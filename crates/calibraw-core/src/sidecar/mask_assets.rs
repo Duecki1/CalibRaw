@@ -64,7 +64,7 @@ pub(super) fn extract_mask_assets(edits: &mut EditState) -> Result<MaskAssets, S
         let pixels =
             u64::try_from(image.pixels.len()).map_err(|_| SidecarError::TooLarge(u64::MAX))?;
         checked_add(&mut decoded_asset_bytes, pixels)?;
-        if decoded_asset_bytes > MAX_DECODED_MASK_ASSET_BYTES {
+        if decoded_asset_bytes > MAX_DECODED_ASSET_BYTES {
             return invalid("generated masks exceed the decoded asset memory safety limit");
         }
         let png = encode_mask_png(&image)?;
@@ -188,7 +188,7 @@ pub(super) fn restore_mask_assets(
                 decoded_bytes = decoded_bytes
                     .checked_add(image.pixels.len() as u64)
                     .ok_or(SidecarError::TooLarge(u64::MAX))?;
-                if decoded_bytes > MAX_DECODED_MASK_ASSET_BYTES {
+                if decoded_bytes > MAX_DECODED_ASSET_BYTES {
                     return invalid("generated masks exceed the decoded memory safety limit");
                 }
             } else if generated_mask(&component.geometry).is_some_and(Option::is_some) {
@@ -206,7 +206,7 @@ pub(super) fn restore_mask_assets(
         decoded_bytes = decoded_bytes
             .checked_add(pixels)
             .ok_or(SidecarError::TooLarge(u64::MAX))?;
-        if decoded_bytes > MAX_DECODED_MASK_ASSET_BYTES {
+        if decoded_bytes > MAX_DECODED_ASSET_BYTES {
             return invalid("compressed mask assets exceed the decoded memory safety limit");
         }
     }

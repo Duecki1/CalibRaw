@@ -30,6 +30,12 @@ const RASTER_NOMINAL_ENCODED_SIGMA: f32 = 1.0 / 255.0;
 /// and the count at which it is fully trusted.
 const RASTER_MIN_SAMPLES: usize = 64;
 const RASTER_FULL_CONFIDENCE_SAMPLES: f32 = 2_000.0;
+/// Normalised sensor levels at or above this are clipped highlights, which a RAW
+/// estimate leaves out of its fit.
+const RAW_MEASURED_LEVEL_LIMIT: f32 = 0.985;
+/// Summed sample weight at which a RAW channel's fit is fully trusted over the ISO-based
+/// fallback.
+const RAW_FULL_CONFIDENCE_WEIGHT: f32 = 2_000.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AdaptiveDetailDefaults {
@@ -110,7 +116,7 @@ impl NoiseProfile {
                 let index = (y * width + x) as usize;
                 let channel = usize::from(color_indices[index]).min(3);
                 let center = match normalized(x, y, channel) {
-                    Some(v) if v < 0.985 => v,
+                    Some(v) if v < RAW_MEASURED_LEVEL_LIMIT => v,
                     _ => {
                         x = x.saturating_add(stride);
                         continue;
@@ -177,8 +183,9 @@ impl NoiseProfile {
             let fitted_a = ((sw * sxy - sx * sy) / denom).clamp(min_shot, max_shot);
             let fitted_b = ((sy - fitted_a * sx) / sw).clamp(min_read, max_read);
 
-            let confidence =
-                (points.iter().map(|point| point.2).sum::<f32>() / 2_000.0).clamp(0.0, 1.0);
+            let confidence = (points.iter().map(|point| point.2).sum::<f32>()
+                / RAW_FULL_CONFIDENCE_WEIGHT)
+                .clamp(0.0, 1.0);
             shot[channel] = fallback.shot[channel] * (1.0 - confidence) + fitted_a * confidence;
             read[channel] = fallback.read[channel] * (1.0 - confidence) + fitted_b * confidence;
             channel_confidence[channel] = confidence;
@@ -293,6 +300,21 @@ impl NoiseProfile {
     ) -> AdaptiveDetailDefaults {
         const REFERENCE_SIGNAL: f32 = 0.18;
         const METADATA_VARIANCE_FLOOR: f32 = 1.0;
+        // Noise relative to `REFERENCE_SIGNAL` that fades the automatic denoise in: nothing
+        // at the low edge, the full amount at the high edge (smoothstep in between).
+        const LUMINANCE_SIGMA_FADE: (f32, f32) = (0.018, 0.080);
+        const OPPONENT_SIGMA_FADE: (f32, f32) = (0.035, 0.160);
+        // Largest automatic amounts: luminance on its 0-100 slider scale, chroma on its
+        // 0-1 scale, with the exponents shaping how quickly they rise.
+        const MAX_LUMINANCE_DENOISE: f32 = 34.0;
+        const LUMINANCE_DENOISE_EXPONENT: f32 = 1.15;
+        const MAX_CHROMA_DENOISE: f32 = 0.38;
+        const CHROMA_DENOISE_EXPONENT: f32 = 0.8;
+        // Detail rises from the untouched default by this much at full luminance need.
+        const DETAIL_BOOST: f32 = 8.0;
+        // Needs above which the High denoise quality is selected.
+        const HIGH_QUALITY_LUMINANCE_NEED: f32 = 0.72;
+        const HIGH_QUALITY_CHROMA_NEED: f32 = 0.40;
         let fallback = Self::iso_fallback(iso_speed, white_levels, self.green2_present);
         let mut variance = [0.0f32; 3];
         for channel in 0..3 {
@@ -311,16 +333,28 @@ impl NoiseProfile {
         let relative_signal_sigma = signal_variance.max(0.0).sqrt() / REFERENCE_SIGNAL;
         let relative_opponent_sigma = opponent_variance.max(0.0).sqrt() / REFERENCE_SIGNAL;
 
-        let luminance_need = smoothstep(0.018, 0.080, relative_signal_sigma);
-        let chroma_need = smoothstep(0.035, 0.160, relative_opponent_sigma);
-        let luminance_denoise = 34.0 * luminance_need.powf(1.15);
-        let chroma_denoise = 0.38 * chroma_need.powf(0.8);
+        let luminance_need = smoothstep(
+            LUMINANCE_SIGMA_FADE.0,
+            LUMINANCE_SIGMA_FADE.1,
+            relative_signal_sigma,
+        );
+        let chroma_need = smoothstep(
+            OPPONENT_SIGMA_FADE.0,
+            OPPONENT_SIGMA_FADE.1,
+            relative_opponent_sigma,
+        );
+        let luminance_denoise =
+            MAX_LUMINANCE_DENOISE * luminance_need.powf(LUMINANCE_DENOISE_EXPONENT);
+        let chroma_denoise = MAX_CHROMA_DENOISE * chroma_need.powf(CHROMA_DENOISE_EXPONENT);
 
         AdaptiveDetailDefaults {
             luminance_denoise,
             chroma_denoise,
-            denoise_detail: 50.0 + 8.0 * luminance_need,
-            denoise_quality: if luminance_need > 0.72 || chroma_need > 0.40 {
+            denoise_detail: super::basicadj::default_denoise_detail()
+                + DETAIL_BOOST * luminance_need,
+            denoise_quality: if luminance_need > HIGH_QUALITY_LUMINANCE_NEED
+                || chroma_need > HIGH_QUALITY_CHROMA_NEED
+            {
                 DenoiseQuality::High
             } else {
                 DenoiseQuality::Balanced

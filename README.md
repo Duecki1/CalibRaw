@@ -56,6 +56,19 @@ Edit RAW files with sliders, curves, color grading and masks. AI tools can selec
 
 AI models are downloaded once, on first use and only after you agree; they are verified by SHA-256 and then run offline.
 
+### Graphics requirements
+
+CalibRaw processes photos on the GPU through Vulkan, Direct3D 12 or Metal. OpenGL is not supported: a GPU whose only driver is OpenGL cannot be used, and CalibRaw shows an "Unsupported graphics driver" notice instead of the editor.
+
+| Platform | Needs |
+| --- | --- |
+| **Linux** | A Vulkan driver. GPUs without one (for example Intel Haswell, whose Mesa Vulkan driver `hasvk` is not conformant and hidden) can run on the CPU with Mesa's software driver lavapipe (`mesa-vulkan-drivers` or `vulkan-swrast`), which is slow. |
+| **Android** | A Vulkan-capable GPU and driver. |
+| **Windows** | Direct3D 12 or Vulkan. Without either, Windows' software renderer (WARP) is used. |
+| **macOS** | Metal. |
+
+Set `WGPU_BACKEND` (for example `vulkan`) to choose the graphics API yourself.
+
 ---
 
 ## Why CalibRaw

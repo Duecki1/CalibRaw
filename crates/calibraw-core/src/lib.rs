@@ -3,6 +3,7 @@ pub mod color_math;
 pub mod diagnostics;
 pub mod display_metadata_cache;
 pub mod file_ops;
+mod fnv;
 pub mod matrix;
 pub mod migrations;
 pub mod pipeline;

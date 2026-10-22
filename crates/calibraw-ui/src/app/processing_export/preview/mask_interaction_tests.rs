@@ -240,19 +240,28 @@ fn zoom_drag_mapping_refines_all_layers_and_release_keeps_the_last_edit() {
         },
         |_| {},
     );
-    app.masks.interaction_dirty_layer = Some(0);
+    // A held slider defers the fitted and navigation previews while the
+    // sharp crop covers the view and only the Output stage changes.
     app.preview.pending_stage = Some(ProcessingStage::Output);
     app.preview.navigation_pending_stage = Some(ProcessingStage::Output);
-    assert!(app.defer_background_mask_processing());
+    assert!(app.defer_background_preview_processing());
+    // So does a mask drag.
+    app.masks.interaction_dirty_layer = Some(0);
+    assert!(app.defer_background_preview_processing());
+    // Raw and Tone changes reach every preview: the crop takes its tone
+    // statistics from a full-frame one.
     app.preview.navigation_pending_stage = Some(ProcessingStage::Tone);
-    assert!(!app.defer_background_mask_processing());
+    assert!(!app.defer_background_preview_processing());
     app.preview.navigation_pending_stage = Some(ProcessingStage::Output);
-    app.preview.white_balance_refresh_pending = true;
-    assert!(!app.defer_background_mask_processing());
-    app.preview.white_balance_refresh_pending = false;
+    app.preview.pending_stage = Some(ProcessingStage::Raw);
+    assert!(!app.defer_background_preview_processing());
+    app.preview.pending_stage = Some(ProcessingStage::Output);
     app.preview.detail.as_mut().unwrap().revision = app.preview.revision.wrapping_sub(1);
-    assert!(!app.defer_background_mask_processing());
+    assert!(!app.defer_background_preview_processing());
     app.preview.detail.as_mut().unwrap().revision = app.preview.revision;
+    app.preview.zoom = 1.0;
+    assert!(!app.defer_background_preview_processing());
+    app.preview.zoom = 2.0;
 
     // A held pointer also commits the latest value without another movement,
     // using the faster interval only when the sharp crop covers the view.
@@ -271,7 +280,7 @@ fn zoom_drag_mapping_refines_all_layers_and_release_keeps_the_last_edit() {
         },
         |_| {},
     );
-    assert!(!app.defer_background_mask_processing());
+    assert!(!app.defer_background_preview_processing());
     app.finish_mask_geometry_interaction();
     assert!(
         app.masks.detail_dirty_layers[0],

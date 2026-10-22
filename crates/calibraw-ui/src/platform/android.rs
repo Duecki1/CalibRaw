@@ -25,6 +25,11 @@ pub fn android_main(android_app: AndroidApp) {
             .with_tag("CalibRaw"),
     );
 
+    match calibraw_ffi::gpu_stage_timing_requested(&android_app) {
+        Ok(true) => calibraw_gpu::stage_timing::request(),
+        Ok(false) => {}
+        Err(error) => log::warn!("{error}"),
+    }
     let mut options = crate::native_options(PlatformCaps::ANDROID);
     options.wgpu_options.surface = eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY;
     options.android_app = Some(android_app.clone());

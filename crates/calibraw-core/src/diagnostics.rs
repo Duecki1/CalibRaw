@@ -157,20 +157,16 @@ fn sample_indices(length: usize) -> impl Iterator<Item = usize> {
     })
 }
 
-fn fnv1a_step(hash: u64, byte: u8) -> u64 {
-    (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-}
-
 fn sampled_fingerprint<T, Get, Bytes, ByteIter>(length: usize, get: Get, bytes: Bytes) -> u64
 where
     Get: Fn(usize) -> T,
     Bytes: Fn(T) -> ByteIter,
     ByteIter: IntoIterator<Item = u8>,
 {
-    let mut hash = 0xcbf29ce484222325u64;
+    let mut hash = crate::fnv::OFFSET_BASIS;
     for index in sample_indices(length) {
         for byte in bytes(get(index)) {
-            hash = fnv1a_step(hash, byte);
+            hash = crate::fnv::step(hash, byte);
         }
     }
     hash

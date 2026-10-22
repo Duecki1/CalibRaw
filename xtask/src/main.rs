@@ -5,6 +5,7 @@
 //! `docs/DEVELOPMENT.md`.
 
 mod android;
+mod android_bench;
 mod arch;
 mod baseline;
 mod cfg_ratchet;
@@ -54,6 +55,8 @@ fn run() -> Result<()> {
         "baseline-run" => baseline::run(rest),
         "cfg-ratchet" => cfg_ratchet::run(rest),
         "baseline-compare" => baseline::compare(rest),
+        "android-bench" => android_bench::run(rest),
+        "android-bench-compare" => android_bench::compare(rest),
         "colorchecker-wb-validate" => colorchecker::run(rest),
         "icons" => {
             ensure_no_extra_args(&rest, "icons")?;
@@ -98,6 +101,11 @@ pub(crate) fn print_help() {
            baseline-run LABEL [--filter F]  capture UI review screenshots into\n\
                                             $CALIBRAW_BASELINE_DIR/<date>-<rev>-LABEL\n\
            baseline-compare BEFORE AFTER    compare two capture runs pixel by pixel\n\
+           android-bench LABEL [--scenario PATH] [--package NAME] [--apk PATH | --no-install]\n\
+                                            play a gesture scenario on the connected Android\n\
+                                            device into $CALIBRAW_BASELINE_DIR/<date>-<rev>-LABEL\n\
+           android-bench-compare BEFORE AFTER\n\
+                                            set two bench runs' figures side by side\n\
            colorchecker-wb-validate CSV [--json PATH]\n\n\
          Build and packaging:\n\
            icons\n\

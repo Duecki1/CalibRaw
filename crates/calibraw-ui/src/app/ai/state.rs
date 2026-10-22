@@ -232,7 +232,7 @@ impl CalibRawApp {
             return;
         };
         let now = Instant::now();
-        let interval = if self.defer_background_mask_processing() {
+        let interval = if self.defer_background_preview_processing() {
             Duration::from_millis(16)
         } else {
             INTERACTIVE_MASK_INTERVAL

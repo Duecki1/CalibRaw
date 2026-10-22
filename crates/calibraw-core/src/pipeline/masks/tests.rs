@@ -188,7 +188,6 @@ fn common_mask_properties_mutate_through_shared_model_api() {
         MaskKind::Sky,
         MaskKind::Object,
         MaskKind::LuminanceRange,
-        MaskKind::ColorRange,
     ] {
         stack.clear();
         stack.add_mask(kind);
@@ -209,8 +208,7 @@ fn common_mask_properties_mutate_through_shared_model_api() {
             | MaskGeometry::Path { feather, .. }
             | MaskGeometry::Ai { feather, .. }
             | MaskGeometry::Object { feather, .. }
-            | MaskGeometry::LuminanceRange { feather, .. }
-            | MaskGeometry::ColorRange { feather, .. } => *feather,
+            | MaskGeometry::LuminanceRange { feather, .. } => *feather,
             _ => unreachable!("tested mask kind must expose feather"),
         };
         assert_eq!(feather, 0.37);
@@ -325,12 +323,138 @@ fn linear_gradient_has_centered_falloff_and_smooth_outer_lines() {
 }
 
 #[test]
-fn color_range_feather_preserves_selected_colors() {
+fn color_range_fully_selects_colours_near_the_sample() {
     let source = MaskRgbImage::new(2, 1, vec![255, 0, 0, 255, 250, 4, 4, 255]).unwrap();
-    let hard = rasterize_color_range(2, 1, &source, [1.0, 0.0, 0.0], 0.15, 0.0);
-    let soft = rasterize_color_range(2, 1, &source, [1.0, 0.0, 0.0], 0.15, 1.0);
-    assert_eq!(hard[1], 1.0);
-    assert_eq!(soft[1], 1.0);
+    let coverage = rasterize_color_range(2, 1, &source, [1.0, 0.0, 0.0], 0.15);
+    assert_eq!(coverage, vec![1.0, 1.0]);
+}
+
+#[test]
+fn color_range_has_no_feather_but_older_readers_still_find_one() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::ColorRange);
+    let component = &mut stack.masks[0].components[0];
+    assert!(!component.set_feather(0.5));
+    let json = serde_json::to_value(&component.geometry).unwrap();
+    assert_eq!(
+        json["ColorRange"]["feather"].as_f64(),
+        Some(f64::from(0.12f32))
+    );
+    assert!(json["ColorRange"].get("source").is_none());
+    let read: MaskGeometry = serde_json::from_value(json).unwrap();
+    assert_eq!(read, component.geometry);
+}
+
+#[test]
+fn color_range_follows_a_colour_into_shade_before_black_or_grey() {
+    // Sampled blue; navy (the same blue in shade); a lighter blue; black;
+    // a near-black; mid grey.
+    let pixels: [[u8; 3]; 6] = [
+        [38, 77, 217],
+        [13, 26, 89],
+        [128, 153, 255],
+        [0, 0, 0],
+        [8, 8, 13],
+        [128, 128, 128],
+    ];
+    let rgba = pixels
+        .iter()
+        .flat_map(|&[r, g, b]| [r, g, b, 255])
+        .collect();
+    let source = MaskRgbImage::new(6, 1, rgba).unwrap();
+    let sample = pixels[0].map(|value| value as f32 / 255.0);
+    let coverage = |tolerance| rasterize_color_range(6, 1, &source, sample, tolerance);
+    let default = coverage(DEFAULT_COLOR_TOLERANCE);
+    assert_eq!(default[0], 1.0);
+    assert!(default[1] > 0.5, "navy is the sampled blue in shade");
+    assert!(
+        default[3..].iter().all(|&value| value == 0.0),
+        "{default:?}"
+    );
+    // Widening the tolerance reaches the lighter blue long before black,
+    // near-black or grey.
+    let wide = coverage(0.6);
+    assert_eq!(wide[1], 1.0, "{wide:?}");
+    assert!(wide[2] > 0.5, "{wide:?}");
+    assert!(wide[3..].iter().all(|&value| value == 0.0), "{wide:?}");
+}
+
+#[test]
+fn color_range_ignores_chroma_noise_in_dark_backgrounds() {
+    // A dim red tube across a near-black backdrop whose sensor noise is
+    // tinted red, as under red neon light.
+    let (width, height) = (1200usize, 1200usize);
+    let mut state = 0x2545_f491_u32;
+    let mut noise = |amplitude: f32| {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        ((state >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * 2.0 * amplitude
+    };
+    let mut rgba = Vec::with_capacity(width * height * 4);
+    for _ in 0..height {
+        for x in 0..width {
+            let base: [f32; 3] = if (570..630).contains(&x) {
+                [80.0, 20.0, 16.0]
+            } else {
+                [8.0, 6.0, 6.0]
+            };
+            let red = noise(10.0);
+            let other = noise(4.0);
+            for (channel, value) in base.into_iter().enumerate() {
+                let offset = if channel == 0 { red } else { other };
+                rgba.push((value + offset).clamp(0.0, 255.0) as u8);
+            }
+            rgba.push(255);
+        }
+    }
+    let source = MaskRgbImage::new(width as u32, height as u32, rgba).unwrap();
+    let sample = [80.0 / 255.0, 20.0 / 255.0, 16.0 / 255.0];
+    let coverage = rasterize_color_range(1200, 1200, &source, sample, DEFAULT_COLOR_TOLERANCE);
+    let coverage = &coverage;
+    let column = |x: usize| (0..1200).map(move |y| coverage[y * 1200 + x]);
+    assert!(column(600).all(|value| value > 0.9), "the tube is selected");
+    let background = (0..1200)
+        .filter(|x| !(540..660).contains(x))
+        .flat_map(column)
+        .fold(0.0f32, f32::max);
+    assert!(background < 0.1, "background speckles reach {background}");
+}
+
+#[test]
+fn color_range_neutral_sample_selects_neutrals_not_colours() {
+    let pixels: [[u8; 3]; 4] = [
+        [128, 128, 128],
+        [90, 92, 95],
+        [170, 168, 166],
+        [200, 60, 50],
+    ];
+    let rgba = pixels
+        .iter()
+        .flat_map(|&[r, g, b]| [r, g, b, 255])
+        .collect();
+    let source = MaskRgbImage::new(4, 1, rgba).unwrap();
+    let coverage = rasterize_color_range(4, 1, &source, [0.5; 3], DEFAULT_COLOR_TOLERANCE);
+    assert!(
+        coverage[..3].iter().all(|&value| value > 0.99),
+        "{coverage:?}"
+    );
+    assert_eq!(coverage[3], 0.0);
+}
+
+#[test]
+fn luminance_range_bounds_are_placed_on_cie_lightness() {
+    for luminance in [0.0, 0.001, 0.008, 0.01, 0.184, 0.5, 1.0] {
+        let lightness = luminance_to_lightness(luminance);
+        assert!((lightness_to_luminance(lightness) - luminance).abs() < 1e-5);
+    }
+    // Mid grey sits mid-scale.
+    assert!((luminance_to_lightness(0.184) - 0.5).abs() < 0.01);
+    // A feather of 1 ramps over the same lightness in shadows and highlights.
+    for low in [0.05, 0.6] {
+        let halfway =
+            lightness_to_luminance(luminance_to_lightness(low) - 0.5 * LUMINANCE_FEATHER_WIDTH);
+        let weight = luminance_range_weight(halfway, low, 1.0, [1.0, 0.0]);
+        assert!((weight - 0.5).abs() < 1e-3, "{low}: {weight}");
+    }
 }
 
 #[test]
@@ -1490,7 +1614,6 @@ fn grow_expands_luminance_and_color_range_masks() {
         sample,
         tolerance,
         grow,
-        feather,
         sampled,
     } = &mut stack.selected_component_mut().unwrap().geometry
     {
@@ -1498,7 +1621,6 @@ fn grow_expands_luminance_and_color_range_masks() {
         *sample = [1.0, 0.0, 0.0];
         *tolerance = 0.05;
         *grow = 0.0;
-        *feather = 0.0;
         *sampled = true;
     }
     let original_color = covered(stack.rasterize_layer(1, 64, 64, 64, 64));

@@ -1075,9 +1075,12 @@ pub(super) fn dispatch_compute(
     bind_groups: &[&wgpu::BindGroup],
     workgroups: [u32; 3],
 ) {
+    let timestamps = crate::stage_timing::next_pass(label);
     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
         label: Some(label),
-        timestamp_writes: None,
+        timestamp_writes: timestamps
+            .as_ref()
+            .map(crate::stage_timing::PassTimestamps::writes),
     });
     pass.set_pipeline(pipeline);
     for (index, bind_group) in bind_groups.iter().enumerate() {
