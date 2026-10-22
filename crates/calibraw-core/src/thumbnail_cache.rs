@@ -308,8 +308,8 @@ pub fn load_jpeg(path: &Path, maximum_edge: u32) -> Result<Option<RawThumbnail>,
 
 pub fn save_jpeg(path: &Path, thumbnail: &RawThumbnail) -> Result<(), String> {
     let (_, _, decoded_bytes) = accepted_thumbnail_layout(thumbnail.width, thumbnail.height)?;
-    let expected = usize::try_from(decoded_bytes)
-        .map_err(|_| "thumbnail byte count overflow".to_owned())?;
+    let expected =
+        usize::try_from(decoded_bytes).map_err(|_| "thumbnail byte count overflow".to_owned())?;
     if thumbnail.rgba.len() != expected {
         return Err("thumbnail has an invalid RGBA byte count".to_owned());
     }

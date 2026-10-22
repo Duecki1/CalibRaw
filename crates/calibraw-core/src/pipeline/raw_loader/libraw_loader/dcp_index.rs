@@ -62,7 +62,9 @@ fn dcp_profile_index_cache() -> &'static Mutex<HashMap<PathBuf, CachedDcpIndex>>
 /// Locks `mutex`, continuing with the data of a poisoned lock: the index and the scan
 /// lock hold no invariant that a panic in the middle of an update could leave broken.
 fn lock_ignoring_poison<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 pub(in crate::pipeline::raw_loader) fn invalidate_dcp_profile_index() {
