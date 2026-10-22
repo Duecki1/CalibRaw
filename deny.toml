@@ -48,3 +48,12 @@ ignore = false
 unknown-git = "deny"
 allow-git = ["https://github.com/Duecki1/Moduwu"]
 unknown-registry = "deny"
+
+[advisories]
+# zbus 6 absorbed these crates. accesskit_unix (via eframe/egui-winit) still
+# requires zbus 5, so they stay until the egui stack moves to zbus 6.
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: pulled by zbus 5 through accesskit_unix" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: pulled by zbus 5 through accesskit_unix" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: pulled by zbus 5 through accesskit_unix" },
+]

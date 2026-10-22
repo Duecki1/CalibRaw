@@ -119,14 +119,14 @@ pub fn save_result(
         .with_context(|| format!("create AI-denoise result directory {}", parent.display()))?;
     write_atomically(path, |file| -> Result<()> {
         let mut archive = ZipWriter::new(file);
-        let stored = FileOptions::default().compression_method(CompressionMethod::Stored);
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         archive
             .start_file(RESULT_FILE_MANIFEST, stored)
             .context("start AI-denoise result manifest")?;
         archive
             .write_all(&manifest)
             .context("write AI-denoise result manifest")?;
-        let compressed = FileOptions::default()
+        let compressed = SimpleFileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .compression_level(Some(3));
         archive
