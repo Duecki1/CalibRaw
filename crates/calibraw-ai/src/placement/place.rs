@@ -18,8 +18,7 @@ const MEMORY_MARGIN_PERCENT: u64 = 20;
 /// a few MiB between jobs without anything having been released.
 const MIN_RETRY_GROWTH: u64 = 256 * MIB;
 
-/// An accelerated execution provider: WebGPU on desktop. Android has none
-/// (docs/GPU_REWORK.md P6.1).
+/// An accelerated execution provider: WebGPU on desktop. Android has none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GpuProvider {
     WebGpu,

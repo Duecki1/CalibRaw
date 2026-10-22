@@ -61,7 +61,7 @@ pub(crate) const fn sam_encoder_tolerates_non_finite() -> bool {
 
 /// Whether SAM sessions may stay loaded between object-mask jobs. The Linux
 /// AppImage unloads them (introduced in `837ab43d`, "Try fix pixelated"); the
-/// reason is unknown (docs/GPU_REWORK.md open decision 4). Recheck with the
+/// reason is unknown. Recheck with the
 /// WebGPU runtime, which the AppImage downloads like other Linux builds.
 pub(crate) fn sam_sessions_may_stay_warm() -> bool {
     !(cfg!(target_os = "linux") && running_from_appimage())
