@@ -2,7 +2,7 @@
 
 fn neon_edge_sample(pos: vec2<f32>) -> f32 {
     let base = vec2<i32>(floor(pos));
-    let f = fract(pos);
+    let f = pos - vec2<f32>(base);
     let rgb = mix(
         mix(SceneAdjustments::adjustment_base_at(base),
         SceneAdjustments::adjustment_base_at(base + vec2<i32>(1, 0)), f.x),

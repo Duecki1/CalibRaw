@@ -7,7 +7,7 @@ fn atmosphere_hash(position: vec2<f32>) -> f32 {
 
 fn atmosphere_noise(position: vec2<f32>) -> f32 {
     let cell = floor(position);
-    let fraction = fract(position);
+    let fraction = position - cell;
     let smooth_fraction = fraction * fraction * (vec2<f32>(3.0) - 2.0 * fraction);
     let bottom = mix(
         atmosphere_hash(cell),
@@ -93,7 +93,7 @@ fn fog_hash3(cell: vec3<i32>) -> f32 {
 
 fn fog_noise3(point: vec3<f32>) -> f32 {
     let cell = vec3<i32>(floor(point));
-    let f = fract(point);
+    let f = point - vec3<f32>(cell);
     let u = f * f * f * (f * (f * 6.0 - vec3<f32>(15.0)) + vec3<f32>(10.0));
     let a = mix(
         mix(fog_hash3(cell), fog_hash3(cell + vec3<i32>(1, 0, 0)), u.x),
