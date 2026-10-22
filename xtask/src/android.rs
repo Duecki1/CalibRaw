@@ -372,12 +372,15 @@ fn find_host_libclang(ndk_host: &Path) -> Option<PathBuf> {
         .and_then(|library| library.parent().map(Path::to_path_buf))
 }
 
+/// `release` builds the published library from a committed tree, `profiling`
+/// the same optimized code from the working tree, `debug` at Cargo's dev
+/// profile.
 fn validate_android_profile(profile: &str) -> Result<()> {
-    if matches!(profile, "debug" | "release") {
+    if matches!(profile, "debug" | "release" | "profiling") {
         Ok(())
     } else {
         Err(XtaskError::usage(format!(
-            "Unknown profile '{profile}' (use release or debug)"
+            "Unknown profile '{profile}' (use release, profiling or debug)"
         )))
     }
 }
@@ -544,17 +547,23 @@ fn command_build_android(args: BuildAndroidArgs) -> Result<()> {
     ] {
         command.env_remove(key);
     }
-    if args.profile == "release" {
-        let source_date_epoch = run_command_output(
-            Command::new("git")
-                .current_dir(&root)
-                .args(["show", "-s", "--format=%ct", "HEAD"]),
-            "git show source date",
-        )?;
-        command
-            .arg("--release")
-            .env("CALIBRAW_REQUIRE_COMMITTED_SOURCE", "1")
-            .env("SOURCE_DATE_EPOCH", source_date_epoch.trim());
+    match args.profile.as_str() {
+        "release" => {
+            let source_date_epoch = run_command_output(
+                Command::new("git")
+                    .current_dir(&root)
+                    .args(["show", "-s", "--format=%ct", "HEAD"]),
+                "git show source date",
+            )?;
+            command
+                .arg("--release")
+                .env("CALIBRAW_REQUIRE_COMMITTED_SOURCE", "1")
+                .env("SOURCE_DATE_EPOCH", source_date_epoch.trim());
+        }
+        "profiling" => {
+            command.arg("--release");
+        }
+        _ => {}
     }
     command
         .args(["--package", "calibraw-ui", "--lib", "--manifest-path"])

@@ -14,6 +14,19 @@ impl PreviewState {
         }
     }
 
+    /// What dispatching preview work changes: every dispatch advances or
+    /// clears a pending stage or creates the navigation proxy.
+    pub(in crate::app) fn dispatch_progress(&self) -> DispatchProgress {
+        DispatchProgress {
+            stages: [
+                self.pending_stage,
+                self.detail_pending_stage,
+                self.navigation_pending_stage,
+            ],
+            navigation_exists: self.navigation.is_some(),
+        }
+    }
+
     pub(crate) fn processing_pending(&self) -> bool {
         self.detail_pending_stage.is_some()
             || self.navigation_pending_stage.is_some()
@@ -30,6 +43,13 @@ impl PreviewState {
         self.original_hold
             .is_some_and(|hold| hold.phase != crate::app::AndroidOriginalHoldPhase::Waiting)
     }
+}
+
+/// See [`PreviewState::dispatch_progress`].
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::app) struct DispatchProgress {
+    stages: [Option<ProcessingStage>; 3],
+    navigation_exists: bool,
 }
 
 /// The full-frame pipeline whose tone statistics a zoomed detail crop

@@ -3,7 +3,7 @@
 use super::masks::mask_model_retention;
 use super::{depth_refine, normalized_rgb_input};
 use crate::config::{MemoryClass, CAPABILITIES};
-use crate::placement::{CpuFallbackProfile, SessionOptions};
+use crate::placement::SessionOptions;
 use crate::registry::{AiModel, ModelInfo};
 use crate::slot::with_model_session;
 use anyhow::{Context, Result};
@@ -33,10 +33,9 @@ fn session_options() -> SessionOptions {
 const fn session_options_for(memory: MemoryClass) -> SessionOptions {
     let options = AiModel::Depth.spec().session;
     match memory {
-        // Depth runs on the CPU beside the RAW preview.
-        MemoryClass::Constrained => options
-            .cpu_only()
-            .with_cpu_fallback_profile(CpuFallbackProfile::LowMemory),
+        // Depth runs on the CPU beside the RAW preview, in the lean session
+        // every model gets there (`placement::session`).
+        MemoryClass::Constrained => options.cpu_only(),
         MemoryClass::Standard => options,
     }
 }
@@ -253,6 +252,7 @@ fn quantize_depth(depth: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::placement::CpuFallbackProfile;
 
     const EDGE: u32 = INPUT_EDGE;
 
@@ -305,13 +305,13 @@ mod tests {
     }
 
     #[test]
-    fn only_constrained_memory_runs_depth_on_a_low_memory_cpu_session() {
+    fn only_constrained_memory_runs_depth_on_the_cpu() {
         let constrained = session_options_for(MemoryClass::Constrained);
         assert_eq!(constrained.model_name, MODEL.name);
         assert!(!constrained.allow_acceleration);
         assert_eq!(
             constrained.cpu_fallback_profile,
-            CpuFallbackProfile::LowMemory
+            CpuFallbackProfile::Default
         );
         let standard = session_options_for(MemoryClass::Standard);
         assert!(standard.allow_acceleration);

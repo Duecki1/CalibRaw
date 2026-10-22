@@ -75,7 +75,7 @@ impl Tip {
             }
             Self::ColorRangeMask => {
                 "Click or drag on the photo to sample a color. \
-                 Then use Tolerance to widen the selection, and Grow or Color feather to refine its edge."
+                 Then use Tolerance to widen or narrow the selection, and Grow to expand or shrink it."
             }
             Self::LuminanceRangeMask => {
                 "Drag the solid handles to set the luminance range, the darkest and brightest tones selected. \

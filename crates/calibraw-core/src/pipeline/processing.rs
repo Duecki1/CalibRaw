@@ -1,4 +1,7 @@
-use super::{CompactPixelMap, DenoiseQuality, ExposureParams, LoadedRaw, MaskEffect, MaskStack};
+use super::{
+    CompactPixelMap, DemosaicMode, DenoiseQuality, ExposureParams, HighlightReconstructionMethod,
+    LoadedRaw, MaskEffect, MaskStack, WhiteBalance,
+};
 use rayon::prelude::*;
 
 mod ai_denoised_regions;
@@ -30,28 +33,100 @@ pub fn affected_stage(before: &ExposureParams, after: &ExposureParams) -> Option
         return None;
     }
 
-    if raw_controls_changed(before, after) || before.white_balance != after.white_balance {
+    if RawStageControls::of(before) != RawStageControls::of(after) {
         Some(ProcessingStage::Raw)
     } else {
         Some(ProcessingStage::Output)
     }
 }
 
-fn raw_controls_changed(before: &ExposureParams, after: &ExposureParams) -> bool {
-    before.black_point != after.black_point
-        || before.chroma_denoise != after.chroma_denoise
-        || before.luminance_denoise != after.luminance_denoise
-        || before.denoise_detail != after.denoise_detail
-        || before.denoise_quality != after.denoise_quality
-        || before.ai_denoise_enabled != after.ai_denoise_enabled
-        || before.ai_denoise_amount != after.ai_denoise_amount
-        || before.demosaic_mode != after.demosaic_mode
-        || before.dual_threshold != after.dual_threshold
-        || before.frequency_chroma != after.frequency_chroma
-        || before.highlight_method != after.highlight_method
-        || before.highlight_clip != after.highlight_clip
-        || before.highlight_reconstruction != after.highlight_reconstruction
-        || before.chromatic_aberration != after.chromatic_aberration
+/// The settings that make the RAW reconstruction stage run again when they change.
+#[derive(PartialEq)]
+struct RawStageControls {
+    black_point: f32,
+    white_balance: WhiteBalance,
+    chroma_denoise: f32,
+    luminance_denoise: f32,
+    denoise_detail: f32,
+    denoise_quality: DenoiseQuality,
+    ai_denoise_enabled: bool,
+    ai_denoise_amount: f32,
+    demosaic_mode: DemosaicMode,
+    dual_threshold: f32,
+    frequency_chroma: f32,
+    highlight_method: HighlightReconstructionMethod,
+    highlight_clip: f32,
+    highlight_reconstruction: f32,
+    chromatic_aberration: f32,
+}
+
+impl RawStageControls {
+    /// `ExposureParams` is destructured without `..`, so adding a field to it fails to
+    /// compile here until it is classified: a RAW-stage control goes into the struct, a
+    /// later-stage setting is bound to `_`.
+    fn of(params: &ExposureParams) -> Self {
+        let ExposureParams {
+            black_point,
+            exposure: _,
+            contrast: _,
+            sigmoid: _,
+            white_balance,
+            hue: _,
+            saturation: _,
+            vibrance: _,
+            tone_curve: _,
+            tone_curve_red: _,
+            tone_curve_green: _,
+            tone_curve_blue: _,
+            chroma_denoise,
+            luminance_denoise,
+            denoise_detail,
+            denoise_quality,
+            ai_denoise_enabled,
+            ai_denoise_amount,
+            demosaic_mode,
+            dual_threshold,
+            frequency_chroma,
+            highlight_method,
+            highlight_clip,
+            highlight_reconstruction,
+            chromatic_aberration,
+            highlights: _,
+            shadows: _,
+            whites: _,
+            blacks: _,
+            texture: _,
+            clarity: _,
+            dehaze: _,
+            sharpen_amount: _,
+            sharpen_radius: _,
+            sharpen_detail: _,
+            sharpen_masking: _,
+            hsl_hue: _,
+            hsl_saturation: _,
+            hsl_luminance: _,
+            point_colors: _,
+            point_color_visualize: _,
+            color_grading: _,
+        } = *params;
+        Self {
+            black_point,
+            white_balance,
+            chroma_denoise,
+            luminance_denoise,
+            denoise_detail,
+            denoise_quality,
+            ai_denoise_enabled,
+            ai_denoise_amount,
+            demosaic_mode,
+            dual_threshold,
+            frequency_chroma,
+            highlight_method,
+            highlight_clip,
+            highlight_reconstruction,
+            chromatic_aberration,
+        }
+    }
 }
 
 #[cfg(test)]

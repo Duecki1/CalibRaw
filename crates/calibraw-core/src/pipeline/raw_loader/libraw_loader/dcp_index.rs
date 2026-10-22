@@ -5,6 +5,32 @@ use super::*;
 const MAX_DCP_SCAN_FILES: usize = 10_000;
 const MAX_DCP_SCAN_DEPTH: usize = 16;
 
+// Ranking of a profile against a camera, used by `dcp_match_score`. The score tiers rank
+// where the model matched, a declared model always outranking a file name match. The
+// bonuses and the penalty then nudge profiles inside and between the closer file name
+// tiers.
+/// The profile declares exactly this camera model.
+const SCORE_DECLARED_MODEL_EXACT: i32 = 1000;
+/// The profile's declared camera model contains this model.
+const SCORE_DECLARED_MODEL_CONTAINS: i32 = 900;
+/// The file name is exactly the model, for profiles that declare no camera.
+const SCORE_FILENAME_EXACT: i32 = 700;
+/// The file name contains the model.
+const SCORE_FILENAME_CONTAINS: i32 = 600;
+/// Only the folder path mentions the model.
+const SCORE_PATH_CONTAINS: i32 = 550;
+/// Shortest normalised model name that may match by containment; shorter names would
+/// match unrelated profiles.
+const MIN_CONTAINED_MODEL_KEY_LEN: usize = 4;
+/// The camera make appears in the profile name, file name or path.
+const BONUS_MAKE_MATCH: i32 = 25;
+/// Adobe's "Camera Standard" profile (also written "Camera ST").
+const BONUS_CAMERA_STANDARD: i32 = 20;
+/// Any other "standard" profile.
+const BONUS_STANDARD: i32 = 15;
+/// Monochrome profiles, which would drop the colour of a colour camera's photo.
+const PENALTY_MONOCHROME: i32 = 30;
+
 pub(super) struct MatchedDcpProfile {
     score: i32,
     pub(super) path: PathBuf,
@@ -33,12 +59,30 @@ fn dcp_profile_index_cache() -> &'static Mutex<HashMap<PathBuf, CachedDcpIndex>>
     DCP_PROFILE_INDEX.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Locks `mutex`, continuing with the data of a poisoned lock: the index and the scan
+/// lock hold no invariant that a panic in the middle of an update could leave broken.
+fn lock_ignoring_poison<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub(in crate::pipeline::raw_loader) fn invalidate_dcp_profile_index() {
     if let Some(cache) = DCP_PROFILE_INDEX.get() {
-        if let Ok(mut cache) = cache.lock() {
-            cache.clear();
-        }
+        lock_ignoring_poison(cache).clear();
     }
+}
+
+/// The cached index of `cache_key` when the folder has not changed since it was built.
+fn cached_profiles(
+    cache_key: &Path,
+    root_modified: Option<SystemTime>,
+) -> Option<Arc<Vec<IndexedDcpProfile>>> {
+    let cache = lock_ignoring_poison(dcp_profile_index_cache());
+    cache
+        .get(cache_key)
+        .filter(|index| index.root_modified == root_modified)
+        .map(|index| Arc::clone(&index.profiles))
 }
 
 pub(in crate::pipeline::raw_loader) fn prewarm_dcp_profile_index(folder: &Path) {
@@ -60,24 +104,14 @@ fn indexed_dcp_profiles(folder: &Path) -> Result<Arc<Vec<IndexedDcpProfile>>> {
     let cache_key = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
     let root_modified = metadata.modified().ok();
 
-    if let Ok(cache) = dcp_profile_index_cache().lock() {
-        if let Some(index) = cache.get(&cache_key) {
-            if index.root_modified == root_modified {
-                return Ok(Arc::clone(&index.profiles));
-            }
-        }
+    if let Some(profiles) = cached_profiles(&cache_key, root_modified) {
+        return Ok(profiles);
     }
 
-    let _scan_guard = DCP_PROFILE_SCAN_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .ok();
-    if let Ok(cache) = dcp_profile_index_cache().lock() {
-        if let Some(index) = cache.get(&cache_key) {
-            if index.root_modified == root_modified {
-                return Ok(Arc::clone(&index.profiles));
-            }
-        }
+    let _scan_guard = lock_ignoring_poison(DCP_PROFILE_SCAN_LOCK.get_or_init(|| Mutex::new(())));
+    // Another thread may have indexed this folder while this one waited for the scan lock.
+    if let Some(profiles) = cached_profiles(&cache_key, root_modified) {
+        return Ok(profiles);
     }
 
     let mut stack = vec![(folder.to_path_buf(), 0usize)];
@@ -157,15 +191,13 @@ fn indexed_dcp_profiles(folder: &Path) -> Result<Arc<Vec<IndexedDcpProfile>>> {
     }
 
     let profiles = Arc::new(profiles);
-    if let Ok(mut cache) = dcp_profile_index_cache().lock() {
-        cache.insert(
-            cache_key,
-            CachedDcpIndex {
-                root_modified,
-                profiles: Arc::clone(&profiles),
-            },
-        );
-    }
+    lock_ignoring_poison(dcp_profile_index_cache()).insert(
+        cache_key,
+        CachedDcpIndex {
+            root_modified,
+            profiles: Arc::clone(&profiles),
+        },
+    );
     crate::diagnostics::record(format!(
         "Indexed {} DCP profiles after scanning {scanned} filesystem entries",
         profiles.len()
@@ -285,20 +317,21 @@ fn dcp_match_score(
     let profile_name = profile_name.map(normalize_camera_name).unwrap_or_default();
     let path_key = normalize_camera_name(&path.to_string_lossy());
 
+    let contains_model = model_key.len() >= MIN_CONTAINED_MODEL_KEY_LEN;
     let mut score = if !declared.is_empty() {
         if declared == model_key || declared == combined_key {
-            1000
-        } else if model_key.len() >= 4 && declared.contains(model_key) {
-            900
+            SCORE_DECLARED_MODEL_EXACT
+        } else if contains_model && declared.contains(model_key) {
+            SCORE_DECLARED_MODEL_CONTAINS
         } else {
             return 0;
         }
     } else if filename == model_key || filename == combined_key {
-        700
-    } else if model_key.len() >= 4 && filename.contains(model_key) {
-        600
-    } else if model_key.len() >= 4 && path_key.contains(model_key) {
-        550
+        SCORE_FILENAME_EXACT
+    } else if contains_model && filename.contains(model_key) {
+        SCORE_FILENAME_CONTAINS
+    } else if contains_model && path_key.contains(model_key) {
+        SCORE_PATH_CONTAINS
     } else {
         return 0;
     };
@@ -308,23 +341,23 @@ fn dcp_match_score(
             || filename.contains(make_key)
             || path_key.contains(make_key))
     {
-        score += 25;
+        score += BONUS_MAKE_MATCH;
     }
     if profile_name.contains("camerastandard")
         || filename.contains("camerastandard")
         || profile_name.ends_with("camerast")
         || filename.ends_with("camerast")
     {
-        score += 20;
+        score += BONUS_CAMERA_STANDARD;
     } else if profile_name.contains("standard") || filename.contains("standard") {
-        score += 15;
+        score += BONUS_STANDARD;
     }
     if profile_name.contains("monochrome")
         || filename.contains("monochrome")
         || profile_name.ends_with("camerabw")
         || filename.ends_with("camerabw")
     {
-        score -= 30;
+        score -= PENALTY_MONOCHROME;
     }
     score
 }

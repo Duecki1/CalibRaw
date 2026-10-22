@@ -183,6 +183,7 @@ impl CalibRawApp {
             return;
         };
         let finished = poll_ai_job(
+            self.platform.as_ref(),
             receiver,
             || "The object-mask worker stopped unexpectedly.".to_owned(),
             |update| match update {

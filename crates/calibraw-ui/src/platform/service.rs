@@ -168,6 +168,16 @@ pub(crate) trait Platform: Send + Sync {
         None
     }
 
+    // --- Memory ---
+
+    /// Returns the heap memory the app has freed to the system, without
+    /// blocking the caller. Handlers call it after work that frees a lot.
+    /// Where the allocator returns freed memory by itself, it does nothing
+    /// (`calibraw_core::system_memory::release_free_heap`).
+    fn release_free_memory(&self) {
+        calibraw_core::system_memory::release_free_heap();
+    }
+
     // --- App storage ---
 
     fn performance_settings_path(&self) -> Result<Option<PathBuf>, String>;

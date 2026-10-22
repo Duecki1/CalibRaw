@@ -38,6 +38,10 @@ impl Platform for FakePlatform {
         self.caps
     }
 
+    fn release_free_memory(&self) {
+        self.record("release_free_memory".to_owned());
+    }
+
     fn performance_settings_path(&self) -> Result<Option<PathBuf>, String> {
         Ok(None)
     }

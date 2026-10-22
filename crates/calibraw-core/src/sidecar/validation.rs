@@ -1,7 +1,21 @@
 use super::*;
+use crate::pipeline::BrushDab;
 
 mod effects;
 use effects::*;
+
+/// Largest magnitude of a mask coordinate, radius or size, in multiples of the image
+/// width or height; a few image widths beyond the frame are legitimate, more is a
+/// damaged or hand-edited file.
+const MASK_SPACE_LIMIT: f32 = 16.0;
+/// Largest retouch source, destination or brush coordinate, in native pixels. Far above
+/// the longest accepted image edge.
+const NATIVE_PIXEL_LIMIT: f32 = 1_000_000.0;
+/// Largest Remove brush radius, in native pixels.
+const REMOVE_BRUSH_RADIUS_LIMIT: f32 = 100_000.0;
+/// Sanity bound on a radial mask rotation; the value only has to be finite and small
+/// enough to keep the trigonometry accurate.
+const MASK_ROTATION_LIMIT: f32 = 1_000_000.0;
 
 pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError> {
     validate_exposure(&edits.exposure)?;
@@ -71,22 +85,32 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                 ],
             )?;
             for value in retouch.source.into_iter().chain(retouch.destination) {
-                bounded("retouch source or destination", value, -1.0, 1_000_000.0)?;
+                bounded(
+                    "retouch source or destination",
+                    value,
+                    -1.0,
+                    NATIVE_PIXEL_LIMIT,
+                )?;
             }
             bounded("retouch hardness", retouch.hardness, 0.0, 1.0)?;
             bounded("retouch opacity", retouch.opacity, 0.0, 1.0)?;
         }
         for point in &stroke.brush.points {
             finite("Remove brush point", &[point.x, point.y, point.radius])?;
-            bounded("Remove brush x", point.x, -1.0, 1_000_000.0)?;
-            bounded("Remove brush y", point.y, -1.0, 1_000_000.0)?;
-            bounded("Remove brush radius", point.radius, 0.0, 100_000.0)?;
+            bounded("Remove brush x", point.x, -1.0, NATIVE_PIXEL_LIMIT)?;
+            bounded("Remove brush y", point.y, -1.0, NATIVE_PIXEL_LIMIT)?;
+            bounded(
+                "Remove brush radius",
+                point.radius,
+                0.0,
+                REMOVE_BRUSH_RADIUS_LIMIT,
+            )?;
         }
         for patch in &stroke.patches {
             if patch.bounds.width == 0
                 || patch.bounds.height == 0
-                || patch.bounds.width > 32_768
-                || patch.bounds.height > 32_768
+                || patch.bounds.width > MAX_REMOVE_PATCH_EDGE
+                || patch.bounds.height > MAX_REMOVE_PATCH_EDGE
             {
                 return invalid("Remove patch has invalid dimensions");
             }
@@ -112,38 +136,19 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
         "subject refinement settings",
         &[refinement.size, refinement.feather, refinement.flow],
     )?;
-    bounded("subject refinement size", refinement.size, 0.0, 16.0)?;
+    bounded(
+        "subject refinement size",
+        refinement.size,
+        0.0,
+        MASK_SPACE_LIMIT,
+    )?;
     bounded("subject refinement feather", refinement.feather, 0.0, 1.0)?;
     bounded("subject refinement flow", refinement.flow, 0.0, 1.0)?;
-    if refinement.dabs.len() > MAX_BRUSH_DABS {
-        return invalid("subject refinement contains too many dabs");
-    }
-    let mut previous_start = None;
-    for &start in &refinement.stroke_starts {
-        if start >= refinement.dabs.len()
-            || previous_start.is_some_and(|previous| start <= previous)
-        {
-            return invalid("subject refinement contains invalid stroke boundaries");
-        }
-        previous_start = Some(start);
-    }
-    for dab in &refinement.dabs {
-        finite(
-            "subject refinement dab",
-            &[
-                dab.center[0],
-                dab.center[1],
-                dab.opacity,
-                dab.size,
-                dab.feather,
-            ],
-        )?;
-        bounded("subject refinement dab x", dab.center[0], -16.0, 16.0)?;
-        bounded("subject refinement dab y", dab.center[1], -16.0, 16.0)?;
-        bounded("subject refinement dab opacity", dab.opacity, -1.0, 1.0)?;
-        bounded("subject refinement dab size", dab.size, 0.0, 16.0)?;
-        bounded("subject refinement dab feather", dab.feather, 0.0, 1.0)?;
-    }
+    validate_dabs(
+        "subject refinement",
+        &refinement.dabs,
+        &refinement.stroke_starts,
+    )?;
 
     validate_effect_components(&stack.global_effects)?;
 
@@ -185,38 +190,10 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     ..
                 } => {
                     finite("brush geometry", &[*size, *feather, *opacity])?;
-                    bounded("brush size", *size, 0.0, 16.0)?;
+                    bounded("brush size", *size, 0.0, MASK_SPACE_LIMIT)?;
                     bounded("brush feather", *feather, 0.0, 1.0)?;
                     bounded("brush opacity", *opacity, 0.0, 1.0)?;
-                    if dabs.len() > MAX_BRUSH_DABS {
-                        return invalid("brush mask contains too many dabs");
-                    }
-                    let mut previous_start = None;
-                    for &start in stroke_starts {
-                        if start >= dabs.len()
-                            || previous_start.is_some_and(|previous| start <= previous)
-                        {
-                            return invalid("brush mask contains invalid stroke boundaries");
-                        }
-                        previous_start = Some(start);
-                    }
-                    for dab in dabs {
-                        finite(
-                            "brush dab",
-                            &[
-                                dab.center[0],
-                                dab.center[1],
-                                dab.opacity,
-                                dab.size,
-                                dab.feather,
-                            ],
-                        )?;
-                        bounded("brush dab x", dab.center[0], -16.0, 16.0)?;
-                        bounded("brush dab y", dab.center[1], -16.0, 16.0)?;
-                        bounded("brush dab opacity", dab.opacity, -1.0, 1.0)?;
-                        bounded("brush dab size", dab.size, 0.0, 16.0)?;
-                        bounded("brush dab feather", dab.feather, 0.0, 1.0)?;
-                    }
+                    validate_dabs("brush mask", dabs, stroke_starts)?;
                 }
                 MaskGeometry::Radial {
                     center,
@@ -232,12 +209,17 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                         ],
                     )?;
                     for value in center {
-                        bounded("radial center", *value, -16.0, 16.0)?;
+                        bounded("radial center", *value, -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
                     }
                     for value in radius {
-                        bounded("radial radius", *value, 0.0, 16.0)?;
+                        bounded("radial radius", *value, 0.0, MASK_SPACE_LIMIT)?;
                     }
-                    bounded("radial rotation", *rotation, -1_000_000.0, 1_000_000.0)?;
+                    bounded(
+                        "radial rotation",
+                        *rotation,
+                        -MASK_ROTATION_LIMIT,
+                        MASK_ROTATION_LIMIT,
+                    )?;
                     bounded("radial feather", *feather, 0.0, 1.0)?;
                 }
                 MaskGeometry::Linear {
@@ -251,9 +233,9 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                         &[start[0], start[1], end[0], end[1], *feather],
                     )?;
                     for value in start.iter().chain(end.iter()) {
-                        bounded("linear point", *value, -16.0, 16.0)?;
+                        bounded("linear point", *value, -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
                     }
-                    bounded("linear feather", *feather, 0.0, 16.0)?;
+                    bounded("linear feather", *feather, 0.0, MASK_SPACE_LIMIT)?;
                 }
                 MaskGeometry::Path {
                     points,
@@ -279,7 +261,12 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                             ],
                         )?;
                         for value in point.position {
-                            bounded("path point position", value, -16.0, 16.0)?;
+                            bounded(
+                                "path point position",
+                                value,
+                                -MASK_SPACE_LIMIT,
+                                MASK_SPACE_LIMIT,
+                            )?;
                         }
                         for value in point.handle_in.into_iter().chain(point.handle_out) {
                             bounded("path point handle", value, -32.0, 32.0)?;
@@ -313,7 +300,7 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     )?;
                     bounded("object mask grow", *grow, -1.0, 1.0)?;
                     bounded("object mask feather", *feather, 0.0, 1.0)?;
-                    bounded("object brush size", *brush_size, 0.0, 16.0)?;
+                    bounded("object brush size", *brush_size, 0.0, MASK_SPACE_LIMIT)?;
                     bounded("object edge refine", *edge_refine, 0.0, 1.0)?;
                     if strokes.len() > MAX_OBJECT_STROKES {
                         return invalid("object mask contains too many strokes");
@@ -331,8 +318,18 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                         }
                         for point in &stroke.points {
                             finite("object prompt", point)?;
-                            bounded("object prompt x", point[0], -16.0, 16.0)?;
-                            bounded("object prompt y", point[1], -16.0, 16.0)?;
+                            bounded(
+                                "object prompt x",
+                                point[0],
+                                -MASK_SPACE_LIMIT,
+                                MASK_SPACE_LIMIT,
+                            )?;
+                            bounded(
+                                "object prompt y",
+                                point[1],
+                                -MASK_SPACE_LIMIT,
+                                MASK_SPACE_LIMIT,
+                            )?;
                         }
                     }
                     if let Some(image) = mask {
@@ -350,12 +347,17 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     finite("luminance range mask", &[*low, *high, *grow, *feather])?;
                     if let Some(high_feather) = high_feather {
                         finite("luminance range mask", &[*high_feather])?;
-                        bounded("luminance high feather", *high_feather, 0.0, 16.0)?;
+                        bounded(
+                            "luminance high feather",
+                            *high_feather,
+                            0.0,
+                            MASK_SPACE_LIMIT,
+                        )?;
                     }
-                    bounded("luminance low", *low, -16.0, 16.0)?;
-                    bounded("luminance high", *high, -16.0, 16.0)?;
+                    bounded("luminance low", *low, -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
+                    bounded("luminance high", *high, -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
                     bounded("luminance grow", *grow, -1.0, 1.0)?;
-                    bounded("luminance feather", *feather, 0.0, 16.0)?;
+                    bounded("luminance feather", *feather, 0.0, MASK_SPACE_LIMIT)?;
                     if let Some(image) = source {
                         validate_image(image.width, image.height, image.rgba.len(), 4)?;
                     }
@@ -365,19 +367,17 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     sample,
                     tolerance,
                     grow,
-                    feather,
                     ..
                 } => {
                     finite(
                         "color range mask",
-                        &[sample[0], sample[1], sample[2], *tolerance, *grow, *feather],
+                        &[sample[0], sample[1], sample[2], *tolerance, *grow],
                     )?;
                     for value in sample {
-                        bounded("color sample", *value, -16.0, 16.0)?;
+                        bounded("color sample", *value, -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
                     }
-                    bounded("color tolerance", *tolerance, 0.0, 16.0)?;
+                    bounded("color tolerance", *tolerance, 0.0, MASK_SPACE_LIMIT)?;
                     bounded("color grow", *grow, -1.0, 1.0)?;
-                    bounded("color feather", *feather, 0.0, 16.0)?;
                     if let Some(image) = source {
                         validate_image(image.width, image.height, image.rgba.len(), 4)?;
                     }
@@ -398,7 +398,8 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                         validate_image(image.width, image.height, image.pixels.len(), 1)?;
                     }
                 }
-                _ => {}
+                // These variants carry no numeric fields to range-check.
+                MaskGeometry::Fullscreen | MaskGeometry::Placeholder => {}
             }
         }
     }
@@ -656,6 +657,58 @@ fn validate_grading(
             grading.balance,
         ],
     )
+}
+
+/// Checks the dabs of one brush stroke list: count, strictly increasing stroke starts
+/// inside the list, and every dab value within its range.
+fn validate_dabs(
+    label: &str,
+    dabs: &[BrushDab],
+    stroke_starts: &[usize],
+) -> Result<(), SidecarError> {
+    if dabs.len() > MAX_BRUSH_DABS {
+        return invalid(&format!("{label} contains too many dabs"));
+    }
+    let mut previous_start = None;
+    for &start in stroke_starts {
+        if start >= dabs.len() || previous_start.is_some_and(|previous| start <= previous) {
+            return invalid(&format!("{label} contains invalid stroke boundaries"));
+        }
+        previous_start = Some(start);
+    }
+    for dab in dabs {
+        finite(
+            &format!("{label} dab"),
+            &[
+                dab.center[0],
+                dab.center[1],
+                dab.opacity,
+                dab.size,
+                dab.feather,
+            ],
+        )?;
+        bounded(
+            &format!("{label} dab x"),
+            dab.center[0],
+            -MASK_SPACE_LIMIT,
+            MASK_SPACE_LIMIT,
+        )?;
+        bounded(
+            &format!("{label} dab y"),
+            dab.center[1],
+            -MASK_SPACE_LIMIT,
+            MASK_SPACE_LIMIT,
+        )?;
+        bounded(&format!("{label} dab opacity"), dab.opacity, -1.0, 1.0)?;
+        bounded(
+            &format!("{label} dab size"),
+            dab.size,
+            0.0,
+            MASK_SPACE_LIMIT,
+        )?;
+        bounded(&format!("{label} dab feather"), dab.feather, 0.0, 1.0)?;
+    }
+    Ok(())
 }
 
 fn finite(label: &str, values: &[f32]) -> Result<(), SidecarError> {

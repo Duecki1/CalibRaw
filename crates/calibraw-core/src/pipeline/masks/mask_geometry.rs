@@ -71,14 +71,16 @@ pub enum MaskGeometry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         high_feather: Option<f32>,
     },
+    /// Written by `serialize_color_range`, which leaves out the source and
+    /// adds a retired `feather` for older readers; reading ignores it.
+    #[serde(serialize_with = "crate::migrations::older_readers::serialize_color_range")]
     ColorRange {
-        #[serde(default, skip_serializing)]
+        #[serde(default)]
         source: Option<MaskRgbImage>,
         sample: [f32; 3],
         tolerance: f32,
         #[serde(default)]
         grow: f32,
-        feather: f32,
         sampled: bool,
     },
     DepthRange {
@@ -86,6 +88,8 @@ pub enum MaskGeometry {
         #[serde(flatten)]
         range: DepthRangeSettings,
     },
+    /// Reserved shape-less geometry of a Depth range mask. No code creates it, but the
+    /// sidecar validator accepts it, so the serialized name must keep loading.
     Placeholder,
 }
 
@@ -221,9 +225,8 @@ impl MaskGeometry {
             MaskKind::ColorRange => Self::ColorRange {
                 source: None,
                 sample: [0.5; 3],
-                tolerance: 0.18,
+                tolerance: DEFAULT_COLOR_TOLERANCE,
                 grow: 0.0,
-                feather: 0.12,
                 sampled: false,
             },
             MaskKind::DepthRange => Self::DepthRange {
@@ -265,11 +268,12 @@ impl MaskGeometry {
             | Self::Path { feather, .. }
             | Self::Ai { feather, .. }
             | Self::Object { feather, .. }
-            | Self::LuminanceRange { feather, .. }
-            | Self::ColorRange { feather, .. } => feather,
-            Self::Fullscreen | Self::Brush { .. } | Self::DepthRange { .. } | Self::Placeholder => {
-                return false
-            }
+            | Self::LuminanceRange { feather, .. } => feather,
+            Self::Fullscreen
+            | Self::Brush { .. }
+            | Self::ColorRange { .. }
+            | Self::DepthRange { .. }
+            | Self::Placeholder => return false,
         };
         set_if_changed(feather, value)
     }

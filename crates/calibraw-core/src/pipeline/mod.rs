@@ -23,6 +23,7 @@ mod rendered_loader;
 pub mod sigmoid;
 pub mod source_format;
 mod tiff_loader;
+pub(crate) use tiff_loader::is_tiff_path;
 pub mod white_balance_presets;
 
 pub use basicadj::{
@@ -52,18 +53,18 @@ pub use lensfun::{
 pub use mask_region::{mask_region_texture_extent, mask_source_region_uv};
 pub use masks::{
     effect_params, ellipse_outline_points, export_mask_atlas_edge, export_mask_atlas_edge_limit,
-    luminance_range_weight, mask_atlas_edge, path_outline_points, rasterize_brush_dabs,
-    BlurEffectSettings, BrushDab, BrushMode, ContentDependencies, DepthRangeSettings,
-    EdgeGlowEffectSettings, EffectComponent, FogEffectSettings, GlowEffectSettings,
-    GrainEffectSettings, HalationEffectSettings, InitialEffectSettings, LensBlurEffectSettings,
-    LightRaysEffectSettings, LocalAdjustments, LocalMask, MaskCombineMode, MaskCommon,
-    MaskComponent, MaskEffect, MaskEffectCategory, MaskEffectSettings, MaskGeometry, MaskImage,
-    MaskKind, MaskRgbImage, MaskStack, MotionBlurEffectSettings, NeonEffectSettings, ObjectStroke,
-    PathPoint, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode,
-    RelightEffectSettings, SharpenEffectSettings, SmokeEffectSettings, SubjectRefinement,
-    TiltShiftEffectSettings, VignetteEffectSettings, LUMINANCE_FEATHER_MAX,
-    LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
-    MAX_PATH_POINTS,
+    lightness_to_luminance, luminance_range_weight, luminance_to_lightness, mask_atlas_edge,
+    path_outline_points, rasterize_brush_dabs, BlurEffectSettings, BrushDab, BrushMode,
+    ContentDependencies, DepthRangeSettings, EdgeGlowEffectSettings, EffectComponent,
+    FogEffectSettings, GlowEffectSettings, GrainEffectSettings, HalationEffectSettings,
+    InitialEffectSettings, LensBlurEffectSettings, LightRaysEffectSettings, LocalAdjustments,
+    LocalMask, MaskCombineMode, MaskCommon, MaskComponent, MaskEffect, MaskEffectCategory,
+    MaskEffectSettings, MaskGeometry, MaskImage, MaskKind, MaskRgbImage, MaskStack,
+    MotionBlurEffectSettings, NeonEffectSettings, ObjectStroke, PathPoint, PixelateEffectSettings,
+    RadialBlurEffectSettings, RadialBlurMode, RelightEffectSettings, SharpenEffectSettings,
+    SmokeEffectSettings, SubjectRefinement, TiltShiftEffectSettings, VignetteEffectSettings,
+    DEFAULT_COLOR_TOLERANCE, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS,
+    MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
 };
 pub use noise::{AdaptiveDetailDefaults, DenoiseQuality, NoiseProfile};
 pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
