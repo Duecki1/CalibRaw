@@ -733,6 +733,7 @@ dependencies = [
  "image-webp",
  "jiff",
  "log",
+ "memmap2",
  "moduwu-design",
  "pollster",
  "rfd",
