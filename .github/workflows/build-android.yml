@@ -13,6 +13,9 @@ on:
         type: string
         default: github
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_NET_RETRY: "10"
