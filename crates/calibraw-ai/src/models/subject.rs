@@ -1,7 +1,8 @@
 //! Subject masks from BiRefNet General-Lite.
 
+use super::mask_refine::{self, MaskCrop};
 use super::masks::mask_model_retention;
-use super::{mask_refine, normalized_rgb_input, sigmoid_probability};
+use super::{normalized_rgb_input, sigmoid_probability};
 use crate::config::{MemoryClass, CAPABILITIES};
 use crate::placement::FallbackSession;
 use crate::registry::{AiModel, ModelInfo, BIREFNET_FLOAT16_ON_GPU};
@@ -46,12 +47,14 @@ impl SubjectModelPrecision {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubjectMaskQuality {
-    /// The 768 x 768 model or its float16 conversion, one pass.
+    /// The 768 x 768 model or its float16 conversion, one pass, plus the
+    /// crop pass for a small subject.
     Low,
-    /// The 1024 x 1024 model or its float16 conversion, one pass.
+    /// The 1024 x 1024 model or its float16 conversion, one pass, plus the
+    /// crop pass for a small subject.
     #[default]
     Medium,
-    /// `Medium`'s model with the cropped refinement pass. Needs
+    /// `Medium`'s model, always with the crop pass. Needs
     /// `MemoryClass::Standard`.
     High,
 }
@@ -101,8 +104,9 @@ pub fn birefnet_model_is_verified(
     quality.ai_model(precision).spec().is_installed(path)
 }
 
-/// Runs BiRefNet over the full frame and, for `High` with standard memory,
-/// follows it with one native-resolution crop pass for finer boundary detail.
+/// Runs BiRefNet over the full frame, then once more over the subject's
+/// bounding crop for finer boundary detail: always for `High` with standard
+/// memory, and at every quality when the subject is small in the frame.
 pub(super) fn subject_mask(
     model_path: &Path,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -110,18 +114,31 @@ pub(super) fn subject_mask(
     precision: SubjectModelPrecision,
 ) -> Result<Vec<u8>> {
     let (width, height) = image.dimensions();
-    let mut mask = infer_birefnet(model_path, image, quality, precision)?;
+    let model = quality.ai_model(precision);
+    let spec = model.spec();
+    let edge = spec.input.edge();
     let crop_refinement =
         subject_crop_refinement_enabled(quality.crop_refinement(), CAPABILITIES.memory);
-    if crop_refinement {
-        if let Some(crop) = mask_refine::mask_crop_above(&mask, width, height, 5, 0.15) {
-            let crop_image =
-                image::imageops::crop_imm(image, crop.x, crop.y, crop.width, crop.height)
-                    .to_image();
-            let crop_alpha = infer_birefnet(model_path, &crop_image, quality, precision)?;
-            mask_refine::merge_crop_pass(&mut mask, width, crop, &crop_alpha, 8);
-        }
-    }
+    // Both passes share one session, so a one-shot session loads only once.
+    let mut mask = with_model_session(
+        model,
+        model_path,
+        spec.session,
+        mask_model_retention(true),
+        |session| {
+            let mut mask = infer_birefnet(session, image, edge)?;
+            let crop = mask_refine::mask_crop_above(&mask, width, height, 5, 0.15)
+                .filter(|&crop| crop_refinement || is_small_subject(crop, width, height));
+            if let Some(crop) = crop {
+                let crop_image =
+                    image::imageops::crop_imm(image, crop.x, crop.y, crop.width, crop.height)
+                        .to_image();
+                let crop_alpha = infer_birefnet(session, &crop_image, edge)?;
+                mask_refine::merge_crop_pass(&mut mask, width, crop, &crop_alpha, 8);
+            }
+            Ok(mask)
+        },
+    )?;
     mask_refine::guided_filter_color(image.as_raw(), &mut mask, width, height, 8, 1e-4)?;
     mask_refine::harden_model_alpha(&mut mask);
     Ok(mask)
@@ -131,27 +148,31 @@ const fn subject_crop_refinement_enabled(requested: bool, memory: MemoryClass) -
     requested && matches!(memory, MemoryClass::Standard)
 }
 
+/// The full-frame pass squeezes the frame to the model's input edge, so a
+/// subject that spans little of it gets few model pixels and a coarse
+/// outline. A subject crop at most `1 / SMALL_SUBJECT_MAGNIFICATION` of the
+/// frame on both axes gets the crop pass, which enlarges it at least this
+/// many times. The crop is small then, so the pass costs little memory.
+const SMALL_SUBJECT_MAGNIFICATION: u64 = 3;
+
+fn is_small_subject(crop: MaskCrop, width: u32, height: u32) -> bool {
+    u64::from(crop.width) * SMALL_SUBJECT_MAGNIFICATION <= u64::from(width)
+        && u64::from(crop.height) * SMALL_SUBJECT_MAGNIFICATION <= u64::from(height)
+}
+
+/// One BiRefNet pass over `image`, resized to the model's square `edge`. The
+/// returned probabilities have `image`'s size.
 fn infer_birefnet(
-    model_path: &Path,
+    session: &mut FallbackSession,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    quality: SubjectMaskQuality,
-    precision: SubjectModelPrecision,
+    edge: u32,
 ) -> Result<Vec<u8>> {
-    let model = quality.ai_model(precision);
-    let spec = model.spec();
-    let edge = spec.input.edge();
     let resized = image::imageops::resize(image, edge, edge, FilterType::Lanczos3);
     let input = normalized_rgb_input(&resized)?;
     let input = Tensor::from_array(([1usize, 3, edge as usize, edge as usize], input))
         .context("create BiRefNet input tensor")?;
 
-    let (output_width, output_height, logits) = with_model_session(
-        model,
-        model_path,
-        spec.session,
-        mask_model_retention(true),
-        |session| run_subject_session(session, input, edge, edge),
-    )?;
+    let (output_width, output_height, logits) = run_subject_session(session, input, edge, edge)?;
 
     restore_birefnet_output(
         &logits,
@@ -274,11 +295,12 @@ fn restore_birefnet_output(
 #[cfg(test)]
 mod tests {
     use super::{
-        birefnet_model_is_verified, infer_birefnet, restore_birefnet_output,
-        subject_crop_refinement_enabled, validate_birefnet_output_shape, SubjectMaskQuality,
-        SubjectModelPrecision,
+        birefnet_model_is_verified, is_small_subject, restore_birefnet_output,
+        subject_crop_refinement_enabled, subject_mask, validate_birefnet_output_shape,
+        SubjectMaskQuality, SubjectModelPrecision,
     };
     use crate::config::MemoryClass;
+    use crate::models::mask_refine::MaskCrop;
     use crate::registry::{AiModel, BIREFNET_FLOAT16_ON_GPU};
     use image::{ImageBuffer, Rgba};
     use std::path::Path;
@@ -306,7 +328,7 @@ mod tests {
         let image = ImageBuffer::from_fn(96, 64, |x, y| {
             Rgba([(x * 255 / 95) as u8, (y * 255 / 63) as u8, 128, 255])
         });
-        let mask = infer_birefnet(Path::new(&path), &image, quality, precision).unwrap();
+        let mask = subject_mask(Path::new(&path), &image, quality, precision).unwrap();
         assert_eq!(mask.len(), 96 * 64);
         let providers = crate::ai_session_statuses();
         eprintln!("BiRefNet inference providers: {providers:?}");
@@ -330,6 +352,20 @@ mod tests {
             true,
             MemoryClass::Constrained
         ));
+    }
+
+    #[test]
+    fn only_subjects_within_a_third_of_both_axes_are_small() {
+        let crop = |width, height| MaskCrop {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+        assert!(is_small_subject(crop(100, 50), 300, 150));
+        assert!(!is_small_subject(crop(101, 50), 300, 150));
+        assert!(!is_small_subject(crop(100, 51), 300, 150));
+        assert!(!is_small_subject(crop(300, 150), 300, 150));
     }
 
     #[test]

@@ -377,13 +377,13 @@ fn normalize_name(name: &str) -> Result<String, PresetError> {
     Ok(name.to_owned())
 }
 
+/// The group a preset is filed under: `group` validated, or [`DEFAULT_PRESET_GROUP`]
+/// when it is empty.
 fn normalize_group(group: &str) -> Result<String, PresetError> {
-    let group = group.trim();
-    if group.is_empty() {
+    if group.trim().is_empty() {
         return Ok(DEFAULT_PRESET_GROUP.to_owned());
     }
-    validate_label(group, "group name")?;
-    Ok(group.to_owned())
+    validate_group_name(group)
 }
 
 /// Checks a group name typed by the user and returns it trimmed.
@@ -555,11 +555,16 @@ pub enum DeletedGroupPresets {
 /// The group in `groups` that `name` refers to. Group names are compared
 /// the way they are shown, ignoring case.
 pub fn find_group<'g>(groups: &'g [String], name: &str) -> Option<&'g str> {
-    let name = name.trim().to_lowercase();
     groups
         .iter()
-        .find(|group| group.to_lowercase() == name)
+        .find(|group| same_group_name(group, name))
         .map(String::as_str)
+}
+
+/// Whether two group names mean the same group: equal ignoring case and surrounding
+/// spaces.
+fn same_group_name(left: &str, right: &str) -> bool {
+    left.trim().to_lowercase() == right.trim().to_lowercase()
 }
 
 /// Unique group names, sorted. The first spelling of a name wins.
@@ -640,7 +645,7 @@ pub fn rename_group(folder: &Path, old: &str, new: &str) -> Result<String, Prese
         }
     }
     for stored in &contents.presets {
-        if find_group(std::slice::from_ref(&old), stored.preset.group()).is_some() {
+        if same_group_name(&old, stored.preset.group()) {
             let renamed = stored.preset.renamed(stored.preset.name(), &new)?;
             write_preset_file(&stored.path, &renamed)?;
         }
@@ -665,7 +670,7 @@ pub fn delete_group(
     let Some(group) = find_group(&contents.groups, name).map(str::to_owned) else {
         return Ok(());
     };
-    let moves_to_itself = find_group(std::slice::from_ref(&group), DEFAULT_PRESET_GROUP).is_some();
+    let moves_to_itself = same_group_name(&group, DEFAULT_PRESET_GROUP);
     if presets == DeletedGroupPresets::MoveToDefaultGroup && moves_to_itself {
         return invalid(format!(
             "presets cannot be moved out of “{DEFAULT_PRESET_GROUP}” into itself"
@@ -673,7 +678,7 @@ pub fn delete_group(
     }
     let mut moved_any = false;
     for stored in &contents.presets {
-        if find_group(std::slice::from_ref(&group), stored.preset.group()).is_none() {
+        if !same_group_name(&group, stored.preset.group()) {
             continue;
         }
         match presets {

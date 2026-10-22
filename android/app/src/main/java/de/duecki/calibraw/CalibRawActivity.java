@@ -35,6 +35,9 @@ public final class CalibRawActivity extends NativeActivity {
     private static final int TABLET_SMALLEST_WIDTH_DP = 600;
     private static final int OPEN_RAW_DOCUMENT = 1001;
     private static final int OPEN_CAMERA_PROFILE_FOLDER = 1003;
+    // A launch with this extra set to true times GPU processing stages
+    // (`cargo xtask android-bench`).
+    private static final String EXTRA_GPU_STAGE_TIMING = "de.duecki.calibraw.GPU_STAGE_TIMING";
 
     private StorageManager storageManager;
     private ProfileImporter profileImporter;
@@ -341,6 +344,11 @@ public final class CalibRawActivity extends NativeActivity {
                 + "\nandroid_release=" + Build.VERSION.RELEASE
                 + "\nsdk=" + Build.VERSION.SDK_INT
                 + "\nsupported_abis=" + String.join(",", Build.SUPPORTED_ABIS);
+    }
+
+    public boolean gpuStageTimingRequested() {
+        Intent intent = getIntent();
+        return intent != null && intent.getBooleanExtra(EXTRA_GPU_STAGE_TIMING, false);
     }
 
     public String performanceSettingsPath() {

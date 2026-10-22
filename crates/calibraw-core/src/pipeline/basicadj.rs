@@ -402,7 +402,7 @@ impl Default for ExposureParams {
     }
 }
 
-const fn default_denoise_detail() -> f32 {
+pub(super) const fn default_denoise_detail() -> f32 {
     50.0
 }
 

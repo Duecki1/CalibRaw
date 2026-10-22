@@ -14,3 +14,4 @@ pub use gpu_errors::{
 };
 
 pub mod pipeline;
+pub mod stage_timing;

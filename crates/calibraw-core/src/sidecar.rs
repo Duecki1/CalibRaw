@@ -51,16 +51,18 @@ const MAX_MASK_IMAGE_EDGE: u32 = 8192;
 const MAX_MASK_ASSET_REFS: usize = MAX_LOCAL_MASKS * MAX_MASK_COMPONENTS;
 const MAX_MASK_ASSETS: usize = MAX_MASK_ASSET_REFS + 1;
 const MAX_REMOVE_ASSET_REFS: usize = REMOVE_MAX_STROKES * REMOVE_MAX_PATCHES_PER_STROKE;
-const MAX_DECODED_MASK_ASSET_BYTES: u64 = if cfg!(target_os = "android") {
+/// Memory a sidecar may expand to when its mask and retouch assets are decoded; the
+/// mask and retouch budgets are checked separately against this one value.
+const MAX_DECODED_ASSET_BYTES: u64 = if cfg!(target_os = "android") {
     256 * 1024 * 1024
 } else {
     512 * 1024 * 1024
 };
-const MAX_DECODED_REMOVE_ASSET_BYTES: u64 = if cfg!(target_os = "android") {
-    256 * 1024 * 1024
-} else {
-    512 * 1024 * 1024
-};
+/// Longest edge, in pixels, of a stored retouch patch.
+const MAX_REMOVE_PATCH_EDGE: u32 = 32_768;
+/// Decoded bytes per retouch patch pixel: three `u16` scene colour channels plus one
+/// `u8` alpha.
+const REMOVE_PATCH_BYTES_PER_PIXEL: u64 = 3 * 2 + 1;
 const MAX_EDIT_NAME_BYTES: usize = 4096;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

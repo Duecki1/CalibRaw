@@ -5,6 +5,7 @@
 use super::*;
 use crate::pipeline::{BrushDab, ObjectStroke, PathPoint, MAX_PATH_POINTS};
 use crate::ui::preview::{shortest_angle_delta, source_angle_from};
+use calibraw_core::color_math::{srgb_decode, srgb_encode};
 
 /// Upper bound on subject-refinement dabs shared by Subject and Background.
 const MAX_REFINEMENT_DABS: usize = 65_536;
@@ -486,7 +487,12 @@ fn extend_object_strokes(strokes: &mut Vec<ObjectStroke>, stroke: &BrushStrokeSa
     object_stroke.points.len() != before
 }
 
-/// Sample the source colour under `uv`; `uv` lies inside the editable image.
+/// Source pixels on each side of the sampled one that its colour is averaged
+/// over, so sensor noise does not decide the sampled colour.
+const COLOR_SAMPLE_RADIUS: usize = 2;
+
+/// Sample the source colour around `uv`; `uv` lies inside the editable image.
+/// Averages in linear light and stores display-encoded sRGB.
 fn sample_color_range(geometry: &mut MaskGeometry, uv: [f32; 2]) -> bool {
     let MaskGeometry::ColorRange {
         source: Some(source),
@@ -497,14 +503,27 @@ fn sample_color_range(geometry: &mut MaskGeometry, uv: [f32; 2]) -> bool {
     else {
         return false;
     };
-    let x = (uv[0] * source.width.saturating_sub(1) as f32).round() as usize;
-    let y = (uv[1] * source.height.saturating_sub(1) as f32).round() as usize;
-    let index = (y * source.width as usize + x) * 4;
-    *sample = [
-        source.rgba[index] as f32 / 255.0,
-        source.rgba[index + 1] as f32 / 255.0,
-        source.rgba[index + 2] as f32 / 255.0,
-    ];
+    let width = source.width as usize;
+    let height = source.height as usize;
+    if width == 0 || height == 0 {
+        return false;
+    }
+    let x = (uv[0] * width.saturating_sub(1) as f32).round() as usize;
+    let y = (uv[1] * height.saturating_sub(1) as f32).round() as usize;
+    let columns = x.saturating_sub(COLOR_SAMPLE_RADIUS)..=(x + COLOR_SAMPLE_RADIUS).min(width - 1);
+    let rows = y.saturating_sub(COLOR_SAMPLE_RADIUS)..=(y + COLOR_SAMPLE_RADIUS).min(height - 1);
+    let mut sum = [0.0f32; 3];
+    let mut count = 0.0f32;
+    for row in rows {
+        for column in columns.clone() {
+            let index = (row * width + column) * 4;
+            for (channel, total) in sum.iter_mut().enumerate() {
+                *total += srgb_decode(source.rgba[index + channel] as f32 / 255.0);
+            }
+            count += 1.0;
+        }
+    }
+    *sample = sum.map(|total| srgb_encode(total / count));
     *sampled = true;
     true
 }

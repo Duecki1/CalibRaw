@@ -137,30 +137,20 @@ fn coefficients_are_valid(coefficients: SigmoidCoefficients) -> bool {
         return false;
     }
 
-    let black = generalized_loglogistic_sigmoid(
-        0.0,
-        coefficients.white_target,
-        coefficients.paper_exposure,
-        coefficients.film_fog,
-        coefficients.film_power,
-        coefficients.paper_power,
-    );
-    let grey = generalized_loglogistic_sigmoid(
-        MIDDLE_GREY,
-        coefficients.white_target,
-        coefficients.paper_exposure,
-        coefficients.film_fog,
-        coefficients.film_power,
-        coefficients.paper_power,
-    );
-    let bright = generalized_loglogistic_sigmoid(
-        1.0e6,
-        coefficients.white_target,
-        coefficients.paper_exposure,
-        coefficients.film_fog,
-        coefficients.film_power,
-        coefficients.paper_power,
-    );
+    let curve = |x| {
+        generalized_loglogistic_sigmoid(
+            x,
+            coefficients.white_target,
+            coefficients.paper_exposure,
+            coefficients.film_fog,
+            coefficients.film_power,
+            coefficients.paper_power,
+        )
+    };
+    // Probe the shadow end, middle grey and a far HDR value.
+    let black = curve(0.0);
+    let grey = curve(MIDDLE_GREY);
+    let bright = curve(1.0e6);
     black.is_finite()
         && grey.is_finite()
         && bright.is_finite()

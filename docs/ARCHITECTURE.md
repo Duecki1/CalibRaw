@@ -12,7 +12,7 @@ background work follows. Update it in the change that alters a boundary.
 | `calibraw-gpu` | Headless devices (`device`), adapter memory queries (`memory/`), GPU resource planning, WGSL composition, processing passes, readback, tiled export and file encoding | `calibraw-core`, wgpu, naga_oil; in `memory/`, the platform APIs under wgpu (`windows` DXGI, `ash`, `objc2-metal`) | UI crates, egui/eframe |
 | `calibraw-ai` | AI configuration and device capabilities (`config`), ONNX Runtime loading, its WebGPU plugin and the automatic packages (`runtime/`), where sessions run (GPU if they fit in free memory, else CPU), CPU fallback, GPU failure handling and platform and provider quirks (`placement/`), the model table, downloads and installation (`registry/`), the session slot (`slot`), the job worker (`jobs`), model-specific pre/postprocessing (`models/`) | `calibraw-core`, `calibraw-gpu` (denoise/remove render paths) | UI crates, egui/eframe |
 | `calibraw-ffi` | C ABI and the Android JNI bridge: storage, pickers, export publishing, notifications, replay encoder | `calibraw-core` (sidecar types), jni, android-activity | processing crates, UI crates, egui/eframe |
-| `calibraw-ui` (lib `calibraw`) | Application coordination (`app/`), views (`ui/`), presentation-independent services (`services/`), preview presentation, platform capabilities and OS services (`platform/`) | all crates above, eframe/egui, `moduwu-design`; in `platform/`, the OS crates (`calibraw-ffi`, `rfd`, `trash`, `zbus`, Discord IPC, loggers) | — |
+| `calibraw-ui` (lib `calibraw`) | Application coordination (`app/`), views (`ui/`), presentation-independent services (`services/`), preview presentation, platform capabilities and OS services (`platform/`) | all crates above, eframe/egui, `moduwu-design`; in `platform/`, the OS crates (`calibraw-ffi`, `rfd`, `trash`, `zbus`, `windows-sys`, Discord IPC, loggers) | — |
 | `calibraw-cli` | Headless develop export and white-balance diagnostics | `calibraw-core`, `calibraw-gpu` | UI crates, egui/eframe |
 | `xtask` | Repository tooling: architecture checks, line counts, baselines, Android build helpers, icons | std and tooling crates | product crates |
 | `moduwu-design` (separate repository) | Reusable egui tokens, themes, controls, frames and responsive helpers | egui | any CalibRaw crate |
@@ -115,6 +115,7 @@ job records the value it started with.
 | Remove / retouch | one receiver in `InpaintState` | `AtomicBool` | `reset_for_document` sets the flag and drops the receiver, so late results are discarded | notice; the pending stroke is kept only when the user must re-consent to a download |
 | Export / batch export / replay | one `ExportTask`; batch items run sequentially | `AtomicBool`; partial files are removed and never reported as success | export works on an immutable snapshot of the edit | notice; temporary output removed |
 | Sidecar save | `VecDeque` of requests, one write in flight | none; writes are short | requests carry `generation` and `revision`; stale completions are ignored | failure keeps a recovery request and shows a dialog |
+| Heap purge (Android, Linux glibc) | one `calibraw-heap-purge` thread in `calibraw_core::system_memory`; requests made while a purge is queued or running are served by one more | none; a purge takes up to a few hundred milliseconds | none; it only returns pages the allocator already freed | a thread that cannot start leaves memory with the allocator; an Android without `M_PURGE` changes nothing |
 | Library thumbnails | shared work queue for a worker pool | `AtomicU64` generation; workers exit when it changes | generation bump on folder change | each item's result, success or error, is sent with its generation; older generations are ignored |
 
 Job channels are unbounded `std::sync::mpsc` channels: each job sends a
@@ -176,6 +177,13 @@ Presenting its output is a UI concern: `PreviewPipeline` pairs a pipeline with
 its egui registration, so a displayed pipeline cannot outlive or leak its
 texture. On Android a replaced detail preview frees its texture immediately
 (`free_now`) to return memory before the replacement is allocated.
+The editor's previews (fitted, zoomed crop, navigation proxy) render in
+batches: each frame submits every pending stage of each preview, at most one
+batch is in flight (`PreviewDispatchGate`, opened by `on_submitted_work_done`),
+and edits made meanwhile only update the target parameters, so the next batch
+renders the newest ones. While a control is dragged zoomed in and only the
+Output stage changes, the fitted preview and the navigation proxy wait until
+the pointer lifts (`defer_background_preview_processing`).
 Compiled programs are shared through `RawGpuProgramTemplate` and the persistent
 pipeline cache. Rust/WGSL layout contracts are tested in
 `calibraw-gpu/src/pipeline/gpu/layout_contract_tests.rs` against the modules the
@@ -199,9 +207,12 @@ production `ShaderManager` composes.
     pickers, media library, sidecars, thumbnails, publishing, clipboard,
     notifications, system bars and replay encoder, and the desktop's settings
     and cache folders and GPU-loss restart. Its default methods answer
-    "unavailable" or do nothing, so a backend implements only what it has.
+    "unavailable" or do nothing, so a backend implements only what it has;
+    `release_free_memory` defaults to the heap purge every backend shares,
+    which tests replace to observe it.
     `platform/android.rs` wraps `calibraw-ffi`; `platform/desktop/` holds the
-    window entry point, the Flatpak portal and Discord IPC.
+    window entry point, the Flatpak portal, Discord IPC and, on Windows, the
+    NVIDIA driver profile that keeps G-SYNC off for the window.
   - Stateless desktop services are free functions: `FileDialog` (`rfd`),
     `trash`, `show_fatal_message`, camera-profile search folders.
   - `platform::fake::FakePlatform` (tests) takes any `PlatformCaps` and

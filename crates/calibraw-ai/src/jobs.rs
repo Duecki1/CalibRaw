@@ -1,6 +1,7 @@
 //! The worker thread every AI job runs on: it reports downloads and progress,
-//! turns a panic inside ONNX Runtime into an error, and always ends with
-//! `AiJobEvent::Finished`.
+//! turns a panic inside ONNX Runtime into an error, always ends with
+//! `AiJobEvent::Finished` and records how long the job took in
+//! `diagnostics` ("AI job calibraw-onnx-mask finished in 18.81 s").
 
 use crate::registry::install::{ModelDownloadProgress, ModelInstallSpec};
 use crate::registry::ModelSpec;
@@ -12,6 +13,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc,
     },
+    time::Instant,
 };
 
 /// What a running AI job reports: `T` is its result, `P` its own progress.
@@ -110,6 +112,7 @@ where
     let spawn = std::thread::Builder::new()
         .name(kind.thread.to_owned())
         .spawn(move || {
+            let started = Instant::now();
             let result = std::panic::catch_unwind(AssertUnwindSafe(|| run(&context)))
                 .unwrap_or_else(|panic| {
                     let message = panic
@@ -119,6 +122,14 @@ where
                         .unwrap_or("unknown ONNX Runtime failure");
                     Err(anyhow::anyhow!("{}: {message}", kind.panicked))
                 });
+            let seconds = started.elapsed().as_secs_f64();
+            calibraw_core::diagnostics::record(match &result {
+                Ok(_) => format!("AI job {} finished in {seconds:.2} s", kind.thread),
+                Err(error) => format!(
+                    "AI job {} failed after {seconds:.2} s: {error:#}",
+                    kind.thread
+                ),
+            });
             let _ = context.events.send(AiJobEvent::Finished(
                 result.map_err(|error| format!("{error:#}")),
             ));
@@ -164,6 +175,9 @@ mod tests {
             Ok(7)
         });
         assert_eq!(finish(receiver), ["progress 1", "ok 7"]);
+        assert!(
+            calibraw_core::diagnostics::snapshot().contains("AI job calibraw-test-job finished in")
+        );
     }
 
     #[test]

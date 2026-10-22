@@ -286,9 +286,10 @@ fn validate_layout(input: &Input) -> Result<SampleDecoder> {
     let cpp =
         number(raw, TiffCommonTag::SamplesPerPixel as u16)?.context("missing sample count")?;
     let photometric = number(raw, TiffCommonTag::PhotometricInt as u16)?
-        .context("missing photometric interpretation")?;
+        .context("missing photometric interpretation")? as u64;
     ensure!(
-        (photometric == 32803 && cpp == 1) || (photometric == 34892 && cpp == 3),
+        (photometric == crate::pipeline::tiff_loader::PHOTOMETRIC_CFA && cpp == 1)
+            || (photometric == crate::pipeline::tiff_loader::PHOTOMETRIC_LINEAR_RAW && cpp == 3),
         "unsupported DNG photometric interpretation {photometric} with {cpp} channels"
     );
     ensure!(

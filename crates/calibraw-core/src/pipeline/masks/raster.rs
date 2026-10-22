@@ -291,11 +291,9 @@ fn rasterize_component_internal(
             sample,
             tolerance,
             grow,
-            feather,
             sampled: true,
         } => {
-            let mut coverage =
-                rasterize_color_range(width, height, source, *sample, *tolerance, *feather);
+            let mut coverage = rasterize_color_range(width, height, source, *sample, *tolerance);
             if grow.abs() > 1e-5 {
                 shape_probability_mask(&mut coverage, width, height, *grow, 0.0);
             }
@@ -362,7 +360,7 @@ pub(super) fn component_shape_margin_pixels(component: &MaskComponent, image_edg
             shape_margin(*grow, *feather)
         }
         MaskGeometry::LuminanceRange { grow, .. } | MaskGeometry::ColorRange { grow, .. } => {
-            shape_margin(*grow, 0.0)
+            shape_margin(*grow, 0.0) + range_filter_reach() * image_edge
         }
         MaskGeometry::Path { grow, feather, .. } => shape_margin(*grow, *feather),
         _ => 2.0,
@@ -377,30 +375,77 @@ pub(super) fn rasterize_luminance_range(
     high: f32,
     feathers: [f32; 2],
 ) -> Vec<f32> {
-    sample_rgb_mask(width, height, source, |rgb| {
+    let lightness = sample_rgb(width, height, source, |rgb| {
         let linear = rgb.map(srgb_decode_signed);
-        let luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
-        luminance_range_weight(luminance, low, high, feathers)
-    })
+        luminance_to_lightness(0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2])
+    });
+    let edge = raster_edge(width, source);
+    let mut smoothed = lightness.clone();
+    smooth_lightness(&mut smoothed, width as usize, height as usize, edge);
+    let mut coverage: Vec<f32> = smoothed
+        .par_iter()
+        .map(|&lightness| {
+            luminance_range_weight(lightness_to_luminance(lightness), low, high, feathers)
+        })
+        .collect();
+    refine_coverage(
+        &mut coverage,
+        &lightness,
+        width as usize,
+        height as usize,
+        edge,
+    );
+    coverage
 }
 
-/// Luminance ramp width of a feather of 1.
+/// Lightness ramp width of a luminance feather of 1.
 pub const LUMINANCE_FEATHER_WIDTH: f32 = 0.35;
-/// Largest luminance feather: a ramp across the whole 0–1 range. Feathers up to
-/// 1 render as they always have.
+/// Largest luminance feather: a ramp across the whole 0–1 lightness range.
 pub const LUMINANCE_FEATHER_MAX: f32 = 1.0 / LUMINANCE_FEATHER_WIDTH;
 
+/// CIE luminance below which lightness is linear: (6/29)³.
+const CIE_EPSILON: f32 = 216.0 / 24_389.0;
+/// Slope of the linear part of the CIE lightness: L* = `CIE_KAPPA` · Y.
+const CIE_KAPPA: f32 = 24_389.0 / 27.0;
+/// Lightness (0–1) at `CIE_EPSILON`, where the linear and cube-root parts meet:
+/// `CIE_KAPPA * CIE_EPSILON / 100`, that is L* = 8.
+const CIE_LINEAR_LIGHTNESS_LIMIT: f32 = 0.08;
+
+/// CIE lightness L*/100 (0–1) of linear luminance `luminance` (0–1). Range
+/// masks place and soften their bounds on this perceptual scale, where
+/// shadows get as much room as highlights.
+pub fn luminance_to_lightness(luminance: f32) -> f32 {
+    let luminance = luminance.clamp(0.0, 1.0);
+    if luminance > CIE_EPSILON {
+        1.16 * luminance.cbrt() - 0.16
+    } else {
+        CIE_KAPPA * luminance / 100.0
+    }
+}
+
+/// Inverse of [`luminance_to_lightness`].
+pub fn lightness_to_luminance(lightness: f32) -> f32 {
+    let lightness = lightness.clamp(0.0, 1.0);
+    if lightness > CIE_LINEAR_LIGHTNESS_LIMIT {
+        ((lightness + 0.16) / 1.16).powi(3)
+    } else {
+        lightness * 100.0 / CIE_KAPPA
+    }
+}
+
 /// Selection weight (0–1) of linear `luminance` in a luminance-range mask:
-/// full between `low` and `high`, with a smooth ramp of
-/// `feather × LUMINANCE_FEATHER_WIDTH` below `low` (`feathers[0]`) and above
-/// `high` (`feathers[1]`). The UI draws its range curve with this function.
+/// full between the linear-luminance bounds `low` and `high`, with a smooth
+/// ramp of `feather × LUMINANCE_FEATHER_WIDTH` in lightness
+/// ([`luminance_to_lightness`]) below `low` (`feathers[0]`) and above `high`
+/// (`feathers[1]`). The UI draws its range curve with this function.
 pub fn luminance_range_weight(luminance: f32, low: f32, high: f32, feathers: [f32; 2]) -> f32 {
-    let low = low.min(high).clamp(0.0, 1.0);
-    let high = high.max(low).clamp(0.0, 1.0);
+    let low = luminance_to_lightness(low.min(high));
+    let high = luminance_to_lightness(high).max(low);
+    let lightness = luminance_to_lightness(luminance);
     let [below, above] =
         feathers.map(|feather| feather.clamp(0.0, LUMINANCE_FEATHER_MAX) * LUMINANCE_FEATHER_WIDTH);
-    let enter = smoothstep(low - below, low, luminance);
-    let leave = 1.0 - smoothstep(high, high + above, luminance);
+    let enter = smoothstep(low - below, low, lightness);
+    let leave = 1.0 - smoothstep(high, high + above, lightness);
     enter * leave
 }
 
@@ -410,32 +455,128 @@ pub(super) fn rasterize_color_range(
     source: &MaskRgbImage,
     sample: [f32; 3],
     tolerance: f32,
-    feather: f32,
 ) -> Vec<f32> {
-    let target = linear_srgb_to_oklab(sample.map(srgb_decode_signed));
-    let tolerance = tolerance.clamp(0.005, 1.0) * 0.42;
-    let softness = feather.clamp(0.0, 1.0) * tolerance.max(0.01);
-    sample_rgb_mask(width, height, source, |rgb| {
-        let color = linear_srgb_to_oklab(rgb.map(srgb_decode_signed));
-        let distance = ((color[0] - target[0]).powi(2)
-            + (color[1] - target[1]).powi(2)
-            + (color[2] - target[2]).powi(2))
-        .sqrt();
-        1.0 - smoothstep(tolerance, tolerance + softness, distance)
-    })
+    let target = RangeColor::from_oklab(srgb_to_oklab(sample));
+    let reach = tolerance.clamp(0.005, 1.0) / COLOR_RANGE_UNIT_TOLERANCE;
+    let [full, none] = [1.0 - COLOR_RANGE_SOFTNESS, 1.0 + COLOR_RANGE_SOFTNESS].map(|f| f * reach);
+    let edge = raster_edge(width, source);
+    let mut lab = sample_rgb(width, height, source, srgb_to_oklab);
+    let lightness: Vec<f32> = lab.iter().map(|color| color[0]).collect();
+    smooth_for_classification(&mut lab, width as usize, height as usize, edge);
+    let mut coverage: Vec<f32> = lab
+        .par_iter()
+        .map(|&color| {
+            let distance = target.distance(&RangeColor::from_oklab(color));
+            1.0 - smoothstep(full, none, distance)
+        })
+        .collect();
+    drop(lab);
+    refine_coverage(
+        &mut coverage,
+        &lightness,
+        width as usize,
+        height as usize,
+        edge,
+    );
+    coverage
 }
 
-fn sample_rgb_mask(
+/// OKLab of display-encoded sRGB.
+fn srgb_to_oklab(srgb: [f32; 3]) -> [f32; 3] {
+    linear_srgb_to_oklab(srgb.map(srgb_decode_signed))
+}
+
+/// Raster pixels per shorter image edge, for a raster `width` pixels wide
+/// over the source's sampling rectangle. The source has the image's aspect.
+fn raster_edge(width: u32, source: &MaskRgbImage) -> f32 {
+    let span = (source.sampling_rect[2] - source.sampling_rect[0]) * source.width as f32;
+    width as f32 / span.max(f32::EPSILON) * source.width.min(source.height) as f32
+}
+
+/// Tolerance of a new colour-range mask: a sampled colour across light and
+/// shade, without neighbouring hues or nearby neutrals.
+pub const DEFAULT_COLOR_TOLERANCE: f32 = 0.35;
+/// Colour-range tolerance whose selection is half strength at distance 1.
+/// The full tolerance of 1 reaches about 2.2, where most of a photo's
+/// related colours are selected.
+const COLOR_RANGE_UNIT_TOLERANCE: f32 = 0.45;
+/// Half-width of the colour-range fade, relative to the tolerance's reach:
+/// colours are fully selected below `1 − this` of the reach and not at all
+/// beyond `1 + this`.
+const COLOR_RANGE_SOFTNESS: f32 = 0.4;
+/// Hue difference (radians, 26°) that counts as distance 1.
+const COLOR_RANGE_HUE_UNIT: f32 = 0.454;
+/// Saturation log-ratio that counts as distance 1: a factor of 2.2.
+const COLOR_RANGE_SATURATION_UNIT: f32 = 0.788;
+/// OKLab lightness difference that counts as distance 1.
+const COLOR_RANGE_LIGHTNESS_UNIT: f32 = 0.35;
+/// Saturation is chroma over at least this lightness, so the chroma noise of
+/// near-black pixels does not read as a saturated colour.
+const COLOR_RANGE_LIGHTNESS_FLOOR: f32 = 0.15;
+/// Added to both saturations before their ratio, so neutrals compare as
+/// similar rather than by the ratio of their noise.
+const COLOR_RANGE_SATURATION_OFFSET: f32 = 0.04;
+
+/// A colour as the colour-range mask compares it: OKLab lightness, plus
+/// saturation (chroma relative to lightness) and hue. Darkening a colour
+/// scales OKLab lightness and chroma by the same factor, so saturation and
+/// hue identify a colour across light and shade, and black, with no
+/// saturation, is far from every saturated colour.
+struct RangeColor {
+    lightness: f32,
+    saturation: f32,
+    /// Unit hue direction in the OKLab a–b plane; zero for exact neutrals.
+    hue: [f32; 2],
+}
+
+impl RangeColor {
+    fn from_oklab([lightness, a, b]: [f32; 3]) -> Self {
+        let chroma = a.hypot(b);
+        let hue = if chroma > 1e-6 {
+            [a / chroma, b / chroma]
+        } else {
+            [0.0; 2]
+        };
+        Self {
+            lightness,
+            saturation: chroma / lightness.max(COLOR_RANGE_LIGHTNESS_FLOOR),
+            hue,
+        }
+    }
+
+    /// Distance of `other` from this sampled colour; distance 1 is half
+    /// selected at [`COLOR_RANGE_UNIT_TOLERANCE`]. Hue counts only where both
+    /// colours have one: a nearly neutral colour is told apart by its
+    /// saturation instead.
+    fn distance(&self, other: &Self) -> f32 {
+        let hue_angle = (self.hue[0] * other.hue[1] - self.hue[1] * other.hue[0])
+            .atan2(self.hue[0] * other.hue[0] + self.hue[1] * other.hue[1])
+            .abs();
+        let hue_confidence =
+            smoothstep(0.02, 0.08, self.saturation) * smoothstep(0.0, 0.06, other.saturation);
+        let hue = hue_angle / COLOR_RANGE_HUE_UNIT * hue_confidence;
+        let saturation = ((other.saturation + COLOR_RANGE_SATURATION_OFFSET)
+            / (self.saturation + COLOR_RANGE_SATURATION_OFFSET))
+            .ln()
+            / COLOR_RANGE_SATURATION_UNIT;
+        let lightness = (other.lightness - self.lightness) / COLOR_RANGE_LIGHTNESS_UNIT;
+        (hue * hue + saturation * saturation + lightness * lightness).sqrt()
+    }
+}
+
+/// Maps the bilinearly sampled display-encoded sRGB of every raster pixel
+/// through `map`; the raster spans the source's sampling rectangle.
+fn sample_rgb<T: Copy + Default + Send>(
     width: u32,
     height: u32,
     source: &MaskRgbImage,
-    coverage: impl Fn([f32; 3]) -> f32 + Sync,
-) -> Vec<f32> {
+    map: impl Fn([f32; 3]) -> T + Sync,
+) -> Vec<T> {
     if width == 0 || height == 0 || source.width == 0 || source.height == 0 {
-        return vec![0.0; width as usize * height as usize];
+        return vec![T::default(); width as usize * height as usize];
     }
     let row_stride = width as usize;
-    let mut out = vec![0.0; row_stride * height as usize];
+    let mut out = vec![T::default(); row_stride * height as usize];
     out.par_chunks_mut(row_stride)
         .enumerate()
         .for_each(|(y, row)| {
@@ -469,7 +610,7 @@ fn sample_rgb_mask(
                     let bottom = bottom_left + (bottom_right - bottom_left) * fx;
                     top + (bottom - top) * fy
                 });
-                *value = coverage(rgb).clamp(0.0, 1.0);
+                *value = map(rgb);
             }
         });
     out

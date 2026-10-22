@@ -7,12 +7,7 @@ impl CalibRawApp {
         if self.ai_denoise_running() {
             return;
         }
-        if self.defer_background_mask_processing()
-            || !self
-                .preview
-                .interactive_render_ready
-                .load(std::sync::atomic::Ordering::Acquire)
-        {
+        if self.defer_background_preview_processing() {
             return;
         }
         let zoomed = self.preview.zoom > DETAIL_ZOOM_START;

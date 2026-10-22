@@ -10,6 +10,12 @@ use std::path::PathBuf;
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
+/// Generation of the desktop thumbnail stamp for sensor RAWs; bump it to drop every cached
+/// RAW thumbnail.
+const RAW_STAMP_GENERATION: u32 = 1;
+/// Generation for TIFFs, which render through the float raster path. Generation 3 drops
+/// thumbnails whose float downscale lifted black.
+const TIFF_STAMP_GENERATION: u32 = 3;
 const RAW_THUMBNAIL_SUFFIX: &str = ".calibraw-raw-thumb.jpg";
 const RAW_THUMBNAIL_FINGERPRINT_SUFFIX: &str = ".calibraw-raw-thumb.fingerprint";
 pub const DESKTOP_THUMBNAIL_CACHE_DIR: &str = "library-thumbnails";
@@ -301,22 +307,9 @@ pub fn load_jpeg(path: &Path, maximum_edge: u32) -> Result<Option<RawThumbnail>,
 }
 
 pub fn save_jpeg(path: &Path, thumbnail: &RawThumbnail) -> Result<(), String> {
-    if thumbnail.width == 0
-        || thumbnail.height == 0
-        || thumbnail.width > MAX_CACHED_THUMBNAIL_EDGE
-        || thumbnail.height > MAX_CACHED_THUMBNAIL_EDGE
-    {
-        return Err("thumbnail dimensions are outside the cache safety limit".to_owned());
-    }
-    let expected = usize::try_from(thumbnail.width)
-        .ok()
-        .and_then(|width| {
-            usize::try_from(thumbnail.height)
-                .ok()
-                .and_then(|height| width.checked_mul(height))
-        })
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| "thumbnail byte count overflow".to_owned())?;
+    let (_, _, decoded_bytes) = accepted_thumbnail_layout(thumbnail.width, thumbnail.height)?;
+    let expected =
+        usize::try_from(decoded_bytes).map_err(|_| "thumbnail byte count overflow".to_owned())?;
     if thumbnail.rgba.len() != expected {
         return Err("thumbnail has an invalid RGBA byte count".to_owned());
     }
@@ -342,12 +335,13 @@ pub fn save_jpeg(path: &Path, thumbnail: &RawThumbnail) -> Result<(), String> {
 }
 
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
+    fnv1a64_bytes(bytes.iter().copied())
+}
+
+fn fnv1a64_bytes(bytes: impl IntoIterator<Item = u8>) -> u64 {
+    bytes
+        .into_iter()
+        .fold(crate::fnv::OFFSET_BASIS, crate::fnv::step)
 }
 
 pub fn load_desktop_raw_thumbnail(
@@ -532,14 +526,11 @@ fn desktop_path_fingerprint(path: &Path) -> u64 {
 fn desktop_path_fingerprint(path: &Path) -> u64 {
     use std::os::windows::ffi::OsStrExt;
 
-    let mut hash = 0xcbf29ce484222325u64;
-    for word in path.as_os_str().encode_wide() {
-        for byte in word.to_le_bytes() {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
-    }
-    hash
+    fnv1a64_bytes(
+        path.as_os_str()
+            .encode_wide()
+            .flat_map(|word| word.to_le_bytes()),
+    )
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -559,16 +550,10 @@ fn desktop_raw_stamp(raw_path: &Path) -> Result<String, String> {
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let generation = if raw_path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("tif") || extension.eq_ignore_ascii_case("tiff")
-        }) {
-        // Generation 3 drops thumbnails whose float downscale lifted black.
-        3
+    let generation = if crate::pipeline::is_tiff_path(raw_path) {
+        TIFF_STAMP_GENERATION
     } else {
-        1
+        RAW_STAMP_GENERATION
     };
     Ok(format!("v{generation}:{}:{modified}", metadata.len()))
 }
