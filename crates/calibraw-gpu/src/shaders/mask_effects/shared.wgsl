@@ -126,7 +126,7 @@ fn mask_effect_source_linear_at(pos: vec2<f32>) -> vec3<f32> {
     // Manual bilinear filtering also works with the non-filterable 32-bit
     // working texture used for high-quality processing.
     let base = vec2<i32>(floor(pos));
-    let fraction = fract(pos);
+    let fraction = pos - vec2<f32>(base);
     let top = mix(
         SceneAdjustments::local_effects_at(base),
         SceneAdjustments::local_effects_at(base + vec2<i32>(1, 0)),

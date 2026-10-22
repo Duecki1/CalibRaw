@@ -13,7 +13,7 @@ use ort::session::builder::SessionBuilder;
 use ort::AsPointer;
 
 /// This platform's GPU providers, most preferred first. Android's built-in
-/// runtime has none (docs/GPU_REWORK.md P6.1): its NNAPI ran on Android's
+/// runtime has none: its NNAPI ran on Android's
 /// CPU reference code where no vendor driver exists, slower than ONNX
 /// Runtime's own CPU kernels, and its prebuilt binary has no XNNPACK.
 #[cfg(not(target_os = "android"))]

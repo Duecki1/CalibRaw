@@ -386,7 +386,7 @@ fn grain_noise_at(cell: vec2<i32>) -> f32 {
 
 fn grain_field(point: vec2<f32>) -> f32 {
     let cell = vec2<i32>(floor(point));
-    let f = fract(point);
+    let f = point - vec2<f32>(cell);
     let blend = f * f * (vec2<f32>(3.0) - 2.0 * f);
     let top = mix(grain_noise_at(cell), grain_noise_at(cell + vec2<i32>(1, 0)), blend.x);
     let bottom = mix(grain_noise_at(cell + vec2<i32>(0, 1)), grain_noise_at(cell + vec2<i32>(1, 1)), blend.x);

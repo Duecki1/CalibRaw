@@ -1,6 +1,5 @@
 //! `cargo xtask android-bench` and `android-bench-compare`: play a gesture
-//! scenario on a connected Android device and record what it cost
-//! (docs/ANDROID_LOW_END.md, P0.3).
+//! scenario on a connected Android device and record what it cost.
 //!
 //! A run installs the profiling build, restores the scenario's photo and
 //! sidecar into that app's library, launches it with GPU stage timing on and

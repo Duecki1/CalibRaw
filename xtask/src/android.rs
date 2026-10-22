@@ -662,7 +662,7 @@ fn extract_64_bit_libraries(apk: &Path, destination: &Path) -> Result<Vec<(Strin
         if entry.is_dir() {
             continue;
         }
-        let archive_path = entry.name().replace('\\', "/");
+        let archive_path = entry.name()?.replace('\\', "/");
         let Some((abi, file_name)) = native_library_path(&archive_path) else {
             continue;
         };

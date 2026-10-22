@@ -23,7 +23,7 @@ use std::{
         mpsc, Arc,
     },
 };
-use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
+use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::pipeline::{
     AiDenoisedImage, CfaKind, CompactPixelMap, ExposureParams, GpuParams, LoadedRaw, MaskStack,

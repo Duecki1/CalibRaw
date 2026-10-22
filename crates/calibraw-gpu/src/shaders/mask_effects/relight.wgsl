@@ -51,6 +51,13 @@ fn relight_surface(uv: vec2<f32>, level: f32) -> vec4<f32> {
     return textureSampleLevel(scene_depth_tex, SceneAdjustments::local_mask_sampler, uv, level);
 }
 
+// Texels of scene-depth mip `level`. Derived from level 0 because
+// lavapipe in Mesa 25 reports wrong sizes for higher levels.
+fn relight_depth_level_size(level: i32) -> vec2<i32> {
+    let base = vec2<i32>(textureDimensions(scene_depth_tex));
+    return max(base >> vec2<u32>(u32(level)), vec2<i32>(1));
+}
+
 // Mean extent of one level-0 texel in shorter-edge units.
 fn relight_texel_extent(camera: SceneCamera) -> f32 {
     let texels = vec2<f32>(textureDimensions(scene_depth_tex));
@@ -112,10 +119,10 @@ fn relight_blocked(
     level: i32,
     width: f32,
 ) -> f32 {
-    let size = vec2<i32>(textureDimensions(scene_depth_tex, level));
+    let size = relight_depth_level_size(level);
     let p = uv * vec2<f32>(size) - vec2<f32>(0.5);
     let base = vec2<i32>(floor(p));
-    let f = fract(p);
+    let f = p - vec2<f32>(base);
     var blocked = 0.0;
     for (var y = 0; y < 2; y = y + 1) {
         for (var x = 0; x < 2; x = x + 1) {
@@ -148,7 +155,7 @@ fn relight_step_unoccluded(
     side: vec2<f32>,
     level: i32,
 ) -> bool {
-    let size = vec2<i32>(textureDimensions(scene_depth_tex, level));
+    let size = relight_depth_level_size(level);
     let last = size - vec2<i32>(1);
     let extent = vec2<f32>(size);
     // The cells `relight_blocked` reads for all three taps.

@@ -34,7 +34,7 @@ fn light_ray_hash(cell: u32, seed: u32) -> f32 {
 fn light_ray_circular_noise(turn: f32, frequency: u32, seed: u32) -> f32 {
     let point = fract(turn) * f32(frequency);
     let cell = u32(floor(point));
-    let f = fract(point);
+    let f = point - f32(cell);
     let blend = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
     return mix(
         light_ray_hash(cell % frequency, seed),

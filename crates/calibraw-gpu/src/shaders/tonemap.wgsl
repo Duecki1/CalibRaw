@@ -23,7 +23,7 @@ fn sample_tone_guide_ev(pos: vec2<i32>) -> f32 {
     let global_pos = vec2<f32>(pos + tile_origin) + vec2<f32>(0.5);
     let coordinate = global_pos / cell_size - vec2<f32>(0.5) - guide_origin;
     let base = vec2<i32>(floor(coordinate));
-    let fraction = fract(coordinate);
+    let fraction = coordinate - vec2<f32>(base);
 
     let p00 = clamp(base, vec2<i32>(0), guide_max);
     let p10 = clamp(base + vec2<i32>(1, 0), vec2<i32>(0), guide_max);
