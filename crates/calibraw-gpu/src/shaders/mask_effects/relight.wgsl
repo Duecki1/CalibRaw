@@ -115,7 +115,7 @@ fn relight_blocked(
     let size = vec2<i32>(textureDimensions(scene_depth_tex, level));
     let p = uv * vec2<f32>(size) - vec2<f32>(0.5);
     let base = vec2<i32>(floor(p));
-    let f = fract(p);
+    let f = p - vec2<f32>(base);
     var blocked = 0.0;
     for (var y = 0; y < 2; y = y + 1) {
         for (var x = 0; x < 2; x = x + 1) {
