@@ -293,8 +293,11 @@ pub(super) fn restore_remove_assets(
 
     let mut decoded_bytes = 0u64;
     for asset in assets {
-        if asset.width == 0 || asset.height == 0 || asset.width > MAX_REMOVE_PATCH_EDGE
-            || asset.height > MAX_REMOVE_PATCH_EDGE {
+        if asset.width == 0
+            || asset.height == 0
+            || asset.width > MAX_REMOVE_PATCH_EDGE
+            || asset.height > MAX_REMOVE_PATCH_EDGE
+        {
             return invalid("compressed retouch patch has invalid dimensions");
         }
         let pixels = u64::from(asset.width)

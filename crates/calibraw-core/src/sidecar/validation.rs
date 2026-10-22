@@ -85,7 +85,12 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                 ],
             )?;
             for value in retouch.source.into_iter().chain(retouch.destination) {
-                bounded("retouch source or destination", value, -1.0, NATIVE_PIXEL_LIMIT)?;
+                bounded(
+                    "retouch source or destination",
+                    value,
+                    -1.0,
+                    NATIVE_PIXEL_LIMIT,
+                )?;
             }
             bounded("retouch hardness", retouch.hardness, 0.0, 1.0)?;
             bounded("retouch opacity", retouch.opacity, 0.0, 1.0)?;
@@ -94,7 +99,12 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
             finite("Remove brush point", &[point.x, point.y, point.radius])?;
             bounded("Remove brush x", point.x, -1.0, NATIVE_PIXEL_LIMIT)?;
             bounded("Remove brush y", point.y, -1.0, NATIVE_PIXEL_LIMIT)?;
-            bounded("Remove brush radius", point.radius, 0.0, REMOVE_BRUSH_RADIUS_LIMIT)?;
+            bounded(
+                "Remove brush radius",
+                point.radius,
+                0.0,
+                REMOVE_BRUSH_RADIUS_LIMIT,
+            )?;
         }
         for patch in &stroke.patches {
             if patch.bounds.width == 0
@@ -126,7 +136,12 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
         "subject refinement settings",
         &[refinement.size, refinement.feather, refinement.flow],
     )?;
-    bounded("subject refinement size", refinement.size, 0.0, MASK_SPACE_LIMIT)?;
+    bounded(
+        "subject refinement size",
+        refinement.size,
+        0.0,
+        MASK_SPACE_LIMIT,
+    )?;
     bounded("subject refinement feather", refinement.feather, 0.0, 1.0)?;
     bounded("subject refinement flow", refinement.flow, 0.0, 1.0)?;
     validate_dabs(
@@ -199,7 +214,12 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     for value in radius {
                         bounded("radial radius", *value, 0.0, MASK_SPACE_LIMIT)?;
                     }
-                    bounded("radial rotation", *rotation, -MASK_ROTATION_LIMIT, MASK_ROTATION_LIMIT)?;
+                    bounded(
+                        "radial rotation",
+                        *rotation,
+                        -MASK_ROTATION_LIMIT,
+                        MASK_ROTATION_LIMIT,
+                    )?;
                     bounded("radial feather", *feather, 0.0, 1.0)?;
                 }
                 MaskGeometry::Linear {
@@ -241,7 +261,12 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                             ],
                         )?;
                         for value in point.position {
-                            bounded("path point position", value, -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
+                            bounded(
+                                "path point position",
+                                value,
+                                -MASK_SPACE_LIMIT,
+                                MASK_SPACE_LIMIT,
+                            )?;
                         }
                         for value in point.handle_in.into_iter().chain(point.handle_out) {
                             bounded("path point handle", value, -32.0, 32.0)?;
@@ -293,8 +318,18 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                         }
                         for point in &stroke.points {
                             finite("object prompt", point)?;
-                            bounded("object prompt x", point[0], -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
-                            bounded("object prompt y", point[1], -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
+                            bounded(
+                                "object prompt x",
+                                point[0],
+                                -MASK_SPACE_LIMIT,
+                                MASK_SPACE_LIMIT,
+                            )?;
+                            bounded(
+                                "object prompt y",
+                                point[1],
+                                -MASK_SPACE_LIMIT,
+                                MASK_SPACE_LIMIT,
+                            )?;
                         }
                     }
                     if let Some(image) = mask {
@@ -312,7 +347,12 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     finite("luminance range mask", &[*low, *high, *grow, *feather])?;
                     if let Some(high_feather) = high_feather {
                         finite("luminance range mask", &[*high_feather])?;
-                        bounded("luminance high feather", *high_feather, 0.0, MASK_SPACE_LIMIT)?;
+                        bounded(
+                            "luminance high feather",
+                            *high_feather,
+                            0.0,
+                            MASK_SPACE_LIMIT,
+                        )?;
                     }
                     bounded("luminance low", *low, -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
                     bounded("luminance high", *high, -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
@@ -647,10 +687,25 @@ fn validate_dabs(
                 dab.feather,
             ],
         )?;
-        bounded(&format!("{label} dab x"), dab.center[0], -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
-        bounded(&format!("{label} dab y"), dab.center[1], -MASK_SPACE_LIMIT, MASK_SPACE_LIMIT)?;
+        bounded(
+            &format!("{label} dab x"),
+            dab.center[0],
+            -MASK_SPACE_LIMIT,
+            MASK_SPACE_LIMIT,
+        )?;
+        bounded(
+            &format!("{label} dab y"),
+            dab.center[1],
+            -MASK_SPACE_LIMIT,
+            MASK_SPACE_LIMIT,
+        )?;
         bounded(&format!("{label} dab opacity"), dab.opacity, -1.0, 1.0)?;
-        bounded(&format!("{label} dab size"), dab.size, 0.0, MASK_SPACE_LIMIT)?;
+        bounded(
+            &format!("{label} dab size"),
+            dab.size,
+            0.0,
+            MASK_SPACE_LIMIT,
+        )?;
         bounded(&format!("{label} dab feather"), dab.feather, 0.0, 1.0)?;
     }
     Ok(())

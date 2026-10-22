@@ -26,9 +26,7 @@ impl TransferCurve {
         match self {
             Self::Identity => x,
             Self::Gamma(gamma) => x.powf(*gamma),
-            Self::Sampled(values) => {
-                interpolate_sampled(values, x)
-            }
+            Self::Sampled(values) => interpolate_sampled(values, x),
             Self::Parametric { kind, params } => parametric_curve(*kind, params, x),
         }
     }

@@ -110,6 +110,7 @@ const SOURCE_RULES: &[SourceRule] = &[
             "calibraw_ffi",
             "rfd",
             "zbus",
+            "windows_sys",
             "env_logger",
             "android_logger",
         ],

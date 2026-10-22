@@ -183,8 +183,9 @@ impl NoiseProfile {
             let fitted_a = ((sw * sxy - sx * sy) / denom).clamp(min_shot, max_shot);
             let fitted_b = ((sy - fitted_a * sx) / sw).clamp(min_read, max_read);
 
-            let confidence =
-                (points.iter().map(|point| point.2).sum::<f32>() / RAW_FULL_CONFIDENCE_WEIGHT).clamp(0.0, 1.0);
+            let confidence = (points.iter().map(|point| point.2).sum::<f32>()
+                / RAW_FULL_CONFIDENCE_WEIGHT)
+                .clamp(0.0, 1.0);
             shot[channel] = fallback.shot[channel] * (1.0 - confidence) + fitted_a * confidence;
             read[channel] = fallback.read[channel] * (1.0 - confidence) + fitted_b * confidence;
             channel_confidence[channel] = confidence;
@@ -349,8 +350,11 @@ impl NoiseProfile {
         AdaptiveDetailDefaults {
             luminance_denoise,
             chroma_denoise,
-            denoise_detail: super::basicadj::default_denoise_detail() + DETAIL_BOOST * luminance_need,
-            denoise_quality: if luminance_need > HIGH_QUALITY_LUMINANCE_NEED || chroma_need > HIGH_QUALITY_CHROMA_NEED {
+            denoise_detail: super::basicadj::default_denoise_detail()
+                + DETAIL_BOOST * luminance_need,
+            denoise_quality: if luminance_need > HIGH_QUALITY_LUMINANCE_NEED
+                || chroma_need > HIGH_QUALITY_CHROMA_NEED
+            {
                 DenoiseQuality::High
             } else {
                 DenoiseQuality::Balanced

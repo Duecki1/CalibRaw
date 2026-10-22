@@ -47,6 +47,8 @@ fn desktop_icon() -> std::sync::Arc<eframe::egui::IconData> {
 
 fn run_desktop() -> eframe::Result {
     env_logger::init();
+    #[cfg(target_os = "windows")]
+    super::nvidia_vrr::keep_gsync_off_for_window();
 
     if std::env::var_os("CALIBRAW_GPU_STAGE_TIMING").is_some_and(|value| value == "1") {
         calibraw_gpu::stage_timing::request();
