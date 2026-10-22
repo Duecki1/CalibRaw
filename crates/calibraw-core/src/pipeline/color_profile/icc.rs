@@ -8,6 +8,18 @@ enum TransferCurve {
     Parametric { kind: u16, params: Vec<f32> },
 }
 
+/// Linear interpolation of a sampled curve at `x` in `0..=1`; an empty table is the
+/// identity.
+fn interpolate_sampled(values: &[f32], x: f32) -> f32 {
+    if values.is_empty() {
+        return x;
+    }
+    let location = x * (values.len() - 1) as f32;
+    let i = location.floor() as usize;
+    let j = (i + 1).min(values.len() - 1);
+    values[i] + (values[j] - values[i]) * (location - i as f32)
+}
+
 impl TransferCurve {
     fn forward(&self, x: f32) -> f32 {
         let x = x.clamp(0.0, 1.0);
@@ -15,13 +27,7 @@ impl TransferCurve {
             Self::Identity => x,
             Self::Gamma(gamma) => x.powf(*gamma),
             Self::Sampled(values) => {
-                if values.is_empty() {
-                    return x;
-                }
-                let location = x * (values.len() - 1) as f32;
-                let i = location.floor() as usize;
-                let j = (i + 1).min(values.len() - 1);
-                values[i] + (values[j] - values[i]) * (location - i as f32)
+                interpolate_sampled(values, x)
             }
             Self::Parametric { kind, params } => parametric_curve(*kind, params, x),
         }
@@ -47,10 +53,7 @@ impl TransferCurve {
                     let slope = (values[last] - values[last - 1]) * last as f32;
                     return values[last] + slope * (x - 1.0);
                 }
-                let location = x * (values.len() - 1) as f32;
-                let i = location.floor() as usize;
-                let j = (i + 1).min(values.len() - 1);
-                values[i] + (values[j] - values[i]) * (location - i as f32)
+                interpolate_sampled(values, x)
             }
             Self::Parametric { kind, params } => parametric_curve(*kind, params, x),
         }

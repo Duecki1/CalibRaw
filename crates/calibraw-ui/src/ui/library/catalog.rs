@@ -267,6 +267,11 @@ pub(super) fn thumbnail_tile(
             THUMBNAIL_CARD_RADIUS,
             ui.visuals().extreme_bg_color,
         );
+        crate::ui::components::loading_wave::paint_loading_wave(
+            ui,
+            image_rect,
+            THUMBNAIL_CARD_RADIUS,
+        );
         painter.text(
             image_rect.center(),
             Align2::CENTER_CENTER,

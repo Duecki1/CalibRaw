@@ -403,28 +403,33 @@ pub const LUMINANCE_FEATHER_WIDTH: f32 = 0.35;
 /// Largest luminance feather: a ramp across the whole 0–1 lightness range.
 pub const LUMINANCE_FEATHER_MAX: f32 = 1.0 / LUMINANCE_FEATHER_WIDTH;
 
+/// CIE luminance below which lightness is linear: (6/29)³.
+const CIE_EPSILON: f32 = 216.0 / 24_389.0;
+/// Slope of the linear part of the CIE lightness: L* = `CIE_KAPPA` · Y.
+const CIE_KAPPA: f32 = 24_389.0 / 27.0;
+/// Lightness (0–1) at `CIE_EPSILON`, where the linear and cube-root parts meet:
+/// `CIE_KAPPA * CIE_EPSILON / 100`, that is L* = 8.
+const CIE_LINEAR_LIGHTNESS_LIMIT: f32 = 0.08;
+
 /// CIE lightness L*/100 (0–1) of linear luminance `luminance` (0–1). Range
 /// masks place and soften their bounds on this perceptual scale, where
 /// shadows get as much room as highlights.
 pub fn luminance_to_lightness(luminance: f32) -> f32 {
-    const EPSILON: f32 = 216.0 / 24_389.0;
-    const KAPPA: f32 = 24_389.0 / 27.0;
     let luminance = luminance.clamp(0.0, 1.0);
-    if luminance > EPSILON {
+    if luminance > CIE_EPSILON {
         1.16 * luminance.cbrt() - 0.16
     } else {
-        KAPPA * luminance / 100.0
+        CIE_KAPPA * luminance / 100.0
     }
 }
 
 /// Inverse of [`luminance_to_lightness`].
 pub fn lightness_to_luminance(lightness: f32) -> f32 {
-    const KAPPA: f32 = 24_389.0 / 27.0;
     let lightness = lightness.clamp(0.0, 1.0);
-    if lightness > 0.08 {
+    if lightness > CIE_LINEAR_LIGHTNESS_LIMIT {
         ((lightness + 0.16) / 1.16).powi(3)
     } else {
-        lightness * 100.0 / KAPPA
+        lightness * 100.0 / CIE_KAPPA
     }
 }
 

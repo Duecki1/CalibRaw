@@ -23,6 +23,7 @@ mod rendered_loader;
 pub mod sigmoid;
 pub mod source_format;
 mod tiff_loader;
+pub(crate) use tiff_loader::is_tiff_path;
 pub mod white_balance_presets;
 
 pub use basicadj::{
