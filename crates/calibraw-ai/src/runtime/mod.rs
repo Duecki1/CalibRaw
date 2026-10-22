@@ -86,7 +86,7 @@ pub fn ai_sessions_may_use_gpu(_manual_runtime: bool) -> bool {
     false
 }
 
-/// Android's built-in runtime has no GPU provider (docs/GPU_REWORK.md P6.1).
+/// Android's built-in runtime has no GPU provider.
 #[cfg(target_os = "android")]
 pub(crate) fn automatic_runtime_lacks_gpu_build() -> bool {
     true

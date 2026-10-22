@@ -1,8 +1,7 @@
 //! AI parity harness: every published model runs one fixed input from the
 //! Demo photos through its public job API and is compared with a golden
 //! output stored in `data/ai-parity/`. This is the "same output" proof for
-//! restructuring AI code and changing how sessions are placed
-//! (docs/GPU_REWORK.md, P0.2).
+//! restructuring AI code and changing how sessions are placed.
 //!
 //! Every test is `#[ignore]`d: it needs the Demo photos, the models and an
 //! ONNX Runtime, and some cases need a wgpu adapter. Run all of them with

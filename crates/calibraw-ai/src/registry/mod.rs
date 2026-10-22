@@ -268,7 +268,7 @@ const BIREFNET_LOW: ModelSpec = ModelSpec {
 
 /// Whether subject masks expected on the GPU use the float16 BiRefNet
 /// conversions below instead of float32: only once the parity harness
-/// confirms them on the GPU provider (docs/GPU_REWORK.md P5.3). On the
+/// confirms them on the GPU provider. On the
 /// WebGPU provider of `measured_peak`'s machine, Medium's masks reached an
 /// IoU of 0.984 against the float32 CPU goldens and Low's 0.995, where the
 /// harness asks for 0.995, for about 10% less time per mask.
