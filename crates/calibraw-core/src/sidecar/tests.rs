@@ -278,7 +278,7 @@ fn scene_depth_shares_the_decoded_memory_limit_with_mask_assets() {
         height: MAX_MASK_IMAGE_EDGE,
         png: Arc::from([]),
     };
-    let count = MAX_DECODED_MASK_ASSET_BYTES
+    let count = MAX_DECODED_ASSET_BYTES
         / (u64::from(MAX_MASK_IMAGE_EDGE) * u64::from(MAX_MASK_IMAGE_EDGE));
     assert!(
         matches!(restore_mask_assets(&mut edits, &vec![asset; count as usize], &[], None),

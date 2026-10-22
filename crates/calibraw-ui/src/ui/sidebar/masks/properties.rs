@@ -491,7 +491,7 @@ impl Sidebar {
                     Self::depth_range_properties(ui, depth.is_some(), *range, &mut edits);
                 }
                 MaskGeometry::Placeholder => {
-                    ui.label("This mask type is not implemented yet.");
+                    ui.label("This mask has no shape data.");
                 }
             }
         });

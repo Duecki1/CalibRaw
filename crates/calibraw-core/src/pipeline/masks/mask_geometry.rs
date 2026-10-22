@@ -88,6 +88,8 @@ pub enum MaskGeometry {
         #[serde(flatten)]
         range: DepthRangeSettings,
     },
+    /// Reserved shape-less geometry of a Depth range mask. No code creates it, but the
+    /// sidecar validator accepts it, so the serialized name must keep loading.
     Placeholder,
 }
 

@@ -574,6 +574,7 @@ fn filmstrip_thumbnail(
         );
     } else {
         painter.rect_filled(rect, card_radius, ui.visuals().extreme_bg_color);
+        crate::ui::components::loading_wave::paint_loading_wave(ui, rect, card_radius);
         painter.text(
             rect.center(),
             Align2::CENTER_CENTER,

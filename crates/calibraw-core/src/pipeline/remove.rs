@@ -366,6 +366,9 @@ impl RemoveMask {
     /// Largest distance in native pixels from a masked pixel to the nearest
     /// unmasked one: half the stroke's thickness at its widest.
     fn max_half_width(&self) -> f32 {
+        // Chamfer 3-4 distance: distances are kept in thirds of a pixel, an orthogonal step
+        // costing 3 and a diagonal one 4 (about 3 * sqrt(2)), and divided by `ORTHOGONAL`
+        // at the end.
         const ORTHOGONAL: u32 = 3;
         const DIAGONAL: u32 = 4;
         // Pad by one pixel so the bounds' border counts as unmasked.
