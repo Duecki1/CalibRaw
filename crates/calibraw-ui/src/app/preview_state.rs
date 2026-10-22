@@ -283,10 +283,7 @@ pub(crate) struct PreviewState {
     pub(crate) original_rendered_state: Option<(bool, u64)>,
     pub(crate) original_hold: Option<AndroidOriginalHold>,
     pub(crate) pending_stage: Option<ProcessingStage>,
-    // Keep white-balance updates exact and coalesce zoomed mask scrubs while
-    // the preceding GPU render is still running.
-    pub(crate) white_balance_refresh_pending: bool,
-    pub(crate) interactive_render_ready: Arc<AtomicBool>,
+    pub(crate) dispatch_gate: PreviewDispatchGate,
     pub(crate) lens_original_cache: Option<(PreviewQuality, Arc<LoadedRaw>)>,
     pub(crate) lens_corrected_cache: Option<(
         LensCorrection,

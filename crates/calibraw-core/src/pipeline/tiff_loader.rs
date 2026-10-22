@@ -22,6 +22,21 @@ const MAX_TIFF_IFDS: usize = 32;
 const MAX_TIFF_IFD_ENTRIES: u64 = 4096;
 const MAX_TIFF_SUBIFDS: usize = 64;
 const MIN_TIFF_ICC_BYTES: u64 = 132;
+
+// TIFF and DNG tag codes read by the container probes.
+const TAG_BITS_PER_SAMPLE: u16 = 258;
+const TAG_COMPRESSION: u16 = 259;
+const TAG_PHOTOMETRIC: u16 = 262;
+const TAG_SUB_IFDS: u16 = 330;
+/// TIFF/EP CFARepeatPatternDim and CFAPattern: only sensor data carries them.
+const TAG_CFA_REPEAT_PATTERN_DIM: u16 = 33421;
+const TAG_CFA_PATTERN: u16 = 33422;
+const TAG_ICC_PROFILE: u16 = 34675;
+/// Four-byte DNG version tuple; present in every DNG.
+const TAG_DNG_VERSION: u16 = 50706;
+/// Photometric interpretations of sensor data: colour filter array and linear raw.
+pub(super) const PHOTOMETRIC_CFA: u64 = 32803;
+pub(super) const PHOTOMETRIC_LINEAR_RAW: u64 = 34892;
 const MAX_TIFF_ICC_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,10 +151,10 @@ fn has_camera_raw_marks(path: &Path) -> Result<bool> {
     }
     let marked = walk_tiff_fields(path, |file, tag, field| {
         let sensor = match tag {
-            258 => integer_values(file, field, 4)?
+            TAG_BITS_PER_SAMPLE => integer_values(file, field, 4)?
                 .into_iter()
                 .any(|bits| !matches!(bits, 1 | 8 | 16 | 32 | 64)),
-            259 => scalar_u64(file, field)?
+            TAG_COMPRESSION => scalar_u64(file, field)?
                 .is_some_and(|compression| SENSOR_COMPRESSIONS.contains(&compression)),
             _ => false,
         };
@@ -148,7 +163,7 @@ fn has_camera_raw_marks(path: &Path) -> Result<bool> {
     Ok(marked.is_some())
 }
 
-pub(super) fn is_tiff_path(path: &Path) -> bool {
+pub(crate) fn is_tiff_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
@@ -160,19 +175,19 @@ pub(super) fn has_dng_version(path: &Path) -> Result<bool> {
     Ok(walk_tiff_fields(path, |_file, tag, field| {
         // DNGVersion is a four-byte version tuple. Reuse the bounded TIFF
         // walker so extensionless Android descriptor paths can be identified.
-        Ok((tag == 50706 && field.field_type == 1 && field.count == 4).then_some(true))
+        Ok((tag == TAG_DNG_VERSION && field.field_type == 1 && field.count == 4).then_some(true))
     })?
     .unwrap_or(false))
 }
 
 fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
     Ok(walk_tiff_fields(path, |file, tag, field| {
-        if matches!(tag, 33421 | 33422) {
+        if matches!(tag, TAG_CFA_REPEAT_PATTERN_DIM | TAG_CFA_PATTERN) {
             return Ok(Some(TiffContainerKind::Sensor));
         }
-        if tag == 262 && field.count == 1 {
+        if tag == TAG_PHOTOMETRIC && field.count == 1 {
             if let Some(value) = scalar_u64(file, field)? {
-                if matches!(value, 32803 | 34892) {
+                if matches!(value, PHOTOMETRIC_CFA | PHOTOMETRIC_LINEAR_RAW) {
                     return Ok(Some(TiffContainerKind::Sensor));
                 }
             }
@@ -259,7 +274,7 @@ fn walk_tiff_fields<T>(
             if let Some(value) = visit(&mut file, tag, field)? {
                 return Ok(Some(value));
             }
-            if tag == 330 && pending.len() < MAX_TIFF_SUBIFDS {
+            if tag == TAG_SUB_IFDS && pending.len() < MAX_TIFF_SUBIFDS {
                 let offsets = integer_values(&mut file, field, MAX_TIFF_SUBIFDS - pending.len())?;
                 pending.extend(offsets.into_iter().filter(|offset| *offset != 0));
             }
@@ -438,7 +453,7 @@ pub(super) fn load_raster_tiff_thumbnail(path: &Path, maximum_edge: u32) -> Resu
 
 fn read_embedded_icc_profile(path: &Path) -> Result<Option<Vec<u8>>> {
     walk_tiff_fields(path, |file, tag, field| {
-        if tag != 34675 {
+        if tag != TAG_ICC_PROFILE {
             return Ok(None);
         }
         anyhow::ensure!(

@@ -145,12 +145,12 @@ pub(super) fn extract_remove_assets(
                     .checked_mul(u64::from(payload.height))
                     .ok_or(SidecarError::TooLarge(u64::MAX))?;
                 let decoded_bytes = pixels
-                    .checked_mul(7)
+                    .checked_mul(REMOVE_PATCH_BYTES_PER_PIXEL)
                     .ok_or(SidecarError::TooLarge(u64::MAX))?;
                 decoded_asset_bytes = decoded_asset_bytes
                     .checked_add(decoded_bytes)
                     .ok_or(SidecarError::TooLarge(u64::MAX))?;
-                if decoded_asset_bytes > MAX_DECODED_REMOVE_ASSET_BYTES {
+                if decoded_asset_bytes > MAX_DECODED_ASSET_BYTES {
                     return invalid("retouch patches exceed the decoded asset memory safety limit");
                 }
                 let compressed =
@@ -293,19 +293,23 @@ pub(super) fn restore_remove_assets(
 
     let mut decoded_bytes = 0u64;
     for asset in assets {
-        if asset.width == 0 || asset.height == 0 || asset.width > 32_768 || asset.height > 32_768 {
+        if asset.width == 0
+            || asset.height == 0
+            || asset.width > MAX_REMOVE_PATCH_EDGE
+            || asset.height > MAX_REMOVE_PATCH_EDGE
+        {
             return invalid("compressed retouch patch has invalid dimensions");
         }
         let pixels = u64::from(asset.width)
             .checked_mul(u64::from(asset.height))
             .ok_or(SidecarError::TooLarge(u64::MAX))?;
         let bytes = pixels
-            .checked_mul(7)
+            .checked_mul(REMOVE_PATCH_BYTES_PER_PIXEL)
             .ok_or(SidecarError::TooLarge(u64::MAX))?;
         decoded_bytes = decoded_bytes
             .checked_add(bytes)
             .ok_or(SidecarError::TooLarge(u64::MAX))?;
-        if decoded_bytes > MAX_DECODED_REMOVE_ASSET_BYTES {
+        if decoded_bytes > MAX_DECODED_ASSET_BYTES {
             return invalid("compressed retouch patches exceed the decoded memory safety limit");
         }
     }

@@ -44,28 +44,11 @@ pub(crate) fn run(args: Vec<OsString>) -> Result<()> {
         index += 1;
     }
     let label = label.ok_or_else(|| XtaskError::usage("baseline-run requires a LABEL"))?;
-    if label.is_empty()
-        || !label
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || "-_.".contains(character))
-    {
-        return Err(XtaskError::usage(
-            "LABEL may only contain ASCII letters, digits, '-', '_' and '.'",
-        ));
-    }
-
     let root = workspace_root();
-    let baseline_dir = baseline_directory(&root)?;
-    let revision = git_revision(&root);
-    let short = revision.trim_end_matches("+dirty");
-    let run_dir = baseline_dir.join(format!("{}-{short}-{label}", utc_date()));
-    // `create_dir` (not `create_dir_all`) refuses to reuse an existing run.
-    fs::create_dir(&run_dir).map_err(|error| {
-        XtaskError::new(format!(
-            "cannot create new run folder {}: {error}",
-            run_dir.display()
-        ))
-    })?;
+    let RunFolder {
+        path: run_dir,
+        revision,
+    } = create_run_folder(&root, &label)?;
 
     let lockfile = fs::read(root.join("Cargo.lock"))?;
     let rustc = run_command_output(Command::new("rustc").arg("-V"), "rustc -V")
@@ -292,6 +275,38 @@ fn compare_images(before: &Path, after: &Path, tolerance: u8) -> Result<ImageCom
     })
 }
 
+/// A new run folder and the CalibRaw revision its name records.
+pub(crate) struct RunFolder {
+    pub(crate) path: PathBuf,
+    pub(crate) revision: String,
+}
+
+/// Creates `$CALIBRAW_BASELINE_DIR/<date>-<revision>-LABEL`, refusing a
+/// LABEL with characters outside `[A-Za-z0-9._-]` and a folder that exists.
+pub(crate) fn create_run_folder(root: &Path, label: &str) -> Result<RunFolder> {
+    if label.is_empty()
+        || !label
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "-_.".contains(character))
+    {
+        return Err(XtaskError::usage(
+            "LABEL may only contain ASCII letters, digits, '-', '_' and '.'",
+        ));
+    }
+    let baseline_dir = baseline_directory(root)?;
+    let revision = git_revision(root);
+    let short = revision.trim_end_matches("+dirty");
+    let path = baseline_dir.join(format!("{}-{short}-{label}", utc_date()));
+    // `create_dir` (not `create_dir_all`) refuses to reuse an existing run.
+    fs::create_dir(&path).map_err(|error| {
+        XtaskError::new(format!(
+            "cannot create new run folder {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(RunFolder { path, revision })
+}
+
 /// Validates `$CALIBRAW_BASELINE_DIR`: it must exist and must not live in the
 /// checkout or the system temporary directory, which `git clean` or a reboot
 /// would erase and which differ between worktrees.
@@ -356,7 +371,7 @@ fn png_files(directory: &Path) -> Result<Vec<String>> {
     Ok(files)
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     ring::digest::digest(&ring::digest::SHA256, bytes)
         .as_ref()
         .iter()
@@ -364,7 +379,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn unix_seconds() -> u64 {
+pub(crate) fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())

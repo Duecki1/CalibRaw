@@ -1,4 +1,5 @@
 use super::job_state::ForegroundProgress;
+use crate::platform::Platform;
 use calibraw_ai::{AiJobEvent, ModelDownloadProgress};
 use eframe::egui;
 use std::sync::mpsc;
@@ -55,7 +56,11 @@ pub(crate) enum AiJobUpdate<P> {
 /// Passes the AI job's reports since the last frame to `update`, in order,
 /// and returns its result once it finished. A job whose worker stopped
 /// without a result finishes with the error `stopped` makes.
+///
+/// A finished job has dropped its session and buffers, so the memory they
+/// held is returned to the system through `platform`.
 pub(crate) fn poll_ai_job<T, P>(
+    platform: &dyn Platform,
     receiver: &mpsc::Receiver<AiJobEvent<T, P>>,
     stopped: impl FnOnce() -> String,
     mut update: impl FnMut(AiJobUpdate<P>),
@@ -73,6 +78,9 @@ pub(crate) fn poll_ai_job<T, P>(
     }
     if finished.is_none() && disconnected {
         finished = Some(Err(stopped()));
+    }
+    if finished.is_some() {
+        platform.release_free_memory();
     }
     finished
 }
@@ -99,8 +107,33 @@ pub(crate) fn megabytes_detail(progress: ModelDownloadProgress) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::drain_worker_events;
+    use super::{drain_worker_events, poll_ai_job};
+    use crate::platform::fake::FakePlatform;
+    use crate::platform::PlatformCaps;
+    use calibraw_ai::AiJobEvent;
     use std::sync::mpsc;
+
+    #[test]
+    fn a_finished_ai_job_returns_freed_memory() {
+        let platform = FakePlatform::new(PlatformCaps::ANDROID);
+        let (sender, receiver) = mpsc::channel::<AiJobEvent<u8, u8>>();
+        let poll = || poll_ai_job(platform.as_ref(), &receiver, String::new, |_| {});
+        sender.send(AiJobEvent::Progress(1)).unwrap();
+        assert!(poll().is_none());
+        assert!(platform.calls().is_empty());
+
+        sender.send(AiJobEvent::Finished(Ok(7))).unwrap();
+        assert_eq!(poll(), Some(Ok(7)));
+        assert_eq!(platform.calls(), ["release_free_memory"]);
+
+        // A worker that died without a result has dropped its buffers too.
+        drop(sender);
+        assert_eq!(poll(), Some(Err(String::new())));
+        assert_eq!(
+            platform.calls(),
+            ["release_free_memory", "release_free_memory"]
+        );
+    }
 
     #[test]
     fn draining_stops_after_a_terminal_event_and_keeps_later_ones() {

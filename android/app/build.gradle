@@ -187,6 +187,15 @@ android {
                 signingConfig signingConfigs.release
             }
         }
+        // Release Rust and native libraries in an app that installs beside the
+        // release one, keeps its own data, and is profileable
+        // (src/profiling/AndroidManifest.xml).
+        profiling {
+            initWith release
+            applicationIdSuffix ".profiling"
+            versionNameSuffix "-profiling"
+            signingConfig signingConfigs.debug
+        }
     }
 
     externalNativeBuild {
@@ -230,6 +239,7 @@ def abiTaskSuffix = { String abi ->
 
 def debugRustTasks = []
 def releaseRustTasks = []
+def profilingRustTasks = []
 calibrawAbis.each { abi ->
     def suffix = abiTaskSuffix(abi)
     debugRustTasks << tasks.register("buildRustDebug${suffix}", Exec) {
@@ -244,6 +254,12 @@ calibrawAbis.each { abi ->
         environment "CALIBRAW_NATIVE_DEPS_READY", "1"
         commandLine(["cargo", "xtask", "build-android", abi, "release"] + rustFeatureArgs)
     }
+    profilingRustTasks << tasks.register("buildRustProfiling${suffix}", Exec) {
+        dependsOn("buildCMakeRelWithDebInfo[${abi}][calibraw_native_deps]")
+        workingDir repositoryRoot
+        environment "CALIBRAW_NATIVE_DEPS_READY", "1"
+        commandLine(["cargo", "xtask", "build-android", abi, "profiling"] + rustFeatureArgs)
+    }
 }
 
 tasks.register("buildRustDebug") {
@@ -251,6 +267,9 @@ tasks.register("buildRustDebug") {
 }
 tasks.register("buildRustRelease") {
     dependsOn(releaseRustTasks)
+}
+tasks.register("buildRustProfiling") {
+    dependsOn(profilingRustTasks)
 }
 
 // The XML asset directory is produced by the external native build, and the
@@ -271,4 +290,5 @@ if (buildRustEnabled) {
     }
     wireNativeBuild("Debug", "buildRustDebug")
     wireNativeBuild("Release", "buildRustRelease")
+    wireNativeBuild("Profiling", "buildRustProfiling")
 }

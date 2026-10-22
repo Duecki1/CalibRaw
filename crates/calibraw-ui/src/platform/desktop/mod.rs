@@ -3,6 +3,8 @@
 pub(super) mod discord;
 mod entry;
 pub(super) mod files;
+#[cfg(target_os = "windows")]
+mod nvidia_vrr;
 mod portal;
 
 pub(crate) use entry::main;
