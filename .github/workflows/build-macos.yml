@@ -219,10 +219,11 @@ jobs:
             echo "Lensfun: $(pkg-config --modversion lensfun)"
           } > "$contents/Resources/BUILD-INFO.txt"
 
-          # GitHub builds are intentionally ad-hoc signed. Distribution through
-          # Gatekeeper still requires a future Developer ID signature/notarization.
-          codesign --force --deep --sign - "$app_dir"
-          codesign --verify --deep --strict --verbose=2 "$app_dir"
+          # Ad-hoc signatures are only applied to main and version-tag builds.
+          if [[ "$GITHUB_REF" == "refs/heads/main" || "$GITHUB_REF" == refs/tags/v* ]]; then
+            codesign --force --deep --sign - "$app_dir"
+            codesign --verify --deep --strict --verbose=2 "$app_dir"
+          fi
 
           file "$executable" | grep -q "${{ matrix.artifact_arch }}"
           test -n "$(find "$contents/Frameworks" -name '*.dylib' -print -quit)"

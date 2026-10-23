@@ -98,7 +98,7 @@ jobs:
             zip
 
       - name: Prepare release signing keystore
-        if: inputs.distribution == 'googleplay' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.CALIBRAW_ANDROID_KEYSTORE_BASE64 }}
@@ -252,7 +252,7 @@ jobs:
             # Same sequence as release APKs below. Play rejects a reused
             # versionCode, so upload only one bundle per commit.
             version_code=$((1000000 + $(git rev-list --count HEAD)))
-          elif [ "$GITHUB_EVENT_NAME" = "push" ] && { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
+          elif { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
             gradle_task=assembleRelease
             apk_path="android/app/build/outputs/apk/release/app-release.apk"
             output_name="CalibRaw-release-arm64-v8a.apk"
@@ -264,10 +264,11 @@ jobs:
             # The offset also puts these codes above the old run-number codes.
             version_code=$((1000000 + $(git rev-list --count HEAD)))
           else
-            gradle_task=assembleDebug
-            apk_path="android/app/build/outputs/apk/debug/app-debug.apk"
-            output_name="CalibRaw-debug-arm64-v8a.apk"
-            artifact_name="calibraw-android-debug-arm64-v8a"
+            # Release variant without a signing config produces an unsigned APK.
+            gradle_task=assembleRelease
+            apk_path="android/app/build/outputs/apk/release/app-release-unsigned.apk"
+            output_name="CalibRaw-unsigned-arm64-v8a.apk"
+            artifact_name="calibraw-android-unsigned-arm64-v8a"
             signing_args=()
             version_code="$GITHUB_RUN_NUMBER"
           fi
@@ -293,7 +294,7 @@ jobs:
           else
             cargo xtask verify-android-16kb "$APK"
           fi
-          if [ "$CALIBRAW_DISTRIBUTION" != "googleplay" ] && [ "$GITHUB_EVENT_NAME" = "push" ] && { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
+          if [ "$CALIBRAW_DISTRIBUTION" != "googleplay" ] && { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
             "$ANDROID_HOME/build-tools/$CALIBRAW_ANDROID_BUILD_TOOLS_VERSION/apksigner" \
               verify --verbose --print-certs "$APK"
           fi
@@ -303,7 +304,7 @@ jobs:
           echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
 
       - name: Remove release signing keystore
-        if: always() && (inputs.distribution == 'googleplay' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))))
+        if: always() && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         shell: bash
         run: |
           rm -f "$RUNNER_TEMP/calibraw-release.keystore"

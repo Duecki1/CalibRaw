@@ -1,0 +1,3 @@
+# Enable "Require review from Code Owners" in main's branch protection rules.
+/.github/workflows/ @Duecki1
+/.github/CODEOWNERS @Duecki1

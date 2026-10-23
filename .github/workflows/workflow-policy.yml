@@ -1,0 +1,45 @@
+name: Workflow policy
+
+# This runs the version already on the base branch. It inspects PR filenames
+# through the API and never checks out or executes pull request code.
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: workflow-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    name: Protect workflow files
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Reject workflow policy changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          changed_files="$(gh api --paginate \
+            "repos/$REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[].filename')"
+          policy_changes="$(printf '%s\n' "$changed_files" \
+            | grep -E '^(\.github/workflows/|\.github/CODEOWNERS$)' || true)"
+
+          if [ -n "$policy_changes" ]; then
+            echo "Workflow policy files may only be changed directly on main:" >&2
+            printf '%s\n' "$policy_changes" >&2
+            exit 1
+          fi
