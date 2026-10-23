@@ -236,9 +236,7 @@ mod tests {
                 std::thread::yield_now();
             }
         }
-        assert!(gate
-            .median_latency_ms(Batch::Fitted)
-            .is_some_and(|ms| ms >= 0.0));
+        assert!(gate.median_latency_ms(Batch::Fitted).is_some());
         assert_eq!(gate.median_latency_ms(Batch::Interactive), None);
     }
 }

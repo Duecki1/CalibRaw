@@ -11,6 +11,7 @@ impl CalibRawApp {
             self.preview.motion_at = None;
             self.preview.detail_pending_stage = None;
             self.preview.detail_urgent = false;
+            self.preview.detail_block = None;
             return;
         }
         // While a control is dragged the reduced crop follows it
@@ -18,9 +19,9 @@ impl CalibRawApp {
         if self.interactive_following() {
             return;
         }
-        // Fingers on the photo no longer block the refresh: each move restarts
+        // Fingers on the photo do not block the refresh: each move restarts
         // the idle delay below, so the crop is prepared once a pinch or pan
-        // pauses instead of only after the fingers lift.
+        // pauses.
         let blocked = if self.ui.active_tab != AppTab::Develop {
             Some("another tab is open")
         } else if self.preview.quality_dirty {
@@ -280,8 +281,6 @@ impl CalibRawApp {
             processing_halo,
             ..
         } = prepared;
-        let [x0, y0] = source_origin;
-        let [crop_width, crop_height] = source_size;
         let ([virtual_origin_x, virtual_origin_y], [virtual_full_width, virtual_full_height]) =
             detail_virtual_frame(
                 [detail_raw.width, detail_raw.height],
@@ -302,19 +301,18 @@ impl CalibRawApp {
         if full_raw.uses_opposed_chroma(&self.develop.target_exposure) {
             full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
-        let params = GpuParams::new_for_tile(
+        let placement = DetailPlacement {
+            virtual_origin: [virtual_origin_x, virtual_origin_y],
+            virtual_full_size: [virtual_full_width, virtual_full_height],
+            full_size: [full_raw.width, full_raw.height],
+            mask_region,
+            mask_extent,
+        };
+        let params = placement.params(
             &self.develop.target_exposure,
             &preview_masks,
+            self.develop.geometry,
             &detail_raw,
-            virtual_origin_x,
-            virtual_origin_y,
-            virtual_full_width,
-            virtual_full_height,
-        )
-        .with_vignette_geometry(self.develop.geometry)
-        .with_mask_uv_rect_and_extent(
-            mask_source_region_uv(mask_region, full_raw.width, full_raw.height),
-            mask_extent,
         );
         let full_frame_tone_pipeline = full_frame_tone_pipeline(
             self.preview.gpu_pipeline.as_ref(),
@@ -359,12 +357,12 @@ impl CalibRawApp {
                 &render_state.device,
                 &params,
                 ProcessingStage::Raw,
-                RemoveSceneContext::new(
+                detail_remove_scene(
                     &self.inpaint.edits,
                     &full_raw,
                     &self.develop.target_exposure,
-                    [x0 as f32, y0 as f32],
-                    [crop_width as f32, crop_height as f32],
+                    source_origin,
+                    source_size,
                 ),
             ) {
                 self.report_error(
@@ -459,12 +457,12 @@ impl CalibRawApp {
             &render_state.device,
             &params,
             ProcessingStage::Raw,
-            RemoveSceneContext::new(
+            detail_remove_scene(
                 &self.inpaint.edits,
                 &full_raw,
                 &self.develop.target_exposure,
-                [x0 as f32, y0 as f32],
-                [crop_width as f32, crop_height as f32],
+                source_origin,
+                source_size,
             ),
         ) {
             self.report_error(
@@ -585,6 +583,24 @@ impl DetailPlacement {
     }
 }
 
+/// The Remove edits as they apply to a crop at `source_origin` and
+/// `source_size` of `full_raw`.
+fn detail_remove_scene<'a>(
+    edits: &'a RemoveEditState,
+    full_raw: &'a LoadedRaw,
+    exposure: &'a ExposureParams,
+    source_origin: [u32; 2],
+    source_size: [u32; 2],
+) -> RemoveSceneContext<'a> {
+    RemoveSceneContext::new(
+        edits,
+        full_raw,
+        exposure,
+        source_origin.map(|origin| origin as f32),
+        source_size.map(|size| size as f32),
+    )
+}
+
 impl PreviewDetail {
     pub(super) fn placement(&self) -> DetailPlacement {
         DetailPlacement {
@@ -603,12 +619,12 @@ impl PreviewDetail {
         full_raw: &'a LoadedRaw,
         exposure: &'a ExposureParams,
     ) -> RemoveSceneContext<'a> {
-        RemoveSceneContext::new(
+        detail_remove_scene(
             edits,
             full_raw,
             exposure,
-            self.source_origin.map(|origin| origin as f32),
-            self.source_size.map(|size| size as f32),
+            self.source_origin,
+            self.source_size,
         )
     }
 

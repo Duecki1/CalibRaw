@@ -1310,10 +1310,10 @@ mod tests {
         raw
     }
 
-    /// Down-scale ratios between one and three used to place each proxy pixel
-    /// on the nearest sample of its colour, up to a source pixel away, so thin
-    /// lines came out wobbly. Every pixel now sits where it belongs: a ramp is
-    /// reproduced to within a quarter pixel.
+    /// Down-scale ratios between one and three place each proxy pixel where it
+    /// belongs instead of on the nearest sample of its colour up to a source
+    /// pixel away, so thin lines stay straight: a ramp is reproduced to within
+    /// a quarter pixel.
     #[test]
     fn small_ratio_proxy_places_every_pixel_exactly_on_a_ramp() {
         let raw = bayer_ramp(240, 240);

@@ -58,6 +58,9 @@ pub fn preview_mask_layer_capacity(mask_count: usize) -> usize {
         .min(MAX_LOCAL_MASKS)
 }
 
+/// Profile LUTs the preview graph reserves in addition to its processing
+/// surfaces.
+const PREVIEW_PROFILE_BUFFER_BYTES: u64 = 4 * 1024 * 1024;
 /// Resident bytes of an export tile that must still fit beside the previews
 /// (a 752 px tile, see `android_budget_scales_with_device_ram_within_bounds`).
 const MOBILE_EXPORT_HEADROOM_BYTES: u64 = 168 * 1024 * 1024;
@@ -145,20 +148,13 @@ impl RawGpuPipeline {
         cfa_kind: CfaKind,
         mask_layers: usize,
     ) -> u64 {
-        build_gpu_resource_plan(GpuResourcePlanInput {
+        build_gpu_resource_plan(preview_plan_input(
             width,
             height,
-            quality: ProcessingQuality::Preview,
-            tone_scale: tone_analysis_scale(),
-            mask_atlas_edge: interactive_mask_atlas_edge(width, height),
-            mask_layers: mask_layers.clamp(1, MAX_LOCAL_MASKS) as u32,
-            profile_buffer_bytes: 4 * 1024 * 1024,
-            stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
-            mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
-            ai_cfa: false,
-            raster_source: false,
             cfa_kind,
-        })
+            interactive_mask_atlas_edge(width, height),
+            mask_layers,
+        ))
         .map_or(u64::MAX, |plan| plan.admitted_gpu_bytes)
     }
 
@@ -200,22 +196,38 @@ fn mobile_preview_resource_plan(
         (f64::from(width) * scale).ceil().max(1.0) as u32,
         (f64::from(height) * scale).ceil().max(1.0) as u32,
     );
-    build_gpu_resource_plan(GpuResourcePlanInput {
+    // The edge `compute_derived_geometry` picks on Android when the image
+    // sizes the atlas.
+    let mask_atlas_edge = shape
+        .mask_atlas_edge
+        .unwrap_or_else(|| crate::pipeline::masks::MASK_ATLAS_EDGE_ANDROID.min(width.max(height)))
+        .max(64);
+    build_gpu_resource_plan(preview_plan_input(
+        width,
+        height,
+        cfa_kind,
+        mask_atlas_edge,
+        shape.mask_layers,
+    ))
+}
+
+/// The resource plan of a preview graph, shared by the size bound and the
+/// admission check so both account for the same buffers.
+fn preview_plan_input(
+    width: u32,
+    height: u32,
+    cfa_kind: CfaKind,
+    mask_atlas_edge: u32,
+    mask_layers: usize,
+) -> GpuResourcePlanInput {
+    GpuResourcePlanInput {
         width,
         height,
         quality: ProcessingQuality::Preview,
         tone_scale: tone_analysis_scale(),
-        // The edge `compute_derived_geometry` picks on Android when the image
-        // sizes the atlas.
-        mask_atlas_edge: shape
-            .mask_atlas_edge
-            .unwrap_or_else(|| {
-                crate::pipeline::masks::MASK_ATLAS_EDGE_ANDROID.min(width.max(height))
-            })
-            .max(64),
-        mask_layers: shape.mask_layers.clamp(1, MAX_LOCAL_MASKS) as u32,
-        // Reserve space for profile LUTs in addition to the processing surfaces.
-        profile_buffer_bytes: 4 * 1024 * 1024,
+        mask_atlas_edge,
+        mask_layers: mask_layers.clamp(1, MAX_LOCAL_MASKS) as u32,
+        profile_buffer_bytes: PREVIEW_PROFILE_BUFFER_BYTES,
         stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
         mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
         ai_cfa: false,
@@ -223,7 +235,7 @@ fn mobile_preview_resource_plan(
         // per pixel of the CFA textures it replaces.
         raster_source: false,
         cfa_kind,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -336,8 +348,8 @@ mod tests {
         }
     }
 
-    /// The 4 GB Tab M11 case: the fitted preview used to stop at about 1060 px
-    /// on every Android device; a 1920x1200 screen shows a 3:2 photo at 1800 px.
+    /// The 4 GB Tab M11 case: a 1920x1200 screen shows a 3:2 photo at 1800 px,
+    /// so the fitted preview must reach at least 1600 px.
     #[test]
     fn a_four_gigabyte_tablet_fits_a_near_screen_sized_preview() {
         const GIB: u64 = 1024 * 1024 * 1024;
@@ -354,9 +366,9 @@ mod tests {
         assert!(edge >= 1_600, "fitted preview capped at {edge} px");
     }
 
-    /// The Tab M11 case: at 100% the screen shows 1296x970 photo pixels, and the
-    /// zoomed crop used to be capped at 121 MiB although the fitted graph
-    /// reserves about 85 MiB of its larger share.
+    /// The Tab M11 case: at 100% the screen shows 1296x970 photo pixels, and
+    /// the zoomed crop must get the memory a resident fitted graph of about
+    /// 85 MiB leaves in its larger share.
     #[test]
     fn the_detail_budget_follows_the_resident_fitted_graph() {
         let limit = 476 * MIB + 800 * 1024;

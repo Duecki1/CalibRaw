@@ -170,7 +170,7 @@ pub(in crate::app) struct DetailView {
     /// The canvas, which bounds the crop's size.
     pub canvas_pixels: [u32; 2],
     /// The part of the image in view along each source axis, which sets the
-    /// crop's density. See `PreviewState::visible_image_pixels`.
+    /// crop's density. See `PreviewState::detail_view`.
     pub visible_pixels: [u32; 2],
 }
 
@@ -272,6 +272,12 @@ pub(in crate::app) fn detail_mask_edge() -> u32 {
     } else {
         2048
     }
+}
+
+/// The mask atlas of the reduced zoomed crop: half the sharp crop's, matching
+/// its half-size graph.
+pub(in crate::app) fn interactive_detail_mask_edge() -> u32 {
+    detail_mask_edge() / 2
 }
 
 pub(in crate::app) fn detail_mask_source_region(

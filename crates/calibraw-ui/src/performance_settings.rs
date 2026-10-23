@@ -570,8 +570,11 @@ mod tests {
         assert!(settings.thumbnail_workers_automatic);
         assert_eq!(settings.thumbnail_workers, 1);
         // The default is kept as the current default's density, not remapped to a
-        // different tier.
-        assert_eq!(settings.preview_quality, crate::app::PreviewQuality::Max);
+        // different tier (constrained-memory platforms default one step down).
+        assert_eq!(
+            settings.preview_quality,
+            crate::app::PreviewQuality::default()
+        );
         assert!(!settings.image_relative_brush_size);
         assert!(settings.show_develop_navigation_labels);
         assert!(!settings.develop_histogram_open);

@@ -28,18 +28,22 @@ const POINTER_RECHECK: Duration = Duration::from_millis(100);
 /// The largest graph built where the backend reports no GPU memory.
 const UNREPORTED_MEMORY_LIMIT_BYTES: u64 = 1536 * 1024 * 1024;
 
+/// The extra render may use this fraction of the adapter's reported free
+/// memory: half.
+const REPORTED_MEMORY_SHARE_DIVISOR: u64 = 2;
+
 /// A rendered image: tightly packed RGBA8, display-encoded, in source space.
-pub(crate) struct FullResolutionRgba {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
+struct FullResolutionRgba {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
 }
 
 /// What the fitted preview shows: its texture, and how often its output has
 /// been rendered (`RawGpuPipeline::output_revision`). Both change with every
 /// edit, rebuild and document, so equal values mean the same picture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FittedOutput {
+struct FittedOutput {
     texture: egui::TextureId,
     revision: u64,
 }
@@ -171,7 +175,7 @@ struct FullResolutionJob {
     raw: Arc<LoadedRaw>,
     exposure: ExposureParams,
     masks: Arc<MaskStack>,
-    remove: RemoveEditState,
+    remove: Arc<RemoveEditState>,
     geometry: GeometryTransform,
     programs: Option<RawGpuProgramTemplate>,
     /// The longest edge of the result.
@@ -230,7 +234,11 @@ impl CalibRawApp {
         else {
             return false;
         };
-        full.width.max(full.height) > preview.width.max(preview.height).saturating_add(5)
+        full.width.max(full.height)
+            > preview
+                .width
+                .max(preview.height)
+                .saturating_add(PROXY_EDGE_TOLERANCE)
     }
 
     pub(in crate::app) fn advance_full_resolution(&mut self, frame: &eframe::Frame) {
@@ -266,7 +274,7 @@ impl CalibRawApp {
         );
         let allowed = calibraw_gpu::memory::adapter_memory(&render_state.device)
             .map_or(UNREPORTED_MEMORY_LIMIT_BYTES, |memory| {
-                memory.available() / 2
+                memory.available() / REPORTED_MEMORY_SHARE_DIVISOR
             });
         if let Some(reason) = declined(
             raw.width.max(raw.height),
@@ -300,7 +308,7 @@ impl CalibRawApp {
             raw,
             exposure: self.develop.target_exposure,
             masks,
-            remove: (*self.inpaint.edits).clone(),
+            remove: Arc::clone(&self.inpaint.edits),
             geometry: self.develop.geometry,
             programs: self.preview.program_template.clone(),
             target_edge,
@@ -633,7 +641,7 @@ mod tests {
             raw,
             exposure: ExposureParams::default(),
             masks: Arc::new(MaskStack::default()),
-            remove: RemoveEditState::default(),
+            remove: Arc::new(RemoveEditState::default()),
             geometry: GeometryTransform::default(),
             programs: None,
             target_edge: 48,

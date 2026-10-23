@@ -23,11 +23,21 @@ enum FittedRebuild {
     Proxy,
 }
 
-/// A proxy at least as large as `requested_edge` is kept (within the 5 pixels
-/// a CFA-aligned proxy may fall short), unless the Preview quality setting just
-/// changed (`shrink_oversized`) and it is clearly larger than the new density
-/// needs. `visibility_changed`: the previewed masks or preset changed what the
-/// graph must hold.
+/// A proxy is clearly larger than the density asks for when it exceeds the
+/// requested edge by more than an eighth plus a few pixels.
+const SHRINK_MARGIN_DIVISOR: u32 = 8;
+const SHRINK_MARGIN_PIXELS: u32 = 8;
+
+fn clearly_larger(edge: u32, requested_edge: u32) -> bool {
+    edge > requested_edge
+        .saturating_add(requested_edge / SHRINK_MARGIN_DIVISOR + SHRINK_MARGIN_PIXELS)
+}
+
+/// A proxy at least as large as `requested_edge` is kept (within
+/// `PROXY_EDGE_TOLERANCE`), unless the Preview quality setting just changed
+/// (`shrink_oversized`) and it is clearly larger than the new density needs.
+/// `visibility_changed`: the previewed masks or preset changed what the graph
+/// must hold.
 fn fitted_rebuild(
     current: Option<FittedGraph>,
     requested_edge: u32,
@@ -36,9 +46,8 @@ fn fitted_rebuild(
 ) -> FittedRebuild {
     let Some(graph) = current.filter(|graph| {
         !visibility_changed
-            && graph.edge.saturating_add(5) >= requested_edge
-            && !(shrink_oversized
-                && graph.edge > requested_edge.saturating_add(requested_edge / 8 + 8))
+            && graph.edge.saturating_add(PROXY_EDGE_TOLERANCE) >= requested_edge
+            && !(shrink_oversized && clearly_larger(graph.edge, requested_edge))
             && graph.ai_source_matches
     }) else {
         return FittedRebuild::Proxy;
@@ -119,7 +128,12 @@ impl CalibRawApp {
             (preview_source.as_ref(), self.develop.preview_raw.as_ref())
         {
             let target = self.requested_preview_edge_for_source(full_raw);
-            if preview_raw.width.max(preview_raw.height).saturating_add(5) < target {
+            if preview_raw
+                .width
+                .max(preview_raw.height)
+                .saturating_add(PROXY_EDGE_TOLERANCE)
+                < target
+            {
                 self.preview.quality_dirty = true;
             }
         }
@@ -145,7 +159,7 @@ impl CalibRawApp {
         {
             let target_edge = self.requested_preview_edge_for_source(full_raw);
             let current_edge = preview_raw.width.max(preview_raw.height);
-            if current_edge.saturating_add(5) < target_edge {
+            if current_edge.saturating_add(PROXY_EDGE_TOLERANCE) < target_edge {
                 self.preview.quality_dirty = true;
             }
         }
@@ -456,7 +470,11 @@ impl CalibRawApp {
             );
             let latest_edge = self.requested_preview_edge_for_source(full);
             if prepared.quality != self.preview.quality
-                || preview.width.max(preview.height).saturating_add(5) < latest_edge
+                || preview
+                    .width
+                    .max(preview.height)
+                    .saturating_add(PROXY_EDGE_TOLERANCE)
+                    < latest_edge
             {
                 self.preview.quality_dirty = true;
             }

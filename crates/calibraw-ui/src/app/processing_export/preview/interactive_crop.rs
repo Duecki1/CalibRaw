@@ -39,7 +39,7 @@ impl CalibRawApp {
             sharp.source_origin,
             sharp.source_size,
         );
-        let mask_atlas_edge = detail_mask_edge() / 2;
+        let mask_atlas_edge = interactive_detail_mask_edge();
         let placement = DetailPlacement {
             virtual_origin,
             virtual_full_size,

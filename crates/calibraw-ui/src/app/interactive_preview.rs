@@ -79,6 +79,8 @@ fn interactive_edge(source_edge: u32) -> Option<u32> {
     (source_edge >= MIN_SOURCE_EDGE).then_some(source_edge / 2)
 }
 
+/// The reduced whole-photo graph renders half the fitted edge, so its mask
+/// atlas can be small.
 fn interactive_mask_edge() -> u32 {
     if PlatformCaps::CURRENT.constrained_memory() {
         384
@@ -204,7 +206,7 @@ enum Reduced {
 }
 
 /// The reduced graph.
-pub(crate) struct InteractivePreview {
+struct InteractivePreview {
     reduced: Reduced,
     /// What it was reduced from, the fitted proxy or the sharp crop's raw. It
     /// is dropped once that changes.
@@ -222,7 +224,8 @@ impl InteractivePreview {
     }
 }
 
-/// A reduction of the fitted proxy being prepared.
+/// A reduction of the current sharp source (the fitted proxy, or the zoomed
+/// crop's raw) being prepared.
 struct WarmUp {
     source: Arc<LoadedRaw>,
     receiver: mpsc::Receiver<Arc<LoadedRaw>>,
@@ -735,9 +738,8 @@ impl CalibRawApp {
         let masks = self.preview_mask_stack();
         let params = GpuParams::new(&self.develop.target_exposure, &masks, reduced)
             .with_vignette_geometry(self.develop.geometry);
-        let options = PipelineOptions::new(ProcessingQuality::Preview)
+        let options = fitted_pipeline_options(masks.masks.len())
             .mask_atlas_edge(interactive_mask_edge())
-            .mask_layers(preview_mask_layer_capacity(masks.masks.len()))
             .programs(&template);
         let pipeline = RawGpuPipeline::new(
             &render_state.device,

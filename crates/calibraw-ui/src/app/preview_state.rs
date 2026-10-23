@@ -54,6 +54,16 @@ const MIN_PROXY_EDGE: u32 = 640;
 /// (2 for Bayer, 6 for X-Trans) never leaves it shorter than asked.
 const CFA_PHASE_GUARD: u32 = 6;
 
+/// A CFA-aligned proxy may fall this many pixels short of the edge asked for
+/// and still count as full size.
+pub(crate) const PROXY_EDGE_TOLERANCE: u32 = 5;
+
+/// `requested` rounded down to a whole number and padded with the CFA phase
+/// guard, so the phase-aligned proxy is never shorter than asked.
+fn cfa_guarded_edge(requested: f64) -> u32 {
+    requested.min(f64::from(u32::MAX - CFA_PHASE_GUARD)) as u32 + CFA_PHASE_GUARD
+}
+
 /// The preview graph a size bound is for: it sets how much of the GPU budget
 /// the graph may take on a memory-constrained device, and what the graph
 /// reserves besides its pixels.
@@ -173,10 +183,9 @@ impl PreviewQuality {
             geometry.crop_pixel_dimensions(source_width, source_height);
         let fit_scale = (f64::from(viewport_pixels[0].max(1)) / f64::from(display_width.max(1)))
             .min(f64::from(viewport_pixels[1].max(1)) / f64::from(display_height.max(1)));
-        let requested = (f64::from(source_edge) * fit_scale * f64::from(self.pixel_scale()))
-            .ceil()
-            .min(f64::from(u32::MAX - CFA_PHASE_GUARD)) as u32
-            + CFA_PHASE_GUARD;
+        let requested = cfa_guarded_edge(
+            (f64::from(source_edge) * fit_scale * f64::from(self.pixel_scale())).ceil(),
+        );
         Self::bounded_source_edge(
             source_width,
             source_height,
@@ -193,8 +202,7 @@ impl PreviewQuality {
         const BORDER_SCALE: f32 = 1.35;
         let viewport_edge = viewport_pixels[0].max(viewport_pixels[1]).max(1) as f64;
         let requested = (viewport_edge * f64::from(self.pixel_scale() * BORDER_SCALE)).ceil();
-        MIN_PROXY_EDGE
-            .max(requested.min(f64::from(u32::MAX - CFA_PHASE_GUARD)) as u32 + CFA_PHASE_GUARD)
+        MIN_PROXY_EDGE.max(cfa_guarded_edge(requested))
     }
 }
 
@@ -443,6 +451,7 @@ impl PreviewState {
     pub(crate) fn drop_detail_rebuild(&mut self) {
         self.cancel_detail_rebuild();
         self.detail_rebuild = None;
+        self.detail_block = None;
     }
 
     /// Fits the whole image in the view again and stops view motion. Bumping
@@ -454,6 +463,7 @@ impl PreviewState {
         self.motion_at = None;
         self.touch_navigation_active = false;
         self.pending_view = None;
+        self.detail_block = None;
         self.revision = self.revision.wrapping_add(1);
     }
 
