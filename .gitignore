@@ -22,6 +22,9 @@ android/local.properties
 .idea/
 android.iml
 
+# macOS Finder metadata
+.DS_Store
+
 # Local config
 .cargo/*
 !.cargo/config.toml
