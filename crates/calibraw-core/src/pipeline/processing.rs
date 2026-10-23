@@ -5,9 +5,11 @@ use super::{
 use rayon::prelude::*;
 
 mod ai_denoised_regions;
+mod display_downscale;
 mod proxy;
 mod tiles;
 use ai_denoised_regions::*;
+pub use display_downscale::downscale_display_rgba8;
 pub use proxy::*;
 pub use tiles::*;
 

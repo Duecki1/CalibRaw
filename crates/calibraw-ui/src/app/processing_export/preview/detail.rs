@@ -12,15 +12,34 @@ impl CalibRawApp {
             self.preview.detail_urgent = false;
             return;
         }
-        if self.preview.touch_navigation_active
-            || self.ui.active_tab != AppTab::Develop
-            || self.preview.quality_dirty
-            || self.develop.lens_correction_dirty
-            || self.lens_correction_busy()
-            || self.develop.load_receiver.is_some()
-            || self.ai_denoise_running()
-            || self.preview.detail_rebuild_receiver.is_some()
-        {
+        // Fingers on the photo no longer block the refresh: each move restarts
+        // the idle delay below, so the crop is prepared once a pinch or pan
+        // pauses instead of only after the fingers lift.
+        let blocked = if self.ui.active_tab != AppTab::Develop {
+            Some("another tab is open")
+        } else if self.preview.quality_dirty {
+            Some("the fitted preview is being rebuilt")
+        } else if self.develop.lens_correction_dirty || self.lens_correction_busy() {
+            Some("lens correction is running")
+        } else if self.develop.load_receiver.is_some() {
+            Some("a photo is loading")
+        } else if self.ai_denoise_running() {
+            Some("AI denoise is running")
+        } else if self.preview.detail_rebuild_receiver.is_some() {
+            Some("the previous crop is still being prepared")
+        } else {
+            None
+        };
+        if blocked != self.preview.detail_block {
+            self.preview.detail_block = blocked;
+            if let Some(reason) = blocked {
+                calibraw_core::diagnostics::record(format!(
+                    "Zoom detail waits: {reason} (zoom {:.2})",
+                    self.preview.zoom
+                ));
+            }
+        }
+        if blocked.is_some() {
             return;
         }
         if self.preview_detail_is_current() {
@@ -40,13 +59,21 @@ impl CalibRawApp {
         let Some(source_raw) = preview_source.as_ref().map(Arc::clone) else {
             return;
         };
+        let view = self
+            .preview
+            .detail_view([source_raw.width, source_raw.height]);
+        calibraw_core::diagnostics::record(format!(
+            "Zoom detail requested: zoom {:.2}, visible {:?}, canvas {:?}, visible pixels {:?}",
+            self.preview.zoom, self.preview.visible_uv, view.canvas_pixels, view.visible_pixels
+        ));
         let request = PreviewDetailRequest {
             source_raw,
             revision: self.preview.revision,
             visible: self.preview.visible_uv,
-            viewport_pixels: self.preview.source_viewport_pixels(),
+            view,
             quality: self.preview.quality,
             processing_halo: self.preview_detail_halo(),
+            graph: self.detail_graph(),
             exposure: if self.preview.original_requested {
                 self.preview.original_exposure
             } else {
@@ -139,6 +166,10 @@ impl CalibRawApp {
             || prepared.quality != self.preview.quality
             || self.preview.quality_dirty
         {
+            calibraw_core::diagnostics::record(format!(
+                "Zoom detail discarded as outdated (zoom {:.2}, revision {} vs {}, quality dirty {})",
+                self.preview.zoom, prepared.revision, self.preview.revision, self.preview.quality_dirty
+            ));
             if source_is_current && self.preview.zoom > DETAIL_ZOOM_START {
                 self.preview.detail_urgent = true;
                 self.preview.motion_at = Some(Instant::now());
@@ -150,9 +181,11 @@ impl CalibRawApp {
         if self.preview_detail_is_current() {
             return;
         }
-        // Coalesce navigation while the one preparation worker is running.
-        // A completely offscreen result is no longer worth uploading to the GPU.
-        if self.preview.touch_navigation_active
+        // Coalesce navigation while the one preparation worker is running: under
+        // fingers, a move since the request means the view has left what was
+        // prepared. A completely offscreen result is no longer worth uploading
+        // to the GPU.
+        if (self.preview.touch_navigation_active && self.preview.motion_at.is_some())
             || !(0..2).all(|axis| {
                 prepared.visible.max[axis] > self.preview.visible_uv.min[axis]
                     && prepared.visible.min[axis] < self.preview.visible_uv.max[axis]
@@ -161,7 +194,21 @@ impl CalibRawApp {
             self.egui_ctx.request_repaint();
             return;
         }
+        let installed_at = Instant::now();
         if self.install_prepared_preview_detail(frame, prepared) {
+            calibraw_core::diagnostics::record(format!(
+                "Zoom detail installed in {:.3}s: {}",
+                installed_at.elapsed().as_secs_f64(),
+                self.preview.detail.as_ref().map_or_else(
+                    || "no texture".to_owned(),
+                    |detail| format!(
+                        "texture {}x{} for source crop {:?}",
+                        detail.pipeline.gpu().width,
+                        detail.pipeline.gpu().height,
+                        detail.source_size
+                    )
+                )
+            ));
             self.preview.detail_pending_stage = None;
             if self.preview.original_requested {
                 self.preview.original_rendered_state = None;
@@ -464,6 +511,7 @@ impl PreviewDetail {
             requested.size[1],
             requested.edge,
             self.raw.cfa_kind,
+            requested.graph,
         )
     }
 }
@@ -481,10 +529,11 @@ struct PreviewDetailRequest {
     source_raw: Arc<LoadedRaw>,
     revision: u64,
     visible: PreviewUvRect,
-    viewport_pixels: [u32; 2],
+    view: DetailView,
     quality: PreviewQuality,
     exposure: ExposureParams,
     processing_halo: u32,
+    graph: DetailGraph,
 }
 
 fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<PreparedPreviewDetail> {
@@ -492,18 +541,20 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         source_raw,
         revision,
         visible,
-        viewport_pixels,
+        view,
         quality,
         exposure,
         processing_halo,
+        graph,
     } = request;
     let plan = PreviewDetailPlan::new(
         [source_raw.width, source_raw.height],
         source_raw.cfa_kind,
         visible,
-        viewport_pixels,
+        view,
         quality,
         processing_halo,
+        graph,
     );
     let [x0, y0] = plan.origin;
     let [crop_width, crop_height] = plan.size;
@@ -520,6 +571,10 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         ],
     };
     let requested_edge = plan.edge;
+    calibraw_core::diagnostics::record(format!(
+        "Zoom detail plan: crop {}x{} at {:?}, edge {}",
+        crop_width, crop_height, plan.origin, requested_edge
+    ));
     if source_raw.uses_opposed_chroma(&exposure) {
         source_raw.inpaint_opposed_chroma_for_exposure(&exposure);
     }
@@ -530,6 +585,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
             source_size[1],
             requested_edge,
             source_raw.cfa_kind,
+            graph,
         ) {
             // The detail texture is sampled down to the viewport only after the
             // complete GPU graph has run.  Keeping the mosaic native here is what
@@ -571,6 +627,7 @@ fn settled_detail_uses_native_source(
     region_height: u32,
     requested_edge: u32,
     cfa_kind: crate::pipeline::CfaKind,
+    graph: DetailGraph,
 ) -> bool {
     if !is_sensor_raw {
         return false;
@@ -592,6 +649,7 @@ fn settled_detail_uses_native_source(
             region_height,
             region_width.max(region_height),
             cfa_kind,
+            graph.preview_graph(),
         ) == region_width.max(region_height)
 }
 
@@ -632,7 +690,8 @@ mod tests {
             3_800,
             2_500,
             2_000,
-            crate::pipeline::CfaKind::Bayer
+            crate::pipeline::CfaKind::Bayer,
+            DetailGraph::unconstrained()
         ));
     }
 
@@ -643,7 +702,8 @@ mod tests {
             6_000,
             4_000,
             2_000,
-            crate::pipeline::CfaKind::Bayer
+            crate::pipeline::CfaKind::Bayer,
+            DetailGraph::unconstrained()
         ));
     }
 
@@ -654,7 +714,8 @@ mod tests {
             1_000,
             700,
             2_000,
-            crate::pipeline::CfaKind::Bayer
+            crate::pipeline::CfaKind::Bayer,
+            DetailGraph::unconstrained()
         ));
     }
 }

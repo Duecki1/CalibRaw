@@ -246,12 +246,23 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         restore_ai_denoise_result(&full_raw, &exposure, ai_denoise_result_path.as_deref())?;
         prepare_highlight_analysis(&full_raw, &exposure);
 
-        let preview_raw =
-            build_preview_proxy(&full_raw, preview_quality, viewport_pixels, geometry);
+        let preview_raw = build_preview_proxy(
+            &full_raw,
+            preview_quality,
+            viewport_pixels,
+            geometry,
+            masks.masks.len(),
+        );
         let initial_params =
             GpuParams::new(&exposure, &masks, &preview_raw).with_vignette_geometry(geometry);
-        let pipeline =
-            create_preview_pipeline(&device, &queue, &preview_raw, &initial_params, programs)?;
+        let pipeline = create_preview_pipeline(
+            &device,
+            &queue,
+            &preview_raw,
+            &initial_params,
+            programs,
+            masks.masks.len(),
+        )?;
         let mask_source = if needs_canonical_mask_source(&masks) {
             Some(reconstruct_canonical_mask_source(
                 &pipeline,
@@ -801,6 +812,7 @@ fn build_preview_proxy(
     quality: PreviewQuality,
     viewport_pixels: [u32; 2],
     geometry: GeometryTransform,
+    mask_count: usize,
 ) -> Arc<LoadedRaw> {
     let spec = ProxySpec {
         max_edge: quality.proxy_edge_for_fitted_source(
@@ -809,6 +821,7 @@ fn build_preview_proxy(
             full_raw.height,
             geometry,
             full_raw.cfa_kind,
+            mask_count,
         ),
     };
     let proxy_started = Instant::now();
@@ -837,6 +850,7 @@ fn create_preview_pipeline(
     preview_raw: &LoadedRaw,
     params: &GpuParams,
     programs: PreviewProgramSources,
+    mask_count: usize,
 ) -> Result<RawGpuPipeline, String> {
     let PreviewProgramSources {
         previous_pipeline,
@@ -878,16 +892,10 @@ fn create_preview_pipeline(
                 .map(RawGpuPipeline::program_template)
         });
 
-    let quality = ProcessingQuality::Preview;
+    let options = fitted_pipeline_options(mask_count);
     let compile = || {
-        RawGpuPipeline::new(
-            device,
-            queue,
-            preview_raw,
-            params,
-            PipelineOptions::new(quality),
-        )
-        .map_err(|error| format!("GPU preview setup failed: {error:#}"))
+        RawGpuPipeline::new(device, queue, preview_raw, params, options)
+            .map_err(|error| format!("GPU preview setup failed: {error:#}"))
     };
     let pipeline_started = Instant::now();
     let pipeline = match template {
@@ -896,7 +904,7 @@ fn create_preview_pipeline(
             queue,
             preview_raw,
             params,
-            PipelineOptions::new(quality).programs(&template),
+            options.programs(&template),
         ) {
             Ok(pipeline) => {
                 calibraw_core::diagnostics::record("GPU preview reused precompiled programs");

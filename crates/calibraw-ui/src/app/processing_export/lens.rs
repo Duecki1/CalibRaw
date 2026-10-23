@@ -90,6 +90,7 @@ impl CalibRawApp {
             original_raw.height,
             self.develop.geometry,
             original_raw.cfa_kind,
+            self.preview_mask_stack().masks.len(),
         );
         self.develop.lens_correction_dirty = false;
         self.start_lens_correction_task(LensCorrectionTaskRequest {
@@ -351,7 +352,7 @@ impl CalibRawApp {
                 &render_state.queue,
                 &prepared.preview_raw,
                 &params,
-                PipelineOptions::new(ProcessingQuality::Preview),
+                fitted_pipeline_options(preview_masks.masks.len()),
             ) {
                 Ok(pipeline) => pipeline,
                 Err(error) => {
@@ -411,6 +412,7 @@ impl CalibRawApp {
         self.masks.navigation_dirty_layers = [false; MAX_LOCAL_MASKS];
         self.develop.loaded_raw = Some(prepared.full_raw);
         self.develop.preview_raw = Some(prepared.preview_raw);
+        self.preview.full_resolution.invalidate();
         self.preview.reset_view();
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;

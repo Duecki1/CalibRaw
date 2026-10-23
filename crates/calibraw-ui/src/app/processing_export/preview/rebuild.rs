@@ -17,59 +17,53 @@ impl CalibRawApp {
         self.persist_performance_settings();
         if preview_source.is_some() || self.develop.load_receiver.is_some() {
             self.preview.quality_dirty = true;
+            self.preview.shrink_oversized = true;
             self.note_preview_motion();
         }
     }
 
+    /// Whether the fitted graph has fewer mask layers than the masks it must
+    /// render. Its layers are sized for the masks it was built with
+    /// (`fitted_pipeline_options`), so it is rebuilt once there are more.
+    pub(in crate::app) fn fitted_mask_capacity_stale(&self) -> bool {
+        self.preview.pipeline().is_some_and(|pipeline| {
+            pipeline.mask_layer_capacity() < self.preview_mask_stack().masks.len().max(1)
+        })
+    }
+
+    /// The longest edge the fitted preview should have: one rendered pixel
+    /// per screen pixel (scaled by the quality tier) of the image as it is
+    /// fitted into the canvas, which is what the load path asks for too.
+    /// Zoomed in, the sharp crop (`PreviewDetail`) covers the view, so the
+    /// fitted preview keeps the edge it has.
     pub(in crate::app) fn requested_preview_edge_for_source(&self, full_raw: &LoadedRaw) -> u32 {
-        let fallback = self
-            .preview
-            .quality
-            .proxy_edge_for_viewport(self.preview.viewport_pixels);
+        let fitted = self.preview.quality.proxy_edge_for_fitted_source(
+            self.preview.viewport_pixels,
+            full_raw.width,
+            full_raw.height,
+            self.develop.geometry,
+            full_raw.cfa_kind,
+            self.preview_mask_stack().masks.len(),
+        );
         if self.preview.zoom > DETAIL_ZOOM_START {
             return self
                 .develop
                 .preview_raw
                 .as_ref()
                 .map(|raw| raw.width.max(raw.height))
-                .unwrap_or(fallback)
+                .unwrap_or(fitted)
                 .min(full_raw.width.max(full_raw.height));
         }
-
-        let span_x = (self.preview.visible_uv.max[0] - self.preview.visible_uv.min[0])
-            .abs()
-            .clamp(1.0 / full_raw.width.max(1) as f32, 1.0);
-        let span_y = (self.preview.visible_uv.max[1] - self.preview.visible_uv.min[1])
-            .abs()
-            .clamp(1.0 / full_raw.height.max(1) as f32, 1.0);
-        let [viewport_width, viewport_height] =
-            self.preview.viewport_pixels.map(|value| value.max(1));
-        let quarter_turn = self.develop.geometry.quarter_turns % 2 == 1;
-        let (display_for_source_x, display_for_source_y) = if quarter_turn {
-            (viewport_height, viewport_width)
-        } else {
-            (viewport_width, viewport_height)
-        };
-        let source_x = full_raw.width.max(1) as f64 * f64::from(span_x);
-        let source_y = full_raw.height.max(1) as f64 * f64::from(span_y);
-        let source_to_display = (f64::from(display_for_source_x) / source_x)
-            .max(f64::from(display_for_source_y) / source_y);
-        let requested = (full_raw.width.max(full_raw.height) as f64
-            * source_to_display
-            * f64::from(self.preview.quality.pixel_scale()))
-        .ceil() as u32;
-        PreviewQuality::bounded_source_edge(
-            full_raw.width,
-            full_raw.height,
-            fallback.max(requested.saturating_add(6)),
-            full_raw.cfa_kind,
-        )
+        fitted
     }
 
     pub(crate) fn preview_source_region_changed(&mut self) {
         let preview_source = self.develop.loaded_raw.clone();
         if self.preview.zoom > DETAIL_ZOOM_START {
             return;
+        }
+        if self.preview.shrink_oversized {
+            self.preview.quality_dirty = true;
         }
         if let (Some(full_raw), Some(preview_raw)) =
             (preview_source.as_ref(), self.develop.preview_raw.as_ref())
@@ -286,6 +280,7 @@ impl CalibRawApp {
             self.preview.program_template = Some(template.clone());
         }
 
+        let options = fitted_pipeline_options(preview_masks.masks.len());
         let build_pipeline = || {
             if let Some(template) = program_template.as_ref() {
                 RawGpuPipeline::new(
@@ -293,7 +288,7 @@ impl CalibRawApp {
                     &render_state.queue,
                     &prepared.preview_raw,
                     &params,
-                    PipelineOptions::new(ProcessingQuality::Preview).programs(template),
+                    options.programs(template),
                 )
             } else {
                 RawGpuPipeline::new(
@@ -301,7 +296,7 @@ impl CalibRawApp {
                     &render_state.queue,
                     &prepared.preview_raw,
                     &params,
-                    PipelineOptions::new(ProcessingQuality::Preview),
+                    options,
                 )
             }
         };
@@ -403,6 +398,7 @@ impl CalibRawApp {
         self.masks.dirty_layers.fill(false);
         self.masks.detail_dirty_layers.fill(false);
         self.masks.navigation_dirty_layers.fill(false);
+        self.preview.full_resolution.invalidate();
         self.preview.revision = self.preview.revision.wrapping_add(1);
         self.preview.motion_at = (self.preview.zoom > DETAIL_ZOOM_START).then(Instant::now);
         if let (Some(full), Some(preview)) = (&preview_source, &self.develop.preview_raw) {
@@ -458,7 +454,13 @@ impl CalibRawApp {
         let quality = self.preview.quality;
         let ai_enabled = self.preview_exposure().ai_denoise_enabled;
 
-        let current_is_sufficient =
+        // A proxy at least as large as requested is kept, unless the setting
+        // just changed and it is clearly larger than the new density needs.
+        // While zoomed the fitted proxy is left alone, so the request waits for
+        // the view to return (`preview_source_region_changed`).
+        let shrink_oversized = self.preview.zoom <= DETAIL_ZOOM_START
+            && std::mem::take(&mut self.preview.shrink_oversized);
+        let pipeline_is_current =
             !crate::app::preview_visibility::PreviewVisibility::requires_rebuild(&self.egui_ctx)
                 && self
                     .develop
@@ -466,13 +468,21 @@ impl CalibRawApp {
                     .as_ref()
                     .zip(self.preview.pipeline())
                     .is_some_and(|(raw, pipeline)| {
-                        raw.width.max(raw.height).saturating_add(5) >= requested_edge
+                        let edge = raw.width.max(raw.height);
+                        edge.saturating_add(5) >= requested_edge
+                            && !(shrink_oversized
+                                && edge > requested_edge.saturating_add(requested_edge / 8 + 8))
                             && pipeline.immutable_ai_source_matches(source_raw.cfa_kind, ai_enabled)
                     });
-        if current_is_sufficient {
+        let capacity_stale = self.fitted_mask_capacity_stale();
+        if pipeline_is_current && !capacity_stale {
             self.preview.quality_dirty = false;
             return;
         }
+        // Only the mask layers are short: the proxy it was built with stays.
+        let reused_preview = pipeline_is_current
+            .then(|| self.develop.preview_raw.clone())
+            .flatten();
 
         if source_raw.uses_opposed_chroma(&self.develop.target_exposure) {
             source_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
@@ -486,17 +496,18 @@ impl CalibRawApp {
             .name("calibraw-preview-rebuild".to_owned())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let preview_raw =
-                        if worker_source.width.max(worker_source.height) <= requested_edge {
-                            Arc::clone(&worker_source)
-                        } else {
-                            Arc::new(build_proxy(
-                                &worker_source,
-                                ProxySpec {
-                                    max_edge: requested_edge,
-                                },
-                            ))
-                        };
+                    let preview_raw = if let Some(reused) = reused_preview {
+                        reused
+                    } else if worker_source.width.max(worker_source.height) <= requested_edge {
+                        Arc::clone(&worker_source)
+                    } else {
+                        Arc::new(build_proxy(
+                            &worker_source,
+                            ProxySpec {
+                                max_edge: requested_edge,
+                            },
+                        ))
+                    };
                     Ok::<_, anyhow::Error>(PreparedPreviewRebuild {
                         source_raw: worker_source,
                         preview_raw,
@@ -538,6 +549,57 @@ impl CalibRawApp {
 mod mask_upload_tests {
     use super::*;
     use crate::pipeline::{MaskImage, MaskKind};
+
+    #[test]
+    fn the_fitted_graph_is_built_with_spare_layers_for_its_masks_only() {
+        let gpu = calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {
+            label: "fitted mask capacity test",
+            adapter: calibraw_gpu::HeadlessAdapter::Software,
+            texture_dimension: wgpu::Limits::default().max_texture_dimension_2d,
+        });
+        let (device, queue) = match gpu {
+            Ok(gpu) => (gpu.device, gpu.queue),
+            Err(calibraw_gpu::HeadlessDeviceError::NoAdapter(_)) => {
+                eprintln!("fitted mask capacity test skipped: no headless GPU adapter");
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        };
+        let raw = LoadedRaw::from_scene_linear_rec2020(16, 16, vec![0.2; 16 * 16 * 3]).unwrap();
+        let exposure = ExposureParams::default();
+        let mut masks = MaskStack::default();
+        for _ in 0..3 {
+            masks.add_mask(MaskKind::Fullscreen);
+        }
+        let params = GpuParams::new(&exposure, &masks, &raw);
+        let pipeline = RawGpuPipeline::new(
+            &device,
+            &queue,
+            &raw,
+            &params,
+            fitted_pipeline_options(masks.masks.len()),
+        )
+        .unwrap();
+        assert_eq!(pipeline.mask_layer_capacity(), 4);
+        let layer = vec![0x3C00u16; (pipeline.mask_atlas_edge().pow(2)) as usize] /* f16 1.0 */;
+        assert!(pipeline.update_mask_layer(&queue, 3, &layer).is_ok());
+        assert!(pipeline.update_mask_layer(&queue, 4, &layer).is_err());
+
+        // A fourth mask still fits; a fifth needs a rebuilt graph.
+        masks.add_mask(MaskKind::Fullscreen);
+        assert!(masks.masks.len() <= pipeline.mask_layer_capacity());
+        masks.add_mask(MaskKind::Fullscreen);
+        assert!(masks.masks.len() > pipeline.mask_layer_capacity());
+        let rebuilt = RawGpuPipeline::new(
+            &device,
+            &queue,
+            &raw,
+            &GpuParams::new(&exposure, &masks, &raw),
+            fitted_pipeline_options(masks.masks.len()),
+        )
+        .unwrap();
+        assert_eq!(rebuilt.mask_layer_capacity(), 8);
+    }
 
     #[test]
     fn shared_depth_refresh_uploads_compact_atlases_and_clears_unused_dirty_slots() {

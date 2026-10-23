@@ -130,7 +130,13 @@ impl CalibRawApp {
                 detail_pending_stage: None,
                 navigation_pending_stage: None,
                 detail_urgent: false,
+                detail_block: None,
                 quality_dirty: false,
+                full_resolution: FullResolutionState::new(
+                    performance.preview_full_resolution
+                        && PlatformCaps::CURRENT.full_resolution_preview(),
+                ),
+                shrink_oversized: false,
                 rebuild_receiver: None,
                 detail_rebuild_receiver: None,
                 original_exposure: exposure,

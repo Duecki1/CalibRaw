@@ -20,14 +20,89 @@ pub(crate) enum AndroidOriginalHoldPhase {
     Moved,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// How densely the preview is rendered, as a share of the physical screen
+/// pixels it covers (`pixel_scale`): Max is exactly one rendered pixel per
+/// screen pixel, which is all a display can show, so no tier supersamples.
+/// The serialized names are stable; the density behind them moved in
+/// settings version 6 (`PerformanceSettings::sanitized`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PreviewQuality {
     Low,
-    #[default]
     Medium,
     High,
     Max,
+}
+
+impl Default for PreviewQuality {
+    /// Exact density, except where memory is constrained: a phone or tablet
+    /// starts one step down, which its GPU can update more smoothly.
+    fn default() -> Self {
+        if PlatformCaps::CURRENT.constrained_memory() {
+            Self::High
+        } else {
+            Self::Max
+        }
+    }
+}
+
+/// The smallest preview edge, used until the canvas has a size and as the
+/// floor for tiny canvases.
+const MIN_PROXY_EDGE: u32 = 640;
+
+/// The preview graph a size bound is for: it sets how much of the GPU budget
+/// the graph may take on a memory-constrained device, and what the graph
+/// reserves besides its pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PreviewGraph {
+    /// The whole image, sized for `mask_count` masks.
+    Fitted { mask_count: usize },
+    /// The zoomed crop, with its own mask atlas.
+    Detail {
+        mask_count: usize,
+        mask_atlas_edge: u32,
+        /// What the fitted graph has reserved; see
+        /// `PreviewResourceShape::fitted_resident_bytes`.
+        fitted_resident_bytes: u64,
+    },
+}
+
+impl PreviewGraph {
+    fn role(self) -> MobilePreviewRole {
+        match self {
+            Self::Fitted { .. } => MobilePreviewRole::Fitted,
+            Self::Detail { .. } => MobilePreviewRole::Detail,
+        }
+    }
+
+    /// Whole mask-layer steps, so the bound changes only where the graph's
+    /// capacity does.
+    fn shape(self) -> PreviewResourceShape {
+        match self {
+            Self::Fitted { mask_count } => PreviewResourceShape {
+                mask_atlas_edge: None,
+                mask_layers: preview_mask_layer_capacity(mask_count),
+                fitted_resident_bytes: 0,
+            },
+            Self::Detail {
+                mask_count,
+                mask_atlas_edge,
+                fitted_resident_bytes,
+            } => PreviewResourceShape {
+                mask_atlas_edge: Some(mask_atlas_edge),
+                mask_layers: preview_mask_layer_capacity(mask_count),
+                fitted_resident_bytes,
+            },
+        }
+    }
+}
+
+/// How to build the displayed fitted graph: with mask layers for the masks it
+/// renders and a few spare, instead of every layer the editor allows. A graph
+/// with fewer layers than masks is rebuilt (`CalibRawApp::fitted_mask_capacity_stale`).
+pub(crate) fn fitted_pipeline_options<'a>(mask_count: usize) -> PipelineOptions<'a> {
+    PipelineOptions::new(ProcessingQuality::Preview)
+        .mask_layers(preview_mask_layer_capacity(mask_count))
 }
 
 impl PreviewQuality {
@@ -36,20 +111,29 @@ impl PreviewQuality {
         height: u32,
         requested: u32,
         cfa_kind: crate::pipeline::CfaKind,
+        graph: PreviewGraph,
     ) -> u32 {
         if PlatformCaps::CURRENT.constrained_memory() {
-            RawGpuPipeline::bounded_mobile_preview_edge(width, height, requested, cfa_kind)
+            RawGpuPipeline::bounded_mobile_preview_edge(
+                width,
+                height,
+                requested,
+                cfa_kind,
+                graph.role(),
+                graph.shape(),
+            )
         } else {
             requested.min(width.max(height))
         }
     }
 
+    /// Rendered pixels per physical screen pixel along each axis.
     pub(crate) const fn pixel_scale(self) -> f32 {
         match self {
-            Self::Low => 0.75,
-            Self::Medium => 1.00,
-            Self::High => 1.25,
-            Self::Max => 1.50,
+            Self::Low => 0.50,
+            Self::Medium => 0.75,
+            Self::High => 0.90,
+            Self::Max => 1.00,
         }
     }
 
@@ -62,25 +146,12 @@ impl PreviewQuality {
         }
     }
 
-    pub(crate) const fn proxy_edge(self) -> u32 {
-        match self {
-            Self::Low => 640,
-            Self::Medium => 800,
-            Self::High => 1024,
-            Self::Max => 1280,
-        }
-    }
-
     fn edge_for_scale(self, viewport_pixels: [u32; 2], support_scale: f32) -> u32 {
         const CFA_PHASE_GUARD: u32 = 6;
         let viewport_edge = viewport_pixels[0].max(viewport_pixels[1]).max(1) as f64;
         let requested = (viewport_edge * f64::from(self.pixel_scale() * support_scale)).ceil();
-        self.proxy_edge()
+        MIN_PROXY_EDGE
             .max(requested.min(f64::from(u32::MAX - CFA_PHASE_GUARD)) as u32 + CFA_PHASE_GUARD)
-    }
-
-    pub(crate) fn proxy_edge_for_viewport(self, viewport_pixels: [u32; 2]) -> u32 {
-        self.edge_for_scale(viewport_pixels, 1.0)
     }
 
     pub(crate) fn proxy_edge_for_fitted_source(
@@ -90,6 +161,7 @@ impl PreviewQuality {
         source_height: u32,
         geometry: GeometryTransform,
         cfa_kind: crate::pipeline::CfaKind,
+        mask_count: usize,
     ) -> u32 {
         const CFA_PHASE_GUARD: u32 = 6;
         let source_width = source_width.max(1);
@@ -106,11 +178,15 @@ impl PreviewQuality {
         Self::bounded_source_edge(
             source_width,
             source_height,
-            self.proxy_edge().max(requested),
+            MIN_PROXY_EDGE.max(requested),
             cfa_kind,
+            PreviewGraph::Fitted { mask_count },
         )
     }
 
+    /// The most samples along the long edge a zoomed crop gets: the viewport at
+    /// this tier's density, with 35% extra for the border the crop keeps
+    /// around the view so small pans need no new render.
     pub(crate) fn detail_edge_for_viewport(self, viewport_pixels: [u32; 2]) -> u32 {
         self.edge_for_scale(viewport_pixels, 1.35)
     }
@@ -276,7 +352,16 @@ pub(crate) struct PreviewState {
     pub(crate) detail_pending_stage: Option<ProcessingStage>,
     pub(crate) navigation_pending_stage: Option<ProcessingStage>,
     pub(crate) detail_urgent: bool,
+    /// Why the zoomed crop is not being prepared, as last reported to the
+    /// diagnostics, so each reason is reported once.
+    pub(crate) detail_block: Option<&'static str>,
     pub(crate) quality_dirty: bool,
+    /// The idle-time render from the native RAW; see `full_resolution`.
+    pub(crate) full_resolution: FullResolutionState,
+    /// The Preview quality setting changed: the next check rebuilds a proxy
+    /// that is clearly larger than the new density asks for, instead of
+    /// keeping it as sufficient.
+    pub(crate) shrink_oversized: bool,
     pub(crate) rebuild_receiver: Option<mpsc::Receiver<PreviewRebuildEvent>>,
     pub(crate) detail_rebuild_receiver: Option<mpsc::Receiver<PreviewDetailRebuildEvent>>,
     pub(crate) original_exposure: ExposureParams,

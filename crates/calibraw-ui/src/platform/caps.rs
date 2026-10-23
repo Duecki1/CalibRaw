@@ -110,4 +110,11 @@ impl PlatformCaps {
     pub(crate) const fn constrained_memory(self) -> bool {
         matches!(self.memory, MemoryClass::Constrained)
     }
+
+    /// Whether the preview can be rendered from the whole native photo while
+    /// idle: it takes a graph of the photo's size for a few seconds, which
+    /// only a device with its own GPU memory has.
+    pub(crate) const fn full_resolution_preview(self) -> bool {
+        !self.constrained_memory()
+    }
 }

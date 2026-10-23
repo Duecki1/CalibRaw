@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 // Bump when a public settings change needs migration; see `sanitized`.
 // Version 5 dropped the automatic runtime choice (`onnx_runtime_kind` and
 // `onnx_runtime_kind_chosen`), which unknown fields leave to be ignored.
-const SETTINGS_VERSION: u32 = 5;
+// Version 6 moved the Preview quality tiers; see `sanitized`.
+const SETTINGS_VERSION: u32 = 6;
 /// The desktop decoded-RAW cache default before version 2 raised it, so that
 /// Develop can prefetch both neighbours of the open photo.
 ///
@@ -33,6 +34,8 @@ pub(crate) struct PerformanceSettings {
     /// Show RAW+JPEG (or RAW+HEIC) pairs once, as the RAW.
     pub library_stack_raw_companions: bool,
     pub preview_quality: crate::app::PreviewQuality,
+    /// Render the idle preview from the whole native photo; where the platform offers it.
+    pub preview_full_resolution: bool,
     pub image_relative_brush_size: bool,
     pub show_develop_navigation_labels: bool,
     pub export_name_template: String,
@@ -157,6 +160,7 @@ impl Default for PerformanceSettings {
             library_sort_order: crate::ui::library::LibrarySortOrder::default(),
             library_stack_raw_companions: true,
             preview_quality: crate::app::PreviewQuality::default(),
+            preview_full_resolution: false,
             image_relative_brush_size: false,
             show_develop_navigation_labels: true,
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
@@ -222,6 +226,20 @@ impl PerformanceSettings {
         // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
         if self.version < 4 {
             self.show_develop_navigation_labels = true;
+        }
+        // Version 6: Preview quality tiers are densities relative to the screen, and
+        // Max is now exactly one rendered pixel per screen pixel. They used to be
+        // Low 75%, Medium 100%, High 125% and Max 150%, so a stored choice keeps its
+        // density: old Low is the new Medium, and the rest, which were at or above
+        // the screen's, are the new Max.
+        // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
+        if self.version < 6 {
+            self.preview_quality = match self.preview_quality {
+                crate::app::PreviewQuality::Low => crate::app::PreviewQuality::Medium,
+                crate::app::PreviewQuality::Medium
+                | crate::app::PreviewQuality::High
+                | crate::app::PreviewQuality::Max => crate::app::PreviewQuality::Max,
+            };
         }
         self.version = SETTINGS_VERSION;
         // Setup offers the default until the user has chosen; earlier builds
@@ -373,6 +391,28 @@ mod tests {
     }
 
     #[test]
+    fn version_5_preview_quality_keeps_its_density() {
+        use crate::app::PreviewQuality::{High, Low, Max, Medium};
+        let migrated = |version, preview_quality| {
+            PerformanceSettings {
+                version,
+                preview_quality,
+                ..Default::default()
+            }
+            .sanitized()
+            .preview_quality
+        };
+        assert_eq!(migrated(5, Low), Medium);
+        assert_eq!(migrated(5, Medium), Max);
+        assert_eq!(migrated(5, High), Max);
+        assert_eq!(migrated(5, Max), Max);
+        // Version 6 files keep the tier as saved.
+        for quality in [Low, Medium, High, Max] {
+            assert_eq!(migrated(SETTINGS_VERSION, quality), quality);
+        }
+    }
+
+    #[test]
     fn version_3_navigation_labels_turn_on_once() {
         let migrated = |version, labels| {
             PerformanceSettings {
@@ -499,7 +539,9 @@ mod tests {
         // keep their stored count as the manual limit.
         assert!(settings.thumbnail_workers_automatic);
         assert_eq!(settings.thumbnail_workers, 1);
-        assert_eq!(settings.preview_quality, crate::app::PreviewQuality::Medium);
+        // The default is kept as the current default's density, not remapped to a
+        // different tier.
+        assert_eq!(settings.preview_quality, crate::app::PreviewQuality::Max);
         assert!(!settings.image_relative_brush_size);
         assert!(settings.show_develop_navigation_labels);
         assert!(!settings.develop_histogram_open);

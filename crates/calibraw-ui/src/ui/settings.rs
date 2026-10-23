@@ -418,7 +418,7 @@ impl Settings {
             "settings-preview-quality",
             app.preview.quality.label(),
             160.0,
-            "Controls preview render density relative to its physical screen size: Low 75%, Medium 100%, High 125%, and Max 150%. Zoom detail uses the same density.",
+            "Controls how many pixels the preview renders compared with the screen pixels it covers: Low 50%, Medium 75%, High 90%, and Max 100%, one rendered pixel per screen pixel. Zoom detail uses the same density. A device with little GPU memory may render fewer pixels than asked.",
             |ui| {
                 ui.selectable_value(&mut app.preview.quality, PreviewQuality::Low, "Low");
                 ui.selectable_value(&mut app.preview.quality, PreviewQuality::Medium, "Medium");
@@ -428,6 +428,20 @@ impl Settings {
         );
         if app.preview.quality != previous_quality {
             app.preview_quality_changed();
+        }
+        if app.caps().full_resolution_preview() {
+            let mut full_resolution = app.preview.full_resolution.enabled();
+            if moduwu_design::toggle_with_help(
+                ui,
+                &mut full_resolution,
+                "Full-resolution preview",
+                "When nothing has changed for a moment, renders the whole photo from the original RAW instead of the reduced preview and shows it scaled to your screen. Editing and zooming stay on the fast preview. Needs extra GPU memory and a few seconds on large photos.",
+            )
+            .changed()
+            {
+                app.preview.full_resolution.set_enabled(full_resolution);
+                app.persist_performance_settings();
+            }
         }
         // Without a configurable AI runtime there is no AI models card to hold
         // this control.

@@ -21,10 +21,10 @@
 //!   photo is opened (`LoadedRaw::resolve_white_balance`,
 //!   `pipeline/raw_loader/white_balance.rs`). Their file layout is read and
 //!   written by `white_balance_offsets`.
-//! - Performance settings versions 1 to 3: the old desktop decoded-RAW
-//!   cache default, automatic vignetting correction and Develop navigation
-//!   labels, updated when the settings are loaded (`calibraw-ui`,
-//!   `performance_settings.rs`).
+//! - Performance settings versions 1 to 5: the old desktop decoded-RAW
+//!   cache default, automatic vignetting correction, Develop navigation
+//!   labels and the Preview quality tiers, updated when the settings are
+//!   loaded (`calibraw-ui`, `performance_settings.rs`).
 //! - The old AI-denoise result cache, removed on start-up
 //!   (`calibraw-ui`, `app/ai_denoise.rs`).
 //! - The depth model desktop builds used before Depth Anything V2 Small,

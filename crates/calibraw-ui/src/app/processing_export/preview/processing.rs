@@ -326,6 +326,14 @@ impl CalibRawApp {
         let Some(stage) = self.preview.pending_stage else {
             return;
         };
+        if self.fitted_mask_capacity_stale() {
+            // Dispatching would read mask layers the graph does not have. Keep
+            // the last frame until the rebuilt graph, which renders every
+            // pending change, replaces it.
+            self.preview.quality_dirty = true;
+            self.egui_ctx.request_repaint();
+            return;
+        }
         let (Some(raw), Some(pipeline)) = (&self.develop.preview_raw, self.preview.pipeline())
         else {
             self.preview.pending_stage = None;

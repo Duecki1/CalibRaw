@@ -40,9 +40,14 @@ impl CalibRawApp {
             self.refresh_develop_loading_thumbnail(ui.ctx());
         }
         let [clipping_base, clipping_detail] = self.preview_clipping_textures(frame);
+        let full_resolution = self
+            .full_resolution_texture()
+            .filter(|_| clipping_base.is_none());
         let base = self.preview_base_pipeline().map(|presented| {
             (
-                clipping_base.unwrap_or(presented.texture()),
+                clipping_base
+                    .or(full_resolution)
+                    .unwrap_or(presented.texture()),
                 presented.gpu().width,
                 presented.gpu().height,
             )

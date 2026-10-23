@@ -176,6 +176,7 @@ impl CalibRawApp {
         self.poll_load_worker(frame);
         self.poll_preview_rebuild_worker(frame);
         self.poll_preview_detail_rebuild_worker(frame);
+        self.poll_full_resolution();
         let caps = self.caps();
         if caps.has_folders() {
             self.poll_library_batch_export_worker();
@@ -220,6 +221,7 @@ impl CalibRawApp {
         if !self.preview.original_requested {
             self.advance_preview_dispatch(frame);
         }
+        self.advance_full_resolution(frame);
         self.refresh_status();
 
         self.update_preview_histogram(frame);

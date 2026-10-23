@@ -14,6 +14,32 @@ impl PreviewState {
         }
     }
 
+    /// The screen the zoomed crop is rendered for: the canvas, and how many
+    /// physical pixels the part of the image in view covers along each
+    /// source axis. A photo that does not fill the canvas (a landscape photo
+    /// on a portrait phone) covers fewer than the canvas has, so sizing the
+    /// crop from the canvas would ask for texels the screen cannot show.
+    pub(in crate::app) fn detail_view(&self, full_size: [u32; 2]) -> DetailView {
+        let canvas_pixels = self.source_viewport_pixels();
+        let screen_per_source = self
+            .native_zoom
+            .filter(|native| native.is_finite() && *native > 0.0)
+            .map(|native| f64::from(self.zoom / native));
+        let visible_pixels = match screen_per_source {
+            Some(screen_per_source) => [0, 1].map(|axis| {
+                let span = f64::from((self.visible_uv.max[axis] - self.visible_uv.min[axis]).abs());
+                (span * f64::from(full_size[axis]) * screen_per_source)
+                    .ceil()
+                    .clamp(1.0, f64::from(u32::MAX)) as u32
+            }),
+            None => canvas_pixels,
+        };
+        DetailView {
+            canvas_pixels,
+            visible_pixels,
+        }
+    }
+
     /// What dispatching preview work changes: every dispatch advances or
     /// clears a pending stage or creates the navigation proxy.
     pub(in crate::app) fn dispatch_progress(&self) -> DispatchProgress {
@@ -25,6 +51,11 @@ impl PreviewState {
             ],
             navigation_exists: self.navigation.is_some(),
         }
+    }
+
+    /// Whether the view is zoomed in far enough for a sharp crop to cover it.
+    pub(in crate::app) fn zoomed_in(&self) -> bool {
+        self.zoom > DETAIL_ZOOM_START
     }
 
     pub(crate) fn processing_pending(&self) -> bool {
@@ -75,6 +106,18 @@ pub(in crate::app) fn full_frame_tone_pipeline<'a>(
 }
 
 impl CalibRawApp {
+    /// What the zoomed crop's graph is sized for: the masks it renders, and
+    /// what the fitted graph that is resident has reserved.
+    pub(in crate::app) fn detail_graph(&self) -> DetailGraph {
+        DetailGraph {
+            mask_count: self.preview_mask_stack().masks.len(),
+            fitted_resident_bytes: self
+                .preview
+                .pipeline()
+                .map_or(0, RawGpuPipeline::resident_bytes),
+        }
+    }
+
     pub(in crate::app) fn preview_detail_halo(&self) -> u32 {
         let preview_masks = self.preview_mask_stack();
         if self.preview.original_requested {
@@ -97,9 +140,10 @@ impl CalibRawApp {
                 detail.full_source_size,
                 detail.raw.cfa_kind,
                 self.preview.visible_uv,
-                self.preview.source_viewport_pixels(),
+                self.preview.detail_view(detail.full_source_size),
                 self.preview.quality,
                 halo,
+                self.detail_graph(),
             );
             detail.revision == self.preview.revision
                 && detail.processing_halo >= halo
@@ -123,6 +167,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn queue_preview_processing(&mut self, stage: ProcessingStage) {
+        self.preview.full_resolution.invalidate();
         self.preview.pending_stage = Some(match self.preview.pending_stage {
             Some(existing) => existing.min(stage),
             None => stage,

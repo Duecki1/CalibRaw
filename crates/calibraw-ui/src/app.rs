@@ -2,11 +2,12 @@ use crate::appearance::{PreviewBackdrop, UiDesign};
 use crate::pipeline::RawThumbnail;
 use crate::pipeline::{
     affected_stage, apply_lens_correction, build_proxy, build_region_proxy,
-    is_unsupported_raw_error, load_raw_file_with_profile_selection, spawn_tiled_export, BrushMode,
-    CameraProfileMode, ExportEvent, ExportFormat, ExportMetadata, ExportSettings, ExposureParams,
-    GeometryTransform, GpuParams, GpuProgramPrewarm, LensCorrection, LensfunCatalog,
-    LensfunCorrections, LensfunLens, LoadedRaw, ManualLensCorrection, MaskGeometry, MaskImage,
-    MaskKind, MaskRgbImage, MaskStack, PipelineOptions, ProcessingQuality, ProcessingStage,
+    is_unsupported_raw_error, load_raw_file_with_profile_selection, preview_mask_layer_capacity,
+    spawn_tiled_export, BrushMode, CameraProfileMode, ExportEvent, ExportFormat, ExportMetadata,
+    ExportSettings, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm,
+    LensCorrection, LensfunCatalog, LensfunCorrections, LensfunLens, LoadedRaw,
+    ManualLensCorrection, MaskGeometry, MaskImage, MaskKind, MaskRgbImage, MaskStack,
+    MobilePreviewRole, PipelineOptions, PreviewResourceShape, ProcessingQuality, ProcessingStage,
     ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveBrushPoint, RemoveBrushStroke,
     RemoveEditState, RemoveSceneContext, RetouchAlignment, RetouchStroke, RetouchTool,
     SubjectRefinement, TileSpec, TiledExportJob, MAX_LOCAL_MASKS,
@@ -298,6 +299,7 @@ pub(crate) use library_adjustments::{
     EditTransfer, EditTransferOrigin, LibraryEditTransferOutcome,
 };
 pub(crate) use presets::{GroupDialogMode, PresetEditor, PresetEditorMode, PresetState};
+mod full_resolution;
 mod lifecycle;
 mod preview_clipping;
 mod preview_dispatch_gate;
@@ -306,6 +308,7 @@ mod preview_histogram;
 mod preview_tests;
 mod preview_texture;
 mod preview_viewport;
+pub(crate) use full_resolution::FullResolutionState;
 pub(crate) use preview_dispatch_gate::PreviewDispatchGate;
 pub(crate) use preview_texture::{PreviewPipeline, TextureRetirement};
 pub(crate) use preview_viewport::PreviewViewportAction;
@@ -330,8 +333,10 @@ use sidecar_persistence::sidecar_interaction_active;
 
 #[cfg(test)]
 mod tests {
-    use super::{AiMaskTarget, MaskGeometry, MaskKind, MaskStack, MaskState, PreviewQuality};
-    use crate::pipeline::GeometryTransform;
+    use super::{
+        AiMaskTarget, CalibRawApp, MaskGeometry, MaskKind, MaskStack, MaskState, PreviewQuality,
+    };
+    use crate::pipeline::{GeometryTransform, LoadedRaw};
 
     #[test]
     fn media_library_photos_open_through_the_platform_once() {
@@ -394,32 +399,62 @@ mod tests {
 
     #[test]
     fn preview_quality_levels_track_physical_viewport_density() {
-        assert_eq!(
-            PreviewQuality::Max.proxy_edge_for_viewport([3_000, 2_000]),
-            4_506
+        // The crop keeps a border of up to 35% beyond the view.
+        let detail = PreviewQuality::Max.detail_edge_for_viewport([3_200, 1_800]);
+        assert!((4_320..=4_330).contains(&detail), "{detail}");
+        assert!(
+            PreviewQuality::Low.detail_edge_for_viewport([3_200, 1_800])
+                < PreviewQuality::Max.detail_edge_for_viewport([3_200, 1_800])
         );
-        assert!(PreviewQuality::Max.detail_edge_for_viewport([3_200, 1_800]) >= 3_200 * 2);
+        // No tier renders more pixels than the screen has.
         for quality in [
             PreviewQuality::Low,
             PreviewQuality::Medium,
             PreviewQuality::High,
             PreviewQuality::Max,
         ] {
-            assert!(quality.proxy_edge_for_viewport([3_840, 2_160]) > quality.proxy_edge());
+            assert!(quality.pixel_scale() <= 1.0);
         }
     }
 
     #[test]
-    fn preview_quality_density_is_ordered_and_medium_matches_physical_pixels() {
-        let viewport = [2_400, 1_600];
+    fn preview_quality_density_is_ordered_and_max_matches_physical_pixels() {
+        let edge = |quality: PreviewQuality| {
+            quality.proxy_edge_for_fitted_source(
+                [2_400, 1_600],
+                6_000,
+                4_000,
+                GeometryTransform::default(),
+                crate::pipeline::CfaKind::Bayer,
+                0,
+            )
+        };
         let edges = [
-            PreviewQuality::Low.proxy_edge_for_viewport(viewport),
-            PreviewQuality::Medium.proxy_edge_for_viewport(viewport),
-            PreviewQuality::High.proxy_edge_for_viewport(viewport),
-            PreviewQuality::Max.proxy_edge_for_viewport(viewport),
+            edge(PreviewQuality::Low),
+            edge(PreviewQuality::Medium),
+            edge(PreviewQuality::High),
+            edge(PreviewQuality::Max),
         ];
         assert!(edges.windows(2).all(|pair| pair[0] < pair[1]));
-        assert_eq!(edges[1], 2_406);
+        // A 3:2 photo fitted into 2400x1600 shows 2400 pixels along its long
+        // edge, plus the phase guard for the CFA.
+        assert_eq!(edges[3], 2_406);
+    }
+
+    #[test]
+    fn the_requested_edge_follows_the_fitted_image_not_the_canvas() {
+        let mut app = CalibRawApp::empty(&eframe::egui::Context::default());
+        app.preview.quality = PreviewQuality::Max;
+        app.preview.viewport_pixels = [1_400, 1_100];
+        // A portrait photo in a landscape canvas is 1100 pixels tall on
+        // screen; sizing it from the wider axis asked for almost twice that.
+        let raw = LoadedRaw::from_scene_linear_rec2020(1_200, 1_800, vec![0.1; 1_200 * 1_800 * 3])
+            .unwrap();
+        let edge = app.requested_preview_edge_for_source(&raw);
+        assert!((1_100..=1_120).contains(&edge), "{edge}");
+        // Zoomed in, the fitted preview keeps what it has.
+        app.preview.zoom = 4.0;
+        assert_eq!(app.requested_preview_edge_for_source(&raw), edge);
     }
 
     #[test]
@@ -431,8 +466,11 @@ mod tests {
             4_688,
             geometry,
             crate::pipeline::CfaKind::Bayer,
+            0,
         );
-        assert_eq!(edge, 1_280);
+        // 720 pixels wide on screen, plus the CFA phase guard; the canvas'
+        // height does not matter.
+        assert!((726..=727).contains(&edge), "{edge}");
 
         let mut cropped = geometry;
         cropped.crop = [0.375, 0.0, 0.625, 1.0];
@@ -443,6 +481,7 @@ mod tests {
                 4_688,
                 cropped,
                 crate::pipeline::CfaKind::Bayer,
+                0,
             ) > edge
         );
     }
