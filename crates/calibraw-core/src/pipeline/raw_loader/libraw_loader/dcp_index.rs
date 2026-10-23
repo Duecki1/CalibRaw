@@ -11,6 +11,9 @@ const MAX_DCP_SCAN_DEPTH: usize = 16;
 // tiers.
 /// The profile declares exactly this camera model.
 const SCORE_DECLARED_MODEL_EXACT: i32 = 1000;
+/// The profile declares this model behind a make that only spells the camera's make
+/// differently, such as "OM Digital Solutions OM-5" for LibRaw's make "OM Digital".
+const SCORE_DECLARED_MODEL_SUFFIX: i32 = 950;
 /// The profile's declared camera model contains this model.
 const SCORE_DECLARED_MODEL_CONTAINS: i32 = 900;
 /// The file name is exactly the model, for profiles that declare no camera.
@@ -321,6 +324,8 @@ fn dcp_match_score(
     let mut score = if !declared.is_empty() {
         if declared == model_key || declared == combined_key {
             SCORE_DECLARED_MODEL_EXACT
+        } else if declares_model_behind_make(&declared, make_key, model_key) {
+            SCORE_DECLARED_MODEL_SUFFIX
         } else if contains_model && declared.contains(model_key) {
             SCORE_DECLARED_MODEL_CONTAINS
         } else {
@@ -362,10 +367,64 @@ fn dcp_match_score(
     score
 }
 
+/// Whether `declared` is `model_key` behind a prefix that abbreviates or extends `make_key`.
+///
+/// Decoders and profiles disagree on the make ("OM Digital" against "OM Digital
+/// Solutions"), which defeats the exact comparison. Requiring the make relation keeps a
+/// short model such as "OM-5" from matching the tail of an unrelated camera name, and
+/// the model at the end keeps it off "OM-5 Mark II". All keys are normalised.
+fn declares_model_behind_make(declared: &str, make_key: &str, model_key: &str) -> bool {
+    if make_key.is_empty() {
+        return false;
+    }
+    declared.strip_suffix(model_key).is_some_and(|prefix| {
+        !prefix.is_empty() && (prefix.starts_with(make_key) || make_key.starts_with(prefix))
+    })
+}
+
 fn normalize_camera_name(value: &str) -> String {
     value
         .chars()
         .filter(|ch| ch.is_alphanumeric())
         .flat_map(|ch| ch.to_lowercase())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn score(declared: &str, make: &str, model: &str) -> i32 {
+        dcp_match_score(
+            Some(declared),
+            None,
+            Path::new("profile.dcp"),
+            &normalize_camera_name(make),
+            &normalize_camera_name(model),
+            &normalize_camera_name(&format!("{make} {model}")),
+        )
+    }
+
+    #[test]
+    fn short_model_matches_a_longer_spelling_of_the_make() {
+        let score = score("OM Digital Solutions OM-5", "OM Digital", "OM-5");
+        assert_eq!(score, SCORE_DECLARED_MODEL_SUFFIX + BONUS_MAKE_MATCH);
+    }
+
+    #[test]
+    fn short_model_does_not_match_a_later_model_or_another_make() {
+        assert_eq!(
+            score("OM Digital Solutions OM-5 Mark II", "OM Digital", "OM-5"),
+            0
+        );
+        assert_eq!(score("Acme Atom5", "OM Digital", "OM-5"), 0);
+        assert_eq!(score("Acme OM-5", "OM Digital", "OM-5"), 0);
+        assert_eq!(score("OM Digital Solutions OM-5", "", "OM-5"), 0);
+    }
+
+    #[test]
+    fn exact_declared_model_outranks_the_make_spelling_match() {
+        let exact = score("OM Digital OM-5", "OM Digital", "OM-5");
+        assert!(exact > score("OM Digital Solutions OM-5", "OM Digital", "OM-5"));
+    }
 }
