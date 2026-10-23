@@ -80,7 +80,8 @@ Checked items are done. Order within a section is not a priority.
 - [X]  Error dialogs for all failures (e.g. out of memory)
 - [X]  AuRaw → CalibRaw conversion script
 - [ ]  Panorama and focus alignment
-- [ ]  Lower preview memory use: RAM-scaled limit, on-demand mask layers and effect buffers, shared mask atlas
+- [X]  Lower preview memory use: RAM-scaled limit, on-demand mask layers
+- [ ]  Lower preview memory use: on-demand effect buffers, shared mask atlas
 - [ ]  Android notifications, new tablet UI
 - [ ]  AppImage built on oldest Ubuntu LTS
 - [ ]  Play Store, Winget

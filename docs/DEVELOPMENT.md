@@ -560,6 +560,8 @@ when off. Turn it on with `CALIBRAW_GPU_STAGE_TIMING=1` on the desktop, or by
 launching Android with the extra
 `--ez de.duecki.calibraw.GPU_STAGE_TIMING true`.
 
+While a control is dragged, a slow GPU shows a half-size preview that the full one replaces on release, fitted or zoomed in (`interactive_preview.rs`). The editor chooses by timing the batches of the preview that is shown; on the desktop `CALIBRAW_INTERACTIVE_PREVIEW=always` or `off` forces either path to compare them. After every control drag the diagnostics line `Control drag: …` (`Control drag (zoomed in): …` when zoomed) logs how many GPU batches each preview ran and their median times, which is how to compare the two paths on a device.
+
 `cargo xtask android-bench LABEL` measures the connected device. It installs
 the profiling APK (`--apk PATH`, or `--no-install`), copies the scenario's
 photo from `CALIBRAW_BENCH_PHOTOS` (checked against its SHA-256) and its

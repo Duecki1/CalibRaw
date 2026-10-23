@@ -8,7 +8,7 @@ pub(in crate::app) fn aligned_detail_axis(
     extent: u32,
     cfa_period: u32,
     viewport_pixels: u32,
-    detail_pixel_scale: f32,
+    pixel_scale: f32,
     processing_halo: u32,
 ) -> (u32, u32) {
     let extent = extent.max(1);
@@ -31,8 +31,7 @@ pub(in crate::app) fn aligned_detail_axis(
         ((max_uv.clamp(0.0, 1.0) * extent as f32).ceil() as u32).clamp(visible_start + 1, extent);
     let visible_len = visible_end - visible_start;
 
-    let visible_detail_pixels =
-        (viewport_pixels.max(1) as f32 * detail_pixel_scale.max(0.1)).max(1.0);
+    let visible_detail_pixels = (viewport_pixels.max(1) as f32 * pixel_scale.max(0.1)).max(1.0);
     let support_padding =
         (visible_len as f32 * processing_halo as f32 / visible_detail_pixels).ceil() as u32;
     // Reserve a small reusable border in addition to processing support.
@@ -94,9 +93,14 @@ fn detail_display_uv(
     display
 }
 
+/// The long edge of the crop's texture. `canvas_pixels` is the physical size of
+/// the canvas, which bounds it; `visible_pixels` is the physical size of the
+/// part of the image in view along each source axis, which can be smaller than
+/// the canvas (a photo that does not fill it), and sets the density.
 pub(in crate::app) fn requested_detail_edge(
     quality: PreviewQuality,
-    viewport_pixels: [u32; 2],
+    canvas_pixels: [u32; 2],
+    visible_pixels: [u32; 2],
     visible: PreviewUvRect,
     crop_size: [u32; 2],
     full_size: [u32; 2],
@@ -112,17 +116,73 @@ pub(in crate::app) fn requested_detail_edge(
         * full_height as f32)
         .max(1.0);
     let padded_width_pixels =
-        viewport_pixels[0].max(1) as f32 * crop_width as f32 / visible_source_width;
+        visible_pixels[0].max(1) as f32 * crop_width as f32 / visible_source_width;
     let padded_height_pixels =
-        viewport_pixels[1].max(1) as f32 * crop_height as f32 / visible_source_height;
-    (padded_width_pixels.max(padded_height_pixels) * quality.detail_pixel_scale())
+        visible_pixels[1].max(1) as f32 * crop_height as f32 / visible_source_height;
+    (padded_width_pixels.max(padded_height_pixels) * quality.pixel_scale())
         .ceil()
         .clamp(
             256.0,
             quality
-                .detail_edge_for_viewport(viewport_pixels)
+                .detail_edge_for_viewport(canvas_pixels)
                 .saturating_add(processing_halo.saturating_mul(2)) as f32,
         ) as u32
+}
+
+/// What the zoomed crop's graph is sized for besides its pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app) struct DetailGraph {
+    /// The masks it renders, which size its atlas.
+    pub mask_count: usize,
+    /// What the fitted graph has reserved, which the crop's budget leaves out.
+    pub fitted_resident_bytes: u64,
+}
+
+/// How the zoomed crop's graph is built: the atlas and the mask layers that
+/// `DetailGraph::preview_graph` sizes it for.
+fn detail_pipeline_options<'a>(mask_count: usize) -> PipelineOptions<'a> {
+    PipelineOptions::new(ProcessingQuality::Preview)
+        .mask_atlas_edge(detail_mask_edge())
+        .mask_layers(detail_mask_layers(mask_count))
+}
+
+impl DetailGraph {
+    fn preview_graph(self) -> PreviewGraph {
+        PreviewGraph::Detail {
+            mask_count: self.mask_count,
+            mask_atlas_edge: detail_mask_edge(),
+            fitted_resident_bytes: self.fitted_resident_bytes,
+        }
+    }
+
+    #[cfg(test)]
+    fn unconstrained() -> Self {
+        Self {
+            mask_count: 0,
+            fitted_resident_bytes: 0,
+        }
+    }
+}
+
+/// The screen the detail crop is rendered for, in physical pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app) struct DetailView {
+    /// The canvas, which bounds the crop's size.
+    pub canvas_pixels: [u32; 2],
+    /// The part of the image in view along each source axis, which sets the
+    /// crop's density. See `PreviewState::detail_view`.
+    pub visible_pixels: [u32; 2],
+}
+
+impl DetailView {
+    /// A view whose image fills the canvas.
+    #[cfg(test)]
+    fn filling(canvas_pixels: [u32; 2]) -> Self {
+        Self {
+            canvas_pixels,
+            visible_pixels: canvas_pixels,
+        }
+    }
 }
 
 /// The next crop and its density are planned independently of the cached crop.
@@ -131,6 +191,7 @@ struct PreviewDetailPlan {
     origin: [u32; 2],
     size: [u32; 2],
     edge: u32,
+    graph: DetailGraph,
 }
 
 impl PreviewDetailPlan {
@@ -138,9 +199,10 @@ impl PreviewDetailPlan {
         full_size: [u32; 2],
         cfa_kind: crate::pipeline::CfaKind,
         visible: PreviewUvRect,
-        viewport: [u32; 2],
+        view: DetailView,
         quality: PreviewQuality,
         processing_halo: u32,
+        graph: DetailGraph,
     ) -> Self {
         let period = match cfa_kind {
             crate::pipeline::CfaKind::Bayer => 2,
@@ -152,17 +214,35 @@ impl PreviewDetailPlan {
                 visible.max[axis],
                 full_size[axis],
                 period,
-                viewport[axis],
-                quality.detail_pixel_scale(),
+                view.visible_pixels[axis],
+                quality.pixel_scale(),
                 processing_halo,
             )
         });
         let origin = axes.map(|(start, _)| start);
         let size = axes.map(|(start, end)| end - start);
-        let edge =
-            requested_detail_edge(quality, viewport, visible, size, full_size, processing_halo);
-        let edge = PreviewQuality::bounded_source_edge(size[0], size[1], edge, cfa_kind);
-        Self { origin, size, edge }
+        let edge = requested_detail_edge(
+            quality,
+            view.canvas_pixels,
+            view.visible_pixels,
+            visible,
+            size,
+            full_size,
+            processing_halo,
+        );
+        let edge = PreviewQuality::bounded_source_edge(
+            size[0],
+            size[1],
+            edge,
+            cfa_kind,
+            graph.preview_graph(),
+        );
+        Self {
+            origin,
+            size,
+            edge,
+            graph,
+        }
     }
 
     fn sampling_scale(&self) -> f64 {
@@ -192,6 +272,12 @@ pub(in crate::app) fn detail_mask_edge() -> u32 {
     } else {
         2048
     }
+}
+
+/// The mask atlas of the reduced zoomed crop: half the sharp crop's, matching
+/// its half-size graph.
+pub(in crate::app) fn interactive_detail_mask_edge() -> u32 {
+    detail_mask_edge() / 2
 }
 
 pub(in crate::app) fn detail_mask_source_region(
@@ -291,10 +377,13 @@ pub(in crate::app) fn zoom_detail_idle_delay() -> Duration {
 }
 
 mod detail;
+mod interactive_crop;
 mod navigation;
 mod processing;
 mod rebuild;
 mod state;
+use detail::{detail_virtual_frame, DetailPlacement};
+use processing::dispatch_detail_stage;
 use state::full_frame_tone_pipeline;
 
 #[cfg(test)]
@@ -342,6 +431,7 @@ mod detail_resolution_tests {
             origin: [0; 2],
             size,
             edge,
+            graph: DetailGraph::unconstrained(),
         }
     }
 
@@ -400,9 +490,10 @@ mod detail_resolution_tests {
                             full_size,
                             crate::pipeline::CfaKind::XTrans,
                             visible,
-                            viewport,
-                            PreviewQuality::Medium,
+                            DetailView::filling(viewport),
+                            PreviewQuality::Max,
                             halo,
+                            DetailGraph::unconstrained(),
                         );
                         let texture = requested.size.map(|size| {
                             if requested.sampling_scale() >= 1.0 {
@@ -428,15 +519,16 @@ mod detail_resolution_tests {
     #[test]
     fn capped_detail_refines_after_a_small_zoom_step() {
         let viewport = [1000, 667];
-        let edge = PreviewQuality::Medium.detail_edge_for_viewport(viewport);
+        let edge = PreviewQuality::Max.detail_edge_for_viewport(viewport);
         let visible = uv(0.25, 0.75);
         let requested = PreviewDetailPlan::new(
             [13334, 8888],
             crate::pipeline::CfaKind::Bayer,
             visible,
-            viewport,
-            PreviewQuality::Medium,
+            DetailView::filling(viewport),
+            PreviewQuality::Max,
             64,
+            DetailGraph::unconstrained(),
         );
         assert!(!detail_covers_view(
             uv(0.2, 0.8),
@@ -456,9 +548,10 @@ mod detail_resolution_tests {
                 [6000, 4000],
                 crate::pipeline::CfaKind::Bayer,
                 visible,
-                [900, 600],
-                PreviewQuality::Medium,
+                DetailView::filling([900, 600]),
+                PreviewQuality::Max,
                 64,
+                DetailGraph::unconstrained(),
             );
             assert!(!detail_covers_view(
                 uv(0.0, 1.0),
@@ -482,9 +575,10 @@ mod detail_resolution_tests {
                     [6000, 4000],
                     crate::pipeline::CfaKind::Bayer,
                     uv(inset, 1.0 - inset),
-                    [900, 600],
-                    PreviewQuality::Medium,
+                    DetailView::filling([900, 600]),
+                    PreviewQuality::Max,
                     support,
+                    DetailGraph::unconstrained(),
                 );
                 let visible_source_pixels = 6000.0 / f64::from(zoom);
                 let samples = requested.sampling_scale() * visible_source_pixels;
@@ -508,6 +602,61 @@ mod detail_resolution_tests {
         let full = detail_display_uv(visible, uv(0.0, 1.0), [edge; 2], EXPORT_TILE_HALO);
         assert_eq!(full.min, [0.0; 2]);
         assert_eq!(full.max, [1.0; 2]);
+    }
+
+    /// Regression guard for blocky or wasteful detail at some zoom levels: at
+    /// every zoom the crop has at least one texel per screen pixel (or every
+    /// source pixel there is) and not much more, whatever shape the photo and
+    /// the canvas have.
+    #[test]
+    fn max_quality_detail_matches_the_screen_density_at_every_zoom() {
+        for (full_size, canvas) in [
+            ([6000, 4000], [1920, 1200]),
+            ([7028, 4688], [1080, 1700]),
+            ([9504, 6336], [2560, 1440]),
+            ([4000, 6000], [1920, 1200]),
+        ] {
+            let [full_width, full_height] = full_size;
+            // Screen pixels per source pixel at the fitted view.
+            let fit = (f64::from(canvas[0]) / f64::from(full_width))
+                .min(f64::from(canvas[1]) / f64::from(full_height));
+            for halo in [24, 64, EXPORT_TILE_HALO] {
+                let mut zoom = 1.01_f32;
+                while zoom < 48.0 {
+                    let inset = (1.0 - zoom.recip()) * 0.5;
+                    let visible = uv(inset, 1.0 - inset);
+                    let screen_per_source = fit * f64::from(zoom);
+                    let visible_pixels = [0, 1].map(|axis| {
+                        (f64::from(visible.max[axis] - visible.min[axis])
+                            * f64::from(full_size[axis])
+                            * screen_per_source)
+                            .ceil() as u32
+                    });
+                    let plan = PreviewDetailPlan::new(
+                        full_size,
+                        crate::pipeline::CfaKind::Bayer,
+                        visible,
+                        DetailView {
+                            canvas_pixels: canvas,
+                            visible_pixels,
+                        },
+                        PreviewQuality::Max,
+                        halo,
+                        DetailGraph::unconstrained(),
+                    );
+                    // Texels per screen pixel, against the most the screen can
+                    // use: one texel per screen pixel, or one per source pixel.
+                    let density = plan.sampling_scale() / screen_per_source;
+                    let wanted = (1.0 / screen_per_source).min(1.0);
+                    let context = format!(
+                        "{full_size:?} in {canvas:?}, halo {halo}, zoom {zoom}: {density:.3} texels per screen pixel, wanted {wanted:.3}"
+                    );
+                    assert!(density + 0.02 >= wanted, "too coarse, {context}");
+                    assert!(density <= wanted * 1.5 + 0.02, "wasteful, {context}");
+                    zoom *= 1.03;
+                }
+            }
+        }
     }
 
     #[test]
@@ -538,13 +687,14 @@ mod detail_resolution_tests {
     }
 
     #[test]
-    fn medium_zoom_detail_matches_the_physical_viewport_density() {
+    fn max_zoom_detail_matches_the_physical_viewport_density() {
         let visible = PreviewUvRect {
             min: [0.25, 0.25],
             max: [0.75, 0.75],
         };
-        let medium = requested_detail_edge(
-            PreviewQuality::Medium,
+        let max = requested_detail_edge(
+            PreviewQuality::Max,
+            [3_000, 2_000],
             [3_000, 2_000],
             visible,
             [3_500, 2_344],
@@ -554,13 +704,62 @@ mod detail_resolution_tests {
         let low = requested_detail_edge(
             PreviewQuality::Low,
             [3_000, 2_000],
+            [3_000, 2_000],
             visible,
             [3_500, 2_344],
             [7_000, 4_688],
             64,
         );
 
-        assert_eq!(medium, 3_000);
-        assert!(low < medium);
+        assert_eq!(max, 3_000);
+        assert!(low < max);
+    }
+
+    /// The size bound and the graph must agree on the layers, or the bound
+    /// reserves memory the graph never allocates (or the reverse).
+    #[test]
+    fn graphs_allocate_the_mask_layers_their_size_bound_assumes() {
+        let gpu = calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {
+            label: "mask layer bound test",
+            adapter: calibraw_gpu::HeadlessAdapter::Software,
+            texture_dimension: wgpu::Limits::default().max_texture_dimension_2d,
+        });
+        let (device, queue) = match gpu {
+            Ok(gpu) => (gpu.device, gpu.queue),
+            Err(calibraw_gpu::HeadlessDeviceError::NoAdapter(_)) => {
+                eprintln!("mask layer bound test skipped: no headless GPU adapter");
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        };
+        let raw = LoadedRaw::from_scene_linear_rec2020(16, 16, vec![0.2; 16 * 16 * 3]).unwrap();
+        let exposure = ExposureParams::default();
+        for mask_count in [0, 1, 4, 5, 9, MAX_LOCAL_MASKS] {
+            let mut masks = MaskStack::default();
+            for _ in 0..mask_count {
+                masks.add_mask(crate::pipeline::MaskKind::Fullscreen);
+            }
+            let params = GpuParams::new(&exposure, &masks, &raw);
+            let build = |options| RawGpuPipeline::new(&device, &queue, &raw, &params, options);
+            let detail = build(detail_pipeline_options(mask_count)).unwrap();
+            let shape = DetailGraph {
+                mask_count,
+                fitted_resident_bytes: 0,
+            }
+            .preview_graph()
+            .shape();
+            assert_eq!(
+                detail.mask_layer_capacity(),
+                shape.mask_layers,
+                "{mask_count}"
+            );
+            let fitted = build(fitted_pipeline_options(mask_count)).unwrap();
+            let shape = PreviewGraph::Fitted { mask_count }.shape();
+            assert_eq!(
+                fitted.mask_layer_capacity(),
+                shape.mask_layers,
+                "{mask_count}"
+            );
+        }
     }
 }

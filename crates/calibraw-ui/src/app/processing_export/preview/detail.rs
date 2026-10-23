@@ -6,21 +6,47 @@ impl CalibRawApp {
         // The zoomed detail is a second full GPU pipeline. It gives way to a
         // GPU AI job and is rebuilt when the job ends.
         if self.preview.zoom <= DETAIL_ZOOM_START || self.ai_job_may_use_gpu() {
+            self.preview.cancel_detail_rebuild();
             self.preview.detail = None;
             self.preview.motion_at = None;
             self.preview.detail_pending_stage = None;
             self.preview.detail_urgent = false;
+            self.preview.detail_block = None;
             return;
         }
-        if self.preview.touch_navigation_active
-            || self.ui.active_tab != AppTab::Develop
-            || self.preview.quality_dirty
-            || self.develop.lens_correction_dirty
-            || self.lens_correction_busy()
-            || self.develop.load_receiver.is_some()
-            || self.ai_denoise_running()
-            || self.preview.detail_rebuild_receiver.is_some()
-        {
+        // While a control is dragged the reduced crop follows it
+        // (`interactive`); the sharp one is refreshed once the drag ends.
+        if self.interactive_following() {
+            return;
+        }
+        // Fingers on the photo do not block the refresh: each move restarts
+        // the idle delay below, so the crop is prepared once a pinch or pan
+        // pauses.
+        let blocked = if self.ui.active_tab != AppTab::Develop {
+            Some("another tab is open")
+        } else if self.preview.quality_dirty {
+            Some("the fitted preview is being rebuilt")
+        } else if self.develop.lens_correction_dirty || self.lens_correction_busy() {
+            Some("lens correction is running")
+        } else if self.develop.load_receiver.is_some() {
+            Some("a photo is loading")
+        } else if self.ai_denoise_running() {
+            Some("AI denoise is running")
+        } else if self.preview.detail_rebuild.is_some() {
+            Some("the previous crop is still being prepared")
+        } else {
+            None
+        };
+        if blocked != self.preview.detail_block {
+            self.preview.detail_block = blocked;
+            if let Some(reason) = blocked {
+                calibraw_core::diagnostics::record(format!(
+                    "Zoom detail waits: {reason} (zoom {:.2})",
+                    self.preview.zoom
+                ));
+            }
+        }
+        if blocked.is_some() {
             return;
         }
         if self.preview_detail_is_current() {
@@ -40,13 +66,23 @@ impl CalibRawApp {
         let Some(source_raw) = preview_source.as_ref().map(Arc::clone) else {
             return;
         };
+        let view = self
+            .preview
+            .detail_view([source_raw.width, source_raw.height]);
+        calibraw_core::diagnostics::record(format!(
+            "Zoom detail requested: zoom {:.2}, visible {:?}, canvas {:?}, visible pixels {:?}",
+            self.preview.zoom, self.preview.visible_uv, view.canvas_pixels, view.visible_pixels
+        ));
+        let cancel = Arc::new(AtomicBool::new(false));
         let request = PreviewDetailRequest {
+            cancel: Arc::clone(&cancel),
             source_raw,
             revision: self.preview.revision,
             visible: self.preview.visible_uv,
-            viewport_pixels: self.preview.source_viewport_pixels(),
+            view,
             quality: self.preview.quality,
             processing_halo: self.preview_detail_halo(),
+            graph: self.detail_graph(),
             exposure: if self.preview.original_requested {
                 self.preview.original_exposure
             } else {
@@ -75,11 +111,15 @@ impl CalibRawApp {
                     ))
                 })
                 .map_err(|error| format!("{error:#}"));
-                let _ = sender.send(PreviewDetailRebuildEvent::Finished(result));
+                let _ = sender.send(match result {
+                    Ok(Some(prepared)) => PreviewDetailRebuildEvent::Finished(Ok(prepared)),
+                    Ok(None) => PreviewDetailRebuildEvent::Cancelled,
+                    Err(error) => PreviewDetailRebuildEvent::Finished(Err(error)),
+                });
                 context.request_repaint();
             }) {
             Ok(_) => {
-                self.preview.detail_rebuild_receiver = Some(receiver);
+                self.preview.detail_rebuild = Some(DetailRebuild::new(receiver, cancel));
                 self.egui_ctx
                     .request_repaint_after(Duration::from_millis(50));
             }
@@ -94,16 +134,22 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_preview_detail_rebuild_worker(&mut self, frame: &eframe::Frame) {
+        // A crop that is ready waits for the end of the drag a reduced
+        // preview follows: installing it renders the whole crop on the GPU,
+        // which the drag would then have to wait behind.
+        if self.interactive_following() {
+            return;
+        }
         let preview_source = self.develop.loaded_raw.clone();
         let received = self
             .preview
-            .detail_rebuild_receiver
+            .detail_rebuild
             .as_ref()
-            .map(std::sync::mpsc::Receiver::try_recv);
+            .map(|rebuild| rebuild.receiver.try_recv());
         let event = match received {
             Some(Ok(event)) => Some(event),
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                self.preview.detail_rebuild_receiver = None;
+                self.preview.detail_rebuild = None;
                 self.retry_preview_detail_later();
                 self.report_error(
                     ErrorKind::Preview,
@@ -113,10 +159,19 @@ impl CalibRawApp {
             }
             Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => None,
         };
-        let Some(PreviewDetailRebuildEvent::Finished(result)) = event else {
+        let Some(event) = event else {
             return;
         };
-        self.preview.detail_rebuild_receiver = None;
+        self.preview.detail_rebuild = None;
+        let PreviewDetailRebuildEvent::Finished(result) = event else {
+            // Cancelled because the view moved on: the next crop is requested
+            // once it settles.
+            calibraw_core::diagnostics::record(
+                "Zoom detail cancelled: the view moved on before it was ready",
+            );
+            self.egui_ctx.request_repaint();
+            return;
+        };
         let prepared = match result {
             Ok(prepared) => prepared,
             Err(error) => {
@@ -139,6 +194,10 @@ impl CalibRawApp {
             || prepared.quality != self.preview.quality
             || self.preview.quality_dirty
         {
+            calibraw_core::diagnostics::record(format!(
+                "Zoom detail discarded as outdated (zoom {:.2}, revision {} vs {}, quality dirty {})",
+                self.preview.zoom, prepared.revision, self.preview.revision, self.preview.quality_dirty
+            ));
             if source_is_current && self.preview.zoom > DETAIL_ZOOM_START {
                 self.preview.detail_urgent = true;
                 self.preview.motion_at = Some(Instant::now());
@@ -150,9 +209,11 @@ impl CalibRawApp {
         if self.preview_detail_is_current() {
             return;
         }
-        // Coalesce navigation while the one preparation worker is running.
-        // A completely offscreen result is no longer worth uploading to the GPU.
-        if self.preview.touch_navigation_active
+        // Coalesce navigation while the one preparation worker is running: under
+        // fingers, a move since the request means the view has left what was
+        // prepared. A completely offscreen result is no longer worth uploading
+        // to the GPU.
+        if (self.preview.touch_navigation_active && self.preview.motion_at.is_some())
             || !(0..2).all(|axis| {
                 prepared.visible.max[axis] > self.preview.visible_uv.min[axis]
                     && prepared.visible.min[axis] < self.preview.visible_uv.max[axis]
@@ -161,7 +222,21 @@ impl CalibRawApp {
             self.egui_ctx.request_repaint();
             return;
         }
+        let installed_at = Instant::now();
         if self.install_prepared_preview_detail(frame, prepared) {
+            calibraw_core::diagnostics::record(format!(
+                "Zoom detail installed in {:.3}s: {}",
+                installed_at.elapsed().as_secs_f64(),
+                self.preview.detail.as_ref().map_or_else(
+                    || "no texture".to_owned(),
+                    |detail| format!(
+                        "texture {}x{} for source crop {:?}",
+                        detail.pipeline.gpu().width,
+                        detail.pipeline.gpu().height,
+                        detail.source_size
+                    )
+                )
+            ));
             self.preview.detail_pending_stage = None;
             if self.preview.original_requested {
                 self.preview.original_rendered_state = None;
@@ -206,20 +281,13 @@ impl CalibRawApp {
             processing_halo,
             ..
         } = prepared;
-        let [x0, y0] = source_origin;
-        let [crop_width, crop_height] = source_size;
-        let virtual_full_width = ((detail_raw.width as f64 * full_raw.width as f64
-            / crop_width.max(1) as f64)
-            .round() as u32)
-            .max(detail_raw.width);
-        let virtual_full_height = ((detail_raw.height as f64 * full_raw.height as f64
-            / crop_height.max(1) as f64)
-            .round() as u32)
-            .max(detail_raw.height);
-        let virtual_origin_x =
-            (x0 as f64 / full_raw.width.max(1) as f64 * virtual_full_width as f64).round() as i32;
-        let virtual_origin_y =
-            (y0 as f64 / full_raw.height.max(1) as f64 * virtual_full_height as f64).round() as i32;
+        let ([virtual_origin_x, virtual_origin_y], [virtual_full_width, virtual_full_height]) =
+            detail_virtual_frame(
+                [detail_raw.width, detail_raw.height],
+                [full_raw.width, full_raw.height],
+                source_origin,
+                source_size,
+            );
         let interactive = self.interactive_detail_mask_edit();
         let mask_region = detail_mask_update_region(
             &preview_masks,
@@ -233,19 +301,18 @@ impl CalibRawApp {
         if full_raw.uses_opposed_chroma(&self.develop.target_exposure) {
             full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
-        let params = GpuParams::new_for_tile(
+        let placement = DetailPlacement {
+            virtual_origin: [virtual_origin_x, virtual_origin_y],
+            virtual_full_size: [virtual_full_width, virtual_full_height],
+            full_size: [full_raw.width, full_raw.height],
+            mask_region,
+            mask_extent,
+        };
+        let params = placement.params(
             &self.develop.target_exposure,
             &preview_masks,
+            self.develop.geometry,
             &detail_raw,
-            virtual_origin_x,
-            virtual_origin_y,
-            virtual_full_width,
-            virtual_full_height,
-        )
-        .with_vignette_geometry(self.develop.geometry)
-        .with_mask_uv_rect_and_extent(
-            mask_source_region_uv(mask_region, full_raw.width, full_raw.height),
-            mask_extent,
         );
         let full_frame_tone_pipeline = full_frame_tone_pipeline(
             self.preview.gpu_pipeline.as_ref(),
@@ -290,12 +357,12 @@ impl CalibRawApp {
                 &render_state.device,
                 &params,
                 ProcessingStage::Raw,
-                RemoveSceneContext::new(
+                detail_remove_scene(
                     &self.inpaint.edits,
                     &full_raw,
                     &self.develop.target_exposure,
-                    [x0 as f32, y0 as f32],
-                    [crop_width as f32, crop_height as f32],
+                    source_origin,
+                    source_size,
                 ),
             ) {
                 self.report_error(
@@ -361,8 +428,7 @@ impl CalibRawApp {
             &render_state.queue,
             &detail_raw,
             &params,
-            PipelineOptions::new(ProcessingQuality::Preview)
-                .mask_atlas_edge(detail_mask_edge())
+            detail_pipeline_options(preview_masks.masks.len())
                 .programs(&program_template.program_template()),
         ) {
             Ok(pipeline) => pipeline,
@@ -391,12 +457,12 @@ impl CalibRawApp {
             &render_state.device,
             &params,
             ProcessingStage::Raw,
-            RemoveSceneContext::new(
+            detail_remove_scene(
                 &self.inpaint.edits,
                 &full_raw,
                 &self.develop.target_exposure,
-                [x0 as f32, y0 as f32],
-                [crop_width as f32, crop_height as f32],
+                source_origin,
+                source_size,
             ),
         ) {
             self.report_error(
@@ -451,7 +517,117 @@ impl CalibRawApp {
     }
 }
 
+/// Where a crop sits in the frame the whole photo would fill at the crop's
+/// density: the origin and the size of that frame. The crop's graph places
+/// vignette, masks and tone guide in it, as if it were a tile of the photo.
+/// `raw_size` is the crop's graph, `source_origin` and `source_size` the crop
+/// in photo pixels.
+pub(super) fn detail_virtual_frame(
+    raw_size: [u32; 2],
+    full_size: [u32; 2],
+    source_origin: [u32; 2],
+    source_size: [u32; 2],
+) -> ([i32; 2], [u32; 2]) {
+    let size = [0, 1].map(|axis| {
+        ((f64::from(raw_size[axis]) * f64::from(full_size[axis])
+            / f64::from(source_size[axis].max(1)))
+        .round() as u32)
+            .max(raw_size[axis])
+    });
+    let origin = [0, 1].map(|axis| {
+        (f64::from(source_origin[axis]) / f64::from(full_size[axis].max(1)) * f64::from(size[axis]))
+            .round() as i32
+    });
+    (origin, size)
+}
+
+/// Where a crop's graph sits in the photo, which its GPU parameters place the
+/// vignette, the masks and the tone guide by.
+#[derive(Clone, Copy)]
+pub(super) struct DetailPlacement {
+    /// The crop in the frame the photo would fill at its density
+    /// (`detail_virtual_frame`).
+    pub virtual_origin: [i32; 2],
+    pub virtual_full_size: [u32; 2],
+    /// The photo's size in pixels.
+    pub full_size: [u32; 2],
+    /// The part of the photo the masks are rasterized for, and the size of
+    /// that raster.
+    pub mask_region: [u32; 4],
+    pub mask_extent: [u32; 2],
+}
+
+impl DetailPlacement {
+    /// The parameters of the graph built from `raw` for `exposure`.
+    pub(super) fn params(
+        self,
+        exposure: &ExposureParams,
+        masks: &MaskStack,
+        geometry: GeometryTransform,
+        raw: &LoadedRaw,
+    ) -> GpuParams {
+        GpuParams::new_for_tile(
+            exposure,
+            masks,
+            raw,
+            self.virtual_origin[0],
+            self.virtual_origin[1],
+            self.virtual_full_size[0],
+            self.virtual_full_size[1],
+        )
+        .with_vignette_geometry(geometry)
+        .with_mask_uv_rect_and_extent(
+            mask_source_region_uv(self.mask_region, self.full_size[0], self.full_size[1]),
+            self.mask_extent,
+        )
+    }
+}
+
+/// The Remove edits as they apply to a crop at `source_origin` and
+/// `source_size` of `full_raw`.
+fn detail_remove_scene<'a>(
+    edits: &'a RemoveEditState,
+    full_raw: &'a LoadedRaw,
+    exposure: &'a ExposureParams,
+    source_origin: [u32; 2],
+    source_size: [u32; 2],
+) -> RemoveSceneContext<'a> {
+    RemoveSceneContext::new(
+        edits,
+        full_raw,
+        exposure,
+        source_origin.map(|origin| origin as f32),
+        source_size.map(|size| size as f32),
+    )
+}
+
 impl PreviewDetail {
+    pub(super) fn placement(&self) -> DetailPlacement {
+        DetailPlacement {
+            virtual_origin: self.virtual_origin,
+            virtual_full_size: self.virtual_full_size,
+            full_size: self.full_source_size,
+            mask_region: self.mask_source_region,
+            mask_extent: self.mask_texture_extent,
+        }
+    }
+
+    /// The Remove edits as they apply to this crop of `full_raw`.
+    pub(super) fn remove_scene<'a>(
+        &self,
+        edits: &'a RemoveEditState,
+        full_raw: &'a LoadedRaw,
+        exposure: &'a ExposureParams,
+    ) -> RemoveSceneContext<'a> {
+        detail_remove_scene(
+            edits,
+            full_raw,
+            exposure,
+            self.source_origin,
+            self.source_size,
+        )
+    }
+
     pub(super) fn needs_native_refinement(&self, requested: &PreviewDetailPlan) -> bool {
         if self.raw.is_pre_demosaiced_raster()
             || [self.raw.width, self.raw.height] == self.source_size
@@ -464,6 +640,7 @@ impl PreviewDetail {
             requested.size[1],
             requested.edge,
             self.raw.cfa_kind,
+            requested.graph,
         )
     }
 }
@@ -478,32 +655,41 @@ fn detail_refresh_delay(motion_at: Option<Instant>, urgent: bool, now: Instant) 
 }
 
 struct PreviewDetailRequest {
+    /// Set when the crop is no longer wanted, which ends the preparation.
+    cancel: Arc<AtomicBool>,
     source_raw: Arc<LoadedRaw>,
     revision: u64,
     visible: PreviewUvRect,
-    viewport_pixels: [u32; 2],
+    view: DetailView,
     quality: PreviewQuality,
     exposure: ExposureParams,
     processing_halo: u32,
+    graph: DetailGraph,
 }
 
-fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<PreparedPreviewDetail> {
+/// Prepares the crop of a request, or returns `None` if it was cancelled.
+fn prepare_preview_detail(
+    request: PreviewDetailRequest,
+) -> anyhow::Result<Option<PreparedPreviewDetail>> {
     let PreviewDetailRequest {
+        cancel,
         source_raw,
         revision,
         visible,
-        viewport_pixels,
+        view,
         quality,
         exposure,
         processing_halo,
+        graph,
     } = request;
     let plan = PreviewDetailPlan::new(
         [source_raw.width, source_raw.height],
         source_raw.cfa_kind,
         visible,
-        viewport_pixels,
+        view,
         quality,
         processing_halo,
+        graph,
     );
     let [x0, y0] = plan.origin;
     let [crop_width, crop_height] = plan.size;
@@ -520,6 +706,14 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         ],
     };
     let requested_edge = plan.edge;
+    let prepare_started = Instant::now();
+    calibraw_core::diagnostics::record(format!(
+        "Zoom detail plan: crop {}x{} at {:?}, edge {}",
+        crop_width, crop_height, plan.origin, requested_edge
+    ));
+    if cancel.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(None);
+    }
     if source_raw.uses_opposed_chroma(&exposure) {
         source_raw.inpaint_opposed_chroma_for_exposure(&exposure);
     }
@@ -530,6 +724,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
             source_size[1],
             requested_edge,
             source_raw.cfa_kind,
+            graph,
         ) {
             // The detail texture is sampled down to the viewport only after the
             // complete GPU graph has run.  Keeping the mosaic native here is what
@@ -539,7 +734,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
             native.opposed_chroma_cache = Arc::clone(&source_raw.opposed_chroma_cache);
             native
         } else {
-            build_region_proxy(
+            let Some(proxy) = build_region_proxy_until(
                 &source_raw,
                 x0,
                 y0,
@@ -548,11 +743,21 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
                 ProxySpec {
                     max_edge: requested_edge,
                 },
-            )
+                &cancel,
+            ) else {
+                return Ok(None);
+            };
+            proxy
         },
     );
+    calibraw_core::diagnostics::record(format!(
+        "Zoom detail source prepared in {:.3}s: {}x{}",
+        prepare_started.elapsed().as_secs_f64(),
+        raw.width,
+        raw.height
+    ));
     let visible = detail_display_uv(visible, crop_uv, [raw.width, raw.height], processing_halo);
-    Ok(PreparedPreviewDetail {
+    Ok(Some(PreparedPreviewDetail {
         source_raw,
         processing_halo,
         revision,
@@ -562,7 +767,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         source_origin: [x0, y0],
         source_size,
         raw,
-    })
+    }))
 }
 
 fn settled_detail_uses_native_source(
@@ -571,6 +776,7 @@ fn settled_detail_uses_native_source(
     region_height: u32,
     requested_edge: u32,
     cfa_kind: crate::pipeline::CfaKind,
+    graph: DetailGraph,
 ) -> bool {
     if !is_sensor_raw {
         return false;
@@ -592,12 +798,34 @@ fn settled_detail_uses_native_source(
             region_height,
             region_width.max(region_height),
             cfa_kind,
+            graph.preview_graph(),
         ) == region_width.max(region_height)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_crop_is_placed_in_the_frame_the_photo_fills_at_its_density() {
+        // A 1000 by 500 crop at (200, 100) of a 4000 by 3000 photo, as 500 by
+        // 250 samples: the photo at that density is 2000 by 1500.
+        let (origin, size) =
+            detail_virtual_frame([500, 250], [4_000, 3_000], [200, 100], [1_000, 500]);
+        assert_eq!(size, [2_000, 1_500]);
+        assert_eq!(origin, [100, 50]);
+        // Halving the density halves the frame and the origin with it, which
+        // is what lets the reduced crop reuse the sharp crop's place.
+        let (half_origin, half_size) =
+            detail_virtual_frame([250, 125], [4_000, 3_000], [200, 100], [1_000, 500]);
+        assert_eq!(half_size, [1_000, 750]);
+        assert_eq!(half_origin, [50, 25]);
+        // A crop of the whole photo needs no more than its own size.
+        assert_eq!(
+            detail_virtual_frame([300, 200], [300, 200], [0, 0], [300, 200]),
+            ([0, 0], [300, 200])
+        );
+    }
 
     #[test]
     fn missing_detail_recovers_without_a_motion_timer() {
@@ -632,7 +860,8 @@ mod tests {
             3_800,
             2_500,
             2_000,
-            crate::pipeline::CfaKind::Bayer
+            crate::pipeline::CfaKind::Bayer,
+            DetailGraph::unconstrained()
         ));
     }
 
@@ -643,7 +872,8 @@ mod tests {
             6_000,
             4_000,
             2_000,
-            crate::pipeline::CfaKind::Bayer
+            crate::pipeline::CfaKind::Bayer,
+            DetailGraph::unconstrained()
         ));
     }
 
@@ -654,7 +884,8 @@ mod tests {
             1_000,
             700,
             2_000,
-            crate::pipeline::CfaKind::Bayer
+            crate::pipeline::CfaKind::Bayer,
+            DetailGraph::unconstrained()
         ));
     }
 }

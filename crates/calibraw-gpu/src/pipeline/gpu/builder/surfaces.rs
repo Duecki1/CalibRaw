@@ -38,7 +38,9 @@ pub(in crate::pipeline::gpu) fn compute_derived_geometry(
         .mask_atlas_edge_override
         .unwrap_or_else(|| interactive_mask_atlas_edge(raw.width, raw.height))
         .clamp(64, export_mask_atlas_edge_limit());
-    let mask_layer_capacity = if config.mask_atlas_edge_override.is_some() {
+    let mask_layer_capacity = if let Some(layers) = config.mask_layer_capacity_override {
+        layers.clamp(1, MAX_LOCAL_MASKS)
+    } else if config.mask_atlas_edge_override.is_some() {
         (params.scene_tone.mask_counts[0] as usize).clamp(1, MAX_LOCAL_MASKS)
     } else {
         MAX_LOCAL_MASKS

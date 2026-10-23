@@ -474,6 +474,41 @@ fn space_pans_only_when_held_before_the_press_and_lasts_until_release() {
 }
 
 #[test]
+fn portrait_fit_reports_the_whole_width_fitted_image_for_proxy_density() {
+    use crate::app::{PreviewUvRect, PreviewViewportAction};
+
+    let ctx = egui::Context::default();
+    let app = CalibRawApp::empty(&ctx);
+    let input = egui::RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 1_400.0))),
+        ..Default::default()
+    };
+    // A portrait phone with the tool sheet open: the image is fitted by width
+    // and continues behind the sheet.
+    let exposed = Rect::from_min_max(egui::pos2(0.0, 100.0), egui::pos2(800.0, 800.0));
+    let mut pixels = None;
+    let _ = ctx.run_ui(input, |ui| {
+        let canvas = Preview::begin_canvas(ui, Color32::BLACK, Some(exposed));
+        let input = PreviewViewportInput::of(&app, (4_000, 6_000));
+        let (mut viewport, _) = Preview::begin_viewport(ui, canvas, &input, Some(exposed))
+            .expect("the canvas has area");
+        for action in Preview::navigate_viewport(ui, &mut viewport, PreviewUvRect::FULL, false) {
+            if let PreviewViewportAction::SetViewportPixels { visible, fitted } = action {
+                pixels = Some((visible, fitted));
+            }
+        }
+    });
+
+    let (visible, fitted) = pixels.expect("the layout reports its viewport");
+    assert_eq!(visible, [800, 700], "only the exposed part is in view");
+    assert_eq!(
+        fitted,
+        [800, 1_200],
+        "the proxy is sized for the whole width-fitted image"
+    );
+}
+
+#[test]
 fn a_kept_view_keeps_the_magnification_on_a_photo_of_another_size() {
     use crate::app::PreviewViewportAction;
 

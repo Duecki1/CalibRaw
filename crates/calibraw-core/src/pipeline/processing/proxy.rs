@@ -1,6 +1,7 @@
 //! Reduced and cropped proxies of a RAW for previews and regions.
 
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ProxySpec {
@@ -87,7 +88,8 @@ fn build_raster_region_proxy(
     width: u32,
     height: u32,
     spec: ProxySpec,
-) -> LoadedRaw {
+    cancel: &AtomicBool,
+) -> Option<LoadedRaw> {
     let x = x.min(raw.width.saturating_sub(1));
     let y = y.min(raw.height.saturating_sub(1));
     let region_width = width.max(1).min(raw.width - x);
@@ -95,7 +97,7 @@ fn build_raster_region_proxy(
     let max_edge = spec.max_edge.max(1);
     let longest = region_width.max(region_height);
     if longest <= max_edge {
-        return crop_raster(raw, x, y, region_width, region_height);
+        return Some(crop_raster(raw, x, y, region_width, region_height));
     }
 
     let scale = max_edge as f64 / longest as f64;
@@ -109,6 +111,9 @@ fn build_raster_region_proxy(
     rgb.par_chunks_mut(output_width as usize * 3)
         .enumerate()
         .for_each(|(output_y, row)| {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
             let (sy0, sy1) = proportional_partition(output_y as u32, region_height, output_height);
             for output_x in 0..output_width {
                 let (sx0, sx1) = proportional_partition(output_x, region_width, output_width);
@@ -130,6 +135,9 @@ fn build_raster_region_proxy(
                 row[destination + 2] = (sum[2] / divisor) as f32;
             }
         });
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
     let mut proxy = raster_with_metadata(
         raw,
         output_width,
@@ -142,7 +150,7 @@ fn build_raster_region_proxy(
     proxy.noise_profile = raw.noise_profile.scaled_variance(
         [area_ratio([output_width, output_height], [region_width, region_height]); 4],
     );
-    proxy
+    Some(proxy)
 }
 
 /// The fraction of `region`'s area that `output` covers, at most 1.
@@ -228,6 +236,43 @@ pub fn build_proxy(raw: &LoadedRaw, spec: ProxySpec) -> LoadedRaw {
     build_region_proxy(raw, 0, 0, raw.width, raw.height, spec)
 }
 
+/// Down-scale ratios (source pixels per proxy pixel) below this resample each
+/// colour plane with a triangle filter instead of averaging the same-coloured
+/// samples of a footprint. A footprint of one or two pixels holds a sample of a
+/// given colour only some of the time, so averaging falls back to the nearest
+/// sample and every proxy pixel lands up to a pixel from where it belongs:
+/// thin lines come out wobbly. The filter places each pixel exactly.
+const SMOOTH_RESAMPLE_BELOW: f64 = 3.0;
+
+/// The half-width, in source pixels, of the triangle filter at least: the
+/// spacing of same-coloured samples along an axis, so that a window holds one
+/// on either side of the pixel.
+fn smooth_resample_min_radius(cfa_period: u32) -> f64 {
+    f64::from(cfa_period.min(6) / 2).max(2.0)
+}
+
+/// One axis of the triangle filter for output pixel `index`: the source
+/// positions in the window, clamped to `0..limit`, and their weights.
+fn triangle_taps(
+    origin: u32,
+    index: u32,
+    scale: f64,
+    radius: f64,
+    limit: u32,
+    taps: &mut Vec<(u32, f64)>,
+) {
+    taps.clear();
+    let center = f64::from(origin) + (f64::from(index) + 0.5) * scale;
+    let first = (center - radius).floor().max(0.0) as u32;
+    let last = ((center + radius).ceil().max(0.0) as u32).min(limit.saturating_sub(1));
+    for position in first..=last {
+        let weight = 1.0 - ((f64::from(position) + 0.5) - center).abs() / radius;
+        if weight > 0.0 {
+            taps.push((position, weight));
+        }
+    }
+}
+
 /// Builds a bounded, interactive approximation of a source region.
 ///
 /// For sensor RAW inputs this averages samples of the same CFA colour before
@@ -244,8 +289,24 @@ pub fn build_region_proxy(
     height: u32,
     spec: ProxySpec,
 ) -> LoadedRaw {
+    build_region_proxy_until(raw, x, y, width, height, spec, &AtomicBool::new(false))
+        .expect("a flag nobody else holds is never set, so the build is not cancelled")
+}
+
+/// [`build_region_proxy`] that gives up, returning `None`, soon after `cancel`
+/// is set: it looks at the flag for every row it resamples. For a build whose
+/// result is no longer wanted, such as a zoomed crop of a view that moved on.
+pub fn build_region_proxy_until(
+    raw: &LoadedRaw,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    spec: ProxySpec,
+    cancel: &AtomicBool,
+) -> Option<LoadedRaw> {
     if raw.is_pre_demosaiced_raster() {
-        return build_raster_region_proxy(raw, x, y, width, height, spec);
+        return build_raster_region_proxy(raw, x, y, width, height, spec, cancel);
     }
     let x = x.min(raw.width.saturating_sub(1));
     let y = y.min(raw.height.saturating_sub(1));
@@ -255,9 +316,9 @@ pub fn build_region_proxy(
     let longest = region_width.max(region_height);
     if longest <= max_edge {
         if x == 0 && y == 0 && region_width == raw.width && region_height == raw.height {
-            return raw.clone();
+            return Some(raw.clone());
         }
-        return crop_raw(raw, x, y, region_width, region_height);
+        return Some(crop_raw(raw, x, y, region_width, region_height));
     }
 
     let cfa_period = match raw.cfa_kind {
@@ -282,6 +343,24 @@ pub fn build_region_proxy(
     let height = phase_aligned_dimension(region_height, target_height);
     let len = (width * height) as usize;
     let row_stride = width as usize;
+    let scale_x = f64::from(region_width) / f64::from(width);
+    let scale_y = f64::from(region_height) / f64::from(height);
+    let smooth = scale_x.max(scale_y) < SMOOTH_RESAMPLE_BELOW;
+    let smooth_radius_x = scale_x.max(smooth_resample_min_radius(cfa_period));
+    let smooth_radius_y = scale_y.max(smooth_resample_min_radius(cfa_period));
+    // The filter's columns depend only on the output column, so they are worked
+    // out once instead of for every row.
+    let column_taps: Vec<Vec<(u32, f64)>> = if smooth {
+        (0..width)
+            .map(|px| {
+                let mut taps = Vec::new();
+                triangle_taps(x, px, scale_x, smooth_radius_x, raw.width, &mut taps);
+                taps
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut raw_pixels = vec![0u16; len];
     let mut color_indices = vec![0u8; len];
     let mut black_levels_per_pixel = vec![0.0f32; len];
@@ -295,12 +374,19 @@ pub fn build_region_proxy(
         .map(|(py, ((raw_row, cfa_row), black_row))| {
             let mut inverse_counts = [0.0f64; 4];
             let mut pixel_counts = [0u64; 4];
+            if cancel.load(Ordering::Relaxed) {
+                return (inverse_counts, pixel_counts);
+            }
             let py = py as u32;
             let output_phase_y = py % cfa_period;
             let (source_y0, source_y1) = proportional_partition(py, region_height, height);
             let footprint_y0 = y + source_y0;
             let footprint_y1 = (y + source_y1).min(y + region_height);
 
+            let mut row_taps = Vec::new();
+            if smooth {
+                triangle_taps(y, py, scale_y, smooth_radius_y, raw.height, &mut row_taps);
+            }
             for px in 0..width {
                 let output_phase_x = px % cfa_period;
                 let (source_x0, source_x1) = proportional_partition(px, region_width, width);
@@ -319,20 +405,48 @@ pub fn build_region_proxy(
                 let mut pixel_sum = 0u64;
                 let mut black_sum = 0.0f64;
                 let mut count = 0u32;
+                // The triangle-filtered sum, for the ratios that use it.
+                let mut weighted = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
 
-                for sy in footprint_y0..footprint_y1 {
-                    let row = sy * raw.width;
-                    for sx in footprint_x0..footprint_x1 {
-                        let index = (row + sx) as usize;
-                        if raw.color_indices[index] == cfa {
-                            pixel_sum += u64::from(raw.raw_pixels[index]);
-                            black_sum += f64::from(raw.black_levels_per_pixel[index]);
-                            count += 1;
+                if smooth {
+                    for &(sy, weight_y) in &row_taps {
+                        let row = sy * raw.width;
+                        for &(sx, weight_x) in &column_taps[px as usize] {
+                            let index = (row + sx) as usize;
+                            if raw.color_indices[index] == cfa {
+                                let weight = weight_x * weight_y;
+                                weighted.0 += weight * f64::from(raw.raw_pixels[index]);
+                                weighted.1 += weight * f64::from(raw.black_levels_per_pixel[index]);
+                                weighted.2 += weight;
+                                weighted.3 += weight * weight;
+                            }
+                        }
+                    }
+                } else {
+                    for sy in footprint_y0..footprint_y1 {
+                        let row = sy * raw.width;
+                        for sx in footprint_x0..footprint_x1 {
+                            let index = (row + sx) as usize;
+                            if raw.color_indices[index] == cfa {
+                                pixel_sum += u64::from(raw.raw_pixels[index]);
+                                black_sum += f64::from(raw.black_levels_per_pixel[index]);
+                                count += 1;
+                            }
                         }
                     }
                 }
 
                 let px = px as usize;
+                if smooth && weighted.2 > 0.0 {
+                    raw_row[px] = (weighted.0 / weighted.2).round().clamp(0.0, 65_535.0) as u16;
+                    black_row[px] = (weighted.1 / weighted.2) as f32;
+                    cfa_row[px] = cfa;
+                    let channel = usize::from(cfa.min(3));
+                    // Samples a pixel effectively averages: (Σw)² / Σw².
+                    inverse_counts[channel] += weighted.3 / (weighted.2 * weighted.2);
+                    pixel_counts[channel] += 1;
+                    continue;
+                }
                 if count == 0 {
                     let fallback = nearest_cfa_sample(raw, center_x, center_y, cfa, cfa_period);
                     raw_row[px] = raw.raw_pixels[fallback];
@@ -358,6 +472,9 @@ pub fn build_region_proxy(
                 (inverse, pixels)
             },
         );
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
     // A proxy pixel averages only the footprint's samples of its own colour, a
     // quarter of the footprint on Bayer, so its variance is the sensor's over
     // that sample count, not over the footprint area.
@@ -369,7 +486,7 @@ pub fn build_region_proxy(
         }
     });
 
-    LoadedRaw {
+    Some(LoadedRaw {
         noise_profile: raw.noise_profile.scaled_variance(variance_factors),
         lens_geometry: (x == 0
             && y == 0
@@ -393,7 +510,7 @@ pub fn build_region_proxy(
             CompactPixelMap::compact_from_dense(width, height, color_indices, 64),
             CompactPixelMap::compact_from_dense(width, height, black_levels_per_pixel, 64),
         )
-    }
+    })
 }
 
 pub(super) fn nearest_cfa_sample(

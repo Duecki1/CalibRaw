@@ -36,7 +36,7 @@ fn dragged_develop_sidebar_width(
 impl CalibRawApp {
     fn release_optional_gpu_memory(&mut self) {
         self.discard_auxiliary_previews();
-        self.preview.detail_rebuild_receiver = None;
+        self.preview.drop_detail_rebuild();
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
         self.preview.detail_urgent = false;
@@ -176,6 +176,7 @@ impl CalibRawApp {
         self.poll_load_worker(frame);
         self.poll_preview_rebuild_worker(frame);
         self.poll_preview_detail_rebuild_worker(frame);
+        self.poll_full_resolution();
         let caps = self.caps();
         if caps.has_folders() {
             self.poll_library_batch_export_worker();
@@ -217,9 +218,11 @@ impl CalibRawApp {
         self.apply_pending_preview_quality(frame);
         self.advance_preview_detail(frame);
         self.sync_original_preview(frame);
+        self.advance_interactive_preview(frame);
         if !self.preview.original_requested {
             self.advance_preview_dispatch(frame);
         }
+        self.advance_full_resolution(frame);
         self.refresh_status();
 
         self.update_preview_histogram(frame);
@@ -232,7 +235,7 @@ impl CalibRawApp {
             || self.export.task.is_some()
             || self.export.publish_pending
             || self.preview.rebuild_receiver.is_some()
-            || self.preview.detail_rebuild_receiver.is_some()
+            || self.preview.detail_rebuild.is_some()
             || self.inpaint_processing()
         {
             ctx.request_repaint_after(Duration::from_millis(80));
@@ -486,13 +489,6 @@ pub(super) fn show_android_foreground_task_blocker(ctx: &egui::Context) {
                 ui.allocate_exact_size(content_rect.size(), egui::Sense::click_and_drag());
             ui.painter()
                 .rect_filled(rect, 0.0, egui::Color32::from_black_alpha(96));
-            ui.painter().text(
-                egui::pos2(rect.center().x, rect.bottom() - 24.0),
-                egui::Align2::CENTER_BOTTOM,
-                "Keep CalibRaw open in the foreground until the operation finishes. Leaving or closing the app may stop it.",
-                egui::FontId::proportional(13.0),
-                egui::Color32::from_white_alpha(210),
-            );
         });
 }
 

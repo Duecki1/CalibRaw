@@ -7,7 +7,7 @@ impl CalibRawApp {
         if self.ai_denoise_running() {
             return;
         }
-        if self.defer_background_preview_processing() {
+        if self.defer_navigation_preview() {
             return;
         }
         let zoomed = self.preview.zoom > DETAIL_ZOOM_START;
@@ -62,6 +62,7 @@ impl CalibRawApp {
                 &params,
                 PipelineOptions::new(ProcessingQuality::Preview)
                     .mask_atlas_edge(navigation_mask_edge())
+                    .mask_layers(preview_mask_layer_capacity(preview_masks.masks.len()))
                     .programs(&template.program_template()),
             ) {
                 Ok(pipeline) => pipeline,

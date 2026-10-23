@@ -21,7 +21,7 @@ pub(super) fn autosave_deadline(
 }
 
 pub(super) fn sidecar_interaction_active(ctx: &egui::Context) -> bool {
-    ctx.input(|input| input.pointer.any_down()) || ctx.egui_wants_keyboard_input()
+    super::interaction::pointer_engaged(ctx) || ctx.egui_wants_keyboard_input()
 }
 
 fn edited_preview_is_current_for_thumbnail(

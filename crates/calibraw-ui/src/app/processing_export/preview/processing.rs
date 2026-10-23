@@ -7,14 +7,33 @@ impl CalibRawApp {
             && self.egui_ctx.input(|input| input.pointer.primary_down())
     }
 
-    /// Whether only the zoomed crop follows the current drag: a control or a
-    /// mask is dragged while zoomed in, the sharp crop covers the view and
-    /// the drag changes only the Output stage. The fitted preview and the
-    /// navigation proxy keep their pending work until the pointer lifts.
+    /// Whether the fitted preview waits for the end of the current drag, which
+    /// something else follows: the reduced preview of a dragged control
+    /// (`interactive`), or, zoomed in, the crop alone. That is when a control
+    /// or a mask is dragged while the sharp crop covers the view and the drag
+    /// changes only the Output stage. The fitted preview and the navigation
+    /// proxy keep their pending work until the pointer lifts.
     ///
     /// Raw and Tone changes still update every preview, because the crop
     /// takes its tone statistics from a full-frame one.
     pub(in crate::app) fn defer_background_preview_processing(&self) -> bool {
+        self.interactive_following() || self.defer_for_zoomed_drag()
+    }
+
+    /// Whether the navigation proxy waits for the end of the current drag. It
+    /// only supplies the crop's tone statistics, which Raw and Tone changes
+    /// move: the reduced crop needs them too, so they are not waited for.
+    pub(in crate::app) fn defer_navigation_preview(&self) -> bool {
+        if self.interactive_following() && self.preview.zoomed_in() {
+            return self
+                .preview
+                .navigation_pending_stage
+                .is_none_or(|stage| stage == ProcessingStage::Output);
+        }
+        self.defer_background_preview_processing()
+    }
+
+    fn defer_for_zoomed_drag(&self) -> bool {
         self.preview.zoom > DETAIL_ZOOM_START
             && self.egui_ctx.input(|input| input.pointer.primary_down())
             && [
@@ -100,11 +119,8 @@ impl CalibRawApp {
             return;
         };
 
-        let detail_raw = Arc::clone(&detail.raw);
-        let virtual_origin = detail.virtual_origin;
-        let virtual_full_size = detail.virtual_full_size;
         if stage == ProcessingStage::Raw
-            && !detail_raw.is_pre_demosaiced_raster()
+            && !detail.raw.is_pre_demosaiced_raster()
             && full_raw.uses_opposed_chroma(&self.develop.target_exposure)
         {
             // Crops and proxies share the full sensor cache. Populate the exact
@@ -127,19 +143,16 @@ impl CalibRawApp {
         );
         let mapping_changed =
             detail.mask_source_region != mask_region || detail.mask_texture_extent != mask_extent;
-        let params = GpuParams::new_for_tile(
+        let params = DetailPlacement {
+            mask_region,
+            mask_extent,
+            ..detail.placement()
+        }
+        .params(
             &self.develop.target_exposure,
             &preview_masks,
-            &detail_raw,
-            virtual_origin[0],
-            virtual_origin[1],
-            virtual_full_size[0],
-            virtual_full_size[1],
-        )
-        .with_vignette_geometry(self.develop.geometry)
-        .with_mask_uv_rect_and_extent(
-            mask_source_region_uv(mask_region, full_raw.width, full_raw.height),
-            mask_extent,
+            self.develop.geometry,
+            &detail.raw,
         );
 
         let full_frame_tone_pipeline = full_frame_tone_pipeline(
@@ -172,59 +185,21 @@ impl CalibRawApp {
             self.masks.detail_dirty_layers.fill(false);
         }
 
-        if stage == ProcessingStage::Tone {
-            if let Some(full_frame) = full_frame_tone_pipeline {
-                detail
-                    .pipeline
-                    .gpu()
-                    .dispatch_tone_guide_with_inherited_statistics(
-                        &render_state.queue,
-                        &render_state.device,
-                        &params,
-                        full_frame,
-                    );
-            } else {
-                detail.pipeline.gpu().dispatch_stage(
-                    &render_state.queue,
-                    &render_state.device,
-                    &params,
-                    ProcessingStage::Tone,
-                );
-            }
-        } else {
-            if stage == ProcessingStage::Output {
-                if let Some(full_frame) = full_frame_tone_pipeline {
-                    detail.pipeline.gpu().inherit_tone_statistics(
-                        &render_state.queue,
-                        &render_state.device,
-                        &params,
-                        full_frame,
-                    );
-                }
-            }
-            if let Err(error) = detail.pipeline.gpu().dispatch_stage_with_remove(
-                &render_state.queue,
-                &render_state.device,
-                &params,
-                stage,
-                RemoveSceneContext::new(
-                    &self.inpaint.edits,
-                    full_raw,
-                    &self.develop.target_exposure,
-                    [
-                        detail.source_origin[0] as f32,
-                        detail.source_origin[1] as f32,
-                    ],
-                    [detail.source_size[0] as f32, detail.source_size[1] as f32],
-                ),
-            ) {
-                self.report_error(
-                    ErrorKind::Preview,
-                    format!("Could not apply Remove to zoomed preview: {error:#}"),
-                );
-                self.preview.detail_pending_stage = None;
-                return;
-            }
+        if let Err(error) = dispatch_detail_stage(
+            detail.pipeline.gpu(),
+            &render_state.queue,
+            &render_state.device,
+            &params,
+            stage,
+            full_frame_tone_pipeline,
+            detail.remove_scene(&self.inpaint.edits, full_raw, &self.develop.target_exposure),
+        ) {
+            self.report_error(
+                ErrorKind::Preview,
+                format!("Could not apply Remove to zoomed preview: {error:#}"),
+            );
+            self.preview.detail_pending_stage = None;
+            return;
         }
         self.preview.detail_pending_stage = match stage {
             ProcessingStage::Raw => Some(ProcessingStage::Tone),
@@ -255,10 +230,29 @@ impl CalibRawApp {
         // Every dispatch advances or clears a pending stage, so an unchanged
         // state means nothing was submitted and the gate can stay open.
         if let Some(render_state) = render_state {
-            if self.preview.dispatch_progress() != before {
-                self.preview
-                    .dispatch_gate
-                    .close_until_idle(&render_state.queue, &self.egui_ctx);
+            let after = self.preview.dispatch_progress();
+            if after != before {
+                // What the batch is timed as is what the user waits for: the
+                // reduced preview while it follows a drag, else the sharp
+                // preview that is shown.
+                let batch = if after.interactive() != before.interactive() {
+                    Batch::Interactive
+                } else if self.preview.zoomed_in() {
+                    if before.detail().is_some() && after.detail() != before.detail() {
+                        Batch::Detail
+                    } else {
+                        Batch::Other
+                    }
+                } else if before.fitted().is_some() && after.fitted() != before.fitted() {
+                    Batch::Fitted
+                } else {
+                    Batch::Other
+                };
+                self.preview.dispatch_gate.close_until_idle(
+                    &render_state.queue,
+                    &self.egui_ctx,
+                    batch,
+                );
             }
         }
     }
@@ -269,8 +263,17 @@ impl CalibRawApp {
         let zoomed = self.preview.zoom > DETAIL_ZOOM_START;
         // Decided before the crop renders, which can make it current.
         let defer_fitted = self.defer_background_preview_processing();
-        if zoomed {
+        let following_drag = self.interactive_following();
+        // The reduced preview follows a drag in the sharp one's place, which
+        // keeps what it owes until the drag ends.
+        if zoomed && !following_drag {
             self.drain_zoomed_processing(frame);
+        }
+        if following_drag {
+            self.drain_pending_stages(
+                |preview| preview.interactive.pending_stage(),
+                |app| app.advance_interactive_stage(frame),
+            );
         }
         if defer_fitted {
             return;
@@ -326,6 +329,14 @@ impl CalibRawApp {
         let Some(stage) = self.preview.pending_stage else {
             return;
         };
+        if self.fitted_mask_capacity_stale() {
+            // Dispatching would read mask layers the graph does not have. Keep
+            // the last frame until the rebuilt graph, which renders every
+            // pending change, replaces it.
+            self.preview.quality_dirty = true;
+            self.egui_ctx.request_repaint();
+            return;
+        }
         let (Some(raw), Some(pipeline)) = (&self.develop.preview_raw, self.preview.pipeline())
         else {
             self.preview.pending_stage = None;
@@ -396,4 +407,32 @@ impl CalibRawApp {
             ProcessingStage::Output => None,
         };
     }
+}
+
+/// Renders `stage` of a zoomed crop's graph. The crop takes its tone
+/// statistics from a full-frame graph (`full_frame`) when there is one, so the
+/// tone does not depend on the part of the photo in view.
+pub(in crate::app) fn dispatch_detail_stage(
+    pipeline: &RawGpuPipeline,
+    queue: &wgpu::Queue,
+    device: &wgpu::Device,
+    params: &GpuParams,
+    stage: ProcessingStage,
+    full_frame: Option<&RawGpuPipeline>,
+    remove: RemoveSceneContext<'_>,
+) -> anyhow::Result<()> {
+    if stage == ProcessingStage::Tone {
+        match full_frame {
+            Some(full_frame) => pipeline
+                .dispatch_tone_guide_with_inherited_statistics(queue, device, params, full_frame),
+            None => pipeline.dispatch_stage(queue, device, params, ProcessingStage::Tone),
+        }
+        return Ok(());
+    }
+    if stage == ProcessingStage::Output {
+        if let Some(full_frame) = full_frame {
+            pipeline.inherit_tone_statistics(queue, device, params, full_frame);
+        }
+    }
+    pipeline.dispatch_stage_with_remove(queue, device, params, stage, remove)
 }

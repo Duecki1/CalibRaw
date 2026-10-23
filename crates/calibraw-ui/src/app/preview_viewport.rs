@@ -15,8 +15,13 @@ pub(crate) enum PreviewViewportAction {
         zoom: f32,
         center: [f32; 2],
     },
-    /// The canvas area showing the image, in physical pixels.
-    SetViewportPixels([u32; 2]),
+    /// The image and the part of it in view, in physical pixels.
+    SetViewportPixels {
+        /// The visible part; it bounds the zoomed crop and sets its density.
+        visible: [u32; 2],
+        /// The image as laid out at fit, including parts overlay panels cover.
+        fitted: [u32; 2],
+    },
     /// The source region in view; a larger one may need a sharper preview.
     SetVisibleUv(PreviewUvRect),
     NoteMotion,
@@ -40,16 +45,31 @@ impl CalibRawApp {
             self.refresh_develop_loading_thumbnail(ui.ctx());
         }
         let [clipping_base, clipping_detail] = self.preview_clipping_textures(frame);
+        let full_resolution = self
+            .full_resolution_texture()
+            .filter(|_| clipping_base.is_none());
+        // While a control is dragged the reduced preview is shown in the
+        // fitted one's place; the layout keeps the fitted size.
+        let reduced = self
+            .preview
+            .interactive
+            .texture()
+            .filter(|_| clipping_base.is_none());
         let base = self.preview_base_pipeline().map(|presented| {
             (
-                clipping_base.unwrap_or(presented.texture()),
+                clipping_base
+                    .or(reduced)
+                    .or(full_resolution)
+                    .unwrap_or(presented.texture()),
                 presented.gpu().width,
                 presented.gpu().height,
             )
         });
         let Some((texture_id, pipeline_width, pipeline_height)) = base else {
             if canvas.has_area() {
-                self.set_preview_viewport_pixels(canvas.physical_pixels(ui.ctx()));
+                // No layout yet: the canvas is the best estimate for both.
+                let pixels = canvas.physical_pixels(ui.ctx());
+                self.set_preview_viewport_pixels(pixels, pixels);
             }
             Preview::show_placeholder(ui, canvas, &PreviewPlaceholder::of(self), unobscured);
             return;
@@ -123,8 +143,8 @@ impl CalibRawApp {
                 // The layout that sent this applied any kept view.
                 self.preview.pending_view = None;
             }
-            PreviewViewportAction::SetViewportPixels(pixels) => {
-                self.set_preview_viewport_pixels(pixels);
+            PreviewViewportAction::SetViewportPixels { visible, fitted } => {
+                self.set_preview_viewport_pixels(visible, fitted);
             }
             PreviewViewportAction::SetVisibleUv(visible_uv) => {
                 self.preview.visible_uv = visible_uv;
