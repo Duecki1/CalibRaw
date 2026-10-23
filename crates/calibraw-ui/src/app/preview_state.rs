@@ -321,6 +321,30 @@ pub(crate) struct PreparedPreviewDetail {
 
 pub(crate) enum PreviewDetailRebuildEvent {
     Finished(Result<PreparedPreviewDetail, String>),
+    /// The worker stopped early because its crop was no longer wanted.
+    Cancelled,
+}
+
+/// A zoomed crop being prepared on a worker.
+pub(crate) struct DetailRebuild {
+    pub(crate) receiver: mpsc::Receiver<PreviewDetailRebuildEvent>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl DetailRebuild {
+    pub(crate) fn new(
+        receiver: mpsc::Receiver<PreviewDetailRebuildEvent>,
+        cancel: Arc<AtomicBool>,
+    ) -> Self {
+        Self { receiver, cancel }
+    }
+
+    /// Asks the worker to stop. It reports `Cancelled` once it has, which is
+    /// soon: it looks at the request for every row it resamples.
+    fn cancel(&self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
 }
 
 pub(crate) struct PreviewState {
@@ -367,7 +391,7 @@ pub(crate) struct PreviewState {
     /// keeping it as sufficient.
     pub(crate) shrink_oversized: bool,
     pub(crate) rebuild_receiver: Option<mpsc::Receiver<PreviewRebuildEvent>>,
-    pub(crate) detail_rebuild_receiver: Option<mpsc::Receiver<PreviewDetailRebuildEvent>>,
+    pub(crate) detail_rebuild: Option<DetailRebuild>,
     pub(crate) original_exposure: ExposureParams,
     pub(crate) original_requested: bool,
     pub(crate) original_rendered_state: Option<(bool, u64)>,
@@ -405,6 +429,22 @@ impl KeptView {
 }
 
 impl PreviewState {
+    /// Stops the crop being prepared, if one is, because the view moved on. The
+    /// worker is kept until it ends, so that the next crop is not prepared
+    /// beside it.
+    pub(crate) fn cancel_detail_rebuild(&self) {
+        if let Some(rebuild) = &self.detail_rebuild {
+            rebuild.cancel();
+        }
+    }
+
+    /// Stops the crop being prepared and forgets it: its photo or its graphs
+    /// are gone.
+    pub(crate) fn drop_detail_rebuild(&mut self) {
+        self.cancel_detail_rebuild();
+        self.detail_rebuild = None;
+    }
+
     /// Fits the whole image in the view again and stops view motion. Bumping
     /// the revision rejects detail renders made for the previous view.
     pub(crate) fn reset_view(&mut self) {

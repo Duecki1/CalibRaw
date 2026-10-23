@@ -17,14 +17,14 @@ impl CalibRawApp {
     /// Raw and Tone changes still update every preview, because the crop
     /// takes its tone statistics from a full-frame one.
     pub(in crate::app) fn defer_background_preview_processing(&self) -> bool {
-        self.interactive_drag_active() || self.defer_for_zoomed_drag()
+        self.interactive_following() || self.defer_for_zoomed_drag()
     }
 
     /// Whether the navigation proxy waits for the end of the current drag. It
     /// only supplies the crop's tone statistics, which Raw and Tone changes
     /// move: the reduced crop needs them too, so they are not waited for.
     pub(in crate::app) fn defer_navigation_preview(&self) -> bool {
-        if self.interactive_drag_active() && self.preview.zoomed_in() {
+        if self.interactive_following() && self.preview.zoomed_in() {
             return self
                 .preview
                 .navigation_pending_stage
@@ -263,7 +263,7 @@ impl CalibRawApp {
         let zoomed = self.preview.zoom > DETAIL_ZOOM_START;
         // Decided before the crop renders, which can make it current.
         let defer_fitted = self.defer_background_preview_processing();
-        let following_drag = self.interactive_drag_active();
+        let following_drag = self.interactive_following();
         // The reduced preview follows a drag in the sharp one's place, which
         // keeps what it owes until the drag ends.
         if zoomed && !following_drag {

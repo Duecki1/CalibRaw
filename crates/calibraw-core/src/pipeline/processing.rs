@@ -134,9 +134,10 @@ impl RawStageControls {
 #[cfg(test)]
 mod tests {
     use super::{
-        affected_stage, build_proxy, build_region_proxy, crop_raw, extract_padded_tile,
-        extract_padded_tile_into, required_export_tile_halo, ExportTile, ProcessingStage,
-        ProxySpec, TilePlan, TileSpec, EXPORT_TILE_HALO, GLOW_SUPPORT, MIN_EXPORT_TILE_HALO,
+        affected_stage, build_proxy, build_region_proxy, build_region_proxy_until, crop_raw,
+        extract_padded_tile, extract_padded_tile_into, required_export_tile_halo, ExportTile,
+        ProcessingStage, ProxySpec, TilePlan, TileSpec, EXPORT_TILE_HALO, GLOW_SUPPORT,
+        MIN_EXPORT_TILE_HALO,
     };
     use crate::pipeline::{
         AiDenoisedImage, CameraProfile, CfaKind, CompactPixelMap, DenoiseQuality, ExposureParams,
@@ -225,6 +226,33 @@ mod tests {
             }
         }
         raw
+    }
+
+    #[test]
+    fn a_cancelled_proxy_build_gives_up_and_a_live_one_matches_the_plain_build() {
+        use std::sync::atomic::AtomicBool;
+        let spec = ProxySpec { max_edge: 32 };
+        for raw in [test_raster(96, 64), test_raw(96, 64)] {
+            let raster = raw.is_pre_demosaiced_raster();
+            assert!(
+                build_region_proxy_until(&raw, 8, 4, 80, 56, spec, &AtomicBool::new(true))
+                    .is_none(),
+                "raster={raster}"
+            );
+            let built = build_region_proxy_until(&raw, 8, 4, 80, 56, spec, &AtomicBool::new(false))
+                .expect("a flag that is not set does not cancel the build");
+            let plain = build_region_proxy(&raw, 8, 4, 80, 56, spec);
+            assert_eq!(
+                (built.width, built.height),
+                (plain.width, plain.height),
+                "raster={raster}"
+            );
+            if raster {
+                assert_eq!(built.scene_linear_raster(), plain.scene_linear_raster());
+            } else {
+                assert_eq!(built.raw_pixels, plain.raw_pixels);
+            }
+        }
     }
 
     #[test]

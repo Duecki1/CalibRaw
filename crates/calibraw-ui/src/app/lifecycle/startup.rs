@@ -139,7 +139,7 @@ impl CalibRawApp {
                 interactive: InteractiveState::default(),
                 shrink_oversized: false,
                 rebuild_receiver: None,
-                detail_rebuild_receiver: None,
+                detail_rebuild: None,
                 original_exposure: exposure,
                 original_requested: false,
                 original_rendered_state: None,

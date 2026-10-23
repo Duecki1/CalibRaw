@@ -36,7 +36,7 @@ fn dragged_develop_sidebar_width(
 impl CalibRawApp {
     fn release_optional_gpu_memory(&mut self) {
         self.discard_auxiliary_previews();
-        self.preview.detail_rebuild_receiver = None;
+        self.preview.drop_detail_rebuild();
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
         self.preview.detail_urgent = false;
@@ -235,7 +235,7 @@ impl CalibRawApp {
             || self.export.task.is_some()
             || self.export.publish_pending
             || self.preview.rebuild_receiver.is_some()
-            || self.preview.detail_rebuild_receiver.is_some()
+            || self.preview.detail_rebuild.is_some()
             || self.inpaint_processing()
         {
             ctx.request_repaint_after(Duration::from_millis(80));

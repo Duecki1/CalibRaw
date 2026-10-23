@@ -99,7 +99,9 @@ impl FullResolutionState {
         }
     }
 
-    fn cancel_running(&self) {
+    /// Tells the render in flight, if any, that its picture is no longer
+    /// wanted. It stops before its next stage.
+    pub(crate) fn cancel_running(&self) {
         if let Some(running) = &self.running {
             running.cancel.store(true, Ordering::Release);
         }
@@ -220,7 +222,7 @@ impl CalibRawApp {
             || self.foreground_operation_active()
             || self.export.task.is_some()
             || self.export.batch.is_some()
-            || self.preview.detail_rebuild_receiver.is_some()
+            || self.preview.detail_rebuild.is_some()
         {
             return false;
         }
@@ -234,10 +236,15 @@ impl CalibRawApp {
     pub(in crate::app) fn advance_full_resolution(&mut self, frame: &eframe::Frame) {
         let output = self.fitted_output();
         let idle = self.preview.full_resolution.observe(output, Instant::now());
+        // Whatever the pointer is pressing is about to change the picture, and
+        // the preview that follows it needs the GPU more than this render does.
+        let pointer_down = super::interaction::pointer_engaged(&self.egui_ctx);
+        if pointer_down {
+            self.preview.full_resolution.cancel_running();
+        }
         if !self.full_resolution_due() {
             return;
         }
-        let pointer_down = super::interaction::pointer_engaged(&self.egui_ctx);
         if let Some(wait) = wait_before_render(idle, pointer_down) {
             self.egui_ctx.request_repaint_after(wait);
             return;
@@ -403,6 +410,27 @@ impl CalibRawApp {
     }
 }
 
+/// Waits until the GPU has finished what was submitted to `queue` so far, and
+/// returns whether it did: `false` once `cancel` is set, which stops the wait.
+/// It polls the device instead of blocking on it, as a blocking wait on the
+/// editor's device would hold off the UI's frames (`gpu::wait`).
+fn wait_for_gpu(device: &wgpu::Device, queue: &wgpu::Queue, cancel: &AtomicBool) -> bool {
+    let done = Arc::new(AtomicBool::new(false));
+    let signal = Arc::clone(&done);
+    queue.on_submitted_work_done(move || signal.store(true, Ordering::Release));
+    while !done.load(Ordering::Acquire) {
+        if cancel.load(Ordering::Acquire) {
+            return false;
+        }
+        // A failed poll is a lost device: the readback that follows reports it.
+        if device.poll(wgpu::PollType::Poll).is_err() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    true
+}
+
 /// Renders `job.raw` at native resolution through the preview graph and
 /// averages it down to `job.target_edge`.
 fn render_full_resolution(job: &FullResolutionJob) -> anyhow::Result<FullResolutionRgba> {
@@ -423,16 +451,20 @@ fn render_full_resolution(job: &FullResolutionJob) -> anyhow::Result<FullResolut
     let pipeline = RawGpuPipeline::new(&job.device, &job.queue, raw, &params, options)?;
     CalibRawApp::upload_preview_masks(&pipeline, &job.queue, &job.masks, raw)
         .map_err(anyhow::Error::msg)?;
-    pipeline.recompute_with_remove(
-        &job.queue,
-        &job.device,
-        &params,
-        RemoveSceneContext::full_frame(&job.remove, raw, &job.exposure),
-    )?;
-    anyhow::ensure!(
-        !job.cancel.load(Ordering::Acquire),
-        "full-resolution render cancelled"
-    );
+    // One stage at a time, so a cancel is noticed between them: stages already
+    // submitted run to the end, and a native graph's take long.
+    let remove = RemoveSceneContext::full_frame(&job.remove, raw, &job.exposure);
+    for stage in [
+        ProcessingStage::Raw,
+        ProcessingStage::Tone,
+        ProcessingStage::Output,
+    ] {
+        pipeline.dispatch_stage_with_remove(&job.queue, &job.device, &params, stage, remove)?;
+        anyhow::ensure!(
+            wait_for_gpu(&job.device, &job.queue, &job.cancel),
+            "full-resolution render cancelled"
+        );
+    }
     let pixels = pipeline.read_output_region_blocking(
         &job.device,
         &job.queue,
@@ -489,6 +521,23 @@ mod tests {
             ),
             output,
             document_generation: 0,
+        }
+    }
+
+    #[test]
+    fn an_edit_or_a_moved_view_cancels_the_render_in_flight() {
+        let shown = output(1, 7);
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        for interrupt in [
+            (|app: &mut CalibRawApp| app.queue_preview_processing(ProcessingStage::Output))
+                as fn(&mut CalibRawApp),
+            CalibRawApp::note_preview_motion,
+        ] {
+            let (render, cancel) = running(shown);
+            app.preview.full_resolution.running = Some(render);
+            assert!(!cancel.load(Ordering::Acquire));
+            interrupt(&mut app);
+            assert!(cancel.load(Ordering::Acquire));
         }
     }
 

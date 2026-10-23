@@ -1,6 +1,7 @@
 //! Reduced and cropped proxies of a RAW for previews and regions.
 
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ProxySpec {
@@ -87,7 +88,8 @@ fn build_raster_region_proxy(
     width: u32,
     height: u32,
     spec: ProxySpec,
-) -> LoadedRaw {
+    cancel: &AtomicBool,
+) -> Option<LoadedRaw> {
     let x = x.min(raw.width.saturating_sub(1));
     let y = y.min(raw.height.saturating_sub(1));
     let region_width = width.max(1).min(raw.width - x);
@@ -95,7 +97,7 @@ fn build_raster_region_proxy(
     let max_edge = spec.max_edge.max(1);
     let longest = region_width.max(region_height);
     if longest <= max_edge {
-        return crop_raster(raw, x, y, region_width, region_height);
+        return Some(crop_raster(raw, x, y, region_width, region_height));
     }
 
     let scale = max_edge as f64 / longest as f64;
@@ -109,6 +111,9 @@ fn build_raster_region_proxy(
     rgb.par_chunks_mut(output_width as usize * 3)
         .enumerate()
         .for_each(|(output_y, row)| {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
             let (sy0, sy1) = proportional_partition(output_y as u32, region_height, output_height);
             for output_x in 0..output_width {
                 let (sx0, sx1) = proportional_partition(output_x, region_width, output_width);
@@ -130,6 +135,9 @@ fn build_raster_region_proxy(
                 row[destination + 2] = (sum[2] / divisor) as f32;
             }
         });
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
     let mut proxy = raster_with_metadata(
         raw,
         output_width,
@@ -142,7 +150,7 @@ fn build_raster_region_proxy(
     proxy.noise_profile = raw.noise_profile.scaled_variance(
         [area_ratio([output_width, output_height], [region_width, region_height]); 4],
     );
-    proxy
+    Some(proxy)
 }
 
 /// The fraction of `region`'s area that `output` covers, at most 1.
@@ -281,8 +289,24 @@ pub fn build_region_proxy(
     height: u32,
     spec: ProxySpec,
 ) -> LoadedRaw {
+    build_region_proxy_until(raw, x, y, width, height, spec, &AtomicBool::new(false))
+        .expect("a flag nobody else holds is never set, so the build is not cancelled")
+}
+
+/// [`build_region_proxy`] that gives up, returning `None`, soon after `cancel`
+/// is set: it looks at the flag for every row it resamples. For a build whose
+/// result is no longer wanted, such as a zoomed crop of a view that moved on.
+pub fn build_region_proxy_until(
+    raw: &LoadedRaw,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    spec: ProxySpec,
+    cancel: &AtomicBool,
+) -> Option<LoadedRaw> {
     if raw.is_pre_demosaiced_raster() {
-        return build_raster_region_proxy(raw, x, y, width, height, spec);
+        return build_raster_region_proxy(raw, x, y, width, height, spec, cancel);
     }
     let x = x.min(raw.width.saturating_sub(1));
     let y = y.min(raw.height.saturating_sub(1));
@@ -292,9 +316,9 @@ pub fn build_region_proxy(
     let longest = region_width.max(region_height);
     if longest <= max_edge {
         if x == 0 && y == 0 && region_width == raw.width && region_height == raw.height {
-            return raw.clone();
+            return Some(raw.clone());
         }
-        return crop_raw(raw, x, y, region_width, region_height);
+        return Some(crop_raw(raw, x, y, region_width, region_height));
     }
 
     let cfa_period = match raw.cfa_kind {
@@ -350,6 +374,9 @@ pub fn build_region_proxy(
         .map(|(py, ((raw_row, cfa_row), black_row))| {
             let mut inverse_counts = [0.0f64; 4];
             let mut pixel_counts = [0u64; 4];
+            if cancel.load(Ordering::Relaxed) {
+                return (inverse_counts, pixel_counts);
+            }
             let py = py as u32;
             let output_phase_y = py % cfa_period;
             let (source_y0, source_y1) = proportional_partition(py, region_height, height);
@@ -445,6 +472,9 @@ pub fn build_region_proxy(
                 (inverse, pixels)
             },
         );
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
     // A proxy pixel averages only the footprint's samples of its own colour, a
     // quarter of the footprint on Bayer, so its variance is the sensor's over
     // that sample count, not over the footprint area.
@@ -456,7 +486,7 @@ pub fn build_region_proxy(
         }
     });
 
-    LoadedRaw {
+    Some(LoadedRaw {
         noise_profile: raw.noise_profile.scaled_variance(variance_factors),
         lens_geometry: (x == 0
             && y == 0
@@ -480,7 +510,7 @@ pub fn build_region_proxy(
             CompactPixelMap::compact_from_dense(width, height, color_indices, 64),
             CompactPixelMap::compact_from_dense(width, height, black_levels_per_pixel, 64),
         )
-    }
+    })
 }
 
 pub(super) fn nearest_cfa_sample(

@@ -183,7 +183,7 @@ impl CalibRawApp {
         self.cancel_document_bound_foreground_operation();
         self.abandon_ai_denoise_worker();
         self.preview.rebuild_receiver = None;
-        self.preview.detail_rebuild_receiver = None;
+        self.preview.drop_detail_rebuild();
         let editing_time_override_ms = (profile_reload.is_some()
             && self.persistence.sidecar_target.as_ref() == Some(&source.sidecar_target))
         .then(|| self.raw_editing_time_ms());

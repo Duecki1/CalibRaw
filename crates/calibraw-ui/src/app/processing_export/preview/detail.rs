@@ -6,6 +6,7 @@ impl CalibRawApp {
         // The zoomed detail is a second full GPU pipeline. It gives way to a
         // GPU AI job and is rebuilt when the job ends.
         if self.preview.zoom <= DETAIL_ZOOM_START || self.ai_job_may_use_gpu() {
+            self.preview.cancel_detail_rebuild();
             self.preview.detail = None;
             self.preview.motion_at = None;
             self.preview.detail_pending_stage = None;
@@ -14,7 +15,7 @@ impl CalibRawApp {
         }
         // While a control is dragged the reduced crop follows it
         // (`interactive`); the sharp one is refreshed once the drag ends.
-        if self.interactive_drag_active() {
+        if self.interactive_following() {
             return;
         }
         // Fingers on the photo no longer block the refresh: each move restarts
@@ -30,7 +31,7 @@ impl CalibRawApp {
             Some("a photo is loading")
         } else if self.ai_denoise_running() {
             Some("AI denoise is running")
-        } else if self.preview.detail_rebuild_receiver.is_some() {
+        } else if self.preview.detail_rebuild.is_some() {
             Some("the previous crop is still being prepared")
         } else {
             None
@@ -71,7 +72,9 @@ impl CalibRawApp {
             "Zoom detail requested: zoom {:.2}, visible {:?}, canvas {:?}, visible pixels {:?}",
             self.preview.zoom, self.preview.visible_uv, view.canvas_pixels, view.visible_pixels
         ));
+        let cancel = Arc::new(AtomicBool::new(false));
         let request = PreviewDetailRequest {
+            cancel: Arc::clone(&cancel),
             source_raw,
             revision: self.preview.revision,
             visible: self.preview.visible_uv,
@@ -107,11 +110,15 @@ impl CalibRawApp {
                     ))
                 })
                 .map_err(|error| format!("{error:#}"));
-                let _ = sender.send(PreviewDetailRebuildEvent::Finished(result));
+                let _ = sender.send(match result {
+                    Ok(Some(prepared)) => PreviewDetailRebuildEvent::Finished(Ok(prepared)),
+                    Ok(None) => PreviewDetailRebuildEvent::Cancelled,
+                    Err(error) => PreviewDetailRebuildEvent::Finished(Err(error)),
+                });
                 context.request_repaint();
             }) {
             Ok(_) => {
-                self.preview.detail_rebuild_receiver = Some(receiver);
+                self.preview.detail_rebuild = Some(DetailRebuild::new(receiver, cancel));
                 self.egui_ctx
                     .request_repaint_after(Duration::from_millis(50));
             }
@@ -126,16 +133,22 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_preview_detail_rebuild_worker(&mut self, frame: &eframe::Frame) {
+        // A crop that is ready waits for the end of the drag a reduced
+        // preview follows: installing it renders the whole crop on the GPU,
+        // which the drag would then have to wait behind.
+        if self.interactive_following() {
+            return;
+        }
         let preview_source = self.develop.loaded_raw.clone();
         let received = self
             .preview
-            .detail_rebuild_receiver
+            .detail_rebuild
             .as_ref()
-            .map(std::sync::mpsc::Receiver::try_recv);
+            .map(|rebuild| rebuild.receiver.try_recv());
         let event = match received {
             Some(Ok(event)) => Some(event),
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                self.preview.detail_rebuild_receiver = None;
+                self.preview.detail_rebuild = None;
                 self.retry_preview_detail_later();
                 self.report_error(
                     ErrorKind::Preview,
@@ -145,10 +158,19 @@ impl CalibRawApp {
             }
             Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => None,
         };
-        let Some(PreviewDetailRebuildEvent::Finished(result)) = event else {
+        let Some(event) = event else {
             return;
         };
-        self.preview.detail_rebuild_receiver = None;
+        self.preview.detail_rebuild = None;
+        let PreviewDetailRebuildEvent::Finished(result) = event else {
+            // Cancelled because the view moved on: the next crop is requested
+            // once it settles.
+            calibraw_core::diagnostics::record(
+                "Zoom detail cancelled: the view moved on before it was ready",
+            );
+            self.egui_ctx.request_repaint();
+            return;
+        };
         let prepared = match result {
             Ok(prepared) => prepared,
             Err(error) => {
@@ -617,6 +639,8 @@ fn detail_refresh_delay(motion_at: Option<Instant>, urgent: bool, now: Instant) 
 }
 
 struct PreviewDetailRequest {
+    /// Set when the crop is no longer wanted, which ends the preparation.
+    cancel: Arc<AtomicBool>,
     source_raw: Arc<LoadedRaw>,
     revision: u64,
     visible: PreviewUvRect,
@@ -627,8 +651,12 @@ struct PreviewDetailRequest {
     graph: DetailGraph,
 }
 
-fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<PreparedPreviewDetail> {
+/// Prepares the crop of a request, or returns `None` if it was cancelled.
+fn prepare_preview_detail(
+    request: PreviewDetailRequest,
+) -> anyhow::Result<Option<PreparedPreviewDetail>> {
     let PreviewDetailRequest {
+        cancel,
         source_raw,
         revision,
         visible,
@@ -667,6 +695,9 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         "Zoom detail plan: crop {}x{} at {:?}, edge {}",
         crop_width, crop_height, plan.origin, requested_edge
     ));
+    if cancel.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(None);
+    }
     if source_raw.uses_opposed_chroma(&exposure) {
         source_raw.inpaint_opposed_chroma_for_exposure(&exposure);
     }
@@ -687,7 +718,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
             native.opposed_chroma_cache = Arc::clone(&source_raw.opposed_chroma_cache);
             native
         } else {
-            build_region_proxy(
+            let Some(proxy) = build_region_proxy_until(
                 &source_raw,
                 x0,
                 y0,
@@ -696,7 +727,11 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
                 ProxySpec {
                     max_edge: requested_edge,
                 },
-            )
+                &cancel,
+            ) else {
+                return Ok(None);
+            };
+            proxy
         },
     );
     calibraw_core::diagnostics::record(format!(
@@ -706,7 +741,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         raw.height
     ));
     let visible = detail_display_uv(visible, crop_uv, [raw.width, raw.height], processing_halo);
-    Ok(PreparedPreviewDetail {
+    Ok(Some(PreparedPreviewDetail {
         source_raw,
         processing_halo,
         revision,
@@ -716,7 +751,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         source_origin: [x0, y0],
         source_size,
         raw,
-    })
+    }))
 }
 
 fn settled_detail_uses_native_source(

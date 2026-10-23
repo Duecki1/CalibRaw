@@ -179,6 +179,10 @@ impl CalibRawApp {
     pub(crate) fn note_preview_motion(&mut self) {
         // Navigation changes the requested region, not the developed pixels.
         // Keep the last sharp crop visible while its replacement is prepared.
+        // A crop being prepared is for a view that is gone: stop it, so the
+        // crop for this one starts as soon as the view settles.
+        self.preview.cancel_detail_rebuild();
+        self.preview.full_resolution.cancel_running();
         self.preview.motion_at = Some(Instant::now());
         self.egui_ctx
             .request_repaint_after(zoom_detail_idle_delay());
@@ -186,6 +190,8 @@ impl CalibRawApp {
 
     pub(crate) fn queue_preview_processing(&mut self, stage: ProcessingStage) {
         self.preview.interactive.note_edit(stage);
+        // The idle render shows what the photo was before this edit.
+        self.preview.full_resolution.cancel_running();
         self.preview.pending_stage = Some(match self.preview.pending_stage {
             Some(existing) => existing.min(stage),
             None => stage,

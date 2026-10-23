@@ -1,7 +1,7 @@
 use crate::appearance::{PreviewBackdrop, UiDesign};
 use crate::pipeline::RawThumbnail;
 use crate::pipeline::{
-    affected_stage, apply_lens_correction, build_proxy, build_region_proxy,
+    affected_stage, apply_lens_correction, build_proxy, build_region_proxy_until,
     is_unsupported_raw_error, load_raw_file_with_profile_selection, preview_mask_layer_capacity,
     spawn_tiled_export, BrushMode, CameraProfileMode, ExportEvent, ExportFormat, ExportMetadata,
     ExportSettings, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm,

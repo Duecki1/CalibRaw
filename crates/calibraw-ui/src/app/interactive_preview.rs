@@ -46,6 +46,12 @@ const SETTLE_DELAY: Duration = Duration::from_millis(80);
 /// while the pointer is still down.
 const HOLD_STILL: Duration = Duration::from_millis(300);
 
+/// How long after a drag ends or pauses the reduced preview goes on owning the
+/// edits before the sharp preview starts to catch up. The GPU cannot take back
+/// a batch it was given, so a control grabbed again within it finds the GPU
+/// free instead of busy with a sharp render that the next edit outdates.
+const CATCH_UP_DELAY: Duration = Duration::from_millis(150);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InteractiveMode {
     /// Follow drags with the reduced preview where the GPU is slow.
@@ -173,6 +179,16 @@ impl DragPhase {
     fn is_dragging(self) -> bool {
         matches!(self, Self::Dragging { .. })
     }
+
+    /// Whether the reduced preview still owns the edits at `now`: while
+    /// dragging, and for `CATCH_UP_DELAY` after.
+    fn follows(self, now: Instant) -> bool {
+        match self {
+            Self::Idle => false,
+            Self::Dragging { .. } => true,
+            Self::Settling { since } => now.saturating_duration_since(since) < CATCH_UP_DELAY,
+        }
+    }
 }
 
 /// What a reduced graph shows.
@@ -220,6 +236,9 @@ pub(crate) struct InteractiveState {
     /// again.
     failed_for: Option<Arc<LoadedRaw>>,
     phase: DragPhase,
+    /// The reduced preview owns the edits (`DragPhase::follows`): the sharp
+    /// preview keeps what it owes until that ends.
+    following: bool,
     /// The fitted preview is too slow to follow a drag (`gpu_is_slow`).
     slow: bool,
     /// The weakest stage an edit queued since the last frame needs.
@@ -302,11 +321,13 @@ impl InteractiveState {
     }
 
     /// Moves to `next`, keeping what the reduced graph owes in step. `edit` is
-    /// the weakest stage queued this frame.
-    fn enter(&mut self, next: DragPhase, edit: Option<ProcessingStage>) {
+    /// the weakest stage queued this frame, and `following` whether the
+    /// reduced preview owns the edits (`DragPhase::follows`).
+    fn enter(&mut self, next: DragPhase, following: bool, edit: Option<ProcessingStage>) {
         let entering = next.is_dragging() && !self.phase.is_dragging();
-        if next.is_dragging() {
-            if entering && !self.synced {
+        self.following = following;
+        if following {
+            if !self.synced && (entering || edit.is_some()) {
                 // Everything is rendered once, with the masks uploaded, so the
                 // graph shows the edit as it is and not as it was when it
                 // last followed a drag.
@@ -331,6 +352,7 @@ impl InteractiveState {
         self.graph = None;
         self.warm = None;
         self.phase = DragPhase::Idle;
+        self.following = false;
         self.pending = None;
         self.synced = false;
         self.masks_pending = false;
@@ -386,7 +408,7 @@ impl CalibRawApp {
     /// control changed about what the crop would need (the border its filters
     /// reach); it is refreshed once the drag ends.
     fn sharp_crop_covers_view(&self) -> bool {
-        self.preview.detail_rebuild_receiver.is_none()
+        self.preview.detail_rebuild.is_none()
             && if self.preview.interactive.phase == DragPhase::Idle {
                 self.preview_detail_is_current()
             } else {
@@ -407,9 +429,10 @@ impl CalibRawApp {
         }
     }
 
-    /// Whether a control is being dragged and the reduced preview follows it.
-    pub(in crate::app) fn interactive_drag_active(&self) -> bool {
-        self.preview.interactive.phase.is_dragging()
+    /// Whether the reduced preview owns the edits: a control is being dragged,
+    /// or was a moment ago. The sharp preview waits meanwhile.
+    pub(in crate::app) fn interactive_following(&self) -> bool {
+        self.preview.interactive.following
     }
 
     /// Keeps the reduced graph (builds it when the editor is quiet, drops it
@@ -449,12 +472,22 @@ impl CalibRawApp {
             sharp_current,
             now,
         });
-        self.preview.interactive.enter(next, edit);
+        self.preview
+            .interactive
+            .enter(next, next.follows(now), edit);
         self.log_drag(next, edit.is_some(), dragging_control, now);
         match next {
             DragPhase::Idle => {}
             DragPhase::Dragging { .. } => self.egui_ctx.request_repaint_after(HOLD_STILL),
-            DragPhase::Settling { .. } => self.egui_ctx.request_repaint_after(SETTLE_DELAY),
+            DragPhase::Settling { since } => {
+                // The frame that ends the wait starts the sharp preview.
+                let wait = CATCH_UP_DELAY.saturating_sub(now.saturating_duration_since(since));
+                self.egui_ctx.request_repaint_after(if wait.is_zero() {
+                    SETTLE_DELAY
+                } else {
+                    wait
+                });
+            }
         }
     }
 
@@ -947,37 +980,87 @@ mod tests {
     fn the_reduced_graph_renders_everything_once_and_then_only_the_edits() {
         let now = Instant::now();
         let dragging = DragPhase::Dragging { last_edit: now };
+        let settling = DragPhase::Settling { since: now };
         let mut state = InteractiveState::default();
 
         // The first drag: nothing is known to be in step, so all stages run
         // and the masks go up, whatever the edit was.
-        state.enter(dragging, Some(ProcessingStage::Output));
+        state.enter(dragging, true, Some(ProcessingStage::Output));
         assert_eq!(state.pending, Some(ProcessingStage::Raw));
         assert!(state.masks_pending);
+        assert!(state.following);
 
         // Later edits of the drag only add the stage they need.
         state.pending = None;
         state.masks_pending = false;
         state.synced = true;
-        state.enter(dragging, Some(ProcessingStage::Output));
+        state.enter(dragging, true, Some(ProcessingStage::Output));
         assert_eq!(state.pending, Some(ProcessingStage::Output));
-        state.enter(dragging, Some(ProcessingStage::Raw));
+        state.enter(dragging, true, Some(ProcessingStage::Raw));
         assert_eq!(state.pending, Some(ProcessingStage::Raw));
 
-        // After a pause the drag resumes without a full render.
+        // A pause, or a release, keeps the reduced graph in charge for a
+        // moment: it still renders what it owes, and an edit by other means
+        // joins that.
+        state.enter(settling, true, Some(ProcessingStage::Output));
+        assert_eq!(state.pending, Some(ProcessingStage::Raw));
+        assert!(state.synced && state.following);
         state.pending = None;
-        state.enter(DragPhase::Settling { since: now }, None);
-        assert!(state.synced);
-        state.enter(dragging, Some(ProcessingStage::Output));
+        state.enter(settling, true, Some(ProcessingStage::Output));
+        assert_eq!(state.pending, Some(ProcessingStage::Output));
+
+        // The drag resumes without a full render.
+        state.pending = None;
+        state.enter(dragging, true, Some(ProcessingStage::Output));
         assert_eq!(state.pending, Some(ProcessingStage::Output));
         assert!(!state.masks_pending);
 
-        // An edit while the fitted preview owns them puts it behind.
-        state.enter(DragPhase::Idle, Some(ProcessingStage::Output));
+        // Once the sharp preview takes over, what the reduced graph still owed
+        // is dropped, and it is behind.
+        state.enter(settling, false, None);
+        assert_eq!(state.pending, None);
+        assert!(!state.synced && !state.following);
+
+        // An edit while the fitted preview owns them puts it behind, too.
+        state.synced = true;
+        state.enter(DragPhase::Idle, false, Some(ProcessingStage::Output));
         assert!(!state.synced);
-        state.enter(dragging, None);
+        state.enter(dragging, true, None);
         assert_eq!(state.pending, Some(ProcessingStage::Raw));
         assert!(state.masks_pending);
+    }
+
+    #[test]
+    fn the_sharp_previews_wait_while_the_reduced_one_owns_the_edits() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        let frame = eframe::Frame::_new_kittest();
+        assert!(!app.defer_background_preview_processing());
+
+        // A crop that is ready is not installed meanwhile: installing renders
+        // the whole crop, which the drag would have to wait behind.
+        let (sender, receiver) = mpsc::channel();
+        sender.send(PreviewDetailRebuildEvent::Cancelled).unwrap();
+        app.preview.detail_rebuild = Some(DetailRebuild::new(receiver, Arc::default()));
+        app.preview.interactive.following = true;
+        assert!(app.defer_background_preview_processing());
+        app.poll_preview_detail_rebuild_worker(&frame);
+        assert!(app.preview.detail_rebuild.is_some());
+
+        app.preview.interactive.following = false;
+        assert!(!app.defer_background_preview_processing());
+        app.poll_preview_detail_rebuild_worker(&frame);
+        assert!(app.preview.detail_rebuild.is_none());
+    }
+
+    #[test]
+    fn the_reduced_preview_owns_the_edits_for_a_moment_after_the_drag() {
+        let start = Instant::now();
+        assert!(!DragPhase::Idle.follows(start));
+        assert!(DragPhase::Dragging { last_edit: start }.follows(start + Duration::from_secs(9)));
+        let settling = DragPhase::Settling { since: start };
+        assert!(settling.follows(start));
+        assert!(settling.follows(start + CATCH_UP_DELAY - Duration::from_millis(1)));
+        assert!(!settling.follows(start + CATCH_UP_DELAY));
     }
 
     #[test]
@@ -987,6 +1070,7 @@ mod tests {
             last_edit: Instant::now(),
         };
         app.preview.interactive.phase = dragging;
+        app.preview.interactive.following = true;
         app.preview.zoom = 2.0;
         // The reduced crop takes its tone statistics from the navigation
         // proxy while the fitted preview waits, so a change to them is not
@@ -1008,6 +1092,7 @@ mod tests {
         app.preview.navigation_pending_stage = Some(ProcessingStage::Raw);
         assert!(app.defer_navigation_preview());
         app.preview.interactive.phase = DragPhase::Idle;
+        app.preview.interactive.following = false;
         assert!(!app.defer_navigation_preview());
     }
 
