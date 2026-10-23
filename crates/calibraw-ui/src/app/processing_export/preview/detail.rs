@@ -571,6 +571,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         ],
     };
     let requested_edge = plan.edge;
+    let prepare_started = Instant::now();
     calibraw_core::diagnostics::record(format!(
         "Zoom detail plan: crop {}x{} at {:?}, edge {}",
         crop_width, crop_height, plan.origin, requested_edge
@@ -607,6 +608,12 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
             )
         },
     );
+    calibraw_core::diagnostics::record(format!(
+        "Zoom detail source prepared in {:.3}s: {}x{}",
+        prepare_started.elapsed().as_secs_f64(),
+        raw.width,
+        raw.height
+    ));
     let visible = detail_display_uv(visible, crop_uv, [raw.width, raw.height], processing_halo);
     Ok(PreparedPreviewDetail {
         source_raw,

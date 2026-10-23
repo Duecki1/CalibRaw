@@ -228,6 +228,43 @@ pub fn build_proxy(raw: &LoadedRaw, spec: ProxySpec) -> LoadedRaw {
     build_region_proxy(raw, 0, 0, raw.width, raw.height, spec)
 }
 
+/// Down-scale ratios (source pixels per proxy pixel) below this resample each
+/// colour plane with a triangle filter instead of averaging the same-coloured
+/// samples of a footprint. A footprint of one or two pixels holds a sample of a
+/// given colour only some of the time, so averaging falls back to the nearest
+/// sample and every proxy pixel lands up to a pixel from where it belongs:
+/// thin lines come out wobbly. The filter places each pixel exactly.
+const SMOOTH_RESAMPLE_BELOW: f64 = 3.0;
+
+/// The half-width, in source pixels, of the triangle filter at least: the
+/// spacing of same-coloured samples along an axis, so that a window holds one
+/// on either side of the pixel.
+fn smooth_resample_min_radius(cfa_period: u32) -> f64 {
+    f64::from(cfa_period.min(6) / 2).max(2.0)
+}
+
+/// One axis of the triangle filter for output pixel `index`: the source
+/// positions in the window, clamped to `0..limit`, and their weights.
+fn triangle_taps(
+    origin: u32,
+    index: u32,
+    scale: f64,
+    radius: f64,
+    limit: u32,
+    taps: &mut Vec<(u32, f64)>,
+) {
+    taps.clear();
+    let center = f64::from(origin) + (f64::from(index) + 0.5) * scale;
+    let first = (center - radius).floor().max(0.0) as u32;
+    let last = ((center + radius).ceil().max(0.0) as u32).min(limit.saturating_sub(1));
+    for position in first..=last {
+        let weight = 1.0 - ((f64::from(position) + 0.5) - center).abs() / radius;
+        if weight > 0.0 {
+            taps.push((position, weight));
+        }
+    }
+}
+
 /// Builds a bounded, interactive approximation of a source region.
 ///
 /// For sensor RAW inputs this averages samples of the same CFA colour before
@@ -282,6 +319,11 @@ pub fn build_region_proxy(
     let height = phase_aligned_dimension(region_height, target_height);
     let len = (width * height) as usize;
     let row_stride = width as usize;
+    let scale_x = f64::from(region_width) / f64::from(width);
+    let scale_y = f64::from(region_height) / f64::from(height);
+    let smooth = scale_x.max(scale_y) < SMOOTH_RESAMPLE_BELOW;
+    let smooth_radius_x = scale_x.max(smooth_resample_min_radius(cfa_period));
+    let smooth_radius_y = scale_y.max(smooth_resample_min_radius(cfa_period));
     let mut raw_pixels = vec![0u16; len];
     let mut color_indices = vec![0u8; len];
     let mut black_levels_per_pixel = vec![0.0f32; len];
@@ -301,6 +343,11 @@ pub fn build_region_proxy(
             let footprint_y0 = y + source_y0;
             let footprint_y1 = (y + source_y1).min(y + region_height);
 
+            let mut column_taps = Vec::new();
+            let mut row_taps = Vec::new();
+            if smooth {
+                triangle_taps(y, py, scale_y, smooth_radius_y, raw.height, &mut row_taps);
+            }
             for px in 0..width {
                 let output_phase_x = px % cfa_period;
                 let (source_x0, source_x1) = proportional_partition(px, region_width, width);
@@ -319,20 +366,49 @@ pub fn build_region_proxy(
                 let mut pixel_sum = 0u64;
                 let mut black_sum = 0.0f64;
                 let mut count = 0u32;
+                // The triangle-filtered sum, for the ratios that use it.
+                let mut weighted = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
 
-                for sy in footprint_y0..footprint_y1 {
-                    let row = sy * raw.width;
-                    for sx in footprint_x0..footprint_x1 {
-                        let index = (row + sx) as usize;
-                        if raw.color_indices[index] == cfa {
-                            pixel_sum += u64::from(raw.raw_pixels[index]);
-                            black_sum += f64::from(raw.black_levels_per_pixel[index]);
-                            count += 1;
+                if smooth {
+                    triangle_taps(x, px, scale_x, smooth_radius_x, raw.width, &mut column_taps);
+                    for &(sy, weight_y) in &row_taps {
+                        let row = sy * raw.width;
+                        for &(sx, weight_x) in &column_taps {
+                            let index = (row + sx) as usize;
+                            if raw.color_indices[index] == cfa {
+                                let weight = weight_x * weight_y;
+                                weighted.0 += weight * f64::from(raw.raw_pixels[index]);
+                                weighted.1 += weight * f64::from(raw.black_levels_per_pixel[index]);
+                                weighted.2 += weight;
+                                weighted.3 += weight * weight;
+                            }
+                        }
+                    }
+                } else {
+                    for sy in footprint_y0..footprint_y1 {
+                        let row = sy * raw.width;
+                        for sx in footprint_x0..footprint_x1 {
+                            let index = (row + sx) as usize;
+                            if raw.color_indices[index] == cfa {
+                                pixel_sum += u64::from(raw.raw_pixels[index]);
+                                black_sum += f64::from(raw.black_levels_per_pixel[index]);
+                                count += 1;
+                            }
                         }
                     }
                 }
 
                 let px = px as usize;
+                if smooth && weighted.2 > 0.0 {
+                    raw_row[px] = (weighted.0 / weighted.2).round().clamp(0.0, 65_535.0) as u16;
+                    black_row[px] = (weighted.1 / weighted.2) as f32;
+                    cfa_row[px] = cfa;
+                    let channel = usize::from(cfa.min(3));
+                    // Samples a pixel effectively averages: (Σw)² / Σw².
+                    inverse_counts[channel] += weighted.3 / (weighted.2 * weighted.2);
+                    pixel_counts[channel] += 1;
+                    continue;
+                }
                 if count == 0 {
                     let fallback = nearest_cfa_sample(raw, center_x, center_y, cfa, cfa_period);
                     raw_row[px] = raw.raw_pixels[fallback];
