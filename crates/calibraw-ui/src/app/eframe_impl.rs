@@ -196,6 +196,7 @@ impl CalibRawApp {
     /// Edit-history, save and image-navigation shortcuts.
     fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.caps().is_desktop() {
+            self.handle_settings_request(ctx);
             self.handle_edit_history_shortcuts(ctx);
             self.handle_sidecar_shortcut(ctx);
             if self.ui.active_tab == AppTab::Develop {

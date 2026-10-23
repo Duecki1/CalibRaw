@@ -39,6 +39,14 @@ impl CalibRawApp {
             && !self.transient_ui_open(ctx)
     }
 
+    /// Opens Settings when the system menu asked for it (macOS Settings…);
+    /// an open dialog or popup keeps it closed, as it blocks the tab.
+    pub(in crate::app) fn handle_settings_request(&mut self, ctx: &egui::Context) {
+        if self.platform.take_settings_request() && self.shortcut_overlays_clear(ctx) {
+            self.activate_tab(AppTab::Settings);
+        }
+    }
+
     pub(crate) fn app_shortcuts_allowed(&self, ctx: &egui::Context) -> bool {
         !ctx.egui_wants_keyboard_input() && self.shortcut_overlays_clear(ctx)
     }

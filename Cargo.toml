@@ -93,6 +93,10 @@ wgpu = "29"
 # The versions wgpu-hal 29 uses, for its Vulkan and Metal handles.
 ash = { version = "0.38", default-features = false, features = ["std"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice"] }
+# The versions eframe's other macOS dependencies use, for the app menu.
+objc2 = { version = "0.6.4", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSWindow"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString"] }
 naga = { version = "29", features = ["wgsl-in"] }
 naga_oil = { version = "=0.22.0", default-features = false }
 

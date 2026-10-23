@@ -141,6 +141,11 @@ pub(crate) trait Platform: Send + Sync {
     fn take_back_request(&self) -> bool {
         false
     }
+    /// Whether the system menu asked to open Settings (macOS Settings…,
+    /// Cmd+,) since the last call.
+    fn take_settings_request(&self) -> bool {
+        false
+    }
     /// Left, top, right and bottom system-bar insets in points.
     fn system_bar_insets_points(&self, _pixels_per_point: f32) -> [f32; 4] {
         [0.0; 4]

@@ -12,7 +12,7 @@ background work follows. Update it in the change that alters a boundary.
 | `calibraw-gpu` | Headless devices (`device`), adapter memory queries (`memory/`), GPU resource planning, WGSL composition, processing passes, readback, tiled export and file encoding | `calibraw-core`, wgpu, naga_oil; in `memory/`, the platform APIs under wgpu (`windows` DXGI, `ash`, `objc2-metal`) | UI crates, egui/eframe |
 | `calibraw-ai` | AI configuration and device capabilities (`config`), ONNX Runtime loading, its WebGPU plugin and the automatic packages (`runtime/`), where sessions run (GPU if they fit in free memory, else CPU), CPU fallback, GPU failure handling and platform and provider quirks (`placement/`), the model table, downloads and installation (`registry/`), the session slot (`slot`), the job worker (`jobs`), model-specific pre/postprocessing (`models/`) | `calibraw-core`, `calibraw-gpu` (denoise/remove render paths) | UI crates, egui/eframe |
 | `calibraw-ffi` | C ABI and the Android JNI bridge: storage, pickers, export publishing, notifications, replay encoder | `calibraw-core` (sidecar types), jni, android-activity | processing crates, UI crates, egui/eframe |
-| `calibraw-ui` (lib `calibraw`) | Application coordination (`app/`), views (`ui/`), presentation-independent services (`services/`), preview presentation, platform capabilities and OS services (`platform/`) | all crates above, eframe/egui, `moduwu-design`; in `platform/`, the OS crates (`calibraw-ffi`, `rfd`, `trash`, `zbus`, `windows-sys`, Discord IPC, loggers) | — |
+| `calibraw-ui` (lib `calibraw`) | Application coordination (`app/`), views (`ui/`), presentation-independent services (`services/`), preview presentation, platform capabilities and OS services (`platform/`) | all crates above, eframe/egui, `moduwu-design`; in `platform/`, the OS crates (`calibraw-ffi`, `rfd`, `trash`, `zbus`, `windows-sys`, `objc2` AppKit bindings, Discord IPC, loggers) | — |
 | `calibraw-cli` | Headless develop export and white-balance diagnostics | `calibraw-core`, `calibraw-gpu` | UI crates, egui/eframe |
 | `xtask` | Repository tooling: architecture checks, line counts, baselines, Android build helpers, icons | std and tooling crates | product crates |
 | `moduwu-design` (separate repository) | Reusable egui tokens, themes, controls, frames and responsive helpers | egui | any CalibRaw crate |
@@ -45,9 +45,9 @@ Source rules (in code; comments and strings are ignored):
   `target_os`: they read `config::AiCapabilities` (what the device can do) and
   `placement::quirks` (platform bugs) instead.
 - `crates/calibraw-ui/src/` outside `platform/` must not use `target_os`,
-  `calibraw_ffi`, `rfd`, `zbus`, `env_logger` or `android_logger`: UI code
-  reads `PlatformCaps` and calls `Platform`. `cargo xtask cfg-ratchet` does
-  not count `platform/` either.
+  `calibraw_ffi`, `rfd`, `zbus`, `windows_sys`, `objc2*`, `env_logger` or
+  `android_logger`: UI code reads `PlatformCaps` and calls `Platform`.
+  `cargo xtask cfg-ratchet` does not count `platform/` either.
 
 "egui family" is egui, egui-wgpu, eframe and egui-winit. Add a rule in the
 change that establishes a boundary, not in advance.
@@ -211,8 +211,10 @@ production `ShaderManager` composes.
     `release_free_memory` defaults to the heap purge every backend shares,
     which tests replace to observe it.
     `platform/android.rs` wraps `calibraw-ffi`; `platform/desktop/` holds the
-    window entry point, the Flatpak portal, Discord IPC and, on Windows, the
-    NVIDIA driver profile that keeps G-SYNC off for the window.
+    window entry point, the Flatpak portal, Discord IPC, on macOS the menu
+    bar (`macos_menu`, whose Settings… reaches the app through
+    `take_settings_request`) and, on Windows, the NVIDIA driver profile that
+    keeps G-SYNC off for the window.
   - Stateless desktop services are free functions: `FileDialog` (`rfd`),
     `trash`, `show_fatal_message`, camera-profile search folders.
   - `platform::fake::FakePlatform` (tests) takes any `PlatformCaps` and
