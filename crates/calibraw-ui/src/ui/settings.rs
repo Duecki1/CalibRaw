@@ -300,7 +300,6 @@ impl Settings {
             "Choose the design used across every screen and the canvas color shown around the photo. Changes are saved and applied immediately.",
         );
 
-        moduwu_design::section_separator(ui);
         let mut design = app.preferences.ui_design;
         moduwu_design::form_combo_with_help(
             ui,
@@ -320,7 +319,6 @@ impl Settings {
             app.set_ui_design(design);
         }
 
-        moduwu_design::section_separator(ui);
         let mut backdrop = app.preferences.preview_backdrop;
         let backdrop_help = match backdrop {
             crate::appearance::PreviewBackdrop::MatchPhoto => {
@@ -355,7 +353,6 @@ impl Settings {
             "Configure preview resolution, brush behavior, and library resource use.",
         );
 
-        moduwu_design::section_separator(ui);
         if moduwu_design::toggle_with_help(
             ui,
             &mut app.preferences.show_develop_navigation_labels,
@@ -367,7 +364,6 @@ impl Settings {
             app.persist_performance_settings();
         }
 
-        moduwu_design::section_separator(ui);
         let mut tips_enabled = app.preferences.tips.enabled;
         if moduwu_design::toggle_with_help(
             ui,
@@ -390,7 +386,6 @@ impl Settings {
         }
 
         if app.discord_rich_presence_supported() {
-            moduwu_design::section_separator(ui);
             let mut enabled = app.preferences.discord_rich_presence;
             if moduwu_design::toggle_with_help(
                 ui,
@@ -410,7 +405,6 @@ impl Settings {
             }
         }
 
-        moduwu_design::section_separator(ui);
         let previous_quality = app.preview.quality;
         moduwu_design::form_combo_with_help(
             ui,
@@ -446,7 +440,6 @@ impl Settings {
         // Without a configurable AI runtime there is no AI models card to hold
         // this control.
         if !app.caps().configurable_ai_runtime {
-            moduwu_design::section_separator(ui);
             subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
         }
 
@@ -619,11 +612,10 @@ impl Settings {
     fn show_new_photo_preset_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "Preset for new photos",
+            "New photos",
             "Choose a preset that is applied when you open a photo that has no saved edits. Photos you have already edited keep their edits, and the preset can be undone like any other edit.",
         );
 
-        moduwu_design::section_separator(ui);
         let current = app
             .new_photo_preset_path()
             .filter(|path| app.presets.get(path).is_some());
@@ -634,7 +626,7 @@ impl Settings {
             .map_or_else(|| "None".to_owned(), |preset| preset.name().to_owned());
         moduwu_design::form_combo_with_help(
             ui,
-            "Preset",
+            "Default preset",
             "settings-new-photo-preset",
             selected,
             220.0,
@@ -707,7 +699,6 @@ impl Settings {
             "Export file names",
             "Build export file names from the original name, dates, and capture metadata. The selected image format adds its extension automatically.",
         );
-        moduwu_design::section_separator(ui);
         export_name_template_controls(ui, app, "settings-export-name-template");
     }
 
