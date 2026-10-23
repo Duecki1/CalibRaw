@@ -111,7 +111,7 @@ job records the value it started with.
 | Document load | single receiver; a new load replaces it | the replaced receiver is dropped and its result discarded | the load installs the new document and bumps `document_generation` | notice or unsupported-file dialog; a disconnected worker is reported |
 | Neighbour prefetch (desktop) | one thread after each interactive load; prepares the library neighbours into `DecodedRawCache` | `AtomicBool` checked between steps; a new load or a profile-settings change cancels it | results only fill caches; an open of a photo being prefetched waits for that decode | ignored; the open reports its own failure |
 | Preview rebuild / detail | single receiver each; latest request wins | replaced receiver discards the stale result; `PreviewState::revision` rejects outdated detail renders | receivers cleared with the preview | disconnect clears the pending state |
-| Reduced preview warm-up | one receiver in `InteractiveState`, started when the editor is quiet and the GPU is slow | none; short | the result is used only while its source is still `develop.preview_raw` (`Arc::ptr_eq`); the graph is dropped when that changes, when the view zooms in, or when the GPU is no longer slow | a dead worker is an error dialog; a graph the budget cannot hold is skipped with a diagnostics line; neither is retried for that proxy |
+| Reduced preview warm-up | one receiver in `InteractiveState`, started when the editor is quiet and the GPU is slow | none; short | the result is used only while its source is still the fitted proxy or the zoomed crop's raw (`Arc::ptr_eq`); the graph is dropped when that changes (the fitted proxy, or the zoomed crop's raw), when an export starts, or when the GPU is no longer slow | a dead worker is an error dialog; a graph the budget cannot hold is skipped with a diagnostics line; neither is retried for that proxy |
 | Full-resolution preview (desktop) | one `RunningRender` in `PreviewState::full_resolution`, started after the editor has been idle; no second one starts until its result arrives | `AtomicBool`, set by `FullResolutionState::observe` when the fitted preview shows another `FittedOutput` (texture and `output_revision`) | the result is installed only when `FittedOutput` and `document_generation` still match | a photo whose graph does not fit the adapter's free memory or texture limit is skipped with a diagnostics line; a failed render is an error dialog; neither is retried for the document |
 | Foreground AI / lens correction / auto straighten | one `ForegroundOperation` slot; a second request is refused | shared `AtomicBool`; the worker stops at its next safe point | results are applied only if `document_id` equals the current `document_generation` | error dialog or notice; slot cleared |
 | Remove / retouch | one receiver in `InpaintState` | `AtomicBool` | `reset_for_document` sets the flag and drops the receiver, so late results are discarded | notice; the pending stroke is kept only when the user must re-consent to a download |
@@ -185,14 +185,20 @@ batch is in flight (`PreviewDispatchGate`, opened by `on_submitted_work_done`),
 and edits made meanwhile only update the target parameters, so the next batch
 renders the newest ones. While a control is dragged zoomed in and only the
 Output stage changes, the fitted preview and the navigation proxy wait until
-the pointer lifts (`defer_background_preview_processing`). Fitted, the same
-drag is followed by a second graph of the whole photo at half the fitted edge,
-`interactive_preview.rs`, where the dispatch gate's timings show the GPU takes
-more than about 45 ms for the fitted batch (a device with little memory is
-assumed slow until it has timings). The fitted preview keeps merging the stage
-it owes and renders it when the drag ends or pauses; the reduced picture stays
-until that is done. The reduced graph exists only while the photo is fitted, is
-built from the fitted proxy, and counts against the same GPU budget.
+the pointer lifts (`defer_background_preview_processing`). Where the dispatch
+gate's timings show the GPU takes more than about 45 ms for a batch of the
+preview that is shown (a device with little memory is assumed slow until it
+has timings), the drag is followed by a second, smaller graph at half the edge
+instead (`interactive_preview.rs`): the whole photo at half the fitted edge,
+or, zoomed in, the sharp crop's part of the photo at half the crop's edge
+(`interactive_crop.rs`), drawn with the crop's coordinates. The sharp preview
+keeps merging the stage it owes and renders it when the drag ends or pauses;
+the reduced picture stays until that is done. While a zoomed drag is followed,
+the navigation proxy still renders Raw and Tone changes, because the reduced
+crop takes its tone statistics from it. There is one reduced graph at a time,
+built from the sharp preview's source (the fitted proxy, or the crop's raw);
+it counts against the same GPU budget and is dropped when that source changes,
+when an export starts, or when the GPU is no longer slow.
 The fitted preview graph is built with mask layers for its masks plus spare layers in steps of four (`fitted_pipeline_options`, `preview_mask_layer_capacity`), not every layer the editor allows; one with fewer layers than masks is rebuilt (`fitted_mask_capacity_stale`) and keeps showing its last frame until then. On Android the fitted and zoomed graphs are sized against shares of the RAM-scaled working-set limit that remain after an export tile and the navigation graph (`MobilePreviewRole`, `bounded_mobile_preview_edge`); a Preview graph accounts only for its RGBA8 readback, since RGBA32F readbacks need `ProcessingQuality::High`. Where the platform allows (`PlatformCaps::full_resolution_preview`), an idle editor renders the whole photo from the native RAW on a worker thread with its own graph and shows the scaled result (`app/full_resolution.rs`) in place of the fitted texture while the fitted output is unchanged.
 Compiled programs are shared through `RawGpuProgramTemplate` and the persistent
 pipeline cache. Rust/WGSL layout contracts are tested in

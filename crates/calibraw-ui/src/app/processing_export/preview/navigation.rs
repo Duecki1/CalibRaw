@@ -7,7 +7,7 @@ impl CalibRawApp {
         if self.ai_denoise_running() {
             return;
         }
-        if self.defer_background_preview_processing() {
+        if self.defer_navigation_preview() {
             return;
         }
         let zoomed = self.preview.zoom > DETAIL_ZOOM_START;

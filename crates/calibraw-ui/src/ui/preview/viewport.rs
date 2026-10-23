@@ -205,8 +205,13 @@ impl PreviewDetailImage {
             .detail
             .as_ref()
             .filter(|detail| detail.revision == app.preview.revision)?;
+        // While a control is dragged the reduced crop is drawn in the sharp
+        // one's place, with its coordinates.
+        let texture_id = clipping_texture
+            .or_else(|| app.preview.interactive.crop_texture())
+            .unwrap_or(detail.pipeline.texture());
         Some(Self {
-            texture_id: clipping_texture.unwrap_or(detail.pipeline.texture()),
+            texture_id,
             texture_uv: Rect::from_min_max(
                 Pos2::new(detail.texture_uv_rect.min[0], detail.texture_uv_rect.min[1]),
                 Pos2::new(detail.texture_uv_rect.max[0], detail.texture_uv_rect.max[1]),

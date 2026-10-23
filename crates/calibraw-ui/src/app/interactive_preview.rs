@@ -1,28 +1,34 @@
 //! The reduced preview shown while a control is dragged.
 //!
-//! On a GPU that needs more than a few frames for the fitted preview, a slider
-//! drag falls far behind the pointer. While a control is dragged, a second
-//! graph of the whole photo at half the fitted edge (a quarter of the pixels
-//! and of the GPU time) follows it, and the fitted preview waits. When the
-//! drag ends, the fitted preview renders everything it missed
-//! (`queue_preview_processing` keeps merging the stage it owes while it waits)
-//! and replaces the reduced one once it is done.
+//! On a GPU that needs more than a few frames for the preview, a slider drag
+//! falls far behind the pointer. While a control is dragged, a second graph at
+//! half the edge (a quarter of the pixels and of the GPU time) follows it, and
+//! the sharp preview waits. When the drag ends, the sharp preview renders
+//! everything it missed (`queue_preview_processing` keeps merging the stage it
+//! owes while it waits) and replaces the reduced one once it is done.
+//!
+//! What is reduced depends on the view. The photo is shown whole by the fitted
+//! preview, so the reduced graph is the whole photo at half the fitted edge.
+//! Zoomed in, the sharp crop (`PreviewDetail`) covers the view and is the
+//! larger graph, so the reduced graph is that same part of the photo at half
+//! the crop's edge, drawn with the crop's coordinates
+//! (`processing_export::preview::interactive_crop`).
 //!
 //! Which GPUs need it is measured, not assumed (`gpu_is_slow`): the dispatch
-//! gate times the fitted batches. Zoomed in, the crop follows the drag at the
-//! screen's density as before (`defer_background_preview_processing`).
+//! gate times the batches of the preview that is shown.
 //!
-//! The reduced graph is built from the fitted proxy on a worker once the
+//! The reduced graph is built from the sharp one's source on a worker once the
 //! editor is quiet, so a drag finds it ready; one that starts earlier just
-//! uses the fitted preview. It exists only while the photo is fitted, so it
-//! never competes with the zoomed crop for memory.
+//! uses the sharp preview. There is one at a time: changing the zoom drops it
+//! and builds the other, so it never adds more than a quarter of a graph.
 
 use super::preview_dispatch_gate::Batch;
 use super::*;
 
-/// The smallest fitted edge that gets a reduced graph; half of it must still
-/// reach the smallest proxy (`MIN_PROXY_EDGE`).
-const MIN_FITTED_EDGE: u32 = 1280;
+/// The smallest source edge (the fitted proxy, or the zoomed crop's raw) that
+/// gets a reduced graph; half of it must still reach the smallest proxy
+/// (`MIN_PROXY_EDGE`).
+const MIN_SOURCE_EDGE: u32 = 1280;
 
 /// A median fitted batch time above this makes the reduced preview follow
 /// drags. At about 22 frames a second a drag starts to feel behind.
@@ -61,10 +67,10 @@ fn interactive_mode() -> InteractiveMode {
     )
 }
 
-/// The edge of the reduced graph for a fitted proxy of `fitted_edge`, or
-/// `None` where the proxy is small enough already.
-fn interactive_edge(fitted_edge: u32) -> Option<u32> {
-    (fitted_edge >= MIN_FITTED_EDGE).then_some(fitted_edge / 2)
+/// The edge of the reduced graph for a source of `source_edge`, or `None`
+/// where the source is small enough already.
+fn interactive_edge(source_edge: u32) -> Option<u32> {
+    (source_edge >= MIN_SOURCE_EDGE).then_some(source_edge / 2)
 }
 
 fn interactive_mask_edge() -> u32 {
@@ -119,8 +125,9 @@ struct DragInput {
     dragging_control: bool,
     /// An edit was queued since the last frame.
     edit: bool,
-    /// The fitted preview shows every edit and the GPU has finished it.
-    fitted_current: bool,
+    /// The sharp preview (the fitted one, or the crop when zoomed in) shows
+    /// every edit and the GPU has finished it.
+    sharp_current: bool,
     now: Instant,
 }
 
@@ -152,7 +159,7 @@ impl DragPhase {
             Self::Settling { since } => {
                 if input.dragging_control && input.edit {
                     Self::Dragging { last_edit: now }
-                } else if input.fitted_current
+                } else if input.sharp_current
                     && now.saturating_duration_since(since) >= SETTLE_DELAY
                 {
                     Self::Idle
@@ -168,14 +175,35 @@ impl DragPhase {
     }
 }
 
+/// What a reduced graph shows.
+enum Reduced {
+    /// The whole photo, in the fitted preview's place.
+    Whole {
+        pipeline: PreviewPipeline,
+        raw: Arc<LoadedRaw>,
+    },
+    /// The part of the photo the sharp crop covers, in its place. It has the
+    /// crop's geometry, so the canvas draws it with the crop's coordinates.
+    Crop(PreviewDetail),
+}
+
 /// The reduced graph.
 pub(crate) struct InteractivePreview {
-    pipeline: PreviewPipeline,
-    raw: Arc<LoadedRaw>,
-    /// The fitted proxy it was reduced from; it is dropped once that changes.
+    reduced: Reduced,
+    /// What it was reduced from, the fitted proxy or the sharp crop's raw. It
+    /// is dropped once that changes.
     source: Arc<LoadedRaw>,
     /// It has rendered since it was built, so its texture holds a picture.
     rendered: bool,
+}
+
+impl InteractivePreview {
+    fn pipeline(&self) -> &PreviewPipeline {
+        match &self.reduced {
+            Reduced::Whole { pipeline, .. } => pipeline,
+            Reduced::Crop(detail) => &detail.pipeline,
+        }
+    }
 }
 
 /// A reduction of the fitted proxy being prepared.
@@ -225,16 +253,52 @@ impl InteractiveState {
         self.pending
     }
 
+    /// A state in which `reduced` has rendered and follows a drag.
+    #[cfg(test)]
+    pub(in crate::app) fn showing_crop(reduced: PreviewDetail, source: Arc<LoadedRaw>) -> Self {
+        Self {
+            graph: Some(InteractivePreview {
+                reduced: Reduced::Crop(reduced),
+                source,
+                rendered: true,
+            }),
+            phase: DragPhase::Dragging {
+                last_edit: Instant::now(),
+            },
+            ..Self::default()
+        }
+    }
+
+    /// The masks have to be uploaded to the reduced graph before it renders.
+    pub(in crate::app) fn masks_pending(&self) -> bool {
+        self.masks_pending
+    }
+
     fn visible(&self) -> bool {
         self.phase != DragPhase::Idle && self.graph.as_ref().is_some_and(|graph| graph.rendered)
     }
 
     /// The texture to show instead of the fitted one.
     pub(crate) fn texture(&self) -> Option<egui::TextureId> {
-        if !self.visible() {
-            return None;
+        match self.graph.as_ref()? {
+            InteractivePreview {
+                reduced: Reduced::Whole { pipeline, .. },
+                ..
+            } if self.visible() => Some(pipeline.texture()),
+            _ => None,
         }
-        self.graph.as_ref().map(|graph| graph.pipeline.texture())
+    }
+
+    /// The texture to show instead of the sharp crop's. It has the crop's
+    /// coordinates (`PreviewDetailImage`).
+    pub(crate) fn crop_texture(&self) -> Option<egui::TextureId> {
+        match self.graph.as_ref()? {
+            InteractivePreview {
+                reduced: Reduced::Crop(detail),
+                ..
+            } if self.visible() => Some(detail.pipeline.texture()),
+            _ => None,
+        }
     }
 
     /// Moves to `next`, keeping what the reduced graph owes in step. `edit` is
@@ -263,7 +327,7 @@ impl InteractiveState {
     }
 
     /// Drops the graph and everything prepared for it.
-    fn reset(&mut self) {
+    pub(in crate::app) fn reset(&mut self) {
         self.graph = None;
         self.warm = None;
         self.phase = DragPhase::Idle;
@@ -281,24 +345,29 @@ pub(crate) fn shown_pipeline<'a>(
     interactive: &'a InteractiveState,
 ) -> Option<&'a PreviewPipeline> {
     match interactive.graph.as_ref() {
-        Some(graph) if interactive.visible() => Some(&graph.pipeline),
+        Some(InteractivePreview {
+            reduced: Reduced::Whole { pipeline, .. },
+            ..
+        }) if interactive.visible() => Some(pipeline),
         _ => fitted,
     }
 }
 
 impl CalibRawApp {
-    /// Whether the reduced preview may stand in for the fitted one, whatever
-    /// the speed of the GPU: a plain photo shown whole, nothing rebuilding.
+    /// Whether the reduced preview may stand in for the sharp one, whatever
+    /// the speed of the GPU: a plain photo, nothing rebuilding, and zoomed in
+    /// a crop that covers the view.
     fn interactive_usable(&self) -> bool {
         interactive_mode() != InteractiveMode::Off
             && self.preview.gpu_pipeline.is_some()
-            && !self.preview.zoomed_in()
             && !self.preview.original_requested
             && !self.preview_is_preparing()
             && !self.lens_correction_busy()
+            // An export tile needs the memory the reduced graph would hold.
+            && self.export.task.is_none()
             // The reduced graph has no AI source.
             && !self.develop.target_exposure.ai_denoise_enabled
-            // The clipping overlay is composed from the fitted output.
+            // The clipping overlay is composed from the sharp output.
             && !self.preview.clipping.shadows
             && !self.preview.clipping.highlights
             && !self.fitted_mask_capacity_stale()
@@ -306,6 +375,36 @@ impl CalibRawApp {
             // are uploaded as a whole when a drag starts.
             && self.masks.interaction_dirty_layer.is_none()
             && !self.masks.dirty_layers.iter().any(|dirty| *dirty)
+            && (!self.preview.zoomed_in()
+                // The crop's own masks, which stay marked while it is absent.
+                || (!self.masks.detail_dirty_layers.iter().any(|dirty| *dirty)
+                    && self.sharp_crop_covers_view()))
+    }
+
+    /// Whether the sharp crop is there to be reduced: it belongs to this view
+    /// and is not being replaced. A drag already followed keeps it, whatever a
+    /// control changed about what the crop would need (the border its filters
+    /// reach); it is refreshed once the drag ends.
+    fn sharp_crop_covers_view(&self) -> bool {
+        self.preview.detail_rebuild_receiver.is_none()
+            && if self.preview.interactive.phase == DragPhase::Idle {
+                self.preview_detail_is_current()
+            } else {
+                self.preview
+                    .detail
+                    .as_ref()
+                    .is_some_and(|detail| detail.revision == self.preview.revision)
+            }
+    }
+
+    /// Whether the sharp preview has every edit queued so far rendered. It
+    /// is the crop when zoomed in, as the fitted preview is not on the canvas.
+    fn sharp_preview_rendered(&self) -> bool {
+        if self.preview.zoomed_in() {
+            self.preview.detail_pending_stage.is_none() && self.preview_detail_is_current()
+        } else {
+            self.preview.pending_stage.is_none()
+        }
     }
 
     /// Whether a control is being dragged and the reduced preview follows it.
@@ -319,7 +418,12 @@ impl CalibRawApp {
         let now = Instant::now();
         let edit = self.preview.interactive.edit.take();
         let usable = self.interactive_usable();
-        let median = self.preview.dispatch_gate.median_latency_ms(Batch::Fitted);
+        let sharp_batch = if self.preview.zoomed_in() {
+            Batch::Detail
+        } else {
+            Batch::Fitted
+        };
+        let median = self.preview.dispatch_gate.median_latency_ms(sharp_batch);
         let slow = gpu_is_slow(
             interactive_mode(),
             median,
@@ -329,19 +433,20 @@ impl CalibRawApp {
         self.preview.interactive.slow = slow;
         self.maintain_interactive_graph(frame, usable && slow);
 
-        let state = &self.preview.interactive;
-        let eligible = usable && slow && state.graph.is_some();
-        let fitted_current = self.preview.pending_stage.is_none()
+        let eligible = usable && slow && self.preview.interactive.graph.is_some();
+        // The GPU has finished what it was given, too, so the sharp picture
+        // that replaces the reduced one is on the screen.
+        let sharp_current = self.sharp_preview_rendered()
             && frame.wgpu_render_state().is_none_or(|render_state| {
                 self.preview.dispatch_gate.poll_open(&render_state.device)
             });
-        let before = state.phase;
+        let before = self.preview.interactive.phase;
         let dragging_control = super::interaction::control_dragged(&self.egui_ctx);
         let next = before.next(DragInput {
             eligible,
             dragging_control,
             edit: edit.is_some(),
-            fitted_current,
+            sharp_current,
             now,
         });
         self.preview.interactive.enter(next, edit);
@@ -356,11 +461,13 @@ impl CalibRawApp {
     /// One line per control drag for the diagnostics, with the rates and
     /// timings that show what the reduced preview gains (or would).
     fn log_drag(&mut self, next: DragPhase, edit: bool, dragging_control: bool, now: Instant) {
+        let zoomed = self.preview.zoomed_in();
         let gate = &self.preview.dispatch_gate;
         let state = &mut self.preview.interactive;
+        let sharp_batch = if zoomed { Batch::Detail } else { Batch::Fitted };
         let batches = [
             gate.completed(Batch::Interactive),
-            gate.completed(Batch::Fitted),
+            gate.completed(sharp_batch),
         ];
         if state.drag.is_none() && dragging_control && edit {
             state.drag = Some(DragLog {
@@ -380,62 +487,83 @@ impl CalibRawApp {
         }
         let seconds = now.saturating_duration_since(drag.started).as_secs_f64();
         let reduced = batches[0] - drag.batches_before[0];
-        let fitted = batches[1] - drag.batches_before[1];
+        let sharp = batches[1] - drag.batches_before[1];
         calibraw_core::diagnostics::record(format!(
-            "Control drag: {} edits over {seconds:.2}s, reduced preview {} ({:?} mode, GPU judged {}), {reduced} reduced and {fitted} fitted GPU batches ({:.1} a second); median batch reduced {:?} ms, fitted {:?} ms",
+            "Control drag{}: {} edits over {seconds:.2}s, reduced preview {} ({:?} mode, GPU judged {}), {reduced} reduced and {sharp} {} GPU batches ({:.1} a second); median batch reduced {:?} ms, {} {:?} ms",
+            if zoomed { " (zoomed in)" } else { "" },
             drag.edits,
             if drag.reduced_used { "used" } else { "not used" },
             interactive_mode(),
             if state.slow { "slow" } else { "fast" },
-            (reduced + fitted) as f64 / seconds.max(0.001),
+            if zoomed { "crop" } else { "fitted" },
+            (reduced + sharp) as f64 / seconds.max(0.001),
             gate.median_latency_ms(Batch::Interactive).map(f32::round),
-            gate.median_latency_ms(Batch::Fitted).map(f32::round),
+            if zoomed { "crop" } else { "fitted" },
+            gate.median_latency_ms(sharp_batch).map(f32::round),
         ));
         state.drag = None;
     }
 
-    /// Builds the reduced graph for the current fitted proxy when it is wanted
-    /// and the editor is quiet, and drops it when it is not wanted or out of
-    /// date.
-    fn maintain_interactive_graph(&mut self, frame: &eframe::Frame, wanted: bool) {
-        let preview_raw = self.develop.preview_raw.clone();
-        let is_current = |source: &Arc<LoadedRaw>| {
-            preview_raw
+    /// What the reduced graph would be made from: the sharp crop's raw when
+    /// zoomed in, otherwise the fitted proxy. `None` where there is nothing to
+    /// reduce, or it is small enough already.
+    fn reduction(&self) -> Option<Reduction> {
+        let source = if self.preview.zoomed_in() {
+            &self
+                .preview
+                .detail
                 .as_ref()
-                .is_some_and(|raw| Arc::ptr_eq(raw, source))
+                .filter(|detail| detail.revision == self.preview.revision)?
+                .raw
+        } else {
+            self.develop.preview_raw.as_ref()?
         };
+        Some(Reduction {
+            edge: interactive_edge(source.width.max(source.height))?,
+            source: Arc::clone(source),
+        })
+    }
+
+    /// Builds the reduced graph for the current sharp preview when it is
+    /// wanted and the editor is quiet, and drops it when it is not wanted or
+    /// out of date.
+    fn maintain_interactive_graph(&mut self, frame: &eframe::Frame, wanted: bool) {
+        let reduction = self.reduction().filter(|_| wanted);
         let needed_layers = self.preview_mask_stack().masks.len().max(1);
         let state = &mut self.preview.interactive;
+        let Some(reduction) = reduction else {
+            if state.graph.is_some() || state.warm.is_some() {
+                state.reset();
+            }
+            return;
+        };
         let out_of_date = state.graph.as_ref().is_some_and(|graph| {
-            !is_current(&graph.source) || graph.pipeline.gpu().mask_layer_capacity() < needed_layers
+            !Arc::ptr_eq(&graph.source, &reduction.source)
+                || graph.pipeline().gpu().mask_layer_capacity() < needed_layers
         });
-        if out_of_date || (!wanted && state.graph.is_some()) {
+        if out_of_date {
             state.reset();
         }
         if state
             .warm
             .as_ref()
-            .is_some_and(|warm| !is_current(&warm.source))
-            || !wanted
+            .is_some_and(|warm| !Arc::ptr_eq(&warm.source, &reduction.source))
         {
             state.warm = None;
         }
-        let Some(source) = preview_raw else {
-            return;
-        };
-        if !wanted || state.graph.is_some() {
+        if state.graph.is_some() {
             return;
         }
         if let Some(warm) = state.warm.as_ref() {
             match warm.receiver.try_recv() {
                 Ok(reduced) => {
                     state.warm = None;
-                    self.build_interactive_graph(frame, source, reduced);
+                    self.build_interactive_graph(frame, reduction.source, reduced);
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
                     state.warm = None;
-                    state.failed_for = Some(source);
+                    state.failed_for = Some(reduction.source);
                     self.report_error(
                         ErrorKind::Preview,
                         "The reduced preview worker stopped unexpectedly.".to_owned(),
@@ -447,17 +575,16 @@ impl CalibRawApp {
         if state
             .failed_for
             .as_ref()
-            .is_some_and(|failed| Arc::ptr_eq(failed, &source))
+            .is_some_and(|failed| Arc::ptr_eq(failed, &reduction.source))
         {
             return;
         }
-        let quiet = !self.preview.processing_pending()
-            && !super::interaction::pointer_engaged(&self.egui_ctx);
-        let Some(edge) = interactive_edge(source.width.max(source.height)).filter(|_| quiet) else {
+        if !self.interactive_quiet() {
             return;
-        };
+        }
         let (sender, receiver) = mpsc::channel();
         let context = self.egui_ctx.clone();
+        let Reduction { source, edge } = reduction;
         let worker_source = Arc::clone(&source);
         let spawn = std::thread::Builder::new()
             .name("calibraw-interactive-preview".to_owned())
@@ -480,6 +607,17 @@ impl CalibRawApp {
         }
     }
 
+    /// Whether nothing is being edited or rendered, so preparing the reduced
+    /// graph takes time from no one.
+    fn interactive_quiet(&self) -> bool {
+        !self.preview.processing_pending()
+            && !super::interaction::pointer_engaged(&self.egui_ctx)
+            && (!self.preview.zoomed_in() || self.preview_detail_is_current())
+    }
+
+    /// Builds the reduced graph of `source` from `reduced`, the worker's
+    /// reduction of it, and keeps a graph that does not fit as a failure not
+    /// to be tried again.
     fn build_interactive_graph(
         &mut self,
         frame: &eframe::Frame,
@@ -489,45 +627,52 @@ impl CalibRawApp {
         let Some(render_state) = frame.wgpu_render_state() else {
             return;
         };
-        let Some(template) = self
-            .preview
-            .pipeline()
-            .map(RawGpuPipeline::program_template)
-        else {
+        let built = if self.preview.zoomed_in() {
+            self.preview
+                .detail
+                .as_ref()
+                .filter(|detail| Arc::ptr_eq(&detail.raw, &source))
+                .map(|sharp| {
+                    self.build_interactive_crop(
+                        &render_state.device,
+                        &render_state.queue,
+                        |pipeline| self.present_pipeline(pipeline, render_state),
+                        sharp,
+                        &reduced,
+                    )
+                    .map(Reduced::Crop)
+                })
+        } else {
+            Some(self.build_whole_graph(render_state, &reduced))
+        };
+        // The sharp crop was replaced while the worker ran.
+        let Some(built) = built else {
             return;
         };
-        let masks = self.preview_mask_stack();
-        let params = GpuParams::new(&self.develop.target_exposure, &masks, &reduced)
-            .with_vignette_geometry(self.develop.geometry);
-        let options = PipelineOptions::new(ProcessingQuality::Preview)
-            .mask_atlas_edge(interactive_mask_edge())
-            .mask_layers(preview_mask_layer_capacity(masks.masks.len()))
-            .programs(&template);
-        match RawGpuPipeline::new(
-            &render_state.device,
-            &render_state.queue,
-            &reduced,
-            &params,
-            options,
-        ) {
-            Ok(pipeline) => {
-                calibraw_core::diagnostics::record(format!(
-                    "Interactive preview graph built: {}x{} ({:.1} MiB)",
-                    reduced.width,
-                    reduced.height,
-                    pipeline.resident_bytes() as f64 / (1024.0 * 1024.0)
-                ));
-                self.preview.interactive.graph = Some(InteractivePreview {
-                    pipeline: self.present_pipeline(pipeline, render_state),
-                    raw: reduced,
+        match built {
+            Ok(reduced_graph) => {
+                let graph = InteractivePreview {
+                    reduced: reduced_graph,
                     source,
                     rendered: false,
-                });
+                };
+                calibraw_core::diagnostics::record(format!(
+                    "Interactive preview graph built{}: {}x{} ({:.1} MiB)",
+                    if matches!(graph.reduced, Reduced::Crop(_)) {
+                        " for the zoomed crop"
+                    } else {
+                        ""
+                    },
+                    reduced.width,
+                    reduced.height,
+                    graph.pipeline().gpu().resident_bytes() as f64 / (1024.0 * 1024.0)
+                ));
+                self.preview.interactive.graph = Some(graph);
                 self.preview.interactive.synced = false;
             }
             Err(error) => {
                 self.preview.interactive.failed_for = Some(source);
-                // Memory the fitted preview and an export tile leave is not
+                // Memory the sharp previews and an export tile leave is not
                 // enough: expected on a small device, and nothing is lost.
                 if error.to_string().contains("GPU pipelines already reserve") {
                     calibraw_core::diagnostics::record(format!(
@@ -541,6 +686,37 @@ impl CalibRawApp {
                 }
             }
         }
+    }
+
+    /// The reduced graph of the whole photo, from the reduced fitted proxy.
+    fn build_whole_graph(
+        &self,
+        render_state: &eframe::egui_wgpu::RenderState,
+        reduced: &Arc<LoadedRaw>,
+    ) -> anyhow::Result<Reduced> {
+        let template = self
+            .preview
+            .pipeline()
+            .map(RawGpuPipeline::program_template)
+            .ok_or_else(|| anyhow::anyhow!("the fitted preview is gone"))?;
+        let masks = self.preview_mask_stack();
+        let params = GpuParams::new(&self.develop.target_exposure, &masks, reduced)
+            .with_vignette_geometry(self.develop.geometry);
+        let options = PipelineOptions::new(ProcessingQuality::Preview)
+            .mask_atlas_edge(interactive_mask_edge())
+            .mask_layers(preview_mask_layer_capacity(masks.masks.len()))
+            .programs(&template);
+        let pipeline = RawGpuPipeline::new(
+            &render_state.device,
+            &render_state.queue,
+            reduced,
+            &params,
+            options,
+        )?;
+        Ok(Reduced::Whole {
+            pipeline: self.present_pipeline(pipeline, render_state),
+            raw: Arc::clone(reduced),
+        })
     }
 
     /// Renders the next pending stage of the reduced graph.
@@ -561,36 +737,29 @@ impl CalibRawApp {
             self.preview.interactive.pending = None;
             return;
         };
-        let upload = if state.masks_pending {
-            Self::upload_preview_masks(
-                graph.pipeline.gpu(),
-                &render_state.queue,
-                &preview_masks,
-                &graph.raw,
-            )
-        } else {
-            Ok(())
-        };
         if stage == ProcessingStage::Raw
             && full_raw.uses_opposed_chroma(&self.develop.target_exposure)
         {
             full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
-        let params = GpuParams::new(&self.develop.target_exposure, &preview_masks, &graph.raw)
-            .with_vignette_geometry(self.develop.geometry);
-        let result = upload.map_err(anyhow::Error::msg).and_then(|()| {
-            graph.pipeline.gpu().dispatch_stage_with_remove(
+        let result = match &graph.reduced {
+            Reduced::Whole { pipeline, raw } => self.render_whole_stage(
+                render_state,
+                pipeline,
+                raw,
+                stage,
+                &preview_masks,
+                &full_raw,
+            ),
+            Reduced::Crop(detail) => self.render_interactive_crop_stage(
                 &render_state.queue,
                 &render_state.device,
-                &params,
+                detail,
                 stage,
-                RemoveSceneContext::full_frame(
-                    &self.inpaint.edits,
-                    &full_raw,
-                    &self.develop.target_exposure,
-                ),
-            )
-        });
+                &preview_masks,
+                &full_raw,
+            ),
+        };
         let state = &mut self.preview.interactive;
         if let Err(error) = result {
             if let Some(source) = state.graph.as_ref().map(|graph| Arc::clone(&graph.source)) {
@@ -617,6 +786,43 @@ impl CalibRawApp {
         }
         self.egui_ctx.request_repaint();
     }
+
+    /// Renders `stage` of the reduced graph of the whole photo. With
+    /// `masks_pending` the masks go up first.
+    fn render_whole_stage(
+        &self,
+        render_state: &eframe::egui_wgpu::RenderState,
+        pipeline: &PreviewPipeline,
+        raw: &LoadedRaw,
+        stage: ProcessingStage,
+        masks: &MaskStack,
+        full_raw: &LoadedRaw,
+    ) -> anyhow::Result<()> {
+        if self.preview.interactive.masks_pending() {
+            Self::upload_preview_masks(pipeline.gpu(), &render_state.queue, masks, raw)
+                .map_err(anyhow::Error::msg)?;
+        }
+        let params = GpuParams::new(&self.develop.target_exposure, masks, raw)
+            .with_vignette_geometry(self.develop.geometry);
+        pipeline.gpu().dispatch_stage_with_remove(
+            &render_state.queue,
+            &render_state.device,
+            &params,
+            stage,
+            RemoveSceneContext::full_frame(
+                &self.inpaint.edits,
+                full_raw,
+                &self.develop.target_exposure,
+            ),
+        )
+    }
+}
+
+/// What the reduced graph is made from, and how large it is.
+struct Reduction {
+    source: Arc<LoadedRaw>,
+    /// The long edge of the reduction.
+    edge: u32,
 }
 
 #[cfg(test)]
@@ -628,7 +834,7 @@ mod tests {
             eligible: true,
             dragging_control: false,
             edit: false,
-            fitted_current: false,
+            sharp_current: false,
             now,
         }
     }
@@ -702,13 +908,13 @@ mod tests {
         let start = Instant::now();
         let settling = DragPhase::Settling { since: start };
         let current = |at| DragInput {
-            fitted_current: true,
+            sharp_current: true,
             ..input(at)
         };
         assert_eq!(settling.next(current(start)), settling);
         assert_eq!(
             settling.next(DragInput {
-                fitted_current: false,
+                sharp_current: false,
                 ..input(start + SETTLE_DELAY)
             }),
             settling
@@ -775,6 +981,37 @@ mod tests {
     }
 
     #[test]
+    fn a_followed_zoomed_drag_keeps_the_navigation_proxy_for_tone_changes_only() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        let dragging = DragPhase::Dragging {
+            last_edit: Instant::now(),
+        };
+        app.preview.interactive.phase = dragging;
+        app.preview.zoom = 2.0;
+        // The reduced crop takes its tone statistics from the navigation
+        // proxy while the fitted preview waits, so a change to them is not
+        // waited for; an Output change does not touch them.
+        for (pending, waits) in [
+            (None, true),
+            (Some(ProcessingStage::Output), true),
+            (Some(ProcessingStage::Tone), false),
+            (Some(ProcessingStage::Raw), false),
+        ] {
+            app.preview.navigation_pending_stage = pending;
+            assert_eq!(app.defer_navigation_preview(), waits, "{pending:?}");
+        }
+        // The fitted preview waits for every kind of change.
+        app.preview.pending_stage = Some(ProcessingStage::Raw);
+        assert!(app.defer_background_preview_processing());
+        // Unzoomed there is no proxy to keep.
+        app.preview.zoom = 1.0;
+        app.preview.navigation_pending_stage = Some(ProcessingStage::Raw);
+        assert!(app.defer_navigation_preview());
+        app.preview.interactive.phase = DragPhase::Idle;
+        assert!(!app.defer_navigation_preview());
+    }
+
+    #[test]
     fn only_a_rendered_graph_is_shown_and_only_while_a_phase_is_active() {
         let mut state = InteractiveState::default();
         assert!(!state.visible());
@@ -789,8 +1026,8 @@ mod tests {
     #[test]
     fn the_reduced_graph_is_half_the_fitted_proxy_and_never_for_a_small_one() {
         assert_eq!(interactive_edge(1_691), Some(845));
-        assert_eq!(interactive_edge(MIN_FITTED_EDGE), Some(640));
-        assert_eq!(interactive_edge(MIN_FITTED_EDGE - 1), None);
+        assert_eq!(interactive_edge(MIN_SOURCE_EDGE), Some(640));
+        assert_eq!(interactive_edge(MIN_SOURCE_EDGE - 1), None);
         assert_eq!(interactive_edge(640), None);
     }
 

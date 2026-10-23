@@ -90,6 +90,11 @@ impl DispatchProgress {
         self.stages[0]
     }
 
+    /// The stage the zoomed crop has pending.
+    pub(in crate::app) fn detail(&self) -> Option<ProcessingStage> {
+        self.stages[1]
+    }
+
     /// The stage the reduced preview has pending.
     pub(in crate::app) fn interactive(&self) -> Option<ProcessingStage> {
         self.stages[3]

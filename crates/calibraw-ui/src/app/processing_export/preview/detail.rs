@@ -12,6 +12,11 @@ impl CalibRawApp {
             self.preview.detail_urgent = false;
             return;
         }
+        // While a control is dragged the reduced crop follows it
+        // (`interactive`); the sharp one is refreshed once the drag ends.
+        if self.interactive_drag_active() {
+            return;
+        }
         // Fingers on the photo no longer block the refresh: each move restarts
         // the idle delay below, so the crop is prepared once a pinch or pan
         // pauses instead of only after the fingers lift.
@@ -255,18 +260,13 @@ impl CalibRawApp {
         } = prepared;
         let [x0, y0] = source_origin;
         let [crop_width, crop_height] = source_size;
-        let virtual_full_width = ((detail_raw.width as f64 * full_raw.width as f64
-            / crop_width.max(1) as f64)
-            .round() as u32)
-            .max(detail_raw.width);
-        let virtual_full_height = ((detail_raw.height as f64 * full_raw.height as f64
-            / crop_height.max(1) as f64)
-            .round() as u32)
-            .max(detail_raw.height);
-        let virtual_origin_x =
-            (x0 as f64 / full_raw.width.max(1) as f64 * virtual_full_width as f64).round() as i32;
-        let virtual_origin_y =
-            (y0 as f64 / full_raw.height.max(1) as f64 * virtual_full_height as f64).round() as i32;
+        let ([virtual_origin_x, virtual_origin_y], [virtual_full_width, virtual_full_height]) =
+            detail_virtual_frame(
+                [detail_raw.width, detail_raw.height],
+                [full_raw.width, full_raw.height],
+                source_origin,
+                source_size,
+            );
         let interactive = self.interactive_detail_mask_edit();
         let mask_region = detail_mask_update_region(
             &preview_masks,
@@ -497,7 +497,99 @@ impl CalibRawApp {
     }
 }
 
+/// Where a crop sits in the frame the whole photo would fill at the crop's
+/// density: the origin and the size of that frame. The crop's graph places
+/// vignette, masks and tone guide in it, as if it were a tile of the photo.
+/// `raw_size` is the crop's graph, `source_origin` and `source_size` the crop
+/// in photo pixels.
+pub(super) fn detail_virtual_frame(
+    raw_size: [u32; 2],
+    full_size: [u32; 2],
+    source_origin: [u32; 2],
+    source_size: [u32; 2],
+) -> ([i32; 2], [u32; 2]) {
+    let size = [0, 1].map(|axis| {
+        ((f64::from(raw_size[axis]) * f64::from(full_size[axis])
+            / f64::from(source_size[axis].max(1)))
+        .round() as u32)
+            .max(raw_size[axis])
+    });
+    let origin = [0, 1].map(|axis| {
+        (f64::from(source_origin[axis]) / f64::from(full_size[axis].max(1)) * f64::from(size[axis]))
+            .round() as i32
+    });
+    (origin, size)
+}
+
+/// Where a crop's graph sits in the photo, which its GPU parameters place the
+/// vignette, the masks and the tone guide by.
+#[derive(Clone, Copy)]
+pub(super) struct DetailPlacement {
+    /// The crop in the frame the photo would fill at its density
+    /// (`detail_virtual_frame`).
+    pub virtual_origin: [i32; 2],
+    pub virtual_full_size: [u32; 2],
+    /// The photo's size in pixels.
+    pub full_size: [u32; 2],
+    /// The part of the photo the masks are rasterized for, and the size of
+    /// that raster.
+    pub mask_region: [u32; 4],
+    pub mask_extent: [u32; 2],
+}
+
+impl DetailPlacement {
+    /// The parameters of the graph built from `raw` for `exposure`.
+    pub(super) fn params(
+        self,
+        exposure: &ExposureParams,
+        masks: &MaskStack,
+        geometry: GeometryTransform,
+        raw: &LoadedRaw,
+    ) -> GpuParams {
+        GpuParams::new_for_tile(
+            exposure,
+            masks,
+            raw,
+            self.virtual_origin[0],
+            self.virtual_origin[1],
+            self.virtual_full_size[0],
+            self.virtual_full_size[1],
+        )
+        .with_vignette_geometry(geometry)
+        .with_mask_uv_rect_and_extent(
+            mask_source_region_uv(self.mask_region, self.full_size[0], self.full_size[1]),
+            self.mask_extent,
+        )
+    }
+}
+
 impl PreviewDetail {
+    pub(super) fn placement(&self) -> DetailPlacement {
+        DetailPlacement {
+            virtual_origin: self.virtual_origin,
+            virtual_full_size: self.virtual_full_size,
+            full_size: self.full_source_size,
+            mask_region: self.mask_source_region,
+            mask_extent: self.mask_texture_extent,
+        }
+    }
+
+    /// The Remove edits as they apply to this crop of `full_raw`.
+    pub(super) fn remove_scene<'a>(
+        &self,
+        edits: &'a RemoveEditState,
+        full_raw: &'a LoadedRaw,
+        exposure: &'a ExposureParams,
+    ) -> RemoveSceneContext<'a> {
+        RemoveSceneContext::new(
+            edits,
+            full_raw,
+            exposure,
+            self.source_origin.map(|origin| origin as f32),
+            self.source_size.map(|size| size as f32),
+        )
+    }
+
     pub(super) fn needs_native_refinement(&self, requested: &PreviewDetailPlan) -> bool {
         if self.raw.is_pre_demosaiced_raster()
             || [self.raw.width, self.raw.height] == self.source_size
@@ -662,6 +754,27 @@ fn settled_detail_uses_native_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_crop_is_placed_in_the_frame_the_photo_fills_at_its_density() {
+        // A 1000 by 500 crop at (200, 100) of a 4000 by 3000 photo, as 500 by
+        // 250 samples: the photo at that density is 2000 by 1500.
+        let (origin, size) =
+            detail_virtual_frame([500, 250], [4_000, 3_000], [200, 100], [1_000, 500]);
+        assert_eq!(size, [2_000, 1_500]);
+        assert_eq!(origin, [100, 50]);
+        // Halving the density halves the frame and the origin with it, which
+        // is what lets the reduced crop reuse the sharp crop's place.
+        let (half_origin, half_size) =
+            detail_virtual_frame([250, 125], [4_000, 3_000], [200, 100], [1_000, 500]);
+        assert_eq!(half_size, [1_000, 750]);
+        assert_eq!(half_origin, [50, 25]);
+        // A crop of the whole photo needs no more than its own size.
+        assert_eq!(
+            detail_virtual_frame([300, 200], [300, 200], [0, 0], [300, 200]),
+            ([0, 0], [300, 200])
+        );
+    }
 
     #[test]
     fn missing_detail_recovers_without_a_motion_timer() {

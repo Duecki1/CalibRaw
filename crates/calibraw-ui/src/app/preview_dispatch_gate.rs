@@ -22,6 +22,9 @@ const LATENCY_WINDOW: usize = 5;
 /// wait for shader programs to compile.
 const MIN_LATENCY_SAMPLES: usize = 3;
 
+/// The kinds of batch that are timed: all but `Batch::Other`.
+const TIMED_BATCH_KINDS: usize = 3;
+
 /// The last few batch times, in milliseconds.
 #[derive(Debug, Default)]
 struct LatencyWindow {
@@ -60,15 +63,18 @@ pub(crate) enum Batch {
     Fitted,
     /// The reduced preview shown while a control is dragged.
     Interactive,
-    /// Anything else: the zoomed crop, the navigation graph, a build.
+    /// A zoomed-in update: the crop at the size it is shown, with whatever
+    /// else the edit made necessary.
+    Detail,
+    /// Anything else: the navigation graph, a build.
     Other,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct PreviewDispatchGate {
     open: Arc<AtomicBool>,
-    /// The `Fitted` and `Interactive` windows.
-    latency: Arc<Mutex<[LatencyWindow; 2]>>,
+    /// The windows of the timed kinds (`Batch::window`).
+    latency: Arc<Mutex<[LatencyWindow; TIMED_BATCH_KINDS]>>,
 }
 
 impl Default for PreviewDispatchGate {
@@ -125,6 +131,7 @@ impl PreviewDispatchGate {
         match batch {
             Batch::Fitted => Some(0),
             Batch::Interactive => Some(1),
+            Batch::Detail => Some(2),
             Batch::Other => None,
         }
     }

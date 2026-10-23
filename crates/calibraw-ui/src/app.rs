@@ -251,6 +251,7 @@ impl CalibRawApp {
     fn discard_auxiliary_previews(&mut self) {
         self.preview.detail = None;
         self.preview.navigation = None;
+        self.preview.interactive.reset();
     }
 
     /// `None` when the platform has no clipboard of its own and egui's is used.
