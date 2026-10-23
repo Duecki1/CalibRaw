@@ -23,10 +23,14 @@ mod service;
 
 #[cfg(target_os = "android")]
 mod android;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod desktop;
 #[cfg(test)]
 pub(crate) mod fake;
+#[cfg(target_os = "ios")]
+mod ios;
+#[cfg(any(target_os = "ios", test))]
+mod ios_library;
 
 pub(crate) use caps::{MemoryClass, PlatformCaps, StorageKind, VideoEncoder};
 pub(crate) use files::{
@@ -44,5 +48,7 @@ pub(crate) use service::{
 
 #[cfg(target_os = "android")]
 pub(crate) use android::main;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) use desktop::main;
+#[cfg(target_os = "ios")]
+pub(crate) use ios::main;

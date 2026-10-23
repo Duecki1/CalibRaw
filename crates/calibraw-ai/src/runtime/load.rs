@@ -1,13 +1,13 @@
 //! Loading the ONNX Runtime library once per process. Desktop builds load a
 //! library file pinned by its SHA-256, and register the automatic runtime's
-//! WebGPU plugin execution provider beside it; Android links the runtime
+//! WebGPU plugin execution provider beside it; mobile builds link the runtime
 //! into the app. Either way its log goes to `logger`.
 
 use super::logger;
 use crate::config::RuntimeSource;
 use anyhow::Result;
 use std::sync::{Mutex, OnceLock};
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use {
     super::package::WebGpuPlugin,
     crate::config::Sha256,
@@ -15,7 +15,7 @@ use {
     std::{fs, path::PathBuf},
 };
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 static DESKTOP_RUNTIME_IDENTITY: OnceLock<(PathBuf, Sha256)> = OnceLock::new();
 static RUNTIME_INITIALIZED: OnceLock<()> = OnceLock::new();
 static RUNTIME_INIT_LOCK: Mutex<()> = Mutex::new(());
@@ -26,7 +26,7 @@ pub fn initialize_runtime() -> Result<()> {
     load(&crate::config::runtime_source())
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(super) fn load(source: &RuntimeSource) -> Result<()> {
     // A manual runtime runs only the providers built into it: a plugin beside
     // it would not be covered by the SHA-256 the user approved.
@@ -113,7 +113,7 @@ pub(super) fn load(source: &RuntimeSource) -> Result<()> {
 /// Registers the WebGPU plugin execution provider with the loaded runtime.
 /// A plugin that fails to register leaves sessions on the CPU; the reason is
 /// recorded in diagnostics. Registration lasts as long as the process.
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn register_webgpu_plugin(plugin: &WebGpuPlugin) {
     let result = (|| -> Result<()> {
         // Checked again right before loading, as the core library is.
@@ -198,12 +198,12 @@ fn set_log_level() {
 /// Whether this process has already loaded an ONNX Runtime library. The
 /// library stays loaded until the process exits, so choosing a different one
 /// only takes effect after a restart.
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn runtime_loaded_in_process() -> bool {
     DESKTOP_RUNTIME_IDENTITY.get().is_some()
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 fn load(_source: &RuntimeSource) -> Result<()> {
     if RUNTIME_INITIALIZED.get().is_some() {
         return Ok(());

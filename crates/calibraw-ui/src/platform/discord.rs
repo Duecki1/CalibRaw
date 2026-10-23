@@ -3,13 +3,13 @@
 use std::sync::mpsc;
 
 #[cfg_attr(
-    target_os = "android",
+    any(target_os = "android", target_os = "ios"),
     allow(dead_code, reason = "read only by the desktop Rich Presence worker")
 )]
 pub(crate) const GET_CALIBRAW_URL: &str = env!("CARGO_PKG_REPOSITORY");
 
 #[cfg_attr(
-    target_os = "android",
+    any(target_os = "android", target_os = "ios"),
     allow(dead_code, reason = "read only by the desktop Rich Presence worker")
 )]
 #[derive(Clone, Copy, Debug)]
@@ -19,7 +19,7 @@ pub(crate) enum PresenceActivity {
 }
 
 #[cfg_attr(
-    target_os = "android",
+    any(target_os = "android", target_os = "ios"),
     allow(dead_code, reason = "read only by the desktop Rich Presence worker")
 )]
 pub(crate) enum PresenceCommand {
@@ -39,10 +39,10 @@ pub(crate) fn run_presence_worker(application_id: &str, receiver: mpsc::Receiver
     imp::run_presence_worker(application_id, receiver);
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use super::desktop::discord as imp;
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 mod imp {
     use super::PresenceCommand;
     use std::sync::mpsc;

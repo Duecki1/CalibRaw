@@ -15,7 +15,11 @@ pub fn base_device_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
     if adapter.get_info().backend == wgpu::Backend::Gl {
         adapter.limits()
     } else {
-        wgpu::Limits::default()
+        let mut limits = wgpu::Limits::default();
+        limits.max_inter_stage_shader_variables = limits
+            .max_inter_stage_shader_variables
+            .min(adapter.limits().max_inter_stage_shader_variables);
+        limits
     }
 }
 

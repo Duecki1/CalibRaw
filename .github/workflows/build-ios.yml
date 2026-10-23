@@ -1,0 +1,71 @@
+name: Build iOS
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-ipa:
+    name: Unsigned iOS IPA
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      RUST_BACKTRACE: "1"
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Read the Rust version from rust-toolchain.toml
+        id: rust
+        shell: bash
+        run: echo "version=$(sed -n 's/^channel = \"\(.*\)\"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master, pinned 2026-07-14
+        with:
+          toolchain: ${{ steps.rust.outputs.version }}
+          targets: aarch64-apple-ios
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: ios-aarch64-apple-ios
+
+      - name: Install native dependencies
+        run: brew install autoconf automake libtool llvm pkg-config
+
+      - name: Build unsigned IPA
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+          export CALIBRAW_REQUIRE_COMMITTED_SOURCE=1
+          export CALIBRAW_SOURCE_REVISION="$(git rev-parse --verify HEAD)"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          bash scripts/generate_licenses.sh
+          python3 scripts/build_ios.py --release --ipa
+          unzip -t target/ios-ipa/release/CalibRaw-ios-arm64.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: CalibRaw-ios-arm64
+          path: target/ios-ipa/release/CalibRaw-ios-arm64.ipa
+          if-no-files-found: error

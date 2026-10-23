@@ -4,6 +4,7 @@
 
 mod failure;
 mod job_record;
+mod memory;
 mod out_of_memory;
 mod place;
 mod providers;

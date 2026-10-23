@@ -29,6 +29,9 @@ fn main() {
     if target_os == "android" {
         configure_android_libraw(build_metadata.android_min_sdk);
         configure_android_lensfun(&build_metadata);
+    } else if target_os == "ios" {
+        configure_ios_libraw();
+        configure_ios_lensfun();
     } else {
         configure_desktop_libraw();
         configure_desktop_lensfun();
@@ -129,6 +132,50 @@ fn command_output(command: &mut Command) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn configure_ios_libraw() {
+    if let Some(root) = std::env::var_os("CALIBRAW_LIBRAW_ROOT").map(PathBuf::from) {
+        let header = root.join("include/libraw/libraw.h");
+        let library = root.join("lib/libraw_r.a");
+        println!("cargo:rerun-if-changed={}", header.display());
+        println!("cargo:rerun-if-changed={}", library.display());
+
+        if header.is_file() && library.is_file() {
+            println!(
+                "cargo:rustc-link-search=native={}",
+                root.join("lib").display()
+            );
+            println!("cargo:rustc-link-lib=static=raw_r");
+            println!("cargo:rustc-link-lib=c++");
+            println!("cargo:rustc-link-lib=z");
+            generate_bindings(&header, &[root.join("include")], None);
+            return;
+        }
+    }
+
+    if allow_no_libraw() {
+        println!(
+            "cargo:warning=iOS LibRaw is not staged through CALIBRAW_LIBRAW_ROOT; RAW loading is disabled for this non-production check"
+        );
+        return;
+    }
+
+    panic!(
+        "iOS LibRaw requires CALIBRAW_LIBRAW_ROOT with include/libraw/libraw.h and lib/libraw_r.a built for the selected simulator or device target. Stage the pinned source using scripts/build_libraw.sh with --enable-static --disable-shared and provide BINDGEN_EXTRA_CLANG_ARGS for the target SDK; set CALIBRAW_ALLOW_NO_LIBRAW=1 only for an intentional non-production check build."
+    );
+}
+
+fn configure_ios_lensfun() {
+    println!("cargo:rerun-if-env-changed=CALIBRAW_REQUIRE_LENSFUN");
+    if std::env::var("CALIBRAW_REQUIRE_LENSFUN")
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    {
+        panic!("Lensfun is required for this build, but iOS Lensfun is not available");
+    }
+    println!(
+        "cargo:warning=iOS Lensfun is not available; lens correction is disabled. Host pkg-config is not probed for iOS."
+    );
 }
 
 fn configure_android_libraw(android_min_sdk: u32) {

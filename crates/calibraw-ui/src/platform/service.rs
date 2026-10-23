@@ -213,6 +213,10 @@ pub(crate) trait Platform: Send + Sync {
     fn open_raw_document(&self) -> Result<(), String> {
         Err(unavailable("the document picker"))
     }
+    /// Picker anchor in normalized window coordinates; other platforms ignore it.
+    fn open_raw_document_at(&self, _anchor: Option<[f32; 2]>) -> Result<(), String> {
+        self.open_raw_document()
+    }
     fn take_picker_result(&self) -> Option<PickerResult> {
         None
     }
@@ -411,6 +415,10 @@ pub(crate) trait Platform: Send + Sync {
     }
 
     // --- Publishing exports to the shared media store ---
+
+    fn export_location_label(&self) -> &'static str {
+        "Pictures/CalibRaw"
+    }
 
     /// A file to write the export into, or `None` to write it elsewhere and
     /// publish it with [`Platform::publish_image`].

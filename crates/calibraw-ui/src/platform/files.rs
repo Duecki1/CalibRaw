@@ -142,10 +142,10 @@ pub(crate) fn detected_camera_profile_folder() -> Option<PathBuf> {
         .find(|path| path.is_dir())
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use super::desktop::files as imp;
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 mod imp {
     use super::FileDialog;
     use std::path::{Path, PathBuf};
@@ -173,7 +173,12 @@ mod imp {
     }
 
     pub(super) fn trash(_path: &Path) -> Result<(), String> {
-        Err("The trash is not available on Android".to_owned())
+        Err(if cfg!(target_os = "ios") {
+            "The trash is not available on iOS"
+        } else {
+            "The trash is not available on Android"
+        }
+        .to_owned())
     }
 
     pub(super) fn is_flatpak() -> bool {
