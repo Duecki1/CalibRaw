@@ -3,6 +3,8 @@
 pub(super) mod discord;
 mod entry;
 pub(super) mod files;
+#[cfg(target_os = "macos")]
+mod macos_menu;
 #[cfg(target_os = "windows")]
 mod nvidia_vrr;
 mod portal;
@@ -29,6 +31,21 @@ impl DesktopPlatform {
 impl Platform for DesktopPlatform {
     fn caps(&self) -> PlatformCaps {
         PlatformCaps::DESKTOP
+    }
+
+    #[cfg(target_os = "macos")]
+    fn attach_ui(&self, request_repaint: Box<dyn Fn() + Send + Sync>) {
+        macos_menu::set_wake_ui(Some(request_repaint));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn detach_ui(&self) {
+        macos_menu::set_wake_ui(None);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn take_settings_request(&self) -> bool {
+        macos_menu::take_settings_request()
     }
 
     fn performance_settings_path(&self) -> Result<Option<PathBuf>, String> {

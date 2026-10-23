@@ -67,6 +67,11 @@ fn run_desktop() -> eframe::Result {
     eframe::run_native(
         "CalibRaw",
         options,
-        Box::new(|cc| Ok(crate::app::create_app(cc, super::DesktopPlatform::new()))),
+        Box::new(|cc| {
+            // winit installed its default menu bar when the event loop launched.
+            #[cfg(target_os = "macos")]
+            super::macos_menu::install();
+            Ok(crate::app::create_app(cc, super::DesktopPlatform::new()))
+        }),
     )
 }
