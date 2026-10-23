@@ -56,6 +56,33 @@ impl Platform for DesktopPlatform {
         calibraw_ai::desktop_model_root()
     }
 
+    fn reveal_file(&self, path: &std::path::Path) -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        let mut command = {
+            let mut command = std::process::Command::new("explorer.exe");
+            let mut argument = std::ffi::OsString::from("/select,");
+            argument.push(path);
+            command.arg(argument);
+            command
+        };
+        #[cfg(target_os = "macos")]
+        let mut command = {
+            let mut command = std::process::Command::new("open");
+            command.arg("-R").arg(path);
+            command
+        };
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let mut command = {
+            let mut command = std::process::Command::new("xdg-open");
+            command.arg(path.parent().unwrap_or(path));
+            command
+        };
+        command
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Could not open the file manager: {error}"))
+    }
+
     fn gpu_pipeline_cache_dir(&self) -> Result<Option<PathBuf>, String> {
         Ok(Some(
             calibraw_core::thumbnail_cache::desktop_app_cache_root(),

@@ -239,6 +239,10 @@ pub(crate) trait Platform: Send + Sync {
     fn open_camera_profile_folder(&self) -> Result<(), String> {
         Err(unavailable("the camera profile folder picker"))
     }
+    /// Reveals a local file in the system file manager.
+    fn reveal_file(&self, _path: &Path) -> Result<(), String> {
+        Err(unavailable("the system file manager"))
+    }
     fn remove_camera_profile_mirror(&self, _path: &Path) -> Result<(), String> {
         Ok(())
     }
