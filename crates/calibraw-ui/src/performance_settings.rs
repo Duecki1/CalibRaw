@@ -201,6 +201,21 @@ impl Default for PerformanceSettings {
     }
 }
 
+/// The tier that keeps the density of a Preview quality stored before settings
+/// version 6; see `PerformanceSettings::sanitized`.
+// migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
+fn preview_quality_before_v6(
+    stored: crate::app::PreviewQuality,
+    constrained_memory: bool,
+) -> crate::app::PreviewQuality {
+    use crate::app::PreviewQuality::{High, Low, Max, Medium};
+    match stored {
+        Low => Medium,
+        Medium | High | Max if constrained_memory => High,
+        Medium | High | Max => Max,
+    }
+}
+
 impl PerformanceSettings {
     pub(crate) fn sanitized(mut self) -> Self {
         // Version 1 is the public baseline. Apply public-version migrations here before updating
@@ -231,15 +246,16 @@ impl PerformanceSettings {
         // Max is now exactly one rendered pixel per screen pixel. They used to be
         // Low 75%, Medium 100%, High 125% and Max 150%, so a stored choice keeps its
         // density: old Low is the new Medium, and the rest, which were at or above
-        // the screen's, are the new Max.
+        // the screen's, are the new Max. A constrained device never rendered them:
+        // its preview was capped near 1050 pixels whatever the tier, so there they
+        // become High, which is what a new install starts with, instead of a
+        // preview two and a half times larger.
         // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
         if self.version < 6 {
-            self.preview_quality = match self.preview_quality {
-                crate::app::PreviewQuality::Low => crate::app::PreviewQuality::Medium,
-                crate::app::PreviewQuality::Medium
-                | crate::app::PreviewQuality::High
-                | crate::app::PreviewQuality::Max => crate::app::PreviewQuality::Max,
-            };
+            self.preview_quality = preview_quality_before_v6(
+                self.preview_quality,
+                PlatformCaps::CURRENT.constrained_memory(),
+            );
         }
         self.version = SETTINGS_VERSION;
         // Setup offers the default until the user has chosen; earlier builds
@@ -393,6 +409,20 @@ mod tests {
     #[test]
     fn version_5_preview_quality_keeps_its_density() {
         use crate::app::PreviewQuality::{High, Low, Max, Medium};
+        // A screen-sized device kept up to 150% of its pixels; Max is the new 100%.
+        for (stored, migrated) in [(Low, Medium), (Medium, Max), (High, Max), (Max, Max)] {
+            assert_eq!(preview_quality_before_v6(stored, false), migrated);
+        }
+        // A constrained device rendered every tier at about the same capped size,
+        // so it lands on the tier a new install starts with.
+        for (stored, migrated) in [(Low, Medium), (Medium, High), (High, High), (Max, High)] {
+            assert_eq!(preview_quality_before_v6(stored, true), migrated);
+        }
+    }
+
+    #[test]
+    fn sanitizing_migrates_the_preview_quality_once() {
+        use crate::app::PreviewQuality::{High, Low, Max, Medium};
         let migrated = |version, preview_quality| {
             PerformanceSettings {
                 version,
@@ -402,12 +432,12 @@ mod tests {
             .sanitized()
             .preview_quality
         };
-        assert_eq!(migrated(5, Low), Medium);
-        assert_eq!(migrated(5, Medium), Max);
-        assert_eq!(migrated(5, High), Max);
-        assert_eq!(migrated(5, Max), Max);
-        // Version 6 files keep the tier as saved.
         for quality in [Low, Medium, High, Max] {
+            assert_eq!(
+                migrated(5, quality),
+                preview_quality_before_v6(quality, PlatformCaps::CURRENT.constrained_memory())
+            );
+            // Version 6 files keep the tier as saved.
             assert_eq!(migrated(SETTINGS_VERSION, quality), quality);
         }
     }

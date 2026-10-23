@@ -5,8 +5,12 @@ const UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, PartialEq)]
 struct HistogramKey {
+    /// The fitted preview's texture, which names the image even while the
+    /// reduced preview is the one read.
     texture: egui::TextureId,
     output_revision: u64,
+    /// The reduced preview is the one read (`shown_pipeline`).
+    reduced: bool,
     geometry: GeometryTransform,
     original: bool,
 }
@@ -34,9 +38,11 @@ pub(crate) struct HistogramState {
 impl CalibRawApp {
     fn histogram_key(&self) -> Option<HistogramKey> {
         let presented = self.preview.gpu_pipeline.as_ref()?;
+        let shown = shown_pipeline(Some(presented), &self.preview.interactive)?;
         Some(HistogramKey {
             texture: presented.texture(),
-            output_revision: presented.gpu().output_revision(),
+            output_revision: shown.gpu().output_revision(),
+            reduced: !std::ptr::eq(shown, presented),
             geometry: self.develop.geometry,
             original: self.preview.original_requested,
         })
@@ -110,12 +116,12 @@ impl CalibRawApp {
         let gpu = state
             .gpu
             .get_or_insert_with(|| PreviewHistogramGpu::new(&render_state.device));
-        let source = self
-            .preview
-            .gpu_pipeline
-            .as_ref()
-            .map(PreviewPipeline::gpu)
-            .expect("histogram source exists");
+        let source = shown_pipeline(
+            self.preview.gpu_pipeline.as_ref(),
+            &self.preview.interactive,
+        )
+        .map(PreviewPipeline::gpu)
+        .expect("histogram source exists");
         if gpu.request(
             &render_state.device,
             &render_state.queue,
@@ -141,6 +147,7 @@ mod tests {
         let key = HistogramKey {
             texture: egui::TextureId::User(1),
             output_revision: 1,
+            reduced: false,
             geometry: GeometryTransform::default(),
             original: false,
         };
@@ -148,6 +155,17 @@ mod tests {
             output_revision: 2,
             ..key
         }));
+        // The panel keeps its data when the reduced preview takes over.
+        assert!(key.same_view(HistogramKey {
+            reduced: true,
+            ..key
+        }));
+        assert!(
+            key != HistogramKey {
+                reduced: true,
+                ..key
+            }
+        );
         assert!(!key.same_view(HistogramKey {
             texture: egui::TextureId::User(2),
             ..key

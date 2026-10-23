@@ -8,7 +8,7 @@ pub(in crate::app) fn aligned_detail_axis(
     extent: u32,
     cfa_period: u32,
     viewport_pixels: u32,
-    detail_pixel_scale: f32,
+    pixel_scale: f32,
     processing_halo: u32,
 ) -> (u32, u32) {
     let extent = extent.max(1);
@@ -31,8 +31,7 @@ pub(in crate::app) fn aligned_detail_axis(
         ((max_uv.clamp(0.0, 1.0) * extent as f32).ceil() as u32).clamp(visible_start + 1, extent);
     let visible_len = visible_end - visible_start;
 
-    let visible_detail_pixels =
-        (viewport_pixels.max(1) as f32 * detail_pixel_scale.max(0.1)).max(1.0);
+    let visible_detail_pixels = (viewport_pixels.max(1) as f32 * pixel_scale.max(0.1)).max(1.0);
     let support_padding =
         (visible_len as f32 * processing_halo as f32 / visible_detail_pixels).ceil() as u32;
     // Reserve a small reusable border in addition to processing support.
@@ -120,7 +119,7 @@ pub(in crate::app) fn requested_detail_edge(
         visible_pixels[0].max(1) as f32 * crop_width as f32 / visible_source_width;
     let padded_height_pixels =
         visible_pixels[1].max(1) as f32 * crop_height as f32 / visible_source_height;
-    (padded_width_pixels.max(padded_height_pixels) * quality.detail_pixel_scale())
+    (padded_width_pixels.max(padded_height_pixels) * quality.pixel_scale())
         .ceil()
         .clamp(
             256.0,
@@ -137,6 +136,14 @@ pub(in crate::app) struct DetailGraph {
     pub mask_count: usize,
     /// What the fitted graph has reserved, which the crop's budget leaves out.
     pub fitted_resident_bytes: u64,
+}
+
+/// How the zoomed crop's graph is built: the atlas and the mask layers that
+/// `DetailGraph::preview_graph` sizes it for.
+fn detail_pipeline_options<'a>(mask_count: usize) -> PipelineOptions<'a> {
+    PipelineOptions::new(ProcessingQuality::Preview)
+        .mask_atlas_edge(detail_mask_edge())
+        .mask_layers(detail_mask_layers(mask_count))
 }
 
 impl DetailGraph {
@@ -208,7 +215,7 @@ impl PreviewDetailPlan {
                 full_size[axis],
                 period,
                 view.visible_pixels[axis],
-                quality.detail_pixel_scale(),
+                quality.pixel_scale(),
                 processing_halo,
             )
         });
@@ -697,5 +704,53 @@ mod detail_resolution_tests {
 
         assert_eq!(max, 3_000);
         assert!(low < max);
+    }
+
+    /// The size bound and the graph must agree on the layers, or the bound
+    /// reserves memory the graph never allocates (or the reverse).
+    #[test]
+    fn graphs_allocate_the_mask_layers_their_size_bound_assumes() {
+        let gpu = calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {
+            label: "mask layer bound test",
+            adapter: calibraw_gpu::HeadlessAdapter::Software,
+            texture_dimension: wgpu::Limits::default().max_texture_dimension_2d,
+        });
+        let (device, queue) = match gpu {
+            Ok(gpu) => (gpu.device, gpu.queue),
+            Err(calibraw_gpu::HeadlessDeviceError::NoAdapter(_)) => {
+                eprintln!("mask layer bound test skipped: no headless GPU adapter");
+                return;
+            }
+            Err(error) => panic!("{error}"),
+        };
+        let raw = LoadedRaw::from_scene_linear_rec2020(16, 16, vec![0.2; 16 * 16 * 3]).unwrap();
+        let exposure = ExposureParams::default();
+        for mask_count in [0, 1, 4, 5, 9, MAX_LOCAL_MASKS] {
+            let mut masks = MaskStack::default();
+            for _ in 0..mask_count {
+                masks.add_mask(crate::pipeline::MaskKind::Fullscreen);
+            }
+            let params = GpuParams::new(&exposure, &masks, &raw);
+            let build = |options| RawGpuPipeline::new(&device, &queue, &raw, &params, options);
+            let detail = build(detail_pipeline_options(mask_count)).unwrap();
+            let shape = DetailGraph {
+                mask_count,
+                fitted_resident_bytes: 0,
+            }
+            .preview_graph()
+            .shape();
+            assert_eq!(
+                detail.mask_layer_capacity(),
+                shape.mask_layers,
+                "{mask_count}"
+            );
+            let fitted = build(fitted_pipeline_options(mask_count)).unwrap();
+            let shape = PreviewGraph::Fitted { mask_count }.shape();
+            assert_eq!(
+                fitted.mask_layer_capacity(),
+                shape.mask_layers,
+                "{mask_count}"
+            );
+        }
     }
 }

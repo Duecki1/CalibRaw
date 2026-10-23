@@ -48,6 +48,7 @@ impl PreviewState {
                 self.pending_stage,
                 self.detail_pending_stage,
                 self.navigation_pending_stage,
+                self.interactive.pending_stage(),
             ],
             navigation_exists: self.navigation.is_some(),
         }
@@ -79,8 +80,20 @@ impl PreviewState {
 /// See [`PreviewState::dispatch_progress`].
 #[derive(Debug, PartialEq, Eq)]
 pub(in crate::app) struct DispatchProgress {
-    stages: [Option<ProcessingStage>; 3],
+    stages: [Option<ProcessingStage>; 4],
     navigation_exists: bool,
+}
+
+impl DispatchProgress {
+    /// The stage the fitted preview has pending.
+    pub(in crate::app) fn fitted(&self) -> Option<ProcessingStage> {
+        self.stages[0]
+    }
+
+    /// The stage the reduced preview has pending.
+    pub(in crate::app) fn interactive(&self) -> Option<ProcessingStage> {
+        self.stages[3]
+    }
 }
 
 /// The full-frame pipeline whose tone statistics a zoomed detail crop
@@ -167,7 +180,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn queue_preview_processing(&mut self, stage: ProcessingStage) {
-        self.preview.full_resolution.invalidate();
+        self.preview.interactive.note_edit(stage);
         self.preview.pending_stage = Some(match self.preview.pending_stage {
             Some(existing) => existing.min(stage),
             None => stage,

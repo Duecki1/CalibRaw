@@ -43,9 +43,17 @@ impl CalibRawApp {
         let full_resolution = self
             .full_resolution_texture()
             .filter(|_| clipping_base.is_none());
+        // While a control is dragged the reduced preview is shown in the
+        // fitted one's place; the layout keeps the fitted size.
+        let reduced = self
+            .preview
+            .interactive
+            .texture()
+            .filter(|_| clipping_base.is_none());
         let base = self.preview_base_pipeline().map(|presented| {
             (
                 clipping_base
+                    .or(reduced)
                     .or(full_resolution)
                     .unwrap_or(presented.texture()),
                 presented.gpu().width,

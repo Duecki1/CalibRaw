@@ -8,6 +8,12 @@
 //! with every pixel the sensor has. Its output is read back and averaged down
 //! in linear light; the result is an ordinary egui texture that needs no GPU
 //! budget of its own once the graph is released.
+//!
+//! A render is valid while the fitted preview still shows what it showed when
+//! the render started (`FittedOutput`), so no edit path has to announce that
+//! it outdated the image. A photo whose graph does not fit the GPU is skipped
+//! (`declined`), not reported: this is an extra, not something the user asked
+//! to happen to this photo.
 
 use super::*;
 use crate::pipeline::downscale_display_rgba8;
@@ -16,6 +22,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// How long nothing may change before the render starts.
 const IDLE_BEFORE_RENDER: Duration = Duration::from_millis(800);
 
+/// How often the idle check looks again while the pointer is down.
+const POINTER_RECHECK: Duration = Duration::from_millis(100);
+
+/// The largest graph built where the backend reports no GPU memory.
+const UNREPORTED_MEMORY_LIMIT_BYTES: u64 = 1536 * 1024 * 1024;
+
 /// A rendered image: tightly packed RGBA8, display-encoded, in source space.
 pub(crate) struct FullResolutionRgba {
     pub width: u32,
@@ -23,40 +35,53 @@ pub(crate) struct FullResolutionRgba {
     pub rgba: Vec<u8>,
 }
 
+/// What the fitted preview shows: its texture, and how often its output has
+/// been rendered (`RawGpuPipeline::output_revision`). Both change with every
+/// edit, rebuild and document, so equal values mean the same picture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FittedOutput {
+    texture: egui::TextureId,
+    revision: u64,
+}
+
 struct FullResolutionResult {
-    serial: u64,
     document_generation: u64,
     image: Result<FullResolutionRgba, String>,
 }
 
 struct FullResolutionImage {
     texture: egui::TextureHandle,
-    serial: u64,
+    output: FittedOutput,
     document_generation: u64,
+}
+
+/// The render in flight. It is kept until its result arrives, even once
+/// cancelled, so a second graph never builds beside the first.
+struct RunningRender {
+    receiver: mpsc::Receiver<FullResolutionResult>,
+    cancel: Arc<AtomicBool>,
+    output: FittedOutput,
 }
 
 pub(crate) struct FullResolutionState {
     enabled: bool,
-    receiver: Option<mpsc::Receiver<FullResolutionResult>>,
-    cancel: Option<Arc<AtomicBool>>,
+    running: Option<RunningRender>,
     image: Option<FullResolutionImage>,
-    /// Counts the changes that outdate a rendered image.
-    serial: u64,
-    changed_at: Instant,
-    /// The document a render failed for, which is not tried again.
-    failed_for: Option<u64>,
+    /// The fitted output last seen and since when: the idle clock.
+    seen: Option<(FittedOutput, Instant)>,
+    /// The document a render failed or was declined for, which is not tried
+    /// again.
+    given_up_for: Option<u64>,
 }
 
 impl FullResolutionState {
     pub(crate) fn new(enabled: bool) -> Self {
         Self {
             enabled,
-            receiver: None,
-            cancel: None,
+            running: None,
             image: None,
-            serial: 0,
-            changed_at: Instant::now(),
-            failed_for: None,
+            seen: None,
+            given_up_for: None,
         }
     }
 
@@ -67,21 +92,74 @@ impl FullResolutionState {
     pub(crate) fn set_enabled(&mut self, enabled: bool) {
         if self.enabled != enabled {
             self.enabled = enabled;
-            self.failed_for = None;
-            self.invalidate();
+            self.given_up_for = None;
+            self.seen = None;
+            self.image = None;
+            self.cancel_running();
         }
     }
 
-    /// The shown image no longer matches the edit: stop rendering it and drop it.
-    pub(crate) fn invalidate(&mut self) {
-        self.serial = self.serial.wrapping_add(1);
-        self.changed_at = Instant::now();
-        if let Some(cancel) = self.cancel.take() {
-            cancel.store(true, Ordering::Release);
+    fn cancel_running(&self) {
+        if let Some(running) = &self.running {
+            running.cancel.store(true, Ordering::Release);
         }
-        self.receiver = None;
-        self.image = None;
     }
+
+    /// Notes what the fitted preview shows now and returns how long it has
+    /// shown that. A change cancels a render of anything else and drops an
+    /// image of anything else.
+    fn observe(&mut self, output: Option<FittedOutput>, now: Instant) -> Duration {
+        if self.seen.map(|(seen, _)| seen) != output {
+            self.seen = output.map(|output| (output, now));
+            if self
+                .running
+                .as_ref()
+                .is_some_and(|running| Some(running.output) != output)
+            {
+                self.cancel_running();
+            }
+            if self
+                .image
+                .as_ref()
+                .is_some_and(|image| Some(image.output) != output)
+            {
+                self.image = None;
+            }
+        }
+        self.seen.map_or(Duration::ZERO, |(_, since)| {
+            now.saturating_duration_since(since)
+        })
+    }
+}
+
+/// How much longer to wait before the render may start, or `None` when it may:
+/// the preview has been still for the idle time and nothing is pressed.
+fn wait_before_render(idle: Duration, pointer_down: bool) -> Option<Duration> {
+    if idle < IDLE_BEFORE_RENDER {
+        Some(IDLE_BEFORE_RENDER - idle)
+    } else if pointer_down {
+        // Waiting out the idle time again would be no wait at all.
+        Some(POINTER_RECHECK)
+    } else {
+        None
+    }
+}
+
+/// Why the graph of a `edge` px photo is not built, given the GPU's texture
+/// limit, the bytes the graph reserves and the bytes it may take.
+fn declined(edge: u32, texture_limit: u32, needed: u64, allowed: u64) -> Option<String> {
+    if edge > texture_limit {
+        return Some(format!(
+            "the photo is {edge} px wide and the GPU's texture limit is {texture_limit} px"
+        ));
+    }
+    (needed > allowed).then(|| {
+        format!(
+            "it needs {:.0} MiB of GPU memory and {:.0} MiB are free to use",
+            needed as f64 / (1024.0 * 1024.0),
+            allowed as f64 / (1024.0 * 1024.0)
+        )
+    })
 }
 
 /// Everything a render needs, owned so it can run on its own thread.
@@ -100,12 +178,23 @@ struct FullResolutionJob {
 }
 
 impl CalibRawApp {
+    /// What the fitted preview shows now.
+    fn fitted_output(&self) -> Option<FittedOutput> {
+        self.preview
+            .gpu_pipeline
+            .as_ref()
+            .map(|presented| FittedOutput {
+                texture: presented.texture(),
+                revision: presented.gpu().output_revision(),
+            })
+    }
+
     /// The texture to show instead of the fitted proxy, while it is current.
     pub(crate) fn full_resolution_texture(&self) -> Option<egui::TextureId> {
         let state = &self.preview.full_resolution;
         let image = state.image.as_ref()?;
         (state.enabled
-            && image.serial == state.serial
+            && Some(image.output) == self.fitted_output()
             && image.document_generation == self.persistence.document_generation
             && !self.preview.zoomed_in()
             && !self.preview.original_requested
@@ -120,8 +209,8 @@ impl CalibRawApp {
         if !state.enabled
             || !self.caps().full_resolution_preview()
             || state.image.is_some()
-            || state.receiver.is_some()
-            || state.failed_for == Some(self.persistence.document_generation)
+            || state.running.is_some()
+            || state.given_up_for == Some(self.persistence.document_generation)
             || self.ui.active_tab != AppTab::Develop
             || self.preview.zoomed_in()
             || self.preview.original_requested
@@ -143,24 +232,48 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn advance_full_resolution(&mut self, frame: &eframe::Frame) {
+        let output = self.fitted_output();
+        let idle = self.preview.full_resolution.observe(output, Instant::now());
         if !self.full_resolution_due() {
             return;
         }
-        let pointer_down = self
-            .egui_ctx
-            .input(|input| input.pointer.any_down() || input.any_touches());
-        let idle = self.preview.full_resolution.changed_at.elapsed();
-        if pointer_down || idle < IDLE_BEFORE_RENDER {
-            self.egui_ctx
-                .request_repaint_after(IDLE_BEFORE_RENDER.saturating_sub(idle));
+        let pointer_down = super::interaction::pointer_engaged(&self.egui_ctx);
+        if let Some(wait) = wait_before_render(idle, pointer_down) {
+            self.egui_ctx.request_repaint_after(wait);
             return;
         }
-        let (Some(render_state), Some(raw)) = (frame.wgpu_render_state(), &self.develop.loaded_raw)
+        let (Some(render_state), Some(raw), Some(output)) =
+            (frame.wgpu_render_state(), &self.develop.loaded_raw, output)
         else {
             return;
         };
         let raw = Arc::clone(raw);
         let masks = self.preview_mask_stack();
+        let document_generation = self.persistence.document_generation;
+
+        let needed = RawGpuPipeline::preview_admitted_bytes(
+            raw.width,
+            raw.height,
+            raw.cfa_kind,
+            preview_mask_layer_capacity(masks.masks.len()),
+        );
+        let allowed = calibraw_gpu::memory::adapter_memory(&render_state.device)
+            .map_or(UNREPORTED_MEMORY_LIMIT_BYTES, |memory| {
+                memory.available() / 2
+            });
+        if let Some(reason) = declined(
+            raw.width.max(raw.height),
+            render_state.device.limits().max_texture_dimension_2d,
+            needed,
+            allowed,
+        ) {
+            calibraw_core::diagnostics::record(format!(
+                "Full-resolution preview skipped for this photo: {reason}"
+            ));
+            self.preview.full_resolution.given_up_for = Some(document_generation);
+            return;
+        }
+
         let max_texture_side = self.egui_ctx.input(|input| input.max_texture_side) as u32;
         let target_edge = PreviewQuality::Max
             .proxy_edge_for_fitted_source(
@@ -186,8 +299,6 @@ impl CalibRawApp {
             target_edge,
             cancel: Arc::clone(&cancel),
         };
-        let serial = self.preview.full_resolution.serial;
-        let document_generation = self.persistence.document_generation;
         let (sender, receiver) = mpsc::channel();
         let context = self.egui_ctx.clone();
         let spawn = std::thread::Builder::new()
@@ -208,7 +319,6 @@ impl CalibRawApp {
                 })
                 .map_err(|error| format!("{error:#}"));
                 let _ = sender.send(FullResolutionResult {
-                    serial,
                     document_generation,
                     image,
                 });
@@ -216,12 +326,14 @@ impl CalibRawApp {
             });
         match spawn {
             Ok(_) => {
-                let state = &mut self.preview.full_resolution;
-                state.receiver = Some(receiver);
-                state.cancel = Some(cancel);
+                self.preview.full_resolution.running = Some(RunningRender {
+                    receiver,
+                    cancel,
+                    output,
+                });
             }
             Err(error) => {
-                self.preview.full_resolution.failed_for = Some(document_generation);
+                self.preview.full_resolution.given_up_for = Some(document_generation);
                 self.report_error(
                     ErrorKind::Preview,
                     format!("Could not start the full-resolution preview: {error}"),
@@ -231,34 +343,35 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_full_resolution(&mut self) {
-        let received = self
-            .preview
-            .full_resolution
-            .receiver
-            .as_ref()
-            .map(mpsc::Receiver::try_recv);
+        let Some(running) = self.preview.full_resolution.running.as_ref() else {
+            return;
+        };
+        let received = running.receiver.try_recv();
+        if matches!(received, Err(mpsc::TryRecvError::Empty)) {
+            return;
+        }
+        let output = running.output;
+        let cancelled = running.cancel.load(Ordering::Acquire);
+        let document_generation = self.persistence.document_generation;
+        self.preview.full_resolution.running = None;
         let result = match received {
-            Some(Ok(result)) => result,
-            Some(Err(mpsc::TryRecvError::Disconnected)) => {
-                let state = &mut self.preview.full_resolution;
-                state.receiver = None;
-                state.cancel = None;
-                state.failed_for = Some(self.persistence.document_generation);
-                self.report_error(
-                    ErrorKind::Preview,
-                    "The full-resolution preview worker stopped unexpectedly.".to_owned(),
-                );
+            Ok(result) => result,
+            Err(_) => {
+                if !cancelled {
+                    self.preview.full_resolution.given_up_for = Some(document_generation);
+                    self.report_error(
+                        ErrorKind::Preview,
+                        "The full-resolution preview worker stopped unexpectedly.".to_owned(),
+                    );
+                }
                 return;
             }
-            Some(Err(mpsc::TryRecvError::Empty)) | None => return,
         };
-        let state = &mut self.preview.full_resolution;
-        state.receiver = None;
-        state.cancel = None;
-        if result.serial != state.serial
-            || result.document_generation != self.persistence.document_generation
+        // Outdated while it rendered: the next idle moment renders it again.
+        if cancelled
+            || result.document_generation != document_generation
+            || Some(output) != self.fitted_output()
         {
-            // Outdated while it rendered; the next idle moment renders it again.
             return;
         }
         match result.image {
@@ -274,13 +387,13 @@ impl CalibRawApp {
                 );
                 self.preview.full_resolution.image = Some(FullResolutionImage {
                     texture,
-                    serial: result.serial,
+                    output,
                     document_generation: result.document_generation,
                 });
                 self.egui_ctx.request_repaint();
             }
             Err(error) => {
-                state.failed_for = Some(result.document_generation);
+                self.preview.full_resolution.given_up_for = Some(result.document_generation);
                 self.report_error(
                     ErrorKind::Preview,
                     format!("Could not render the full-resolution preview: {error}"),
@@ -303,17 +416,11 @@ fn render_full_resolution(job: &FullResolutionJob) -> anyhow::Result<FullResolut
     }
     let params =
         GpuParams::new(&job.exposure, &job.masks, raw).with_vignette_geometry(job.geometry);
-    let options = fitted_pipeline_options(job.masks.masks.len());
-    let pipeline = match job.programs.as_ref() {
-        Some(programs) => RawGpuPipeline::new(
-            &job.device,
-            &job.queue,
-            raw,
-            &params,
-            options.programs(programs),
-        ),
-        None => RawGpuPipeline::new(&job.device, &job.queue, raw, &params, options),
-    }?;
+    let options = PipelineOptions {
+        programs: job.programs.as_ref(),
+        ..fitted_pipeline_options(job.masks.masks.len())
+    };
+    let pipeline = RawGpuPipeline::new(&job.device, &job.queue, raw, &params, options)?;
     CalibRawApp::upload_preview_masks(&pipeline, &job.queue, &job.masks, raw)
         .map_err(anyhow::Error::msg)?;
     pipeline.recompute_with_remove(
@@ -352,6 +459,101 @@ fn render_full_resolution(job: &FullResolutionJob) -> anyhow::Result<FullResolut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn output(texture: u64, revision: u64) -> FittedOutput {
+        FittedOutput {
+            texture: egui::TextureId::Managed(texture),
+            revision,
+        }
+    }
+
+    fn running(output: FittedOutput) -> (RunningRender, Arc<AtomicBool>) {
+        let (_sender, receiver) = mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        (
+            RunningRender {
+                receiver,
+                cancel: Arc::clone(&cancel),
+                output,
+            },
+            cancel,
+        )
+    }
+
+    fn image(output: FittedOutput) -> FullResolutionImage {
+        FullResolutionImage {
+            texture: egui::Context::default().load_texture(
+                "test",
+                egui::ColorImage::filled([1, 1], egui::Color32::WHITE),
+                egui::TextureOptions::LINEAR,
+            ),
+            output,
+            document_generation: 0,
+        }
+    }
+
+    #[test]
+    fn the_idle_clock_runs_while_the_preview_shows_the_same_output() {
+        let mut state = FullResolutionState::new(true);
+        let start = Instant::now();
+        let shown = output(1, 7);
+        assert_eq!(state.observe(Some(shown), start), Duration::ZERO);
+        assert_eq!(
+            state.observe(Some(shown), start + Duration::from_millis(300)),
+            Duration::from_millis(300)
+        );
+    }
+
+    #[test]
+    fn another_output_restarts_the_clock_cancels_the_render_and_drops_the_image() {
+        let start = Instant::now();
+        let shown = output(1, 7);
+        // An edit renders the output again; a rebuilt graph has another texture.
+        for changed in [output(1, 8), output(2, 7)] {
+            let mut state = FullResolutionState::new(true);
+            state.observe(Some(shown), start);
+            let (render, cancel) = running(shown);
+            state.running = Some(render);
+            state.image = Some(image(shown));
+
+            // The same output keeps both.
+            state.observe(Some(shown), start + Duration::from_secs(1));
+            assert!(!cancel.load(Ordering::Acquire));
+            assert!(state.image.is_some());
+
+            let later = start + Duration::from_secs(2);
+            assert_eq!(state.observe(Some(changed), later), Duration::ZERO);
+            assert!(cancel.load(Ordering::Acquire), "{changed:?}");
+            assert!(state.image.is_none(), "{changed:?}");
+        }
+    }
+
+    #[test]
+    fn the_render_waits_for_the_idle_time_and_for_the_pointer() {
+        let idle = IDLE_BEFORE_RENDER;
+        assert_eq!(
+            wait_before_render(Duration::from_millis(300), false),
+            Some(idle - Duration::from_millis(300))
+        );
+        assert_eq!(wait_before_render(idle, false), None);
+        // Held down on a still image: look again later, never in a spin.
+        assert_eq!(wait_before_render(idle * 3, true), Some(POINTER_RECHECK));
+        assert!(POINTER_RECHECK > Duration::ZERO);
+    }
+
+    #[test]
+    fn photos_that_do_not_fit_the_gpu_are_declined() {
+        const MIB: u64 = 1024 * 1024;
+        assert_eq!(declined(6_000, 16_384, 1_500 * MIB, 4_000 * MIB), None);
+        assert!(declined(20_000, 16_384, MIB, 4_000 * MIB)
+            .unwrap()
+            .contains("texture limit"));
+        let reason = declined(9_504, 16_384, 3_900 * MIB, 2_000 * MIB).unwrap();
+        assert!(
+            reason.contains("3900") && reason.contains("2000"),
+            "{reason}"
+        );
+    }
 
     #[test]
     fn the_render_has_the_target_size_and_the_photo_gradient() {

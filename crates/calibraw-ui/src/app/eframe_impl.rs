@@ -218,6 +218,7 @@ impl CalibRawApp {
         self.apply_pending_preview_quality(frame);
         self.advance_preview_detail(frame);
         self.sync_original_preview(frame);
+        self.advance_interactive_preview(frame);
         if !self.preview.original_requested {
             self.advance_preview_dispatch(frame);
         }

@@ -50,6 +50,10 @@ impl Default for PreviewQuality {
 /// floor for tiny canvases.
 const MIN_PROXY_EDGE: u32 = 640;
 
+/// Samples added to a proxy edge so rounding it down to a whole CFA period
+/// (2 for Bayer, 6 for X-Trans) never leaves it shorter than asked.
+const CFA_PHASE_GUARD: u32 = 6;
+
 /// The preview graph a size bound is for: it sets how much of the GPU budget
 /// the graph may take on a memory-constrained device, and what the graph
 /// reserves besides its pixels.
@@ -77,7 +81,7 @@ impl PreviewGraph {
 
     /// Whole mask-layer steps, so the bound changes only where the graph's
     /// capacity does.
-    fn shape(self) -> PreviewResourceShape {
+    pub(in crate::app) fn shape(self) -> PreviewResourceShape {
         match self {
             Self::Fitted { mask_count } => PreviewResourceShape {
                 mask_atlas_edge: None,
@@ -90,11 +94,18 @@ impl PreviewGraph {
                 fitted_resident_bytes,
             } => PreviewResourceShape {
                 mask_atlas_edge: Some(mask_atlas_edge),
-                mask_layers: preview_mask_layer_capacity(mask_count),
+                mask_layers: detail_mask_layers(mask_count),
                 fitted_resident_bytes,
             },
         }
     }
+}
+
+/// The mask layers of the zoomed crop's graph: one for each mask it renders.
+/// It gets no spare layers, unlike the fitted graph: they would take memory
+/// from the crop's pixels, and a crop is rebuilt as the view moves anyway.
+pub(crate) fn detail_mask_layers(mask_count: usize) -> usize {
+    mask_count.clamp(1, MAX_LOCAL_MASKS)
 }
 
 /// How to build the displayed fitted graph: with mask layers for the masks it
@@ -146,14 +157,6 @@ impl PreviewQuality {
         }
     }
 
-    fn edge_for_scale(self, viewport_pixels: [u32; 2], support_scale: f32) -> u32 {
-        const CFA_PHASE_GUARD: u32 = 6;
-        let viewport_edge = viewport_pixels[0].max(viewport_pixels[1]).max(1) as f64;
-        let requested = (viewport_edge * f64::from(self.pixel_scale() * support_scale)).ceil();
-        MIN_PROXY_EDGE
-            .max(requested.min(f64::from(u32::MAX - CFA_PHASE_GUARD)) as u32 + CFA_PHASE_GUARD)
-    }
-
     pub(crate) fn proxy_edge_for_fitted_source(
         self,
         viewport_pixels: [u32; 2],
@@ -163,7 +166,6 @@ impl PreviewQuality {
         cfa_kind: crate::pipeline::CfaKind,
         mask_count: usize,
     ) -> u32 {
-        const CFA_PHASE_GUARD: u32 = 6;
         let source_width = source_width.max(1);
         let source_height = source_height.max(1);
         let source_edge = source_width.max(source_height);
@@ -188,11 +190,11 @@ impl PreviewQuality {
     /// this tier's density, with 35% extra for the border the crop keeps
     /// around the view so small pans need no new render.
     pub(crate) fn detail_edge_for_viewport(self, viewport_pixels: [u32; 2]) -> u32 {
-        self.edge_for_scale(viewport_pixels, 1.35)
-    }
-
-    pub(crate) const fn detail_pixel_scale(self) -> f32 {
-        self.pixel_scale()
+        const BORDER_SCALE: f32 = 1.35;
+        let viewport_edge = viewport_pixels[0].max(viewport_pixels[1]).max(1) as f64;
+        let requested = (viewport_edge * f64::from(self.pixel_scale() * BORDER_SCALE)).ceil();
+        MIN_PROXY_EDGE
+            .max(requested.min(f64::from(u32::MAX - CFA_PHASE_GUARD)) as u32 + CFA_PHASE_GUARD)
     }
 }
 
@@ -358,6 +360,8 @@ pub(crate) struct PreviewState {
     pub(crate) quality_dirty: bool,
     /// The idle-time render from the native RAW; see `full_resolution`.
     pub(crate) full_resolution: FullResolutionState,
+    /// The reduced preview shown while a control is dragged; see `interactive`.
+    pub(crate) interactive: InteractiveState,
     /// The Preview quality setting changed: the next check rebuilds a proxy
     /// that is clearly larger than the new density asks for, instead of
     /// keeping it as sufficient.

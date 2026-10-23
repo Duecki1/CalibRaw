@@ -14,7 +14,14 @@ impl CalibRawApp {
     ///
     /// Raw and Tone changes still update every preview, because the crop
     /// takes its tone statistics from a full-frame one.
+    ///
+    /// Unzoomed, the fitted preview also waits while the reduced preview
+    /// follows a dragged control (`interactive`).
     pub(in crate::app) fn defer_background_preview_processing(&self) -> bool {
+        self.interactive_drag_active() || self.defer_for_zoomed_drag()
+    }
+
+    fn defer_for_zoomed_drag(&self) -> bool {
         self.preview.zoom > DETAIL_ZOOM_START
             && self.egui_ctx.input(|input| input.pointer.primary_down())
             && [
@@ -255,10 +262,22 @@ impl CalibRawApp {
         // Every dispatch advances or clears a pending stage, so an unchanged
         // state means nothing was submitted and the gate can stay open.
         if let Some(render_state) = render_state {
-            if self.preview.dispatch_progress() != before {
-                self.preview
-                    .dispatch_gate
-                    .close_until_idle(&render_state.queue, &self.egui_ctx);
+            let after = self.preview.dispatch_progress();
+            if after != before {
+                let batch = if self.preview.zoomed_in() {
+                    Batch::Other
+                } else if after.interactive() != before.interactive() {
+                    Batch::Interactive
+                } else if before.fitted().is_some() && after.fitted() != before.fitted() {
+                    Batch::Fitted
+                } else {
+                    Batch::Other
+                };
+                self.preview.dispatch_gate.close_until_idle(
+                    &render_state.queue,
+                    &self.egui_ctx,
+                    batch,
+                );
             }
         }
     }
@@ -271,6 +290,12 @@ impl CalibRawApp {
         let defer_fitted = self.defer_background_preview_processing();
         if zoomed {
             self.drain_zoomed_processing(frame);
+        }
+        if self.interactive_drag_active() {
+            self.drain_pending_stages(
+                |preview| preview.interactive.pending_stage(),
+                |app| app.advance_interactive_stage(frame),
+            );
         }
         if defer_fitted {
             return;

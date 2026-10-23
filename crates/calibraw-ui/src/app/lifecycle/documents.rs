@@ -309,7 +309,6 @@ impl CalibRawApp {
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
         self.preview.detail_urgent = false;
-        self.preview.full_resolution.invalidate();
         self.preview.reset_view();
         self.develop.lens_correction = LensCorrectionState::default();
         self.develop.lens_correction_dirty = false;
@@ -416,7 +415,6 @@ impl CalibRawApp {
                 if loaded.mask_source.is_some() {
                     self.masks.source_cache = loaded.mask_source;
                 }
-                self.preview.full_resolution.invalidate();
                 self.preview.reset_view_keeping(kept_view);
                 self.preview.original_rendered_state = None;
                 self.preview.detail = None;

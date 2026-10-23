@@ -324,6 +324,19 @@ pub fn build_region_proxy(
     let smooth = scale_x.max(scale_y) < SMOOTH_RESAMPLE_BELOW;
     let smooth_radius_x = scale_x.max(smooth_resample_min_radius(cfa_period));
     let smooth_radius_y = scale_y.max(smooth_resample_min_radius(cfa_period));
+    // The filter's columns depend only on the output column, so they are worked
+    // out once instead of for every row.
+    let column_taps: Vec<Vec<(u32, f64)>> = if smooth {
+        (0..width)
+            .map(|px| {
+                let mut taps = Vec::new();
+                triangle_taps(x, px, scale_x, smooth_radius_x, raw.width, &mut taps);
+                taps
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut raw_pixels = vec![0u16; len];
     let mut color_indices = vec![0u8; len];
     let mut black_levels_per_pixel = vec![0.0f32; len];
@@ -343,7 +356,6 @@ pub fn build_region_proxy(
             let footprint_y0 = y + source_y0;
             let footprint_y1 = (y + source_y1).min(y + region_height);
 
-            let mut column_taps = Vec::new();
             let mut row_taps = Vec::new();
             if smooth {
                 triangle_taps(y, py, scale_y, smooth_radius_y, raw.height, &mut row_taps);
@@ -370,10 +382,9 @@ pub fn build_region_proxy(
                 let mut weighted = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
 
                 if smooth {
-                    triangle_taps(x, px, scale_x, smooth_radius_x, raw.width, &mut column_taps);
                     for &(sy, weight_y) in &row_taps {
                         let row = sy * raw.width;
-                        for &(sx, weight_x) in &column_taps {
+                        for &(sx, weight_x) in &column_taps[px as usize] {
                             let index = (row + sx) as usize;
                             if raw.color_indices[index] == cfa {
                                 let weight = weight_x * weight_y;

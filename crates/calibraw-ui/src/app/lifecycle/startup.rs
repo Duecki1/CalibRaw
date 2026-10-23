@@ -136,6 +136,7 @@ impl CalibRawApp {
                     performance.preview_full_resolution
                         && PlatformCaps::CURRENT.full_resolution_preview(),
                 ),
+                interactive: InteractiveState::default(),
                 shrink_oversized: false,
                 rebuild_receiver: None,
                 detail_rebuild_receiver: None,

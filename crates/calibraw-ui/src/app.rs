@@ -300,6 +300,8 @@ pub(crate) use library_adjustments::{
 };
 pub(crate) use presets::{GroupDialogMode, PresetEditor, PresetEditorMode, PresetState};
 mod full_resolution;
+mod interaction;
+mod interactive_preview;
 mod lifecycle;
 mod preview_clipping;
 mod preview_dispatch_gate;
@@ -309,7 +311,8 @@ mod preview_tests;
 mod preview_texture;
 mod preview_viewport;
 pub(crate) use full_resolution::FullResolutionState;
-pub(crate) use preview_dispatch_gate::PreviewDispatchGate;
+pub(crate) use interactive_preview::{shown_pipeline, InteractiveState};
+pub(crate) use preview_dispatch_gate::{Batch, PreviewDispatchGate};
 pub(crate) use preview_texture::{PreviewPipeline, TextureRetirement};
 pub(crate) use preview_viewport::PreviewViewportAction;
 mod processing_export;

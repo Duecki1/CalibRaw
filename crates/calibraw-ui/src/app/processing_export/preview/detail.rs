@@ -408,8 +408,7 @@ impl CalibRawApp {
             &render_state.queue,
             &detail_raw,
             &params,
-            PipelineOptions::new(ProcessingQuality::Preview)
-                .mask_atlas_edge(detail_mask_edge())
+            detail_pipeline_options(preview_masks.masks.len())
                 .programs(&program_template.program_template()),
         ) {
             Ok(pipeline) => pipeline,

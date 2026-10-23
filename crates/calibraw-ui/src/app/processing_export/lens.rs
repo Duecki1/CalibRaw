@@ -412,7 +412,6 @@ impl CalibRawApp {
         self.masks.navigation_dirty_layers = [false; MAX_LOCAL_MASKS];
         self.develop.loaded_raw = Some(prepared.full_raw);
         self.develop.preview_raw = Some(prepared.preview_raw);
-        self.preview.full_resolution.invalidate();
         self.preview.reset_view();
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;

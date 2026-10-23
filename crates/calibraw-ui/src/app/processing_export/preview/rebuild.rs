@@ -1,5 +1,55 @@
 use super::*;
 
+/// What the displayed fitted graph is, as far as deciding whether it must be
+/// built again.
+#[derive(Clone, Copy, Debug)]
+struct FittedGraph {
+    /// The longest edge of its proxy.
+    edge: u32,
+    /// It has a mask layer for each mask it must render.
+    has_enough_mask_layers: bool,
+    /// It was built with the AI-denoise source the photo now needs.
+    ai_source_matches: bool,
+}
+
+/// What the fitted graph needs to become what is wanted of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FittedRebuild {
+    /// Nothing: it is as wanted.
+    None,
+    /// Only its mask layers are short: it is built again from the same proxy.
+    MaskLayers,
+    /// It needs another proxy.
+    Proxy,
+}
+
+/// A proxy at least as large as `requested_edge` is kept (within the 5 pixels
+/// a CFA-aligned proxy may fall short), unless the Preview quality setting just
+/// changed (`shrink_oversized`) and it is clearly larger than the new density
+/// needs. `visibility_changed`: the previewed masks or preset changed what the
+/// graph must hold.
+fn fitted_rebuild(
+    current: Option<FittedGraph>,
+    requested_edge: u32,
+    shrink_oversized: bool,
+    visibility_changed: bool,
+) -> FittedRebuild {
+    let Some(graph) = current.filter(|graph| {
+        !visibility_changed
+            && graph.edge.saturating_add(5) >= requested_edge
+            && !(shrink_oversized
+                && graph.edge > requested_edge.saturating_add(requested_edge / 8 + 8))
+            && graph.ai_source_matches
+    }) else {
+        return FittedRebuild::Proxy;
+    };
+    if graph.has_enough_mask_layers {
+        FittedRebuild::None
+    } else {
+        FittedRebuild::MaskLayers
+    }
+}
+
 impl CalibRawApp {
     pub(crate) fn preview_base_pipeline(&self) -> Option<&PreviewPipeline> {
         self.preview.gpu_pipeline.as_ref()
@@ -280,25 +330,18 @@ impl CalibRawApp {
             self.preview.program_template = Some(template.clone());
         }
 
-        let options = fitted_pipeline_options(preview_masks.masks.len());
+        let options = PipelineOptions {
+            programs: program_template.as_ref(),
+            ..fitted_pipeline_options(preview_masks.masks.len())
+        };
         let build_pipeline = || {
-            if let Some(template) = program_template.as_ref() {
-                RawGpuPipeline::new(
-                    &render_state.device,
-                    &render_state.queue,
-                    &prepared.preview_raw,
-                    &params,
-                    options.programs(template),
-                )
-            } else {
-                RawGpuPipeline::new(
-                    &render_state.device,
-                    &render_state.queue,
-                    &prepared.preview_raw,
-                    &params,
-                    options,
-                )
-            }
+            RawGpuPipeline::new(
+                &render_state.device,
+                &render_state.queue,
+                &prepared.preview_raw,
+                &params,
+                options,
+            )
         };
         let pipeline_started = Instant::now();
         let mut pipeline_result = build_pipeline();
@@ -398,7 +441,6 @@ impl CalibRawApp {
         self.masks.dirty_layers.fill(false);
         self.masks.detail_dirty_layers.fill(false);
         self.masks.navigation_dirty_layers.fill(false);
-        self.preview.full_resolution.invalidate();
         self.preview.revision = self.preview.revision.wrapping_add(1);
         self.preview.motion_at = (self.preview.zoom > DETAIL_ZOOM_START).then(Instant::now);
         if let (Some(full), Some(preview)) = (&preview_source, &self.develop.preview_raw) {
@@ -454,33 +496,33 @@ impl CalibRawApp {
         let quality = self.preview.quality;
         let ai_enabled = self.preview_exposure().ai_denoise_enabled;
 
-        // A proxy at least as large as requested is kept, unless the setting
-        // just changed and it is clearly larger than the new density needs.
-        // While zoomed the fitted proxy is left alone, so the request waits for
-        // the view to return (`preview_source_region_changed`).
+        // While zoomed the fitted proxy is left alone, so a request to shrink it
+        // waits for the view to return (`preview_source_region_changed`).
         let shrink_oversized = self.preview.zoom <= DETAIL_ZOOM_START
             && std::mem::take(&mut self.preview.shrink_oversized);
-        let pipeline_is_current =
-            !crate::app::preview_visibility::PreviewVisibility::requires_rebuild(&self.egui_ctx)
-                && self
-                    .develop
-                    .preview_raw
-                    .as_ref()
-                    .zip(self.preview.pipeline())
-                    .is_some_and(|(raw, pipeline)| {
-                        let edge = raw.width.max(raw.height);
-                        edge.saturating_add(5) >= requested_edge
-                            && !(shrink_oversized
-                                && edge > requested_edge.saturating_add(requested_edge / 8 + 8))
-                            && pipeline.immutable_ai_source_matches(source_raw.cfa_kind, ai_enabled)
-                    });
-        let capacity_stale = self.fitted_mask_capacity_stale();
-        if pipeline_is_current && !capacity_stale {
+        let current = self
+            .develop
+            .preview_raw
+            .as_ref()
+            .zip(self.preview.pipeline())
+            .map(|(raw, pipeline)| FittedGraph {
+                edge: raw.width.max(raw.height),
+                has_enough_mask_layers: !self.fitted_mask_capacity_stale(),
+                ai_source_matches: pipeline
+                    .immutable_ai_source_matches(source_raw.cfa_kind, ai_enabled),
+            });
+        let rebuild = fitted_rebuild(
+            current,
+            requested_edge,
+            shrink_oversized,
+            crate::app::preview_visibility::PreviewVisibility::requires_rebuild(&self.egui_ctx),
+        );
+        if rebuild == FittedRebuild::None {
             self.preview.quality_dirty = false;
             return;
         }
         // Only the mask layers are short: the proxy it was built with stays.
-        let reused_preview = pipeline_is_current
+        let reused_preview = (rebuild == FittedRebuild::MaskLayers)
             .then(|| self.develop.preview_raw.clone())
             .flatten();
 
@@ -653,5 +695,95 @@ mod mask_upload_tests {
             assert_eq!(pixels.len(), 16 * 16 * 4);
             assert!(pixels.iter().any(|value| *value > 0));
         }
+    }
+}
+
+#[cfg(test)]
+mod fitted_rebuild_tests {
+    use super::*;
+
+    fn graph(edge: u32) -> Option<FittedGraph> {
+        Some(FittedGraph {
+            edge,
+            has_enough_mask_layers: true,
+            ai_source_matches: true,
+        })
+    }
+
+    #[test]
+    fn a_proxy_that_is_large_enough_is_kept() {
+        for edge in [1_600, 1_605, 2_400, 6_000] {
+            assert_eq!(
+                fitted_rebuild(graph(edge), 1_600, false, false),
+                FittedRebuild::None,
+                "{edge}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_proxy_that_is_too_small_is_replaced() {
+        assert_eq!(
+            fitted_rebuild(graph(1_594), 1_600, false, false),
+            FittedRebuild::Proxy
+        );
+        assert_eq!(
+            fitted_rebuild(None, 1_600, false, false),
+            FittedRebuild::Proxy
+        );
+    }
+
+    #[test]
+    fn only_a_changed_setting_shrinks_a_clearly_larger_proxy() {
+        // 12.5% and 8 pixels over what is asked is clearly larger.
+        assert_eq!(
+            fitted_rebuild(graph(1_809), 1_600, true, false),
+            FittedRebuild::Proxy
+        );
+        assert_eq!(
+            fitted_rebuild(graph(1_808), 1_600, true, false),
+            FittedRebuild::None
+        );
+        assert_eq!(
+            fitted_rebuild(graph(4_000), 1_600, false, false),
+            FittedRebuild::None
+        );
+    }
+
+    #[test]
+    fn short_mask_layers_keep_the_proxy_and_a_mismatch_replaces_it() {
+        let short = |ai_source_matches| {
+            Some(FittedGraph {
+                edge: 1_600,
+                has_enough_mask_layers: false,
+                ai_source_matches,
+            })
+        };
+        assert_eq!(
+            fitted_rebuild(short(true), 1_600, false, false),
+            FittedRebuild::MaskLayers
+        );
+        assert_eq!(
+            fitted_rebuild(short(false), 1_600, false, false),
+            FittedRebuild::Proxy
+        );
+        assert_eq!(
+            fitted_rebuild(graph(1_600), 1_600, false, true),
+            FittedRebuild::Proxy
+        );
+        // A proxy that is too small is replaced whatever else is wrong.
+        assert_eq!(
+            fitted_rebuild(
+                Some(FittedGraph {
+                    edge: 800,
+                    has_enough_mask_layers: false,
+                    ai_source_matches: true,
+                }),
+                1_600,
+                false,
+                false
+            ),
+            FittedRebuild::Proxy
+        );
     }
 }
