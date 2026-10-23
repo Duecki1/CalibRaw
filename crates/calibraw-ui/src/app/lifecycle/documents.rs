@@ -479,6 +479,9 @@ impl CalibRawApp {
                 );
                 self.cancel_document_bound_foreground_operation();
                 self.resume_persisted_ai_denoise(frame);
+                if loaded.starts_unedited && !self.document_load_is_background() {
+                    self.apply_new_photo_preset(frame);
+                }
                 log::info!("loaded RAW preview for {}", loaded.label);
                 if self.caps().has_folders() && !self.document_load_is_background() {
                     self.prefetch_neighbour_raws();

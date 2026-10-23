@@ -214,6 +214,7 @@ pub(crate) struct LoadedPreview {
     pub(super) editing_time_ms: u64,
     pub(super) selected_camera_profile: Option<PathBuf>,
     pub(super) geometry: GeometryTransform,
+    pub(super) starts_unedited: bool,
 }
 
 pub(crate) struct PreparedPreviewRebuild {

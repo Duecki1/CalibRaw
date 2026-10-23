@@ -331,6 +331,7 @@ impl CalibRawApp {
         if let Err(error) = self.presets.reload() {
             self.report_error(ErrorKind::Presets, error);
         }
+        self.forget_deleted_new_photo_preset();
     }
 
     pub(crate) fn delete_preset(&mut self, path: &Path) {
@@ -348,6 +349,41 @@ impl CalibRawApp {
         }
         if let Err(error) = self.presets.reload() {
             self.report_error(ErrorKind::Presets, error);
+        }
+        self.forget_deleted_new_photo_preset();
+    }
+
+    pub(crate) fn new_photo_preset_path(&self) -> Option<PathBuf> {
+        let file = self.preferences.new_photo_preset.as_ref()?;
+        Some(self.presets.folder().ok()?.join(file))
+    }
+
+    pub(crate) fn apply_new_photo_preset(&mut self, frame: &eframe::Frame) {
+        let Some(path) = self.new_photo_preset_path() else {
+            return;
+        };
+        let Some(preset) = self.presets.get(&path).cloned() else {
+            log::warn!("the preset for new photos is missing: {}", path.display());
+            return;
+        };
+        if let Err(error) = self.apply_edit_transfer_to_current(
+            EditTransfer::Preset(&preset),
+            EditTransferOrigin::Develop,
+            frame,
+        ) {
+            self.report_error(
+                ErrorKind::Presets,
+                format!("Could not apply preset “{}”: {error}", preset.name()),
+            );
+        }
+    }
+
+    fn forget_deleted_new_photo_preset(&mut self) {
+        if self
+            .new_photo_preset_path()
+            .is_some_and(|path| !path.exists())
+        {
+            self.set_new_photo_preset(None);
         }
     }
 
@@ -484,6 +520,36 @@ pub(crate) fn sentence_case(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet};
+
+    #[test]
+    fn deleting_the_preset_for_new_photos_stops_applying_it() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+        let selection = EditSelection {
+            adjustment_groups: AdjustmentGroupSet::from_iter([AdjustmentGroup::Color]),
+            ..EditSelection::default()
+        };
+        let edits = crate::sidecar::default_edit_state();
+        let save = |name| {
+            let preset = Preset::new(name, "", selection, &edits).unwrap();
+            crate::presets::save_new_preset(folder.path(), &preset).unwrap()
+        };
+        let warm = save("Warm");
+        let cool = save("Cool");
+        app.presets.reload().unwrap();
+
+        app.set_new_photo_preset(warm.file_name().map(PathBuf::from));
+        assert_eq!(app.new_photo_preset_path(), Some(warm.clone()));
+
+        app.delete_preset(&cool);
+        assert_eq!(app.new_photo_preset_path(), Some(warm.clone()));
+
+        app.delete_preset(&warm);
+        assert_eq!(app.preferences.new_photo_preset, None);
+        assert_eq!(app.new_photo_preset_path(), None);
+    }
 
     #[test]
     fn preset_file_extension_matches_the_preset_suffix() {
