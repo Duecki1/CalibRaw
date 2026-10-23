@@ -237,6 +237,14 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    pub(crate) fn set_new_photo_preset(&mut self, preset: Option<PathBuf>) {
+        if self.preferences.new_photo_preset == preset {
+            return;
+        }
+        self.preferences.new_photo_preset = preset;
+        self.persist_performance_settings();
+    }
+
     pub(crate) fn set_library_thumbnail_size(
         &mut self,
         thumbnail_size: crate::ui::library::LibraryThumbnailSize,
@@ -347,6 +355,7 @@ impl CalibRawApp {
                 .corrections
                 .vignetting,
             missing_lens_profile_prompt: self.preferences.missing_lens_profile_prompt,
+            new_photo_preset: self.preferences.new_photo_preset.clone(),
             adjustment_copy_settings: self.preferences.adjustment_copy_settings,
             last_android_library_folder: self.library.android_folder().to_owned(),
             last_library_folder: self

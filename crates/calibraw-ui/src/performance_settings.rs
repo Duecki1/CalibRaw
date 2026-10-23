@@ -81,6 +81,8 @@ pub(crate) struct PerformanceSettings {
     pub automatic_lens_vignetting: bool,
     /// Ask about manual correction when automatic correction finds no profile.
     pub missing_lens_profile_prompt: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_photo_preset: Option<PathBuf>,
     pub adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings,
     /// The media-library folder open last; media-library storage only.
     pub(crate) last_android_library_folder: String,
@@ -184,6 +186,7 @@ impl Default for PerformanceSettings {
             automatic_lens_geometry: true,
             automatic_lens_vignetting: false,
             missing_lens_profile_prompt: true,
+            new_photo_preset: None,
             adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings::default(),
             last_android_library_folder: String::new(),
             last_library_folder: None,
@@ -570,6 +573,7 @@ mod tests {
             automatic_lens_geometry: false,
             automatic_lens_vignetting: true,
             missing_lens_profile_prompt: false,
+            new_photo_preset: Some(PathBuf::from("user-presets-warm.calibraw-preset")),
             subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality::Low,
             tips_enabled: false,
             seen_tips: BTreeSet::from(["masks_tab".to_owned(), "from_a_newer_version".to_owned()]),
@@ -602,6 +606,7 @@ mod tests {
         assert!(!restored.automatic_lens_correction);
         assert!(!restored.automatic_lens_geometry && restored.automatic_lens_vignetting);
         assert!(!restored.missing_lens_profile_prompt);
+        assert_eq!(restored.new_photo_preset, settings.new_photo_preset);
         assert!(!restored.tips_enabled);
         assert_eq!(restored.seen_tips, settings.seen_tips);
         assert!(restored.develop_histogram_open);

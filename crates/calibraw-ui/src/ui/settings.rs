@@ -255,6 +255,11 @@ impl Settings {
         moduwu_design::card_gap(ui);
         moduwu_design::content_card(ui, |ui| Self::show_export_names_card(ui, app));
 
+        if app.presets.is_available() {
+            moduwu_design::card_gap(ui);
+            moduwu_design::content_card(ui, |ui| Self::show_new_photo_preset_card(ui, app));
+        }
+
         moduwu_design::card_gap(ui);
         moduwu_design::content_card(ui, |ui| Self::show_lens_correction_card(ui, app));
 
@@ -594,6 +599,47 @@ impl Settings {
         .changed();
         if changed {
             app.set_adjustment_copy_settings(settings);
+        }
+    }
+
+    fn show_new_photo_preset_card(ui: &mut Ui, app: &mut CalibRawApp) {
+        moduwu_design::heading_with_help(
+            ui,
+            "Preset for new photos",
+            "Choose a preset that is applied when you open a photo that has no saved edits. Photos you have already edited keep their edits, and the preset can be undone like any other edit.",
+        );
+
+        moduwu_design::section_separator(ui);
+        let current = app
+            .new_photo_preset_path()
+            .filter(|path| app.presets.get(path).is_some());
+        let mut choice = current.clone();
+        let selected = current
+            .as_deref()
+            .and_then(|path| app.presets.get(path))
+            .map_or_else(|| "None".to_owned(), |preset| preset.name().to_owned());
+        moduwu_design::form_combo_with_help(
+            ui,
+            "Preset",
+            "settings-new-photo-preset",
+            selected,
+            220.0,
+            "Applied once, when the photo first opens in Develop.",
+            |ui| {
+                ui.selectable_value(&mut choice, None, "None");
+                for stored in app.presets.all() {
+                    ui.selectable_value(
+                        &mut choice,
+                        Some(stored.path.clone()),
+                        format!("{} / {}", stored.preset.group(), stored.preset.name()),
+                    );
+                }
+            },
+        );
+        if choice != current {
+            app.set_new_photo_preset(
+                choice.and_then(|path| path.file_name().map(std::path::PathBuf::from)),
+            );
         }
     }
 

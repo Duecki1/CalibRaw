@@ -203,6 +203,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             mut sidecar_warning,
             mut sidecar_needs_rewrite,
             use_adaptive_detail_defaults,
+            starts_unedited,
         } = edits;
         if use_adaptive_detail_defaults {
             original_raw.apply_adaptive_detail_defaults(&mut exposure);
@@ -311,6 +312,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             editing_time_ms,
             selected_camera_profile,
             geometry,
+            starts_unedited,
         })
     })();
 
@@ -564,6 +566,7 @@ struct InitialEdits {
     sidecar_needs_rewrite: bool,
     /// Documents without saved edits adopt camera-specific detail defaults.
     use_adaptive_detail_defaults: bool,
+    starts_unedited: bool,
 }
 
 impl InitialEdits {
@@ -596,12 +599,15 @@ impl InitialEdits {
                 )
             }
             Ok(None) => Self::defaults(default_exposure, None),
-            Err(error) => Self::defaults(
-                default_exposure,
-                Some(format!(
-                    "Could not load this RAW's sidecar; using default edits: {error}"
-                )),
-            ),
+            Err(error) => Self {
+                starts_unedited: false,
+                ..Self::defaults(
+                    default_exposure,
+                    Some(format!(
+                        "Could not load this RAW's sidecar; using default edits: {error}"
+                    )),
+                )
+            },
         }
     }
 
@@ -622,6 +628,7 @@ impl InitialEdits {
             sidecar_warning,
             sidecar_needs_rewrite,
             use_adaptive_detail_defaults: false,
+            starts_unedited: false,
         }
     }
 
@@ -637,6 +644,7 @@ impl InitialEdits {
             sidecar_warning,
             sidecar_needs_rewrite: false,
             use_adaptive_detail_defaults: true,
+            starts_unedited: true,
         }
     }
 }
@@ -1033,6 +1041,7 @@ mod tests {
         assert!(reloaded.sidecar_needs_rewrite);
         assert_eq!(reloaded.editing_time_ms, 7);
         assert!(!reloaded.use_adaptive_detail_defaults);
+        assert!(!reloaded.starts_unedited);
 
         let mut edited = sidecar_with_profile(None);
         if let Ok(Some(loaded)) = &mut edited {
@@ -1044,6 +1053,7 @@ mod tests {
         assert!(saved.saved_lens.is_some());
         assert_eq!(saved.exposure.exposure, 0.5);
         assert!(!saved.use_adaptive_detail_defaults);
+        assert!(!saved.starts_unedited);
 
         // A rating or a reset leaves a sidecar without adjustments; it opens like
         // a first import (camera defaults apply) and keeps its editing time.
@@ -1051,6 +1061,7 @@ mod tests {
         sticky.demosaic_mode = crate::pipeline::DemosaicMode::Dual;
         let unadjusted = InitialEdits::resolve(None, None, sidecar_with_profile(None), sticky);
         assert!(unadjusted.use_adaptive_detail_defaults);
+        assert!(unadjusted.starts_unedited);
         assert_eq!(unadjusted.editing_time_ms, 42);
         assert!(unadjusted.saved_lens.is_none());
         assert_eq!(unadjusted.exposure, sticky);
@@ -1058,6 +1069,7 @@ mod tests {
 
         let fresh = InitialEdits::resolve(None, None, Ok(None), defaults);
         assert!(fresh.use_adaptive_detail_defaults);
+        assert!(fresh.starts_unedited);
         assert!(fresh.sidecar_warning.is_none());
 
         let unreadable = InitialEdits::resolve(
@@ -1067,6 +1079,7 @@ mod tests {
             defaults,
         );
         assert!(unreadable.use_adaptive_detail_defaults);
+        assert!(!unreadable.starts_unedited);
         assert!(unreadable
             .sidecar_warning
             .is_some_and(|warning| warning.contains("using default edits")));

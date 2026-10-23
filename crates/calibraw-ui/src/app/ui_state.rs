@@ -24,6 +24,7 @@ pub(crate) struct PreferencesState {
     pub(crate) automatic_lens_correction: AutomaticLensCorrection,
     /// Ask about manual correction when automatic correction finds no profile.
     pub(crate) missing_lens_profile_prompt: bool,
+    pub(crate) new_photo_preset: Option<PathBuf>,
     pub(crate) export_name_template: String,
     pub(crate) discord_rich_presence: bool,
     pub(crate) hdd_mode: bool,

@@ -283,6 +283,7 @@ impl CalibRawApp {
                     },
                 },
                 missing_lens_profile_prompt: performance.missing_lens_profile_prompt,
+                new_photo_preset: performance.new_photo_preset.clone(),
                 export_name_template: performance.export_name_template.clone(),
                 discord_rich_presence: performance.discord_rich_presence,
                 hdd_mode: performance.hdd_mode,
