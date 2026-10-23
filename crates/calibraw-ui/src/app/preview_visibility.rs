@@ -214,7 +214,7 @@ impl CalibRawApp {
         self.masks.navigation_dirty_layers.fill(true);
         if source_changed {
             self.preview.quality_dirty = true;
-            self.preview.detail_rebuild_receiver = None;
+            self.preview.drop_detail_rebuild();
         }
         self.queue_preview_processing(ProcessingStage::Raw);
     }

@@ -16,7 +16,7 @@ const EDIT_HISTORY_LIMIT: usize = if crate::platform::PlatformCaps::CURRENT.cons
 };
 
 fn edit_history_interaction_active(ctx: &egui::Context) -> bool {
-    ctx.input(|input| input.pointer.any_down())
+    super::interaction::pointer_engaged(ctx)
         || (ctx.memory(|memory| memory.focused().is_some())
             && ctx.input(|input| {
                 [

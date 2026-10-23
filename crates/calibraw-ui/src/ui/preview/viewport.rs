@@ -27,12 +27,15 @@ impl PreviewCanvas {
 
     /// The image area in physical pixels.
     pub(crate) fn physical_pixels(self, ctx: &egui::Context) -> [u32; 2] {
-        let pixels_per_point = physical_pixels_per_point(ctx);
-        [
-            (self.preview_size.x * pixels_per_point).round().max(1.0) as u32,
-            (self.preview_size.y * pixels_per_point).round().max(1.0) as u32,
-        ]
+        physical_pixel_size(self.preview_size, physical_pixels_per_point(ctx))
     }
+}
+
+fn physical_pixel_size(size: egui::Vec2, pixels_per_point: f32) -> [u32; 2] {
+    [
+        (size.x * pixels_per_point).round().max(1.0) as u32,
+        (size.y * pixels_per_point).round().max(1.0) as u32,
+    ]
 }
 
 /// What the placeholder shows while no developed image exists.
@@ -205,8 +208,13 @@ impl PreviewDetailImage {
             .detail
             .as_ref()
             .filter(|detail| detail.revision == app.preview.revision)?;
+        // While a control is dragged the reduced crop is drawn in the sharp
+        // one's place, with its coordinates.
+        let texture_id = clipping_texture
+            .or_else(|| app.preview.interactive.crop_texture())
+            .unwrap_or(detail.pipeline.texture());
         Some(Self {
-            texture_id: clipping_texture.unwrap_or(detail.pipeline.texture()),
+            texture_id,
             texture_uv: Rect::from_min_max(
                 Pos2::new(detail.texture_uv_rect.min[0], detail.texture_uv_rect.min[1]),
                 Pos2::new(detail.texture_uv_rect.max[0], detail.texture_uv_rect.max[1]),
@@ -529,12 +537,13 @@ impl Preview {
         // the exposed image, not the pixels hidden by the overlay surfaces.
         let visible_screen = viewport.outer_rect.intersect(viewport.image_rect);
         let pixels_per_point = physical_pixels_per_point(ui.ctx());
-        actions.push(PreviewViewportAction::SetViewportPixels([
-            (visible_screen.width() * pixels_per_point).round().max(1.0) as u32,
-            (visible_screen.height() * pixels_per_point)
-                .round()
-                .max(1.0) as u32,
-        ]));
+        actions.push(PreviewViewportAction::SetViewportPixels {
+            visible: physical_pixel_size(visible_screen.size(), pixels_per_point),
+            // The fitted image can be taller than the exposed canvas (a
+            // portrait phone fits it by width); the proxy covers the whole
+            // image, so it is sized from the full layout.
+            fitted: physical_pixel_size(viewport.base_size, pixels_per_point),
+        });
         let new_visible_uv = Self::visible_source_uv(viewport, visible_screen);
         if preview_uv_changed(visible_uv, new_visible_uv) {
             actions.push(PreviewViewportAction::SetVisibleUv(new_visible_uv));

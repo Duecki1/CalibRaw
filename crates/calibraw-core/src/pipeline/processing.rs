@@ -5,9 +5,11 @@ use super::{
 use rayon::prelude::*;
 
 mod ai_denoised_regions;
+mod display_downscale;
 mod proxy;
 mod tiles;
 use ai_denoised_regions::*;
+pub use display_downscale::downscale_display_rgba8;
 pub use proxy::*;
 pub use tiles::*;
 
@@ -132,9 +134,10 @@ impl RawStageControls {
 #[cfg(test)]
 mod tests {
     use super::{
-        affected_stage, build_proxy, build_region_proxy, crop_raw, extract_padded_tile,
-        extract_padded_tile_into, required_export_tile_halo, ExportTile, ProcessingStage,
-        ProxySpec, TilePlan, TileSpec, EXPORT_TILE_HALO, GLOW_SUPPORT, MIN_EXPORT_TILE_HALO,
+        affected_stage, build_proxy, build_region_proxy, build_region_proxy_until, crop_raw,
+        extract_padded_tile, extract_padded_tile_into, required_export_tile_halo, ExportTile,
+        ProcessingStage, ProxySpec, TilePlan, TileSpec, EXPORT_TILE_HALO, GLOW_SUPPORT,
+        MIN_EXPORT_TILE_HALO,
     };
     use crate::pipeline::{
         AiDenoisedImage, CameraProfile, CfaKind, CompactPixelMap, DenoiseQuality, ExposureParams,
@@ -223,6 +226,33 @@ mod tests {
             }
         }
         raw
+    }
+
+    #[test]
+    fn a_cancelled_proxy_build_gives_up_and_a_live_one_matches_the_plain_build() {
+        use std::sync::atomic::AtomicBool;
+        let spec = ProxySpec { max_edge: 32 };
+        for raw in [test_raster(96, 64), test_raw(96, 64)] {
+            let raster = raw.is_pre_demosaiced_raster();
+            assert!(
+                build_region_proxy_until(&raw, 8, 4, 80, 56, spec, &AtomicBool::new(true))
+                    .is_none(),
+                "raster={raster}"
+            );
+            let built = build_region_proxy_until(&raw, 8, 4, 80, 56, spec, &AtomicBool::new(false))
+                .expect("a flag that is not set does not cancel the build");
+            let plain = build_region_proxy(&raw, 8, 4, 80, 56, spec);
+            assert_eq!(
+                (built.width, built.height),
+                (plain.width, plain.height),
+                "raster={raster}"
+            );
+            if raster {
+                assert_eq!(built.scene_linear_raster(), plain.scene_linear_raster());
+            } else {
+                assert_eq!(built.raw_pixels, plain.raw_pixels);
+            }
+        }
     }
 
     #[test]
@@ -1262,5 +1292,77 @@ mod tests {
         let proxy = build_proxy(&raw, ProxySpec { max_edge: 60 });
         assert!(proxy.raw_pixels[0] <= 200, "left sample was over-blurred");
         assert!(proxy.raw_pixels[5] >= 900, "right sample was over-blurred");
+    }
+    /// A Bayer mosaic whose every sample is `100 + 8x + 5y`: a smooth ramp, so
+    /// the true value at any position is known. Colour plane `(x % 2, y % 2)`.
+    fn bayer_ramp(width: u32, height: u32) -> LoadedRaw {
+        let mut raw = test_raw(width, height);
+        raw.raw_pixels = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (100 + 8 * x + 5 * y) as u16))
+            .collect();
+        raw.color_indices = CompactPixelMap::dense(
+            width,
+            height,
+            (0..height)
+                .flat_map(|y| (0..width).map(move |x| ((y % 2) * 2 + x % 2) as u8))
+                .collect(),
+        );
+        raw
+    }
+
+    /// Down-scale ratios between one and three place each proxy pixel where it
+    /// belongs instead of on the nearest sample of its colour up to a source
+    /// pixel away, so thin lines stay straight: a ramp is reproduced to within
+    /// a quarter pixel.
+    #[test]
+    fn small_ratio_proxy_places_every_pixel_exactly_on_a_ramp() {
+        let raw = bayer_ramp(240, 240);
+        for max_edge in [200u32, 170, 120, 90] {
+            let proxy = build_proxy(&raw, ProxySpec { max_edge });
+            let scale = f64::from(raw.width) / f64::from(proxy.width);
+            assert!(scale > 1.0 && scale < 3.0, "ratio {scale}");
+            let mut worst = 0.0f64;
+            for py in 6..proxy.height - 6 {
+                for px in 6..proxy.width - 6 {
+                    let u = (f64::from(px) + 0.5) * scale;
+                    let v = (f64::from(py) + 0.5) * scale;
+                    let expected = 100.0 + 8.0 * (u - 0.5) + 5.0 * (v - 0.5);
+                    let actual = f64::from(proxy.raw_pixels[(py * proxy.width + px) as usize]);
+                    worst = worst.max((actual - expected).abs());
+                }
+            }
+            // The ramp rises 8 per source pixel, so this is a quarter pixel;
+            // nearest-sample placement was off by a whole pixel or more.
+            assert!(worst < 2.0, "max edge {max_edge}: worst error {worst}");
+        }
+    }
+
+    #[test]
+    fn small_ratio_proxy_keeps_flat_areas_flat_and_counts_noise_by_weight() {
+        let mut raw = bayer_ramp(240, 240);
+        raw.raw_pixels = vec![700; 240 * 240];
+        raw.noise_profile = crate::pipeline::NoiseProfile::default();
+        let proxy = build_proxy(&raw, ProxySpec { max_edge: 160 });
+        assert!(proxy.raw_pixels.iter().all(|value| *value == 700));
+        assert_eq!(proxy.black_levels_per_pixel.len(), proxy.raw_pixels.len());
+    }
+
+    /// From three source pixels per proxy pixel the footprint always holds
+    /// samples of each colour, so averaging them is kept: a lone clipped
+    /// photosite still shrinks in the proxy.
+    #[test]
+    fn large_ratio_proxy_still_averages_its_footprint() {
+        let mut raw = bayer_ramp(240, 240);
+        raw.raw_pixels = vec![0; 240 * 240];
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                raw.raw_pixels[(y * 240 + x) as usize] = 1000;
+            }
+        }
+        // Ratio 240 / 48 = 5: the first proxy pixel averages the 4x4 block that
+        // is all 1000 and the zeros beyond it, so it is neither 0 nor 1000.
+        let proxy = build_proxy(&raw, ProxySpec { max_edge: 48 });
+        let first = proxy.raw_pixels[0];
+        assert!(first > 0 && first < 1000, "{first}");
     }
 }

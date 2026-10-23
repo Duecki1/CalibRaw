@@ -15,6 +15,7 @@ pub(crate) enum LibraryAction {
     PasteIntoAssetFolder(LibraryAsset),
     Duplicate(Vec<LibraryAsset>),
     Rename(LibraryAsset),
+    RevealFile(LibraryAsset),
     ResetAdjustments(Vec<LibraryAsset>),
     Delete(Vec<LibraryAsset>),
 }
@@ -81,6 +82,17 @@ pub(crate) fn library_image_context_menu(
     .clicked()
     {
         action = Some(LibraryAction::Export(context_assets.to_vec()));
+        ui.close();
+    }
+
+    if moduwu_design::context_menu_item(
+        ui,
+        app.caps().is_desktop() && selected_count == 1 && context_asset.desktop_path().is_some(),
+        "Show in File Manager",
+    )
+    .clicked()
+    {
+        action = Some(LibraryAction::RevealFile(context_asset.clone()));
         ui.close();
     }
 
@@ -288,6 +300,13 @@ pub(crate) fn apply_library_action(
                 error: None,
                 focus_requested: false,
             });
+        }
+        LibraryAction::RevealFile(asset) => {
+            if let Some(path) = asset.desktop_path() {
+                if let Err(error) = app.platform.reveal_file(path) {
+                    app.library.status = error;
+                }
+            }
         }
         LibraryAction::ResetAdjustments(assets) => {
             let current_to_reopen = app.develop.current_path.as_ref().and_then(|current| {

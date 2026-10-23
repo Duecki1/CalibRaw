@@ -146,6 +146,12 @@ impl GpuBudgetReservation {
     }
 }
 
+impl GpuBudgetReservation {
+    pub(super) fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
 impl Drop for GpuBudgetReservation {
     fn drop(&mut self) {
         RESERVED_GPU_BYTES.fetch_sub(self.bytes, Ordering::AcqRel);
@@ -476,10 +482,16 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         2 * texture_allocation_bytes(HAZE_GRID_LONG, HAZE_GRID_LONG, 1, 1, HAZE_MAP_FORMAT)?,
     );
 
-    let rgba32_readback = aligned_copy_buffer_bytes(input.width, input.height, 16)?
-        .min(MAX_RGBA32_READBACK_CHUNK_BYTES);
     let rgba8_readback = aligned_copy_buffer_bytes(input.width, input.height, 4)?;
-    let readback_peak = rgba32_readback.max(rgba8_readback);
+    // Every RGBA32F readback (display-linear regions, the scene texture, the
+    // camera scene) is refused unless the graph is `ProcessingQuality::High`,
+    // so a preview graph only ever reads back its RGBA8 output.
+    let readback_peak = match input.quality {
+        ProcessingQuality::Preview => rgba8_readback,
+        ProcessingQuality::High => aligned_copy_buffer_bytes(input.width, input.height, 16)?
+            .min(MAX_RGBA32_READBACK_CHUNK_BYTES)
+            .max(rgba8_readback),
+    };
     push_entry(
         &mut entries,
         "readback buffer peak",
@@ -591,66 +603,12 @@ pub(super) fn gpu_working_set_limit_bytes() -> u64 {
 /// share, never below the preview budget or above the ceiling. Unknown RAM
 /// keeps the preview budget.
 #[cfg(any(target_os = "android", test))]
-fn android_working_set_limit_bytes(total_ram_bytes: Option<u64>) -> u64 {
+pub(super) fn android_working_set_limit_bytes(total_ram_bytes: Option<u64>) -> u64 {
     total_ram_bytes.map_or(ANDROID_GPU_WORKING_SET_LIMIT_BYTES, |ram| {
         (ram / ANDROID_GPU_WORKING_SET_RAM_DIVISOR).clamp(
             ANDROID_GPU_WORKING_SET_LIMIT_BYTES,
             ANDROID_GPU_WORKING_SET_CEILING_BYTES,
         )
-    })
-}
-
-impl RawGpuPipeline {
-    /// Bound mobile previews using the same resource accounting as allocation.
-    /// Leave room for the fitted image and a detail crop to coexist. This uses
-    /// the full mask capacity so adding a mask cannot invalidate the budget.
-    pub fn bounded_mobile_preview_edge(
-        width: u32,
-        height: u32,
-        requested: u32,
-        cfa_kind: CfaKind,
-    ) -> u32 {
-        let mut low = 1;
-        let mut high = requested.min(width.max(height)).max(1);
-        while low < high {
-            let edge = low + (high - low).div_ceil(2);
-            let fits =
-                mobile_preview_resource_plan(width, height, edge, cfa_kind).is_ok_and(|plan| {
-                    plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
-                });
-            if fits {
-                low = edge;
-            } else {
-                high = edge - 1;
-            }
-        }
-        low
-    }
-}
-
-fn mobile_preview_resource_plan(
-    width: u32,
-    height: u32,
-    edge: u32,
-    cfa_kind: CfaKind,
-) -> Result<GpuResourcePlan> {
-    let scale = (f64::from(edge) / f64::from(width.max(height).max(1))).min(1.0);
-    build_gpu_resource_plan(GpuResourcePlanInput {
-        width: (f64::from(width) * scale).ceil().max(1.0) as u32,
-        height: (f64::from(height) * scale).ceil().max(1.0) as u32,
-        quality: ProcessingQuality::Preview,
-        tone_scale: tone_analysis_scale(),
-        mask_atlas_edge: crate::pipeline::masks::MASK_ATLAS_EDGE_ANDROID,
-        mask_layers: MAX_LOCAL_MASKS as u32,
-        // Reserve space for profile LUTs in addition to the processing surfaces.
-        profile_buffer_bytes: 4 * 1024 * 1024,
-        stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
-        mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
-        ai_cfa: false,
-        // Sized for sensor sources: a raster's RGB source is within a byte
-        // per pixel of the CFA textures it replaces.
-        raster_source: false,
-        cfa_kind,
     })
 }
 
@@ -1661,37 +1619,22 @@ mod resource_plan_tests {
     }
 
     #[test]
-    fn mobile_max_preview_respects_the_budget_before_allocating() {
-        // Regression: the reported 2330x1554 Max proxy exceeded 384 MiB.
-        let unbounded = mobile_preview_resource_plan(2330, 1554, 2330, CfaKind::Bayer).unwrap();
-        assert!(unbounded.admitted_gpu_bytes > ANDROID_GPU_WORKING_SET_LIMIT_BYTES);
-        for cfa_kind in [CfaKind::Bayer, CfaKind::XTrans] {
-            for (width, height) in [(4688, 7028), (7028, 4688), (2048, 2048), (8000, 1000)] {
-                let edge =
-                    RawGpuPipeline::bounded_mobile_preview_edge(width, height, 3600, cfa_kind);
-                let plan = mobile_preview_resource_plan(width, height, edge, cfa_kind).unwrap();
-                assert!(plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2);
-                assert!(
-                    mobile_preview_resource_plan(width, height, edge + 1, cfa_kind)
-                        .unwrap()
-                        .admitted_gpu_bytes
-                        > ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
-                );
-                // Two admitted graphs leave room for the small navigation graph.
-                assert!(
-                    plan.persistent_gpu_bytes * 2 + 32 * 1024 * 1024
-                        < ANDROID_GPU_WORKING_SET_LIMIT_BYTES
-                );
-            }
-            assert_eq!(
-                RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 800, cfa_kind),
-                800
-            );
-            assert_eq!(
-                RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 1600, cfa_kind),
-                800
-            );
-        }
+    fn preview_graphs_reserve_only_their_rgba8_readback() {
+        let mut preview = input();
+        preview.width = 4096;
+        preview.height = 2731;
+        let mut export = preview;
+        export.quality = ProcessingQuality::High;
+        let preview = build_gpu_resource_plan(preview).unwrap();
+        let export = build_gpu_resource_plan(export).unwrap();
+        assert_eq!(
+            entry_bytes(&preview, "readback buffer peak"),
+            aligned_copy_buffer_bytes(4096, 2731, 4).unwrap()
+        );
+        assert!(
+            entry_bytes(&export, "readback buffer peak")
+                > entry_bytes(&preview, "readback buffer peak")
+        );
     }
 
     #[test]

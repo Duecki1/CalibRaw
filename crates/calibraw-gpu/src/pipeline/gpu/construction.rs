@@ -144,6 +144,7 @@ impl RawGpuPipeline {
             quality,
             config: RawGpuPipelineConfig {
                 mask_atlas_edge_override,
+                mask_layer_capacity_override: None,
             },
         })
     }
@@ -169,6 +170,7 @@ impl RawGpuPipeline {
             quality: options.quality,
             config: RawGpuPipelineConfig {
                 mask_atlas_edge_override: options.mask_atlas_edge,
+                mask_layer_capacity_override: options.mask_layers,
             },
         })
     }

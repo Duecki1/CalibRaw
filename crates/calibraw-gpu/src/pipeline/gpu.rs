@@ -25,6 +25,7 @@ mod construction;
 mod effect_inputs;
 mod histogram;
 mod mask_layers;
+mod preview_budget;
 mod readback;
 mod resources;
 mod scene_depth;
@@ -37,6 +38,7 @@ use builder::*;
 pub use clipping::PreviewClippingGpu;
 use effect_inputs::{EffectInputs, FullImageMap, InputBindingSources, InputBoundPass, HAZE_PASSES};
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
+pub use preview_budget::{preview_mask_layer_capacity, MobilePreviewRole, PreviewResourceShape};
 use readback::*;
 use resources::*;
 use scene_depth::valid_scene_depth;
@@ -300,6 +302,7 @@ impl From<InputBoundPass> for PassBindings {
 #[derive(Clone, Copy, Debug, Default)]
 struct RawGpuPipelineConfig {
     mask_atlas_edge_override: Option<u32>,
+    mask_layer_capacity_override: Option<usize>,
 }
 
 /// How to build a [`RawGpuPipeline`].
@@ -309,6 +312,10 @@ pub struct PipelineOptions<'a> {
     /// A fixed mask atlas edge (exports and crops). Without one, interactive
     /// previews size the atlas from the image and reserve every mask layer.
     pub mask_atlas_edge: Option<u32>,
+    /// A fixed number of mask layers for an interactive preview that sizes
+    /// its atlas from the image. A graph with more masks than this must be
+    /// rebuilt; see [`RawGpuPipeline::mask_layer_capacity`].
+    pub mask_layers: Option<usize>,
     /// Compiled programs to reuse; they must match the CFA layout and quality.
     pub programs: Option<&'a RawGpuProgramTemplate>,
 }
@@ -318,6 +325,7 @@ impl<'a> PipelineOptions<'a> {
         Self {
             quality,
             mask_atlas_edge: None,
+            mask_layers: None,
             programs: None,
         }
     }
@@ -325,6 +333,12 @@ impl<'a> PipelineOptions<'a> {
     #[must_use]
     pub const fn mask_atlas_edge(mut self, edge: u32) -> Self {
         self.mask_atlas_edge = Some(edge);
+        self
+    }
+
+    #[must_use]
+    pub const fn mask_layers(mut self, layers: usize) -> Self {
+        self.mask_layers = Some(layers);
         self
     }
 
@@ -600,6 +614,11 @@ impl RawGpuPipeline {
 
     pub const fn mask_atlas_edge(&self) -> u32 {
         self.mask_atlas_edge
+    }
+
+    /// The resident GPU bytes this graph reserved against the process budget.
+    pub fn resident_bytes(&self) -> u64 {
+        self._gpu_budget_reservation.bytes()
     }
 
     pub const fn mask_layer_capacity(&self) -> usize {

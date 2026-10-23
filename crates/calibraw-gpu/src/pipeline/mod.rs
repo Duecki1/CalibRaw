@@ -18,8 +18,9 @@ pub use export::{
 };
 pub(crate) use gpu::SLOW_GPU_WAIT;
 pub use gpu::{
-    GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, GpuWait, PipelineOptions, PreviewClippingGpu,
-    PreviewHistogram, PreviewHistogramGpu, ProcessingQuality, RawGpuPipeline,
-    RawGpuProgramTemplate, RemoveSceneContext,
+    preview_mask_layer_capacity, GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, GpuWait,
+    MobilePreviewRole, PipelineOptions, PreviewClippingGpu, PreviewHistogram, PreviewHistogramGpu,
+    PreviewResourceShape, ProcessingQuality, RawGpuPipeline, RawGpuProgramTemplate,
+    RemoveSceneContext,
 };
 pub use gpu_cache::PersistentGpuPipelineCache;

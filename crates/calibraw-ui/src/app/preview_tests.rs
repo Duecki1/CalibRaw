@@ -270,9 +270,9 @@ fn portrait_gpu_layout_and_input() {
             },
         )))
         .unwrap();
-    app.preview.detail_rebuild_receiver = Some(receiver);
+    app.preview.detail_rebuild = Some(DetailRebuild::new(receiver, Arc::default()));
     app.poll_preview_detail_rebuild_worker(&frame);
-    assert!(app.preview.detail_rebuild_receiver.is_none());
+    assert!(app.preview.detail_rebuild.is_none());
     assert!(
         app.preview.motion_at.is_none(),
         "a late result attempted an unnecessary GPU upload"

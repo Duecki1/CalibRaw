@@ -183,7 +183,7 @@ impl CalibRawApp {
         self.cancel_document_bound_foreground_operation();
         self.abandon_ai_denoise_worker();
         self.preview.rebuild_receiver = None;
-        self.preview.detail_rebuild_receiver = None;
+        self.preview.drop_detail_rebuild();
         let editing_time_override_ms = (profile_reload.is_some()
             && self.persistence.sidecar_target.as_ref() == Some(&source.sidecar_target))
         .then(|| self.raw_editing_time_ms());
@@ -205,7 +205,7 @@ impl CalibRawApp {
             document_generation,
             initial_exposure,
             preview_quality: self.preview.quality,
-            viewport_pixels: self.preview.viewport_pixels,
+            fitted_viewport_pixels: self.preview.fitted_viewport_pixels,
             camera_profiles: self.camera_profile_settings(),
             automatic_lens: self.preferences.automatic_lens_correction,
             ai_denoise_result_path: self.ai_denoise_result_path_for_target(&source.sidecar_target),

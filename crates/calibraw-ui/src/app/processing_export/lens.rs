@@ -85,11 +85,12 @@ impl CalibRawApp {
         };
 
         let preview_proxy_edge = self.preview.quality.proxy_edge_for_fitted_source(
-            self.preview.viewport_pixels,
+            self.preview.fitted_viewport_pixels,
             original_raw.width,
             original_raw.height,
             self.develop.geometry,
             original_raw.cfa_kind,
+            self.preview_mask_stack().masks.len(),
         );
         self.develop.lens_correction_dirty = false;
         self.start_lens_correction_task(LensCorrectionTaskRequest {
@@ -351,7 +352,7 @@ impl CalibRawApp {
                 &render_state.queue,
                 &prepared.preview_raw,
                 &params,
-                PipelineOptions::new(ProcessingQuality::Preview),
+                fitted_pipeline_options(preview_masks.masks.len()),
             ) {
                 Ok(pipeline) => pipeline,
                 Err(error) => {

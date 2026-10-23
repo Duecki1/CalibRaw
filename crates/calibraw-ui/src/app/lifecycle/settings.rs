@@ -320,6 +320,7 @@ impl CalibRawApp {
             library_sort_order: self.library.sort_order(),
             library_stack_raw_companions: self.library.stacks_raw_companions(),
             preview_quality: self.preview.quality,
+            preview_full_resolution: self.preview.full_resolution.enabled(),
             image_relative_brush_size: self.preferences.image_relative_brush_size,
             show_develop_navigation_labels: self.preferences.show_develop_navigation_labels,
             export_name_template: self.preferences.export_name_template.clone(),
