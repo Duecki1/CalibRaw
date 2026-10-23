@@ -1,5 +1,8 @@
 use crate::appearance::UiDesign;
+use crate::platform::{self, SystemFont};
 use eframe::egui::{self, Color32};
+use std::borrow::Cow;
+use std::sync::Arc;
 
 pub(crate) const CANVAS_BACKDROP: Color32 = Color32::from_rgb(13, 15, 18);
 pub(crate) const STATUS_WARNING: Color32 = Color32::from_rgb(244, 142, 48);
@@ -105,11 +108,35 @@ pub(crate) fn text_on_backdrop(color: Color32) -> Color32 {
 pub(crate) fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    if let Some(font) = platform::chinese_font() {
+        add_fallback_font(&mut fonts, font);
+    }
     ctx.set_fonts(fonts);
     // Ctrl/Cmd +/- zoom the photo preview (`Preview::zoom_with_keyboard`),
     // not the interface.
     ctx.options_mut(|options| options.zoom_with_keyboard = false);
     apply(ctx, UiDesign::default());
+}
+
+/// Adds `font` after every other font of both families, so it only draws
+/// characters they lack (Chinese file and folder names).
+fn add_fallback_font(fonts: &mut egui::FontDefinitions, font: SystemFont) {
+    const NAME: &str = "system-chinese";
+    fonts.font_data.insert(
+        NAME.to_owned(),
+        Arc::new(egui::FontData {
+            font: Cow::Borrowed(font.bytes),
+            index: font.index,
+            tweak: egui::FontTweak::default(),
+        }),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push(NAME.to_owned());
+    }
 }
 
 pub(crate) fn apply(ctx: &egui::Context, design: UiDesign) {
@@ -131,6 +158,36 @@ mod tests {
             style.visuals.widgets.active.bg_fill,
             UiDesign::ObsidianRed.design().palette().accent
         );
+    }
+
+    #[test]
+    fn chinese_names_use_the_system_font_after_the_built_in_ones() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let covers = |family: egui::FontFamily, text: &str| {
+            ctx.fonts_mut(|fonts| fonts.has_glyphs(&egui::FontId::new(14.0, family), text))
+        };
+        assert!(covers(egui::FontFamily::Proportional, "Photos 2026"));
+        if platform::chinese_font().is_none() {
+            return;
+        }
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            assert!(covers(family.clone(), "中文文件夹照片"));
+        }
+        let definitions = egui::FontDefinitions::default();
+        ctx.fonts(|fonts| {
+            let families = &fonts.definitions().families;
+            let proportional = &families[&egui::FontFamily::Proportional];
+            assert_eq!(
+                proportional.last().map(String::as_str),
+                Some("system-chinese")
+            );
+            assert_eq!(
+                proportional[0],
+                definitions.families[&egui::FontFamily::Proportional][0]
+            );
+        });
     }
 
     #[test]
