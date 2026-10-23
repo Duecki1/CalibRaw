@@ -953,6 +953,18 @@ pub fn invalidate_dcp_profile_index() {
 #[cfg(not(libraw_available))]
 pub fn invalidate_dcp_profile_index() {}
 
+/// The profile limit when the index of `folder` stopped at it, returned once per built
+/// index so the caller can tell the user that some profiles are missing.
+#[cfg(libraw_available)]
+pub fn take_dcp_profile_limit_notice(folder: &Path) -> Option<usize> {
+    libraw_loader::take_dcp_profile_limit_notice(folder)
+}
+
+#[cfg(not(libraw_available))]
+pub fn take_dcp_profile_limit_notice(_folder: &Path) -> Option<usize> {
+    None
+}
+
 #[cfg(libraw_available)]
 pub fn prewarm_dcp_profile_index(folder: &Path) {
     libraw_loader::prewarm_dcp_profile_index(folder);

@@ -1,6 +1,26 @@
 use super::*;
 
 impl CalibRawApp {
+    /// Tells the user once per scan of the profile folder when it holds more DCP profiles
+    /// than the index keeps, so that profiles for their camera may be missing.
+    pub(super) fn report_camera_profile_limit(&mut self) {
+        let limit = self
+            .preferences
+            .camera_profile_folder
+            .as_deref()
+            .and_then(crate::pipeline::take_dcp_profile_limit_notice);
+        if let Some(limit) = limit {
+            self.report_error(
+                ErrorKind::CameraProfile,
+                format!(
+                    "The camera profile folder holds more than {limit} DCP profiles, so some \
+                     are not listed. Choose a smaller folder, such as the CameraProfiles \
+                     folder inside it."
+                ),
+            );
+        }
+    }
+
     /// Asks for a DCP profile folder: a native folder dialog, or the
     /// platform's picker, which copies the folder into app storage.
     pub(crate) fn choose_camera_profile_folder(&mut self) {

@@ -2,7 +2,9 @@
 
 use super::*;
 
-const MAX_DCP_SCAN_FILES: usize = 10_000;
+/// Most `.dcp` files indexed per folder; further profiles are left out. Bounds the memory
+/// and time of one scan.
+const MAX_DCP_PROFILES: usize = 10_000;
 const MAX_DCP_SCAN_DEPTH: usize = 16;
 
 // Ranking of a profile against a camera, used by `dcp_match_score`. The score tiers rank
@@ -53,6 +55,8 @@ struct IndexedDcpProfile {
 struct CachedDcpIndex {
     root_modified: Option<SystemTime>,
     profiles: Arc<Vec<IndexedDcpProfile>>,
+    /// The scan stopped at `MAX_DCP_PROFILES` and the user has not been told yet.
+    limit_unreported: bool,
 }
 
 static DCP_PROFILE_INDEX: OnceLock<Mutex<HashMap<PathBuf, CachedDcpIndex>>> = OnceLock::new();
@@ -68,6 +72,18 @@ fn lock_ignoring_poison<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The profile limit when the index of `folder` is incomplete because it reached
+/// `MAX_DCP_PROFILES`. Returns it once per built index, so the caller can report it to the
+/// user.
+pub(in crate::pipeline::raw_loader) fn take_dcp_profile_limit_notice(
+    folder: &Path,
+) -> Option<usize> {
+    let cache_key = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    lock_ignoring_poison(dcp_profile_index_cache())
+        .get_mut(&cache_key)
+        .and_then(|index| std::mem::take(&mut index.limit_unreported).then_some(MAX_DCP_PROFILES))
 }
 
 pub(in crate::pipeline::raw_loader) fn invalidate_dcp_profile_index() {
@@ -118,7 +134,8 @@ fn indexed_dcp_profiles(folder: &Path) -> Result<Arc<Vec<IndexedDcpProfile>>> {
     }
 
     let mut stack = vec![(folder.to_path_buf(), 0usize)];
-    let mut scanned = 0usize;
+    let mut dcp_files = 0usize;
+    let mut limit_reached = false;
     let mut profiles = Vec::new();
     'scan: while let Some((directory, depth)) = stack.pop() {
         if depth > MAX_DCP_SCAN_DEPTH {
@@ -135,13 +152,6 @@ fn indexed_dcp_profiles(folder: &Path) -> Result<Arc<Vec<IndexedDcpProfile>>> {
             }
         };
         for entry in entries {
-            if scanned >= MAX_DCP_SCAN_FILES {
-                log::warn!(
-                    "stopped DCP profile scan after {MAX_DCP_SCAN_FILES} filesystem entries"
-                );
-                break 'scan;
-            }
-            scanned += 1;
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
@@ -168,6 +178,15 @@ fn indexed_dcp_profiles(folder: &Path) -> Result<Arc<Vec<IndexedDcpProfile>>> {
             {
                 continue;
             }
+            if dcp_files >= MAX_DCP_PROFILES {
+                log::warn!(
+                    "stopped DCP profile scan in {} after {MAX_DCP_PROFILES} profiles",
+                    folder.display()
+                );
+                limit_reached = true;
+                break 'scan;
+            }
+            dcp_files += 1;
             match entry.metadata() {
                 Ok(metadata) if metadata.len() > 0 && metadata.len() <= MAX_DCP_FILE_BYTES => {}
                 _ => continue,
@@ -199,11 +218,17 @@ fn indexed_dcp_profiles(folder: &Path) -> Result<Arc<Vec<IndexedDcpProfile>>> {
         CachedDcpIndex {
             root_modified,
             profiles: Arc::clone(&profiles),
+            limit_unreported: limit_reached,
         },
     );
     crate::diagnostics::record(format!(
-        "Indexed {} DCP profiles after scanning {scanned} filesystem entries",
-        profiles.len()
+        "Indexed {} DCP profiles{}",
+        profiles.len(),
+        if limit_reached {
+            " (limit reached)"
+        } else {
+            ""
+        }
     ));
     Ok(profiles)
 }
@@ -426,5 +451,33 @@ mod tests {
     fn exact_declared_model_outranks_the_make_spelling_match() {
         let exact = score("OM Digital OM-5", "OM Digital", "OM-5");
         assert!(exact > score("OM Digital Solutions OM-5", "OM Digital", "OM-5"));
+    }
+
+    #[test]
+    fn index_stops_at_the_profile_limit_and_reports_it_once() {
+        let folder = tempfile::tempdir().expect("temp folder");
+        // Other files and folders do not count towards the limit.
+        fs::write(folder.path().join("notes.txt"), b"x").expect("write notes");
+        for index in 0..=MAX_DCP_PROFILES {
+            fs::write(folder.path().join(format!("{index}.dcp")), b"").expect("write profile");
+        }
+
+        prewarm_dcp_profile_index(folder.path());
+        assert_eq!(
+            take_dcp_profile_limit_notice(folder.path()),
+            Some(MAX_DCP_PROFILES)
+        );
+        assert_eq!(take_dcp_profile_limit_notice(folder.path()), None);
+    }
+
+    #[test]
+    fn index_below_the_profile_limit_reports_nothing() {
+        let folder = tempfile::tempdir().expect("temp folder");
+        for index in 0..MAX_DCP_PROFILES {
+            fs::write(folder.path().join(format!("{index}.dcp")), b"").expect("write profile");
+        }
+
+        prewarm_dcp_profile_index(folder.path());
+        assert_eq!(take_dcp_profile_limit_notice(folder.path()), None);
     }
 }

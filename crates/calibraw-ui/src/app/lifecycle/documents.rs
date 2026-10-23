@@ -467,6 +467,7 @@ impl CalibRawApp {
                     }
                     warning => self.ui.notice = warning,
                 }
+                self.report_camera_profile_limit();
                 crate::app::preview_visibility::PreviewVisibility::invalidate_masks(
                     &self.egui_ctx,
                     &self.masks.stack,

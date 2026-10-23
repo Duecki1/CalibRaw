@@ -84,7 +84,9 @@ pub use raw_loader::{
     CameraProfileMode, CfaKind, CompactPixelMap, LoadedRaw, RawDisplayMetadata, RawThumbnail,
     SensorSaturation, WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
 };
-pub use raw_loader::{invalidate_dcp_profile_index, prewarm_dcp_profile_index};
+pub use raw_loader::{
+    invalidate_dcp_profile_index, prewarm_dcp_profile_index, take_dcp_profile_limit_notice,
+};
 pub use remove::{
     adaptive_remove_dilation, canonical_remove_scene_to_pipeline_scene,
     composite_patch_into_linear_region, composite_remove_edits_into_linear_region,
