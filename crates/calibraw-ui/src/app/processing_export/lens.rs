@@ -85,7 +85,7 @@ impl CalibRawApp {
         };
 
         let preview_proxy_edge = self.preview.quality.proxy_edge_for_fitted_source(
-            self.preview.viewport_pixels,
+            self.preview.fitted_viewport_pixels,
             original_raw.width,
             original_raw.height,
             self.develop.geometry,

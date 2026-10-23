@@ -15,8 +15,13 @@ pub(crate) enum PreviewViewportAction {
         zoom: f32,
         center: [f32; 2],
     },
-    /// The canvas area showing the image, in physical pixels.
-    SetViewportPixels([u32; 2]),
+    /// The image and the part of it in view, in physical pixels.
+    SetViewportPixels {
+        /// The visible part; it bounds the zoomed crop and sets its density.
+        visible: [u32; 2],
+        /// The image as laid out at fit, including parts overlay panels cover.
+        fitted: [u32; 2],
+    },
     /// The source region in view; a larger one may need a sharper preview.
     SetVisibleUv(PreviewUvRect),
     NoteMotion,
@@ -62,7 +67,9 @@ impl CalibRawApp {
         });
         let Some((texture_id, pipeline_width, pipeline_height)) = base else {
             if canvas.has_area() {
-                self.set_preview_viewport_pixels(canvas.physical_pixels(ui.ctx()));
+                // No layout yet: the canvas is the best estimate for both.
+                let pixels = canvas.physical_pixels(ui.ctx());
+                self.set_preview_viewport_pixels(pixels, pixels);
             }
             Preview::show_placeholder(ui, canvas, &PreviewPlaceholder::of(self), unobscured);
             return;
@@ -136,8 +143,8 @@ impl CalibRawApp {
                 // The layout that sent this applied any kept view.
                 self.preview.pending_view = None;
             }
-            PreviewViewportAction::SetViewportPixels(pixels) => {
-                self.set_preview_viewport_pixels(pixels);
+            PreviewViewportAction::SetViewportPixels { visible, fitted } => {
+                self.set_preview_viewport_pixels(visible, fitted);
             }
             PreviewViewportAction::SetVisibleUv(visible_uv) => {
                 self.preview.visible_uv = visible_uv;

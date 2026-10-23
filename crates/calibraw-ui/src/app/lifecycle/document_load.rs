@@ -81,7 +81,7 @@ pub(super) struct DocumentLoadJob {
     pub(super) document_generation: u64,
     pub(super) initial_exposure: ExposureParams,
     pub(super) preview_quality: PreviewQuality,
-    pub(super) viewport_pixels: [u32; 2],
+    pub(super) fitted_viewport_pixels: [u32; 2],
     pub(super) camera_profiles: CameraProfileSettings,
     pub(super) automatic_lens: AutomaticLensCorrection,
     pub(super) ai_denoise_result_path: Option<PathBuf>,
@@ -107,7 +107,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         document_generation,
         initial_exposure,
         preview_quality,
-        viewport_pixels,
+        fitted_viewport_pixels,
         camera_profiles,
         automatic_lens,
         ai_denoise_result_path,
@@ -249,7 +249,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         let preview_raw = build_preview_proxy(
             &full_raw,
             preview_quality,
-            viewport_pixels,
+            fitted_viewport_pixels,
             geometry,
             masks.masks.len(),
         );
@@ -810,13 +810,13 @@ fn restore_ai_denoise_result(
 fn build_preview_proxy(
     full_raw: &Arc<LoadedRaw>,
     quality: PreviewQuality,
-    viewport_pixels: [u32; 2],
+    fitted_viewport_pixels: [u32; 2],
     geometry: GeometryTransform,
     mask_count: usize,
 ) -> Arc<LoadedRaw> {
     let spec = ProxySpec {
         max_edge: quality.proxy_edge_for_fitted_source(
-            viewport_pixels,
+            fitted_viewport_pixels,
             full_raw.width,
             full_raw.height,
             geometry,

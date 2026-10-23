@@ -118,6 +118,7 @@ impl CalibRawApp {
                 center: [0.5, 0.5],
                 visible_uv: PreviewUvRect::FULL,
                 viewport_pixels: [1, 1],
+                fitted_viewport_pixels: [1, 1],
                 source_axes_swapped: false,
                 motion_at: None,
                 touch_navigation_active: false,

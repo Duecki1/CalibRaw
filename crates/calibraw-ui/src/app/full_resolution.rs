@@ -292,7 +292,7 @@ impl CalibRawApp {
         let max_texture_side = self.egui_ctx.input(|input| input.max_texture_side) as u32;
         let target_edge = PreviewQuality::Max
             .proxy_edge_for_fitted_source(
-                self.preview.viewport_pixels,
+                self.preview.fitted_viewport_pixels,
                 raw.width,
                 raw.height,
                 self.develop.geometry,

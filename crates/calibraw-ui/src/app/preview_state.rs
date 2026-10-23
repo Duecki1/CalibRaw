@@ -167,9 +167,11 @@ impl PreviewQuality {
         }
     }
 
+    /// `fitted_pixels` is the image as laid out at fit, in physical pixels,
+    /// not the part of it that happens to be unobscured.
     pub(crate) fn proxy_edge_for_fitted_source(
         self,
-        viewport_pixels: [u32; 2],
+        fitted_pixels: [u32; 2],
         source_width: u32,
         source_height: u32,
         geometry: GeometryTransform,
@@ -181,8 +183,8 @@ impl PreviewQuality {
         let source_edge = source_width.max(source_height);
         let (display_width, display_height) =
             geometry.crop_pixel_dimensions(source_width, source_height);
-        let fit_scale = (f64::from(viewport_pixels[0].max(1)) / f64::from(display_width.max(1)))
-            .min(f64::from(viewport_pixels[1].max(1)) / f64::from(display_height.max(1)));
+        let fit_scale = (f64::from(fitted_pixels[0].max(1)) / f64::from(display_width.max(1)))
+            .min(f64::from(fitted_pixels[1].max(1)) / f64::from(display_height.max(1)));
         let requested = cfa_guarded_edge(
             (f64::from(source_edge) * fit_scale * f64::from(self.pixel_scale())).ceil(),
         );
@@ -366,7 +368,14 @@ pub(crate) struct PreviewState {
     pub(crate) zoom: f32,
     pub(crate) center: [f32; 2],
     pub(crate) visible_uv: PreviewUvRect,
+    /// The part of the image in view, in physical pixels. Bounds the zoomed
+    /// crop and sets its density.
     pub(crate) viewport_pixels: [u32; 2],
+    /// The image as laid out at fit, in physical pixels, including the parts
+    /// an overlay panel covers (a portrait phone's tool sheet). Sets the
+    /// fitted preview's density: the visible part can be shorter than the
+    /// displayed image, which would make the proxy too coarse.
+    pub(crate) fitted_viewport_pixels: [u32; 2],
     pub(crate) source_axes_swapped: bool,
     pub(crate) motion_at: Option<Instant>,
     pub(crate) touch_navigation_active: bool,

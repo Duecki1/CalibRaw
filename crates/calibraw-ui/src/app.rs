@@ -449,7 +449,7 @@ mod tests {
     fn the_requested_edge_follows_the_fitted_image_not_the_canvas() {
         let mut app = CalibRawApp::empty(&eframe::egui::Context::default());
         app.preview.quality = PreviewQuality::Max;
-        app.preview.viewport_pixels = [1_400, 1_100];
+        app.preview.fitted_viewport_pixels = [1_400, 1_100];
         // A portrait photo in a landscape canvas is 1100 pixels tall on
         // screen; sizing it from the wider axis asked for almost twice that.
         let raw = LoadedRaw::from_scene_linear_rec2020(1_200, 1_800, vec![0.1; 1_200 * 1_800 * 3])

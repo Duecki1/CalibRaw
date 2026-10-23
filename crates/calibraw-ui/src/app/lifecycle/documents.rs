@@ -205,7 +205,7 @@ impl CalibRawApp {
             document_generation,
             initial_exposure,
             preview_quality: self.preview.quality,
-            viewport_pixels: self.preview.viewport_pixels,
+            fitted_viewport_pixels: self.preview.fitted_viewport_pixels,
             camera_profiles: self.camera_profile_settings(),
             automatic_lens: self.preferences.automatic_lens_correction,
             ai_denoise_result_path: self.ai_denoise_result_path_for_target(&source.sidecar_target),

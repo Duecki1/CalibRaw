@@ -97,7 +97,7 @@ impl CalibRawApp {
     /// fitted preview keeps the edge it has.
     pub(in crate::app) fn requested_preview_edge_for_source(&self, full_raw: &LoadedRaw) -> u32 {
         let fitted = self.preview.quality.proxy_edge_for_fitted_source(
-            self.preview.viewport_pixels,
+            self.preview.fitted_viewport_pixels,
             full_raw.width,
             full_raw.height,
             self.develop.geometry,
@@ -139,12 +139,21 @@ impl CalibRawApp {
         }
     }
 
-    pub(crate) fn set_preview_viewport_pixels(&mut self, viewport_pixels: [u32; 2]) -> bool {
+    /// Records the physical sizes the preview is laid out at: `visible` is the
+    /// part of the image in view, `fitted` the whole image at fit, which can
+    /// extend behind an overlay panel. Returns whether either changed.
+    pub(crate) fn set_preview_viewport_pixels(
+        &mut self,
+        visible: [u32; 2],
+        fitted: [u32; 2],
+    ) -> bool {
         let preview_source = self.develop.loaded_raw.clone();
-        if self.preview.viewport_pixels == viewport_pixels {
+        if self.preview.viewport_pixels == visible && self.preview.fitted_viewport_pixels == fitted
+        {
             return false;
         }
-        self.preview.viewport_pixels = viewport_pixels;
+        self.preview.viewport_pixels = visible;
+        self.preview.fitted_viewport_pixels = fitted;
 
         if self.preview.zoom > DETAIL_ZOOM_START {
             self.note_preview_motion();
