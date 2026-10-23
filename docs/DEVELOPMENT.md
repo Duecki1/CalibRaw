@@ -102,7 +102,7 @@ install the matching target with `rustup target add --toolchain <toolchain> <tar
 and set `RUSTUP_TOOLCHAIN=<toolchain>` for the helper. Homebrew's keg-only rustup installation
 also needs `$(brew --prefix rustup)/bin` prepended to PATH.
 
-The helper builds pinned LibRaw into a separate target-specific prefix, then
+The helper builds pinned LibRaw into a prefix keyed by both Rust and Clang targets, then
 packages and ad-hoc signs `target/ios-simulator/debug/CalibRaw.app`. Desktop and
 Android native dependency staging are untouched. Use `--release` for an
 optimized bundle, `--no-run` to only build, or `--device <UDID>` to select an
@@ -148,6 +148,12 @@ The output is `target/ios-ipa/release/CalibRaw-ios-arm64.ipa`. It contains an
 ARM64 device app, not a simulator build, and must be signed before installation.
 The Build iOS workflow uploads this IPA on pushes, pull requests and manual runs;
 tagged releases include it as a downloadable asset.
+
+Check device, IPA and simulator target selection without Xcode or downloads:
+
+```sh
+python3 -m unittest discover -s scripts/tests -p 'test_build_ios.py'
+```
 
 ## Checks
 

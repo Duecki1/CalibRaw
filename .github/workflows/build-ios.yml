@@ -50,6 +50,9 @@ jobs:
       - name: Install native dependencies
         run: brew install autoconf automake libtool llvm pkg-config
 
+      - name: Check iOS build target selection
+        run: python3 -m unittest discover -s scripts/tests -p 'test_build_ios.py'
+
       - name: Build unsigned IPA
         shell: bash
         run: |

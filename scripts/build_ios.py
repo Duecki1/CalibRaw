@@ -171,7 +171,7 @@ def main():
         raise RuntimeError(f"Install the Rust simulator target with `rustup target add {target}` and use its cargo/rustc on PATH")
     sdk = run(["xcrun", "--sdk", sdk_name, "--show-sdk-path"], environment, True).strip()
     environment["SDKROOT"] = sdk
-    clang_target = f"{architecture}-apple-ios{MINIMUM_IOS}" + ("" if options.physical_device else "-simulator")
+    clang_target = f"{architecture}-apple-ios{MINIMUM_IOS}" + ("" if device_build else "-simulator")
     flags = shlex.join(["-target", clang_target, "-isysroot", sdk])
     target_dir = Path(environment.get("CARGO_TARGET_DIR", ROOT / "target"))
     if not target_dir.is_absolute():
@@ -181,7 +181,9 @@ def main():
     target_dir.mkdir(parents=True, exist_ok=True)
     onnx_framework, onnx_license = stage_onnx_runtime(target_dir, environment)
     environment["ORT_IOS_XCFWK_PATH"] = str(onnx_framework)
-    prefix = target_dir / "ios-native" / target / MINIMUM_IOS / "libraw"
+    # Include the Clang target to bypass older IPA caches whose device prefix
+    # accidentally contained simulator objects despite a matching source pin.
+    prefix = target_dir / "ios-native" / target / MINIMUM_IOS / clang_target / "libraw"
     native_environment = environment.copy()
     native_environment.update({
         "CC": run(["xcrun", "--sdk", sdk_name, "--find", "clang"], environment, True).strip(),
