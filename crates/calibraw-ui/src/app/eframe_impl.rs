@@ -489,13 +489,6 @@ pub(super) fn show_android_foreground_task_blocker(ctx: &egui::Context) {
                 ui.allocate_exact_size(content_rect.size(), egui::Sense::click_and_drag());
             ui.painter()
                 .rect_filled(rect, 0.0, egui::Color32::from_black_alpha(96));
-            ui.painter().text(
-                egui::pos2(rect.center().x, rect.bottom() - 24.0),
-                egui::Align2::CENTER_BOTTOM,
-                "Keep CalibRaw open in the foreground until the operation finishes. Leaving or closing the app may stop it.",
-                egui::FontId::proportional(13.0),
-                egui::Color32::from_white_alpha(210),
-            );
         });
 }
 
