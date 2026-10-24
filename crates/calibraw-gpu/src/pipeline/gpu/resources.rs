@@ -599,6 +599,16 @@ pub(super) fn gpu_working_set_limit_bytes() -> u64 {
     u64::MAX
 }
 
+/// The process reservation limit mobile previews are sized against. An
+/// unlimited admission budget keeps the mobile floor for preview sizing;
+/// Android's finite, RAM-scaled limit is shared with allocation admission.
+pub(super) fn mobile_preview_limit_bytes() -> u64 {
+    match gpu_working_set_limit_bytes() {
+        u64::MAX => ANDROID_GPU_WORKING_SET_LIMIT_BYTES,
+        limit => limit,
+    }
+}
+
 /// The Android admission cap for `total_ram_bytes` of device RAM: a fixed
 /// share, never below the preview budget or above the ceiling. Unknown RAM
 /// keeps the preview budget.

@@ -59,6 +59,11 @@ jobs:
     uses: ./.github/workflows/build-macos.yml
     secrets: inherit
 
+  ios:
+    name: Build iOS
+    needs: validate
+    uses: ./.github/workflows/build-ios.yml
+
   publish:
     name: Publish GitHub Release
     needs:
@@ -66,6 +71,7 @@ jobs:
       - android
       - windows
       - macos
+      - ios
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -84,7 +90,7 @@ jobs:
           mkdir -p release-assets
           while IFS= read -r -d '' file; do
             case "$file" in
-              *.AppImage|*.exe|*.zip|*.apk)
+              *.AppImage|*.exe|*.zip|*.apk|*.ipa)
                 cp "$file" "release-assets/$(basename "$file")"
                 ;;
             esac
@@ -98,7 +104,8 @@ jobs:
           test "$(find release-assets -maxdepth 1 -type f -name 'CalibRaw-windows-*.zip' | wc -l)" -eq 2
           test "$(find release-assets -maxdepth 1 -type f -name 'CalibRaw-macos-*.zip' | wc -l)" -eq 2
           test "$(find release-assets -maxdepth 1 -type f -name '*.apk' | wc -l)" -eq 1
-          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 9
+          test "$(find release-assets -maxdepth 1 -type f -name '*.ipa' | wc -l)" -eq 1
+          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 10
 
       - name: Publish release
         env:

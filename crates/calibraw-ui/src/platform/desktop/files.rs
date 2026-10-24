@@ -115,13 +115,13 @@ fn camera_profile_candidates_under(root: &Path) -> Vec<PathBuf> {
 pub(in crate::platform) fn camera_profile_candidates() -> Vec<PathBuf> {
     #[cfg(target_os = "windows")]
     {
-        return if let Some(program_data) =
+        if let Some(program_data) =
             std::env::var_os("ProgramData").or_else(|| std::env::var_os("ALLUSERSPROFILE"))
         {
             camera_profile_candidates_under(&PathBuf::from(program_data))
         } else {
             Vec::new()
-        };
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -137,7 +137,7 @@ pub(in crate::platform) fn camera_profile_candidates() -> Vec<PathBuf> {
         candidates.extend(camera_profile_candidates_under(&PathBuf::from(
             "/Library/Application Support",
         )));
-        return candidates;
+        candidates
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

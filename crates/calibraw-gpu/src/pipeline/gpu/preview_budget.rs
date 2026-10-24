@@ -7,13 +7,11 @@
 
 #[cfg(test)]
 use super::resources::android_working_set_limit_bytes;
-#[cfg(target_os = "android")]
-use super::resources::gpu_working_set_limit_bytes;
 use super::resources::{
-    build_gpu_resource_plan, interactive_mask_atlas_edge, tone_analysis_scale, GpuResourcePlan,
-    GpuResourcePlanInput,
+    build_gpu_resource_plan, interactive_mask_atlas_edge, mobile_preview_limit_bytes,
+    tone_analysis_scale, GpuResourcePlan, GpuResourcePlanInput,
 };
-#[cfg(any(not(target_os = "android"), test))]
+#[cfg(test)]
 use super::ANDROID_GPU_WORKING_SET_LIMIT_BYTES;
 use super::{
     ProcessingQuality, RawGpuPipeline, GPU_STAGE_UNIFORM_ALLOCATION_BYTES, MASK_DATA_SIZE_BYTES,
@@ -95,20 +93,6 @@ fn mobile_preview_share_bytes(limit: u64, role: MobilePreviewRole, fitted_reside
             };
             pool.saturating_sub(fitted).max(MOBILE_DETAIL_FLOOR_BYTES)
         }
-    }
-}
-
-/// The process reservation limit mobile previews are sized against: the
-/// RAM-scaled Android limit, or its floor where there is no Android RAM to
-/// read.
-fn mobile_preview_limit_bytes() -> u64 {
-    #[cfg(target_os = "android")]
-    {
-        gpu_working_set_limit_bytes()
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        ANDROID_GPU_WORKING_SET_LIMIT_BYTES
     }
 }
 

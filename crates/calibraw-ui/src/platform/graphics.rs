@@ -4,7 +4,7 @@
 /// The graphics APIs CalibRaw processes photos with on this OS.
 pub(crate) const PROCESSING_GRAPHICS_API: &str = if cfg!(target_os = "windows") {
     "Direct3D 12 or Vulkan"
-} else if cfg!(target_os = "macos") {
+} else if cfg!(any(target_os = "macos", target_os = "ios")) {
     "Metal"
 } else {
     "Vulkan"

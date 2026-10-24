@@ -46,7 +46,16 @@ pub fn move_desktop_models(from: &Path, to: &Path, keep: Option<&Path>) -> io::R
 /// Whether one folder contains the other, also through symbolic links: a
 /// file "both have" would then be one file, removed by the merge.
 fn overlap(from: &Path, to: &Path) -> bool {
-    let resolved = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolved = |path: &Path| {
+        // The destination may not exist yet. Resolve its existing ancestors so
+        // links such as macOS's /var still use the same spelling as `from`.
+        path.ancestors()
+            .find_map(|ancestor| {
+                let resolved = fs::canonicalize(ancestor).ok()?;
+                Some(resolved.join(path.strip_prefix(ancestor).ok()?))
+            })
+            .unwrap_or_else(|| path.to_path_buf())
+    };
     let (from, to) = (resolved(from), resolved(to));
     from.starts_with(&to) || to.starts_with(&from)
 }
@@ -276,6 +285,22 @@ mod tests {
         move_desktop_models(&from, &to, None).unwrap();
 
         assert_eq!(read(&from.join("sky.onnx")), "sky");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn does_nothing_when_a_missing_destination_is_nested_through_a_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let from = root.path().join("models");
+        write(&from.join("sky.onnx"), "sky");
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&from, &alias).unwrap();
+        let to = alias.join("missing/nested");
+
+        move_desktop_models(&from, &to, None).unwrap();
+
+        assert_eq!(read(&from.join("sky.onnx")), "sky");
+        assert!(!from.join("missing").exists());
     }
 
     #[test]

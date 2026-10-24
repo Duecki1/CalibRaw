@@ -86,10 +86,23 @@ impl PlatformCaps {
         can_restart: false,
     };
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(any(target_os = "ios", test))]
+    pub(crate) const IOS: Self = Self {
+        form_factor: FormFactor::Mobile,
+        storage: StorageKind::MediaLibrary,
+        memory: MemoryClass::Constrained,
+        tasks_need_foreground: false,
+        configurable_ai_runtime: false,
+        video_encoder: VideoEncoder::Platform,
+        can_restart: false,
+    };
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub(crate) const CURRENT: Self = Self::DESKTOP;
     #[cfg(target_os = "android")]
     pub(crate) const CURRENT: Self = Self::ANDROID;
+    #[cfg(target_os = "ios")]
+    pub(crate) const CURRENT: Self = Self::IOS;
 
     pub(crate) const fn is_desktop(self) -> bool {
         matches!(self.form_factor, FormFactor::Desktop)
@@ -116,5 +129,21 @@ impl PlatformCaps {
     /// only a device with its own GPU memory has.
     pub(crate) const fn full_resolution_preview(self) -> bool {
         !self.constrained_memory()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PlatformCaps;
+
+    #[test]
+    fn ios_uses_mobile_library_capabilities() {
+        let caps = PlatformCaps::IOS;
+        assert!(caps.is_mobile());
+        assert!(!caps.is_desktop());
+        assert!(caps.has_media_library());
+        assert!(!caps.has_folders());
+        assert_eq!(caps.form_factor, PlatformCaps::ANDROID.form_factor);
+        assert_eq!(caps.storage, PlatformCaps::ANDROID.storage);
     }
 }

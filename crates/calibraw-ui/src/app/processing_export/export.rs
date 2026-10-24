@@ -624,11 +624,15 @@ impl CalibRawApp {
                                         ) {
                                             Ok(()) => {
                                                 self.export.publish_pending = true;
-                                                self.ui.notice =
-                                                    Some("Saving to Pictures/CalibRaw…".to_owned());
+                                                self.ui.notice = Some(format!(
+                                                    "Saving to {}…",
+                                                    self.platform.export_location_label()
+                                                ));
                                                 if let Some(task) = self.export.task.as_mut() {
-                                                    task.phase = "Publishing to Pictures/CalibRaw…"
-                                                        .to_owned();
+                                                    task.phase = format!(
+                                                        "Publishing to {}…",
+                                                        self.platform.export_location_label()
+                                                    );
                                                     task.progress = task
                                                         .progress
                                                         .max(EXPORT_MAX_INCOMPLETE_FRACTION);
@@ -722,7 +726,7 @@ impl CalibRawApp {
         } else if let Some(task) = self.export.task.as_ref() {
             task.phase.clone()
         } else if self.export.publish_pending {
-            "Saving to Pictures/CalibRaw…".to_owned()
+            format!("Saving to {}…", self.platform.export_location_label())
         } else if self.preview.zoom > DETAIL_ZOOM_START {
             if let Some(stage) = self.preview.detail_pending_stage {
                 format!("Updating visible zoom crop — {}…", stage.label())
