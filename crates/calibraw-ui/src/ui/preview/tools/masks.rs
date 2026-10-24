@@ -104,7 +104,11 @@ impl Preview {
                     actions.push(MaskToolAction::RestartStroke);
                 }
             } else {
+                // Only a painted stroke's release starts inference. A release
+                // from another control (Cancel, Undo, Redo) also happens while
+                // an object component awaits its mask.
                 let request_object = (primary_released
+                    && input.last_brush_point.is_some()
                     && !subject_refining
                     && object_strokes_await_selection(component))
                 .then_some((mask_index, component_index));

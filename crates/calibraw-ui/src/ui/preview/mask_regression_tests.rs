@@ -1,6 +1,7 @@
 //! Exercise the preview entry points with pointer frames and inspect their output.
 use super::*;
-use crate::pipeline::LoadedRaw;
+use crate::app::MaskToolAction;
+use crate::pipeline::{LoadedRaw, ObjectStroke};
 use std::time::{Duration, Instant};
 
 const WIDTH: u32 = 960;
@@ -58,6 +59,8 @@ enum Paint {
 struct Harness {
     context: egui::Context,
     app: CalibRawApp,
+    /// The object target requested by the last frame's actions, if any.
+    last_object_request: Option<(usize, usize)>,
 }
 
 impl Harness {
@@ -92,9 +95,21 @@ impl Harness {
                 feather: 0.65,
                 initialized: true,
             },
+            MaskKind::Object => MaskGeometry::Object {
+                mask: None,
+                grow: 0.0,
+                feather: 0.0,
+                brush_size: 8.0,
+                edge_refine: 0.0,
+                strokes: Vec::new(),
+            },
             _ => unreachable!(),
         };
-        let mut harness = Self { context, app };
+        let mut harness = Self {
+            context,
+            app,
+            last_object_request: None,
+        };
         // Register the interaction rectangle before sending its first press.
         harness.frame(vec![], Paint::None);
         harness.frame(vec![], Paint::None);
@@ -102,8 +117,13 @@ impl Harness {
     }
 
     fn frame(&mut self, events: Vec<egui::Event>, paint: Paint) -> egui::FullOutput {
-        let app = &mut self.app;
-        self.context.run_ui(
+        let Self {
+            context,
+            app,
+            last_object_request,
+        } = self;
+        let mut request = None;
+        let output = context.run_ui(
             egui::RawInput {
                 screen_rect: Some(screen_rect()),
                 events,
@@ -124,6 +144,10 @@ impl Harness {
                     layout,
                     &response,
                 );
+                request = actions.iter().find_map(|action| match action {
+                    MaskToolAction::EndGesture { request_object } => *request_object,
+                    _ => None,
+                });
                 app.apply_mask_tool_actions(ui.ctx(), actions);
                 match paint {
                     Paint::None => {}
@@ -131,7 +155,9 @@ impl Harness {
                     Paint::Coverage => Preview::paint_coverage_texture(ui, app, layout, 0, Some(0)),
                 }
             },
-        )
+        );
+        *last_object_request = request;
+        output
     }
 
     fn press(&mut self, position: Pos2, paint: Paint) -> egui::FullOutput {
@@ -587,4 +613,37 @@ fn linear_move_repaints_pending_coverage_and_release_refines() {
 #[test]
 fn linear_rotation_repaints_pending_coverage_and_release_refines() {
     assert_pending_coverage_updates_and_release_refines(MaskKind::Linear, true);
+}
+
+#[test]
+fn pointer_releases_on_other_controls_do_not_restart_object_selection() {
+    let mut h = Harness::new(MaskKind::Object);
+    let MaskGeometry::Object { strokes, .. } =
+        &mut h.app.masks.stack.masks[0].components[0].geometry
+    else {
+        panic!("expected object geometry");
+    };
+    strokes.push(ObjectStroke {
+        points: vec![CENTER],
+        positive: true,
+        brush_size: 8.0,
+    });
+
+    // Clicking another control (Cancel, Undo, Redo) releases the primary
+    // button without ending a stroke on the photo.
+    h.frame(vec![button(Pos2::new(1150.0, 950.0), false)], Paint::None);
+
+    assert_eq!(h.last_object_request, None);
+}
+
+#[test]
+fn releasing_a_painted_object_stroke_requests_its_mask() {
+    let mut h = Harness::new(MaskKind::Object);
+    let start = screen(CENTER);
+    let end = screen([CENTER[0] + 0.05, CENTER[1] + 0.03]);
+    h.press(start, Paint::None);
+    h.move_to(end, Paint::None);
+    h.release(end, Paint::None);
+
+    assert_eq!(h.last_object_request, Some((0, 0)));
 }
