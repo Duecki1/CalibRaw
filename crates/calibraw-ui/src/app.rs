@@ -405,24 +405,34 @@ mod tests {
     fn preview_quality_levels_track_physical_viewport_density() {
         // The crop keeps a border of up to 35% beyond the view.
         let detail = PreviewQuality::Max.detail_edge_for_viewport([3_200, 1_800]);
-        assert!((4_320..=4_330).contains(&detail), "{detail}");
+        let expected = if crate::platform::PlatformCaps::CURRENT.constrained_memory() {
+            4_327
+        } else {
+            6_487
+        };
+        assert_eq!(detail, expected, "{detail}");
         assert!(
             PreviewQuality::Low.detail_edge_for_viewport([3_200, 1_800])
                 < PreviewQuality::Max.detail_edge_for_viewport([3_200, 1_800])
         );
-        // No tier renders more pixels than the screen has.
-        for quality in [
-            PreviewQuality::Low,
-            PreviewQuality::Medium,
-            PreviewQuality::High,
-            PreviewQuality::Max,
-        ] {
-            assert!(quality.pixel_scale() <= 1.0);
-        }
+        // No tier on a constrained device renders more pixels than the screen
+        // has; a computer supersamples at its top tiers.
+        let scales = [
+            PreviewQuality::Low.pixel_scale(),
+            PreviewQuality::Medium.pixel_scale(),
+            PreviewQuality::High.pixel_scale(),
+            PreviewQuality::Max.pixel_scale(),
+        ];
+        let expected = if crate::platform::PlatformCaps::CURRENT.constrained_memory() {
+            [0.50, 0.75, 0.90, 1.00]
+        } else {
+            [0.75, 1.00, 1.25, 1.50]
+        };
+        assert_eq!(scales, expected);
     }
 
     #[test]
-    fn preview_quality_density_is_ordered_and_max_matches_physical_pixels() {
+    fn preview_quality_density_is_ordered_and_max_follows_the_platform() {
         let edge = |quality: PreviewQuality| {
             quality.proxy_edge_for_fitted_source(
                 [2_400, 1_600],
@@ -441,8 +451,14 @@ mod tests {
         ];
         assert!(edges.windows(2).all(|pair| pair[0] < pair[1]));
         // A 3:2 photo fitted into 2400x1600 shows 2400 pixels along its long
-        // edge, plus the phase guard for the CFA.
-        assert_eq!(edges[3], 2_406);
+        // edge, plus the phase guard for the CFA at the screen's density; a
+        // computer's Max adds half again to supersample.
+        let expected = if crate::platform::PlatformCaps::CURRENT.constrained_memory() {
+            2_406
+        } else {
+            3_606
+        };
+        assert_eq!(edges[3], expected);
     }
 
     #[test]
@@ -455,7 +471,13 @@ mod tests {
         let raw = LoadedRaw::from_scene_linear_rec2020(1_200, 1_800, vec![0.1; 1_200 * 1_800 * 3])
             .unwrap();
         let edge = app.requested_preview_edge_for_source(&raw);
-        assert!((1_100..=1_120).contains(&edge), "{edge}");
+        // 1100 pixels on screen, at the tier's density, plus the CFA guard.
+        let expected = if crate::platform::PlatformCaps::CURRENT.constrained_memory() {
+            1_100..=1_120
+        } else {
+            1_650..=1_670
+        };
+        assert!(expected.contains(&edge), "{edge}");
         // Zoomed in, the fitted preview keeps what it has.
         app.preview.zoom = 4.0;
         assert_eq!(app.requested_preview_edge_for_source(&raw), edge);
@@ -473,8 +495,13 @@ mod tests {
             0,
         );
         // 720 pixels wide on screen, plus the CFA phase guard; the canvas'
-        // height does not matter.
-        assert!((726..=727).contains(&edge), "{edge}");
+        // height does not matter. A computer's Max supersamples its width.
+        let expected = if crate::platform::PlatformCaps::CURRENT.constrained_memory() {
+            726..=727
+        } else {
+            1_080..=1_090
+        };
+        assert!(expected.contains(&edge), "{edge}");
 
         let mut cropped = geometry;
         cropped.crop = [0.375, 0.0, 0.625, 1.0];

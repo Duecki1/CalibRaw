@@ -406,13 +406,18 @@ impl Settings {
         }
 
         let previous_quality = app.preview.quality;
+        let quality_help = if app.caps().constrained_memory() {
+            "Controls how many pixels the preview renders compared with the screen pixels it covers: Low 50%, Medium 75%, High 90%, and Max 100%, one rendered pixel per screen pixel. Zoom detail uses the same density. A device with little GPU memory may render fewer pixels than asked."
+        } else {
+            "Controls how many pixels the preview renders compared with the screen pixels it covers: Low 75%, Medium 100%, High 125%, and Max 150%. Above 100% the preview renders more pixels than the screen has and averages them down when scaled to it, which keeps the fitted view sharp. Zoom detail uses the same density."
+        };
         moduwu_design::form_combo_with_help(
             ui,
             "Preview quality",
             "settings-preview-quality",
             app.preview.quality.label(),
             160.0,
-            "Controls how many pixels the preview renders compared with the screen pixels it covers: Low 50%, Medium 75%, High 90%, and Max 100%, one rendered pixel per screen pixel. Zoom detail uses the same density. A device with little GPU memory may render fewer pixels than asked.",
+            quality_help,
             |ui| {
                 ui.selectable_value(&mut app.preview.quality, PreviewQuality::Low, "Low");
                 ui.selectable_value(&mut app.preview.quality, PreviewQuality::Medium, "Medium");

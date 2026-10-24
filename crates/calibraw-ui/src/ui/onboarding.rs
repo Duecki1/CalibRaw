@@ -129,14 +129,20 @@ fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 }
 
 fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
+    let constrained = app.caps().constrained_memory();
     let mut quality = app.preview.quality;
+    let help = if constrained {
+        "Higher quality renders more preview pixels and uses more GPU memory. Max matches your screen pixel for pixel."
+    } else {
+        "Higher quality renders more preview pixels and uses more GPU memory. Max renders 150% of your screen pixels and averages them down, for the sharpest preview."
+    };
     moduwu_design::form_combo_with_help(
         ui,
         "Preview quality",
         "onboarding-preview-quality",
         quality.label(),
         180.0,
-        "Higher quality renders more preview pixels and uses more GPU memory. Max matches your screen pixel for pixel.",
+        help,
         |ui| {
             for option in [
                 PreviewQuality::Low,
@@ -154,11 +160,20 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     }
 
     ui.add_space(moduwu_design::SPACE_SM);
-    ui.small(match quality {
-        PreviewQuality::Low => "50% render density · lowest GPU memory use",
-        PreviewQuality::Medium => "75% render density · lighter on the GPU",
-        PreviewQuality::High => "90% render density · nearly exact previews",
-        PreviewQuality::Max => "100% render density · exact screen pixels",
+    ui.small(if constrained {
+        match quality {
+            PreviewQuality::Low => "50% render density · lowest GPU memory use",
+            PreviewQuality::Medium => "75% render density · lighter on the GPU",
+            PreviewQuality::High => "90% render density · nearly exact previews",
+            PreviewQuality::Max => "100% render density · exact screen pixels",
+        }
+    } else {
+        match quality {
+            PreviewQuality::Low => "75% render density · lowest GPU memory use",
+            PreviewQuality::Medium => "100% render density · exact screen pixels",
+            PreviewQuality::High => "125% render density · finer detail",
+            PreviewQuality::Max => "150% render density · supersampled previews",
+        }
     });
 }
 

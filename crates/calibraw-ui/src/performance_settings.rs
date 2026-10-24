@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 // Bump when a public settings change needs migration; see `sanitized`.
 // Version 5 dropped the automatic runtime choice (`onnx_runtime_kind` and
 // `onnx_runtime_kind_chosen`), which unknown fields leave to be ignored.
-// Version 6 moved the Preview quality tiers; see `sanitized`.
+// Version 6 moved the Preview quality tiers of memory-constrained devices;
+// see `sanitized`.
 const SETTINGS_VERSION: u32 = 6;
 /// The desktop decoded-RAW cache default before version 2 raised it, so that
 /// Develop can prefetch both neighbours of the open photo.
@@ -202,17 +203,20 @@ impl Default for PerformanceSettings {
 }
 
 /// The tier that keeps the density of a Preview quality stored before settings
-/// version 6; see `PerformanceSettings::sanitized`.
+/// version 6 on a memory-constrained device; elsewhere the tiers kept their
+/// densities and the stored choice is kept as it is.
 // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
 fn preview_quality_before_v6(
     stored: crate::app::PreviewQuality,
     constrained_memory: bool,
 ) -> crate::app::PreviewQuality {
     use crate::app::PreviewQuality::{High, Low, Max, Medium};
+    if !constrained_memory {
+        return stored;
+    }
     match stored {
         Low => Medium,
-        Medium | High | Max if constrained_memory => High,
-        Medium | High | Max => Max,
+        Medium | High | Max => High,
     }
 }
 
@@ -242,14 +246,13 @@ impl PerformanceSettings {
         if self.version < 4 {
             self.show_develop_navigation_labels = true;
         }
-        // Version 6: Preview quality tiers are densities relative to the screen, and
-        // Max is now exactly one rendered pixel per screen pixel. They used to be
-        // Low 75%, Medium 100%, High 125% and Max 150%, so a stored choice keeps its
-        // density: old Low is the new Medium, and the rest, which were at or above
-        // the screen's, are the new Max. A constrained device never rendered them:
-        // its preview was capped near 1050 pixels whatever the tier, so there they
-        // become High, which is what a new install starts with, instead of a
-        // preview two and a half times larger.
+        // Version 6: a memory-constrained device's Preview quality tiers became
+        // densities relative to the screen, topping out at one rendered pixel per
+        // screen pixel. It never rendered the old tiers — its preview was capped
+        // near 1050 pixels whatever they said — so they become the tier a new
+        // install starts with, except old Low, which keeps its nominal 75% as the
+        // new Medium. A computer kept the old densities (Low 75%, Medium 100%,
+        // High 125%, Max 150%), so there the stored tier keeps its meaning.
         // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
         if self.version < 6 {
             self.preview_quality = preview_quality_before_v6(
@@ -409,12 +412,14 @@ mod tests {
     #[test]
     fn version_5_preview_quality_keeps_its_density() {
         use crate::app::PreviewQuality::{High, Low, Max, Medium};
-        // A screen-sized device kept up to 150% of its pixels; Max is the new 100%.
-        for (stored, migrated) in [(Low, Medium), (Medium, Max), (High, Max), (Max, Max)] {
+        // A computer kept the tiers and their densities, so a stored choice
+        // carries over unchanged.
+        for (stored, migrated) in [(Low, Low), (Medium, Medium), (High, High), (Max, Max)] {
             assert_eq!(preview_quality_before_v6(stored, false), migrated);
         }
         // A constrained device rendered every tier at about the same capped size,
-        // so it lands on the tier a new install starts with.
+        // so it lands on the tier a new install starts with; old Low keeps its
+        // nominal 75% as the new Medium.
         for (stored, migrated) in [(Low, Medium), (Medium, High), (High, High), (Max, High)] {
             assert_eq!(preview_quality_before_v6(stored, true), migrated);
         }

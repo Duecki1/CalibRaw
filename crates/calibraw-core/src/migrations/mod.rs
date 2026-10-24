@@ -23,8 +23,9 @@
 //!   written by `white_balance_offsets`.
 //! - Performance settings versions 1 to 5: the old desktop decoded-RAW
 //!   cache default, automatic vignetting correction, Develop navigation
-//!   labels and the Preview quality tiers, updated when the settings are
-//!   loaded (`calibraw-ui`, `performance_settings.rs`).
+//!   labels and, on memory-constrained devices, the Preview quality tiers,
+//!   updated when the settings are loaded (`calibraw-ui`,
+//!   `performance_settings.rs`).
 //! - The old AI-denoise result cache, removed on start-up
 //!   (`calibraw-ui`, `app/ai_denoise.rs`).
 //! - The depth model desktop builds used before Depth Anything V2 Small,

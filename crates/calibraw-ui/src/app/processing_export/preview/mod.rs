@@ -644,10 +644,12 @@ mod detail_resolution_tests {
                         halo,
                         DetailGraph::unconstrained(),
                     );
-                    // Texels per screen pixel, against the most the screen can
-                    // use: one texel per screen pixel, or one per source pixel.
+                    // Texels per screen pixel, against what the tier asks
+                    // for: its density, or every source pixel when the view is
+                    // magnified.
                     let density = plan.sampling_scale() / screen_per_source;
-                    let wanted = (1.0 / screen_per_source).min(1.0);
+                    let wanted =
+                        f64::from(PreviewQuality::Max.pixel_scale()).min(1.0 / screen_per_source);
                     let context = format!(
                         "{full_size:?} in {canvas:?}, halo {halo}, zoom {zoom}: {density:.3} texels per screen pixel, wanted {wanted:.3}"
                     );
@@ -711,7 +713,14 @@ mod detail_resolution_tests {
             64,
         );
 
-        assert_eq!(max, 3_000);
+        // The crop asks for the tier's density of the viewport; a computer's
+        // Max adds half again to supersample.
+        let expected = if PlatformCaps::CURRENT.constrained_memory() {
+            3_000
+        } else {
+            4_500
+        };
+        assert_eq!(max, expected);
         assert!(low < max);
     }
 

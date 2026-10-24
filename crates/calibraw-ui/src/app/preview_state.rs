@@ -21,9 +21,10 @@ pub(crate) enum AndroidOriginalHoldPhase {
 }
 
 /// How densely the preview is rendered, as a share of the physical screen
-/// pixels it covers (`pixel_scale`): Max is exactly one rendered pixel per
-/// screen pixel, which is all a display can show, so no tier supersamples.
-/// The serialized names are stable; the density behind them moved in
+/// pixels it covers (`pixel_scale`). A memory-constrained device tops out at
+/// exactly one rendered pixel per screen pixel; a computer supersamples, so
+/// scaling the preview down to the screen keeps it sharp. The serialized names
+/// are stable; on constrained devices the density behind them moved in
 /// settings version 6 (`PerformanceSettings::sanitized`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,7 +36,7 @@ pub(crate) enum PreviewQuality {
 }
 
 impl Default for PreviewQuality {
-    /// Exact density, except where memory is constrained: a phone or tablet
+    /// The top tier, except where memory is constrained: a phone or tablet
     /// starts one step down, which its GPU can update more smoothly.
     fn default() -> Self {
         if PlatformCaps::CURRENT.constrained_memory() {
@@ -149,12 +150,26 @@ impl PreviewQuality {
     }
 
     /// Rendered pixels per physical screen pixel along each axis.
+    ///
+    /// A computer renders up to 150% of the screen pixels and averages the
+    /// extra ones down when the preview is scaled to the screen; a
+    /// memory-constrained device stops at 100%, where the tiers only trade
+    /// density for GPU time.
     pub(crate) const fn pixel_scale(self) -> f32 {
-        match self {
-            Self::Low => 0.50,
-            Self::Medium => 0.75,
-            Self::High => 0.90,
-            Self::Max => 1.00,
+        if PlatformCaps::CURRENT.constrained_memory() {
+            match self {
+                Self::Low => 0.50,
+                Self::Medium => 0.75,
+                Self::High => 0.90,
+                Self::Max => 1.00,
+            }
+        } else {
+            match self {
+                Self::Low => 0.75,
+                Self::Medium => 1.00,
+                Self::High => 1.25,
+                Self::Max => 1.50,
+            }
         }
     }
 
