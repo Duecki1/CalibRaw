@@ -384,8 +384,12 @@ mod tests {
         let saved = edits();
         let bytes = crate::sidecar::encode(saved.clone()).unwrap();
         let lens = LensCorrectionState::default();
-        let mut history =
-            crate::app::edit_history::EditHistory::new(&saved.exposure, &saved.masks, &lens);
+        let mut history = crate::app::edit_history::EditHistory::new(
+            &saved.exposure,
+            saved.geometry,
+            &saved.masks,
+            &lens,
+        );
         assert!(!history.can_undo());
         for title in [
             "Light",
@@ -421,7 +425,7 @@ mod tests {
         assert_eq!(masks.masks[1], saved.masks.masks[1]);
         assert_eq!(saved.exposure.exposure, 1.75);
         assert_eq!(saved.masks.masks[0].adjustments.exposure, 1.5);
-        history.observe(&saved.exposure, &saved.masks, &lens, false);
+        history.observe(&saved.exposure, saved.geometry, &saved.masks, &lens, false);
         assert!(!history.can_undo());
         assert_eq!(crate::sidecar::encode(saved.clone()).unwrap(), bytes);
 

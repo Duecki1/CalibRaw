@@ -47,7 +47,7 @@ Checked items are done. Order within a section is not a priority.
 - [ ]  Compound masks
 - [ ]  Better mask and sky edges
 - [ ]  Light rays subtract/intersect fix
-- [ ]  Undo/redo for object mask and crop
+- [X]  Undo/redo for object mask and crop
 - [ ]  Cancelable object mask
 
 ## Library

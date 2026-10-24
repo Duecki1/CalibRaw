@@ -66,9 +66,10 @@ impl CalibRawApp {
             )
         };
         let exposure = ExposureParams::scene_referred_default();
+        let geometry = GeometryTransform::default();
         let masks = MaskStack::default();
         let lens_correction = LensCorrectionState::default();
-        let edit_history = EditHistory::new(&exposure, &masks, &lens_correction);
+        let edit_history = EditHistory::new(&exposure, geometry, &masks, &lens_correction);
         let manual_runtime = if caps.configurable_ai_runtime {
             Self::load_onnx_runtime_selection(performance_settings_path.as_deref())
         } else {
@@ -94,7 +95,7 @@ impl CalibRawApp {
                 decoded_raws: DecodedRawCache::new(performance.raw_cache_files),
                 neighbour_prefetch: Default::default(),
                 selected_camera_profile: None,
-                geometry: GeometryTransform::default(),
+                geometry,
                 geometry_revision: 0,
                 lens_correction,
                 target_exposure: exposure,

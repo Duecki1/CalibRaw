@@ -1,7 +1,7 @@
 use super::ai_mask_source_proxy_edge;
 use crate::{
     app::CalibRawApp,
-    pipeline::{LoadedRaw, MaskKind},
+    pipeline::{LoadedRaw, MaskGeometry, MaskImage, MaskKind},
 };
 use eframe::egui;
 
@@ -38,6 +38,43 @@ fn resetting_masks_clears_transient_ui_state_and_remains_undoable() {
 
     app.undo_edit();
     assert_eq!(app.masks.stack.masks.len(), 2);
+}
+
+#[test]
+fn generated_object_masks_are_undoable_and_redoable() {
+    let context = egui::Context::default();
+    crate::ui::theme::install(&context);
+    let mut app = CalibRawApp::empty(&context);
+    app.develop.loaded_raw = Some(std::sync::Arc::new(
+        LoadedRaw::from_scene_linear_rec2020(8, 8, vec![0.2; 8 * 8 * 3]).unwrap(),
+    ));
+    app.masks.stack.add_mask(MaskKind::Object);
+    app.reset_edit_history();
+
+    let generated = MaskImage::new(2, 2, vec![0, 255, 255, 0]).unwrap();
+    let MaskGeometry::Object { mask, .. } = &mut app.masks.stack.masks[0].components[0].geometry
+    else {
+        panic!("expected an object mask");
+    };
+    *mask = Some(generated.clone());
+    app.mark_mask_geometry_dirty(0);
+    app.commit_edit_history_now();
+    assert!(app.can_undo_edit());
+
+    app.ai.object_pending_target = Some((0, 0));
+    app.undo_edit();
+    assert!(app.ai.object_pending_target.is_none());
+    let MaskGeometry::Object { mask, .. } = &app.masks.stack.masks[0].components[0].geometry else {
+        panic!("expected an object mask");
+    };
+    assert!(mask.is_none());
+    assert!(app.can_redo_edit());
+
+    app.redo_edit();
+    let MaskGeometry::Object { mask, .. } = &app.masks.stack.masks[0].components[0].geometry else {
+        panic!("expected an object mask");
+    };
+    assert_eq!(mask.as_ref(), Some(&generated));
 }
 
 #[test]

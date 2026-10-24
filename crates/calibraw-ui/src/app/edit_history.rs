@@ -3,7 +3,8 @@ use super::{
     LensfunCorrections,
 };
 use crate::pipeline::{
-    ExposureParams, ManualLensCorrection, MaskGeometry, MaskStack, ProcessingStage, RemoveEditState,
+    ExposureParams, GeometryTransform, ManualLensCorrection, MaskGeometry, MaskStack,
+    ProcessingStage, RemoveEditState,
 };
 use eframe::egui;
 use std::collections::VecDeque;
@@ -113,6 +114,7 @@ impl MaskSelection {
 #[derive(Clone, Debug)]
 struct EditSnapshot {
     exposure: ExposureParams,
+    geometry: GeometryTransform,
     masks: Arc<MaskStack>,
     mask_selection: MaskSelection,
     lens: LensEditState,
@@ -120,13 +122,19 @@ struct EditSnapshot {
 }
 
 impl EditSnapshot {
-    fn capture(exposure: &ExposureParams, masks: &MaskStack, lens: &LensCorrectionState) -> Self {
+    fn capture(
+        exposure: &ExposureParams,
+        geometry: GeometryTransform,
+        masks: &MaskStack,
+        lens: &LensCorrectionState,
+    ) -> Self {
         let mut contents = masks.clone();
         contents.selected_mask = None;
         contents.selected_component = None;
         let contents = Arc::new(contents);
         Self {
             exposure: *exposure,
+            geometry,
             mask_selection: MaskSelection::capture(masks, &contents),
             masks: contents,
             lens: LensEditState::capture(lens),
@@ -137,6 +145,7 @@ impl EditSnapshot {
     fn capture_successor(
         &self,
         exposure: &ExposureParams,
+        geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
         mask_contents_match: bool,
@@ -151,6 +160,7 @@ impl EditSnapshot {
         };
         Self {
             exposure: *exposure,
+            geometry,
             mask_selection: MaskSelection::capture(masks, &contents),
             masks: contents,
             lens: LensEditState::capture(lens),
@@ -184,13 +194,14 @@ pub(crate) struct EditHistory {
 impl EditHistory {
     pub(super) fn new(
         exposure: &ExposureParams,
+        geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
     ) -> Self {
         Self {
             undo: VecDeque::new(),
             redo: VecDeque::new(),
-            current: EditSnapshot::capture(exposure, masks, lens),
+            current: EditSnapshot::capture(exposure, geometry, masks, lens),
             interaction_pending: false,
             mask_interaction_pending: false,
             change_observed: false,
@@ -210,13 +221,14 @@ impl EditHistory {
     pub(super) fn reset(
         &mut self,
         exposure: &ExposureParams,
+        geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
         remove: &Arc<RemoveEditState>,
     ) {
         self.undo.clear();
         self.redo.clear();
-        self.current = EditSnapshot::capture(exposure, masks, lens);
+        self.current = EditSnapshot::capture(exposure, geometry, masks, lens);
         self.current.remove = Arc::clone(remove);
         self.interaction_pending = false;
         self.mask_interaction_pending = false;
@@ -245,11 +257,15 @@ impl EditHistory {
     pub(super) fn observe(
         &mut self,
         exposure: &ExposureParams,
+        geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
         interaction_active: bool,
     ) {
         self.current.remember_selection(masks);
+        if self.current.geometry != geometry {
+            self.change_observed = true;
+        }
         if self.mask_change_observed {
             self.mask_interaction_pending = true;
             self.mask_change_observed = false;
@@ -261,12 +277,13 @@ impl EditHistory {
         if !self.interaction_pending || interaction_active {
             return;
         }
-        self.commit_current_state(exposure, masks, lens);
+        self.commit_current_state(exposure, geometry, masks, lens);
     }
 
     fn commit_current_state(
         &mut self,
         exposure: &ExposureParams,
+        geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
     ) {
@@ -283,6 +300,7 @@ impl EditHistory {
             true
         };
         if self.current.exposure == *exposure
+            && self.current.geometry == geometry
             && mask_contents_match
             && self.current.lens.matches(lens)
         {
@@ -292,9 +310,9 @@ impl EditHistory {
             return;
         }
 
-        let next = self
-            .current
-            .capture_successor(exposure, masks, lens, mask_contents_match);
+        let next =
+            self.current
+                .capture_successor(exposure, geometry, masks, lens, mask_contents_match);
         let previous = std::mem::replace(&mut self.current, next);
         Self::push_bounded(&mut self.undo, previous);
         self.redo.clear();
@@ -306,15 +324,18 @@ impl EditHistory {
     pub(super) fn commit_remove_state(
         &mut self,
         exposure: &ExposureParams,
+        geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
         remove: &Arc<RemoveEditState>,
     ) {
-        self.commit_current_state(exposure, masks, lens);
+        self.commit_current_state(exposure, geometry, masks, lens);
         if Arc::ptr_eq(&self.current.remove, remove) {
             return;
         }
-        let mut next = self.current.capture_successor(exposure, masks, lens, true);
+        let mut next = self
+            .current
+            .capture_successor(exposure, geometry, masks, lens, true);
         next.remove = Arc::clone(remove);
         let previous = std::mem::replace(&mut self.current, next);
         Self::push_bounded(&mut self.undo, previous);
@@ -341,10 +362,11 @@ impl EditHistory {
     fn undo(
         &mut self,
         exposure: &ExposureParams,
+        geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
     ) -> Option<(EditSnapshot, bool, bool)> {
-        self.commit_current_state(exposure, masks, lens);
+        self.commit_current_state(exposure, geometry, masks, lens);
         let target = self.undo.pop_back()?;
         let masks_changed = !Arc::ptr_eq(&target.masks, &self.current.masks);
         let remove_changed = !Arc::ptr_eq(&target.remove, &self.current.remove);
@@ -357,10 +379,11 @@ impl EditHistory {
     fn redo(
         &mut self,
         exposure: &ExposureParams,
+        geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
     ) -> Option<(EditSnapshot, bool, bool)> {
-        self.commit_current_state(exposure, masks, lens);
+        self.commit_current_state(exposure, geometry, masks, lens);
         let target = self.redo.pop_back()?;
         let masks_changed = !Arc::ptr_eq(&target.masks, &self.current.masks);
         let remove_changed = !Arc::ptr_eq(&target.remove, &self.current.remove);
@@ -391,6 +414,7 @@ impl CalibRawApp {
     pub(crate) fn note_remove_edit_changed(&mut self) {
         self.persistence.history.commit_remove_state(
             &self.develop.exposure,
+            self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
             &self.inpaint.edits,
@@ -435,6 +459,7 @@ impl CalibRawApp {
         self.persistence.lens_restore_masks = None;
         self.persistence.history.reset(
             &self.develop.exposure,
+            self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
             &self.inpaint.edits,
@@ -445,6 +470,7 @@ impl CalibRawApp {
         let interaction_active = edit_history_interaction_active(ctx);
         self.persistence.history.observe(
             &self.develop.exposure,
+            self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
             interaction_active,
@@ -455,6 +481,7 @@ impl CalibRawApp {
         self.finish_mask_geometry_interaction();
         self.persistence.history.observe(
             &self.develop.exposure,
+            self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
             false,
@@ -473,6 +500,7 @@ impl CalibRawApp {
         self.finish_mask_geometry_interaction();
         let snapshot = self.persistence.history.undo(
             &self.develop.exposure,
+            self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
         );
@@ -486,6 +514,7 @@ impl CalibRawApp {
         self.finish_mask_geometry_interaction();
         let snapshot = self.persistence.history.redo(
             &self.develop.exposure,
+            self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
         );
@@ -529,6 +558,7 @@ impl CalibRawApp {
         remove_changed: bool,
     ) {
         let lens_changed = !snapshot.lens.matches(&self.develop.lens_correction);
+        let geometry_changed = snapshot.geometry != self.develop.geometry;
         let ai_denoise_changed =
             snapshot.exposure.ai_denoise_enabled != self.develop.exposure.ai_denoise_enabled;
         self.cancel_document_bound_foreground_operation();
@@ -555,6 +585,16 @@ impl CalibRawApp {
             self.inpaint.processing_progress = None;
         }
         snapshot.lens.apply_to(&mut self.develop.lens_correction);
+        if geometry_changed {
+            self.develop.geometry = snapshot.geometry;
+            // The restored crop is the one later straighten or transform
+            // changes refit, and a drag from the replaced view must not
+            // continue against it.
+            self.develop_ui.crop_constraint_reference = Some(self.develop.geometry.crop);
+            self.develop_ui.crop_drag = None;
+            self.develop_ui.straighten_drag = None;
+            self.note_geometry_changed();
+        }
         self.rehydrate_restored_mask_state();
         if remove_changed {
             self.note_mask_source_changed();
@@ -610,6 +650,11 @@ impl CalibRawApp {
         self.masks.thumbnail_component_mask = None;
         self.masks.thumbnail_component_textures.clear();
         self.masks.thumbnail_revision = self.masks.overlay_revision;
+        // Object inference caches carry the prompt strokes they were decoded
+        // for, so a restored object mask must not reuse one from before the
+        // undo or paste.
+        self.ai.object_cache = None;
+        self.ai.object_pending_target = None;
 
         let restored_source = self.masks.stack.masks.iter().find_map(|mask| {
             mask.components
@@ -657,16 +702,29 @@ mod tests {
     #[test]
     fn scene_depth_changes_round_trip_through_history() {
         let (exposure, mut masks, lens) = state();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
         masks.scene_depth =
             Some(crate::pipeline::MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap());
         history.note_mask_change();
-        history.observe(&exposure, &masks, &lens, false);
-        let (undone, masks_changed, _) = history.undo(&exposure, &masks, &lens).unwrap();
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
+        let (undone, masks_changed, _) = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(masks_changed);
         assert!(undone.materialize_masks().scene_depth.is_none());
         let (redone, masks_changed, _) = history
-            .redo(&exposure, &undone.materialize_masks(), &lens)
+            .redo(
+                &exposure,
+                GeometryTransform::default(),
+                &undone.materialize_masks(),
+                &lens,
+            )
             .unwrap();
         assert!(masks_changed);
         assert_eq!(redone.materialize_masks().scene_depth, masks.scene_depth);
@@ -675,19 +733,32 @@ mod tests {
     #[test]
     fn global_effect_changes_round_trip_through_history() {
         let (exposure, mut masks, lens) = state();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
         masks
             .global_effects
             .push(crate::pipeline::EffectComponent::new(
                 crate::pipeline::MaskEffect::Blur,
             ));
         history.note_mask_change();
-        history.observe(&exposure, &masks, &lens, false);
-        let (undone, masks_changed, _) = history.undo(&exposure, &masks, &lens).unwrap();
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
+        let (undone, masks_changed, _) = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(masks_changed);
         assert!(undone.materialize_masks().global_effects.is_empty());
         let (redone, masks_changed, _) = history
-            .redo(&exposure, &undone.materialize_masks(), &lens)
+            .redo(
+                &exposure,
+                GeometryTransform::default(),
+                &undone.materialize_masks(),
+                &lens,
+            )
             .unwrap();
         assert!(masks_changed);
         assert_eq!(
@@ -697,27 +768,109 @@ mod tests {
     }
 
     #[test]
+    fn geometry_changes_round_trip_through_history() {
+        let (exposure, masks, lens) = state();
+        let mut geometry = GeometryTransform::default();
+        let mut history = EditHistory::new(&exposure, geometry, &masks, &lens);
+
+        geometry.crop = [0.1, 0.2, 0.9, 0.8];
+        geometry.rotation_degrees = 4.5;
+        geometry.quarter_turns = 1;
+        geometry.flip_horizontal = true;
+        history.observe(&exposure, geometry, &masks, &lens, false);
+
+        let (undone, masks_changed, _) = history.undo(&exposure, geometry, &masks, &lens).unwrap();
+        assert!(!masks_changed);
+        assert_eq!(undone.geometry, GeometryTransform::default());
+
+        let (redone, masks_changed, _) = history
+            .redo(&exposure, undone.geometry, &masks, &lens)
+            .unwrap();
+        assert!(!masks_changed);
+        assert_eq!(redone.geometry, geometry);
+    }
+
+    #[test]
+    fn crop_gestures_are_coalesced_into_one_undo_step() {
+        let (exposure, masks, lens) = state();
+        let mut geometry = GeometryTransform::default();
+        let mut history = EditHistory::new(&exposure, geometry, &masks, &lens);
+
+        geometry.crop = [0.0, 0.0, 0.9, 1.0];
+        history.observe(&exposure, geometry, &masks, &lens, true);
+        geometry.crop = [0.0, 0.0, 0.8, 1.0];
+        history.observe(&exposure, geometry, &masks, &lens, true);
+        assert!(history.undo.is_empty());
+
+        history.observe(&exposure, geometry, &masks, &lens, false);
+        assert_eq!(history.undo.len(), 1);
+        let (undone, _, _) = history.undo(&exposure, geometry, &masks, &lens).unwrap();
+        assert_eq!(undone.geometry, GeometryTransform::default());
+    }
+
+    #[test]
+    fn app_undo_and_redo_apply_crop_geometry() {
+        let context = egui::Context::default();
+        crate::ui::theme::install(&context);
+        let mut app = CalibRawApp::empty(&context);
+        app.develop.loaded_raw = Some(Arc::new(
+            crate::pipeline::LoadedRaw::from_scene_linear_rec2020(8, 8, vec![0.2; 8 * 8 * 3])
+                .unwrap(),
+        ));
+        app.reset_edit_history();
+
+        let changed = GeometryTransform {
+            crop: [0.1, 0.1, 0.9, 0.9],
+            rotation_degrees: 3.0,
+            quarter_turns: 1,
+            ..GeometryTransform::default()
+        };
+        app.develop.geometry = changed;
+        app.note_geometry_changed();
+        app.commit_edit_history_now();
+        assert!(app.can_undo_edit());
+
+        let revision = app.edit_commit_revision();
+        app.undo_edit();
+        assert_eq!(app.develop.geometry, GeometryTransform::default());
+        assert_ne!(app.edit_commit_revision(), revision);
+        assert!(app.can_redo_edit());
+
+        app.redo_edit();
+        assert_eq!(app.develop.geometry, changed);
+        assert_eq!(app.develop_ui.crop_constraint_reference, Some(changed.crop));
+    }
+
+    #[test]
     fn interaction_changes_are_coalesced_into_one_step() {
         let (mut exposure, masks, lens) = state();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
 
         exposure.exposure = 1.0;
         history.note_change();
-        history.observe(&exposure, &masks, &lens, true);
+        history.observe(&exposure, GeometryTransform::default(), &masks, &lens, true);
         exposure.exposure = 2.0;
         history.note_change();
-        history.observe(&exposure, &masks, &lens, true);
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(&exposure, GeometryTransform::default(), &masks, &lens, true);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
 
-        let (restored, masks_changed, _remove_changed) =
-            history.undo(&exposure, &masks, &lens).unwrap();
+        let (restored, masks_changed, _remove_changed) = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(!masks_changed);
         assert_eq!(restored.exposure.exposure, 0.0);
         assert!(history.undo.is_empty());
 
         exposure = restored.exposure;
-        let (redone, masks_changed, _remove_changed) =
-            history.redo(&exposure, &masks, &lens).unwrap();
+        let (redone, masks_changed, _remove_changed) = history
+            .redo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(!masks_changed);
         assert_eq!(redone.exposure.exposure, 2.0);
     }
@@ -725,7 +878,7 @@ mod tests {
     #[test]
     fn held_arrow_changes_commit_once_on_release() {
         let (mut exposure, masks, lens) = state();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
         let ctx = egui::Context::default();
         let focus_id = egui::Id::new("history-arrow-field");
         {
@@ -749,6 +902,7 @@ mod tests {
                     }
                     history.observe(
                         &exposure,
+                        GeometryTransform::default(),
                         &masks,
                         &lens,
                         edit_history_interaction_active(ui.ctx()),
@@ -765,41 +919,89 @@ mod tests {
             assert_eq!(frame(Some(false), None), 2);
         }
 
-        let first = history.undo(&exposure, &masks, &lens).unwrap().0;
+        let first = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap()
+            .0;
         assert_eq!(first.exposure.exposure, 0.03);
-        let second = history.undo(&first.exposure, &masks, &lens).unwrap().0;
+        let second = history
+            .undo(&first.exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap()
+            .0;
         assert_eq!(second.exposure.exposure, 0.0);
     }
 
     #[test]
     fn point_color_sampling_adjustment_and_deletion_round_trip_through_history() {
         let (mut exposure, masks, lens) = state();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
         exposure
             .point_colors
             .push(crate::pipeline::PointColor::from_srgb([0.7, 0.1, 0.2]));
         history.note_change();
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
         let sampled = exposure;
         exposure.point_colors[0].hue_shift = 35.0;
         exposure.point_colors[0].saturation_range.inner_max = 0.1;
         history.note_change();
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
         let adjusted = exposure;
         exposure.point_colors.clear();
         history.note_change();
-        history.observe(&exposure, &masks, &lens, false);
-        exposure = history.undo(&exposure, &masks, &lens).unwrap().0.exposure;
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
+        exposure = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap()
+            .0
+            .exposure;
         assert_eq!(exposure, adjusted);
-        exposure = history.undo(&exposure, &masks, &lens).unwrap().0.exposure;
+        exposure = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap()
+            .0
+            .exposure;
         assert_eq!(exposure, sampled);
-        exposure = history.undo(&exposure, &masks, &lens).unwrap().0.exposure;
+        exposure = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap()
+            .0
+            .exposure;
         assert!(exposure.point_colors.is_empty());
-        exposure = history.redo(&exposure, &masks, &lens).unwrap().0.exposure;
+        exposure = history
+            .redo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap()
+            .0
+            .exposure;
         assert_eq!(exposure, sampled);
-        exposure = history.redo(&exposure, &masks, &lens).unwrap().0.exposure;
+        exposure = history
+            .redo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap()
+            .0
+            .exposure;
         assert_eq!(exposure, adjusted);
-        exposure = history.redo(&exposure, &masks, &lens).unwrap().0.exposure;
+        exposure = history
+            .redo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap()
+            .0
+            .exposure;
         assert!(exposure.point_colors.is_empty());
     }
 
@@ -807,12 +1009,18 @@ mod tests {
     fn selection_navigation_does_not_create_history() {
         let (exposure, mut masks, lens) = state();
         masks.add_mask(MaskKind::Radial).unwrap();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
         let mask_contents = history.committed_masks();
 
         masks.selected_mask = None;
         masks.selected_component = None;
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
 
         assert!(history.undo.is_empty());
         assert!(!history.can_undo());
@@ -826,22 +1034,35 @@ mod tests {
     fn undo_redo_restore_each_mask_states_valid_selection() {
         let (exposure, mut masks, lens) = state();
         masks.add_mask(MaskKind::Radial).unwrap();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
 
         masks.add_mask(MaskKind::Linear).unwrap();
         history.note_mask_change();
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
 
-        let (restored, masks_changed, _remove_changed) =
-            history.undo(&exposure, &masks, &lens).unwrap();
+        let (restored, masks_changed, _remove_changed) = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(masks_changed);
         let restored_masks = restored.materialize_masks();
         assert_eq!(restored_masks.masks.len(), 1);
         assert_eq!(restored_masks.selected_mask, Some(0));
         assert_eq!(restored_masks.selected_component, Some(0));
 
-        let (redone, masks_changed, _remove_changed) =
-            history.redo(&exposure, &restored_masks, &lens).unwrap();
+        let (redone, masks_changed, _remove_changed) = history
+            .redo(
+                &exposure,
+                GeometryTransform::default(),
+                &restored_masks,
+                &lens,
+            )
+            .unwrap();
         assert!(masks_changed);
         let redone_masks = redone.materialize_masks();
         assert_eq!(redone_masks.masks.len(), 2);
@@ -853,37 +1074,61 @@ mod tests {
     fn separate_mask_gestures_are_separate_undo_steps() {
         let (exposure, mut masks, lens) = state();
         masks.add_mask(MaskKind::Brush).unwrap();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
 
         masks.masks[0].opacity = 0.8;
         history.note_mask_change();
-        history.observe(&exposure, &masks, &lens, true);
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(&exposure, GeometryTransform::default(), &masks, &lens, true);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
 
         masks.masks[0].opacity = 0.6;
         history.note_mask_change();
-        history.observe(&exposure, &masks, &lens, true);
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(&exposure, GeometryTransform::default(), &masks, &lens, true);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
 
-        let (first_undo, masks_changed, _remove_changed) =
-            history.undo(&exposure, &masks, &lens).unwrap();
+        let (first_undo, masks_changed, _remove_changed) = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(masks_changed);
         let first_masks = first_undo.materialize_masks();
         assert_eq!(first_masks.masks[0].opacity, 0.8);
 
-        let (second_undo, masks_changed, _remove_changed) =
-            history.undo(&exposure, &first_masks, &lens).unwrap();
+        let (second_undo, masks_changed, _remove_changed) = history
+            .undo(&exposure, GeometryTransform::default(), &first_masks, &lens)
+            .unwrap();
         assert!(masks_changed);
         assert_eq!(second_undo.materialize_masks().masks[0].opacity, 1.0);
 
         let (first_redo, masks_changed, _remove_changed) = history
-            .redo(&exposure, &second_undo.materialize_masks(), &lens)
+            .redo(
+                &exposure,
+                GeometryTransform::default(),
+                &second_undo.materialize_masks(),
+                &lens,
+            )
             .unwrap();
         assert!(masks_changed);
         assert_eq!(first_redo.materialize_masks().masks[0].opacity, 0.8);
 
         let (second_redo, masks_changed, _remove_changed) = history
-            .redo(&exposure, &first_redo.materialize_masks(), &lens)
+            .redo(
+                &exposure,
+                GeometryTransform::default(),
+                &first_redo.materialize_masks(),
+                &lens,
+            )
             .unwrap();
         assert!(masks_changed);
         assert_eq!(second_redo.materialize_masks().masks[0].opacity, 0.6);
@@ -893,12 +1138,18 @@ mod tests {
     fn global_edits_share_mask_contents_across_snapshots() {
         let (mut exposure, mut masks, lens) = state();
         masks.add_mask(MaskKind::Brush).unwrap();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
         let original_contents = history.committed_masks();
 
         exposure.exposure = 1.5;
         history.note_change();
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
 
         assert!(Arc::ptr_eq(&original_contents, &history.current.masks));
         assert!(Arc::ptr_eq(
@@ -909,7 +1160,9 @@ mod tests {
             &history.committed_masks(),
             &history.current.masks
         ));
-        let (_, masks_changed, _remove_changed) = history.undo(&exposure, &masks, &lens).unwrap();
+        let (_, masks_changed, _remove_changed) = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(!masks_changed);
     }
 
@@ -917,18 +1170,30 @@ mod tests {
     fn a_mask_edit_allocates_new_contents_once_then_global_edits_reuse_it() {
         let (mut exposure, mut masks, lens) = state();
         masks.add_mask(MaskKind::Radial).unwrap();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
         let before_mask_edit = history.committed_masks();
 
         masks.masks[0].opacity = 0.4;
         history.note_mask_change();
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
         let after_mask_edit = history.committed_masks();
         assert!(!Arc::ptr_eq(&before_mask_edit, &after_mask_edit));
 
         exposure.exposure = 1.25;
         history.note_change();
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
         assert!(Arc::ptr_eq(&after_mask_edit, &history.current.masks));
         assert!(Arc::ptr_eq(
             &history.undo.back().unwrap().masks,
@@ -939,25 +1204,33 @@ mod tests {
     #[test]
     fn mask_content_and_lens_selection_round_trip() {
         let (exposure, mut masks, mut lens) = state();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
 
         masks.add_mask(MaskKind::Radial).unwrap();
         lens.enabled = true;
         lens.selected_maker = "Example".to_owned();
         lens.selected_model = "Prime 50".to_owned();
         history.note_mask_change();
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
 
-        let (restored, masks_changed, _remove_changed) =
-            history.undo(&exposure, &masks, &lens).unwrap();
+        let (restored, masks_changed, _remove_changed) = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(masks_changed);
         assert!(restored.masks.masks.is_empty());
         assert!(!restored.lens.enabled);
 
         masks = restored.materialize_masks();
         restored.lens.apply_to(&mut lens);
-        let (redone, masks_changed, _remove_changed) =
-            history.redo(&exposure, &masks, &lens).unwrap();
+        let (redone, masks_changed, _remove_changed) = history
+            .redo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(masks_changed);
         assert_eq!(redone.masks.masks.len(), 1);
         assert!(redone.lens.enabled);
@@ -968,36 +1241,62 @@ mod tests {
     #[test]
     fn redo_is_kept_for_a_reverted_gesture_and_cleared_by_a_new_edit() {
         let (mut exposure, masks, lens) = state();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
 
         exposure.exposure = 1.0;
         history.note_change();
-        history.observe(&exposure, &masks, &lens, false);
-        let (restored, _, _) = history.undo(&exposure, &masks, &lens).unwrap();
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
+        let (restored, _, _) = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         exposure = restored.exposure;
         assert!(history.can_redo());
 
         exposure.exposure = 0.9;
         history.note_change();
-        history.observe(&exposure, &masks, &lens, true);
+        history.observe(&exposure, GeometryTransform::default(), &masks, &lens, true);
         exposure.exposure = 0.0;
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
         assert!(history.can_redo());
 
         exposure.exposure = 1.2;
         history.note_change();
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
         assert!(!history.can_redo());
     }
 
     #[test]
     fn history_is_bounded() {
         let (mut exposure, masks, lens) = state();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
         for index in 0..(EDIT_HISTORY_LIMIT + 7) {
             exposure.exposure = index as f32;
             history.note_change();
-            history.observe(&exposure, &masks, &lens, false);
+            history.observe(
+                &exposure,
+                GeometryTransform::default(),
+                &masks,
+                &lens,
+                false,
+            );
         }
         assert_eq!(history.undo.len(), EDIT_HISTORY_LIMIT);
     }
@@ -1005,19 +1304,25 @@ mod tests {
     #[test]
     fn revision_changes_only_when_a_transaction_commits() {
         let (mut exposure, masks, lens) = state();
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
 
         exposure.exposure = 1.0;
         history.note_change();
-        history.observe(&exposure, &masks, &lens, true);
+        history.observe(&exposure, GeometryTransform::default(), &masks, &lens, true);
         assert_eq!(history.committed_revision(), 0);
 
         exposure.exposure = 1.5;
         history.note_change();
-        history.observe(&exposure, &masks, &lens, true);
+        history.observe(&exposure, GeometryTransform::default(), &masks, &lens, true);
         assert_eq!(history.committed_revision(), 0);
 
-        history.observe(&exposure, &masks, &lens, false);
+        history.observe(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            false,
+        );
         assert_eq!(history.committed_revision(), 1);
     }
 
@@ -1025,23 +1330,37 @@ mod tests {
     fn remove_strokes_are_discrete_undoable_history_steps() {
         let (exposure, masks, lens) = state();
         let mut remove = Arc::new(RemoveEditState::default());
-        let mut history = EditHistory::new(&exposure, &masks, &lens);
-        history.reset(&exposure, &masks, &lens, &remove);
+        let mut history = EditHistory::new(&exposure, GeometryTransform::default(), &masks, &lens);
+        history.reset(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            &remove,
+        );
 
         Arc::make_mut(&mut remove)
             .strokes
             .push(RemoveStroke::default());
-        history.commit_remove_state(&exposure, &masks, &lens, &remove);
+        history.commit_remove_state(
+            &exposure,
+            GeometryTransform::default(),
+            &masks,
+            &lens,
+            &remove,
+        );
         assert_eq!(history.committed_remove().strokes.len(), 1);
 
-        let (undone, masks_changed, remove_changed) =
-            history.undo(&exposure, &masks, &lens).unwrap();
+        let (undone, masks_changed, remove_changed) = history
+            .undo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(!masks_changed);
         assert!(remove_changed);
         assert!(undone.remove.strokes.is_empty());
 
-        let (redone, masks_changed, remove_changed) =
-            history.redo(&exposure, &masks, &lens).unwrap();
+        let (redone, masks_changed, remove_changed) = history
+            .redo(&exposure, GeometryTransform::default(), &masks, &lens)
+            .unwrap();
         assert!(!masks_changed);
         assert!(remove_changed);
         assert_eq!(redone.remove.strokes.len(), 1);
