@@ -377,6 +377,67 @@ transitive dependencies have incompatible version requirements. Workspace
 direct dependencies are kept on the versions used by the application, and no
 dependency is upgraded solely to silence a duplicate-version warning.
 
+## Experimental iOS
+
+An unsupported prototype: the Android mobile UI on Metal, with a sandboxed
+platform layer in `crates/calibraw-ui/src/platform/ios*.{rs,m}`.
+
+- **Library.** Files and Photos pickers copy photos into `Documents/CalibRaw`
+  (exposed in the Files app and USB file sharing). Library IDs are paths
+  relative to that folder, so they survive container moves. Imports never
+  overwrite. Photos uses the out-of-process picker without read permission and
+  prefers RAW representations where Photos offers them.
+- **Exports** are saved to Photos with Add Photos Only permission
+  (`NSPhotoLibraryAddUsageDescription`); a denied or failed save reports an
+  error rather than falling back to Files.
+- **AI** links the pinned ONNX Runtime XCFramework and runs on the constrained
+  CPU configuration; CoreML is not enabled. Device builds request the Increased
+  Memory Limit entitlement, and BiRefNet is refused before loading when its CPU
+  peak does not fit `os_proc_available_memory()`.
+- **Not implemented:** Lensfun, camera-profile folders, CoreML, replay
+  encoding and background-task integration.
+
+Requirements: macOS, full Xcode with an iOS simulator runtime, Python 3,
+autoconf, automake, GNU libtool and pkg-config, and rustup's cargo/rustc on
+PATH (Homebrew's keg-only rustup: prepend `$(brew --prefix rustup)/bin`).
+`scripts/build_ios.py` builds the pinned LibRaw for the target, downloads and
+verifies the pinned ONNX Runtime, then bundles and signs the app:
+
+```sh
+# Simulator (Intel Macs: x86_64-apple-ios). --device <UDID> picks a simulator,
+# --no-run only builds, --release optimizes.
+rustup target add aarch64-apple-ios-sim
+python3 scripts/build_ios.py
+
+# Physical device with Developer Mode, paired in Xcode (xcrun devicectl list devices).
+rustup target add aarch64-apple-ios
+python3 scripts/build_ios.py --physical-device <UDID> --team <TEAM_ID>
+
+# Unsigned ARM64 IPA for re-signing (e.g. AltStore); no device or team needed.
+python3 scripts/build_ios.py --release --ipa
+```
+
+Device builds use `packaging/ios/CalibRaw.xcodeproj` for automatic development
+signing and install `de.duecki.calibraw.ios-dev`; free accounts allow three
+development apps with short-lived profiles. The IPA is written to
+`target/ios-ipa/release/CalibRaw-ios-arm64.ipa`; the Build iOS workflow uploads
+it and tagged releases attach it.
+
+Tests: `python3 -m unittest discover -s scripts/tests -p 'test_build_ios.py'`
+checks target selection without Xcode. `packaging/ios/tests/picker_lifecycle.m`
+checks that the native pickers complete exactly once; run it on a booted Apple
+Silicon simulator:
+
+```sh
+sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
+xcrun --sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator \
+  -isysroot "$sdk" -fobjc-arc -Werror packaging/ios/tests/picker_lifecycle.m \
+  -framework UIKit -framework Foundation -framework CoreGraphics \
+  -framework UniformTypeIdentifiers -framework Photos -framework PhotosUI \
+  -o target/picker-lifecycle-test
+xcrun simctl spawn booted "$PWD/target/picker-lifecycle-test"
+```
+
 ## Android Build & Signing
 
 ### Requirements

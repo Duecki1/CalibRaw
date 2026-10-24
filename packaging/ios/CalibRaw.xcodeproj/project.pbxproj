@@ -1,0 +1,113 @@
+// !$*UTF8*$!
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 56;
+    objects = {
+        000000000000000000000001 = {
+            isa = PBXProject;
+            attributes = { LastUpgradeCheck = 2710; };
+            buildConfigurationList = 000000000000000000000007;
+            compatibilityVersion = "Xcode 14.0";
+            developmentRegion = en;
+            hasScannedForEncodings = 0;
+            knownRegions = (en, Base);
+            mainGroup = 000000000000000000000002;
+            productRefGroup = 000000000000000000000003;
+            projectDirPath = "";
+            projectRoot = "";
+            targets = (000000000000000000000005);
+        };
+        000000000000000000000002 = {
+            isa = PBXGroup;
+            children = (000000000000000000000003);
+            sourceTree = "<group>";
+        };
+        000000000000000000000003 = {
+            isa = PBXGroup;
+            children = (000000000000000000000004);
+            name = Products;
+            sourceTree = "<group>";
+        };
+        000000000000000000000004 = {
+            isa = PBXFileReference;
+            explicitFileType = wrapper.application;
+            includeInIndex = 0;
+            path = CalibRaw.app;
+            sourceTree = BUILT_PRODUCTS_DIR;
+        };
+        000000000000000000000005 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = 000000000000000000000008;
+            buildPhases = (000000000000000000000006);
+            buildRules = ();
+            dependencies = ();
+            name = CalibRaw;
+            productName = CalibRaw;
+            productReference = 000000000000000000000004;
+            productType = "com.apple.product-type.application";
+        };
+        000000000000000000000006 = {
+            isa = PBXShellScriptBuildPhase;
+            buildActionMask = 2147483647;
+            files = ();
+            inputPaths = ("$(CALIBRAW_IOS_BINARY)", "$(CALIBRAW_IOS_ICON_DIR)", "$(CALIBRAW_IOS_RUNTIME_LICENSE)");
+            name = "Stage Rust executable";
+            outputPaths = ("$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)");
+            runOnlyForDeploymentPostprocessing = 0;
+            shellPath = /bin/sh;
+            shellScript = "mkdir -p \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\ncp \"$CALIBRAW_IOS_BINARY\" \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\ncp -R \"$CALIBRAW_IOS_ICON_DIR/.\" \"$TARGET_BUILD_DIR/$WRAPPER_NAME/\"\ncp \"$CALIBRAW_IOS_RUNTIME_LICENSE\" \"$TARGET_BUILD_DIR/$WRAPPER_NAME/onnxruntime-LICENSE.txt\"\n";
+        };
+        000000000000000000000007 = {
+            isa = XCConfigurationList;
+            buildConfigurations = (000000000000000000000009, 00000000000000000000000A);
+            defaultConfigurationIsVisible = 0;
+            defaultConfigurationName = Release;
+        };
+        000000000000000000000008 = {
+            isa = XCConfigurationList;
+            buildConfigurations = (00000000000000000000000B, 00000000000000000000000C);
+            defaultConfigurationIsVisible = 0;
+            defaultConfigurationName = Release;
+        };
+        000000000000000000000009 = {
+            isa = XCBuildConfiguration;
+            buildSettings = { SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; };
+            name = Debug;
+        };
+        00000000000000000000000A = {
+            isa = XCBuildConfiguration;
+            buildSettings = { SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; };
+            name = Release;
+        };
+        00000000000000000000000B = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                ARCHS = arm64;
+                CODE_SIGN_ENTITLEMENTS = CalibRaw.entitlements;
+                CODE_SIGN_STYLE = Automatic;
+                GENERATE_INFOPLIST_FILE = NO;
+                PRODUCT_BUNDLE_IDENTIFIER = "de.duecki.calibraw.ios-dev";
+                PRODUCT_NAME = CalibRaw;
+                SUPPORTED_PLATFORMS = iphoneos;
+                TARGETED_DEVICE_FAMILY = "1,2";
+            };
+            name = Debug;
+        };
+        00000000000000000000000C = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                ARCHS = arm64;
+                CODE_SIGN_ENTITLEMENTS = CalibRaw.entitlements;
+                CODE_SIGN_STYLE = Automatic;
+                GENERATE_INFOPLIST_FILE = NO;
+                PRODUCT_BUNDLE_IDENTIFIER = "de.duecki.calibraw.ios-dev";
+                PRODUCT_NAME = CalibRaw;
+                SUPPORTED_PLATFORMS = iphoneos;
+                TARGETED_DEVICE_FAMILY = "1,2";
+            };
+            name = Release;
+        };
+    };
+    rootObject = 000000000000000000000001;
+}

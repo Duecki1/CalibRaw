@@ -238,7 +238,11 @@ const BIREFNET: ModelSpec = ModelSpec {
     },
     input: InputShape::Square { edge: 1024 },
     // Measured 4557 MiB.
-    session: birefnet_session(measured_peak(4600)),
+    // CPU peak: 5093 MiB with ONNX Runtime 1.24.2 on Apple Silicon,
+    // sequential execution, two threads, no arena or weight prepacking and
+    // memory patterns disabled. Rounded up; placement adds a margin before
+    // admitting the session against iOS's process memory allowance.
+    session: birefnet_session(measured_peak(4600)).with_cpu_memory(5300 * MIB),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -262,7 +266,8 @@ const BIREFNET_LOW: ModelSpec = ModelSpec {
     },
     input: InputShape::Square { edge: 768 },
     // Measured 3018 MiB.
-    session: birefnet_session(measured_peak(3100)),
+    // CPU peak: 4643 MiB under the same configuration as BIREFNET above.
+    session: birefnet_session(measured_peak(3100)).with_cpu_memory(4800 * MIB),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -653,6 +658,13 @@ mod tests {
                 WebGpuCpuNodes::None
             };
             assert_eq!(session.webgpu_cpu_nodes, webgpu_cpu_nodes, "{model:?}");
+        }
+    }
+
+    #[test]
+    fn subject_cpu_sessions_have_memory_admission_budgets() {
+        for (model, peak_mib) in [(AiModel::BiRefNet, 5300), (AiModel::BiRefNetLow, 4800)] {
+            assert_eq!(model.spec().session.cpu_memory_bytes, Some(peak_mib * MIB));
         }
     }
 }

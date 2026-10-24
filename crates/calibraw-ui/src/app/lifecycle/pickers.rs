@@ -70,7 +70,16 @@ impl CalibRawApp {
             return;
         }
         self.develop_ui.loading_thumbnail.clear();
-        match self.platform.open_raw_document() {
+        let anchor = self.egui_ctx.input(|input| {
+            let viewport = input.viewport_rect();
+            input.pointer.interact_pos().map(|position| {
+                [
+                    (position.x - viewport.min.x) / viewport.width().max(1.0),
+                    (position.y - viewport.min.y) / viewport.height().max(1.0),
+                ]
+            })
+        });
+        match self.platform.open_raw_document_at(anchor) {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.ui.notice = None;
@@ -182,6 +191,7 @@ impl CalibRawApp {
 
         while let Some(result) = self.platform.take_picker_result() {
             self.android.picker_pending = false;
+            self.android.photo_import = None;
             self.handle_android_picker_result(result, frame);
         }
         self.poll_android_external_open(frame);

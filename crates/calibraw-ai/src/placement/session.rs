@@ -5,6 +5,7 @@ use super::failure::{
     quarantine_after_device_loss, GpuFailure, LoggedGpuErrors, RunFailure, SetupFailure,
 };
 use super::job_record::{GpuJobRecord, GpuSessionRecord};
+use super::memory::ensure_cpu_memory_available;
 use super::out_of_memory;
 use super::place::{CpuReason, GpuProvider, Placement, ProviderOffer};
 use super::providers::{cpu_provider, offered_providers, with_gpu_provider};
@@ -44,6 +45,10 @@ pub(crate) struct SessionOptions {
     /// margin included: allocations beyond it fail, or on Windows overcommit
     /// video memory, which pages until the slowdown ends in a driver reset.
     pub(crate) gpu_memory_bytes: Option<u64>,
+    /// Peak CPU memory of creating and running a fresh session, in bytes.
+    /// On iOS it must fit in the process allowance, with a margin, before
+    /// loading the model. Unknown peaks are not subject to admission.
+    pub(crate) cpu_memory_bytes: Option<u64>,
     /// Nodes its WebGPU sessions run on the CPU (`quirks::WebGpuCpuNodes`).
     pub(crate) webgpu_cpu_nodes: WebGpuCpuNodes,
 }
@@ -55,12 +60,18 @@ impl SessionOptions {
             allow_acceleration: true,
             cpu_fallback_profile: CpuFallbackProfile::Default,
             gpu_memory_bytes: None,
+            cpu_memory_bytes: None,
             webgpu_cpu_nodes: WebGpuCpuNodes::None,
         }
     }
 
     pub(crate) const fn with_gpu_memory(mut self, bytes: u64) -> Self {
         self.gpu_memory_bytes = Some(bytes);
+        self
+    }
+
+    pub(crate) const fn with_cpu_memory(mut self, bytes: u64) -> Self {
+        self.cpu_memory_bytes = Some(bytes);
         self
     }
 
@@ -151,6 +162,8 @@ fn commit_model(builder: &mut SessionBuilder, source: &Path) -> Result<Session> 
 }
 
 fn create_cpu_session_inner(source: &Path, options: &SessionOptions) -> Result<Session> {
+    // Check before loading: the peak already includes the model's weights.
+    ensure_cpu_memory_available(options)?;
     let builder = Session::builder().context("create CPU ONNX Runtime session")?;
     let builder = configure_common_builder(builder)?;
     let mut builder = configure_cpu_builder(builder, options)?

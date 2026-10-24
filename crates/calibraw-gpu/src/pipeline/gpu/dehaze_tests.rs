@@ -575,6 +575,42 @@ fn dehaze_depth_gain_is_monotonic_bounded_and_ignores_tiny_departures() -> anyho
 }
 
 #[test]
+fn dehaze_depth_extreme_departures_match_the_bounded_reference() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("Dehaze depth regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    // Keep the scene luminance fixed and move its base to cover both tails of
+    // the depth curve without introducing unrelated extreme colour values.
+    let departures = [-128.0, -64.0, -8.0, 0.0, 8.0, 64.0, 128.0];
+    let cases: Vec<DepthCase> = departures
+        .iter()
+        .map(|&departure| DepthCase {
+            rgb: [0.18; 3],
+            departure,
+            amount: 1.0,
+        })
+        .collect();
+    let output = run_depth(&device, &queue, [1.0; 3], &cases)?;
+    for (rgb, departure) in output.iter().zip(departures) {
+        // Evaluate the documented threshold and soft limit in f64, whose
+        // tanh remains finite across these departures on the host.
+        let measured = f64::from(departure);
+        let shrunk = measured - 0.15 * (measured / 0.15).tanh();
+        let limit = if shrunk > 0.0 { 2.0 } else { 0.75 };
+        let limited = shrunk / (1.0 + (shrunk / limit).powi(2)).sqrt();
+        let expected = 0.18 * (0.5 * limited).exp2();
+        for &channel in rgb {
+            assert!(
+                channel.is_finite() && (f64::from(channel) - expected).abs() < 1e-5,
+                "depth at {departure} stops returned {rgb:?}, expected {expected}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn dehaze_depth_lifts_moderate_colours_but_not_casts_neutrals_or_vivid_colours(
 ) -> anyhow::Result<()> {
     let Some((device, queue)) = request_test_device() else {

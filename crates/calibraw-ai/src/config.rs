@@ -121,24 +121,25 @@ pub(crate) struct AiCapabilities {
 /// How much memory AI may take beside the editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MemoryClass {
-    /// Shared with the system and the RAW preview (Android): models unload
+    /// Shared with the system and the RAW preview (Android and iOS): models unload
     /// after each job, depth runs on a lean CPU session and High subject
     /// quality is unavailable.
     Constrained,
     Standard,
 }
 
-pub(crate) const CAPABILITIES: AiCapabilities = if cfg!(target_os = "android") {
-    AiCapabilities {
-        memory: MemoryClass::Constrained,
-        keep_mask_sessions_warm: false,
-    }
-} else {
-    AiCapabilities {
-        memory: MemoryClass::Standard,
-        keep_mask_sessions_warm: true,
-    }
-};
+pub(crate) const CAPABILITIES: AiCapabilities =
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        AiCapabilities {
+            memory: MemoryClass::Constrained,
+            keep_mask_sessions_warm: false,
+        }
+    } else {
+        AiCapabilities {
+            memory: MemoryClass::Standard,
+            keep_mask_sessions_warm: true,
+        }
+    };
 
 pub struct AiConfig {
     /// Whether sessions may use GPU execution providers. Android always may.
@@ -268,7 +269,14 @@ fn write() -> RwLockWriteGuard<'static, Settings> {
 
 #[cfg(test)]
 mod tests {
-    use super::Sha256;
+    use super::{MemoryClass, Sha256, CAPABILITIES};
+
+    #[test]
+    fn current_target_uses_its_memory_policy() {
+        let constrained = matches!(std::env::consts::OS, "android" | "ios");
+        assert_eq!(CAPABILITIES.memory == MemoryClass::Constrained, constrained);
+        assert_eq!(CAPABILITIES.keep_mask_sessions_warm, !constrained);
+    }
 
     #[test]
     fn sha256_accepts_only_lowercase_hex_digests() {
