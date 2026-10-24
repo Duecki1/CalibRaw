@@ -81,7 +81,26 @@ int main(void) {
         NSCAssert(responses.count == 1 && [responses[0][@"errors"] count] == 1,
             @"Confirm must deliver selected-provider results");
         NSCAssert(!activeDocumentPicker, @"Confirm must release the picker session");
-        puts("Picker lifecycle: chooser handoff, close, confirm, and exactly-once completion passed");
+
+        [responses removeAllObjects];
+        delegate = start_session(responses);
+        NSURL *inbox = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
+            URLByAppendingPathComponent:@"CalibRaw-test-Inbox" isDirectory:YES];
+        [NSFileManager.defaultManager createDirectoryAtURL:inbox withIntermediateDirectories:YES
+            attributes:nil error:nil];
+        NSURL *pickedCopy = [inbox URLByAppendingPathComponent:@"photo.dng"];
+        NSCAssert([[NSData data] writeToURL:pickedCopy atomically:NO], @"The test must create a picked copy");
+        [delegate documentPicker:(UIDocumentPickerViewController *)dismissal didPickDocumentsAtURLs:@[pickedCopy]];
+        NSCAssert(responses.count == 1 && [responses[0][@"paths"] count] == 1,
+            @"Files must deliver the picked copy");
+        NSString *staged = responses[0][@"paths"][0];
+        NSCAssert([staged hasPrefix:responses[0][@"staging_directory"]]
+            && [staged.lastPathComponent isEqualToString:@"photo.dng"],
+            @"Files must move the picked copy into import staging under its own name");
+        NSCAssert(![NSFileManager.defaultManager fileExistsAtPath:pickedCopy.path],
+            @"Files must not leave the picked copy in its Inbox");
+        [NSFileManager.defaultManager removeItemAtURL:inbox error:nil];
+        puts("Picker lifecycle: chooser handoff, close, confirm, Files staging, and exactly-once completion passed");
     }
     return 0;
 }

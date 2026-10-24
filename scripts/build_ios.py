@@ -181,9 +181,9 @@ def main():
     target_dir.mkdir(parents=True, exist_ok=True)
     onnx_framework, onnx_license = stage_onnx_runtime(target_dir, environment)
     environment["ORT_IOS_XCFWK_PATH"] = str(onnx_framework)
-    # Include the Clang target to bypass older IPA caches whose device prefix
-    # accidentally contained simulator objects despite a matching source pin.
-    prefix = target_dir / "ios-native" / target / MINIMUM_IOS / clang_target / "libraw"
+    # The Clang target names architecture, minimum iOS and simulator or device,
+    # so builds for different slices never share LibRaw objects.
+    prefix = target_dir / "ios-native" / clang_target / "libraw"
     native_environment = environment.copy()
     native_environment.update({
         "CC": run(["xcrun", "--sdk", sdk_name, "--find", "clang"], environment, True).strip(),

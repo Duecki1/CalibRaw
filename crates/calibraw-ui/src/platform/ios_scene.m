@@ -50,6 +50,17 @@ static UIWindow *calibraw_ios_window(void) {
 
 typedef void (*CalibRawDocumentCallback)(void *, const char *);
 
+// A new folder for one import's files. Rust removes it, with everything in it,
+// once the import finishes (`IosImportStaging`), so its name and parent must
+// match what that type accepts.
+static NSURL *calibraw_ios_create_import_staging(NSError **error) {
+    NSURL *staging = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
+        URLByAppendingPathComponent:[@"CalibRaw-import-" stringByAppendingString:NSUUID.UUID.UUIDString]
+        isDirectory:YES];
+    return [NSFileManager.defaultManager createDirectoryAtURL:staging withIntermediateDirectories:YES
+        attributes:nil error:error] ? staging : nil;
+}
+
 @interface CalibRawDocumentPickerDelegate : NSObject <UIDocumentPickerDelegate, PHPickerViewControllerDelegate, UIAdaptivePresentationControllerDelegate>
 @property(nonatomic) void *context;
 @property(nonatomic) CalibRawDocumentCallback callback;
@@ -81,15 +92,41 @@ static CalibRawDocumentPickerDelegate *activeDocumentPicker;
 }
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    // presentFiles opens documents as copies, so every URL is this app's own
+    // file in its tmp Inbox. Move them into the import staging folder; one that
+    // cannot be staged is deleted, so no copy outlives the import.
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSError *stagingError = nil;
+    NSURL *staging = calibraw_ios_create_import_staging(&stagingError);
+    if (!staging) {
+        for (NSURL *url in urls) {
+            [files removeItemAtURL:url error:nil];
+        }
+        [self finish:@{@"error": stagingError.localizedDescription ?: @"Could not stage the selected files"}];
+        return;
+    }
     NSMutableArray<NSString *> *paths = [NSMutableArray array];
-    for (NSURL *url in urls) {
+    NSMutableArray<NSString *> *errors = [NSMutableArray array];
+    [urls enumerateObjectsUsingBlock:^(NSURL *url, NSUInteger index, BOOL *stop) {
         if (!url.isFileURL) {
-            [self finish:@{@"error": @"The selected document is not a local file"}];
+            [errors addObject:@"The selected document is not a local file"];
             return;
         }
-        [paths addObject:url.path];
-    }
-    [self finish:@{@"paths": paths}];
+        // One folder per file keeps the provider's name even when two match.
+        NSURL *folder = [staging URLByAppendingPathComponent:[NSString stringWithFormat:@"%lu", (unsigned long)index]
+            isDirectory:YES];
+        NSURL *destination = [folder URLByAppendingPathComponent:url.lastPathComponent];
+        NSError *moveError = nil;
+        if ([files createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:&moveError]
+            && [files moveItemAtURL:url toURL:destination error:&moveError]) {
+            [paths addObject:destination.path];
+        } else {
+            [files removeItemAtURL:url error:nil];
+            [errors addObject:[NSString stringWithFormat:@"%@: %@", url.lastPathComponent,
+                moveError.localizedDescription ?: @"Could not stage the selected file"]];
+        }
+    }];
+    [self finish:@{@"paths": paths, @"errors": errors, @"staging_directory": staging.path}];
 }
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
@@ -138,12 +175,9 @@ static CalibRawDocumentPickerDelegate *activeDocumentPicker;
         [self finish:@{@"cancelled": @YES}];
         return;
     }
-    NSURL *staging = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
-        URLByAppendingPathComponent:[@"CalibRaw-import-" stringByAppendingString:NSUUID.UUID.UUIDString]
-        isDirectory:YES];
     NSError *directoryError = nil;
-    if (![NSFileManager.defaultManager createDirectoryAtURL:staging withIntermediateDirectories:YES
-        attributes:nil error:&directoryError]) {
+    NSURL *staging = calibraw_ios_create_import_staging(&directoryError);
+    if (!staging) {
         [self finish:@{@"error": directoryError.localizedDescription ?: @"Could not stage Photos import"}];
         return;
     }

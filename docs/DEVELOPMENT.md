@@ -24,137 +24,6 @@ To move the pin, update `Cargo.toml`, `scripts/build_libraw.sh`,
 `android/app/src/main/cpp/CMakeLists.txt`, the Flatpak manifest and the
 `libraw-<commit>` cache key in `build-linux-appimage.yml` together.
 
-## Experimental iOS
-
-This is a first-launch prototype, not a supported iOS release. It builds the
-existing Android-style mobile UI with Metal and a small sandbox-backed platform
-implementation. The import button offers native Files and Photos pickers. Files
-and Photos are chosen from a menu anchored to the import tap; Photos opens
-full-screen. The Home Screen icon uses the existing CalibRaw artwork, compiled
-as an opaque app-icon asset catalog for both simulator and device bundles. Files
-accepts multiple RAW and rendered photos,
-including files supplied by iCloud Drive and other document providers. Selected
-files are copied into `Documents/CalibRaw` on a worker thread. The mobile library
-supports folders, reopening, rename/delete, sidecars, reviews and thumbnail caches;
-its relative document IDs remain valid if the sandbox container moves. Imports
-never overwrite existing photos. Photos uses the private system picker without
-requesting photo-library read permission. It requests current file representations,
-prefers RAW when offered, and copies provider files before their temporary URLs
-expire. Available representations of edited RAW assets are controlled by Photos;
-original RAW retrieval is not guaranteed for every asset.
-
-Image exports save to Photos using separate Add Photos Only permission, declared
-by `NSPhotoLibraryAddUsageDescription`. Success is reported only after PhotoKit
-finishes saving. Denied access or unsupported export formats report an error;
-there is no silent Files fallback. A private cache copy supports the native share
-sheet without requesting library read access. Existing `Documents/Exports` files
-are left untouched. `Documents/CalibRaw` and any older exported files remain
-exposed under the app's Files container and through USB file sharing.
-
-The build helper stages the official ONNX Runtime 1.24.2 XCFramework, verifies
-its pinned SHA-256, links the appropriate device/simulator slice and includes
-its license in the app bundle. iOS uses the built-in runtime initializer rather
-than desktop runtime downloads or child-process probes. AI sessions use the
-existing constrained CPU configuration; CoreML acceleration is not enabled.
-Device builds request the Increased Memory Limit entitlement, also retained in
-the IPA's ad-hoc signature for re-signing. Before loading BiRefNet, the runtime
-checks its CPU memory budget against the process allowance and reports an error
-if it cannot fit. Subject masking has been verified on an iPhone 17 Pro Max;
-other models still require device testing.
-
-Filesystem import, image decoding, persistence, path confinement and sidecar/cache
-operations have automated tests. Startup has been tested on the simulator and a
-physical device; simulator background/foreground resumption has
-also been checked. Interactive Files/Photos selection, Photos authorization and
-saving, and the full GPU develop/export workflow still require device testing.
-Camera-profile folder picking, Lensfun, CoreML acceleration, replay encoding and
-complete background-task integration are not implemented.
-
-The native picker lifecycle regression checks that chooser dismissal cannot
-release the Photos callback session, and that close, confirm and interactive
-dismissal complete exactly once. With a booted Apple Silicon simulator:
-
-```sh
-sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
-xcrun --sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator \
-  -isysroot "$sdk" -fobjc-arc -Werror packaging/ios/tests/picker_lifecycle.m \
-  -framework UIKit -framework Foundation -framework CoreGraphics \
-  -framework UniformTypeIdentifiers -framework Photos -framework PhotosUI \
-  -o target/picker-lifecycle-test
-xcrun simctl spawn booted "$PWD/target/picker-lifecycle-test"
-```
-
-This exercises callback ownership and transitions, not taps in Apple's system UI.
-
-Use macOS, full Xcode with an installed iOS simulator runtime, Python 3,
-autoconf, automake, GNU libtool and pkg-config. Put rustup's cargo/rustc on PATH
-and install the simulator standard library for the selected Rust toolchain:
-
-```sh
-rustup target add aarch64-apple-ios-sim
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  python3 scripts/build_ios.py
-```
-
-Intel Macs use `x86_64-apple-ios` instead. The helper uses the active Rust
-toolchain. To select another compiler without changing the repository's pin,
-install the matching target with `rustup target add --toolchain <toolchain> <target>`
-and set `RUSTUP_TOOLCHAIN=<toolchain>` for the helper. Homebrew's keg-only rustup installation
-also needs `$(brew --prefix rustup)/bin` prepended to PATH.
-
-The helper builds pinned LibRaw into a prefix keyed by both Rust and Clang targets, then
-packages and ad-hoc signs `target/ios-simulator/debug/CalibRaw.app`. Desktop and
-Android native dependency staging are untouched. Use `--release` for an
-optimized bundle, `--no-run` to only build, or `--device <UDID>` to select an
-available compatible simulator from `xcrun simctl list devices available`.
-If Xcode's Simulator GUI is missing, the helper still installs and launches
-headlessly; interactive testing needs the Simulator GUI from a complete Xcode
-installation.
-
-The bundle declares a single UIKit window scene. A native scene delegate attaches
-eframe's window to that scene, forwards lifecycle notifications required by the
-pinned winit version and reports safe-area insets to the shared mobile layout.
-The linked SDK version is not rewritten.
-
-For a physical device, enable Developer Mode, pair it with Xcode, install the
-device target for the selected toolchain and supply your Apple development team:
-
-```sh
-rustup target add aarch64-apple-ios
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  python3 scripts/build_ios.py \
-    --physical-device <UDID> --team <TEAM_ID>
-```
-
-Find the device with `xcrun devicectl list devices`. The helper uses the packaging
-Xcode project for automatic provisioning and signing, then installs and launches
-`de.duecki.calibraw.ios-dev`. The signed Debug bundle is in
-`target/ios-device/xcode/Build/Products/Debug-iphoneos/CalibRaw.app`.
-Trust the developer in Settings > General > VPN & Device Management if launch is
-denied. Free development accounts permit only three installed development apps
-and use short-lived provisioning profiles; free a slot yourself if installation
-hits that limit, and rebuild when the profile expires. The helper never uninstalls
-another app. This is development signing, not App Store distribution.
-
-For an unsigned device IPA that can be re-signed with AltStore, no connected
-phone, development team or signing secrets are required:
-
-```sh
-rustup target add aarch64-apple-ios
-python3 scripts/build_ios.py --release --ipa
-```
-
-The output is `target/ios-ipa/release/CalibRaw-ios-arm64.ipa`. It contains an
-ARM64 device app, not a simulator build, and must be signed before installation.
-The Build iOS workflow uploads this IPA on pushes, pull requests and manual runs;
-tagged releases include it as a downloadable asset.
-
-Check device, IPA and simulator target selection without Xcode or downloads:
-
-```sh
-python3 -m unittest discover -s scripts/tests -p 'test_build_ios.py'
-```
-
 ## Checks
 
 Ordinary CI runs these on every push and pull request; run them before
@@ -507,6 +376,67 @@ Wayland/winit platform adapters, bindgen's parser toolchain, and framework
 transitive dependencies have incompatible version requirements. Workspace
 direct dependencies are kept on the versions used by the application, and no
 dependency is upgraded solely to silence a duplicate-version warning.
+
+## Experimental iOS
+
+An unsupported prototype: the Android mobile UI on Metal, with a sandboxed
+platform layer in `crates/calibraw-ui/src/platform/ios*.{rs,m}`.
+
+- **Library.** Files and Photos pickers copy photos into `Documents/CalibRaw`
+  (exposed in the Files app and USB file sharing). Library IDs are paths
+  relative to that folder, so they survive container moves. Imports never
+  overwrite. Photos uses the out-of-process picker without read permission and
+  prefers RAW representations where Photos offers them.
+- **Exports** are saved to Photos with Add Photos Only permission
+  (`NSPhotoLibraryAddUsageDescription`); a denied or failed save reports an
+  error rather than falling back to Files.
+- **AI** links the pinned ONNX Runtime XCFramework and runs on the constrained
+  CPU configuration; CoreML is not enabled. Device builds request the Increased
+  Memory Limit entitlement, and BiRefNet is refused before loading when its CPU
+  peak does not fit `os_proc_available_memory()`.
+- **Not implemented:** Lensfun, camera-profile folders, CoreML, replay
+  encoding and background-task integration.
+
+Requirements: macOS, full Xcode with an iOS simulator runtime, Python 3,
+autoconf, automake, GNU libtool and pkg-config, and rustup's cargo/rustc on
+PATH (Homebrew's keg-only rustup: prepend `$(brew --prefix rustup)/bin`).
+`scripts/build_ios.py` builds the pinned LibRaw for the target, downloads and
+verifies the pinned ONNX Runtime, then bundles and signs the app:
+
+```sh
+# Simulator (Intel Macs: x86_64-apple-ios). --device <UDID> picks a simulator,
+# --no-run only builds, --release optimizes.
+rustup target add aarch64-apple-ios-sim
+python3 scripts/build_ios.py
+
+# Physical device with Developer Mode, paired in Xcode (xcrun devicectl list devices).
+rustup target add aarch64-apple-ios
+python3 scripts/build_ios.py --physical-device <UDID> --team <TEAM_ID>
+
+# Unsigned ARM64 IPA for re-signing (e.g. AltStore); no device or team needed.
+python3 scripts/build_ios.py --release --ipa
+```
+
+Device builds use `packaging/ios/CalibRaw.xcodeproj` for automatic development
+signing and install `de.duecki.calibraw.ios-dev`; free accounts allow three
+development apps with short-lived profiles. The IPA is written to
+`target/ios-ipa/release/CalibRaw-ios-arm64.ipa`; the Build iOS workflow uploads
+it and tagged releases attach it.
+
+Tests: `python3 -m unittest discover -s scripts/tests -p 'test_build_ios.py'`
+checks target selection without Xcode. `packaging/ios/tests/picker_lifecycle.m`
+checks that the native pickers complete exactly once; run it on a booted Apple
+Silicon simulator:
+
+```sh
+sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
+xcrun --sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator \
+  -isysroot "$sdk" -fobjc-arc -Werror packaging/ios/tests/picker_lifecycle.m \
+  -framework UIKit -framework Foundation -framework CoreGraphics \
+  -framework UniformTypeIdentifiers -framework Photos -framework PhotosUI \
+  -o target/picker-lifecycle-test
+xcrun simctl spawn booted "$PWD/target/picker-lifecycle-test"
+```
 
 ## Android Build & Signing
 

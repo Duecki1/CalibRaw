@@ -16,6 +16,9 @@ pub fn base_device_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
         adapter.limits()
     } else {
         let mut limits = wgpu::Limits::default();
+        // wgpu's Metal backend reports 15 on iOS (60 varying components / 4),
+        // below the default of 16, so the default request would fail there.
+        // Other adapters report at least 16 and keep the default.
         limits.max_inter_stage_shader_variables = limits
             .max_inter_stage_shader_variables
             .min(adapter.limits().max_inter_stage_shader_variables);

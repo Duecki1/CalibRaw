@@ -415,9 +415,12 @@ fn haze_deepened(
     let log_luminance = log2(luminance);
     let measured_departure = log_luminance - haze_depth_base(cells, log_luminance);
     // Shrunk smoothly towards zero by the threshold: no slope at zero, full
-    // slope well beyond it.
+    // slope well beyond it. tanh rounds to +/-1 in f32 beyond +/-10, so
+    // bounding its argument preserves the result and avoids overflow in
+    // backend intrinsics that evaluate tanh through exponentials.
+    let threshold_departure = clamp(measured_departure / HAZE_DEPTH_THRESHOLD_STOPS, -10.0, 10.0);
     let departure = measured_departure
-        - HAZE_DEPTH_THRESHOLD_STOPS * tanh(measured_departure / HAZE_DEPTH_THRESHOLD_STOPS);
+        - HAZE_DEPTH_THRESHOLD_STOPS * tanh(threshold_departure);
     let limit = select(HAZE_DEPTH_DARKEN_STOPS, HAZE_DEPTH_BRIGHTEN_STOPS, departure > 0.0);
     let limited = departure * inverseSqrt(1.0 + departure * departure / (limit * limit));
     let gain = exp2(amount * HAZE_DEPTH_CONTRAST * limited);

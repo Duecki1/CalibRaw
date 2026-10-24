@@ -80,6 +80,7 @@ class IosBuildTests(unittest.TestCase):
             (["--no-run"], "x86_64", "x86_64-apple-ios", "x86_64",
              "iphonesimulator", "-simulator"),
         ]
+        prefixes = []
         for arguments, host, target, architecture, sdk, suffix in cases:
             with self.subTest(arguments=arguments, host=host):
                 (native, native_env), (cargo, cargo_env) = self.configure_build(arguments, host)
@@ -95,27 +96,9 @@ class IosBuildTests(unittest.TestCase):
                 self.assertEqual(native_env["CXX"], f"/tools/{sdk}/clang++")
                 self.assertEqual(cargo_env["SDKROOT"], f"/SDKs/{sdk}.sdk")
                 self.assertEqual(cargo_env["CALIBRAW_LIBRAW_ROOT"], native[2])
-
-    def test_ipa_bypasses_previously_cached_simulator_libraw(self):
-        # Old IPA builds used the device Rust target but simulator Clang flags.
-        legacy = self.target_dir / "ios-native/aarch64-apple-ios" / build_ios.MINIMUM_IOS / "libraw"
-        pkgconfig = legacy / "lib/pkgconfig/libraw.pc"
-        pkgconfig.parent.mkdir(parents=True)
-        pkgconfig.write_text("cached simulator archive", encoding="utf-8")
-        stamp = legacy / "share/calibraw/libraw-revision"
-        stamp.parent.mkdir(parents=True)
-        revision = next(
-            line.split('"')[1]
-            for line in (build_ios.ROOT / "Cargo.toml").read_text(encoding="utf-8").splitlines()
-            if line.startswith("libraw_revision = ")
-        )
-        stamp.write_text(revision + "\n", encoding="utf-8")
-
-        (native, _), (_, cargo_env) = self.configure_build(["--release", "--ipa"])
-
-        self.assertNotEqual(Path(native[2]), legacy)
-        self.assertEqual(cargo_env["CALIBRAW_LIBRAW_ROOT"], native[2])
-        self.assertEqual(pkgconfig.read_text(encoding="utf-8"), "cached simulator archive")
+                prefixes.append(native[2])
+        # The two device cases share a slice; every other slice has its own LibRaw.
+        self.assertEqual(len(set(prefixes)), 3)
 
 
 if __name__ == "__main__":

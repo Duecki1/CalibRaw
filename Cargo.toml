@@ -97,6 +97,8 @@ objc2-metal = { version = "0.3.2", default-features = false, features = ["std", 
 objc2 = { version = "0.6.4", default-features = false, features = ["std"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSWindow"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString"] }
+# The version winit uses, for the UIKit view eframe creates on iOS.
+raw-window-handle = "=0.6.2"
 naga = { version = "29", features = ["wgsl-in"] }
 naga_oil = { version = "=0.22.0", default-features = false }
 

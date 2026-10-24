@@ -18,7 +18,7 @@ use std::time::UNIX_EPOCH;
 /// replacing path components concurrently; this mutex serializes this owner's writes.
 #[cfg_attr(
     test,
-    allow(dead_code, reason = "service forwarding is integrated separately")
+    allow(dead_code, reason = "only ios.rs calls it outside its unit tests")
 )]
 pub(super) struct IosLibrary {
     root: PathBuf,
@@ -74,7 +74,7 @@ impl Drop for PartialCopy {
 
 #[cfg_attr(
     test,
-    allow(dead_code, reason = "service forwarding is integrated separately")
+    allow(dead_code, reason = "only ios.rs calls it outside its unit tests")
 )]
 impl IosLibrary {
     pub(super) fn new(root: PathBuf, cache: PathBuf) -> Result<Self, String> {
