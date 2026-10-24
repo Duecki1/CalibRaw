@@ -124,6 +124,9 @@ static SYSTEM_INSET_LEFT_PX: AtomicI32 = AtomicI32::new(0);
 static SYSTEM_INSET_TOP_PX: AtomicI32 = AtomicI32::new(0);
 static SYSTEM_INSET_RIGHT_PX: AtomicI32 = AtomicI32::new(0);
 static SYSTEM_INSET_BOTTOM_PX: AtomicI32 = AtomicI32::new(0);
+/// Height of the soft keyboard from the bottom of the window in pixels, 0
+/// while it is hidden.
+static KEYBOARD_INSET_BOTTOM_PX: AtomicI32 = AtomicI32::new(0);
 
 fn results() -> &'static Mutex<VecDeque<PickerResult>> {
     RESULTS.get_or_init(|| Mutex::new(VecDeque::new()))
@@ -199,6 +202,12 @@ pub fn system_bar_insets_points(pixels_per_point: f32) -> [f32; 4] {
         to_points(SYSTEM_INSET_RIGHT_PX.load(Ordering::Acquire)),
         to_points(SYSTEM_INSET_BOTTOM_PX.load(Ordering::Acquire)),
     ]
+}
+
+/// Height of the soft keyboard from the bottom of the window in points, 0
+/// while it is hidden.
+pub fn keyboard_inset_points(pixels_per_point: f32) -> f32 {
+    KEYBOARD_INSET_BOTTOM_PX.load(Ordering::Acquire).max(0) as f32 / pixels_per_point.max(0.5)
 }
 
 pub fn take_picker_result() -> Option<PickerResult> {

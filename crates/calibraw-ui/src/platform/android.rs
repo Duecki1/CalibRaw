@@ -87,6 +87,10 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::system_bar_insets_points(pixels_per_point)
     }
 
+    fn keyboard_inset_points(&self, pixels_per_point: f32) -> f32 {
+        calibraw_ffi::keyboard_inset_points(pixels_per_point)
+    }
+
     fn set_light_system_bars(&self, light: bool) -> Result<(), String> {
         calibraw_ffi::set_light_system_bars(&self.app, light)
     }

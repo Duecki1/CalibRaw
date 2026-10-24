@@ -200,6 +200,10 @@ public final class CalibRawActivity extends NativeActivity {
                         WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
                 nativeOnSystemInsetsChanged(
                         safeInsets.left, safeInsets.top, safeInsets.right, safeInsets.bottom);
+                // Edge-to-edge windows are not resized for the soft keyboard; it overlays
+                // the surface, so the UI moves dialogs above it itself.
+                nativeOnKeyboardInsetChanged(
+                        windowInsets.getInsets(WindowInsets.Type.ime()).bottom);
                 return windowInsets;
             });
             decorView.requestApplyInsets();
@@ -251,6 +255,7 @@ public final class CalibRawActivity extends NativeActivity {
 
     private static native boolean nativeOnBackRequested();
     private static native void nativeOnSystemInsetsChanged(int left, int top, int right, int bottom);
+    private static native void nativeOnKeyboardInsetChanged(int bottom);
     private static native void nativeOnFilePicked(
             String cachedPath,
             String displayName,

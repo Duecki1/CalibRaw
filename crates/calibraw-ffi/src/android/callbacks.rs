@@ -35,6 +35,18 @@ pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnSystemIn
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnKeyboardInsetChanged<
+    'local,
+>(
+    _unowned_env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    bottom: jni::sys::jint,
+) {
+    KEYBOARD_INSET_BOTTOM_PX.store(bottom.max(0), Ordering::Release);
+    request_repaint();
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnFilePicked<'local>(
     mut unowned_env: EnvUnowned<'local>,
     _class: JClass<'local>,

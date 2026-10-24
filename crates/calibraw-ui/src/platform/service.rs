@@ -150,6 +150,11 @@ pub(crate) trait Platform: Send + Sync {
     fn system_bar_insets_points(&self, _pixels_per_point: f32) -> [f32; 4] {
         [0.0; 4]
     }
+    /// Height in points of an on-screen keyboard that overlays the bottom of
+    /// the window, 0 while none is shown or when the window resizes for it.
+    fn keyboard_inset_points(&self, _pixels_per_point: f32) -> f32 {
+        0.0
+    }
     fn set_light_system_bars(&self, _light: bool) -> Result<(), String> {
         Ok(())
     }

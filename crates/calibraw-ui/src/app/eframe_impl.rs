@@ -124,7 +124,8 @@ impl CalibRawApp {
         self.library.poll_dropped_raw_import(ctx);
     }
 
-    /// Picker and publish results, the back button and system-bar safe areas.
+    /// Picker and publish results, the back button, system-bar safe areas and
+    /// the soft keyboard's height, which dialogs stay above.
     fn handle_android_platform_events(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.poll_android_picker(frame);
         self.poll_android_export_publish();
@@ -142,9 +143,12 @@ impl CalibRawApp {
             }
         }
 
-        let [left, top, right, bottom] = self
-            .platform
-            .system_bar_insets_points(ui.ctx().pixels_per_point());
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        moduwu_design::set_keyboard_inset(
+            ui.ctx(),
+            self.platform.keyboard_inset_points(pixels_per_point),
+        );
+        let [left, top, right, bottom] = self.platform.system_bar_insets_points(pixels_per_point);
         if top > 0.0 {
             egui::Panel::top("android_status_bar_safe_area")
                 .resizable(false)
