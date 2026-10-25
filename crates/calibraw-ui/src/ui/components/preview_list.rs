@@ -46,6 +46,13 @@ impl<K> Default for PreviewListResponse<K> {
     }
 }
 
+/// How tall a [`preview_list`] is at most; shorter when its rows all fit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ListHeight {
+    Rows(f32),
+    Points(f32),
+}
+
 /// Whether the pointer hovers without pressing. A touch or a held button
 /// means the pointer is doing something else.
 fn pointer_hovers(ui: &Ui) -> bool {
@@ -59,17 +66,21 @@ pub(crate) fn pointer_previews(ui: &Ui) -> bool {
     pointer_hovers(ui) && !egui::Popup::is_any_open(ui.ctx())
 }
 
-/// Draws `items` in a scroll area `visible_rows` rows high, or shorter when
-/// they all fit.
+/// Draws `items` in a scroll area `height` tall, or shorter when they all
+/// fit.
 pub(crate) fn preview_list<K: Clone>(
     ui: &mut Ui,
     id_salt: impl egui::AsIdSalt,
-    visible_rows: f32,
+    height: ListHeight,
     items: impl IntoIterator<Item = PreviewListItem<K>>,
 ) -> PreviewListResponse<K> {
     let previews = pointer_previews(ui);
-    let row_height = moduwu_design::CONTROL_HEIGHT + ui.spacing().item_spacing.y;
-    let height = row_height * visible_rows;
+    let height = match height {
+        ListHeight::Rows(rows) => {
+            (moduwu_design::CONTROL_HEIGHT + ui.spacing().item_spacing.y) * rows
+        }
+        ListHeight::Points(points) => points,
+    };
     egui::ScrollArea::vertical()
         .id_salt(id_salt)
         .max_height(height)
@@ -86,13 +97,11 @@ pub(crate) fn preview_list<K: Clone>(
         .inner
 }
 
-/// A labelled dropdown of `items` whose closed field reads the selected row.
-/// Resting the pointer on a row of the open menu reports it as hovered.
+/// A full-width dropdown of `items` whose closed field reads the selected
+/// row. Resting the pointer on a row of the open menu reports it as hovered.
 pub(crate) fn preview_combo<K: Clone>(
     ui: &mut Ui,
-    label: &str,
     id_salt: impl egui::AsIdSalt,
-    preferred_width: f32,
     items: Vec<PreviewListItem<K>>,
 ) -> PreviewListResponse<K> {
     let selected_text = items
@@ -109,7 +118,7 @@ pub(crate) fn preview_combo<K: Clone>(
     // The open menu is this dropdown's own, so only the pointer decides.
     let previews = pointer_hovers(ui);
     let mut response = PreviewListResponse::default();
-    moduwu_design::form_combo(ui, label, id_salt, selected_text, preferred_width, |ui| {
+    moduwu_design::combo_box(id_salt, selected_text, ui.available_width()).show_ui(ui, |ui| {
         response = show_items(ui, items, previews, |ui, label, selected| {
             ui.selectable_label(selected, label)
         });
@@ -162,27 +171,27 @@ mod tests {
             .collect()
     }
 
-    /// The height `preview_list` takes for `count` rows of up to `visible`,
+    /// The height `preview_list` takes for `count` rows of up to `height`,
     /// drawn below the fold of a scrolling panel.
-    fn height_below_the_fold(count: usize, visible: f32) -> f32 {
-        let mut height = 0.0;
+    fn height_below_the_fold(count: usize, height: ListHeight) -> f32 {
+        let mut measured = 0.0;
         egui::__run_test_ui(|ui| {
             egui::ScrollArea::vertical()
                 .max_height(200.0)
                 .show(ui, |ui| {
                     ui.add_space(400.0);
                     let top = ui.cursor().top();
-                    preview_list(ui, "list", visible, rows(count));
-                    height = ui.cursor().top() - top - ui.spacing().item_spacing.y;
+                    preview_list(ui, "list", height, rows(count));
+                    measured = ui.cursor().top() - top - ui.spacing().item_spacing.y;
                 });
         });
-        height
+        measured
     }
 
     #[test]
     fn a_list_below_the_fold_keeps_its_visible_rows() {
         let row_height = moduwu_design::CONTROL_HEIGHT + egui::Spacing::default().item_spacing.y;
-        let height = height_below_the_fold(20, 7.5);
+        let height = height_below_the_fold(20, ListHeight::Rows(7.5));
         assert!(
             (height - row_height * 7.5).abs() < 1.0,
             "{height} for 7.5 rows of {row_height}"
@@ -192,6 +201,13 @@ mod tests {
     #[test]
     fn a_short_list_shrinks_to_its_rows() {
         let row_height = moduwu_design::CONTROL_HEIGHT + egui::Spacing::default().item_spacing.y;
-        assert!(height_below_the_fold(2, 7.5) < row_height * 2.5);
+        assert!(height_below_the_fold(2, ListHeight::Rows(7.5)) < row_height * 2.5);
+        assert!(height_below_the_fold(2, ListHeight::Points(500.0)) < row_height * 2.5);
+    }
+
+    #[test]
+    fn a_list_takes_the_points_it_is_given() {
+        let height = height_below_the_fold(40, ListHeight::Points(300.0));
+        assert!((height - 300.0).abs() < 1.0, "{height}");
     }
 }

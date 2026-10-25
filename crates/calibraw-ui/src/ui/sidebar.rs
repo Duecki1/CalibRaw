@@ -101,6 +101,7 @@ mod inpainting;
 mod look_lut;
 mod masks;
 mod navigation;
+mod portrait_fill;
 #[cfg(test)]
 mod test_support;
 

@@ -4,12 +4,14 @@ use super::adjustment_cards::CardAction;
 use super::*;
 use crate::app::LOOK_LUT_CARD_TITLE;
 use crate::luts::{LookLut, LutEntry, LutId};
-use crate::ui::components::preview_list::{preview_list, PreviewListItem};
+use crate::ui::components::preview_list::{preview_list, ListHeight, PreviewListItem};
 
 /// Libraries with more LUTs than this get a search field and a Recent group.
 const SEARCH_FROM_LUTS: usize = 8;
-/// Rows the list shows before it scrolls.
+/// Rows the list shows before it scrolls in the docked panel.
 const VISIBLE_LUT_ROWS: f32 = 7.5;
+/// Rows the list keeps in the portrait panel, where it fills the panel.
+const MIN_PORTRAIT_LUT_ROWS: f32 = 3.0;
 
 /// What the LUT card asks for.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,7 +36,9 @@ pub(super) struct LookLutView<'a> {
     /// Recently chosen library LUTs, most recent first.
     pub(super) recent: &'a [LutId],
     pub(super) can_import: bool,
-    pub(super) foldable: bool,
+    /// Docked, the card folds and its list is a few rows high. In portrait
+    /// it shows alone, and its list fills the panel so the card fits whole.
+    pub(super) layout: ScreenLayout,
 }
 
 impl Sidebar {
@@ -45,34 +49,42 @@ impl Sidebar {
             action: None,
             hovered: None,
         };
-        let card =
-            Self::adjustment_card(ui, LOOK_LUT_CARD_TITLE, true, view.foldable, true, |ui| {
-                let query = Self::show_look_lut_search(ui, view.entries.len());
-                let list = preview_list(
-                    ui,
-                    "develop-look-lut-list",
-                    VISIBLE_LUT_ROWS,
-                    look_lut_items(view, &query),
-                );
-                if let Some(choice) = list.clicked {
-                    response.action = Some(LookLutAction::Select(choice));
+        let foldable = view.layout == ScreenLayout::Horizontal;
+        let card = Self::adjustment_card(ui, LOOK_LUT_CARD_TITLE, false, foldable, true, |ui| {
+            let query = Self::show_look_lut_search(ui, view.entries.len());
+            let items = look_lut_items(view, &query);
+            let list_id = "develop-look-lut-list";
+            let list = match view.layout {
+                ScreenLayout::Horizontal => {
+                    preview_list(ui, list_id, ListHeight::Rows(VISIBLE_LUT_ROWS), items)
                 }
-                response.hovered = list.hovered;
-                if view.can_import && moduwu_design::full_width_button(ui, "Import…").clicked() {
-                    response.action = Some(LookLutAction::Import);
+                ScreenLayout::Vertical => {
+                    let min_height = (moduwu_design::CONTROL_HEIGHT + ui.spacing().item_spacing.y)
+                        * MIN_PORTRAIT_LUT_ROWS;
+                    Self::portrait_fill(ui, list_id, min_height, |ui, height| {
+                        preview_list(ui, list_id, ListHeight::Points(height), items)
+                    })
                 }
-                if let Some(look) = view.look {
-                    let mut percent = look.amount * 100.0;
-                    if AdjustmentSlider::new("Amount", &mut percent, 0.0..=100.0)
-                        .decimals(0)
-                        .step(1.0)
-                        .reset_to(LookLut::DEFAULT_AMOUNT * 100.0)
-                        .show(ui)
-                    {
-                        response.action = Some(LookLutAction::Amount(percent / 100.0));
-                    }
+            };
+            if let Some(choice) = list.clicked {
+                response.action = Some(LookLutAction::Select(choice));
+            }
+            response.hovered = list.hovered;
+            if view.can_import && moduwu_design::full_width_button(ui, "Import…").clicked() {
+                response.action = Some(LookLutAction::Import);
+            }
+            if let Some(look) = view.look {
+                let mut percent = look.amount * 100.0;
+                if AdjustmentSlider::new("Amount", &mut percent, 0.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .reset_to(LookLut::DEFAULT_AMOUNT * 100.0)
+                    .show(ui)
+                {
+                    response.action = Some(LookLutAction::Amount(percent / 100.0));
                 }
-            });
+            }
+        });
         if matches!(card, CardAction::Reset) {
             response.action = Some(LookLutAction::Select(None));
         }
@@ -174,7 +186,7 @@ mod tests {
             entries,
             recent,
             can_import: true,
-            foldable: true,
+            layout: ScreenLayout::Horizontal,
         }
     }
 
@@ -224,5 +236,54 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn the_portrait_card_fits_the_panel_with_its_list_scrolling_inside() {
+        let entries: Vec<_> = (0..30u8)
+            .map(|index| entry(&format!("Look {index}"), index))
+            .collect();
+        let look = LookLut {
+            id: entries[0].id,
+            name: entries[0].name.clone(),
+            amount: 1.0,
+        };
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let panel = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(360.0, 520.0));
+        let mut frame = || {
+            let mut overflow = 0.0;
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(panel),
+                    ..Default::default()
+                },
+                |ui| {
+                    let scroll = egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.add_space(140.0);
+                            Sidebar::show_look_lut(
+                                ui,
+                                &LookLutView {
+                                    look: Some(&look),
+                                    layout: ScreenLayout::Vertical,
+                                    ..view(&entries, &[])
+                                },
+                            );
+                        });
+                    overflow = scroll.content_size.y - scroll.inner_rect.height();
+                    Sidebar::settle_portrait_fill(ui.ctx(), overflow);
+                },
+            );
+            (overflow, output.shapes)
+        };
+        frame();
+        let (overflow, shapes) = frame();
+        assert!(overflow.abs() < 1.0, "{overflow}");
+        let amount =
+            crate::ui::sidebar::test_support::text_rect(&shapes, "Amount").expect("Amount label");
+        assert!(amount.bottom() <= panel.bottom(), "{amount:?}");
+        assert!(crate::ui::sidebar::test_support::text_rect(&shapes, "Look 29").is_none());
     }
 }

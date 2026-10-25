@@ -240,6 +240,10 @@ impl Sidebar {
                         },
                     );
                 });
+            Self::settle_portrait_fill(
+                ui.ctx(),
+                scroll_output.content_size.y - scroll_output.inner_rect.height(),
+            );
 
             if layout == ScreenLayout::Horizontal && app.ui.sidebar_tab == SidebarTab::Masks {
                 if let Some(header_rect) = mask_edit_header_rect {
@@ -385,7 +389,7 @@ impl Sidebar {
                         false,
                     );
                 }
-                AdjustmentSection::Lut => Self::show_look_lut_card(ui, app, false),
+                AdjustmentSection::Lut => Self::show_look_lut_card(ui, app, layout),
                 AdjustmentSection::Color => {
                     changed |= Self::show_color(
                         ui,
@@ -463,7 +467,7 @@ impl Sidebar {
                             true,
                         );
                     }
-                    DevelopCard::Lut => Self::show_look_lut_card(ui, app, true),
+                    DevelopCard::Lut => Self::show_look_lut_card(ui, app, layout),
                     DevelopCard::Color => {
                         changed |= Self::show_color(
                             ui,
@@ -594,7 +598,7 @@ impl Sidebar {
             && (app.luts.is_available() || app.develop.look_lut.is_some())
     }
 
-    fn show_look_lut_card(ui: &mut Ui, app: &mut CalibRawApp, foldable: bool) {
+    fn show_look_lut_card(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
         if !Self::look_lut_card_shown(app) {
             return;
         }
@@ -605,7 +609,7 @@ impl Sidebar {
                 entries: app.luts.entries(),
                 recent: app.luts.recent(),
                 can_import: app.luts.is_available(),
-                foldable,
+                layout,
             },
         );
         if let Some(choice) = response.hovered {
@@ -640,13 +644,7 @@ impl Sidebar {
         );
         let mut combo = None;
         moduwu_design::section_card(ui, "Camera profile", |ui| {
-            combo = Some(preview_combo(
-                ui,
-                "Profile",
-                "current-image-camera-profile",
-                240.0,
-                items,
-            ));
+            combo = Some(preview_combo(ui, "current-image-camera-profile", items));
         });
         moduwu_design::card_gap(ui);
 
