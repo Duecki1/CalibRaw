@@ -17,6 +17,7 @@
 mod caps;
 pub(crate) mod discord;
 mod files;
+mod fonts;
 mod graphics;
 mod service;
 
@@ -37,6 +38,7 @@ pub(crate) use files::{
     is_flatpak, is_onnx_runtime_library_name, show_fatal_message, trash, trash_name, FileDialog,
     ONNX_RUNTIME_IS_DLL, PRIMARY_MODIFIER_NAME,
 };
+pub(crate) use fonts::{chinese_font, SystemFont};
 pub(crate) use graphics::{PROCESSING_DRIVER_INSTALL_HINT, PROCESSING_GRAPHICS_API};
 pub(crate) use service::{
     CameraProfileFolderResult, ExportPublishResult, ImportProgress, ImportedLibraryDocument,

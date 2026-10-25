@@ -749,6 +749,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "skrifa",
  "tempfile",
  "trash",
  "ureq",

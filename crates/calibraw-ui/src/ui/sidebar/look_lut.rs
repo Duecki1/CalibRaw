@@ -219,7 +219,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::ui::theme::install(&ctx);
         let panel = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(360.0, 520.0));
-        let mut frame = || {
+        let frame = || {
             let mut overflow = 0.0;
             let output = ctx.run_ui(
                 egui::RawInput {
