@@ -126,7 +126,7 @@ impl Develop {
                 app.develop_ui.reference.split_ratio = ratio.clamp(min_ratio, max_ratio);
             }
         }
-        if divider_response.double_clicked() {
+        if moduwu_design::double_tapped(&divider_response) {
             app.develop_ui.reference.split_ratio = 0.5;
         }
 

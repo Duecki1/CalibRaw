@@ -446,7 +446,7 @@ pub(crate) fn feathered_range_track<R: FeatheredRange>(
     if response.drag_stopped() {
         ui.data_mut(|data| data.remove::<RangeDrag>(drag_id));
     }
-    if enabled && response.double_clicked() {
+    if enabled && moduwu_design::double_tapped(&response) {
         range.reset();
     }
 

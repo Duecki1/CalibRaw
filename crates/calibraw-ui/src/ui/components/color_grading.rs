@@ -230,7 +230,7 @@ fn color_wheel_picker(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
         painter.circle_filled(marker, 5.0, Color32::WHITE);
         painter.circle_stroke(marker, 6.5, Stroke::new(1.5, Color32::BLACK));
 
-        if response.double_clicked() {
+        if moduwu_design::double_tapped(&response) {
             wheel.reset();
             changed = true;
         } else if let Some(pointer) = (response.dragged() || response.clicked())

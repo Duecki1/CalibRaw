@@ -360,7 +360,7 @@ impl TopBar {
                     "Preview zoom\nDouble-click to reset."
                 },
             );
-            if icon_response.double_clicked() {
+            if moduwu_design::double_tapped(&icon_response) {
                 reset_requested = true;
             }
 

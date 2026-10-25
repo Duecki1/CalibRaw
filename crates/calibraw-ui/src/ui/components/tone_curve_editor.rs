@@ -17,11 +17,38 @@ struct GrabbedPoint {
     offset: [f32; 2],
 }
 
-pub(crate) fn tone_curve_editor(ui: &mut Ui, curve: &mut PointCurve, curve_color: Color32) -> bool {
+/// The curve editor. With `touch`, a drag that begins away from every point
+/// is left to the scroll area around the editor, so the panel scrolls.
+pub(crate) fn tone_curve_editor(
+    ui: &mut Ui,
+    curve: &mut PointCurve,
+    curve_color: Color32,
+    touch: bool,
+) -> bool {
     curve.sanitize();
     let width = ui.available_width().max(1.0);
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, CURVE_HEIGHT), Sense::click_and_drag());
+    let area_sense = if touch {
+        Sense::click()
+    } else {
+        Sense::click_and_drag()
+    };
+    let (rect, area) = ui.allocate_exact_size(egui::vec2(width, CURVE_HEIGHT), area_sense);
+    // Each point takes drags that begin within the radius a drag picks it
+    // from. Its taps count as taps on the curve: a widget that takes drags
+    // also takes the clicks on it, so the area beneath would miss them.
+    let area_id = area.id;
+    let response = (0..curve.len as usize).fold(area, |response, index| {
+        let hit = egui::Rect::from_center_size(
+            curve_to_screen(rect, curve.points[index]),
+            egui::Vec2::splat(PICK_RADIUS * 4.0),
+        )
+        .intersect(rect);
+        response.union(ui.interact(
+            hit,
+            area_id.with(("curve-point", index)),
+            Sense::click_and_drag(),
+        ))
+    });
     let painter = ui.painter_at(rect);
     let overlay_painter = ui.painter().with_clip_rect(ui.clip_rect());
     let visuals = ui.visuals();
@@ -131,7 +158,6 @@ pub(crate) fn tone_curve_editor(ui: &mut Ui, curve: &mut PointCurve, curve_color
     }
 
     // Touch adds points with a double tap, so a single tap can select one.
-    let touch = crate::platform::PlatformCaps::CURRENT.is_mobile();
     if !touch && response.clicked() {
         if let Some(pointer) = response.interact_pointer_pos() {
             let point = screen_to_curve(rect, pointer);
@@ -139,7 +165,7 @@ pub(crate) fn tone_curve_editor(ui: &mut Ui, curve: &mut PointCurve, curve_color
         }
     }
 
-    if touch && response.double_clicked() {
+    if touch && moduwu_design::double_tapped(&response) {
         if let Some(pointer) = response.interact_pointer_pos() {
             let point = screen_to_curve(rect, pointer);
             changed |= insert_point(curve, point);
@@ -332,7 +358,7 @@ pub(crate) fn tone_curve_channel_editor(
 
         {
             let (curve, color) = selected_tone_curve(curves, *selected_tab);
-            changed |= tone_curve_editor(ui, curve, color);
+            changed |= tone_curve_editor(ui, curve, color, touch);
         }
     } else {
         ui.horizontal(|ui| {
@@ -370,7 +396,7 @@ pub(crate) fn tone_curve_channel_editor(
             });
 
             let (curve, color) = selected_tone_curve(curves, *selected_tab);
-            changed |= tone_curve_editor(ui, curve, color);
+            changed |= tone_curve_editor(ui, curve, color, touch);
         });
     }
 
@@ -436,7 +462,7 @@ mod tests {
             },
             |ui| {
                 ui.set_width(300.0);
-                tone_curve_editor(ui, curve, Color32::WHITE);
+                tone_curve_editor(ui, curve, Color32::WHITE, false);
                 rect = ui.min_rect();
             },
         );
@@ -450,6 +476,153 @@ mod tests {
             pressed,
             modifiers: egui::Modifiers::NONE,
         }
+    }
+
+    /// Shows the editor at the top of a scroll area taller than the screen
+    /// and returns the curve's rect and the scroll offset.
+    fn show_scrolling(
+        ctx: &egui::Context,
+        curve: &mut PointCurve,
+        touch: bool,
+        events: Vec<egui::Event>,
+    ) -> (egui::Rect, f32) {
+        let mut result = (egui::Rect::NOTHING, 0.0);
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(320.0, 260.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let output = egui::ScrollArea::vertical()
+                    .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                    .show(ui, |ui| {
+                        ui.set_width(300.0);
+                        let top = ui.cursor().min;
+                        tone_curve_editor(ui, curve, Color32::WHITE, touch);
+                        ui.add_space(400.0);
+                        egui::Rect::from_min_size(top, egui::vec2(300.0, CURVE_HEIGHT))
+                    });
+                result = (output.inner, output.state.offset.y);
+            },
+        );
+        result
+    }
+
+    /// Shows the editor until the scroll area knows its content is taller
+    /// than the screen; egui picks a drag's target from the previous frame.
+    fn settle_scrolling(ctx: &egui::Context, curve: &mut PointCurve, touch: bool) -> egui::Rect {
+        show_scrolling(ctx, curve, touch, vec![]);
+        show_scrolling(ctx, curve, touch, vec![]).0
+    }
+
+    /// Drags from `start` by `delta` in steps, then releases.
+    fn drag_scrolling(
+        ctx: &egui::Context,
+        curve: &mut PointCurve,
+        touch: bool,
+        start: Pos2,
+        delta: egui::Vec2,
+    ) -> f32 {
+        show_scrolling(
+            ctx,
+            curve,
+            touch,
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+        );
+        let mut end = start;
+        for step in 1..=6 {
+            end = start + delta * (step as f32 / 6.0);
+            show_scrolling(ctx, curve, touch, vec![egui::Event::PointerMoved(end)]);
+        }
+        show_scrolling(ctx, curve, touch, vec![button(end, false)]);
+        show_scrolling(ctx, curve, touch, vec![]).1
+    }
+
+    fn curve_with_middle_point() -> PointCurve {
+        let mut curve = PointCurve::linear();
+        assert!(insert_point(&mut curve, [0.5, 0.5]));
+        curve
+    }
+
+    #[test]
+    fn touch_drags_away_from_points_scroll_the_panel() {
+        for touch in [true, false] {
+            let ctx = egui::Context::default();
+            let mut curve = curve_with_middle_point();
+            let before = curve;
+            let rect = settle_scrolling(&ctx, &mut curve, touch);
+            // Top left of the curve, far from every point.
+            let empty = curve_to_screen(rect, [0.2, 0.8]);
+            let offset = drag_scrolling(&ctx, &mut curve, touch, empty, egui::vec2(0.0, -60.0));
+            assert_eq!(curve, before, "touch={touch}");
+            if touch {
+                assert!(offset > 30.0, "the panel scrolls: {offset}");
+            } else {
+                // The mouse keeps the whole curve as its drag target.
+                assert_eq!(offset, 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn touch_drags_on_a_point_move_it_instead_of_scrolling() {
+        let ctx = egui::Context::default();
+        let mut curve = curve_with_middle_point();
+        let rect = settle_scrolling(&ctx, &mut curve, true);
+        // Grab beside the point, within its pick radius.
+        let start = curve_to_screen(rect, curve.points[1]) + egui::vec2(8.0, 8.0);
+        let offset = drag_scrolling(&ctx, &mut curve, true, start, egui::vec2(0.0, -42.0));
+        assert_eq!(offset, 0.0);
+        assert!((curve.points[1][0] - 0.5).abs() < 1e-4);
+        assert!((curve.points[1][1] - (0.5 + 42.0 / CURVE_HEIGHT)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn secondary_clicks_on_a_point_still_remove_it() {
+        for touch in [true, false] {
+            let ctx = egui::Context::default();
+            let mut curve = curve_with_middle_point();
+            let rect = settle_scrolling(&ctx, &mut curve, touch);
+            let point = curve_to_screen(rect, curve.points[1]);
+            let secondary = |pressed| egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            show_scrolling(
+                &ctx,
+                &mut curve,
+                touch,
+                vec![egui::Event::PointerMoved(point), secondary(true)],
+            );
+            show_scrolling(&ctx, &mut curve, touch, vec![secondary(false)]);
+            assert_eq!(curve.len, 2, "touch={touch}");
+        }
+    }
+
+    #[test]
+    fn a_double_tap_adds_a_point_when_the_taps_land_apart() {
+        let ctx = egui::Context::default();
+        let mut curve = PointCurve::linear();
+        let rect = settle_scrolling(&ctx, &mut curve, true);
+        let first = curve_to_screen(rect, [0.3, 0.6]);
+        // Beyond egui's own 6 points between the two clicks.
+        let second = first + egui::vec2(8.0, 3.0);
+        for pos in [first, second] {
+            show_scrolling(
+                &ctx,
+                &mut curve,
+                true,
+                vec![egui::Event::PointerMoved(pos), button(pos, true)],
+            );
+            show_scrolling(&ctx, &mut curve, true, vec![button(pos, false)]);
+        }
+        assert_eq!(curve.len, 3);
     }
 
     #[test]

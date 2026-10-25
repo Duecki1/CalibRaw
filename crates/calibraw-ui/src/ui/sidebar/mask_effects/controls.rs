@@ -235,7 +235,7 @@ pub(super) fn position_pad(
         ]
     };
     let before = *position;
-    if response.double_clicked() {
+    if moduwu_design::double_tapped(&response) {
         *position = [specs[0].default, specs[1].default];
     } else if response.clicked() || response.dragged() {
         response.request_focus();

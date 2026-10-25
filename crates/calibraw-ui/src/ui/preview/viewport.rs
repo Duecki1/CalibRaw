@@ -519,7 +519,7 @@ impl Preview {
         viewport.fit_gesture = !viewport.white_balance_canvas
             && !viewport.point_color_canvas
             && !viewport.touch_navigation
-            && viewport.response.double_clicked();
+            && moduwu_design::double_tapped(&viewport.response);
         if viewport.fit_gesture {
             // Cancelling reprocesses at the zoom before the fit.
             actions.push(viewport.navigation());

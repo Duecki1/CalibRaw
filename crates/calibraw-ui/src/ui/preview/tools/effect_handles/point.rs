@@ -97,7 +97,7 @@ pub(super) fn show(
     let response = grab(ui, id, placement.drawn, spec.name, value);
 
     let mut position = spec.position;
-    if response.double_clicked() {
+    if moduwu_design::double_tapped(&response) {
         position = [spec.specs[0].default, spec.specs[1].default];
     } else if let Some(moved) = drag_to(ui, &response, id, placement) {
         position = spec.clamp(frames.position_at(spec.frame, moved));
@@ -105,7 +105,7 @@ pub(super) fn show(
         let steps = arrow_steps(ui, &response);
         position = spec.clamp([position[0] + steps.x, position[1] + steps.y]);
     }
-    if position != spec.position || response.double_clicked() {
+    if position != spec.position || moduwu_design::double_tapped(&response) {
         edits.push(EffectHandleEdit::Position(position));
     }
 

@@ -256,7 +256,7 @@ fn edit_for(
     frames: Frames<'_>,
     settings: &TiltShiftEffectSettings,
 ) -> Option<EffectHandleEdit> {
-    if response.double_clicked() {
+    if moduwu_design::double_tapped(response) {
         return Some(match part {
             Part::Center => {
                 EffectHandleEdit::Position([params::CENTER_X.default, params::CENTER_Y.default])
