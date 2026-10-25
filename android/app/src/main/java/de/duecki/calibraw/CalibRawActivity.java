@@ -37,12 +37,14 @@ public final class CalibRawActivity extends NativeActivity {
     private static final int TABLET_SMALLEST_WIDTH_DP = 600;
     private static final int OPEN_RAW_DOCUMENT = 1001;
     private static final int OPEN_CAMERA_PROFILE_FOLDER = 1003;
+    private static final int OPEN_LUT_FILES = 1004;
     // A launch with this extra set to true times GPU processing stages
     // (`cargo xtask android-bench`).
     private static final String EXTRA_GPU_STAGE_TIMING = "de.duecki.calibraw.GPU_STAGE_TIMING";
 
     private StorageManager storageManager;
     private ProfileImporter profileImporter;
+    private LutImporter lutImporter;
     private ExportPublisher exportPublisher;
     private TaskNotificationController taskNotificationController;
     // Created on first use; UI thread only.
@@ -117,6 +119,7 @@ public final class CalibRawActivity extends NativeActivity {
                 nativeOnCameraProfileFolderPicked(cachedPath, displayName, profileCount, error);
             }
         });
+        lutImporter = new LutImporter(this, CalibRawActivity::nativeOnLutFilesPicked);
         exportPublisher = new ExportPublisher(this, CalibRawActivity::nativeOnExportPublished);
 
         configureSystemBarsAndInsets();
@@ -311,6 +314,7 @@ public final class CalibRawActivity extends NativeActivity {
     private static native void nativeOnCameraProfileFolderImportStarted(String displayName);
     private static native void nativeOnCameraProfileFolderPicked(
             String cachedPath, String displayName, int profileCount, String error);
+    private static native void nativeOnLutFilesPicked(String stagingDirectory, String error);
     private static native void nativeOnExportPublished(String location, String uri, String error);
 
     public void openRawDocument() {
@@ -323,11 +327,18 @@ public final class CalibRawActivity extends NativeActivity {
                 profileImporter.createFolderPickerIntent(), OPEN_CAMERA_PROFILE_FOLDER));
     }
 
+    public void openLutFiles() {
+        runOnUiThread(() -> startActivityForResult(
+                lutImporter.createFilePickerIntent(), OPEN_LUT_FILES));
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == OPEN_CAMERA_PROFILE_FOLDER) {
             profileImporter.handleFolderPickerResult(resultCode, data);
+        } else if (requestCode == OPEN_LUT_FILES) {
+            lutImporter.handleFilePickerResult(resultCode, data);
         } else if (requestCode == OPEN_RAW_DOCUMENT) {
             storageManager.handleRawDocumentResult(resultCode, data);
         }

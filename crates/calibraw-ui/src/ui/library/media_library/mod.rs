@@ -144,6 +144,7 @@ pub(in crate::ui::library) fn start_local_library_export(
     assets: &[LibraryAsset],
     settings: ExportSettings,
     format: ExportFormat,
+    export_override: crate::app::ExportOverride,
     _frame: &eframe::Frame,
 ) -> bool {
     let targets = android_targets(assets)
@@ -153,7 +154,7 @@ pub(in crate::ui::library) fn start_local_library_export(
     if targets.is_empty() {
         return false;
     }
-    app.start_android_library_exports(targets, settings, format);
+    app.start_android_library_exports(targets, settings, format, export_override);
     true
 }
 

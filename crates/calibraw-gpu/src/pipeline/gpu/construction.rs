@@ -92,7 +92,7 @@ impl RawGpuPipeline {
             focus_distance: 0.0,
             capture_metadata: Default::default(),
             cfa_kind,
-            raw_pixels: vec![0u16; pixels],
+            raw_pixels: vec![0u16; pixels].into(),
             scene_linear_raster: None,
             scene_referred_raster: false,
             color_indices: crate::pipeline::CompactPixelMap::repeating(
@@ -103,11 +103,8 @@ impl RawGpuPipeline {
                 cfa_pattern,
             ),
             wb_coeffs: [1.0; 4],
-            cam_to_srgb: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-            ],
+            profile_color: Default::default(),
+            color_source: None,
             black_levels: [0.0; 4],
             black_levels_per_pixel: crate::pipeline::CompactPixelMap::repeating(
                 EDGE,
@@ -119,10 +116,7 @@ impl RawGpuPipeline {
             white_levels: [65535.0; 4],
             sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: crate::pipeline::NoiseProfile::default(),
-            camera_profile: crate::pipeline::CameraProfile::default(),
-            camera_profile_source: None,
             available_camera_profiles: Vec::new(),
-            white_balance_model: None,
             lens_geometry: None,
             lens_shading: None,
             lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
@@ -145,6 +139,7 @@ impl RawGpuPipeline {
             config: RawGpuPipelineConfig {
                 mask_atlas_edge_override,
                 mask_layer_capacity_override: None,
+                profile_capacity_bytes: 0,
             },
         })
     }
@@ -171,6 +166,11 @@ impl RawGpuPipeline {
             config: RawGpuPipelineConfig {
                 mask_atlas_edge_override: options.mask_atlas_edge,
                 mask_layer_capacity_override: options.mask_layers,
+                profile_capacity_bytes: if options.profile_preview {
+                    PREVIEWED_PROFILE_BYTES
+                } else {
+                    0
+                },
             },
         })
     }
@@ -200,13 +200,23 @@ impl RawGpuPipeline {
 
         let geometry = compute_derived_geometry(raw, params, quality, config);
 
-        let profile_gpu_data = raw.camera_profile.gpu_data();
+        let profile_gpu_data = params.profile_color.camera_profile.gpu_data();
         profile_gpu_data.validate()?;
+        // Words past the tables are never read; they leave room for the
+        // tables of a previewed profile (`upload_profile_tables`).
+        let mut profile_words = profile_gpu_data.words;
+        let word_bytes = std::mem::size_of::<[f32; 4]>();
+        let capacity_words = usize::try_from(config.profile_capacity_bytes)
+            .map_err(|_| anyhow!("GPU profile capacity does not fit in usize"))?
+            / word_bytes;
+        if profile_words.len() < capacity_words {
+            profile_words.resize(capacity_words, [0.0; 4]);
+        }
+        let profile_capacity_words = profile_words.len();
         let profile_buffer_size_bytes = u64::try_from(
-            profile_gpu_data
-                .words
+            profile_words
                 .len()
-                .checked_mul(std::mem::size_of::<[f32; 4]>())
+                .checked_mul(word_bytes)
                 .ok_or_else(|| anyhow!("GPU profile buffer size overflows"))?,
         )
         .map_err(|_| anyhow!("GPU profile buffer size does not fit in u64"))?;
@@ -242,7 +252,7 @@ impl RawGpuPipeline {
             create_pipeline_surfaces(device, queue, raw, ai_cfa, &geometry)?;
 
         let camera = params.camera_for_raw_texture(has_ai_cfa);
-        let buffers = create_pipeline_buffers(device, params, &camera, &profile_gpu_data.words);
+        let buffers = create_pipeline_buffers(device, params, &camera, &profile_words);
 
         let layouts = create_bind_group_layouts(
             device,
@@ -320,6 +330,9 @@ impl RawGpuPipeline {
             mask_data_buffer: buffers.mask_data_buffer,
             tone_histogram_buffer: buffers.tone_histogram_buffer,
             tone_stats_buffer: buffers.tone_stats_buffer,
+            profile_buffer: buffers.profile_buffer,
+            profile_capacity_words,
+            uploaded_profile: Mutex::new(Arc::clone(&params.profile_color)),
             effect_inputs,
             indices,
             post_blur_glow_passes,

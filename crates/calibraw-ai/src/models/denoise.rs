@@ -307,9 +307,9 @@ mod tests {
     use crate::config::{RuntimeSource, Sha256};
     use crate::jobs::AiJobEvent;
     use crate::pipeline::{
-        build_proxy, AiDenoisedImage, CameraProfile, CfaKind, CompactPixelMap, ExposureParams,
-        GpuParams, LoadedRaw, MaskStack, NoiseProfile, PipelineOptions, ProcessingQuality,
-        ProxySpec, RawGpuPipeline, SensorSaturation,
+        build_proxy, AiDenoisedImage, CfaKind, CompactPixelMap, ExposureParams, GpuParams,
+        LoadedRaw, MaskStack, NoiseProfile, PipelineOptions, ProcessingQuality, ProxySpec,
+        RawGpuPipeline, SensorSaturation,
     };
     use crate::registry::AiModel;
     use crate::slot::acquire_model_session;
@@ -334,20 +334,14 @@ mod tests {
             scene_referred_raster: false,
             color_indices: CompactPixelMap::repeating(width, height, 2, 2, vec![0, 1, 3, 2]),
             wb_coeffs: [2.0, 1.0, 1.5, 1.0],
-            cam_to_srgb: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-            ],
+            profile_color: Default::default(),
+            color_source: None,
             black_levels: [64.0; 4],
             black_levels_per_pixel: CompactPixelMap::repeating(width, height, 1, 1, vec![64.0]),
             white_levels: [16_383.0; 4],
             sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: NoiseProfile::default(),
-            camera_profile: CameraProfile::default(),
-            camera_profile_source: None,
             available_camera_profiles: Vec::new(),
-            white_balance_model: None,
             lens_geometry: None,
             lens_shading: None,
             lateral_chromatic_aberration: calibraw_core::pipeline::LateralChromaticAberration::NONE,
@@ -449,7 +443,7 @@ mod tests {
         let restored = load_saved_result(&path, &raw).unwrap().unwrap();
         assert_eq!(restored.raw_cfa16.as_ref(), expected.raw_cfa16.as_ref());
 
-        raw.raw_pixels[3] ^= 1;
+        raw.raw_pixels.make_mut()[3] ^= 1;
         assert!(load_saved_result(&path, &raw).is_err());
     }
 
@@ -492,7 +486,7 @@ mod tests {
         let saved = AiDenoisedImage::new_bayer_cfa(4, 4, values).unwrap();
         let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         save_result(&path, &raw, &saved, &cancellation).unwrap();
-        raw.raw_pixels[3] ^= 1;
+        raw.raw_pixels.make_mut()[3] ^= 1;
 
         let receiver = spawn_rawnind_denoise(
             directory.join("models-do-not-exist"),

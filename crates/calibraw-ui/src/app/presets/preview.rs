@@ -2,90 +2,18 @@
 //! panel. Only the Develop preview reads it, through the projection in
 //! `preview_visibility`; saved edits, history and export never contain it.
 use super::*;
+use crate::app::hover_preview::HoverPreview;
 use crate::app::preview_visibility::PreviewVisibility;
 
-/// How long the pointer must rest on a preset before the preview renders.
-/// Without a delay, moving across the list re-renders the photo once per row.
-const HOVER_PREVIEW_DELAY: Duration = Duration::from_millis(150);
-
-#[derive(Default)]
-pub(crate) struct PresetHoverPreview {
-    /// The preset under the pointer this frame. Written by the Presets panel
-    /// and consumed every frame, so a hidden panel ends the preview.
-    requested: Option<PathBuf>,
-    /// The preset under the pointer and when the pointer reached it.
-    pending: Option<(PathBuf, Instant)>,
-    /// The preset rendered on the preview.
-    shown: Option<PathBuf>,
-    /// A preset that was just applied. It is not previewed again until the
-    /// pointer leaves it; previewing it on top of itself would add its masks
-    /// a second time.
-    suppressed: Option<PathBuf>,
-}
-
-impl PresetHoverPreview {
-    /// Reports the preset under the pointer for this frame.
-    pub(crate) fn request(&mut self, path: PathBuf) {
-        self.requested = Some(path);
-    }
-
-    /// Ends the preview of `path` because it was just applied. Returns
-    /// whether a preview was on screen.
-    fn suppress(&mut self, path: &Path) -> bool {
-        self.suppressed = Some(path.to_owned());
-        self.pending = None;
-        self.shown.take().is_some()
-    }
-
-    /// Advances the hover delay. Returns whether the shown preset changed,
-    /// and how long to wait before the pending preset is due.
-    fn advance(&mut self, now: Instant) -> (bool, Option<Duration>) {
-        let requested = self.requested.take();
-        if self.suppressed.is_some() && requested != self.suppressed {
-            self.suppressed = None;
-        }
-        let requested = requested.filter(|path| Some(path) != self.suppressed.as_ref());
-
-        let mut wait = None;
-        let next = match requested {
-            None => {
-                self.pending = None;
-                None
-            }
-            Some(path) => {
-                let (pending_path, since) = match &self.pending {
-                    Some((pending_path, since)) if *pending_path == path => {
-                        (pending_path.clone(), *since)
-                    }
-                    _ => {
-                        self.pending = Some((path.clone(), now));
-                        (path, now)
-                    }
-                };
-                let waited = now.saturating_duration_since(since);
-                if waited >= HOVER_PREVIEW_DELAY {
-                    Some(pending_path)
-                } else {
-                    wait = Some(HOVER_PREVIEW_DELAY - waited);
-                    // Keep the current preview until the next one is due, so
-                    // moving between rows does not flash the unedited photo.
-                    self.shown.clone()
-                }
-            }
-        };
-        let changed = next != self.shown;
-        self.shown = next;
-        (changed, wait)
-    }
-}
+/// The preset rendered on the preview, keyed by its file.
+pub(crate) type PresetHoverPreview = HoverPreview<PathBuf>;
 
 impl CalibRawApp {
     /// The preset rendered on the Develop preview without being applied.
     pub(in crate::app) fn previewed_preset(&self) -> Option<&Preset> {
         self.presets
             .hover
-            .shown
-            .as_deref()
+            .shown()
             .and_then(|path| self.presets.get(path))
     }
 
@@ -115,79 +43,7 @@ impl CalibRawApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn path(name: &str) -> PathBuf {
-        PathBuf::from(format!("/presets/{name}.calibraw-preset"))
-    }
-
-    #[test]
-    fn previews_start_after_the_pointer_rests() {
-        let start = Instant::now();
-        let mut hover = PresetHoverPreview::default();
-
-        hover.request(path("a"));
-        let (changed, wait) = hover.advance(start);
-        assert!(!changed);
-        assert_eq!(wait, Some(HOVER_PREVIEW_DELAY));
-
-        hover.request(path("a"));
-        assert_eq!(hover.advance(start + HOVER_PREVIEW_DELAY), (true, None));
-        assert_eq!(hover.shown, Some(path("a")));
-    }
-
-    #[test]
-    fn moving_to_another_preset_keeps_the_current_preview_until_the_next_is_due() {
-        let start = Instant::now();
-        let mut hover = PresetHoverPreview::default();
-        hover.request(path("a"));
-        hover.advance(start);
-        hover.request(path("a"));
-        hover.advance(start + HOVER_PREVIEW_DELAY);
-
-        let moved = start + HOVER_PREVIEW_DELAY * 2;
-        hover.request(path("b"));
-        assert!(!hover.advance(moved).0);
-        assert_eq!(hover.shown, Some(path("a")));
-        hover.request(path("b"));
-        assert!(hover.advance(moved + HOVER_PREVIEW_DELAY).0);
-        assert_eq!(hover.shown, Some(path("b")));
-    }
-
-    #[test]
-    fn leaving_the_list_ends_the_preview_at_once() {
-        let start = Instant::now();
-        let mut hover = PresetHoverPreview::default();
-        hover.request(path("a"));
-        hover.advance(start);
-        hover.request(path("a"));
-        hover.advance(start + HOVER_PREVIEW_DELAY);
-
-        assert_eq!(hover.advance(start + HOVER_PREVIEW_DELAY * 2), (true, None));
-        assert_eq!(hover.shown, None);
-    }
-
-    #[test]
-    fn an_applied_preset_is_not_previewed_again_until_the_pointer_leaves_it() {
-        let start = Instant::now();
-        let mut hover = PresetHoverPreview::default();
-        hover.request(path("a"));
-        hover.advance(start);
-        hover.request(path("a"));
-        hover.advance(start + HOVER_PREVIEW_DELAY);
-        assert!(hover.suppress(&path("a")));
-
-        let later = start + HOVER_PREVIEW_DELAY * 4;
-        hover.request(path("a"));
-        assert_eq!(hover.advance(later), (false, None));
-        assert_eq!(hover.shown, None);
-
-        // Leaving and coming back previews it again.
-        hover.advance(later);
-        hover.request(path("a"));
-        hover.advance(later);
-        hover.request(path("a"));
-        assert!(hover.advance(later + HOVER_PREVIEW_DELAY).0);
-    }
+    use crate::app::hover_preview::HOVER_PREVIEW_DELAY;
 
     #[test]
     fn hover_previews_render_without_touching_saved_edits_or_history() {

@@ -350,7 +350,7 @@ pub fn extract_padded_tile_into(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mu
                 .expect("raster tile allocation must exist"),
         );
         fill_padded_raster_pixels(raw, tile, rgb);
-        tile_raw.raw_pixels.clear();
+        tile_raw.raw_pixels = Default::default();
         tile_raw.lens_geometry = None;
         tile_raw.clear_ai_denoised_image();
         return;
@@ -378,7 +378,9 @@ fn fill_padded_tile(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mut LoadedRaw)
     }
     let width = tile.padded_width as usize;
     let height = tile.padded_height as usize;
-    tile_raw.raw_pixels.resize(width.saturating_mul(height), 0);
+    // The tile's own samples, reused from the previous tile.
+    let samples = tile_raw.raw_pixels.make_mut();
+    samples.resize(width.saturating_mul(height), 0);
 
     let source_width = raw.width as i64;
     let max_x = source_width.saturating_sub(1);
@@ -387,7 +389,7 @@ fn fill_padded_tile(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mut LoadedRaw)
     for local_y in 0..tile.padded_height {
         let global_y = (i64::from(tile.global_origin_y) + i64::from(local_y)).clamp(0, max_y);
         let destination_start = local_y as usize * width;
-        let destination = &mut tile_raw.raw_pixels[destination_start..destination_start + width];
+        let destination = &mut samples[destination_start..destination_start + width];
         let origin_x = i64::from(tile.global_origin_x);
         let end_x = origin_x + i64::from(tile.padded_width);
         let source_row = global_y as usize * raw.width as usize;

@@ -398,7 +398,7 @@ impl LoadedRaw {
         let pixels = ai_image
             .as_ref()
             .and_then(AiDenoisedImage::bayer_cfa)
-            .unwrap_or(self.raw_pixels.as_slice());
+            .unwrap_or(&self.raw_pixels);
         let chroma = if self.opposed_chroma_reference_source {
             let prepared = self
                 .opposed_chroma_cache

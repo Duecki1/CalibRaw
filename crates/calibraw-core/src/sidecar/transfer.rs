@@ -21,6 +21,8 @@ pub struct AdjustmentCopySettings {
     pub ai_masks: bool,
     #[serde(default)]
     pub lens_correction: bool,
+    #[serde(default = "default_true")]
+    pub lut: bool,
 }
 
 const fn default_true() -> bool {
@@ -36,6 +38,7 @@ impl Default for AdjustmentCopySettings {
             masks: true,
             ai_masks: true,
             lens_correction: false,
+            lut: true,
         }
     }
 }
@@ -67,6 +70,7 @@ pub struct EditSelection {
     /// Subject, background, sky, object and range components.
     pub ai_masks: bool,
     pub lens_correction: bool,
+    pub lut: bool,
 }
 
 impl EditSelection {
@@ -99,6 +103,7 @@ impl From<AdjustmentCopySettings> for EditSelection {
             masks: settings.masks,
             ai_masks: settings.ai_masks,
             lens_correction: settings.lens_correction,
+            lut: settings.lut,
         }
     }
 }
@@ -229,6 +234,9 @@ pub fn transfer_edits(
         if camera_profile_changed && !destination.masks.content_dependencies().is_empty() {
             destination.ai_masks_need_update = true;
         }
+    }
+    if selection.lut {
+        destination.look_lut = source.look_lut.clone();
     }
     if selection.includes_masks() {
         let previous_ai_masks_need_update = destination.ai_masks_need_update;

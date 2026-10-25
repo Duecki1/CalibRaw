@@ -176,12 +176,34 @@ pub(crate) enum AdjustmentSection {
     #[default]
     Light,
     ToneCurve,
+    /// Shown only when the LUT card is (`Sidebar::look_lut_card_shown`).
+    Lut,
     Color,
     ColorGrading,
     Detail,
     Effects,
     ColorMixer,
     Optics,
+}
+
+impl AdjustmentSection {
+    /// The section that shows `card` in the vertical layout, which orders its
+    /// sections as the cards are ordered. The camera profile has none: the
+    /// Light section shows it.
+    pub(crate) const fn of_card(card: DevelopCard) -> Option<Self> {
+        match card {
+            DevelopCard::CameraProfile => None,
+            DevelopCard::Light => Some(Self::Light),
+            DevelopCard::ToneCurve => Some(Self::ToneCurve),
+            DevelopCard::Lut => Some(Self::Lut),
+            DevelopCard::Color => Some(Self::Color),
+            DevelopCard::ColorGrading => Some(Self::ColorGrading),
+            DevelopCard::Detail => Some(Self::Detail),
+            DevelopCard::Effects => Some(Self::Effects),
+            DevelopCard::ColorMixer => Some(Self::ColorMixer),
+            DevelopCard::LensCorrections => Some(Self::Optics),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -417,6 +439,17 @@ pub(crate) struct DevelopState {
     pub(crate) lens_correction: LensCorrectionState,
     pub(crate) lens_correction_dirty: bool,
     pub(crate) selected_camera_profile: Option<PathBuf>,
+    /// The edit's LUT.
+    pub(crate) look_lut: Option<crate::luts::LookLut>,
+    /// The table of `look_lut` once read; `None` while it is read or when the
+    /// LUT library does not hold it (`luts.rs`).
+    pub(crate) look_lut_table: Option<Arc<crate::luts::CubeLut>>,
+    /// The LUT the previews render, kept like `target_exposure`.
+    pub(crate) target_look: Option<crate::luts::ResolvedLook>,
+    /// Another camera profile's colour the shown previews render instead of
+    /// the photo's own: a previewed profile.
+    pub(crate) target_profile_color: Option<Arc<crate::pipeline::ProfileColor>>,
+    pub(crate) profile_preview: crate::app::lifecycle::CameraProfilePreview,
     pub(crate) load_receiver: Option<mpsc::Receiver<LoadEvent>>,
     pub(crate) loading_label: Option<String>,
     /// The view the loading document opens at; `None` fits it.

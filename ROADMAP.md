@@ -23,7 +23,7 @@ Checked items are done. Order within a section is not a priority.
 - [ ]  Dead and hot pixel correction
 - [ ]  Auto tone, auto geometry, auto perspective
 - [ ]  Depth lens blur
-- [ ]  LUT support
+- [X]  LUT support
 - [ ]  Watermark
 - [ ]  Retouch tab: blemish removal, skin smoothing, eye enhancement (maybe)
 - [ ]  Straight brush lines, rectangle and circle brushes

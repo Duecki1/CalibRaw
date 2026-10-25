@@ -11,6 +11,7 @@ pub mod file_ops {
 pub(crate) mod export_naming;
 pub(crate) mod performance_settings;
 pub(crate) mod platform;
+pub(crate) use calibraw_core::luts;
 pub(crate) use calibraw_core::presets;
 
 pub mod pipeline {

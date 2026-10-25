@@ -4,14 +4,14 @@
 use super::*;
 
 pub(super) fn estimate_scene_cct(
-    color: &ffi::libraw_colordata_t,
+    color: &LibRawColor,
     wb_coeffs: [f32; 4],
     cdesc: [u8; 4],
 ) -> Option<f32> {
     let mut best_cct = 0.0;
     let mut best_error = f32::INFINITY;
 
-    for row in color.WBCT_Coeffs {
+    for row in color.wbct_coeffs {
         let cct = row[0];
         if !cct.is_finite() || cct <= 0.0 {
             continue;

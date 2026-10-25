@@ -147,6 +147,20 @@ impl GpuBudgetReservation {
 }
 
 impl GpuBudgetReservation {
+    /// Reserves `bytes` for `resource`, which is allocated after its pipeline
+    /// was built and is not part of the pipeline's plan.
+    pub(super) fn acquire_bytes(resource: &str, bytes: u64, limit: u64) -> Result<Self> {
+        reserve_gpu_bytes(&RESERVED_GPU_BYTES, limit, bytes).map_err(|used| {
+            anyhow!(
+                "GPU pipelines already reserve {:.1} MiB of resident resources; the {resource} needs another {:.1} MiB, exceeding the {:.1} MiB process budget",
+                used as f64 / (1024.0 * 1024.0),
+                bytes as f64 / (1024.0 * 1024.0),
+                limit as f64 / (1024.0 * 1024.0),
+            )
+        })?;
+        Ok(Self { bytes })
+    }
+
     pub(super) fn bytes(&self) -> u64 {
         self.bytes
     }
@@ -197,6 +211,15 @@ fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> Result<u64> {
         wgpu::TextureFormat::Rgba32Float => Ok(16),
         _ => Err(anyhow!("unaccounted GPU texture format {format:?}")),
     }
+}
+
+/// The texel format of the look LUT (look_lut.wgsl): f32, so the lattice
+/// keeps the precision of the `.cube` file.
+pub(super) const LOOK_LUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+
+/// Bytes of a look LUT texture with `size`³ texels.
+pub(super) fn look_lut_texture_bytes(size: u32) -> Result<u64> {
+    texture_allocation_bytes(size, size, size, 1, LOOK_LUT_FORMAT)
 }
 
 fn texture_allocation_bytes(
@@ -1172,6 +1195,7 @@ pub(super) fn validate_raw(raw: &LoadedRaw) -> Result<()> {
         ));
     }
     if raw
+        .profile_color
         .cam_to_srgb
         .iter()
         .flatten()
@@ -1182,6 +1206,7 @@ pub(super) fn validate_raw(raw: &LoadedRaw) -> Result<()> {
         ));
     }
     if raw
+        .profile_color
         .cam_to_srgb
         .iter()
         .flatten()
@@ -1277,6 +1302,20 @@ pub(super) fn texture_entry(
         ty: wgpu::BindingType::Texture {
             sample_type,
             view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+/// An unfiltered 3D float texture, read with `textureLoad`.
+pub(super) fn texture_3d_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D3,
             multisampled: false,
         },
         count: None,

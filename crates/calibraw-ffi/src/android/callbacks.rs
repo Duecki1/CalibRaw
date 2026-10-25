@@ -237,6 +237,35 @@ pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnCameraPr
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnLutFilesPicked<'local>(
+    mut unowned_env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    staging_directory: JString<'local>,
+    error: JString<'local>,
+) {
+    unowned_env
+        .with_env(|_env| -> jni::errors::Result<()> {
+            let staging_directory = staging_directory.to_string();
+            let error = error.to_string();
+            let result = if !error.is_empty() {
+                LutFilesResult::Failed(error)
+            } else if staging_directory.is_empty() {
+                LutFilesResult::Cancelled
+            } else {
+                LutFilesResult::Staged(PathBuf::from(staging_directory))
+            };
+            if let Ok(mut queue) = lut_files_results().lock() {
+                queue.push_back(result);
+            }
+            request_repaint();
+            Ok(())
+        })
+        .resolve_with::<LogContextErrorAndDefault, _>(|| {
+            "CalibRawActivity.nativeOnLutFilesPicked".to_owned()
+        });
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnImportProgress<'local>(
     _unowned_env: EnvUnowned<'local>,
     _class: JClass<'local>,

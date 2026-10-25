@@ -69,7 +69,7 @@ impl CalibRawApp {
         let geometry = GeometryTransform::default();
         let masks = MaskStack::default();
         let lens_correction = LensCorrectionState::default();
-        let edit_history = EditHistory::new(&exposure, geometry, &masks, &lens_correction);
+        let edit_history = EditHistory::new(&exposure, geometry, &masks, &lens_correction, None);
         let manual_runtime = if caps.configurable_ai_runtime {
             Self::load_onnx_runtime_selection(performance_settings_path.as_deref())
         } else {
@@ -95,6 +95,11 @@ impl CalibRawApp {
                 decoded_raws: DecodedRawCache::new(performance.raw_cache_files),
                 neighbour_prefetch: Default::default(),
                 selected_camera_profile: None,
+                look_lut: None,
+                look_lut_table: None,
+                target_look: None,
+                target_profile_color: None,
+                profile_preview: Default::default(),
                 geometry,
                 geometry_revision: 0,
                 lens_correction,
@@ -251,6 +256,7 @@ impl CalibRawApp {
                 publish_pending: false,
                 android_batch_load_pending: false,
                 share_mime_type: None,
+                override_choice: ExportOverrideChoice::default(),
             },
             persistence: PersistenceState {
                 history: edit_history,
@@ -281,9 +287,15 @@ impl CalibRawApp {
                     .as_deref()
                     .and_then(crate::app::presets::preset_folder_for_settings),
             ),
+            luts: LutState::open(
+                performance_settings_path
+                    .as_deref()
+                    .map(crate::luts::lut_folder_for_settings),
+            ),
             preferences: PreferencesState {
                 image_relative_brush_size: performance.image_relative_brush_size,
                 show_develop_navigation_labels: performance.show_develop_navigation_labels,
+                develop_card_order: performance.develop_card_order.clone(),
                 automatic_lens_correction: AutomaticLensCorrection {
                     enabled: performance.automatic_lens_correction,
                     corrections: LensfunCorrections {
@@ -333,6 +345,7 @@ impl CalibRawApp {
                 tip: None,
                 version_check: Default::default(),
                 shortcuts_dialog_open: false,
+                settings_dialog: None,
                 numeric_keyboard: false,
             },
             library: if caps.has_media_library() {

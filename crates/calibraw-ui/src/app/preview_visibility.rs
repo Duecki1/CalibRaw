@@ -54,6 +54,10 @@ impl PreviewVisibility {
         let state = Self::read(ctx);
         !state.hidden.contains(&(state.scope, title))
     }
+    /// Whether the photo-wide card `title` is shown, whichever mask is in scope.
+    pub(in crate::app) fn globally_visible(ctx: &egui::Context, title: &'static str) -> bool {
+        !Self::read(ctx).hidden.contains(&(None, title))
+    }
     pub(crate) fn toggle(ctx: &egui::Context, title: &'static str) {
         let mut state = Self::read(ctx);
         let key = (state.scope, title);
@@ -208,6 +212,7 @@ impl CalibRawApp {
         state.rebuild_required |= source_changed;
         state.write(&self.egui_ctx);
         self.develop.target_exposure = exposure;
+        self.develop.target_look = self.preview_look();
         self.preview.original_rendered_state = None;
         self.masks.dirty_layers.fill(true);
         self.masks.detail_dirty_layers.fill(true);
@@ -389,6 +394,7 @@ mod tests {
             saved.geometry,
             &saved.masks,
             &lens,
+            None,
         );
         assert!(!history.can_undo());
         for title in [
@@ -425,7 +431,14 @@ mod tests {
         assert_eq!(masks.masks[1], saved.masks.masks[1]);
         assert_eq!(saved.exposure.exposure, 1.75);
         assert_eq!(saved.masks.masks[0].adjustments.exposure, 1.5);
-        history.observe(&saved.exposure, saved.geometry, &saved.masks, &lens, false);
+        history.observe(
+            &saved.exposure,
+            saved.geometry,
+            &saved.masks,
+            &lens,
+            None,
+            false,
+        );
         assert!(!history.can_undo());
         assert_eq!(crate::sidecar::encode(saved.clone()).unwrap(), bytes);
 

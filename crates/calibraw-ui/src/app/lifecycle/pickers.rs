@@ -126,6 +126,12 @@ impl CalibRawApp {
             crate::app::DesktopPickerEvent::PresetFiles(Some(paths)) => {
                 self.import_preset_files(&paths);
             }
+            crate::app::DesktopPickerEvent::LutFiles(Some(paths)) => {
+                self.import_lut_files(&paths);
+            }
+            crate::app::DesktopPickerEvent::LutFiles(None) => {
+                self.luts.apply_next_import = false;
+            }
             _ => {}
         }
     }
@@ -185,6 +191,19 @@ impl CalibRawApp {
                         ErrorKind::CameraProfile,
                         format!("Could not import camera profiles: {error}"),
                     );
+                }
+            }
+        }
+
+        while let Some(result) = self.platform.take_lut_files_result() {
+            match result {
+                crate::platform::LutFilesResult::Staged(folder) => {
+                    self.import_staged_lut_files(&folder);
+                }
+                crate::platform::LutFilesResult::Cancelled => self.luts.apply_next_import = false,
+                crate::platform::LutFilesResult::Failed(error) => {
+                    self.luts.apply_next_import = false;
+                    self.report_error(ErrorKind::Luts, format!("Could not import LUTs: {error}"));
                 }
             }
         }

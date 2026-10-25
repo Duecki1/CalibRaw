@@ -62,6 +62,7 @@ pub(crate) struct ReplayRequest {
     pub(crate) final_geometry: GeometryTransform,
     pub(crate) final_masks: MaskStack,
     pub(crate) final_remove: RemoveEditState,
+    pub(crate) final_look: Option<crate::luts::ResolvedLook>,
     pub(crate) gpu_export_prewarm: Option<Arc<GpuProgramPrewarm>>,
     pub(crate) platform: Arc<dyn Platform>,
 }
@@ -180,6 +181,7 @@ fn render_still(
             exposure: state.exposure,
             masks: state.masks.clone(),
             remove: state.remove.clone(),
+            look: state.look.clone(),
             target: ExportTarget::File(path.to_path_buf()),
             tile_spec: TileSpec::default(),
             settings,
@@ -227,6 +229,7 @@ fn final_render_state(request: &ReplayRequest) -> ReplayRenderState {
         geometry: request.final_geometry.sanitized(),
         masks: request.final_masks.clone(),
         remove: request.final_remove.clone(),
+        look: request.final_look.clone(),
     }
 }
 
@@ -293,6 +296,7 @@ pub(crate) fn render_edit_replay(
         request.final_geometry,
         &request.final_masks,
         &request.final_remove,
+        request.final_look.as_ref(),
     );
     let render_count = stages.len() + 2;
     let render_dir = tempfile::Builder::new()
@@ -589,6 +593,7 @@ mod tests {
             },
             final_masks: MaskStack::default(),
             final_remove: RemoveEditState::default(),
+            final_look: None,
             gpu_export_prewarm: None,
             platform: crate::platform::fake::FakePlatform::new(
                 crate::platform::PlatformCaps::DESKTOP,

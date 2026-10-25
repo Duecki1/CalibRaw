@@ -48,6 +48,7 @@ fn sample_edits() -> EditState {
         exposure,
         geometry: GeometryTransform::default(),
         camera_profile: None,
+        look_lut: None,
         masks: Arc::new(masks),
         subject_refinement: None,
         lens: LensEditState {
@@ -550,6 +551,7 @@ fn copied_adjustments_respect_category_settings_and_mark_ai_masks_stale() {
             masks: false,
             ai_masks: true,
             lens_correction: false,
+            lut: false,
         },
     );
 
@@ -574,6 +576,7 @@ fn chromatic_aberration_is_pasted_with_lens_correction_not_adjustments() {
         masks: false,
         ai_masks: false,
         lens_correction,
+        lut: false,
     };
 
     let mut destination = default_edit_state();
@@ -611,6 +614,7 @@ fn copied_uncached_ai_masks_are_still_marked_stale() {
             masks: false,
             ai_masks: true,
             lens_correction: false,
+            lut: false,
         },
     );
 
@@ -651,6 +655,7 @@ fn manual_and_ai_masks_can_be_copied_independently() {
             masks: true,
             ai_masks: false,
             lens_correction: false,
+            lut: false,
         },
     );
 
@@ -679,6 +684,7 @@ fn manual_and_ai_masks_can_be_copied_independently() {
             masks: false,
             ai_masks: true,
             lens_correction: false,
+            lut: false,
         },
     );
 
@@ -725,6 +731,7 @@ fn mixed_mask_groups_do_not_copy_disabled_manual_components() {
             masks: false,
             ai_masks: true,
             lens_correction: false,
+            lut: false,
         },
     );
 
@@ -746,6 +753,7 @@ fn mixed_mask_groups_do_not_copy_disabled_manual_components() {
             masks: true,
             ai_masks: false,
             lens_correction: false,
+            lut: false,
         },
     );
 
@@ -783,6 +791,7 @@ fn copied_adjustments_include_camera_profile_and_replace_clears_other_categories
             masks: false,
             ai_masks: false,
             lens_correction: false,
+            lut: false,
         },
         AdjustmentPasteMode::Replace,
     );
@@ -795,6 +804,64 @@ fn copied_adjustments_include_camera_profile_and_replace_clears_other_categories
     assert!(destination.masks.masks.is_empty());
     assert_eq!(destination.lens, LensEditState::default());
     assert_eq!(destination.remove, destination_remove);
+}
+
+fn film_look(amount: f32) -> crate::luts::LookLut {
+    crate::luts::LookLut {
+        id: crate::luts::LutId::of_bytes(b"film"),
+        name: "Film".to_owned(),
+        amount,
+    }
+}
+
+#[test]
+fn the_lut_is_pasted_only_with_its_category() {
+    let mut source = sample_edits();
+    source.look_lut = Some(film_look(0.4));
+    let only = |lut| AdjustmentCopySettings {
+        adjustments: false,
+        geometry: false,
+        camera_profile: false,
+        masks: false,
+        ai_masks: false,
+        lens_correction: false,
+        lut,
+    };
+
+    let mut destination = sample_edits();
+    paste(&mut destination, &source, only(false));
+    assert_eq!(destination.look_lut, None);
+    paste(&mut destination, &source, only(true));
+    assert_eq!(destination.look_lut, source.look_lut);
+    assert!(edit_state_has_adjustments(&destination));
+
+    paste_with_mode(
+        &mut destination,
+        &sample_edits(),
+        AdjustmentCopySettings {
+            adjustments: true,
+            ..only(false)
+        },
+        AdjustmentPasteMode::Replace,
+    );
+    assert_eq!(
+        destination.look_lut, None,
+        "replace clears other categories"
+    );
+}
+
+#[test]
+fn lut_amounts_outside_zero_to_one_are_rejected() {
+    for amount in [-0.1, 1.5, f32::NAN] {
+        let edits = EditState {
+            look_lut: Some(film_look(amount)),
+            ..default_edit_state()
+        };
+        assert!(
+            matches!(encode(edits), Err(SidecarError::Invalid(_))),
+            "{amount}"
+        );
+    }
 }
 
 #[test]
@@ -867,7 +934,7 @@ fn sidecar_round_trip_preserves_edit_state() {
     });
     let encoded = encode(edits.clone()).unwrap();
     let document: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
-    assert_eq!(SIDECAR_SCHEMA_VERSION, 2);
+    assert_eq!(SIDECAR_SCHEMA_VERSION, 3);
     // Without Relight, v1.2 and older can still read it.
     assert_eq!(document["schema_version"], 1);
     let loaded = decode(&encoded).unwrap();

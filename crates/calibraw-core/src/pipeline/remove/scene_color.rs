@@ -50,7 +50,7 @@ pub fn pipeline_scene_to_working_rec2020(raw: &LoadedRaw, rgb: [f32; 3]) -> [f32
 
 // Sensor pipeline scenes have WB applied already; camera rasters do not.
 fn remove_camera_transform(raw: &LoadedRaw) -> [[f32; 4]; 3] {
-    let mut transform = raw.cam_to_srgb;
+    let mut transform = raw.profile_color.cam_to_srgb;
     if raw.is_camera_linear_raster() {
         for row in &mut transform {
             for (value, gain) in row.iter_mut().zip(raw.wb_coeffs) {

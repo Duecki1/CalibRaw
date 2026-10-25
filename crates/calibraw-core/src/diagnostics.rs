@@ -139,7 +139,9 @@ pub fn record_raw(label: &str, raw: &LoadedRaw) {
     ));
     record(format!(
         "{label}: cam_to_srgb=[{:?}, {:?}, {:?}]",
-        raw.cam_to_srgb[0], raw.cam_to_srgb[1], raw.cam_to_srgb[2]
+        raw.profile_color.cam_to_srgb[0],
+        raw.profile_color.cam_to_srgb[1],
+        raw.profile_color.cam_to_srgb[2]
     ));
     record(format!(
         "{label}: sampled_fingerprint raw={raw_signature:016x} cfa={cfa_signature:016x} black={black_signature:016x} sampled_cfa_counts={cfa_sample_counts:?}"

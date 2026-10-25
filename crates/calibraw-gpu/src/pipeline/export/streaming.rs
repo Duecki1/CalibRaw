@@ -48,6 +48,7 @@ where
         exposure,
         masks,
         remove,
+        look,
         output: _,
         tile_spec,
         output_width,
@@ -110,7 +111,8 @@ where
         first_mask_region,
         raw.width,
         raw.height,
-    ));
+    ))
+    .with_look_lut(look);
     let pipeline_started = Instant::now();
     let export_mask_edge = if masks.masks.is_empty() {
         mask_atlas_edge()
@@ -170,6 +172,9 @@ where
         export_mask_edge
     ));
     tile_pipeline
+        .prepare_look_lut(queue, first_params.look_lut())
+        .context("upload the LUT")?;
+    tile_pipeline
         .update_light_rays_mask_layers(
             queue,
             masks,
@@ -200,6 +205,7 @@ where
             raw.height,
         )
         .with_vignette_geometry(geometry)
+        .with_look_lut(look)
         .with_global_tone_histogram_bounds(
             tile.core_x,
             tile.core_y,
@@ -302,7 +308,8 @@ where
             .with_mask_uv_rect_and_extent(
                 mask_source_region_uv(mask_region, raw.width, raw.height),
                 mask_extent,
-            );
+            )
+            .with_look_lut(look);
             tile_pipeline
                 .dispatch_export_tile_with_remove(
                     queue,

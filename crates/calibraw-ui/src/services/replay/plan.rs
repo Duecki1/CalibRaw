@@ -1,5 +1,6 @@
 //! Which edit categories a replay shows, in order, and the edit state after each.
 
+use crate::luts::ResolvedLook;
 use crate::pipeline::{
     EffectComponent, ExposureParams, GeometryTransform, LocalMask, MaskEffect, MaskStack,
     RemoveEditState,
@@ -36,6 +37,7 @@ pub(super) struct ReplayRenderState {
     pub(super) geometry: GeometryTransform,
     pub(super) masks: MaskStack,
     pub(super) remove: RemoveEditState,
+    pub(super) look: Option<ResolvedLook>,
 }
 
 impl ReplayRenderState {
@@ -45,6 +47,7 @@ impl ReplayRenderState {
             geometry: GeometryTransform::default(),
             masks: MaskStack::default(),
             remove: RemoveEditState::default(),
+            look: None,
         }
     }
 }
@@ -60,13 +63,16 @@ pub(super) fn replay_stage_plan(
     final_geometry: GeometryTransform,
     final_masks: &MaskStack,
     final_remove: &RemoveEditState,
+    final_look: Option<&ResolvedLook>,
 ) -> Vec<ReplayStage> {
     let final_geometry = final_geometry.sanitized();
     let mut current = ReplayRenderState::original(original_exposure);
     let mut stages = Vec::new();
 
-    if final_exposure != original_exposure {
+    // The LUT is shown with the global adjustments.
+    if final_exposure != original_exposure || final_look.is_some() {
         current.exposure = final_exposure;
+        current.look = final_look.cloned();
         stages.push(ReplayStage {
             kind: ReplayStageKind::Edit,
             state: current.clone(),
@@ -244,6 +250,7 @@ mod tests {
             GeometryTransform::default(),
             &masks,
             &RemoveEditState::default(),
+            None,
         );
         assert_eq!(
             stages.iter().map(|stage| stage.kind).collect::<Vec<_>>(),
@@ -298,6 +305,7 @@ mod tests {
                 GeometryTransform::default(),
                 &masks,
                 &RemoveEditState::default(),
+                None,
             );
             assert_eq!(stages.len(), 1);
             assert_eq!(stages[0].kind, ReplayStageKind::Effects);
@@ -332,6 +340,7 @@ mod tests {
                 GeometryTransform::default(),
                 &masks,
                 &RemoveEditState::default(),
+                None,
             );
             assert!(stages.is_empty());
         }
@@ -382,8 +391,14 @@ mod tests {
             });
         remove.strokes.push(remove_stroke);
 
-        let stages =
-            replay_stage_plan(original_exposure, final_exposure, geometry, &masks, &remove);
+        let stages = replay_stage_plan(
+            original_exposure,
+            final_exposure,
+            geometry,
+            &masks,
+            &remove,
+            None,
+        );
         let kinds = stages.iter().map(|stage| stage.kind).collect::<Vec<_>>();
         assert_eq!(
             kinds,
@@ -403,6 +418,7 @@ mod tests {
             GeometryTransform::default(),
             &MaskStack::default(),
             &RemoveEditState::default(),
+            None,
         );
         assert!(stages.is_empty());
     }
@@ -427,6 +443,7 @@ mod tests {
             GeometryTransform::default(),
             &masks,
             &RemoveEditState::default(),
+            None,
         );
         assert_eq!(stages.len(), 1);
         assert_eq!(stages[0].kind, ReplayStageKind::Masks);
@@ -449,5 +466,29 @@ mod tests {
                 radius: 8.0,
             });
         assert!(remove_used(&remove));
+    }
+
+    #[test]
+    fn a_lut_alone_is_replayed_with_the_global_adjustments() {
+        let lut = crate::luts::parse_cube(
+            b"LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+        )
+        .unwrap();
+        let look = ResolvedLook {
+            lut: std::sync::Arc::new(lut),
+            amount: 0.5,
+        };
+        let original_exposure = ExposureParams::scene_referred_default();
+        let stages = replay_stage_plan(
+            original_exposure,
+            original_exposure,
+            GeometryTransform::default(),
+            &MaskStack::default(),
+            &RemoveEditState::default(),
+            Some(&look),
+        );
+        assert_eq!(stages.len(), 1);
+        assert_eq!(stages[0].kind, ReplayStageKind::Edit);
+        assert!(stages[0].state.look.is_some());
     }
 }

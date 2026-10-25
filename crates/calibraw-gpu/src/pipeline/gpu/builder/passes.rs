@@ -566,7 +566,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             shaders.view_transform_module.as_ref(),
             "apply_view_node",
             &layouts.bgl_adjust_render,
-            groups.bg_adjust_render.clone(),
+            InputBoundPass::View,
             image_workgroups,
         ),
     ]);
@@ -741,7 +741,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         pipeline: passes[indices.adjustment_render_pass_index]
             .pipeline
             .clone(),
-        bindings: groups.bg_adjust_render_after_blur.clone().into(),
+        bindings: InputBoundPass::ViewAfterBlur.into(),
         workgroups: image_workgroups,
     };
 

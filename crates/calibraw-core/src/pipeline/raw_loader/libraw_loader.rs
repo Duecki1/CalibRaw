@@ -40,12 +40,19 @@ use std::os::windows::ffi::OsStrExt;
 mod camera_matrix;
 mod cct;
 mod dcp_index;
+mod profile_color_source;
 mod sensor;
 mod temperature_tint;
 mod thumbnail;
 pub(super) use camera_matrix::*;
 use cct::*;
 pub(super) use dcp_index::*;
+use profile_color_source::LibRawColorInputs;
+pub use profile_color_source::ProfileColorSource;
+pub(super) use profile_color_source::{
+    read_embedded_signature, CameraProfileSelection, DecoderColor, EmbeddedSignature,
+    RawlerColorInputs,
+};
 pub(super) use sensor::*;
 pub(super) use temperature_tint::*;
 pub(super) use thumbnail::*;
@@ -70,6 +77,9 @@ pub(super) fn apply_resolved_default_exposure(
         resolve_default_exposure_ev(baseline_exposure, camera_profile.profile_exposure_offset_ev);
 }
 
+/// The camera profile a decode of the RAW at `path` applies, as
+/// [`select_camera_profiles`] chooses it, with the embedded signature it was
+/// matched against.
 pub(super) fn resolve_camera_profiles(
     path: &Path,
     mode: CameraProfileMode,
@@ -77,17 +87,34 @@ pub(super) fn resolve_camera_profiles(
     selected_profile: Option<&Path>,
     camera_make: &str,
     camera_model: &str,
-) -> Result<(
-    Option<DcpProfile>,
-    Option<PathBuf>,
-    Vec<CameraProfileCandidate>,
-)> {
-    let raw_camera_signature = match mode {
-        CameraProfileMode::Automatic | CameraProfileMode::DcpProfiles => {
-            read_optional_profile(path)?.and_then(|profile| profile.camera_calibration_signature)
-        }
-        CameraProfileMode::MatrixOnly => None,
+) -> Result<(EmbeddedSignature, CameraProfileSelection)> {
+    let signature = read_embedded_signature(path, mode)?;
+    let raw_camera_signature = match &signature {
+        EmbeddedSignature::Read(signature) => signature.clone(),
+        EmbeddedSignature::Unread => None,
     };
+    let selection = select_camera_profiles(
+        mode,
+        profile_folder,
+        selected_profile,
+        camera_make,
+        camera_model,
+        raw_camera_signature,
+    );
+    Ok((signature, selection))
+}
+
+/// The DCP `mode` applies to a camera: `selected_profile` when it matches the
+/// camera, otherwise the best match in DCP mode, and none for the photo's own
+/// colour data. Matching DCPs take `raw_camera_signature`.
+pub(super) fn select_camera_profiles(
+    mode: CameraProfileMode,
+    profile_folder: Option<&Path>,
+    selected_profile: Option<&Path>,
+    camera_make: &str,
+    camera_model: &str,
+    raw_camera_signature: Option<String>,
+) -> CameraProfileSelection {
     let mut matches = profile_folder
         .map(|folder| find_matching_dcp_profiles(folder, camera_make, camera_model))
         .transpose()
@@ -101,7 +128,7 @@ pub(super) fn resolve_camera_profiles(
             None
         })
         .unwrap_or_default();
-    let available_camera_profiles = matches
+    let candidates = matches
         .iter()
         .map(|candidate| CameraProfileCandidate {
             path: candidate.path.clone(),
@@ -121,17 +148,17 @@ pub(super) fn resolve_camera_profiles(
             (mode.prefers_external_dcp() && !matches.is_empty()).then(|| matches.remove(0))
         })
     };
-    let (selected_profile_path, selected_profile) = external_profile
+    let (source, profile) = external_profile
         .map(|mut candidate| {
             candidate.profile.camera_calibration_signature = raw_camera_signature;
             (Some(candidate.path), Some(candidate.profile))
         })
         .unwrap_or((None, None));
-    Ok((
-        selected_profile,
-        selected_profile_path,
-        available_camera_profiles,
-    ))
+    CameraProfileSelection {
+        profile,
+        source,
+        candidates,
+    }
 }
 
 use crate::color_math::{bradford_adaptation, D65_XYZ, DNG_PCS_D50_XYZ};
@@ -184,15 +211,14 @@ pub(super) fn load_raw_file_with_profile_selection(
     );
 
     let profile_started = Instant::now();
-    let (selected_profile, selected_profile_path, available_camera_profiles) =
-        resolve_camera_profiles(
-            path,
-            mode,
-            profile_folder,
-            selected_profile,
-            &camera_make,
-            &camera_model,
-        )?;
+    let (signature, selection) = resolve_camera_profiles(
+        path,
+        mode,
+        profile_folder,
+        selected_profile,
+        &camera_make,
+        &camera_model,
+    )?;
     crate::diagnostics::record(format!(
         "Camera-profile resolution finished in {:.3}s",
         profile_started.elapsed().as_secs_f64()
@@ -208,46 +234,56 @@ pub(super) fn load_raw_file_with_profile_selection(
         unpack_started.elapsed().as_secs_f64()
     ));
     let materialize_started = Instant::now();
-    let mut loaded = loaded_raw_from_context(&ctx, selected_profile)?;
+    let mut loaded = loaded_raw_from_context(&ctx, signature, selection.profile, selection.source)?;
     merge_exif_capture_metadata(&mut loaded.capture_metadata, source_metadata);
     crate::diagnostics::record(format!(
         "Decoded mosaic materialization finished in {:.3}s",
         materialize_started.elapsed().as_secs_f64()
     ));
-    loaded.camera_profile_source = selected_profile_path;
-    loaded.available_camera_profiles = available_camera_profiles;
+    loaded.available_camera_profiles = selection.candidates;
     Ok(loaded)
 }
 
 pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result<LoadedRaw> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
-    let (selected, candidate) = read_selected_dcp_profile(path, profile_path)?;
-    let mut loaded = load_raw_file_with_selected_profile(path, Some(selected))?;
-    loaded.camera_profile_source = Some(candidate.path.clone());
+    let (selected, candidate, signature) = read_selected_dcp_profile(path, profile_path)?;
+    let mut loaded = load_raw_file_with_selected_profile(
+        path,
+        signature,
+        Some(selected),
+        Some(candidate.path.clone()),
+    )?;
     loaded.available_camera_profiles = vec![candidate];
     Ok(loaded)
 }
 
 /// Reads the DCP explicitly chosen for the proprietary RAW at `raw_path`, for
 /// either backend. A profile embedded in the RAW supplies the camera
-/// calibration signature that the DCP's calibration matrices are matched to.
+/// calibration signature that the DCP's calibration matrices are matched to;
+/// it is returned too.
 pub(super) fn read_selected_dcp_profile(
     raw_path: &Path,
     profile_path: &Path,
-) -> Result<(DcpProfile, CameraProfileCandidate)> {
+) -> Result<(DcpProfile, CameraProfileCandidate, EmbeddedSignature)> {
     validate_input_file(profile_path, MAX_DCP_FILE_BYTES, "DCP profile")?;
     let mut selected = DcpProfile::from_path(profile_path)
         .with_context(|| format!("read DCP profile {}", profile_path.display()))?
         .ok_or_else(|| anyhow!("{} is not a DNG camera profile", profile_path.display()))?;
 
-    if let Some(raw_profile) = read_optional_profile(raw_path)? {
-        selected.camera_calibration_signature = raw_profile.camera_calibration_signature;
+    let raw_signature = read_optional_profile(raw_path)?
+        .map(|raw_profile| raw_profile.camera_calibration_signature);
+    if let Some(signature) = &raw_signature {
+        selected.camera_calibration_signature = signature.clone();
     }
     let candidate = CameraProfileCandidate {
         path: profile_path.to_path_buf(),
         name: dcp_profile_display_name(selected.name.as_deref(), profile_path),
     };
-    Ok((selected, candidate))
+    Ok((
+        selected,
+        candidate,
+        EmbeddedSignature::Read(raw_signature.flatten()),
+    ))
 }
 
 pub(super) fn load_raw_display_metadata(path: &Path) -> Result<super::RawDisplayMetadata> {
@@ -308,7 +344,9 @@ pub(super) fn read_optional_profile(path: &Path) -> Result<Option<DcpProfile>> {
 
 fn load_raw_file_with_selected_profile(
     path: &Path,
+    signature: EmbeddedSignature,
     dcp_profile: Option<DcpProfile>,
+    profile_source: Option<PathBuf>,
 ) -> Result<LoadedRaw> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
     // Every file read happens here; unpacking ends with the payload in memory.
@@ -324,7 +362,7 @@ fn load_raw_file_with_selected_profile(
         Ok((source_metadata, ctx))
     })?;
 
-    let mut loaded = loaded_raw_from_context(&ctx, dcp_profile)?;
+    let mut loaded = loaded_raw_from_context(&ctx, signature, dcp_profile, profile_source)?;
     merge_exif_capture_metadata(&mut loaded.capture_metadata, source_metadata);
     Ok(loaded)
 }
@@ -558,10 +596,14 @@ fn validate_opened_raw_geometry(ctx: &LibRawContext) -> Result<()> {
     Ok(())
 }
 
-/// Builds the `LoadedRaw` from a context that has been unpacked.
+/// Builds the `LoadedRaw` from a context that has been unpacked, with
+/// `dcp_profile`, read from `profile_source` and matched against
+/// `signature`, or the RAW's own colour data.
 fn loaded_raw_from_context(
     ctx: &LibRawContext,
+    signature: EmbeddedSignature,
     dcp_profile: Option<DcpProfile>,
+    profile_source: Option<PathBuf>,
 ) -> Result<LoadedRaw> {
     let raw = ctx.data();
     let rawdata = &raw.rawdata;
@@ -647,16 +689,19 @@ fn loaded_raw_from_context(
     }?;
     let physical_wb = white_balance(color.cam_mul, cdesc);
     let wb_coeffs = canonicalize_f32x4(physical_wb, cfa_map);
-    let calibration_compatible = dcp_profile
-        .as_ref()
-        .is_none_or(DcpProfile::calibration_is_compatible);
-    let (cam_to_srgb, profile_weight, white_balance_model) = camera_to_working_matrix(
-        color,
-        physical_wb,
-        cdesc,
-        dcp_profile.as_ref(),
-        calibration_compatible,
-    )?;
+    let color_source = ProfileColorSource::new(
+        &c_array_to_string(&iparams.make),
+        &c_array_to_string(&iparams.model),
+        signature,
+        DecoderColor::LibRaw(Box::new(LibRawColorInputs {
+            color: LibRawColor::from_libraw(color),
+            physical_wb,
+            cdesc,
+            baseline_exposure: valid_baseline_exposure(color.dng_levels.baseline_exposure),
+            embedded_icc: embedded_camera_icc(color)?,
+        })),
+    );
+    let profile_color = color_source.resolve(dcp_profile, profile_source)?;
     let black_levels = canonicalize_f32x4(physical_black_levels, cfa_map);
     let linear_max = color.linear_max.map(normalize_libraw_linear_max);
     let white_levels = saturation_adjusted_white_levels(
@@ -684,29 +729,6 @@ fn loaded_raw_from_context(
         },
     );
 
-    let mut camera_profile = dcp_profile
-        .map(|profile| CameraProfile::from_dcp(profile, profile_weight))
-        .unwrap_or_default();
-    let baseline_exposure = valid_baseline_exposure(color.dng_levels.baseline_exposure);
-    apply_resolved_default_exposure(&mut camera_profile, baseline_exposure);
-    if !color.profile.is_null() && color.profile_length > 0 {
-        let length = usize::try_from(color.profile_length).unwrap_or(0);
-        if length <= 16 * 1024 * 1024 {
-            // SAFETY: a non-null `profile` is LibRaw's copy of the embedded ICC
-            // profile, `profile_length` bytes owned by `ctx`, which outlives
-            // this borrow.
-            let source = unsafe { std::slice::from_raw_parts(color.profile as *const u8, length) };
-            let mut profile = Vec::new();
-            profile
-                .try_reserve_exact(length)
-                .context("reserve embedded camera ICC profile")?;
-            profile.extend_from_slice(source);
-            camera_profile.embedded_camera_icc = Some(profile);
-        } else {
-            log::warn!("ignoring embedded camera ICC profile larger than 16 MiB");
-        }
-    }
-
     let mut loaded = LoadedRaw {
         width,
         height,
@@ -731,21 +753,19 @@ fn loaded_raw_from_context(
             artist: c_array_to_string(&other.artist),
         },
         cfa_kind,
-        raw_pixels,
+        raw_pixels: raw_pixels.into(),
         scene_linear_raster: None,
         scene_referred_raster: false,
         color_indices,
         wb_coeffs,
-        cam_to_srgb,
         black_levels,
         black_levels_per_pixel,
         white_levels,
         sensor_saturation,
         noise_profile,
-        camera_profile,
-        camera_profile_source: None,
+        profile_color: Arc::new(profile_color),
+        color_source: Some(Arc::new(color_source)),
         available_camera_profiles: Vec::new(),
-        white_balance_model,
         lens_geometry: None,
         lens_shading: None,
         lateral_chromatic_aberration: LateralChromaticAberration::NONE,
@@ -756,6 +776,28 @@ fn loaded_raw_from_context(
     };
     loaded.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&loaded);
     Ok(loaded)
+}
+
+/// A copy of the camera ICC profile LibRaw read from the RAW, if any.
+fn embedded_camera_icc(color: &ffi::libraw_colordata_t) -> Result<Option<Vec<u8>>> {
+    if color.profile.is_null() || color.profile_length == 0 {
+        return Ok(None);
+    }
+    let length = usize::try_from(color.profile_length).unwrap_or(0);
+    if length > 16 * 1024 * 1024 {
+        log::warn!("ignoring embedded camera ICC profile larger than 16 MiB");
+        return Ok(None);
+    }
+    // SAFETY: a non-null `profile` is LibRaw's copy of the embedded ICC
+    // profile, `profile_length` bytes owned by the context `color` belongs
+    // to, which outlives this borrow.
+    let source = unsafe { std::slice::from_raw_parts(color.profile as *const u8, length) };
+    let mut profile = Vec::new();
+    profile
+        .try_reserve_exact(length)
+        .context("reserve embedded camera ICC profile")?;
+    profile.extend_from_slice(source);
+    Ok(Some(profile))
 }
 
 fn c_array_to_string(value: &[c_char]) -> String {

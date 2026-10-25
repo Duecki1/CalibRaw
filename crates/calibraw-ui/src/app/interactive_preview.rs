@@ -737,7 +737,8 @@ impl CalibRawApp {
             .ok_or_else(|| anyhow::anyhow!("the fitted preview is gone"))?;
         let masks = self.preview_mask_stack();
         let params = GpuParams::new(&self.develop.target_exposure, &masks, reduced)
-            .with_vignette_geometry(self.develop.geometry);
+            .with_vignette_geometry(self.develop.geometry)
+            .with_look_lut(self.develop.target_look.as_ref());
         let options = fitted_pipeline_options(masks.masks.len())
             .mask_atlas_edge(interactive_mask_edge())
             .programs(&template);
@@ -838,7 +839,8 @@ impl CalibRawApp {
                 .map_err(anyhow::Error::msg)?;
         }
         let params = GpuParams::new(&self.develop.target_exposure, masks, raw)
-            .with_vignette_geometry(self.develop.geometry);
+            .with_vignette_geometry(self.develop.geometry)
+            .with_look_lut(self.develop.target_look.as_ref());
         pipeline.gpu().dispatch_stage_with_remove(
             &render_state.queue,
             &render_state.device,

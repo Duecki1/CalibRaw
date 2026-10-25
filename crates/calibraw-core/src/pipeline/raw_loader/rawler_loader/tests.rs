@@ -160,7 +160,7 @@ fn integer_and_float_linearraw_keep_normalized_camera_rgb() {
             assert!((*actual - expected).abs() < 1e-6);
         }
         assert_eq!(raw.wb_coeffs, [2.0, 1.0, 4.0, 1.0]);
-        assert!((raw.camera_profile.default_exposure_ev - 0.5).abs() < 1e-6);
+        assert!((raw.profile_color.camera_profile.default_exposure_ev - 0.5).abs() < 1e-6);
         assert!(raw.as_shot_white_balance().is_some());
         assert_ne!(
             raw.adjusted_white_balance_and_camera_transform(0.2, 0.0).0,
@@ -465,9 +465,15 @@ fn explicit_dcp_selection_is_applied() {
         root.add_tag(DngTag::BaselineExposureOffset, SRational::new(1, 4));
     });
     let raw = load_raw_file_with_dcp(file.path(), profile.path()).unwrap();
-    assert_eq!(raw.camera_profile_source.as_deref(), Some(profile.path()));
-    assert_eq!(raw.camera_profile.name.as_deref(), Some("Selected profile"));
-    assert!((raw.camera_profile.default_exposure_ev - 0.75).abs() < 1e-6);
+    assert_eq!(
+        raw.profile_color.camera_profile_source.as_deref(),
+        Some(profile.path())
+    );
+    assert_eq!(
+        raw.profile_color.camera_profile.name.as_deref(),
+        Some("Selected profile")
+    );
+    assert!((raw.profile_color.camera_profile.default_exposure_ev - 0.75).abs() < 1e-6);
 }
 
 #[test]
@@ -531,4 +537,174 @@ fn proprietary_loader_leaves_dngs_to_the_dng_backend() {
     )
     .unwrap_err();
     assert!(format!("{error:#}").contains("Rawler DNG backend"));
+}
+
+/// A DCP for the fixture camera named `name`, whose colour matrix scales red
+/// by `red` and which offsets the default exposure by `offset` quarters.
+fn dcp_fixture(folder: &Path, name: &str, red: i32, offset: i32) -> std::path::PathBuf {
+    let file = fixture(false, false, false, |root| {
+        root.add_tag(DngTag::ProfileName, name);
+        root.add_tag(
+            DngTag::ColorMatrix1,
+            Value::SRational(
+                (0..9)
+                    .map(|i| match i {
+                        0 => SRational::new(red, 4),
+                        4 | 8 => SRational::new(1, 1),
+                        _ => SRational::new(0, 1),
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        );
+        root.add_tag(DngTag::BaselineExposureOffset, SRational::new(offset, 4));
+    });
+    let path = folder.join(format!("{name}.dcp"));
+    std::fs::copy(file.path(), &path).unwrap();
+    path
+}
+
+/// Asserts that `recolored` has exactly the colour, profile list and
+/// samples of `decoded`.
+fn assert_same_colour(recolored: &LoadedRaw, decoded: &LoadedRaw) {
+    let (left, right) = (&recolored.profile_color, &decoded.profile_color);
+    assert_eq!(
+        left.cam_to_srgb.map(|row| row.map(f32::to_bits)),
+        right.cam_to_srgb.map(|row| row.map(f32::to_bits))
+    );
+    assert_eq!(
+        format!("{:?}", left.camera_profile),
+        format!("{:?}", right.camera_profile)
+    );
+    assert_eq!(left.camera_profile_source, right.camera_profile_source);
+    assert_eq!(left.white_balance_model, right.white_balance_model);
+    assert_eq!(
+        recolored.available_camera_profiles,
+        decoded.available_camera_profiles
+    );
+    assert_eq!(recolored.wb_coeffs, decoded.wb_coeffs);
+    assert_eq!(recolored.raw_pixels, decoded.raw_pixels);
+    assert_eq!(
+        recolored.scene_linear_raster.as_deref(),
+        decoded.scene_linear_raster.as_deref()
+    );
+}
+
+/// Decoding with one camera profile and switching to another gives exactly
+/// what decoding with the other gives, for every choice a decode can make.
+fn assert_profile_switches_match_decodes(
+    decode: impl Fn(&Path, CameraProfileMode, Option<&Path>, Option<&Path>) -> LoadedRaw,
+    size: u32,
+    linear: bool,
+) {
+    let folder = tempfile::tempdir().unwrap();
+    let first = dcp_fixture(folder.path(), "First", 5, 1);
+    let second = dcp_fixture(folder.path(), "Second", 3, -2);
+    let file = sized_fixture(size, linear, false, false, |_| {});
+    let folder = Some(folder.path());
+    for mode in [CameraProfileMode::Automatic, CameraProfileMode::DcpProfiles] {
+        let decoded_first = decode(file.path(), mode, folder, Some(&first));
+        assert_eq!(
+            decoded_first.profile_color.camera_profile_source.as_deref(),
+            Some(first.as_path())
+        );
+        let decoded_second = decode(file.path(), mode, folder, Some(&second));
+        assert_ne!(
+            decoded_first.profile_color.cam_to_srgb, decoded_second.profile_color.cam_to_srgb,
+            "the fixture DCPs give different colour"
+        );
+        for selected in [Some(second.as_path()), None, Some(first.as_path())] {
+            let decoded = decode(file.path(), mode, folder, selected);
+            let recolored = decoded_first
+                .with_camera_profile_selection(mode, folder, selected)
+                .expect("the decode keeps its colour source")
+                .unwrap();
+            assert_same_colour(&recolored, &decoded);
+        }
+    }
+
+    // A decode without DCPs cannot match one, so it is decoded again.
+    let matrix_only = decode(file.path(), CameraProfileMode::MatrixOnly, folder, None);
+    assert!(matrix_only
+        .with_camera_profile_selection(CameraProfileMode::Automatic, folder, Some(&second))
+        .is_none());
+    let recolored = matrix_only
+        .with_camera_profile_selection(CameraProfileMode::MatrixOnly, folder, Some(&second))
+        .unwrap()
+        .unwrap();
+    assert_same_colour(
+        &recolored,
+        &decode(
+            file.path(),
+            CameraProfileMode::MatrixOnly,
+            folder,
+            Some(&second),
+        ),
+    );
+}
+
+#[test]
+fn switching_camera_profiles_matches_decoding_with_them() {
+    let rawler = |path: &Path, mode, folder: Option<&Path>, selected: Option<&Path>| {
+        load_raw_file_with_profile_selection(path, mode, folder, selected).unwrap()
+    };
+    assert_profile_switches_match_decodes(rawler, 16, false);
+    assert_profile_switches_match_decodes(rawler, 16, true);
+}
+
+#[test]
+fn switching_camera_profiles_matches_decoding_with_them_through_libraw() {
+    let libraw = |path: &Path, mode, folder: Option<&Path>, selected: Option<&Path>| {
+        shared::load_raw_file_with_profile_selection(path, mode, folder, selected).unwrap()
+    };
+    // LibRaw rejects images smaller than 22 pixels on an edge.
+    assert_profile_switches_match_decodes(libraw, 32, false);
+}
+
+#[test]
+fn a_profile_switch_shares_the_samples_and_starts_derived_work_again() {
+    let folder = tempfile::tempdir().unwrap();
+    let second = dcp_fixture(folder.path(), "Second", 3, -2);
+    let file = fixture(false, false, false, |_| {});
+    let decoded = load(file.path());
+    decoded
+        .set_ai_denoised_image(
+            crate::pipeline::AiDenoisedImage::new_bayer_cfa(16, 16, vec![1; 256]).unwrap(),
+        )
+        .unwrap();
+    let recolored = decoded
+        .with_camera_profile_selection(
+            CameraProfileMode::Automatic,
+            Some(folder.path()),
+            Some(&second),
+        )
+        .unwrap()
+        .unwrap();
+    assert!(std::ptr::eq(
+        decoded.raw_pixels.as_ptr(),
+        recolored.raw_pixels.as_ptr()
+    ));
+    assert!(recolored.ai_denoised_image().is_none());
+    assert!(!Arc::ptr_eq(
+        &decoded.opposed_chroma_cache,
+        &recolored.opposed_chroma_cache
+    ));
+
+    // A view derived from the decode, such as its lens-corrected copy, takes
+    // the new colour and shares the recoloured decode's estimate.
+    let view = decoded.derive_with(
+        16,
+        16,
+        decoded.raw_pixels.to_vec(),
+        decoded.color_indices.clone(),
+        decoded.black_levels_per_pixel.clone(),
+    );
+    let recolored_view = view.with_profile_color_of(&recolored);
+    assert!(Arc::ptr_eq(
+        &recolored_view.profile_color,
+        &recolored.profile_color
+    ));
+    assert!(Arc::ptr_eq(
+        &recolored_view.opposed_chroma_cache,
+        &recolored.opposed_chroma_cache
+    ));
 }

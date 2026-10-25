@@ -142,9 +142,23 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
         }
     }
 
+    // A LUT the library does not hold is left out, and that thumbnail is not
+    // cached, so it shows the LUT once the LUT is imported.
+    let look = edits.look_lut.as_ref().and_then(|look| {
+        let settings_path = crate::platform::desktop_settings_path()?;
+        let store =
+            crate::luts::LutStore::new(crate::luts::lut_folder_for_settings(&settings_path));
+        let lut = store.load(look.id).ok()?;
+        Some(crate::luts::ResolvedLook {
+            lut,
+            amount: look.amount,
+        })
+    });
+    let cacheable = edits.look_lut.is_none() || look.is_some();
     let mut masks = Arc::unwrap_or_clone(edits.masks);
-    let initial_params =
-        GpuParams::new(&edits.exposure, &masks, &preview_raw).with_vignette_geometry(geometry);
+    let initial_params = GpuParams::new(&edits.exposure, &masks, &preview_raw)
+        .with_vignette_geometry(geometry)
+        .with_look_lut(look.as_ref());
     let gpu = developed_thumbnail_gpu()?;
     let gpu = gpu
         .lock()
@@ -199,8 +213,9 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
             preview_raw.lens_geometry.as_deref(),
         )
         .map_err(|error| format!("could not apply thumbnail Light Rays mask: {error:#}"))?;
-    let params =
-        GpuParams::new(&edits.exposure, &masks, &preview_raw).with_vignette_geometry(geometry);
+    let params = GpuParams::new(&edits.exposure, &masks, &preview_raw)
+        .with_vignette_geometry(geometry)
+        .with_look_lut(look.as_ref());
     pipeline.recompute(&gpu.queue, &gpu.device, &params);
     let thumbnail = pipeline
         .output_snapshot(&gpu.device, &gpu.queue)
@@ -211,6 +226,8 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
         geometry,
         preview_raw.lens_geometry.as_deref(),
     );
-    crate::sidecar::save_developed_thumbnail_cache(path, &thumbnail, sidecar_fingerprint)?;
+    if cacheable {
+        crate::sidecar::save_developed_thumbnail_cache(path, &thumbnail, sidecar_fingerprint)?;
+    }
     Ok(Some(thumbnail))
 }

@@ -144,6 +144,11 @@ struct SceneToneUniforms {
     bradford_to_xyz: mat3x3<f32>,
     point_colors: array<PointColor, 8>,
     point_color_meta: vec4<u32>,
+    // The edit's LUT (look_lut.wgsl): amount (0 without a LUT), lattice points per
+    // axis, 0, 0; the domain minimum; the reciprocal of the domain extent.
+    look_lut: vec4<f32>,
+    look_lut_domain_min: vec4<f32>,
+    look_lut_domain_scale: vec4<f32>,
 }
 
 struct PointColor {

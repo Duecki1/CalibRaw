@@ -2,6 +2,63 @@
 
 use super::*;
 
+/// A preset and a LUT applied to every photo of a batch export on top of the
+/// photo's own edit. Sidecars are left unchanged.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ExportOverride {
+    /// Already limited to what an export can apply (`Preset::for_export`).
+    preset: Option<crate::presets::Preset>,
+    /// Replaces the LUT of every photo.
+    look_lut: Option<crate::luts::LookLut>,
+}
+
+impl ExportOverride {
+    pub(crate) fn new(
+        preset: Option<&crate::presets::Preset>,
+        look_lut: Option<crate::luts::LookLut>,
+    ) -> Self {
+        Self {
+            preset: preset.and_then(crate::presets::Preset::for_export),
+            look_lut,
+        }
+    }
+
+    /// Applies the preset, then the LUT, to `edits`. The photo keeps its own
+    /// AI denoise setting, since its denoised result is not computed for an
+    /// export.
+    pub(crate) fn apply(&self, edits: &mut SidecarEditState) {
+        if let Some(preset) = &self.preset {
+            let ai_denoise_enabled = edits.exposure.ai_denoise_enabled;
+            preset.apply_to(edits);
+            edits.exposure.ai_denoise_enabled = ai_denoise_enabled;
+        }
+        if let Some(look_lut) = &self.look_lut {
+            edits.look_lut = Some(look_lut.clone());
+        }
+    }
+}
+
+/// The preset and LUT chosen in the Library export dialog, kept for the
+/// session.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ExportOverrideChoice {
+    /// The preset file.
+    pub(crate) preset: Option<PathBuf>,
+    pub(crate) look_lut: Option<crate::luts::LutId>,
+    /// 0–1.
+    pub(crate) look_amount: f32,
+}
+
+impl Default for ExportOverrideChoice {
+    fn default() -> Self {
+        Self {
+            preset: None,
+            look_lut: None,
+            look_amount: crate::luts::LookLut::DEFAULT_AMOUNT,
+        }
+    }
+}
+
 /// A photo in a folder that the batch export worker renders.
 #[derive(Clone, Debug)]
 pub(super) struct FileBatchExportJob {
@@ -115,6 +172,7 @@ pub(crate) struct LibraryBatchExportState {
     /// Used by media-library batches, which start each export themselves.
     pub(super) format: ExportFormat,
     pub(super) settings: ExportSettings,
+    pub(super) export_override: ExportOverride,
 }
 
 pub(super) enum LibraryBatchExportEvent {
@@ -218,6 +276,7 @@ pub(super) struct PreparedExportSource {
     pub(super) exposure: ExposureParams,
     pub(super) masks: MaskStack,
     pub(super) remove: RemoveEditState,
+    pub(super) look: Option<crate::luts::ResolvedLook>,
     pub(super) source_file_name: Option<String>,
     pub(super) gpu_export_prewarm: Option<Arc<GpuProgramPrewarm>>,
 }
@@ -252,4 +311,5 @@ pub(crate) struct ExportState {
     /// publishes without sharing. Kept outside the task because a replay's task
     /// ends before its gallery publish does.
     pub(crate) share_mime_type: Option<&'static str>,
+    pub(crate) override_choice: ExportOverrideChoice,
 }

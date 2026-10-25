@@ -36,8 +36,6 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_glow_blur_after_blur: [wgpu::BindGroup; GLOW_BLUR_STEPS],
     pub(in crate::pipeline::gpu) bg_pixelate_blocks: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_pixelate_blocks_after_blur: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_adjust_render: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_adjust_render_after_blur: wgpu::BindGroup,
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_groups(
@@ -58,7 +56,6 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         ..
     } = buffers;
     let PipelineSurfaces {
-        out_view,
         display_linear_view,
         reconstructed_raw_view,
         highlight_work_a_view,
@@ -569,29 +566,6 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_pixelate_blocks_after_blur =
         make_pixelate_blocks_bind_group("bg Pixelate block averages after mask Blur", tex2_view);
 
-    let make_adjust_render_bind_group = |label: &str, source: &wgpu::TextureView| {
-        create_bind_group(
-            device,
-            label,
-            &layouts.bgl_adjust_render,
-            &[
-                buffer_binding(0, camera_uniforms_buffer),
-                texture_binding(12, out_view),
-                texture_binding(26, source),
-                buffer_binding(16, tone_stats_buffer),
-                buffer_binding(20, profile_buffer),
-                texture_binding(27, mask_view),
-                sampler_binding(28, mask_sampler),
-                texture_binding(29, display_linear_view),
-                buffer_binding(33, mask_data_buffer),
-            ],
-        )
-    };
-    let bg_adjust_render =
-        make_adjust_render_bind_group("bg scene look view and output", tex2_view);
-    let bg_adjust_render_after_blur =
-        make_adjust_render_bind_group("bg scene look view and output after mask Blur", tex1_view);
-
     BindGroups {
         scene_tone_bind_group,
         effects_bind_group,
@@ -624,8 +598,6 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_glow_blur_after_blur,
         bg_pixelate_blocks,
         bg_pixelate_blocks_after_blur,
-        bg_adjust_render,
-        bg_adjust_render_after_blur,
     }
 }
 
@@ -653,6 +625,7 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
     InputBindingSources {
         scene_preparation_layout: layouts.bgl_adjust_prepare.clone(),
         creative_layout: layouts.bgl_adjust_creative.clone(),
+        view_layout: layouts.bgl_adjust_render.clone(),
         scene_depth_guide_layout: layouts.bgl_scene_depth_guide.clone(),
         relight_shadow_map_layout: layouts.bgl_relight_shadow_map.clone(),
         image_light_layouts: [
@@ -674,6 +647,7 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
         tex1: surfaces.tex1_view.clone(),
         tex2: surfaces.tex2_view.clone(),
         display_linear: surfaces.display_linear_view.clone(),
+        out: surfaces.out_view.clone(),
         mask: surfaces.mask_view.clone(),
         mask_sampler: surfaces.mask_sampler.clone(),
         light_rays_mask: surfaces.light_rays_mask_view.clone(),

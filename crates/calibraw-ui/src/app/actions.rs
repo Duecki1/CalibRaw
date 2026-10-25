@@ -75,6 +75,7 @@ impl CalibRawApp {
             || self.ui.runtime_restart_prompt.is_some()
             || self.develop_ui.manual_lens_dialog.is_some()
             || self.shortcuts_dialog_open()
+            || (self.ui.active_tab == AppTab::Settings && self.ui.settings_dialog.is_some())
             || self.ui.version_check.dialog_open()
             || self.library.transient_dialog_open()
             || self.presets.dialog_open()

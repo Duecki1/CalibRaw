@@ -207,6 +207,7 @@ impl CalibRawApp {
             preview_quality: self.preview.quality,
             fitted_viewport_pixels: self.preview.fitted_viewport_pixels,
             camera_profiles: self.camera_profile_settings(),
+            luts: self.luts.store(),
             automatic_lens: self.preferences.automatic_lens_correction,
             ai_denoise_result_path: self.ai_denoise_result_path_for_target(&source.sidecar_target),
             device: render_state.device.clone(),
@@ -293,6 +294,7 @@ impl CalibRawApp {
         self.develop.current_path = None;
         self.develop.current_label = None;
         self.develop.selected_camera_profile = None;
+        self.install_loaded_look_lut(None, None);
         self.develop.image_status = format!("Loading {label}…");
         self.preview.original_exposure = initial_exposure;
         self.preview.original_requested = false;
@@ -373,6 +375,7 @@ impl CalibRawApp {
                 let preview_height = loaded.preview_raw.height;
                 let profile_label = loaded
                     .full_raw
+                    .profile_color
                     .camera_profile
                     .name
                     .as_deref()
@@ -392,6 +395,7 @@ impl CalibRawApp {
                 self.develop.current_path = loaded.source_path;
                 self.develop.current_label = Some(loaded.label.clone());
                 self.develop.selected_camera_profile = loaded.selected_camera_profile.clone();
+                self.install_loaded_look_lut(loaded.look_lut, loaded.look_lut_table);
                 self.develop.original_raw = Some(loaded.original_raw);
                 self.develop.loaded_raw = Some(loaded.full_raw);
                 self.develop.preview_raw = Some(loaded.preview_raw);

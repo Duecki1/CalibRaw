@@ -207,6 +207,9 @@ fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         "The selected camera profile, when it is available for the destination image.",
     )
     .changed();
+    changed |=
+        moduwu_design::toggle_with_help(ui, &mut settings.lut, "LUT", "The LUT and its amount.")
+            .changed();
     changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.masks,

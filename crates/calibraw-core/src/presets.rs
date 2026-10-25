@@ -26,10 +26,10 @@ use std::sync::Arc;
 
 pub const PRESET_SUFFIX: &str = ".calibraw-preset";
 /// The newest schema. Bump for every incompatible change to the serialized
-/// layout. Schema 2 shares the layout of schema 1 and adds the Relight effect;
-/// presets without it are still written as schema 1
-/// (`migrations::older_readers`).
-pub const PRESET_SCHEMA_VERSION: u32 = 2;
+/// layout. Schemas 2 and 3 share the layout of schema 1; schema 2 adds the
+/// Relight effect and schema 3 the LUT. Presets are written with the oldest
+/// schema that holds them (`migrations::older_readers`).
+pub const PRESET_SCHEMA_VERSION: u32 = 3;
 pub const DEFAULT_PRESET_GROUP: &str = "User Presets";
 pub const MAX_PRESET_NAME_CHARS: usize = 64;
 /// Presets hold no image data, so anything larger is not a preset.
@@ -202,11 +202,40 @@ impl Preset {
         }
     }
 
+    /// The part of the preset an export can apply to a photo as it was
+    /// decoded: everything but the camera profile and lens correction, which
+    /// need the photo decoded again, and AI masks, which need AI models run.
+    /// `None` when nothing else is left.
+    pub fn for_export(&self) -> Option<Self> {
+        let selection = EditSelection {
+            camera_profile: false,
+            lens_correction: false,
+            ai_masks: false,
+            ..self.selection
+        };
+        if selection.is_empty() {
+            return None;
+        }
+        let mut preset = self.clone();
+        preset.selection = selection;
+        preset.edits.camera_profile = None;
+        preset.edits.lens = crate::sidecar::LensEditState::default();
+        preset.edits.subject_refinement = None;
+        let masks = Arc::make_mut(&mut preset.edits.masks);
+        masks.subject_refinement = Default::default();
+        for mask in &mut masks.masks {
+            mask.components
+                .retain(|component| crate::sidecar::is_manual_mask_kind(component.kind));
+        }
+        masks.masks.retain(|mask| !mask.components.is_empty());
+        Some(preset)
+    }
+
     // A quick preview shows the part of a preset that renders without reloading
     // the photo or running AI models: the adjustment groups, plus masks and
     // effects placed by hand. Camera profile, lens correction, geometry, RAW
-    // processing, AI denoise and AI masks only take effect when the preset is
-    // applied.
+    // processing, AI denoise, AI masks and the LUT only take effect when the
+    // preset is applied.
 
     /// Applies the preset's adjustment groups to `exposure` for a quick preview.
     pub fn preview_adjustments_on(&self, exposure: &mut ExposureParams) {
@@ -287,9 +316,11 @@ impl Preset {
         }
         // Keep each future schema's decoder and migration in its own arm so an
         // older layout is never read as the current one by accident. Schemas 1
-        // and 2 share one layout.
+        // to 3 share one layout.
         let mut document = match header.schema_version {
-            migrations::older_readers::V1_SCHEMA_VERSION | PRESET_SCHEMA_VERSION => {
+            migrations::older_readers::V1_SCHEMA_VERSION
+            | migrations::older_readers::V2_SCHEMA_VERSION
+            | PRESET_SCHEMA_VERSION => {
                 serde_json::from_slice::<PresetDocument>(bytes).map_err(|error| {
                     PresetError::Invalid(format!("invalid preset JSON: {error}"))
                 })?
@@ -440,7 +471,7 @@ pub fn portable_masks(masks: &MaskStack) -> MaskStack {
 }
 
 /// The categories a new preset from `edits` should include by default: every
-/// edited adjustment group, a chosen camera profile and any portable masks.
+/// edited adjustment group, a chosen camera profile, a LUT and any portable masks.
 /// Geometry, lens correction and RAW processing are photo-specific and left out.
 pub fn suggested_selection(edits: &EditState) -> EditSelection {
     let portable = portable_masks(&edits.masks);
@@ -460,6 +491,7 @@ pub fn suggested_selection(edits: &EditState) -> EditSelection {
             .filter(|group| adjustment_group_is_edited(edits, *group))
             .collect(),
         camera_profile: edits.camera_profile.is_some(),
+        lut: edits.look_lut.is_some(),
         masks: has_manual,
         ai_masks: has_ai,
         ..EditSelection::default()

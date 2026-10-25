@@ -207,7 +207,7 @@ fn source_fingerprint(raw: &LoadedRaw, cancellation: Option<&AtomicBool>) -> Res
     digest.update(&cfa_cache_code(raw.cfa_kind).to_le_bytes());
     update_digest_cancelable(
         &mut digest,
-        bytemuck::cast_slice(raw.raw_pixels.as_slice()),
+        bytemuck::cast_slice(&raw.raw_pixels),
         cancellation,
     )?;
     let (color_width, color_height, colors) = raw.color_indices.storage_parts();
@@ -219,7 +219,7 @@ fn source_fingerprint(raw: &LoadedRaw, cancellation: Option<&AtomicBool>) -> Res
     digest.update(&black_height.to_le_bytes());
     update_digest_cancelable(&mut digest, bytemuck::cast_slice(blacks), cancellation)?;
     digest.update(bytemuck::bytes_of(&raw.wb_coeffs));
-    digest.update(bytemuck::bytes_of(&raw.cam_to_srgb));
+    digest.update(bytemuck::bytes_of(&raw.profile_color.cam_to_srgb));
     digest.update(bytemuck::bytes_of(&raw.black_levels));
     digest.update(bytemuck::bytes_of(&raw.white_levels));
     // The X-Trans model denoises the demosaiced scene, which the GPU renders

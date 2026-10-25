@@ -260,6 +260,9 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 bradford_to_xyz,
                 point_colors,
                 point_color_meta,
+                look_lut,
+                look_lut_domain_min,
+                look_lut_domain_scale,
             }),
         ),
         (
@@ -372,6 +375,37 @@ fn shared_buffer_bindings_match_the_rust_bind_group_layouts() {
         }
     }
     assert_eq!(seen.len(), expected.len(), "every shared buffer is used");
+}
+
+#[test]
+fn the_look_lut_texture_matches_the_view_layout() {
+    let modules = production_modules();
+    let mut seen = false;
+    for (context, module) in &modules {
+        for (_, global) in module.global_variables.iter() {
+            if global.name.as_deref().map(undecorated) != Some("look_lut_tex") {
+                continue;
+            }
+            let resource = global.binding.as_ref().expect("textures are bound");
+            assert_eq!((resource.group, resource.binding), (0, 61), "{context}");
+            assert!(
+                matches!(
+                    module.types[global.ty].inner,
+                    naga::TypeInner::Image {
+                        dim: naga::ImageDimension::D3,
+                        arrayed: false,
+                        class: naga::ImageClass::Sampled {
+                            kind: naga::ScalarKind::Float,
+                            multi: false,
+                        },
+                    }
+                ),
+                "{context}: look_lut_tex is an unfiltered 3D float texture"
+            );
+            seen = true;
+        }
+    }
+    assert!(seen, "the view pass reads the LUT");
 }
 
 /// The value of a u32 constant, which every module that keeps it must agree on.

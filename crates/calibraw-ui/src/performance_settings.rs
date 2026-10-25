@@ -39,6 +39,8 @@ pub(crate) struct PerformanceSettings {
     pub preview_full_resolution: bool,
     pub image_relative_brush_size: bool,
     pub show_develop_navigation_labels: bool,
+    /// The Develop cards of the sidebar layout, in the order shown.
+    pub develop_card_order: crate::app::DevelopCardOrder,
     pub export_name_template: String,
     #[serde(with = "export_format_serde")]
     pub export_format: ExportFormat,
@@ -164,6 +166,7 @@ impl Default for PerformanceSettings {
             preview_full_resolution: false,
             image_relative_brush_size: false,
             show_develop_navigation_labels: true,
+            develop_card_order: crate::app::DevelopCardOrder::default(),
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
             export_format: ExportFormat::Jpeg,
             ui_design: crate::appearance::UiDesign::default(),
@@ -636,6 +639,8 @@ mod tests {
 
     #[test]
     fn library_preferences_round_trip() {
+        let mut develop_card_order = crate::app::DevelopCardOrder::default();
+        develop_card_order.move_card(3, true);
         let settings = PerformanceSettings {
             develop_histogram_open: true,
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::Enormous,
@@ -643,6 +648,7 @@ mod tests {
             library_stack_raw_companions: false,
             image_relative_brush_size: true,
             show_develop_navigation_labels: false,
+            develop_card_order,
             export_name_template: "{OriginalName}-{CurrentDate}".to_owned(),
             export_format: ExportFormat::Png,
             ui_design: crate::appearance::UiDesign::Porcelain,
@@ -683,6 +689,8 @@ mod tests {
         assert!(!restored.library_stack_raw_companions);
         assert!(restored.image_relative_brush_size);
         assert!(!restored.show_develop_navigation_labels);
+        assert_eq!(restored.develop_card_order, settings.develop_card_order);
+        assert!(!restored.develop_card_order.is_default());
         assert!(!restored.automatic_lens_correction);
         assert!(!restored.automatic_lens_geometry && restored.automatic_lens_vignetting);
         assert!(!restored.missing_lens_profile_prompt);

@@ -1,6 +1,6 @@
 use crate::app::{
-    AdjustmentSection, AppAction, CalibRawApp, ColorGradeTab, HslMixerColor, InpaintTool,
-    MaskSection, SidebarTab, ToneCurveTab,
+    AdjustmentSection, AppAction, CalibRawApp, ColorGradeTab, DevelopCard, HslMixerColor,
+    InpaintTool, MaskSection, SidebarTab, ToneCurveTab,
 };
 use crate::pipeline::{
     AdjustmentGroup, BrushMode, DenoiseQuality, ExportBitDepth, ExportFormat, ExportResizeMode,
@@ -98,8 +98,10 @@ mod develop;
 mod export;
 mod info;
 mod inpainting;
+mod look_lut;
 mod masks;
 mod navigation;
+mod portrait_fill;
 #[cfg(test)]
 mod test_support;
 

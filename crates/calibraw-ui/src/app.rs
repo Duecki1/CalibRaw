@@ -55,6 +55,8 @@ use worker::spawn_ui_worker;
 use worker::{model_download_progress, poll_ai_job, AiJobUpdate};
 
 mod decoded_raw_cache;
+mod develop_cards;
+pub(crate) use develop_cards::{DevelopCard, DevelopCardOrder};
 mod develop_state;
 mod effect_handles;
 mod export_state;
@@ -66,7 +68,7 @@ mod mask_tool;
 mod persistence_state;
 mod preview_state;
 mod ui_state;
-pub(crate) use decoded_raw_cache::{DecodeKey, DecodedRaw, DecodedRawCache};
+pub(crate) use decoded_raw_cache::{DecodeKey, DecodeRequest, DecodedRaw, DecodedRawCache};
 pub(crate) use develop_state::*;
 pub(crate) use effect_handles::{
     EffectComponentRef, EffectHandle, EffectHandleAction, EffectHandleEdit,
@@ -96,6 +98,7 @@ pub struct CalibRawApp {
     pub(crate) usage: UsageState,
     pub(crate) preferences: PreferencesState,
     pub(crate) presets: PresetState,
+    pub(crate) luts: LutState,
     pub(crate) ui: UiState,
     discord_presence: DiscordPresence,
     /// The desktop toolbar's brand mark; `None` where there is no toolbar brand.
@@ -292,13 +295,16 @@ mod error_dialogs;
 pub(crate) use error_dialogs::{ErrorDialogQueue, ErrorKind};
 mod foreground;
 mod gpu_recovery;
+mod hover_preview;
 mod inpainting;
 mod library_adjustments;
+mod luts;
 mod manual_lens;
 mod presets;
 pub(crate) use library_adjustments::{
     EditTransfer, EditTransferOrigin, LibraryEditTransferOutcome,
 };
+pub(crate) use luts::{missing_look_lut_notice, LutState, LOOK_LUT_CARD_TITLE};
 pub(crate) use presets::{GroupDialogMode, PresetEditor, PresetEditorMode, PresetState};
 mod full_resolution;
 mod interaction;
@@ -329,10 +335,10 @@ mod ui_review_tests;
 
 use ai::AiUpdate;
 use lifecycle::needs_canonical_mask_source;
-pub(crate) use lifecycle::ProfileReload;
 pub(crate) use lifecycle::{
     install_missing_range_sources, masks_have_missing_range_sources, DocumentSource,
 };
+pub(crate) use lifecycle::{CameraProfileChoice, ProfileReload};
 use sidecar_persistence::sidecar_interaction_active;
 
 #[cfg(test)]

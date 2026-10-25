@@ -153,7 +153,9 @@ impl CalibRawApp {
             &preview_masks,
             self.develop.geometry,
             &detail.raw,
-        );
+            self.preview_profile_color(&detail.raw),
+        )
+        .with_look_lut(self.develop.target_look.as_ref());
 
         let full_frame_tone_pipeline = full_frame_tone_pipeline(
             self.preview.gpu_pipeline.as_ref(),
@@ -360,12 +362,21 @@ impl CalibRawApp {
             }
         }
 
-        let params = GpuParams::new(&self.develop.target_exposure, preview_masks, raw)
-            .with_vignette_geometry(self.develop.geometry);
+        let params = GpuParams::new_with_profile_color(
+            &self.develop.target_exposure,
+            preview_masks,
+            raw,
+            self.preview_profile_color(raw),
+        )
+        .with_vignette_geometry(self.develop.geometry)
+        .with_look_lut(self.develop.target_look.as_ref());
         let Some(full_raw) = preview_source.as_ref() else {
             self.preview.pending_stage = None;
             return;
         };
+        let look_lut_failure = pipeline
+            .prepare_look_lut(&render_state.queue, params.look_lut())
+            .err();
         if let Err(error) = pipeline.dispatch_stage_with_remove(
             &render_state.queue,
             &render_state.device,
@@ -406,6 +417,9 @@ impl CalibRawApp {
             ProcessingStage::Tone => Some(ProcessingStage::Output),
             ProcessingStage::Output => None,
         };
+        if let Some(error) = look_lut_failure {
+            self.report_look_lut_upload_failure(&error);
+        }
     }
 }
 

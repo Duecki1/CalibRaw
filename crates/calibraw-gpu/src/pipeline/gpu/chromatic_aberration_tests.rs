@@ -179,19 +179,20 @@ fn camera_linear_fringes_are_judged_after_white_balance() -> anyhow::Result<()> 
         std::array::from_fn(|channel| balanced[channel] / gains[channel])
     });
     raw.wb_coeffs = [gains[0], gains[1], gains[2], gains[1]];
-    raw.white_balance_model = Some(CameraWhiteBalanceModel {
-        base_wb: [gains[0], gains[1], gains[2], gains[1]],
-        cdesc: *b"RGBG",
-        base_cct: 5_000.0,
-        color: CameraColorModel::Matrix {
-            xyz_to_camera: [
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-                [0.0, 1.0, 0.0],
-            ],
-        },
-    });
+    std::sync::Arc::make_mut(&mut raw.profile_color).white_balance_model =
+        Some(CameraWhiteBalanceModel {
+            base_wb: [gains[0], gains[1], gains[2], gains[1]],
+            cdesc: *b"RGBG",
+            base_cct: 5_000.0,
+            color: CameraColorModel::Matrix {
+                xyz_to_camera: [
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [0.0, 1.0, 0.0],
+                ],
+            },
+        });
     assert!(raw.is_camera_linear_raster());
     let balance = |scene: Vec<f32>| -> Vec<f32> {
         scene

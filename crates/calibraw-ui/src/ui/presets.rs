@@ -4,6 +4,8 @@ use crate::pipeline::AdjustmentGroup;
 use crate::platform::PlatformCaps;
 use crate::presets::DeletedGroupPresets;
 use crate::sidecar::EditSelection;
+use crate::ui::components::adjustment_slider::AdjustmentSlider;
+use crate::ui::components::preview_list::pointer_previews;
 use eframe::egui::{self, Ui};
 use std::path::PathBuf;
 
@@ -122,6 +124,7 @@ fn selection_summary(selection: EditSelection) -> String {
     for (included, label) in [
         (selection.raw_processing, "RAW processing"),
         (selection.camera_profile, "Camera profile"),
+        (selection.lut, "LUT"),
         (selection.masks, "Masks"),
         (selection.ai_masks, "AI masks"),
         (selection.geometry, "Crop & geometry"),
@@ -166,6 +169,24 @@ pub(crate) fn show_header_actions(ui: &mut Ui, app: &mut CalibRawApp) {
 pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
     let list = PresetList::from_app(app);
     let mut action = None;
+
+    if let Some((name, amount)) = app.applied_preset_amount() {
+        let name = name.to_owned();
+        let mut percent = amount * 100.0;
+        let changed = moduwu_design::content_card(ui, |ui| {
+            ui.add(egui::Label::new(egui::RichText::new(&name).strong()).truncate());
+            AdjustmentSlider::new("Amount", &mut percent, 0.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .reset_to(100.0)
+                .show(ui)
+        })
+        .inner;
+        if changed {
+            app.set_applied_preset_amount(percent / 100.0);
+        }
+        moduwu_design::card_gap(ui);
+    }
 
     let mut notes = Vec::new();
     if !app.presets.is_available() {
@@ -243,8 +264,8 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
     {
         action = Some(PresetAction::NewGroup);
     }
-    // Touch screens have no hover; a tap applies the preset directly.
-    if let Some(path) = hovered.filter(|_| caps.is_desktop()) {
+    // A touch has no hover; a tap applies the preset directly.
+    if let Some(path) = hovered.filter(|_| pointer_previews(ui)) {
         app.presets.hover.request(path);
     }
 
@@ -713,6 +734,7 @@ fn show_selection_controls(
         + [
             selection.raw_processing,
             selection.camera_profile,
+            selection.lut,
             selection.masks,
             selection.ai_masks,
             selection.geometry,
@@ -813,6 +835,11 @@ fn show_additional_selection(ui: &mut Ui, selection: &mut EditSelection) {
                     &mut selection.camera_profile,
                     "Camera profile",
                     "The DCP profile chosen for this photo. Photos from other camera models keep their automatic profile.",
+                ),
+                (
+                    &mut selection.lut,
+                    "LUT",
+                    "The LUT and its amount. Photos whose LUT library lacks it are shown without it.",
                 ),
                 (
                     &mut selection.masks,

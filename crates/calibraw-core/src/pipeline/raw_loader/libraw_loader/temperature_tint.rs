@@ -117,7 +117,7 @@ pub(super) fn parsed_dng_endpoints(
 /// The endpoints of LibRaw's DNG colour data, each `None` when its colour
 /// matrix is unusable.
 pub(super) fn libraw_dng_endpoints(
-    color: &ffi::libraw_colordata_t,
+    color: &LibRawColor,
     calibration_compatible: bool,
 ) -> [Option<DngColorEndpoint>; 2] {
     std::array::from_fn(|index| {

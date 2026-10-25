@@ -8,6 +8,7 @@ pub(crate) enum DesktopPickerEvent {
     CameraProfileFolder(Option<PathBuf>),
     OnnxRuntime(Result<Option<(PathBuf, calibraw_ai::Sha256)>, String>),
     PresetFiles(Option<Vec<PathBuf>>),
+    LutFiles(Option<Vec<PathBuf>>),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -21,6 +22,7 @@ pub(crate) enum AppTab {
 pub(crate) struct PreferencesState {
     pub(crate) image_relative_brush_size: bool,
     pub(crate) show_develop_navigation_labels: bool,
+    pub(crate) develop_card_order: DevelopCardOrder,
     pub(crate) automatic_lens_correction: AutomaticLensCorrection,
     /// Ask about manual correction when automatic correction finds no profile.
     pub(crate) missing_lens_profile_prompt: bool,
@@ -58,6 +60,13 @@ pub(crate) enum OnboardingStep {
     Discord,
 }
 
+/// A Settings dialog for a list too long for its card.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsDialog {
+    DevelopCardOrder,
+    Luts,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct UnsupportedFileDialog {
     pub(crate) label: String,
@@ -83,6 +92,8 @@ pub(crate) struct UiState {
     pub(in crate::app) version_check: version_update::VersionCheckState,
     /// The keyboard shortcuts reference is open.
     pub(crate) shortcuts_dialog_open: bool,
+    /// The Settings dialog that is open, shown while Settings is.
+    pub(crate) settings_dialog: Option<SettingsDialog>,
     pub(crate) thumbnail_cache_size: Option<Result<u64, String>>,
     pub(crate) thumbnail_cache_size_receiver: Option<mpsc::Receiver<Result<u64, String>>>,
     pub(crate) desktop_picker_receiver: Option<mpsc::Receiver<DesktopPickerEvent>>,

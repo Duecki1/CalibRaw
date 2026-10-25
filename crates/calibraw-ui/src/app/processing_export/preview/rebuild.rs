@@ -338,12 +338,14 @@ impl CalibRawApp {
             self.preview.quality_dirty = true;
             return;
         };
-        let params = GpuParams::new(
+        let params = GpuParams::new_with_profile_color(
             &self.preview_exposure(),
             &preview_masks,
             &prepared.preview_raw,
+            self.preview_profile_color(&prepared.preview_raw),
         )
-        .with_vignette_geometry(self.develop.geometry);
+        .with_vignette_geometry(self.develop.geometry)
+        .with_look_lut(self.preview_look().as_ref());
         let program_template = self
             .preview
             .pipeline()
@@ -355,6 +357,7 @@ impl CalibRawApp {
 
         let options = PipelineOptions {
             programs: program_template.as_ref(),
+            profile_preview: crate::app::lifecycle::reserves_profile_preview(&prepared.preview_raw),
             ..fitted_pipeline_options(preview_masks.masks.len())
         };
         let build_pipeline = || {
@@ -457,6 +460,7 @@ impl CalibRawApp {
             }
         }
         self.develop.target_exposure = self.preview_exposure();
+        self.develop.target_look = self.preview_look();
         self.preview.pending_stage = None;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
