@@ -19,9 +19,6 @@ use crate::luts::{
 /// is keyed by.
 pub(crate) const LOOK_LUT_CARD_TITLE: &str = "LUT";
 
-/// Recently chosen LUTs the Develop card lists first.
-const RECENT_LUTS: usize = 5;
-
 /// A row of the LUT list: a library LUT, or `None` for no LUT.
 pub(crate) type LutChoice = Option<LutId>;
 
@@ -51,8 +48,6 @@ pub(crate) struct LutState {
     hover_table: Option<Arc<CubeLut>>,
     /// The table being read for the hovered LUT.
     hover_loading: Option<LutTableLoad>,
-    /// Library LUTs chosen in this session, most recent first.
-    recent: Vec<LutId>,
 }
 
 /// The Settings dialog that renames a library LUT.
@@ -129,17 +124,6 @@ impl LutState {
     /// Reads library LUTs on any thread.
     pub(crate) fn store(&self) -> Option<LutStore> {
         self.library.as_ref().map(|library| library.store().clone())
-    }
-
-    /// Library LUTs chosen in this session, most recent first.
-    pub(crate) fn recent(&self) -> &[LutId] {
-        &self.recent
-    }
-
-    fn note_recent(&mut self, id: LutId) {
-        self.recent.retain(|recent| *recent != id);
-        self.recent.insert(0, id);
-        self.recent.truncate(RECENT_LUTS);
     }
 
     fn end_hover_table(&mut self) {
@@ -226,9 +210,6 @@ impl CalibRawApp {
     pub(crate) fn select_look_lut(&mut self, id: Option<LutId>) {
         if self.luts.hover.suppress(&id) {
             self.luts.end_hover_table();
-        }
-        if let Some(id) = id.filter(|id| self.luts.entry(*id).is_some()) {
-            self.luts.note_recent(id);
         }
         let amount = self
             .develop
@@ -687,7 +668,6 @@ mod tests {
         app.sync_lut_hover_preview_at(start + HOVER_PREVIEW_DELAY);
         app.select_look_lut(Some(id));
         assert!(app.luts.hover.shown().is_none());
-        assert_eq!(app.luts.recent(), [id]);
         assert_eq!(
             app.develop.target_look.as_ref().map(|look| look.lut.id()),
             Some(id)

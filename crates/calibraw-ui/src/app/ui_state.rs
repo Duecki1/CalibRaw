@@ -60,6 +60,13 @@ pub(crate) enum OnboardingStep {
     Discord,
 }
 
+/// A Settings dialog for a list too long for its card.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsDialog {
+    DevelopCardOrder,
+    Luts,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct UnsupportedFileDialog {
     pub(crate) label: String,
@@ -85,6 +92,8 @@ pub(crate) struct UiState {
     pub(in crate::app) version_check: version_update::VersionCheckState,
     /// The keyboard shortcuts reference is open.
     pub(crate) shortcuts_dialog_open: bool,
+    /// The Settings dialog that is open, shown while Settings is.
+    pub(crate) settings_dialog: Option<SettingsDialog>,
     pub(crate) thumbnail_cache_size: Option<Result<u64, String>>,
     pub(crate) thumbnail_cache_size_receiver: Option<mpsc::Receiver<Result<u64, String>>>,
     pub(crate) desktop_picker_receiver: Option<mpsc::Receiver<DesktopPickerEvent>>,

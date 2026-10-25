@@ -345,6 +345,7 @@ impl CalibRawApp {
                 tip: None,
                 version_check: Default::default(),
                 shortcuts_dialog_open: false,
+                settings_dialog: None,
                 numeric_keyboard: false,
             },
             library: if caps.has_media_library() {

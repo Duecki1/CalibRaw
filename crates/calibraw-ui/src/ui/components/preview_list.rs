@@ -5,23 +5,19 @@
 //! how its preview renders.
 use eframe::egui::{self, Ui};
 
-/// One line of a [`preview_list`] or [`preview_combo`].
-pub(crate) enum PreviewListItem<K> {
-    /// A small title above the rows that follow it.
-    Heading(&'static str),
-    Choice {
-        key: K,
-        label: String,
-        selected: bool,
-        /// A disabled row is shown, as a missing choice the photo still uses,
-        /// but can be neither clicked nor previewed.
-        enabled: bool,
-    },
+/// One row of a [`preview_list`] or [`preview_combo`].
+pub(crate) struct PreviewListItem<K> {
+    pub(crate) key: K,
+    pub(crate) label: String,
+    pub(crate) selected: bool,
+    /// A disabled row is shown, as a missing choice the photo still uses, but
+    /// can be neither clicked nor previewed.
+    pub(crate) enabled: bool,
 }
 
 impl<K> PreviewListItem<K> {
     pub(crate) fn choice(key: K, label: impl Into<String>, selected: bool) -> Self {
-        Self::Choice {
+        Self {
             key,
             label: label.into(),
             selected,
@@ -106,14 +102,8 @@ pub(crate) fn preview_combo<K: Clone>(
 ) -> PreviewListResponse<K> {
     let selected_text = items
         .iter()
-        .find_map(|item| match item {
-            PreviewListItem::Choice {
-                label,
-                selected: true,
-                ..
-            } => Some(label.clone()),
-            _ => None,
-        })
+        .find(|item| item.selected)
+        .map(|item| item.label.clone())
         .unwrap_or_default();
     // The open menu is this dropdown's own, so only the pointer decides.
     let previews = pointer_hovers(ui);
@@ -126,8 +116,8 @@ pub(crate) fn preview_combo<K: Clone>(
     response
 }
 
-/// Draws `items` one below another, each choice with `row`, and reports the
-/// clicked row and, when `previews`, the hovered one.
+/// Draws `items` one below another, each with `row`, and reports the clicked
+/// row and, when `previews`, the hovered one.
 fn show_items<K: Clone>(
     ui: &mut Ui,
     items: impl IntoIterator<Item = PreviewListItem<K>>,
@@ -135,27 +125,21 @@ fn show_items<K: Clone>(
     mut row: impl FnMut(&mut Ui, String, bool) -> egui::Response,
 ) -> PreviewListResponse<K> {
     let mut response = PreviewListResponse::default();
-    for item in items {
-        match item {
-            PreviewListItem::Heading(title) => {
-                ui.label(egui::RichText::new(title).small().weak());
-            }
-            PreviewListItem::Choice {
-                key,
-                label,
-                selected,
-                enabled,
-            } => {
-                let shown = ui
-                    .add_enabled_ui(enabled, |ui| row(ui, label, selected))
-                    .inner;
-                if shown.clicked() {
-                    response.clicked = Some(key.clone());
-                }
-                if previews && shown.hovered() && enabled {
-                    response.hovered = Some(key);
-                }
-            }
+    for PreviewListItem {
+        key,
+        label,
+        selected,
+        enabled,
+    } in items
+    {
+        let shown = ui
+            .add_enabled_ui(enabled, |ui| row(ui, label, selected))
+            .inner;
+        if shown.clicked() {
+            response.clicked = Some(key.clone());
+        }
+        if previews && shown.hovered() && enabled {
+            response.hovered = Some(key);
         }
     }
     response

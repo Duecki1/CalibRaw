@@ -14,6 +14,9 @@ const THIRD_PARTY_NOTICES: &str = include_str!("../../../../THIRD_PARTY_NOTICES.
 const RUST_DEPENDENCY_LICENSES: &str =
     include_str!(concat!(env!("OUT_DIR"), "/THIRD_PARTY_LICENSES.md"));
 
+mod card_order;
+mod lut_library;
+
 pub(crate) struct Settings;
 
 /// A count setting as a standard slider. Dragging or typing edits a draft that
@@ -248,6 +251,7 @@ impl Settings {
         moduwu_design::card_gap(ui);
 
         moduwu_design::content_card(ui, |ui| Self::show_interface_card(ui, app));
+        Self::show_develop_card_order_dialog(ui.ctx(), app);
 
         moduwu_design::card_gap(ui);
         moduwu_design::content_card(ui, |ui| Self::show_adjustment_clipboard_card(ui, app));
@@ -269,6 +273,7 @@ impl Settings {
         if app.luts.is_available() || app.luts.failure().is_some() {
             moduwu_design::card_gap(ui);
             moduwu_design::content_card(ui, |ui| Self::show_luts_card(ui, app));
+            Self::show_lut_library_dialog(ui.ctx(), app);
             Self::show_lut_rename_dialog(ui.ctx(), app);
             Self::show_lut_remove_confirmation(ui.ctx(), app);
         }
@@ -838,98 +843,6 @@ impl Settings {
                 app.clear_camera_profile_folder();
             }
         });
-    }
-
-    /// The order of the Develop cards in the sidebar, changed one step at a
-    /// time with each card's arrows.
-    fn show_develop_card_order(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::strong_with_help(
-            ui,
-            "Develop card order",
-            "The order of the Edit cards in the sidebar. Phones in portrait show one section at a time in a fixed order.",
-        );
-        let mut order = app.preferences.develop_card_order.clone();
-        let mut moved = None;
-        let last = order.cards().len().saturating_sub(1);
-        for (index, card) in order.cards().iter().enumerate() {
-            // Right to left: the down arrow sits at the row's end.
-            moduwu_design::property_row(ui, card.label(), |ui| {
-                let size = moduwu_design::toolbar_icon_size();
-                let down = ui.add_enabled_ui(index < last, |ui| {
-                    moduwu_design::ghost_icon_button(
-                        ui,
-                        egui_phosphor::regular::CARET_DOWN,
-                        size,
-                        &format!("Move {} down", card.label()),
-                    )
-                });
-                let up = ui.add_enabled_ui(index > 0, |ui| {
-                    moduwu_design::ghost_icon_button(
-                        ui,
-                        egui_phosphor::regular::CARET_UP,
-                        size,
-                        &format!("Move {} up", card.label()),
-                    )
-                });
-                if up.inner.clicked() {
-                    moved = Some((index, true));
-                } else if down.inner.clicked() {
-                    moved = Some((index, false));
-                }
-            });
-        }
-        if let Some((index, up)) = moved {
-            order.move_card(index, up);
-        }
-        if moduwu_design::secondary_button_enabled(ui, !order.is_default(), "Reset card order")
-            .clicked()
-        {
-            order = crate::app::DevelopCardOrder::default();
-        }
-        app.set_develop_card_order(order);
-    }
-
-    fn show_luts_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
-            ui,
-            "LUTs",
-            "3D LUTs in the .cube format, for the LUT card in Develop and for batch exports. Imported files are copied into CalibRaw, so the originals can be moved or deleted.",
-        );
-        if let Some(failure) = app.luts.failure() {
-            ui.colored_label(ui.visuals().error_fg_color, failure);
-        }
-        let mut rename = None;
-        let mut remove = None;
-        if app.luts.entries().is_empty() && app.luts.is_available() {
-            ui.small("No LUTs imported.");
-        }
-        for entry in app.luts.entries() {
-            ui.horizontal(|ui| {
-                ui.label(&entry.name);
-                ui.small(format!("{0}×{0}×{0}", entry.size));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if moduwu_design::secondary_button(ui, "Remove").clicked() {
-                        remove = Some(entry.id);
-                    }
-                    if moduwu_design::secondary_button(ui, "Rename").clicked() {
-                        rename = Some(entry.id);
-                    }
-                });
-            });
-        }
-        moduwu_design::action_row(ui, |ui| {
-            if moduwu_design::secondary_button_enabled(ui, app.luts.is_available(), "Import…")
-                .clicked()
-            {
-                app.choose_lut_files_to_import(false);
-            }
-        });
-        if let Some(id) = rename {
-            app.start_lut_rename(id);
-        }
-        if remove.is_some() {
-            app.luts.pending_remove = remove;
-        }
     }
 
     fn show_lut_rename_dialog(ctx: &egui::Context, app: &mut CalibRawApp) {

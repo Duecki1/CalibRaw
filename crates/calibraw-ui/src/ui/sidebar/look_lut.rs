@@ -6,7 +6,7 @@ use crate::app::LOOK_LUT_CARD_TITLE;
 use crate::luts::{LookLut, LutEntry, LutId};
 use crate::ui::components::preview_list::{preview_list, ListHeight, PreviewListItem};
 
-/// Libraries with more LUTs than this get a search field and a Recent group.
+/// Libraries with more LUTs than this get a search field.
 const SEARCH_FROM_LUTS: usize = 8;
 /// Rows the list shows before it scrolls in the docked panel.
 const VISIBLE_LUT_ROWS: f32 = 7.5;
@@ -33,8 +33,6 @@ pub(super) struct LookLutView<'a> {
     pub(super) look: Option<&'a LookLut>,
     /// Every library LUT, sorted by name.
     pub(super) entries: &'a [LutEntry],
-    /// Recently chosen library LUTs, most recent first.
-    pub(super) recent: &'a [LutId],
     pub(super) can_import: bool,
     /// Docked, the card folds and its list is a few rows high. In portrait
     /// it shows alone, and its list fills the panel so the card fits whole.
@@ -42,8 +40,8 @@ pub(super) struct LookLutView<'a> {
 }
 
 impl Sidebar {
-    /// The LUT card: None, the library's LUTs, then Import… and the amount of
-    /// the chosen LUT. A LUT the library does not hold is listed as missing.
+    /// The LUT card: None, the library's LUTs, then the amount of the chosen
+    /// LUT and Import…. A LUT the library does not hold is listed as missing.
     pub(super) fn show_look_lut(ui: &mut Ui, view: &LookLutView<'_>) -> LookLutResponse {
         let mut response = LookLutResponse {
             action: None,
@@ -70,9 +68,6 @@ impl Sidebar {
                 response.action = Some(LookLutAction::Select(choice));
             }
             response.hovered = list.hovered;
-            if view.can_import && moduwu_design::full_width_button(ui, "Import…").clicked() {
-                response.action = Some(LookLutAction::Import);
-            }
             if let Some(look) = view.look {
                 let mut percent = look.amount * 100.0;
                 if AdjustmentSlider::new("Amount", &mut percent, 0.0..=100.0)
@@ -83,6 +78,9 @@ impl Sidebar {
                 {
                     response.action = Some(LookLutAction::Amount(percent / 100.0));
                 }
+            }
+            if view.can_import && moduwu_design::full_width_button(ui, "Import…").clicked() {
+                response.action = Some(LookLutAction::Import);
             }
         });
         if matches!(card, CardAction::Reset) {
@@ -113,8 +111,8 @@ impl Sidebar {
 }
 
 /// The rows of the LUT list for the lowercase search `query`: None, the
-/// photo's LUT when the library lacks it, the recent LUTs, then every
-/// matching LUT. A search lists only matching LUTs.
+/// photo's LUT when the library lacks it, then every matching LUT. A search
+/// lists only matching LUTs.
 fn look_lut_items(view: &LookLutView<'_>, query: &str) -> Vec<PreviewListItem<Option<LutId>>> {
     let selected = view.look.map(|look| look.id);
     let row = |entry: &LutEntry| {
@@ -128,33 +126,19 @@ fn look_lut_items(view: &LookLutView<'_>, query: &str) -> Vec<PreviewListItem<Op
         .look
         .filter(|look| view.entries.iter().all(|entry| entry.id != look.id))
     {
-        items.push(PreviewListItem::Choice {
+        items.push(PreviewListItem {
             key: Some(look.id),
             label: format!("{} (missing)", look.name),
             selected: true,
             enabled: false,
         });
     }
-    if query.is_empty() {
-        let recent: Vec<_> = view
-            .recent
+    items.extend(
+        view.entries
             .iter()
-            .filter_map(|id| view.entries.iter().find(|entry| entry.id == *id))
-            .collect();
-        if view.entries.len() > SEARCH_FROM_LUTS && !recent.is_empty() {
-            items.push(PreviewListItem::Heading("Recent"));
-            items.extend(recent.into_iter().map(row));
-            items.push(PreviewListItem::Heading("All"));
-        }
-        items.extend(view.entries.iter().map(row));
-    } else {
-        items.extend(
-            view.entries
-                .iter()
-                .filter(|entry| entry.name.to_lowercase().contains(query))
-                .map(row),
-        );
-    }
+            .filter(|entry| entry.name.to_lowercase().contains(query))
+            .map(row),
+    );
     items
 }
 
@@ -171,20 +155,13 @@ mod tests {
     }
 
     fn labels(items: &[PreviewListItem<Option<LutId>>]) -> Vec<String> {
-        items
-            .iter()
-            .map(|item| match item {
-                PreviewListItem::Heading(title) => format!("# {title}"),
-                PreviewListItem::Choice { label, .. } => label.clone(),
-            })
-            .collect()
+        items.iter().map(|item| item.label.clone()).collect()
     }
 
-    fn view<'a>(entries: &'a [LutEntry], recent: &'a [LutId]) -> LookLutView<'a> {
+    fn view(entries: &[LutEntry]) -> LookLutView<'_> {
         LookLutView {
             look: None,
             entries,
-            recent,
             can_import: true,
             layout: ScreenLayout::Horizontal,
         }
@@ -193,24 +170,22 @@ mod tests {
     #[test]
     fn a_small_library_lists_none_and_every_lut() {
         let entries = [entry("Film", 1), entry("Warm", 2)];
-        let recent = [entries[1].id];
         assert_eq!(
-            labels(&look_lut_items(&view(&entries, &recent), "")),
+            labels(&look_lut_items(&view(&entries), "")),
             ["None", "Film", "Warm"]
         );
     }
 
     #[test]
-    fn a_large_library_lists_recent_luts_first_and_searches_by_name() {
+    fn a_large_library_lists_every_lut_and_searches_by_name() {
         let entries: Vec<_> = (0..=SEARCH_FROM_LUTS as u8)
             .map(|index| entry(&format!("Look {index}"), index))
             .collect();
-        let recent = [entries[3].id];
-        let items = look_lut_items(&view(&entries, &recent), "");
-        assert_eq!(labels(&items[..4]), ["None", "# Recent", "Look 3", "# All"]);
-        assert_eq!(items.len(), 4 + entries.len());
+        let items = look_lut_items(&view(&entries), "");
+        assert_eq!(labels(&items[..2]), ["None", "Look 0"]);
+        assert_eq!(items.len(), 1 + entries.len());
 
-        let found = look_lut_items(&view(&entries, &recent), "look 8");
+        let found = look_lut_items(&view(&entries), "look 8");
         assert_eq!(labels(&found), ["Look 8"]);
     }
 
@@ -224,18 +199,11 @@ mod tests {
         };
         let view = LookLutView {
             look: Some(&missing),
-            ..view(&entries, &[])
+            ..view(&entries)
         };
         let items = look_lut_items(&view, "");
         assert_eq!(labels(&items), ["None", "Gone (missing)", "Film"]);
-        assert!(matches!(
-            items[1],
-            PreviewListItem::Choice {
-                selected: true,
-                enabled: false,
-                ..
-            }
-        ));
+        assert!(items[1].selected && !items[1].enabled);
     }
 
     #[test]
@@ -268,7 +236,7 @@ mod tests {
                                 &LookLutView {
                                     look: Some(&look),
                                     layout: ScreenLayout::Vertical,
-                                    ..view(&entries, &[])
+                                    ..view(&entries)
                                 },
                             );
                         });

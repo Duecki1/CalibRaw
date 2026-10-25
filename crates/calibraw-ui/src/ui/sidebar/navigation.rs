@@ -607,7 +607,6 @@ impl Sidebar {
             &look_lut::LookLutView {
                 look: app.develop.look_lut.as_ref(),
                 entries: app.luts.entries(),
-                recent: app.luts.recent(),
                 can_import: app.luts.is_available(),
                 layout,
             },
