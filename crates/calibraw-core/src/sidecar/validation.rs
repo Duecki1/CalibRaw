@@ -36,6 +36,13 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
             return invalid("camera profile path must stay inside the configured profile folder");
         }
     }
+    if let Some(look) = &edits.look_lut {
+        if look.name.len() > MAX_EDIT_NAME_BYTES {
+            return invalid("LUT name is unreasonably long");
+        }
+        finite("LUT amount", &[look.amount])?;
+        bounded("LUT amount", look.amount, 0.0, 1.0)?;
+    }
     let stack = &edits.masks;
     if stack.masks.len() > MAX_LOCAL_MASKS {
         return invalid("sidecar contains too many local masks");

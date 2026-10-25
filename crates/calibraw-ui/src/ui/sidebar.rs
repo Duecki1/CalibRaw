@@ -98,6 +98,7 @@ mod develop;
 mod export;
 mod info;
 mod inpainting;
+mod look_lut;
 mod masks;
 mod navigation;
 #[cfg(test)]

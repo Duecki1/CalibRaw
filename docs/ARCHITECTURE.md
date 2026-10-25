@@ -8,7 +8,7 @@ background work follows. Update it in the change that alters a boundary.
 
 | Crate | Owns | May depend on | Must not depend on |
 |---|---|---|---|
-| `calibraw-core` | Image and edit models, colour mathematics, geometry, parameter validation, RAW/rendered loading, sidecars, presets, thumbnail cache | std, decoding and serde crates | any other CalibRaw crate, egui/eframe |
+| `calibraw-core` | Image and edit models, colour mathematics, geometry, parameter validation, RAW/rendered loading, sidecars, presets, the LUT library and `.cube` parsing (`luts`), thumbnail cache | std, decoding and serde crates | any other CalibRaw crate, egui/eframe |
 | `calibraw-gpu` | Headless devices (`device`), adapter memory queries (`memory/`), GPU resource planning, WGSL composition, processing passes, readback, tiled export and file encoding | `calibraw-core`, wgpu, naga_oil; in `memory/`, the platform APIs under wgpu (`windows` DXGI, `ash`, `objc2-metal`) | UI crates, egui/eframe |
 | `calibraw-ai` | AI configuration and device capabilities (`config`), ONNX Runtime loading, its WebGPU plugin and the automatic packages (`runtime/`), where sessions run (GPU if they fit in free memory, else CPU), CPU memory admission, CPU fallback, GPU failure handling and platform and provider quirks (`placement/`), the model table, downloads and installation (`registry/`), the session slot (`slot`), the job worker (`jobs`), model-specific pre/postprocessing (`models/`) | `calibraw-core`, `calibraw-gpu` (denoise/remove render paths) | UI crates, egui/eframe |
 | `calibraw-ffi` | C ABI and the Android JNI bridge: storage, pickers, export publishing, notifications, replay encoder | `calibraw-core` (sidecar types), jni, android-activity | processing crates, UI crates, egui/eframe |
@@ -64,6 +64,9 @@ change that establishes a boundary, not in advance.
   `{stem}-N` name; `ExportTarget::Descriptor` (Android MediaStore)
   is written in place with intermediates in a caller-chosen staging directory.
   The exporter no longer asks the platform bridge which kind a path is.
+- A batch export may apply a preset and a LUT to every photo
+  (`ExportOverride`). They change only the edit snapshot each item is rendered
+  from; sidecars are never written.
 
 ## Inside `calibraw-ui`
 
@@ -144,7 +147,8 @@ GPU readbacks wait on one-slot channels.
 | out-of-memory records | `calibraw_ai::placement::out_of_memory` | AI jobs, also under the model runtime slot; Settings when GPU AI is switched | which models ran out of GPU memory and when they may retry; a leaf lock, never held while a session is created or run |
 | AI settings (`RwLock`) | `calibraw_ai::config` | the UI thread writes at startup and on Settings changes; AI jobs read | runtime source and model root; never held across a load or download |
 | `SHARED_SURFACE` | `calibraw_gpu` scene-depth upload | any thread uploading scene depth: preview pipelines on the UI thread, export workers | the relighting surface is derived once per depth result and shared by every pipeline; held while deriving, so a concurrent upload of the same result waits instead of repeating it |
-| effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates the depth guide, Relight surface and shadow map, image-light map or haze map the first time an effect reads them and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
+| effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates the depth guide, Relight surface and shadow map, image-light map or haze map the first time an effect reads them, and the LUT texture when a LUT is uploaded, and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
+| LUT cache | `calibraw_core::luts::LutStore`, shared by its clones | the UI thread, document loads, batch export and thumbnail workers | the recently parsed LUTs; a leaf lock, never held while a file is read or parsed |
 | `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
 | decoded-RAW cache state and condvar | `DecodedRawCache` | document loads and the prefetch worker | short critical sections; decodes run unlocked, and a second request for a decoding entry waits on the condvar |
 | per-entry lens-correction slot | `DecodedRaw` | document loads and the prefetch worker | held while correcting, so one correction per selection runs at a time |
@@ -175,6 +179,9 @@ released when their owners drop.
 
 `RawGpuPipeline` owns all textures and buffers of one processing graph and a
 `GpuBudgetReservation` (RAII) against the process-wide GPU working-set limit.
+The LUT texture is sized by its LUT, so it is not part of that plan: it takes
+a reservation of its own when a LUT is first uploaded, and pipelines without a
+LUT reserve nothing for it.
 Presenting its output is a UI concern: `PreviewPipeline` pairs a pipeline with
 its egui registration, so a displayed pipeline cannot outlive or leak its
 texture. On Android a replaced detail preview frees its texture immediately

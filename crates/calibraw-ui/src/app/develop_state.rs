@@ -417,6 +417,13 @@ pub(crate) struct DevelopState {
     pub(crate) lens_correction: LensCorrectionState,
     pub(crate) lens_correction_dirty: bool,
     pub(crate) selected_camera_profile: Option<PathBuf>,
+    /// The edit's LUT.
+    pub(crate) look_lut: Option<crate::luts::LookLut>,
+    /// The table of `look_lut` once read; `None` while it is read or when the
+    /// LUT library does not hold it (`luts.rs`).
+    pub(crate) look_lut_table: Option<Arc<crate::luts::CubeLut>>,
+    /// The LUT the previews render, kept like `target_exposure`.
+    pub(crate) target_look: Option<crate::luts::ResolvedLook>,
     pub(crate) load_receiver: Option<mpsc::Receiver<LoadEvent>>,
     pub(crate) loading_label: Option<String>,
     /// The view the loading document opens at; `None` fits it.

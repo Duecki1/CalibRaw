@@ -306,7 +306,8 @@ impl CalibRawApp {
                 &self.preview_mask_stack(),
                 &prepared.preview_raw,
             )
-            .with_vignette_geometry(self.develop.geometry);
+            .with_vignette_geometry(self.develop.geometry)
+            .with_look_lut(self.preview_look().as_ref());
             if let Err(error) = pipeline.recompute_with_remove(
                 &render_state.queue,
                 &render_state.device,
@@ -346,7 +347,8 @@ impl CalibRawApp {
                 &preview_masks,
                 &prepared.preview_raw,
             )
-            .with_vignette_geometry(self.develop.geometry);
+            .with_vignette_geometry(self.develop.geometry)
+            .with_look_lut(self.preview_look().as_ref());
             let pipeline = match RawGpuPipeline::new(
                 &render_state.device,
                 &render_state.queue,
@@ -417,6 +419,7 @@ impl CalibRawApp {
         self.preview.navigation_pending_stage = None;
         self.preview.detail_urgent = false;
         self.develop.target_exposure = self.preview_exposure();
+        self.develop.target_look = self.preview_look();
         self.preview.pending_stage = None;
         self.develop.lens_correction.applied = prepared.applied_label.is_some();
         self.develop.lens_correction.catalog.status = prepared.applied_label.map_or_else(

@@ -266,6 +266,13 @@ impl Settings {
         moduwu_design::card_gap(ui);
         moduwu_design::content_card(ui, |ui| Self::show_raw_color_profiles_card(ui, app));
 
+        if app.luts.is_available() || app.luts.failure().is_some() {
+            moduwu_design::card_gap(ui);
+            moduwu_design::content_card(ui, |ui| Self::show_luts_card(ui, app));
+            Self::show_lut_rename_dialog(ui.ctx(), app);
+            Self::show_lut_remove_confirmation(ui.ctx(), app);
+        }
+
         if app.caps().configurable_ai_runtime {
             moduwu_design::card_gap(ui);
             moduwu_design::content_card(ui, |ui| Self::show_ai_models_card(ui, app));
@@ -590,6 +597,13 @@ impl Settings {
         .changed();
         changed |= moduwu_design::toggle_with_help(
             ui,
+            &mut settings.lut,
+            "LUT",
+            "The LUT and its amount. Enabled by default.",
+        )
+        .changed();
+        changed |= moduwu_design::toggle_with_help(
+            ui,
             &mut settings.masks,
             "Normal masks",
             "Brush, radial-gradient, and linear-gradient mask components, including local adjustments. Mixed groups are split so disabling this never copies their manual components.",
@@ -822,6 +836,123 @@ impl Settings {
                 app.clear_camera_profile_folder();
             }
         });
+    }
+
+    fn show_luts_card(ui: &mut Ui, app: &mut CalibRawApp) {
+        moduwu_design::heading_with_help(
+            ui,
+            "LUTs",
+            "3D LUTs in the .cube format, for the LUT card in Develop and for batch exports. Imported files are copied into CalibRaw, so the originals can be moved or deleted.",
+        );
+        if let Some(failure) = app.luts.failure() {
+            ui.colored_label(ui.visuals().error_fg_color, failure);
+        }
+        let mut rename = None;
+        let mut remove = None;
+        if app.luts.entries().is_empty() && app.luts.is_available() {
+            ui.small("No LUTs imported.");
+        }
+        for entry in app.luts.entries() {
+            ui.horizontal(|ui| {
+                ui.label(&entry.name);
+                ui.small(format!("{0}×{0}×{0}", entry.size));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if moduwu_design::secondary_button(ui, "Remove").clicked() {
+                        remove = Some(entry.id);
+                    }
+                    if moduwu_design::secondary_button(ui, "Rename").clicked() {
+                        rename = Some(entry.id);
+                    }
+                });
+            });
+        }
+        moduwu_design::action_row(ui, |ui| {
+            if moduwu_design::secondary_button_enabled(ui, app.luts.is_available(), "Import…")
+                .clicked()
+            {
+                app.choose_lut_files_to_import(false);
+            }
+        });
+        if let Some(id) = rename {
+            app.start_lut_rename(id);
+        }
+        if remove.is_some() {
+            app.luts.pending_remove = remove;
+        }
+    }
+
+    fn show_lut_rename_dialog(ctx: &egui::Context, app: &mut CalibRawApp) {
+        let Some(rename) = app.luts.rename.as_mut() else {
+            return;
+        };
+        let mut choice = moduwu_design::DialogAction::None;
+        let confirm_enabled = !rename.name.trim().is_empty();
+        moduwu_design::Dialog::new("lut-rename-dialog", "Rename LUT").show_with_footer(
+            ctx,
+            |ui| {
+                ui.label("LUT name");
+                let response =
+                    moduwu_design::dialog_text_field(ui, &mut rename.name, "lut-name", "e.g. Film");
+                moduwu_design::request_initial_focus(&response, &mut rename.focus_requested);
+            },
+            |ui| {
+                choice = moduwu_design::dialog_confirmation_actions(
+                    ui,
+                    "Cancel",
+                    "Rename",
+                    confirm_enabled,
+                    false,
+                    moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
+                );
+            },
+        );
+        match choice {
+            moduwu_design::DialogAction::Cancel => app.luts.rename = None,
+            moduwu_design::DialogAction::Confirm => {
+                if let Some(rename) = app.luts.rename.as_ref() {
+                    let (id, name) = (rename.id, rename.name.clone());
+                    app.rename_lut(id, &name);
+                }
+            }
+            moduwu_design::DialogAction::None => {}
+        }
+    }
+
+    fn show_lut_remove_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
+        let Some(id) = app.luts.pending_remove else {
+            return;
+        };
+        let Some(name) = app.luts.entry(id).map(|entry| entry.name.clone()) else {
+            app.luts.pending_remove = None;
+            return;
+        };
+        let mut choice = moduwu_design::DialogAction::None;
+        moduwu_design::Dialog::new("lut-remove-confirmation", "Remove LUT?").show_with_footer(
+            ctx,
+            |ui| {
+                ui.add(
+                    egui::Label::new(format!(
+                        "“{name}” will be removed. Photos that use it keep naming it and are shown without it until it is imported again."
+                    ))
+                    .wrap(),
+                );
+            },
+            |ui| {
+                choice = moduwu_design::dialog_confirmation_actions(
+                    ui,
+                    "Cancel",
+                    "Remove",
+                    true,
+                    true,
+                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                );
+            },
+        );
+        match choice {
+            moduwu_design::DialogAction::Cancel => app.luts.pending_remove = None,
+            moduwu_design::DialogAction::Confirm => app.remove_lut(id),
+            moduwu_design::DialogAction::None => {}
+        }
     }
 
     fn show_ai_models_card(ui: &mut Ui, app: &mut CalibRawApp) {

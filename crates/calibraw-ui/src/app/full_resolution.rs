@@ -177,6 +177,7 @@ struct FullResolutionJob {
     masks: Arc<MaskStack>,
     remove: Arc<RemoveEditState>,
     geometry: GeometryTransform,
+    look: Option<crate::luts::ResolvedLook>,
     programs: Option<RawGpuProgramTemplate>,
     /// The longest edge of the result.
     target_edge: u32,
@@ -310,6 +311,7 @@ impl CalibRawApp {
             masks,
             remove: Arc::clone(&self.inpaint.edits),
             geometry: self.develop.geometry,
+            look: self.develop.target_look.clone(),
             programs: self.preview.program_template.clone(),
             target_edge,
             cancel: Arc::clone(&cancel),
@@ -450,8 +452,9 @@ fn render_full_resolution(job: &FullResolutionJob) -> anyhow::Result<FullResolut
     if raw.uses_opposed_chroma(&job.exposure) {
         raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
     }
-    let params =
-        GpuParams::new(&job.exposure, &job.masks, raw).with_vignette_geometry(job.geometry);
+    let params = GpuParams::new(&job.exposure, &job.masks, raw)
+        .with_vignette_geometry(job.geometry)
+        .with_look_lut(job.look.as_ref());
     let options = PipelineOptions {
         programs: job.programs.as_ref(),
         ..fitted_pipeline_options(job.masks.masks.len())
@@ -643,6 +646,7 @@ mod tests {
             masks: Arc::new(MaskStack::default()),
             remove: Arc::new(RemoveEditState::default()),
             geometry: GeometryTransform::default(),
+            look: None,
             programs: None,
             target_edge: 48,
             cancel: Arc::new(AtomicBool::new(false)),

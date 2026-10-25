@@ -1,4 +1,5 @@
 use crate::file_ops::write_atomically;
+use crate::luts::LookLut;
 use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
     lensfun_catalog, ExposureParams, GeometryTransform, LensCorrection, LensfunCorrections,
@@ -27,9 +28,10 @@ pub use size_limits::*;
 
 // The newest schema of the "CalibRaw edit sidecar" format. Bump this for every incompatible
 // serialized layout change; pre-release AuRaw sidecars use a different format discriminator.
-// Schema 2 shares the layout of schema 1 and adds the Relight effect and manual lens correction;
-// edits without them are still written as schema 1 (`migrations::older_readers`).
-pub const SIDECAR_SCHEMA_VERSION: u32 = 2;
+// Schemas 2 and 3 share the layout of schema 1. Schema 2 adds the Relight effect and manual lens
+// correction, schema 3 the LUT; edits are written with the oldest schema that holds them
+// (`migrations::older_readers`).
+pub const SIDECAR_SCHEMA_VERSION: u32 = 3;
 pub const DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT: u64 = 0x4155_5241_5700_0007;
 pub const SIDECAR_SUFFIX: &str = ".calibraw";
 /// The AI-denoise result saved next to a RAW. It is large derived data, so it
@@ -162,6 +164,8 @@ pub struct EditState {
     pub geometry: GeometryTransform,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera_profile: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look_lut: Option<LookLut>,
     pub masks: Arc<MaskStack>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_refinement: Option<SubjectRefinement>,
@@ -181,6 +185,7 @@ pub fn default_edit_state() -> EditState {
         exposure: ExposureParams::scene_referred_default(),
         geometry: GeometryTransform::default(),
         camera_profile: None,
+        look_lut: None,
         masks: Arc::new(MaskStack::default()),
         subject_refinement: None,
         lens: LensEditState::default(),
@@ -194,6 +199,7 @@ pub fn edit_state_has_adjustments(edits: &EditState) -> bool {
     edits.exposure != default.exposure
         || edits.geometry != default.geometry
         || edits.camera_profile != default.camera_profile
+        || edits.look_lut != default.look_lut
         || edits.masks != default.masks
         || edits.subject_refinement != default.subject_refinement
         || edits.lens != default.lens
@@ -426,10 +432,12 @@ fn decode_versioned_document(
     schema_version: u32,
 ) -> Result<(SidecarDocument, bool), SidecarError> {
     // Keep each future public schema's decoder and migration in its own match arm so an older
-    // layout can never be deserialized as the current schema by accident. Schemas 1 and 2 share
+    // layout can never be deserialized as the current schema by accident. Schemas 1 to 3 share
     // one layout.
     match schema_version {
-        migrations::older_readers::V1_SCHEMA_VERSION | SIDECAR_SCHEMA_VERSION => {
+        migrations::older_readers::V1_SCHEMA_VERSION
+        | migrations::older_readers::V2_SCHEMA_VERSION
+        | SIDECAR_SCHEMA_VERSION => {
             serde_json::from_slice::<SidecarDocument>(bytes)
                 .map(|document| (document, false))
                 .map_err(|error| SidecarError::Invalid(format!("invalid sidecar JSON: {error}")))

@@ -122,6 +122,7 @@ fn selection_summary(selection: EditSelection) -> String {
     for (included, label) in [
         (selection.raw_processing, "RAW processing"),
         (selection.camera_profile, "Camera profile"),
+        (selection.lut, "LUT"),
         (selection.masks, "Masks"),
         (selection.ai_masks, "AI masks"),
         (selection.geometry, "Crop & geometry"),
@@ -713,6 +714,7 @@ fn show_selection_controls(
         + [
             selection.raw_processing,
             selection.camera_profile,
+            selection.lut,
             selection.masks,
             selection.ai_masks,
             selection.geometry,
@@ -813,6 +815,11 @@ fn show_additional_selection(ui: &mut Ui, selection: &mut EditSelection) {
                     &mut selection.camera_profile,
                     "Camera profile",
                     "The DCP profile chosen for this photo. Photos from other camera models keep their automatic profile.",
+                ),
+                (
+                    &mut selection.lut,
+                    "LUT",
+                    "The LUT and its amount. Photos whose LUT library lacks it are shown without it.",
                 ),
                 (
                     &mut selection.masks,

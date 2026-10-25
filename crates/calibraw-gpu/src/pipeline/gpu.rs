@@ -13,6 +13,7 @@ use crate::pipeline::{
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use calibraw_core::color_math::{linear_srgb_to_oklab, srgb_decode};
+use calibraw_core::luts::{CubeLut, LutId, ResolvedLook};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
@@ -73,6 +74,8 @@ mod layout_contract_tests;
 #[cfg(test)]
 mod light_rays_tests;
 #[cfg(test)]
+mod look_lut_tests;
+#[cfg(test)]
 mod photographic_modules_tests;
 #[cfg(test)]
 mod pixelate_tests;
@@ -99,7 +102,7 @@ pub use params::*;
 pub use remove_scene::*;
 use stage_params::*;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 14;
+const GPU_PARAMS_ABI_VERSION: u32 = 15;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -108,7 +111,7 @@ pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android"
 };
 const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_120;
 const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 384;
-const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_712;
+const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_760;
 const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 192;
 const GPU_STAGE_UNIFORM_SIZE_BYTES: u32 =
     CAMERA_UNIFORMS_SIZE_BYTES + SCENE_TONE_UNIFORMS_SIZE_BYTES + EFFECTS_UNIFORMS_SIZE_BYTES;
@@ -566,7 +569,17 @@ impl RawGpuPipeline {
             params.scene_depth.as_ref(),
             params.needs_relight_surface(),
         );
+        let look_lut_uploaded = match self.prepare_look_lut(queue, params.look_lut()) {
+            Ok(()) => true,
+            Err(error) => {
+                // Callers that must not render without the LUT report this
+                // through `prepare_look_lut` before dispatching.
+                log::error!("rendering without the LUT: {error:#}");
+                false
+            }
+        };
         let camera = params.camera_for_raw_texture(self.has_ai_cfa);
+        let scene_tone = params.scene_tone_for_upload(look_lut_uploaded);
         match self.uploaded_stage_uniforms.lock() {
             Ok(mut uploaded) => {
                 if bytemuck::bytes_of(&uploaded.camera) != bytemuck::bytes_of(&camera) {
@@ -577,13 +590,13 @@ impl RawGpuPipeline {
                     );
                     uploaded.camera = camera;
                 }
-                if bytemuck::bytes_of(&uploaded.scene_tone) != params.scene_tone_bytes() {
+                if bytemuck::bytes_of(&uploaded.scene_tone) != bytemuck::bytes_of(&scene_tone) {
                     queue.write_buffer(
                         &self.scene_tone_uniforms_buffer,
                         0,
-                        params.scene_tone_bytes(),
+                        bytemuck::bytes_of(&scene_tone),
                     );
-                    uploaded.scene_tone = params.scene_tone;
+                    uploaded.scene_tone = scene_tone;
                 }
                 if bytemuck::bytes_of(&uploaded.effects) != params.effects_bytes() {
                     queue.write_buffer(&self.effects_uniforms_buffer, 0, params.effects_bytes());
@@ -595,7 +608,7 @@ impl RawGpuPipeline {
                 queue.write_buffer(
                     &self.scene_tone_uniforms_buffer,
                     0,
-                    params.scene_tone_bytes(),
+                    bytemuck::bytes_of(&scene_tone),
                 );
                 queue.write_buffer(&self.effects_uniforms_buffer, 0, params.effects_bytes());
             }
@@ -758,6 +771,17 @@ impl RawGpuPipeline {
         for map in FullImageMap::ALL {
             self.full_image_map_current(map)
                 .store(false, Ordering::Release);
+        }
+    }
+
+    /// Uploads `lut` for the look LUT pass unless this pipeline already holds
+    /// it. The texture is allocated, and reserved against the process GPU
+    /// budget, only when a LUT is first uploaded. Parameters with a LUT
+    /// upload it themselves; call this first to learn whether it fits.
+    pub fn prepare_look_lut(&self, queue: &wgpu::Queue, lut: Option<&CubeLut>) -> Result<()> {
+        match lut {
+            Some(lut) => self.effect_inputs.upload_look_lut(queue, lut),
+            None => Ok(()),
         }
     }
 

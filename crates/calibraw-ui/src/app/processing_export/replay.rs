@@ -70,6 +70,13 @@ impl CalibRawApp {
         let Some(raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {
             return;
         };
+        let final_look = match self.look_for_export() {
+            Ok(look) => look,
+            Err(error) => {
+                self.report_error(ErrorKind::EditReplay, error);
+                return;
+            }
+        };
         let request = ReplayRequest {
             device: render_state.device.clone(),
             queue: render_state.queue.clone(),
@@ -79,6 +86,7 @@ impl CalibRawApp {
             final_geometry: self.develop.geometry,
             final_masks: self.masks.stack.clone(),
             final_remove: self.inpaint.edits.as_ref().clone(),
+            final_look,
             gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),
             platform: Arc::clone(&self.platform),
         };

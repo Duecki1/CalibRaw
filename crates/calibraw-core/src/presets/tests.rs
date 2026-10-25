@@ -571,3 +571,71 @@ fn groups_persist_until_deleted_and_move_their_presets() {
 
     std::fs::remove_dir_all(folder).unwrap();
 }
+
+#[test]
+fn presets_carry_the_lut_with_its_category() {
+    let mut photo = edited_photo();
+    photo.look_lut = Some(crate::luts::LookLut {
+        id: crate::luts::LutId::of_bytes(b"film"),
+        name: "Film".to_owned(),
+        amount: 0.7,
+    });
+    assert!(suggested_selection(&photo).lut);
+
+    let without = Preset::new("Light", "", selection(&[AdjustmentGroup::Light]), &photo).unwrap();
+    assert_eq!(without.edits().look_lut, None);
+    let with = Preset::new(
+        "Film",
+        "",
+        EditSelection {
+            lut: true,
+            ..selection(&[AdjustmentGroup::Light])
+        },
+        &photo,
+    )
+    .unwrap();
+    let mut destination = default_edit_state();
+    with.apply_to(&mut destination);
+    assert_eq!(destination.look_lut, photo.look_lut);
+    assert_eq!(Preset::decode(&with.encode().unwrap()).unwrap(), with);
+}
+
+#[test]
+fn exports_leave_out_what_needs_the_photo_reopened_or_ai() {
+    let photo = edited_photo();
+    let everything = EditSelection {
+        adjustment_groups: AdjustmentGroupSet::ALL,
+        camera_profile: true,
+        masks: true,
+        ai_masks: true,
+        lens_correction: true,
+        ..EditSelection::default()
+    };
+    let preset = Preset::new("All", "", everything, &photo).unwrap();
+    let export = preset.for_export().unwrap();
+    let selection = export.selection();
+    assert!(!selection.camera_profile && !selection.ai_masks && !selection.lens_correction);
+    assert!(selection.masks);
+    assert_eq!(selection.adjustment_groups, AdjustmentGroupSet::ALL);
+    assert_eq!(export.edits().camera_profile, None);
+    assert!(export
+        .edits()
+        .masks
+        .masks
+        .iter()
+        .flat_map(|mask| &mask.components)
+        .all(|component| crate::sidecar::is_manual_mask_kind(component.kind)));
+    assert!(!export.edits().masks.masks.is_empty());
+
+    let mut destination = default_edit_state();
+    export.apply_to(&mut destination);
+    assert!(!destination.ai_masks_need_update);
+    assert_eq!(destination.camera_profile, None);
+
+    let profile_only = EditSelection {
+        camera_profile: true,
+        ..EditSelection::default()
+    };
+    let preset = Preset::new("Profile", "", profile_only, &photo).unwrap();
+    assert!(preset.for_export().is_none());
+}

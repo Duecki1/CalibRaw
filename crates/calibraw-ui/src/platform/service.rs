@@ -91,6 +91,20 @@ pub(crate) enum CameraProfileFolderResult {
     Failed(String),
 }
 
+/// `.cube` files picked for the LUT library.
+#[cfg_attr(
+    not(target_os = "android"),
+    allow(dead_code, reason = "constructed only by the Android backend")
+)]
+#[derive(Debug)]
+pub(crate) enum LutFilesResult {
+    /// The picked files, copied into this folder, which the receiver deletes
+    /// after importing them.
+    Staged(PathBuf),
+    Cancelled,
+    Failed(String),
+}
+
 /// A photo copied into the media library.
 #[derive(Clone, Debug)]
 pub(crate) struct ImportedLibraryDocument {
@@ -247,8 +261,17 @@ pub(crate) trait Platform: Send + Sync {
     fn take_export_publish_result(&self) -> Option<ExportPublishResult> {
         None
     }
+    fn take_lut_files_result(&self) -> Option<LutFilesResult> {
+        None
+    }
 
-    // --- Camera profiles copied into app storage ---
+    // --- Files copied into app storage ---
+
+    /// Asks for `.cube` files; the result arrives through
+    /// [`Self::take_lut_files_result`]. Folder storage uses `FileDialog`.
+    fn open_lut_files(&self) -> Result<(), String> {
+        Err(unavailable("the LUT file picker"))
+    }
 
     fn open_camera_profile_folder(&self) -> Result<(), String> {
         Err(unavailable("the camera profile folder picker"))

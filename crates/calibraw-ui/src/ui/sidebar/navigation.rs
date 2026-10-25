@@ -350,6 +350,7 @@ impl Sidebar {
         frame: &eframe::Frame,
     ) {
         Self::show_camera_profile_selector(ui, app, frame);
+        Self::show_look_lut_card(ui, app, layout != ScreenLayout::Vertical);
 
         let mut changed = false;
         let mut lens_changed = false;
@@ -554,6 +555,27 @@ impl Sidebar {
         };
         if changed {
             app.mark_mask_adjustments_dirty();
+        }
+    }
+
+    fn show_look_lut_card(ui: &mut Ui, app: &mut CalibRawApp, foldable: bool) {
+        if app.develop.loaded_raw.is_none()
+            || (!app.luts.is_available() && app.develop.look_lut.is_none())
+        {
+            return;
+        }
+        let action = Self::show_look_lut(
+            ui,
+            app.develop.look_lut.as_ref(),
+            app.luts.entries(),
+            app.luts.is_available(),
+            foldable,
+        );
+        match action {
+            Some(look_lut::LookLutAction::Select(id)) => app.select_look_lut(id),
+            Some(look_lut::LookLutAction::Amount(amount)) => app.set_look_lut_amount(amount),
+            Some(look_lut::LookLutAction::Import) => app.choose_lut_files_to_import(true),
+            None => {}
         }
     }
 

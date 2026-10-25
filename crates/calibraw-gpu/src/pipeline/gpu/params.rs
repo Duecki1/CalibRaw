@@ -186,6 +186,12 @@ pub(super) struct SceneToneUniforms {
     pub(super) bradford_to_xyz: [[f32; 4]; 3],
     pub(super) point_colors: [PackedPointColor; MAX_POINT_COLORS],
     pub(super) point_color_meta: [u32; 4],
+    /// The edit's LUT (`GpuParams::with_look_lut`): amount (0 without a LUT),
+    /// lattice points per axis, 0, 0.
+    pub(super) look_lut: [f32; 4],
+    /// The LUT's domain minimum, then the reciprocal of its extent, per channel.
+    pub(super) look_lut_domain_min: [f32; 4],
+    pub(super) look_lut_domain_scale: [f32; 4],
 }
 
 const _: () =
@@ -214,7 +220,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_288);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_336);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -280,6 +286,8 @@ pub struct GpuParams {
     pub(super) effects: EffectsUniforms,
     mask_data: Box<[MaskData]>,
     pub(super) scene_depth: Option<MaskImage>,
+    /// The LUT `scene_tone.look_lut` describes, uploaded with the parameters.
+    look_lut: Option<Arc<CubeLut>>,
 }
 
 impl GpuParams {
@@ -494,7 +502,52 @@ impl GpuParams {
             effects: pack_effect_params(&context, &mask_data),
             mask_data,
             scene_depth: masks.scene_depth_image().cloned(),
+            look_lut: None,
         }
+    }
+
+    /// Applies `look`'s LUT at its amount after tone mapping (look_lut.wgsl).
+    /// `None`, or an amount of 0, leaves the image as without a LUT.
+    pub fn with_look_lut(mut self, look: Option<&ResolvedLook>) -> Self {
+        let look = look.filter(|look| look.amount > 0.0);
+        self.look_lut = look.map(|look| Arc::clone(&look.lut));
+        let (uniform, domain_min, domain_scale) = match look {
+            Some(look) => {
+                let lut = &look.lut;
+                let [min_r, min_g, min_b] = lut.domain_min();
+                let [max_r, max_g, max_b] = lut.domain_max();
+                (
+                    [look.amount.min(1.0), lut.size() as f32, 0.0, 0.0],
+                    [min_r, min_g, min_b, 0.0],
+                    [
+                        1.0 / (max_r - min_r),
+                        1.0 / (max_g - min_g),
+                        1.0 / (max_b - min_b),
+                        0.0,
+                    ],
+                )
+            }
+            None => ([0.0; 4], [0.0; 4], [0.0; 4]),
+        };
+        self.scene_tone.look_lut = uniform;
+        self.scene_tone.look_lut_domain_min = domain_min;
+        self.scene_tone.look_lut_domain_scale = domain_scale;
+        self
+    }
+
+    /// The LUT these parameters apply, if any.
+    pub fn look_lut(&self) -> Option<&CubeLut> {
+        self.look_lut.as_deref()
+    }
+
+    /// The scene and tone uniforms, with the LUT switched off when the
+    /// pipeline could not upload it.
+    pub(super) fn scene_tone_for_upload(&self, look_lut_uploaded: bool) -> SceneToneUniforms {
+        let mut scene_tone = self.scene_tone;
+        if !look_lut_uploaded {
+            scene_tone.look_lut = [0.0; 4];
+        }
+        scene_tone
     }
 
     pub fn with_vignette_geometry(mut self, geometry: GeometryTransform) -> Self {

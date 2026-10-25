@@ -96,6 +96,7 @@ pub struct CalibRawApp {
     pub(crate) usage: UsageState,
     pub(crate) preferences: PreferencesState,
     pub(crate) presets: PresetState,
+    pub(crate) luts: LutState,
     pub(crate) ui: UiState,
     discord_presence: DiscordPresence,
     /// The desktop toolbar's brand mark; `None` where there is no toolbar brand.
@@ -294,11 +295,13 @@ mod foreground;
 mod gpu_recovery;
 mod inpainting;
 mod library_adjustments;
+mod luts;
 mod manual_lens;
 mod presets;
 pub(crate) use library_adjustments::{
     EditTransfer, EditTransferOrigin, LibraryEditTransferOutcome,
 };
+pub(crate) use luts::{missing_look_lut_notice, LutState, LOOK_LUT_CARD_TITLE};
 pub(crate) use presets::{GroupDialogMode, PresetEditor, PresetEditorMode, PresetState};
 mod full_resolution;
 mod interaction;

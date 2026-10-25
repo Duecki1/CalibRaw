@@ -123,6 +123,7 @@ fn run_export_worker(
             exposure: &job.exposure,
             masks: &job.masks,
             remove: &job.remove,
+            look: job.look.as_ref(),
             output,
             tile_spec,
             output_width,

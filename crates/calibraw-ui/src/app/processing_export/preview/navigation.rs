@@ -51,7 +51,8 @@ impl CalibRawApp {
                 ))
             };
             let params = GpuParams::new(&self.develop.target_exposure, &preview_masks, &raw)
-                .with_vignette_geometry(self.develop.geometry);
+                .with_vignette_geometry(self.develop.geometry)
+                .with_look_lut(self.develop.target_look.as_ref());
             let Some(template) = self.preview.pipeline() else {
                 return;
             };
@@ -138,7 +139,8 @@ impl CalibRawApp {
             full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
         let params = GpuParams::new(&self.develop.target_exposure, &preview_masks, &preview.raw)
-            .with_vignette_geometry(self.develop.geometry);
+            .with_vignette_geometry(self.develop.geometry)
+            .with_look_lut(self.develop.target_look.as_ref());
         let stages = match stage {
             ProcessingStage::Raw => &[
                 ProcessingStage::Raw,

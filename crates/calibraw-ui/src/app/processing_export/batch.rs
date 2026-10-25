@@ -47,6 +47,8 @@ struct DesktopLibraryExportContext {
     camera_profile_folder: Option<PathBuf>,
     last_camera_profile: Option<PathBuf>,
     default_exposure: ExposureParams,
+    export_override: ExportOverride,
+    luts: Option<crate::luts::LutStore>,
     decode_gate: Arc<std::sync::RwLock<()>>,
     cancellation: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -199,6 +201,13 @@ fn prepare_desktop_library_export_item(
     if use_adaptive_detail_defaults {
         original_raw.apply_adaptive_detail_defaults(&mut edits.exposure);
     }
+    context.export_override.apply(&mut edits);
+    let look = edits
+        .look_lut
+        .as_ref()
+        .map(|look| crate::app::luts::resolve_look_for_export(context.luts.as_ref(), look))
+        .transpose()
+        .map_err(|error| format!("{}: {error}", job.source.display()))?;
 
     if cancellation.load(Ordering::Acquire) {
         return Err("batch export cancelled".to_owned());
@@ -275,6 +284,7 @@ fn prepare_desktop_library_export_item(
             exposure: edits.exposure,
             masks,
             remove,
+            look,
             source_file_name,
             gpu_export_prewarm: None,
         },
@@ -332,6 +342,7 @@ impl CalibRawApp {
         targets: Vec<AndroidLibraryExportTarget>,
         settings: ExportSettings,
         format: ExportFormat,
+        export_override: ExportOverride,
     ) {
         if targets.is_empty() || self.export.task.is_some() {
             if self.export.task.is_some() {
@@ -358,6 +369,7 @@ impl CalibRawApp {
             cancel_requested: false,
             format,
             settings,
+            export_override,
         });
         self.export.task = Some(ExportTask::new(
             ExportTaskKind::LibraryBatch,
@@ -476,6 +488,7 @@ impl CalibRawApp {
 
         let format = batch.format;
         let settings = batch.settings.clone();
+        let export_override = batch.export_override.clone();
         let display_name = current.display_name().to_owned();
         self.export.settings = settings;
         let original_name = super::export::export_source_stem(None, Some(&display_name));
@@ -511,18 +524,27 @@ impl CalibRawApp {
             };
         let cleanup = destination.clone();
         let mut start_error = None;
-        let started = self
-            .capture_export_task_request(destination, frame, format)
-            .and_then(|request| {
+        let started = match self.capture_export_task_request(
+            destination,
+            frame,
+            format,
+            Some(&export_override),
+        ) {
+            Ok(Some(request)) => {
                 match self.start_export_task(request, ExportTaskKind::LibraryBatch) {
-                    Ok(()) => Some(()),
+                    Ok(()) => true,
                     Err(error) => {
                         start_error = Some(error);
-                        None
+                        false
                     }
                 }
-            })
-            .is_some();
+            }
+            Ok(None) => false,
+            Err(error) => {
+                start_error = Some(error);
+                false
+            }
+        };
         // Keep batch export in the library without invoking interactive tab
         // transition side effects while its worker is active.
         self.ui.active_tab = AppTab::Library;
@@ -653,6 +675,7 @@ impl CalibRawApp {
         jobs: Vec<(PathBuf, LibraryExportDestination)>,
         settings: ExportSettings,
         format: ExportFormat,
+        export_override: ExportOverride,
         frame: &eframe::Frame,
     ) {
         if jobs.is_empty() || self.export.task.is_some() {
@@ -688,6 +711,8 @@ impl CalibRawApp {
                 camera_profile_folder: self.preferences.camera_profile_folder.clone(),
                 last_camera_profile: self.preferences.last_camera_profile.clone(),
                 default_exposure: self.new_image_exposure(),
+                export_override: export_override.clone(),
+                luts: self.luts.store(),
                 decode_gate: self.library.decode_gate(),
                 cancellation: Arc::clone(&cancellation),
             },
@@ -702,6 +727,7 @@ impl CalibRawApp {
             cancel_requested: false,
             format,
             settings,
+            export_override,
         });
         self.export.task = Some(ExportTask::new(
             ExportTaskKind::LibraryBatch,

@@ -1,6 +1,7 @@
 #import calibraw::common as Common
 #import calibraw::color as Color
 #import calibraw::profile as Profile
+#import calibraw::look_lut as LookLut
 #import calibraw::scene_adjustments as SceneAdjustments
 #import calibraw::creative_effects as CreativeEffects
 #import calibraw::tone_common as ToneCommon
@@ -658,6 +659,7 @@ fn apply_view_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     let local_point_color_sample = point_color_hsl(max(display_linear + point_color_delta, vec3<f32>(0.0)));
     let local_selection = local_point_color_visualization(pos, local_point_color_sample);
     display_linear = apply_local_point_colors(pos, display_linear, point_color_delta);
+    display_linear = LookLut::apply_look_lut(display_linear);
     display_linear = CreativeEffects::apply_film_finish_modules(pos, display_linear);
     textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));
 

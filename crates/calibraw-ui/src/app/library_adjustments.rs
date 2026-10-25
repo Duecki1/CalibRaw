@@ -125,6 +125,8 @@ impl CalibRawApp {
         let adjustments_changed = selection.includes_exposure() || replacing;
         let geometry_changed = selection.geometry || replacing;
         let camera_profile_category_changed = selection.camera_profile || replacing;
+        let look_lut_changed =
+            (selection.lut || replacing) && merged.look_lut != self.develop.look_lut;
         let pipeline_adjustments_changed =
             adjustments_changed || geometry_changed || camera_profile_category_changed;
         let masks_changed = selection.includes_masks() || replacing;
@@ -160,6 +162,10 @@ impl CalibRawApp {
         }
         if camera_profile_category_changed {
             self.develop.selected_camera_profile = pasted_camera_profile.clone();
+        }
+        if look_lut_changed {
+            self.install_look_lut(merged.look_lut.clone());
+            self.note_edit_changed();
         }
         if pipeline_adjustments_changed {
             self.note_edit_changed();

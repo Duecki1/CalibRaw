@@ -518,6 +518,7 @@ struct LibraryExportDialog {
     assets: Vec<LibraryAsset>,
     settings: ExportSettings,
     format: ExportFormat,
+    overrides: crate::app::ExportOverrideChoice,
 }
 
 #[derive(Clone)]

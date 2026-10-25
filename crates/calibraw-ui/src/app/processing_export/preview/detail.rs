@@ -308,12 +308,14 @@ impl CalibRawApp {
             mask_region,
             mask_extent,
         };
-        let params = placement.params(
-            &self.develop.target_exposure,
-            &preview_masks,
-            self.develop.geometry,
-            &detail_raw,
-        );
+        let params = placement
+            .params(
+                &self.develop.target_exposure,
+                &preview_masks,
+                self.develop.geometry,
+                &detail_raw,
+            )
+            .with_look_lut(self.develop.target_look.as_ref());
         let full_frame_tone_pipeline = full_frame_tone_pipeline(
             self.preview.gpu_pipeline.as_ref(),
             self.preview.navigation.as_ref(),

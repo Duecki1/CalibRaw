@@ -380,6 +380,7 @@ pub(in crate::ui::library) fn start_local_library_export(
     assets: &[LibraryAsset],
     settings: ExportSettings,
     format: ExportFormat,
+    export_override: crate::app::ExportOverride,
     frame: &eframe::Frame,
 ) -> bool {
     let Some(jobs) = library_export_jobs(
@@ -389,7 +390,7 @@ pub(in crate::ui::library) fn start_local_library_export(
     ) else {
         return false;
     };
-    app.start_library_exports(jobs, settings, format, frame);
+    app.start_library_exports(jobs, settings, format, export_override, frame);
     true
 }
 

@@ -10,6 +10,7 @@ use super::{
 };
 use anyhow::{Context, Result};
 use calibraw_core::file_ops::{move_file_to_free_name, replace_file, sync_parent_directory};
+use calibraw_core::luts::ResolvedLook;
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::fs::{self, OpenOptions};
@@ -73,6 +74,8 @@ pub struct TiledExportJob {
     pub exposure: ExposureParams,
     pub masks: MaskStack,
     pub remove: RemoveEditState,
+    /// The edit's LUT, applied after tone mapping.
+    pub look: Option<ResolvedLook>,
     pub target: ExportTarget,
     pub tile_spec: TileSpec,
     pub settings: ExportSettings,
@@ -131,6 +134,7 @@ struct ExportRequest<'a> {
     exposure: &'a ExposureParams,
     masks: &'a MaskStack,
     remove: &'a RemoveEditState,
+    look: Option<&'a ResolvedLook>,
     output: ExportOutput<'a>,
     tile_spec: TileSpec,
     output_width: u32,

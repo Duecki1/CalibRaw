@@ -51,12 +51,14 @@ impl CalibRawApp {
                 false,
             ),
         };
-        let params = placement.params(
-            &self.develop.target_exposure,
-            &masks,
-            self.develop.geometry,
-            reduced,
-        );
+        let params = placement
+            .params(
+                &self.develop.target_exposure,
+                &masks,
+                self.develop.geometry,
+                reduced,
+            )
+            .with_look_lut(self.develop.target_look.as_ref());
         let pipeline = RawGpuPipeline::new(
             device,
             queue,
@@ -109,12 +111,14 @@ impl CalibRawApp {
             )
             .map_err(anyhow::Error::msg)?;
         }
-        let params = placement.params(
-            &self.develop.target_exposure,
-            masks,
-            self.develop.geometry,
-            &reduced.raw,
-        );
+        let params = placement
+            .params(
+                &self.develop.target_exposure,
+                masks,
+                self.develop.geometry,
+                &reduced.raw,
+            )
+            .with_look_lut(self.develop.target_look.as_ref());
         let full_frame = full_frame_tone_pipeline(
             self.preview.gpu_pipeline.as_ref(),
             self.preview.navigation.as_ref(),

@@ -248,6 +248,10 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
             0,
             local_point_color_flags | (u32::from(exposure.point_colors.has_adjustments()) << 2),
         ],
+        // Set by `GpuParams::with_look_lut`.
+        look_lut: [0.0; 4],
+        look_lut_domain_min: [0.0; 4],
+        look_lut_domain_scale: [0.0; 4],
     }
 }
 

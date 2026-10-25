@@ -1,7 +1,8 @@
 //! GPU inputs that only some effects read, allocated the first time one of
 //! them renders: the joint-upsampling guide of scene depth that Fog, Smoke and
 //! Relight read, Relight's scene-depth surface and shadow map, the image-light
-//! map that Fog and Smoke scatter, and the haze map Dehaze applies.
+//! map that Fog and Smoke scatter, the haze map Dehaze applies, and the LUT
+//! the view pass applies.
 //!
 //! Until then the passes that read them are bound to placeholders of one
 //! texel, and Fog reads the plain scene-depth texture, so a pipeline whose
@@ -9,6 +10,10 @@
 //! budget reserves them with the pipeline (`GpuResourceResidency::OnDemand`),
 //! so allocating them later cannot exceed it. Once allocated they stay until
 //! the pipeline is dropped.
+//!
+//! The LUT texture is the exception: its size depends on the LUT, so it takes
+//! its own reservation when a LUT is uploaded, and pipelines without one
+//! reserve nothing for it. A LUT of another size replaces it.
 //!
 //! Passes bound to these inputs are tagged with an [`InputBoundPass`]; the
 //! pipeline takes their bind groups from [`EffectInputs::bind_group`], which
@@ -55,6 +60,9 @@ pub(super) enum InputBoundPass {
     ScenePreparation,
     Creative,
     CreativeAfterBlur,
+    /// The view transform and output (`apply_view_node`), which reads the LUT.
+    View,
+    ViewAfterBlur,
     SceneDepthGuide,
     SceneDepthGuideAfterBlur,
     RelightShadowMap,
@@ -69,6 +77,8 @@ struct InputBindGroups {
     scene_preparation: wgpu::BindGroup,
     creative: wgpu::BindGroup,
     creative_after_blur: wgpu::BindGroup,
+    view: wgpu::BindGroup,
+    view_after_blur: wgpu::BindGroup,
     scene_depth_guide: wgpu::BindGroup,
     scene_depth_guide_after_blur: wgpu::BindGroup,
     relight_shadow_map: wgpu::BindGroup,
@@ -82,6 +92,8 @@ impl InputBindGroups {
             InputBoundPass::ScenePreparation => &self.scene_preparation,
             InputBoundPass::Creative => &self.creative,
             InputBoundPass::CreativeAfterBlur => &self.creative_after_blur,
+            InputBoundPass::View => &self.view,
+            InputBoundPass::ViewAfterBlur => &self.view_after_blur,
             InputBoundPass::SceneDepthGuide => &self.scene_depth_guide,
             InputBoundPass::SceneDepthGuideAfterBlur => &self.scene_depth_guide_after_blur,
             InputBoundPass::RelightShadowMap => &self.relight_shadow_map,
@@ -96,6 +108,7 @@ impl InputBindGroups {
 pub(super) struct InputBindingSources {
     pub(super) scene_preparation_layout: wgpu::BindGroupLayout,
     pub(super) creative_layout: wgpu::BindGroupLayout,
+    pub(super) view_layout: wgpu::BindGroupLayout,
     pub(super) scene_depth_guide_layout: wgpu::BindGroupLayout,
     pub(super) relight_shadow_map_layout: wgpu::BindGroupLayout,
     pub(super) image_light_layouts: [wgpu::BindGroupLayout; IMAGE_LIGHT_PASSES],
@@ -112,6 +125,8 @@ pub(super) struct InputBindingSources {
     pub(super) tex1: wgpu::TextureView,
     pub(super) tex2: wgpu::TextureView,
     pub(super) display_linear: wgpu::TextureView,
+    /// The display output.
+    pub(super) out: wgpu::TextureView,
     pub(super) mask: wgpu::TextureView,
     pub(super) mask_sampler: wgpu::Sampler,
     pub(super) light_rays_mask: wgpu::TextureView,
@@ -295,6 +310,78 @@ impl HazeInputs {
     }
 }
 
+/// The LUT the view pass applies (look_lut.wgsl): `size`³ texels, red along
+/// x, green along y and blue along z.
+struct LookLutInputs {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    size: u32,
+    /// The LUT the texture holds; `None` until one is written.
+    uploaded: Option<LutId>,
+    _reservation: Option<GpuBudgetReservation>,
+}
+
+impl LookLutInputs {
+    fn new(device: &wgpu::Device, size: u32, reservation: Option<GpuBudgetReservation>) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("calibraw look LUT"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: size,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: LOOK_LUT_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[LOOK_LUT_FORMAT],
+        });
+        Self {
+            view: default_texture_view(&texture),
+            texture,
+            size,
+            uploaded: None,
+            _reservation: reservation,
+        }
+    }
+
+    /// A texture for `size`³ texels with its budget reservation.
+    fn reserved(device: &wgpu::Device, size: u32) -> Result<Self> {
+        let reservation = GpuBudgetReservation::acquire_bytes(
+            "LUT texture",
+            look_lut_texture_bytes(size)?,
+            gpu_working_set_limit_bytes(),
+        )?;
+        Ok(Self::new(device, size, Some(reservation)))
+    }
+
+    fn write(&mut self, queue: &wgpu::Queue, lut: &CubeLut) {
+        let texels: Vec<[f32; 4]> = lut
+            .table()
+            .iter()
+            .map(|&[red, green, blue]| [red, green, blue, 1.0])
+            .collect();
+        let row_bytes = self.size * std::mem::size_of::<[f32; 4]>() as u32;
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&texels),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row_bytes),
+                rows_per_image: Some(self.size),
+            },
+            self.texture.size(),
+        );
+        self.uploaded = Some(lut.id());
+    }
+}
+
 /// Views the input-bound passes bind, allocated or placeholder.
 struct BoundInputs<'a> {
     /// Scene depth: the Relight surface once allocated, else the plain depth.
@@ -303,6 +390,7 @@ struct BoundInputs<'a> {
     shadow_map: &'a wgpu::TextureView,
     image_lights: &'a ImageLightInputs,
     haze: &'a HazeInputs,
+    look_lut: &'a wgpu::TextureView,
 }
 
 impl InputBindingSources {
@@ -349,6 +437,25 @@ impl InputBindingSources {
                     texture_binding(45, &inputs.image_lights.map_view),
                     texture_binding(46, inputs.shadow_map),
                     texture_binding(48, inputs.scene_depth_guide),
+                ],
+            )
+        };
+        let view = |label: &str, input: &wgpu::TextureView| {
+            create_bind_group(
+                device,
+                label,
+                &self.view_layout,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(12, &self.out),
+                    texture_binding(26, input),
+                    buffer_binding(16, &self.tone_stats),
+                    buffer_binding(20, &self.profile),
+                    texture_binding(27, &self.mask),
+                    sampler_binding(28, &self.mask_sampler),
+                    texture_binding(29, &self.display_linear),
+                    buffer_binding(33, &self.mask_data),
+                    texture_binding(61, inputs.look_lut),
                 ],
             )
         };
@@ -478,6 +585,8 @@ impl InputBindingSources {
                 &self.tex2,
                 &self.tex1,
             ),
+            view: view("bg scene look view and output", &self.tex2),
+            view_after_blur: view("bg scene look view and output after mask Blur", &self.tex1),
             scene_depth_guide: scene_depth_guide("bg scene-depth guide", &self.tex1),
             scene_depth_guide_after_blur: scene_depth_guide(
                 "bg scene-depth guide after mask Blur",
@@ -506,6 +615,10 @@ struct Allocated {
     relight: Option<RelightInputs>,
     image_lights: Option<ImageLightInputs>,
     haze: Option<HazeInputs>,
+    look_lut: Option<LookLutInputs>,
+    /// The LUT that last failed to upload and why, so it is not retried for
+    /// every render.
+    look_lut_failure: Option<(LutId, String)>,
     bind_groups: InputBindGroups,
 }
 
@@ -518,6 +631,7 @@ pub(super) struct EffectInputs {
     placeholder_shadow_map_view: wgpu::TextureView,
     placeholder_image_lights: ImageLightInputs,
     placeholder_haze: HazeInputs,
+    placeholder_look_lut: LookLutInputs,
     allocated: Mutex<Allocated>,
 }
 
@@ -529,6 +643,8 @@ impl EffectInputs {
         let (placeholder_shadow_map, placeholder_shadow_map_view) = shadow_map(device, 1);
         let placeholder_image_lights = ImageLightInputs::new(device, 1);
         let placeholder_haze = HazeInputs::new(device, 1);
+        // Never read: the view pass skips the LUT unless one was uploaded.
+        let placeholder_look_lut = LookLutInputs::new(device, 1, None);
         let bind_groups = sources.bind_groups(
             device,
             &BoundInputs {
@@ -537,6 +653,7 @@ impl EffectInputs {
                 shadow_map: &placeholder_shadow_map_view,
                 image_lights: &placeholder_image_lights,
                 haze: &placeholder_haze,
+                look_lut: &placeholder_look_lut.view,
             },
         );
         Self {
@@ -548,11 +665,14 @@ impl EffectInputs {
             placeholder_shadow_map_view,
             placeholder_image_lights,
             placeholder_haze,
+            placeholder_look_lut,
             allocated: Mutex::new(Allocated {
                 scene_depth_guide: None,
                 relight: None,
                 image_lights: None,
                 haze: None,
+                look_lut: None,
+                look_lut_failure: None,
                 bind_groups,
             }),
         }
@@ -612,6 +732,46 @@ impl EffectInputs {
         self.rebind(&mut allocated);
     }
 
+    /// Writes `lut` to the LUT texture unless it already holds it, first
+    /// allocating a texture of the LUT's size when the current one differs.
+    pub(super) fn upload_look_lut(&self, queue: &wgpu::Queue, lut: &CubeLut) -> Result<()> {
+        let mut allocated = self.lock();
+        if allocated
+            .look_lut
+            .as_ref()
+            .is_some_and(|inputs| inputs.uploaded == Some(lut.id()))
+        {
+            return Ok(());
+        }
+        if let Some((id, message)) = &allocated.look_lut_failure {
+            if *id == lut.id() {
+                return Err(anyhow!("{message}"));
+            }
+        }
+        if allocated
+            .look_lut
+            .as_ref()
+            .is_none_or(|inputs| inputs.size != lut.size())
+        {
+            // Release the previous texture's reservation before taking one
+            // for the new size.
+            allocated.look_lut = None;
+            let replacement = LookLutInputs::reserved(&self.device, lut.size());
+            let failure = replacement.as_ref().err().map(|error| format!("{error:#}"));
+            allocated.look_lut = replacement.ok();
+            self.rebind(&mut allocated);
+            if let Some(message) = failure {
+                allocated.look_lut_failure = Some((lut.id(), message.clone()));
+                return Err(anyhow!(message));
+            }
+        }
+        if let Some(inputs) = allocated.look_lut.as_mut() {
+            inputs.write(queue, lut);
+        }
+        allocated.look_lut_failure = None;
+        Ok(())
+    }
+
     fn rebind(&self, allocated: &mut Allocated) {
         let relight = allocated.relight.as_ref();
         allocated.bind_groups = self.sources.bind_groups(
@@ -631,6 +791,11 @@ impl EffectInputs {
                     .as_ref()
                     .unwrap_or(&self.placeholder_image_lights),
                 haze: allocated.haze.as_ref().unwrap_or(&self.placeholder_haze),
+                look_lut: &allocated
+                    .look_lut
+                    .as_ref()
+                    .unwrap_or(&self.placeholder_look_lut)
+                    .view,
             },
         );
     }

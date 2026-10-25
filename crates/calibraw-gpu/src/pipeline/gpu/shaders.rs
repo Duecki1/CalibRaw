@@ -62,6 +62,7 @@ pub(super) const COLOR: ShaderSource = wgsl!("color.wgsl");
 pub(super) const NOISE: ShaderSource = wgsl!("noise.wgsl");
 pub(super) const RAW_SAMPLING: ShaderSource = wgsl!("raw_sampling.wgsl");
 pub(super) const PROFILE: ShaderSource = wgsl!("profile.wgsl");
+pub(super) const LOOK_LUT: ShaderSource = wgsl!("look_lut.wgsl");
 pub(super) const BASIC_ADJUSTMENTS: ShaderSource = wgsl!("basic_adjustments.wgsl");
 pub(super) const SCENE_SOURCE: ShaderSource = wgsl!("scene_source.wgsl");
 pub(super) const HAZE: ShaderSource = wgsl!("haze.wgsl");
@@ -160,7 +161,7 @@ const fn xtrans_module(source: ShaderSource) -> ComposableModule {
 
 /// Composable modules in registration order: a module may only import
 /// modules listed before it.
-pub(super) const COMPOSABLE_MODULES: [ComposableModule; 19] = [
+pub(super) const COMPOSABLE_MODULES: [ComposableModule; 20] = [
     module(COMMON),
     module(COLOR),
     module(NOISE),
@@ -168,6 +169,7 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 19] = [
     module(CFA_LINEAR),
     xtrans_module(XTRANS_MARKESTEIJN),
     module(PROFILE),
+    module(LOOK_LUT),
     module(BASIC_ADJUSTMENTS),
     module(SCENE_SOURCE),
     module(HAZE),

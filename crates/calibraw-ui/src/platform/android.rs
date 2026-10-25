@@ -2,8 +2,8 @@
 
 use super::service::{
     CameraProfileFolderResult, ExportPublishResult, ImportProgress, ImportedLibraryDocument,
-    LibraryDocument, LibraryFolder, PickedDocument, PickerResult, Platform, PublishedExport,
-    ReplayVideoEncoder, TaskNotification,
+    LibraryDocument, LibraryFolder, LutFilesResult, PickedDocument, PickerResult, Platform,
+    PublishedExport, ReplayVideoEncoder, TaskNotification,
 };
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
@@ -203,6 +203,18 @@ impl Platform for AndroidPlatform {
 
     fn open_camera_profile_folder(&self) -> Result<(), String> {
         calibraw_ffi::open_camera_profile_folder(&self.app)
+    }
+
+    fn take_lut_files_result(&self) -> Option<LutFilesResult> {
+        calibraw_ffi::take_lut_files_result().map(|result| match result {
+            calibraw_ffi::LutFilesResult::Staged(folder) => LutFilesResult::Staged(folder),
+            calibraw_ffi::LutFilesResult::Cancelled => LutFilesResult::Cancelled,
+            calibraw_ffi::LutFilesResult::Failed(error) => LutFilesResult::Failed(error),
+        })
+    }
+
+    fn open_lut_files(&self) -> Result<(), String> {
+        calibraw_ffi::open_lut_files(&self.app)
     }
 
     fn remove_camera_profile_mirror(&self, path: &Path) -> Result<(), String> {

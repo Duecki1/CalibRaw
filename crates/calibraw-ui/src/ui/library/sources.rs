@@ -55,15 +55,26 @@ pub(super) fn start_local_library_export(
     assets: &[LibraryAsset],
     settings: ExportSettings,
     format: ExportFormat,
+    export_override: crate::app::ExportOverride,
     frame: &eframe::Frame,
 ) -> bool {
     match app.caps().storage {
-        StorageKind::Folders => {
-            folders::start_local_library_export(app, assets, settings, format, frame)
-        }
-        StorageKind::MediaLibrary => {
-            media_library::start_local_library_export(app, assets, settings, format, frame)
-        }
+        StorageKind::Folders => folders::start_local_library_export(
+            app,
+            assets,
+            settings,
+            format,
+            export_override,
+            frame,
+        ),
+        StorageKind::MediaLibrary => media_library::start_local_library_export(
+            app,
+            assets,
+            settings,
+            format,
+            export_override,
+            frame,
+        ),
     }
 }
 

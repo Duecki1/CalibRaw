@@ -83,6 +83,8 @@ pub(super) struct DocumentLoadJob {
     pub(super) preview_quality: PreviewQuality,
     pub(super) fitted_viewport_pixels: [u32; 2],
     pub(super) camera_profiles: CameraProfileSettings,
+    /// Reads the edit's LUT; `None` without a LUT library.
+    pub(super) luts: Option<crate::luts::LutStore>,
     pub(super) automatic_lens: AutomaticLensCorrection,
     pub(super) ai_denoise_result_path: Option<PathBuf>,
     pub(super) device: wgpu::Device,
@@ -109,6 +111,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         preview_quality,
         fitted_viewport_pixels,
         camera_profiles,
+        luts,
         automatic_lens,
         ai_denoise_result_path,
         device,
@@ -196,6 +199,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             mut exposure,
             mut masks,
             remove,
+            look_lut,
             saved_lens,
             ai_masks_need_update,
             geometry,
@@ -235,6 +239,32 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             );
         }
 
+        // A LUT the library does not hold stays in the edit, so it applies
+        // again once the LUT is imported; the photo renders without it.
+        let look_lut_table = look_lut.as_ref().and_then(|look| {
+            match luts.as_ref().map(|store| store.load(look.id)) {
+                Some(Ok(table)) => Some(table),
+                Some(Err(crate::luts::LutLibraryError::NotFound(_))) | None => {
+                    append_notice(&mut sidecar_warning, &missing_look_lut_notice(look));
+                    None
+                }
+                Some(Err(error)) => {
+                    append_notice(
+                        &mut sidecar_warning,
+                        &format!("Could not read the LUT “{}”: {error}", look.name),
+                    );
+                    None
+                }
+            }
+        });
+        let look = look_lut
+            .as_ref()
+            .zip(look_lut_table.as_ref())
+            .map(|(look, table)| crate::luts::ResolvedLook {
+                lut: Arc::clone(table),
+                amount: look.amount,
+            });
+
         let lens_state_saved = saved_lens.is_some();
         let (lens_correction, full_raw) =
             apply_saved_lens_correction(&decoded, saved_lens, automatic_lens, &mut sidecar_warning);
@@ -253,8 +283,9 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             geometry,
             masks.masks.len(),
         );
-        let initial_params =
-            GpuParams::new(&exposure, &masks, &preview_raw).with_vignette_geometry(geometry);
+        let initial_params = GpuParams::new(&exposure, &masks, &preview_raw)
+            .with_vignette_geometry(geometry)
+            .with_look_lut(look.as_ref());
         let pipeline = create_preview_pipeline(
             &device,
             &queue,
@@ -281,8 +312,9 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             "Preview masks rasterized/uploaded in {:.3}s",
             mask_upload_started.elapsed().as_secs_f64()
         ));
-        let params =
-            GpuParams::new(&exposure, &masks, &preview_raw).with_vignette_geometry(geometry);
+        let params = GpuParams::new(&exposure, &masks, &preview_raw)
+            .with_vignette_geometry(geometry)
+            .with_look_lut(look.as_ref());
         let render_started = Instant::now();
         pipeline
             .recompute_with_remove(
@@ -322,6 +354,8 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             sidecar_needs_rewrite,
             editing_time_ms,
             selected_camera_profile,
+            look_lut,
+            look_lut_table,
             geometry,
             starts_unedited,
         })
@@ -569,6 +603,7 @@ struct InitialEdits {
     exposure: ExposureParams,
     masks: MaskStack,
     remove: RemoveEditState,
+    look_lut: Option<crate::luts::LookLut>,
     saved_lens: Option<crate::sidecar::LensEditState>,
     ai_masks_need_update: bool,
     geometry: GeometryTransform,
@@ -632,6 +667,7 @@ impl InitialEdits {
             exposure: edits.exposure,
             masks: Arc::unwrap_or_clone(edits.masks),
             remove: Arc::unwrap_or_clone(edits.remove),
+            look_lut: edits.look_lut,
             saved_lens: Some(edits.lens),
             ai_masks_need_update: edits.ai_masks_need_update,
             geometry: edits.geometry.sanitized(),
@@ -648,6 +684,7 @@ impl InitialEdits {
             exposure,
             masks: MaskStack::default(),
             remove: RemoveEditState::default(),
+            look_lut: None,
             saved_lens: None,
             ai_masks_need_update: false,
             geometry: GeometryTransform::default(),

@@ -105,12 +105,23 @@ pub enum CameraProfileFolderResult {
     Failed(String),
 }
 
+/// `.cube` files picked for the LUT library.
+#[derive(Debug)]
+pub enum LutFilesResult {
+    /// The picked files, copied into this folder in the app's cache. The
+    /// receiver imports them and deletes the folder.
+    Staged(PathBuf),
+    Cancelled,
+    Failed(String),
+}
+
 static RESULTS: OnceLock<Mutex<VecDeque<PickerResult>>> = OnceLock::new();
 /// Photos other apps sent ("Open with", Share). Kept apart from `RESULTS`,
 /// whose entries answer an open the UI requested.
 static EXTERNAL_OPEN_RESULTS: OnceLock<Mutex<VecDeque<PickerResult>>> = OnceLock::new();
 static CAMERA_PROFILE_FOLDER_RESULTS: OnceLock<Mutex<VecDeque<CameraProfileFolderResult>>> =
     OnceLock::new();
+static LUT_FILES_RESULTS: OnceLock<Mutex<VecDeque<LutFilesResult>>> = OnceLock::new();
 static EXPORT_RESULTS: OnceLock<Mutex<VecDeque<ExportPublishResult>>> = OnceLock::new();
 /// Only the newest progress matters, so this is a slot rather than a queue.
 static IMPORT_PROGRESS: Mutex<Option<ImportProgress>> = Mutex::new(None);
@@ -138,6 +149,10 @@ fn external_open_results() -> &'static Mutex<VecDeque<PickerResult>> {
 
 fn camera_profile_folder_results() -> &'static Mutex<VecDeque<CameraProfileFolderResult>> {
     CAMERA_PROFILE_FOLDER_RESULTS.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn lut_files_results() -> &'static Mutex<VecDeque<LutFilesResult>> {
+    LUT_FILES_RESULTS.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
 fn export_results() -> &'static Mutex<VecDeque<ExportPublishResult>> {
@@ -235,6 +250,10 @@ pub fn take_camera_profile_folder_result() -> Option<CameraProfileFolderResult> 
     take_queued(camera_profile_folder_results())
 }
 
+pub fn take_lut_files_result() -> Option<LutFilesResult> {
+    take_queued(lut_files_results())
+}
+
 pub fn take_export_publish_result() -> Option<ExportPublishResult> {
     take_queued(export_results())
 }
@@ -278,6 +297,19 @@ pub fn open_camera_profile_folder(app: &AndroidApp) -> Result<(), String> {
         Ok(())
     })
     .map_err(|error| format!("could not open Android's camera-profile folder picker: {error:#}"))
+}
+
+pub fn open_lut_files(app: &AndroidApp) -> Result<(), String> {
+    with_activity(app, |env, activity| {
+        env.call_method(
+            activity,
+            jni::jni_str!("openLutFiles"),
+            jni::jni_sig!(() -> void),
+            &[],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("could not open Android's LUT file picker: {error:#}"))
 }
 
 pub fn remove_camera_profile_mirror(app: &AndroidApp, path: &Path) -> Result<(), String> {

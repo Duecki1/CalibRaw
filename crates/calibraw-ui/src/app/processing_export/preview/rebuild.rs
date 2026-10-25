@@ -343,7 +343,8 @@ impl CalibRawApp {
             &preview_masks,
             &prepared.preview_raw,
         )
-        .with_vignette_geometry(self.develop.geometry);
+        .with_vignette_geometry(self.develop.geometry)
+        .with_look_lut(self.preview_look().as_ref());
         let program_template = self
             .preview
             .pipeline()
@@ -457,6 +458,7 @@ impl CalibRawApp {
             }
         }
         self.develop.target_exposure = self.preview_exposure();
+        self.develop.target_look = self.preview_look();
         self.preview.pending_stage = None;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;

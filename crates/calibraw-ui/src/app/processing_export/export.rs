@@ -91,6 +91,7 @@ pub(in crate::app) fn spawn_export_item(
         exposure,
         masks,
         remove,
+        look,
         source_file_name,
         gpu_export_prewarm,
     } = source;
@@ -106,6 +107,7 @@ pub(in crate::app) fn spawn_export_item(
             exposure,
             masks,
             remove,
+            look,
             target,
             tile_spec: TileSpec::default(),
             settings,
@@ -341,29 +343,63 @@ impl CalibRawApp {
         }
     }
 
+    /// The request to export the open photo, with `export_override` applied
+    /// on top of its edit when given. `Ok(None)` while the photo cannot be
+    /// exported yet; `Err` for a failure to report.
     pub(in crate::app) fn capture_export_task_request(
         &mut self,
         destination: ExportDestination,
         frame: &eframe::Frame,
         format: ExportFormat,
-    ) -> Option<ExportItemRequest> {
+        export_override: Option<&ExportOverride>,
+    ) -> Result<Option<ExportItemRequest>, String> {
         if self.develop.loaded_raw.is_none()
             || self.develop.preview_raw.is_none()
             || self.export.publish_pending
             || self.develop.load_receiver.is_some()
             || self.inpaint_processing()
         {
-            return None;
+            return Ok(None);
         }
 
-        let raw = self.develop.loaded_raw.as_ref().map(Arc::clone)?;
-        let Some(render_state) = frame.wgpu_render_state() else {
-            self.report_error(
-                ErrorKind::Export,
-                "eframe is not running with the wgpu backend.",
-            );
-            return None;
+        let Some(raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {
+            return Ok(None);
         };
+        let Some(render_state) = frame.wgpu_render_state() else {
+            return Err("eframe is not running with the wgpu backend.".to_owned());
+        };
+        let (exposure, geometry, masks, look) = match export_override {
+            None => (
+                self.develop.exposure,
+                self.develop.geometry,
+                self.masks.stack.clone(),
+                self.look_for_export(),
+            ),
+            Some(export_override) => {
+                let mut edits = SidecarEditState {
+                    exposure: self.develop.exposure,
+                    geometry: self.develop.geometry,
+                    masks: Arc::new(self.masks.stack.clone()),
+                    look_lut: self.develop.look_lut.clone(),
+                    ..crate::sidecar::default_edit_state()
+                };
+                export_override.apply(&mut edits);
+                let look = edits
+                    .look_lut
+                    .as_ref()
+                    .map(|look| {
+                        crate::app::luts::resolve_look_for_export(self.luts.store().as_ref(), look)
+                    })
+                    .transpose();
+                (
+                    edits.exposure,
+                    edits.geometry,
+                    Arc::unwrap_or_clone(edits.masks),
+                    look,
+                )
+            }
+        };
+        let look = look?;
         let source_file_name = self
             .develop
             .current_path
@@ -372,22 +408,23 @@ impl CalibRawApp {
             .and_then(|name| name.to_str())
             .map(str::to_owned)
             .or_else(|| self.develop.current_label.clone());
-        Some(ExportItemRequest {
+        Ok(Some(ExportItemRequest {
             device: render_state.device.clone(),
             queue: render_state.queue.clone(),
             source: PreparedExportSource {
                 raw,
-                geometry: self.develop.geometry,
-                exposure: self.develop.exposure,
-                masks: self.masks.stack.clone(),
+                geometry,
+                exposure,
+                masks,
                 remove: self.inpaint.edits.as_ref().clone(),
+                look,
                 source_file_name,
                 gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),
             },
             destination,
             format,
             settings: self.export.settings.clone(),
-        })
+        }))
     }
 
     pub(in crate::app) fn start_export(
@@ -408,7 +445,13 @@ impl CalibRawApp {
         if !self.can_export() {
             return None;
         }
-        let request = self.capture_export_task_request(destination, frame, format)?;
+        let request = match self.capture_export_task_request(destination, frame, format, None) {
+            Ok(request) => request?,
+            Err(error) => {
+                self.report_error(ErrorKind::Export, error);
+                return None;
+            }
+        };
         if let Err(error) = self.start_export_task(request, ExportTaskKind::Single) {
             self.report_error(ErrorKind::Export, format!("Export failed: {error}"));
             return None;
@@ -745,12 +788,14 @@ impl CalibRawApp {
     }
 
     /// Restores the adjustments a first open of this photo starts with,
-    /// including its camera- and ISO-dependent noise reduction.
+    /// including its camera- and ISO-dependent noise reduction, and removes
+    /// its LUT.
     pub(crate) fn reset_develop_adjustments(&mut self) {
         let mut exposure = self.new_image_exposure();
         if let Some(raw) = self.develop.original_raw.as_deref() {
             raw.apply_adaptive_detail_defaults(&mut exposure);
         }
+        self.select_look_lut(None);
         self.develop.exposure = exposure;
         self.develop_ui.point_color = Default::default();
         self.develop_ui.cancel_white_balance_picker();

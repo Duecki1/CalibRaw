@@ -21,6 +21,9 @@
 //!   report as newer instead of as corrupt, so they never replace the file
 //!   with an unedited one. Every other edit is written with schema 1, whose
 //!   layout schema 2 shares.
+//! - Up to v1.3, readers would drop a LUT. Edits with one are written with
+//!   schema 3, which shares the same layout and which those readers report
+//!   as newer.
 
 use super::effect_sliders::GlobalSliders;
 use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskRgbImage};
@@ -29,6 +32,8 @@ use serde::{Serialize, Serializer};
 
 /// The sidecar and preset schema that v1.2 and older read.
 pub(crate) const V1_SCHEMA_VERSION: u32 = 1;
+/// The newest sidecar and preset schema that v1.3 reads.
+pub(crate) const V2_SCHEMA_VERSION: u32 = 2;
 
 /// Serializes `exposure` with the chromatic-aberration shift and the
 /// Effects-card sliders at rest.
@@ -86,8 +91,12 @@ pub(crate) fn serialize_color_range<S: Serializer>(
 }
 
 /// The schema to write `edits` with: [`V1_SCHEMA_VERSION`] when readers up to
-/// v1.2 can decode them, otherwise `current`.
+/// v1.2 can decode them, [`V2_SCHEMA_VERSION`] when readers up to v1.3 can,
+/// otherwise `current`.
 pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
+    if edits.look_lut.is_some() {
+        return current;
+    }
     let masks = &edits.masks;
     let uses_relight = masks
         .global_effects
@@ -102,7 +111,7 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     let removes_chromatic_aberration = edits.exposure.chromatic_aberration != 0.0;
     if uses_relight || edits.lens.manual.is_some() || custom_aspect || removes_chromatic_aberration
     {
-        current
+        V2_SCHEMA_VERSION
     } else {
         V1_SCHEMA_VERSION
     }
@@ -111,6 +120,7 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::luts::{LookLut, LutId};
     use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet, EffectComponent, MaskKind};
     use crate::presets::{Preset, PRESET_SCHEMA_VERSION};
     use crate::sidecar::{
@@ -171,11 +181,11 @@ mod tests {
     }
 
     #[test]
-    fn relight_anywhere_is_written_as_the_newer_schema() {
+    fn relight_anywhere_is_written_as_schema_2() {
         for in_mask in [false, true] {
             let edits = edits(Some(in_mask));
             let bytes = encode(edits.clone()).unwrap();
-            assert_eq!(document(&bytes)["schema_version"], SIDECAR_SCHEMA_VERSION);
+            assert_eq!(document(&bytes)["schema_version"], V2_SCHEMA_VERSION);
             let loaded = decode(&bytes).unwrap();
             assert!(!loaded.migrated);
             assert_eq!(loaded.edits, edits, "in_mask={in_mask}");
@@ -183,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_lens_correction_is_written_as_the_newer_schema() {
+    fn manual_lens_correction_is_written_as_schema_2() {
         let mut edits = edits(None);
         edits.lens.enabled = true;
         edits.lens.manual = Some(crate::pipeline::ManualLensCorrection {
@@ -191,33 +201,57 @@ mod tests {
             vignetting: -4.0,
         });
         let bytes = encode(edits.clone()).unwrap();
-        assert_eq!(document(&bytes)["schema_version"], SIDECAR_SCHEMA_VERSION);
+        assert_eq!(document(&bytes)["schema_version"], V2_SCHEMA_VERSION);
         assert_eq!(decode(&bytes).unwrap().edits, edits);
     }
 
     #[test]
-    fn chromatic_aberration_removal_is_written_as_the_newer_schema() {
+    fn chromatic_aberration_removal_is_written_as_schema_2() {
         let mut edits = edits(None);
         edits.exposure.chromatic_aberration = 60.0;
         let bytes = encode(edits.clone()).unwrap();
-        assert_eq!(document(&bytes)["schema_version"], SIDECAR_SCHEMA_VERSION);
+        assert_eq!(document(&bytes)["schema_version"], V2_SCHEMA_VERSION);
         assert_eq!(decode(&bytes).unwrap().edits, edits);
     }
 
     #[test]
-    fn a_custom_crop_ratio_is_written_as_the_newer_schema() {
+    fn a_custom_crop_ratio_is_written_as_schema_2() {
         let mut edits = edits(None);
         edits.geometry.aspect_ratio = CropAspectRatio::Custom {
             width: 5,
             height: 4,
         };
         let bytes = encode(edits.clone()).unwrap();
-        assert_eq!(document(&bytes)["schema_version"], SIDECAR_SCHEMA_VERSION);
+        assert_eq!(document(&bytes)["schema_version"], V2_SCHEMA_VERSION);
         assert_eq!(decode(&bytes).unwrap().edits, edits);
 
         edits.geometry.aspect_ratio = CropAspectRatio::FourThree;
         let bytes = encode(edits).unwrap();
         assert_eq!(document(&bytes)["schema_version"], V1_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn a_lut_is_written_as_the_newest_schema() {
+        let mut edits = edits(Some(false));
+        edits.look_lut = Some(LookLut {
+            id: LutId::of_bytes(b"film"),
+            name: "Film".to_owned(),
+            amount: 0.5,
+        });
+        let bytes = encode(edits.clone()).unwrap();
+        assert_eq!(document(&bytes)["schema_version"], SIDECAR_SCHEMA_VERSION);
+        let loaded = decode(&bytes).unwrap();
+        assert!(!loaded.migrated);
+        assert_eq!(loaded.edits, edits);
+
+        let selection = EditSelection {
+            lut: true,
+            ..EditSelection::default()
+        };
+        let preset = Preset::new("Film", "", selection, &edits).unwrap();
+        let bytes = preset.encode().unwrap();
+        assert_eq!(document(&bytes)["schema_version"], PRESET_SCHEMA_VERSION);
+        assert_eq!(Preset::decode(&bytes).unwrap(), preset);
     }
 
     #[test]
@@ -227,10 +261,7 @@ mod tests {
             masks: true,
             ..EditSelection::default()
         };
-        for (relight, expected) in [
-            (None, V1_SCHEMA_VERSION),
-            (Some(false), PRESET_SCHEMA_VERSION),
-        ] {
+        for (relight, expected) in [(None, V1_SCHEMA_VERSION), (Some(false), V2_SCHEMA_VERSION)] {
             let preset = Preset::new("Light", "", selection, &edits(relight)).unwrap();
             let bytes = preset.encode().unwrap();
             assert_eq!(document(&bytes)["schema_version"], expected);

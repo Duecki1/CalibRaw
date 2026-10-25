@@ -245,6 +245,7 @@ pub(crate) fn apply_library_action(
                     assets,
                     settings: app.export.settings.clone(),
                     format: app.export.format,
+                    overrides: app.export.override_choice.clone(),
                 });
             }
         }
@@ -810,6 +811,8 @@ pub(crate) fn show_library_action_overlays(
     let mut selected_export_format = None;
     // Folder exports ask where to save; media-library exports are published.
     let publishes = app.caps().has_media_library();
+    let presets = app.presets.all();
+    let luts = app.luts.entries();
     if let Some(dialog) = app.library.export_dialog.as_mut() {
         let count = dialog.assets.len();
         let export_picker_directory = dialog
@@ -851,6 +854,7 @@ pub(crate) fn show_library_action_overlays(
                     if format_changed {
                         selected_export_format = Some(dialog.format);
                     }
+                    show_export_override_controls(ui, &mut dialog.overrides, presets, luts);
                 },
                 |ui| {
                     if moduwu_design::primary_action_button(ui, label)
@@ -883,11 +887,14 @@ pub(crate) fn show_library_action_overlays(
 
     if confirm_export {
         if let Some(dialog) = app.library.export_dialog.clone() {
+            let export_override = app.export_override(&dialog.overrides);
+            app.export.override_choice = dialog.overrides;
             if start_local_library_export(
                 app,
                 &dialog.assets,
                 dialog.settings,
                 dialog.format,
+                export_override,
                 frame,
             ) {
                 app.library.clear_selection();

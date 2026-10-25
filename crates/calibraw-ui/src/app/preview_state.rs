@@ -316,6 +316,9 @@ pub(crate) struct LoadedPreview {
     pub(super) sidecar_needs_rewrite: bool,
     pub(super) editing_time_ms: u64,
     pub(super) selected_camera_profile: Option<PathBuf>,
+    /// The edit's LUT, and its table when the LUT library holds it.
+    pub(super) look_lut: Option<crate::luts::LookLut>,
+    pub(super) look_lut_table: Option<Arc<crate::luts::CubeLut>>,
     pub(super) geometry: GeometryTransform,
     pub(super) starts_unedited: bool,
 }
