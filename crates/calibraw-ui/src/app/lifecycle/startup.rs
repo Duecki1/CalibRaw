@@ -333,6 +333,7 @@ impl CalibRawApp {
                 tip: None,
                 version_check: Default::default(),
                 shortcuts_dialog_open: false,
+                numeric_keyboard: false,
             },
             library: if caps.has_media_library() {
                 LibraryState::new_android(

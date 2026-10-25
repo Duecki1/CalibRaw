@@ -86,6 +86,8 @@ pub(crate) struct UiState {
     pub(crate) thumbnail_cache_size: Option<Result<u64, String>>,
     pub(crate) thumbnail_cache_size_receiver: Option<mpsc::Receiver<Result<u64, String>>>,
     pub(crate) desktop_picker_receiver: Option<mpsc::Receiver<DesktopPickerEvent>>,
+    /// The platform was last asked for the soft keyboard's number layout.
+    pub(in crate::app) numeric_keyboard: bool,
 }
 
 /// Media-library workflows the platform finishes asynchronously: its picker,

@@ -239,6 +239,21 @@ pub fn take_export_publish_result() -> Option<ExportPublishResult> {
     take_queued(export_results())
 }
 
+/// Switches the soft keyboard between its number and text layouts. winit
+/// still decides whether the keyboard is shown.
+pub fn set_numeric_keyboard(app: &AndroidApp, numeric: bool) -> Result<(), String> {
+    with_activity(app, |env, activity| {
+        env.call_method(
+            activity,
+            jni::jni_str!("setNumericKeyboard"),
+            jni::jni_sig!((i32) -> void),
+            &[JValue::Int(i32::from(numeric))],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("could not switch the Android keyboard layout: {error:#}"))
+}
+
 pub fn set_light_system_bars(app: &AndroidApp, light: bool) -> Result<(), String> {
     with_activity(app, |env, activity| {
         env.call_method(

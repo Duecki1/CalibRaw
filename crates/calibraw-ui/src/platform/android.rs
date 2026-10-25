@@ -91,6 +91,10 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::keyboard_inset_points(pixels_per_point)
     }
 
+    fn set_numeric_keyboard(&self, numeric: bool) -> Result<(), String> {
+        calibraw_ffi::set_numeric_keyboard(&self.app, numeric)
+    }
+
     fn set_light_system_bars(&self, light: bool) -> Result<(), String> {
         calibraw_ffi::set_light_system_bars(&self.app, light)
     }

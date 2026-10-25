@@ -155,6 +155,11 @@ pub(crate) trait Platform: Send + Sync {
     fn keyboard_inset_points(&self, _pixels_per_point: f32) -> f32 {
         0.0
     }
+    /// Shows the on-screen keyboard's number layout instead of its text
+    /// layout while `numeric`.
+    fn set_numeric_keyboard(&self, _numeric: bool) -> Result<(), String> {
+        Ok(())
+    }
     fn set_light_system_bars(&self, _light: bool) -> Result<(), String> {
         Ok(())
     }

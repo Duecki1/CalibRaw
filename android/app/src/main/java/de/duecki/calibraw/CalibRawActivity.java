@@ -11,8 +11,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.graphics.Insets;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Toast;
 import android.util.Log;
 import android.window.OnBackInvokedDispatcher;
@@ -43,6 +45,10 @@ public final class CalibRawActivity extends NativeActivity {
     private ProfileImporter profileImporter;
     private ExportPublisher exportPublisher;
     private TaskNotificationController taskNotificationController;
+    // Created on first use; UI thread only.
+    private NumericInputView numericInputView;
+    // The view that had input focus before the number layout took it.
+    private View focusBeforeNumericInput;
     private final ExecutorService startupMaintenanceExecutor =
             Executors.newSingleThreadExecutor(runnable ->
                     new Thread(runnable, "CalibRaw startup maintenance"));
@@ -230,6 +236,37 @@ public final class CalibRawActivity extends NativeActivity {
                 int visibility = decorView.getSystemUiVisibility();
                 decorView.setSystemUiVisibility(
                         light ? visibility | mask : visibility & ~mask);
+            }
+        });
+    }
+
+    // Shows the soft keyboard's number layout while the UI edits a number. Showing and hiding the
+    // keyboard stays with winit; this only moves input focus between NativeActivity's view, which
+    // gets the text layout, and NumericInputView.
+    public void setNumericKeyboard(int numericFlag) {
+        final boolean numeric = numericFlag != 0;
+        runOnUiThread(() -> {
+            InputMethodManager inputMethods = getSystemService(InputMethodManager.class);
+            if (numeric) {
+                if (numericInputView == null) {
+                    numericInputView = new NumericInputView(this);
+                    addContentView(numericInputView, new ViewGroup.LayoutParams(1, 1));
+                }
+                if (numericInputView.hasFocus()) {
+                    return;
+                }
+                focusBeforeNumericInput = getWindow().getCurrentFocus();
+                numericInputView.requestFocus();
+                inputMethods.restartInput(numericInputView);
+                inputMethods.showSoftInput(numericInputView, 0);
+            } else if (numericInputView != null && numericInputView.hasFocus()) {
+                View previous = focusBeforeNumericInput;
+                focusBeforeNumericInput = null;
+                if (previous != null && previous.requestFocus()) {
+                    inputMethods.restartInput(previous);
+                } else {
+                    numericInputView.clearFocus();
+                }
             }
         });
     }
