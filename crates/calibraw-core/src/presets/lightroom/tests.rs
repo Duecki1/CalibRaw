@@ -1,6 +1,9 @@
 use super::*;
-use crate::pipeline::{AdjustmentGroup, MaskEffect, PointCurve, WhiteBalance};
+use crate::pipeline::{
+    AdjustmentGroup, MaskCombineMode, MaskEffect, MaskGeometry, MaskKind, PointCurve, WhiteBalance,
+};
 use crate::presets::{Preset, PresetError};
+use crate::sidecar::default_edit_state;
 
 fn document(attributes: &str, body: &str) -> String {
     format!(
@@ -32,6 +35,35 @@ fn assert_close(actual: f32, expected: f32) {
 fn assert_close_point(actual: [f32; 2], expected: [f32; 2]) {
     assert_close(actual[0], expected[0]);
     assert_close(actual[1], expected[1]);
+}
+
+fn mask_group(corrections: &[String]) -> String {
+    format!(
+        "<crs:MaskGroupBasedCorrections><rdf:Seq>{}</rdf:Seq></crs:MaskGroupBasedCorrections>",
+        corrections.concat()
+    )
+}
+
+fn correction(name: &str, attributes: &str, components: &[String], curves: &str) -> String {
+    format!(
+        r#"<rdf:li><rdf:Description crs:What="Correction" crs:CorrectionName="{name}" {attributes}>
+{curves}
+<crs:CorrectionMasks><rdf:Seq>{}</rdf:Seq></crs:CorrectionMasks>
+</rdf:Description></rdf:li>"#,
+        components.concat()
+    )
+}
+
+fn component(name: &str, subtype: &str, attributes: &str) -> String {
+    format!(
+        r#"<rdf:li crs:What="Mask/Image" crs:MaskName="{name}" crs:MaskSubType="{subtype}" {attributes}/>"#
+    )
+}
+
+fn background_component(name: &str, attributes: &str) -> String {
+    format!(
+        r#"<rdf:li crs:What="Mask/Image" crs:MaskName="{name}" crs:MaskSubType="0" crs:MaskSubCategoryID="22" {attributes}/>"#
+    )
 }
 
 #[test]
@@ -685,4 +717,313 @@ fn recognises_xmp_files_without_case() {
     assert!(is_lightroom_preset_file(Path::new("look.XMP")));
     assert!(!is_lightroom_preset_file(Path::new("look.calibraw-preset")));
     assert!(!is_lightroom_preset_file(Path::new("look")));
+}
+
+#[test]
+fn imports_subject_background_and_sky_masks() {
+    let subject = correction(
+        "Subject mask",
+        r#"crs:CorrectionAmount="0.8""#,
+        &[component("Subject 1", "1", "")],
+        "",
+    );
+    let background = correction(
+        "Background mask",
+        "",
+        &[background_component("Background 1", "")],
+        "",
+    );
+    let sky = correction("Sky mask", "", &[component("Sky 1", "2", "")], "");
+    let import = import(
+        r#"crs:Exposure2012="0.5""#,
+        &mask_group(&[subject, background, sky]),
+    );
+
+    let masks = &import.preset.edits().masks.masks;
+    assert_eq!(masks.len(), 3);
+    assert_eq!(masks[0].name, "Subject mask");
+    assert_close(masks[0].opacity, 0.8);
+    assert_eq!(masks[0].components[0].kind, MaskKind::Subject);
+    assert_eq!(masks[0].components[0].name, "Subject 1");
+    assert_eq!(masks[1].components[0].kind, MaskKind::Background);
+    assert_eq!(masks[2].components[0].kind, MaskKind::Sky);
+    for mask in masks {
+        assert!(matches!(
+            mask.components[0].geometry,
+            MaskGeometry::Ai { mask: None, .. }
+        ));
+    }
+    assert!(import.preset.selection().ai_masks);
+    assert!(!import.preset.selection().masks);
+    assert!(import.warnings.is_empty(), "{:?}", import.warnings);
+}
+
+#[test]
+fn maps_mask_components_and_their_state() {
+    let correction = correction(
+        "Composite",
+        r#"crs:CorrectionAmount="0.5" crs:CorrectionActive="false""#,
+        &[
+            background_component("Background 1", r#"crs:MaskBlendMode="0""#),
+            component(
+                "Subject 1",
+                "1",
+                r#"crs:MaskBlendMode="1" crs:MaskInverted="true" crs:MaskActive="false""#,
+            ),
+            component("Sky 1", "2", r#"crs:MaskBlendMode="2""#),
+        ],
+        "",
+    );
+    let import = import("", &mask_group(&[correction]));
+    let mask = &import.preset.edits().masks.masks[0];
+
+    assert!(!mask.enabled);
+    assert_close(mask.opacity, 0.5);
+    assert_eq!(mask.components.len(), 3);
+    assert_eq!(mask.components[0].combine, MaskCombineMode::Add);
+    assert_eq!(mask.components[1].combine, MaskCombineMode::Subtract);
+    assert!(mask.components[1].invert);
+    assert!(!mask.components[1].enabled);
+    assert_eq!(mask.components[2].combine, MaskCombineMode::Intersect);
+}
+
+#[test]
+fn maps_local_adjustments_and_tone_curves() {
+    let curves = r#"
+<crs:MainCurve><rdf:Seq>
+ <rdf:li>0,0</rdf:li>
+ <rdf:li>128,64</rdf:li>
+ <rdf:li>255,255</rdf:li>
+</rdf:Seq></crs:MainCurve>
+<crs:BlueCurve><rdf:Seq>
+ <rdf:li>0,0</rdf:li>
+ <rdf:li>64,128</rdf:li>
+ <rdf:li>255,255</rdf:li>
+</rdf:Seq></crs:BlueCurve>
+"#;
+    let correction = correction(
+        "Local",
+        r#"crs:LocalExposure2012="0.5"
+           crs:LocalContrast2012="0.25"
+           crs:LocalHighlights2012="-0.5"
+           crs:LocalShadows2012="0.75"
+           crs:LocalWhites2012="-0.1"
+           crs:LocalBlacks2012="0.1"
+           crs:LocalTemperature="0.2"
+           crs:LocalTint="-0.3"
+           crs:LocalHue="0.5"
+           crs:LocalSaturation="-0.4"
+           crs:LocalTexture="0.6"
+           crs:LocalClarity2012="-0.7"
+           crs:LocalDehaze="0.8""#,
+        &[component("Subject 1", "1", "")],
+        curves,
+    );
+    let import = import("", &mask_group(&[correction]));
+    assert!(import.warnings.is_empty(), "{:?}", import.warnings);
+    let adjustments = &import.preset.edits().masks.masks[0].adjustments;
+
+    assert_close(adjustments.exposure, 0.5);
+    assert_close(adjustments.contrast, 25.0);
+    assert_close(adjustments.highlights, -50.0);
+    assert_close(adjustments.shadows, 75.0);
+    assert_close(adjustments.whites, -10.0);
+    assert_close(adjustments.blacks, 10.0);
+    assert_close(adjustments.temperature, 20.0);
+    assert_close(adjustments.tint, -30.0);
+    assert_close(adjustments.hue, 90.0);
+    assert_close(adjustments.saturation, -40.0);
+    assert_close(adjustments.texture, 60.0);
+    assert_close(adjustments.clarity, -70.0);
+    assert_close(adjustments.dehaze, 80.0);
+
+    assert_eq!(
+        curve_points(&adjustments.tone_curve),
+        vec![[0.0, 0.0], [128.0 / 255.0, 64.0 / 255.0], [1.0, 1.0]]
+    );
+    assert_eq!(
+        curve_points(&adjustments.tone_curve_blue),
+        vec![[0.0, 0.0], [64.0 / 255.0, 128.0 / 255.0], [1.0, 1.0]]
+    );
+    assert_eq!(
+        curve_points(&adjustments.tone_curve_red),
+        vec![[0.0, 0.0], [1.0, 1.0]]
+    );
+}
+
+#[test]
+fn skips_unsupported_mask_components() {
+    let radial = correction(
+        "Radial",
+        "",
+        &[
+            r#"<rdf:li crs:What="Mask/CircularGradient" crs:MaskName="Radial Gradient 1"/>"#
+                .to_owned(),
+        ],
+        "",
+    );
+    let person = correction(
+        "Person",
+        "",
+        &[component("Person 1", "3", r#"crs:MaskSubCategoryID="13""#)],
+        "",
+    );
+    let empty = correction("Empty", "", &[], "");
+    let subtract = correction(
+        "Subtract",
+        "",
+        &[component("Subject 1", "1", r#"crs:MaskBlendMode="1""#)],
+        "",
+    );
+    let unknown_blend = correction(
+        "Unknown blend",
+        "",
+        &[component("Sky 1", "2", r#"crs:MaskBlendMode="7""#)],
+        "",
+    );
+    let subject = correction("Imported", "", &[component("Subject 1", "1", "")], "");
+    let import = import(
+        "",
+        &mask_group(&[radial, person, empty, subtract, unknown_blend, subject]),
+    );
+
+    let masks = &import.preset.edits().masks.masks;
+    assert_eq!(masks.len(), 1);
+    assert_eq!(masks[0].name, "Imported");
+    assert_eq!(masks[0].components[0].kind, MaskKind::Subject);
+    for expected in [
+        "radial gradient",
+        "person",
+        "has no components",
+        "starts with a subtracted component",
+        "unknown blend mode",
+    ] {
+        assert!(
+            import
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(expected)),
+            "missing warning containing {expected:?}: {:?}",
+            import.warnings
+        );
+    }
+}
+
+#[test]
+fn warns_about_unsupported_local_adjustments() {
+    let correction = correction(
+        "Local",
+        r#"crs:LocalSharpness="0.5"
+           crs:LocalLuminanceNoise="0.2"
+           crs:LocalMoire="0.1"
+           crs:LocalDefringe="0.3"
+           crs:LocalGrain="0.4"
+           crs:LocalBrightness="0.1"
+           crs:LocalToningHue="20"
+           crs:LocalToningSaturation="0.1"
+           crs:LocalCorrectedDepth="0.2"
+           crs:LocalCurveRefineSaturation="50""#,
+        &[component("Subject 1", "1", "")],
+        r#"<crs:LocalPointColors><rdf:Seq><rdf:li>0.1, 0.2</rdf:li></rdf:Seq></crs:LocalPointColors>"#,
+    );
+    let import = import("", &mask_group(&[correction]));
+
+    assert_eq!(import.preset.edits().masks.masks.len(), 1);
+    assert!(import
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("Some local adjustments")));
+}
+
+#[test]
+fn mask_only_files_import_and_apply_as_ai_masks() {
+    let correction = correction("Subject mask", "", &[component("Subject 1", "1", "")], "");
+    let import = import("", &mask_group(&[correction]));
+
+    assert!(import.preset.selection().adjustment_groups.is_empty());
+    assert!(import.preset.selection().ai_masks);
+    assert!(!import.preset.selection().masks);
+    assert_eq!(import.preset.edits().masks.masks.len(), 1);
+
+    let mut destination = default_edit_state();
+    import.preset.apply_to(&mut destination);
+    assert_eq!(destination.masks.masks.len(), 1);
+    assert_eq!(
+        destination.masks.masks[0].components[0].kind,
+        MaskKind::Subject
+    );
+    assert!(destination.ai_masks_need_update);
+}
+
+#[test]
+fn ignores_masks_inside_an_embedded_preset() {
+    let nested = format!(
+        r#"<crs:Preset><rdf:Description crs:Exposure2012="2.0">{}</rdf:Description></crs:Preset>"#,
+        mask_group(&[correction(
+            "Nested",
+            "",
+            &[component("Subject 1", "1", "")],
+            "",
+        )])
+    );
+    let body = format!(
+        "{nested}{}",
+        mask_group(&[correction(
+            "Sky mask",
+            "",
+            &[component("Sky 1", "2", "")],
+            "",
+        )])
+    );
+    let import = import(r#"crs:Exposure2012="0.25""#, &body);
+
+    assert_close(import.preset.edits().exposure.exposure, 0.25);
+    let masks = &import.preset.edits().masks.masks;
+    assert_eq!(masks.len(), 1);
+    assert_eq!(masks[0].name, "Sky mask");
+    assert_eq!(masks[0].components[0].kind, MaskKind::Sky);
+}
+
+#[test]
+fn reads_masks_inside_the_parameters_description() {
+    let body = format!(
+        r#"<crs:Parameters><rdf:Description>{}</rdf:Description></crs:Parameters>"#,
+        mask_group(&[correction(
+            "Subject mask",
+            "",
+            &[component("Subject 1", "1", "")],
+            "",
+        )])
+    );
+    let import = import(r#"crs:Exposure2012="0.25""#, &body);
+
+    assert_close(import.preset.edits().exposure.exposure, 0.25);
+    assert_eq!(import.preset.edits().masks.masks.len(), 1);
+    assert_eq!(
+        import.preset.edits().masks.masks[0].components[0].kind,
+        MaskKind::Subject
+    );
+}
+
+#[test]
+fn imported_masks_round_trip_and_apply() {
+    let correction = correction(
+        "Subject mask",
+        r#"crs:CorrectionAmount="0.6" crs:LocalExposure2012="0.4""#,
+        &[component("Subject 1", "1", "")],
+        "",
+    );
+    let import = import(r#"crs:Exposure2012="0.5""#, &mask_group(&[correction]));
+
+    let encoded = import.preset.encode().expect("the preset encodes");
+    let decoded = Preset::decode(&encoded).expect("the preset decodes");
+    assert_eq!(decoded, import.preset);
+
+    let mut destination = default_edit_state();
+    decoded.apply_to(&mut destination);
+    assert_close(destination.exposure.exposure, 0.5);
+    assert_eq!(destination.masks.masks.len(), 1);
+    assert_close(destination.masks.masks[0].opacity, 0.6);
+    assert_close(destination.masks.masks[0].adjustments.exposure, 0.4);
+    assert!(destination.ai_masks_need_update);
 }

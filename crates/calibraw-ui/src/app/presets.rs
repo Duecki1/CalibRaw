@@ -555,7 +555,7 @@ pub(crate) fn sentence_case(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet};
+    use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet, MaskKind};
 
     #[test]
     fn deleting_the_preset_for_new_photos_stops_applying_it() {
@@ -652,6 +652,44 @@ mod tests {
         let notice = app.ui.notice.as_deref().unwrap();
         assert!(notice.starts_with("Imported 1 preset."), "{notice}");
         assert!(notice.contains("Lens corrections were not imported."));
+    }
+
+    #[test]
+    fn importing_a_mask_only_lightroom_preset_saves_an_ai_mask() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+
+        let xmp = folder.path().join("Subject Look.xmp");
+        std::fs::write(
+            &xmp,
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/">
+<crs:MaskGroupBasedCorrections><rdf:Seq><rdf:li>
+<rdf:Description crs:What="Correction" crs:CorrectionName="Subject">
+<crs:CorrectionMasks><rdf:Seq>
+<rdf:li crs:What="Mask/Image" crs:MaskName="Subject 1" crs:MaskSubType="1"/>
+</rdf:Seq></crs:CorrectionMasks>
+</rdf:Description>
+</rdf:li></rdf:Seq></crs:MaskGroupBasedCorrections>
+</rdf:Description>
+</rdf:RDF>
+</x:xmpmeta>"#,
+        )
+        .unwrap();
+
+        app.import_preset_files(&[xmp]);
+
+        assert_eq!(app.presets.all().len(), 1);
+        let stored = &app.presets.all()[0];
+        assert!(stored.preset.selection().ai_masks);
+        assert_eq!(stored.preset.edits().masks.masks.len(), 1);
+        assert_eq!(
+            stored.preset.edits().masks.masks[0].components[0].kind,
+            MaskKind::Subject
+        );
+        assert_eq!(app.ui.notice.as_deref(), Some("Imported 1 preset."));
     }
 
     #[test]

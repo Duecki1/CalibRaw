@@ -12,13 +12,19 @@
 //! warnings instead of failing the import. White balance is absolute in
 //! CalibRaw, so Lightroom's named white balances use their usual temperature
 //! and tint values.
+//!
+//! Subject, background and sky masks are carried over without their raster;
+//! CalibRaw regenerates them on the target photo. Other mask types are skipped
+//! with a warning, as are local adjustments CalibRaw cannot represent.
 
 use super::{Preset, PresetError, DEFAULT_PRESET_GROUP, MAX_PRESET_BYTES, MAX_PRESET_NAME_CHARS};
 use crate::pipeline::{
     AdjustmentGroup, AdjustmentGroupSet, ColorGradeWheel, ColorGrading, EffectComponent,
-    ExposureParams, GrainEffectSettings, MaskEffect, MaskEffectSettings, MaskStack, PointCurve,
-    VignetteEffectSettings, WhiteBalance, HSL_HUE_LIMIT, MAX_POINT_CURVE_POINTS,
-    MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
+    ExposureParams, GrainEffectSettings, LocalAdjustments, LocalMask, MaskCombineMode,
+    MaskComponent, MaskEffect, MaskEffectSettings, MaskKind, MaskStack, PointCurve,
+    VignetteEffectSettings, WhiteBalance, HSL_HUE_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
+    MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_POINT_CURVE_POINTS, MAX_TEMPERATURE_KELVIN,
+    MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
 use crate::sidecar::{default_edit_state, EditSelection};
 use quick_xml::events::{BytesEnd, BytesRef, BytesStart, Event};
@@ -203,6 +209,22 @@ impl CurveSet {
     }
 }
 
+/// One Lightroom local-adjustment group, called a correction in XMP. Its
+/// attributes hold the local sliders; `masks` are the components that shape it.
+#[derive(Clone, Default)]
+struct ParsedMaskGroup {
+    attributes: BTreeMap<String, String>,
+    /// RGB, red, green and blue local tone curves, in CalibRaw channel order.
+    curves: [Option<Vec<String>>; 4],
+    masks: Vec<ParsedMask>,
+    has_point_colors: bool,
+}
+
+#[derive(Clone, Default)]
+struct ParsedMask {
+    attributes: BTreeMap<String, String>,
+}
+
 #[derive(Default)]
 struct ParsedXmp {
     attributes: BTreeMap<String, String>,
@@ -210,7 +232,82 @@ struct ParsedXmp {
     group: Option<String>,
     curves: CurveSet,
     legacy_curves: CurveSet,
+    masks: Vec<ParsedMaskGroup>,
     description_found: bool,
+}
+
+struct MaskCapture {
+    /// Depth of `crs:MaskGroupBasedCorrections`.
+    depth: usize,
+    groups: Vec<ParsedMaskGroup>,
+    current: Option<ParsedMaskGroup>,
+    /// Depth of the correction `rdf:Description` that owns `current`.
+    group_depth: Option<usize>,
+    curve: Option<LocalCurveCapture>,
+}
+
+impl MaskCapture {
+    fn new(depth: usize) -> Self {
+        Self {
+            depth,
+            groups: Vec::new(),
+            current: None,
+            group_depth: None,
+            curve: None,
+        }
+    }
+
+    fn finish_group(&mut self) {
+        if let Some(group) = self.current.take() {
+            self.groups.push(group);
+        }
+        self.group_depth = None;
+    }
+
+    fn finish_curve(&mut self) {
+        let Some(mut curve) = self.curve.take() else {
+            return;
+        };
+        curve.finish_point();
+        if let Some(group) = self.current.as_mut() {
+            group.curves[curve.channel] = Some(curve.points);
+        }
+    }
+}
+
+struct LocalCurveCapture {
+    channel: usize,
+    /// Depth of the `crs:*Curve` element.
+    depth: usize,
+    /// Depth of the open `rdf:li`, for one curve point.
+    point_depth: Option<usize>,
+    text: String,
+    points: Vec<String>,
+}
+
+impl LocalCurveCapture {
+    fn new(channel: usize, depth: usize) -> Self {
+        Self {
+            channel,
+            depth,
+            point_depth: None,
+            text: String::new(),
+            points: Vec::new(),
+        }
+    }
+
+    fn begin_point(&mut self, depth: usize) {
+        self.point_depth = Some(depth);
+        self.text.clear();
+    }
+
+    fn finish_point(&mut self) {
+        let point = std::mem::take(&mut self.text);
+        if !point.trim().is_empty() {
+            self.points.push(point);
+        }
+        self.point_depth = None;
+    }
 }
 
 #[derive(Default)]
@@ -220,6 +317,7 @@ struct XmpParser {
     top_depth: Option<usize>,
     skip_depth: Option<usize>,
     capture: Option<Capture>,
+    mask_capture: Option<MaskCapture>,
     parsed: ParsedXmp,
 }
 
@@ -280,6 +378,10 @@ impl XmpParser {
             return Ok(());
         }
 
+        if self.mask_capture.is_some() {
+            return self.start_mask(start, empty, is_rdf, is_crs, local);
+        }
+
         if is_rdf && local == b"RDF" {
             self.rdf_depth = Some(self.depth);
             return Ok(());
@@ -312,6 +414,13 @@ impl XmpParser {
         if is_crs && local == b"Preset" {
             if !empty {
                 self.skip_depth = Some(self.depth);
+            }
+            return Ok(());
+        }
+
+        if is_crs && local == b"MaskGroupBasedCorrections" {
+            if !empty {
+                self.mask_capture = Some(MaskCapture::new(self.depth));
             }
             return Ok(());
         }
@@ -376,10 +485,123 @@ impl XmpParser {
         Ok(())
     }
 
+    /// Collects the correction descriptions, their local curves and their mask
+    /// components. Everything else in the subtree is ignored.
+    fn start_mask(
+        &mut self,
+        start: &BytesStart<'_>,
+        empty: bool,
+        is_rdf: bool,
+        is_crs: bool,
+        local: &[u8],
+    ) -> Result<(), PresetError> {
+        let depth = self.depth;
+        let Some(capture) = self.mask_capture.as_mut() else {
+            return Ok(());
+        };
+
+        if capture.curve.is_some() {
+            if !empty && is_rdf && local == b"li" {
+                if let Some(curve) = capture.curve.as_mut() {
+                    curve.begin_point(depth);
+                }
+            }
+            return Ok(());
+        }
+
+        if is_crs {
+            if let Some(channel) = local_curve_channel(local) {
+                if !empty {
+                    capture.curve = Some(LocalCurveCapture::new(channel, depth));
+                }
+                return Ok(());
+            }
+        }
+
+        if is_rdf && local == b"Description" {
+            let attributes = crs_attributes(start)?;
+            if is_mask_attributes(&attributes) && capture.current.is_some() {
+                if let Some(group) = capture.current.as_mut() {
+                    group.masks.push(ParsedMask { attributes });
+                }
+                return Ok(());
+            }
+            capture.finish_group();
+            let group = ParsedMaskGroup {
+                attributes,
+                ..ParsedMaskGroup::default()
+            };
+            if empty {
+                capture.groups.push(group);
+            } else {
+                capture.current = Some(group);
+                capture.group_depth = Some(depth);
+            }
+            return Ok(());
+        }
+
+        if is_rdf && local == b"li" {
+            let attributes = crs_attributes(start)?;
+            if is_mask_attributes(&attributes) {
+                if let Some(group) = capture.current.as_mut() {
+                    group.masks.push(ParsedMask { attributes });
+                }
+            }
+            return Ok(());
+        }
+
+        if is_crs && local == b"LocalPointColors" {
+            if let Some(group) = capture.current.as_mut() {
+                group.has_point_colors = true;
+            }
+        }
+        Ok(())
+    }
+
     fn end(&mut self, end: &BytesEnd<'_>) {
         if let Some(skip_depth) = self.skip_depth {
             if self.depth == skip_depth {
                 self.skip_depth = None;
+            }
+            return;
+        }
+
+        if self.mask_capture.is_some() {
+            let depth = self.depth;
+            let mut capture_closed = false;
+            if let Some(capture) = self.mask_capture.as_mut() {
+                if capture
+                    .curve
+                    .as_ref()
+                    .is_some_and(|curve| curve.point_depth == Some(depth))
+                {
+                    if let Some(curve) = capture.curve.as_mut() {
+                        curve.finish_point();
+                    }
+                    return;
+                }
+                if capture
+                    .curve
+                    .as_ref()
+                    .is_some_and(|curve| curve.depth == depth)
+                {
+                    capture.finish_curve();
+                    return;
+                }
+                if capture.group_depth == Some(depth) {
+                    capture.finish_group();
+                    return;
+                }
+                if capture.depth == depth {
+                    capture.finish_curve();
+                    capture.finish_group();
+                    capture_closed = true;
+                }
+            }
+            if capture_closed {
+                if let Some(capture) = self.mask_capture.take() {
+                    self.parsed.masks = capture.groups;
+                }
             }
             return;
         }
@@ -411,6 +633,14 @@ impl XmpParser {
         if self.skip_depth.is_some() {
             return;
         }
+        if let Some(capture) = self.mask_capture.as_mut() {
+            if let Some(curve) = capture.curve.as_mut() {
+                if curve.point_depth.is_some() {
+                    curve.text.push_str(text);
+                }
+            }
+            return;
+        }
         let Some(capture) = self.capture.as_mut() else {
             return;
         };
@@ -424,47 +654,82 @@ impl XmpParser {
         if self.skip_depth.is_some() {
             return Ok(());
         }
+        if let Some(capture) = self.mask_capture.as_mut() {
+            if let Some(curve) = capture.curve.as_mut() {
+                if curve.point_depth.is_some() {
+                    curve.text.push_str(&decoded_reference(reference)?);
+                }
+            }
+            return Ok(());
+        }
         let Some(capture) = self.capture.as_mut() else {
             return Ok(());
         };
         if capture.is_curve() && capture.point_depth.is_none() {
             return Ok(());
         }
-        let name = reference
-            .decode()
-            .map_err(|error| invalid_xml(format!("could not decode an entity: {error}")))?;
-        if let Some(character) = reference
-            .resolve_char_ref()
-            .map_err(|error| invalid_xml(format!("invalid character reference: {error}")))?
-        {
-            capture.text.push(character);
-        } else if let Some(entity) = quick_xml::escape::resolve_predefined_entity(&name) {
-            capture.text.push_str(entity);
-        } else {
-            return Err(invalid_xml(format!("unknown XML entity &{name};")));
-        }
+        capture.text.push_str(&decoded_reference(reference)?);
         Ok(())
     }
 
     fn collect_attributes(&mut self, start: &BytesStart<'_>) -> Result<(), PresetError> {
-        for attribute in start.attributes() {
-            let attribute = attribute
-                .map_err(|error| invalid_xml(format!("could not read an attribute: {error}")))?;
-            let (local, prefix) = attribute.key.decompose();
-            if prefix.is_none_or(|prefix| prefix.as_ref() != b"crs") {
-                continue;
-            }
-            let name = std::str::from_utf8(local.as_ref())
-                .map_err(|error| invalid_xml(format!("invalid attribute name: {error}")))?;
-            let value = attribute
-                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                .map_err(|error| invalid_xml(format!("invalid attribute value: {error}")))?;
-            self.parsed
-                .attributes
-                .insert(name.to_owned(), value.into_owned());
-        }
+        self.parsed.attributes.extend(crs_attributes(start)?);
         Ok(())
     }
+}
+
+fn decoded_reference(reference: &BytesRef<'_>) -> Result<String, PresetError> {
+    let name = reference
+        .decode()
+        .map_err(|error| invalid_xml(format!("could not decode an entity: {error}")))?;
+    if let Some(character) = reference
+        .resolve_char_ref()
+        .map_err(|error| invalid_xml(format!("invalid character reference: {error}")))?
+    {
+        return Ok(character.to_string());
+    }
+    if let Some(entity) = quick_xml::escape::resolve_predefined_entity(&name) {
+        return Ok(entity.to_owned());
+    }
+    Err(invalid_xml(format!("unknown XML entity &{name};")))
+}
+
+fn crs_attributes(start: &BytesStart<'_>) -> Result<BTreeMap<String, String>, PresetError> {
+    let mut attributes = BTreeMap::new();
+    for attribute in start.attributes() {
+        let attribute = attribute
+            .map_err(|error| invalid_xml(format!("could not read an attribute: {error}")))?;
+        let (local, prefix) = attribute.key.decompose();
+        if prefix.is_none_or(|prefix| prefix.as_ref() != b"crs") {
+            continue;
+        }
+        let name = std::str::from_utf8(local.as_ref())
+            .map_err(|error| invalid_xml(format!("invalid attribute name: {error}")))?;
+        let value = attribute
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+            .map_err(|error| invalid_xml(format!("invalid attribute value: {error}")))?;
+        attributes.insert(name.to_owned(), value.into_owned());
+    }
+    Ok(attributes)
+}
+
+fn local_curve_channel(local: &[u8]) -> Option<usize> {
+    match local {
+        b"MainCurve" => Some(CURVE_RGB),
+        b"RedCurve" => Some(CURVE_RED),
+        b"GreenCurve" => Some(CURVE_GREEN),
+        b"BlueCurve" => Some(CURVE_BLUE),
+        _ => None,
+    }
+}
+
+fn is_mask_attributes(attributes: &BTreeMap<String, String>) -> bool {
+    attributes.contains_key("MaskSubType")
+        || attributes.contains_key("MaskName")
+        || attributes.contains_key("MaskBrushTable")
+        || attributes
+            .get("What")
+            .is_some_and(|what| what == "Mask/Image")
 }
 
 // ---------------------------------------------------------------------------
@@ -624,6 +889,7 @@ struct Converter<'a> {
     group: Option<&'a str>,
     curves: CurveSet,
     legacy_curves: CurveSet,
+    masks: &'a [ParsedMaskGroup],
     warnings: Vec<String>,
 }
 
@@ -635,6 +901,7 @@ impl<'a> Converter<'a> {
             group: parsed.group.as_deref(),
             curves: parsed.curves.clone(),
             legacy_curves: parsed.legacy_curves.clone(),
+            masks: &parsed.masks,
             warnings: Vec::new(),
         }
     }
@@ -653,9 +920,10 @@ impl<'a> Converter<'a> {
         self.convert_color_grading(&mut exposure, &mut groups);
         self.convert_detail(&mut exposure, &mut groups);
         self.convert_effects(&mut exposure, &mut groups, &mut effects);
+        let masks = self.convert_masks();
         self.warn_unsupported_settings();
 
-        if groups.is_empty() {
+        if groups.is_empty() && masks.is_empty() {
             let notes = if self.warnings.is_empty() {
                 String::new()
             } else {
@@ -668,11 +936,13 @@ impl<'a> Converter<'a> {
 
         let selection = EditSelection {
             adjustment_groups: groups,
+            ai_masks: !masks.is_empty(),
             ..EditSelection::default()
         };
         let mut edits = default_edit_state();
         edits.exposure = exposure;
         edits.masks = Arc::new(MaskStack {
+            masks,
             global_effects: effects,
             ..MaskStack::default()
         });
@@ -1083,6 +1353,25 @@ impl<'a> Converter<'a> {
         }
     }
 
+    fn convert_masks(&mut self) -> Vec<LocalMask> {
+        let groups = self.masks;
+        let warnings = &mut self.warnings;
+        let mut masks = Vec::with_capacity(groups.len());
+        for (index, group) in groups.iter().enumerate() {
+            if masks.len() >= MAX_LOCAL_MASKS {
+                push_warning(
+                    warnings,
+                    format!("Only the first {MAX_LOCAL_MASKS} Lightroom masks were imported."),
+                );
+                break;
+            }
+            if let Some(mask) = convert_mask_group(group, index, warnings) {
+                masks.push(mask);
+            }
+        }
+        masks
+    }
+
     fn grain_settings(&mut self) -> GrainEffectSettings {
         let defaults = GrainEffectSettings::default();
         GrainEffectSettings {
@@ -1302,6 +1591,335 @@ impl<'a> Converter<'a> {
         {
             self.warn("The post-crop vignette style was not imported.");
         }
+    }
+}
+
+fn convert_mask_group(
+    group: &ParsedMaskGroup,
+    index: usize,
+    warnings: &mut Vec<String>,
+) -> Option<LocalMask> {
+    let fallback_name = format!("Mask {}", index + 1);
+    let raw_name = attribute_text(&group.attributes, "CorrectionName").unwrap_or(&fallback_name);
+    let (name, shortened) = sanitize_label(raw_name, &fallback_name, MAX_PRESET_NAME_CHARS);
+    if shortened {
+        push_warning(
+            warnings,
+            format!("A Lightroom mask name was shortened to {MAX_PRESET_NAME_CHARS} characters."),
+        );
+    }
+    let mut components = Vec::with_capacity(group.masks.len());
+    let mut unsupported = Vec::new();
+
+    for parsed in &group.masks {
+        let Some(kind) = mask_kind(&parsed.attributes) else {
+            unsupported.push(unsupported_component_label(&parsed.attributes));
+            continue;
+        };
+        let Some(combine) = mask_combine(&parsed.attributes) else {
+            unsupported.push(format!(
+                "“{}” (unknown blend mode)",
+                component_name(&parsed.attributes)
+            ));
+            continue;
+        };
+        if components.len() >= MAX_MASK_COMPONENTS {
+            push_warning(
+                warnings,
+                format!(
+                    "The Lightroom mask “{name}” has more than {MAX_MASK_COMPONENTS} components; the extra components were not imported."
+                ),
+            );
+            break;
+        }
+        let mut component = MaskComponent::new(kind, combine);
+        if let Some(component_name) = attribute_text(&parsed.attributes, "MaskName") {
+            component.name = sanitize_label(component_name, kind.label(), MAX_PRESET_NAME_CHARS).0;
+        }
+        component.enabled = attribute_boolean(&parsed.attributes, "MaskActive").unwrap_or(true);
+        component.invert = attribute_boolean(&parsed.attributes, "MaskInverted").unwrap_or(false);
+        components.push(component);
+    }
+
+    if !unsupported.is_empty() {
+        push_warning(
+            warnings,
+            format!(
+                "The Lightroom mask “{name}” was not imported because it uses unsupported components: {}.",
+                unsupported.join(", ")
+            ),
+        );
+        return None;
+    }
+    if components.is_empty() {
+        push_warning(
+            warnings,
+            format!("The Lightroom mask “{name}” has no components and was not imported."),
+        );
+        return None;
+    }
+    if components[0].combine != MaskCombineMode::Add {
+        push_warning(
+            warnings,
+            format!(
+                "The Lightroom mask “{name}” starts with a subtracted component and was not imported."
+            ),
+        );
+        return None;
+    }
+
+    let adjustments = local_adjustments(group, &name, warnings);
+    let mut mask = LocalMask::new(components[0].kind, index + 1);
+    mask.common.name = name;
+    mask.common.enabled = attribute_boolean(&group.attributes, "CorrectionActive").unwrap_or(true);
+    mask.opacity = attribute_number(&group.attributes, "CorrectionAmount")
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0);
+    mask.components = components;
+    mask.adjustments = adjustments;
+    Some(mask)
+}
+
+fn local_adjustments(
+    group: &ParsedMaskGroup,
+    mask_name: &str,
+    warnings: &mut Vec<String>,
+) -> LocalAdjustments {
+    let attributes = &group.attributes;
+    let mut adjustments = LocalAdjustments::default();
+
+    // Lightroom stores local sliders as -1..1, unlike the -100..100 global
+    // sliders. Exposure is already in EV, and local hue is a fraction of the
+    // full 360-degree rotation.
+    if let Some(value) = local_number_any(
+        attributes,
+        &["LocalExposure2012", "LocalExposure"],
+        warnings,
+    ) {
+        adjustments.exposure = value.clamp(-5.0, 5.0);
+    }
+    for (keys, target) in [
+        (
+            &["LocalContrast2012", "LocalContrast"][..],
+            &mut adjustments.contrast,
+        ),
+        (
+            &["LocalHighlights2012", "LocalHighlights"][..],
+            &mut adjustments.highlights,
+        ),
+        (
+            &["LocalShadows2012", "LocalShadows"][..],
+            &mut adjustments.shadows,
+        ),
+        (
+            &["LocalWhites2012", "LocalWhites"][..],
+            &mut adjustments.whites,
+        ),
+        (
+            &["LocalBlacks2012", "LocalBlacks"][..],
+            &mut adjustments.blacks,
+        ),
+    ] {
+        if let Some(value) = local_number_any(attributes, keys, warnings) {
+            *target = local_unit_to_percent(value);
+        }
+    }
+    if let Some(value) = local_number(attributes, "LocalTemperature", warnings) {
+        adjustments.temperature = local_unit_to_percent(value);
+    }
+    if let Some(value) = local_number(attributes, "LocalTint", warnings) {
+        adjustments.tint = local_unit_to_percent(value);
+    }
+    if let Some(value) = local_number(attributes, "LocalHue", warnings) {
+        adjustments.hue = (value * HUE_ROTATION_LIMIT_DEGREES)
+            .clamp(-HUE_ROTATION_LIMIT_DEGREES, HUE_ROTATION_LIMIT_DEGREES);
+    }
+    if let Some(value) = local_number(attributes, "LocalSaturation", warnings) {
+        adjustments.saturation = local_unit_to_percent(value);
+    }
+    for (keys, target) in [
+        (&["LocalTexture"][..], &mut adjustments.texture),
+        (
+            &["LocalClarity2012", "LocalClarity"][..],
+            &mut adjustments.clarity,
+        ),
+        (&["LocalDehaze"][..], &mut adjustments.dehaze),
+    ] {
+        if let Some(value) = local_number_any(attributes, keys, warnings) {
+            *target = local_unit_to_percent(value);
+        }
+    }
+
+    for (channel, label, target) in [
+        (CURVE_RGB, "RGB", &mut adjustments.tone_curve),
+        (CURVE_RED, "red", &mut adjustments.tone_curve_red),
+        (CURVE_GREEN, "green", &mut adjustments.tone_curve_green),
+        (CURVE_BLUE, "blue", &mut adjustments.tone_curve_blue),
+    ] {
+        if let Some(raw_points) = group.curves[channel].as_deref() {
+            match parse_curve(raw_points, warnings) {
+                Some(points) => *target = point_curve_from_points(&points),
+                None => push_warning(
+                    warnings,
+                    format!(
+                        "The local {label} tone curve of the Lightroom mask “{mask_name}” could not be read; it was left linear."
+                    ),
+                ),
+            }
+        }
+    }
+
+    warn_unsupported_local_settings(group, mask_name, warnings);
+    adjustments
+}
+
+fn warn_unsupported_local_settings(
+    group: &ParsedMaskGroup,
+    mask_name: &str,
+    warnings: &mut Vec<String>,
+) {
+    let attributes = &group.attributes;
+    let changed = [
+        "LocalSharpness",
+        "LocalLuminanceNoise",
+        "LocalMoire",
+        "LocalDefringe",
+        "LocalGrain",
+        "LocalBrightness",
+        "LocalToningHue",
+        "LocalToningSaturation",
+        "LocalCorrectedDepth",
+    ]
+    .iter()
+    .any(|key| attribute_number(attributes, key).is_some_and(|value| value.abs() > 1e-6))
+        || attribute_number(attributes, "LocalCurveRefineSaturation")
+            .is_some_and(|value| (value - 100.0).abs() > 1e-6)
+        || group.has_point_colors;
+    if changed {
+        push_warning(
+            warnings,
+            format!(
+                "Some local adjustments of the Lightroom mask “{mask_name}” were not imported."
+            ),
+        );
+    }
+}
+
+fn local_unit_to_percent(value: f32) -> f32 {
+    (value * 100.0).clamp(-100.0, 100.0)
+}
+
+fn mask_kind(attributes: &BTreeMap<String, String>) -> Option<MaskKind> {
+    let subtype = attribute_number(attributes, "MaskSubType")?;
+    if (subtype - subtype.round()).abs() > 1e-6 {
+        return None;
+    }
+    match subtype.round() as i32 {
+        0 if attribute_number(attributes, "MaskSubCategoryID") == Some(22.0) => {
+            Some(MaskKind::Background)
+        }
+        1 => Some(MaskKind::Subject),
+        2 => Some(MaskKind::Sky),
+        _ => None,
+    }
+}
+
+fn mask_combine(attributes: &BTreeMap<String, String>) -> Option<MaskCombineMode> {
+    let Some(raw) = attributes.get("MaskBlendMode") else {
+        return Some(MaskCombineMode::Add);
+    };
+    let value = parse_number(raw)?;
+    if (value - value.round()).abs() > 1e-6 {
+        return None;
+    }
+    match value.round() as i32 {
+        0 => Some(MaskCombineMode::Add),
+        1 => Some(MaskCombineMode::Subtract),
+        2 => Some(MaskCombineMode::Intersect),
+        _ => None,
+    }
+}
+
+fn component_name(attributes: &BTreeMap<String, String>) -> String {
+    sanitize_label(
+        attribute_text(attributes, "MaskName").unwrap_or("unnamed mask"),
+        "unnamed mask",
+        MAX_PRESET_NAME_CHARS,
+    )
+    .0
+}
+
+fn unsupported_component_label(attributes: &BTreeMap<String, String>) -> String {
+    format!(
+        "“{}” ({})",
+        component_name(attributes),
+        mask_kind_label(attributes)
+    )
+}
+
+fn mask_kind_label(attributes: &BTreeMap<String, String>) -> &'static str {
+    let subtype = attribute_number(attributes, "MaskSubType").map(|value| value.round() as i32);
+    match subtype {
+        Some(0) => "landscape element",
+        Some(1) => "subject",
+        Some(2) => "sky",
+        Some(3) => "person",
+        Some(4) => "object",
+        Some(_) => "unknown AI mask",
+        None => match attribute_text(attributes, "What") {
+            Some("Mask/CircularGradient") => "radial gradient",
+            Some("Mask/LinearGradient") => "linear gradient",
+            Some("Mask/Aggregate") => "brush",
+            Some("Mask/Path") => "path",
+            Some("Mask/Image") => "unsupported AI mask",
+            Some(_) | None => "unsupported mask",
+        },
+    }
+}
+
+fn attribute_text<'a>(attributes: &'a BTreeMap<String, String>, key: &str) -> Option<&'a str> {
+    attributes
+        .get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+}
+
+fn attribute_number(attributes: &BTreeMap<String, String>, key: &str) -> Option<f32> {
+    attributes.get(key).and_then(|raw| parse_number(raw))
+}
+
+fn local_number(
+    attributes: &BTreeMap<String, String>,
+    key: &str,
+    warnings: &mut Vec<String>,
+) -> Option<f32> {
+    let raw = attributes.get(key)?.clone();
+    match parse_number(&raw) {
+        Some(value) => Some(value),
+        None => {
+            push_warning(
+                warnings,
+                format!("The value “{raw}” of {key} could not be read."),
+            );
+            None
+        }
+    }
+}
+
+fn local_number_any(
+    attributes: &BTreeMap<String, String>,
+    keys: &[&str],
+    warnings: &mut Vec<String>,
+) -> Option<f32> {
+    keys.iter()
+        .find_map(|key| local_number(attributes, key, warnings))
+}
+
+fn attribute_boolean(attributes: &BTreeMap<String, String>, key: &str) -> Option<bool> {
+    match attributes.get(key)?.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" => Some(true),
+        "false" | "0" => Some(false),
+        _ => None,
     }
 }
 
