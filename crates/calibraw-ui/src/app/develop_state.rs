@@ -186,6 +186,26 @@ pub(crate) enum AdjustmentSection {
     Optics,
 }
 
+impl AdjustmentSection {
+    /// The section that shows `card` in the vertical layout, which orders its
+    /// sections as the cards are ordered. The camera profile has none: the
+    /// Light section shows it.
+    pub(crate) const fn of_card(card: DevelopCard) -> Option<Self> {
+        match card {
+            DevelopCard::CameraProfile => None,
+            DevelopCard::Light => Some(Self::Light),
+            DevelopCard::ToneCurve => Some(Self::ToneCurve),
+            DevelopCard::Lut => Some(Self::Lut),
+            DevelopCard::Color => Some(Self::Color),
+            DevelopCard::ColorGrading => Some(Self::ColorGrading),
+            DevelopCard::Detail => Some(Self::Detail),
+            DevelopCard::Effects => Some(Self::Effects),
+            DevelopCard::ColorMixer => Some(Self::ColorMixer),
+            DevelopCard::LensCorrections => Some(Self::Optics),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum MaskSection {
     #[default]

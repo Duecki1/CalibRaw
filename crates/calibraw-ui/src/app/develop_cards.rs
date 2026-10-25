@@ -1,6 +1,7 @@
-//! The order of the Develop cards in the wide (sidebar) layout, a user
-//! preference saved with the app settings. The vertical layout shows one
-//! section at a time and keeps its own order.
+//! The order of the Develop cards, a user preference saved with the app
+//! settings. The wide (sidebar) layout shows the cards in this order; the
+//! vertical layout shows one section at a time and orders its tabs the same
+//! way (`AdjustmentSection::of_card`).
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -11,7 +11,7 @@ impl Settings {
             ui,
             "Develop card order",
             160.0,
-            "The order of the Edit cards in the sidebar. Phones in portrait show one section at a time in a fixed order.",
+            "The order of the Edit cards in the sidebar, and of the Edit tabs on phones in portrait.",
             |ui, _| {
                 if moduwu_design::secondary_button(ui, "Reorder…").clicked() {
                     app.ui.settings_dialog = Some(SettingsDialog::DevelopCardOrder);

@@ -130,24 +130,26 @@ impl Sidebar {
                 if !lut_shown && app.develop_ui.adjustment_section == AdjustmentSection::Lut {
                     app.develop_ui.adjustment_section = AdjustmentSection::Light;
                 }
-                for (section, icon, label) in [
-                    (AdjustmentSection::Light, regular::SUN, "Light"),
-                    (AdjustmentSection::ToneCurve, regular::WAVE_SINE, "Curve"),
-                    (AdjustmentSection::Lut, regular::CUBE, "LUT"),
-                    (AdjustmentSection::Color, regular::DROP, "Color"),
-                    (
-                        AdjustmentSection::ColorGrading,
-                        regular::CIRCLES_THREE,
-                        "Grading",
-                    ),
-                    (AdjustmentSection::Detail, regular::APERTURE, "Detail"),
-                    (AdjustmentSection::Effects, regular::SPARKLE, "Effects"),
-                    (AdjustmentSection::ColorMixer, regular::SWATCHES, "Mixer"),
-                    (AdjustmentSection::Optics, regular::EYE, "Optics"),
-                ] {
-                    if section == AdjustmentSection::Lut && !lut_shown {
-                        continue;
-                    }
+                let sections: Vec<_> = app
+                    .preferences
+                    .develop_card_order
+                    .cards()
+                    .iter()
+                    .filter_map(|card| AdjustmentSection::of_card(*card))
+                    .filter(|section| *section != AdjustmentSection::Lut || lut_shown)
+                    .collect();
+                for section in sections {
+                    let (icon, label) = match section {
+                        AdjustmentSection::Light => (regular::SUN, "Light"),
+                        AdjustmentSection::ToneCurve => (regular::WAVE_SINE, "Curve"),
+                        AdjustmentSection::Lut => (regular::CUBE, "LUT"),
+                        AdjustmentSection::Color => (regular::DROP, "Color"),
+                        AdjustmentSection::ColorGrading => (regular::CIRCLES_THREE, "Grading"),
+                        AdjustmentSection::Detail => (regular::APERTURE, "Detail"),
+                        AdjustmentSection::Effects => (regular::SPARKLE, "Effects"),
+                        AdjustmentSection::ColorMixer => (regular::SWATCHES, "Mixer"),
+                        AdjustmentSection::Optics => (regular::EYE, "Optics"),
+                    };
                     if Self::mobile_icon_tab(
                         ui,
                         icon,
