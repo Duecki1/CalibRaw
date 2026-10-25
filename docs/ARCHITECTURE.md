@@ -67,6 +67,14 @@ change that establishes a boundary, not in advance.
 - A batch export may apply a preset and a LUT to every photo
   (`ExportOverride`). They change only the edit snapshot each item is rendered
   from; sidecars are never written.
+- A camera profile changes only how the samples' colour is read
+  (`ProfileColor`), never the samples. A decode keeps what it read the colour
+  from (`ProfileColorSource`), so another profile is applied to the decode in
+  memory (`LoadedRaw::with_camera_profile_selection`), sharing its
+  `SensorSamples`, exactly as decoding with that profile would apply it. One
+  `DecodedRawCache` entry therefore serves every camera-profile request; only
+  a decode with the embedded matrix alone, which did not read the RAW's
+  calibration signature, cannot serve requests that match DCPs.
 
 ## Inside `calibraw-ui`
 
@@ -152,6 +160,7 @@ GPU readbacks wait on one-slot channels.
 | `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
 | decoded-RAW cache state and condvar | `DecodedRawCache` | document loads and the prefetch worker | short critical sections; decodes run unlocked, and a second request for a decoding entry waits on the condvar |
 | per-entry lens-correction slot | `DecodedRaw` | document loads and the prefetch worker | held while correcting, so one correction per selection runs at a time |
+| per-entry recoloured-copy slot | `DecodedRaw` | document loads and the prefetch worker | held while another camera profile is applied to the decode (reading its DCP); never held with the lens-correction slot |
 | serialized-read gate (HDD mode) | `calibraw_core::serialized_reads` | thumbnail, display-metadata and RAW loads, only while HDD mode is on | one photo file read at a time; decoding stays outside; a leaf lock, re-entered inline on the holding thread |
 | `TextureRetirement` | `PreviewState` | any thread dropping a `PreviewPipeline`; drained by the UI thread | short pushes and one drain per frame |
 | FFI result queues, `REPAINT_NOTIFIER` | `calibraw_ffi::android` | Java callback threads push; the UI thread pops | short critical sections; no JNI call while held |
@@ -182,6 +191,11 @@ released when their owners drop.
 The LUT texture is sized by its LUT, so it is not part of that plan: it takes
 a reservation of its own when a LUT is first uploaded, and pipelines without a
 LUT reserve nothing for it.
+The graphs that show a photo with camera profiles to choose from (fitted,
+navigation and zoomed crop) size their profile buffer for
+`PREVIEWED_PROFILE_BYTES`, so a hovered profile renders on them
+(`GpuParams::new_with_profile_color`) without a rebuild; the preview budget
+already counts that room.
 Presenting its output is a UI concern: `PreviewPipeline` pairs a pipeline with
 its egui registration, so a displayed pipeline cannot outlive or leak its
 texture. On Android a replaced detail preview frees its texture immediately

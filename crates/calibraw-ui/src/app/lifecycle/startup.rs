@@ -98,6 +98,8 @@ impl CalibRawApp {
                 look_lut: None,
                 look_lut_table: None,
                 target_look: None,
+                target_profile_color: None,
+                profile_preview: Default::default(),
                 geometry,
                 geometry_revision: 0,
                 lens_correction,
@@ -293,6 +295,7 @@ impl CalibRawApp {
             preferences: PreferencesState {
                 image_relative_brush_size: performance.image_relative_brush_size,
                 show_develop_navigation_labels: performance.show_develop_navigation_labels,
+                develop_card_order: performance.develop_card_order.clone(),
                 automatic_lens_correction: AutomaticLensCorrection {
                     enabled: performance.automatic_lens_correction,
                     corrections: LensfunCorrections {

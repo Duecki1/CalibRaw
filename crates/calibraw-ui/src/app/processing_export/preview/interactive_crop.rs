@@ -57,6 +57,7 @@ impl CalibRawApp {
                 &masks,
                 self.develop.geometry,
                 reduced,
+                &reduced.profile_color,
             )
             .with_look_lut(self.develop.target_look.as_ref());
         let pipeline = RawGpuPipeline::new(
@@ -117,6 +118,7 @@ impl CalibRawApp {
                 masks,
                 self.develop.geometry,
                 &reduced.raw,
+                &reduced.raw.profile_color,
             )
             .with_look_lut(self.develop.target_look.as_ref());
         let full_frame = full_frame_tone_pipeline(
@@ -217,7 +219,13 @@ mod tests {
             mask_region: region,
             mask_extent: detail_mask_texture_extent(region, detail_mask_edge(), false),
         };
-        let sharp_params = placement.params(&exposure, &masks, app.develop.geometry, &sharp_raw);
+        let sharp_params = placement.params(
+            &exposure,
+            &masks,
+            app.develop.geometry,
+            &sharp_raw,
+            &sharp_raw.profile_color,
+        );
         let sharp_pipeline = RawGpuPipeline::new(
             &device,
             &queue,

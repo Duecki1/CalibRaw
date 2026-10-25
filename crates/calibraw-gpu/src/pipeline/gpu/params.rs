@@ -288,6 +288,9 @@ pub struct GpuParams {
     pub(super) scene_depth: Option<MaskImage>,
     /// The LUT `scene_tone.look_lut` describes, uploaded with the parameters.
     look_lut: Option<Arc<CubeLut>>,
+    /// The camera profile `camera` describes, whose tables the pipeline
+    /// uploads with the parameters.
+    pub(super) profile_color: Arc<ProfileColor>,
 }
 
 impl GpuParams {
@@ -467,6 +470,9 @@ pub(super) struct GpuParamContext<'a> {
     pub(super) exposure: &'a ExposureParams,
     pub(super) masks: &'a MaskStack,
     pub(super) raw: &'a LoadedRaw,
+    /// The camera profile colour rendered: `raw`'s own, or another profile
+    /// of the same photo.
+    pub(super) color: &'a ProfileColor,
     pub(super) tile: GpuTileInfo,
 }
 
@@ -484,10 +490,50 @@ impl GpuParams {
         full_width: u32,
         full_height: u32,
     ) -> Self {
+        Self::new_for_tile_with_profile_color(
+            exposure,
+            masks,
+            raw,
+            &raw.profile_color,
+            [tile_origin_x, tile_origin_y],
+            [full_width, full_height],
+        )
+    }
+
+    /// [`Self::new`] rendering `profile_color` instead of `raw`'s own: the
+    /// colour another camera profile gives the same photo
+    /// (`LoadedRaw::profile_color_for_selection`), to preview it.
+    pub fn new_with_profile_color(
+        exposure: &ExposureParams,
+        masks: &MaskStack,
+        raw: &LoadedRaw,
+        profile_color: &Arc<ProfileColor>,
+    ) -> Self {
+        Self::new_for_tile_with_profile_color(
+            exposure,
+            masks,
+            raw,
+            profile_color,
+            [0, 0],
+            [raw.width, raw.height],
+        )
+    }
+
+    /// [`Self::new_for_tile`] rendering `profile_color` instead of `raw`'s
+    /// own ([`Self::new_with_profile_color`]).
+    pub fn new_for_tile_with_profile_color(
+        exposure: &ExposureParams,
+        masks: &MaskStack,
+        raw: &LoadedRaw,
+        profile_color: &Arc<ProfileColor>,
+        [tile_origin_x, tile_origin_y]: [i32; 2],
+        [full_width, full_height]: [u32; 2],
+    ) -> Self {
         let context = GpuParamContext {
             exposure,
             masks,
             raw,
+            color: profile_color,
             tile: GpuTileInfo {
                 origin_x: tile_origin_x,
                 origin_y: tile_origin_y,
@@ -503,6 +549,7 @@ impl GpuParams {
             mask_data,
             scene_depth: masks.scene_depth_image().cloned(),
             look_lut: None,
+            profile_color: Arc::clone(profile_color),
         }
     }
 

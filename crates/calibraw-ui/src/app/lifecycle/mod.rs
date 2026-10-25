@@ -6,6 +6,8 @@ use document_load::{
 };
 pub(crate) use document_load::{DocumentSource, ProfileReload};
 pub(crate) use prefetch::NeighbourPrefetch;
+pub(in crate::app) use profile_preview::reserves_profile_preview;
+pub(crate) use profile_preview::{CameraProfileChoice, CameraProfilePreview};
 
 pub(super) fn remove_temporary_raw(path: &std::path::Path) {
     if let Err(error) = std::fs::remove_file(path) {
@@ -282,6 +284,7 @@ mod document_load;
 mod documents;
 mod pickers;
 mod prefetch;
+mod profile_preview;
 mod profiles;
 mod settings;
 mod startup;

@@ -153,6 +153,7 @@ impl CalibRawApp {
             &preview_masks,
             self.develop.geometry,
             &detail.raw,
+            self.preview_profile_color(&detail.raw),
         )
         .with_look_lut(self.develop.target_look.as_ref());
 
@@ -361,9 +362,14 @@ impl CalibRawApp {
             }
         }
 
-        let params = GpuParams::new(&self.develop.target_exposure, preview_masks, raw)
-            .with_vignette_geometry(self.develop.geometry)
-            .with_look_lut(self.develop.target_look.as_ref());
+        let params = GpuParams::new_with_profile_color(
+            &self.develop.target_exposure,
+            preview_masks,
+            raw,
+            self.preview_profile_color(raw),
+        )
+        .with_vignette_geometry(self.develop.geometry)
+        .with_look_lut(self.develop.target_look.as_ref());
         let Some(full_raw) = preview_source.as_ref() else {
             self.preview.pending_stage = None;
             return;

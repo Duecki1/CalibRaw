@@ -815,7 +815,7 @@ mod tests {
         let mut app = CalibRawApp::empty(&ctx);
         let mut raw = LoadedRaw::from_scene_linear_rec2020(8, 8, vec![0.2; 8 * 8 * 3]).unwrap();
         // Sensor data makes this a RAW rather than an already-developed raster.
-        raw.raw_pixels = vec![1_000; 8 * 8];
+        raw.raw_pixels = vec![1_000; 8 * 8].into();
         raw.capture_metadata.iso_speed = 6_400.0;
         app.develop.original_raw = Some(Arc::new(raw));
 

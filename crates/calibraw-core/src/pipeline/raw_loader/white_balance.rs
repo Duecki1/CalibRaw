@@ -2,11 +2,7 @@
 
 use super::*;
 
-impl LoadedRaw {
-    pub fn as_shot_temperature_kelvin(&self) -> Option<f32> {
-        self.as_shot_white_balance().map(|value| value.0)
-    }
-
+impl ProfileColor {
     pub fn as_shot_white_balance(&self) -> Option<(f32, f32)> {
         #[cfg(libraw_available)]
         {
@@ -20,7 +16,7 @@ impl LoadedRaw {
         }
     }
 
-    /// Fixed temperature and tint slider ranges for this image.
+    /// Fixed temperature and tint slider ranges for this colour.
     pub fn white_balance_ranges(&self) -> Option<WhiteBalanceRanges> {
         #[cfg(libraw_available)]
         {
@@ -62,8 +58,8 @@ impl LoadedRaw {
     }
 
     /// Temperature and tint offsets from the as-shot white balance that
-    /// render `white_balance` on this photo, as the sensor multipliers take
-    /// them. Zero, so as shot, when the photo has no white-balance model.
+    /// render `white_balance` with this colour, as the sensor multipliers
+    /// take them. Zero, so as shot, without a white-balance model.
     pub fn white_balance_offsets(&self, white_balance: WhiteBalance) -> (f32, f32) {
         match white_balance {
             WhiteBalance::AsShot => (0.0, 0.0),
@@ -73,6 +69,86 @@ impl LoadedRaw {
             // migration: remove in v2.0.0
             WhiteBalance::LegacyOffset { temperature, tint } => (temperature, tint),
         }
+    }
+
+    /// White-balance multipliers, camera-to-working transform and
+    /// hue/saturation table weight for temperature and tint offsets from
+    /// `as_shot`, the photo's as-shot multipliers. As the DNG SDK renders a
+    /// white, a dual-illuminant profile's matrices and table weight are
+    /// interpolated at the white's own temperature; single-matrix models keep
+    /// the as-shot transform and weight. The as-shot white returns the values
+    /// the photo loaded with.
+    pub fn adjusted_white_balance_and_camera_transform(
+        &self,
+        as_shot: [f32; 4],
+        temperature: f32,
+        tint: f32,
+    ) -> ([f32; 4], [[f32; 4]; 3], f32) {
+        let as_shot = (
+            as_shot,
+            self.cam_to_srgb,
+            self.camera_profile.interpolation_weight,
+        );
+        if temperature.abs() < 1e-6 && tint.abs() < 1e-6 {
+            return as_shot;
+        }
+        #[cfg(libraw_available)]
+        if let Some(model) = &self.white_balance_model {
+            if let Some(adjusted) = libraw_loader::adjusted_white_balance(
+                model,
+                temperature.clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
+                tint.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
+                self.camera_profile.interpolation_weight,
+            ) {
+                let (transform, weight) = adjusted.profile.unwrap_or((as_shot.1, as_shot.2));
+                return (adjusted.coefficients, transform, weight);
+            }
+        }
+        as_shot
+    }
+}
+
+impl LoadedRaw {
+    pub fn as_shot_temperature_kelvin(&self) -> Option<f32> {
+        self.as_shot_white_balance().map(|value| value.0)
+    }
+
+    pub fn as_shot_white_balance(&self) -> Option<(f32, f32)> {
+        self.profile_color.as_shot_white_balance()
+    }
+
+    /// Fixed temperature and tint slider ranges for this image.
+    pub fn white_balance_ranges(&self) -> Option<WhiteBalanceRanges> {
+        self.profile_color.white_balance_ranges()
+    }
+
+    /// Temperature and tint the sliders show for stored offsets, each limited
+    /// to its own slider range.
+    pub fn white_balance_temperature_tint(
+        &self,
+        temperature_offset: f32,
+        tint_offset: f32,
+    ) -> Option<(f32, f32)> {
+        self.profile_color
+            .white_balance_temperature_tint(temperature_offset, tint_offset)
+    }
+
+    /// Stored offsets for a temperature and tint, each first limited to its
+    /// own slider range.
+    pub fn white_balance_offsets_from_temperature_tint(
+        &self,
+        temperature: f32,
+        tint: f32,
+    ) -> Option<(f32, f32)> {
+        self.profile_color
+            .white_balance_offsets_from_temperature_tint(temperature, tint)
+    }
+
+    /// Temperature and tint offsets from the as-shot white balance that
+    /// render `white_balance` on this photo, as the sensor multipliers take
+    /// them. Zero, so as shot, when the photo has no white-balance model.
+    pub fn white_balance_offsets(&self, white_balance: WhiteBalance) -> (f32, f32) {
+        self.profile_color.white_balance_offsets(white_balance)
     }
 
     /// Temperature and tint the sliders show for `white_balance`, each limited
@@ -153,7 +229,7 @@ impl LoadedRaw {
     }
 
     fn physical_white_balance_coefficients(&self, logical: [f32; 4]) -> Option<[f32; 4]> {
-        let model = self.white_balance_model.as_ref()?;
+        let model = self.profile_color.white_balance_model.as_ref()?;
         let mut physical = model.base_wb;
         for (index, descriptor) in model.cdesc.iter().enumerate() {
             physical[index] = match *descriptor as char {
@@ -172,7 +248,7 @@ impl LoadedRaw {
     ) -> Option<(f32, f32)> {
         #[cfg(libraw_available)]
         {
-            let model = self.white_balance_model.as_ref()?;
+            let model = self.profile_color.white_balance_model.as_ref()?;
             let physical = self.physical_white_balance_coefficients(logical_coefficients)?;
             let (temperature, tint) =
                 libraw_loader::temperature_tint_from_coefficients(&model.color, physical)?;
@@ -267,7 +343,7 @@ impl LoadedRaw {
 
     pub fn rawnind_daylight_white_balance(&self) -> [f32; 3] {
         #[cfg(libraw_available)]
-        if let Some(model) = &self.white_balance_model {
+        if let Some(model) = &self.profile_color.white_balance_model {
             if let Some(daylight) = libraw_loader::daylight_white_balance(model) {
                 return daylight;
             }
@@ -299,35 +375,13 @@ impl LoadedRaw {
 
     /// White-balance multipliers, camera-to-working transform and
     /// hue/saturation table weight for temperature and tint offsets from the
-    /// as-shot white. As the DNG SDK renders a white, a dual-illuminant
-    /// profile's matrices and table weight are interpolated at the white's
-    /// own temperature; single-matrix models keep the as-shot transform and
-    /// weight. The as-shot white returns the values the photo loaded with.
+    /// as-shot white ([`ProfileColor::adjusted_white_balance_and_camera_transform`]).
     pub fn adjusted_white_balance_and_camera_transform(
         &self,
         temperature: f32,
         tint: f32,
     ) -> ([f32; 4], [[f32; 4]; 3], f32) {
-        let as_shot = (
-            self.wb_coeffs,
-            self.cam_to_srgb,
-            self.camera_profile.interpolation_weight,
-        );
-        if temperature.abs() < 1e-6 && tint.abs() < 1e-6 {
-            return as_shot;
-        }
-        #[cfg(libraw_available)]
-        if let Some(model) = &self.white_balance_model {
-            if let Some(adjusted) = libraw_loader::adjusted_white_balance(
-                model,
-                temperature.clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
-                tint.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
-                self.camera_profile.interpolation_weight,
-            ) {
-                let (transform, weight) = adjusted.profile.unwrap_or((as_shot.1, as_shot.2));
-                return (adjusted.coefficients, transform, weight);
-            }
-        }
-        as_shot
+        self.profile_color
+            .adjusted_white_balance_and_camera_transform(self.wb_coeffs, temperature, tint)
     }
 }

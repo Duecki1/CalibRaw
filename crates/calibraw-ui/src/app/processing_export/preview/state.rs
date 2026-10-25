@@ -257,6 +257,15 @@ impl CalibRawApp {
         } else {
             self.develop.target_look.as_ref()
         };
+        // The original shows the photo's own camera profile.
+        let previewed_profile = self
+            .develop
+            .target_profile_color
+            .as_ref()
+            .filter(|_| !self.preview.original_requested);
+        let profile_color = |raw: &'_ LoadedRaw| -> Arc<crate::pipeline::ProfileColor> {
+            Arc::clone(previewed_profile.unwrap_or(&raw.profile_color))
+        };
         if let Some(full_raw) = preview_source.as_ref() {
             if full_raw.uses_opposed_chroma(exposure) {
                 full_raw.inpaint_opposed_chroma_for_exposure(exposure);
@@ -269,9 +278,10 @@ impl CalibRawApp {
             self.preview.pipeline(),
             &preview_source,
         ) {
-            let params = GpuParams::new(exposure, masks, raw)
-                .with_vignette_geometry(self.develop.geometry)
-                .with_look_lut(look);
+            let params =
+                GpuParams::new_with_profile_color(exposure, masks, raw, &profile_color(raw))
+                    .with_vignette_geometry(self.develop.geometry)
+                    .with_look_lut(look);
             if self.preview.original_requested {
                 pipeline.recompute(&render_state.queue, &render_state.device, &params);
             } else if let Err(error) = pipeline.recompute_with_remove(
@@ -286,9 +296,14 @@ impl CalibRawApp {
         if let (Some(navigation), Some(full_raw)) =
             (self.preview.navigation.as_ref(), preview_source.as_ref())
         {
-            let params = GpuParams::new(exposure, masks, &navigation.raw)
-                .with_vignette_geometry(self.develop.geometry)
-                .with_look_lut(look);
+            let params = GpuParams::new_with_profile_color(
+                exposure,
+                masks,
+                &navigation.raw,
+                &profile_color(&navigation.raw),
+            )
+            .with_vignette_geometry(self.develop.geometry)
+            .with_look_lut(look);
             if self.preview.original_requested {
                 navigation.pipeline.gpu().recompute(
                     &render_state.queue,
@@ -312,14 +327,13 @@ impl CalibRawApp {
             .as_ref()
             .filter(|detail| detail.revision == self.preview.revision)
         {
-            let mut params = GpuParams::new_for_tile(
+            let mut params = GpuParams::new_for_tile_with_profile_color(
                 exposure,
                 masks,
                 &detail.raw,
-                detail.virtual_origin[0],
-                detail.virtual_origin[1],
-                detail.virtual_full_size[0],
-                detail.virtual_full_size[1],
+                &profile_color(&detail.raw),
+                detail.virtual_origin,
+                detail.virtual_full_size,
             )
             .with_vignette_geometry(self.develop.geometry)
             .with_look_lut(look);

@@ -1,4 +1,6 @@
 use super::*;
+use crate::app::CameraProfileChoice;
+use crate::ui::components::preview_list::{preview_list, PreviewListItem};
 
 mod mobile;
 
@@ -349,9 +351,6 @@ impl Sidebar {
         layout: ScreenLayout,
         frame: &eframe::Frame,
     ) {
-        Self::show_camera_profile_selector(ui, app, frame);
-        Self::show_look_lut_card(ui, app, layout != ScreenLayout::Vertical);
-
         let mut changed = false;
         let mut lens_changed = false;
         let mut ai_denoise_request = None;
@@ -375,6 +374,7 @@ impl Sidebar {
         if layout == ScreenLayout::Vertical {
             match app.develop_ui.adjustment_section {
                 AdjustmentSection::Light => {
+                    Self::show_camera_profile_selector(ui, app, frame);
                     changed |= Self::show_basic(ui, &mut app.develop.exposure, false);
                 }
                 AdjustmentSection::ToneCurve => {
@@ -385,6 +385,7 @@ impl Sidebar {
                         false,
                     );
                 }
+                AdjustmentSection::Lut => Self::show_look_lut_card(ui, app, false),
                 AdjustmentSection::Color => {
                     changed |= Self::show_color(
                         ui,
@@ -444,53 +445,81 @@ impl Sidebar {
                 }
             }
         } else {
-            changed |= Self::show_basic(ui, &mut app.develop.exposure, true);
-            changed |= Self::show_tone_curve(
-                ui,
-                &mut app.develop.exposure,
-                &mut app.develop_ui.tone_curve_tab,
-                true,
-            );
-            changed |= Self::show_color(
-                ui,
-                &mut app.develop.exposure,
-                white_balance_raw.as_deref(),
-                &mut app.develop_ui.white_balance_picker_active,
-                true,
-            );
-            changed |= Self::show_color_grading(
-                ui,
-                &mut app.develop.exposure,
-                &mut app.develop_ui.color_grade_tab,
-                true,
-            );
-            let (detail_changed, request) = Self::show_detail(
-                ui,
-                &mut app.develop.exposure,
-                &detail_defaults,
-                ai_strength_available,
-                true,
-            );
-            changed |= detail_changed;
-            ai_denoise_request = request;
-            let (presence_changed, added) = Self::show_presence(
-                ui,
-                &mut app.develop.exposure,
-                &app.masks.stack.global_effects,
-                true,
-            );
-            changed |= presence_changed;
-            changed |= Self::show_hsl(
-                ui,
-                &mut app.develop.exposure,
-                &mut app.develop_ui.hsl_mixer_color,
-                &mut app.develop_ui.point_color,
-                &mut app.develop_ui.point_color_tab,
-                true,
-            );
-            let optics = Self::show_optics(ui, app, true);
-            lens_changed |= optics.lens;
-            changed |= optics.exposure;
+            let mut added = None;
+            let order = app.preferences.develop_card_order.clone();
+            for card in order.cards() {
+                match card {
+                    DevelopCard::CameraProfile => {
+                        Self::show_camera_profile_selector(ui, app, frame);
+                    }
+                    DevelopCard::Light => {
+                        changed |= Self::show_basic(ui, &mut app.develop.exposure, true);
+                    }
+                    DevelopCard::ToneCurve => {
+                        changed |= Self::show_tone_curve(
+                            ui,
+                            &mut app.develop.exposure,
+                            &mut app.develop_ui.tone_curve_tab,
+                            true,
+                        );
+                    }
+                    DevelopCard::Lut => Self::show_look_lut_card(ui, app, true),
+                    DevelopCard::Color => {
+                        changed |= Self::show_color(
+                            ui,
+                            &mut app.develop.exposure,
+                            white_balance_raw.as_deref(),
+                            &mut app.develop_ui.white_balance_picker_active,
+                            true,
+                        );
+                    }
+                    DevelopCard::ColorGrading => {
+                        changed |= Self::show_color_grading(
+                            ui,
+                            &mut app.develop.exposure,
+                            &mut app.develop_ui.color_grade_tab,
+                            true,
+                        );
+                    }
+                    DevelopCard::Detail => {
+                        let (detail_changed, request) = Self::show_detail(
+                            ui,
+                            &mut app.develop.exposure,
+                            &detail_defaults,
+                            ai_strength_available,
+                            true,
+                        );
+                        changed |= detail_changed;
+                        ai_denoise_request = request;
+                    }
+                    DevelopCard::Effects => {
+                        let (presence_changed, presence_added) = Self::show_presence(
+                            ui,
+                            &mut app.develop.exposure,
+                            &app.masks.stack.global_effects,
+                            true,
+                        );
+                        changed |= presence_changed;
+                        added = presence_added;
+                    }
+                    DevelopCard::ColorMixer => {
+                        changed |= Self::show_hsl(
+                            ui,
+                            &mut app.develop.exposure,
+                            &mut app.develop_ui.hsl_mixer_color,
+                            &mut app.develop_ui.point_color,
+                            &mut app.develop_ui.point_color_tab,
+                            true,
+                        );
+                    }
+                    DevelopCard::LensCorrections => {
+                        let optics = Self::show_optics(ui, app, true);
+                        lens_changed |= optics.lens;
+                        changed |= optics.exposure;
+                    }
+                }
+            }
+            // The effect cards follow every adjustment card, whatever their order.
             Self::show_global_effects(ui, app, frame, layout, added);
         }
 
@@ -558,20 +587,31 @@ impl Sidebar {
         }
     }
 
+    /// Whether a photo is open and there is a LUT to show or a library to
+    /// choose one from.
+    fn look_lut_card_shown(app: &CalibRawApp) -> bool {
+        app.develop.loaded_raw.is_some()
+            && (app.luts.is_available() || app.develop.look_lut.is_some())
+    }
+
     fn show_look_lut_card(ui: &mut Ui, app: &mut CalibRawApp, foldable: bool) {
-        if app.develop.loaded_raw.is_none()
-            || (!app.luts.is_available() && app.develop.look_lut.is_none())
-        {
+        if !Self::look_lut_card_shown(app) {
             return;
         }
-        let action = Self::show_look_lut(
+        let response = Self::show_look_lut(
             ui,
-            app.develop.look_lut.as_ref(),
-            app.luts.entries(),
-            app.luts.is_available(),
-            foldable,
+            &look_lut::LookLutView {
+                look: app.develop.look_lut.as_ref(),
+                entries: app.luts.entries(),
+                recent: app.luts.recent(),
+                can_import: app.luts.is_available(),
+                foldable,
+            },
         );
-        match action {
+        if let Some(choice) = response.hovered {
+            app.luts.hover.request(choice);
+        }
+        match response.action {
             Some(look_lut::LookLutAction::Select(id)) => app.select_look_lut(id),
             Some(look_lut::LookLutAction::Amount(amount)) => app.set_look_lut_amount(amount),
             Some(look_lut::LookLutAction::Import) => app.choose_lut_files_to_import(true),
@@ -579,6 +619,8 @@ impl Sidebar {
         }
     }
 
+    /// The Camera profile card: automatic selection, the RAW's embedded
+    /// matrix and the matching DCPs. Resting the pointer on one previews it.
     fn show_camera_profile_selector(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         if app.preferences.camera_profile_mode == crate::pipeline::CameraProfileMode::MatrixOnly {
             return;
@@ -586,12 +628,54 @@ impl Sidebar {
         let Some(raw) = app.develop.loaded_raw.as_ref() else {
             return;
         };
-        let candidates = raw.available_camera_profiles.clone();
-        if candidates.is_empty() {
+        if raw.available_camera_profiles.is_empty() {
             return;
         }
-        let active_source = raw.camera_profile_source.clone();
-        let active_name = active_source
+        let selected = app.develop.selected_camera_profile.clone();
+        let items = camera_profile_items(
+            raw,
+            &selected,
+            app.preferences.camera_profile_folder.as_ref(),
+        );
+        let mut list = None;
+        moduwu_design::section_card(ui, "Camera profile", |ui| {
+            list = Some(preview_list(
+                ui,
+                "current-image-camera-profile",
+                VISIBLE_CAMERA_PROFILE_ROWS,
+                items,
+            ));
+        });
+        moduwu_design::card_gap(ui);
+
+        let Some(list) = list else {
+            return;
+        };
+        if let Some(choice) = list.hovered {
+            app.develop.profile_preview.hover.request(choice);
+        }
+        if let Some(choice) = list.clicked.filter(|choice| *choice != selected) {
+            app.select_camera_profile_for_current(choice, frame);
+        }
+    }
+}
+
+/// Rows the Camera profile card shows before it scrolls.
+const VISIBLE_CAMERA_PROFILE_ROWS: f32 = 6.5;
+
+/// The rows of the Camera profile card for `raw` with `selected` chosen:
+/// automatic selection, which names the profile it applies, the embedded
+/// matrix, which the profile folder `root` stands for, and each matching DCP.
+fn camera_profile_items(
+    raw: &LoadedRaw,
+    selected: &CameraProfileChoice,
+    root: Option<&std::path::PathBuf>,
+) -> Vec<PreviewListItem<CameraProfileChoice>> {
+    let candidates = &raw.available_camera_profiles;
+    let automatic = if selected.is_none() {
+        let active_name = raw
+            .profile_color
+            .camera_profile_source
             .as_ref()
             .and_then(|active| {
                 candidates
@@ -599,61 +683,28 @@ impl Sidebar {
                     .find(|candidate| candidate.path == *active)
                     .map(|candidate| candidate.name.clone())
             })
-            .or_else(|| raw.camera_profile.name.clone())
+            .or_else(|| raw.profile_color.camera_profile.name.clone())
             .unwrap_or_else(|| "Embedded Matrix".to_owned());
-
-        let previous = app.develop.selected_camera_profile.clone();
-        let mut selection = previous.clone();
-        let embedded_matrix_selected = previous
-            .as_ref()
-            .zip(app.preferences.camera_profile_folder.as_ref())
-            .is_some_and(|(selected, root)| selected == root);
-        let selected_text = embedded_matrix_selected
-            .then_some("Embedded Matrix".to_owned())
-            .or_else(|| {
-                previous.as_ref().and_then(|selected| {
-                    candidates
-                        .iter()
-                        .find(|candidate| candidate.path == *selected)
-                        .map(|candidate| candidate.name.clone())
-                })
-            })
-            .unwrap_or_else(|| format!("Automatic — {active_name}"));
-
-        moduwu_design::section_card(ui, "Camera profile", |ui| {
-            moduwu_design::form_combo(
-                ui,
-                "Profile",
-                "current-image-camera-profile",
-                selected_text,
-                240.0,
-                |ui| {
-                    ui.selectable_value(&mut selection, None, "Automatic (recommended)")
-                        .on_hover_text("Use the RAW's embedded camera matrix by default.");
-                    if let Some(root) = app.preferences.camera_profile_folder.as_ref() {
-                        ui.selectable_value(&mut selection, Some(root.clone()), "Embedded Matrix")
-                            .on_hover_text(
-                                "Use the RAW's embedded camera matrix without a DCP profile.",
-                            );
-                    }
-                    ui.separator();
-                    for candidate in &candidates {
-                        ui.selectable_value(
-                            &mut selection,
-                            Some(candidate.path.clone()),
-                            &candidate.name,
-                        )
-                        .on_hover_text(candidate.path.display().to_string());
-                    }
-                },
-            );
-        });
-        moduwu_design::card_gap(ui);
-
-        if selection != previous {
-            app.select_camera_profile_for_current(selection, frame);
-        }
+        format!("Automatic — {active_name}")
+    } else {
+        "Automatic".to_owned()
+    };
+    let mut items = vec![PreviewListItem::choice(None, automatic, selected.is_none())];
+    if let Some(root) = root {
+        items.push(PreviewListItem::choice(
+            Some(root.clone()),
+            "Embedded Matrix",
+            selected.as_ref() == Some(root),
+        ));
     }
+    items.extend(candidates.iter().map(|candidate| {
+        PreviewListItem::choice(
+            Some(candidate.path.clone()),
+            &candidate.name,
+            selected.as_ref() == Some(&candidate.path),
+        )
+    }));
+    items
 }
 
 #[cfg(test)]

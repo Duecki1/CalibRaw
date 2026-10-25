@@ -1195,6 +1195,7 @@ pub(super) fn validate_raw(raw: &LoadedRaw) -> Result<()> {
         ));
     }
     if raw
+        .profile_color
         .cam_to_srgb
         .iter()
         .flatten()
@@ -1205,6 +1206,7 @@ pub(super) fn validate_raw(raw: &LoadedRaw) -> Result<()> {
         ));
     }
     if raw
+        .profile_color
         .cam_to_srgb
         .iter()
         .flatten()

@@ -1,10 +1,17 @@
 //! Decoded RAWs kept for reopening, shared by document loads and neighbour
 //! prefetch.
 //!
-//! An entry is one file decoded with one camera-profile request, together with
-//! what opening it derives from the decode alone: its Lensfun catalog and its
-//! most recent lens-corrected copy. The RAW a document renders from also keeps
-//! its full-resolution highlight analysis, so a revisit skips that work too.
+//! An entry is one decoded file, together with what opening it derives from
+//! the decode alone: its Lensfun catalog and its most recent lens-corrected
+//! copy. The RAW a document renders from also keeps its full-resolution
+//! highlight analysis, so a revisit skips that work too.
+//!
+//! A camera profile changes only how the samples' colour is read, so one
+//! entry serves every camera-profile request: the decode itself for the
+//! request it was decoded for, and a copy sharing its samples for another
+//! (`LoadedRaw::with_camera_profile_selection`). Only a decode that read the
+//! RAW's calibration signature can match DCPs; one decoded with the embedded
+//! matrix alone serves only requests for the embedded matrix.
 //!
 //! Decodes are single-flight: asking for an entry that another thread is
 //! decoding waits for that decode instead of starting a second one. The limit
@@ -18,37 +25,145 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 
-/// Everything that determines a decode's result.
+/// The camera-profile choice a document asks a decode for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DecodeRequest {
+    pub(crate) mode: CameraProfileMode,
+    pub(crate) folder: Option<PathBuf>,
+    pub(crate) profile: Option<PathBuf>,
+}
+
+impl DecodeRequest {
+    /// Whether the decode reads the RAW's calibration signature, which
+    /// matching a DCP needs.
+    fn matches_dcps(&self) -> bool {
+        self.mode != CameraProfileMode::MatrixOnly
+    }
+}
+
+/// Which decodes an entry holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DecodeKey {
     /// The file's identity, including its size and modification time, so an
     /// edited file is decoded again.
     pub(crate) source: String,
-    pub(crate) profile_mode: CameraProfileMode,
-    pub(crate) profile_folder: Option<PathBuf>,
-    pub(crate) requested_profile: Option<PathBuf>,
+    /// Whether the decode can match DCPs (`DecodeRequest::matches_dcps`).
+    pub(crate) matches_dcps: bool,
+}
+
+impl DecodeKey {
+    pub(crate) fn new(source: String, request: &DecodeRequest) -> Self {
+        Self {
+            source,
+            matches_dcps: request.matches_dcps(),
+        }
+    }
 }
 
 /// A decoded RAW and what is derived from it alone.
 pub(crate) struct DecodedRaw {
+    /// The camera-profile request `original` was decoded for.
+    request: DecodeRequest,
     original: Arc<LoadedRaw>,
     lens_catalog: OnceLock<LensfunCatalog>,
     /// Held while a correction runs, so a second request for the same
     /// selection waits for it instead of correcting again.
     lens_corrected: Mutex<Option<(LensCorrection, Arc<LoadedRaw>)>>,
+    /// The decode with the camera profile of the latest other request.
+    recolored: Mutex<Option<Recolored>>,
+}
+
+/// A decode with the camera profile of another request than its own.
+struct Recolored {
+    request: DecodeRequest,
+    original: Arc<LoadedRaw>,
+    /// The latest lens-corrected copy of `original`.
+    lens_corrected: Option<(LensCorrection, Arc<LoadedRaw>)>,
 }
 
 impl DecodedRaw {
-    fn new(original: LoadedRaw) -> Self {
+    fn new(request: DecodeRequest, original: LoadedRaw) -> Self {
         Self {
+            request,
             original: Arc::new(original),
             lens_catalog: OnceLock::new(),
             lens_corrected: Mutex::new(None),
+            recolored: Mutex::new(None),
         }
     }
 
-    pub(crate) fn original(&self) -> &Arc<LoadedRaw> {
-        &self.original
+    /// The RAW with the camera profile `request` chooses, exactly as a decode
+    /// for `request` would give it. The entry's cache lookup ensures the
+    /// decode can serve `request` (`DecodeKey::matches_dcps`).
+    pub(crate) fn original_for(&self, request: &DecodeRequest) -> anyhow::Result<Arc<LoadedRaw>> {
+        if *request == self.request {
+            return Ok(Arc::clone(&self.original));
+        }
+        let mut slot = lock(&self.recolored);
+        if let Some(recolored) = slot
+            .as_ref()
+            .filter(|recolored| recolored.request == *request)
+        {
+            return Ok(Arc::clone(&recolored.original));
+        }
+        let original = if self.original.color_source.is_none() {
+            // Rendered photos have no camera profile, so every request
+            // decodes them alike.
+            Arc::clone(&self.original)
+        } else {
+            let recolored = self
+                .original
+                .with_camera_profile_selection(
+                    request.mode,
+                    request.folder.as_deref(),
+                    request.profile.as_deref(),
+                )
+                .ok_or_else(|| {
+                    anyhow::anyhow!("the RAW was decoded without what this camera profile needs")
+                })??;
+            Arc::new(recolored)
+        };
+        *slot = Some(Recolored {
+            request: request.clone(),
+            original: Arc::clone(&original),
+            lens_corrected: None,
+        });
+        Ok(original)
+    }
+
+    /// The lens-corrected RAW for `selection` with the camera profile
+    /// `request` chooses. The correction itself is made once for the decode
+    /// ([`Self::lens_corrected`]); another profile shares its samples.
+    pub(crate) fn lens_corrected_for(
+        &self,
+        request: &DecodeRequest,
+        selection: &LensCorrection,
+        correct: impl FnOnce(&LoadedRaw) -> anyhow::Result<LoadedRaw>,
+    ) -> anyhow::Result<Arc<LoadedRaw>> {
+        let corrected = self.lens_corrected(selection, correct)?;
+        if *request == self.request {
+            return Ok(corrected);
+        }
+        let original = self.original_for(request)?;
+        if Arc::ptr_eq(&original, &self.original) {
+            return Ok(corrected);
+        }
+        let mut slot = lock(&self.recolored);
+        let Some(recolored) = slot
+            .as_mut()
+            .filter(|recolored| recolored.request == *request)
+        else {
+            // Another request replaced the copy meanwhile.
+            return Ok(Arc::new(corrected.with_profile_color_of(&original)));
+        };
+        if let Some((cached_selection, corrected)) = &recolored.lens_corrected {
+            if cached_selection == selection {
+                return Ok(Arc::clone(corrected));
+            }
+        }
+        let recolored_corrected = Arc::new(corrected.with_profile_color_of(&original));
+        recolored.lens_corrected = Some((selection.clone(), Arc::clone(&recolored_corrected)));
+        Ok(recolored_corrected)
     }
 
     /// The Lensfun profiles matching this RAW, looked up once.
@@ -140,12 +255,27 @@ impl DecodedRawCache {
         self.shared.changed.notify_all();
     }
 
-    /// The entry for `key`, decoded by `decode` unless it is cached or another
-    /// thread is already decoding it, in which case this waits for that decode.
-    /// A failed decode is not kept; a caller waiting for it decodes itself.
+    /// The entry for `key` if it is decoded already, without waiting for a
+    /// decode in progress.
+    pub(crate) fn get_ready(&self, key: &DecodeKey) -> Option<Arc<DecodedRaw>> {
+        let mut state = self.lock();
+        let index = state.entries.iter().position(|entry| entry.key == *key)?;
+        let Slot::Ready(decoded) = &state.entries[index].slot else {
+            return None;
+        };
+        let decoded = Arc::clone(decoded);
+        state.mark_used(index);
+        Some(decoded)
+    }
+
+    /// The entry for `key`, decoded for `request` by `decode` unless it is
+    /// cached or another thread is already decoding it, in which case this
+    /// waits for that decode. A failed decode is not kept; a caller waiting
+    /// for it decodes itself.
     pub(crate) fn get_or_decode(
         &self,
         key: &DecodeKey,
+        request: &DecodeRequest,
         decode: impl FnOnce() -> anyhow::Result<LoadedRaw>,
     ) -> anyhow::Result<Arc<DecodedRaw>> {
         let mut state = self.lock();
@@ -174,7 +304,7 @@ impl DecodedRawCache {
             cache: self,
             ticket,
         };
-        let decoded = Arc::new(DecodedRaw::new(decode()?));
+        let decoded = Arc::new(DecodedRaw::new(request.clone(), decode()?));
         pending.finish(Arc::clone(&decoded));
         Ok(decoded)
     }
@@ -274,13 +404,16 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Barrier;
 
-    fn key(source: &str) -> DecodeKey {
-        DecodeKey {
-            source: source.to_owned(),
-            profile_mode: CameraProfileMode::Automatic,
-            profile_folder: None,
-            requested_profile: None,
+    fn request() -> DecodeRequest {
+        DecodeRequest {
+            mode: CameraProfileMode::Automatic,
+            folder: None,
+            profile: None,
         }
+    }
+
+    fn key(source: &str) -> DecodeKey {
+        DecodeKey::new(source.to_owned(), &request())
     }
 
     fn raw(width: u32) -> LoadedRaw {
@@ -304,27 +437,58 @@ mod tests {
             decodes.fetch_add(1, Ordering::Relaxed);
             Ok(raw(width))
         };
-        let first = cache.get_or_decode(&key("a"), || decode(1)).unwrap();
-        cache.get_or_decode(&key("b"), || decode(2)).unwrap();
-        let again = cache.get_or_decode(&key("a"), || decode(3)).unwrap();
+        let first = cache
+            .get_or_decode(&key("a"), &request(), || decode(1))
+            .unwrap();
+        cache
+            .get_or_decode(&key("b"), &request(), || decode(2))
+            .unwrap();
+        let again = cache
+            .get_or_decode(&key("a"), &request(), || decode(3))
+            .unwrap();
         assert!(Arc::ptr_eq(&first, &again));
         assert_eq!(decodes.load(Ordering::Relaxed), 2);
         // "b" is now least recently used and makes room for "c".
-        cache.get_or_decode(&key("c"), || decode(4)).unwrap();
+        cache
+            .get_or_decode(&key("c"), &request(), || decode(4))
+            .unwrap();
         assert_eq!(cached_sources(&cache), ["a", "c"]);
     }
 
     #[test]
-    fn different_profile_requests_are_different_entries() {
+    fn one_entry_serves_every_camera_profile_request() {
         let cache = DecodedRawCache::new(4);
-        let automatic = key("a");
-        let selected = DecodeKey {
-            requested_profile: Some(PathBuf::from("profiles/neutral.dcp")),
-            ..key("a")
+        let selected = DecodeRequest {
+            profile: Some(PathBuf::from("profiles/neutral.dcp")),
+            ..request()
         };
-        let first = cache.get_or_decode(&automatic, || Ok(raw(1))).unwrap();
-        let second = cache.get_or_decode(&selected, || Ok(raw(2))).unwrap();
-        assert!(!Arc::ptr_eq(&first, &second));
+        let first = cache
+            .get_or_decode(&key("a"), &request(), || Ok(raw(1)))
+            .unwrap();
+        let second = cache
+            .get_or_decode(
+                &DecodeKey::new("a".to_owned(), &selected),
+                &selected,
+                || Ok(raw(2)),
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        // A rendered photo has no camera profile, so every request shows it
+        // as decoded.
+        assert!(Arc::ptr_eq(
+            &first.original_for(&selected).unwrap(),
+            &first.original_for(&request()).unwrap()
+        ));
+
+        // A decode with the embedded matrix alone cannot match DCPs.
+        let matrix_only = DecodeRequest {
+            mode: CameraProfileMode::MatrixOnly,
+            ..request()
+        };
+        let matrix_key = DecodeKey::new("a".to_owned(), &matrix_only);
+        assert_ne!(matrix_key, key("a"));
+        assert!(cache.get_ready(&matrix_key).is_none());
+        assert!(cache.get_ready(&key("a")).is_some());
     }
 
     #[test]
@@ -337,7 +501,7 @@ mod tests {
                 scope.spawn(|| {
                     started.wait();
                     cache
-                        .get_or_decode(&key("a"), || {
+                        .get_or_decode(&key("a"), &request(), || {
                             decodes.fetch_add(1, Ordering::Relaxed);
                             std::thread::sleep(std::time::Duration::from_millis(50));
                             Ok(raw(1))
@@ -355,23 +519,27 @@ mod tests {
     fn failed_and_panicked_decodes_leave_no_entry() {
         let cache = DecodedRawCache::new(2);
         assert!(cache
-            .get_or_decode(&key("a"), || Err(anyhow::anyhow!("unreadable")))
+            .get_or_decode(&key("a"), &request(), || Err(anyhow::anyhow!("unreadable")))
             .is_err());
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = cache.get_or_decode(&key("b"), || panic!("decoder bug"));
+            let _ = cache.get_or_decode(&key("b"), &request(), || panic!("decoder bug"));
         }));
         assert!(panicked.is_err());
         assert!(cached_sources(&cache).is_empty());
         // Both can be decoded afterwards.
-        cache.get_or_decode(&key("a"), || Ok(raw(1))).unwrap();
-        cache.get_or_decode(&key("b"), || Ok(raw(1))).unwrap();
+        cache
+            .get_or_decode(&key("a"), &request(), || Ok(raw(1)))
+            .unwrap();
+        cache
+            .get_or_decode(&key("b"), &request(), || Ok(raw(1)))
+            .unwrap();
     }
 
     #[test]
     fn clearing_during_a_decode_does_not_keep_its_result() {
         let cache = DecodedRawCache::new(2);
         cache
-            .get_or_decode(&key("a"), || {
+            .get_or_decode(&key("a"), &request(), || {
                 cache.clear();
                 Ok(raw(1))
             })
@@ -382,11 +550,15 @@ mod tests {
     #[test]
     fn a_zero_limit_decodes_without_keeping() {
         let cache = DecodedRawCache::new(0);
-        cache.get_or_decode(&key("a"), || Ok(raw(1))).unwrap();
+        cache
+            .get_or_decode(&key("a"), &request(), || Ok(raw(1)))
+            .unwrap();
         assert!(cached_sources(&cache).is_empty());
         let cache = DecodedRawCache::new(3);
         for source in ["a", "b", "c"] {
-            cache.get_or_decode(&key(source), || Ok(raw(1))).unwrap();
+            cache
+                .get_or_decode(&key(source), &request(), || Ok(raw(1)))
+                .unwrap();
         }
         cache.set_limit(1);
         assert_eq!(cached_sources(&cache), ["c"]);
@@ -394,7 +566,7 @@ mod tests {
 
     #[test]
     fn lens_corrections_are_reused_per_selection() {
-        let decoded = DecodedRaw::new(raw(4));
+        let decoded = DecodedRaw::new(request(), raw(4));
         let corrections = AtomicUsize::new(0);
         let correct = |raw: &LoadedRaw| {
             corrections.fetch_add(1, Ordering::Relaxed);

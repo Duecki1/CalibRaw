@@ -28,10 +28,14 @@ use std::sync::{Arc, RwLock};
 
 mod compact_pixel_map;
 mod opposed_chroma;
+mod profile_color;
+mod sensor_samples;
 mod sensor_saturation;
 mod white_balance;
 pub use compact_pixel_map::*;
 pub use opposed_chroma::*;
+pub use profile_color::{ProfileColor, ProfileColorSource};
+pub use sensor_samples::SensorSamples;
 pub use sensor_saturation::SensorSaturation;
 
 #[derive(Debug)]
@@ -328,15 +332,15 @@ pub struct LoadedRaw {
     pub focus_distance: f32,
     pub capture_metadata: CaptureMetadata,
     pub cfa_kind: CfaKind,
-    pub raw_pixels: Vec<u16>,
+    pub raw_pixels: SensorSamples,
     pub scene_linear_raster: Option<Arc<[f32]>>,
     /// The raster holds scene radiance whose tones were never rendered, such as a
     /// floating-point HDR or focus-stack master, rather than a developed photo. It may
     /// exceed display white, so it always takes the scene view transform.
     pub scene_referred_raster: bool,
     pub color_indices: CompactPixelMap<u8>,
+    /// The as-shot white balance multipliers.
     pub wb_coeffs: [f32; 4],
-    pub cam_to_srgb: [[f32; 4]; 3],
     pub black_levels: [f32; 4],
     pub black_levels_per_pixel: CompactPixelMap<f32>,
     pub white_levels: [f32; 4],
@@ -344,10 +348,11 @@ pub struct LoadedRaw {
     /// against it. Crops, proxies and tiles keep their source's.
     pub sensor_saturation: SensorSaturation,
     pub noise_profile: NoiseProfile,
-    pub camera_profile: CameraProfile,
-    pub camera_profile_source: Option<PathBuf>,
+    pub profile_color: Arc<ProfileColor>,
+    /// What the decode read `profile_color` from; crops, proxies and tiles
+    /// keep their source's.
+    pub color_source: Option<Arc<ProfileColorSource>>,
     pub available_camera_profiles: Vec<CameraProfileCandidate>,
-    pub white_balance_model: Option<CameraWhiteBalanceModel>,
     pub lens_geometry: Option<Arc<LensGeometryMap>>,
     /// Vignetting gains the GPU applies after highlight reconstruction; only
     /// sensor mosaics carry them. Placed over the whole photo, so crops,
@@ -394,21 +399,19 @@ impl LoadedRaw {
             focus_distance: self.focus_distance,
             capture_metadata: self.capture_metadata.clone(),
             cfa_kind: self.cfa_kind,
-            raw_pixels,
+            raw_pixels: raw_pixels.into(),
             scene_linear_raster: None,
             scene_referred_raster: self.scene_referred_raster,
             color_indices,
             wb_coeffs: self.wb_coeffs,
-            cam_to_srgb: self.cam_to_srgb,
             black_levels: self.black_levels,
             black_levels_per_pixel,
             white_levels: self.white_levels,
             sensor_saturation: self.sensor_saturation,
             noise_profile: self.noise_profile,
-            camera_profile: self.camera_profile.clone(),
-            camera_profile_source: self.camera_profile_source.clone(),
+            profile_color: Arc::clone(&self.profile_color),
+            color_source: self.color_source.clone(),
             available_camera_profiles: self.available_camera_profiles.clone(),
-            white_balance_model: self.white_balance_model.clone(),
             lens_geometry: None,
             lens_shading: self.lens_shading.clone(),
             lateral_chromatic_aberration: self.lateral_chromatic_aberration,
@@ -446,25 +449,19 @@ impl LoadedRaw {
             focus_distance: 0.0,
             capture_metadata: CaptureMetadata::default(),
             cfa_kind: CfaKind::Bayer,
-            raw_pixels: Vec::new(),
+            raw_pixels: SensorSamples::default(),
             scene_linear_raster: Some(rgb.into()),
             scene_referred_raster: false,
             color_indices: CompactPixelMap::repeating(width, height, 1, 1, vec![1]),
             wb_coeffs: [1.0; 4],
-            cam_to_srgb: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-            ],
             black_levels: [0.0; 4],
             black_levels_per_pixel: CompactPixelMap::repeating(width, height, 1, 1, vec![0.0]),
             white_levels: [1.0; 4],
             sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: NoiseProfile::default(),
-            camera_profile: CameraProfile::default(),
-            camera_profile_source: None,
+            profile_color: Arc::default(),
+            color_source: None,
             available_camera_profiles: Vec::new(),
-            white_balance_model: None,
             lens_geometry: None,
             lens_shading: None,
             lateral_chromatic_aberration: LateralChromaticAberration::NONE,
@@ -489,14 +486,14 @@ impl LoadedRaw {
     /// raster TIFFs have no camera white-balance model, nor do RAWs without
     /// usable colour metadata.
     pub fn has_white_balance_model(&self) -> bool {
-        self.white_balance_model.is_some()
+        self.profile_color.white_balance_model.is_some()
     }
 
     /// A raster decoded from camera-space LinearRaw samples. Unlike normal
     /// scene rasters, these pixels still need the camera white balance and
     /// camera-to-working transform applied by the GPU.
     pub fn is_camera_linear_raster(&self) -> bool {
-        self.is_pre_demosaiced_raster() && self.white_balance_model.is_some()
+        self.is_pre_demosaiced_raster() && self.profile_color.white_balance_model.is_some()
     }
 
     /// A raster decoded from a rendered photo (JPEG, PNG, HEIF or rendered
@@ -1248,37 +1245,40 @@ mod tests {
             focus_distance: 0.0,
             capture_metadata: Default::default(),
             cfa_kind: CfaKind::Bayer,
-            raw_pixels: vec![0],
+            raw_pixels: vec![0].into(),
             scene_linear_raster: None,
             scene_referred_raster: false,
             color_indices: CompactPixelMap::dense(1, 1, vec![0]),
             wb_coeffs: [2.0, 1.0, 1.5, 1.0],
-            cam_to_srgb: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-            ],
+            profile_color: std::sync::Arc::new(crate::pipeline::ProfileColor {
+                cam_to_srgb: [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                ],
+                camera_profile: CameraProfile::default(),
+                camera_profile_source: None,
+                white_balance_model: Some(CameraWhiteBalanceModel {
+                    base_wb: [2.0, 1.0, 1.5, 1.0],
+                    cdesc: *b"RGBG",
+                    base_cct: 5_000.0,
+                    color: CameraColorModel::Matrix {
+                        xyz_to_camera: [
+                            [1.0, 0.0, 0.0],
+                            [0.0, 1.0, 0.0],
+                            [0.0, 0.0, 1.0],
+                            [0.0, 1.0, 0.0],
+                        ],
+                    },
+                }),
+            }),
+            color_source: None,
             black_levels: [0.0; 4],
             black_levels_per_pixel: CompactPixelMap::dense(1, 1, vec![0.0]),
             white_levels: [1.0; 4],
             sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: crate::pipeline::NoiseProfile::default(),
-            camera_profile: CameraProfile::default(),
-            camera_profile_source: None,
             available_camera_profiles: Vec::new(),
-            white_balance_model: Some(CameraWhiteBalanceModel {
-                base_wb: [2.0, 1.0, 1.5, 1.0],
-                cdesc: *b"RGBG",
-                base_cct: 5_000.0,
-                color: CameraColorModel::Matrix {
-                    xyz_to_camera: [
-                        [1.0, 0.0, 0.0],
-                        [0.0, 1.0, 0.0],
-                        [0.0, 0.0, 1.0],
-                        [0.0, 1.0, 0.0],
-                    ],
-                },
-            }),
             lens_geometry: None,
             lens_shading: None,
             lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
@@ -1325,7 +1325,11 @@ mod tests {
     fn a_custom_white_balance_is_the_same_on_photos_shot_differently() {
         let daylight = raw_with_white_balance_model();
         let mut tungsten = raw_with_white_balance_model();
-        tungsten.white_balance_model.as_mut().unwrap().base_wb = [1.2, 1.0, 2.6, 1.0];
+        std::sync::Arc::make_mut(&mut tungsten.profile_color)
+            .white_balance_model
+            .as_mut()
+            .unwrap()
+            .base_wb = [1.2, 1.0, 2.6, 1.0];
         let custom = daylight.custom_white_balance(4300.0, 5.0).unwrap();
         let pasted = tungsten.resolve_white_balance(custom);
 
@@ -1401,7 +1405,7 @@ mod tests {
                 pixels.push((value * WHITE).round() as u16);
             }
         }
-        raw.raw_pixels = pixels;
+        raw.raw_pixels = pixels.into();
         raw.color_indices = CompactPixelMap::dense(WIDTH, HEIGHT, colors);
         raw.opposed_chroma_cache = Default::default();
         raw.opposed_chroma_source_identity = Default::default();
@@ -1442,7 +1446,7 @@ mod tests {
             assert_eq!(cache.prepared.len(), 3);
         }
 
-        let mut ai_pixels = raw.raw_pixels.clone();
+        let mut ai_pixels = raw.raw_pixels.to_vec();
         for value in &mut ai_pixels {
             *value = value.saturating_sub(137);
         }
@@ -1495,7 +1499,10 @@ mod tests {
     fn extended_temperature_range_reaches_beyond_the_old_hundred_mired_clamp() {
         let mut raw = raw_with_white_balance_model();
         // A neutral as-shot white, so the gain limit leaves the full range.
-        let model = raw.white_balance_model.as_mut().unwrap();
+        let model = std::sync::Arc::make_mut(&mut raw.profile_color)
+            .white_balance_model
+            .as_mut()
+            .unwrap();
         model.base_wb =
             super::libraw_loader::temperature_tint_to_coefficients(model, 5_000.0, 0.0).unwrap();
         raw.wb_coeffs = model.base_wb;
@@ -1528,7 +1535,10 @@ mod tests {
     #[test]
     fn white_balance_display_presets_and_renderer_share_camera_limits() {
         let mut raw = raw_with_white_balance_model();
-        let model = raw.white_balance_model.as_mut().unwrap();
+        let model = std::sync::Arc::make_mut(&mut raw.profile_color)
+            .white_balance_model
+            .as_mut()
+            .unwrap();
         model.color = CameraColorModel::Matrix {
             xyz_to_camera: [
                 [0.65, -0.2, -0.1],
@@ -1561,13 +1571,13 @@ mod tests {
         let from_saved = raw.adjusted_white_balance_and_camera_transform(saved.0, saved.1);
         assert_eq!(from_legacy, from_saved);
         assert_ne!(from_legacy.0, raw.wb_coeffs);
-        assert_eq!(from_legacy.1, raw.cam_to_srgb);
+        assert_eq!(from_legacy.1, raw.profile_color.cam_to_srgb);
         assert_eq!(
             raw.adjusted_white_balance_and_camera_transform(0.0, 0.0).0,
             raw.wb_coeffs
         );
         let expected = super::libraw_loader::temperature_tint_to_coefficients(
-            raw.white_balance_model.as_ref().unwrap(),
+            raw.profile_color.white_balance_model.as_ref().unwrap(),
             displayed.0,
             displayed.1,
         )
@@ -1607,7 +1617,7 @@ mod tests {
             }
         }
         raw.color_indices = CompactPixelMap::dense(WIDTH, HEIGHT, colors);
-        raw.raw_pixels = pixels;
+        raw.raw_pixels = pixels.into();
 
         let sampled_offsets = raw
             .white_balance_offsets_from_area([0.1, 0.1], [0.9, 0.9], 0.0)
@@ -1633,7 +1643,7 @@ mod tests {
         raw.height = HEIGHT;
         raw.wb_coeffs = [1.0; 4];
         raw.white_levels = [WHITE; 4];
-        raw.white_balance_model = None;
+        std::sync::Arc::make_mut(&mut raw.profile_color).white_balance_model = None;
 
         let mut colors = Vec::with_capacity((WIDTH * HEIGHT) as usize);
         let mut pixels = Vec::with_capacity((WIDTH * HEIGHT) as usize);
@@ -1654,7 +1664,7 @@ mod tests {
                 pixels.push((value * WHITE).round() as u16);
             }
         }
-        raw.raw_pixels = pixels;
+        raw.raw_pixels = pixels.into();
         raw.color_indices = CompactPixelMap::dense(WIDTH, HEIGHT, colors);
         raw.black_levels_per_pixel = CompactPixelMap::repeating(WIDTH, HEIGHT, 1, 1, vec![0.0]);
         raw.opposed_chroma_cache = Default::default();
@@ -1682,7 +1692,7 @@ mod tests {
         let mut raw = raw_with_white_balance_model();
         raw.width = WIDTH;
         raw.height = HEIGHT;
-        raw.raw_pixels = vec![1_000; (WIDTH * HEIGHT) as usize];
+        raw.raw_pixels = vec![1_000; (WIDTH * HEIGHT) as usize].into();
         raw.color_indices =
             CompactPixelMap::dense(WIDTH, HEIGHT, vec![2; (WIDTH * HEIGHT) as usize]);
         raw.black_levels_per_pixel = CompactPixelMap::repeating(WIDTH, HEIGHT, 1, 1, vec![0.0]);

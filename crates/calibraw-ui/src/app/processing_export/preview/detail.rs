@@ -314,6 +314,7 @@ impl CalibRawApp {
                 &preview_masks,
                 self.develop.geometry,
                 &detail_raw,
+                self.preview_profile_color(&detail_raw),
             )
             .with_look_lut(self.develop.target_look.as_ref());
         let full_frame_tone_pipeline = full_frame_tone_pipeline(
@@ -431,6 +432,7 @@ impl CalibRawApp {
             &detail_raw,
             &params,
             detail_pipeline_options(preview_masks.masks.len())
+                .profile_preview(crate::app::lifecycle::reserves_profile_preview(&detail_raw))
                 .programs(&program_template.program_template()),
         ) {
             Ok(pipeline) => pipeline,
@@ -560,22 +562,23 @@ pub(super) struct DetailPlacement {
 }
 
 impl DetailPlacement {
-    /// The parameters of the graph built from `raw` for `exposure`.
+    /// The parameters of the graph built from `raw` for `exposure`, rendering
+    /// `profile_color`: `raw`'s own, or a previewed camera profile's.
     pub(super) fn params(
         self,
         exposure: &ExposureParams,
         masks: &MaskStack,
         geometry: GeometryTransform,
         raw: &LoadedRaw,
+        profile_color: &Arc<crate::pipeline::ProfileColor>,
     ) -> GpuParams {
-        GpuParams::new_for_tile(
+        GpuParams::new_for_tile_with_profile_color(
             exposure,
             masks,
             raw,
-            self.virtual_origin[0],
-            self.virtual_origin[1],
-            self.virtual_full_size[0],
-            self.virtual_full_size[1],
+            profile_color,
+            self.virtual_origin,
+            self.virtual_full_size,
         )
         .with_vignette_geometry(geometry)
         .with_mask_uv_rect_and_extent(

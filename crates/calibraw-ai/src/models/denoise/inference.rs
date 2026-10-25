@@ -299,7 +299,8 @@ pub(super) fn infer_linear(
         raw.inpaint_opposed_chroma_for_exposure(&neutral);
     }
     let mut pipeline: Option<RawGpuPipeline> = None;
-    let cam_to_rec2020 = matrix::multiply(LINEAR_SRGB_TO_REC2020, rows3(raw.cam_to_srgb));
+    let cam_to_rec2020 =
+        matrix::multiply(LINEAR_SRGB_TO_REC2020, rows3(raw.profile_color.cam_to_srgb));
     let rec2020_to_cam =
         matrix::invert(cam_to_rec2020).context("camera-to-Rec.2020 matrix is singular")?;
     for tile_y in 0..tiles_y {

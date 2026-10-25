@@ -354,7 +354,9 @@ impl CalibRawApp {
                 &render_state.queue,
                 &prepared.preview_raw,
                 &params,
-                fitted_pipeline_options(preview_masks.masks.len()),
+                fitted_pipeline_options(preview_masks.masks.len()).profile_preview(
+                    crate::app::lifecycle::reserves_profile_preview(&prepared.preview_raw),
+                ),
             ) {
                 Ok(pipeline) => pipeline,
                 Err(error) => {

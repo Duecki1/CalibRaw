@@ -50,9 +50,14 @@ impl CalibRawApp {
                     },
                 ))
             };
-            let params = GpuParams::new(&self.develop.target_exposure, &preview_masks, &raw)
-                .with_vignette_geometry(self.develop.geometry)
-                .with_look_lut(self.develop.target_look.as_ref());
+            let params = GpuParams::new_with_profile_color(
+                &self.develop.target_exposure,
+                &preview_masks,
+                &raw,
+                self.preview_profile_color(&raw),
+            )
+            .with_vignette_geometry(self.develop.geometry)
+            .with_look_lut(self.develop.target_look.as_ref());
             let Some(template) = self.preview.pipeline() else {
                 return;
             };
@@ -62,6 +67,7 @@ impl CalibRawApp {
                 &raw,
                 &params,
                 PipelineOptions::new(ProcessingQuality::Preview)
+                    .profile_preview(crate::app::lifecycle::reserves_profile_preview(&raw))
                     .mask_atlas_edge(navigation_mask_edge())
                     .mask_layers(preview_mask_layer_capacity(preview_masks.masks.len()))
                     .programs(&template.program_template()),
@@ -138,9 +144,18 @@ impl CalibRawApp {
         {
             full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
-        let params = GpuParams::new(&self.develop.target_exposure, &preview_masks, &preview.raw)
-            .with_vignette_geometry(self.develop.geometry)
-            .with_look_lut(self.develop.target_look.as_ref());
+        let params = GpuParams::new_with_profile_color(
+            &self.develop.target_exposure,
+            &preview_masks,
+            &preview.raw,
+            // Not `preview_profile_color`, which would borrow all of `self`.
+            self.develop
+                .target_profile_color
+                .as_ref()
+                .unwrap_or(&preview.raw.profile_color),
+        )
+        .with_vignette_geometry(self.develop.geometry)
+        .with_look_lut(self.develop.target_look.as_ref());
         let stages = match stage {
             ProcessingStage::Raw => &[
                 ProcessingStage::Raw,

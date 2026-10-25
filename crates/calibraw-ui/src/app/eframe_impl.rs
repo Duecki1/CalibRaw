@@ -223,6 +223,8 @@ impl CalibRawApp {
     /// Advances preview, remove and lens work after the views ran, and schedules repaints while work is pending.
     fn advance_background_work(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.sync_preset_hover_preview();
+        self.sync_lut_hover_preview();
+        self.sync_camera_profile_preview();
         self.sync_preview_visibility();
         self.advance_remove_worker(frame);
         self.apply_pending_lens_correction(frame);

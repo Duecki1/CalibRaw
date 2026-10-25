@@ -11,9 +11,11 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         full_width,
         full_height,
     } = ctx.tile;
-    let (temperature, tint) = raw.white_balance_offsets(exposure.white_balance);
-    let (white_balance, camera_transform, profile_weight) = raw
+    let color = ctx.color;
+    let (temperature, tint) = color.white_balance_offsets(exposure.white_balance);
+    let (white_balance, camera_transform, profile_weight) = color
         .adjusted_white_balance_and_camera_transform(
+            raw.wb_coeffs,
             temperature.clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
             tint.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
         );
@@ -32,7 +34,7 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
     } else {
         camera_transform
     };
-    let mut profile_layout = raw.camera_profile.gpu_layout();
+    let mut profile_layout = color.camera_profile.gpu_layout();
     profile_layout.flags[3] = profile_weight.clamp(0.0, 1.0).to_bits();
     let profile_stages = profile_layout.stages();
     debug_assert_eq!(

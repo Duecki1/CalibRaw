@@ -156,7 +156,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
     let decoded = decode_cached(
         &decoded_raws,
         &source,
-        &DecodeRequest::new(&profile_request, &camera_profiles),
+        decode_request(&profile_request, &camera_profiles),
         &decode_gate,
         DecodePriority::Interactive,
     );
@@ -167,7 +167,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 "RAW decode ready in {:.3}s",
                 decode_started.elapsed().as_secs_f64()
             ));
-            calibraw_core::diagnostics::record_raw("Decoded RAW", decoded.original());
+            calibraw_core::diagnostics::record_raw("Decoded RAW", &decoded.original);
         }
         Err(error) => calibraw_core::diagnostics::record(format!(
             "RAW decode failed after {:.3}s: {error:#}",
@@ -194,7 +194,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
     );
     let result = (|| {
         let decoded = decoded.map_err(|error| format!("{error:#}"))?;
-        let original_raw = Arc::clone(decoded.original());
+        let original_raw = Arc::clone(&decoded.original);
         let InitialEdits {
             mut exposure,
             mut masks,
@@ -402,7 +402,7 @@ pub(super) fn prepare_ahead_of_open(
     let decoded = decode_cached(
         &context.decoded_raws,
         &source,
-        &DecodeRequest::new(&profile_request, &context.camera_profiles),
+        decode_request(&profile_request, &context.camera_profiles),
         &context.decode_gate,
         DecodePriority::Background,
     )?;
@@ -418,7 +418,7 @@ pub(super) fn prepare_ahead_of_open(
     } = InitialEdits::resolve(None, None, loaded_sidecar, context.initial_exposure);
     if use_adaptive_detail_defaults {
         decoded
-            .original()
+            .original
             .apply_adaptive_detail_defaults(&mut exposure);
     }
     let (_, full_raw) =
@@ -506,30 +506,48 @@ impl CameraProfileRequest {
         }
         self.path
             .clone()
-            .filter(|requested| raw.camera_profile_source.as_ref() == Some(requested))
+            .filter(|requested| raw.profile_color.camera_profile_source.as_ref() == Some(requested))
     }
+}
+
+/// The decoder inputs that choosing `selection` in the Camera profile card
+/// resolves to, as a reload for it requests them.
+pub(super) fn selection_decode_request(
+    selection: Option<PathBuf>,
+    settings: &CameraProfileSettings,
+) -> DecodeRequest {
+    decode_request(
+        &CameraProfileRequest {
+            path: selection,
+            from_sidecar: false,
+        },
+        settings,
+    )
 }
 
 /// The decoder inputs that a camera-profile request resolves to.
-struct DecodeRequest {
-    mode: CameraProfileMode,
-    folder: Option<PathBuf>,
-    profile: Option<PathBuf>,
+fn decode_request(
+    profile: &CameraProfileRequest,
+    settings: &CameraProfileSettings,
+) -> DecodeRequest {
+    let embedded_matrix = profile.selects_embedded_matrix(settings);
+    DecodeRequest {
+        mode: if embedded_matrix {
+            CameraProfileMode::MatrixOnly
+        } else {
+            settings.mode
+        },
+        folder: settings.folder.clone(),
+        profile: profile.path.clone().filter(|_| !embedded_matrix),
+    }
 }
 
-impl DecodeRequest {
-    fn new(profile: &CameraProfileRequest, settings: &CameraProfileSettings) -> Self {
-        let embedded_matrix = profile.selects_embedded_matrix(settings);
-        Self {
-            mode: if embedded_matrix {
-                CameraProfileMode::MatrixOnly
-            } else {
-                settings.mode
-            },
-            folder: settings.folder.clone(),
-            profile: profile.path.clone().filter(|_| !embedded_matrix),
-        }
-    }
+/// A decode of the document and the RAW it opens with: the decode with the
+/// camera profile the document's request chooses.
+struct RequestedDecode {
+    decoded: Arc<DecodedRaw>,
+    request: DecodeRequest,
+    original: Arc<LoadedRaw>,
 }
 
 /// Whether a decode is the one the user waits for, or background work.
@@ -542,45 +560,59 @@ enum DecodePriority {
 }
 
 /// The decoded RAW for `source` and `request`, from the cache or decoded now.
+/// A cached decode serves another camera-profile request without decoding
+/// again, as long as it can match DCPs when `request` needs that.
 fn decode_cached(
     cache: &DecodedRawCache,
     source: &DocumentSource,
-    request: &DecodeRequest,
+    request: DecodeRequest,
     decode_gate: &RwLock<()>,
     priority: DecodePriority,
-) -> anyhow::Result<Arc<DecodedRaw>> {
-    let key = DecodeKey {
-        source: raw_cache_key_for_target(&source.sidecar_target),
-        profile_mode: request.mode,
-        profile_folder: request.folder.clone(),
-        requested_profile: request.profile.clone(),
+) -> anyhow::Result<RequestedDecode> {
+    let key = DecodeKey::new(raw_cache_key_for_target(&source.sidecar_target), &request);
+    // A decode that can match DCPs also serves the embedded matrix.
+    let matching = DecodeKey {
+        matches_dcps: true,
+        ..key.clone()
     };
-    cache.get_or_decode(&key, || {
-        let decode = || {
-            let started = Instant::now();
-            let raw = load_raw_file_with_profile_selection(
-                &source.path,
-                request.mode,
-                request.folder.as_deref(),
-                request.profile.as_deref(),
-            );
-            calibraw_core::diagnostics::record(format!(
-                "RAW decoded in {:.3}s",
-                started.elapsed().as_secs_f64()
-            ));
-            raw
-        };
-        let poisoned = || anyhow::anyhow!("RAW decode gate was poisoned");
-        match priority {
-            DecodePriority::Interactive => {
-                let _exclusive = decode_gate.write().map_err(|_| poisoned())?;
-                decode()
+    let ready = (!key.matches_dcps)
+        .then(|| cache.get_ready(&matching))
+        .flatten();
+    let decoded = match ready {
+        Some(decoded) => decoded,
+        None => cache.get_or_decode(&key, &request, || {
+            let decode = || {
+                let started = Instant::now();
+                let raw = load_raw_file_with_profile_selection(
+                    &source.path,
+                    request.mode,
+                    request.folder.as_deref(),
+                    request.profile.as_deref(),
+                );
+                calibraw_core::diagnostics::record(format!(
+                    "RAW decoded in {:.3}s",
+                    started.elapsed().as_secs_f64()
+                ));
+                raw
+            };
+            let poisoned = || anyhow::anyhow!("RAW decode gate was poisoned");
+            match priority {
+                DecodePriority::Interactive => {
+                    let _exclusive = decode_gate.write().map_err(|_| poisoned())?;
+                    decode()
+                }
+                DecodePriority::Background => {
+                    let _shared = decode_gate.read().map_err(|_| poisoned())?;
+                    decode()
+                }
             }
-            DecodePriority::Background => {
-                let _shared = decode_gate.read().map_err(|_| poisoned())?;
-                decode()
-            }
-        }
+        })?,
+    };
+    let original = decoded.original_for(&request)?;
+    Ok(RequestedDecode {
+        decoded,
+        request,
+        original,
     })
 }
 
@@ -718,15 +750,15 @@ fn record_edit_state(exposure: &ExposureParams, masks: &MaskStack) {
 /// Returns the lens state and the RAW to develop, which is the original when
 /// correction is off or fails.
 fn apply_saved_lens_correction(
-    decoded: &DecodedRaw,
+    decoded: &RequestedDecode,
     saved_lens: Option<crate::sidecar::LensEditState>,
     automatic_lens: AutomaticLensCorrection,
     sidecar_warning: &mut Option<String>,
 ) -> (LensCorrectionState, Arc<LoadedRaw>) {
     let lens_started = Instant::now();
-    let original_raw = decoded.original();
+    let original_raw = &decoded.original;
     let mut lens_correction =
-        LensCorrectionState::automatic(decoded.lens_catalog(), automatic_lens);
+        LensCorrectionState::automatic(decoded.decoded.lens_catalog(), automatic_lens);
     calibraw_core::diagnostics::record(format!(
         "Lensfun catalog lookup finished in {:.3}s",
         lens_started.elapsed().as_secs_f64()
@@ -751,7 +783,11 @@ fn apply_saved_lens_correction(
         }
         Some(selection) => {
             let apply_started = Instant::now();
-            match decoded.lens_corrected(&selection, |raw| apply_lens_correction(raw, &selection)) {
+            match decoded
+                .decoded
+                .lens_corrected_for(&decoded.request, &selection, |raw| {
+                    apply_lens_correction(raw, &selection)
+                }) {
                 Ok(corrected) => {
                     calibraw_core::diagnostics::record(format!(
                         "Lensfun full-resolution correction ready in {:.3}s",
@@ -929,7 +965,8 @@ fn create_preview_pipeline(
                 .map(RawGpuPipeline::program_template)
         });
 
-    let options = fitted_pipeline_options(mask_count);
+    let options =
+        fitted_pipeline_options(mask_count).profile_preview(reserves_profile_preview(preview_raw));
     let compile = || {
         RawGpuPipeline::new(device, queue, preview_raw, params, options)
             .map_err(|error| format!("GPU preview setup failed: {error:#}"))

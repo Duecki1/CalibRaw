@@ -40,14 +40,12 @@ fn raster_with_metadata(
     output.capture_metadata = raw.capture_metadata.clone();
     output.scene_referred_raster = raw.scene_referred_raster;
     output.wb_coeffs = raw.wb_coeffs;
-    output.cam_to_srgb = raw.cam_to_srgb;
     output.black_levels = raw.black_levels;
     output.white_levels = raw.white_levels;
-    output.white_balance_model = raw.white_balance_model.clone();
     output.cfa_kind = raw.cfa_kind;
     output.noise_profile = raw.noise_profile;
-    output.camera_profile = raw.camera_profile.clone();
-    output.camera_profile_source = raw.camera_profile_source.clone();
+    output.profile_color = std::sync::Arc::clone(&raw.profile_color);
+    output.color_source = raw.color_source.clone();
     output.available_camera_profiles = raw.available_camera_profiles.clone();
     output.lens_geometry = preserve_lens_geometry
         .then(|| raw.lens_geometry.clone())

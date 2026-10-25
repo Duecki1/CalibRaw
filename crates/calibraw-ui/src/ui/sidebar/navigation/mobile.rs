@@ -126,9 +126,14 @@ impl Sidebar {
         ui.spacing_mut().item_spacing.x = 1.0;
         ui.horizontal(|ui| match app.ui.sidebar_tab {
             SidebarTab::Adjustments => {
+                let lut_shown = Self::look_lut_card_shown(app);
+                if !lut_shown && app.develop_ui.adjustment_section == AdjustmentSection::Lut {
+                    app.develop_ui.adjustment_section = AdjustmentSection::Light;
+                }
                 for (section, icon, label) in [
                     (AdjustmentSection::Light, regular::SUN, "Light"),
                     (AdjustmentSection::ToneCurve, regular::WAVE_SINE, "Curve"),
+                    (AdjustmentSection::Lut, regular::CUBE, "LUT"),
                     (AdjustmentSection::Color, regular::DROP, "Color"),
                     (
                         AdjustmentSection::ColorGrading,
@@ -140,6 +145,9 @@ impl Sidebar {
                     (AdjustmentSection::ColorMixer, regular::SWATCHES, "Mixer"),
                     (AdjustmentSection::Optics, regular::EYE, "Optics"),
                 ] {
+                    if section == AdjustmentSection::Lut && !lut_shown {
+                        continue;
+                    }
                     if Self::mobile_icon_tab(
                         ui,
                         icon,

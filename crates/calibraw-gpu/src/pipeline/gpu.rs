@@ -6,7 +6,7 @@ use crate::pipeline::{
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
     GeometryTransform, HighlightReconstructionMethod, LateralChannel, LensGeometryMap, LoadedRaw,
     LocalMask, MaskEffect, MaskImage, MaskStack, PointColor, PointCurve, ProcessingStage,
-    RawThumbnail, RemoveEditState, RemovePatch, SensorSaturation, SigmoidParams,
+    ProfileColor, RawThumbnail, RemoveEditState, RemovePatch, SensorSaturation, SigmoidParams,
     GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS,
     MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
 };
@@ -306,7 +306,14 @@ impl From<InputBoundPass> for PassBindings {
 struct RawGpuPipelineConfig {
     mask_atlas_edge_override: Option<u32>,
     mask_layer_capacity_override: Option<usize>,
+    profile_capacity_bytes: u64,
 }
+
+/// Room for the tables of a camera profile previewed on a graph built for
+/// another ([`PipelineOptions::profile_preview`]). The preview budget
+/// already reserves it for every preview graph (`preview_budget`); common
+/// DCPs need a few hundred kilobytes.
+pub const PREVIEWED_PROFILE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// How to build a [`RawGpuPipeline`].
 #[derive(Clone, Copy)]
@@ -321,6 +328,10 @@ pub struct PipelineOptions<'a> {
     pub mask_layers: Option<usize>,
     /// Compiled programs to reuse; they must match the CFA layout and quality.
     pub programs: Option<&'a RawGpuProgramTemplate>,
+    /// Reserve [`PREVIEWED_PROFILE_BYTES`] for the tables of other camera
+    /// profiles, so parameters with another profile of the same photo
+    /// ([`GpuParams::new_with_profile_color`]) render without a rebuild.
+    pub profile_preview: bool,
 }
 
 impl<'a> PipelineOptions<'a> {
@@ -330,6 +341,7 @@ impl<'a> PipelineOptions<'a> {
             mask_atlas_edge: None,
             mask_layers: None,
             programs: None,
+            profile_preview: false,
         }
     }
 
@@ -348,6 +360,12 @@ impl<'a> PipelineOptions<'a> {
     #[must_use]
     pub const fn programs(mut self, template: &'a RawGpuProgramTemplate) -> Self {
         self.programs = Some(template);
+        self
+    }
+
+    #[must_use]
+    pub const fn profile_preview(mut self, enabled: bool) -> Self {
+        self.profile_preview = enabled;
         self
     }
 }
@@ -450,6 +468,12 @@ pub struct RawGpuPipeline {
     mask_data_buffer: wgpu::Buffer,
     tone_histogram_buffer: wgpu::Buffer,
     tone_stats_buffer: wgpu::Buffer,
+    /// The camera profile's tables (`ProfileGpuData`), and room for more.
+    profile_buffer: wgpu::Buffer,
+    /// Words `profile_buffer` holds.
+    profile_capacity_words: usize,
+    /// The camera profile whose tables `profile_buffer` holds.
+    uploaded_profile: Mutex<Arc<ProfileColor>>,
     /// Relight's surface and shadow map and the full-image maps, allocated
     /// when an effect first reads them. Cropped and zoomed views copy the
     /// full-image maps from the full frame like the tone statistics.
@@ -563,6 +587,7 @@ struct RawGpuPipelineBuild<'a> {
 
 impl RawGpuPipeline {
     fn upload_params(&self, queue: &wgpu::Queue, params: &GpuParams) {
+        self.upload_profile_tables(queue, &params.profile_color);
         self.prepare_effect_inputs(params);
         self.upload_scene_depth(
             queue,
@@ -783,6 +808,39 @@ impl RawGpuPipeline {
             Some(lut) => self.effect_inputs.upload_look_lut(queue, lut),
             None => Ok(()),
         }
+    }
+
+    /// Whether the tables of `color`, a camera profile of this graph's photo,
+    /// fit its profile buffer, so parameters with it render correctly.
+    pub fn holds_profile_tables(&self, color: &ProfileColor) -> bool {
+        color.camera_profile.gpu_data().words.len() <= self.profile_capacity_words
+    }
+
+    /// Uploads the tables of `color` unless the profile buffer holds them.
+    /// Tables that do not fit are not uploaded; callers check
+    /// [`Self::holds_profile_tables`] before rendering another profile.
+    fn upload_profile_tables(&self, queue: &wgpu::Queue, color: &Arc<ProfileColor>) {
+        let Ok(mut uploaded) = self.uploaded_profile.lock() else {
+            return;
+        };
+        if Arc::ptr_eq(&uploaded, color) {
+            return;
+        }
+        let data = color.camera_profile.gpu_data();
+        if let Err(error) = data.validate() {
+            log::error!("keeping the previous camera profile tables: {error:#}");
+            return;
+        }
+        if data.words.len() > self.profile_capacity_words {
+            log::error!(
+                "camera profile tables of {} words exceed the graph's {}",
+                data.words.len(),
+                self.profile_capacity_words
+            );
+            return;
+        }
+        queue.write_buffer(&self.profile_buffer, 0, bytemuck::cast_slice(&data.words));
+        *uploaded = Arc::clone(color);
     }
 
     /// Allocates the effect inputs `params` reads (`effect_inputs`).

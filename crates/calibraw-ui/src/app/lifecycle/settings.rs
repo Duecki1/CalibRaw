@@ -22,6 +22,15 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
+    /// Shows the sidebar's Develop cards in `order`.
+    pub(crate) fn set_develop_card_order(&mut self, order: crate::app::DevelopCardOrder) {
+        if self.preferences.develop_card_order == order {
+            return;
+        }
+        self.preferences.develop_card_order = order;
+        self.persist_performance_settings();
+    }
+
     pub(crate) fn preview_backdrop_color(&self) -> egui::Color32 {
         self.preferences
             .preview_backdrop
@@ -323,6 +332,7 @@ impl CalibRawApp {
             preview_full_resolution: self.preview.full_resolution.enabled(),
             image_relative_brush_size: self.preferences.image_relative_brush_size,
             show_develop_navigation_labels: self.preferences.show_develop_navigation_labels,
+            develop_card_order: self.preferences.develop_card_order.clone(),
             export_name_template: self.preferences.export_name_template.clone(),
             export_format: self.export.format,
             ui_design: self.preferences.ui_design,

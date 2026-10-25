@@ -176,6 +176,8 @@ pub(crate) enum AdjustmentSection {
     #[default]
     Light,
     ToneCurve,
+    /// Shown only when the LUT card is (`Sidebar::look_lut_card_shown`).
+    Lut,
     Color,
     ColorGrading,
     Detail,
@@ -424,6 +426,10 @@ pub(crate) struct DevelopState {
     pub(crate) look_lut_table: Option<Arc<crate::luts::CubeLut>>,
     /// The LUT the previews render, kept like `target_exposure`.
     pub(crate) target_look: Option<crate::luts::ResolvedLook>,
+    /// Another camera profile's colour the shown previews render instead of
+    /// the photo's own: a previewed profile.
+    pub(crate) target_profile_color: Option<Arc<crate::pipeline::ProfileColor>>,
+    pub(crate) profile_preview: crate::app::lifecycle::CameraProfilePreview,
     pub(crate) load_receiver: Option<mpsc::Receiver<LoadEvent>>,
     pub(crate) loading_label: Option<String>,
     /// The view the loading document opens at; `None` fits it.

@@ -7,6 +7,7 @@ pub(crate) mod hsl_mixer;
 pub(crate) mod loading_wave;
 pub(crate) mod luminance_range_slider;
 pub(crate) mod point_color;
+pub(crate) mod preview_list;
 pub(crate) mod tone_curve_editor;
 
 use eframe::egui::{Align2, Color32, FontId, Painter, Pos2};

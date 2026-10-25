@@ -171,7 +171,7 @@ mod tests {
             focus_distance: 0.0,
             capture_metadata: Default::default(),
             cfa_kind: CfaKind::Bayer,
-            raw_pixels: pixels,
+            raw_pixels: pixels.into(),
             scene_linear_raster: None,
             scene_referred_raster: false,
             color_indices: CompactPixelMap::dense(
@@ -180,7 +180,13 @@ mod tests {
                 vec![0; (width * height) as usize],
             ),
             wb_coeffs: [1.0; 4],
-            cam_to_srgb: [[0.0; 4]; 3],
+            profile_color: std::sync::Arc::new(crate::pipeline::ProfileColor {
+                cam_to_srgb: [[0.0; 4]; 3],
+                camera_profile: CameraProfile::default(),
+                camera_profile_source: None,
+                white_balance_model: None,
+            }),
+            color_source: None,
             black_levels: [0.0; 4],
             black_levels_per_pixel: CompactPixelMap::dense(
                 width,
@@ -190,10 +196,7 @@ mod tests {
             white_levels: [1023.0; 4],
             sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: crate::pipeline::NoiseProfile::default(),
-            camera_profile: CameraProfile::default(),
-            camera_profile_source: None,
             available_camera_profiles: Vec::new(),
-            white_balance_model: None,
             lens_geometry: None,
             lens_shading: None,
             lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
@@ -209,8 +212,7 @@ mod tests {
         raw.color_indices = CompactPixelMap::repeating(width, height, 2, 2, vec![0, 1, 3, 2]);
         raw.white_levels = [10_000.0; 4];
         raw.black_levels_per_pixel = CompactPixelMap::repeating(width, height, 1, 1, vec![0.0]);
-        raw.raw_pixels.clear();
-        raw.raw_pixels.reserve((width * height) as usize);
+        let mut samples = Vec::with_capacity((width * height) as usize);
         for y in 0..height {
             for x in 0..width {
                 let physical = raw.color_indices[(y * width + x) as usize];
@@ -222,9 +224,10 @@ mod tests {
                 {
                     value = 1.0;
                 }
-                raw.raw_pixels.push((value * 10_000.0).round() as u16);
+                samples.push((value * 10_000.0).round() as u16);
             }
         }
+        raw.raw_pixels = samples.into();
         raw
     }
 
@@ -1023,14 +1026,17 @@ mod tests {
     fn raster_derivatives_preserve_camera_transform_metadata() {
         let mut raw = test_raster(4, 4);
         raw.wb_coeffs = [2.0, 1.0, 0.5, 1.0];
-        raw.cam_to_srgb = [
+        std::sync::Arc::make_mut(&mut raw.profile_color).cam_to_srgb = [
             [1.0, 2.0, 3.0, 0.0],
             [4.0, 5.0, 6.0, 0.0],
             [7.0, 8.0, 9.0, 0.0],
         ];
         let cropped = crop_raw(&raw, 1, 1, 2, 2);
         assert_eq!(cropped.wb_coeffs, raw.wb_coeffs);
-        assert_eq!(cropped.cam_to_srgb, raw.cam_to_srgb);
+        assert!(std::sync::Arc::ptr_eq(
+            &cropped.profile_color,
+            &raw.profile_color
+        ));
         assert_eq!(cropped.white_levels, raw.white_levels);
         assert_eq!(cropped.black_levels, raw.black_levels);
     }
@@ -1061,7 +1067,13 @@ mod tests {
                 (0..width * height).map(|value| (value % 4) as u8).collect(),
             ),
             wb_coeffs: [1.0; 4],
-            cam_to_srgb: [[0.0; 4]; 3],
+            profile_color: std::sync::Arc::new(crate::pipeline::ProfileColor {
+                cam_to_srgb: [[0.0; 4]; 3],
+                camera_profile: CameraProfile::default(),
+                camera_profile_source: None,
+                white_balance_model: None,
+            }),
+            color_source: None,
             black_levels: [0.0; 4],
             black_levels_per_pixel: CompactPixelMap::dense(
                 width,
@@ -1071,10 +1083,7 @@ mod tests {
             white_levels: [1023.0; 4],
             sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: crate::pipeline::NoiseProfile::default(),
-            camera_profile: CameraProfile::default(),
-            camera_profile_source: None,
             available_camera_profiles: Vec::new(),
-            white_balance_model: None,
             lens_geometry: None,
             lens_shading: None,
             lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
@@ -1086,7 +1095,7 @@ mod tests {
 
         let cropped = crop_raw(&raw, 1, 1, 2, 2);
         assert_eq!((cropped.width, cropped.height), (2, 2));
-        assert_eq!(cropped.raw_pixels, vec![5, 6, 9, 10]);
+        assert_eq!(*cropped.raw_pixels, [5, 6, 9, 10]);
         assert_eq!(
             cropped.color_indices.iter().copied().collect::<Vec<_>>(),
             vec![1, 2, 1, 2]
@@ -1130,12 +1139,18 @@ mod tests {
             focus_distance: 0.0,
             capture_metadata: Default::default(),
             cfa_kind: CfaKind::Bayer,
-            raw_pixels: vec![100; (width * height) as usize],
+            raw_pixels: vec![100; (width * height) as usize].into(),
             scene_linear_raster: None,
             scene_referred_raster: false,
             color_indices: CompactPixelMap::dense(width, height, color_indices),
             wb_coeffs: [1.0; 4],
-            cam_to_srgb: [[0.0; 4]; 3],
+            profile_color: std::sync::Arc::new(crate::pipeline::ProfileColor {
+                cam_to_srgb: [[0.0; 4]; 3],
+                camera_profile: CameraProfile::default(),
+                camera_profile_source: None,
+                white_balance_model: None,
+            }),
+            color_source: None,
             black_levels: [0.0; 4],
             black_levels_per_pixel: CompactPixelMap::dense(
                 width,
@@ -1145,10 +1160,7 @@ mod tests {
             white_levels: [1023.0; 4],
             sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: crate::pipeline::NoiseProfile::default(),
-            camera_profile: CameraProfile::default(),
-            camera_profile_source: None,
             available_camera_profiles: Vec::new(),
-            white_balance_model: None,
             lens_geometry: None,
             lens_shading: None,
             lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
@@ -1175,8 +1187,9 @@ mod tests {
     #[test]
     fn cfa_proxy_can_hide_a_native_clipped_photosite() {
         let mut raw = patterned_bayer_raw();
-        raw.raw_pixels.fill(100);
-        raw.raw_pixels[0] = 1023;
+        let samples = raw.raw_pixels.make_mut();
+        samples.fill(100);
+        samples[0] = 1023;
 
         let proxy = build_proxy(&raw, ProxySpec { max_edge: 2 });
 
@@ -1195,7 +1208,7 @@ mod tests {
                 // A two-pixel coloured/checker structure: each CFA phase sees
                 // alternating shadow values, while every proxy footprint sees
                 // the same mean.
-                raw.raw_pixels[(y * raw.width + x) as usize] =
+                raw.raw_pixels.make_mut()[(y * raw.width + x) as usize] =
                     if (x / 2 + y / 2) % 2 == 0 { 300 } else { 500 };
             }
         }
@@ -1212,7 +1225,7 @@ mod tests {
         };
 
         assert!(raw.raw_pixels.contains(&300) && raw.raw_pixels.contains(&500));
-        assert_eq!(proxy.raw_pixels, vec![400; 4]);
+        assert_eq!(*proxy.raw_pixels, [400; 4]);
         assert!(variance(&raw.raw_pixels) > 0.0);
         assert_eq!(variance(&proxy.raw_pixels), 0.0);
     }
@@ -1340,7 +1353,7 @@ mod tests {
     #[test]
     fn small_ratio_proxy_keeps_flat_areas_flat_and_counts_noise_by_weight() {
         let mut raw = bayer_ramp(240, 240);
-        raw.raw_pixels = vec![700; 240 * 240];
+        raw.raw_pixels = vec![700; 240 * 240].into();
         raw.noise_profile = crate::pipeline::NoiseProfile::default();
         let proxy = build_proxy(&raw, ProxySpec { max_edge: 160 });
         assert!(proxy.raw_pixels.iter().all(|value| *value == 700));
@@ -1353,10 +1366,10 @@ mod tests {
     #[test]
     fn large_ratio_proxy_still_averages_its_footprint() {
         let mut raw = bayer_ramp(240, 240);
-        raw.raw_pixels = vec![0; 240 * 240];
+        raw.raw_pixels = vec![0; 240 * 240].into();
         for y in 0..4u32 {
             for x in 0..4u32 {
-                raw.raw_pixels[(y * 240 + x) as usize] = 1000;
+                raw.raw_pixels.make_mut()[(y * 240 + x) as usize] = 1000;
             }
         }
         // Ratio 240 / 48 = 5: the first proxy pixel averages the 4x4 block that

@@ -22,6 +22,7 @@ pub(crate) enum AppTab {
 pub(crate) struct PreferencesState {
     pub(crate) image_relative_brush_size: bool,
     pub(crate) show_develop_navigation_labels: bool,
+    pub(crate) develop_card_order: DevelopCardOrder,
     pub(crate) automatic_lens_correction: AutomaticLensCorrection,
     /// Ask about manual correction when automatic correction finds no profile.
     pub(crate) missing_lens_profile_prompt: bool,

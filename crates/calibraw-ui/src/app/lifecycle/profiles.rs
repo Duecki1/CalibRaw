@@ -194,6 +194,7 @@ impl CalibRawApp {
             }
         }
 
+        self.keep_camera_profile_preview_for(&selection);
         self.develop.selected_camera_profile = selection.clone();
         self.preferences.last_camera_profile = selection
             .as_ref()

@@ -4,7 +4,12 @@
 //! and edits name their LUT by id. The open photo's LUT table is read off the
 //! UI thread; the previews render the photo without it until it is read, and
 //! when the library does not hold it.
+//!
+//! Resting the pointer on a LUT in the Develop card previews it: the previews
+//! render the hovered LUT once its table is read, and saved edits, history
+//! and export never contain it.
 use super::*;
+use crate::app::hover_preview::HoverPreview;
 use crate::app::preview_visibility::PreviewVisibility;
 use crate::luts::{
     CubeLut, LookLut, LutEntry, LutId, LutLibrary, LutLibraryError, LutStore, ResolvedLook,
@@ -13,6 +18,12 @@ use crate::luts::{
 /// The title of the Develop card that holds the LUT, which its preview eye
 /// is keyed by.
 pub(crate) const LOOK_LUT_CARD_TITLE: &str = "LUT";
+
+/// Recently chosen LUTs the Develop card lists first.
+const RECENT_LUTS: usize = 5;
+
+/// A row of the LUT list: a library LUT, or `None` for no LUT.
+pub(crate) type LutChoice = Option<LutId>;
 
 #[derive(Default)]
 pub(crate) struct LutState {
@@ -32,6 +43,16 @@ pub(crate) struct LutState {
     pub(crate) rename: Option<LutRename>,
     /// The LUT the preview last could not upload, reported once.
     reported_upload_failure: Option<LutId>,
+    /// The row of the Develop card's list the pointer rests on.
+    pub(crate) hover: HoverPreview<LutChoice>,
+    /// The table of the hovered LUT once read. While the next hovered LUT is
+    /// read it still holds the previous one, so the preview does not flash
+    /// the photo without a LUT between rows.
+    hover_table: Option<Arc<CubeLut>>,
+    /// The table being read for the hovered LUT.
+    hover_loading: Option<LutTableLoad>,
+    /// Library LUTs chosen in this session, most recent first.
+    recent: Vec<LutId>,
 }
 
 /// The Settings dialog that renames a library LUT.
@@ -45,6 +66,27 @@ pub(crate) struct LutRename {
 struct LutTableLoad {
     id: LutId,
     receiver: mpsc::Receiver<Result<Arc<CubeLut>, LutLibraryError>>,
+}
+
+impl LutTableLoad {
+    /// Reads `id` from `store` on a worker.
+    fn start(ctx: &egui::Context, store: LutStore, id: LutId) -> Self {
+        Self {
+            id,
+            receiver: spawn_ui_worker(ctx, move || store.load(id)),
+        }
+    }
+
+    /// The read's result once it is done.
+    fn try_finish(&self) -> Option<Result<Arc<CubeLut>, LutLibraryError>> {
+        match self.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err(LutLibraryError::InvalidIndex(
+                "the LUT reader stopped unexpectedly".to_owned(),
+            ))),
+        }
+    }
 }
 
 impl LutState {
@@ -87,6 +129,22 @@ impl LutState {
     /// Reads library LUTs on any thread.
     pub(crate) fn store(&self) -> Option<LutStore> {
         self.library.as_ref().map(|library| library.store().clone())
+    }
+
+    /// Library LUTs chosen in this session, most recent first.
+    pub(crate) fn recent(&self) -> &[LutId] {
+        &self.recent
+    }
+
+    fn note_recent(&mut self, id: LutId) {
+        self.recent.retain(|recent| *recent != id);
+        self.recent.insert(0, id);
+        self.recent.truncate(RECENT_LUTS);
+    }
+
+    fn end_hover_table(&mut self) {
+        self.hover_table = None;
+        self.hover_loading = None;
     }
 }
 
@@ -166,6 +224,12 @@ impl CalibRawApp {
     /// Selects library LUT `id`, or no LUT, as a change of the edit. The
     /// amount carries over from the previous LUT.
     pub(crate) fn select_look_lut(&mut self, id: Option<LutId>) {
+        if self.luts.hover.suppress(&id) {
+            self.luts.end_hover_table();
+        }
+        if let Some(id) = id.filter(|id| self.luts.entry(*id).is_some()) {
+            self.luts.note_recent(id);
+        }
         let amount = self
             .develop
             .look_lut
@@ -176,6 +240,8 @@ impl CalibRawApp {
             ..LookLut::new(entry)
         });
         self.set_look_lut(look);
+        // Ends the hover preview even when the edit already used this LUT.
+        self.sync_preview_look();
     }
 
     /// Sets the amount of the edit's LUT, 0–1.
@@ -240,20 +306,16 @@ impl CalibRawApp {
             self.develop.look_lut_table = Some(table);
             return;
         }
-        let receiver = spawn_ui_worker(&self.egui_ctx, move || store.load(id));
-        self.luts.loading = Some(LutTableLoad { id, receiver });
+        self.luts.loading = Some(LutTableLoad::start(&self.egui_ctx, store, id));
     }
 
     pub(in crate::app) fn poll_look_lut_table(&mut self) {
+        self.poll_hover_lut_table();
         let Some(load) = self.luts.loading.as_ref() else {
             return;
         };
-        let result = match load.receiver.try_recv() {
-            Ok(result) => result,
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => Err(LutLibraryError::InvalidIndex(
-                "the LUT reader stopped unexpectedly".to_owned(),
-            )),
+        let Some(result) = load.try_finish() else {
+            return;
         };
         let id = load.id;
         self.luts.loading = None;
@@ -303,13 +365,92 @@ impl CalibRawApp {
         })
     }
 
-    /// The LUT the edited previews render: the edit's, unless the LUT card's
-    /// preview eye hides it.
+    /// The LUT the edited previews render: a hovered LUT once its table is
+    /// read, otherwise the edit's, unless the LUT card's preview eye hides it.
     pub(in crate::app) fn preview_look(&self) -> Option<ResolvedLook> {
+        if let Some(hovered) = self.hovered_look() {
+            return hovered;
+        }
         if !PreviewVisibility::globally_visible(&self.egui_ctx, LOOK_LUT_CARD_TITLE) {
             return None;
         }
         self.resolved_look()
+    }
+
+    /// The look of the hovered row, at the edit's amount: `Some(None)` for
+    /// the None row. `None` without a hovered row, and until the first
+    /// hovered LUT's table is read.
+    fn hovered_look(&self) -> Option<Option<ResolvedLook>> {
+        let choice = self.luts.hover.shown()?;
+        if choice.is_none() {
+            return Some(None);
+        }
+        let lut = self.luts.hover_table.clone()?;
+        let amount = self
+            .develop
+            .look_lut
+            .as_ref()
+            .map_or(LookLut::DEFAULT_AMOUNT, |look| look.amount);
+        Some(Some(ResolvedLook { lut, amount }))
+    }
+
+    /// Starts, switches or ends the LUT hover preview. Runs once per frame
+    /// after the LUT card has reported the row under the pointer.
+    pub(in crate::app) fn sync_lut_hover_preview(&mut self) {
+        self.sync_lut_hover_preview_at(Instant::now());
+    }
+
+    fn sync_lut_hover_preview_at(&mut self, now: Instant) {
+        let (changed, wait) = self.luts.hover.advance(now);
+        if let Some(wait) = wait {
+            self.egui_ctx.request_repaint_after(wait);
+        }
+        if !changed {
+            return;
+        }
+        match self.luts.hover.shown().copied().flatten() {
+            Some(id) => self.read_hover_lut_table(id),
+            None => self.luts.end_hover_table(),
+        }
+        self.sync_preview_look();
+    }
+
+    fn read_hover_lut_table(&mut self, id: LutId) {
+        if self.luts.hover_table.as_ref().map(|table| table.id()) == Some(id) {
+            self.luts.hover_loading = None;
+            return;
+        }
+        let Some(store) = self.luts.store() else {
+            return;
+        };
+        if let Some(table) = store.cached(id) {
+            self.luts.hover_loading = None;
+            self.luts.hover_table = Some(table);
+        } else if self.luts.hover_loading.as_ref().map(|load| load.id) != Some(id) {
+            self.luts.hover_loading = Some(LutTableLoad::start(&self.egui_ctx, store, id));
+        }
+    }
+
+    fn poll_hover_lut_table(&mut self) {
+        let Some(load) = self.luts.hover_loading.as_ref() else {
+            return;
+        };
+        let Some(result) = load.try_finish() else {
+            return;
+        };
+        let id = load.id;
+        self.luts.hover_loading = None;
+        if self.luts.hover.shown().copied().flatten() != Some(id) {
+            return;
+        }
+        match result {
+            Ok(table) => {
+                self.luts.hover_table = Some(table);
+                self.sync_preview_look();
+            }
+            // A LUT that cannot be read is reported when it is chosen.
+            Err(error) => log::warn!("could not read the hovered LUT {id}: {error}"),
+        }
     }
 
     /// Brings the previews' LUT up to date, rendering the Output stage again
@@ -511,6 +652,54 @@ mod tests {
             app.develop.look_lut.as_ref().map(|look| look.amount),
             Some(0.25)
         );
+    }
+
+    #[test]
+    fn a_hovered_lut_renders_without_touching_saved_edits_or_history() {
+        use crate::app::hover_preview::HOVER_PREVIEW_DELAY;
+        let folder = tempfile::tempdir().unwrap();
+        let (mut app, id) = app_with_lut(folder.path());
+        app.reset_edit_history();
+        let saved = app.capture_sidecar_edit_state();
+        let revision = app.edit_commit_revision();
+
+        let start = Instant::now();
+        app.luts.hover.request(Some(id));
+        app.sync_lut_hover_preview_at(start);
+        assert!(app.develop.target_look.is_none());
+        app.luts.hover.request(Some(id));
+        app.sync_lut_hover_preview_at(start + HOVER_PREVIEW_DELAY);
+        // An imported LUT is read already, so its preview renders at once.
+        let look = app.develop.target_look.as_ref().unwrap();
+        assert_eq!((look.lut.id(), look.amount), (id, LookLut::DEFAULT_AMOUNT));
+        assert_eq!(app.capture_sidecar_edit_state(), saved);
+        app.observe_edit_history(&app.egui_ctx.clone());
+        assert_eq!(app.edit_commit_revision(), revision);
+
+        // Without a request from the card, the next frame ends the preview.
+        app.sync_lut_hover_preview_at(start + HOVER_PREVIEW_DELAY * 2);
+        assert!(app.develop.target_look.is_none());
+
+        // Choosing the hovered LUT ends its preview and applies it.
+        app.luts.hover.request(Some(id));
+        app.sync_lut_hover_preview_at(start);
+        app.luts.hover.request(Some(id));
+        app.sync_lut_hover_preview_at(start + HOVER_PREVIEW_DELAY);
+        app.select_look_lut(Some(id));
+        assert!(app.luts.hover.shown().is_none());
+        assert_eq!(app.luts.recent(), [id]);
+        assert_eq!(
+            app.develop.target_look.as_ref().map(|look| look.lut.id()),
+            Some(id)
+        );
+
+        // Resting on None previews the photo without its LUT.
+        app.luts.hover.request(None);
+        app.sync_lut_hover_preview_at(start + HOVER_PREVIEW_DELAY * 3);
+        app.luts.hover.request(None);
+        app.sync_lut_hover_preview_at(start + HOVER_PREVIEW_DELAY * 4);
+        assert!(app.develop.target_look.is_none());
+        assert_eq!(app.develop.look_lut.as_ref().map(|look| look.id), Some(id));
     }
 
     #[test]

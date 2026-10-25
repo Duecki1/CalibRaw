@@ -2,7 +2,9 @@
 use super::*;
 use crate::presets::{Preset, StoredPreset};
 
+mod amount;
 mod preview;
+use amount::AppliedPreset;
 use preview::PresetHoverPreview;
 
 /// The folder that stores presets, next to the app settings file.
@@ -24,6 +26,8 @@ pub(crate) struct PresetState {
     pub(crate) group_dialog: Option<GroupDialog>,
     pub(crate) pending_group_delete: Option<String>,
     pub(crate) hover: PresetHoverPreview,
+    /// The preset applied last, whose amount may still change.
+    applied: Option<AppliedPreset>,
 }
 
 impl PresetState {
@@ -398,16 +402,17 @@ impl CalibRawApp {
             return;
         }
         self.end_preset_hover_preview_for(path);
-        self.ui.notice = Some(
-            match self.apply_edit_transfer_to_current(
+        let result = self.apply_preset_with_amount(&preset, |app| {
+            app.apply_edit_transfer_to_current(
                 EditTransfer::Preset(&preset),
                 EditTransferOrigin::Develop,
                 frame,
-            ) {
-                Ok(_) => format!("Applied preset “{}”.", preset.name()),
-                Err(error) => error,
-            },
-        );
+            )
+        });
+        self.ui.notice = Some(match result {
+            Ok(_) => format!("Applied preset “{}”.", preset.name()),
+            Err(error) => error,
+        });
     }
 
     /// Copies preset files into the preset folder. Imported presets whose

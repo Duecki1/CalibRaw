@@ -236,7 +236,7 @@ fn lch_turns_fully_clipped_areas_neutral_with_unequal_wb() -> anyhow::Result<()>
     };
     // Every sample at white, with R and B gains on both sides of green.
     let mut raw = opposed_highlight_consistency_raw(EDGE, EDGE);
-    raw.raw_pixels.fill(10_000);
+    raw.raw_pixels.make_mut().fill(10_000);
     raw.wb_coeffs = [2.1, 1.0, 1.6, 1.0];
     let exposure = ExposureParams {
         highlight_method: HighlightReconstructionMethod::Lch,
@@ -266,7 +266,7 @@ fn lch_turns_fully_clipped_areas_neutral_with_unequal_wb() -> anyhow::Result<()>
 /// white, neutral white balance, and `gain` as its lens shading.
 fn lens_shaded_raw(edge: u32, gain: impl Fn([f32; 2]) -> f32) -> LoadedRaw {
     let mut raw = opposed_highlight_consistency_raw(edge, edge);
-    for (index, sample) in raw.raw_pixels.iter_mut().enumerate() {
+    for (index, sample) in raw.raw_pixels.make_mut().iter_mut().enumerate() {
         let level = match raw.color_indices[index] {
             0 => 0.9,
             2 => 0.3,
@@ -379,7 +379,7 @@ fn dark_frame_raw(edge: u32, sigma_dn: f32) -> LoadedRaw {
             .wrapping_add(1_442_695_040_888_963_407);
         ((state >> 40) as f32 + 0.5) / (1u64 << 24) as f32
     };
-    for sample in &mut raw.raw_pixels {
+    for sample in raw.raw_pixels.make_mut() {
         let gaussian = (-2.0 * uniform().ln()).sqrt() * (std::f32::consts::TAU * uniform()).cos();
         *sample = (512.0 + sigma_dn * gaussian).round().max(0.0) as u16;
     }
@@ -539,7 +539,7 @@ fn noise_below_black_stays_finite_and_dark_through_the_pipeline() -> anyhow::Res
             let index = (y * EDGE + x) as usize;
             let level = 0.4 * (x - EDGE / 2) as f32 / (EDGE / 2) as f32;
             let sample = f32::from(bayer.raw_pixels[index]) + level * (16_383.0 - 512.0);
-            bayer.raw_pixels[index] = sample.round().min(16_383.0) as u16;
+            bayer.raw_pixels.make_mut()[index] = sample.round().min(16_383.0) as u16;
         }
     }
     let mut xtrans = bayer.clone();
@@ -1273,25 +1273,28 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         focus_distance: 0.0,
         capture_metadata: Default::default(),
         cfa_kind: CfaKind::Bayer,
-        raw_pixels: pixels,
+        raw_pixels: pixels.into(),
         scene_linear_raster: None,
         scene_referred_raster: false,
         color_indices: CompactPixelMap::dense(width, height, colors),
         wb_coeffs: [1.45, 1.0, 0.72, 1.0],
-        cam_to_srgb: [
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-        ],
+        profile_color: std::sync::Arc::new(crate::pipeline::ProfileColor {
+            cam_to_srgb: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            camera_profile: CameraProfile::default(),
+            camera_profile_source: None,
+            white_balance_model: None,
+        }),
+        color_source: None,
         black_levels: [0.0; 4],
         black_levels_per_pixel: CompactPixelMap::repeating(width, height, 1, 1, vec![0.0]),
         white_levels: [10_000.0; 4],
         sensor_saturation: SensorSaturation::AT_WHITE,
         noise_profile: crate::pipeline::NoiseProfile::default(),
-        camera_profile: CameraProfile::default(),
-        camera_profile_source: None,
         available_camera_profiles: Vec::new(),
-        white_balance_model: None,
         lens_geometry: None,
         lens_shading: None,
         lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
@@ -2029,7 +2032,8 @@ fn neutral_bayer_raw(edge: u32, sigma: f32, level: impl Fn(u32, u32) -> f32) -> 
             let gaussian =
                 (-2.0 * uniform().ln()).sqrt() * (std::f32::consts::TAU * uniform()).cos();
             let sensor = level(x, y) / raw.wb_coeffs[channel] + sigma * gaussian;
-            raw.raw_pixels[index] = (sensor * 10_000.0).round().clamp(0.0, 10_000.0) as u16;
+            raw.raw_pixels.make_mut()[index] =
+                (sensor * 10_000.0).round().clamp(0.0, 10_000.0) as u16;
         }
     }
     raw
@@ -2197,7 +2201,7 @@ fn xtrans_demosaic_matches_darktable_markesteijn() -> anyhow::Result<()> {
                 + ((x * x * 3 + y * y * 5 + x * y) % 997) * 4
                 + (x * 13 % 7) * 50
                 + 400 * u32::from(color(x, y));
-            raw.raw_pixels[(y * EDGE + x) as usize] = value as u16;
+            raw.raw_pixels.make_mut()[(y * EDGE + x) as usize] = value as u16;
         }
     }
     let exposure = ExposureParams {
@@ -2262,7 +2266,7 @@ fn ai_denoise_strength_renders_the_linear_blend_of_both_mosaics() -> anyhow::Res
     };
     let render_reference = |pixels: Vec<u16>| -> anyhow::Result<Vec<f32>> {
         let mut raw = opposed_highlight_consistency_raw(EDGE, EDGE);
-        raw.raw_pixels = pixels;
+        raw.raw_pixels = pixels.into();
         let params = GpuParams::new(&exposure(false, 1.0), &MaskStack::default(), &raw);
         let pipeline = RawGpuPipeline::new(
             &device,
@@ -2293,7 +2297,7 @@ fn ai_denoise_strength_renders_the_linear_blend_of_both_mosaics() -> anyhow::Res
         pipeline.recompute(&queue, &device, &params);
         pipeline.read_display_linear_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
     };
-    assert_eq!(render(0.0)?, render_reference(source.raw_pixels.clone())?);
+    assert_eq!(render(0.0)?, render_reference(source.raw_pixels.to_vec())?);
     assert_eq!(render(1.0)?, render_reference(ai_pixels)?);
     let half = render(0.5)?;
     let expected = render_reference(blended)?;
@@ -2427,7 +2431,7 @@ fn white_balance_has_no_effect_without_a_white_balance_model() -> anyhow::Result
         })
         .collect();
     let source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
-    assert!(source.white_balance_model.is_none());
+    assert!(source.profile_color.white_balance_model.is_none());
     let exposure = |white_balance| ExposureParams {
         white_balance,
         ..Default::default()
@@ -2491,7 +2495,9 @@ fn the_profile_look_precedes_the_user_colour_edits() -> anyhow::Result<()> {
     // A saturated red, which the look turns green.
     let pixels = (0..EDGE * EDGE).flat_map(|_| [0.30, 0.03, 0.03]).collect();
     let mut source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
-    source.camera_profile.look_table = Some(HsvMap::new(
+    std::sync::Arc::make_mut(&mut source.profile_color)
+        .camera_profile
+        .look_table = Some(HsvMap::new(
         [6, 2, 1],
         vec![[120.0, 1.0, 1.0]; 12],
         ProfileEncoding::Linear,
@@ -2525,5 +2531,80 @@ fn the_profile_look_precedes_the_user_colour_edits() -> anyhow::Result<()> {
             "{looked:?} became {edited:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_previewed_camera_profile_renders_as_a_graph_built_for_it() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 32;
+    let source = neutral_bayer_raw(EDGE, 0.002, |x, y| {
+        0.1 + 0.6 * (x as f32 / EDGE as f32) * (y as f32 / EDGE as f32)
+    });
+    // Another camera profile of the same photo: its own matrix and a look
+    // table that the original profile lacks.
+    let mut other_color = (*source.profile_color).clone();
+    other_color.cam_to_srgb[0][0] *= 1.3;
+    other_color.cam_to_srgb[2][1] += 0.05;
+    other_color.camera_profile.look_table = Some(HsvMap::new(
+        [6, 2, 1],
+        vec![[40.0, 1.2, 1.0]; 12],
+        ProfileEncoding::Linear,
+    )?);
+    let other_color = std::sync::Arc::new(other_color);
+    let other = LoadedRaw {
+        profile_color: std::sync::Arc::clone(&other_color),
+        ..source.clone()
+    };
+    let exposure = ExposureParams::default();
+    let masks = MaskStack::default();
+    let render = |pipeline: &RawGpuPipeline, params: &GpuParams| {
+        pipeline.recompute(&queue, &device, params);
+        pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+
+    let previewing = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure, &masks, &source),
+        PipelineOptions::new(ProcessingQuality::Preview).profile_preview(true),
+    )?;
+    assert!(previewing.holds_profile_tables(&other_color));
+    let own = render(&previewing, &GpuParams::new(&exposure, &masks, &source))?;
+    let previewed = render(
+        &previewing,
+        &GpuParams::new_with_profile_color(&exposure, &masks, &source, &other_color),
+    )?;
+
+    let built_for_other = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &other,
+        &GpuParams::new(&exposure, &masks, &other),
+        PipelineOptions::new(ProcessingQuality::Preview),
+    )?;
+    let expected = render(&built_for_other, &GpuParams::new(&exposure, &masks, &other))?;
+    assert_ne!(own, expected, "the profiles render differently");
+    assert!(
+        previewed == expected,
+        "the previewed profile renders as built"
+    );
+
+    // Ending the preview renders the graph's own profile again.
+    let restored = render(&previewing, &GpuParams::new(&exposure, &masks, &source))?;
+    assert!(restored == own);
+
+    // A graph without room for previews keeps its own tables only.
+    let exact = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure, &masks, &source),
+        PipelineOptions::new(ProcessingQuality::Preview),
+    )?;
+    assert!(!exact.holds_profile_tables(&other_color));
     Ok(())
 }

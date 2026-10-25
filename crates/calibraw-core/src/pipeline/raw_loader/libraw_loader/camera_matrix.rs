@@ -83,14 +83,55 @@ pub(super) struct InterpolatedDngProfile {
     pub(super) weight: f32,
 }
 
+/// One DNG colour calibration of LibRaw's colour data.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::pipeline::raw_loader) struct LibRawDngColor {
+    pub(super) illuminant: u16,
+    pub(super) calibration: [[f32; 4]; 4],
+    pub(super) colormatrix: [[f32; 3]; 4],
+    pub(super) forwardmatrix: [[f32; 4]; 3],
+}
+
+/// The parts of LibRaw's colour data the camera-to-working matrix is built
+/// from, copied out of its context so the photo can take another camera
+/// profile after the context is gone.
+#[derive(Clone, Debug)]
+pub(in crate::pipeline::raw_loader) struct LibRawColor {
+    pub(super) cam_xyz: [[f32; 3]; 4],
+    pub(super) dng_color: [LibRawDngColor; 2],
+    pub(super) dng_analog_balance: [f32; 4],
+    /// The camera's white balance presets by temperature: kelvin, then four
+    /// multipliers.
+    pub(super) wbct_coeffs: [[f32; 5]; 64],
+}
+
+impl LibRawColor {
+    pub(super) fn from_libraw(color: &ffi::libraw_colordata_t) -> Self {
+        Self {
+            cam_xyz: color.cam_xyz,
+            dng_color: std::array::from_fn(|index| {
+                let set = &color.dng_color[index];
+                LibRawDngColor {
+                    illuminant: set.illuminant,
+                    calibration: set.calibration,
+                    colormatrix: set.colormatrix,
+                    forwardmatrix: set.forwardmatrix,
+                }
+            }),
+            dng_analog_balance: color.dng_levels.analogbalance,
+            wbct_coeffs: color.WBCT_Coeffs,
+        }
+    }
+}
+
 pub(super) fn camera_to_working_matrix(
-    color: &ffi::libraw_colordata_t,
+    color: &LibRawColor,
     wb_coeffs: [f32; 4],
     cdesc: [u8; 4],
     parsed_profile: Option<&DcpProfile>,
     calibration_compatible: bool,
 ) -> Result<([[f32; 4]; 3], f32, Option<CameraWhiteBalanceModel>)> {
-    let analog_balance = analog_balance_matrix(color.dng_levels.analogbalance);
+    let analog_balance = analog_balance_matrix(color.dng_analog_balance);
     let parsed_endpoints = parsed_profile.map_or([None, None], |profile| {
         parsed_dng_endpoints(
             profile,

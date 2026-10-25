@@ -6,8 +6,8 @@
 
 use super::libraw_loader as shared;
 use super::{
-    validate_raw_dimensions, CameraProfile, CameraProfileCandidate, CameraProfileMode,
-    CaptureMetadata, CfaKind, CompactPixelMap, LoadedRaw, RawDisplayMetadata, RawThumbnail,
+    validate_raw_dimensions, CameraProfileCandidate, CameraProfileMode, CaptureMetadata, CfaKind,
+    CompactPixelMap, LoadedRaw, ProfileColorSource, RawDisplayMetadata, RawThumbnail,
     SensorSaturation, MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
 };
 use crate::pipeline::{color_profile::DcpProfile, noise::NoiseProfile, LateralChromaticAberration};
@@ -24,7 +24,7 @@ use rawler::tags::{DngTag, TiffCommonTag};
 use std::{
     collections::HashMap,
     panic::{catch_unwind, AssertUnwindSafe},
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
@@ -579,13 +579,21 @@ fn metadata(decoder: &dyn Decoder, source: &RawSource) -> RawMetadata {
         })
 }
 
+/// The camera profile a decode applies, read from `source` and matched
+/// against `signature`; `None` for the photo's own colour data.
+struct ChosenProfile {
+    signature: shared::EmbeddedSignature,
+    profile: Option<DcpProfile>,
+    source: Option<PathBuf>,
+}
+
 fn adapt(
     image: RawImage,
     geometry: Geometry,
     color: CameraColor,
     md: RawMetadata,
     path: &Path,
-    selected: Option<DcpProfile>,
+    chosen: ChosenProfile,
 ) -> Result<LoadedRaw> {
     ensure!(
         image.width == geometry.sensor_width && image.height == geometry.sensor_height,
@@ -668,19 +676,19 @@ fn adapt(
     }
     let wb = shared::white_balance(wb, *b"RGB\0");
     let wb_coeffs = [wb[0], wb[1], wb[2], wb[1]];
-    let (cam_to_srgb, weight, white_balance_model) =
-        shared::camera_to_working_matrix_from_profiles(
+    let color_source = ProfileColorSource::new(
+        &image.make,
+        &image.model,
+        chosen.signature,
+        shared::DecoderColor::Rawler(Box::new(shared::RawlerColorInputs {
             xyz_to_cam,
             wb_coeffs,
-            *b"RGB\0",
-            Some(&embedded),
-            selected.as_ref(),
-            color.analog_balance,
-        )?;
-    let mut camera_profile = selected
-        .map(|p| CameraProfile::from_dcp(p, weight))
-        .unwrap_or_default();
-    shared::apply_resolved_default_exposure(&mut camera_profile, color.baseline_exposure);
+            embedded,
+            analog_balance: color.analog_balance,
+            baseline_exposure: color.baseline_exposure,
+        })),
+    );
+    let profile_color = color_source.resolve(chosen.profile, chosen.source)?;
     let capture_metadata = capture_metadata(path, &md);
     let [width, height] = geometry.dimensions();
     let pixels = validate_raw_dimensions(width, height)?;
@@ -697,21 +705,19 @@ fn adapt(
         focus_distance: positive(md.exif.subject_distance),
         capture_metadata,
         cfa_kind: CfaKind::Bayer,
-        raw_pixels: Vec::new(),
+        raw_pixels: Default::default(),
         scene_linear_raster: None,
         scene_referred_raster: false,
         color_indices: CompactPixelMap::repeating(width, height, 1, 1, vec![1]),
         wb_coeffs,
-        cam_to_srgb,
         black_levels: [0.0; 4],
         black_levels_per_pixel: CompactPixelMap::repeating(width, height, 1, 1, vec![0.0]),
         white_levels: [1.0; 4],
         sensor_saturation: SensorSaturation::AT_WHITE,
         noise_profile: NoiseProfile::default(),
-        camera_profile,
-        camera_profile_source: None,
+        profile_color: Arc::new(profile_color),
+        color_source: Some(Arc::new(color_source)),
         available_camera_profiles: Vec::new(),
-        white_balance_model,
         lens_geometry: None,
         lens_shading: None,
         lateral_chromatic_aberration: LateralChromaticAberration::NONE,
@@ -810,13 +816,15 @@ fn adapt(
                 }
             });
             loaded.white_levels = [white[0]; 4];
-            loaded.raw_pixels.try_reserve_exact(pixels)?;
+            let mut samples = Vec::new();
+            samples.try_reserve_exact(pixels)?;
             for y in 0..height as usize {
                 for x in 0..width as usize {
                     let (sx, sy) = geometry.source(x, y);
-                    loaded.raw_pixels.push(data[sy * image.width + sx]);
+                    samples.push(data[sy * image.width + sx]);
                 }
             }
+            loaded.raw_pixels = samples.into();
             loaded.noise_profile = NoiseProfile::estimate(
                 width,
                 height,
@@ -869,7 +877,7 @@ pub(super) fn load_raw_file_with_profile_selection(
         let input = open(path)?;
         let samples = validate_layout(&input)?;
         let image = decode(path, &input, samples)?;
-        let (profile, source, candidates) = shared::resolve_camera_profiles(
+        let (signature, selection) = shared::resolve_camera_profiles(
             path,
             mode,
             folder,
@@ -879,9 +887,13 @@ pub(super) fn load_raw_file_with_profile_selection(
         )?;
         let color = CameraColor::from_dng(path, &input)?;
         let md = metadata(&*input.decoder, &input.source);
-        let mut loaded = adapt(image, input.geometry, color, md, path, profile)?;
-        loaded.camera_profile_source = source;
-        loaded.available_camera_profiles = candidates;
+        let chosen = ChosenProfile {
+            signature,
+            profile: selection.profile,
+            source: selection.source,
+        };
+        let mut loaded = adapt(image, input.geometry, color, md, path, chosen)?;
+        loaded.available_camera_profiles = selection.candidates;
         crate::diagnostics::record("RAW decode completed through Rawler backend");
         Ok(loaded)
     })
@@ -897,7 +909,7 @@ pub(super) fn load_proprietary_raw_file_with_profile_selection(
 ) -> Result<LoadedRaw> {
     guarded(|| {
         let (image, geometry, color, md) = decode_proprietary(path)?;
-        let (profile, profile_source, candidates) = shared::resolve_camera_profiles(
+        let (signature, selection) = shared::resolve_camera_profiles(
             path,
             mode,
             folder,
@@ -905,9 +917,13 @@ pub(super) fn load_proprietary_raw_file_with_profile_selection(
             &image.make,
             &image.model,
         )?;
-        let mut loaded = adapt(image, geometry, color, md, path, profile)?;
-        loaded.camera_profile_source = profile_source;
-        loaded.available_camera_profiles = candidates;
+        let chosen = ChosenProfile {
+            signature,
+            profile: selection.profile,
+            source: selection.source,
+        };
+        let mut loaded = adapt(image, geometry, color, md, path, chosen)?;
+        loaded.available_camera_profiles = selection.candidates;
         crate::diagnostics::record("RAW decode completed through Rawler fallback backend");
         Ok(loaded)
     })
@@ -920,10 +936,15 @@ pub(super) fn load_proprietary_raw_file_with_dcp(
     profile_path: &Path,
 ) -> Result<LoadedRaw> {
     guarded(|| {
-        let (profile, candidate) = shared::read_selected_dcp_profile(path, profile_path)?;
+        let (profile, candidate, signature) =
+            shared::read_selected_dcp_profile(path, profile_path)?;
         let (image, geometry, color, md) = decode_proprietary(path)?;
-        let mut loaded = adapt(image, geometry, color, md, path, Some(profile))?;
-        loaded.camera_profile_source = Some(candidate.path.clone());
+        let chosen = ChosenProfile {
+            signature,
+            profile: Some(profile),
+            source: Some(candidate.path.clone()),
+        };
+        let mut loaded = adapt(image, geometry, color, md, path, chosen)?;
         loaded.available_camera_profiles = vec![candidate];
         crate::diagnostics::record(
             "DCP-backed RAW decode completed through Rawler fallback backend",
@@ -981,8 +1002,14 @@ pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result
         });
         let image = decode(path, &input, samples)?;
         let md = metadata(&*input.decoder, &input.source);
-        let mut loaded = adapt(image, input.geometry, color, md, path, Some(profile))?;
-        loaded.camera_profile_source = Some(profile_path.to_owned());
+        let chosen = ChosenProfile {
+            signature: shared::EmbeddedSignature::Read(
+                color.embedded.camera_calibration_signature.clone(),
+            ),
+            profile: Some(profile),
+            source: Some(profile_path.to_owned()),
+        };
+        let mut loaded = adapt(image, input.geometry, color, md, path, chosen)?;
         loaded.available_camera_profiles = vec![CameraProfileCandidate {
             path: profile_path.to_owned(),
             name,

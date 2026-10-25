@@ -375,6 +375,7 @@ impl CalibRawApp {
                 let preview_height = loaded.preview_raw.height;
                 let profile_label = loaded
                     .full_raw
+                    .profile_color
                     .camera_profile
                     .name
                     .as_deref()

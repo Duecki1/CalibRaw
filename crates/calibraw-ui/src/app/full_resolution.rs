@@ -221,6 +221,7 @@ impl CalibRawApp {
             || self.ui.active_tab != AppTab::Develop
             || self.preview.zoomed_in()
             || self.preview.original_requested
+            || self.develop.target_profile_color.is_some()
             || self.preview.processing_pending()
             || self.preview_is_preparing()
             || self.lens_correction_busy()
