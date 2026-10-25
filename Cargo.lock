@@ -675,6 +675,7 @@ dependencies = [
  "log",
  "pkg-config",
  "png",
+ "quick-xml",
  "rawler",
  "rayon",
  "serde",

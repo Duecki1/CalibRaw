@@ -9,6 +9,8 @@
 //! Presets live one per file in a folder, so they can be shared by copying
 //! files and a damaged file never hides the others.
 
+pub mod lightroom;
+
 use crate::file_ops::write_bytes_atomically;
 use crate::migrations::{self, LegacyEffectSliders};
 use crate::pipeline::{

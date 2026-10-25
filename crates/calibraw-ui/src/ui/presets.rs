@@ -156,7 +156,7 @@ pub(crate) fn show_header_actions(ui: &mut Ui, app: &mut CalibRawApp) {
                 ui,
                 egui_phosphor::regular::DOWNLOAD_SIMPLE,
                 moduwu_design::toolbar_icon_size(),
-                "Import presets",
+                "Import presets or Lightroom XMP files",
             )
         })
         .inner
