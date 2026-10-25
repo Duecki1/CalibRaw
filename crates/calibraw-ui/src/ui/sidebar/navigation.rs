@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::CameraProfileChoice;
-use crate::ui::components::preview_list::{preview_list, PreviewListItem};
+use crate::ui::components::preview_list::{preview_combo, PreviewListItem};
 
 mod mobile;
 
@@ -619,8 +619,9 @@ impl Sidebar {
         }
     }
 
-    /// The Camera profile card: automatic selection, the RAW's embedded
-    /// matrix and the matching DCPs. Resting the pointer on one previews it.
+    /// The Camera profile card: a dropdown of automatic selection, the RAW's
+    /// embedded matrix and the matching DCPs. Resting the pointer on one in
+    /// the open menu previews it.
     fn show_camera_profile_selector(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         if app.preferences.camera_profile_mode == crate::pipeline::CameraProfileMode::MatrixOnly {
             return;
@@ -637,31 +638,29 @@ impl Sidebar {
             &selected,
             app.preferences.camera_profile_folder.as_ref(),
         );
-        let mut list = None;
+        let mut combo = None;
         moduwu_design::section_card(ui, "Camera profile", |ui| {
-            list = Some(preview_list(
+            combo = Some(preview_combo(
                 ui,
+                "Profile",
                 "current-image-camera-profile",
-                VISIBLE_CAMERA_PROFILE_ROWS,
+                240.0,
                 items,
             ));
         });
         moduwu_design::card_gap(ui);
 
-        let Some(list) = list else {
+        let Some(combo) = combo else {
             return;
         };
-        if let Some(choice) = list.hovered {
+        if let Some(choice) = combo.hovered {
             app.develop.profile_preview.hover.request(choice);
         }
-        if let Some(choice) = list.clicked.filter(|choice| *choice != selected) {
+        if let Some(choice) = combo.clicked.filter(|choice| *choice != selected) {
             app.select_camera_profile_for_current(choice, frame);
         }
     }
 }
-
-/// Rows the Camera profile card shows before it scrolls.
-const VISIBLE_CAMERA_PROFILE_ROWS: f32 = 6.5;
 
 /// The rows of the Camera profile card for `raw` with `selected` chosen:
 /// automatic selection, which names the profile it applies, the embedded

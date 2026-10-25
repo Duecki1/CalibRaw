@@ -15,7 +15,7 @@ use crate::pipeline::{ProfileColor, PREVIEWED_PROFILE_BYTES};
 /// RAW stage.
 const PROFILE_HOVER_DELAY: Duration = Duration::from_millis(250);
 
-/// A row of the camera profile list: `None` for automatic selection, the
+/// A row of the camera profile dropdown: `None` for automatic selection, the
 /// profile folder for the embedded matrix, or a DCP file.
 pub(crate) type CameraProfileChoice = Option<PathBuf>;
 
