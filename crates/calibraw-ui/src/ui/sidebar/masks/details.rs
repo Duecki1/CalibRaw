@@ -2,7 +2,10 @@ use super::adjustments::{
     apply_local_adjustment_response, LocalAdjustmentTabs, LocalAdjustmentTarget,
 };
 use super::*;
-use crate::app::{apply_mask_property_actions, MaskPropertiesControls};
+use crate::app::{apply_mask_property_actions, MaskPropertiesControls, PeopleChoices};
+
+/// Height of a person's chip in the properties panel, in points.
+const PERSON_CHIP_HEIGHT: f32 = 48.0;
 
 fn mask_creation_menu_button<R>(
     ui: &mut Ui,
@@ -249,6 +252,38 @@ impl Sidebar {
             });
     }
 
+    /// The people found in the photo, when `component_index` is a people mask.
+    fn people_choices(
+        app: &CalibRawApp,
+        mask_index: usize,
+        component_index: usize,
+    ) -> PeopleChoices {
+        let Some(geometry @ MaskGeometry::Person { .. }) = app.masks.stack.masks[mask_index]
+            .components
+            .get(component_index)
+            .map(|component| &component.geometry)
+        else {
+            return PeopleChoices::default();
+        };
+        let Some(analysis) = app.ai.people.as_ref() else {
+            return PeopleChoices::default();
+        };
+        let people = analysis
+            .people()
+            .iter()
+            .zip(&app.ai.people_chips)
+            .map(|(person, chip)| {
+                let size = chip.size_vec2();
+                let scale = PERSON_CHIP_HEIGHT / size.y.max(1.0);
+                (chip.id(), size * scale, person.anchor)
+            })
+            .collect();
+        PeopleChoices {
+            people,
+            selected: app.selected_person(geometry),
+        }
+    }
+
     fn show_mask_details(
         ui: &mut Ui,
         app: &mut CalibRawApp,
@@ -293,7 +328,10 @@ impl Sidebar {
             clear_refinement: false,
             request_generation: false,
             request_object: false,
+            request_people: false,
+            separate_person_parts: false,
         };
+        let people = Self::people_choices(app, mask_index, component_index);
         let point_color_preview = |develop_ui: &crate::app::DevelopUiState| {
             (
                 develop_ui.mask_point_color.visualize_range,
@@ -321,6 +359,7 @@ impl Sidebar {
                             mask,
                             component_index,
                             &controls,
+                            &people,
                         );
                     });
                     geometry_changed |= apply_mask_property_actions(
@@ -390,6 +429,7 @@ impl Sidebar {
                                     mask,
                                     component_index,
                                     &controls,
+                                    &people,
                                 );
                             });
                             geometry_changed |= apply_mask_property_actions(
@@ -489,6 +529,11 @@ impl Sidebar {
         }
         if controls.request_object {
             app.request_object_mask(mask_index, component_index);
+        }
+        if controls.separate_person_parts {
+            app.separate_person_parts(mask_index, component_index, frame);
+        } else if controls.request_people {
+            app.request_people_masks(vec![(mask_index, component_index)], frame);
         }
         Self::apply_mask_geometry_change(ui, app, mask_index, geometry_changed);
         if light_rays_changed {

@@ -8,6 +8,7 @@ mod depth_refine;
 mod mask_refine;
 pub mod masks;
 pub mod object;
+pub mod people;
 pub mod remove;
 pub mod sky;
 pub mod subject;
@@ -19,7 +20,8 @@ const IMAGENET_MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 const IMAGENET_STD: [f32; 3] = [0.229, 0.224, 0.225];
 
 /// Planar RGB normalized with the ImageNet mean and deviation, the input
-/// BiRefNet, SkySeg, Depth Anything and SAM were trained on.
+/// BiRefNet, SkySeg, Depth Anything, SAM, RF-DETR and Sapiens2 were trained
+/// on.
 pub(crate) fn normalized_rgb_input(resized: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> Result<Vec<f32>> {
     let (input_width, input_height) = resized.dimensions();
     let plane = usize::try_from(input_width)

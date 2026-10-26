@@ -21,6 +21,9 @@ enum AiUpdateStep {
         mask_index: usize,
         component_index: usize,
     },
+    /// Every people mask: one people detection, then one body-part
+    /// segmentation per person.
+    People,
 }
 
 impl AiUpdate {
@@ -51,6 +54,7 @@ impl AiUpdateStep {
                         component_index,
                     }),
             )
+            .chain(dependencies.people.then_some(Self::People))
             .collect()
     }
 
@@ -65,6 +69,7 @@ impl AiUpdateStep {
             } => dependencies
                 .objects
                 .contains(&(mask_index, component_index)),
+            Self::People => dependencies.people,
         }
     }
 }
@@ -87,7 +92,8 @@ impl CalibRawApp {
         };
         let in_flight = self.content_job_active()
             || self.content_consent_open()
-            || self.ai.object_pending_target.is_some();
+            || self.ai.object_pending_target.is_some()
+            || !self.ai.people_pending.is_empty();
         update.steps.len() + usize::from(in_flight)
     }
 
@@ -111,6 +117,7 @@ impl CalibRawApp {
         self.masks.source_cache = None;
         self.masks.clear_generated_caches();
         self.ai.object_cache = None;
+        self.forget_people();
         if let Err(error) = self.capture_mask_source(frame) {
             self.report_error(ErrorKind::AiUpdate, error);
             return;
@@ -172,6 +179,17 @@ impl CalibRawApp {
                 } => {
                     self.ai.object_pending_target = Some((mask_index, component_index));
                     AiFeature::Object
+                }
+                AiUpdateStep::People if !calibraw_ai::models::people::AVAILABLE => {
+                    self.report_error(ErrorKind::AiUpdate, Self::PEOPLE_UNAVAILABLE.to_owned());
+                    if let Some(update) = self.ai.update.as_mut() {
+                        update.failed = true;
+                    }
+                    continue;
+                }
+                AiUpdateStep::People => {
+                    self.queue_all_people_masks();
+                    AiFeature::People
                 }
             };
             self.request_content_job(feature);
@@ -247,6 +265,7 @@ impl CalibRawApp {
     pub(in crate::app) fn cancel_ai_update(&mut self) {
         self.ai.update = None;
         self.ai.object_pending_target = None;
+        self.ai.people_pending.clear();
         self.ai.update_needed = true;
         self.ui.notice = Some("AI update canceled.".to_owned());
         self.egui_ctx.request_repaint();
@@ -261,6 +280,7 @@ impl CalibRawApp {
         }
         self.ai.object_pending_target = None;
         self.ai.object_cache = None;
+        self.ai.people_pending.clear();
     }
 
     /// Requests content an edit newly depends on, such as scene depth after

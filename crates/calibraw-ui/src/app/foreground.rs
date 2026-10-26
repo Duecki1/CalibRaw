@@ -203,6 +203,7 @@ impl CalibRawApp {
                 AiFeature::Subject | AiFeature::Sky | AiFeature::SceneDepth,
             )) => self.poll_ai_mask_worker(),
             Some(ForegroundOperationKind::Ai(AiFeature::Object)) => self.poll_object_worker(),
+            Some(ForegroundOperationKind::Ai(AiFeature::People)) => self.poll_people_worker(),
             Some(ForegroundOperationKind::Ai(AiFeature::Denoise)) => self.poll_ai_denoise_worker(),
             Some(ForegroundOperationKind::LensCorrection) => {
                 self.poll_lens_correction_worker(frame)

@@ -116,6 +116,9 @@ pub(crate) struct AiCapabilities {
     /// Mask sessions (subject, sky, depth, object) may stay loaded between
     /// jobs while their feature is warm.
     pub(crate) keep_mask_sessions_warm: bool,
+    /// People masks are offered. Their body-part model needs gigabytes and
+    /// several seconds per person even where it fits beside the editor.
+    pub(crate) people_masks: bool,
 }
 
 /// How much memory AI may take beside the editor.
@@ -133,11 +136,13 @@ pub(crate) const CAPABILITIES: AiCapabilities =
         AiCapabilities {
             memory: MemoryClass::Constrained,
             keep_mask_sessions_warm: false,
+            people_masks: false,
         }
     } else {
         AiCapabilities {
             memory: MemoryClass::Standard,
             keep_mask_sessions_warm: true,
+            people_masks: true,
         }
     };
 

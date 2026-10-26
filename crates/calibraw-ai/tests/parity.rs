@@ -43,12 +43,16 @@ use calibraw_ai::models::object::{
     spawn_object_mask, ObjectInferenceCache, ObjectMaskRequest, ObjectMaskWorkerRequest,
     DECODER_MODEL, ENCODER_MODEL,
 };
+use calibraw_ai::models::people::{
+    spawn_people_mask, PeopleAnalysis, PeopleMaskRequest, PeopleMaskWorkerRequest, PeopleTarget,
+    BODY_PARTS_MODEL, DETECTOR_MODEL,
+};
 use calibraw_ai::models::remove::{spawn_remove, RemoveRequest};
 use calibraw_ai::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
 use calibraw_ai::models::{depth, remove, sky};
 use calibraw_ai::pipeline::{
     crop_raw, load_raw_file, CfaKind, ExposureParams, GeometryTransform, LoadedRaw, MaskStack,
-    ObjectStroke, RemoveBrushPoint, RemoveBrushStroke, RemoveEditState,
+    ObjectStroke, PersonPart, RemoveBrushPoint, RemoveBrushStroke, RemoveEditState,
 };
 use calibraw_ai::{
     AiConfigChange, AiJobEvent, AiSessionStatus, CpuReason, Placement, RuntimeSource, Sha256,
@@ -59,7 +63,7 @@ use calibraw_gpu::{
 };
 use half::f16;
 use image::{imageops::FilterType, GrayImage, ImageBuffer, Luma, Rgb, RgbaImage};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -80,6 +84,13 @@ struct Photo {
 const SCENE_PHOTO: Photo = Photo {
     path: "Demo3.5/DSC01000.jpg",
     sha256: "a46fff617da3b759054b9821fec1c524171f218aa040cb92faa6b0976f8cb394",
+};
+/// Someone walking a bicycle across a level crossing, with smaller people
+/// behind: the people model has one clear person to choose and others to
+/// tell apart from them.
+const PEOPLE_PHOTO: Photo = Photo {
+    path: "Demo2.5/DSC09867 (1).jpg",
+    sha256: "f2853ff48e00b561469e01201cb6c77c599e911e8f6b66e22b654be7d46a8b91",
 };
 const BAYER_RAW: Photo = Photo {
     path: "Demo1/DSC00950.arw",
@@ -197,6 +208,32 @@ fn object() {
     };
     let (output, _) = harness.object_job(vec![hull, water], Some(cache));
     harness.check("object-decoder-only", Tolerance::MaskIou(0.98), &output);
+}
+
+/// RF-DETR-Seg and Sapiens2: the face and hair of the most prominent person,
+/// then their clothes and skin from the same analysis, which runs no model.
+#[test]
+#[ignore = "needs CALIBRAW_PARITY_PHOTOS, the RF-DETR-Seg and Sapiens2 models and ONNX Runtime"]
+fn people() {
+    let harness = Harness::lock();
+    let (output, anchor, analysis, ran_models) =
+        harness.people_job(None, &[PersonPart::FaceNeck, PersonPart::Hair], None);
+    assert!(
+        ran_models,
+        "a first people job finds and segments the person"
+    );
+    harness.check("people-face-hair", Tolerance::MaskIou(0.98), &output);
+
+    let (output, _, _, ran_models) = harness.people_job(
+        Some(anchor),
+        &[PersonPart::Clothes, PersonPart::BodySkin],
+        Some(analysis),
+    );
+    assert!(
+        !ran_models,
+        "an analysed person's other parts need no model"
+    );
+    harness.check("people-clothes-skin", Tolerance::MaskIou(0.98), &output);
 }
 
 /// Big-LaMa through the Remove job: a short stroke on a RAW crop. Scene
@@ -366,16 +403,24 @@ impl Harness {
     /// `SCENE_PHOTO` scaled to `SCENE_EDGE`, decoded once per process.
     fn scene(&self) -> &'static RgbaImage {
         static SCENE: OnceLock<RgbaImage> = OnceLock::new();
-        SCENE.get_or_init(|| {
-            let path = self.photo(&SCENE_PHOTO);
-            let image = image::open(&path)
-                .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()))
-                .into_rgba8();
-            let scale = SCENE_EDGE as f32 / image.width().max(image.height()) as f32;
-            let width = (image.width() as f32 * scale).round() as u32;
-            let height = (image.height() as f32 * scale).round() as u32;
-            image::imageops::resize(&image, width, height, FilterType::Triangle)
-        })
+        SCENE.get_or_init(|| self.scaled(&SCENE_PHOTO))
+    }
+
+    /// `PEOPLE_PHOTO` scaled to `SCENE_EDGE`, decoded once per process.
+    fn people_scene(&self) -> &'static RgbaImage {
+        static PEOPLE: OnceLock<RgbaImage> = OnceLock::new();
+        PEOPLE.get_or_init(|| self.scaled(&PEOPLE_PHOTO))
+    }
+
+    fn scaled(&self, photo: &Photo) -> RgbaImage {
+        let path = self.photo(photo);
+        let image = image::open(&path)
+            .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()))
+            .into_rgba8();
+        let scale = SCENE_EDGE as f32 / image.width().max(image.height()) as f32;
+        let width = (image.width() as f32 * scale).round() as u32;
+        let height = (image.height() as f32 * scale).round() as u32;
+        image::imageops::resize(&image, width, height, FilterType::Triangle)
     }
 
     /// A centred square crop of a RAW, with offsets on a 6-pixel grid so
@@ -464,6 +509,52 @@ impl Harness {
             values: result.mask,
         });
         (output, result.cache)
+    }
+
+    /// One people mask of `parts`, the anchor of the person it selected, the
+    /// analysis to reuse, and whether the job ran a model.
+    fn people_job(
+        &self,
+        anchor: Option<[f32; 2]>,
+        parts: &[PersonPart],
+        analysis: Option<PeopleAnalysis>,
+    ) -> (Output, [f32; 2], PeopleAnalysis, bool) {
+        let scene = self.people_scene();
+        let events = spawn_people_mask(PeopleMaskWorkerRequest {
+            detector_path: self.models.join(DETECTOR_MODEL.cache_filename),
+            body_parts_path: self.models.join(BODY_PARTS_MODEL.cache_filename),
+            allow_download: self.download,
+            request: PeopleMaskRequest {
+                source_width: scene.width(),
+                source_height: scene.height(),
+                source_rgba: scene.as_raw().clone(),
+                analysis,
+                targets: vec![PeopleTarget {
+                    anchor,
+                    parts: parts.iter().copied().collect::<BTreeSet<_>>(),
+                }],
+            },
+            cancellation: Arc::new(AtomicBool::new(false)),
+        });
+        let mut ran_models = false;
+        let result = finish(events, |event| match event {
+            AiJobEvent::Progress(_) => {
+                ran_models = true;
+                None
+            }
+            AiJobEvent::Finished(result) => Some(result),
+            AiJobEvent::DownloadProgress(_) => None,
+        });
+        let [Some(mask)] = <[_; 1]>::try_from(result.masks).expect("one mask per target") else {
+            panic!("the people photo has a person");
+        };
+        let anchor = mask.anchor;
+        let output = Output::Mask(Plane {
+            width: mask.width,
+            height: mask.height,
+            values: mask.mask,
+        });
+        (output, anchor, result.analysis, ran_models)
     }
 
     fn denoise_job(&self, raw: LoadedRaw) -> Output {
@@ -559,7 +650,10 @@ impl Harness {
 }
 
 /// Drains `events` until the job finishes and returns its result.
-fn finish<E, T>(events: mpsc::Receiver<E>, finished: impl Fn(E) -> Option<Result<T, String>>) -> T {
+fn finish<E, T>(
+    events: mpsc::Receiver<E>,
+    mut finished: impl FnMut(E) -> Option<Result<T, String>>,
+) -> T {
     for event in events {
         if let Some(result) = finished(event) {
             return result.unwrap_or_else(|error| panic!("AI job failed: {error}"));

@@ -7,9 +7,9 @@
 #import calibraw::raw_sampling as RawSampling
 
 @group(0) @binding(3) var reconstructed_raw_write: texture_storage_2d<r32float, write>;
-// Lens vignetting gains (LensShadingMap in Rust): linear R, G, B gains on a
-// square grid whose nodes span the full image's pixel centres corner to
-// corner. All 1 without lens shading.
+// Lens vignetting gains (LensShadingMap in Rust): linear gains per CFA
+// channel (R, G1, B, G2 in r, g, b, a) on a square grid whose nodes span the
+// full image's pixel centres corner to corner. All 1 without lens shading.
 @group(0) @binding(13) var lens_shading_tex: texture_2d<f32>;
 
 const DARKTABLE_SQRT3: f32 = 1.7320508075688772;
@@ -152,10 +152,10 @@ fn inpaint_opposed_cfa_at(pos: vec2<i32>) -> f32 {
     return max(original, reference + full_source_chrominance);
 }
 
-// The lens shading gain of CFA colour `color` at tile-local `pos`,
-// interpolated bilinearly between grid nodes. Positions outside the full
-// image, such as tile halos, take the gain at its edge.
-fn lens_shading_gain(pos: vec2<i32>, color: u32) -> f32 {
+// The lens shading gain of CFA channel `channel` (RawSampling::cfa_channel_at)
+// at tile-local `pos`, interpolated bilinearly between grid nodes. Positions
+// outside the full image, such as tile halos, take the gain at its edge.
+fn lens_shading_gain(pos: vec2<i32>, channel: u32) -> f32 {
     let last_node = vec2<i32>(textureDimensions(lens_shading_tex)) - vec2<i32>(1);
     let full_extent = max(vec2<f32>(Common::full_image_max()), vec2<f32>(1.0));
     let global = clamp(vec2<f32>(pos + Common::tile_origin()), vec2<f32>(0.0), full_extent);
@@ -163,10 +163,10 @@ fn lens_shading_gain(pos: vec2<i32>, color: u32) -> f32 {
     let p0 = clamp(vec2<i32>(floor(grid)), vec2<i32>(0), max(last_node - vec2<i32>(1), vec2<i32>(0)));
     let p1 = min(p0 + vec2<i32>(1), last_node);
     let f = clamp(grid - vec2<f32>(p0), vec2<f32>(0.0), vec2<f32>(1.0));
-    let a = textureLoad(lens_shading_tex, p0, 0)[color];
-    let b = textureLoad(lens_shading_tex, vec2<i32>(p1.x, p0.y), 0)[color];
-    let c = textureLoad(lens_shading_tex, vec2<i32>(p0.x, p1.y), 0)[color];
-    let d = textureLoad(lens_shading_tex, p1, 0)[color];
+    let a = textureLoad(lens_shading_tex, p0, 0)[channel];
+    let b = textureLoad(lens_shading_tex, vec2<i32>(p1.x, p0.y), 0)[channel];
+    let c = textureLoad(lens_shading_tex, vec2<i32>(p0.x, p1.y), 0)[channel];
+    let d = textureLoad(lens_shading_tex, p1, 0)[channel];
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
@@ -184,7 +184,7 @@ fn highlight_reconstruct(@builtin(global_invocation_id) gid: vec3<u32>) {
     } else if method >= 1.5 {
         output = inpaint_opposed_cfa_at(pos);
     }
-    let shading = lens_shading_gain(pos, RawSampling::color_at(pos));
+    let shading = lens_shading_gain(pos, RawSampling::cfa_channel_at(pos));
     textureStore(
         reconstructed_raw_write,
         pos,

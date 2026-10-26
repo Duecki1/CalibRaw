@@ -102,6 +102,9 @@ pub(super) fn estimate_sidecar_bytes(masks: &MaskStack) -> Result<u64, SidecarEr
                 MaskGeometry::Ai {
                     mask: Some(image), ..
                 }
+                | MaskGeometry::Person {
+                    mask: Some(image), ..
+                }
                 | MaskGeometry::DepthRange {
                     depth: Some(image), ..
                 } => add_unique_mask_asset_bound(
@@ -177,6 +180,9 @@ pub(super) fn measure_sidecar_dynamic_bytes(masks: &MaskStack) -> Result<u64, Si
                     checked_add_scaled(&mut measured, points.len(), PATH_POINT_HEADROOM)?
                 }
                 MaskGeometry::Ai {
+                    mask: Some(image), ..
+                }
+                | MaskGeometry::Person {
                     mask: Some(image), ..
                 }
                 | MaskGeometry::DepthRange {

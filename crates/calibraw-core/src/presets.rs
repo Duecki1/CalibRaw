@@ -468,10 +468,14 @@ fn validate_label(label: &str, kind: &str) -> Result<(), PresetError> {
     Ok(())
 }
 
-/// Whether a mask component can be reproduced on another photo. Brush, path
-/// and object components follow the content of the photo they were drawn on.
+/// Whether a mask component can be reproduced on another photo. Brush, path,
+/// object and people components follow the content of the photo they were
+/// drawn on.
 pub fn is_portable_mask_kind(kind: MaskKind) -> bool {
-    !matches!(kind, MaskKind::Brush | MaskKind::Path | MaskKind::Object)
+    !matches!(
+        kind,
+        MaskKind::Brush | MaskKind::Path | MaskKind::Object | MaskKind::Person
+    )
 }
 
 /// The masks of `masks` that a preset can carry: portable components only,

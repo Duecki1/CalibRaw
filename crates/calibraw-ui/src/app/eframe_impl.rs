@@ -56,6 +56,7 @@ impl CalibRawApp {
         }
         self.masks.source_cache = None;
         self.ai.object_cache = None;
+        self.forget_people();
         if self.caps().configurable_ai_runtime && self.ai.gpu_acceleration {
             self.set_ai_gpu_acceleration(false);
         }

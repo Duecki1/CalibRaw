@@ -305,6 +305,7 @@ impl CalibRawApp {
         self.masks.stack.clear();
         self.reset_inpainting_state();
         self.masks.reset_transient_state();
+        self.forget_people();
         self.ai.update_needed = false;
         self.reset_ai_update_state();
         self.preview.pending_stage = None;
@@ -417,6 +418,7 @@ impl CalibRawApp {
                 self.rehydrate_restored_mask_state();
                 self.ai.update_needed |= loaded.ai_masks_need_update;
                 if loaded.mask_source.is_some() {
+                    self.forget_people();
                     self.masks.source_cache = loaded.mask_source;
                 }
                 self.preview.reset_view_keeping(kept_view);

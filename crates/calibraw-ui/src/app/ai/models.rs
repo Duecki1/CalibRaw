@@ -209,6 +209,15 @@ impl CalibRawApp {
         )
     }
 
+    /// The people detector and body-part model.
+    pub(in crate::app) fn people_model_paths(&self) -> (PathBuf, PathBuf) {
+        let root = self.ai_model_root();
+        (
+            root.join(calibraw_ai::models::people::DETECTOR_MODEL.cache_filename),
+            root.join(calibraw_ai::models::people::BODY_PARTS_MODEL.cache_filename),
+        )
+    }
+
     /// Float16 when subject masks are expected to run on the GPU; see
     /// `SubjectModelPrecision::for_current_sessions`.
     pub(in crate::app) fn subject_model_precision(

@@ -13,7 +13,11 @@ use calibraw_ai::{AiFeature, AiFeatureSet};
 pub(in crate::app) const fn is_content_feature(feature: AiFeature) -> bool {
     matches!(
         feature,
-        AiFeature::Subject | AiFeature::Sky | AiFeature::SceneDepth | AiFeature::Object
+        AiFeature::Subject
+            | AiFeature::Sky
+            | AiFeature::SceneDepth
+            | AiFeature::Object
+            | AiFeature::People
     )
 }
 
@@ -30,7 +34,7 @@ pub(in crate::app) const fn generated_model(feature: AiFeature) -> Option<AiMask
         AiFeature::Subject => Some(AiMaskModel::Subject),
         AiFeature::Sky => Some(AiMaskModel::Sky),
         AiFeature::SceneDepth => Some(AiMaskModel::Depth),
-        AiFeature::Object | AiFeature::Remove | AiFeature::Denoise => None,
+        AiFeature::Object | AiFeature::People | AiFeature::Remove | AiFeature::Denoise => None,
     }
 }
 
@@ -48,6 +52,7 @@ impl ForegroundOperationKind {
             Self::Ai(AiFeature::Sky) => "Preparing sky mask",
             Self::Ai(AiFeature::SceneDepth) => "Estimating scene depth",
             Self::Ai(AiFeature::Object) => "Preparing object mask",
+            Self::Ai(AiFeature::People) => "Preparing people mask",
             Self::Ai(AiFeature::Remove) => "Applying Remove",
             Self::Ai(AiFeature::Denoise) => "Applying AI denoise",
             Self::LensCorrection => "Applying lens correction",
@@ -102,6 +107,10 @@ impl CalibRawApp {
             AiFeature::Object => {
                 let (encoder, decoder) = self.sam21_model_paths();
                 !calibraw_ai::models::object::object_models_are_verified(&encoder, &decoder)
+            }
+            AiFeature::People => {
+                let (detector, body_parts) = self.people_model_paths();
+                !calibraw_ai::models::people::people_models_are_verified(&detector, &body_parts)
             }
             AiFeature::Remove => !calibraw_ai::models::remove::big_lama_model_is_verified(
                 &self.big_lama_model_path(),
@@ -172,15 +181,19 @@ impl CalibRawApp {
                 }
             }
             AiFeature::Denoise => self.start_ai_denoise(frame, allow_download),
-            AiFeature::Subject | AiFeature::Sky | AiFeature::SceneDepth | AiFeature::Object => {
-                self.start_content_job(feature, allow_download);
-            }
+            AiFeature::Subject
+            | AiFeature::Sky
+            | AiFeature::SceneDepth
+            | AiFeature::Object
+            | AiFeature::People => self.start_content_job(feature, allow_download),
         }
     }
 
     fn start_content_job(&mut self, feature: AiFeature, allow_download: bool) {
         if let Some(model) = generated_model(feature) {
             self.start_generated_mask_worker(model, allow_download);
+        } else if feature == AiFeature::People {
+            self.start_people_worker(allow_download);
         } else if let Some((mask_index, component_index)) = self.ai.object_pending_target.take() {
             let (encoder, decoder) = self.sam21_model_paths();
             self.start_object_worker(
@@ -200,6 +213,7 @@ impl CalibRawApp {
         }
         match feature {
             AiFeature::Object => self.ai.object_pending_target = None,
+            AiFeature::People => self.ai.people_pending.clear(),
             AiFeature::Remove => {
                 self.inpaint.pending_brush = None;
                 self.inpaint.pending_retouch = None;
@@ -233,6 +247,7 @@ impl CalibRawApp {
                 AiFeature::Sky,
                 AiFeature::SceneDepth,
                 AiFeature::Object,
+                AiFeature::People,
             ]
             .into_iter()
             .collect(),

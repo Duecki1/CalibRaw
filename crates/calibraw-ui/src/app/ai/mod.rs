@@ -30,6 +30,7 @@ mod consent;
 mod generated;
 mod models;
 mod object;
+mod people;
 mod source;
 mod state;
 mod tasks;

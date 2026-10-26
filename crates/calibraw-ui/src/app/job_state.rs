@@ -62,6 +62,7 @@ impl ForegroundProgress {
 pub(super) enum ForegroundOperationReceiver {
     AiMask(mpsc::Receiver<AiMaskEvent>),
     Object(mpsc::Receiver<ObjectMaskEvent>),
+    People(mpsc::Receiver<PeopleMaskEvent>),
     AiDenoise(mpsc::Receiver<calibraw_ai::models::denoise::AiDenoiseEvent>),
     LensCorrection(mpsc::Receiver<LensCorrectionEvent>),
     AutoStraighten(mpsc::Receiver<AutoStraightenResult>),
@@ -72,6 +73,13 @@ pub(super) enum ForegroundOperationContext {
     Object {
         target: AiMaskTarget,
         inference_started: bool,
+    },
+    /// The people components the job makes masks for, in the order of its
+    /// targets.
+    People {
+        targets: Vec<AiMaskTarget>,
+        /// The job finds the people again, so their chips change.
+        detects: bool,
     },
     AiDenoise,
     LensCorrection,
@@ -133,6 +141,12 @@ pub(crate) struct AiState {
     pub(crate) consent: Option<AiConsent>,
     pub(crate) object_pending_target: Option<(usize, usize)>,
     pub(crate) object_cache: Option<((usize, usize), ObjectInferenceCache)>,
+    /// People components waiting for their job to start.
+    pub(crate) people_pending: Vec<(usize, usize)>,
+    /// The people found in `MaskState::source_cache`, valid while it is.
+    pub(crate) people: Option<PeopleAnalysis>,
+    /// A thumbnail of each person in `people`.
+    pub(crate) people_chips: Vec<egui::TextureHandle>,
     pub(crate) denoise_resume_pending: bool,
 }
 

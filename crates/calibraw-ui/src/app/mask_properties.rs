@@ -4,7 +4,7 @@
 //! mask and to the tool settings the caller writes back afterwards.
 
 use super::*;
-use crate::pipeline::{DepthRangeSettings, LocalMask, MaskCombineMode, MaskComponent};
+use crate::pipeline::{DepthRangeSettings, LocalMask, MaskCombineMode, MaskComponent, PersonPart};
 
 /// Mask-tool state edited by the properties panel. The caller loads it from
 /// the app before drawing and applies it, with its requests, afterwards.
@@ -21,6 +21,18 @@ pub(crate) struct MaskPropertiesControls {
     /// Generate (or regenerate) the subject, sky, or depth map of the component.
     pub(crate) request_generation: bool,
     pub(crate) request_object: bool,
+    /// Make the people mask again, for its person and parts.
+    pub(crate) request_people: bool,
+    pub(crate) separate_person_parts: bool,
+}
+
+/// The people found in the photo, for a people mask's properties.
+#[derive(Default)]
+pub(crate) struct PeopleChoices {
+    /// Each person's thumbnail, its size and their anchor, left to right.
+    pub(crate) people: Vec<(egui::TextureId, egui::Vec2, [f32; 2])>,
+    /// The person the mask selects.
+    pub(crate) selected: Option<usize>,
 }
 
 pub(crate) enum MaskPropertyAction {
@@ -51,6 +63,12 @@ pub(crate) enum MaskPropertyAction {
     SetLuminanceHighFeather(f32),
     SetColorTolerance(f32),
     SetDepthRange(DepthRangeSettings),
+    /// The person a people mask selects, by their anchor.
+    SelectPerson([f32; 2]),
+    /// Adds or removes a part of a people mask; its last part stays.
+    TogglePersonPart(PersonPart),
+    SeparatePersonParts,
+    RequestPeople,
     SetBrushMode(BrushMode),
     SetRefinementActive(bool),
     SetRefinementSize(f32),
@@ -119,6 +137,24 @@ fn apply_mask_property_action(
             controls.request_object = true;
             false
         }
+        MaskPropertyAction::SeparatePersonParts => {
+            controls.separate_person_parts = true;
+            false
+        }
+        MaskPropertyAction::RequestPeople => {
+            controls.request_people = true;
+            false
+        }
+        action
+        @ (MaskPropertyAction::SelectPerson(_) | MaskPropertyAction::TogglePersonPart(_)) => {
+            let changed = mask
+                .components
+                .get_mut(component_index)
+                .is_some_and(|component| apply_geometry_action(&mut component.geometry, action));
+            // The mask itself follows once the people job has made it.
+            controls.request_people |= changed;
+            changed
+        }
         component_action => mask
             .components
             .get_mut(component_index)
@@ -165,6 +201,7 @@ fn shape_feather(geometry: &mut MaskGeometry) -> Option<&mut f32> {
         | MaskGeometry::Path { feather, .. }
         | MaskGeometry::Ai { feather, .. }
         | MaskGeometry::Object { feather, .. }
+        | MaskGeometry::Person { feather, .. }
         | MaskGeometry::LuminanceRange { feather, .. } => Some(feather),
         _ => None,
     }
@@ -175,6 +212,7 @@ fn grow(geometry: &mut MaskGeometry) -> Option<&mut f32> {
         MaskGeometry::Path { grow, .. }
         | MaskGeometry::Ai { grow, .. }
         | MaskGeometry::Object { grow, .. }
+        | MaskGeometry::Person { grow, .. }
         | MaskGeometry::LuminanceRange { grow, .. }
         | MaskGeometry::ColorRange { grow, .. } => Some(grow),
         _ => None,
@@ -286,6 +324,19 @@ fn apply_geometry_action(geometry: &mut MaskGeometry, action: MaskPropertyAction
         }
         (MaskGeometry::DepthRange { range, .. }, MaskPropertyAction::SetDepthRange(value)) => {
             *range = value;
+            true
+        }
+        (MaskGeometry::Person { anchor, .. }, MaskPropertyAction::SelectPerson(value)) => {
+            *anchor = Some(value);
+            true
+        }
+        (MaskGeometry::Person { parts, .. }, MaskPropertyAction::TogglePersonPart(part)) => {
+            if !parts.remove(&part) {
+                parts.insert(part);
+            } else if parts.is_empty() {
+                parts.insert(part);
+                return false;
+            }
             true
         }
         _ => false,

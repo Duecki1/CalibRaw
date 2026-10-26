@@ -3,8 +3,9 @@
 
 use std::sync::Arc;
 
-/// Lens vignetting correction of a sensor mosaic as linear R, G, B gains on a
-/// fixed [`Self::EDGE`]×[`Self::EDGE`] grid over the whole photo.
+/// Lens vignetting correction of a sensor mosaic as linear gains per CFA
+/// channel (red, green, blue, second Bayer green) on a fixed
+/// [`Self::EDGE`]×[`Self::EDGE`] grid over the whole photo.
 ///
 /// The gains are not baked into the mosaic. Highlight reconstruction applies
 /// them to its output, so clip detection and opposed-highlight chroma see the
@@ -18,7 +19,7 @@ use std::sync::Arc;
 #[derive(Clone, Debug, PartialEq)]
 pub struct LensShadingMap {
     /// Row-major from the top-left node.
-    gains: Arc<[[f32; 3]]>,
+    gains: Arc<[[f32; 4]]>,
 }
 
 impl LensShadingMap {
@@ -29,9 +30,9 @@ impl LensShadingMap {
 
     /// Samples `gain` at every node, given the node's normalized position.
     /// Returns `None` unless every gain is finite and non-negative.
-    pub fn from_fn(gain: impl Fn([f32; 2]) -> [f32; 3]) -> Option<Self> {
+    pub fn from_fn(gain: impl Fn([f32; 2]) -> [f32; 4]) -> Option<Self> {
         let last = (Self::EDGE - 1) as f32;
-        let gains: Arc<[[f32; 3]]> = (0..Self::EDGE)
+        let gains: Arc<[[f32; 4]]> = (0..Self::EDGE)
             .flat_map(|row| (0..Self::EDGE).map(move |column| [column, row]))
             .map(|[column, row]| gain([column as f32 / last, row as f32 / last]))
             .collect();
@@ -42,8 +43,25 @@ impl LensShadingMap {
             .then_some(Self { gains })
     }
 
+    /// This correction applied after `earlier`, the shading the photo already
+    /// carries (a DNG's own GainMap): their gains multiply node by node.
+    pub fn after(self, earlier: Option<&Self>) -> Self {
+        let Some(earlier) = earlier else {
+            return self;
+        };
+        let gains = self
+            .gains
+            .iter()
+            .zip(earlier.gains.iter())
+            .map(|(later, earlier)| {
+                std::array::from_fn(|channel| later[channel] * earlier[channel])
+            })
+            .collect();
+        Self { gains }
+    }
+
     /// The node gains, row-major from the top-left node.
-    pub fn gains(&self) -> &[[f32; 3]] {
+    pub fn gains(&self) -> &[[f32; 4]] {
         &self.gains
     }
 }

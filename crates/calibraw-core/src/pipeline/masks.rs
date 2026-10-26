@@ -1,5 +1,6 @@
 use half::f16;
 use rayon::prelude::*;
+use std::collections::BTreeSet;
 use std::f32::consts::TAU;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -93,6 +94,7 @@ pub enum MaskKind {
     LuminanceRange,
     ColorRange,
     DepthRange,
+    Person,
 }
 
 impl MaskKind {
@@ -110,6 +112,7 @@ impl MaskKind {
             Self::LuminanceRange => "Luminance Range",
             Self::ColorRange => "Color Range",
             Self::DepthRange => "Depth",
+            Self::Person => "Select People",
         }
     }
 
@@ -133,6 +136,7 @@ impl MaskKind {
                 | Self::LuminanceRange
                 | Self::ColorRange
                 | Self::DepthRange
+                | Self::Person
         )
     }
 }

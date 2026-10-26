@@ -27,6 +27,8 @@ pub(crate) enum AiModel {
     BigLama,
     RawNindBayer,
     RawNindLinear,
+    PersonDetector,
+    BodyParts,
 }
 
 impl AiModel {
@@ -43,6 +45,8 @@ impl AiModel {
             Self::BigLama => &BIG_LAMA,
             Self::RawNindBayer => &RAWNIND_BAYER,
             Self::RawNindLinear => &RAWNIND_LINEAR,
+            Self::PersonDetector => &PERSON_DETECTOR,
+            Self::BodyParts => &BODY_PARTS,
         }
     }
 }
@@ -56,16 +60,18 @@ pub enum AiFeature {
     Object,
     Remove,
     Denoise,
+    People,
 }
 
 impl AiFeature {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Subject,
         Self::Sky,
         Self::SceneDepth,
         Self::Object,
         Self::Remove,
         Self::Denoise,
+        Self::People,
     ];
 }
 
@@ -123,15 +129,25 @@ pub enum InputShape {
     /// Encoder features plus prompts in the encoder's `edge` x `edge` frame,
     /// and the previous mask at `mask_edge` x `mask_edge`.
     Prompted { edge: u32, mask_edge: u32 },
+    /// The photo or crop scaled to `width` x `height` pixels, whatever its
+    /// aspect ratio.
+    Stretched { width: u32, height: u32 },
 }
 
 impl InputShape {
-    /// Edge of the square the model sees, in pixels: the whole input, one
-    /// tile, or the frame prompts are placed in.
+    /// Longest edge the model sees, in pixels: the whole input, one tile,
+    /// or the frame prompts are placed in.
     pub const fn edge(self) -> u32 {
         match self {
             Self::Square { edge } | Self::Prompted { edge, .. } => edge,
             Self::Tiled { tile, .. } => tile,
+            Self::Stretched { width, height } => {
+                if width > height {
+                    width
+                } else {
+                    height
+                }
+            }
         }
     }
 }
@@ -485,4 +501,60 @@ const RAWNIND_LINEAR: ModelSpec = ModelSpec {
     // Measured 290 MiB, one tile per run.
     session: SessionOptions::new("RawNIND linear").with_gpu_memory(measured_peak(300)),
     retention: ModelRetention::OneShot,
+};
+
+/// RF-DETR-Seg Medium (Apache-2.0), exported by
+/// `packaging/models/rfdetr_seg_export.py`: finds the people in a photo and
+/// outlines them coarsely, which decides whose a body part is. It takes the
+/// photo stretched to 432 x 432 and returns, for 200 queries, a box, COCO
+/// class logits and 108 x 108 mask logits over the whole photo. Medium
+/// rather than Nano or Small: within 7 MB of their download and 0.1 s of
+/// their CPU time, it found twice the people Small found in a street crowd.
+const PERSON_DETECTOR: ModelSpec = ModelSpec {
+    id: AiModel::PersonDetector,
+    feature: AiFeature::People,
+    artifact: ModelArtifact {
+        name: "RF-DETR-Seg Medium",
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/rfdetr/rfdetr-seg-medium.onnx"),
+        sha256: "7978ac93bbdb40c8eef0c7074a5296e7b2fbc7962dcd8a6eb4bcc6e141e484dd",
+        bytes: 130_088_310,
+        cache_filename: "rfdetr-seg-medium.onnx",
+    },
+    source: ModelSource::Download {
+        options: MASK_MODEL_DOWNLOAD,
+        progress_label: "RF-DETR-Seg Medium",
+    },
+    input: InputShape::Square { edge: 432 },
+    // Measured 403 MiB.
+    session: SessionOptions::new("RF-DETR-Seg Medium").with_gpu_memory(measured_peak(500)),
+    retention: ModelRetention::WhileWarm,
+};
+
+/// Sapiens2-0.4B body-part segmentation (Sapiens2 License), exported by
+/// `packaging/models/sapiens2_seg_export.py`: 29 classes per pixel of one
+/// person's crop, stretched to 768 x 1024. Its weights are stored as float16
+/// and cast to float32 when the session is created, so it computes in
+/// float32 from half the download; computing in float16 on WebGPU missed the
+/// parity harness's IoU.
+const BODY_PARTS: ModelSpec = ModelSpec {
+    id: AiModel::BodyParts,
+    feature: AiFeature::People,
+    artifact: ModelArtifact {
+        name: "Sapiens2 0.4B body parts",
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/sapiens2/sapiens2-seg-0.4b-fp16-weights.onnx"),
+        sha256: "d8350f109b1a91ae84680366d1863e5466e049c3e2b62c4c813b56930ac64e04",
+        bytes: 819_707_563,
+        cache_filename: "sapiens2-seg-0.4b-fp16-weights.onnx",
+    },
+    source: ModelSource::Download {
+        options: MASK_MODEL_DOWNLOAD,
+        progress_label: "Sapiens2 0.4B body parts",
+    },
+    input: InputShape::Stretched {
+        width: 768,
+        height: 1024,
+    },
+    // Measured 4531 MiB.
+    session: SessionOptions::new("Sapiens2 0.4B body parts").with_gpu_memory(measured_peak(4600)),
+    retention: ModelRetention::WhileWarm,
 };

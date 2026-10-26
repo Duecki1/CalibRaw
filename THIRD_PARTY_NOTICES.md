@@ -136,6 +136,21 @@ from CalibRaw's GPL license; users must comply with the model terms for their us
 | Object selection | [SAM 2.1 Hiera Tiny ONNX encoder and decoder](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/sam2) | Apache-2.0 |
 | Depth masks, fog and Relight | [Depth Anything V2 Small FP32 ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da2) | Apache-2.0 |
 | RAW denoise | [RawNIND package](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/rawnind) | GPL-3.0 |
+| People selection: finding people | [RF-DETR-Seg Medium ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/rfdetr) | Apache-2.0 |
+| People selection: body parts | [Sapiens2 0.4B body-part segmentation ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/sapiens2) | [Sapiens2 License](https://github.com/facebookresearch/sapiens2/blob/main/LICENSE.md) |
+
+The people models are exported by `packaging/models/rfdetr_seg_export.py`
+from Roboflow's RF-DETR-Seg Medium COCO checkpoint (`rfdetr` 1.11.2) and by
+`packaging/models/sapiens2_seg_export.py` from Meta's
+[facebook/sapiens2-seg-0.4b](https://huggingface.co/facebook/sapiens2-seg-0.4b)
+(revision `449b3c5335e6722bb94990abdd1aa6e612432f22`); the Sapiens2 export
+stores its weights as float16. The Sapiens2 License is not an open-source
+license: it grants use, modification and redistribution, requires a copy of
+it with every copy of the model (published beside the artifact), and
+prohibits uses including surveillance, biometric processing and identifying
+people. The download consent names and links it. CalibRaw uses the model only
+to mask body parts of the person a mask selects, and finds that person again
+by position, never by appearance.
 
 The Android depth model originates from the [ONNX Community FP32 ONNX export](https://huggingface.co/onnx-community/depth-anything-v2-small/tree/4472b7362082ad9968fee890ca0f1e5aca36b93d/onnx).
 

@@ -107,7 +107,9 @@ pub(super) fn rasterize_component(
     // map coverage to the requested atlas. Keep that grid even at zero sliders
     // so starting a drag does not change the generated matte or path sampling.
     let needs_isotropic_grid = match &component.geometry {
-        MaskGeometry::Ai { mask: Some(_), .. } | MaskGeometry::Object { mask: Some(_), .. } => true,
+        MaskGeometry::Ai { mask: Some(_), .. }
+        | MaskGeometry::Object { mask: Some(_), .. }
+        | MaskGeometry::Person { mask: Some(_), .. } => true,
         MaskGeometry::Path { points, .. } => points.len() >= 3,
         MaskGeometry::LuminanceRange {
             source: Some(_), ..
@@ -251,6 +253,12 @@ fn rasterize_component_internal(
             grow,
             feather,
             ..
+        }
+        | MaskGeometry::Person {
+            mask: Some(mask),
+            grow,
+            feather,
+            ..
         } => {
             let mut coverage = rasterize_mask_image(width, height, mask);
             shape_probability_mask_from_source(&mut coverage, width, height, *grow, *feather, mask);
@@ -356,9 +364,9 @@ pub(super) fn component_shape_margin_pixels(component: &MaskComponent, image_edg
         grow.abs() * image_edge * 0.05 + mask_feather_radius(image_edge, feather) + 2.0
     };
     match &component.geometry {
-        MaskGeometry::Ai { grow, feather, .. } | MaskGeometry::Object { grow, feather, .. } => {
-            shape_margin(*grow, *feather)
-        }
+        MaskGeometry::Ai { grow, feather, .. }
+        | MaskGeometry::Object { grow, feather, .. }
+        | MaskGeometry::Person { grow, feather, .. } => shape_margin(*grow, *feather),
         MaskGeometry::LuminanceRange { grow, .. } | MaskGeometry::ColorRange { grow, .. } => {
             shape_margin(*grow, 0.0) + range_filter_reach() * image_edge
         }

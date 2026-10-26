@@ -160,6 +160,51 @@ pub struct ObjectStroke {
     pub brush_size: f32,
 }
 
+/// A part of a person that a Select People component covers. The names are
+/// stored in sidecars; keep them stable.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize, serde::Serialize,
+)]
+pub enum PersonPart {
+    /// Every part below, plus what none of them names (such as the tongue).
+    EntirePerson,
+    FaceNeck,
+    /// Skin of the arms, hands, legs, feet and torso.
+    BodySkin,
+    Hair,
+    /// Clothing, shoes and socks.
+    Clothes,
+    Lips,
+    Teeth,
+    Eyeglasses,
+}
+
+impl PersonPart {
+    pub const ALL: [Self; 8] = [
+        Self::EntirePerson,
+        Self::FaceNeck,
+        Self::BodySkin,
+        Self::Hair,
+        Self::Clothes,
+        Self::Lips,
+        Self::Teeth,
+        Self::Eyeglasses,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::EntirePerson => "Entire person",
+            Self::FaceNeck => "Face & neck",
+            Self::BodySkin => "Body skin",
+            Self::Hair => "Hair",
+            Self::Clothes => "Clothes",
+            Self::Lips => "Lips",
+            Self::Teeth => "Teeth",
+            Self::Eyeglasses => "Eyeglasses",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MaskImage {
     pub width: u32,

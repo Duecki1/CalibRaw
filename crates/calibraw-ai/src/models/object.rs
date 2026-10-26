@@ -29,7 +29,7 @@ pub const SAM21_MODEL_BYTES_ESTIMATE: u64 = 125_500_000;
 const SAM21_MODEL_SIZE: u32 = ENCODER_MODEL.input.edge();
 const SAM21_MASK_INPUT_SIZE: u32 = match DECODER_MODEL.input {
     InputShape::Prompted { mask_edge, .. } => mask_edge,
-    InputShape::Square { .. } | InputShape::Tiled { .. } => {
+    InputShape::Square { .. } | InputShape::Tiled { .. } | InputShape::Stretched { .. } => {
         panic!("the SAM 2.1 decoder takes prompts and a previous mask")
     }
 };

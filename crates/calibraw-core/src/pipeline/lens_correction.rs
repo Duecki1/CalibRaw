@@ -248,10 +248,10 @@ fn apply_vignetting(raw: &LoadedRaw, model: &ManualLensModel) -> Result<LoadedRa
         raw.width.saturating_sub(1) as f32,
         raw.height.saturating_sub(1) as f32,
     ];
-    let shading = LensShadingMap::from_fn(|[u, v]| [gain([u * extent[0], v * extent[1]]); 3])
+    let shading = LensShadingMap::from_fn(|[u, v]| [gain([u * extent[0], v * extent[1]]); 4])
         .ok_or_else(|| anyhow!("manual vignetting produced invalid gains"))?;
     Ok(LoadedRaw {
-        lens_shading: Some(shading),
+        lens_shading: Some(shading.after(raw.lens_shading.as_ref())),
         ..raw.clone()
     })
 }
