@@ -520,13 +520,143 @@ fn reads_a_self_closing_description() {
 }
 
 #[test]
-fn rejects_files_without_importable_settings() {
-    let error = import_lightroom_xmp(document(r#"crs:LensProfileEnable="1""#, "").as_bytes())
-        .expect_err("there is nothing to import");
-    assert!(matches!(error, PresetError::Unsupported(_)));
-    let message = error.to_string();
-    assert!(message.contains("no Lightroom settings"));
-    assert!(message.contains("Lens corrections were not imported."));
+fn keeps_files_without_supported_settings_as_empty_placeholders() {
+    let import = import_lightroom_xmp(document(r#"crs:LensProfileEnable="1""#, "").as_bytes())
+        .expect("the preset stays listed");
+    assert!(import.preset.selection().is_empty());
+    assert_eq!(import.preset.edits(), &default_edit_state());
+    assert!(import
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("No Lightroom settings")));
+    assert!(import
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("Lens corrections were not imported.")));
+}
+
+#[test]
+fn rewrites_name_and_group_attributes_and_keeps_other_bytes() {
+    let xml = document(
+        r#"crs:Name="Old name" crs:Group="Old group" crs:Exposure2012="0.5""#,
+        "",
+    );
+    let rewritten = rewrite_lightroom_labels(xml.as_bytes(), "New & name", "New group")
+        .expect("labels rewrite");
+    let text = String::from_utf8(rewritten).unwrap();
+    assert_eq!(
+        text,
+        xml.replace(r#"crs:Name="Old name""#, r#"crs:Name="New &amp; name""#)
+            .replace(r#"crs:Group="Old group""#, r#"crs:Group="New group""#)
+    );
+    let import = import_lightroom_xmp(text.as_bytes()).expect("the rewritten XMP imports");
+    assert_eq!(import.preset.name(), "New & name");
+    assert_eq!(import.preset.group(), "New group");
+    assert_close(import.preset.edits().exposure.exposure, 0.5);
+}
+
+#[test]
+fn rewrites_name_and_group_elements_and_ignores_the_embedded_preset() {
+    let xml = document(
+        r#"crs:Name="Old name" crs:Group="Old group" crs:Exposure2012="0.5""#,
+        r#"
+<crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Old name</rdf:li></rdf:Alt></crs:Name>
+<crs:Group><rdf:Alt><rdf:li xml:lang="x-default">Old group</rdf:li></rdf:Alt></crs:Group>
+<crs:Preset><rdf:Description crs:Name="Embedded" crs:Group="Embedded group" crs:Exposure2012="1"/></crs:Preset>
+"#,
+    );
+    let rewritten =
+        rewrite_lightroom_labels(xml.as_bytes(), "New", "Group").expect("labels rewrite");
+    let text = String::from_utf8(rewritten).unwrap();
+    assert!(text.contains(
+        r#"<crs:Name><rdf:Alt><rdf:li xml:lang="x-default">New</rdf:li></rdf:Alt></crs:Name>"#
+    ));
+    assert!(text.contains(
+        r#"<crs:Group><rdf:Alt><rdf:li xml:lang="x-default">Group</rdf:li></rdf:Alt></crs:Group>"#
+    ));
+    assert!(text.contains(r#"crs:Name="Embedded""#));
+    let import = import_lightroom_xmp(text.as_bytes()).expect("the rewritten XMP imports");
+    assert_eq!(import.preset.name(), "New");
+    assert_eq!(import.preset.group(), "Group");
+}
+
+#[test]
+fn adds_missing_labels_to_the_top_description() {
+    let xml = document(r#"crs:Exposure2012="0.5""#, "");
+    let rewritten =
+        rewrite_lightroom_labels(xml.as_bytes(), "Added", "Added group").expect("labels rewrite");
+    let import = import_lightroom_xmp(&rewritten).expect("the rewritten XMP imports");
+    assert_eq!(import.preset.name(), "Added");
+    assert_eq!(import.preset.group(), "Added group");
+    assert_close(import.preset.edits().exposure.exposure, 0.5);
+}
+
+#[test]
+fn leaves_labels_alone_when_they_already_match() {
+    let xml = document(
+        r#"crs:Name="Same" crs:Group="Same group" crs:Exposure2012="0.5""#,
+        "",
+    );
+    let rewritten =
+        rewrite_lightroom_labels(xml.as_bytes(), "Same", "Same group").expect("labels rewrite");
+    assert_eq!(rewritten, xml.as_bytes());
+}
+
+#[test]
+fn preserves_a_utf8_bom() {
+    let xml = document(
+        r#"crs:Name="Old" crs:Group="Old group" crs:Exposure2012="0.5""#,
+        "",
+    );
+    let mut bytes = vec![0xEF, 0xBB, 0xBF];
+    bytes.extend_from_slice(xml.as_bytes());
+
+    let rewritten = rewrite_lightroom_labels(&bytes, "New", "Group").expect("labels rewrite");
+    assert!(rewritten.starts_with(&[0xEF, 0xBB, 0xBF]));
+    let text = std::str::from_utf8(&rewritten[3..]).unwrap();
+    assert_eq!(
+        text,
+        xml.replace(r#"crs:Name="Old""#, r#"crs:Name="New""#)
+            .replace(r#"crs:Group="Old group""#, r#"crs:Group="Group""#)
+    );
+}
+
+#[test]
+fn adds_the_crs_namespace_even_when_a_comment_mentions_it() {
+    let xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<!-- the comment mentions xmlns:crs without declaring it -->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" crs:Exposure2012="0.5"/>
+</rdf:RDF>
+</x:xmpmeta>"#;
+    let rewritten =
+        rewrite_lightroom_labels(xml.as_bytes(), "Added", "Added group").expect("labels rewrite");
+    let text = std::str::from_utf8(&rewritten).unwrap();
+    assert!(text.contains(r#"crs:Name="Added""#));
+    assert!(text.contains(r#"crs:Group="Added group""#));
+    assert!(text.contains(r#"xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/""#));
+    let import = import_lightroom_xmp(&rewritten).expect("the rewritten XMP imports");
+    assert_eq!(import.preset.name(), "Added");
+    assert_eq!(import.preset.group(), "Added group");
+    assert_close(import.preset.edits().exposure.exposure, 0.5);
+}
+
+#[test]
+fn rewrites_label_elements_in_a_second_description() {
+    let xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="0.5"/>
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/">
+<crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Old</rdf:li></rdf:Alt></crs:Name>
+</rdf:Description>
+</rdf:RDF>
+</x:xmpmeta>"#;
+    let rewritten =
+        rewrite_lightroom_labels(xml.as_bytes(), "New", "Group").expect("labels rewrite");
+    let import = import_lightroom_xmp(&rewritten).expect("the rewritten XMP imports");
+    assert_eq!(import.preset.name(), "New");
+    assert_eq!(import.preset.group(), "Group");
+    assert_close(import.preset.edits().exposure.exposure, 0.5);
 }
 
 #[test]

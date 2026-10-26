@@ -21,6 +21,8 @@ pub(crate) struct PresetState {
     groups: Vec<String>,
     /// Files in the preset folder that could not be read.
     pub(crate) load_failures: Vec<String>,
+    /// Lightroom presets whose settings were only partly translated.
+    pub(crate) load_warnings: Vec<String>,
     pub(crate) editor: Option<PresetEditor>,
     pub(crate) pending_delete: Option<PathBuf>,
     pub(crate) group_dialog: Option<GroupDialog>,
@@ -51,6 +53,7 @@ impl PresetState {
         self.presets = contents.presets;
         self.groups = contents.groups;
         self.load_failures = contents.failures;
+        self.load_warnings = contents.warnings;
         Ok(())
     }
 
@@ -84,6 +87,21 @@ impl PresetState {
     ) -> Option<&StoredPreset> {
         self.presets.iter().find(|stored| {
             Some(stored.path.as_path()) != except && stored.preset.is_named(name, group)
+        })
+    }
+
+    /// The native preset listed as `name` in `group`, other than the one at
+    /// `except`. A Lightroom preset with the same name is not replaceable.
+    pub(crate) fn find_named_native(
+        &self,
+        name: &str,
+        group: &str,
+        except: Option<&Path>,
+    ) -> Option<&StoredPreset> {
+        self.presets.iter().find(|stored| {
+            crate::presets::is_native_preset_file(&stored.path)
+                && Some(stored.path.as_path()) != except
+                && stored.preset.is_named(name, group)
         })
     }
 
@@ -215,11 +233,13 @@ impl CalibRawApp {
             PresetEditorMode::Create { edits } => {
                 let preset = Preset::new(&editor.name, &editor.group, editor.selection, edits)
                     .map_err(|error| sentence_case(&error.to_string()))?;
-                // Saving under an existing name replaces that preset; the
-                // dialog labels its button "Replace" in that case.
+                // Saving under an existing native name replaces that preset;
+                // the dialog labels its button "Replace" in that case. A
+                // Lightroom preset is never replaced by a native one, so a
+                // shared name gets a numbered native preset instead.
                 let existing = self
                     .presets
-                    .find_named(preset.name(), preset.group(), None)
+                    .find_named_native(preset.name(), preset.group(), None)
                     .map(|stored| stored.path.clone());
                 match existing {
                     Some(path) => {
@@ -228,6 +248,10 @@ impl CalibRawApp {
                         Ok(format!("Replaced preset “{}”.", preset.name()))
                     }
                     None => {
+                        let name = self.presets.unique_name(&preset);
+                        let preset = preset
+                            .renamed(&name, preset.group())
+                            .map_err(|error| sentence_case(&error.to_string()))?;
                         crate::presets::save_new_preset(folder, &preset)
                             .map_err(|error| format!("Could not save the preset: {error}"))?;
                         Ok(format!("Saved preset “{}”.", preset.name()))
@@ -416,9 +440,9 @@ impl CalibRawApp {
     }
 
     /// Copies preset files into the preset folder. Imported presets whose
-    /// name is taken in their group get a numbered name. Lightroom presets are
-    /// converted first; settings without an equivalent are reported as
-    /// warnings in the notice.
+    /// name is taken in their group get a numbered name. A Lightroom XMP is
+    /// copied as an XMP, keeping settings CalibRaw cannot translate yet.
+    /// Settings without an equivalent are reported as warnings in the notice.
     pub(crate) fn import_preset_files(&mut self, paths: &[PathBuf]) {
         let folder = match self.presets.folder() {
             Ok(folder) => folder.to_owned(),
@@ -436,11 +460,18 @@ impl CalibRawApp {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            let result = read_preset_for_import(path).and_then(|(preset, file_warnings)| {
-                let name = self.presets.unique_name(&preset);
-                let preset = preset.renamed(&name, preset.group())?;
-                crate::presets::save_new_preset(&folder, &preset)?;
-                Ok(file_warnings)
+            let result = read_preset_for_import(path).and_then(|imported| {
+                let name = self.presets.unique_name(&imported.preset);
+                let preset = imported.preset.renamed(&name, imported.preset.group())?;
+                match imported.source {
+                    Some(source) => {
+                        crate::presets::save_new_lightroom_preset(&folder, &preset, &source)?;
+                    }
+                    None => {
+                        crate::presets::save_new_preset(&folder, &preset)?;
+                    }
+                }
+                Ok(imported.warnings)
             });
             match result {
                 Ok(file_warnings) => {
@@ -506,15 +537,29 @@ impl CalibRawApp {
                 character => character,
             })
             .collect();
+        let is_lightroom = crate::presets::lightroom::is_lightroom_preset_file(path);
+        let (filter, extensions, suffix) = if is_lightroom {
+            (
+                "Lightroom preset",
+                LIGHTROOM_FILE_EXTENSIONS,
+                crate::presets::lightroom::LIGHTROOM_PRESET_SUFFIX,
+            )
+        } else {
+            (
+                "CalibRaw preset",
+                PRESET_FILE_EXTENSIONS,
+                crate::presets::PRESET_SUFFIX,
+            )
+        };
         let Some(destination) = crate::ui::choose_save_path(
-            "CalibRaw preset".to_owned(),
-            PRESET_FILE_EXTENSIONS,
-            &format!("{file_name}{}", crate::presets::PRESET_SUFFIX),
+            filter.to_owned(),
+            extensions,
+            &format!("{file_name}{suffix}"),
             None,
         ) else {
             return;
         };
-        match crate::presets::write_preset_file(&destination, &preset) {
+        match crate::presets::export_preset_file(path, &destination, &preset) {
             Ok(()) => {
                 self.ui.notice = Some(format!(
                     "Exported preset “{}” to {}.",
@@ -532,15 +577,33 @@ impl CalibRawApp {
 
 /// [`crate::presets::PRESET_SUFFIX`] without its leading dot, for file pickers.
 const PRESET_FILE_EXTENSIONS: &[&str] = &["calibraw-preset"];
+/// [`crate::presets::lightroom::LIGHTROOM_PRESET_SUFFIX`] without its dot.
+const LIGHTROOM_FILE_EXTENSIONS: &[&str] = &["xmp"];
+
+struct ImportedPreset {
+    preset: Preset,
+    warnings: Vec<String>,
+    /// The XMP bytes of a Lightroom preset, kept as the copied source.
+    source: Option<Vec<u8>>,
+}
 
 /// Reads a CalibRaw or Lightroom preset file, with the warnings of a
-/// Lightroom conversion.
-fn read_preset_for_import(path: &Path) -> Result<(Preset, Vec<String>), PresetError> {
+/// Lightroom translation and the XMP source when there is one.
+fn read_preset_for_import(path: &Path) -> Result<ImportedPreset, PresetError> {
     if crate::presets::lightroom::is_lightroom_preset_file(path) {
-        let import = crate::presets::lightroom::read_lightroom_preset_file(path)?;
-        Ok((import.preset, import.warnings))
+        let (import, source) =
+            crate::presets::lightroom::read_lightroom_preset_file_with_bytes(path)?;
+        Ok(ImportedPreset {
+            preset: import.preset,
+            warnings: import.warnings,
+            source: Some(source),
+        })
     } else {
-        crate::presets::read_preset_file(path).map(|preset| (preset, Vec::new()))
+        Ok(ImportedPreset {
+            preset: crate::presets::read_preset_file(path)?,
+            warnings: Vec::new(),
+            source: None,
+        })
     }
 }
 
@@ -600,24 +663,22 @@ mod tests {
     }
 
     #[test]
-    fn importing_a_lightroom_preset_converts_and_saves_it() {
+    fn importing_a_lightroom_preset_copies_the_xmp() {
         let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
         let mut app = CalibRawApp::empty(&egui::Context::default());
         app.presets = PresetState::load(Some(folder.path().to_owned()));
 
-        let xmp = folder.path().join("Warm Look.xmp");
-        std::fs::write(
-            &xmp,
-            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+        let xmp = source_folder.path().join("Warm Look.xmp");
+        let original = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
 <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
  crs:WhiteBalance="As Shot" crs:Exposure2012="0.5" crs:Vibrance="20" />
 </rdf:RDF>
-</x:xmpmeta>"#,
-        )
-        .unwrap();
+</x:xmpmeta>"#;
+        std::fs::write(&xmp, original).unwrap();
 
-        app.import_preset_files(&[xmp]);
+        app.import_preset_files(std::slice::from_ref(&xmp));
 
         assert_eq!(app.presets.all().len(), 1);
         let stored = &app.presets.all()[0];
@@ -625,16 +686,27 @@ mod tests {
         assert_eq!(stored.preset.group(), crate::presets::DEFAULT_PRESET_GROUP);
         assert_eq!(stored.preset.edits().exposure.exposure, 0.5);
         assert_eq!(stored.preset.edits().exposure.vibrance, 20.0);
+        assert_eq!(
+            stored
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("xmp")
+        );
+        assert_ne!(stored.path, xmp);
+        assert_eq!(std::fs::read_to_string(&xmp).unwrap(), original);
+        assert!(stored.path.exists());
         assert_eq!(app.ui.notice.as_deref(), Some("Imported 1 preset."));
     }
 
     #[test]
     fn importing_a_lightroom_preset_keeps_warnings_out_of_failures() {
         let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
         let mut app = CalibRawApp::empty(&egui::Context::default());
         app.presets = PresetState::load(Some(folder.path().to_owned()));
 
-        let xmp = folder.path().join("Corrected.xmp");
+        let xmp = source_folder.path().join("Corrected.xmp");
         std::fs::write(
             &xmp,
             r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
@@ -657,10 +729,11 @@ mod tests {
     #[test]
     fn importing_a_mask_only_lightroom_preset_saves_an_ai_mask() {
         let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
         let mut app = CalibRawApp::empty(&egui::Context::default());
         app.presets = PresetState::load(Some(folder.path().to_owned()));
 
-        let xmp = folder.path().join("Subject Look.xmp");
+        let xmp = source_folder.path().join("Subject Look.xmp");
         std::fs::write(
             &xmp,
             r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
@@ -690,6 +763,128 @@ mod tests {
             MaskKind::Subject
         );
         assert_eq!(app.ui.notice.as_deref(), Some("Imported 1 preset."));
+    }
+
+    #[test]
+    fn importing_an_unsupported_lightroom_preset_keeps_it_listed() {
+        let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+
+        let xmp = source_folder.path().join("Lens only.xmp");
+        std::fs::write(
+            &xmp,
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+ crs:LensProfileEnable="1" />
+</rdf:RDF>
+</x:xmpmeta>"#,
+        )
+        .unwrap();
+
+        app.import_preset_files(&[xmp]);
+
+        assert_eq!(app.presets.all().len(), 1);
+        let stored = &app.presets.all()[0];
+        assert!(stored.preset.selection().is_empty());
+        assert_eq!(stored.preset.name(), "Lens only");
+        assert_eq!(
+            stored
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("xmp")
+        );
+        assert_eq!(app.presets.load_warnings.len(), 1);
+        assert!(app.presets.load_warnings[0].contains("No Lightroom settings"));
+        let notice = app.ui.notice.as_deref().unwrap();
+        assert!(notice.starts_with("Imported 1 preset."), "{notice}");
+        assert!(notice.contains("No Lightroom settings"));
+    }
+
+    #[test]
+    fn renaming_a_lightroom_preset_rewrites_only_the_copied_xmp_labels() {
+        let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+
+        let xmp = source_folder.path().join("Warm Look.xmp");
+        let original = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+ crs:Name="Warm Look" crs:Group="Film" crs:Exposure2012="0.5" />
+</rdf:RDF>
+</x:xmpmeta>"#;
+        std::fs::write(&xmp, original).unwrap();
+        app.import_preset_files(std::slice::from_ref(&xmp));
+
+        let path = app.presets.all()[0].path.clone();
+        app.open_rename_preset_editor(&path);
+        let editor = app.presets.editor.as_mut().unwrap();
+        editor.name = "Hot Look".to_owned();
+        editor.group = "Analog".to_owned();
+        app.confirm_preset_editor();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#"crs:Name="Hot Look""#));
+        assert!(text.contains(r#"crs:Group="Analog""#));
+        assert!(text.contains(r#"crs:Exposure2012="0.5""#));
+        assert_eq!(std::fs::read_to_string(&xmp).unwrap(), original);
+        assert_eq!(app.presets.all()[0].preset.name(), "Hot Look");
+        assert_eq!(app.presets.all()[0].preset.group(), "Analog");
+    }
+
+    #[test]
+    fn creating_a_native_preset_does_not_replace_a_lightroom_preset() {
+        let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+
+        let xmp = source_folder.path().join("Warm.xmp");
+        std::fs::write(
+            &xmp,
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+ crs:Name="Warm" crs:Exposure2012="0.5" />
+</rdf:RDF>
+</x:xmpmeta>"#,
+        )
+        .unwrap();
+        app.import_preset_files(&[xmp]);
+        let xmp_path = app.presets.all()[0].path.clone();
+
+        let edits = crate::sidecar::default_edit_state();
+        let selection = EditSelection {
+            adjustment_groups: AdjustmentGroupSet::from_iter([AdjustmentGroup::Color]),
+            ..EditSelection::default()
+        };
+        app.presets.editor = Some(PresetEditor {
+            mode: PresetEditorMode::Create {
+                edits: Box::new(edits),
+            },
+            name: "Warm".to_owned(),
+            group: String::new(),
+            selection,
+            error: None,
+            focus_requested: false,
+        });
+        app.confirm_preset_editor();
+
+        assert!(xmp_path.exists());
+        assert_eq!(app.presets.all().len(), 2);
+        assert!(app
+            .presets
+            .all()
+            .iter()
+            .any(|stored| { stored.path == xmp_path && stored.preset.name() == "Warm" }));
+        assert!(app.presets.all().iter().any(|stored| {
+            crate::presets::is_native_preset_file(&stored.path) && stored.preset.name() == "Warm 2"
+        }));
     }
 
     #[test]

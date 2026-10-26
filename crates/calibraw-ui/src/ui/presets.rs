@@ -115,6 +115,9 @@ impl PresetList {
 /// A one-line description of what a preset changes, such as
 /// "Light, Color, Effects · Masks".
 fn selection_summary(selection: EditSelection) -> String {
+    if selection.is_empty() {
+        return "No supported settings yet".to_owned();
+    }
     let mut parts: Vec<&str> = selection
         .adjustment_groups
         .iter()
@@ -205,6 +208,17 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
             ),
             ui.visuals().warn_fg_color,
             Some(app.presets.load_failures.join("\n")),
+        ));
+    }
+    if !app.presets.load_warnings.is_empty() {
+        let count = app.presets.load_warnings.len();
+        notes.push((
+            format!(
+                "Some settings in {count} Lightroom {} were not translated.",
+                if count == 1 { "preset" } else { "presets" }
+            ),
+            ui.visuals().warn_fg_color,
+            Some(app.presets.load_warnings.join("\n")),
         ));
     }
     if list.groups.is_empty() {
@@ -459,7 +473,7 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
         matches!(editor.mode, PresetEditorMode::Create { .. })
             && app
                 .presets
-                .find_named(&editor.name, &editor.group, None)
+                .find_named_native(&editor.name, &editor.group, None)
                 .is_some()
     });
     let Some(editor) = app.presets.editor.as_mut() else {
@@ -1028,5 +1042,9 @@ mod tests {
             ..EditSelection::default()
         };
         assert_eq!(selection_summary(masks_only), "AI masks");
+        assert_eq!(
+            selection_summary(EditSelection::default()),
+            "No supported settings yet"
+        );
     }
 }

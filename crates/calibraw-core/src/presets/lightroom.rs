@@ -6,18 +6,22 @@
 //! camera-raw sidecar under `crs:Preset`; that subtree belongs to a different
 //! preset and is ignored here.
 //!
-//! The conversion covers the settings CalibRaw has an equivalent for. Settings
-//! that cannot be represented (lens corrections, perspective, defringing,
-//! parametric curves, camera calibration and profiles) are reported as
-//! warnings instead of failing the import. White balance is absolute in
-//! CalibRaw, so Lightroom's named white balances use their usual temperature
-//! and tint values.
+//! CalibRaw keeps the XMP as the preset source and translates it into a
+//! [`Preset`] whenever presets load. Settings that cannot be represented
+//! (lens corrections, perspective, defringing, parametric curves, camera
+//! calibration and profiles) are reported as warnings instead of failing the
+//! import, and remain in the XMP for a future version to translate. White
+//! balance is absolute in CalibRaw, so Lightroom's named white balances use
+//! their usual temperature and tint values.
 //!
 //! Subject, background and sky masks are carried over without their raster;
 //! CalibRaw regenerates them on the target photo. Other mask types are skipped
 //! with a warning, as are local adjustments CalibRaw cannot represent.
 
-use super::{Preset, PresetError, DEFAULT_PRESET_GROUP, MAX_PRESET_BYTES, MAX_PRESET_NAME_CHARS};
+use super::{
+    read_preset_bytes, Preset, PresetError, DEFAULT_PRESET_GROUP, MAX_PRESET_BYTES,
+    MAX_PRESET_NAME_CHARS,
+};
 use crate::pipeline::{
     AdjustmentGroup, AdjustmentGroupSet, ColorGradeWheel, ColorGrading, EffectComponent,
     ExposureParams, GrainEffectSettings, LocalAdjustments, LocalMask, MaskCombineMode,
@@ -27,10 +31,11 @@ use crate::pipeline::{
     MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
 use crate::sidecar::{default_edit_state, EditSelection};
+use quick_xml::escape::escape;
 use quick_xml::events::{BytesEnd, BytesRef, BytesStart, Event};
 use quick_xml::Reader;
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -53,18 +58,21 @@ pub fn is_lightroom_preset_file(path: &Path) -> bool {
 
 /// Reads a Lightroom preset from `path`. See [`import_lightroom_xmp`].
 pub fn read_lightroom_preset_file(path: &Path) -> Result<LightroomImport, PresetError> {
-    let file = std::fs::File::open(path)?;
-    let length = file.metadata()?.len();
-    if length > MAX_PRESET_BYTES {
-        return Err(PresetError::TooLarge(length));
-    }
-    let mut bytes = Vec::with_capacity(length as usize);
-    file.take(MAX_PRESET_BYTES + 1).read_to_end(&mut bytes)?;
+    read_lightroom_preset_file_with_bytes(path).map(|(import, _)| import)
+}
+
+/// Reads a Lightroom preset and the XMP bytes it came from. The bytes are
+/// kept when the preset is imported, so unsupported settings survive.
+pub fn read_lightroom_preset_file_with_bytes(
+    path: &Path,
+) -> Result<(LightroomImport, Vec<u8>), PresetError> {
+    let bytes = read_preset_bytes(path)?;
     let fallback = path
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("Lightroom preset");
-    import_lightroom_xmp_named(&bytes, fallback)
+    let import = import_lightroom_xmp_named(&bytes, fallback)?;
+    Ok((import, bytes))
 }
 
 /// Converts a Lightroom preset XMP document into a CalibRaw preset.
@@ -106,6 +114,428 @@ fn decode_utf8(bytes: &[u8]) -> Result<&str, PresetError> {
 
 fn invalid_xml(message: impl Into<String>) -> PresetError {
     PresetError::Invalid(format!("invalid XMP: {}", message.into()))
+}
+
+// ---------------------------------------------------------------------------
+// Label rewriting
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+enum LabelKind {
+    Name,
+    Group,
+}
+
+impl LabelKind {
+    fn attribute_name(self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::Group => "Group",
+        }
+    }
+}
+
+/// Rewrites the preset name and group stored in `bytes`, leaving every other
+/// byte of the XMP untouched. Used when a copied Lightroom preset is renamed,
+/// moved between groups, or imported under a unique name.
+pub(crate) fn rewrite_lightroom_labels(
+    bytes: &[u8],
+    name: &str,
+    group: &str,
+) -> Result<Vec<u8>, PresetError> {
+    if bytes.len() as u64 > MAX_PRESET_BYTES {
+        return Err(PresetError::TooLarge(bytes.len() as u64));
+    }
+    let text = decode_utf8(bytes)?;
+    let prefix_len = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        3
+    } else {
+        0
+    };
+    let mut rewriter = LabelRewriter::new(text, name, group);
+    rewriter.rewrite()?;
+    let replacements = rewriter.finish();
+    if replacements.is_empty() {
+        return Ok(bytes.to_vec());
+    }
+
+    let source = text.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len() + 64);
+    output.extend_from_slice(&bytes[..prefix_len]);
+    let mut cursor = 0;
+    for (range, replacement) in replacements {
+        output.extend_from_slice(&source[cursor..range.start]);
+        output.extend_from_slice(&replacement);
+        cursor = range.end;
+    }
+    output.extend_from_slice(&source[cursor..]);
+    if output.len() as u64 > MAX_PRESET_BYTES {
+        return Err(PresetError::TooLarge(output.len() as u64));
+    }
+    Ok(output)
+}
+
+struct LabelRewriter<'a> {
+    text: &'a str,
+    name: &'a str,
+    group: &'a str,
+    escaped_name: String,
+    escaped_group: String,
+    depth: usize,
+    rdf_depth: Option<usize>,
+    top_depth: Option<usize>,
+    top_found: bool,
+    /// End of the top description's start tag, and whether it was empty.
+    top_tag: Option<(usize, bool)>,
+    /// Whether `crs` is bound by an ancestor of the top description or by the
+    /// description itself.
+    crs_namespace_in_scope: bool,
+    skip_depth: Option<usize>,
+    open_label: Option<OpenLabel>,
+    seen_name: bool,
+    seen_group: bool,
+    replacements: Vec<(Range<usize>, Vec<u8>)>,
+}
+
+struct OpenLabel {
+    kind: LabelKind,
+    depth: usize,
+    content_start: usize,
+}
+
+impl<'a> LabelRewriter<'a> {
+    fn new(text: &'a str, name: &'a str, group: &'a str) -> Self {
+        Self {
+            text,
+            name,
+            group,
+            escaped_name: escape(name).into_owned(),
+            escaped_group: escape(group).into_owned(),
+            depth: 0,
+            rdf_depth: None,
+            top_depth: None,
+            top_found: false,
+            top_tag: None,
+            crs_namespace_in_scope: false,
+            skip_depth: None,
+            open_label: None,
+            seen_name: false,
+            seen_group: false,
+            replacements: Vec::new(),
+        }
+    }
+
+    fn rewrite(&mut self) -> Result<(), PresetError> {
+        let mut reader = Reader::from_str(self.text);
+        reader.config_mut().trim_text(false);
+        loop {
+            let before = reader.buffer_position() as usize;
+            let event = reader
+                .read_event()
+                .map_err(|error| invalid_xml(error.to_string()))?;
+            let after = reader.buffer_position() as usize;
+            match event {
+                Event::Start(start) => {
+                    self.start(&start, before, after, false)?;
+                    self.depth += 1;
+                }
+                Event::Empty(start) => self.start(&start, before, after, true)?,
+                Event::End(_) => {
+                    self.depth = self
+                        .depth
+                        .checked_sub(1)
+                        .ok_or_else(|| invalid_xml("unexpected closing tag"))?;
+                    self.end(before);
+                }
+                Event::Eof => break,
+                _ => {}
+            }
+        }
+        if self.top_depth.is_some() {
+            return Err(invalid_xml("the preset description is not closed"));
+        }
+        if !self.top_found {
+            return Err(invalid_xml("no rdf:Description was found"));
+        }
+        Ok(())
+    }
+
+    fn start(
+        &mut self,
+        start: &BytesStart<'_>,
+        before: usize,
+        after: usize,
+        empty: bool,
+    ) -> Result<(), PresetError> {
+        let (local, prefix) = start.name().decompose();
+        let local = local.as_ref();
+        let is_rdf = prefix.is_some_and(|prefix| prefix.as_ref() == b"rdf");
+        let is_crs = prefix.is_some_and(|prefix| prefix.as_ref() == b"crs");
+
+        if self.skip_depth.is_some() || self.open_label.is_some() {
+            return Ok(());
+        }
+
+        if !self.top_found && declares_crs_namespace(start)? {
+            self.crs_namespace_in_scope = true;
+        }
+
+        if is_rdf && local == b"RDF" {
+            self.rdf_depth = Some(self.depth);
+            return Ok(());
+        }
+
+        if is_rdf && local == b"Description" {
+            let direct_child = match self.rdf_depth {
+                Some(rdf_depth) => self.depth == rdf_depth + 1,
+                None => true,
+            };
+            if direct_child {
+                if !self.top_found {
+                    self.top_found = true;
+                    self.top_tag = Some((after, empty));
+                }
+                if !empty {
+                    self.top_depth = Some(self.depth);
+                }
+            }
+            if self.top_found {
+                self.collect_label_attributes(start, before, after)?;
+            }
+            return Ok(());
+        }
+
+        if self.top_depth.is_none() {
+            return Ok(());
+        }
+
+        if is_crs && local == b"Preset" {
+            if !empty {
+                self.skip_depth = Some(self.depth);
+            }
+            return Ok(());
+        }
+
+        if is_crs && (local == b"Name" || local == b"Group") {
+            let kind = if local == b"Name" {
+                LabelKind::Name
+            } else {
+                LabelKind::Group
+            };
+            if empty {
+                let escaped = self.escaped(kind);
+                let replacement = label_element(
+                    &self.text.as_bytes()[before..after],
+                    start.name().as_ref(),
+                    escaped,
+                );
+                self.replacements.push((before..after, replacement));
+                self.mark_seen(kind);
+            } else {
+                self.open_label = Some(OpenLabel {
+                    kind,
+                    depth: self.depth,
+                    content_start: after,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn end(&mut self, before: usize) {
+        if let Some(skip_depth) = self.skip_depth {
+            if self.depth == skip_depth {
+                self.skip_depth = None;
+            }
+            return;
+        }
+
+        if let Some(open) = self
+            .open_label
+            .take_if(|open_label| open_label.depth == self.depth)
+        {
+            let content = label_content(self.escaped(open.kind));
+            self.replacements
+                .push((open.content_start..before, content));
+            self.mark_seen(open.kind);
+        }
+
+        if self.top_depth == Some(self.depth) {
+            self.top_depth = None;
+        }
+    }
+
+    fn collect_label_attributes(
+        &mut self,
+        start: &BytesStart<'_>,
+        before: usize,
+        after: usize,
+    ) -> Result<(), PresetError> {
+        let attributes = crs_attributes(start)?;
+        let tag = &self.text.as_bytes()[before..after];
+        for (kind, range) in label_attribute_spans(start, tag) {
+            self.mark_seen(kind);
+            let desired = match kind {
+                LabelKind::Name => self.name,
+                LabelKind::Group => self.group,
+            };
+            let differs = attributes
+                .get(kind.attribute_name())
+                .is_none_or(|current| current.as_str() != desired);
+            if differs {
+                let replacement = self.escaped(kind).as_bytes().to_vec();
+                self.replacements
+                    .push((before + range.start..before + range.end, replacement));
+            }
+        }
+        // Never add a second label next to one whose raw value could not be
+        // located; the parsed value is authoritative.
+        if attributes.contains_key("Name") {
+            self.seen_name = true;
+        }
+        if attributes.contains_key("Group") {
+            self.seen_group = true;
+        }
+        Ok(())
+    }
+
+    fn escaped(&self, kind: LabelKind) -> &str {
+        match kind {
+            LabelKind::Name => &self.escaped_name,
+            LabelKind::Group => &self.escaped_group,
+        }
+    }
+
+    fn mark_seen(&mut self, kind: LabelKind) {
+        match kind {
+            LabelKind::Name => self.seen_name = true,
+            LabelKind::Group => self.seen_group = true,
+        }
+    }
+
+    fn finish(mut self) -> Vec<(Range<usize>, Vec<u8>)> {
+        if let Some((after, empty)) = self.top_tag {
+            let mut insertion = String::new();
+            if !self.seen_name {
+                insertion.push_str(" crs:Name=\"");
+                insertion.push_str(&self.escaped_name);
+                insertion.push('"');
+            }
+            if !self.seen_group {
+                insertion.push_str(" crs:Group=\"");
+                insertion.push_str(&self.escaped_group);
+                insertion.push('"');
+            }
+            if !insertion.is_empty() {
+                if !self.crs_namespace_in_scope {
+                    insertion
+                        .push_str(" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\"");
+                }
+                let position = if empty { after - 2 } else { after - 1 };
+                self.replacements
+                    .push((position..position, insertion.into_bytes()));
+            }
+        }
+        self.replacements
+            .sort_by_key(|(range, _)| (range.start, range.end));
+        self.replacements
+    }
+}
+
+fn label_element(open_tag: &[u8], tag_name: &[u8], escaped: &str) -> Vec<u8> {
+    let mut element = if let Some(open) = open_tag.strip_suffix(b"/>") {
+        let mut open = open.to_vec();
+        open.push(b'>');
+        open
+    } else {
+        open_tag.to_vec()
+    };
+    element.extend_from_slice(&label_content(escaped));
+    element.extend_from_slice(b"</");
+    element.extend_from_slice(tag_name);
+    element.push(b'>');
+    element
+}
+
+fn label_content(escaped: &str) -> Vec<u8> {
+    let mut content = Vec::with_capacity(escaped.len() + 64);
+    content.extend_from_slice(b"<rdf:Alt><rdf:li xml:lang=\"x-default\">");
+    content.extend_from_slice(escaped.as_bytes());
+    content.extend_from_slice(b"</rdf:li></rdf:Alt>");
+    content
+}
+
+/// The `crs:Name` and `crs:Group` attribute value spans of a start tag,
+/// relative to the tag.
+fn label_attribute_spans(start: &BytesStart<'_>, tag: &[u8]) -> Vec<(LabelKind, Range<usize>)> {
+    let mut spans = Vec::new();
+    let mut cursor = 1 + start.name().as_ref().len();
+    while cursor < tag.len() {
+        while cursor < tag.len() && tag[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if tag
+            .get(cursor)
+            .is_none_or(|byte| *byte == b'>' || *byte == b'/')
+        {
+            break;
+        }
+        let key_start = cursor;
+        while cursor < tag.len()
+            && !tag[cursor].is_ascii_whitespace()
+            && !matches!(tag[cursor], b'=' | b'>' | b'/')
+        {
+            cursor += 1;
+        }
+        let key_end = cursor;
+        while cursor < tag.len() && tag[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if tag.get(cursor) != Some(&b'=') {
+            break;
+        }
+        cursor += 1;
+        while cursor < tag.len() && tag[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        let quote = match tag.get(cursor).copied() {
+            Some(quote) if quote == b'"' || quote == b'\'' => quote,
+            _ => break,
+        };
+        cursor += 1;
+        let value_start = cursor;
+        while cursor < tag.len() && tag[cursor] != quote {
+            cursor += 1;
+        }
+        let value_end = cursor;
+        if cursor < tag.len() {
+            cursor += 1;
+        }
+
+        let key = &tag[key_start..key_end];
+        if let Some(colon) = key.iter().position(|byte| *byte == b':') {
+            if &key[..colon] == b"crs" {
+                match &key[colon + 1..] {
+                    b"Name" => spans.push((LabelKind::Name, value_start..value_end)),
+                    b"Group" => spans.push((LabelKind::Group, value_start..value_end)),
+                    _ => {}
+                }
+            }
+        }
+    }
+    spans
+}
+
+/// Whether `start` binds the `crs` prefix to the camera-raw namespace.
+fn declares_crs_namespace(start: &BytesStart<'_>) -> Result<bool, PresetError> {
+    for attribute in start.attributes() {
+        let attribute = attribute
+            .map_err(|error| invalid_xml(format!("could not read an attribute: {error}")))?;
+        if attribute.key.as_ref() == b"xmlns:crs" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -924,14 +1354,7 @@ impl<'a> Converter<'a> {
         self.warn_unsupported_settings();
 
         if groups.is_empty() && masks.is_empty() {
-            let notes = if self.warnings.is_empty() {
-                String::new()
-            } else {
-                format!(" Notes: {}.", self.warnings.join("; "))
-            };
-            return Err(PresetError::Unsupported(format!(
-                "the XMP file contains no Lightroom settings CalibRaw can import.{notes}"
-            )));
+            self.warn("No Lightroom settings in this preset can be translated yet.");
         }
 
         let selection = EditSelection {
@@ -946,7 +1369,7 @@ impl<'a> Converter<'a> {
             global_effects: effects,
             ..MaskStack::default()
         });
-        Preset::new(&name, &group, selection, &edits)
+        Preset::from_lightroom(&name, &group, selection, &edits)
     }
 
     fn preset_name(&mut self, fallback: &str) -> String {

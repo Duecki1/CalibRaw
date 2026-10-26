@@ -99,9 +99,33 @@ impl Preset {
         selection: EditSelection,
         edits: &EditState,
     ) -> Result<Self, PresetError> {
+        Self::captured(name, group, selection, edits, true)
+    }
+
+    /// Captures a preset translated from a Lightroom XMP.
+    ///
+    /// Unlike [`Self::new`], the selection may be empty: an XMP whose settings
+    /// CalibRaw cannot translate yet stays listed as a placeholder until a
+    /// newer version can translate it.
+    pub(crate) fn from_lightroom(
+        name: &str,
+        group: &str,
+        selection: EditSelection,
+        edits: &EditState,
+    ) -> Result<Self, PresetError> {
+        Self::captured(name, group, selection, edits, false)
+    }
+
+    fn captured(
+        name: &str,
+        group: &str,
+        selection: EditSelection,
+        edits: &EditState,
+        require_selection: bool,
+    ) -> Result<Self, PresetError> {
         let name = normalize_name(name)?;
         let group = normalize_group(group)?;
-        if selection.is_empty() {
+        if require_selection && selection.is_empty() {
             return invalid("a preset must include at least one setting");
         }
         let mut captured = default_edit_state();
@@ -288,6 +312,9 @@ impl Preset {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, PresetError> {
+        if self.selection.is_empty() {
+            return invalid("a preset must include at least one setting");
+        }
         let document = PresetDocument {
             format: PRESET_FORMAT.to_owned(),
             schema_version: migrations::older_readers::schema_version(
@@ -516,6 +543,9 @@ pub struct PresetFolderContents {
     pub groups: Vec<String>,
     /// One message per file that could not be read.
     pub failures: Vec<String>,
+    /// One message per Lightroom preset whose settings were only partly
+    /// translated.
+    pub warnings: Vec<String>,
 }
 
 /// Reads every preset in `folder`. A missing folder holds no presets.
@@ -533,12 +563,17 @@ pub fn load_preset_folder(folder: &Path) -> Result<PresetFolderContents, PresetE
         if !is_preset_file(&path) {
             continue;
         }
-        match read_preset_file(&path) {
-            Ok(preset) => contents.presets.push(StoredPreset { path, preset }),
-            Err(error) => contents.failures.push(format!(
-                "{}: {error}",
-                path.file_name().unwrap_or_default().to_string_lossy()
-            )),
+        let label = path.file_name().unwrap_or_default().to_string_lossy();
+        match read_preset_file_for_load(&path) {
+            Ok((preset, warnings)) => {
+                if !warnings.is_empty() {
+                    contents
+                        .warnings
+                        .push(format!("{label}: {}", warnings.join(" ")));
+                }
+                contents.presets.push(StoredPreset { path, preset });
+            }
+            Err(error) => contents.failures.push(format!("{label}: {error}")),
         }
     }
     contents.presets.sort_by_cached_key(|stored| {
@@ -735,13 +770,41 @@ pub fn delete_group(
     write_group_list(folder, groups)
 }
 
+/// Whether `path` names a preset file in the preset folder: a native
+/// `.calibraw-preset` or a Lightroom `.xmp`.
 pub fn is_preset_file(path: &Path) -> bool {
+    is_native_preset_file(path) || is_visible_lightroom_preset_file(path)
+}
+
+/// Whether `path` names a native CalibRaw preset file.
+pub fn is_native_preset_file(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.ends_with(PRESET_SUFFIX) && !name.starts_with('.'))
 }
 
+fn is_visible_lightroom_preset_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| !name.starts_with('.'))
+        && lightroom::is_lightroom_preset_file(path)
+}
+
+/// Reads a native CalibRaw preset from `path`.
 pub fn read_preset_file(path: &Path) -> Result<Preset, PresetError> {
+    Preset::decode(&read_preset_bytes(path)?)
+}
+
+fn read_preset_file_for_load(path: &Path) -> Result<(Preset, Vec<String>), PresetError> {
+    if lightroom::is_lightroom_preset_file(path) {
+        let import = lightroom::read_lightroom_preset_file(path)?;
+        Ok((import.preset, import.warnings))
+    } else {
+        Ok((read_preset_file(path)?, Vec::new()))
+    }
+}
+
+pub(crate) fn read_preset_bytes(path: &Path) -> Result<Vec<u8>, PresetError> {
     let file = std::fs::File::open(path)?;
     let length = file.metadata()?.len();
     if length > MAX_PRESET_BYTES {
@@ -749,32 +812,79 @@ pub fn read_preset_file(path: &Path) -> Result<Preset, PresetError> {
     }
     let mut bytes = Vec::with_capacity(length as usize);
     file.take(MAX_PRESET_BYTES + 1).read_to_end(&mut bytes)?;
-    Preset::decode(&bytes)
+    Ok(bytes)
 }
 
-/// Writes `preset` to `path`, replacing any file there.
+/// Writes `preset` to `path`, replacing any file there. A native preset is
+/// encoded as JSON; a Lightroom XMP keeps its settings and only has its name
+/// and group labels rewritten.
 pub fn write_preset_file(path: &Path, preset: &Preset) -> Result<(), PresetError> {
-    write_bytes_atomically(path, &preset.encode()?)?;
+    if lightroom::is_lightroom_preset_file(path) {
+        let bytes = read_preset_bytes(path)?;
+        let bytes = lightroom::rewrite_lightroom_labels(&bytes, preset.name(), preset.group())?;
+        write_bytes_atomically(path, &bytes)?;
+    } else {
+        write_bytes_atomically(path, &preset.encode()?)?;
+    }
     Ok(())
 }
 
-/// Saves `preset` as a new file in `folder` and returns its path. The file
-/// name is derived from the group and name and never replaces another file.
+/// Saves `preset` as a new native preset file in `folder` and returns its
+/// path. The file name is derived from the group and name and never replaces
+/// another file.
 pub fn save_new_preset(folder: &Path, preset: &Preset) -> Result<PathBuf, PresetError> {
-    let stem = preset_file_stem(preset);
-    let path = (1..=MAX_PRESET_FILES)
-        .map(|index| {
-            let suffix = if index == 1 {
-                String::new()
-            } else {
-                format!("-{index}")
-            };
-            folder.join(format!("{stem}{suffix}{PRESET_SUFFIX}"))
-        })
-        .find(|path| !path.exists())
-        .ok_or_else(|| PresetError::Invalid("too many presets with the same name".to_owned()))?;
+    let path = unused_preset_path(folder, preset, PRESET_SUFFIX)?;
     write_preset_file(&path, preset)?;
     Ok(path)
+}
+
+/// Saves a copy of a Lightroom XMP in `folder` and returns its path. The copy
+/// has the preset's current name and group, and never replaces another file.
+pub fn save_new_lightroom_preset(
+    folder: &Path,
+    preset: &Preset,
+    source: &[u8],
+) -> Result<PathBuf, PresetError> {
+    let path = unused_preset_path(folder, preset, lightroom::LIGHTROOM_PRESET_SUFFIX)?;
+    let bytes = lightroom::rewrite_lightroom_labels(source, preset.name(), preset.group())?;
+    write_bytes_atomically(&path, &bytes)?;
+    Ok(path)
+}
+
+/// Copies `source` to `destination` in the same format, with the preset's
+/// current name and group. A Lightroom XMP keeps all of its settings.
+pub fn export_preset_file(
+    source: &Path,
+    destination: &Path,
+    preset: &Preset,
+) -> Result<(), PresetError> {
+    if lightroom::is_lightroom_preset_file(source) {
+        let bytes = read_preset_bytes(source)?;
+        let bytes = lightroom::rewrite_lightroom_labels(&bytes, preset.name(), preset.group())?;
+        write_bytes_atomically(destination, &bytes)?;
+    } else {
+        write_bytes_atomically(destination, &preset.encode()?)?;
+    }
+    Ok(())
+}
+
+fn unused_preset_path(
+    folder: &Path,
+    preset: &Preset,
+    extension: &str,
+) -> Result<PathBuf, PresetError> {
+    let stem = preset_file_stem(preset);
+    (1..=MAX_PRESET_FILES)
+        .map(|index| {
+            let suffix = if index == 1 {
+                extension.to_owned()
+            } else {
+                format!("-{index}{extension}")
+            };
+            folder.join(format!("{stem}{suffix}"))
+        })
+        .find(|path| !path.exists())
+        .ok_or_else(|| PresetError::Invalid("too many presets with the same name".to_owned()))
 }
 
 fn preset_file_stem(preset: &Preset) -> String {
