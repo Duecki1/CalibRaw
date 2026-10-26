@@ -9,49 +9,45 @@
 //! photo's sidecar) carry names and settings of their own.
 //!
 //! CalibRaw keeps the XMP as the preset source and translates it into a
-//! [`Preset`] whenever presets load. Settings without an equivalent (lens
-//! corrections, perspective, defringing, parametric curves, camera
-//! calibration and profiles) are reported as warnings instead of failing the
-//! import, and stay in the XMP for a later version to translate. White
-//! balance is absolute in CalibRaw, so named white balances use their usual
-//! temperature and tint.
+//! [`Preset`] whenever presets load, so a later version can translate more
+//! of it. Settings without an equivalent (perspective, defringing, camera
+//! calibration, the black-and-white mixer, profiles and some local
+//! adjustments) are reported as warnings instead of failing the import.
 //!
-//! Subject, background and sky masks are carried over without their raster;
-//! CalibRaw regenerates them on the target photo. Masks with other components
-//! are skipped with a warning, as are local adjustments without an equivalent.
+//! Where CalibRaw's controls differ, the translation approximates: the
+//! parametric curve is folded into the RGB point curve ([`curves`]), Point
+//! Color is rescaled to CalibRaw's ranges ([`point_colors`]), lens profiles
+//! are matched on the target photo, and white balance is absolute, so named
+//! white balances use their usual temperature and tint. Masks are covered in
+//! [`masks`].
 //!
 //! XMP writers use the conventional `rdf` and `crs` prefixes, so elements and
 //! attributes are matched by prefix rather than by resolved namespace.
 
-use super::{
-    read_preset_bytes, Preset, PresetError, DEFAULT_PRESET_GROUP, MAX_PRESET_BYTES,
-    MAX_PRESET_NAME_CHARS,
-};
+mod curves;
+mod document;
+mod masks;
+mod point_colors;
+
+use super::{read_preset_bytes, Preset, PresetError, DEFAULT_PRESET_GROUP, MAX_PRESET_NAME_CHARS};
 use crate::pipeline::{
     AdjustmentGroup, AdjustmentGroupSet, ColorGradeWheel, ColorGrading, EffectComponent,
-    ExposureParams, GrainEffectSettings, LocalAdjustments, LocalMask, MaskCombineMode,
-    MaskComponent, MaskEffect, MaskEffectSettings, MaskKind, MaskStack, PointCurve,
-    VignetteEffectSettings, WhiteBalance, HSL_HUE_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
-    MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_POINT_CURVE_POINTS, MAX_TEMPERATURE_KELVIN,
+    ExposureParams, GrainEffectSettings, ManualLensCorrection, MaskEffect, MaskEffectSettings,
+    MaskStack, VignetteEffectSettings, WhiteBalance, HSL_HUE_LIMIT, MAX_TEMPERATURE_KELVIN,
     MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
-use crate::sidecar::{default_edit_state, EditSelection};
-use quick_xml::escape::{escape, resolve_predefined_entity};
-use quick_xml::events::{BytesRef, BytesStart, Event};
-use quick_xml::{Reader, XmlVersion};
-use std::collections::BTreeMap;
-use std::ops::Range;
+use crate::sidecar::{default_edit_state, is_manual_mask_kind, EditSelection, LensEditState};
+use curves::{compose, point_curve, read_points, ParametricCurve};
+use document::{parse_document, split_bom, Document, Properties, Warnings};
+use point_colors::read_point_colors;
 use std::path::Path;
 use std::sync::Arc;
+
+pub(crate) use document::rewrite_xmp_labels;
 
 /// The file extension of an XMP preset.
 pub const XMP_PRESET_SUFFIX: &str = ".xmp";
 
-const CRS_NAMESPACE: &str = "http://ns.adobe.com/camera-raw-settings/1.0/";
-const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
-/// Real presets nest about a dozen elements deep; the limit keeps a hostile
-/// file from building an arbitrarily deep tree.
-const MAX_ELEMENT_DEPTH: usize = 64;
 const FALLBACK_NAME: &str = "Imported preset";
 
 /// A translated preset and the settings that could not be translated.
@@ -102,495 +98,9 @@ fn import(bytes: &[u8], fallback_name: &str) -> Result<XmpImport, PresetError> {
     let preset = converter.convert(&document, fallback_name)?;
     Ok(XmpImport {
         preset,
-        warnings: converter.warnings.0,
+        warnings: converter.warnings.into_vec(),
     })
 }
-
-/// Rewrites the preset name and group stored in `bytes`, leaving every other
-/// byte of the XMP untouched. A label the document lacks is added to its
-/// first description. Used when a copied XMP preset is renamed, moved
-/// between groups, or imported under a unique name.
-pub(crate) fn rewrite_xmp_labels(
-    bytes: &[u8],
-    name: &str,
-    group: &str,
-) -> Result<Vec<u8>, PresetError> {
-    let (bom, text) = split_bom(bytes)?;
-    let root = parse_document(text)?;
-    let document = Document::new(&root)?;
-
-    let mut edits = Vec::new();
-    let mut missing = String::new();
-    for (key, label) in [("crs:Name", name), ("crs:Group", group)] {
-        if !document.label_edits(text, key, label, &mut edits) {
-            missing.push_str(&format!(" {key}=\"{}\"", escape(label)));
-        }
-    }
-    if !missing.is_empty() {
-        if !document.crs_declared {
-            missing.push_str(&format!(" xmlns:crs=\"{CRS_NAMESPACE}\""));
-        }
-        let tag = &document.descriptions[0].start_tag;
-        let closing = if text[tag.clone()].ends_with("/>") {
-            2
-        } else {
-            1
-        };
-        let at = tag.end - closing;
-        edits.push((at..at, missing));
-    }
-    edits.sort_by_key(|(range, _)| range.start);
-
-    let mut output = Vec::with_capacity(bytes.len() + 64);
-    output.extend_from_slice(bom);
-    let source = text.as_bytes();
-    let mut cursor = 0;
-    for (range, replacement) in edits {
-        output.extend_from_slice(&source[cursor..range.start]);
-        output.extend_from_slice(replacement.as_bytes());
-        cursor = range.end;
-    }
-    output.extend_from_slice(&source[cursor..]);
-    if output.len() as u64 > MAX_PRESET_BYTES {
-        return Err(PresetError::TooLarge(output.len() as u64));
-    }
-    Ok(output)
-}
-
-/// Splits `bytes` into its UTF-8 byte-order mark, if any, and the text.
-fn split_bom(bytes: &[u8]) -> Result<(&[u8], &str), PresetError> {
-    if bytes.len() as u64 > MAX_PRESET_BYTES {
-        return Err(PresetError::TooLarge(bytes.len() as u64));
-    }
-    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
-        return Err(PresetError::Unsupported(
-            "UTF-16 XMP presets are not supported; save the preset as UTF-8".to_owned(),
-        ));
-    }
-    let bom_len = if bytes.starts_with(UTF8_BOM) {
-        UTF8_BOM.len()
-    } else {
-        0
-    };
-    let (bom, rest) = bytes.split_at(bom_len);
-    let text = std::str::from_utf8(rest)
-        .map_err(|_| PresetError::Unsupported("the XMP preset is not valid UTF-8".to_owned()))?;
-    Ok((bom, text))
-}
-
-fn invalid_xml(message: impl Into<String>) -> PresetError {
-    PresetError::Invalid(format!("invalid XMP: {}", message.into()))
-}
-
-// ---------------------------------------------------------------------------
-// Document
-// ---------------------------------------------------------------------------
-
-/// One element of an XMP document.
-#[derive(Default)]
-struct Element {
-    /// The qualified name, such as `crs:Name`.
-    name: String,
-    /// Attributes by qualified name, with entities resolved.
-    attributes: Vec<(String, String)>,
-    children: Vec<Element>,
-    /// The element's own character data, with entities resolved.
-    text: String,
-    /// Byte range of the start tag, `<…>` or `<…/>`.
-    start_tag: Range<usize>,
-    /// Byte range between the start and end tags; `None` for `<…/>`.
-    content: Option<Range<usize>>,
-}
-
-impl Element {
-    fn open(start: &BytesStart<'_>, start_tag: Range<usize>) -> Result<Self, PresetError> {
-        let attributes = start
-            .attributes()
-            .map(|attribute| {
-                let attribute = attribute.map_err(|error| {
-                    invalid_xml(format!("could not read an attribute: {error}"))
-                })?;
-                let value = attribute
-                    .normalized_value(XmlVersion::Implicit1_0)
-                    .map_err(|error| invalid_xml(format!("invalid attribute value: {error}")))?;
-                Ok((utf8(attribute.key.as_ref())?.to_owned(), value.into_owned()))
-            })
-            .collect::<Result<_, PresetError>>()?;
-        Ok(Self {
-            name: utf8(start.name().as_ref())?.to_owned(),
-            attributes,
-            start_tag,
-            ..Self::default()
-        })
-    }
-
-    fn attribute(&self, name: &str) -> Option<&str> {
-        self.attributes
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.as_str())
-    }
-
-    fn child(&self, name: &str) -> Option<&Element> {
-        self.children.iter().find(|child| child.name == name)
-    }
-
-    fn children_named(&self, name: &'static str) -> impl Iterator<Item = &Element> + '_ {
-        self.children.iter().filter(move |child| child.name == name)
-    }
-
-    /// The fields of a struct value: the `rdf:Description` inside a property
-    /// or list item, or the element itself when the fields are written on it.
-    fn resource(&self) -> &Element {
-        self.child("rdf:Description").unwrap_or(self)
-    }
-
-    /// The items of an `rdf:Seq` property.
-    fn seq_items(&self) -> impl Iterator<Item = &Element> + '_ {
-        self.child("rdf:Seq")
-            .into_iter()
-            .flat_map(|seq| seq.children_named("rdf:li"))
-    }
-
-    /// The text of a language-alternative property: its default-language
-    /// item, else its first item. A plain text property is accepted too.
-    fn alt_text(&self) -> Option<&str> {
-        let text = match self.child("rdf:Alt") {
-            Some(alt) => {
-                &alt.children_named("rdf:li")
-                    .find(|item| item.attribute("xml:lang") == Some("x-default"))
-                    .or_else(|| alt.child("rdf:li"))?
-                    .text
-            }
-            None => &self.text,
-        };
-        Some(text.trim()).filter(|text| !text.is_empty())
-    }
-}
-
-fn utf8(bytes: &[u8]) -> Result<&str, PresetError> {
-    std::str::from_utf8(bytes).map_err(|_| invalid_xml("a name is not valid UTF-8"))
-}
-
-/// Parses `text` into a tree under an unnamed root element.
-fn parse_document(text: &str) -> Result<Element, PresetError> {
-    let mut reader = Reader::from_str(text);
-    reader.config_mut().trim_text(false);
-    let mut root = Element::default();
-    // The open elements below the root, outermost first.
-    let mut open: Vec<Element> = Vec::new();
-    loop {
-        let before = reader.buffer_position() as usize;
-        let event = reader
-            .read_event()
-            .map_err(|error| invalid_xml(error.to_string()))?;
-        let after = reader.buffer_position() as usize;
-        let innermost = open.last_mut().unwrap_or(&mut root);
-        match event {
-            Event::Start(start) => {
-                if open.len() >= MAX_ELEMENT_DEPTH {
-                    return Err(invalid_xml("the document is nested too deeply"));
-                }
-                open.push(Element::open(&start, before..after)?);
-            }
-            Event::Empty(start) => innermost
-                .children
-                .push(Element::open(&start, before..after)?),
-            Event::End(_) => {
-                let mut element = open
-                    .pop()
-                    .ok_or_else(|| invalid_xml("unexpected closing tag"))?;
-                element.content = Some(element.start_tag.end..before);
-                open.last_mut().unwrap_or(&mut root).children.push(element);
-            }
-            Event::Text(text) => innermost.text.push_str(
-                &text
-                    .decode()
-                    .map_err(|error| invalid_xml(format!("could not decode text: {error}")))?,
-            ),
-            Event::CData(cdata) => innermost.text.push_str(
-                &cdata
-                    .decode()
-                    .map_err(|error| invalid_xml(format!("could not decode text: {error}")))?,
-            ),
-            Event::GeneralRef(reference) => {
-                innermost.text.push_str(&decoded_reference(&reference)?);
-            }
-            Event::Eof => break,
-            _ => {}
-        }
-    }
-    if let Some(element) = open.last() {
-        return Err(invalid_xml(format!("<{}> is not closed", element.name)));
-    }
-    Ok(root)
-}
-
-fn decoded_reference(reference: &BytesRef<'_>) -> Result<String, PresetError> {
-    if let Some(character) = reference
-        .resolve_char_ref()
-        .map_err(|error| invalid_xml(format!("invalid character reference: {error}")))?
-    {
-        return Ok(character.to_string());
-    }
-    let name = reference
-        .decode()
-        .map_err(|error| invalid_xml(format!("could not decode an entity: {error}")))?;
-    resolve_predefined_entity(&name)
-        .map(str::to_owned)
-        .ok_or_else(|| invalid_xml(format!("unknown XML entity &{name};")))
-}
-
-/// The top-level descriptions of an XMP document, which hold the preset's
-/// own properties.
-struct Document<'a> {
-    descriptions: Vec<&'a Element>,
-    /// Whether `xmlns:crs` is in scope on the first description.
-    crs_declared: bool,
-}
-
-impl<'a> Document<'a> {
-    fn new(root: &'a Element) -> Result<Self, PresetError> {
-        // `x:xmpmeta` and `rdf:RDF` wrap the descriptions; both are optional.
-        let mut parent = root;
-        let mut crs_declared = false;
-        for wrapper in ["x:xmpmeta", "rdf:RDF"] {
-            if let Some(inner) = parent.child(wrapper) {
-                parent = inner;
-                crs_declared |= declares_crs(inner);
-            }
-        }
-        let descriptions: Vec<&Element> = parent.children_named("rdf:Description").collect();
-        let first = descriptions
-            .first()
-            .ok_or_else(|| invalid_xml("no rdf:Description was found"))?;
-        crs_declared |= declares_crs(first);
-        Ok(Self {
-            descriptions,
-            crs_declared,
-        })
-    }
-
-    /// The elements that hold settings: each description and its
-    /// `crs:Parameters`.
-    fn settings(&self) -> Vec<&'a Element> {
-        self.descriptions
-            .iter()
-            .flat_map(|&description| {
-                std::iter::once(description)
-                    .chain(description.child("crs:Parameters").map(Element::resource))
-            })
-            .collect()
-    }
-
-    fn properties(&self) -> Properties<'a> {
-        let mut properties = Properties::default();
-        for element in self.settings() {
-            properties.extend(element);
-        }
-        properties
-    }
-
-    /// The first settings property written as an element, such as a curve.
-    fn property_element(&self, key: &str) -> Option<&'a Element> {
-        self.settings()
-            .into_iter()
-            .find_map(|element| element.child(key))
-    }
-
-    /// The local adjustment groups, called corrections in XMP.
-    fn corrections(&self) -> Vec<&'a Element> {
-        self.settings()
-            .into_iter()
-            .filter_map(|element| element.child("crs:MaskGroupBasedCorrections"))
-            .flat_map(|corrections| corrections.seq_items())
-            .map(Element::resource)
-            .collect()
-    }
-
-    /// The preset label `key` (`crs:Name` or `crs:Group`). An element wins
-    /// over an attribute, as XMP writers put the localized label there.
-    fn label(&self, key: &'static str) -> Option<&'a str> {
-        let element = self
-            .descriptions
-            .iter()
-            .find_map(|&description| description.children_named(key).find_map(Element::alt_text));
-        element.or_else(|| {
-            self.descriptions.iter().find_map(|&description| {
-                description
-                    .attribute(key)
-                    .map(str::trim)
-                    .filter(|label| !label.is_empty())
-            })
-        })
-    }
-
-    /// Adds to `edits` the replacements that set every occurrence of the
-    /// label `key` to `label`. Returns whether the document has the label.
-    fn label_edits(
-        &self,
-        text: &str,
-        key: &'static str,
-        label: &str,
-        edits: &mut Vec<(Range<usize>, String)>,
-    ) -> bool {
-        let escaped = escape(label);
-        let mut found = false;
-        for &description in &self.descriptions {
-            if let Some(current) = description.attribute(key) {
-                found = true;
-                let tag = &description.start_tag;
-                if current != label {
-                    if let Some(value) = attribute_value_span(&text[tag.clone()], key) {
-                        let span = tag.start + value.start..tag.start + value.end;
-                        edits.push((span, escaped.clone().into_owned()));
-                    }
-                }
-            }
-            for element in description.children_named(key) {
-                found = true;
-                if element.alt_text() == Some(label) {
-                    continue;
-                }
-                let alt = format!(
-                    r#"<rdf:Alt><rdf:li xml:lang="x-default">{escaped}</rdf:li></rdf:Alt>"#
-                );
-                match &element.content {
-                    Some(content) => edits.push((content.clone(), alt)),
-                    None => {
-                        // `<crs:Name/>` becomes `<crs:Name>…</crs:Name>`.
-                        let tag = &text[element.start_tag.clone()];
-                        let open = tag.strip_suffix("/>").unwrap_or(tag);
-                        edits.push((element.start_tag.clone(), format!("{open}>{alt}</{key}>")));
-                    }
-                }
-            }
-        }
-        found
-    }
-}
-
-fn declares_crs(element: &Element) -> bool {
-    element.attribute("xmlns:crs").is_some()
-}
-
-/// The byte range of the value of attribute `key` within `tag`, the source
-/// of a start tag the XML reader has accepted.
-fn attribute_value_span(tag: &str, key: &str) -> Option<Range<usize>> {
-    let bytes = tag.as_bytes();
-    // Past `<` and the element name.
-    let mut cursor = bytes.iter().position(u8::is_ascii_whitespace)?;
-    loop {
-        cursor += bytes[cursor..]
-            .iter()
-            .position(|byte| !byte.is_ascii_whitespace())?;
-        let name_end = cursor
-            + bytes[cursor..]
-                .iter()
-                .position(|byte| *byte == b'=' || byte.is_ascii_whitespace())?;
-        let quote_at = name_end
-            + bytes[name_end..]
-                .iter()
-                .position(|byte| matches!(byte, b'"' | b'\''))?;
-        let value_start = quote_at + 1;
-        let value_end = value_start
-            + bytes[value_start..]
-                .iter()
-                .position(|byte| *byte == bytes[quote_at])?;
-        if &tag[cursor..name_end] == key {
-            return Some(value_start..value_end);
-        }
-        cursor = value_end + 1;
-    }
-}
-
-/// The `crs:` attributes of the elements read so far, by local name. Later
-/// elements override earlier ones.
-#[derive(Default)]
-struct Properties<'a>(BTreeMap<&'a str, &'a str>);
-
-impl<'a> Properties<'a> {
-    fn of(element: &'a Element) -> Self {
-        let mut properties = Self::default();
-        properties.extend(element);
-        properties
-    }
-
-    fn extend(&mut self, element: &'a Element) {
-        for (name, value) in &element.attributes {
-            if let Some(key) = name.strip_prefix("crs:") {
-                self.0.insert(key, value);
-            }
-        }
-    }
-
-    fn has(&self, key: &str) -> bool {
-        self.0.contains_key(key)
-    }
-
-    fn has_any(&self, keys: &[&str]) -> bool {
-        keys.iter().any(|key| self.has(key))
-    }
-
-    fn text(&self, key: &str) -> Option<&'a str> {
-        self.0
-            .get(key)
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-    }
-
-    /// The number stored as `key`, or `None` when it is missing or unreadable.
-    fn value(&self, key: &str) -> Option<f32> {
-        self.0.get(key).and_then(|raw| parse_number(raw))
-    }
-
-    /// Like [`Self::value`], but reports an unreadable value.
-    fn number(&self, key: &str, warnings: &mut Warnings) -> Option<f32> {
-        let raw = self.0.get(key)?;
-        let value = parse_number(raw);
-        if value.is_none() {
-            warnings.push(format!("The value “{raw}” of {key} could not be read."));
-        }
-        value
-    }
-
-    /// The first readable number among `keys`, such as a current key and
-    /// its legacy name.
-    fn first_number(&self, keys: &[&str], warnings: &mut Warnings) -> Option<f32> {
-        keys.iter().find_map(|key| self.number(key, warnings))
-    }
-
-    /// Whether `key` holds a number other than `neutral`.
-    fn differs(&self, key: &str, neutral: f32) -> bool {
-        self.value(key)
-            .is_some_and(|value| (value - neutral).abs() > 1e-6)
-    }
-
-    fn boolean(&self, key: &str) -> Option<bool> {
-        match self.0.get(key)?.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" => Some(true),
-            "false" | "0" => Some(false),
-            _ => None,
-        }
-    }
-}
-
-/// Warnings in the order they arose, without duplicates.
-#[derive(Default)]
-struct Warnings(Vec<String>);
-
-impl Warnings {
-    fn push(&mut self, message: impl Into<String>) {
-        let message = message.into();
-        if !self.0.contains(&message) {
-            self.0.push(message);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Conversion
-// ---------------------------------------------------------------------------
 
 const EXPOSURE_KEYS: &[&str] = &["Exposure2012", "Exposure"];
 /// The -100..100 light sliders, each as its current and legacy key.
@@ -600,20 +110,6 @@ const TONE_SLIDER_KEYS: [[&str; 2]; 5] = [
     ["Shadows2012", "Shadows"],
     ["Whites2012", "Whites"],
     ["Blacks2012", "Blacks"],
-];
-/// The curves CalibRaw stores, in its channel order, as the current key, the
-/// legacy key and a label.
-const TONE_CURVES: [(&str, &str, &str); 4] = [
-    ("crs:ToneCurvePV2012", "crs:ToneCurve", "RGB"),
-    ("crs:ToneCurvePV2012Red", "crs:ToneCurveRed", "red"),
-    ("crs:ToneCurvePV2012Green", "crs:ToneCurveGreen", "green"),
-    ("crs:ToneCurvePV2012Blue", "crs:ToneCurveBlue", "blue"),
-];
-const LOCAL_TONE_CURVES: [(&str, &str); 4] = [
-    ("crs:MainCurve", "RGB"),
-    ("crs:RedCurve", "red"),
-    ("crs:GreenCurve", "green"),
-    ("crs:BlueCurve", "blue"),
 ];
 const COLOR_KEYS: &[&str] = &[
     "WhiteBalance",
@@ -672,18 +168,24 @@ const POST_CROP_VIGNETTE_KEYS: &[&str] = &[
     "PostCropVignetteHighlightContrast",
 ];
 
-const LENS_WARNING: &str = "Lens corrections were not imported.";
+/// The curves CalibRaw stores, in its channel order, as the current key, the
+/// legacy key and a label.
+const TONE_CURVES: [(&str, &str, &str); 4] = [
+    ("crs:ToneCurvePV2012", "crs:ToneCurve", "RGB"),
+    ("crs:ToneCurvePV2012Red", "crs:ToneCurveRed", "red"),
+    ("crs:ToneCurvePV2012Green", "crs:ToneCurveGreen", "green"),
+    ("crs:ToneCurvePV2012Blue", "crs:ToneCurveBlue", "blue"),
+];
+/// Lens profile strengths, in percent; CalibRaw applies each part fully or
+/// not at all.
+const LENS_PROFILE_STRENGTH_KEYS: [&str; 3] = [
+    "LensProfileDistortionScale",
+    "LensProfileChromaticAberrationScale",
+    "LensProfileVignettingScale",
+];
 /// Settings without an equivalent, each with its neutral value, and the
 /// warning shown when any of them is away from neutral.
 const UNSUPPORTED_SETTINGS: &[(&[(&str, f32)], &str)] = &[
-    (
-        &[
-            ("LensManualDistortionAmount", 0.0),
-            ("AutoLateralCA", 0.0),
-            ("VignetteAmount", 0.0),
-        ],
-        LENS_WARNING,
-    ),
     (
         &[
             ("PerspectiveUpright", 0.0),
@@ -700,18 +202,6 @@ const UNSUPPORTED_SETTINGS: &[(&[(&str, f32)], &str)] = &[
     (
         &[("DefringePurpleAmount", 0.0), ("DefringeGreenAmount", 0.0)],
         "Defringing was not imported.",
-    ),
-    (
-        &[
-            ("ParametricShadows", 0.0),
-            ("ParametricDarks", 0.0),
-            ("ParametricLights", 0.0),
-            ("ParametricHighlights", 0.0),
-            ("ParametricShadowSplit", 25.0),
-            ("ParametricMidtoneSplit", 50.0),
-            ("ParametricHighlightSplit", 75.0),
-        ],
-        "The parametric tone curve was not imported.",
     ),
     (
         &[
@@ -742,19 +232,6 @@ const UNSUPPORTED_SETTINGS: &[(&[(&str, f32)], &str)] = &[
         "The legacy shadow tint was not imported.",
     ),
 ];
-/// Local adjustments without an equivalent, with their neutral values.
-const UNSUPPORTED_LOCAL_SETTINGS: &[(&str, f32)] = &[
-    ("LocalSharpness", 0.0),
-    ("LocalLuminanceNoise", 0.0),
-    ("LocalMoire", 0.0),
-    ("LocalDefringe", 0.0),
-    ("LocalGrain", 0.0),
-    ("LocalBrightness", 0.0),
-    ("LocalToningHue", 0.0),
-    ("LocalToningSaturation", 0.0),
-    ("LocalCorrectedDepth", 0.0),
-    ("LocalCurveRefineSaturation", 100.0),
-];
 
 struct Converter<'a> {
     properties: Properties<'a>,
@@ -780,25 +257,30 @@ impl Converter<'_> {
         self.convert_light(&mut exposure, &mut groups);
         self.convert_tone_curves(document, &mut exposure, &mut groups);
         self.convert_color(&mut exposure, &mut groups);
-        self.convert_color_mixer(&mut exposure, &mut groups);
+        self.convert_color_mixer(document, &mut exposure, &mut groups);
         self.convert_color_grading(&mut exposure, &mut groups);
         self.convert_detail(&mut exposure, &mut groups);
         self.convert_effects(&mut exposure, &mut groups, &mut effects);
-        let masks = self.convert_masks(document);
+        let lens = self.convert_lens(&mut exposure);
+        let masks = masks::convert_masks(&document.corrections(), &mut self.warnings);
         self.warn_unsupported_settings();
 
-        if groups.is_empty() && masks.is_empty() {
+        if groups.is_empty() && masks.is_empty() && lens.is_none() {
             self.warnings
                 .push("No settings in this preset can be translated yet.");
         }
 
+        let components = || masks.iter().flat_map(|mask| &mask.components);
         let selection = EditSelection {
             adjustment_groups: groups,
-            ai_masks: !masks.is_empty(),
+            masks: components().any(|component| is_manual_mask_kind(component.kind)),
+            ai_masks: components().any(|component| !is_manual_mask_kind(component.kind)),
+            lens_correction: lens.is_some(),
             ..EditSelection::default()
         };
         let mut edits = default_edit_state();
         edits.exposure = exposure;
+        edits.lens = lens.unwrap_or_default();
         edits.masks = Arc::new(MaskStack {
             masks,
             global_effects: effects,
@@ -861,12 +343,13 @@ impl Converter<'_> {
     ) {
         // The current layout wins per channel, so a file that mixes layouts
         // still keeps the channels only the legacy layout has.
-        let curves = TONE_CURVES.map(|(current, legacy, _)| {
+        let elements = TONE_CURVES.map(|(current, legacy, _)| {
             document
                 .property_element(current)
                 .or_else(|| document.property_element(legacy))
         });
-        if curves.iter().all(Option::is_none) {
+        let parametric = ParametricCurve::from_properties(&self.properties, &mut self.warnings);
+        if parametric.is_none() && elements.iter().all(Option::is_none) {
             return;
         }
         groups.set(AdjustmentGroup::ToneCurve, true);
@@ -876,16 +359,21 @@ impl Converter<'_> {
             &mut exposure.tone_curve_green,
             &mut exposure.tone_curve_blue,
         ];
-        for ((curve, (_, _, label)), target) in curves.iter().zip(TONE_CURVES).zip(targets) {
-            let Some(curve) = curve else {
-                continue;
-            };
-            if let Some(curve) = read_curve(
-                curve,
-                &format!("The {label} tone curve"),
-                &mut self.warnings,
-            ) {
-                *target = curve;
+        for (channel, ((element, (_, _, label)), target)) in
+            elements.iter().zip(TONE_CURVES).zip(targets).enumerate()
+        {
+            let points = element.and_then(|element| {
+                read_points(
+                    element,
+                    &format!("The {label} tone curve"),
+                    &mut self.warnings,
+                )
+            });
+            // The parametric curve shapes the RGB curve only.
+            match (parametric.filter(|_| channel == 0), points) {
+                (Some(parametric), points) => *target = compose(&parametric, points.as_deref()),
+                (None, Some(points)) => *target = point_curve(&points, &mut self.warnings),
+                (None, None) => {}
             }
         }
     }
@@ -960,6 +448,7 @@ impl Converter<'_> {
 
     fn convert_color_mixer(
         &mut self,
+        document: &Document<'_>,
         exposure: &mut ExposureParams,
         groups: &mut AdjustmentGroupSet,
     ) {
@@ -970,10 +459,21 @@ impl Converter<'_> {
                 format!("LuminanceAdjustment{color}"),
             ]
         });
-        if !keys.iter().flatten().any(|key| self.properties.has(key)) {
+        let point_colors = document
+            .property_element("crs:PointColors")
+            .map(|swatches| {
+                read_point_colors(
+                    swatches,
+                    document.property_element("crs:ColorVariance"),
+                    "",
+                    &mut self.warnings,
+                )
+            });
+        if point_colors.is_none() && !keys.iter().flatten().any(|key| self.properties.has(key)) {
             return;
         }
         groups.set(AdjustmentGroup::ColorMixer, true);
+        exposure.point_colors = point_colors.unwrap_or_default();
         for (index, [hue, saturation, luminance]) in keys.iter().enumerate() {
             // The ±100 hue slider spans CalibRaw's ±200.
             if let Some(value) = self.number(hue) {
@@ -1186,20 +686,59 @@ impl Converter<'_> {
         settings
     }
 
-    fn convert_masks(&mut self, document: &Document<'_>) -> Vec<LocalMask> {
-        let mut masks = Vec::new();
-        for (index, correction) in document.corrections().into_iter().enumerate() {
-            if masks.len() >= MAX_LOCAL_MASKS {
-                self.warnings.push(format!(
-                    "Only the first {MAX_LOCAL_MASKS} masks were imported."
-                ));
-                break;
-            }
-            if let Some(mask) = convert_correction(correction, index, &mut self.warnings) {
-                masks.push(mask);
-            }
+    /// The lens corrections, or `None` when the preset turns none on, so
+    /// applying it leaves the photo's own lens corrections alone.
+    ///
+    /// The profile is matched on the target photo, as lens names differ
+    /// between profile catalogs. Manual corrections keep their -100..100
+    /// sliders, though their strength is CalibRaw's. CalibRaw applies them
+    /// instead of the profile, so a preset with both keeps the manual ones.
+    fn convert_lens(&mut self, exposure: &mut ExposureParams) -> Option<LensEditState> {
+        let profile = self.properties.boolean("LensProfileEnable") == Some(true);
+        let manual = ManualLensCorrection {
+            distortion: self
+                .number("LensManualDistortionAmount")
+                .unwrap_or(0.0)
+                .clamp(-100.0, 100.0),
+            vignetting: self
+                .number("VignetteAmount")
+                .unwrap_or(0.0)
+                .clamp(-100.0, 100.0),
+        };
+        let remove_aberration = self.properties.boolean("AutoLateralCA") == Some(true);
+        if !profile && manual.is_identity() && !remove_aberration {
+            return None;
         }
-        masks
+        exposure.chromatic_aberration = if remove_aberration { 100.0 } else { 0.0 };
+
+        let manual = (!manual.is_identity()).then_some(manual);
+        let [distortion, _, vignetting] =
+            LENS_PROFILE_STRENGTH_KEYS.map(|key| self.properties.value(key).unwrap_or(100.0));
+        if profile && manual.is_some() {
+            self.warnings.push(
+                "A lens profile and manual lens corrections cannot be combined; the manual corrections were imported.",
+            );
+        } else if profile
+            && LENS_PROFILE_STRENGTH_KEYS
+                .iter()
+                .any(|key| self.properties.differs(key, 100.0) && self.properties.differs(key, 0.0))
+        {
+            self.warnings
+                .push("Lens profile strengths other than 0 and 100 were not imported.");
+        }
+        if manual.is_some_and(|manual| manual.vignetting != 0.0)
+            && self.properties.differs("VignetteMidpoint", 50.0)
+        {
+            self.warnings
+                .push("The lens vignetting midpoint was not imported.");
+        }
+        Some(LensEditState {
+            enabled: profile || manual.is_some(),
+            geometry: distortion > 0.0,
+            vignetting: vignetting > 0.0,
+            manual,
+            ..LensEditState::default()
+        })
     }
 
     fn warn_unsupported_settings(&mut self) {
@@ -1211,28 +750,6 @@ impl Converter<'_> {
             {
                 self.warnings.push(*warning);
             }
-        }
-
-        // A profile name can stay in the file while the profile is disabled;
-        // only an enabled profile changes the photo.
-        let lens_profile = match properties.value("LensProfileEnable") {
-            Some(enabled) => enabled != 0.0,
-            None => {
-                properties
-                    .text("LensProfileSetup")
-                    .is_some_and(|setup| !setup.eq_ignore_ascii_case("LensProfileDefault"))
-                    || properties.text("LensProfileName").is_some()
-                    || [
-                        "LensProfileDistortionScale",
-                        "LensProfileChromaticAberrationScale",
-                        "LensProfileVignettingScale",
-                    ]
-                    .iter()
-                    .any(|key| properties.differs(key, 100.0))
-            }
-        };
-        if lens_profile {
-            self.warnings.push(LENS_WARNING);
         }
 
         // Style 1 is Highlight Priority, which CalibRaw's vignette follows;
@@ -1265,317 +782,6 @@ impl Converter<'_> {
     }
 }
 
-fn convert_correction(
-    correction: &Element,
-    index: usize,
-    warnings: &mut Warnings,
-) -> Option<LocalMask> {
-    let properties = Properties::of(correction);
-    let fallback_name = format!("Mask {}", index + 1);
-    let (name, shortened) = sanitize_label(
-        properties.text("CorrectionName").unwrap_or(&fallback_name),
-        &fallback_name,
-        MAX_PRESET_NAME_CHARS,
-    );
-    if shortened {
-        warnings.push(format!(
-            "A mask name was shortened to {MAX_PRESET_NAME_CHARS} characters."
-        ));
-    }
-
-    let mut components = Vec::new();
-    let mut unsupported = Vec::new();
-    let items = correction
-        .child("crs:CorrectionMasks")
-        .into_iter()
-        .flat_map(|masks| masks.seq_items());
-    for item in items {
-        let attributes = Properties::of(item.resource());
-        let Some(kind) = mask_kind(&attributes) else {
-            unsupported.push(format!(
-                "“{}” ({})",
-                component_name(&attributes),
-                mask_kind_label(&attributes)
-            ));
-            continue;
-        };
-        let Some(combine) = mask_combine(&attributes) else {
-            unsupported.push(format!(
-                "“{}” (unknown blend mode)",
-                component_name(&attributes)
-            ));
-            continue;
-        };
-        if components.len() >= MAX_MASK_COMPONENTS {
-            warnings.push(format!(
-                "The mask “{name}” has more than {MAX_MASK_COMPONENTS} components; the extra components were not imported."
-            ));
-            break;
-        }
-        let mut component = MaskComponent::new(kind, combine);
-        if let Some(component_name) = attributes.text("MaskName") {
-            component.name = sanitize_label(component_name, kind.label(), MAX_PRESET_NAME_CHARS).0;
-        }
-        component.enabled = attributes.boolean("MaskActive").unwrap_or(true);
-        component.invert = attributes.boolean("MaskInverted").unwrap_or(false);
-        components.push(component);
-    }
-
-    if !unsupported.is_empty() {
-        warnings.push(format!(
-            "The mask “{name}” was not imported because it uses unsupported components: {}.",
-            unsupported.join(", ")
-        ));
-        return None;
-    }
-    let Some(first) = components.first() else {
-        warnings.push(format!(
-            "The mask “{name}” has no components and was not imported."
-        ));
-        return None;
-    };
-    if first.combine != MaskCombineMode::Add {
-        warnings.push(format!(
-            "The mask “{name}” starts with a subtracted component and was not imported."
-        ));
-        return None;
-    }
-
-    let mut mask = LocalMask::new(first.kind, index + 1);
-    mask.adjustments = local_adjustments(correction, &properties, &name, warnings);
-    mask.common.name = name;
-    mask.common.enabled = properties.boolean("CorrectionActive").unwrap_or(true);
-    mask.opacity = properties
-        .value("CorrectionAmount")
-        .unwrap_or(1.0)
-        .clamp(0.0, 1.0);
-    mask.components = components;
-    Some(mask)
-}
-
-fn local_adjustments(
-    correction: &Element,
-    properties: &Properties<'_>,
-    mask_name: &str,
-    warnings: &mut Warnings,
-) -> LocalAdjustments {
-    let mut adjustments = LocalAdjustments::default();
-
-    // Local sliders are stored as -1..1, unlike the -100..100 global sliders.
-    // Exposure is already in EV, and hue scales to CalibRaw's hue rotation.
-    if let Some(value) = properties.first_number(&["LocalExposure2012", "LocalExposure"], warnings)
-    {
-        adjustments.exposure = value.clamp(-5.0, 5.0);
-    }
-    if let Some(value) = properties.number("LocalHue", warnings) {
-        adjustments.hue = (value * HUE_ROTATION_LIMIT_DEGREES)
-            .clamp(-HUE_ROTATION_LIMIT_DEGREES, HUE_ROTATION_LIMIT_DEGREES);
-    }
-    for (keys, target) in [
-        (
-            &["LocalContrast2012", "LocalContrast"][..],
-            &mut adjustments.contrast,
-        ),
-        (
-            &["LocalHighlights2012", "LocalHighlights"],
-            &mut adjustments.highlights,
-        ),
-        (
-            &["LocalShadows2012", "LocalShadows"],
-            &mut adjustments.shadows,
-        ),
-        (&["LocalWhites2012", "LocalWhites"], &mut adjustments.whites),
-        (&["LocalBlacks2012", "LocalBlacks"], &mut adjustments.blacks),
-        (&["LocalTemperature"], &mut adjustments.temperature),
-        (&["LocalTint"], &mut adjustments.tint),
-        (&["LocalSaturation"], &mut adjustments.saturation),
-        (&["LocalTexture"], &mut adjustments.texture),
-        (
-            &["LocalClarity2012", "LocalClarity"],
-            &mut adjustments.clarity,
-        ),
-        (&["LocalDehaze"], &mut adjustments.dehaze),
-    ] {
-        if let Some(value) = properties.first_number(keys, warnings) {
-            *target = (value * 100.0).clamp(-100.0, 100.0);
-        }
-    }
-
-    let targets = [
-        &mut adjustments.tone_curve,
-        &mut adjustments.tone_curve_red,
-        &mut adjustments.tone_curve_green,
-        &mut adjustments.tone_curve_blue,
-    ];
-    for ((key, label), target) in LOCAL_TONE_CURVES.iter().zip(targets) {
-        let Some(element) = correction.child(key) else {
-            continue;
-        };
-        let what = format!("The local {label} tone curve of the mask “{mask_name}”");
-        if let Some(curve) = read_curve(element, &what, warnings) {
-            *target = curve;
-        }
-    }
-
-    if UNSUPPORTED_LOCAL_SETTINGS
-        .iter()
-        .any(|(key, neutral)| properties.differs(key, *neutral))
-        || correction.child("crs:LocalPointColors").is_some()
-    {
-        warnings.push(format!(
-            "Some local adjustments of the mask “{mask_name}” were not imported."
-        ));
-    }
-    adjustments
-}
-
-fn mask_kind(attributes: &Properties<'_>) -> Option<MaskKind> {
-    match integer(attributes.value("MaskSubType")?)? {
-        0 if attributes.value("MaskSubCategoryID") == Some(22.0) => Some(MaskKind::Background),
-        1 => Some(MaskKind::Subject),
-        2 => Some(MaskKind::Sky),
-        _ => None,
-    }
-}
-
-fn mask_combine(attributes: &Properties<'_>) -> Option<MaskCombineMode> {
-    if !attributes.has("MaskBlendMode") {
-        return Some(MaskCombineMode::Add);
-    }
-    match integer(attributes.value("MaskBlendMode")?)? {
-        0 => Some(MaskCombineMode::Add),
-        1 => Some(MaskCombineMode::Subtract),
-        2 => Some(MaskCombineMode::Intersect),
-        _ => None,
-    }
-}
-
-/// `value` as an enumeration index, when it is a whole number.
-fn integer(value: f32) -> Option<i32> {
-    ((value - value.round()).abs() <= 1e-6).then_some(value.round() as i32)
-}
-
-fn component_name(attributes: &Properties<'_>) -> String {
-    let fallback = "unnamed mask";
-    sanitize_label(
-        attributes.text("MaskName").unwrap_or(fallback),
-        fallback,
-        MAX_PRESET_NAME_CHARS,
-    )
-    .0
-}
-
-fn mask_kind_label(attributes: &Properties<'_>) -> &'static str {
-    match attributes
-        .value("MaskSubType")
-        .map(|value| value.round() as i32)
-    {
-        Some(0) => "landscape element",
-        Some(1) => "subject",
-        Some(2) => "sky",
-        Some(3) => "person",
-        Some(4) => "object",
-        Some(_) => "unknown AI mask",
-        None => match attributes.text("What") {
-            Some("Mask/CircularGradient") => "radial gradient",
-            Some("Mask/LinearGradient") => "linear gradient",
-            Some("Mask/Aggregate") => "brush",
-            Some("Mask/Path") => "path",
-            Some("Mask/Image") => "unsupported AI mask",
-            Some(_) | None => "unsupported mask",
-        },
-    }
-}
-
-/// Reads the curve property `element`. An unreadable curve is reported as
-/// `what` and left linear.
-fn read_curve(element: &Element, what: &str, warnings: &mut Warnings) -> Option<PointCurve> {
-    let points: Vec<&str> = element
-        .seq_items()
-        .map(|item| item.text.trim())
-        .filter(|point| !point.is_empty())
-        .collect();
-    let curve = parse_curve(&points, warnings).map(|points| point_curve_from_points(&points));
-    if curve.is_none() {
-        warnings.push(format!("{what} could not be read; it was left linear."));
-    }
-    curve
-}
-
-/// Parses "x, y" points in 0–255 into sorted 0–1 points, reduced to the
-/// point limit. Needs at least two distinct points.
-fn parse_curve(raw_points: &[&str], warnings: &mut Warnings) -> Option<Vec<[f32; 2]>> {
-    let mut points = Vec::with_capacity(raw_points.len());
-    for raw in raw_points {
-        let point = raw
-            .split_once(',')
-            .and_then(|(x, y)| Some([parse_number(x)?, parse_number(y)?]));
-        let Some([x, y]) = point else {
-            warnings.push(format!("The tone curve point “{raw}” could not be read."));
-            continue;
-        };
-        if !(0.0..=255.0).contains(&x) || !(0.0..=255.0).contains(&y) {
-            warnings.push(format!(
-                "The tone curve point “{raw}” is outside the 0–255 range and was skipped."
-            ));
-            continue;
-        }
-        points.push([x / 255.0, y / 255.0]);
-    }
-    points.sort_by(|left, right| left[0].total_cmp(&right[0]));
-    points.dedup_by(|left, right| (left[0] - right[0]).abs() < f32::EPSILON);
-    if points.len() < 2 {
-        return None;
-    }
-    if points.len() > MAX_POINT_CURVE_POINTS {
-        warnings.push(format!(
-            "The tone curve has {} points; it was reduced to {MAX_POINT_CURVE_POINTS}.",
-            points.len()
-        ));
-        points = resample_curve(&points, MAX_POINT_CURVE_POINTS);
-    }
-    Some(points)
-}
-
-/// `max_points` evenly spaced samples of the piecewise-linear curve through
-/// `points`, which are sorted and at least two.
-fn resample_curve(points: &[[f32; 2]], max_points: usize) -> Vec<[f32; 2]> {
-    let first_x = points[0][0];
-    let span = points[points.len() - 1][0] - first_x;
-    (0..max_points)
-        .map(|index| {
-            let fraction = index as f32 / (max_points - 1) as f32;
-            let x = first_x + span * fraction;
-            [x, interpolate_curve(points, x)]
-        })
-        .collect()
-}
-
-fn interpolate_curve(points: &[[f32; 2]], x: f32) -> f32 {
-    for pair in points.windows(2) {
-        let [x0, y0] = pair[0];
-        let [x1, y1] = pair[1];
-        if x <= x1 {
-            let width = x1 - x0;
-            if width.abs() < f32::EPSILON || x <= x0 {
-                return y0;
-            }
-            return y0 + (y1 - y0) * (x - x0) / width;
-        }
-    }
-    points[points.len() - 1][1]
-}
-
-fn point_curve_from_points(points: &[[f32; 2]]) -> PointCurve {
-    let mut curve = PointCurve::linear();
-    curve.points = [[1.0, 1.0]; MAX_POINT_CURVE_POINTS];
-    let len = points.len().min(MAX_POINT_CURVE_POINTS);
-    curve.points[..len].copy_from_slice(&points[..len]);
-    curve.len = len as u32;
-    curve.sanitize();
-    curve
-}
-
 /// Replaces control characters, collapses whitespace and shortens `text` to
 /// `max_chars`. Returns the label and whether it was shortened; an empty
 /// label becomes `fallback`.
@@ -1601,12 +807,6 @@ fn custom_white_balance(temperature: f32, tint: f32) -> WhiteBalance {
         tint: tint.clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT),
         older_reader_offsets: [0.0, 0.0],
     }
-}
-
-fn parse_number(raw: &str) -> Option<f32> {
-    let raw = raw.trim();
-    let raw = raw.strip_prefix('+').unwrap_or(raw);
-    raw.parse::<f32>().ok().filter(|value| value.is_finite())
 }
 
 /// Maps the 0–100 grain size to CalibRaw's 0.5–4.0. The format's default 25

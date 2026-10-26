@@ -493,14 +493,16 @@ fn preset_folders_keep_xmp_presets_without_supported_settings() {
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
         folder.join("unsupported.xmp"),
-        xmp_document(r#"crs:Name="Lens only" crs:Group="Film" crs:LensProfileEnable="1""#),
+        xmp_document(
+            r#"crs:Name="Perspective only" crs:Group="Film" crs:PerspectiveVertical="10""#,
+        ),
     )
     .unwrap();
 
     let contents = load_preset_folder(&folder).unwrap();
     assert_eq!(contents.presets.len(), 1);
     assert!(contents.presets[0].preset.selection().is_empty());
-    assert_eq!(contents.presets[0].preset.name(), "Lens only");
+    assert_eq!(contents.presets[0].preset.name(), "Perspective only");
     assert_eq!(contents.groups, vec!["Film"]);
 
     std::fs::remove_dir_all(folder).unwrap();

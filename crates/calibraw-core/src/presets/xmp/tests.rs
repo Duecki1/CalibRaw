@@ -1,6 +1,7 @@
 use super::*;
 use crate::pipeline::{
-    AdjustmentGroup, MaskCombineMode, MaskEffect, MaskGeometry, MaskKind, PointCurve, WhiteBalance,
+    luminance_range_weight, AdjustmentGroup, MaskCombineMode, MaskEffect, MaskGeometry, MaskKind,
+    PointCurve, WhiteBalance, MAX_POINT_CURVE_POINTS,
 };
 use crate::presets::{Preset, PresetError};
 use crate::sidecar::default_edit_state;
@@ -339,11 +340,12 @@ fn mixes_modern_and_legacy_curves_per_channel() {
 }
 
 #[test]
-fn resamples_curves_longer_than_the_point_limit() {
+fn simplifies_curves_longer_than_the_point_limit() {
+    // 20 points on a smooth bend: more than CalibRaw stores.
     let points: String = (0..20)
         .map(|index| {
-            let value = index * 13;
-            format!("<rdf:li>{value}, {value}</rdf:li>")
+            let x = index as f32 / 19.0;
+            format!("<rdf:li>{}, {}</rdf:li>", x * 255.0, x * x * 255.0)
         })
         .collect();
     let import = import(
@@ -352,26 +354,25 @@ fn resamples_curves_longer_than_the_point_limit() {
     );
 
     let curve = &import.preset.edits().exposure.tone_curve;
-    assert_eq!(curve.len as usize, MAX_POINT_CURVE_POINTS);
-    assert_close_point(curve_points(curve)[0], [0.0, 0.0]);
-    assert_close_point(
-        *curve_points(curve).last().unwrap(),
-        [247.0 / 255.0, 247.0 / 255.0],
-    );
+    let kept = curve_points(curve);
+    assert!(kept.len() <= MAX_POINT_CURVE_POINTS);
+    assert_close_point(kept[0], [0.0, 0.0]);
+    assert_close_point(*kept.last().unwrap(), [1.0, 1.0]);
+    for [x, y] in kept {
+        assert_close(y, x * x);
+    }
     assert!(import
         .warnings
         .iter()
-        .any(|warning| warning.contains("reduced to 16")));
+        .any(|warning| warning.contains("it was simplified to")));
 }
 
 #[test]
 fn warns_about_settings_that_cannot_be_imported() {
     let import = import(
         r#"crs:Exposure2012="0"
-           crs:LensProfileEnable="1"
            crs:PerspectiveVertical="10"
            crs:DefringePurpleAmount="5"
-           crs:ParametricShadows="10"
            crs:ProcessVersion="10.0"
            crs:CameraProfile="Adobe Standard"
            crs:RedHue="5"
@@ -383,10 +384,8 @@ fn warns_about_settings_that_cannot_be_imported() {
     );
 
     for expected in [
-        "Lens corrections were not imported.",
         "Perspective corrections were not imported.",
         "Defringing was not imported.",
-        "The parametric tone curve was not imported.",
         "Process version 10 is older than 11",
         "Camera profile “Adobe Standard” was not imported.",
         "Camera calibration color adjustments were not imported.",
@@ -403,30 +402,6 @@ fn warns_about_settings_that_cannot_be_imported() {
             import.warnings
         );
     }
-}
-
-#[test]
-fn ignores_a_lens_profile_name_while_the_profile_is_disabled() {
-    let disabled = import(
-        r#"crs:Exposure2012="0"
-           crs:LensProfileEnable="0"
-           crs:LensProfileName="Adobe (Canon EF 50mm f/1.8 STM)""#,
-        "",
-    );
-    assert!(!disabled
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("Lens corrections")));
-
-    let name_without_flag = import(
-        r#"crs:Exposure2012="0"
-           crs:LensProfileName="Adobe (Canon EF 50mm f/1.8 STM)""#,
-        "",
-    );
-    assert!(name_without_flag
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("Lens corrections")));
 }
 
 #[test]
@@ -521,7 +496,7 @@ fn reads_a_self_closing_description() {
 
 #[test]
 fn keeps_files_without_supported_settings_as_empty_placeholders() {
-    let import = import_xmp(document(r#"crs:LensProfileEnable="1""#, "").as_bytes())
+    let import = import_xmp(document(r#"crs:PerspectiveVertical="10""#, "").as_bytes())
         .expect("the preset stays listed");
     assert!(import.preset.selection().is_empty());
     assert_eq!(import.preset.edits(), &default_edit_state());
@@ -532,7 +507,7 @@ fn keeps_files_without_supported_settings_as_empty_placeholders() {
     assert!(import
         .warnings
         .iter()
-        .any(|warning| warning.contains("Lens corrections were not imported.")));
+        .any(|warning| warning.contains("Perspective corrections were not imported.")));
 }
 
 #[test]
@@ -1055,13 +1030,10 @@ fn maps_local_adjustments_and_tone_curves() {
 
 #[test]
 fn skips_unsupported_mask_components() {
-    let radial = correction(
-        "Radial",
+    let brush = correction(
+        "Brush",
         "",
-        &[
-            r#"<rdf:li crs:What="Mask/CircularGradient" crs:MaskName="Radial Gradient 1"/>"#
-                .to_owned(),
-        ],
+        &[r#"<rdf:li crs:What="Mask/Aggregate" crs:MaskName="Brush 1"/>"#.to_owned()],
         "",
     );
     let person = correction(
@@ -1086,7 +1058,7 @@ fn skips_unsupported_mask_components() {
     let subject = correction("Imported", "", &[component("Subject 1", "1", "")], "");
     let import = import(
         "",
-        &mask_group(&[radial, person, empty, subtract, unknown_blend, subject]),
+        &mask_group(&[brush, person, empty, subtract, unknown_blend, subject]),
     );
 
     let masks = &import.preset.edits().masks.masks;
@@ -1094,7 +1066,7 @@ fn skips_unsupported_mask_components() {
     assert_eq!(masks[0].name, "Imported");
     assert_eq!(masks[0].components[0].kind, MaskKind::Subject);
     for expected in [
-        "radial gradient",
+        "brush",
         "person",
         "has no components",
         "starts with a subtracted component",
@@ -1228,4 +1200,385 @@ fn imported_masks_round_trip_and_apply() {
     assert_close(destination.masks.masks[0].opacity, 0.6);
     assert_close(destination.masks.masks[0].adjustments.exposure, 0.4);
     assert!(destination.ai_masks_need_update);
+}
+
+fn tone_curve_import(attributes: &str, body: &str) -> PointCurve {
+    let import = import(attributes, body);
+    assert!(import
+        .preset
+        .selection()
+        .adjustment_groups
+        .contains(AdjustmentGroup::ToneCurve));
+    import.preset.edits().exposure.tone_curve
+}
+
+/// The output of the polyline through `curve`'s points at `x`.
+fn curve_at(curve: &PointCurve, x: f32) -> f32 {
+    let points = curve_points(curve);
+    let next = points.iter().position(|point| point[0] >= x).unwrap();
+    if next == 0 {
+        return points[0][1];
+    }
+    let ([x0, y0], [x1, y1]) = (points[next - 1], points[next]);
+    y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+}
+
+#[test]
+fn folds_the_parametric_curve_into_the_rgb_curve() {
+    let curve = tone_curve_import(
+        r#"crs:ParametricHighlights="+60" crs:ParametricShadows="-40""#,
+        "",
+    );
+    let points = curve_points(&curve);
+    assert_close_point(points[0], [0.0, 0.0]);
+    assert_close_point(*points.last().unwrap(), [1.0, 1.0]);
+    assert!(points.windows(2).all(|pair| pair[1][1] >= pair[0][1]));
+    assert!(curve_at(&curve, 0.875) > 0.875 + 0.02, "highlights rise");
+    assert!(curve_at(&curve, 0.125) < 0.125 - 0.01, "shadows fall");
+    // Fitting keeps the curve within about 1/1000 of the target.
+    assert!((curve_at(&curve, 0.5) - 0.5).abs() < 2e-3);
+
+    // A neutral parametric curve leaves the tone curve alone.
+    let neutral = import(
+        r#"crs:Exposure2012="0" crs:ParametricShadows="0" crs:ParametricShadowSplit="30""#,
+        "",
+    );
+    assert!(!neutral
+        .preset
+        .selection()
+        .adjustment_groups
+        .contains(AdjustmentGroup::ToneCurve));
+}
+
+#[test]
+fn applies_the_parametric_curve_before_the_point_curve() {
+    let halving = r#"<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 128</rdf:li></rdf:Seq></crs:ToneCurvePV2012>"#;
+    let lifted = tone_curve_import(r#"crs:ParametricLights="+80""#, "");
+    let composed = tone_curve_import(r#"crs:ParametricLights="+80""#, halving);
+    for x in [0.25, 0.5, 0.625, 0.75] {
+        let expected = curve_at(&lifted, x) * 128.0 / 255.0;
+        assert!(
+            (curve_at(&composed, x) - expected).abs() < 0.01,
+            "at {x}: {} vs {expected}",
+            curve_at(&composed, x)
+        );
+    }
+}
+
+fn radial_component(attributes: &str) -> String {
+    format!(
+        r#"<rdf:li crs:What="Mask/CircularGradient" crs:MaskName="Radial Gradient 1" crs:Top="-0.1" crs:Left="0.2" crs:Bottom="0.9" crs:Right="0.6" crs:Angle="30" crs:Feather="40" {attributes}/>"#
+    )
+}
+
+#[test]
+fn imports_radial_and_linear_gradients() {
+    let radial = correction(
+        "Vignette",
+        r#"crs:LocalExposure2012="-0.5""#,
+        &[radial_component(
+            r#"crs:MaskInverted="true" crs:Flipped="false""#,
+        )],
+        "",
+    );
+    let linear = correction(
+        "Sky",
+        "",
+        &[
+            r#"<rdf:li crs:What="Mask/LinearGradient" crs:ZeroX="0.5" crs:ZeroY="0.6" crs:FullX="0.5" crs:FullY="0.1"/>"#
+                .to_owned(),
+        ],
+        "",
+    );
+    let import = import("", &mask_group(&[radial, linear]));
+    assert!(import.warnings.is_empty(), "{:?}", import.warnings);
+    assert!(import.preset.selection().masks);
+    assert!(!import.preset.selection().ai_masks);
+
+    let masks = &import.preset.edits().masks.masks;
+    let radial = &masks[0].components[0];
+    assert_eq!(radial.kind, MaskKind::Radial);
+    assert!(radial.invert);
+    let MaskGeometry::Radial {
+        center,
+        radius,
+        rotation,
+        feather,
+        initialized,
+    } = radial.geometry
+    else {
+        panic!("a radial geometry");
+    };
+    assert_close_point(center, [0.4, 0.4]);
+    assert_close_point(radius, [0.2, 0.5]);
+    assert_close(rotation, 30.0_f32.to_radians());
+    assert_close(feather, 0.4);
+    assert!(initialized);
+    assert_close(masks[0].adjustments.exposure, -0.5);
+
+    let linear = &masks[1].components[0];
+    assert_eq!(linear.kind, MaskKind::Linear);
+    assert_eq!(
+        linear.geometry,
+        MaskGeometry::Linear {
+            start: [0.5, 0.1],
+            end: [0.5, 0.6],
+            feather: 1.0,
+            initialized: true,
+        }
+    );
+}
+
+#[test]
+fn flipped_inverts_the_older_radial_filter() {
+    let correction = correction(
+        "Old radial",
+        "",
+        &[radial_component(r#"crs:Flipped="true""#)],
+        "",
+    );
+    let import = import("", &mask_group(&[correction]));
+    assert!(import.preset.edits().masks.masks[0].components[0].invert);
+}
+
+#[test]
+fn reads_the_older_per_tool_correction_lists() {
+    let gradient = r#"<crs:GradientBasedCorrections><rdf:Seq><rdf:li><rdf:Description crs:What="Correction" crs:LocalExposure2012="0.3">
+<crs:CorrectionMasks><rdf:Seq><rdf:li crs:What="Mask/Gradient" crs:ZeroX="0" crs:ZeroY="0" crs:FullX="1" crs:FullY="1"/></rdf:Seq></crs:CorrectionMasks>
+<crs:CorrectionRangeMask crs:Version="2" crs:Type="0"/>
+</rdf:Description></rdf:li></rdf:Seq></crs:GradientBasedCorrections>"#;
+    let ranged = r#"<crs:CircularGradientBasedCorrections><rdf:Seq><rdf:li><rdf:Description crs:What="Correction">
+<crs:CorrectionMasks><rdf:Seq><rdf:li crs:What="Mask/CircularGradient" crs:Top="0" crs:Left="0" crs:Bottom="1" crs:Right="1" crs:Angle="0" crs:Feather="50"/></rdf:Seq></crs:CorrectionMasks>
+<crs:CorrectionRangeMask crs:Version="3" crs:Type="2" crs:LumRange="0 0.2 0.6 0.8"/>
+</rdf:Description></rdf:li></rdf:Seq></crs:CircularGradientBasedCorrections>"#;
+    let brush = r#"<crs:PaintBasedCorrections><rdf:Seq><rdf:li><rdf:Description crs:What="Correction">
+<crs:CorrectionMasks><rdf:Seq><rdf:li crs:What="Mask/Paint" crs:Radius="0.1"/></rdf:Seq></crs:CorrectionMasks>
+</rdf:Description></rdf:li></rdf:Seq></crs:PaintBasedCorrections>"#;
+    let import = import("", &format!("{gradient}{ranged}{brush}"));
+
+    let masks = &import.preset.edits().masks.masks;
+    assert_eq!(masks.len(), 2);
+    assert_eq!(masks[0].components.len(), 1);
+    assert_eq!(masks[0].components[0].kind, MaskKind::Linear);
+    assert_close(masks[0].adjustments.exposure, 0.3);
+    let kinds: Vec<_> = masks[1]
+        .components
+        .iter()
+        .map(|component| (component.kind, component.combine))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            (MaskKind::Radial, MaskCombineMode::Add),
+            (MaskKind::LuminanceRange, MaskCombineMode::Intersect),
+        ]
+    );
+    assert!(import.preset.selection().masks && import.preset.selection().ai_masks);
+    assert!(import
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("(brush)")));
+}
+
+fn range_component(name: &str, lum_range: &str) -> String {
+    format!(
+        r#"<rdf:li><rdf:Description crs:What="Mask/RangeMask" crs:MaskName="{name}" crs:MaskBlendMode="0">
+<crs:CorrectionRangeMask crs:Version="3" crs:Type="2" crs:SampleType="0" crs:LumRange="{lum_range}"/>
+</rdf:Description></rdf:li>"#
+    )
+}
+
+#[test]
+fn imports_luminance_ranges() {
+    let highlights = correction(
+        "Highlights",
+        "",
+        &[range_component("Bright", "0.6 0.8 1 1")],
+        "",
+    );
+    let shadows = correction("Shadows", "", &[range_component("Dark", "0 0 0.1 0.5")], "");
+    let import = import("", &mask_group(&[highlights, shadows]));
+    assert!(import.warnings.is_empty(), "{:?}", import.warnings);
+    assert!(import.preset.selection().ai_masks);
+
+    let masks = &import.preset.edits().masks.masks;
+    let MaskGeometry::LuminanceRange {
+        low,
+        high,
+        feather,
+        high_feather,
+        ..
+    } = masks[0].components[0].geometry
+    else {
+        panic!("a luminance range");
+    };
+    let weight = |lightness: f32| {
+        luminance_range_weight(
+            crate::pipeline::lightness_to_luminance(lightness),
+            low,
+            high,
+            [feather, high_feather.unwrap()],
+        )
+    };
+    assert_close(weight(0.5), 0.0);
+    assert_close(weight(0.9), 1.0);
+    // Full up to white keeps white selected.
+    assert_close(weight(1.0), 1.0);
+    assert!(weight(0.7) > 0.0 && weight(0.7) < 1.0);
+
+    let MaskGeometry::LuminanceRange {
+        low,
+        high,
+        feather,
+        high_feather,
+        ..
+    } = masks[1].components[0].geometry
+    else {
+        panic!("a luminance range");
+    };
+    let weight = |lightness: f32| {
+        luminance_range_weight(
+            crate::pipeline::lightness_to_luminance(lightness),
+            low,
+            high,
+            [feather, high_feather.unwrap()],
+        )
+    };
+    assert_close(weight(0.05), 1.0);
+    assert_close(weight(0.6), 0.0);
+}
+
+#[test]
+fn skips_masks_with_color_ranges() {
+    let colored = r#"<rdf:li><rdf:Description crs:What="Mask/RangeMask" crs:MaskName="Color Range 1">
+<crs:CorrectionRangeMask crs:Version="3" crs:Type="1" crs:ColorAmount="0.5"/>
+</rdf:Description></rdf:li>"#;
+    let correction = correction("Colored", "", &[colored.to_owned()], "");
+    let import = import("", &mask_group(&[correction]));
+    assert!(import.preset.edits().masks.masks.is_empty());
+    assert!(import
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("“Color Range 1” (color range)")));
+}
+
+#[test]
+fn imports_the_lens_profile_and_aberration_removal() {
+    let profile = import(
+        r#"crs:LensProfileEnable="1" crs:LensProfileName="Some lens" crs:AutoLateralCA="1" crs:LensProfileVignettingScale="0""#,
+        "",
+    );
+    assert!(profile.warnings.is_empty(), "{:?}", profile.warnings);
+    assert!(profile.preset.selection().lens_correction);
+    let lens = &profile.preset.edits().lens;
+    assert!(lens.enabled);
+    assert!(
+        lens.maker.is_empty() && lens.model.is_empty(),
+        "matched on the target photo"
+    );
+    assert!(lens.geometry);
+    assert!(!lens.vignetting);
+    assert_eq!(lens.manual, None);
+    assert_close(profile.preset.edits().exposure.chromatic_aberration, 100.0);
+
+    let partial = import(
+        r#"crs:LensProfileEnable="1" crs:LensProfileDistortionScale="50""#,
+        "",
+    );
+    assert!(partial
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("strengths other than 0 and 100")));
+}
+
+#[test]
+fn imports_manual_lens_corrections_instead_of_the_profile() {
+    let import = import(
+        r#"crs:LensProfileEnable="1" crs:LensManualDistortionAmount="12" crs:VignetteAmount="-30""#,
+        "",
+    );
+    let lens = &import.preset.edits().lens;
+    assert!(lens.enabled);
+    let manual = lens.manual.expect("manual corrections");
+    assert_close(manual.distortion, 12.0);
+    assert_close(manual.vignetting, -30.0);
+    assert!(import
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("cannot be combined")));
+}
+
+#[test]
+fn leaves_lens_corrections_alone_when_the_preset_turns_none_on() {
+    let import = import(
+        r#"crs:Exposure2012="0" crs:LensProfileEnable="0" crs:LensProfileName="Some lens" crs:AutoLateralCA="0" crs:LensManualDistortionAmount="0""#,
+        "",
+    );
+    assert!(!import.preset.selection().lens_correction);
+    assert!(import.warnings.is_empty(), "{:?}", import.warnings);
+}
+
+/// A swatch: neutral gray sample, the given shifts and the default ranges.
+fn gray_swatch(value: f32, shifts: [f32; 3]) -> String {
+    let [hue, saturation, luminance] = shifts;
+    format!(
+        "0, 0, {value}, {hue}, {saturation}, {luminance}, 0.5, 0, 0.33, 0.67, 1, 0, 0.33, 0.67, 1, 0, 0.33, 0.67, 1"
+    )
+}
+
+const UNUSED_SWATCH: &str =
+    "-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1";
+
+#[test]
+fn imports_global_point_colors() {
+    let body = format!(
+        r#"<crs:PointColors><rdf:Seq><rdf:li>{}</rdf:li><rdf:li>{UNUSED_SWATCH}</rdf:li></rdf:Seq></crs:PointColors>
+<crs:ColorVariance><rdf:Seq><rdf:li>0</rdf:li><rdf:li>-50</rdf:li></rdf:Seq></crs:ColorVariance>"#,
+        gray_swatch(0.5, [1.0, -0.5, 0.2])
+    );
+    let import = import("", &body);
+    assert!(import.warnings.is_empty(), "{:?}", import.warnings);
+    assert!(import
+        .preset
+        .selection()
+        .adjustment_groups
+        .contains(AdjustmentGroup::ColorMixer));
+
+    let colors = &import.preset.edits().exposure.point_colors;
+    assert_eq!(colors.len(), 1);
+    let color = &colors[0];
+    // Gray stays gray from ProPhoto to Rec.2020.
+    assert_close(color.sample_hsl[1], 0.0);
+    assert_close(color.sample_hsl[2], 0.5);
+    assert_close(color.hue_shift, 35.0 / 360.0 * 200.0);
+    assert_close(color.saturation_shift, -50.0);
+    assert_close(color.luminance_shift, 0.2 * 100.0 * 0.5);
+    assert_close(color.range, 50.0);
+    assert_close(color.hue_range.min, -0.125);
+    assert_close(color.hue_range.max, 0.125);
+    assert_close(color.luminance_range.inner_max, (2.0 * 0.67 - 1.0) * 0.5);
+}
+
+#[test]
+fn imports_local_point_colors_and_reports_variance() {
+    let correction = correction(
+        "Skin",
+        "",
+        &[component("Subject 1", "1", "")],
+        &format!(
+            r#"<crs:LocalPointColors><rdf:Seq><rdf:li>{}</rdf:li></rdf:Seq></crs:LocalPointColors>
+<crs:LocalColorVariance><rdf:Seq><rdf:li>-0.11</rdf:li></rdf:Seq></crs:LocalColorVariance>"#,
+            gray_swatch(0.8, [0.0, 0.1, 0.0])
+        ),
+    );
+    let import = import("", &mask_group(&[correction]));
+    let colors = &import.preset.edits().masks.masks[0]
+        .adjustments
+        .point_colors;
+    assert_eq!(colors.len(), 1);
+    assert_close(colors[0].saturation_shift, 10.0);
+    assert!(import
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("Point color variance of the mask “Skin”")));
 }

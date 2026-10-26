@@ -707,7 +707,7 @@ mod tests {
             r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
 <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
- crs:Exposure2012="0" crs:LensProfileEnable="1" />
+ crs:Exposure2012="0" crs:PerspectiveVertical="10" />
 </rdf:RDF>
 </x:xmpmeta>"#,
         )
@@ -718,7 +718,7 @@ mod tests {
         assert_eq!(app.presets.all().len(), 1);
         let notice = app.ui.notice.as_deref().unwrap();
         assert!(notice.starts_with("Imported 1 preset."), "{notice}");
-        assert!(notice.contains("Lens corrections were not imported."));
+        assert!(notice.contains("Perspective corrections were not imported."));
     }
 
     #[test]
@@ -767,13 +767,13 @@ mod tests {
         let mut app = CalibRawApp::empty(&egui::Context::default());
         app.presets = PresetState::load(Some(folder.path().to_owned()));
 
-        let xmp = source_folder.path().join("Lens only.xmp");
+        let xmp = source_folder.path().join("Perspective only.xmp");
         std::fs::write(
             &xmp,
             r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
 <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
- crs:LensProfileEnable="1" />
+ crs:PerspectiveVertical="10" />
 </rdf:RDF>
 </x:xmpmeta>"#,
         )
@@ -784,7 +784,7 @@ mod tests {
         assert_eq!(app.presets.all().len(), 1);
         let stored = &app.presets.all()[0];
         assert!(stored.preset.selection().is_empty());
-        assert_eq!(stored.preset.name(), "Lens only");
+        assert_eq!(stored.preset.name(), "Perspective only");
         assert_eq!(
             stored
                 .path
