@@ -131,11 +131,16 @@ impl ProfileColorSource {
                     analog_balance,
                     baseline_exposure,
                 } = &**inputs;
+                // Rawler's Bayer samples keep the second green in channel 3
+                // (`wb_coeffs` is red, green, blue, green), so it is described
+                // as green: an adjusted white then gives both greens one gain.
+                // RGB DNG matrices leave the fourth plane zero, so it adds
+                // nothing to the camera-to-working transform.
                 let (cam_to_srgb, weight, white_balance_model) =
                     camera_to_working_matrix_from_profiles(
                         *xyz_to_cam,
                         *wb_coeffs,
-                        *b"RGB\0",
+                        *b"RGBG",
                         Some(embedded),
                         profile.as_ref(),
                         *analog_balance,
