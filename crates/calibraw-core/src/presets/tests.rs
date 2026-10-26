@@ -459,7 +459,6 @@ fn preset_folders_load_lightroom_xmps_and_edit_their_labels() {
     assert_eq!(contents.presets[0].preset.group(), "Film");
     assert_eq!(contents.presets[0].preset.edits().exposure.exposure, 0.5);
     assert!(contents.failures.is_empty());
-    assert!(contents.warnings.is_empty());
 
     // Renaming a group rewrites only the copied XMP's labels.
     assert_eq!(rename_group(&folder, "Film", "Analog").unwrap(), "Analog");
@@ -503,9 +502,6 @@ fn preset_folders_keep_lightroom_presets_without_supported_settings() {
     assert!(contents.presets[0].preset.selection().is_empty());
     assert_eq!(contents.presets[0].preset.name(), "Lens only");
     assert_eq!(contents.groups, vec!["Film"]);
-    assert_eq!(contents.warnings.len(), 1);
-    assert!(contents.warnings[0].starts_with("unsupported.xmp:"));
-    assert!(contents.warnings[0].contains("No Lightroom settings"));
 
     std::fs::remove_dir_all(folder).unwrap();
 }

@@ -21,8 +21,6 @@ pub(crate) struct PresetState {
     groups: Vec<String>,
     /// Files in the preset folder that could not be read.
     pub(crate) load_failures: Vec<String>,
-    /// Lightroom presets whose settings were only partly translated.
-    pub(crate) load_warnings: Vec<String>,
     pub(crate) editor: Option<PresetEditor>,
     pub(crate) pending_delete: Option<PathBuf>,
     pub(crate) group_dialog: Option<GroupDialog>,
@@ -53,7 +51,6 @@ impl PresetState {
         self.presets = contents.presets;
         self.groups = contents.groups;
         self.load_failures = contents.failures;
-        self.load_warnings = contents.warnings;
         Ok(())
     }
 
@@ -513,13 +510,8 @@ impl CalibRawApp {
         if self.ui.desktop_picker_receiver.is_some() || !self.presets.is_available() {
             return;
         }
-        let lightroom_extension =
-            crate::presets::lightroom::LIGHTROOM_PRESET_SUFFIX.trim_start_matches('.');
-        // Some tools export `.XMP`; the picker matches case-sensitively on Linux.
-        let lightroom_extensions = [lightroom_extension, "XMP"];
         let dialog = crate::platform::FileDialog::new()
-            .add_filter("CalibRaw presets", PRESET_FILE_EXTENSIONS)
-            .add_filter("Lightroom presets", &lightroom_extensions);
+            .add_filter("CalibRaw and Lightroom presets", PRESET_IMPORT_EXTENSIONS);
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
             DesktopPickerEvent::PresetFiles(dialog.pick_files_on_worker())
         }));
@@ -579,6 +571,9 @@ impl CalibRawApp {
 const PRESET_FILE_EXTENSIONS: &[&str] = &["calibraw-preset"];
 /// [`crate::presets::lightroom::LIGHTROOM_PRESET_SUFFIX`] without its dot.
 const LIGHTROOM_FILE_EXTENSIONS: &[&str] = &["xmp"];
+/// Both preset formats in one import filter, so users see every preset file
+/// at once. Some tools export `.XMP`; Linux pickers match case-sensitively.
+const PRESET_IMPORT_EXTENSIONS: &[&str] = &["calibraw-preset", "xmp", "XMP"];
 
 struct ImportedPreset {
     preset: Preset,
@@ -656,6 +651,8 @@ mod tests {
             crate::presets::PRESET_SUFFIX
         );
         assert_eq!(crate::presets::lightroom::LIGHTROOM_PRESET_SUFFIX, ".xmp");
+        assert!(PRESET_IMPORT_EXTENSIONS.contains(&PRESET_FILE_EXTENSIONS[0]));
+        assert!(PRESET_IMPORT_EXTENSIONS.contains(&LIGHTROOM_FILE_EXTENSIONS[0]));
         assert_eq!(
             preset_folder_for_settings(Path::new("/config/calibraw/performance.json")),
             Some(PathBuf::from("/config/calibraw/presets"))
@@ -797,8 +794,6 @@ mod tests {
                 .and_then(|extension| extension.to_str()),
             Some("xmp")
         );
-        assert_eq!(app.presets.load_warnings.len(), 1);
-        assert!(app.presets.load_warnings[0].contains("No Lightroom settings"));
         let notice = app.ui.notice.as_deref().unwrap();
         assert!(notice.starts_with("Imported 1 preset."), "{notice}");
         assert!(notice.contains("No Lightroom settings"));

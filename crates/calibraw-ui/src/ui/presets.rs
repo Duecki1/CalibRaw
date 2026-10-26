@@ -210,17 +210,6 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
             Some(app.presets.load_failures.join("\n")),
         ));
     }
-    if !app.presets.load_warnings.is_empty() {
-        let count = app.presets.load_warnings.len();
-        notes.push((
-            format!(
-                "Some settings in {count} Lightroom {} were not translated.",
-                if count == 1 { "preset" } else { "presets" }
-            ),
-            ui.visuals().warn_fg_color,
-            Some(app.presets.load_warnings.join("\n")),
-        ));
-    }
     if list.groups.is_empty() {
         notes.push((
             "No presets yet. Create a group, then add presets to it from an edited photo."

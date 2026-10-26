@@ -543,9 +543,6 @@ pub struct PresetFolderContents {
     pub groups: Vec<String>,
     /// One message per file that could not be read.
     pub failures: Vec<String>,
-    /// One message per Lightroom preset whose settings were only partly
-    /// translated.
-    pub warnings: Vec<String>,
 }
 
 /// Reads every preset in `folder`. A missing folder holds no presets.
@@ -565,14 +562,7 @@ pub fn load_preset_folder(folder: &Path) -> Result<PresetFolderContents, PresetE
         }
         let label = path.file_name().unwrap_or_default().to_string_lossy();
         match read_preset_file_for_load(&path) {
-            Ok((preset, warnings)) => {
-                if !warnings.is_empty() {
-                    contents
-                        .warnings
-                        .push(format!("{label}: {}", warnings.join(" ")));
-                }
-                contents.presets.push(StoredPreset { path, preset });
-            }
+            Ok(preset) => contents.presets.push(StoredPreset { path, preset }),
             Err(error) => contents.failures.push(format!("{label}: {error}")),
         }
     }
@@ -795,12 +785,11 @@ pub fn read_preset_file(path: &Path) -> Result<Preset, PresetError> {
     Preset::decode(&read_preset_bytes(path)?)
 }
 
-fn read_preset_file_for_load(path: &Path) -> Result<(Preset, Vec<String>), PresetError> {
+fn read_preset_file_for_load(path: &Path) -> Result<Preset, PresetError> {
     if lightroom::is_lightroom_preset_file(path) {
-        let import = lightroom::read_lightroom_preset_file(path)?;
-        Ok((import.preset, import.warnings))
+        lightroom::read_lightroom_preset_file(path).map(|import| import.preset)
     } else {
-        Ok((read_preset_file(path)?, Vec::new()))
+        read_preset_file(path)
     }
 }
 
