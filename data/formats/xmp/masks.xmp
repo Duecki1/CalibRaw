@@ -1,0 +1,155 @@
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   crs:ProcessVersion="15.4"
+   crs:Exposure2012="+0.5">
+   <crs:Name>
+    <rdf:Alt>
+     <rdf:li xml:lang="x-default">Masks</rdf:li>
+    </rdf:Alt>
+   </crs:Name>
+   <crs:MaskGroupBasedCorrections>
+    <rdf:Seq>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:CorrectionName="Subject mask" crs:CorrectionAmount="0.8"
+       crs:LocalExposure2012="0.5"
+       crs:LocalContrast2012="0.25"
+       crs:LocalHighlights2012="-0.5"
+       crs:LocalShadows2012="0.75"
+       crs:LocalWhites2012="-0.1"
+       crs:LocalBlacks2012="0.1"
+       crs:LocalTemperature="0.2"
+       crs:LocalTint="-0.3"
+       crs:LocalHue="0.5"
+       crs:LocalSaturation="-0.4"
+       crs:LocalTexture="0.6"
+       crs:LocalClarity2012="-0.7"
+       crs:LocalDehaze="0.8">
+       <crs:MainCurve>
+        <rdf:Seq>
+         <rdf:li>0,0</rdf:li>
+         <rdf:li>128,64</rdf:li>
+         <rdf:li>255,255</rdf:li>
+        </rdf:Seq>
+       </crs:MainCurve>
+       <crs:BlueCurve>
+        <rdf:Seq>
+         <rdf:li>0,0</rdf:li>
+         <rdf:li>64,128</rdf:li>
+         <rdf:li>255,255</rdf:li>
+        </rdf:Seq>
+       </crs:BlueCurve>
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/Image" crs:MaskName="Subject 1" crs:MaskSubType="1"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:CorrectionName="Composite" crs:CorrectionAmount="0.5" crs:CorrectionActive="false">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/Image" crs:MaskName="Background 1" crs:MaskSubType="0" crs:MaskSubCategoryID="22" crs:MaskBlendMode="0"/>
+         <rdf:li crs:What="Mask/Image" crs:MaskName="Subject 1" crs:MaskSubType="1" crs:MaskBlendMode="1" crs:MaskInverted="true" crs:MaskActive="false"/>
+         <rdf:li crs:What="Mask/Image" crs:MaskName="Sky 1" crs:MaskSubType="2" crs:MaskBlendMode="2"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:CorrectionName="Vignette" crs:LocalExposure2012="-0.5">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/CircularGradient" crs:MaskName="Radial Gradient 1" crs:Top="-0.1" crs:Left="0.2" crs:Bottom="0.9" crs:Right="0.6" crs:Angle="30" crs:Feather="40" crs:MaskInverted="true" crs:Flipped="false"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:CorrectionName="Sky">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/LinearGradient" crs:ZeroX="0.5" crs:ZeroY="0.6" crs:FullX="0.5" crs:FullY="0.1"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:CorrectionName="Highlights">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li>
+          <rdf:Description crs:What="Mask/RangeMask" crs:MaskName="Bright" crs:MaskBlendMode="0">
+           <crs:CorrectionRangeMask crs:Version="3" crs:Type="2" crs:SampleType="0" crs:LumRange="0.6 0.8 1 1"/>
+          </rdf:Description>
+         </rdf:li>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:CorrectionName="Skin">
+       <crs:LocalPointColors>
+        <rdf:Seq>
+         <rdf:li>0, 0, 0.8, 0, 0.1, 0, 0.5, 0, 0.33, 0.67, 1, 0, 0.33, 0.67, 1, 0, 0.33, 0.67, 1</rdf:li>
+        </rdf:Seq>
+       </crs:LocalPointColors>
+       <crs:LocalColorVariance>
+        <rdf:Seq>
+         <rdf:li>-0.11</rdf:li>
+        </rdf:Seq>
+       </crs:LocalColorVariance>
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/Image" crs:MaskName="Subject 1" crs:MaskSubType="1"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:CorrectionName="Brush">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/Aggregate" crs:MaskName="Brush 1"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:CorrectionName="Person">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/Image" crs:MaskName="Person 1" crs:MaskSubType="3" crs:MaskSubCategoryID="13"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:CorrectionName="Colored">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li>
+          <rdf:Description crs:What="Mask/RangeMask" crs:MaskName="Color Range 1">
+           <crs:CorrectionRangeMask crs:Version="3" crs:Type="1" crs:ColorAmount="0.5"/>
+          </rdf:Description>
+         </rdf:li>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:CorrectionName="Subtract">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/Image" crs:MaskName="Subject 1" crs:MaskSubType="1" crs:MaskBlendMode="1"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+    </rdf:Seq>
+   </crs:MaskGroupBasedCorrections>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>

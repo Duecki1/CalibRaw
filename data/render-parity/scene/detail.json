@@ -1,0 +1,12 @@
+{
+  "edits": {
+    "exposure": {
+      "clarity": 30.0,
+      "dehaze": 25.0,
+      "sharpen_amount": 80.0,
+      "sharpen_detail": 50.0,
+      "sharpen_radius": 1.5,
+      "texture": 40.0
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "edits": {
+    "exposure": {
+      "color_grading": {
+        "balance": 10.0,
+        "blending": 60.0,
+        "global": {
+          "hue": 200.0,
+          "luminance": 0.0,
+          "saturation": 10.0
+        },
+        "highlights": {
+          "hue": 50.0,
+          "luminance": 5.0,
+          "saturation": 25.0
+        },
+        "midtones": {
+          "hue": 0.0,
+          "luminance": 0.0,
+          "saturation": 0.0
+        },
+        "shadows": {
+          "hue": 220.0,
+          "luminance": -5.0,
+          "saturation": 30.0
+        }
+      },
+      "hsl_hue": [20.0,0.0,-15.0,0.0,30.0,0.0,0.0,-20.0],
+      "hsl_luminance": [10.0,0.0,0.0,-20.0,0.0,0.0,15.0,0.0],
+      "hsl_saturation": [0.0,-30.0,0.0,25.0,0.0,40.0,0.0,0.0],
+      "hue": 10.0,
+      "saturation": 15.0,
+      "vibrance": 30.0
+    }
+  }
+}

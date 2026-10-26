@@ -1,0 +1,34 @@
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.6-c011">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   crs:ProcessVersion="10.0"
+   crs:Exposure="+0.75"
+   crs:Contrast="+12"
+   crs:Clarity="+8"
+   crs:ConvertToGrayscale="True"
+   crs:GrayMixerRed="+20"
+   crs:SplitToningShadowHue="30"
+   crs:SplitToningShadowSaturation="40"
+   crs:SplitToningHighlightHue="200"
+   crs:SplitToningHighlightSaturation="20"
+   crs:SplitToningBalance="-10"
+   crs:PerspectiveVertical="10"
+   crs:DefringePurpleAmount="5"
+   crs:CameraProfile="Adobe Standard"
+   crs:RedHue="5"
+   crs:ColorNoiseReductionSmoothness="70"
+   crs:ColorNoiseReductionDetail="70"
+   crs:PostCropVignetteStyle="2"
+   crs:PostCropVignetteAmount="-150"
+   crs:HasCrop="True">
+   <crs:ToneCurve>
+    <rdf:Seq>
+     <rdf:li>0, 10</rdf:li>
+     <rdf:li>128, 130</rdf:li>
+     <rdf:li>255, 250</rdf:li>
+    </rdf:Seq>
+   </crs:ToneCurve>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>

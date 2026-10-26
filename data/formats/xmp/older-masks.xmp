@@ -1,0 +1,63 @@
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.6-c011">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   crs:ProcessVersion="11.0">
+   <crs:Name>
+    <rdf:Alt>
+     <rdf:li xml:lang="x-default">Older masks</rdf:li>
+    </rdf:Alt>
+   </crs:Name>
+   <crs:GradientBasedCorrections>
+    <rdf:Seq>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:LocalExposure2012="0.3">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/Gradient" crs:ZeroX="0" crs:ZeroY="0" crs:FullX="1" crs:FullY="1"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+       <crs:CorrectionRangeMask crs:Version="2" crs:Type="0"/>
+      </rdf:Description>
+     </rdf:li>
+    </rdf:Seq>
+   </crs:GradientBasedCorrections>
+   <crs:CircularGradientBasedCorrections>
+    <rdf:Seq>
+     <rdf:li>
+      <rdf:Description crs:What="Correction">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/CircularGradient" crs:Top="0" crs:Left="0" crs:Bottom="1" crs:Right="1" crs:Angle="0" crs:Feather="50"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+       <crs:CorrectionRangeMask crs:Version="3" crs:Type="2" crs:LumRange="0 0.2 0.6 0.8"/>
+      </rdf:Description>
+     </rdf:li>
+     <rdf:li>
+      <rdf:Description crs:What="Correction" crs:LocalSaturation="-0.5">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/CircularGradient" crs:Top="-0.1" crs:Left="0.2" crs:Bottom="0.9" crs:Right="0.6" crs:Angle="30" crs:Feather="40" crs:Flipped="true"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+    </rdf:Seq>
+   </crs:CircularGradientBasedCorrections>
+   <crs:PaintBasedCorrections>
+    <rdf:Seq>
+     <rdf:li>
+      <rdf:Description crs:What="Correction">
+       <crs:CorrectionMasks>
+        <rdf:Seq>
+         <rdf:li crs:What="Mask/Paint" crs:Radius="0.1"/>
+        </rdf:Seq>
+       </crs:CorrectionMasks>
+      </rdf:Description>
+     </rdf:li>
+    </rdf:Seq>
+   </crs:PaintBasedCorrections>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>

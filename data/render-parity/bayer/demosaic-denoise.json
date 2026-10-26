@@ -1,0 +1,9 @@
+{
+  "edits": {
+    "exposure": {
+      "chroma_denoise": 0.5,
+      "demosaic_mode": "Dual",
+      "luminance_denoise": 30.0
+    }
+  }
+}

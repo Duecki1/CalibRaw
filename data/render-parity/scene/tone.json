@@ -1,0 +1,12 @@
+{
+  "edits": {
+    "exposure": {
+      "blacks": -20.0,
+      "contrast": 25.0,
+      "exposure": 0.7,
+      "highlights": -60.0,
+      "shadows": 50.0,
+      "whites": 15.0
+    }
+  }
+}

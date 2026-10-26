@@ -23,7 +23,7 @@ Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPM
 ## Migrations
 
 - Code that reads sidecars, presets or settings saved in an older layout lives in `crates/calibraw-core/src/migrations/`, one file per layout change, and runs when the file is decoded, so the current model keeps no legacy fields or branches. Compatibility code that cannot be separated stays next to the code it adapts and is listed in `migrations/mod.rs`.
-- Mark every migration with a comment `migration: remove in vX.Y.Z`, the first version allowed to drop it. User files (sidecars, presets, settings): the next major version after the release that ships it. App-data cleanup: two minor versions later. Deleting a migration deletes its tests and is noted in the release notes.
+- Mark every migration with a comment `migration: remove in vX.Y.Z`, the first version allowed to drop it. User files (sidecars, presets, settings): the next major version after the release that ships it. App-data cleanup: two minor versions later. Deleting a migration deletes its tests and old-layout fixtures and is noted in the release notes.
 - Report a migrated sidecar through `LoadedSidecar::migrated`, so it is saved again in the current layout.
 
 ## WGSL and GPU
@@ -43,8 +43,9 @@ Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPM
 
 ## Tests
 
-- Do not write unit tests. Behaviour is checked by the contract checks (`layout_contract_tests`, shader validation, `arch-check`, `ui-lint`), AI parity, the screenshot baselines and use of the app.
-- Write a Rust test only when asked, for a concurrency, cancellation or cache-invalidation bug, or for a migration (one test decoding a file in the old layout). It drives the public API in one test function; bug fixes otherwise ship without a test.
+- Do not write unit tests. Behaviour is checked by render parity, format fixtures, the contract checks (`layout_contract_tests`, shader validation, `arch-check`, `ui-lint`), AI parity, the screenshot baselines and use of the app ([Render parity and format fixtures](docs/DEVELOPMENT.md#render-parity-and-format-fixtures)).
+- Cover new rendering with a case in `data/render-parity/`, and a new file layout or import mapping (including a migration) with a fixture in `data/formats/`: add the file, bless with `CALIBRAW_PARITY_BLESS=1`, and review the changed goldens. A change meant to alter output re-blesses and says so.
+- Write a Rust test only when asked, or for a concurrency, cancellation or cache-invalidation bug. It drives the public API in one test function; bug fixes otherwise ship without a test.
 - Never test layout, painting, visibility, labels, wiring, accessors, single parsing rules or single numerical cases. Never add a test harness, fixture builder or test-only API (`#[cfg(test)]` constructors or accessors).
 - Code that changes or is removed takes its tests with it; do not keep an old test passing with test-only code.
 - While iterating, test only the affected crate (`cargo test -p <crate>`); run the full checks once at the end.

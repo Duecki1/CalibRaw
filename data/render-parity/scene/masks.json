@@ -1,0 +1,177 @@
+{
+  "edits": {
+    "masks": {
+      "masks": [
+        {
+          "adjustments": {
+            "blacks": 0.0,
+            "clarity": 0.0,
+            "color_grading": {
+              "balance": 0.0,
+              "blending": 50.0,
+              "global": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "highlights": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "midtones": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "shadows": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              }
+            },
+            "contrast": 0.0,
+            "dehaze": 0.0,
+            "exposure": -0.8,
+            "highlights": 0.0,
+            "hsl_hue": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+            "hsl_luminance": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+            "hsl_saturation": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+            "hue": 0.0,
+            "point_colors": [],
+            "saturation": 40.0,
+            "shadows": 0.0,
+            "temperature": 0.0,
+            "texture": 0.0,
+            "tint": 0.0,
+            "tone_curve": {
+              "len": 2,
+              "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+            },
+            "tone_curve_blue": {
+              "len": 2,
+              "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+            },
+            "tone_curve_green": {
+              "len": 2,
+              "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+            },
+            "tone_curve_red": {
+              "len": 2,
+              "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+            },
+            "whites": 0.0
+          },
+          "adjustments_enabled": true,
+          "components": [
+            {
+              "combine": "Add",
+              "enabled": true,
+              "geometry": {
+                "Radial": {
+                  "center": [0.35,0.55],
+                  "feather": 0.6,
+                  "initialized": true,
+                  "radius": [0.28,0.22],
+                  "rotation": 0.4
+                }
+              },
+              "invert": false,
+              "kind": "Radial",
+              "name": "Radial Gradient"
+            }
+          ],
+          "effect": "Adjustment",
+          "enabled": true,
+          "invert": false,
+          "name": "Mask 1",
+          "opacity": 1.0
+        },
+        {
+          "adjustments": {
+            "blacks": 0.0,
+            "clarity": 0.0,
+            "color_grading": {
+              "balance": 0.0,
+              "blending": 50.0,
+              "global": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "highlights": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "midtones": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "shadows": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              }
+            },
+            "contrast": 0.0,
+            "dehaze": 40.0,
+            "exposure": 0.0,
+            "highlights": 0.0,
+            "hsl_hue": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+            "hsl_luminance": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+            "hsl_saturation": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+            "hue": 0.0,
+            "point_colors": [],
+            "saturation": 0.0,
+            "shadows": 0.0,
+            "temperature": -30.0,
+            "texture": 0.0,
+            "tint": 0.0,
+            "tone_curve": {
+              "len": 2,
+              "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+            },
+            "tone_curve_blue": {
+              "len": 2,
+              "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+            },
+            "tone_curve_green": {
+              "len": 2,
+              "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+            },
+            "tone_curve_red": {
+              "len": 2,
+              "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+            },
+            "whites": 0.0
+          },
+          "adjustments_enabled": true,
+          "components": [
+            {
+              "combine": "Add",
+              "enabled": true,
+              "geometry": {
+                "Linear": {
+                  "end": [0.5,0.6],
+                  "feather": 1.0,
+                  "initialized": true,
+                  "start": [0.5,1.0]
+                }
+              },
+              "invert": false,
+              "kind": "Linear",
+              "name": "Linear Gradient"
+            }
+          ],
+          "effect": "Adjustment",
+          "enabled": true,
+          "invert": false,
+          "name": "Mask 2",
+          "opacity": 1.0
+        }
+      ]
+    }
+  }
+}

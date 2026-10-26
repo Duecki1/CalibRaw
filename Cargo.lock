@@ -713,6 +713,7 @@ dependencies = [
  "png",
  "pollster",
  "rayon",
+ "serde_json",
  "wgpu",
  "windows",
  "zune-core",

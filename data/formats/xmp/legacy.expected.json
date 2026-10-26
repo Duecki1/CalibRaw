@@ -1,0 +1,173 @@
+{
+  "saved": {
+    "edits": {
+      "ai_masks_need_update": false,
+      "exposure": {
+        "ai_denoise_amount": 1.0,
+        "ai_denoise_enabled": false,
+        "black_point": 0.0,
+        "blacks": 0.0,
+        "ca_blue": 0.0,
+        "ca_red": 0.0,
+        "chroma_denoise": 0.0,
+        "chromatic_aberration": 0.0,
+        "clarity": 8.0,
+        "color_grading": {
+          "balance": -10.0,
+          "blending": 100.0,
+          "global": {
+            "hue": 0.0,
+            "luminance": 0.0,
+            "saturation": 0.0
+          },
+          "highlights": {
+            "hue": 200.0,
+            "luminance": 0.0,
+            "saturation": 20.0
+          },
+          "midtones": {
+            "hue": 0.0,
+            "luminance": 0.0,
+            "saturation": 0.0
+          },
+          "shadows": {
+            "hue": 30.0,
+            "luminance": 0.0,
+            "saturation": 40.0
+          }
+        },
+        "contrast": 12.0,
+        "dehaze": 0.0,
+        "demosaic_mode": "Reference",
+        "denoise_detail": 50.0,
+        "denoise_quality": "balanced",
+        "dual_threshold": 20.0,
+        "exposure": 0.75,
+        "frequency_chroma": 1.0,
+        "glow_amount": 0.0,
+        "glow_radius": 50.0,
+        "glow_threshold": 60.0,
+        "grain_amount": 0.0,
+        "halation_amount": 0.0,
+        "highlight_clip": 1.0,
+        "highlight_method": "InpaintOpposed",
+        "highlight_reconstruction": 1.0,
+        "highlights": 0.0,
+        "hsl_hue": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+        "hsl_luminance": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+        "hsl_saturation": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+        "hue": 0.0,
+        "luminance_denoise": 0.0,
+        "point_colors": [],
+        "saturation": -100.0,
+        "shadows": 0.0,
+        "sharpen_amount": 40.0,
+        "sharpen_detail": 25.0,
+        "sharpen_masking": 0.0,
+        "sharpen_radius": 1.0,
+        "sigmoid": {
+          "color_processing": "PerChannel",
+          "contrast": 1.5,
+          "display_black_target": 0.0152,
+          "display_white_target": 100.0,
+          "hue_preservation": 100.0,
+          "skew": 0.0
+        },
+        "temperature": 0.0,
+        "texture": 0.0,
+        "tint": 0.0,
+        "tone_curve": {
+          "len": 3,
+          "points": [[0.0,0.039215688],[0.5019608,0.50980395],[1.0,0.98039216],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+        },
+        "tone_curve_blue": {
+          "len": 2,
+          "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+        },
+        "tone_curve_green": {
+          "len": 2,
+          "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+        },
+        "tone_curve_red": {
+          "len": 2,
+          "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
+        },
+        "vibrance": 0.0,
+        "vignette_amount": 0.0,
+        "vignette_feather": 50.0,
+        "vignette_highlights": 0.0,
+        "vignette_midpoint": 50.0,
+        "vignette_roundness": 0.0,
+        "white_balance": "as_shot",
+        "whites": 0.0
+      },
+      "geometry": {
+        "aspect_ratio": "original",
+        "crop": [0.0,0.0,1.0,1.0],
+        "flip_horizontal": false,
+        "flip_vertical": false,
+        "horizontal_transform": 0.0,
+        "quarter_turns": 0,
+        "rotation_degrees": 0.0,
+        "vertical_transform": 0.0
+      },
+      "lens": {
+        "enabled": false,
+        "maker": "",
+        "model": ""
+      },
+      "masks": {
+        "global_effects": [
+          {
+            "effect": "Vignette",
+            "enabled": true,
+            "settings": {
+              "vignette": {
+                "amount": -100.0,
+                "center": [50.0,50.0],
+                "feather": 50.0,
+                "highlights": 0.0,
+                "midpoint": 50.0,
+                "roundness": 0.0
+              }
+            }
+          }
+        ],
+        "masks": [],
+        "selected_component": null,
+        "selected_mask": null
+      }
+    },
+    "format": "CalibRaw preset",
+    "group": "User Presets",
+    "name": "legacy",
+    "schema_version": 1,
+    "selection": {
+      "adjustment_groups": [
+        "light",
+        "tone_curve",
+        "color",
+        "color_grading",
+        "effects"
+      ],
+      "ai_masks": false,
+      "camera_profile": false,
+      "geometry": false,
+      "lens_correction": false,
+      "lut": false,
+      "masks": false,
+      "raw_processing": false
+    }
+  },
+  "warnings": [
+    "Grayscale mix settings were not imported; the preset is imported as a black-and-white conversion.",
+    "Perspective corrections were not imported.",
+    "Defringing was not imported.",
+    "Camera calibration color adjustments were not imported.",
+    "Some noise reduction detail settings were not imported.",
+    "The post-crop vignette style was not imported.",
+    "Process version 10 is older than 11; the preset may look different.",
+    "Camera profile “Adobe Standard” was not imported.",
+    "Crop settings were not imported."
+  ]
+}

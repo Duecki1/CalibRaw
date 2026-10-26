@@ -1,0 +1,10 @@
+{
+  "format": "CalibRaw edit sidecar",
+  "future_feature": {
+    "value": 17
+  },
+  "review": {
+    "rating": 4
+  },
+  "schema_version": 99
+}

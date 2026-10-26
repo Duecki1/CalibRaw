@@ -143,6 +143,32 @@ review the new goldens like code. The Remove and X-Trans denoise cases
 render or demosaic on the GPU first, so their goldens hold only on the
 adapter that blessed them. The file header documents the formats.
 
+### Render parity and format fixtures
+
+Both run with the workspace tests, and `CALIBRAW_PARITY_BLESS=1` rewrites
+their expected output. Bless only an intended change, and review the changed
+images and JSON like code.
+
+`crates/calibraw-gpu/tests/render_parity.rs` exports every case in
+`data/render-parity/<input>/` and compares it with the PNG beside it. A case
+is a sidecar that lists only the fields it changes; `<input>` is one of the
+synthetic photos `scene`, `bayer` and `xtrans`. Cases render on the
+machine's GPU, or wgpu's software adapter without one (lavapipe in CI). GPUs
+round differently, so the mean colour of every 8×8 square must stay within
+two 8-bit levels of the golden; single-pixel rounding averages out, a changed
+tone or colour does not. A new effect or adjustment gets a case here: add the
+JSON and bless.
+
+`crates/calibraw-core/tests/formats.rs` reads every sidecar, preset and
+Lightroom XMP in `data/formats/` the way the app does, writes it again and
+compares the result with `<name>.expected.json`. A layout change or new import
+mapping gets a fixture here: an old-layout or real-world file.
+
+```sh
+cargo test --locked -p calibraw-gpu --test render_parity
+cargo test --locked -p calibraw-core --test formats
+```
+
 For Linux sandbox development and packaging, see the [Flatpak workflow](FLATPAK.md),
 including local snapshots, debug builds, validation, and unpublished release staging.
 
