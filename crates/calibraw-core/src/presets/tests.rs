@@ -392,7 +392,7 @@ fn temporary_folder(label: &str) -> PathBuf {
     ))
 }
 
-fn lightroom_document(attributes: &str) -> String {
+fn xmp_document(attributes: &str) -> String {
     format!(
         r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -443,13 +443,13 @@ fn preset_folders_save_list_and_report_damaged_files() {
 }
 
 #[test]
-fn preset_folders_load_lightroom_xmps_and_edit_their_labels() {
-    let folder = temporary_folder("lightroom");
+fn preset_folders_load_xmp_presets_and_edit_their_labels() {
+    let folder = temporary_folder("xmp");
     std::fs::create_dir_all(&folder).unwrap();
     let xmp = folder.join("warm.xmp");
     std::fs::write(
         &xmp,
-        lightroom_document(r#"crs:Name="Warm" crs:Group="Film" crs:Exposure2012="0.5""#),
+        xmp_document(r#"crs:Name="Warm" crs:Group="Film" crs:Exposure2012="0.5""#),
     )
     .unwrap();
 
@@ -488,12 +488,12 @@ fn preset_folders_load_lightroom_xmps_and_edit_their_labels() {
 }
 
 #[test]
-fn preset_folders_keep_lightroom_presets_without_supported_settings() {
-    let folder = temporary_folder("lightroom-placeholder");
+fn preset_folders_keep_xmp_presets_without_supported_settings() {
+    let folder = temporary_folder("xmp-placeholder");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
         folder.join("unsupported.xmp"),
-        lightroom_document(r#"crs:Name="Lens only" crs:Group="Film" crs:LensProfileEnable="1""#),
+        xmp_document(r#"crs:Name="Lens only" crs:Group="Film" crs:LensProfileEnable="1""#),
     )
     .unwrap();
 
@@ -507,8 +507,8 @@ fn preset_folders_keep_lightroom_presets_without_supported_settings() {
 }
 
 #[test]
-fn empty_lightroom_placeholders_are_not_written_as_native_presets() {
-    let preset = Preset::from_lightroom(
+fn empty_xmp_placeholders_are_not_written_as_native_presets() {
+    let preset = Preset::from_xmp(
         "Placeholder",
         "Film",
         EditSelection::default(),
@@ -519,15 +519,14 @@ fn empty_lightroom_placeholders_are_not_written_as_native_presets() {
 }
 
 #[test]
-fn saves_and_exports_lightroom_presets_as_xmp_copies() {
-    let folder = temporary_folder("lightroom-save");
+fn saves_and_exports_xmp_presets_as_copies() {
+    let folder = temporary_folder("xmp-save");
     std::fs::create_dir_all(&folder).unwrap();
-    let source =
-        lightroom_document(r#"crs:Name="Original" crs:Group="Film" crs:Exposure2012="0.5""#);
-    let import = lightroom::import_lightroom_xmp(source.as_bytes()).unwrap();
+    let source = xmp_document(r#"crs:Name="Original" crs:Group="Film" crs:Exposure2012="0.5""#);
+    let import = xmp::import_xmp(source.as_bytes()).unwrap();
     let renamed = import.preset.renamed("Copy", "Analog").unwrap();
 
-    let saved = save_new_lightroom_preset(&folder, &renamed, source.as_bytes()).unwrap();
+    let saved = save_new_xmp_preset(&folder, &renamed, source.as_bytes()).unwrap();
     assert_eq!(saved.file_name().unwrap(), "analog-copy.xmp");
     let saved_text = std::fs::read_to_string(&saved).unwrap();
     assert!(saved_text.contains(r#"crs:Name="Copy""#));
@@ -536,7 +535,7 @@ fn saves_and_exports_lightroom_presets_as_xmp_copies() {
 
     let exported = folder.join("exported.xmp");
     export_preset_file(&saved, &exported, &renamed).unwrap();
-    let exported = lightroom::read_lightroom_preset_file(&exported).unwrap();
+    let (exported, _) = xmp::read_xmp_preset_file(&exported).unwrap();
     assert_eq!(exported.preset.name(), "Copy");
     assert_eq!(exported.preset.group(), "Analog");
     assert_eq!(exported.preset.edits().exposure.exposure, 0.5);

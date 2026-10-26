@@ -9,7 +9,7 @@
 //! Presets live one per file in a folder, so they can be shared by copying
 //! files and a damaged file never hides the others.
 
-pub mod lightroom;
+pub mod xmp;
 
 use crate::file_ops::write_bytes_atomically;
 use crate::migrations::{self, LegacyEffectSliders};
@@ -102,12 +102,12 @@ impl Preset {
         Self::captured(name, group, selection, edits, true)
     }
 
-    /// Captures a preset translated from a Lightroom XMP.
+    /// Captures a preset translated from an XMP preset.
     ///
     /// Unlike [`Self::new`], the selection may be empty: an XMP whose settings
     /// CalibRaw cannot translate yet stays listed as a placeholder until a
     /// newer version can translate it.
-    pub(crate) fn from_lightroom(
+    pub(crate) fn from_xmp(
         name: &str,
         group: &str,
         selection: EditSelection,
@@ -761,23 +761,24 @@ pub fn delete_group(
 }
 
 /// Whether `path` names a preset file in the preset folder: a native
-/// `.calibraw-preset` or a Lightroom `.xmp`.
+/// `.calibraw-preset` or an `.xmp` preset.
 pub fn is_preset_file(path: &Path) -> bool {
-    is_native_preset_file(path) || is_visible_lightroom_preset_file(path)
+    is_native_preset_file(path) || (!is_hidden(path) && xmp::is_xmp_preset_file(path))
 }
 
 /// Whether `path` names a native CalibRaw preset file.
 pub fn is_native_preset_file(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(PRESET_SUFFIX) && !name.starts_with('.'))
+    !is_hidden(path)
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(PRESET_SUFFIX))
 }
 
-fn is_visible_lightroom_preset_file(path: &Path) -> bool {
+fn is_hidden(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| !name.starts_with('.'))
-        && lightroom::is_lightroom_preset_file(path)
+        .is_none_or(|name| name.starts_with('.'))
 }
 
 /// Reads a native CalibRaw preset from `path`.
@@ -786,8 +787,8 @@ pub fn read_preset_file(path: &Path) -> Result<Preset, PresetError> {
 }
 
 fn read_preset_file_for_load(path: &Path) -> Result<Preset, PresetError> {
-    if lightroom::is_lightroom_preset_file(path) {
-        lightroom::read_lightroom_preset_file(path).map(|import| import.preset)
+    if xmp::is_xmp_preset_file(path) {
+        xmp::read_xmp_preset_file(path).map(|(import, _)| import.preset)
     } else {
         read_preset_file(path)
     }
@@ -805,17 +806,10 @@ pub(crate) fn read_preset_bytes(path: &Path) -> Result<Vec<u8>, PresetError> {
 }
 
 /// Writes `preset` to `path`, replacing any file there. A native preset is
-/// encoded as JSON; a Lightroom XMP keeps its settings and only has its name
+/// encoded as JSON; an XMP preset keeps its settings and only has its name
 /// and group labels rewritten.
 pub fn write_preset_file(path: &Path, preset: &Preset) -> Result<(), PresetError> {
-    if lightroom::is_lightroom_preset_file(path) {
-        let bytes = read_preset_bytes(path)?;
-        let bytes = lightroom::rewrite_lightroom_labels(&bytes, preset.name(), preset.group())?;
-        write_bytes_atomically(path, &bytes)?;
-    } else {
-        write_bytes_atomically(path, &preset.encode()?)?;
-    }
-    Ok(())
+    export_preset_file(path, path, preset)
 }
 
 /// Saves `preset` as a new native preset file in `folder` and returns its
@@ -823,37 +817,38 @@ pub fn write_preset_file(path: &Path, preset: &Preset) -> Result<(), PresetError
 /// another file.
 pub fn save_new_preset(folder: &Path, preset: &Preset) -> Result<PathBuf, PresetError> {
     let path = unused_preset_path(folder, preset, PRESET_SUFFIX)?;
-    write_preset_file(&path, preset)?;
+    write_bytes_atomically(&path, &preset.encode()?)?;
     Ok(path)
 }
 
-/// Saves a copy of a Lightroom XMP in `folder` and returns its path. The copy
-/// has the preset's current name and group, and never replaces another file.
-pub fn save_new_lightroom_preset(
+/// Saves a copy of the XMP preset `source` in `folder` and returns its path.
+/// The copy has the preset's current name and group, and never replaces
+/// another file.
+pub fn save_new_xmp_preset(
     folder: &Path,
     preset: &Preset,
     source: &[u8],
 ) -> Result<PathBuf, PresetError> {
-    let path = unused_preset_path(folder, preset, lightroom::LIGHTROOM_PRESET_SUFFIX)?;
-    let bytes = lightroom::rewrite_lightroom_labels(source, preset.name(), preset.group())?;
+    let path = unused_preset_path(folder, preset, xmp::XMP_PRESET_SUFFIX)?;
+    let bytes = xmp::rewrite_xmp_labels(source, preset.name(), preset.group())?;
     write_bytes_atomically(&path, &bytes)?;
     Ok(path)
 }
 
-/// Copies `source` to `destination` in the same format, with the preset's
-/// current name and group. A Lightroom XMP keeps all of its settings.
+/// Copies the preset file `source` to `destination` in the same format, with
+/// the preset's current name and group. An XMP preset keeps all of its
+/// settings.
 pub fn export_preset_file(
     source: &Path,
     destination: &Path,
     preset: &Preset,
 ) -> Result<(), PresetError> {
-    if lightroom::is_lightroom_preset_file(source) {
-        let bytes = read_preset_bytes(source)?;
-        let bytes = lightroom::rewrite_lightroom_labels(&bytes, preset.name(), preset.group())?;
-        write_bytes_atomically(destination, &bytes)?;
+    let bytes = if xmp::is_xmp_preset_file(source) {
+        xmp::rewrite_xmp_labels(&read_preset_bytes(source)?, preset.name(), preset.group())?
     } else {
-        write_bytes_atomically(destination, &preset.encode()?)?;
-    }
+        preset.encode()?
+    };
+    write_bytes_atomically(destination, &bytes)?;
     Ok(())
 }
 

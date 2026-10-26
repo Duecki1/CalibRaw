@@ -88,7 +88,7 @@ impl PresetState {
     }
 
     /// The native preset listed as `name` in `group`, other than the one at
-    /// `except`. A Lightroom preset with the same name is not replaceable.
+    /// `except`. An XMP preset with the same name is not replaceable.
     pub(crate) fn find_named_native(
         &self,
         name: &str,
@@ -231,9 +231,9 @@ impl CalibRawApp {
                 let preset = Preset::new(&editor.name, &editor.group, editor.selection, edits)
                     .map_err(|error| sentence_case(&error.to_string()))?;
                 // Saving under an existing native name replaces that preset;
-                // the dialog labels its button "Replace" in that case. A
-                // Lightroom preset is never replaced by a native one, so a
-                // shared name gets a numbered native preset instead.
+                // the dialog labels its button "Replace" in that case. An XMP
+                // preset is never replaced by a native one, so a shared name
+                // gets a numbered native preset instead.
                 let existing = self
                     .presets
                     .find_named_native(preset.name(), preset.group(), None)
@@ -437,7 +437,7 @@ impl CalibRawApp {
     }
 
     /// Copies preset files into the preset folder. Imported presets whose
-    /// name is taken in their group get a numbered name. A Lightroom XMP is
+    /// name is taken in their group get a numbered name. An XMP preset is
     /// copied as an XMP, keeping settings CalibRaw cannot translate yet.
     /// Settings without an equivalent are reported as warnings in the notice.
     pub(crate) fn import_preset_files(&mut self, paths: &[PathBuf]) {
@@ -462,7 +462,7 @@ impl CalibRawApp {
                 let preset = imported.preset.renamed(&name, imported.preset.group())?;
                 match imported.source {
                     Some(source) => {
-                        crate::presets::save_new_lightroom_preset(&folder, &preset, &source)?;
+                        crate::presets::save_new_xmp_preset(&folder, &preset, &source)?;
                     }
                     None => {
                         crate::presets::save_new_preset(&folder, &preset)?;
@@ -510,8 +510,8 @@ impl CalibRawApp {
         if self.ui.desktop_picker_receiver.is_some() || !self.presets.is_available() {
             return;
         }
-        let dialog = crate::platform::FileDialog::new()
-            .add_filter("CalibRaw and Lightroom presets", PRESET_IMPORT_EXTENSIONS);
+        let dialog =
+            crate::platform::FileDialog::new().add_filter("Presets", PRESET_IMPORT_EXTENSIONS);
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
             DesktopPickerEvent::PresetFiles(dialog.pick_files_on_worker())
         }));
@@ -529,12 +529,11 @@ impl CalibRawApp {
                 character => character,
             })
             .collect();
-        let is_lightroom = crate::presets::lightroom::is_lightroom_preset_file(path);
-        let (filter, extensions, suffix) = if is_lightroom {
+        let (filter, extensions, suffix) = if crate::presets::xmp::is_xmp_preset_file(path) {
             (
-                "Lightroom preset",
-                LIGHTROOM_FILE_EXTENSIONS,
-                crate::presets::lightroom::LIGHTROOM_PRESET_SUFFIX,
+                "XMP preset",
+                XMP_FILE_EXTENSIONS,
+                crate::presets::xmp::XMP_PRESET_SUFFIX,
             )
         } else {
             (
@@ -569,8 +568,8 @@ impl CalibRawApp {
 
 /// [`crate::presets::PRESET_SUFFIX`] without its leading dot, for file pickers.
 const PRESET_FILE_EXTENSIONS: &[&str] = &["calibraw-preset"];
-/// [`crate::presets::lightroom::LIGHTROOM_PRESET_SUFFIX`] without its dot.
-const LIGHTROOM_FILE_EXTENSIONS: &[&str] = &["xmp"];
+/// [`crate::presets::xmp::XMP_PRESET_SUFFIX`] without its dot.
+const XMP_FILE_EXTENSIONS: &[&str] = &["xmp"];
 /// Both preset formats in one import filter, so users see every preset file
 /// at once. Some tools export `.XMP`; Linux pickers match case-sensitively.
 const PRESET_IMPORT_EXTENSIONS: &[&str] = &["calibraw-preset", "xmp", "XMP"];
@@ -578,16 +577,15 @@ const PRESET_IMPORT_EXTENSIONS: &[&str] = &["calibraw-preset", "xmp", "XMP"];
 struct ImportedPreset {
     preset: Preset,
     warnings: Vec<String>,
-    /// The XMP bytes of a Lightroom preset, kept as the copied source.
+    /// The bytes of an XMP preset, kept as the copied source.
     source: Option<Vec<u8>>,
 }
 
-/// Reads a CalibRaw or Lightroom preset file, with the warnings of a
-/// Lightroom translation and the XMP source when there is one.
+/// Reads a native or XMP preset file, with the warnings of an XMP
+/// translation and the XMP source when there is one.
 fn read_preset_for_import(path: &Path) -> Result<ImportedPreset, PresetError> {
-    if crate::presets::lightroom::is_lightroom_preset_file(path) {
-        let (import, source) =
-            crate::presets::lightroom::read_lightroom_preset_file_with_bytes(path)?;
+    if crate::presets::xmp::is_xmp_preset_file(path) {
+        let (import, source) = crate::presets::xmp::read_xmp_preset_file(path)?;
         Ok(ImportedPreset {
             preset: import.preset,
             warnings: import.warnings,
@@ -650,9 +648,9 @@ mod tests {
             format!(".{}", PRESET_FILE_EXTENSIONS[0]),
             crate::presets::PRESET_SUFFIX
         );
-        assert_eq!(crate::presets::lightroom::LIGHTROOM_PRESET_SUFFIX, ".xmp");
+        assert_eq!(crate::presets::xmp::XMP_PRESET_SUFFIX, ".xmp");
         assert!(PRESET_IMPORT_EXTENSIONS.contains(&PRESET_FILE_EXTENSIONS[0]));
-        assert!(PRESET_IMPORT_EXTENSIONS.contains(&LIGHTROOM_FILE_EXTENSIONS[0]));
+        assert!(PRESET_IMPORT_EXTENSIONS.contains(&XMP_FILE_EXTENSIONS[0]));
         assert_eq!(
             preset_folder_for_settings(Path::new("/config/calibraw/performance.json")),
             Some(PathBuf::from("/config/calibraw/presets"))
@@ -660,7 +658,7 @@ mod tests {
     }
 
     #[test]
-    fn importing_a_lightroom_preset_copies_the_xmp() {
+    fn importing_an_xmp_preset_copies_the_file() {
         let folder = tempfile::tempdir().unwrap();
         let source_folder = tempfile::tempdir().unwrap();
         let mut app = CalibRawApp::empty(&egui::Context::default());
@@ -697,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn importing_a_lightroom_preset_keeps_warnings_out_of_failures() {
+    fn importing_an_xmp_preset_keeps_warnings_out_of_failures() {
         let folder = tempfile::tempdir().unwrap();
         let source_folder = tempfile::tempdir().unwrap();
         let mut app = CalibRawApp::empty(&egui::Context::default());
@@ -724,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn importing_a_mask_only_lightroom_preset_saves_an_ai_mask() {
+    fn importing_a_mask_only_xmp_preset_saves_an_ai_mask() {
         let folder = tempfile::tempdir().unwrap();
         let source_folder = tempfile::tempdir().unwrap();
         let mut app = CalibRawApp::empty(&egui::Context::default());
@@ -763,7 +761,7 @@ mod tests {
     }
 
     #[test]
-    fn importing_an_unsupported_lightroom_preset_keeps_it_listed() {
+    fn importing_an_unsupported_xmp_preset_keeps_it_listed() {
         let folder = tempfile::tempdir().unwrap();
         let source_folder = tempfile::tempdir().unwrap();
         let mut app = CalibRawApp::empty(&egui::Context::default());
@@ -796,11 +794,11 @@ mod tests {
         );
         let notice = app.ui.notice.as_deref().unwrap();
         assert!(notice.starts_with("Imported 1 preset."), "{notice}");
-        assert!(notice.contains("No Lightroom settings"));
+        assert!(notice.contains("No settings in this preset"));
     }
 
     #[test]
-    fn renaming_a_lightroom_preset_rewrites_only_the_copied_xmp_labels() {
+    fn renaming_an_xmp_preset_rewrites_only_the_copied_labels() {
         let folder = tempfile::tempdir().unwrap();
         let source_folder = tempfile::tempdir().unwrap();
         let mut app = CalibRawApp::empty(&egui::Context::default());
@@ -833,7 +831,7 @@ mod tests {
     }
 
     #[test]
-    fn creating_a_native_preset_does_not_replace_a_lightroom_preset() {
+    fn creating_a_native_preset_does_not_replace_an_xmp_preset() {
         let folder = tempfile::tempdir().unwrap();
         let source_folder = tempfile::tempdir().unwrap();
         let mut app = CalibRawApp::empty(&egui::Context::default());

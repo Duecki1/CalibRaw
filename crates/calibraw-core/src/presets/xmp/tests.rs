@@ -17,8 +17,8 @@ fn document(attributes: &str, body: &str) -> String {
     )
 }
 
-fn import(attributes: &str, body: &str) -> LightroomImport {
-    import_lightroom_xmp(document(attributes, body).as_bytes()).expect("the XMP preset imports")
+fn import(attributes: &str, body: &str) -> XmpImport {
+    import_xmp(document(attributes, body).as_bytes()).expect("the XMP preset imports")
 }
 
 fn curve_points(curve: &PointCurve) -> Vec<[f32; 2]> {
@@ -283,7 +283,7 @@ fn reads_the_settings_description_inside_parameters() {
 }
 
 #[test]
-fn maps_legacy_lightroom_keys_and_curves() {
+fn maps_legacy_keys_and_curves() {
     let import = import(
         r#"crs:Exposure="0.75" crs:Contrast="12" crs:Clarity="8" crs:ProcessVersion="10.0""#,
         r#"
@@ -430,7 +430,7 @@ fn ignores_a_lens_profile_name_while_the_profile_is_disabled() {
 }
 
 #[test]
-fn uses_lightroom_vignette_defaults_for_omitted_sliders() {
+fn uses_the_format_vignette_defaults_for_omitted_sliders() {
     let import = import(r#"crs:PostCropVignetteAmount="-30""#, "");
     let vignette = import
         .preset
@@ -450,13 +450,13 @@ fn uses_lightroom_vignette_defaults_for_omitted_sliders() {
 
 #[test]
 fn accepts_the_highlight_priority_vignette_style_only() {
-    let highlight_priority = import(r#"crs:Exposure2012="0" crs:PostCropVignetteStyle="0""#, "");
+    let highlight_priority = import(r#"crs:Exposure2012="0" crs:PostCropVignetteStyle="1""#, "");
     assert!(!highlight_priority
         .warnings
         .iter()
         .any(|warning| warning.contains("vignette style")));
 
-    for style in ["1", "2"] {
+    for style in ["2", "3"] {
         let other = import(
             &format!(r#"crs:Exposure2012="0" crs:PostCropVignetteStyle="{style}""#),
             "",
@@ -490,7 +490,7 @@ fn falls_back_to_the_file_name() {
     let path = folder.path().join("My Look.xmp");
     std::fs::write(&path, document(r#"crs:Exposure2012="0.25""#, "").as_bytes()).unwrap();
 
-    let import = read_lightroom_preset_file(&path).expect("the file imports");
+    let (import, _) = read_xmp_preset_file(&path).expect("the file imports");
     assert_eq!(import.preset.name(), "My Look");
     assert_eq!(import.preset.group(), DEFAULT_PRESET_GROUP);
     assert_close(import.preset.edits().exposure.exposure, 0.25);
@@ -502,7 +502,7 @@ fn accepts_an_xml_declaration() {
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{}",
         document(r#"crs:Exposure2012="0.25""#, "")
     );
-    let import = import_lightroom_xmp(xml.as_bytes()).expect("the declaration is accepted");
+    let import = import_xmp(xml.as_bytes()).expect("the declaration is accepted");
     assert_close(import.preset.edits().exposure.exposure, 0.25);
 }
 
@@ -514,21 +514,21 @@ fn reads_a_self_closing_description() {
  crs:Name="Self closing" crs:Exposure2012="1.0" />
 </rdf:RDF>
 </x:xmpmeta>"#;
-    let import = import_lightroom_xmp(xml.as_bytes()).expect("the file imports");
+    let import = import_xmp(xml.as_bytes()).expect("the file imports");
     assert_eq!(import.preset.name(), "Self closing");
     assert_close(import.preset.edits().exposure.exposure, 1.0);
 }
 
 #[test]
 fn keeps_files_without_supported_settings_as_empty_placeholders() {
-    let import = import_lightroom_xmp(document(r#"crs:LensProfileEnable="1""#, "").as_bytes())
+    let import = import_xmp(document(r#"crs:LensProfileEnable="1""#, "").as_bytes())
         .expect("the preset stays listed");
     assert!(import.preset.selection().is_empty());
     assert_eq!(import.preset.edits(), &default_edit_state());
     assert!(import
         .warnings
         .iter()
-        .any(|warning| warning.contains("No Lightroom settings")));
+        .any(|warning| warning.contains("No settings in this preset")));
     assert!(import
         .warnings
         .iter()
@@ -541,15 +541,15 @@ fn rewrites_name_and_group_attributes_and_keeps_other_bytes() {
         r#"crs:Name="Old name" crs:Group="Old group" crs:Exposure2012="0.5""#,
         "",
     );
-    let rewritten = rewrite_lightroom_labels(xml.as_bytes(), "New & name", "New group")
-        .expect("labels rewrite");
+    let rewritten =
+        rewrite_xmp_labels(xml.as_bytes(), "New & name", "New group").expect("labels rewrite");
     let text = String::from_utf8(rewritten).unwrap();
     assert_eq!(
         text,
         xml.replace(r#"crs:Name="Old name""#, r#"crs:Name="New &amp; name""#)
             .replace(r#"crs:Group="Old group""#, r#"crs:Group="New group""#)
     );
-    let import = import_lightroom_xmp(text.as_bytes()).expect("the rewritten XMP imports");
+    let import = import_xmp(text.as_bytes()).expect("the rewritten XMP imports");
     assert_eq!(import.preset.name(), "New & name");
     assert_eq!(import.preset.group(), "New group");
     assert_close(import.preset.edits().exposure.exposure, 0.5);
@@ -565,8 +565,7 @@ fn rewrites_name_and_group_elements_and_ignores_the_embedded_preset() {
 <crs:Preset><rdf:Description crs:Name="Embedded" crs:Group="Embedded group" crs:Exposure2012="1"/></crs:Preset>
 "#,
     );
-    let rewritten =
-        rewrite_lightroom_labels(xml.as_bytes(), "New", "Group").expect("labels rewrite");
+    let rewritten = rewrite_xmp_labels(xml.as_bytes(), "New", "Group").expect("labels rewrite");
     let text = String::from_utf8(rewritten).unwrap();
     assert!(text.contains(
         r#"<crs:Name><rdf:Alt><rdf:li xml:lang="x-default">New</rdf:li></rdf:Alt></crs:Name>"#
@@ -575,7 +574,7 @@ fn rewrites_name_and_group_elements_and_ignores_the_embedded_preset() {
         r#"<crs:Group><rdf:Alt><rdf:li xml:lang="x-default">Group</rdf:li></rdf:Alt></crs:Group>"#
     ));
     assert!(text.contains(r#"crs:Name="Embedded""#));
-    let import = import_lightroom_xmp(text.as_bytes()).expect("the rewritten XMP imports");
+    let import = import_xmp(text.as_bytes()).expect("the rewritten XMP imports");
     assert_eq!(import.preset.name(), "New");
     assert_eq!(import.preset.group(), "Group");
 }
@@ -584,8 +583,8 @@ fn rewrites_name_and_group_elements_and_ignores_the_embedded_preset() {
 fn adds_missing_labels_to_the_top_description() {
     let xml = document(r#"crs:Exposure2012="0.5""#, "");
     let rewritten =
-        rewrite_lightroom_labels(xml.as_bytes(), "Added", "Added group").expect("labels rewrite");
-    let import = import_lightroom_xmp(&rewritten).expect("the rewritten XMP imports");
+        rewrite_xmp_labels(xml.as_bytes(), "Added", "Added group").expect("labels rewrite");
+    let import = import_xmp(&rewritten).expect("the rewritten XMP imports");
     assert_eq!(import.preset.name(), "Added");
     assert_eq!(import.preset.group(), "Added group");
     assert_close(import.preset.edits().exposure.exposure, 0.5);
@@ -598,7 +597,7 @@ fn leaves_labels_alone_when_they_already_match() {
         "",
     );
     let rewritten =
-        rewrite_lightroom_labels(xml.as_bytes(), "Same", "Same group").expect("labels rewrite");
+        rewrite_xmp_labels(xml.as_bytes(), "Same", "Same group").expect("labels rewrite");
     assert_eq!(rewritten, xml.as_bytes());
 }
 
@@ -611,7 +610,7 @@ fn preserves_a_utf8_bom() {
     let mut bytes = vec![0xEF, 0xBB, 0xBF];
     bytes.extend_from_slice(xml.as_bytes());
 
-    let rewritten = rewrite_lightroom_labels(&bytes, "New", "Group").expect("labels rewrite");
+    let rewritten = rewrite_xmp_labels(&bytes, "New", "Group").expect("labels rewrite");
     assert!(rewritten.starts_with(&[0xEF, 0xBB, 0xBF]));
     let text = std::str::from_utf8(&rewritten[3..]).unwrap();
     assert_eq!(
@@ -630,12 +629,12 @@ fn adds_the_crs_namespace_even_when_a_comment_mentions_it() {
 </rdf:RDF>
 </x:xmpmeta>"#;
     let rewritten =
-        rewrite_lightroom_labels(xml.as_bytes(), "Added", "Added group").expect("labels rewrite");
+        rewrite_xmp_labels(xml.as_bytes(), "Added", "Added group").expect("labels rewrite");
     let text = std::str::from_utf8(&rewritten).unwrap();
     assert!(text.contains(r#"crs:Name="Added""#));
     assert!(text.contains(r#"crs:Group="Added group""#));
     assert!(text.contains(r#"xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/""#));
-    let import = import_lightroom_xmp(&rewritten).expect("the rewritten XMP imports");
+    let import = import_xmp(&rewritten).expect("the rewritten XMP imports");
     assert_eq!(import.preset.name(), "Added");
     assert_eq!(import.preset.group(), "Added group");
     assert_close(import.preset.edits().exposure.exposure, 0.5);
@@ -651,22 +650,95 @@ fn rewrites_label_elements_in_a_second_description() {
 </rdf:Description>
 </rdf:RDF>
 </x:xmpmeta>"#;
-    let rewritten =
-        rewrite_lightroom_labels(xml.as_bytes(), "New", "Group").expect("labels rewrite");
-    let import = import_lightroom_xmp(&rewritten).expect("the rewritten XMP imports");
+    let rewritten = rewrite_xmp_labels(xml.as_bytes(), "New", "Group").expect("labels rewrite");
+    let import = import_xmp(&rewritten).expect("the rewritten XMP imports");
     assert_eq!(import.preset.name(), "New");
     assert_eq!(import.preset.group(), "Group");
     assert_close(import.preset.edits().exposure.exposure, 0.5);
 }
 
+/// A profile reference as XMP writers store it after the preset's labels.
+const LOOK: &str = r#"
+<crs:Look>
+ <rdf:Description crs:Name="Profile name" crs:Amount="1">
+  <crs:Group><rdf:Alt><rdf:li xml:lang="x-default">Profiles</rdf:li></rdf:Alt></crs:Group>
+  <crs:Parameters>
+   <rdf:Description crs:Exposure2012="3" crs:CameraProfile="Profile base">
+    <crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 40</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>
+   </rdf:Description>
+  </crs:Parameters>
+ </rdf:Description>
+</crs:Look>
+"#;
+
+#[test]
+fn ignores_the_profile_labels_and_settings() {
+    let import = import(
+        r#"crs:Exposure2012="0.5""#,
+        &format!(
+            r#"<crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Warm</rdf:li></rdf:Alt></crs:Name>
+<crs:Group><rdf:Alt><rdf:li xml:lang="x-default">Film</rdf:li></rdf:Alt></crs:Group>
+{LOOK}"#
+        ),
+    );
+    assert_eq!(import.preset.name(), "Warm");
+    assert_eq!(import.preset.group(), "Film");
+    assert_close(import.preset.edits().exposure.exposure, 0.5);
+    assert!(!import
+        .preset
+        .selection()
+        .adjustment_groups
+        .contains(AdjustmentGroup::ToneCurve));
+    assert!(import.warnings.is_empty(), "{:?}", import.warnings);
+}
+
+#[test]
+fn rewriting_labels_leaves_the_profile_untouched() {
+    let xml = document(
+        r#"crs:Exposure2012="0.5""#,
+        &format!(
+            r#"<crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Warm</rdf:li></rdf:Alt></crs:Name>
+<crs:Group><rdf:Alt><rdf:li xml:lang="x-default">Film</rdf:li></rdf:Alt></crs:Group>
+{LOOK}"#
+        ),
+    );
+    let rewritten = rewrite_xmp_labels(xml.as_bytes(), "Hot", "Analog").expect("labels rewrite");
+    let text = String::from_utf8(rewritten).unwrap();
+    assert!(text.contains(LOOK));
+    assert_eq!(
+        text,
+        xml.replace(">Warm<", ">Hot<").replace(">Film<", ">Analog<")
+    );
+}
+
+#[test]
+fn skips_masks_whose_components_are_written_as_descriptions() {
+    let range = r#"<rdf:li><rdf:Description crs:What="Mask/RangeMask" crs:MaskBlendMode="2">
+<crs:CorrectionRangeMask crs:Type="1"/>
+</rdf:Description></rdf:li>"#;
+    let correction = correction(
+        "Subject in range",
+        "",
+        &[component("Subject 1", "1", ""), range.to_owned()],
+        "",
+    );
+    let import = import("", &mask_group(&[correction]));
+
+    assert!(import.preset.edits().masks.masks.is_empty());
+    assert!(import
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("“Subject in range” was not imported")));
+}
+
 #[test]
 fn rejects_invalid_and_utf16_documents() {
     assert!(matches!(
-        import_lightroom_xmp(b"not xml"),
+        import_xmp(b"not xml"),
         Err(PresetError::Invalid(_))
     ));
     assert!(matches!(
-        import_lightroom_xmp(&[0xFF, 0xFE, 0x00, 0x00]),
+        import_xmp(&[0xFF, 0xFE, 0x00, 0x00]),
         Err(PresetError::Unsupported(_))
     ));
 }
@@ -843,10 +915,10 @@ fn clamps_values_to_the_calibraw_ranges() {
 
 #[test]
 fn recognises_xmp_files_without_case() {
-    assert!(is_lightroom_preset_file(Path::new("look.xmp")));
-    assert!(is_lightroom_preset_file(Path::new("look.XMP")));
-    assert!(!is_lightroom_preset_file(Path::new("look.calibraw-preset")));
-    assert!(!is_lightroom_preset_file(Path::new("look")));
+    assert!(is_xmp_preset_file(Path::new("look.xmp")));
+    assert!(is_xmp_preset_file(Path::new("look.XMP")));
+    assert!(!is_xmp_preset_file(Path::new("look.calibraw-preset")));
+    assert!(!is_xmp_preset_file(Path::new("look")));
 }
 
 #[test]
