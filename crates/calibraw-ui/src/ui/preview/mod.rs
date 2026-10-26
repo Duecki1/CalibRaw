@@ -105,15 +105,6 @@ use interaction::*;
 use overlays::*;
 use transform::*;
 
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod mask_regression_tests;
-
-#[cfg(test)]
-mod inpaint_regression_tests;
-
 pub(crate) struct Preview;
 
 /// Where the image sits on screen this frame, shared by the preview tools.

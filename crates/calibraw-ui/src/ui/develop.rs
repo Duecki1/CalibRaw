@@ -721,15 +721,3 @@ fn fitted_size(available: egui::Vec2, source: egui::Vec2) -> egui::Vec2 {
         .max(0.0);
     source * scale
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fitted_reference_size_preserves_aspect() {
-        let fitted = fitted_size(egui::vec2(400.0, 300.0), egui::vec2(600.0, 400.0));
-        assert!((fitted.x - 400.0).abs() < 0.001);
-        assert!((fitted.y - 266.666_66).abs() < 0.001);
-    }
-}

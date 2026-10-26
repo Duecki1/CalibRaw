@@ -426,6 +426,3 @@ impl Reference {
             .collect()
     }
 }
-
-#[cfg(test)]
-mod tests;

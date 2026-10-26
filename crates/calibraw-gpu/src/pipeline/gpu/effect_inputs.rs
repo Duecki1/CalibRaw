@@ -831,10 +831,3 @@ impl EffectInputs {
         }
     }
 }
-
-#[cfg(test)]
-impl EffectInputs {
-    pub(super) fn scene_depth_guide_allocated(&self) -> bool {
-        self.lock().scene_depth_guide.is_some()
-    }
-}

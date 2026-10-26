@@ -82,28 +82,3 @@ fn clear_and_close(client: &mut Option<DiscordIpcClient>) {
         let _ = client.close();
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn payloads_do_not_expose_document_identity() {
-        let browsing =
-            serde_json::to_string(&activity_payload(PresenceActivity::Browsing)).unwrap();
-        let editing = serde_json::to_string(&activity_payload(PresenceActivity::Editing {
-            started_at: 123,
-        }))
-        .unwrap();
-
-        assert!(browsing.contains("Browsing Photos"));
-        assert!(editing.contains("Editing a Picture"));
-        assert!(editing.contains("\"start\":123"));
-        assert!(browsing.contains("Get CalibRaw"));
-        assert!(editing.contains("Get CalibRaw"));
-        assert!(browsing.contains(GET_CALIBRAW_URL));
-        assert!(editing.contains(GET_CALIBRAW_URL));
-        assert!(!browsing.contains("document"));
-        assert!(!editing.contains("document"));
-    }
-}

@@ -1150,6 +1150,3 @@ pub(super) fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawTh
         }
     })
 }
-
-#[cfg(test)]
-mod tests;

@@ -260,12 +260,9 @@ canvases, mask cards, and colour controls in their existing components.
   "source set") and dialog text that explains a choice are not descriptions.
 
 Run the independent library checks above for reusable design-system regressions
-and `cargo test -p calibraw-ui --lib --locked` for headless UI integration regressions.
-The ignored `portrait_gpu_layout_and_input` test additionally checks rendered
-preview geometry and pointer/touch behavior; it needs a GPU adapter and an
-isolated `XDG_CONFIG_HOME`. `CALIBRAW_PREVIEW_TEST_SCREENSHOT` optionally captures
-its rendered fixture. Review desktop and Android layouts in all six themes
-when a change affects appearance.
+and the screenshot baselines (`cargo xtask baseline-run` and `baseline-compare`)
+for rendered UI regressions. Review desktop and Android layouts in all six
+themes when a change affects appearance.
 
 ### Feature tips
 

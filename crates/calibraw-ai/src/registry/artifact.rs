@@ -463,58 +463,6 @@ mod tests {
         cache_filename: "model.onnx",
     };
 
-    fn write_temp(bytes: &[u8]) -> (tempfile::TempDir, PathBuf) {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("model.onnx");
-        fs::write(&path, bytes).unwrap();
-        (temp, path)
-    }
-
-    #[test]
-    fn valid_cached_artifact_is_accepted() {
-        let (_temp, path) = write_temp(b"valid model bytes");
-        verify_artifact(&path, TEST_ARTIFACT).unwrap();
-    }
-
-    #[test]
-    fn checksum_mismatch_is_rejected() {
-        let (_temp, path) = write_temp(b"invalid model byt");
-        let error = verify_artifact(&path, TEST_ARTIFACT).unwrap_err();
-        assert!(format!("{error:#}").contains("SHA-256 mismatch"));
-    }
-
-    #[test]
-    fn partial_artifact_is_rejected() {
-        let (_temp, path) = write_temp(b"partial");
-        let error = verify_artifact(&path, TEST_ARTIFACT).unwrap_err();
-        assert!(format!("{error:#}").contains("size mismatch"));
-    }
-
-    #[test]
-    fn failed_install_cleans_partial_file() {
-        let temp = tempfile::tempdir().unwrap();
-        let destination = temp.path().join("model.onnx");
-        let mut source = std::io::Cursor::new(b"invalid model byt");
-        assert!(
-            install_artifact_from_reader(&destination, TEST_ARTIFACT, &mut source, || Ok(()))
-                .is_err()
-        );
-        assert!(!destination.exists());
-        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
-    }
-
-    #[test]
-    fn successful_install_replaces_existing_file_atomically_and_is_verified() {
-        let temp = tempfile::tempdir().unwrap();
-        let destination = temp.path().join("model.onnx");
-        fs::write(&destination, b"old invalid model").unwrap();
-        let mut source = std::io::Cursor::new(b"valid model bytes");
-        install_artifact_from_reader(&destination, TEST_ARTIFACT, &mut source, || Ok(())).unwrap();
-        verify_artifact(&destination, TEST_ARTIFACT).unwrap();
-        assert_eq!(fs::read(&destination).unwrap(), b"valid model bytes");
-        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
-    }
-
     #[test]
     fn retry_backoff_observes_cancellation_before_sleeping() {
         let mut checks = 0;

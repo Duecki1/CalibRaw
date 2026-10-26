@@ -191,15 +191,3 @@ fn paint_guides(painter: &egui::Painter, rect: Rect, cells: [u32; 2]) {
         painter.hline(rect.x_range(), y, stroke);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mesh_cells_follow_the_aspect_ratio() {
-        assert_eq!(grid_cells(3000, 2000, 48), [48, 32]);
-        assert_eq!(grid_cells(2000, 3000, 48), [32, 48]);
-        assert_eq!(grid_cells(10_000, 10, 48), [48, 2]);
-    }
-}

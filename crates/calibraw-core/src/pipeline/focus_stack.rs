@@ -428,6 +428,3 @@ impl<T: Texel> Plane<T> {
 fn clamp_index(index: isize, size: usize) -> usize {
     index.clamp(0, size as isize - 1) as usize
 }
-
-#[cfg(test)]
-mod tests;

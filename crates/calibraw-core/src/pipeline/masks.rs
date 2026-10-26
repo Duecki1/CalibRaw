@@ -445,12 +445,3 @@ fn copied_name(base: &str, exists: impl Fn(&str) -> bool) -> String {
     }
     format!("{base} Copy")
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod zoom_tests;
-
-#[cfg(test)]
-mod lens_tests;

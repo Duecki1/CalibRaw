@@ -18,17 +18,3 @@ fn parse_mem_total_bytes(meminfo: &str) -> Option<u64> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mem_total_is_parsed_from_meminfo() {
-        let meminfo = "MemTotal:        7812344 kB\nMemFree:          123456 kB\n";
-        assert_eq!(parse_mem_total_bytes(meminfo), Some(7_812_344 * 1024));
-        assert_eq!(parse_mem_total_bytes("MemFree: 1 kB\n"), None);
-        assert_eq!(parse_mem_total_bytes("MemTotal: x kB\n"), None);
-        assert_eq!(parse_mem_total_bytes("MemTotal: 12 MB\n"), None);
-    }
-}

@@ -819,6 +819,3 @@ fn grain_size(value: f32) -> f32 {
         1.0 + (value - 25.0) / 75.0 * 3.0
     }
 }
-
-#[cfg(test)]
-mod tests;

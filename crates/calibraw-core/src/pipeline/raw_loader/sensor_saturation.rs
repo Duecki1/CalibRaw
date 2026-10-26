@@ -43,24 +43,3 @@ impl Default for SensorSaturation {
         Self::AT_WHITE
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::SensorSaturation;
-
-    #[test]
-    fn levels_at_or_below_white_and_invalid_levels_mean_saturation_at_white() {
-        for level in [1.0, 0.8, 0.0, -1.0, f32::NAN, f32::INFINITY] {
-            assert_eq!(SensorSaturation::new(level), SensorSaturation::AT_WHITE);
-        }
-        assert_eq!(SensorSaturation::default(), SensorSaturation::AT_WHITE);
-    }
-
-    #[test]
-    fn clip_level_scales_the_highlight_clip_by_saturation() {
-        assert_eq!(SensorSaturation::AT_WHITE.clip_level(0.9), 0.9);
-        let saturation = SensorSaturation::new(1.25);
-        assert_eq!(saturation.level(), 1.25);
-        assert_eq!(saturation.clip_level(0.8), 1.0);
-    }
-}

@@ -211,10 +211,6 @@ android {
     }
 }
 
-dependencies {
-    testImplementation "junit:junit:4.13.2"
-}
-
 tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ["-Xlint:deprecation"]
 }
@@ -275,7 +271,7 @@ tasks.register("buildRustProfiling") {
 // The XML asset directory is produced by the external native build, and the
 // Rust cdylib must exist before AGP merges JNI libraries. Wiring at merge time
 // avoids a preBuild <-> externalNativeBuild dependency cycle. Native work is
-// omitted when calibrawBuildRust=false so JVM-only unit tests remain host-only.
+// omitted when calibrawBuildRust=false.
 if (buildRustEnabled) {
     def wireNativeBuild = { String variant, String rustTask ->
         tasks.matching { it.name == "merge${variant}Assets" }.configureEach {

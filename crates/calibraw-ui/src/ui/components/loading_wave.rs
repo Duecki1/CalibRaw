@@ -84,19 +84,3 @@ fn wave_band_image() -> ColorImage {
         .collect();
     ColorImage::new([TEXTURE_SIZE, TEXTURE_SIZE], pixels)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn band_peaks_mid_period_and_is_clear_at_the_wrap_seam() {
-        let image = wave_band_image();
-        let alpha = |x: usize| image.pixels[x].a();
-        assert_eq!(alpha(TEXTURE_SIZE / 2), 255);
-        assert!(alpha(TEXTURE_SIZE / 2 - 4) > alpha(TEXTURE_SIZE / 2 - 8));
-        // Linear filtering across the repeat seam blends these two texels.
-        assert_eq!(alpha(0), 0);
-        assert_eq!(alpha(TEXTURE_SIZE - 1), 0);
-    }
-}

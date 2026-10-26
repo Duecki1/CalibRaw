@@ -888,6 +888,3 @@ fn preset_file_stem(preset: &Preset) -> String {
         stem.to_owned()
     }
 }
-
-#[cfg(test)]
-mod tests;

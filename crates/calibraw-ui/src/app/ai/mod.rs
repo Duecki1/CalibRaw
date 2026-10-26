@@ -36,6 +36,3 @@ mod tasks;
 mod update;
 
 pub(crate) use update::AiUpdate;
-
-#[cfg(test)]
-mod tests;

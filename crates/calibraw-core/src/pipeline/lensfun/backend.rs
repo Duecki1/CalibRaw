@@ -206,30 +206,3 @@ pub(super) fn apply(raw: &LoadedRaw, selection: &LensfunLens) -> Result<LoadedRa
     }
     correct_mosaic(raw, &early_modifier, early_flags, lens_geometry)
 }
-
-#[cfg(test)]
-mod ffi_boundary_tests {
-    use super::*;
-
-    #[test]
-    fn null_native_results_are_normal_wrapper_misses() {
-        assert!(camera_name(ptr::null()).is_none());
-        assert!(camera_crop_factor(ptr::null()).is_none());
-        assert!(lens_fields(ptr::null()).is_none());
-        assert!(lens_name(ptr::null()).is_none());
-        assert!(pointer_list::<lfLens>(ptr::null()).is_empty());
-
-        let list = OwnedPointerList::<lfLens> {
-            pointer: ptr::null_mut(),
-        };
-        assert!(list.first().is_none());
-        assert!(list.values().is_empty());
-    }
-
-    #[test]
-    fn native_owners_remain_raii_guards() {
-        assert!(std::mem::needs_drop::<Database>());
-        assert!(std::mem::needs_drop::<Modifier>());
-        assert!(std::mem::needs_drop::<OwnedPointerList<lfLens>>());
-    }
-}

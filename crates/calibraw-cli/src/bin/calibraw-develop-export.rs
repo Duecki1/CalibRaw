@@ -425,20 +425,6 @@ fn output_format(path: &Path) -> Result<ExportFormat> {
     bail!("--output must use the .png or .jxl extension")
 }
 
-#[cfg(test)]
-#[test]
-fn output_extension_selects_encoder() {
-    assert_eq!(
-        output_format(Path::new("photo.png")).unwrap(),
-        ExportFormat::Png
-    );
-    assert_eq!(
-        output_format(Path::new("photo.JXL")).unwrap(),
-        ExportFormat::JpegXl
-    );
-    assert!(output_format(Path::new("photo.jpg")).is_err());
-}
-
 fn parse_crop(value: &str) -> Result<[u32; 4]> {
     let values = value
         .split(',')

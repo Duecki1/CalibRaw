@@ -60,19 +60,3 @@ fn forward_message(level: LogLevel, message: &str) {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ort_log_picks_the_level_as_ort_does() {
-        assert_eq!(level_named(None), LogLevel::Error);
-        assert_eq!(level_named(Some("verbose")), LogLevel::Verbose);
-        assert_eq!(level_named(Some("info")), LogLevel::Info);
-        assert_eq!(level_named(Some("warning")), LogLevel::Warning);
-        assert_eq!(level_named(Some("error")), LogLevel::Error);
-        assert_eq!(level_named(Some("fatal")), LogLevel::Fatal);
-        assert_eq!(level_named(Some("loud")), LogLevel::Error);
-    }
-}

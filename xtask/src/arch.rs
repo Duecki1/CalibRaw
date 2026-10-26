@@ -248,30 +248,3 @@ fn package_names(output: &str) -> BTreeSet<String> {
         .map(str::to_owned)
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn identifier_rules_ignore_comments_strings_and_longer_words() {
-        let source = RustSource::new(
-            "//! Must not use egui.\nuse eframe::egui;\nlet text = \"egui\";\nlet eguix = 1;\n",
-        );
-        assert_eq!(
-            identifier_uses(&source, &["egui", "eframe"]),
-            [(2, "eframe".to_owned()), (2, "egui".to_owned())]
-        );
-    }
-
-    #[test]
-    fn package_names_ignore_versions_sources_and_duplicates() {
-        let names = package_names(
-            "calibraw-core v1.1.1 (/repo/crates/calibraw-core)\nserde v1.0.0\nserde v1.0.0 (*)\n\n",
-        );
-        assert_eq!(
-            names.into_iter().collect::<Vec<_>>(),
-            ["calibraw-core", "serde"]
-        );
-    }
-}

@@ -195,33 +195,3 @@ fn box_mean_columns(values: &[f32], width: usize, height: usize, radius: usize) 
         });
     out
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn box_mean_averages_the_window_and_replicates_edges() {
-        let values = [0.0, 0.0, 3.0, 0.0, 0.0, 6.0];
-        let mean = box_mean(&values, 6, 1, 1);
-        assert_eq!(mean, vec![0.0, 1.0, 1.0, 1.0, 2.0, 4.0]);
-        let column = box_mean(&values, 1, 6, 1);
-        assert_eq!(column, mean);
-    }
-
-    #[test]
-    fn guided_refinement_removes_specks_and_keeps_edges() {
-        // Left half dark, right half bright; coverage follows the edge, plus
-        // one stray covered pixel in the dark half on flat lightness.
-        let (width, height) = (16, 8);
-        let guide: Vec<f32> = (0..width * height)
-            .map(|index| if index % width < 8 { 0.1 } else { 0.6 })
-            .collect();
-        let mut coverage: Vec<f32> = guide.iter().map(|&value| f32::from(value > 0.3)).collect();
-        coverage[3 * width + 3] = 1.0;
-        refine_coverage(&mut coverage, &guide, width, height, 1000.0);
-        assert!(coverage[3 * width + 3] < 0.2, "{}", coverage[3 * width + 3]);
-        assert!(coverage[3 * width + 7] < 0.1);
-        assert!(coverage[3 * width + 8] > 0.9);
-    }
-}

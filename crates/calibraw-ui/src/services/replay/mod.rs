@@ -549,19 +549,6 @@ pub(crate) fn render_edit_replay(
 mod tests {
     use super::*;
 
-    #[test]
-    fn replay_frame_count_grows_only_with_active_stages() {
-        let base = total_replay_frames(0);
-        assert_eq!(
-            total_replay_frames(1) - base,
-            STAGE_TRANSITION_FRAMES + STAGE_HOLD_FRAMES
-        );
-        assert_eq!(
-            total_replay_frames(6) - base,
-            6 * (STAGE_TRANSITION_FRAMES + STAGE_HOLD_FRAMES)
-        );
-    }
-
     fn test_request() -> Option<ReplayRequest> {
         let calibraw_gpu::HeadlessDevice { device, queue, .. } =
             calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {

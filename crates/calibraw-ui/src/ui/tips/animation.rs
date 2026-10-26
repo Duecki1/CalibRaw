@@ -109,25 +109,3 @@ fn color_image(decoder: &WebPDecoder<Cursor<&'static [u8]>>, pixels: &[u8]) -> e
         egui::ColorImage::from_rgb(size, pixels)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::super::Tip;
-    use super::*;
-
-    #[test]
-    fn every_tip_clip_plays_and_loops() {
-        let ctx = egui::Context::default();
-        for tip in Tip::ALL {
-            let mut animation =
-                TipAnimation::new(&ctx, tip.key(), tip.media()).expect("first frame decodes");
-            // One step past the last frame, so the loop back to the start is covered.
-            for _ in 0..=animation.decoder.num_frames() {
-                if let Some(due) = &mut animation.next_frame_at {
-                    *due = f64::MIN;
-                }
-                animation.advance(&ctx).expect("frame decodes");
-            }
-        }
-    }
-}

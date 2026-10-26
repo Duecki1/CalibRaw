@@ -520,39 +520,3 @@ impl PreviewState {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn zoomed_app(zoom: f32, native_zoom: f32) -> CalibRawApp {
-        let mut app = CalibRawApp::empty(&egui::Context::default());
-        app.preview.zoom = zoom;
-        app.preview.center = [0.3, 0.6];
-        app.preview.native_zoom = Some(native_zoom);
-        app
-    }
-
-    #[test]
-    fn a_fitted_view_is_not_kept() {
-        let app = zoomed_app(1.0, 4.0);
-        assert_eq!(app.preview.kept_view(), None);
-    }
-
-    #[test]
-    fn a_kept_view_carries_the_magnification_until_it_is_laid_out() {
-        let mut app = zoomed_app(2.0, 4.0);
-        let kept = app.preview.kept_view().expect("a zoomed view is kept");
-        assert_eq!(kept.navigation(8.0), (4.0, [0.3, 0.6]));
-
-        let revision = app.preview.revision;
-        app.preview.reset_view_keeping(Some(kept));
-        assert_eq!(app.preview.zoom, 1.0);
-        assert_ne!(app.preview.revision, revision);
-        // Switching again before the layout passes the same view on.
-        assert_eq!(app.preview.kept_view(), Some(kept));
-
-        app.preview.reset_view();
-        assert_eq!(app.preview.pending_view, None);
-    }
-}

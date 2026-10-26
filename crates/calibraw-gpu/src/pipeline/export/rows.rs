@@ -39,20 +39,6 @@ pub(super) fn validate_rgb_raster_len(bytes: &[u8], width: u32, height: u32) -> 
     Ok(())
 }
 
-#[cfg(test)]
-pub(super) fn encode_srgb_row(row: &[f32], transform: &SrgbOutputTransform) -> Result<Vec<u8>> {
-    encode_output_row(row, Some(transform), ExportRowFormat::Rgba8)
-}
-
-#[cfg(test)]
-pub(super) fn encode_srgb_row_with_format(
-    row: &[f32],
-    transform: &SrgbOutputTransform,
-    row_format: ExportRowFormat,
-) -> Result<Vec<u8>> {
-    encode_output_row(row, Some(transform), row_format)
-}
-
 pub(super) fn encode_output_row(
     row: &[f32],
     transform: Option<&SrgbOutputTransform>,

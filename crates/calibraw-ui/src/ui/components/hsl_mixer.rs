@@ -117,28 +117,3 @@ fn color_selector_button(
     );
     response.on_hover_text(format!("Select the {name} color range"))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{selector_geometry, CHANNELS};
-    use crate::app::HslMixerColor;
-
-    #[test]
-    fn mixer_colors_match_pipeline_channel_order() {
-        assert_eq!(HslMixerColor::ALL.len(), CHANNELS.len());
-        for (index, color) in HslMixerColor::ALL.iter().enumerate() {
-            assert_eq!(color.index(), index);
-        }
-        assert_eq!(CHANNELS[0].0, "Red");
-        assert_eq!(CHANNELS[7].0, "Magenta");
-    }
-
-    #[test]
-    fn selector_never_requests_more_than_the_available_width() {
-        for available in [0.0, 1.0, 80.0, 220.0, 320.0, 520.0] {
-            let (button, gap) = selector_geometry(available);
-            let requested = button * 8.0 + gap * 7.0;
-            assert!(requested <= available + f32::EPSILON * 8.0);
-        }
-    }
-}

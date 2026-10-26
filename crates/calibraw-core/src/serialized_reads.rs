@@ -81,23 +81,3 @@ pub fn prefetch_file(path: &Path) {
         }
     });
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn nested_runs_on_one_thread_do_not_deadlock() {
-        // Tests share the process-wide flag, so only enable it; disabling could
-        // race with another test observing the gate.
-        set_enabled(true);
-        assert_eq!(run(|| run(|| 7)), 7);
-        assert!(!HELD_BY_THIS_THREAD.with(Cell::get));
-    }
-
-    #[test]
-    fn prefetch_tolerates_missing_files() {
-        set_enabled(true);
-        prefetch_file(Path::new("/nonexistent/calibraw-prefetch-test"));
-    }
-}

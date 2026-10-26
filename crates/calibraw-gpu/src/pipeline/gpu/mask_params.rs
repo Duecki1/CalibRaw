@@ -68,15 +68,6 @@ fn assign_relight_shadow_channels(packed: &mut [MaskData]) {
     }
 }
 
-/// Takes every Relight slot off the shadow map, so each traces its shadows
-/// per pixel: the reference the map is compared with.
-#[cfg(test)]
-pub(super) fn clear_relight_shadow_channels(packed: &mut [MaskData]) {
-    for data in packed {
-        data.effect_options[options::RELIGHT_SHADOW_CHANNEL] = 0.0;
-    }
-}
-
 pub(super) fn pack_effect_mask(
     effect: MaskEffect,
     settings: &crate::pipeline::MaskEffectSettings,

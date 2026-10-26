@@ -96,26 +96,6 @@ pub(super) struct GeometryResampler<'a> {
 }
 
 impl<'a> GeometryResampler<'a> {
-    #[cfg(test)]
-    pub(super) fn new(
-        source: &'a [f32],
-        source_width: u32,
-        source_height: u32,
-        geometry: GeometryTransform,
-        output_width: u32,
-        output_height: u32,
-    ) -> Result<Self> {
-        Self::new_with_lens(
-            source,
-            source_width,
-            source_height,
-            geometry,
-            None,
-            output_width,
-            output_height,
-        )
-    }
-
     pub(super) fn new_with_lens(
         source: &'a [f32],
         source_width: u32,

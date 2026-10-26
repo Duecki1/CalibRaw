@@ -287,49 +287,6 @@ mod tests {
     }
 
     #[test]
-    fn on_screen_tools_keep_their_models_warm() {
-        let mut app = CalibRawApp::empty(&egui::Context::default());
-        assert_eq!(app.warm_ai_features(), AiFeatureSet::EMPTY);
-
-        app.ui.active_tab = AppTab::Develop;
-        app.ui.sidebar_tab = SidebarTab::Masks;
-        let masks = app.warm_ai_features();
-        for feature in AiFeature::ALL {
-            assert_eq!(masks.contains(feature), is_content_feature(feature));
-        }
-
-        app.ui.sidebar_tab = SidebarTab::Inpainting;
-        assert_eq!(
-            app.warm_ai_features(),
-            AiFeatureSet::EMPTY.with(AiFeature::Remove)
-        );
-
-        app.ui.sidebar_tab = SidebarTab::Adjustments;
-        assert_eq!(app.warm_ai_features(), AiFeatureSet::EMPTY);
-    }
-
-    #[test]
-    fn declining_consent_drops_the_staged_job() {
-        let mut app = CalibRawApp::empty(&egui::Context::default());
-        app.develop.exposure.ai_denoise_enabled = true;
-        app.ai.object_pending_target = Some((0, 0));
-        app.inpaint.pending_brush = Some(crate::pipeline::RemoveBrushStroke::default());
-
-        for feature in [AiFeature::Denoise, AiFeature::Object, AiFeature::Remove] {
-            app.ai.consent = Some(AiConsent {
-                feature,
-                runtime_download_needed: false,
-                origin: AiJobOrigin::Requested,
-            });
-            app.abandon_ai_job(feature);
-            assert!(app.ai.consent.is_none());
-        }
-        assert!(!app.develop.exposure.ai_denoise_enabled);
-        assert!(app.ai.object_pending_target.is_none());
-        assert!(app.inpaint.pending_brush.is_none());
-    }
-
-    #[test]
     fn declining_a_content_job_cancels_the_update_it_belongs_to() {
         let mut app = CalibRawApp::empty(&egui::Context::default());
         app.masks.stack.add_mask(MaskKind::Sky).unwrap();

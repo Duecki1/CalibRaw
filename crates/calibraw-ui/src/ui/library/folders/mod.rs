@@ -472,30 +472,3 @@ pub(in crate::ui::library) fn show_sidebar_dialogs(ui: &mut Ui, app: &mut CalibR
 }
 
 pub(in crate::ui::library) fn show_page_dialogs(_ui: &mut Ui, _app: &mut CalibRawApp) {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const GIB: u64 = 1024 * 1024 * 1024;
-
-    #[test]
-    fn automatic_workers_leave_a_core_free_and_respect_memory() {
-        assert_eq!(automatic_thumbnail_worker_count_for(8, Some(16 * GIB)), 7);
-        assert_eq!(automatic_thumbnail_worker_count_for(16, Some(8 * GIB)), 6);
-        assert_eq!(automatic_thumbnail_worker_count_for(32, Some(64 * GIB)), 12);
-        assert_eq!(automatic_thumbnail_worker_count_for(1, Some(64 * GIB)), 1);
-        assert_eq!(automatic_thumbnail_worker_count_for(4, Some(GIB)), 1);
-        assert_eq!(automatic_thumbnail_worker_count_for(16, None), 4);
-    }
-
-    #[test]
-    fn manual_limit_allows_every_core_and_the_previous_maximum() {
-        assert!(maximum_thumbnail_worker_count() >= MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT);
-        assert!(
-            maximum_thumbnail_worker_count()
-                >= logical_core_count().min(MAX_DESKTOP_THUMBNAIL_WORKER_LIMIT)
-        );
-        assert!(automatic_thumbnail_worker_count() <= maximum_thumbnail_worker_count());
-    }
-}

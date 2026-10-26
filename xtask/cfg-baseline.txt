@@ -10,15 +10,12 @@
   6 crates/calibraw-core/src/pipeline/raw_loader.rs
   2 crates/calibraw-core/src/pipeline/raw_loader/libraw_loader.rs
   8 crates/calibraw-core/src/pipeline/raw_loader/libraw_loader/thumbnail.rs
-  1 crates/calibraw-core/src/pipeline/raw_loader/rawler_loader/tests.rs
   2 crates/calibraw-core/src/pipeline/rendered_loader.rs
   2 crates/calibraw-core/src/pipeline/tiff_loader.rs
   2 crates/calibraw-core/src/sidecar.rs
   3 crates/calibraw-core/src/sidecar/files.rs
-  9 crates/calibraw-core/src/sidecar/tests.rs
   2 crates/calibraw-core/src/thumbnail_cache.rs
   3 crates/calibraw-ffi/src/lib.rs
   2 crates/calibraw-gpu/src/pipeline/export/settings.rs
-  2 crates/calibraw-gpu/src/pipeline/export/tests.rs
   3 crates/calibraw-gpu/src/pipeline/gpu.rs
-  4 crates/calibraw-gpu/src/pipeline/gpu/resources.rs
+  3 crates/calibraw-gpu/src/pipeline/gpu/resources.rs

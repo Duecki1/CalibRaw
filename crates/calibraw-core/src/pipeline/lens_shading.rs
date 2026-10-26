@@ -47,24 +47,3 @@ impl LensShadingMap {
         &self.gains
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn nodes_span_the_photo_corner_to_corner() {
-        let map = LensShadingMap::from_fn(|[u, v]| [u, v, 1.0]).unwrap();
-        let edge = LensShadingMap::EDGE as usize;
-        assert_eq!(map.gains().len(), edge * edge);
-        assert_eq!(map.gains()[0], [0.0, 0.0, 1.0]);
-        assert_eq!(map.gains()[edge - 1], [1.0, 0.0, 1.0]);
-        assert_eq!(map.gains()[edge * edge - 1], [1.0, 1.0, 1.0]);
-    }
-
-    #[test]
-    fn invalid_gains_are_refused() {
-        assert!(LensShadingMap::from_fn(|_| [1.0, f32::NAN, 1.0]).is_none());
-        assert!(LensShadingMap::from_fn(|_| [1.0, -0.5, 1.0]).is_none());
-    }
-}

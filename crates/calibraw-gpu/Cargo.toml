@@ -37,6 +37,4 @@ ash.workspace = true
 objc2-metal.workspace = true
 
 [dev-dependencies]
-exif.workspace = true
-jxl-oxide = "0.12.6"
 naga.workspace = true

@@ -29,7 +29,7 @@ mod desktop;
 pub(crate) mod fake;
 #[cfg(target_os = "ios")]
 mod ios;
-#[cfg(any(target_os = "ios", test))]
+#[cfg(target_os = "ios")]
 mod ios_library;
 
 pub(crate) use caps::{MemoryClass, PlatformCaps, StorageKind, VideoEncoder};

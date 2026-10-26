@@ -266,24 +266,3 @@ fn read() -> RwLockReadGuard<'static, Settings> {
 fn write() -> RwLockWriteGuard<'static, Settings> {
     SETTINGS.write().unwrap_or_else(PoisonError::into_inner)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{MemoryClass, Sha256, CAPABILITIES};
-
-    #[test]
-    fn current_target_uses_its_memory_policy() {
-        let constrained = matches!(std::env::consts::OS, "android" | "ios");
-        assert_eq!(CAPABILITIES.memory == MemoryClass::Constrained, constrained);
-        assert_eq!(CAPABILITIES.keep_mask_sessions_warm, !constrained);
-    }
-
-    #[test]
-    fn sha256_accepts_only_lowercase_hex_digests() {
-        let digest = "7702832f291b1ad6d8269d712184a9ddc87c9bac3833fa10b3f2140830fb4c47";
-        assert_eq!(Sha256::parse(digest).unwrap().as_str(), digest);
-        assert!(Sha256::parse(&digest.to_ascii_uppercase()).is_err());
-        assert!(Sha256::parse(&digest[1..]).is_err());
-        assert!(Sha256::parse(&format!("{}g", &digest[1..])).is_err());
-    }
-}

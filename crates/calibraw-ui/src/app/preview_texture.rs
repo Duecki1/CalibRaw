@@ -140,22 +140,3 @@ impl PreviewPipeline {
         drop(gpu);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn retirement_deduplicates_and_requests_a_frame() {
-        let context = egui::Context::default();
-        let retirement = TextureRetirement::new(context);
-        let texture = egui::TextureId::User(7);
-        retirement.retire(texture);
-        retirement.retire(texture);
-        assert_eq!(
-            *retirement.retired.lock().unwrap(),
-            vec![egui::TextureId::User(7)]
-        );
-        assert!(!retirement.is_empty());
-    }
-}

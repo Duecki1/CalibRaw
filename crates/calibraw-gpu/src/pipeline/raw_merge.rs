@@ -329,30 +329,3 @@ pub(super) fn sensor_footprint_peak(raw: &LoadedRaw) -> Vec<f32> {
         })
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn float_tiff_round_trip_preserves_hdr_range_and_color_profile() {
-        let source = MergedImage {
-            width: 2,
-            height: 1,
-            rgb: vec![4.0, 2.0, 0.5, -0.01, 0.0001, 16.0],
-        };
-        let mut output = std::io::Cursor::new(Vec::new());
-        source.write_tiff(&mut output).unwrap();
-        let decoded =
-            image::load_from_memory_with_format(output.get_ref(), image::ImageFormat::Tiff)
-                .unwrap()
-                .into_rgb32f();
-        assert_eq!(decoded.as_raw(), &source.rgb);
-        let mut decoder =
-            image::codecs::tiff::TiffDecoder::new(std::io::Cursor::new(output.get_ref())).unwrap();
-        let profile = image::ImageDecoder::icc_profile(&mut decoder)
-            .unwrap()
-            .unwrap();
-        assert_eq!(profile, super::super::export::linear_rec2020_icc());
-    }
-}

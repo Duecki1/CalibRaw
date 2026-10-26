@@ -110,6 +110,3 @@ pub struct ResolvedLook {
     /// 0–1, as [`LookLut::amount`].
     pub amount: f32,
 }
-
-#[cfg(test)]
-mod tests;

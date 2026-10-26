@@ -45,14 +45,3 @@ pub fn release_free_heap() {
     #[cfg(any(target_os = "android", all(target_os = "linux", target_env = "gnu")))]
     heap_purge::request();
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
-    #[test]
-    fn desktop_platforms_report_installed_memory() {
-        assert!(total_memory_bytes().is_some_and(|bytes| bytes > 0));
-    }
-}

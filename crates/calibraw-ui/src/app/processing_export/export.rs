@@ -802,34 +802,3 @@ impl CalibRawApp {
         self.mark_pipeline_dirty();
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::pipeline::{DemosaicMode, LoadedRaw};
-
-    #[test]
-    fn reset_restores_first_open_noise_reduction() {
-        let ctx = egui::Context::default();
-        crate::ui::theme::install(&ctx);
-        let mut app = CalibRawApp::empty(&ctx);
-        let mut raw = LoadedRaw::from_scene_linear_rec2020(8, 8, vec![0.2; 8 * 8 * 3]).unwrap();
-        // Sensor data makes this a RAW rather than an already-developed raster.
-        raw.raw_pixels = vec![1_000; 8 * 8].into();
-        raw.capture_metadata.iso_speed = 6_400.0;
-        app.develop.original_raw = Some(Arc::new(raw));
-
-        app.develop.exposure.exposure = 1.5;
-        app.develop.exposure.luminance_denoise = 0.0;
-        app.develop.exposure.chroma_denoise = 0.0;
-        // Processing choices carry over to newly opened photos, so a reset keeps them too.
-        app.develop.exposure.demosaic_mode = DemosaicMode::Dual;
-        app.reset_develop_adjustments();
-
-        let exposure = app.develop.exposure;
-        assert_eq!(exposure.exposure, 0.0);
-        assert!(exposure.luminance_denoise > 0.0, "{exposure:?}");
-        assert!(exposure.chroma_denoise > 0.0, "{exposure:?}");
-        assert_eq!(exposure.demosaic_mode, DemosaicMode::Dual);
-    }
-}

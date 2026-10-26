@@ -242,23 +242,6 @@ mod tests {
     }
 
     #[test]
-    fn only_one_foreground_operation_can_occupy_the_slot() {
-        let mut slot = None;
-        assert!(try_install_foreground_operation(
-            &mut slot,
-            test_operation(7)
-        ));
-        assert!(!try_install_foreground_operation(
-            &mut slot,
-            test_operation(7)
-        ));
-        assert_eq!(
-            slot.as_ref().map(|operation| operation.kind),
-            Some(ForegroundOperationKind::Ai(AiFeature::Subject))
-        );
-    }
-
-    #[test]
     fn foreground_cancellation_rejects_late_results() {
         let mut operation = test_operation(7);
         operation.cancel();

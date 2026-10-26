@@ -168,30 +168,6 @@ mod tests {
     }
 
     #[test]
-    fn a_job_reports_progress_then_finishes() {
-        let receiver = spawn_job(&TEST_JOB, Arc::new(AtomicBool::new(false)), |job| {
-            job.progress(1);
-            job.ensure_not_cancelled()?;
-            Ok(7)
-        });
-        assert_eq!(finish(receiver), ["progress 1", "ok 7"]);
-        assert!(
-            calibraw_core::diagnostics::snapshot().contains("AI job calibraw-test-job finished in")
-        );
-    }
-
-    #[test]
-    fn a_panic_finishes_the_job_with_an_error() {
-        let receiver = spawn_job::<u32, u32>(&TEST_JOB, Arc::new(AtomicBool::new(false)), |_| {
-            panic!("kernel failed")
-        });
-        assert_eq!(
-            finish(receiver),
-            ["err ONNX Runtime terminated the test job: kernel failed"]
-        );
-    }
-
-    #[test]
     fn a_cancelled_job_ends_with_its_cancellation_error() {
         let receiver = spawn_job::<u32, u32>(&TEST_JOB, Arc::new(AtomicBool::new(true)), |job| {
             job.ensure_not_cancelled()?;

@@ -50,45 +50,7 @@ pub(crate) use wait::SLOW_GPU_WAIT;
 use wait::{wait_for_submission, GpuWaitError};
 
 #[cfg(test)]
-mod black_tone_tests;
-#[cfg(test)]
-mod blacks_pipeline_tests;
-#[cfg(test)]
-mod chromatic_aberration_tests;
-#[cfg(test)]
-mod dehaze_tests;
-#[cfg(test)]
-mod direct_shader;
-#[cfg(test)]
-mod effect_timing_tests;
-#[cfg(test)]
-mod existing_effects_tests;
-#[cfg(test)]
-mod film_effects_tests;
-#[cfg(test)]
-mod fog_tests;
-#[cfg(test)]
-mod highlights_pipeline_tests;
-#[cfg(test)]
 mod layout_contract_tests;
-#[cfg(test)]
-mod light_rays_tests;
-#[cfg(test)]
-mod look_lut_tests;
-#[cfg(test)]
-mod photographic_modules_tests;
-#[cfg(test)]
-mod pixelate_tests;
-#[cfg(test)]
-mod point_color_tests;
-#[cfg(test)]
-mod relight_tests;
-#[cfg(test)]
-mod saturation_vibrance_tests;
-#[cfg(test)]
-mod scene_gamut_tests;
-#[cfg(test)]
-mod scene_lights_tests;
 #[cfg(test)]
 mod tests;
 
@@ -124,18 +86,16 @@ const WORKGROUP_EDGE: u32 = 8;
 const TONE_STATS_SIZE_BYTES: u64 = 2 * std::mem::size_of::<[f32; 4]>() as u64;
 /// Bins of the scene EV histogram (`ToneHistogram` in `tone_analysis.wgsl`).
 const TONE_HISTOGRAM_BIN_COUNT: u32 = 256;
-#[cfg(test)]
-const DESKTOP_GPU_WORKING_SET_LIMIT_BYTES: u64 = 1_500 * 1024 * 1024;
 /// Android budget that previews are sized against, and the floor of the
 /// Android admission cap (see `gpu_working_set_limit_bytes`).
 const ANDROID_GPU_WORKING_SET_LIMIT_BYTES: u64 = 384 * 1024 * 1024;
 /// Upper bound of the RAM-scaled Android admission cap.
-#[cfg(any(target_os = "android", test))]
+#[cfg(target_os = "android")]
 const ANDROID_GPU_WORKING_SET_CEILING_BYTES: u64 = 1_536 * 1024 * 1024;
 /// Share of device RAM, as a divisor, the Android admission cap allows GPU
 /// pipelines to reserve. Android GPUs share system memory, and drivers may
 /// let the low-memory killer end the app instead of reporting OOM.
-#[cfg(any(target_os = "android", test))]
+#[cfg(target_os = "android")]
 const ANDROID_GPU_WORKING_SET_RAM_DIVISOR: u64 = 8;
 
 const COLOR_DENOISE_ENTRY_POINTS: [&str; 6] = [

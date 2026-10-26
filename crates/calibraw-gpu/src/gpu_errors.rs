@@ -103,17 +103,3 @@ impl GpuErrorScopes {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn out_of_memory_signal_is_edge_triggered() {
-        let signal = OomSignal::new();
-        assert!(!signal.take());
-        signal.raise();
-        assert!(signal.take());
-        assert!(!signal.take());
-    }
-}

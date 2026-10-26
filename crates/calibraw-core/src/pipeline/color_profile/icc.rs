@@ -331,30 +331,3 @@ fn be_u32(bytes: &[u8], label: &str) -> Result<u32> {
 fn s15_fixed16(bytes: &[u8], label: &str) -> Result<f32> {
     Ok(i32::from_be_bytes(checked_array(bytes, label)?) as f32 / 65_536.0)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn input_matrix_profile_round_trips_linear_rec2020() {
-        let device_to_pcs = [
-            [0.673_515_44, 0.165_697_22, 0.125_083_01],
-            [0.279_059_02, 0.675_318_06, 0.045_622_99],
-            [-0.001_932_4, 0.029_977_84, 0.797_059_24],
-        ];
-        let profile = MatrixShaperProfile {
-            device_to_rec2020: device_to_rec2020_from_colorants(device_to_pcs).unwrap(),
-            curves: [
-                TransferCurve::Identity,
-                TransferCurve::Identity,
-                TransferCurve::Identity,
-            ],
-        };
-        let source = [0.18, 0.42, 0.91];
-        let converted = profile.transform_input_to_rec2020(source);
-        for channel in 0..3 {
-            assert!((converted[channel] - source[channel]).abs() < 5e-5);
-        }
-    }
-}

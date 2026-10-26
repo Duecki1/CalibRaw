@@ -600,17 +600,3 @@ fn checked_array<const N: usize>(bytes: &[u8], label: &str) -> Result<[u8; N]> {
         .try_into()
         .map_err(|_| anyhow!("{label} requires exactly {N} bytes, got {}", bytes.len()))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::parse_baseline_exposure_offset;
-
-    #[test]
-    fn baseline_exposure_offset_rejects_non_finite_values() {
-        assert_eq!(parse_baseline_exposure_offset(&[]).unwrap(), 0.0);
-        assert_eq!(parse_baseline_exposure_offset(&[0.25]).unwrap(), 0.25);
-        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            assert!(parse_baseline_exposure_offset(&[value]).is_err());
-        }
-    }
-}

@@ -188,18 +188,3 @@ fn show_landscape(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
     let exposed = Rect::from_min_max(egui::pos2(canvas.left(), top.bottom()), tools.left_bottom());
     app.show_preview(ui, frame, Some(exposed));
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sheet_resizing_always_leaves_image_room() {
-        for viewport in [200.0, 640.0, 891.0, 1400.0] {
-            for requested in [-100.0, 144.0, 380.0, 2000.0] {
-                let height = sheet_height(viewport, requested);
-                assert!(height > 0.0 && height <= viewport * 0.65);
-            }
-        }
-    }
-}

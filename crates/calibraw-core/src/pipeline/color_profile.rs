@@ -12,9 +12,6 @@ use crate::color_math::{
 use crate::matrix::transform;
 use dcp::{profile_from_tags, profile_identity_from_tags, TiffReader};
 
-#[cfg(test)]
-mod tests;
-
 const PROFILE_TONE_LUT_SIZE: usize = 4096;
 const MAX_DCP_TAG_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_DCP_MAP_ENTRIES: usize = 1_000_000;

@@ -888,13 +888,6 @@ impl GpuParams {
             })
     }
 
-    /// Traces every Relight shadow per pixel instead of reading the shadow map.
-    #[cfg(test)]
-    pub(super) fn with_relight_shadows_traced_per_pixel(mut self) -> Self {
-        clear_relight_shadow_channels(&mut self.mask_data);
-        self
-    }
-
     pub(super) fn needs_blur_passes(&self) -> bool {
         self.mask_slots().iter().any(|mask| {
             [

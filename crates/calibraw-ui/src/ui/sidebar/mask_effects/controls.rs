@@ -104,17 +104,6 @@ impl EffectFrame {
         }
     }
 
-    /// An uncropped, unrotated image of the given size.
-    #[cfg(test)]
-    pub(crate) fn uncropped(source_width: u32, source_height: u32) -> Self {
-        Self {
-            geometry: GeometryTransform::default(),
-            lens: None,
-            source_width,
-            source_height,
-        }
-    }
-
     pub(super) fn output_aspect(&self) -> f32 {
         let (width, height) = self
             .geometry
@@ -318,22 +307,4 @@ pub(super) fn position_pad(
         position[0], position[1],
     ));
     (response, changed)
-}
-
-#[cfg(test)]
-mod pattern_tests {
-    use super::*;
-    use crate::pipeline::effect_params::fog;
-
-    #[test]
-    fn shuffled_patterns_are_whole_numbers_in_range_and_always_change() {
-        for entropy in [0, 1, 7, 999, 1_000, 1_001, u64::MAX] {
-            for current in [0.0, 1.0, 500.0, 1_000.0] {
-                let next = shuffled_pattern(current, fog::SEED, entropy);
-                assert!(fog::SEED.range().contains(&next), "{next}");
-                assert_eq!(next, next.round());
-                assert_ne!(next, current, "entropy {entropy}");
-            }
-        }
-    }
 }

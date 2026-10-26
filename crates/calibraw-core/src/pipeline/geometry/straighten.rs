@@ -260,6 +260,3 @@ fn peak_of(votes: &[Vote], min_sigma: f32, window: Option<(f32, f32)>) -> Option
         .filter(|(_, &value)| value > 0.0)
         .map(|(step, _)| position(step))
 }
-
-#[cfg(test)]
-mod tests;

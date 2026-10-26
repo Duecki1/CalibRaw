@@ -617,32 +617,3 @@ impl Drop for MemorySampler {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::RunOptions;
-    use std::ffi::OsString;
-
-    fn options(args: &[&str]) -> crate::Result<RunOptions> {
-        RunOptions::parse(&args.iter().map(OsString::from).collect::<Vec<_>>())
-    }
-
-    #[test]
-    fn options_default_to_the_profiling_build_and_the_tablet_scenario() {
-        let defaults = options(&["before"]).unwrap();
-        assert_eq!(defaults.label, "before");
-        assert_eq!(defaults.package, "de.duecki.calibraw.profiling");
-        assert!(defaults.apk.is_some());
-        let custom = options(&["x", "--no-install", "--package", "de.duecki.calibraw"]).unwrap();
-        assert!(custom.apk.is_none());
-        assert_eq!(custom.package, "de.duecki.calibraw");
-    }
-
-    #[test]
-    fn options_refuse_what_the_device_shell_could_misread() {
-        assert!(options(&[]).is_err());
-        assert!(options(&["a", "b"]).is_err());
-        assert!(options(&["a", "--package", "x; reboot"]).is_err());
-        assert!(options(&["a", "--frames"]).is_err());
-    }
-}

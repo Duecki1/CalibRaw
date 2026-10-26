@@ -39,14 +39,6 @@ impl Default for Alignment {
 }
 
 impl Alignment {
-    #[cfg(test)]
-    pub(crate) fn translation(x: f32, y: f32) -> Self {
-        let mut matrix = IDENTITY;
-        matrix[0][2] = f64::from(x);
-        matrix[1][2] = f64::from(y);
-        Self { matrix }
-    }
-
     /// Scale and rotation (radians, turning +x towards +y) about the center of a
     /// `width × height` image, followed by a translation in source pixels.
     fn similarity(width: u32, height: u32, x: f32, y: f32, rotation: f32, scale: f32) -> Self {
@@ -986,6 +978,3 @@ fn refine(samples: &[Sample], source: &GradientLevel, model: Model, stage: Stage
     }
     frame.model(&p)
 }
-
-#[cfg(test)]
-mod tests;

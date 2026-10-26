@@ -72,33 +72,3 @@ fn interpolated_brush_samples(
         })
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stationary_pointer_emits_no_duplicate_dab() {
-        assert!(interpolated_brush_samples(
-            [0.4, 0.5],
-            [0.4, 0.5],
-            0.0,
-            20.0,
-            STANDARD_BRUSH_MINIMUM_SPACING_FRACTION,
-        )
-        .is_empty());
-    }
-
-    #[test]
-    fn shared_spacing_interpolates_to_the_current_native_point() {
-        let samples = interpolated_brush_samples(
-            [0.1, 0.2],
-            [0.5, 0.6],
-            44.0,
-            20.0,
-            STANDARD_BRUSH_MINIMUM_SPACING_FRACTION,
-        );
-        assert_eq!(samples.len(), 10);
-        assert_eq!(samples.last().copied(), Some([0.5, 0.6]));
-    }
-}

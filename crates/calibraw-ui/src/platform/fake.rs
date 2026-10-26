@@ -24,10 +24,6 @@ impl FakePlatform {
         })
     }
 
-    pub(crate) fn calls(&self) -> Vec<String> {
-        self.calls.lock().unwrap().clone()
-    }
-
     fn record(&self, call: String) {
         self.calls.lock().unwrap().push(call);
     }

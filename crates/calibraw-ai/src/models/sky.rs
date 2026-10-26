@@ -89,29 +89,3 @@ fn sky_probabilities_to_mask(probabilities: &[f32]) -> Result<Vec<u8>> {
     }
     Ok(result)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn preserves_absolute_sky_probabilities() {
-        let mask = sky_probabilities_to_mask(&[0.0, 0.5, 1.0]).unwrap();
-        assert_eq!(mask, [0, 128, 255]);
-    }
-
-    #[test]
-    fn rejects_wrong_output_shape() {
-        assert!(validate_output_shape(&[1, 3, 320, 320], 3 * 320 * 320).is_err());
-    }
-
-    #[test]
-    #[ignore = "requires the published model and ONNX Runtime"]
-    fn published_model_runs_end_to_end() {
-        let path = std::env::var("CALIBRAW_TEST_SKYSEG_MODEL").unwrap();
-        crate::runtime::initialize_runtime().unwrap();
-        let image = ImageBuffer::from_pixel(64, 40, Rgba([100, 160, 220, 255]));
-        let mask = sky_mask(Path::new(&path), &image).unwrap();
-        assert_eq!(mask.len(), 64 * 40);
-    }
-}

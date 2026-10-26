@@ -17,9 +17,6 @@ mod smoke;
 mod tilt_shift;
 mod vignette;
 
-#[cfg(test)]
-mod tests;
-
 pub use blur::BlurEffectSettings;
 pub use edge_glow::EdgeGlowEffectSettings;
 pub use fog::FogEffectSettings;

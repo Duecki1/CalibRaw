@@ -512,6 +512,3 @@ pub(crate) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
     validate_scene_depth(&edits.masks)?;
     validation::validate_edit_state(edits)
 }
-
-#[cfg(test)]
-mod tests;

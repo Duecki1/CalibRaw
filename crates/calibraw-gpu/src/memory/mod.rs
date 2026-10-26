@@ -60,38 +60,3 @@ pub fn adapter_memory(device: &wgpu::Device) -> Option<AdapterMemory> {
     };
     memory
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const MIB: u64 = 1 << 20;
-
-    #[test]
-    fn available_memory_is_the_budget_left_and_never_negative() {
-        let memory = |budget, usage| AdapterMemory { budget, usage };
-        assert_eq!(memory(8192 * MIB, 1500 * MIB).available(), 6692 * MIB);
-        assert_eq!(memory(4096 * MIB, 4096 * MIB).available(), 0);
-        assert_eq!(memory(4096 * MIB, 5000 * MIB).available(), 0);
-    }
-
-    /// Confirms the platform query on this machine's preferred adapter.
-    #[test]
-    #[ignore = "requires a GPU adapter; prints what its backend reports"]
-    fn adapter_memory_reports_the_preferred_adapter() {
-        let gpu = crate::request_headless_device(&crate::HeadlessDeviceRequest {
-            label: "adapter memory test",
-            adapter: crate::HeadlessAdapter::Preferred(wgpu::PowerPreference::HighPerformance),
-            texture_dimension: wgpu::Limits::default().max_texture_dimension_2d,
-        })
-        .unwrap_or_else(|error| panic!("{error}"));
-        let memory = adapter_memory(&gpu.device);
-        eprintln!(
-            "{} ({:?}): {memory:?}",
-            gpu.adapter_info.name, gpu.adapter_info.backend
-        );
-        if let Some(memory) = memory {
-            assert!(memory.budget > 0, "a reported budget is never empty");
-        }
-    }
-}

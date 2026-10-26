@@ -87,16 +87,3 @@ pub(super) fn load_shader_set(
         view_transform_module: load_shader(shaders::VIEW_TRANSFORM_ENTRY)?,
     })
 }
-
-#[cfg(test)]
-mod tone_grid_tests {
-    use super::tone_guide_axis_cell_count;
-
-    #[test]
-    fn tone_guide_cell_count_tracks_global_origin_phase() {
-        assert_eq!(tone_guide_axis_cell_count(0, 8, 4), 2);
-        assert_eq!(tone_guide_axis_cell_count(2, 8, 4), 3);
-        assert_eq!(tone_guide_axis_cell_count(-2, 8, 4), 3);
-        assert_eq!(tone_guide_axis_cell_count(64, 10, 4), 3);
-    }
-}

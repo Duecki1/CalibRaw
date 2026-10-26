@@ -41,7 +41,6 @@ macro_rules! rust_layout {
         )
     }};
 }
-pub(super) use rust_layout;
 
 /// The name of a type, constant or global without naga_oil's module suffix.
 fn undecorated(name: &str) -> &str {

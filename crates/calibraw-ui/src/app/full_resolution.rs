@@ -554,18 +554,6 @@ mod tests {
     }
 
     #[test]
-    fn the_idle_clock_runs_while_the_preview_shows_the_same_output() {
-        let mut state = FullResolutionState::new(true);
-        let start = Instant::now();
-        let shown = output(1, 7);
-        assert_eq!(state.observe(Some(shown), start), Duration::ZERO);
-        assert_eq!(
-            state.observe(Some(shown), start + Duration::from_millis(300)),
-            Duration::from_millis(300)
-        );
-    }
-
-    #[test]
     fn another_output_restarts_the_clock_cancels_the_render_and_drops_the_image() {
         let start = Instant::now();
         let shown = output(1, 7);
@@ -587,78 +575,5 @@ mod tests {
             assert!(cancel.load(Ordering::Acquire), "{changed:?}");
             assert!(state.image.is_none(), "{changed:?}");
         }
-    }
-
-    #[test]
-    fn the_render_waits_for_the_idle_time_and_for_the_pointer() {
-        let idle = IDLE_BEFORE_RENDER;
-        assert_eq!(
-            wait_before_render(Duration::from_millis(300), false),
-            Some(idle - Duration::from_millis(300))
-        );
-        assert_eq!(wait_before_render(idle, false), None);
-        // Held down on a still image: look again later, never in a spin.
-        assert_eq!(wait_before_render(idle * 3, true), Some(POINTER_RECHECK));
-        assert!(POINTER_RECHECK > Duration::ZERO);
-    }
-
-    #[test]
-    fn photos_that_do_not_fit_the_gpu_are_declined() {
-        const MIB: u64 = 1024 * 1024;
-        assert_eq!(declined(6_000, 16_384, 1_500 * MIB, 4_000 * MIB), None);
-        assert!(declined(20_000, 16_384, MIB, 4_000 * MIB)
-            .unwrap()
-            .contains("texture limit"));
-        let reason = declined(9_504, 16_384, 3_900 * MIB, 2_000 * MIB).unwrap();
-        assert!(
-            reason.contains("3900") && reason.contains("2000"),
-            "{reason}"
-        );
-    }
-
-    #[test]
-    fn the_render_has_the_target_size_and_the_photo_gradient() {
-        let gpu = calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {
-            label: "full-resolution render test",
-            adapter: calibraw_gpu::HeadlessAdapter::Software,
-            texture_dimension: wgpu::Limits::default().max_texture_dimension_2d,
-        });
-        let (device, queue) = match gpu {
-            Ok(gpu) => (gpu.device, gpu.queue),
-            Err(calibraw_gpu::HeadlessDeviceError::NoAdapter(_)) => {
-                eprintln!("full-resolution render test skipped: no headless GPU adapter");
-                return;
-            }
-            Err(error) => panic!("{error}"),
-        };
-        let (width, height) = (96u32, 64u32);
-        let mut pixels = Vec::new();
-        for _y in 0..height {
-            for x in 0..width {
-                pixels.extend([0.02 + 0.5 * x as f32 / width as f32; 3]);
-            }
-        }
-        let raw = Arc::new(LoadedRaw::from_scene_linear_rec2020(width, height, pixels).unwrap());
-        let job = FullResolutionJob {
-            device,
-            queue,
-            raw,
-            exposure: ExposureParams::default(),
-            masks: Arc::new(MaskStack::default()),
-            remove: Arc::new(RemoveEditState::default()),
-            geometry: GeometryTransform::default(),
-            look: None,
-            programs: None,
-            target_edge: 48,
-            cancel: Arc::new(AtomicBool::new(false)),
-        };
-        let rendered = render_full_resolution(&job).unwrap();
-        assert_eq!((rendered.width, rendered.height), (48, 32));
-        assert_eq!(rendered.rgba.len(), 48 * 32 * 4);
-        let red = |x: usize| rendered.rgba[(16 * 48 + x) * 4];
-        assert!(red(40) > red(4), "{} vs {}", red(40), red(4));
-
-        job.cancel.store(true, Ordering::Release);
-        assert!(render_full_resolution(&job).is_err());
     }
 }

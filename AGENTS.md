@@ -9,7 +9,7 @@ Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPM
 - Preserve behavior: features, interactions, numerical output and persisted formats (settings, presets, sidecars, edit history). Redesigns, algorithm changes and new features are separate changes.
 - Keep each change focused; do not mix broad formatting, file moves, API changes and numerical changes.
 - An extraction must remove duplication, serve a real additional caller, or establish ownership. Say which.
-- Delegate focused implementation, exploration and test tasks; keep architecture, ambiguous requirements, integration and final verification with the coordinator.
+- Delegate focused implementation and exploration tasks; keep architecture, ambiguous requirements, integration and final verification with the coordinator.
 
 ## Rust
 
@@ -40,6 +40,14 @@ Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPM
 - Keep serialized names stable and preserve dismissal, focus and navigation behavior ([UI conventions](docs/DEVELOPMENT.md#ui-conventions)).
 - No explanatory text in panels, cards or tool rows. Help goes in a tooltip, and only when a control is not self-explanatory; never on dragged controls (sliders, ranges, dials, handles), whose help goes on a static label or heading. Settings may keep descriptions.
 - A requested feature tip includes recording its clip of the real app with the demo recorder; follow [Feature tips](docs/DEVELOPMENT.md#feature-tips).
+
+## Tests
+
+- Do not write unit tests. Behaviour is checked by the contract checks (`layout_contract_tests`, shader validation, `arch-check`, `ui-lint`), AI parity, the screenshot baselines and use of the app.
+- Write a Rust test only when asked, for a concurrency, cancellation or cache-invalidation bug, or for a migration (one test decoding a file in the old layout). It drives the public API in one test function; bug fixes otherwise ship without a test.
+- Never test layout, painting, visibility, labels, wiring, accessors, single parsing rules or single numerical cases. Never add a test harness, fixture builder or test-only API (`#[cfg(test)]` constructors or accessors).
+- Code that changes or is removed takes its tests with it; do not keep an old test passing with test-only code.
+- While iterating, test only the affected crate (`cargo test -p <crate>`); run the full checks once at the end.
 
 ## Verification
 

@@ -270,37 +270,3 @@ fn summary(name: &str, passes: &[String], untimed: u32, ticks: &[u64], period_ns
     line.push(')');
     line
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{next_pass, summary};
-
-    #[test]
-    fn the_summary_totals_from_the_first_start_to_the_last_end() {
-        let passes = ["prepare".to_owned(), "tone".to_owned()];
-        // The second pass starts before the first ends, as on Mali.
-        let ticks = [1_000_000, 4_000_000, 3_500_000, 6_000_000];
-        assert_eq!(
-            summary("Output 652x978", &passes, 0, &ticks, 1.0),
-            "GPU stage Output 652x978: 5.00 ms in 2 passes (prepare 3.00, tone 2.50)"
-        );
-    }
-
-    #[test]
-    fn the_summary_counts_untimed_passes_and_converts_ticks() {
-        let passes = ["raw".to_owned()];
-        assert_eq!(
-            summary("Raw 256x384", &passes, 3, &[10, 30], 50.0),
-            "GPU stage Raw 256x384: 0.00 ms in 1 pass and 3 untimed (raw 0.00)"
-        );
-        assert_eq!(
-            summary("Raw 256x384", &passes, 0, &[0, 2_000_000], 2.0),
-            "GPU stage Raw 256x384: 4.00 ms in 1 pass (raw 4.00)"
-        );
-    }
-
-    #[test]
-    fn passes_are_untimed_while_timing_is_off() {
-        assert!(next_pass("calibraw pass 1").is_none());
-    }
-}

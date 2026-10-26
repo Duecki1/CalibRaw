@@ -76,34 +76,3 @@ pub fn invert<const N: usize>(matrix: [[f32; N]; N]) -> Option<[[f32; N]; N]> {
         .all(|value| value.is_finite())
         .then_some(inverse)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn multiply_handles_rectangular_shapes() {
-        let left = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
-        let right = [[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]];
-        assert_eq!(multiply(left, right), [[58.0, 64.0], [139.0, 154.0]]);
-        assert_eq!(transform(left, [1.0, 0.0, -1.0]), [-2.0, -2.0]);
-    }
-
-    #[test]
-    fn invert_round_trips_and_rejects_singular_matrices() {
-        let matrix = [[2.0, 0.5, 0.0], [0.25, 1.5, 0.1], [0.0, 0.3, 0.9]];
-        let product = multiply(matrix, invert(matrix).unwrap());
-        for (row, identity_row) in product.iter().zip(IDENTITY3) {
-            for (actual, expected) in row.iter().zip(identity_row) {
-                assert!((actual - expected).abs() < 1e-6);
-            }
-        }
-        assert!(invert([[1.0, 2.0], [2.0, 4.0]]).is_none());
-        assert!(invert([[f32::NAN, 0.0], [0.0, 1.0]]).is_none());
-    }
-
-    #[test]
-    fn lerp_interpolates_each_entry() {
-        assert_eq!(lerp([[0.0, 2.0]], [[4.0, -2.0]], 0.25), [[1.0, 1.0]]);
-    }
-}

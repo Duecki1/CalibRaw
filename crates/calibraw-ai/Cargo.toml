@@ -40,5 +40,4 @@ ort = { workspace = true, features = ["download-binaries", "copy-dylibs", "tls-r
 ort = { workspace = true, features = ["coreml", "xnnpack"] }
 
 [dev-dependencies]
-pollster.workspace = true
 tempfile.workspace = true

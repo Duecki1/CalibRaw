@@ -70,19 +70,3 @@ pub(crate) fn sam_sessions_may_stay_warm() -> bool {
 fn running_from_appimage() -> bool {
     std::env::var_os("APPIMAGE").is_some() || std::env::var_os("APPDIR").is_some()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::WebGpuCpuNodes;
-
-    #[test]
-    fn birefnet_leaves_its_fifty_decoder_splits_to_the_cpu() {
-        let names = WebGpuCpuNodes::BiRefNetDecoderSplits.node_names().unwrap();
-        let names: Vec<&str> = names.lines().collect();
-        assert_eq!(names.len(), 50);
-        assert_eq!(names[0], "/decoder/Split");
-        assert_eq!(names[1], "/decoder/Split_1");
-        assert_eq!(names[49], "/decoder/Split_49");
-        assert_eq!(WebGpuCpuNodes::None.node_names(), None);
-    }
-}

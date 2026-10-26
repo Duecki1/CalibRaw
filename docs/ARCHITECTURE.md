@@ -258,8 +258,7 @@ production `ShaderManager` composes.
   - Stateless desktop services are free functions: `FileDialog` (`rfd`),
     `trash`, `show_fatal_message`, camera-profile search folders.
   - `platform::fake::FakePlatform` (tests) takes any `PlatformCaps` and
-    scripted media-library contents and records the services called, so
-    Android paths are tested on Linux.
+    scripted media-library contents and records the services called.
 - Library storage lives in `ui/library/folders/` (folders on disk) and
   `ui/library/media_library/` (the Android library); `ui/library/sources.rs`
   dispatches on `PlatformCaps::storage`.

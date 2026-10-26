@@ -192,24 +192,3 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
         app.ui.shortcuts_dialog_open = false;
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_control_has_an_action_and_an_input() {
-        for group in groups() {
-            assert!(!group.controls.is_empty(), "{} is empty", group.title);
-            for control in group.controls {
-                assert!(!control.action.is_empty());
-                assert!(
-                    control.inputs.iter().all(|input| !input.is_empty())
-                        && !control.inputs.is_empty(),
-                    "{} lacks an input",
-                    control.action
-                );
-            }
-        }
-    }
-}

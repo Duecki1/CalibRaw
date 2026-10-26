@@ -45,23 +45,6 @@ fn apply_rendered_thumbnail_limit(active_workers: usize) {
 }
 
 impl LibraryState {
-    /// A desktop library with default preferences, for tests.
-    #[cfg(test)]
-    pub(crate) fn new() -> Self {
-        Self::new_desktop(
-            crate::platform::fake::FakePlatform::new(PlatformCaps::DESKTOP),
-            LibraryPreferences {
-                thumbnail_workers: default_thumbnail_worker_count(),
-                automatic_thumbnail_workers: true,
-                thumbnail_size: LibraryThumbnailSize::default(),
-                sort_order: LibrarySortOrder::default(),
-                stack_raw_companions: true,
-                render_edited_thumbnails_during_indexing: false,
-            },
-            true,
-        )
-    }
-
     /// A library of folders; none is open until the person picks one.
     pub(crate) fn new_desktop(
         platform: Arc<dyn Platform>,

@@ -166,25 +166,3 @@ impl CalibRawApp {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_first_layout_consumes_the_kept_view() {
-        let mut app = CalibRawApp::empty(&egui::Context::default());
-        app.preview.zoom = 2.0;
-        app.preview.native_zoom = Some(4.0);
-        let kept = app.preview.kept_view();
-        app.preview.reset_view_keeping(kept);
-
-        app.apply_preview_viewport_action(PreviewViewportAction::SetNavigation {
-            zoom: 3.0,
-            center: [0.4, 0.5],
-        });
-
-        assert_eq!(app.preview.pending_view, None);
-        assert_eq!((app.preview.zoom, app.preview.center), (3.0, [0.4, 0.5]));
-    }
-}

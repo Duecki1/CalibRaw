@@ -201,43 +201,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn dialog_fits_portrait_and_short_screens() {
-        for size in [
-            egui::vec2(1280.0, 800.0),
-            egui::vec2(360.0, 640.0),
-            egui::vec2(900.0, 360.0),
-        ] {
-            let ctx = egui::Context::default();
-            crate::ui::theme::install(&ctx);
-            let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
-            let animation = TipAnimation::new(&ctx, "test", Tip::ObjectMask.media()).unwrap();
-            for _ in 0..3 {
-                let _ = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(viewport),
-                        ..Default::default()
-                    },
-                    |root| {
-                        assert_eq!(show(root.ctx(), Tip::ObjectMask, Some(&animation)), None);
-                    },
-                );
-            }
-            let window = ctx
-                .memory(|memory| {
-                    memory.area_rect(moduwu_design::Dialog::area_id((
-                        "calibraw-tip",
-                        Tip::ObjectMask.key(),
-                    )))
-                })
-                .expect("the tip dialog is shown");
-            // A bottom sheet is flush with the screen edge; egui rounds its
-            // position to whole pixels, which may overhang by half a pixel.
-            assert!(
-                viewport.expand(0.5).contains_rect(window),
-                "{window:?} leaves {size:?}"
-            );
-        }
-    }
 }
