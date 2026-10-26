@@ -1,6 +1,6 @@
 //! Preset storage, editing and application for the open photo.
 use super::*;
-use crate::presets::{Preset, StoredPreset};
+use crate::presets::{Preset, PresetError, StoredPreset};
 
 mod amount;
 mod preview;
@@ -84,6 +84,21 @@ impl PresetState {
     ) -> Option<&StoredPreset> {
         self.presets.iter().find(|stored| {
             Some(stored.path.as_path()) != except && stored.preset.is_named(name, group)
+        })
+    }
+
+    /// The native preset listed as `name` in `group`, other than the one at
+    /// `except`. An XMP preset with the same name is not replaceable.
+    pub(crate) fn find_named_native(
+        &self,
+        name: &str,
+        group: &str,
+        except: Option<&Path>,
+    ) -> Option<&StoredPreset> {
+        self.presets.iter().find(|stored| {
+            crate::presets::is_native_preset_file(&stored.path)
+                && Some(stored.path.as_path()) != except
+                && stored.preset.is_named(name, group)
         })
     }
 
@@ -215,11 +230,13 @@ impl CalibRawApp {
             PresetEditorMode::Create { edits } => {
                 let preset = Preset::new(&editor.name, &editor.group, editor.selection, edits)
                     .map_err(|error| sentence_case(&error.to_string()))?;
-                // Saving under an existing name replaces that preset; the
-                // dialog labels its button "Replace" in that case.
+                // Saving under an existing native name replaces that preset;
+                // the dialog labels its button "Replace" in that case. An XMP
+                // preset is never replaced by a native one, so a shared name
+                // gets a numbered native preset instead.
                 let existing = self
                     .presets
-                    .find_named(preset.name(), preset.group(), None)
+                    .find_named_native(preset.name(), preset.group(), None)
                     .map(|stored| stored.path.clone());
                 match existing {
                     Some(path) => {
@@ -228,6 +245,10 @@ impl CalibRawApp {
                         Ok(format!("Replaced preset “{}”.", preset.name()))
                     }
                     None => {
+                        let name = self.presets.unique_name(&preset);
+                        let preset = preset
+                            .renamed(&name, preset.group())
+                            .map_err(|error| sentence_case(&error.to_string()))?;
                         crate::presets::save_new_preset(folder, &preset)
                             .map_err(|error| format!("Could not save the preset: {error}"))?;
                         Ok(format!("Saved preset “{}”.", preset.name()))
@@ -416,7 +437,9 @@ impl CalibRawApp {
     }
 
     /// Copies preset files into the preset folder. Imported presets whose
-    /// name is taken in their group get a numbered name.
+    /// name is taken in their group get a numbered name. An XMP preset is
+    /// copied as an XMP, keeping settings CalibRaw cannot translate yet.
+    /// Settings without an equivalent are reported as warnings in the notice.
     pub(crate) fn import_preset_files(&mut self, paths: &[PathBuf]) {
         let folder = match self.presets.folder() {
             Ok(folder) => folder.to_owned(),
@@ -427,20 +450,33 @@ impl CalibRawApp {
         };
         let mut imported = 0usize;
         let mut failures = Vec::new();
+        let mut warnings = Vec::new();
         for path in paths {
             let label = path
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            let result = crate::presets::read_preset_file(path).and_then(|preset| {
-                let name = self.presets.unique_name(&preset);
-                let preset = preset.renamed(&name, preset.group())?;
-                crate::presets::save_new_preset(&folder, &preset)
+            let result = read_preset_for_import(path).and_then(|imported| {
+                let name = self.presets.unique_name(&imported.preset);
+                let preset = imported.preset.renamed(&name, imported.preset.group())?;
+                match imported.source {
+                    Some(source) => {
+                        crate::presets::save_new_xmp_preset(&folder, &preset, &source)?;
+                    }
+                    None => {
+                        crate::presets::save_new_preset(&folder, &preset)?;
+                    }
+                }
+                Ok(imported.warnings)
             });
             match result {
-                Ok(_) => {
+                Ok(file_warnings) => {
                     imported += 1;
+                    for warning in file_warnings {
+                        log::warn!("{label}: {warning}");
+                        warnings.push(format!("{label}: {warning}"));
+                    }
                     // Later files in this import must see the new names.
                     if let Err(error) = self.presets.reload() {
                         failures.push(error);
@@ -453,13 +489,20 @@ impl CalibRawApp {
             "Imported {imported} {}.",
             if imported == 1 { "preset" } else { "presets" }
         );
+        let warning_text = warnings.join(" ");
         if failures.is_empty() {
-            self.ui.notice = Some(summary);
+            self.ui.notice = Some(if warning_text.is_empty() {
+                summary
+            } else {
+                format!("{summary} {warning_text}")
+            });
         } else {
-            self.report_error(
-                ErrorKind::Presets,
-                format!("{summary} {}", failures.join(" · ")),
-            );
+            let mut message = format!("{summary} {}", failures.join(" · "));
+            if !warning_text.is_empty() {
+                message.push(' ');
+                message.push_str(&warning_text);
+            }
+            self.report_error(ErrorKind::Presets, message);
         }
     }
 
@@ -467,9 +510,8 @@ impl CalibRawApp {
         if self.ui.desktop_picker_receiver.is_some() || !self.presets.is_available() {
             return;
         }
-        let extension = PRESET_FILE_EXTENSIONS[0];
         let dialog =
-            crate::platform::FileDialog::new().add_filter("CalibRaw presets", &[extension]);
+            crate::platform::FileDialog::new().add_filter("Presets", PRESET_IMPORT_EXTENSIONS);
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
             DesktopPickerEvent::PresetFiles(dialog.pick_files_on_worker())
         }));
@@ -487,15 +529,28 @@ impl CalibRawApp {
                 character => character,
             })
             .collect();
+        let (filter, extensions, suffix) = if crate::presets::xmp::is_xmp_preset_file(path) {
+            (
+                "XMP preset",
+                XMP_FILE_EXTENSIONS,
+                crate::presets::xmp::XMP_PRESET_SUFFIX,
+            )
+        } else {
+            (
+                "CalibRaw preset",
+                PRESET_FILE_EXTENSIONS,
+                crate::presets::PRESET_SUFFIX,
+            )
+        };
         let Some(destination) = crate::ui::choose_save_path(
-            "CalibRaw preset".to_owned(),
-            PRESET_FILE_EXTENSIONS,
-            &format!("{file_name}{}", crate::presets::PRESET_SUFFIX),
+            filter.to_owned(),
+            extensions,
+            &format!("{file_name}{suffix}"),
             None,
         ) else {
             return;
         };
-        match crate::presets::write_preset_file(&destination, &preset) {
+        match crate::presets::export_preset_file(path, &destination, &preset) {
             Ok(()) => {
                 self.ui.notice = Some(format!(
                     "Exported preset “{}” to {}.",
@@ -513,6 +568,37 @@ impl CalibRawApp {
 
 /// [`crate::presets::PRESET_SUFFIX`] without its leading dot, for file pickers.
 const PRESET_FILE_EXTENSIONS: &[&str] = &["calibraw-preset"];
+/// [`crate::presets::xmp::XMP_PRESET_SUFFIX`] without its dot.
+const XMP_FILE_EXTENSIONS: &[&str] = &["xmp"];
+/// Both preset formats in one import filter, so users see every preset file
+/// at once. Some tools export `.XMP`; Linux pickers match case-sensitively.
+const PRESET_IMPORT_EXTENSIONS: &[&str] = &["calibraw-preset", "xmp", "XMP"];
+
+struct ImportedPreset {
+    preset: Preset,
+    warnings: Vec<String>,
+    /// The bytes of an XMP preset, kept as the copied source.
+    source: Option<Vec<u8>>,
+}
+
+/// Reads a native or XMP preset file, with the warnings of an XMP
+/// translation and the XMP source when there is one.
+fn read_preset_for_import(path: &Path) -> Result<ImportedPreset, PresetError> {
+    if crate::presets::xmp::is_xmp_preset_file(path) {
+        let (import, source) = crate::presets::xmp::read_xmp_preset_file(path)?;
+        Ok(ImportedPreset {
+            preset: import.preset,
+            warnings: import.warnings,
+            source: Some(source),
+        })
+    } else {
+        Ok(ImportedPreset {
+            preset: crate::presets::read_preset_file(path)?,
+            warnings: Vec::new(),
+            source: None,
+        })
+    }
+}
 
 pub(crate) fn sentence_case(message: &str) -> String {
     let mut characters = message.chars();
@@ -525,7 +611,7 @@ pub(crate) fn sentence_case(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet};
+    use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet, MaskKind};
 
     #[test]
     fn deleting_the_preset_for_new_photos_stops_applying_it() {
@@ -562,10 +648,236 @@ mod tests {
             format!(".{}", PRESET_FILE_EXTENSIONS[0]),
             crate::presets::PRESET_SUFFIX
         );
+        assert_eq!(crate::presets::xmp::XMP_PRESET_SUFFIX, ".xmp");
+        assert!(PRESET_IMPORT_EXTENSIONS.contains(&PRESET_FILE_EXTENSIONS[0]));
+        assert!(PRESET_IMPORT_EXTENSIONS.contains(&XMP_FILE_EXTENSIONS[0]));
         assert_eq!(
             preset_folder_for_settings(Path::new("/config/calibraw/performance.json")),
             Some(PathBuf::from("/config/calibraw/presets"))
         );
+    }
+
+    #[test]
+    fn importing_an_xmp_preset_copies_the_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+
+        let xmp = source_folder.path().join("Warm Look.xmp");
+        let original = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+ crs:WhiteBalance="As Shot" crs:Exposure2012="0.5" crs:Vibrance="20" />
+</rdf:RDF>
+</x:xmpmeta>"#;
+        std::fs::write(&xmp, original).unwrap();
+
+        app.import_preset_files(std::slice::from_ref(&xmp));
+
+        assert_eq!(app.presets.all().len(), 1);
+        let stored = &app.presets.all()[0];
+        assert_eq!(stored.preset.name(), "Warm Look");
+        assert_eq!(stored.preset.group(), crate::presets::DEFAULT_PRESET_GROUP);
+        assert_eq!(stored.preset.edits().exposure.exposure, 0.5);
+        assert_eq!(stored.preset.edits().exposure.vibrance, 20.0);
+        assert_eq!(
+            stored
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("xmp")
+        );
+        assert_ne!(stored.path, xmp);
+        assert_eq!(std::fs::read_to_string(&xmp).unwrap(), original);
+        assert!(stored.path.exists());
+        assert_eq!(app.ui.notice.as_deref(), Some("Imported 1 preset."));
+    }
+
+    #[test]
+    fn importing_an_xmp_preset_keeps_warnings_out_of_failures() {
+        let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+
+        let xmp = source_folder.path().join("Corrected.xmp");
+        std::fs::write(
+            &xmp,
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+ crs:Exposure2012="0" crs:PerspectiveVertical="10" />
+</rdf:RDF>
+</x:xmpmeta>"#,
+        )
+        .unwrap();
+
+        app.import_preset_files(&[xmp]);
+
+        assert_eq!(app.presets.all().len(), 1);
+        let notice = app.ui.notice.as_deref().unwrap();
+        assert!(notice.starts_with("Imported 1 preset."), "{notice}");
+        assert!(notice.contains("Perspective corrections were not imported."));
+    }
+
+    #[test]
+    fn importing_a_mask_only_xmp_preset_saves_an_ai_mask() {
+        let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+
+        let xmp = source_folder.path().join("Subject Look.xmp");
+        std::fs::write(
+            &xmp,
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/">
+<crs:MaskGroupBasedCorrections><rdf:Seq><rdf:li>
+<rdf:Description crs:What="Correction" crs:CorrectionName="Subject">
+<crs:CorrectionMasks><rdf:Seq>
+<rdf:li crs:What="Mask/Image" crs:MaskName="Subject 1" crs:MaskSubType="1"/>
+</rdf:Seq></crs:CorrectionMasks>
+</rdf:Description>
+</rdf:li></rdf:Seq></crs:MaskGroupBasedCorrections>
+</rdf:Description>
+</rdf:RDF>
+</x:xmpmeta>"#,
+        )
+        .unwrap();
+
+        app.import_preset_files(&[xmp]);
+
+        assert_eq!(app.presets.all().len(), 1);
+        let stored = &app.presets.all()[0];
+        assert!(stored.preset.selection().ai_masks);
+        assert_eq!(stored.preset.edits().masks.masks.len(), 1);
+        assert_eq!(
+            stored.preset.edits().masks.masks[0].components[0].kind,
+            MaskKind::Subject
+        );
+        assert_eq!(app.ui.notice.as_deref(), Some("Imported 1 preset."));
+    }
+
+    #[test]
+    fn importing_an_unsupported_xmp_preset_keeps_it_listed() {
+        let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+
+        let xmp = source_folder.path().join("Perspective only.xmp");
+        std::fs::write(
+            &xmp,
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+ crs:PerspectiveVertical="10" />
+</rdf:RDF>
+</x:xmpmeta>"#,
+        )
+        .unwrap();
+
+        app.import_preset_files(&[xmp]);
+
+        assert_eq!(app.presets.all().len(), 1);
+        let stored = &app.presets.all()[0];
+        assert!(stored.preset.selection().is_empty());
+        assert_eq!(stored.preset.name(), "Perspective only");
+        assert_eq!(
+            stored
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("xmp")
+        );
+        let notice = app.ui.notice.as_deref().unwrap();
+        assert!(notice.starts_with("Imported 1 preset."), "{notice}");
+        assert!(notice.contains("No settings in this preset"));
+    }
+
+    #[test]
+    fn renaming_an_xmp_preset_rewrites_only_the_copied_labels() {
+        let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+
+        let xmp = source_folder.path().join("Warm Look.xmp");
+        let original = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+ crs:Name="Warm Look" crs:Group="Film" crs:Exposure2012="0.5" />
+</rdf:RDF>
+</x:xmpmeta>"#;
+        std::fs::write(&xmp, original).unwrap();
+        app.import_preset_files(std::slice::from_ref(&xmp));
+
+        let path = app.presets.all()[0].path.clone();
+        app.open_rename_preset_editor(&path);
+        let editor = app.presets.editor.as_mut().unwrap();
+        editor.name = "Hot Look".to_owned();
+        editor.group = "Analog".to_owned();
+        app.confirm_preset_editor();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#"crs:Name="Hot Look""#));
+        assert!(text.contains(r#"crs:Group="Analog""#));
+        assert!(text.contains(r#"crs:Exposure2012="0.5""#));
+        assert_eq!(std::fs::read_to_string(&xmp).unwrap(), original);
+        assert_eq!(app.presets.all()[0].preset.name(), "Hot Look");
+        assert_eq!(app.presets.all()[0].preset.group(), "Analog");
+    }
+
+    #[test]
+    fn creating_a_native_preset_does_not_replace_an_xmp_preset() {
+        let folder = tempfile::tempdir().unwrap();
+        let source_folder = tempfile::tempdir().unwrap();
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.presets = PresetState::load(Some(folder.path().to_owned()));
+
+        let xmp = source_folder.path().join("Warm.xmp");
+        std::fs::write(
+            &xmp,
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+ crs:Name="Warm" crs:Exposure2012="0.5" />
+</rdf:RDF>
+</x:xmpmeta>"#,
+        )
+        .unwrap();
+        app.import_preset_files(&[xmp]);
+        let xmp_path = app.presets.all()[0].path.clone();
+
+        let edits = crate::sidecar::default_edit_state();
+        let selection = EditSelection {
+            adjustment_groups: AdjustmentGroupSet::from_iter([AdjustmentGroup::Color]),
+            ..EditSelection::default()
+        };
+        app.presets.editor = Some(PresetEditor {
+            mode: PresetEditorMode::Create {
+                edits: Box::new(edits),
+            },
+            name: "Warm".to_owned(),
+            group: String::new(),
+            selection,
+            error: None,
+            focus_requested: false,
+        });
+        app.confirm_preset_editor();
+
+        assert!(xmp_path.exists());
+        assert_eq!(app.presets.all().len(), 2);
+        assert!(app
+            .presets
+            .all()
+            .iter()
+            .any(|stored| { stored.path == xmp_path && stored.preset.name() == "Warm" }));
+        assert!(app.presets.all().iter().any(|stored| {
+            crate::presets::is_native_preset_file(&stored.path) && stored.preset.name() == "Warm 2"
+        }));
     }
 
     #[test]

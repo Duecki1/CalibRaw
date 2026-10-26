@@ -392,6 +392,16 @@ fn temporary_folder(label: &str) -> PathBuf {
     ))
 }
 
+fn xmp_document(attributes: &str) -> String {
+    format!(
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" {attributes}/>
+</rdf:RDF>
+</x:xmpmeta>"#
+    )
+}
+
 #[test]
 fn preset_folders_save_list_and_report_damaged_files() {
     let folder = temporary_folder("folder");
@@ -428,6 +438,109 @@ fn preset_folders_save_list_and_report_damaged_files() {
         .presets
         .iter()
         .any(|stored| stored.path == zebra_path));
+
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn preset_folders_load_xmp_presets_and_edit_their_labels() {
+    let folder = temporary_folder("xmp");
+    std::fs::create_dir_all(&folder).unwrap();
+    let xmp = folder.join("warm.xmp");
+    std::fs::write(
+        &xmp,
+        xmp_document(r#"crs:Name="Warm" crs:Group="Film" crs:Exposure2012="0.5""#),
+    )
+    .unwrap();
+
+    let contents = load_preset_folder(&folder).unwrap();
+    assert_eq!(contents.presets.len(), 1);
+    assert_eq!(contents.presets[0].preset.name(), "Warm");
+    assert_eq!(contents.presets[0].preset.group(), "Film");
+    assert_eq!(contents.presets[0].preset.edits().exposure.exposure, 0.5);
+    assert!(contents.failures.is_empty());
+
+    // Renaming a group rewrites only the copied XMP's labels.
+    assert_eq!(rename_group(&folder, "Film", "Analog").unwrap(), "Analog");
+    let bytes = std::fs::read(&xmp).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains(r#"crs:Name="Warm""#));
+    assert!(text.contains(r#"crs:Group="Analog""#));
+    assert!(text.contains(r#"crs:Exposure2012="0.5""#));
+    assert_eq!(
+        load_preset_folder(&folder).unwrap().presets[0]
+            .preset
+            .edits()
+            .exposure
+            .exposure,
+        0.5
+    );
+
+    // Moving presets out of a deleted group rewrites the group label too.
+    delete_group(&folder, "Analog", DeletedGroupPresets::MoveToDefaultGroup).unwrap();
+    let contents = load_preset_folder(&folder).unwrap();
+    assert_eq!(contents.presets[0].preset.group(), DEFAULT_PRESET_GROUP);
+    assert!(std::fs::read_to_string(&xmp)
+        .unwrap()
+        .contains(&format!(r#"crs:Group="{DEFAULT_PRESET_GROUP}""#)));
+
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn preset_folders_keep_xmp_presets_without_supported_settings() {
+    let folder = temporary_folder("xmp-placeholder");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("unsupported.xmp"),
+        xmp_document(
+            r#"crs:Name="Perspective only" crs:Group="Film" crs:PerspectiveVertical="10""#,
+        ),
+    )
+    .unwrap();
+
+    let contents = load_preset_folder(&folder).unwrap();
+    assert_eq!(contents.presets.len(), 1);
+    assert!(contents.presets[0].preset.selection().is_empty());
+    assert_eq!(contents.presets[0].preset.name(), "Perspective only");
+    assert_eq!(contents.groups, vec!["Film"]);
+
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn empty_xmp_placeholders_are_not_written_as_native_presets() {
+    let preset = Preset::from_xmp(
+        "Placeholder",
+        "Film",
+        EditSelection::default(),
+        &default_edit_state(),
+    )
+    .unwrap();
+    assert!(matches!(preset.encode(), Err(PresetError::Invalid(_))));
+}
+
+#[test]
+fn saves_and_exports_xmp_presets_as_copies() {
+    let folder = temporary_folder("xmp-save");
+    std::fs::create_dir_all(&folder).unwrap();
+    let source = xmp_document(r#"crs:Name="Original" crs:Group="Film" crs:Exposure2012="0.5""#);
+    let import = xmp::import_xmp(source.as_bytes()).unwrap();
+    let renamed = import.preset.renamed("Copy", "Analog").unwrap();
+
+    let saved = save_new_xmp_preset(&folder, &renamed, source.as_bytes()).unwrap();
+    assert_eq!(saved.file_name().unwrap(), "analog-copy.xmp");
+    let saved_text = std::fs::read_to_string(&saved).unwrap();
+    assert!(saved_text.contains(r#"crs:Name="Copy""#));
+    assert!(saved_text.contains(r#"crs:Group="Analog""#));
+    assert!(saved_text.contains(r#"crs:Exposure2012="0.5""#));
+
+    let exported = folder.join("exported.xmp");
+    export_preset_file(&saved, &exported, &renamed).unwrap();
+    let (exported, _) = xmp::read_xmp_preset_file(&exported).unwrap();
+    assert_eq!(exported.preset.name(), "Copy");
+    assert_eq!(exported.preset.group(), "Analog");
+    assert_eq!(exported.preset.edits().exposure.exposure, 0.5);
 
     std::fs::remove_dir_all(folder).unwrap();
 }

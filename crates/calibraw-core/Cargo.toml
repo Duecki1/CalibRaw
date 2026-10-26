@@ -24,6 +24,7 @@ heic-rs.workspace = true
 image.workspace = true
 log.workspace = true
 png.workspace = true
+quick-xml.workspace = true
 rayon.workspace = true
 rawler.workspace = true
 serde.workspace = true

@@ -135,6 +135,14 @@ pub const LINEAR_SRGB_TO_REC2020: Matrix3 = [
     [0.016_391_4, 0.088_013_3, 0.895_595_3],
 ];
 
+/// Linear ProPhoto (ROMM, D50) primaries to linear Rec.2020 (D65), with
+/// Bradford adaptation, as XMP presets sample their Point Color swatches.
+pub const LINEAR_PROPHOTO_TO_REC2020: Matrix3 = [
+    [1.200_650_6, -0.057_563_7, -0.143_086_9],
+    [-0.069_943_4, 1.080_628, -0.010_684_5],
+    [0.005_541_5, -0.040_782_6, 1.035_241],
+];
+
 /// Linear Display P3 (D65) primaries to linear Rec.2020, as tagged by phone
 /// HEIF images that carry `nclx` colour primaries 12 instead of an ICC profile.
 pub const LINEAR_DISPLAY_P3_TO_REC2020: Matrix3 = [
@@ -157,6 +165,14 @@ mod tests {
         for encoded in [0.0, 0.02, 0.5, 1.0] {
             assert!((srgb_encode(srgb_decode(encoded)) - encoded).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn prophoto_to_rec2020_keeps_white_and_matches_the_primaries() {
+        let white = transform(LINEAR_PROPHOTO_TO_REC2020, [1.0; 3]);
+        assert!(white.iter().all(|channel| (channel - 1.0).abs() < 1e-5));
+        // ProPhoto green lies outside Rec.2020, so it needs negative red.
+        assert!(transform(LINEAR_PROPHOTO_TO_REC2020, [0.0, 1.0, 0.0])[0] < 0.0);
     }
 
     #[test]

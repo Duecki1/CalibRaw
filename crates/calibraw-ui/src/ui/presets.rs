@@ -9,9 +9,6 @@ use crate::ui::components::preview_list::pointer_previews;
 use eframe::egui::{self, Ui};
 use std::path::PathBuf;
 
-const POINTER_ROW_HELP: &str = "Previewing on the photo. Click to apply, right-click for more.";
-const TOUCH_ROW_HELP: &str = "Tap to apply to this photo.";
-
 #[derive(Clone, Debug)]
 enum PresetAction {
     Apply(PathBuf),
@@ -115,6 +112,9 @@ impl PresetList {
 /// A one-line description of what a preset changes, such as
 /// "Light, Color, Effects · Masks".
 fn selection_summary(selection: EditSelection) -> String {
+    if selection.is_empty() {
+        return "No supported settings yet".to_owned();
+    }
     let mut parts: Vec<&str> = selection
         .adjustment_groups
         .iter()
@@ -395,16 +395,7 @@ fn show_preset_row(
                     .corner_radius(moduwu_design::CARD_RADIUS),
             )
         },
-    )
-    .on_hover_text(format!(
-        "{}\n{}",
-        if caps.is_mobile() {
-            TOUCH_ROW_HELP
-        } else {
-            POINTER_ROW_HELP
-        },
-        entry.summary
-    ));
+    );
     moduwu_design::context_menu(&response, |ui| preset_actions_menu(ui, caps, entry, action));
     if response.clicked() {
         *action = Some(PresetAction::Apply(entry.path.clone()));
@@ -459,7 +450,7 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
         matches!(editor.mode, PresetEditorMode::Create { .. })
             && app
                 .presets
-                .find_named(&editor.name, &editor.group, None)
+                .find_named_native(&editor.name, &editor.group, None)
                 .is_some()
     });
     let Some(editor) = app.presets.editor.as_mut() else {
@@ -1028,5 +1019,9 @@ mod tests {
             ..EditSelection::default()
         };
         assert_eq!(selection_summary(masks_only), "AI masks");
+        assert_eq!(
+            selection_summary(EditSelection::default()),
+            "No supported settings yet"
+        );
     }
 }

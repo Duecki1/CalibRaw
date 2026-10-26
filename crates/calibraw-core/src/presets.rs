@@ -9,6 +9,8 @@
 //! Presets live one per file in a folder, so they can be shared by copying
 //! files and a damaged file never hides the others.
 
+pub mod xmp;
+
 use crate::file_ops::write_bytes_atomically;
 use crate::migrations::{self, LegacyEffectSliders};
 use crate::pipeline::{
@@ -97,9 +99,33 @@ impl Preset {
         selection: EditSelection,
         edits: &EditState,
     ) -> Result<Self, PresetError> {
+        Self::captured(name, group, selection, edits, true)
+    }
+
+    /// Captures a preset translated from an XMP preset.
+    ///
+    /// Unlike [`Self::new`], the selection may be empty: an XMP whose settings
+    /// CalibRaw cannot translate yet stays listed as a placeholder until a
+    /// newer version can translate it.
+    pub(crate) fn from_xmp(
+        name: &str,
+        group: &str,
+        selection: EditSelection,
+        edits: &EditState,
+    ) -> Result<Self, PresetError> {
+        Self::captured(name, group, selection, edits, false)
+    }
+
+    fn captured(
+        name: &str,
+        group: &str,
+        selection: EditSelection,
+        edits: &EditState,
+        require_selection: bool,
+    ) -> Result<Self, PresetError> {
         let name = normalize_name(name)?;
         let group = normalize_group(group)?;
-        if selection.is_empty() {
+        if require_selection && selection.is_empty() {
             return invalid("a preset must include at least one setting");
         }
         let mut captured = default_edit_state();
@@ -286,6 +312,9 @@ impl Preset {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, PresetError> {
+        if self.selection.is_empty() {
+            return invalid("a preset must include at least one setting");
+        }
         let document = PresetDocument {
             format: PRESET_FORMAT.to_owned(),
             schema_version: migrations::older_readers::schema_version(
@@ -531,12 +560,10 @@ pub fn load_preset_folder(folder: &Path) -> Result<PresetFolderContents, PresetE
         if !is_preset_file(&path) {
             continue;
         }
-        match read_preset_file(&path) {
+        let label = path.file_name().unwrap_or_default().to_string_lossy();
+        match read_preset_file_for_load(&path) {
             Ok(preset) => contents.presets.push(StoredPreset { path, preset }),
-            Err(error) => contents.failures.push(format!(
-                "{}: {error}",
-                path.file_name().unwrap_or_default().to_string_lossy()
-            )),
+            Err(error) => contents.failures.push(format!("{label}: {error}")),
         }
     }
     contents.presets.sort_by_cached_key(|stored| {
@@ -733,13 +760,41 @@ pub fn delete_group(
     write_group_list(folder, groups)
 }
 
+/// Whether `path` names a preset file in the preset folder: a native
+/// `.calibraw-preset` or an `.xmp` preset.
 pub fn is_preset_file(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(PRESET_SUFFIX) && !name.starts_with('.'))
+    is_native_preset_file(path) || (!is_hidden(path) && xmp::is_xmp_preset_file(path))
 }
 
+/// Whether `path` names a native CalibRaw preset file.
+pub fn is_native_preset_file(path: &Path) -> bool {
+    !is_hidden(path)
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(PRESET_SUFFIX))
+}
+
+fn is_hidden(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_none_or(|name| name.starts_with('.'))
+}
+
+/// Reads a native CalibRaw preset from `path`.
 pub fn read_preset_file(path: &Path) -> Result<Preset, PresetError> {
+    Preset::decode(&read_preset_bytes(path)?)
+}
+
+fn read_preset_file_for_load(path: &Path) -> Result<Preset, PresetError> {
+    if xmp::is_xmp_preset_file(path) {
+        xmp::read_xmp_preset_file(path).map(|(import, _)| import.preset)
+    } else {
+        read_preset_file(path)
+    }
+}
+
+pub(crate) fn read_preset_bytes(path: &Path) -> Result<Vec<u8>, PresetError> {
     let file = std::fs::File::open(path)?;
     let length = file.metadata()?.len();
     if length > MAX_PRESET_BYTES {
@@ -747,32 +802,73 @@ pub fn read_preset_file(path: &Path) -> Result<Preset, PresetError> {
     }
     let mut bytes = Vec::with_capacity(length as usize);
     file.take(MAX_PRESET_BYTES + 1).read_to_end(&mut bytes)?;
-    Preset::decode(&bytes)
+    Ok(bytes)
 }
 
-/// Writes `preset` to `path`, replacing any file there.
+/// Writes `preset` to `path`, replacing any file there. A native preset is
+/// encoded as JSON; an XMP preset keeps its settings and only has its name
+/// and group labels rewritten.
 pub fn write_preset_file(path: &Path, preset: &Preset) -> Result<(), PresetError> {
-    write_bytes_atomically(path, &preset.encode()?)?;
+    export_preset_file(path, path, preset)
+}
+
+/// Saves `preset` as a new native preset file in `folder` and returns its
+/// path. The file name is derived from the group and name and never replaces
+/// another file.
+pub fn save_new_preset(folder: &Path, preset: &Preset) -> Result<PathBuf, PresetError> {
+    let path = unused_preset_path(folder, preset, PRESET_SUFFIX)?;
+    write_bytes_atomically(&path, &preset.encode()?)?;
+    Ok(path)
+}
+
+/// Saves a copy of the XMP preset `source` in `folder` and returns its path.
+/// The copy has the preset's current name and group, and never replaces
+/// another file.
+pub fn save_new_xmp_preset(
+    folder: &Path,
+    preset: &Preset,
+    source: &[u8],
+) -> Result<PathBuf, PresetError> {
+    let path = unused_preset_path(folder, preset, xmp::XMP_PRESET_SUFFIX)?;
+    let bytes = xmp::rewrite_xmp_labels(source, preset.name(), preset.group())?;
+    write_bytes_atomically(&path, &bytes)?;
+    Ok(path)
+}
+
+/// Copies the preset file `source` to `destination` in the same format, with
+/// the preset's current name and group. An XMP preset keeps all of its
+/// settings.
+pub fn export_preset_file(
+    source: &Path,
+    destination: &Path,
+    preset: &Preset,
+) -> Result<(), PresetError> {
+    let bytes = if xmp::is_xmp_preset_file(source) {
+        xmp::rewrite_xmp_labels(&read_preset_bytes(source)?, preset.name(), preset.group())?
+    } else {
+        preset.encode()?
+    };
+    write_bytes_atomically(destination, &bytes)?;
     Ok(())
 }
 
-/// Saves `preset` as a new file in `folder` and returns its path. The file
-/// name is derived from the group and name and never replaces another file.
-pub fn save_new_preset(folder: &Path, preset: &Preset) -> Result<PathBuf, PresetError> {
+fn unused_preset_path(
+    folder: &Path,
+    preset: &Preset,
+    extension: &str,
+) -> Result<PathBuf, PresetError> {
     let stem = preset_file_stem(preset);
-    let path = (1..=MAX_PRESET_FILES)
+    (1..=MAX_PRESET_FILES)
         .map(|index| {
             let suffix = if index == 1 {
-                String::new()
+                extension.to_owned()
             } else {
-                format!("-{index}")
+                format!("-{index}{extension}")
             };
-            folder.join(format!("{stem}{suffix}{PRESET_SUFFIX}"))
+            folder.join(format!("{stem}{suffix}"))
         })
         .find(|path| !path.exists())
-        .ok_or_else(|| PresetError::Invalid("too many presets with the same name".to_owned()))?;
-    write_preset_file(&path, preset)?;
-    Ok(path)
+        .ok_or_else(|| PresetError::Invalid("too many presets with the same name".to_owned()))
 }
 
 fn preset_file_stem(preset: &Preset) -> String {
