@@ -152,6 +152,10 @@ pub(crate) struct AiState {
     pub(crate) people_chips: Option<Vec<egui::TextureHandle>>,
     /// People masks being made from `people`.
     pub(crate) people_composes: Vec<PeopleCompose>,
+    /// The person whose chip the pointer is over in the mask panel, for the
+    /// canvas to highlight. Set while the panel shows; the canvas takes it.
+    pub(crate) people_hovered: Option<usize>,
+    pub(crate) people_highlight: Option<PersonHighlight>,
     pub(crate) denoise_resume_pending: bool,
 }
 

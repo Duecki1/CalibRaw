@@ -18,7 +18,11 @@ impl Sidebar {
                 62.0
             })
             .frame(Self::mobile_navigation_frame(ui))
-            .show(ui, |ui| Self::show_mobile_primary_tabs(ui, app));
+            .show(ui, |ui| {
+                crate::ui::layout::docked_panel_contents(ui, |ui| {
+                    Self::show_mobile_primary_tabs(ui, app)
+                })
+            });
 
         if matches!(
             app.ui.sidebar_tab,
@@ -33,7 +37,11 @@ impl Sidebar {
                     58.0
                 })
                 .frame(Self::mobile_navigation_frame(ui))
-                .show(ui, |ui| Self::show_mobile_context_tabs(ui, app));
+                .show(ui, |ui| {
+                    crate::ui::layout::docked_panel_contents(ui, |ui| {
+                        Self::show_mobile_context_tabs(ui, app)
+                    })
+                });
         }
 
         egui::CentralPanel::default()

@@ -227,6 +227,8 @@ impl CalibRawApp {
                 people: None,
                 people_chips: None,
                 people_composes: Vec::new(),
+                people_hovered: None,
+                people_highlight: None,
                 denoise_resume_pending: false,
             },
             inpaint: InpaintState {

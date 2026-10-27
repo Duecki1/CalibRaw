@@ -40,6 +40,11 @@ pub const BODY_PARTS_LICENSE: &str =
 
 const MAX_SOURCE_PIXELS: u64 = 17_000_000;
 const MAX_TARGETS: usize = 64;
+/// A portrait shows this much more than the face and hair, for the neck,
+/// shoulders and some room around them.
+const PORTRAIT_MARGIN: f32 = 1.4;
+/// Longer edge of the silhouette of someone not segmented yet, in pixels.
+const OUTLINE_SILHOUETTE_EDGE: f32 = 128.0;
 
 const PEOPLE_JOB: JobKind = JobKind {
     thread: "calibraw-onnx-people",
@@ -198,6 +203,96 @@ impl PeopleAnalysis {
         self.mask_of(&source.image()?, person, parts)
     }
 
+    /// The parts `person` shows; `None` until they are segmented.
+    pub fn parts_shown(&self, person: usize) -> Option<BTreeSet<PersonPart>> {
+        let segmented = self.parts.get(person)?.as_ref()?;
+        Some(
+            PersonPart::ALL
+                .into_iter()
+                .filter(|&part| segmented.shows(part))
+                .collect(),
+        )
+    }
+
+    /// The person at `point` (fractions of the photo): the likeliest whose
+    /// body parts, or outline while not segmented, cover it. `None` over no
+    /// one.
+    pub fn person_under(&self, point: [f32; 2]) -> Option<usize> {
+        (0..self.people.len())
+            .map(|person| {
+                let probability = match &self.parts[person] {
+                    Some(parts) => parts.coverage_at(point),
+                    None => self
+                        .detection
+                        .outline_probability(person, point[0], point[1]),
+                };
+                (person, probability)
+            })
+            .filter(|&(_, probability)| probability >= 0.5)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(person, _)| person)
+    }
+
+    /// A square of the photo around `person`'s head, for their thumbnail:
+    /// left, top, right and bottom as fractions. Around their face and hair
+    /// once segmented, else the top of their box.
+    pub fn portrait(&self, person: usize) -> Option<[f32; 4]> {
+        let [left, top, right, bottom] = self.people.get(person)?.bounds;
+        let aspect = self.aspect;
+        // Sides in photo heights, so the square is square in pixels.
+        let (centre, side) = match self.parts[person].as_ref().and_then(|parts| parts.head()) {
+            Some([head_left, head_top, head_right, head_bottom]) => (
+                [
+                    (head_left + head_right) * 0.5,
+                    (head_top + head_bottom) * 0.5,
+                ],
+                ((head_right - head_left) * aspect).max(head_bottom - head_top) * PORTRAIT_MARGIN,
+            ),
+            None => {
+                let side = ((right - left) * aspect).min(bottom - top);
+                ([(left + right) * 0.5, top + side * 0.5], side)
+            }
+        };
+        let side = side.clamp(f32::EPSILON, aspect.min(1.0));
+        let (width, height) = (side / aspect, side);
+        let x = (centre[0] - width * 0.5).clamp(0.0, 1.0 - width);
+        let y = (centre[1] - height * 0.5).clamp(0.0, 1.0 - height);
+        Some([x, y, x + width, y + height])
+    }
+
+    /// Where `person` is, to show them over the photo: from their body
+    /// parts once segmented, else their outline.
+    pub fn silhouette(&self, person: usize) -> Option<PersonSilhouette> {
+        let bounds = self.people.get(person)?.bounds;
+        if let Some(parts) = &self.parts[person] {
+            return Some(PersonSilhouette {
+                region: parts.crop,
+                width: parts::INPUT_WIDTH,
+                height: parts::INPUT_HEIGHT,
+                coverage: parts.coverage(),
+            });
+        }
+        let [left, top, right, bottom] = bounds;
+        let (span_x, span_y) = ((right - left) * self.aspect, bottom - top);
+        let scale = OUTLINE_SILHOUETTE_EDGE / span_x.max(span_y).max(f32::EPSILON);
+        let width = ((span_x * scale).round() as u32).max(1);
+        let height = ((span_y * scale).round() as u32).max(1);
+        let coverage = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let u = left + (right - left) * (x as f32 + 0.5) / width as f32;
+                let v = top + (bottom - top) * (y as f32 + 0.5) / height as f32;
+                (self.detection.outline_probability(person, u, v) * 255.0).round() as u8
+            })
+            .collect();
+        Some(PersonSilhouette {
+            region: bounds,
+            width,
+            height,
+            coverage,
+        })
+    }
+
     fn mask_of(
         &self,
         image: &RgbaView<'_>,
@@ -214,6 +309,17 @@ impl PeopleAnalysis {
             mask: segmented.mask(image, parts)?,
         }))
     }
+}
+
+/// Where one person is in the photo.
+pub struct PersonSilhouette {
+    /// The part of the photo `coverage` spans: left, top, right and bottom
+    /// as fractions.
+    pub region: [f32; 4],
+    pub width: u32,
+    pub height: u32,
+    /// How likely each pixel is theirs, 0 to 255, by row.
+    pub coverage: Vec<u8>,
 }
 
 /// One person's body parts, as a job reports them while it runs.

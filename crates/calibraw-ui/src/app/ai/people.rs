@@ -9,16 +9,19 @@ use super::*;
 use crate::app::PeopleEdit;
 use crate::pipeline::PersonPart;
 use calibraw_ai::models::people::{
-    people_models_are_verified, spawn_people_mask, DetectedPerson, PeopleAnalysisFile,
+    people_models_are_verified, spawn_people_mask, PeopleAnalysis, PeopleAnalysisFile,
     PeopleMaskProgress, PeopleMaskRequest, PeopleMaskWorkerRequest, PeopleSource, PeopleTarget,
     PersonBounds, PersonMask, AVAILABLE,
 };
 use calibraw_ai::AiFeature;
+use image::{Rgba, RgbaImage};
 use std::collections::BTreeSet;
 
 const PEOPLE_JOB: ForegroundOperationKind = ForegroundOperationKind::Ai(AiFeature::People);
-/// Height of a person's chip thumbnail, in pixels.
-const CHIP_HEIGHT: u32 = 96;
+/// Edge of a person's square chip thumbnail, in pixels.
+const CHIP_EDGE: u32 = 96;
+/// Opacity of a person's canvas highlight where they certainly are, of 255.
+const HIGHLIGHT_ALPHA: u16 = 115;
 
 /// A people component's person and parts.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,12 +43,17 @@ impl PersonChoice {
     }
 
     /// The choice after `edit`, or `None` when it changes nothing. The last
-    /// part stays.
+    /// part stays, and the entire person replaces the other parts, which
+    /// replace it in turn.
     fn edited(&self, edit: PeopleEdit) -> Option<Self> {
         let mut next = self.clone();
         match edit {
             PeopleEdit::SelectPerson(anchor) => next.anchor = Some(anchor),
+            PeopleEdit::TogglePart(PersonPart::EntirePerson) => {
+                next.parts = BTreeSet::from([PersonPart::EntirePerson]);
+            }
             PeopleEdit::TogglePart(part) => {
+                next.parts.remove(&PersonPart::EntirePerson);
                 if !next.parts.remove(&part) {
                     next.parts.insert(part);
                 } else if next.parts.is_empty() {
@@ -55,6 +63,15 @@ impl PersonChoice {
         }
         (next != *self).then_some(next)
     }
+}
+
+/// One person's canvas highlight, kept while they stay highlighted.
+pub(crate) struct PersonHighlight {
+    person: usize,
+    color: egui::Color32,
+    pub(crate) texture: egui::TextureHandle,
+    /// The part of the photo the texture spans, as fractions.
+    pub(crate) region: [f32; 4],
 }
 
 /// A people mask being made from the analysis on a worker thread.
@@ -171,6 +188,65 @@ impl CalibRawApp {
         }
         self.mark_mask_geometry_dirty(mask_index);
         self.request_people_masks(vec![location], frame);
+    }
+
+    /// Makes the person under `point` (fractions of the photo) the people
+    /// component's person, for a click on the canvas.
+    pub(crate) fn pick_person(
+        &mut self,
+        mask_index: usize,
+        component_index: usize,
+        point: [f32; 2],
+        frame: &eframe::Frame,
+    ) {
+        let Some(anchor) = self.ai.people.as_ref().and_then(|analysis| {
+            let person = analysis.person_under(point)?;
+            Some(analysis.people()[person].anchor)
+        }) else {
+            return;
+        };
+        self.edit_people_mask(
+            mask_index,
+            component_index,
+            PeopleEdit::SelectPerson(anchor),
+            frame,
+        );
+    }
+
+    /// `person`'s highlight over the canvas in `color`.
+    pub(crate) fn person_highlight(
+        &mut self,
+        ctx: &egui::Context,
+        person: usize,
+        color: egui::Color32,
+    ) -> Option<&PersonHighlight> {
+        let current = self
+            .ai
+            .people_highlight
+            .as_ref()
+            .is_some_and(|highlight| highlight.person == person && highlight.color == color);
+        if !current {
+            let silhouette = self.ai.people.as_ref()?.silhouette(person)?;
+            let rgba: Vec<u8> = silhouette
+                .coverage
+                .iter()
+                .flat_map(|&coverage| {
+                    let alpha = u16::from(coverage) * HIGHLIGHT_ALPHA / 255;
+                    [color.r(), color.g(), color.b(), alpha as u8]
+                })
+                .collect();
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [silhouette.width as usize, silhouette.height as usize],
+                &rgba,
+            );
+            self.ai.people_highlight = Some(PersonHighlight {
+                person,
+                color,
+                texture: ctx.load_texture("person-highlight", image, egui::TextureOptions::LINEAR),
+                region: silhouette.region,
+            });
+        }
+        self.ai.people_highlight.as_ref()
     }
 
     /// What a people component shows: the choice its mask is being made
@@ -345,8 +421,16 @@ impl CalibRawApp {
     /// rendering of the same content keeps them.
     pub(in crate::app) fn forget_people(&mut self) {
         self.ai.people = None;
-        self.ai.people_chips = None;
+        self.forget_people_views();
         self.ai.people_composes.clear();
+    }
+
+    /// Drops the thumbnails and highlight made from the people found, when
+    /// those change.
+    fn forget_people_views(&mut self) {
+        self.ai.people_chips = None;
+        self.ai.people_highlight = None;
+        self.ai.people_hovered = None;
     }
 
     /// Where the people analysis of the photo `target` names is kept. `None`
@@ -560,12 +644,15 @@ impl CalibRawApp {
             }
             PeopleMaskProgress::Found(analysis) if accepts => {
                 self.ai.people = Some(analysis);
-                self.ai.people_chips = None;
+                self.forget_people_views();
             }
             PeopleMaskProgress::Segmented(person) if accepts => {
                 if let Some(analysis) = self.ai.people.as_mut() {
                     analysis.insert(person);
                 }
+                // Their thumbnail now centres on their face, and their
+                // highlight follows their body.
+                self.forget_people_views();
             }
             PeopleMaskProgress::Masks(masks) if accepts => {
                 if let ForegroundOperationContext::People { targets, error, .. } =
@@ -677,9 +764,7 @@ impl CalibRawApp {
             }
         }
         let chips = match (&self.masks.source_cache, &self.ai.people) {
-            (Some(source), Some(analysis)) => {
-                person_chips(&self.egui_ctx, source, analysis.people())
-            }
+            (Some(source), Some(analysis)) => person_chips(&self.egui_ctx, source, analysis),
             _ => Vec::new(),
         };
         self.ai.people_chips = Some(chips);
@@ -770,32 +855,28 @@ impl CalibRawApp {
     }
 }
 
-/// A thumbnail of each person, cut from the mask source at their box.
+/// A square thumbnail of each person's head, cut from the mask source.
 fn person_chips(
     ctx: &egui::Context,
     source: &MaskRgbImage,
-    people: &[DetectedPerson],
+    analysis: &PeopleAnalysis,
 ) -> Vec<egui::TextureHandle> {
-    let Some(image) = image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(
-        source.width,
-        source.height,
-        &source.rgba,
-    ) else {
+    let Some(image) =
+        image::ImageBuffer::<Rgba<u8>, &[u8]>::from_raw(source.width, source.height, &source.rgba)
+    else {
         return Vec::new();
     };
-    people
+    analysis
+        .people()
         .iter()
         .enumerate()
         .map(|(index, person)| {
-            let bounds = PersonBounds::from_fractions(person.bounds, source.width, source.height);
+            let portrait = analysis.portrait(index).unwrap_or(person.bounds);
+            let bounds = PersonBounds::from_fractions(portrait, source.width, source.height);
             let crop =
                 image::imageops::crop_imm(&image, bounds.x, bounds.y, bounds.width, bounds.height);
-            // At most square, so a person lying down keeps a usable chip.
-            let height = CHIP_HEIGHT.min(bounds.height.max(1));
-            let width = ((u64::from(bounds.width) * u64::from(height)
-                / u64::from(bounds.height.max(1))) as u32)
-                .clamp(1, height);
-            let thumbnail = image::imageops::thumbnail(&*crop, width, height);
+            let mut thumbnail = image::imageops::thumbnail(&*crop, CHIP_EDGE, CHIP_EDGE);
+            stretch_levels(&mut thumbnail);
             let pixels = egui::ColorImage::from_rgba_unmultiplied(
                 [thumbnail.width() as usize, thumbnail.height() as usize],
                 thumbnail.as_raw(),
@@ -807,4 +888,43 @@ fn person_chips(
             )
         })
         .collect()
+}
+
+/// Stretches a thumbnail's luminance from its 1st to its 99th percentile
+/// over the full range and lifts dark midtones: the mask source is a flat
+/// scene-referred rendering, in which faces are hard to tell apart.
+fn stretch_levels(thumbnail: &mut RgbaImage) {
+    let luminance = |pixel: &Rgba<u8>| {
+        let [red, green, blue, _] = pixel.0.map(f32::from);
+        0.2126 * red + 0.7152 * green + 0.0722 * blue
+    };
+    let mut histogram = [0usize; 256];
+    for pixel in thumbnail.pixels() {
+        histogram[luminance(pixel).round() as usize] += 1;
+    }
+    let total: usize = histogram.iter().sum();
+    let percentile = |fraction: f32| {
+        let target = (total as f32 * fraction) as usize;
+        let mut below = 0;
+        for (level, count) in histogram.iter().enumerate() {
+            below += count;
+            if below > target {
+                return level as f32;
+            }
+        }
+        255.0
+    };
+    let (low, high) = (percentile(0.01), percentile(0.99));
+    if high - low < 8.0 {
+        return;
+    }
+    // Brings a dark median towards 0.45; never darkens.
+    let median = ((percentile(0.5) - low) / (high - low)).clamp(0.01, 0.99);
+    let gamma = (0.45f32.ln() / median.ln()).clamp(0.5, 1.0);
+    for pixel in thumbnail.pixels_mut() {
+        for channel in &mut pixel.0[..3] {
+            let value = ((f32::from(*channel) - low) / (high - low)).clamp(0.0, 1.0);
+            *channel = (value.powf(gamma) * 255.0).round() as u8;
+        }
+    }
 }

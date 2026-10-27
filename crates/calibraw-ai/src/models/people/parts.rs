@@ -68,6 +68,14 @@ const CROP_MARGIN: f32 = 0.1;
 /// fraction of the person's longer side, which reaches the hair and fingers
 /// the coarse outlines miss but not someone the detector did not find.
 const OUTLINE_REACH: f32 = 0.1;
+/// A person shows a part when at least this share of the plane pixels
+/// likely theirs, and `MIN_PART_PIXELS`, are likely that part. On the Demo
+/// photos the smallest teeth and lips took about a 2000th of the person and
+/// missing parts none or a dozen pixels. A borderline part, such as glasses
+/// guessed on someone seen from behind (a 3600th), stays choosable: choosing
+/// it selects next to nothing, while hiding real teeth would be worse.
+const MIN_PART_SHARE: usize = 4000;
+const MIN_PART_PIXELS: usize = 16;
 
 /// The probabilities of each part of one person over a crop around them.
 pub(super) struct PersonParts {
@@ -78,9 +86,88 @@ pub(super) struct PersonParts {
     /// each part's probability, 0 to 255, in `PersonPart::ALL` order. Zero
     /// where the pixel belongs to someone else.
     pub(super) probabilities: Box<[[u8; PARTS]]>,
+    /// The parts they show, one bit per `part_index`.
+    present: u8,
+    /// Around their face and hair, in plane pixels: left, top, right and
+    /// bottom, the last two exclusive. `None` when neither shows.
+    head: Option<[u32; 4]>,
 }
 
 impl PersonParts {
+    pub(super) fn new(crop: [f32; 4], probabilities: Box<[[u8; PARTS]]>) -> Self {
+        let mut counts = [0usize; PARTS];
+        let mut head: Option<[u32; 4]> = None;
+        let (face, hair) = (
+            part_index(PersonPart::FaceNeck),
+            part_index(PersonPart::Hair),
+        );
+        for (index, pixel) in probabilities.iter().enumerate() {
+            for (count, &probability) in counts.iter_mut().zip(pixel) {
+                *count += usize::from(probability >= 128);
+            }
+            if u16::from(pixel[face]) + u16::from(pixel[hair]) >= 128 {
+                let (x, y) = (index as u32 % INPUT_WIDTH, index as u32 / INPUT_WIDTH);
+                head = Some(match head {
+                    Some([left, top, right, bottom]) => {
+                        [left.min(x), top.min(y), right.max(x + 1), bottom.max(y + 1)]
+                    }
+                    None => [x, y, x + 1, y + 1],
+                });
+            }
+        }
+        let minimum =
+            MIN_PART_PIXELS.max(counts[part_index(PersonPart::EntirePerson)] / MIN_PART_SHARE);
+        let present = counts
+            .iter()
+            .enumerate()
+            .filter(|&(_, &count)| count >= minimum)
+            .fold(0u8, |bits, (part, _)| bits | 1 << part);
+        Self {
+            crop,
+            probabilities,
+            present,
+            head,
+        }
+    }
+
+    pub(super) fn shows(&self, part: PersonPart) -> bool {
+        self.present & 1 << part_index(part) != 0
+    }
+
+    /// Around their face and hair, as fractions of the photo: left, top,
+    /// right and bottom.
+    pub(super) fn head(&self) -> Option<[f32; 4]> {
+        let [left, top, right, bottom] = self.head?;
+        let [crop_left, crop_top, crop_right, crop_bottom] = self.crop;
+        let u = |x: u32| crop_left + (crop_right - crop_left) * x as f32 / INPUT_WIDTH as f32;
+        let v = |y: u32| crop_top + (crop_bottom - crop_top) * y as f32 / INPUT_HEIGHT as f32;
+        Some([u(left), v(top), u(right), v(bottom)])
+    }
+
+    /// How likely `point` (fractions of the photo) is theirs, 0 to 1.
+    pub(super) fn coverage_at(&self, point: [f32; 2]) -> f32 {
+        let [left, top, right, bottom] = self.crop;
+        let [u, v] = point;
+        if u < left || u >= right || v < top || v >= bottom {
+            return 0.0;
+        }
+        let x = (((u - left) / (right - left) * INPUT_WIDTH as f32) as usize)
+            .min(INPUT_WIDTH as usize - 1);
+        let y = (((v - top) / (bottom - top) * INPUT_HEIGHT as f32) as usize)
+            .min(INPUT_HEIGHT as usize - 1);
+        let probability =
+            self.probabilities[y * INPUT_WIDTH as usize + x][part_index(PersonPart::EntirePerson)];
+        f32::from(probability) / 255.0
+    }
+
+    /// How likely each plane pixel is theirs, 0 to 255, by row.
+    pub(super) fn coverage(&self) -> Vec<u8> {
+        self.probabilities
+            .iter()
+            .map(|pixel| pixel[part_index(PersonPart::EntirePerson)])
+            .collect()
+    }
+
     /// The photo's mask of `parts`, its edges refined against the photo.
     pub(super) fn mask(
         &self,
@@ -204,15 +291,15 @@ pub(super) fn segment(
     })?;
     let (width, height) = (f64::from(photo_width), f64::from(photo_height));
     let fraction = |pixels: u32, limit: f64| (f64::from(pixels) / limit) as f32;
-    Ok(PersonParts {
-        crop: [
+    Ok(PersonParts::new(
+        [
             fraction(crop.x, width),
             fraction(crop.y, height),
             fraction(crop.x + crop.width, width),
             fraction(crop.y + crop.height, height),
         ],
         probabilities,
-    })
+    ))
 }
 
 /// Per pixel, the softmax of the class logits summed into parts; zero where

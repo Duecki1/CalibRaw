@@ -2,10 +2,9 @@ use super::adjustments::{
     apply_local_adjustment_response, LocalAdjustmentTabs, LocalAdjustmentTarget,
 };
 use super::*;
-use crate::app::{apply_mask_property_actions, MaskPropertiesControls, PeopleChoices};
-
-/// Height of a person's chip in the properties panel, in points.
-const PERSON_CHIP_HEIGHT: f32 = 48.0;
+use crate::app::{
+    apply_mask_property_actions, MaskPropertiesControls, PeopleChoices, PersonThumbnail,
+};
 
 fn mask_creation_menu_button<R>(
     ui: &mut Ui,
@@ -262,25 +261,32 @@ impl Sidebar {
         let Some(choice) = app.shown_person_choice(mask_index, component_index) else {
             return PeopleChoices::default();
         };
-        let (people, selected) = match (app.ai.people.as_ref(), app.ai.people_chips.as_ref()) {
-            (Some(analysis), Some(chips)) => (
-                analysis
-                    .people()
-                    .iter()
-                    .zip(chips)
-                    .map(|(person, chip)| {
-                        let size = chip.size_vec2();
-                        let scale = PERSON_CHIP_HEIGHT / size.y.max(1.0);
-                        (chip.id(), size * scale, person.anchor)
-                    })
-                    .collect(),
-                choice.anchor.and_then(|anchor| analysis.person_at(anchor)),
-            ),
-            _ => (Vec::new(), None),
+        let Some(analysis) = app.ai.people.as_ref() else {
+            return PeopleChoices {
+                parts: choice.parts,
+                ..PeopleChoices::default()
+            };
         };
+        let people = app
+            .ai
+            .people_chips
+            .iter()
+            .flatten()
+            .zip(analysis.people())
+            .enumerate()
+            .map(|(index, (chip, person))| PersonThumbnail {
+                texture: chip.id(),
+                anchor: person.anchor,
+                segmented: analysis.is_segmented(index),
+            })
+            .collect();
         PeopleChoices {
+            analysed: true,
             people,
-            selected,
+            selected: choice.anchor.and_then(|anchor| analysis.person_at(anchor)),
+            shown: analysis
+                .resolve(choice.anchor)
+                .and_then(|person| analysis.parts_shown(person)),
             parts: choice.parts,
         }
     }
@@ -332,6 +338,7 @@ impl Sidebar {
             request_people: false,
             people_edit: None,
             separate_person_parts: false,
+            hovered_person: None,
         };
         let selected_is_person = app.masks.stack.masks[mask_index]
             .components
@@ -539,6 +546,7 @@ impl Sidebar {
         if controls.request_object {
             app.request_object_mask(mask_index, component_index);
         }
+        app.ai.people_hovered = controls.hovered_person;
         if controls.separate_person_parts {
             app.separate_person_parts(mask_index, component_index, frame);
         } else if let Some(edit) = controls.people_edit {

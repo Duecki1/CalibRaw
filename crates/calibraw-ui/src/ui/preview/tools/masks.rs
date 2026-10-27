@@ -77,6 +77,27 @@ impl Preview {
             return vec![MaskToolAction::Deactivate];
         }
         let mut actions = vec![MaskToolAction::Activate(kind)];
+        if kind == MaskKind::Person {
+            // A click or tap picks the person under it; nothing is dragged.
+            if !ui.input(|input| input.pointer.primary_down()) {
+                actions.push(MaskToolAction::EndGesture {
+                    request_object: None,
+                });
+            }
+            let projection = layout.projection(input.geometry, input.lens_geometry);
+            if let Some(point) = response
+                .interact_pointer_pos()
+                .filter(|position| response.clicked() && layout.visible_rect.contains(*position))
+                .and_then(|position| editable_source_uv(projection.to_source(position)))
+            {
+                actions.push(MaskToolAction::PickPerson {
+                    mask_index,
+                    component_index,
+                    point,
+                });
+            }
+            return actions;
+        }
         let subject_refining = input.subject_refinement_active
             && matches!(kind, MaskKind::Subject | MaskKind::Background);
         let geometry_can_leave_image =

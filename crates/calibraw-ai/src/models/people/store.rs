@@ -253,10 +253,7 @@ impl PeopleAnalysis {
                     &parts_entry(person),
                     bytemuck::cast_slice_mut(&mut probabilities),
                 )?;
-                Ok(Some(Arc::new(PersonParts {
-                    crop,
-                    probabilities,
-                })))
+                Ok(Some(Arc::new(PersonParts::new(crop, probabilities))))
             })
             .collect::<Result<Vec<_>>>()?;
 

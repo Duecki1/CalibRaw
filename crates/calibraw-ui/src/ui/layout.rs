@@ -56,6 +56,30 @@ pub(crate) fn develop_sidebar_user_width(
     moduwu_design::persisted_panel_width(ctx, panel_id, default_width, min_width, max_width)
 }
 
+/// Lays out a docked panel's contents so the panel keeps its size.
+///
+/// An `egui::Panel` on the right or bottom edge whose contents overflow its
+/// size keeps the far edge of the contents and moves its inner edge in by the
+/// overflow, so the next panel or the photo is drawn over it. The contents
+/// run in a child bounded by the panel instead: an overflow is clipped at the
+/// panel edge and the panel reports exactly its own rect. The child shares
+/// the panel's id, so persisted widget state keeps its keys.
+pub(crate) fn docked_panel_contents<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let rect = ui.max_rect();
+    let mut contents = ui.new_child(
+        egui::UiBuilder::new()
+            .id(ui.id())
+            .max_rect(rect)
+            .layout(*ui.layout()),
+    );
+    let inner = add_contents(&mut contents);
+    ui.expand_to_include_rect(rect);
+    inner
+}
+
 pub(crate) fn develop_sidebar_max_width(viewport: Vec2) -> f32 {
     (viewport.x * 0.48).clamp(
         ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,

@@ -26,16 +26,31 @@ pub(crate) struct MaskPropertiesControls {
     pub(crate) request_people: bool,
     pub(crate) people_edit: Option<PeopleEdit>,
     pub(crate) separate_person_parts: bool,
+    /// The person whose chip the pointer is over.
+    pub(crate) hovered_person: Option<usize>,
 }
 
 /// A people mask's person and parts, for its properties.
 #[derive(Default)]
 pub(crate) struct PeopleChoices {
-    /// Each person's thumbnail, its size and their anchor, left to right.
-    pub(crate) people: Vec<(egui::TextureId, egui::Vec2, [f32; 2])>,
+    /// Whether the people in the photo are known; until then the panel
+    /// offers to find them.
+    pub(crate) analysed: bool,
+    /// Each person's thumbnail, left to right.
+    pub(crate) people: Vec<PersonThumbnail>,
     /// The person the mask selects.
     pub(crate) selected: Option<usize>,
     pub(crate) parts: BTreeSet<PersonPart>,
+    /// The parts the mask's person shows, once known.
+    pub(crate) shown: Option<BTreeSet<PersonPart>>,
+}
+
+/// One person's chip in a people mask's properties.
+pub(crate) struct PersonThumbnail {
+    pub(crate) texture: egui::TextureId,
+    pub(crate) anchor: [f32; 2],
+    /// Their body parts are known, so choosing them runs no model.
+    pub(crate) segmented: bool,
 }
 
 /// A change to a people mask's person or parts, which
@@ -44,7 +59,8 @@ pub(crate) struct PeopleChoices {
 pub(crate) enum PeopleEdit {
     /// The person, by their anchor.
     SelectPerson([f32; 2]),
-    /// Adds or removes a part; the last part stays.
+    /// Adds or removes a part; the last part stays. The entire person
+    /// replaces the other parts, which replace it in turn.
     TogglePart(PersonPart),
 }
 
@@ -78,10 +94,12 @@ pub(crate) enum MaskPropertyAction {
     SetDepthRange(DepthRangeSettings),
     /// The person a people mask selects, by their anchor.
     SelectPerson([f32; 2]),
-    /// Adds or removes a part of a people mask; its last part stays.
+    /// Adds or removes a part of a people mask, as `PeopleEdit::TogglePart`.
     TogglePersonPart(PersonPart),
     SeparatePersonParts,
     RequestPeople,
+    /// The pointer is over a person's chip.
+    HoverPerson(usize),
     SetBrushMode(BrushMode),
     SetRefinementActive(bool),
     SetRefinementSize(f32),
@@ -156,6 +174,10 @@ fn apply_mask_property_action(
         }
         MaskPropertyAction::RequestPeople => {
             controls.request_people = true;
+            false
+        }
+        MaskPropertyAction::HoverPerson(person) => {
+            controls.hovered_person = Some(person);
             false
         }
         // The person and parts change with the mask they need.

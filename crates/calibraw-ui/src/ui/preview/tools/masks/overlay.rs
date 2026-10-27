@@ -232,6 +232,16 @@ impl Preview {
                 _ => {}
             }
         }
+        if let Some(component_index) = selected_component.filter(|&index| {
+            app.masks
+                .stack
+                .masks
+                .get(mask_index)
+                .and_then(|mask| mask.components.get(index))
+                .is_some_and(|component| component.kind == MaskKind::Person && component.enabled)
+        }) {
+            Self::paint_person_highlight(ui, app, layout, projection, component_index);
+        }
 
         let refining_subject = app.masks.subject_refinement_active
             && app
@@ -320,6 +330,44 @@ impl Preview {
                 }
             }
         }
+    }
+
+    /// Highlights the person whose chip the mask panel has the pointer over,
+    /// else the one under the pointer, which a click picks.
+    fn paint_person_highlight(
+        ui: &Ui,
+        app: &mut CalibRawApp,
+        layout: PreviewLayout,
+        projection: SourceProjection<'_>,
+        component_index: usize,
+    ) {
+        let from_chip = app.ai.people_hovered.take();
+        let Some(analysis) = app.ai.people.as_ref() else {
+            return;
+        };
+        let under_pointer = ui
+            .ctx()
+            .pointer_hover_pos()
+            .filter(|position| layout.visible_rect.contains(*position))
+            .and_then(|position| editable_source_uv(projection.to_source(position)))
+            .and_then(|point| analysis.person_under(point));
+        if under_pointer.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let Some(person) = from_chip.or(under_pointer) else {
+            return;
+        };
+        let color = mask_component_color(component_index);
+        let Some(highlight) = app.person_highlight(ui.ctx(), person, color) else {
+            return;
+        };
+        paint_final_geometry_overlay_texture(
+            ui,
+            highlight.texture.id(),
+            projection,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            highlight.region,
+        );
     }
 
     pub(in crate::ui::preview) fn paint_coverage_texture(

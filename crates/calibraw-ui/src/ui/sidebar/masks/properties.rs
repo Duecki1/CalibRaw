@@ -1,8 +1,11 @@
 use super::*;
-use crate::app::{MaskPropertiesControls, MaskPropertyAction, PeopleChoices};
+use crate::app::{MaskPropertiesControls, MaskPropertyAction, PeopleChoices, PersonThumbnail};
 use crate::pipeline::PersonPart;
 use crate::pipeline::DEFAULT_COLOR_TOLERANCE;
 use crate::ui::components::luminance_range_slider::{luminance_range_slider, LuminanceRange};
+
+/// Edge of a person's chip in the properties panel, in points.
+const PERSON_CHIP_SIZE: f32 = 44.0;
 
 impl Sidebar {
     pub(super) fn apply_mask_properties_action(
@@ -541,6 +544,11 @@ impl Sidebar {
                 edits.push(MaskPropertyAction::ToggleInvert);
             }
             if component_index > 0 {
+                // A combo box lays out in a child `Ui` that never wraps, so
+                // start a new row when it would not fit.
+                if ui.available_size_before_wrap().x < ui.spacing().combo_width {
+                    ui.end_row();
+                }
                 let mut combine = component.combine;
                 egui::ComboBox::from_id_salt("vertical-mask-combine")
                     .selected_text(combine.label())
@@ -841,7 +849,9 @@ impl Sidebar {
         }
     }
 
-    /// A chip per person found, the parts to select and the shape sliders.
+    /// A chip per person found when there is a choice, the parts to select
+    /// and the shape sliders. Until the people are known, a button finds
+    /// them.
     fn person_properties(
         ui: &mut Ui,
         people: &PeopleChoices,
@@ -849,7 +859,7 @@ impl Sidebar {
         feather: f32,
         edits: &mut PropertyEdits,
     ) {
-        if people.people.is_empty() {
+        if !people.analysed {
             let clicked = ui
                 .with_layout(
                     egui::Layout::top_down_justified(egui::Align::Center),
@@ -859,20 +869,39 @@ impl Sidebar {
             if clicked {
                 edits.push(MaskPropertyAction::RequestPeople);
             }
-        } else {
+            ui.add_space(moduwu_design::SPACE_XS);
+        } else if people.people.len() > 1 {
             ui.horizontal_wrapped(|ui| {
-                for (index, &(texture, size, anchor)) in people.people.iter().enumerate() {
+                for (index, person) in people.people.iter().enumerate() {
                     let selected = people.selected == Some(index);
-                    if person_chip(ui, texture, size, selected, index).clicked() && !selected {
-                        edits.push(MaskPropertyAction::SelectPerson(anchor));
+                    let response = person_chip(ui, person, selected, index);
+                    if response.hovered() {
+                        edits.push(MaskPropertyAction::HoverPerson(index));
+                    }
+                    if response.clicked() && !selected {
+                        edits.push(MaskPropertyAction::SelectPerson(person.anchor));
                     }
                 }
             });
+            ui.add_space(moduwu_design::SPACE_XS);
         }
-        ui.add_space(moduwu_design::SPACE_XS);
         ui.horizontal_wrapped(|ui| {
             for part in PersonPart::ALL {
-                if moduwu_design::chip(ui, part.label(), people.parts.contains(&part)).clicked() {
+                let selected = people.parts.contains(&part);
+                // A selected part stays enabled so it can be removed.
+                let shown = selected
+                    || people
+                        .shown
+                        .as_ref()
+                        .is_none_or(|shown| shown.contains(&part));
+                // `add_enabled` lays the chip out in the row itself; a child
+                // `Ui` would never wrap to the next row.
+                let clicked = ui
+                    .add_enabled(shown, |ui: &mut Ui| {
+                        moduwu_design::chip(ui, part.label(), selected)
+                    })
+                    .clicked();
+                if clicked {
                     edits.push(MaskPropertyAction::TogglePersonPart(part));
                 }
             }
@@ -1065,18 +1094,27 @@ impl PropertyEdits {
     }
 }
 
-/// A person's thumbnail as a selectable chip, announced as "Person n".
+/// A person's head as a selectable chip, announced as "Person n". Someone
+/// not segmented yet is dimmed: choosing them runs the body-part model.
 fn person_chip(
     ui: &mut Ui,
-    texture: egui::TextureId,
-    size: egui::Vec2,
+    person: &PersonThumbnail,
     selected: bool,
     index: usize,
 ) -> egui::Response {
+    let tint = if person.segmented {
+        egui::Color32::WHITE
+    } else {
+        egui::Color32::WHITE.gamma_multiply(0.45)
+    };
     let response = ui.add(
-        egui::Button::image(egui::Image::new((texture, size)).corner_radius(4.0))
-            .selected(selected)
-            .corner_radius(6.0),
+        egui::Button::image(
+            egui::Image::new((person.texture, egui::Vec2::splat(PERSON_CHIP_SIZE)))
+                .corner_radius(4.0)
+                .tint(tint),
+        )
+        .selected(selected)
+        .corner_radius(6.0),
     );
     response.widget_info(|| {
         egui::WidgetInfo::selected(
