@@ -39,6 +39,7 @@ edition = "2021"
 rust-version = "1.92.0"
 authors = ["Duecki <dueckis@dueckis.de>"]
 license = "GPL-3.0-or-later"
+homepage = "https://calibraw.dueckis.de"
 repository = "https://github.com/Duecki1/CalibRaw"
 readme = "README.md"
 

@@ -12,7 +12,7 @@
 
 [**Download**](#download) • [**Why CalibRaw**](#why-calibraw) • [**Features**](#key-features) • [**FAQ**](#faq) • [**Supported Formats**](#supported-formats) • [**Building**](#building-from-source)
 
-[**Discord**](https://discord.gg/yrY3JDJKsr) • [**Instagram**](https://www.instagram.com/calib.raw/)
+[**Website**](https://calibraw.dueckis.de) • [**Discord**](https://discord.gg/yrY3JDJKsr) • [**Instagram**](https://www.instagram.com/calib.raw/)
 
 </div>
 
