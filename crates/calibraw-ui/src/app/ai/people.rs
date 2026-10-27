@@ -796,7 +796,10 @@ impl CalibRawApp {
             }
         }
         if found_no_one && self.ai.update.is_none() {
-            self.ui.notice = Some("No people were found in this photo.".to_owned());
+            self.report_error(
+                ErrorKind::NoPeopleFound,
+                "No people were found in this photo.".to_owned(),
+            );
         }
         if !changed_layers.is_empty() {
             for mask_index in changed_layers {
