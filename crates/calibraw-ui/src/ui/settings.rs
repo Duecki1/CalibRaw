@@ -726,6 +726,63 @@ impl Settings {
             "Build export file names from the original name, dates, and capture metadata. The selected image format adds its extension automatically.",
         );
         export_name_template_controls(ui, app, "settings-export-name-template");
+        let mut behavior = app.preferences.export_conflict_behavior;
+        let label = match behavior {
+            crate::performance_settings::ExportConflictBehavior::AddNumber => "Add a number",
+            crate::performance_settings::ExportConflictBehavior::Overwrite => "Overwrite",
+        };
+        moduwu_design::form_combo_with_help(
+            ui,
+            "If the file exists",
+            "settings-export-file-exists",
+            label,
+            220.0,
+            "Add a number to keep existing files, or replace a matching export file.",
+            |ui| {
+                ui.selectable_value(
+                    &mut behavior,
+                    crate::performance_settings::ExportConflictBehavior::AddNumber,
+                    "Add a number",
+                );
+                ui.selectable_value(
+                    &mut behavior,
+                    crate::performance_settings::ExportConflictBehavior::Overwrite,
+                    "Overwrite",
+                );
+            },
+        );
+        if behavior != app.preferences.export_conflict_behavior {
+            app.preferences.export_conflict_behavior = behavior;
+            app.persist_performance_settings();
+        }
+        moduwu_design::section_separator(ui);
+        ui.label("Export folder");
+        ui.horizontal(|ui| {
+            let folder = app
+                .preferences
+                .last_export_directory
+                .as_deref()
+                .filter(|path| path.is_dir());
+            let folder_configured = folder.is_some();
+            let folder_label = folder.map_or("Choose a folder".to_owned(), |path| {
+                path.display().to_string()
+            });
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(folder_label)
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                )
+                .truncate(),
+            );
+            if moduwu_design::secondary_button(ui, "Choose…").clicked() {
+                app.choose_export_folder();
+            }
+            if folder_configured && moduwu_design::secondary_button(ui, "Clear").clicked() {
+                app.preferences.last_export_directory = None;
+                app.persist_performance_settings();
+            }
+        });
     }
 
     fn show_raw_color_profiles_card(ui: &mut Ui, app: &mut CalibRawApp) {

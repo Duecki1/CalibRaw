@@ -42,6 +42,10 @@ pub(crate) struct PerformanceSettings {
     /// The Develop cards of the sidebar layout, in the order shown.
     pub develop_card_order: crate::app::DevelopCardOrder,
     pub export_name_template: String,
+    /// Last folder chosen for a desktop image export.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_export_directory: Option<PathBuf>,
+    pub export_conflict_behavior: ExportConflictBehavior,
     #[serde(with = "export_format_serde")]
     pub export_format: ExportFormat,
     pub ui_design: crate::appearance::UiDesign,
@@ -102,6 +106,14 @@ pub(crate) struct PerformanceSettings {
     pub develop_filmstrip_open: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ExportConflictBehavior {
+    #[default]
+    AddNumber,
+    Overwrite,
+}
+
 mod export_format_serde {
     use super::ExportFormat;
     use serde::{Deserialize, Deserializer, Serializer};
@@ -154,6 +166,8 @@ impl Default for PerformanceSettings {
             show_develop_navigation_labels: true,
             develop_card_order: crate::app::DevelopCardOrder::default(),
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
+            last_export_directory: None,
+            export_conflict_behavior: ExportConflictBehavior::default(),
             export_format: ExportFormat::Jpeg,
             ui_design: crate::appearance::UiDesign::default(),
             preview_backdrop: crate::appearance::PreviewBackdrop::default(),

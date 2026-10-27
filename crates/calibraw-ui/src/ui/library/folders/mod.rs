@@ -387,9 +387,18 @@ pub(in crate::ui::library) fn start_local_library_export(
         &desktop_paths(assets),
         format,
         &app.preferences.export_name_template,
+        app.preferences.last_export_directory.as_deref(),
+        app.preferences.export_conflict_behavior,
     ) else {
         return false;
     };
+    match jobs.first().map(|(_, destination)| destination) {
+        Some(crate::app::LibraryExportDestination::Chosen(path)) => app.remember_export_path(path),
+        Some(crate::app::LibraryExportDestination::InFolder { folder, .. }) => {
+            app.remember_export_directory(folder)
+        }
+        None => {}
+    }
     app.start_library_exports(jobs, settings, format, export_override, frame);
     true
 }

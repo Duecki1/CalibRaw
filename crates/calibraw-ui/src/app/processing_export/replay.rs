@@ -28,18 +28,31 @@ impl CalibRawApp {
         // and then published to the shared media store.
         let publishes = self.caps().has_media_library();
         let destination = if !publishes {
-            let initial_directory = self
+            let source_directory = self
                 .develop
                 .current_path
                 .as_deref()
                 .and_then(|path| path.parent());
-            let default_name =
-                crate::export_naming::free_export_file_name(initial_directory, &stem, "mp4");
+            let initial_directory = self
+                .preferences
+                .last_export_directory
+                .as_deref()
+                .filter(|directory| directory.is_dir())
+                .or(source_directory);
+            let default_name = match self.preferences.export_conflict_behavior {
+                crate::performance_settings::ExportConflictBehavior::AddNumber => {
+                    crate::export_naming::free_export_file_name(initial_directory, &stem, "mp4")
+                }
+                crate::performance_settings::ExportConflictBehavior::Overwrite => {
+                    format!("{stem}.mp4")
+                }
+            };
             let Some(destination) =
                 crate::ui::choose_edit_replay_file_path(&default_name, initial_directory)
             else {
                 return;
             };
+            self.remember_export_path(&destination);
             destination
         } else {
             let default_name = format!("{stem}.mp4");

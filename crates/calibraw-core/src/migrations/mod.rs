@@ -16,6 +16,8 @@
 //!   asset table on the next save (`sidecar/mask_assets.rs`).
 //! - Presets that carry global effects in the masks category
 //!   (`presets.rs`).
+//! - Grain sizes written by the early RapidRAW preset importer
+//!   (`rapidraw_grain_size`, `presets.rs`).
 //! - White balance stored as offsets (`WhiteBalance::LegacyOffset` and
 //!   `older_reader_offsets`, `pipeline/basicadj.rs`), converted when the
 //!   photo is opened (`LoadedRaw::resolve_white_balance`,
@@ -52,6 +54,7 @@ mod effect_sliders;
 pub(crate) mod older_readers;
 pub mod onnx_runtime_selection;
 pub(crate) mod point_curve_slots;
+pub(crate) mod rapidraw_grain_size;
 pub(crate) mod white_balance_offsets;
 
 pub(crate) use effect_sliders::LegacyEffectSliders;

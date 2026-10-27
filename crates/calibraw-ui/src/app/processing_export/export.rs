@@ -174,8 +174,28 @@ impl CalibRawApp {
         ))
     }
 
-    /// Exports the open photo: to a file chosen in a save dialog, or into the
-    /// platform's shared media store.
+    pub(crate) fn refresh_export_filename(&mut self) -> Option<String> {
+        let suggested = self.templated_export_stem()?;
+        let source = self
+            .develop
+            .current_path
+            .as_deref()
+            .map(|path| path.to_string_lossy().into_owned())
+            .or_else(|| self.develop.current_label.clone())
+            .unwrap_or_default();
+        let key = format!(
+            "{source}\n{}\n{suggested}",
+            self.preferences.export_name_template
+        );
+        if self.export.filename_key.as_deref() != Some(&key) {
+            self.export.filename_stem.clone_from(&suggested);
+            self.export.filename_key = Some(key);
+        }
+        Some(self.export.filename_stem.clone())
+    }
+
+    /// Exports the open photo to the selected desktop folder or the platform's
+    /// shared media store.
     fn export_with_format(&mut self, frame: &eframe::Frame, format: ExportFormat) {
         if self.caps().has_folders() {
             self.export_desktop(frame, format);
@@ -189,24 +209,44 @@ impl CalibRawApp {
             return;
         }
 
-        let Some(stem) = self.templated_export_stem() else {
+        let Some(stem) = self.refresh_export_filename() else {
             return;
         };
-        let initial_directory = self
+        let stem = sanitize_export_filename_stem(&stem);
+        let source_directory = self
             .develop
             .current_path
             .as_deref()
-            .and_then(|path| path.parent());
-        let default_name = crate::export_naming::free_export_file_name(
-            initial_directory,
-            &stem,
-            format.extension(),
-        );
-        let Some(path) =
-            crate::ui::choose_export_file_path(format, &default_name, initial_directory)
-        else {
+            .and_then(|path| path.parent())
+            .map(std::path::Path::to_path_buf);
+        let initial_directory = self
+            .preferences
+            .last_export_directory
+            .as_ref()
+            .filter(|directory| directory.is_dir())
+            .cloned()
+            .or(source_directory);
+        let default_name = match self.preferences.export_conflict_behavior {
+            crate::performance_settings::ExportConflictBehavior::AddNumber => {
+                crate::export_naming::free_export_file_name(
+                    initial_directory.as_deref(),
+                    &stem,
+                    format.extension(),
+                )
+            }
+            crate::performance_settings::ExportConflictBehavior::Overwrite => {
+                format!("{stem}.{}", format.extension())
+            }
+        };
+        let Some(directory) = initial_directory else {
+            self.report_error(
+                ErrorKind::Export,
+                "Choose an export folder in Settings or the Export tab first.",
+            );
             return;
         };
+        let path = directory.join(default_name);
+        self.remember_export_directory(&directory);
         self.start_export(path, frame, format);
     }
 
@@ -800,5 +840,24 @@ impl CalibRawApp {
         self.develop_ui.point_color = Default::default();
         self.develop_ui.cancel_white_balance_picker();
         self.mark_pipeline_dirty();
+    }
+}
+
+fn sanitize_export_filename_stem(stem: &str) -> String {
+    let sanitized = stem
+        .chars()
+        .filter(|character| {
+            !character.is_control()
+                && !matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+        })
+        .collect::<String>();
+    let sanitized = sanitized.trim().trim_end_matches('.').trim().to_owned();
+    if sanitized.is_empty() || sanitized == "." || sanitized == ".." {
+        "calibraw-export".to_owned()
+    } else {
+        sanitized
     }
 }

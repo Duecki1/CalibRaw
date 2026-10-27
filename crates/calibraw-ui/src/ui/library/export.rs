@@ -104,6 +104,8 @@ pub(super) fn library_export_jobs(
     paths: &[PathBuf],
     format: ExportFormat,
     name_template: &str,
+    remembered_directory: Option<&Path>,
+    conflict_behavior: crate::performance_settings::ExportConflictBehavior,
 ) -> Option<Vec<(PathBuf, LibraryExportDestination)>> {
     if paths.is_empty() {
         return None;
@@ -111,10 +113,23 @@ pub(super) fn library_export_jobs(
     if paths.len() == 1 {
         let source = &paths[0];
         let stem = library_export_stem(source, name_template);
-        let default_name =
-            crate::export_naming::free_export_file_name(source.parent(), &stem, format.extension());
+        let initial_directory = remembered_directory
+            .filter(|directory| directory.is_dir())
+            .or(source.parent());
+        let default_name = match conflict_behavior {
+            crate::performance_settings::ExportConflictBehavior::AddNumber => {
+                crate::export_naming::free_export_file_name(
+                    initial_directory,
+                    &stem,
+                    format.extension(),
+                )
+            }
+            crate::performance_settings::ExportConflictBehavior::Overwrite => {
+                format!("{stem}.{}", format.extension())
+            }
+        };
         let destination =
-            crate::ui::choose_export_file_path(format, &default_name, source.parent())?;
+            crate::ui::choose_export_file_path(format, &default_name, initial_directory)?;
         return Some(vec![(
             source.clone(),
             LibraryExportDestination::Chosen(destination),
@@ -122,9 +137,9 @@ pub(super) fn library_export_jobs(
     }
 
     let mut dialog = crate::platform::FileDialog::new();
-    if let Some(parent) = paths
-        .first()
-        .and_then(|path| path.parent())
+    if let Some(parent) = remembered_directory
+        .filter(|directory| directory.is_dir())
+        .or_else(|| paths.first().and_then(|path| path.parent()))
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         dialog = dialog.set_directory(parent);
@@ -133,13 +148,28 @@ pub(super) fn library_export_jobs(
     // Names are numbered when each finished file is moved into place, so
     // photos sharing a stem and files that appear meanwhile both get the
     // next free name.
+    let mut used_stems = std::collections::HashSet::<String>::new();
     Some(
         paths
             .iter()
             .map(|source| {
+                let base_stem = library_export_stem(source, name_template);
+                let mut stem = base_stem.clone();
+                if conflict_behavior
+                    == crate::performance_settings::ExportConflictBehavior::Overwrite
+                {
+                    let mut suffix = 2;
+                    while used_stems.contains(&stem) {
+                        stem = format!("{base_stem}-{suffix}");
+                        suffix += 1;
+                    }
+                }
+                used_stems.insert(stem.clone());
                 let destination = LibraryExportDestination::InFolder {
                     folder: folder.clone(),
-                    stem: library_export_stem(source, name_template),
+                    stem,
+                    overwrite: conflict_behavior
+                        == crate::performance_settings::ExportConflictBehavior::Overwrite,
                 };
                 (source.clone(), destination)
             })

@@ -1,6 +1,24 @@
 use super::*;
 
 impl CalibRawApp {
+    pub(crate) fn remember_export_path(&mut self, path: &std::path::Path) {
+        let Some(directory) = path.parent() else {
+            return;
+        };
+        self.remember_export_directory(directory);
+    }
+
+    pub(crate) fn remember_export_directory(&mut self, directory: &std::path::Path) {
+        if !directory.is_dir() {
+            return;
+        }
+        if self.preferences.last_export_directory.as_deref() == Some(directory) {
+            return;
+        }
+        self.preferences.last_export_directory = Some(directory.to_path_buf());
+        self.persist_performance_settings();
+    }
+
     pub(crate) fn set_ui_design(&mut self, design: crate::appearance::UiDesign) {
         if self.preferences.ui_design == design {
             return;
@@ -334,6 +352,8 @@ impl CalibRawApp {
             show_develop_navigation_labels: self.preferences.show_develop_navigation_labels,
             develop_card_order: self.preferences.develop_card_order.clone(),
             export_name_template: self.preferences.export_name_template.clone(),
+            last_export_directory: self.preferences.last_export_directory.clone(),
+            export_conflict_behavior: self.preferences.export_conflict_behavior,
             export_format: self.export.format,
             ui_design: self.preferences.ui_design,
             preview_backdrop: self.preferences.preview_backdrop,
