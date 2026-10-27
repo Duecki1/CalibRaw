@@ -849,9 +849,9 @@ impl Sidebar {
         }
     }
 
-    /// A chip per person found when there is a choice, the parts to select
-    /// and the shape sliders. Until the people are known, a button finds
-    /// them.
+    /// A chip per person found when there is a choice, a switch per part to
+    /// select and the shape sliders. Until the people are known, a button
+    /// finds them.
     fn person_properties(
         ui: &mut Ui,
         people: &PeopleChoices,
@@ -885,27 +885,23 @@ impl Sidebar {
             });
             ui.add_space(moduwu_design::SPACE_XS);
         }
-        ui.horizontal_wrapped(|ui| {
-            for part in PersonPart::ALL {
-                let selected = people.parts.contains(&part);
-                // A selected part stays enabled so it can be removed.
-                let shown = selected
-                    || people
-                        .shown
-                        .as_ref()
-                        .is_none_or(|shown| shown.contains(&part));
-                // `add_enabled` lays the chip out in the row itself; a child
-                // `Ui` would never wrap to the next row.
-                let clicked = ui
-                    .add_enabled(shown, |ui: &mut Ui| {
-                        moduwu_design::chip(ui, part.label(), selected)
-                    })
-                    .clicked();
-                if clicked {
-                    edits.push(MaskPropertyAction::TogglePersonPart(part));
-                }
+        for part in PersonPart::ALL {
+            let mut selected = people.parts.contains(&part);
+            // A selected part stays enabled so it can be removed.
+            let shown = selected
+                || people
+                    .shown
+                    .as_ref()
+                    .is_none_or(|shown| shown.contains(&part));
+            let changed = ui
+                .add_enabled(shown, |ui: &mut Ui| {
+                    moduwu_design::toggle_row(ui, &mut selected, part.label())
+                })
+                .changed();
+            if changed {
+                edits.push(MaskPropertyAction::TogglePersonPart(part));
             }
-        });
+        }
         if people.parts.len() > 1
             && moduwu_design::secondary_button(ui, "Separate masks")
                 .on_hover_text("Move each part to a mask group of its own")
