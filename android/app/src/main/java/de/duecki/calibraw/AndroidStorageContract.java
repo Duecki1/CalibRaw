@@ -134,6 +134,11 @@ final class AndroidStorageContract {
         return companionDisplayName(rawDisplayName, ".calibraw-denoise");
     }
 
+    /** The people analysis kept next to a RAW while its edit has a people mask. */
+    static String peopleAnalysisDisplayName(String rawDisplayName) {
+        return companionDisplayName(rawDisplayName, ".calibraw-people");
+    }
+
     private static String companionDisplayName(String rawDisplayName, String suffix) {
         String name = sanitizeRawName(rawDisplayName);
         if (!name.equals(rawDisplayName)
@@ -282,6 +287,13 @@ final class AndroidStorageContract {
         File result = new File(directory, aiDenoiseDisplayName(rawDisplayName));
         if (result.exists() && !result.delete()) {
             throw new IllegalStateException("Could not delete the AI-denoise result");
+        }
+    }
+
+    static void deletePeopleAnalysis(File directory, String rawDisplayName) {
+        File analysis = new File(directory, peopleAnalysisDisplayName(rawDisplayName));
+        if (analysis.exists() && !analysis.delete()) {
+            throw new IllegalStateException("Could not delete the people analysis");
         }
     }
 

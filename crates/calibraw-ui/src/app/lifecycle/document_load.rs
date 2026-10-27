@@ -87,6 +87,7 @@ pub(super) struct DocumentLoadJob {
     pub(super) luts: Option<crate::luts::LutStore>,
     pub(super) automatic_lens: AutomaticLensCorrection,
     pub(super) ai_denoise_result_path: Option<PathBuf>,
+    pub(super) people_analysis_path: Option<PathBuf>,
     pub(super) device: wgpu::Device,
     pub(super) queue: wgpu::Queue,
     pub(super) programs: PreviewProgramSources,
@@ -114,6 +115,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         luts,
         automatic_lens,
         ai_denoise_result_path,
+        people_analysis_path,
         device,
         queue,
         programs,
@@ -274,6 +276,8 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             && lens_correction.catalog.auto_match.is_none()
             && !original_raw.is_display_referred_raster();
         restore_ai_denoise_result(&full_raw, &exposure, ai_denoise_result_path.as_deref())?;
+        let people_analysis =
+            load_people_analysis(people_analysis_path.as_deref(), &masks, &full_raw, &remove);
         prepare_highlight_analysis(&full_raw, &exposure);
 
         let preview_raw = build_preview_proxy(
@@ -346,6 +350,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             remove,
             ai_masks_need_update,
             mask_source,
+            people_analysis,
             lens_correction,
             lens_profile_missing,
             sidecar_target,
@@ -878,6 +883,42 @@ fn restore_ai_denoise_result(
         }
     }
     Ok(())
+}
+
+/// The people analysis kept beside the photo, when its edit has a people
+/// mask and the analysis is of the content the photo has now. One that cannot
+/// be read is only a cache: the people are found again when a mask needs them.
+fn load_people_analysis(
+    path: Option<&Path>,
+    masks: &MaskStack,
+    raw: &LoadedRaw,
+    remove: &RemoveEditState,
+) -> Option<PeopleAnalysis> {
+    let path = path.filter(|path| path.is_file() && masks.has_people_masks())?;
+    let started = Instant::now();
+    let loaded = calibraw_ai::models::people::content_fingerprint(raw, remove)
+        .and_then(|content| PeopleAnalysis::load(path, content));
+    match loaded {
+        Ok(Some(analysis)) => {
+            calibraw_core::diagnostics::record(format!(
+                "People analysis restored in {:.3}s from {}",
+                started.elapsed().as_secs_f64(),
+                path.display()
+            ));
+            Some(analysis)
+        }
+        Ok(None) => {
+            calibraw_core::diagnostics::record(
+                "The saved people analysis is of other content; people are found again",
+            );
+            None
+        }
+        Err(error) => {
+            log::warn!("ignoring the people analysis {}: {error:#}", path.display());
+            calibraw_core::diagnostics::record(format!("People analysis rejected: {error:#}"));
+            None
+        }
+    }
 }
 
 fn build_preview_proxy(

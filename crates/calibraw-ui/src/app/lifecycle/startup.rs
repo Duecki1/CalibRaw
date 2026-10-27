@@ -214,6 +214,7 @@ impl CalibRawApp {
             },
             ai: AiState {
                 subject_mask_quality: performance.subject_mask_quality,
+                people_mask_quality: performance.people_mask_quality,
                 gpu_acceleration: performance.ai_gpu_acceleration,
                 update_needed: false,
                 update: None,
@@ -223,6 +224,7 @@ impl CalibRawApp {
                 consent: None,
                 object_pending_target: None,
                 object_cache: None,
+                people: PeopleState::default(),
                 denoise_resume_pending: false,
             },
             inpaint: InpaintState {

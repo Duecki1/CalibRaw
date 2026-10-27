@@ -13,7 +13,7 @@
   2 crates/calibraw-core/src/pipeline/rendered_loader.rs
   2 crates/calibraw-core/src/pipeline/tiff_loader.rs
   2 crates/calibraw-core/src/sidecar.rs
-  3 crates/calibraw-core/src/sidecar/files.rs
+  2 crates/calibraw-core/src/sidecar/files.rs
   2 crates/calibraw-core/src/thumbnail_cache.rs
   3 crates/calibraw-ffi/src/lib.rs
   2 crates/calibraw-gpu/src/pipeline/export/settings.rs

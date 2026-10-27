@@ -43,6 +43,7 @@ Editing, AI masks, AI Remove and AI Denoise all run on your device, and your pho
 
 OPEN SOURCE
 CalibRaw is free software under the GNU General Public License v3.0 or later, written in Rust with wgpu and egui.
+Website: https://calibraw.dueckis.de
 Source code: https://github.com/Duecki1/CalibRaw
 Bug reports and ideas: https://github.com/Duecki1/CalibRaw/issues
 Discord: https://discord.gg/yrY3JDJKsr

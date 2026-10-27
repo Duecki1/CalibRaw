@@ -124,7 +124,8 @@ pub(super) fn correct_mosaic(
     };
     if flags & LF_MODIFY_VIGNETTING != 0 {
         let vignette_started = std::time::Instant::now();
-        corrected.lens_shading = Some(build_lens_shading_map(raw, modifier)?);
+        corrected.lens_shading =
+            Some(build_lens_shading_map(raw, modifier)?.after(raw.lens_shading.as_ref()));
         crate::diagnostics::record(format!(
             "Lensfun vignette gain map prepared in {:.3}s",
             vignette_started.elapsed().as_secs_f64()
@@ -390,7 +391,7 @@ fn build_lens_shading_map(raw: &LoadedRaw, modifier: &Modifier) -> Result<LensSh
                 row_stride,
             )
         };
-        [gain.0[0], gain.0[1], gain.0[2]]
+        [gain.0[0], gain.0[1], gain.0[2], gain.0[1]]
     })
     .ok_or_else(|| anyhow!("Lensfun produced invalid vignetting gains"))
 }

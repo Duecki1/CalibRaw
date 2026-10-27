@@ -76,20 +76,25 @@ impl Sidebar {
                 }
 
                 ui.add_space(moduwu_design::SPACE_XXS);
+                // Grid cells do not wrap text, so the camera and lens names
+                // wrap explicitly instead of running past the sidebar.
                 egui::Grid::new("lens-correction-capture-metadata")
                     .num_columns(2)
                     .spacing(egui::vec2(10.0, 3.0))
                     .show(ui, |ui| {
                         ui.label("Camera");
-                        ui.label(if state.catalog.camera_label.is_empty() {
-                            "Not matched"
-                        } else {
-                            state.catalog.camera_label.as_str()
-                        });
+                        ui.add(
+                            egui::Label::new(if state.catalog.camera_label.is_empty() {
+                                "Not matched"
+                            } else {
+                                state.catalog.camera_label.as_str()
+                            })
+                            .wrap(),
+                        );
                         ui.end_row();
                         if let Some((lens, focal, aperture)) = &capture {
                             ui.label("RAW lens");
-                            ui.label(lens);
+                            ui.add(egui::Label::new(lens).wrap());
                             ui.end_row();
                             if let Some(focal) = focal {
                                 ui.label("Focal length");

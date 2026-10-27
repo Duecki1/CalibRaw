@@ -25,10 +25,34 @@ pub fn ai_denoise_result_path(
     .map_err(|error| format!("could not locate the Android AI-denoise result: {error:#}"))
 }
 
-/// Deletes the AI-denoise result once the saved edit no longer uses it. A
-/// failure only leaves a stale file behind, so it is logged.
-fn remove_unused_ai_denoise_result(app: &AndroidApp, raw_uri: &str, display_name: &str) {
-    let path = match ai_denoise_result_path(app, raw_uri, display_name) {
+/// Where the RAW's people analysis lives, next to its sidecar.
+pub fn people_analysis_path(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+) -> Result<PathBuf, String> {
+    with_storage_manager(app, |env, storage_manager| {
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
+        let object = env
+            .call_method(
+                storage_manager,
+                jni::jni_str!("peopleAnalysisPath"),
+                jni::jni_sig!((JString, JString) -> JString),
+                &[JValue::Object(&raw_uri), JValue::Object(&display_name)],
+            )?
+            .l()?;
+        let path = env.cast_local::<JString>(object)?;
+        Ok(PathBuf::from(path.to_string()))
+    })
+    .map_err(|error| format!("could not locate the Android people analysis: {error:#}"))
+}
+
+/// Deletes a file kept next to the RAW at `path` once the saved edit no
+/// longer uses it. A failure only leaves a stale file behind, so it is
+/// logged.
+fn remove_unused_companion(path: Result<PathBuf, String>) {
+    let path = match path {
         Ok(path) => path,
         Err(error) => {
             log::warn!("{error}");
@@ -235,6 +259,7 @@ pub fn save_android_with_review_and_editing_time(
     editing_time_ms: u64,
 ) -> Result<String, calibraw_core::sidecar::SidecarError> {
     let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
+    let uses_people = calibraw_core::sidecar::uses_people_analysis(&edits);
     let bytes = calibraw_core::sidecar::encode_with_review_and_editing_time(
         edits,
         review,
@@ -253,7 +278,10 @@ pub fn save_android_with_review_and_editing_time(
         );
     }
     if result.is_ok() && !uses_ai_denoise {
-        remove_unused_ai_denoise_result(app, raw_uri, display_name);
+        remove_unused_companion(ai_denoise_result_path(app, raw_uri, display_name));
+    }
+    if result.is_ok() && !uses_people {
+        remove_unused_companion(people_analysis_path(app, raw_uri, display_name));
     }
     result
 }

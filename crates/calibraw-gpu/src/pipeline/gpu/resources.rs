@@ -1503,17 +1503,17 @@ pub(super) fn upload_lens_shading_texture(
     raw: &LoadedRaw,
 ) {
     let edge = LensShadingMap::EDGE;
-    let texels: Vec<[f32; 4]> = match &raw.lens_shading {
-        Some(map) => map
-            .gains()
-            .iter()
-            .map(|&[red, green, blue]| [red, green, blue, 1.0])
-            .collect(),
-        None => vec![[1.0; 4]; (edge * edge) as usize],
+    let unshaded;
+    let texels: &[[f32; 4]] = match &raw.lens_shading {
+        Some(map) => map.gains(),
+        None => {
+            unshaded = vec![[1.0; 4]; (edge * edge) as usize];
+            &unshaded
+        }
     };
     queue.write_texture(
         copy_texture(texture),
-        bytemuck::cast_slice(&texels),
+        bytemuck::cast_slice(texels),
         wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(edge * 16),

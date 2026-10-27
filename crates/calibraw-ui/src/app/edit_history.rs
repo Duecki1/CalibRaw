@@ -703,6 +703,8 @@ impl CalibRawApp {
         if restored_source.is_some() || !needs_canonical_mask_source(&self.masks.stack) {
             self.masks.source_cache = restored_source;
         }
+        // People masks being made were for the components before the restore.
+        self.ai.people.composes.clear();
         if self.ai.update_needed {
             self.masks.clear_generated_caches();
         } else {

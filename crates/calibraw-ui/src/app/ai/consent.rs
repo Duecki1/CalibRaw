@@ -14,6 +14,9 @@ struct AiJobDescription {
     details_id: &'static str,
     artifact: (&'static str, String),
     details: String,
+    /// A license with terms beyond attribution, which the dialog names
+    /// outside the collapsed details: its name and where it is published.
+    terms: Option<(&'static str, &'static str)>,
     /// Wording for re-running the model behind an edit that is already on.
     restore: Option<AiRestorePrompt>,
 }
@@ -49,6 +52,7 @@ impl CalibRawApp {
                         checkpoint.input.edge(),
                         checkpoint.input.edge()
                     ),
+                    terms: None,
                     restore: None,
                 }
             }
@@ -61,6 +65,7 @@ impl CalibRawApp {
                 details: "SkySeg U2Net runs locally on a 320 × 320 image and produces a sky \
                           probability mask. License: MIT."
                     .to_owned(),
+                terms: None,
                 restore: None,
             },
             AiFeature::SceneDepth => {
@@ -84,6 +89,7 @@ impl CalibRawApp {
                         name = depth_model.name,
                         edge = depth_model.input.edge(),
                     ),
+                    terms: None,
                     restore: None,
                 }
             }
@@ -96,8 +102,71 @@ impl CalibRawApp {
                 details: "SAM 2.1 Hiera Tiny uses an encoder and decoder with local \
                           edge-aware cleanup. License: Apache-2.0."
                     .to_owned(),
+                terms: None,
                 restore: None,
             },
+            AiFeature::People => {
+                use calibraw_ai::models::people::{
+                    foreground_model, PeopleModels, BODY_PARTS_LICENSE, BODY_PARTS_MODEL,
+                    DETECTOR_MODEL,
+                };
+                let detector = format!(
+                    "{} finds the people in the photo (License: Apache-2.0).",
+                    DETECTOR_MODEL.name
+                );
+                let (models, bytes, details, terms) = match self.people_models() {
+                    PeopleModels::Outline { foreground, .. } => {
+                        let foreground = foreground_model(foreground.precision);
+                        (
+                            "RF-DETR-Seg and BiRefNet",
+                            DETECTOR_MODEL.download_bytes + foreground.download_bytes,
+                            format!(
+                                "{detector} {} then outlines each person you choose, on a \
+                                 crop around them (License: MIT).",
+                                foreground.name
+                            ),
+                            None,
+                        )
+                    }
+                    PeopleModels::BodyParts { foreground, .. } => {
+                        let foreground = foreground.map(|model| foreground_model(model.precision));
+                        let (models, foreground_details) = match foreground {
+                            Some(model) => (
+                                "RF-DETR-Seg, Sapiens2 and BiRefNet",
+                                format!(
+                                    " For high quality, {} first outlines each person more \
+                                     finely (License: MIT).",
+                                    model.name
+                                ),
+                            ),
+                            None => ("RF-DETR-Seg and Sapiens2", String::new()),
+                        };
+                        (
+                            models,
+                            DETECTOR_MODEL.download_bytes
+                                + BODY_PARTS_MODEL.download_bytes
+                                + foreground.map_or(0, |model| model.download_bytes),
+                            format!(
+                                "{detector} {} then segments the body parts of each person \
+                                 you choose, on a crop around them (License: Sapiens2 \
+                                 License).{foreground_details}",
+                                BODY_PARTS_MODEL.name
+                            ),
+                            Some(("Sapiens2 License", BODY_PARTS_LICENSE)),
+                        )
+                    }
+                };
+                AiJobDescription {
+                    label: "people selection",
+                    model: format!("{models} (~{:.0} MB)", megabytes(bytes)),
+                    purpose: "create people masks",
+                    details_id: "people-download-details",
+                    artifact: ("People model artifacts", ARTIFACTS_URL.to_owned()),
+                    details,
+                    terms,
+                    restore: None,
+                }
+            }
             AiFeature::Remove => AiJobDescription {
                 label: "Remove",
                 model: format!(
@@ -114,6 +183,7 @@ impl CalibRawApp {
                     calibraw_ai::models::remove::MODEL_PROVENANCE,
                     &calibraw_ai::models::remove::MODEL.sha256[..12]
                 ),
+                terms: None,
                 restore: None,
             },
             AiFeature::Denoise => AiJobDescription {
@@ -128,6 +198,7 @@ impl CalibRawApp {
                 details: "RawNIND handles Bayer denoise/demosaic and X-Trans images. The \
                           verified models are cached locally under GPL-3.0."
                     .to_owned(),
+                terms: None,
                 restore: Some(AiRestorePrompt {
                     title: "Re-apply AI denoise?",
                     explanation: "AI denoise is turned on for this image, but there is no saved \
@@ -188,6 +259,15 @@ impl CalibRawApp {
                             model_download_needed,
                             runtime_download_needed,
                         );
+                    }
+                    if let Some((license, url)) =
+                        description.terms.filter(|_| model_download_needed)
+                    {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Downloading accepts the model's");
+                            ui.hyperlink_to(license, url);
+                            ui.label("which prohibits some uses, such as surveillance.");
+                        });
                     }
                     self.show_ai_download_details(
                         ui,

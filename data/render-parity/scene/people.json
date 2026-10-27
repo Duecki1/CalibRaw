@@ -1,0 +1,404 @@
+{
+  "edits": {
+    "masks": {
+      "masks": [
+        {
+          "adjustments": {
+            "blacks": 0.0,
+            "clarity": 0.0,
+            "color_grading": {
+              "balance": 0.0,
+              "blending": 50.0,
+              "global": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "highlights": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "midtones": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "shadows": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              }
+            },
+            "contrast": 0.0,
+            "dehaze": 0.0,
+            "exposure": 1.0,
+            "highlights": 0.0,
+            "hsl_hue": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "hsl_luminance": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "hsl_saturation": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "hue": 0.0,
+            "point_colors": [],
+            "saturation": -60.0,
+            "shadows": 0.0,
+            "temperature": 0.0,
+            "texture": 0.0,
+            "tint": 0.0,
+            "tone_curve": {
+              "len": 2,
+              "points": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ]
+              ]
+            },
+            "tone_curve_blue": {
+              "len": 2,
+              "points": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ]
+              ]
+            },
+            "tone_curve_green": {
+              "len": 2,
+              "points": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ]
+              ]
+            },
+            "tone_curve_red": {
+              "len": 2,
+              "points": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ]
+              ]
+            },
+            "whites": 0.0
+          },
+          "adjustments_enabled": true,
+          "components": [
+            {
+              "combine": "Add",
+              "enabled": true,
+              "geometry": {
+                "Person": {
+                  "anchors": [
+                    [
+                      0.5,
+                      0.55
+                    ]
+                  ],
+                  "feather": 0.3,
+                  "grow": 0.1,
+                  "mask": null,
+                  "parts": [
+                    "FaceNeck",
+                    "Hair"
+                  ]
+                }
+              },
+              "invert": false,
+              "kind": "Person",
+              "name": "Select People"
+            }
+          ],
+          "effect": "Adjustment",
+          "enabled": true,
+          "invert": false,
+          "name": "Mask 1",
+          "opacity": 1.0
+        }
+      ],
+      "selected_component": 0,
+      "selected_mask": 0
+    }
+  },
+  "mask_asset_refs": [
+    {
+      "asset_index": 0,
+      "component_index": 0,
+      "mask_index": 0
+    }
+  ],
+  "mask_assets": [
+    {
+      "height": 48,
+      "png": "iVBORw0KGgoAAAANSUhEUgAAAEgAAAAwCAAAAACX92M3AAACFElEQVR4nO3VQU/iQBQA4Edtt7RYy2BaBLeCoy4byV4keuFm9mdvvHFZoxfDZtWkaIyAabQqUtAW3ExhlUWYtoN72n2nvnkvXyZt5w3A//iHIxbUMFdYVqB1edybEcI7Q+i7SW/k6eUvu9ufswtwX99I7x3NAK1+3d1OA0Ai81HlHmrsULlcRoOndPnRokIcrbhVKg0dAFQqbTFDxWL+NckXi6yQhvFoirHGCGUyGUoaAUJIHk1lhBghSaLnoaFIwVFqnQ49Dw3ZtjOaOrbNCDUaDUoaAbLMP068aVqMEFSrZ6/JWbXKfGgPNw31979jHxwcMkNQ0UR/jABc7VcqwA7VvvXvBoPt5/5ebZYJedS+Og03at9t+L9bxALqghz/wEH/qeu47BCnpZJKQvShx3br9sbqs0BKdolAclyYg57bdQjUrLeiQlLOGECJ0R016xfnnUiffxm/QIK/4A6htGZeRoA+reM8gdSXFSGZNO6spr6YVBInoaHNwgbZ0fiIVtVFtDAvi/yPkFCh4EMTSoi8ew56x6EgA+M1vGZM2irwqzz03a5zEQKaX8nlVnKTHQAwvKdO+95+CIayfkxzALLt1u21dRI4IWVd1zRdnA6JpK7LgRBCKJWiXalA6m8v3TeQQmLwE04JwW8JhCRJkuI0ByBOeoKgGM/zPHVDAALpGT+kf+3uf/Y8zwuYYS7peR5b/AWuBK15+nS6qQAAAABJRU5ErkJggg==",
+      "width": 72
+    }
+  ]
+}

@@ -12,7 +12,9 @@ pub(super) fn show_export_action_panel<R>(
                 .fill(ui.visuals().panel_fill)
                 .inner_margin(egui::Margin::symmetric(0, moduwu_design::SPACE_SM as i8)),
         )
-        .show(ui, contents)
+        .show(ui, |ui| {
+            crate::ui::layout::docked_panel_contents(ui, contents)
+        })
 }
 
 pub(super) fn enforce_export_bit_depth(

@@ -18,6 +18,9 @@ pub struct ContentDependencies {
     /// `(mask, component)` of each object mask with a positive stroke; every
     /// object needs its own segmentation.
     pub objects: Vec<(usize, usize)>,
+    /// People masks share one people detection, and each person one
+    /// body-part segmentation.
+    pub people: bool,
     /// Luminance and sampled colour ranges read the source image itself.
     pub range_sources: bool,
 }
@@ -29,15 +32,16 @@ impl ContentDependencies {
 
     /// Whether refreshing these results runs a local AI model.
     pub fn needs_ai(&self) -> bool {
-        self.subject || self.sky || self.scene_depth || !self.objects.is_empty()
+        self.subject || self.sky || self.scene_depth || !self.objects.is_empty() || self.people
     }
 
-    /// Model runs one update performs: one per shared result plus one per object.
+    /// Model jobs one update runs: one per shared result plus one per object.
     pub fn ai_run_count(&self) -> usize {
         usize::from(self.subject)
             + usize::from(self.sky)
             + usize::from(self.scene_depth)
             + self.objects.len()
+            + usize::from(self.people)
     }
 }
 
@@ -64,6 +68,7 @@ impl MaskStack {
                     {
                         dependencies.objects.push((mask_index, component_index));
                     }
+                    (MaskKind::Person, MaskGeometry::Person { .. }) => dependencies.people = true,
                     (MaskKind::LuminanceRange, MaskGeometry::LuminanceRange { .. })
                     | (MaskKind::ColorRange, MaskGeometry::ColorRange { sampled: true, .. }) => {
                         dependencies.range_sources = true;

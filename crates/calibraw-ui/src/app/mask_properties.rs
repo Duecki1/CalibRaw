@@ -4,7 +4,8 @@
 //! mask and to the tool settings the caller writes back afterwards.
 
 use super::*;
-use crate::pipeline::{DepthRangeSettings, LocalMask, MaskCombineMode, MaskComponent};
+use crate::pipeline::{DepthRangeSettings, LocalMask, MaskCombineMode, MaskComponent, PersonPart};
+use std::collections::BTreeSet;
 
 /// Mask-tool state edited by the properties panel. The caller loads it from
 /// the app before drawing and applies it, with its requests, afterwards.
@@ -21,6 +22,47 @@ pub(crate) struct MaskPropertiesControls {
     /// Generate (or regenerate) the subject, sky, or depth map of the component.
     pub(crate) request_generation: bool,
     pub(crate) request_object: bool,
+    /// Make the people mask again, for its person and parts.
+    pub(crate) request_people: bool,
+    pub(crate) people_edit: Option<PeopleEdit>,
+    pub(crate) separate_person_parts: bool,
+    /// The person whose chip the pointer is over.
+    pub(crate) hovered_person: Option<usize>,
+}
+
+/// A people mask's people and parts, for its properties.
+#[derive(Default)]
+pub(crate) struct PeopleChoices {
+    /// Whether the people in the photo are known; until then the panel
+    /// offers to find them.
+    pub(crate) analysed: bool,
+    /// Each person's thumbnail, left to right.
+    pub(crate) people: Vec<PersonThumbnail>,
+    /// The people the mask selects, in order.
+    pub(crate) selected: Vec<usize>,
+    pub(crate) parts: BTreeSet<PersonPart>,
+    /// The parts any of the mask's people shows, once known.
+    pub(crate) shown: Option<BTreeSet<PersonPart>>,
+}
+
+/// One person's chip in a people mask's properties.
+pub(crate) struct PersonThumbnail {
+    pub(crate) texture: egui::TextureId,
+    /// What their masks are made from is known, so adding them runs no
+    /// model.
+    pub(crate) segmented: bool,
+}
+
+/// A change to a people mask's people or parts, which
+/// `CalibRawApp::edit_people_mask` makes together with the mask it needs.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum PeopleEdit {
+    /// Adds a person, by their index in the people found, or removes them;
+    /// the last person stays.
+    TogglePerson(usize),
+    /// Adds or removes a part; the last part stays. The entire person
+    /// replaces the other parts, which replace it in turn.
+    TogglePart(PersonPart),
 }
 
 pub(crate) enum MaskPropertyAction {
@@ -51,6 +93,15 @@ pub(crate) enum MaskPropertyAction {
     SetLuminanceHighFeather(f32),
     SetColorTolerance(f32),
     SetDepthRange(DepthRangeSettings),
+    /// Adds a person to a people mask or removes them, as
+    /// `PeopleEdit::TogglePerson`.
+    TogglePerson(usize),
+    /// Adds or removes a part of a people mask, as `PeopleEdit::TogglePart`.
+    TogglePersonPart(PersonPart),
+    SeparatePersonParts,
+    RequestPeople,
+    /// The pointer is over a person's chip.
+    HoverPerson(usize),
     SetBrushMode(BrushMode),
     SetRefinementActive(bool),
     SetRefinementSize(f32),
@@ -119,6 +170,27 @@ fn apply_mask_property_action(
             controls.request_object = true;
             false
         }
+        MaskPropertyAction::SeparatePersonParts => {
+            controls.separate_person_parts = true;
+            false
+        }
+        MaskPropertyAction::RequestPeople => {
+            controls.request_people = true;
+            false
+        }
+        MaskPropertyAction::HoverPerson(person) => {
+            controls.hovered_person = Some(person);
+            false
+        }
+        // The people and parts change with the mask they need.
+        MaskPropertyAction::TogglePerson(person) => {
+            controls.people_edit = Some(PeopleEdit::TogglePerson(person));
+            false
+        }
+        MaskPropertyAction::TogglePersonPart(part) => {
+            controls.people_edit = Some(PeopleEdit::TogglePart(part));
+            false
+        }
         component_action => mask
             .components
             .get_mut(component_index)
@@ -165,6 +237,7 @@ fn shape_feather(geometry: &mut MaskGeometry) -> Option<&mut f32> {
         | MaskGeometry::Path { feather, .. }
         | MaskGeometry::Ai { feather, .. }
         | MaskGeometry::Object { feather, .. }
+        | MaskGeometry::Person { feather, .. }
         | MaskGeometry::LuminanceRange { feather, .. } => Some(feather),
         _ => None,
     }
@@ -175,6 +248,7 @@ fn grow(geometry: &mut MaskGeometry) -> Option<&mut f32> {
         MaskGeometry::Path { grow, .. }
         | MaskGeometry::Ai { grow, .. }
         | MaskGeometry::Object { grow, .. }
+        | MaskGeometry::Person { grow, .. }
         | MaskGeometry::LuminanceRange { grow, .. }
         | MaskGeometry::ColorRange { grow, .. } => Some(grow),
         _ => None,

@@ -9,6 +9,10 @@ pub(crate) const STATUS_WARNING: Color32 = Color32::from_rgb(244, 142, 48);
 pub(crate) const MASK_ADD: Color32 = Color32::from_rgb(78, 163, 255);
 pub(crate) const MASK_SUBTRACT: Color32 = Color32::from_rgb(255, 105, 105);
 pub(crate) const DROP_TARGET: Color32 = Color32::from_rgb(225, 62, 62);
+/// A person's canvas highlight when a click adds them to a people mask.
+pub(crate) const PERSON_ADD: Color32 = Color32::from_rgb(92, 210, 116);
+/// A person's canvas highlight when a click removes them from a people mask.
+pub(crate) const PERSON_REMOVE: Color32 = MASK_SUBTRACT;
 pub(crate) fn inpaint_stroke_highlight() -> Color32 {
     Color32::from_rgba_unmultiplied(255, 96, 78, 62)
 }

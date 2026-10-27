@@ -126,14 +126,15 @@ pub(super) fn subject_mask(
         spec.session,
         mask_model_retention(true),
         |session| {
-            let mut mask = infer_birefnet(session, image, edge)?;
+            let mut mask = infer_birefnet(session, image, edge, image.dimensions())?;
             let crop = mask_refine::mask_crop_above(&mask, width, height, 5, 0.15)
                 .filter(|&crop| crop_refinement || is_small_subject(crop, width, height));
             if let Some(crop) = crop {
                 let crop_image =
                     image::imageops::crop_imm(image, crop.x, crop.y, crop.width, crop.height)
                         .to_image();
-                let crop_alpha = infer_birefnet(session, &crop_image, edge)?;
+                let crop_alpha =
+                    infer_birefnet(session, &crop_image, edge, crop_image.dimensions())?;
                 mask_refine::merge_crop_pass(&mut mask, width, crop, &crop_alpha, 8);
             }
             Ok(mask)
@@ -161,11 +162,13 @@ fn is_small_subject(crop: MaskCrop, width: u32, height: u32) -> bool {
 }
 
 /// One BiRefNet pass over `image`, resized to the model's square `edge`. The
-/// returned probabilities have `image`'s size.
-fn infer_birefnet(
+/// returned probabilities, by row, are `output` (width, height) pixels
+/// stretched over `image`.
+pub(super) fn infer_birefnet(
     session: &mut FallbackSession,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
     edge: u32,
+    output: (u32, u32),
 ) -> Result<Vec<u8>> {
     let resized = image::imageops::resize(image, edge, edge, FilterType::Lanczos3);
     let input = normalized_rgb_input(&resized)?;
@@ -174,13 +177,7 @@ fn infer_birefnet(
 
     let (output_width, output_height, logits) = run_subject_session(session, input, edge, edge)?;
 
-    restore_birefnet_output(
-        &logits,
-        output_width,
-        output_height,
-        image.width(),
-        image.height(),
-    )
+    restore_birefnet_output(&logits, output_width, output_height, output.0, output.1)
 }
 
 fn run_subject_session(

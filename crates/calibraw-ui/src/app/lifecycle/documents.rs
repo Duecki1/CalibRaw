@@ -210,6 +210,7 @@ impl CalibRawApp {
             luts: self.luts.store(),
             automatic_lens: self.preferences.automatic_lens_correction,
             ai_denoise_result_path: self.ai_denoise_result_path_for_target(&source.sidecar_target),
+            people_analysis_path: self.people_analysis_path_for_target(&source.sidecar_target),
             device: render_state.device.clone(),
             queue: render_state.queue.clone(),
             programs,
@@ -305,6 +306,7 @@ impl CalibRawApp {
         self.masks.stack.clear();
         self.reset_inpainting_state();
         self.masks.reset_transient_state();
+        self.ai.people.forget();
         self.ai.update_needed = false;
         self.reset_ai_update_state();
         self.preview.pending_stage = None;
@@ -419,6 +421,7 @@ impl CalibRawApp {
                 if loaded.mask_source.is_some() {
                     self.masks.source_cache = loaded.mask_source;
                 }
+                self.ai.people.analysis = loaded.people_analysis;
                 self.preview.reset_view_keeping(kept_view);
                 self.preview.original_rendered_state = None;
                 self.preview.detail = None;

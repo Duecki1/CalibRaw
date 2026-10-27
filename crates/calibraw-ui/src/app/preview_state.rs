@@ -307,6 +307,8 @@ pub(crate) struct LoadedPreview {
     pub(super) remove: RemoveEditState,
     pub(super) ai_masks_need_update: bool,
     pub(super) mask_source: Option<MaskRgbImage>,
+    /// The people analysis kept beside the photo, when it is still of its content.
+    pub(super) people_analysis: Option<PeopleAnalysis>,
     pub(super) lens_correction: LensCorrectionState,
     /// Automatic lens correction was due, but no profile matched the RAW.
     pub(super) lens_profile_missing: bool,

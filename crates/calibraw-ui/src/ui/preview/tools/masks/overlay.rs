@@ -232,6 +232,16 @@ impl Preview {
                 _ => {}
             }
         }
+        if let Some(component_index) = selected_component.filter(|&index| {
+            app.masks
+                .stack
+                .masks
+                .get(mask_index)
+                .and_then(|mask| mask.components.get(index))
+                .is_some_and(|component| component.kind == MaskKind::Person && component.enabled)
+        }) {
+            Self::paint_person_highlight(ui, app, layout, projection, mask_index, component_index);
+        }
 
         let refining_subject = app.masks.subject_refinement_active
             && app
@@ -320,6 +330,58 @@ impl Preview {
                 }
             }
         }
+    }
+
+    /// Highlights the person whose chip the mask panel has the pointer over,
+    /// else the one under the pointer, whom a click adds or removes: green
+    /// when it adds them and red when it removes them. The only person
+    /// selected stays on a click, so they show nothing.
+    fn paint_person_highlight(
+        ui: &Ui,
+        app: &mut CalibRawApp,
+        layout: PreviewLayout,
+        projection: SourceProjection<'_>,
+        mask_index: usize,
+        component_index: usize,
+    ) {
+        let from_chip = app.ai.people.hovered.take();
+        let Some(analysis) = app.ai.people.analysis.as_ref() else {
+            return;
+        };
+        let selected = app
+            .shown_person_choice(mask_index, component_index)
+            .map(|choice| analysis.resolve(&choice.anchors))
+            .unwrap_or_default();
+        let click_color = |person: usize| match (selected.contains(&person), selected.len()) {
+            (false, _) => Some(crate::ui::theme::PERSON_ADD),
+            (true, 1) => None,
+            (true, _) => Some(crate::ui::theme::PERSON_REMOVE),
+        };
+        let under_pointer = ui
+            .ctx()
+            .pointer_hover_pos()
+            .filter(|position| layout.visible_rect.contains(*position))
+            .and_then(|position| editable_source_uv(projection.to_source(position)))
+            .and_then(|point| analysis.person_under(point));
+        if under_pointer.and_then(click_color).is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let Some((person, color)) = from_chip
+            .or(under_pointer)
+            .and_then(|person| Some((person, click_color(person)?)))
+        else {
+            return;
+        };
+        let Some(highlight) = app.person_highlight(ui.ctx(), person, color) else {
+            return;
+        };
+        paint_final_geometry_overlay_texture(
+            ui,
+            highlight.texture.id(),
+            projection,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            highlight.region,
+        );
     }
 
     pub(in crate::ui::preview) fn paint_coverage_texture(

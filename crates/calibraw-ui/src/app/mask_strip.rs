@@ -302,6 +302,12 @@ impl CalibRawApp {
                     self.report_ai_mask_error(error);
                 }
             }
+            MaskKind::Person => {
+                let stack = &self.masks.stack;
+                if let Some(location) = stack.selected_mask.zip(stack.selected_component) {
+                    self.request_people_masks(vec![location], frame);
+                }
+            }
             MaskKind::LuminanceRange | MaskKind::ColorRange => {
                 if let Err(error) = self.capture_mask_source(frame) {
                     self.ui.status = error;

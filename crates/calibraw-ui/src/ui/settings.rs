@@ -129,6 +129,41 @@ pub(crate) fn subject_mask_quality_control(
     app.set_subject_mask_quality(quality);
 }
 
+/// People-mask quality, below the subject-mask quality where the device
+/// offers a choice. Locked while an AI mask is being generated.
+pub(crate) fn people_mask_quality_control(
+    ui: &mut Ui,
+    app: &mut CalibRawApp,
+    id_salt: &'static str,
+) {
+    use calibraw_ai::models::people::PeopleMaskQuality;
+    let available = PeopleMaskQuality::available();
+    if available.len() < 2 {
+        return;
+    }
+    let help = "Applies to newly generated people masks.\n\
+                Medium: recommended\n\
+                High: finer outlines, also runs the subject model on each person · \
+                takes longer";
+    let mut quality = app.ai.people_mask_quality;
+    ui.add_enabled_ui(app.ai_mask_generation_idle(), |ui| {
+        moduwu_design::form_combo_with_help(
+            ui,
+            "People mask quality",
+            id_salt,
+            quality.label(),
+            160.0,
+            help,
+            |ui| {
+                for &option in available {
+                    ui.selectable_value(&mut quality, option, option.label());
+                }
+            },
+        );
+    });
+    app.set_people_mask_quality(quality);
+}
+
 pub(crate) fn export_name_template_controls(
     ui: &mut Ui,
     app: &mut CalibRawApp,
@@ -460,6 +495,7 @@ impl Settings {
         // this control.
         if !app.caps().configurable_ai_runtime {
             subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
+            people_mask_quality_control(ui, app, "settings-people-mask-quality");
         }
 
         moduwu_design::section_separator(ui);
@@ -953,6 +989,7 @@ impl Settings {
 
         moduwu_design::section_separator(ui);
         subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
+        people_mask_quality_control(ui, app, "settings-people-mask-quality");
 
         moduwu_design::section_separator(ui);
         let bundled_runtime = calibraw_ai::runtime::bundled_onnx_runtime_path();

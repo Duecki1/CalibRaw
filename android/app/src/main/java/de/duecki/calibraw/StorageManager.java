@@ -461,6 +461,7 @@ final class StorageManager {
         File directory = new File(rawUri.getPath()).getParentFile();
         AndroidStorageContract.deleteSidecar(directory, displayName);
         AndroidStorageContract.deleteAiDenoiseResult(directory, displayName);
+        AndroidStorageContract.deletePeopleAnalysis(directory, displayName);
     }
 
     /**
@@ -474,6 +475,18 @@ final class StorageManager {
         return new File(
                 new File(rawUri.getPath()).getParentFile(),
                 AndroidStorageContract.aiDenoiseDisplayName(displayName)).getAbsolutePath();
+    }
+
+    /**
+     * Returns where the RAW's people analysis lives. Native code reads and
+     * writes it directly, as it does the AI-denoise result.
+     */
+    String peopleAnalysisPath(String rawUriText, String displayName) throws Exception {
+        Uri rawUri = Uri.parse(rawUriText);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
+        return new File(
+                new File(rawUri.getPath()).getParentFile(),
+                AndroidStorageContract.peopleAnalysisDisplayName(displayName)).getAbsolutePath();
     }
 
     String importLocalRawLibraryDocument(String rawPath, String displayName) throws Exception {
@@ -538,6 +551,14 @@ final class StorageManager {
             }
             throw new IllegalStateException("Android storage could not rename the RAW sidecar");
         }
+        File sourcePeople = new File(
+                parent, AndroidStorageContract.peopleAnalysisDisplayName(displayName));
+        // The people are found again without it, so a failed move only costs that.
+        if (sourcePeople.isFile()
+                && !sourcePeople.renameTo(new File(
+                        parent, AndroidStorageContract.peopleAnalysisDisplayName(requestedName)))) {
+            Log.w(LOG_TAG, "Renamed RAW but could not keep its people analysis");
+        }
         String destinationUri = Uri.fromFile(destinationRaw).toString();
         try {
             thumbnailCache.copyDeveloped(rawUriText, destinationUri);
@@ -566,6 +587,11 @@ final class StorageManager {
             AndroidStorageContract.deleteAiDenoiseResult(raw.getParentFile(), displayName);
         } catch (Exception error) {
             Log.w(LOG_TAG, "Deleted RAW but could not clean up its AI-denoise result", error);
+        }
+        try {
+            AndroidStorageContract.deletePeopleAnalysis(raw.getParentFile(), displayName);
+        } catch (Exception error) {
+            Log.w(LOG_TAG, "Deleted RAW but could not clean up its people analysis", error);
         }
         thumbnailCache.clearDeveloped(rawUriText);
     }

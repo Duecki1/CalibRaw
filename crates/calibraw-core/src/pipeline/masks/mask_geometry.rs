@@ -88,6 +88,19 @@ pub enum MaskGeometry {
         #[serde(flatten)]
         range: DepthRangeSettings,
     },
+    /// Parts of one or more people in the photo.
+    Person {
+        /// The people, each as the centre of their detected outline in
+        /// fractions of the full image; a refresh selects whoever is there
+        /// then. Empty until people are found, which selects the most
+        /// prominent one.
+        #[serde(default)]
+        anchors: Vec<[f32; 2]>,
+        parts: BTreeSet<PersonPart>,
+        mask: Option<MaskImage>,
+        grow: f32,
+        feather: f32,
+    },
     /// Reserved shape-less geometry of a Depth range mask. No code creates it, but the
     /// sidecar validator accepts it, so the serialized name must keep loading.
     Placeholder,
@@ -233,6 +246,13 @@ impl MaskGeometry {
                 depth: None,
                 range: DepthRangeSettings::default(),
             },
+            MaskKind::Person => Self::Person {
+                anchors: Vec::new(),
+                parts: BTreeSet::from([PersonPart::EntirePerson]),
+                mask: None,
+                grow: 0.0,
+                feather: 0.0,
+            },
         }
     }
 
@@ -242,7 +262,9 @@ impl MaskGeometry {
             Self::Brush { dabs, .. } => !dabs.is_empty(),
             Self::Radial { initialized, .. } | Self::Linear { initialized, .. } => *initialized,
             Self::Path { points, .. } => points.len() >= 3,
-            Self::Ai { mask, .. } | Self::Object { mask, .. } => mask.is_some(),
+            Self::Ai { mask, .. } | Self::Object { mask, .. } | Self::Person { mask, .. } => {
+                mask.is_some()
+            }
             Self::DepthRange { depth, .. } => depth.is_some(),
             Self::LuminanceRange { source, .. } => source.is_some(),
             Self::ColorRange {
@@ -268,6 +290,7 @@ impl MaskGeometry {
             | Self::Path { feather, .. }
             | Self::Ai { feather, .. }
             | Self::Object { feather, .. }
+            | Self::Person { feather, .. }
             | Self::LuminanceRange { feather, .. } => feather,
             Self::Fullscreen
             | Self::Brush { .. }

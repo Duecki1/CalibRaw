@@ -405,10 +405,12 @@ impl CalibRawApp {
         self.masks.source_cache = None;
         self.masks.clear_generated_caches();
         self.ai.object_cache = None;
+        self.ai.people.forget();
         if self.content_job_active() {
             self.cancel_foreground_operation();
         }
         self.ai.object_pending_target = None;
+        self.ai.people.pending.clear();
         self.ai.update = None;
     }
 

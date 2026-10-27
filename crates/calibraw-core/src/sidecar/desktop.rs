@@ -1,4 +1,5 @@
 use super::AI_DENOISE_SUFFIX;
+use super::PEOPLE_ANALYSIS_SUFFIX;
 use super::SIDECAR_SUFFIX;
 use super::{
     atomic_write, read_bounded, SidecarError, DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT,
@@ -17,12 +18,17 @@ pub fn ai_denoise_path_for_raw(raw_path: &Path) -> PathBuf {
     path_beside_raw(raw_path, AI_DENOISE_SUFFIX)
 }
 
+pub fn people_analysis_path_for_raw(raw_path: &Path) -> PathBuf {
+    path_beside_raw(raw_path, PEOPLE_ANALYSIS_SUFFIX)
+}
+
 /// Files stored next to a RAW that belong to it, so they are copied, renamed
 /// and deleted together with it.
-pub fn raw_companion_paths(raw_path: &Path) -> [PathBuf; 2] {
+pub fn raw_companion_paths(raw_path: &Path) -> [PathBuf; 3] {
     [
         sidecar_path_for_raw(raw_path),
         ai_denoise_path_for_raw(raw_path),
+        people_analysis_path_for_raw(raw_path),
     ]
 }
 
@@ -222,6 +228,7 @@ pub fn remove_desktop_edits(raw_path: &Path) -> Result<bool, String> {
     let paths = [
         sidecar_path_for_raw(raw_path),
         ai_denoise_path_for_raw(raw_path),
+        people_analysis_path_for_raw(raw_path),
         developed_thumbnail_path_for_raw(raw_path),
         developed_thumbnail_fingerprint_path_for_raw(raw_path),
     ];

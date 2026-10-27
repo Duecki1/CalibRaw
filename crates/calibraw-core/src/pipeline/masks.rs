@@ -1,5 +1,6 @@
 use half::f16;
 use rayon::prelude::*;
+use std::collections::BTreeSet;
 use std::f32::consts::TAU;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -50,6 +51,8 @@ pub const MAX_LOCAL_MASKS: usize = 32;
 pub const MAX_EFFECT_COMPONENTS: usize = 12;
 pub const MAX_MASK_COMPONENTS: usize = 64;
 pub const MAX_PATH_POINTS: usize = 256;
+/// People a people mask selects at most: as many as are found in a photo.
+pub const MAX_MASK_PEOPLE: usize = 32;
 pub const MASK_ATLAS_EDGE_DESKTOP: u32 = 2048;
 pub const MASK_ATLAS_EDGE_ANDROID: u32 = 1024;
 pub const MASK_ATLAS_EDGE_EXPORT_DESKTOP: u32 = 4096;
@@ -93,6 +96,7 @@ pub enum MaskKind {
     LuminanceRange,
     ColorRange,
     DepthRange,
+    Person,
 }
 
 impl MaskKind {
@@ -110,6 +114,7 @@ impl MaskKind {
             Self::LuminanceRange => "Luminance Range",
             Self::ColorRange => "Color Range",
             Self::DepthRange => "Depth",
+            Self::Person => "Select People",
         }
     }
 
@@ -133,6 +138,7 @@ impl MaskKind {
                 | Self::LuminanceRange
                 | Self::ColorRange
                 | Self::DepthRange
+                | Self::Person
         )
     }
 }
@@ -387,6 +393,14 @@ impl MaskStack {
                     _ => None,
                 })
         })
+    }
+
+    /// Whether any component is a Select People one, enabled or not.
+    pub fn has_people_masks(&self) -> bool {
+        self.masks
+            .iter()
+            .flat_map(|mask| &mask.components)
+            .any(|component| component.kind == MaskKind::Person)
     }
 
     pub fn has_depth_fog_effect(&self) -> bool {

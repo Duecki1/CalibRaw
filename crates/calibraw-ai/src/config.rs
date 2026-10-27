@@ -116,7 +116,15 @@ pub(crate) struct AiCapabilities {
     /// Mask sessions (subject, sky, depth, object) may stay loaded between
     /// jobs while their feature is warm.
     pub(crate) keep_mask_sessions_warm: bool,
+    /// Devices with at least this much physical memory, in bytes, segment
+    /// people's body parts; the others outline entire people only. The
+    /// body-part model needs gigabytes and several seconds per person.
+    pub(crate) people_body_parts_memory: u64,
 }
+
+/// A phone sold with 12 GB reports about 11.2 GiB (a Pixel 7 Pro 11.19 GiB),
+/// one with 8 GB about 7.3 GiB.
+const MOBILE_PEOPLE_BODY_PARTS_MEMORY: u64 = 10 << 30;
 
 /// How much memory AI may take beside the editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,11 +141,13 @@ pub(crate) const CAPABILITIES: AiCapabilities =
         AiCapabilities {
             memory: MemoryClass::Constrained,
             keep_mask_sessions_warm: false,
+            people_body_parts_memory: MOBILE_PEOPLE_BODY_PARTS_MEMORY,
         }
     } else {
         AiCapabilities {
             memory: MemoryClass::Standard,
             keep_mask_sessions_warm: true,
+            people_body_parts_memory: 0,
         }
     };
 

@@ -197,6 +197,7 @@ impl CalibRawApp {
             self.resume_android_library_batch_export_if_possible(frame);
         }
         self.poll_foreground_operation(frame);
+        self.poll_people_composes();
         self.poll_library_ai_mask_refresh(frame);
         self.poll_merge();
         self.resume_pending_ai_denoise(frame);
@@ -339,7 +340,11 @@ impl eframe::App for CalibRawApp {
                 .resizable(false)
                 .exact_size(Sidebar::DOCKED_TOOL_RAIL_WIDTH)
                 .frame(moduwu_design::panel_frame(ui))
-                .show(ui, |ui| Sidebar::show_docked_tool_rail(ui, self));
+                .show(ui, |ui| {
+                    crate::ui::layout::docked_panel_contents(ui, |ui| {
+                        Sidebar::show_docked_tool_rail(ui, self)
+                    })
+                });
 
             if self.develop_ui.sidebar_open {
                 let panel_id = egui::Id::new(crate::ui::layout::DEVELOP_SIDEBAR_ID);
@@ -369,7 +374,11 @@ impl eframe::App for CalibRawApp {
                     .max_size(panel_width)
                     .default_size(panel_width)
                     .frame(moduwu_design::panel_frame(ui))
-                    .show(ui, |ui| Sidebar::show(ui, self, layout, frame));
+                    .show(ui, |ui| {
+                        crate::ui::layout::docked_panel_contents(ui, |ui| {
+                            Sidebar::show(ui, self, layout, frame)
+                        })
+                    });
 
                 if self.ui.sidebar_tab == SidebarTab::Masks {
                     egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
@@ -377,7 +386,9 @@ impl eframe::App for CalibRawApp {
                         .exact_size(Sidebar::HORIZONTAL_MASK_STRIP_WIDTH)
                         .frame(moduwu_design::panel_frame(ui))
                         .show(ui, |ui| {
-                            Sidebar::show_horizontal_mask_strip(ui, self, frame)
+                            crate::ui::layout::docked_panel_contents(ui, |ui| {
+                                Sidebar::show_horizontal_mask_strip(ui, self, frame)
+                            })
                         });
                 }
             }
@@ -391,7 +402,11 @@ impl eframe::App for CalibRawApp {
             egui::Panel::bottom("filmstrip")
                 .resizable(false)
                 .exact_size(crate::ui::develop::FILMSTRIP_HEIGHT)
-                .show(ui, |ui| Develop::show_filmstrip(ui, self, frame));
+                .show(ui, |ui| {
+                    crate::ui::layout::docked_panel_contents(ui, |ui| {
+                        Develop::show_filmstrip(ui, self, frame)
+                    })
+                });
         }
 
         if self.ui.active_tab == AppTab::Library && self.library.folder_sidebar_open() {

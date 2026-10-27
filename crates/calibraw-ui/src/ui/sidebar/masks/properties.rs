@@ -1,7 +1,12 @@
 use super::*;
-use crate::app::{MaskPropertiesControls, MaskPropertyAction};
+use crate::app::{MaskPropertiesControls, MaskPropertyAction, PeopleChoices, PersonThumbnail};
+use crate::pipeline::PersonPart;
 use crate::pipeline::DEFAULT_COLOR_TOLERANCE;
 use crate::ui::components::luminance_range_slider::{luminance_range_slider, LuminanceRange};
+use std::collections::BTreeSet;
+
+/// Edge of a person's chip in the properties panel, in points.
+const PERSON_CHIP_SIZE: f32 = 44.0;
 
 impl Sidebar {
     pub(super) fn apply_mask_properties_action(
@@ -103,6 +108,24 @@ impl Sidebar {
                         ) => {
                             *mask = saved;
                             *strokes = saved_strokes;
+                        }
+                        (
+                            MaskGeometry::Person {
+                                anchors,
+                                parts,
+                                mask,
+                                ..
+                            },
+                            MaskGeometry::Person {
+                                anchors: people,
+                                parts: saved_parts,
+                                mask: saved,
+                                ..
+                            },
+                        ) => {
+                            *anchors = people;
+                            *parts = saved_parts;
+                            *mask = saved;
                         }
                         (
                             MaskGeometry::LuminanceRange { source, .. },
@@ -389,6 +412,7 @@ impl Sidebar {
         mask: &LocalMask,
         component_index: usize,
         controls: &MaskPropertiesControls,
+        people: &PeopleChoices,
     ) -> Vec<MaskPropertyAction> {
         let mut edits = PropertyEdits {
             actions: Vec::new(),
@@ -490,6 +514,9 @@ impl Sidebar {
                 MaskGeometry::DepthRange { depth, range } => {
                     Self::depth_range_properties(ui, depth.is_some(), *range, &mut edits);
                 }
+                MaskGeometry::Person { grow, feather, .. } => {
+                    Self::person_properties(ui, people, *grow, *feather, &mut edits);
+                }
                 MaskGeometry::Placeholder => {
                     ui.label("This mask has no shape data.");
                 }
@@ -518,6 +545,11 @@ impl Sidebar {
                 edits.push(MaskPropertyAction::ToggleInvert);
             }
             if component_index > 0 {
+                // A combo box lays out in a child `Ui` that never wraps, so
+                // start a new row when it would not fit.
+                if ui.available_size_before_wrap().x < ui.spacing().combo_width {
+                    ui.end_row();
+                }
                 let mut combine = component.combine;
                 egui::ComboBox::from_id_salt("vertical-mask-combine")
                     .selected_text(combine.label())
@@ -818,6 +850,87 @@ impl Sidebar {
         }
     }
 
+    /// A chip per person found when there is a choice, which adds them or
+    /// removes them, a switch per part to select and the shape sliders.
+    /// Until the people are known, a button finds them.
+    fn person_properties(
+        ui: &mut Ui,
+        people: &PeopleChoices,
+        grow: f32,
+        feather: f32,
+        edits: &mut PropertyEdits,
+    ) {
+        if !people.analysed {
+            let clicked = ui
+                .with_layout(
+                    egui::Layout::top_down_justified(egui::Align::Center),
+                    |ui| moduwu_design::secondary_button(ui, "Find people").clicked(),
+                )
+                .inner;
+            if clicked {
+                edits.push(MaskPropertyAction::RequestPeople);
+            }
+            ui.add_space(moduwu_design::SPACE_XS);
+        } else if people.people.len() > 1 {
+            ui.horizontal_wrapped(|ui| {
+                for (index, person) in people.people.iter().enumerate() {
+                    let selected = people.selected.contains(&index);
+                    let response = person_chip(ui, person, selected, index);
+                    if response.hovered() {
+                        edits.push(MaskPropertyAction::HoverPerson(index));
+                    }
+                    if response.clicked() {
+                        edits.push(MaskPropertyAction::TogglePerson(index));
+                    }
+                }
+            });
+            ui.add_space(moduwu_design::SPACE_XS);
+        }
+        // Where the entire person is all a device can select, there is
+        // nothing to choose.
+        let entire_only = |parts: &BTreeSet<PersonPart>| {
+            parts.iter().all(|&part| part == PersonPart::EntirePerson)
+        };
+        let choosable = !entire_only(&people.parts)
+            || people
+                .shown
+                .as_ref()
+                .is_none_or(|shown| !entire_only(shown));
+        for part in PersonPart::ALL.into_iter().filter(|_| choosable) {
+            let mut selected = people.parts.contains(&part);
+            // A selected part stays enabled so it can be removed.
+            let shown = selected
+                || people
+                    .shown
+                    .as_ref()
+                    .is_none_or(|shown| shown.contains(&part));
+            let changed = ui
+                .add_enabled(shown, |ui: &mut Ui| {
+                    moduwu_design::toggle_row(ui, &mut selected, part.label())
+                })
+                .changed();
+            if changed {
+                edits.push(MaskPropertyAction::TogglePersonPart(part));
+            }
+        }
+        if people.parts.len() > 1
+            && moduwu_design::secondary_button(ui, "Separate masks")
+                .on_hover_text("Move each part to a mask group of its own")
+                .clicked()
+        {
+            edits.push(MaskPropertyAction::SeparatePersonParts);
+        }
+        ui.add_space(moduwu_design::SPACE_XS);
+        edits.grow(Self::mask_grow_edit(ui, grow));
+        edits.feather(Self::mask_feather_edit(
+            ui,
+            "Feather",
+            feather,
+            0.0..=1.0,
+            0.0,
+        ));
+    }
+
     fn mask_grow_edit(ui: &mut Ui, grow: f32) -> Option<f32> {
         let mut grow = grow;
         Self::mask_grow_slider(ui, &mut grow).then_some(grow)
@@ -986,4 +1099,38 @@ impl PropertyEdits {
         self.controls.refinement_flow = flow;
         self.push(MaskPropertyAction::SetRefinementFlow(flow));
     }
+}
+
+/// A person's head as a chip that adds them to the mask or removes them,
+/// announced as a "Person n" checkbox. Someone not segmented yet is dimmed:
+/// adding them runs the body-part model.
+fn person_chip(
+    ui: &mut Ui,
+    person: &PersonThumbnail,
+    selected: bool,
+    index: usize,
+) -> egui::Response {
+    let tint = if person.segmented {
+        egui::Color32::WHITE
+    } else {
+        egui::Color32::WHITE.gamma_multiply(0.45)
+    };
+    let response = ui.add(
+        egui::Button::image(
+            egui::Image::new((person.texture, egui::Vec2::splat(PERSON_CHIP_SIZE)))
+                .corner_radius(4.0)
+                .tint(tint),
+        )
+        .selected(selected)
+        .corner_radius(6.0),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            ui.is_enabled(),
+            selected,
+            format!("Person {}", index + 1),
+        )
+    });
+    response
 }

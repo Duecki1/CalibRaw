@@ -405,6 +405,29 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                         validate_image(image.width, image.height, image.pixels.len(), 1)?;
                     }
                 }
+                MaskGeometry::Person {
+                    anchors,
+                    mask,
+                    grow,
+                    feather,
+                    ..
+                } => {
+                    finite("people mask settings", &[*grow, *feather])?;
+                    bounded("people mask grow", *grow, -1.0, 1.0)?;
+                    bounded("people mask feather", *feather, 0.0, 1.0)?;
+                    if anchors.len() > crate::pipeline::MAX_MASK_PEOPLE {
+                        return invalid("too many people in a people mask");
+                    }
+                    for anchor in anchors {
+                        finite("person anchor", anchor)?;
+                        for value in anchor {
+                            bounded("person anchor", *value, 0.0, 1.0)?;
+                        }
+                    }
+                    if let Some(image) = mask {
+                        validate_image(image.width, image.height, image.pixels.len(), 1)?;
+                    }
+                }
                 // These variants carry no numeric fields to range-check.
                 MaskGeometry::Fullscreen | MaskGeometry::Placeholder => {}
             }
@@ -436,6 +459,7 @@ fn geometry_matches_kind(kind: MaskKind, geometry: &MaskGeometry) -> bool {
             | (MaskKind::ColorRange, MaskGeometry::ColorRange { .. })
             | (MaskKind::DepthRange, MaskGeometry::DepthRange { .. })
             | (MaskKind::DepthRange, MaskGeometry::Placeholder)
+            | (MaskKind::Person, MaskGeometry::Person { .. })
     )
 }
 

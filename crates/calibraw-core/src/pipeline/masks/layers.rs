@@ -68,6 +68,12 @@ impl MaskStack {
                         mask,
                         grow,
                         feather,
+                    }
+                    | MaskGeometry::Person {
+                        mask,
+                        grow,
+                        feather,
+                        ..
                     } => {
                         *mask = mask
                             .as_ref()

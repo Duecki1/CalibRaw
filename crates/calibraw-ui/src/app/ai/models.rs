@@ -209,6 +209,21 @@ impl CalibRawApp {
         )
     }
 
+    /// What people masks made now are made from: the people-mask quality on
+    /// this device.
+    pub(crate) fn people_segmentation(&self) -> calibraw_ai::models::people::PeopleSegmentation {
+        self.ai.people_mask_quality.segmentation()
+    }
+
+    /// The models people masks made now need.
+    pub(in crate::app) fn people_models(&self) -> calibraw_ai::models::people::PeopleModels {
+        calibraw_ai::models::people::PeopleModels::new(
+            self.people_segmentation(),
+            &self.ai_model_root(),
+            self.subject_model_precision(),
+        )
+    }
+
     /// Float16 when subject masks are expected to run on the GPU; see
     /// `SubjectModelPrecision::for_current_sessions`.
     pub(in crate::app) fn subject_model_precision(

@@ -22,6 +22,7 @@ log.workspace = true
 rayon.workspace = true
 ring.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 ureq.workspace = true
 wgpu.workspace = true
 zip.workspace = true

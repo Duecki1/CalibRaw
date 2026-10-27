@@ -62,6 +62,7 @@ impl ForegroundProgress {
 pub(super) enum ForegroundOperationReceiver {
     AiMask(mpsc::Receiver<AiMaskEvent>),
     Object(mpsc::Receiver<ObjectMaskEvent>),
+    People(mpsc::Receiver<PeopleMaskEvent>),
     AiDenoise(mpsc::Receiver<calibraw_ai::models::denoise::AiDenoiseEvent>),
     LensCorrection(mpsc::Receiver<LensCorrectionEvent>),
     AutoStraighten(mpsc::Receiver<AutoStraightenResult>),
@@ -72,6 +73,15 @@ pub(super) enum ForegroundOperationContext {
     Object {
         target: AiMaskTarget,
         inference_started: bool,
+    },
+    /// The people components the job makes masks for, in the order of its
+    /// targets.
+    People {
+        targets: Vec<AiMaskTarget>,
+        /// The error its masks came with, reported once the job ends.
+        error: Option<String>,
+        /// Why the analysis could not be kept beside the photo.
+        not_kept: Option<String>,
     },
     AiDenoise,
     LensCorrection,
@@ -121,6 +131,7 @@ pub(crate) struct AiConsent {
 
 pub(crate) struct AiState {
     pub(crate) subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality,
+    pub(crate) people_mask_quality: calibraw_ai::models::people::PeopleMaskQuality,
     pub(crate) gpu_acceleration: bool,
     /// Content results (AI masks, scene depth, range sources) were made from an
     /// image that has since changed. Persisted as `ai_masks_need_update`.
@@ -133,6 +144,7 @@ pub(crate) struct AiState {
     pub(crate) consent: Option<AiConsent>,
     pub(crate) object_pending_target: Option<(usize, usize)>,
     pub(crate) object_cache: Option<((usize, usize), ObjectInferenceCache)>,
+    pub(crate) people: PeopleState,
     pub(crate) denoise_resume_pending: bool,
 }
 

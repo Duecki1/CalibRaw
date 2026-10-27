@@ -6,7 +6,7 @@ Reference outputs of `crates/calibraw-ai/tests/parity.rs`, from CPU sessions.
 
 | Files | Content |
 |---|---|
-| `subject-*.png`, `sky.png`, `object*.png` | Probability masks, 8-bit grayscale |
+| `subject-*.png`, `sky.png`, `object*.png`, `people-*.png` | Probability masks, 8-bit grayscale |
 | `depth.png` | Relative depth, 8-bit grayscale |
 | `denoise-bayer.png` | Denoised RAW sensor codes, 16-bit grayscale |
 | `denoise-xtrans.png` | Camera RGB; 16-bit samples are IEEE float16 bit patterns |

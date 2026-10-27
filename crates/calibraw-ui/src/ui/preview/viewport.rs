@@ -799,7 +799,7 @@ impl Preview {
             if gesture_free && !viewport.point_color_canvas {
                 let actions =
                     Self::mask_tool_actions(ui, &tools::MaskToolInput::of(app), layout, response);
-                app.apply_mask_tool_actions(ui.ctx(), actions);
+                app.apply_mask_tool_actions(ui.ctx(), frame, actions);
             }
             Self::paint_mask_overlay(ui, app, layout);
             Self::paint_tool_hint(ui, app, layout.visible_rect);

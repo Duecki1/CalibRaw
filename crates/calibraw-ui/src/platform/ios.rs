@@ -463,6 +463,10 @@ impl Platform for IosPlatform {
         self.state.library.ai_denoise_result_path(uri, name)
     }
 
+    fn people_analysis_path(&self, uri: &str, name: &str) -> Result<PathBuf, String> {
+        self.state.library.people_analysis_path(uri, name)
+    }
+
     fn load_library_thumbnail(
         &self,
         uri: &str,

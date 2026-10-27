@@ -293,7 +293,12 @@ impl Sidebar {
             clear_refinement: false,
             request_generation: false,
             request_object: false,
+            request_people: false,
+            people_edit: None,
+            separate_person_parts: false,
+            hovered_person: None,
         };
+        let people = app.people_choices(mask_index, component_index, frame);
         let point_color_preview = |develop_ui: &crate::app::DevelopUiState| {
             (
                 develop_ui.mask_point_color.visualize_range,
@@ -321,6 +326,7 @@ impl Sidebar {
                             mask,
                             component_index,
                             &controls,
+                            &people,
                         );
                     });
                     geometry_changed |= apply_mask_property_actions(
@@ -390,6 +396,7 @@ impl Sidebar {
                                     mask,
                                     component_index,
                                     &controls,
+                                    &people,
                                 );
                             });
                             geometry_changed |= apply_mask_property_actions(
@@ -489,6 +496,14 @@ impl Sidebar {
         }
         if controls.request_object {
             app.request_object_mask(mask_index, component_index);
+        }
+        app.ai.people.hovered = controls.hovered_person;
+        if controls.separate_person_parts {
+            app.separate_person_parts(mask_index, component_index, frame);
+        } else if let Some(edit) = controls.people_edit {
+            app.edit_people_mask(mask_index, component_index, edit, frame);
+        } else if controls.request_people {
+            app.request_people_masks(vec![(mask_index, component_index)], frame);
         }
         Self::apply_mask_geometry_change(ui, app, mask_index, geometry_changed);
         if light_rays_changed {

@@ -354,11 +354,13 @@ impl IosLibrary {
             source.clone(),
             sidecar::sidecar_path_for_raw(&source),
             sidecar::ai_denoise_path_for_raw(&source),
+            sidecar::people_analysis_path_for_raw(&source),
         ];
         let destinations = [
             destination.clone(),
             sidecar::sidecar_path_for_raw(&destination),
             sidecar::ai_denoise_path_for_raw(&destination),
+            sidecar::people_analysis_path_for_raw(&destination),
         ];
         if destinations.iter().any(|path| path.exists()) {
             return Err("a photo or its companion already uses that name".to_owned());
@@ -463,12 +465,16 @@ impl IosLibrary {
         }
         sidecar::load_sidecar_metadata(&raw)?;
         let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
+        let uses_people = sidecar::uses_people_analysis(&edits);
         let bytes = sidecar::encode_with_review_and_editing_time(edits, review, editing_time_ms)?;
         calibraw_core::file_ops::write_atomically(&sidecar::sidecar_path_for_raw(&raw), |file| {
             file.write_all(&bytes).map_err(SidecarError::Io)
         })?;
         if !uses_ai_denoise {
             remove_optional(&sidecar::ai_denoise_path_for_raw(&raw)).map_err(sidecar_error)?;
+        }
+        if !uses_people {
+            remove_optional(&sidecar::people_analysis_path_for_raw(&raw)).map_err(sidecar_error)?;
         }
         self.invalidate_developed(uri).map_err(sidecar_error)?;
         Ok(format!("{uri}{}", sidecar::SIDECAR_SUFFIX))
@@ -491,6 +497,7 @@ impl IosLibrary {
                 .map_err(|error| error.to_string())?;
         }
         remove_optional(&sidecar::ai_denoise_path_for_raw(&raw))?;
+        remove_optional(&sidecar::people_analysis_path_for_raw(&raw))?;
         self.invalidate_developed(uri)
     }
 
@@ -511,6 +518,15 @@ impl IosLibrary {
     ) -> Result<PathBuf, String> {
         let _state = self.state()?;
         Ok(sidecar::ai_denoise_path_for_raw(&self.photo(uri)?))
+    }
+
+    pub(super) fn people_analysis_path(
+        &self,
+        uri: &str,
+        _display_name: &str,
+    ) -> Result<PathBuf, String> {
+        let _state = self.state()?;
+        Ok(sidecar::people_analysis_path_for_raw(&self.photo(uri)?))
     }
 
     fn cache_path(&self, uri: &str, suffix: &str) -> Result<PathBuf, String> {

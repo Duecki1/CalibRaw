@@ -4,7 +4,9 @@ use super::*;
 
 pub(super) fn generated_mask(geometry: &MaskGeometry) -> Option<&Option<MaskImage>> {
     match geometry {
-        MaskGeometry::Ai { mask, .. } | MaskGeometry::Object { mask, .. } => Some(mask),
+        MaskGeometry::Ai { mask, .. }
+        | MaskGeometry::Object { mask, .. }
+        | MaskGeometry::Person { mask, .. } => Some(mask),
         MaskGeometry::DepthRange { depth, .. } => Some(depth),
         _ => None,
     }
@@ -12,7 +14,9 @@ pub(super) fn generated_mask(geometry: &MaskGeometry) -> Option<&Option<MaskImag
 
 pub(super) fn generated_mask_mut(geometry: &mut MaskGeometry) -> Option<&mut Option<MaskImage>> {
     match geometry {
-        MaskGeometry::Ai { mask, .. } | MaskGeometry::Object { mask, .. } => Some(mask),
+        MaskGeometry::Ai { mask, .. }
+        | MaskGeometry::Object { mask, .. }
+        | MaskGeometry::Person { mask, .. } => Some(mask),
         MaskGeometry::DepthRange { depth, .. } => Some(depth),
         _ => None,
     }

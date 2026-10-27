@@ -12,6 +12,7 @@ use super::{
 };
 use crate::pipeline::{color_profile::DcpProfile, noise::NoiseProfile, LateralChromaticAberration};
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use gain_map::BayerGainMaps;
 use rawler::decoders::{
     Decoder, FormatHint, Orientation, RawDecodeParams, RawMetadata, WellKnownIFD,
 };
@@ -28,6 +29,8 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+
+mod gain_map;
 
 const TIFF_TAG_PLANAR_CONFIGURATION: u16 = 284;
 const TIFF_COMPRESSION_LOSSLESS_JPEG: usize = 7;
@@ -120,6 +123,9 @@ struct Geometry {
     y: usize,
     width: usize,
     height: usize,
+    /// `[top, left, bottom, right]` of the DNG ActiveArea in sensor pixels,
+    /// the extent of the stage-2 image; the whole sensor without one.
+    active_area: [usize; 4],
     orientation: Orientation,
 }
 
@@ -180,6 +186,7 @@ impl Geometry {
             y,
             width,
             height,
+            active_area: [top, left, bottom, right],
             orientation: Orientation::from_u16(orientation as u16),
         })
     }
@@ -211,6 +218,7 @@ impl Geometry {
             y,
             width,
             height,
+            active_area: [0, 0, sensor_height, sensor_width],
             orientation: Orientation::from_u16(orientation),
         })
     }
@@ -231,6 +239,17 @@ impl Geometry {
         (
             self.x + if horizontal { self.width - 1 - x } else { x },
             self.y + if vertical { self.height - 1 - y } else { y },
+        )
+    }
+
+    /// [`Self::source`] for a position between pixel centres.
+    fn source_position(self, x: f64, y: f64) -> (f64, f64) {
+        let (transpose, horizontal, vertical) = self.orientation.to_flips();
+        let (x, y) = if transpose { (y, x) } else { (x, y) };
+        let last = [(self.width - 1) as f64, (self.height - 1) as f64];
+        (
+            self.x as f64 + if horizontal { last[0] - x } else { x },
+            self.y as f64 + if vertical { last[1] - y } else { y },
         )
     }
 }
@@ -313,18 +332,9 @@ fn validate_layout(input: &Input) -> Result<SampleDecoder> {
         );
     }
     // Rawler 0.8 applies LinearizationTable and supported interleave factors,
-    // but it does not apply DNG opcode lists. Samsung Expert RAW / phone DNGs
-    // commonly carry lens-shading GainMap corrections in OpcodeList2. Treat the
-    // missing correction as a documented rendering limitation rather than a
-    // decode blocker, otherwise valid LinearRaw JPEG-XL images cannot open.
-    if entry(raw, DngTag::OpcodeList2 as u16).is_some() {
-        log::warn!(
-            "DNG OpcodeList2 is present but Rawler 0.8 does not apply DNG opcodes; decoding without the stage-2 correction"
-        );
-        crate::diagnostics::record(
-            "DNG OpcodeList2 present; Rawler decoded pixels without applying the stage-2 opcode list",
-        );
-    }
+    // but no DNG opcode lists. OpcodeList2 GainMaps (phone lens shading) are
+    // applied as the photo's lens shading (`gain_map`); its other opcodes are
+    // skipped with a diagnostic rather than block the decode.
     // Keep other unimplemented raw-stage corrections strict. Ignoring these
     // could change the interpretation of the sensor samples in less predictable
     // ways, and CalibRaw deliberately does not maintain a private opcode parser.
@@ -590,6 +600,7 @@ struct ChosenProfile {
 fn adapt(
     image: RawImage,
     geometry: Geometry,
+    gain_maps: Option<BayerGainMaps>,
     color: CameraColor,
     md: RawMetadata,
     path: &Path,
@@ -783,6 +794,24 @@ fn adapt(
             }
             loaded.color_indices =
                 CompactPixelMap::repeating(width, height, tile_w as u32, tile_h as u32, indices);
+            if let Some(maps) = &gain_maps {
+                let shading = if period == 2 {
+                    maps.lens_shading(geometry, channel_at)
+                } else {
+                    Err(anyhow!("GainMaps of an X-Trans mosaic are not applied"))
+                };
+                match shading {
+                    Ok(shading) => {
+                        loaded.lens_shading = Some(shading);
+                        crate::diagnostics::record(
+                            "DNG OpcodeList2 GainMaps applied as lens shading",
+                        );
+                    }
+                    Err(error) => gain_map::skipped_opcodes(&format!(
+                        "{error:#}; decoding without its GainMaps"
+                    )),
+                }
+            }
             let (bw, bh) = if geometry.orientation.to_flips().0 {
                 (black.height, black.width)
             } else {
@@ -837,6 +866,9 @@ fn adapt(
             );
         }
         RawPhotometricInterpretation::LinearRaw => {
+            if gain_maps.is_some() {
+                gain_map::skipped_opcodes("GainMaps of a LinearRaw image are not applied");
+            }
             ensure!(
                 image.cpp == 3,
                 "only three-channel RGB LinearRaw is supported"
@@ -876,6 +908,7 @@ pub(super) fn load_raw_file_with_profile_selection(
     guarded(|| {
         let input = open(path)?;
         let samples = validate_layout(&input)?;
+        let gain_maps = BayerGainMaps::read(&input.raw, input.geometry);
         let image = decode(path, &input, samples)?;
         let (signature, selection) = shared::resolve_camera_profiles(
             path,
@@ -892,7 +925,7 @@ pub(super) fn load_raw_file_with_profile_selection(
             profile: selection.profile,
             source: selection.source,
         };
-        let mut loaded = adapt(image, input.geometry, color, md, path, chosen)?;
+        let mut loaded = adapt(image, input.geometry, gain_maps, color, md, path, chosen)?;
         loaded.available_camera_profiles = selection.candidates;
         crate::diagnostics::record("RAW decode completed through Rawler backend");
         Ok(loaded)
@@ -922,7 +955,7 @@ pub(super) fn load_proprietary_raw_file_with_profile_selection(
             profile: selection.profile,
             source: selection.source,
         };
-        let mut loaded = adapt(image, geometry, color, md, path, chosen)?;
+        let mut loaded = adapt(image, geometry, None, color, md, path, chosen)?;
         loaded.available_camera_profiles = selection.candidates;
         crate::diagnostics::record("RAW decode completed through Rawler fallback backend");
         Ok(loaded)
@@ -944,7 +977,7 @@ pub(super) fn load_proprietary_raw_file_with_dcp(
             profile: Some(profile),
             source: Some(candidate.path.clone()),
         };
-        let mut loaded = adapt(image, geometry, color, md, path, chosen)?;
+        let mut loaded = adapt(image, geometry, None, color, md, path, chosen)?;
         loaded.available_camera_profiles = vec![candidate];
         crate::diagnostics::record(
             "DCP-backed RAW decode completed through Rawler fallback backend",
@@ -991,6 +1024,7 @@ pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result
             DcpProfile::from_path(profile_path)?.context("not a DNG camera profile")?;
         let input = open(path)?;
         let samples = validate_layout(&input)?;
+        let gain_maps = BayerGainMaps::read(&input.raw, input.geometry);
         let color = CameraColor::from_dng(path, &input)?;
         profile.camera_calibration_signature = color.embedded.camera_calibration_signature.clone();
         let name = profile.name.clone().unwrap_or_else(|| {
@@ -1009,7 +1043,7 @@ pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result
             profile: Some(profile),
             source: Some(profile_path.to_owned()),
         };
-        let mut loaded = adapt(image, input.geometry, color, md, path, chosen)?;
+        let mut loaded = adapt(image, input.geometry, gain_maps, color, md, path, chosen)?;
         loaded.available_camera_profiles = vec![CameraProfileCandidate {
             path: profile_path.to_owned(),
             name,
@@ -1059,6 +1093,7 @@ fn thumbnail_from_dynamic_image(
         y: 0,
         width: resized.width() as usize,
         height: resized.height() as usize,
+        active_area: [0, 0, resized.height() as usize, resized.width() as usize],
         orientation,
     };
     let [width, height] = geometry.dimensions();

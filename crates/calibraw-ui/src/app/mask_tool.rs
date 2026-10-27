@@ -43,6 +43,13 @@ pub(crate) enum MaskToolAction {
     BeginDrag(Option<MaskDragState>),
     PaintSubjectRefinement(BrushStrokeSamples),
     EditComponent(MaskPointerEdit),
+    /// A click on a people component: the person under `point`, in
+    /// normalized source coordinates, is added to its people or removed.
+    PickPerson {
+        mask_index: usize,
+        component_index: usize,
+        point: [f32; 2],
+    },
 }
 
 /// The pointer acting on one component, in normalized source coordinates.
@@ -62,14 +69,20 @@ impl CalibRawApp {
     pub(crate) fn apply_mask_tool_actions(
         &mut self,
         ctx: &egui::Context,
+        frame: &eframe::Frame,
         actions: Vec<MaskToolAction>,
     ) {
         for action in actions {
-            self.apply_mask_tool_action(ctx, action);
+            self.apply_mask_tool_action(ctx, frame, action);
         }
     }
 
-    fn apply_mask_tool_action(&mut self, ctx: &egui::Context, action: MaskToolAction) {
+    fn apply_mask_tool_action(
+        &mut self,
+        ctx: &egui::Context,
+        frame: &eframe::Frame,
+        action: MaskToolAction,
+    ) {
         match action {
             MaskToolAction::Deactivate => {
                 self.finish_mask_geometry_interaction();
@@ -95,6 +108,11 @@ impl CalibRawApp {
                 self.paint_subject_refinement(ctx, &stroke);
             }
             MaskToolAction::EditComponent(edit) => self.edit_mask_component(ctx, edit),
+            MaskToolAction::PickPerson {
+                mask_index,
+                component_index,
+                point,
+            } => self.pick_person(mask_index, component_index, point, frame),
         }
     }
 
