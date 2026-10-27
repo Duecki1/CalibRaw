@@ -51,6 +51,8 @@ pub const MAX_LOCAL_MASKS: usize = 32;
 pub const MAX_EFFECT_COMPONENTS: usize = 12;
 pub const MAX_MASK_COMPONENTS: usize = 64;
 pub const MAX_PATH_POINTS: usize = 256;
+/// People a people mask selects at most: as many as are found in a photo.
+pub const MAX_MASK_PEOPLE: usize = 32;
 pub const MASK_ATLAS_EDGE_DESKTOP: u32 = 2048;
 pub const MASK_ATLAS_EDGE_ANDROID: u32 = 1024;
 pub const MASK_ATLAS_EDGE_EXPORT_DESKTOP: u32 = 4096;

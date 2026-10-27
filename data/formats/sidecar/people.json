@@ -779,9 +779,15 @@
               "enabled": true,
               "geometry": {
                 "Person": {
-                  "anchor": [
-                    0.42,
-                    0.55
+                  "anchors": [
+                    [
+                      0.42,
+                      0.55
+                    ],
+                    [
+                      0.7,
+                      0.5
+                    ]
                   ],
                   "feather": 0.2,
                   "grow": 0.1,
@@ -801,7 +807,7 @@
               "enabled": true,
               "geometry": {
                 "Person": {
-                  "anchor": null,
+                  "anchors": [],
                   "feather": 0.0,
                   "grow": 0.0,
                   "mask": null,

@@ -25,8 +25,9 @@ const CANDIDATE_SCORE: f32 = 0.25;
 /// A candidate whose box overlaps a likelier one's by more than this
 /// intersection over union is the same person found twice.
 const DUPLICATE_OVERLAP: f32 = 0.7;
-/// At most this many people are offered, the likeliest ones.
-pub(super) const MAX_PEOPLE: usize = 32;
+/// At most this many people are offered, the likeliest ones; a people mask
+/// can select them all.
+pub(super) const MAX_PEOPLE: usize = crate::pipeline::MAX_MASK_PEOPLE;
 
 /// The people and other candidates found in one photo.
 pub(super) struct Detection {

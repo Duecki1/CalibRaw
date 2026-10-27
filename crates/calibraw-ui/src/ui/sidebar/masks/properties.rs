@@ -110,19 +110,19 @@ impl Sidebar {
                         }
                         (
                             MaskGeometry::Person {
-                                anchor,
+                                anchors,
                                 parts,
                                 mask,
                                 ..
                             },
                             MaskGeometry::Person {
-                                anchor: person,
+                                anchors: people,
                                 parts: saved_parts,
                                 mask: saved,
                                 ..
                             },
                         ) => {
-                            *anchor = person;
+                            *anchors = people;
                             *parts = saved_parts;
                             *mask = saved;
                         }
@@ -849,9 +849,9 @@ impl Sidebar {
         }
     }
 
-    /// A chip per person found when there is a choice, a switch per part to
-    /// select and the shape sliders. Until the people are known, a button
-    /// finds them.
+    /// A chip per person found when there is a choice, which adds them or
+    /// removes them, a switch per part to select and the shape sliders.
+    /// Until the people are known, a button finds them.
     fn person_properties(
         ui: &mut Ui,
         people: &PeopleChoices,
@@ -873,13 +873,13 @@ impl Sidebar {
         } else if people.people.len() > 1 {
             ui.horizontal_wrapped(|ui| {
                 for (index, person) in people.people.iter().enumerate() {
-                    let selected = people.selected == Some(index);
+                    let selected = people.selected.contains(&index);
                     let response = person_chip(ui, person, selected, index);
                     if response.hovered() {
                         edits.push(MaskPropertyAction::HoverPerson(index));
                     }
-                    if response.clicked() && !selected {
-                        edits.push(MaskPropertyAction::SelectPerson(person.anchor));
+                    if response.clicked() {
+                        edits.push(MaskPropertyAction::TogglePerson(index));
                     }
                 }
             });
@@ -1090,8 +1090,9 @@ impl PropertyEdits {
     }
 }
 
-/// A person's head as a selectable chip, announced as "Person n". Someone
-/// not segmented yet is dimmed: choosing them runs the body-part model.
+/// A person's head as a chip that adds them to the mask or removes them,
+/// announced as a "Person n" checkbox. Someone not segmented yet is dimmed:
+/// adding them runs the body-part model.
 fn person_chip(
     ui: &mut Ui,
     person: &PersonThumbnail,
@@ -1114,7 +1115,7 @@ fn person_chip(
     );
     response.widget_info(|| {
         egui::WidgetInfo::selected(
-            egui::WidgetType::Button,
+            egui::WidgetType::Checkbox,
             ui.is_enabled(),
             selected,
             format!("Person {}", index + 1),

@@ -406,7 +406,7 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     }
                 }
                 MaskGeometry::Person {
-                    anchor,
+                    anchors,
                     mask,
                     grow,
                     feather,
@@ -415,7 +415,10 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     finite("people mask settings", &[*grow, *feather])?;
                     bounded("people mask grow", *grow, -1.0, 1.0)?;
                     bounded("people mask feather", *feather, 0.0, 1.0)?;
-                    if let Some(anchor) = anchor {
+                    if anchors.len() > crate::pipeline::MAX_MASK_PEOPLE {
+                        return invalid("too many people in a people mask");
+                    }
+                    for anchor in anchors {
                         finite("person anchor", anchor)?;
                         for value in anchor {
                             bounded("person anchor", *value, 0.0, 1.0)?;

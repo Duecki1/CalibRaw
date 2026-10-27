@@ -272,21 +272,19 @@ impl Sidebar {
             .people_chips
             .iter()
             .flatten()
-            .zip(analysis.people())
+            .take(analysis.people().len())
             .enumerate()
-            .map(|(index, (chip, person))| PersonThumbnail {
+            .map(|(index, chip)| PersonThumbnail {
                 texture: chip.id(),
-                anchor: person.anchor,
                 segmented: analysis.is_segmented(index),
             })
             .collect();
+        let selected = analysis.resolve(&choice.anchors);
         PeopleChoices {
             analysed: true,
             people,
-            selected: choice.anchor.and_then(|anchor| analysis.person_at(anchor)),
-            shown: analysis
-                .resolve(choice.anchor)
-                .and_then(|person| analysis.parts_shown(person)),
+            shown: analysis.parts_shown(&selected),
+            selected,
             parts: choice.parts,
         }
     }

@@ -78,7 +78,8 @@ impl Preview {
         }
         let mut actions = vec![MaskToolAction::Activate(kind)];
         if kind == MaskKind::Person {
-            // A click or tap picks the person under it; nothing is dragged.
+            // A click or tap adds or removes the person under it; nothing is
+            // dragged.
             if !ui.input(|input| input.pointer.primary_down()) {
                 actions.push(MaskToolAction::EndGesture {
                     request_object: None,

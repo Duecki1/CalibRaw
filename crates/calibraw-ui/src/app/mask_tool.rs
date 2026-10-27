@@ -44,7 +44,7 @@ pub(crate) enum MaskToolAction {
     PaintSubjectRefinement(BrushStrokeSamples),
     EditComponent(MaskPointerEdit),
     /// A click on a people component: the person under `point`, in
-    /// normalized source coordinates, becomes its person.
+    /// normalized source coordinates, is added to its people or removed.
     PickPerson {
         mask_index: usize,
         component_index: usize,

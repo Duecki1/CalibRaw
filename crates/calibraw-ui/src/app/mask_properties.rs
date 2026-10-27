@@ -30,7 +30,7 @@ pub(crate) struct MaskPropertiesControls {
     pub(crate) hovered_person: Option<usize>,
 }
 
-/// A people mask's person and parts, for its properties.
+/// A people mask's people and parts, for its properties.
 #[derive(Default)]
 pub(crate) struct PeopleChoices {
     /// Whether the people in the photo are known; until then the panel
@@ -38,27 +38,27 @@ pub(crate) struct PeopleChoices {
     pub(crate) analysed: bool,
     /// Each person's thumbnail, left to right.
     pub(crate) people: Vec<PersonThumbnail>,
-    /// The person the mask selects.
-    pub(crate) selected: Option<usize>,
+    /// The people the mask selects, in order.
+    pub(crate) selected: Vec<usize>,
     pub(crate) parts: BTreeSet<PersonPart>,
-    /// The parts the mask's person shows, once known.
+    /// The parts any of the mask's people shows, once known.
     pub(crate) shown: Option<BTreeSet<PersonPart>>,
 }
 
 /// One person's chip in a people mask's properties.
 pub(crate) struct PersonThumbnail {
     pub(crate) texture: egui::TextureId,
-    pub(crate) anchor: [f32; 2],
-    /// Their body parts are known, so choosing them runs no model.
+    /// Their body parts are known, so adding them runs no model.
     pub(crate) segmented: bool,
 }
 
-/// A change to a people mask's person or parts, which
+/// A change to a people mask's people or parts, which
 /// `CalibRawApp::edit_people_mask` makes together with the mask it needs.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum PeopleEdit {
-    /// The person, by their anchor.
-    SelectPerson([f32; 2]),
+    /// Adds a person, by their index in the people found, or removes them;
+    /// the last person stays.
+    TogglePerson(usize),
     /// Adds or removes a part; the last part stays. The entire person
     /// replaces the other parts, which replace it in turn.
     TogglePart(PersonPart),
@@ -92,8 +92,9 @@ pub(crate) enum MaskPropertyAction {
     SetLuminanceHighFeather(f32),
     SetColorTolerance(f32),
     SetDepthRange(DepthRangeSettings),
-    /// The person a people mask selects, by their anchor.
-    SelectPerson([f32; 2]),
+    /// Adds a person to a people mask or removes them, as
+    /// `PeopleEdit::TogglePerson`.
+    TogglePerson(usize),
     /// Adds or removes a part of a people mask, as `PeopleEdit::TogglePart`.
     TogglePersonPart(PersonPart),
     SeparatePersonParts,
@@ -180,9 +181,9 @@ fn apply_mask_property_action(
             controls.hovered_person = Some(person);
             false
         }
-        // The person and parts change with the mask they need.
-        MaskPropertyAction::SelectPerson(anchor) => {
-            controls.people_edit = Some(PeopleEdit::SelectPerson(anchor));
+        // The people and parts change with the mask they need.
+        MaskPropertyAction::TogglePerson(person) => {
+            controls.people_edit = Some(PeopleEdit::TogglePerson(person));
             false
         }
         MaskPropertyAction::TogglePersonPart(part) => {

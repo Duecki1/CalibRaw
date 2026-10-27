@@ -88,12 +88,14 @@ pub enum MaskGeometry {
         #[serde(flatten)]
         range: DepthRangeSettings,
     },
-    /// Parts of one person in the photo.
+    /// Parts of one or more people in the photo.
     Person {
-        /// The person, as the centre of their detected outline in fractions
-        /// of the full image; a refresh selects whoever is there then. `None`
-        /// until a person is found, which selects the most prominent one.
-        anchor: Option<[f32; 2]>,
+        /// The people, each as the centre of their detected outline in
+        /// fractions of the full image; a refresh selects whoever is there
+        /// then. Empty until people are found, which selects the most
+        /// prominent one.
+        #[serde(default)]
+        anchors: Vec<[f32; 2]>,
         parts: BTreeSet<PersonPart>,
         mask: Option<MaskImage>,
         grow: f32,
@@ -245,7 +247,7 @@ impl MaskGeometry {
                 range: DepthRangeSettings::default(),
             },
             MaskKind::Person => Self::Person {
-                anchor: None,
+                anchors: Vec::new(),
                 parts: BTreeSet::from([PersonPart::EntirePerson]),
                 mask: None,
                 grow: 0.0,

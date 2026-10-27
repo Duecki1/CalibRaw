@@ -225,8 +225,8 @@ fn people() {
         load_raw_file(&photo).unwrap_or_else(|error| panic!("load {}: {error:#}", photo.display())),
     );
     let remove = Arc::new(RemoveEditState::default());
-    let (output, anchor, ran_models) = harness.people_job(
-        None,
+    let (output, anchors, ran_models) = harness.people_job(
+        Vec::new(),
         &[PersonPart::FaceNeck, PersonPart::Hair],
         None,
         Some(PeopleAnalysisFile {
@@ -246,7 +246,7 @@ fn people() {
         .expect("read the kept people analysis")
         .expect("the kept analysis is of the people photo");
     let (output, _, ran_models) = harness.people_job(
-        Some(anchor),
+        anchors,
         &[PersonPart::Clothes, PersonPart::BodySkin],
         Some(analysis),
         None,
@@ -533,15 +533,15 @@ impl Harness {
         (output, result.cache)
     }
 
-    /// One people mask of `parts`, the anchor of the person it selected, and
+    /// One people mask of `parts`, the anchors of the people it selected, and
     /// whether the job ran a model.
     fn people_job(
         &self,
-        anchor: Option<[f32; 2]>,
+        anchors: Vec<[f32; 2]>,
         parts: &[PersonPart],
         analysis: Option<PeopleAnalysis>,
         keep: Option<PeopleAnalysisFile>,
-    ) -> (Output, [f32; 2], bool) {
+    ) -> (Output, Vec<[f32; 2]>, bool) {
         let scene = self.people_scene();
         let events = spawn_people_mask(PeopleMaskWorkerRequest {
             detector_path: self.models.join(DETECTOR_MODEL.cache_filename),
@@ -555,7 +555,7 @@ impl Harness {
                 },
                 analysis,
                 targets: vec![PeopleTarget {
-                    anchor,
+                    anchors,
                     parts: parts.iter().copied().collect::<BTreeSet<_>>(),
                 }],
                 keep,
@@ -583,13 +583,13 @@ impl Harness {
         let [Some(mask)] = <[_; 1]>::try_from(masks).expect("one mask per target") else {
             panic!("the people photo has a person");
         };
-        let anchor = mask.anchor;
+        let anchors = mask.anchors;
         let output = Output::Mask(Plane {
             width: mask.width,
             height: mask.height,
             values: mask.mask,
         });
-        (output, anchor, ran_models)
+        (output, anchors, ran_models)
     }
 
     fn denoise_job(&self, raw: LoadedRaw) -> Output {

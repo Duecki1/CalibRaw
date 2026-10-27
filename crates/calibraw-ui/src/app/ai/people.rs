@@ -23,19 +23,19 @@ const CHIP_EDGE: u32 = 96;
 /// Opacity of a person's canvas highlight where they certainly are, of 255.
 const HIGHLIGHT_ALPHA: u16 = 115;
 
-/// A people component's person and parts.
+/// A people component's people and parts.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PersonChoice {
-    /// As `MaskGeometry::Person` stores it.
-    pub(crate) anchor: Option<[f32; 2]>,
+    /// As `MaskGeometry::Person` stores them.
+    pub(crate) anchors: Vec<[f32; 2]>,
     pub(crate) parts: BTreeSet<PersonPart>,
 }
 
 impl PersonChoice {
     fn of(geometry: &MaskGeometry) -> Option<Self> {
         match geometry {
-            MaskGeometry::Person { anchor, parts, .. } => Some(Self {
-                anchor: *anchor,
+            MaskGeometry::Person { anchors, parts, .. } => Some(Self {
+                anchors: anchors.clone(),
                 parts: parts.clone(),
             }),
             _ => None,
@@ -43,12 +43,32 @@ impl PersonChoice {
     }
 
     /// The choice after `edit`, or `None` when it changes nothing. The last
-    /// part stays, and the entire person replaces the other parts, which
-    /// replace it in turn.
-    fn edited(&self, edit: PeopleEdit) -> Option<Self> {
+    /// person and the last part stay, and the entire person replaces the
+    /// other parts, which replace it in turn. People are toggled as
+    /// `analysis` found them, so a toggle needs it.
+    fn edited(&self, edit: PeopleEdit, analysis: Option<&PeopleAnalysis>) -> Option<Self> {
         let mut next = self.clone();
         match edit {
-            PeopleEdit::SelectPerson(anchor) => next.anchor = Some(anchor),
+            PeopleEdit::TogglePerson(person) => {
+                let analysis = analysis?;
+                let mut people = analysis.resolve(&self.anchors);
+                if let Some(position) = people.iter().position(|&chosen| chosen == person) {
+                    if people.len() == 1 {
+                        return None;
+                    }
+                    people.remove(position);
+                } else if person < analysis.people().len() {
+                    people.push(person);
+                    people.sort_unstable();
+                } else {
+                    return None;
+                }
+                next.anchors = people
+                    .iter()
+                    .filter_map(|&chosen| analysis.people().get(chosen))
+                    .map(|found| found.anchor)
+                    .collect();
+            }
             PeopleEdit::TogglePart(PersonPart::EntirePerson) => {
                 next.parts = BTreeSet::from([PersonPart::EntirePerson]);
             }
@@ -107,7 +127,7 @@ impl CalibRawApp {
             let Some(choice) = self.person_choice(location) else {
                 continue;
             };
-            if self.segmented_person(choice.anchor).is_some() {
+            if self.segmented_people(&choice.anchors).is_some() {
                 self.start_people_compose(location, choice.clone(), choice, frame);
             } else {
                 needs_job.push(location);
@@ -138,7 +158,7 @@ impl CalibRawApp {
         true
     }
 
-    /// Changes a people component's person or parts. The component takes
+    /// Changes a people component's people or parts. The component takes
     /// the change together with its new mask, as one edit. A person not
     /// segmented yet is chosen at once, and the people job segments them.
     pub(crate) fn edit_people_mask(
@@ -155,7 +175,7 @@ impl CalibRawApp {
         ) else {
             return;
         };
-        let Some(next) = shown.edited(edit) else {
+        let Some(next) = shown.edited(edit, self.ai.people.as_ref()) else {
             return;
         };
         if next == current {
@@ -165,7 +185,7 @@ impl CalibRawApp {
                 .retain(|compose| !compose.is_for(location));
             return;
         }
-        if self.segmented_person(next.anchor).is_some() {
+        if self.segmented_people(&next.anchors).is_some() {
             self.start_people_compose(location, current, next, frame);
             return;
         }
@@ -175,7 +195,7 @@ impl CalibRawApp {
         self.ai
             .people_composes
             .retain(|compose| !compose.is_for(location));
-        if let Some(MaskGeometry::Person { anchor, parts, .. }) = self
+        if let Some(MaskGeometry::Person { anchors, parts, .. }) = self
             .masks
             .stack
             .masks
@@ -183,15 +203,15 @@ impl CalibRawApp {
             .and_then(|mask| mask.components.get_mut(component_index))
             .map(|component| &mut component.geometry)
         {
-            *anchor = next.anchor;
+            *anchors = next.anchors;
             *parts = next.parts;
         }
         self.mark_mask_geometry_dirty(mask_index);
         self.request_people_masks(vec![location], frame);
     }
 
-    /// Makes the person under `point` (fractions of the photo) the people
-    /// component's person, for a click on the canvas.
+    /// Adds the person under `point` (fractions of the photo) to the people
+    /// component's people, or removes them, for a click on the canvas.
     pub(crate) fn pick_person(
         &mut self,
         mask_index: usize,
@@ -199,16 +219,18 @@ impl CalibRawApp {
         point: [f32; 2],
         frame: &eframe::Frame,
     ) {
-        let Some(anchor) = self.ai.people.as_ref().and_then(|analysis| {
-            let person = analysis.person_under(point)?;
-            Some(analysis.people()[person].anchor)
-        }) else {
+        let Some(person) = self
+            .ai
+            .people
+            .as_ref()
+            .and_then(|analysis| analysis.person_under(point))
+        else {
             return;
         };
         self.edit_people_mask(
             mask_index,
             component_index,
-            PeopleEdit::SelectPerson(anchor),
+            PeopleEdit::TogglePerson(person),
             frame,
         );
     }
@@ -275,15 +297,16 @@ impl CalibRawApp {
             .and_then(|component| PersonChoice::of(&component.geometry))
     }
 
-    /// The person `anchor` selects, while the analysis has their body parts.
-    fn segmented_person(&self, anchor: Option<[f32; 2]>) -> Option<usize> {
+    /// The people `anchors` select, while the analysis has all their body
+    /// parts.
+    fn segmented_people(&self, anchors: &[[f32; 2]]) -> Option<Vec<usize>> {
         let analysis = self.ai.people.as_ref()?;
-        analysis
-            .resolve(anchor)
-            .filter(|&person| analysis.is_segmented(person))
+        let people = analysis.resolve(anchors);
+        (!people.is_empty() && people.iter().all(|&person| analysis.is_segmented(person)))
+            .then_some(people)
     }
 
-    /// Starts making the mask of `target`, whose person is segmented, for
+    /// Starts making the mask of `target`, whose people are segmented, for
     /// the component at `location`, replacing one already being made.
     fn start_people_compose(
         &mut self,
@@ -295,9 +318,10 @@ impl CalibRawApp {
         self.ai
             .people_composes
             .retain(|compose| !compose.is_for(location));
-        let (Some(person), Some(analysis)) =
-            (self.segmented_person(target.anchor), self.ai.people.clone())
-        else {
+        let (Some(people), Some(analysis)) = (
+            self.segmented_people(&target.anchors),
+            self.ai.people.clone(),
+        ) else {
             return;
         };
         if let Err(error) = self.capture_mask_source(frame) {
@@ -315,7 +339,7 @@ impl CalibRawApp {
         let parts = target.parts.clone();
         let receiver = spawn_ui_worker(&self.egui_ctx, move || {
             analysis
-                .person_mask(&source, person, &parts)
+                .person_mask(&source, &people, &parts)
                 .map_err(|error| format!("{error:#}"))
         });
         let (mask_index, component_index) = location;
@@ -352,7 +376,7 @@ impl CalibRawApp {
         compose: PeopleCompose,
         result: Result<Option<PersonMask>, String>,
     ) {
-        let mask = match result {
+        let mut mask = match result {
             Ok(Some(mask)) => mask,
             // Only an analysis without the person returns none, and the
             // compose started from one with them.
@@ -366,7 +390,7 @@ impl CalibRawApp {
         if self.person_choice(location).as_ref() != Some(&compose.base) {
             return;
         }
-        let person_anchor = mask.anchor;
+        let people_anchors = std::mem::take(&mut mask.anchors);
         let Some(image) = mask.into_probability_mask() else {
             self.report_ai_mask_error(
                 "People selection returned an invalid mask image.".to_owned(),
@@ -374,7 +398,7 @@ impl CalibRawApp {
             return;
         };
         if let Some(MaskGeometry::Person {
-            anchor,
+            anchors,
             parts,
             mask,
             ..
@@ -386,7 +410,7 @@ impl CalibRawApp {
             .and_then(|mask| mask.components.get_mut(compose.component_index))
             .map(|component| &mut component.geometry)
         {
-            *anchor = Some(person_anchor);
+            *anchors = people_anchors;
             *parts = compose.target.parts;
             *mask = Some(image);
         }
@@ -483,11 +507,11 @@ impl CalibRawApp {
             .into_iter()
             .filter_map(|(mask_index, component_index)| {
                 let target = self.masks.capture_ai_target(mask_index, component_index)?;
-                let MaskGeometry::Person { anchor, parts, .. } = &target.geometry else {
+                let MaskGeometry::Person { anchors, parts, .. } = &target.geometry else {
                     return None;
                 };
                 let people_target = PeopleTarget {
-                    anchor: *anchor,
+                    anchors: anchors.clone(),
                     parts: parts.clone(),
                 };
                 Some((people_target, target))
@@ -504,8 +528,9 @@ impl CalibRawApp {
         let segments = analysis.as_ref().is_none_or(|analysis| {
             targets.iter().any(|target| {
                 analysis
-                    .resolve(target.anchor)
-                    .is_some_and(|person| !analysis.is_segmented(person))
+                    .resolve(&target.anchors)
+                    .iter()
+                    .any(|&person| !analysis.is_segmented(person))
             })
         });
         let (detector_path, body_parts_path) = self.people_model_paths();
@@ -673,7 +698,7 @@ impl CalibRawApp {
         }
     }
 
-    /// Writes each mask and its person's anchor to its component. Returns
+    /// Writes each mask and its people's anchors to its component. Returns
     /// the error to report; finding no one for a mask that has not chosen a
     /// person yet is not one.
     fn apply_people_masks(
@@ -688,11 +713,8 @@ impl CalibRawApp {
             let Some(mask) = mask else {
                 // A refreshed mask keeps its last result; a new one stays empty.
                 if matches!(
-                    target.geometry,
-                    MaskGeometry::Person {
-                        anchor: Some(_),
-                        ..
-                    }
+                    &target.geometry,
+                    MaskGeometry::Person { anchors, .. } if !anchors.is_empty()
                 ) {
                     error = Some(
                         "No one was found in this photo for a people mask; it keeps its last \
@@ -711,14 +733,15 @@ impl CalibRawApp {
                     continue;
                 }
             };
-            let anchor = mask.anchor;
+            let mut mask = mask;
+            let anchors = std::mem::take(&mut mask.anchors);
             let Some(image) = mask.into_probability_mask() else {
                 error = Some("People selection returned an invalid mask image.".to_owned());
                 continue;
             };
             let (mask_index, component_index) = location;
             if let Some(MaskGeometry::Person {
-                anchor: target_anchor,
+                anchors: target_anchors,
                 mask: target_mask,
                 ..
             }) = self
@@ -729,7 +752,7 @@ impl CalibRawApp {
                 .and_then(|local| local.components.get_mut(component_index))
                 .map(|component| &mut component.geometry)
             {
-                *target_anchor = Some(anchor);
+                *target_anchors = anchors;
                 *target_mask = Some(image);
                 changed_layers.insert(mask_index);
             }
@@ -771,7 +794,7 @@ impl CalibRawApp {
     }
 
     /// Keeps the first part of a people component and moves each other part
-    /// to a mask group of its own for the same person, so each part takes its
+    /// to a mask group of its own for the same people, so each part takes its
     /// own adjustments, then makes their masks.
     pub(crate) fn separate_person_parts(
         &mut self,
@@ -779,7 +802,7 @@ impl CalibRawApp {
         component_index: usize,
         frame: &eframe::Frame,
     ) {
-        let Some(PersonChoice { anchor, parts }) =
+        let Some(PersonChoice { anchors, parts }) =
             self.shown_person_choice(mask_index, component_index)
         else {
             return;
@@ -806,7 +829,7 @@ impl CalibRawApp {
 
         let mut candidate = self.masks.stack.clone();
         if let Some(MaskGeometry::Person {
-            anchor: kept_anchor,
+            anchors: kept_anchors,
             parts: kept_parts,
             ..
         }) = candidate
@@ -815,7 +838,7 @@ impl CalibRawApp {
             .and_then(|mask| mask.components.get_mut(component_index))
             .map(|component| &mut component.geometry)
         {
-            *kept_anchor = anchor;
+            *kept_anchors = anchors.clone();
             *kept_parts = BTreeSet::from([first]);
         }
         let mut components = vec![(mask_index, component_index)];
@@ -832,7 +855,7 @@ impl CalibRawApp {
             let group = &mut candidate.masks[new_mask];
             group.common.rename(part.label());
             group.components[new_component].geometry = MaskGeometry::Person {
-                anchor,
+                anchors: anchors.clone(),
                 parts: BTreeSet::from([part]),
                 mask: None,
                 grow,

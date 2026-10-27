@@ -333,7 +333,7 @@ impl Preview {
     }
 
     /// Highlights the person whose chip the mask panel has the pointer over,
-    /// else the one under the pointer, which a click picks.
+    /// else the one under the pointer, whom a click adds or removes.
     fn paint_person_highlight(
         ui: &Ui,
         app: &mut CalibRawApp,

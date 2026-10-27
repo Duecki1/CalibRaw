@@ -158,20 +158,23 @@ impl PeopleAnalysis {
         &self.people
     }
 
-    /// The person a people mask anchored at `anchor` selects: the one whose
-    /// outline contains it, else the one whose anchor is nearest. `None`
-    /// only when no one was found.
-    pub fn person_at(&self, anchor: [f32; 2]) -> Option<usize> {
-        self.detection.person_at(anchor, self.aspect)
-    }
-
-    /// `person_at`, or the most prominent person for a mask that has not
-    /// chosen one yet.
-    pub fn resolve(&self, anchor: Option<[f32; 2]>) -> Option<usize> {
-        match anchor {
-            Some(anchor) => self.person_at(anchor),
-            None => self.detection.most_prominent(),
-        }
+    /// The people a people mask anchored at `anchors` selects, in order and
+    /// each once. An anchor selects the person whose outline contains it,
+    /// else the one whose anchor is nearest; a mask that has not chosen
+    /// anyone yet selects the most prominent person. Empty only when no one
+    /// was found.
+    pub fn resolve(&self, anchors: &[[f32; 2]]) -> Vec<usize> {
+        let mut people: Vec<usize> = if anchors.is_empty() {
+            self.detection.most_prominent().into_iter().collect()
+        } else {
+            anchors
+                .iter()
+                .filter_map(|&anchor| self.detection.person_at(anchor, self.aspect))
+                .collect()
+        };
+        people.sort_unstable();
+        people.dedup();
+        people
     }
 
     /// Whether `person`'s body parts are known, so their masks need no model.
@@ -192,26 +195,37 @@ impl PeopleAnalysis {
         true
     }
 
-    /// The mask of `parts` of `person` over `source`, its edges refined
-    /// against it; runs no model. `None` until the person is segmented.
+    /// The mask of `parts` of `people` over `source`, its edges refined
+    /// against it; runs no model. `None` for no one, or until everyone is
+    /// segmented.
     pub fn person_mask(
         &self,
         source: &PeopleSource,
-        person: usize,
+        people: &[usize],
         parts: &BTreeSet<PersonPart>,
     ) -> Result<Option<PersonMask>> {
-        self.mask_of(&source.image()?, person, parts)
+        self.mask_of(&source.image()?, people, parts)
     }
 
-    /// The parts `person` shows; `None` until they are segmented.
-    pub fn parts_shown(&self, person: usize) -> Option<BTreeSet<PersonPart>> {
-        let segmented = self.parts.get(person)?.as_ref()?;
+    /// The parts any of `people` shows; `None` until they are all
+    /// segmented.
+    pub fn parts_shown(&self, people: &[usize]) -> Option<BTreeSet<PersonPart>> {
+        let segmented = self.segmented(people)?;
         Some(
             PersonPart::ALL
                 .into_iter()
-                .filter(|&part| segmented.shows(part))
+                .filter(|&part| segmented.iter().any(|person| person.shows(part)))
                 .collect(),
         )
+    }
+
+    /// The body parts of each of `people`; `None` unless they are all
+    /// segmented.
+    fn segmented(&self, people: &[usize]) -> Option<Vec<&PersonParts>> {
+        people
+            .iter()
+            .map(|&person| self.parts.get(person)?.as_deref())
+            .collect()
     }
 
     /// The person at `point` (fractions of the photo): the likeliest whose
@@ -293,20 +307,34 @@ impl PeopleAnalysis {
         })
     }
 
+    /// Where people overlap, the mask keeps the likelier of their masks.
     fn mask_of(
         &self,
         image: &RgbaView<'_>,
-        person: usize,
+        people: &[usize],
         parts: &BTreeSet<PersonPart>,
     ) -> Result<Option<PersonMask>> {
-        let Some(segmented) = self.parts.get(person).and_then(Option::as_ref) else {
+        let Some(segmented) = self.segmented(people) else {
             return Ok(None);
         };
+        let mut masks = segmented.iter().map(|person| person.mask(image, parts));
+        let Some(first) = masks.next() else {
+            return Ok(None);
+        };
+        let mut mask = first?;
+        for other in masks {
+            for (union, value) in mask.iter_mut().zip(other?) {
+                *union = (*union).max(value);
+            }
+        }
         Ok(Some(PersonMask {
-            anchor: self.people[person].anchor,
+            anchors: people
+                .iter()
+                .map(|&person| self.people[person].anchor)
+                .collect(),
             width: image.width(),
             height: image.height(),
-            mask: segmented.mask(image, parts)?,
+            mask,
         }))
     }
 }
@@ -342,9 +370,9 @@ impl fmt::Debug for SegmentedPerson {
 /// One people mask to make.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PeopleTarget {
-    /// A point on the person, as fractions of the photo; `None` selects the
+    /// A point on each person, as fractions of the photo; empty selects the
     /// most prominent person.
-    pub anchor: Option<[f32; 2]>,
+    pub anchors: Vec<[f32; 2]>,
     pub parts: BTreeSet<PersonPart>,
 }
 
@@ -368,8 +396,8 @@ pub struct PeopleMaskRequest {
 
 #[derive(Debug)]
 pub struct PersonMask {
-    /// The anchor of the person found, which the target's mask stores.
-    pub anchor: [f32; 2],
+    /// The anchors of the people found, which the target's mask stores.
+    pub anchors: Vec<[f32; 2]>,
     pub width: u32,
     pub height: u32,
     pub mask: Vec<u8>,
@@ -467,9 +495,9 @@ fn infer_people_masks(
     };
     job.ensure_not_cancelled()?;
 
-    let people: Vec<Option<usize>> = targets
+    let people: Vec<Vec<usize>> = targets
         .iter()
-        .map(|target| analysis.resolve(target.anchor))
+        .map(|target| analysis.resolve(&target.anchors))
         .collect();
     let mut order: Vec<usize> = people.iter().flatten().copied().collect();
     order.sort_unstable();
@@ -488,12 +516,14 @@ fn infer_people_masks(
         let masks = targets
             .iter()
             .zip(&people)
-            .map(|(target, person)| match person {
-                Some(person) => analysis
-                    .mask_of(&image, *person, &target.parts)?
+            .map(|(target, people)| {
+                if people.is_empty() {
+                    return Ok(None);
+                }
+                analysis
+                    .mask_of(&image, people, &target.parts)?
                     .context("a selected person has no body parts")
-                    .map(Some),
-                None => Ok(None),
+                    .map(Some)
             })
             .collect::<Result<_>>()?;
         job.progress(PeopleMaskProgress::Masks(masks));
