@@ -330,7 +330,6 @@ impl LibraryState {
                         .map(|asset| {
                             if let Some(mut entry) = previous.remove(&asset.id) {
                                 if same_library_asset_identity(&entry.asset, &asset) {
-                                    entry.review = asset.metadata.review;
                                     entry.asset = asset;
                                     entry.thumbnail_error = None;
                                     entry.thumbnail_queued = false;
@@ -343,15 +342,7 @@ impl LibraryState {
                         })
                         .collect();
                     self.sort_entries();
-                    self.selected_assets
-                        .retain(|asset_id| self.entry_indices.contains_key(asset_id));
-                    if self
-                        .selection_anchor
-                        .as_ref()
-                        .is_some_and(|asset_id| !self.entry_indices.contains_key(asset_id))
-                    {
-                        self.selection_anchor = None;
-                    }
+                    self.forget_missing_selection();
                     self.scanning = false;
                     self.catalog_ready = true;
                     self.thumbnail_progress
@@ -400,17 +391,10 @@ impl LibraryState {
                             let install_pixels =
                                 display_priority || self.entries[index].texture.is_some();
                             self.entries[index].resident_thumbnail = Some(resident_thumbnail);
-                            if let Some(review) = review {
-                                review_sort_changed |= self.entries[index].review != review
-                                    && matches!(
-                                        self.sort_order,
-                                        LibrarySortOrder::RatingHighestFirst
-                                            | LibrarySortOrder::RatingLowestFirst
-                                            | LibrarySortOrder::FlagPickedFirst
-                                            | LibrarySortOrder::FlagRejectedFirst
-                                    );
-                                self.entries[index].review = review;
-                                self.entries[index].asset.metadata.review = review;
+                            if let Some(review) =
+                                review.filter(|_| !self.review_save_pending(&asset_id))
+                            {
+                                review_sort_changed |= self.show_review(&asset_id, review);
                             }
                             self.entries[index].texture_is_resident = false;
                             if install_pixels {

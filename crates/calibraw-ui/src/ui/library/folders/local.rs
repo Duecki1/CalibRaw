@@ -52,7 +52,7 @@ impl LibraryState {
         forward: bool,
     ) -> Option<DesktopFilmstripItem> {
         let current_index = self.filmstrip_index_for_path(path)?;
-        let visible_indices = self.filtered_entry_indices();
+        let visible_indices = self.visible_entry_indices();
         let target_position = match visible_indices.binary_search(&current_index) {
             Ok(position) if forward => position.checked_add(1),
             Ok(position) => position.checked_sub(1),
@@ -189,10 +189,7 @@ impl LibraryState {
                             .folder
                             .as_ref()
                             .map(|folder| folder.display().to_string());
-                        self.entries.clear();
-                        self.entry_indices.clear();
-                        self.clear_selection();
-                        self.catalog_ready = false;
+                        self.reset_folder_contents();
                     }
                 }
                 self.expanded_folders
@@ -346,10 +343,7 @@ impl LibraryState {
             ancestor = path.parent();
         }
         if folder_changed {
-            self.entries.clear();
-            self.entry_indices.clear();
-            self.clear_selection();
-            self.catalog_ready = false;
+            self.reset_folder_contents();
         }
         self.refresh(context);
     }
@@ -364,10 +358,7 @@ impl LibraryState {
 
         self.location = Some(folder.display().to_string());
         self.folder = Some(folder);
-        self.entries.clear();
-        self.entry_indices.clear();
-        self.clear_selection();
-        self.catalog_ready = false;
+        self.reset_folder_contents();
         self.refresh(context);
         true
     }

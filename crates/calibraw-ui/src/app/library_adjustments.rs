@@ -256,7 +256,10 @@ impl CalibRawApp {
         }
     }
 
-    fn library_asset_is_current(&self, asset: &crate::ui::library::LibraryAsset) -> bool {
+    pub(in crate::app) fn library_asset_is_current(
+        &self,
+        asset: &crate::ui::library::LibraryAsset,
+    ) -> bool {
         match &asset.locator {
             LibraryLocator::Desktop(path) => {
                 self.develop.current_path.as_deref() == Some(path.as_path())

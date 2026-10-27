@@ -202,10 +202,10 @@ impl CalibRawApp {
     }
 
     /// Whether the app consumes system back presses: outside the library, or
-    /// while the library has a selection or an open folder sidebar to dismiss.
+    /// while the library is selecting or has an open folder sidebar to dismiss.
     pub(crate) fn handles_back_navigation(&self) -> bool {
         self.ui.active_tab != AppTab::Library
-            || self.library.has_selection()
+            || self.library.is_selecting()
             || self.library.folder_sidebar_open()
     }
 
@@ -300,6 +300,7 @@ mod gpu_recovery;
 mod hover_preview;
 mod inpainting;
 mod library_adjustments;
+mod library_review;
 mod luts;
 mod manual_lens;
 mod presets;

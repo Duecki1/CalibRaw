@@ -1,7 +1,8 @@
 use crate::app::CalibRawApp;
 use crate::ui::library::library_image_context_menu;
 use crate::ui::library::{
-    apply_library_action, load_desktop_reference_preview, DesktopFilmstripItem,
+    apply_library_action, current_photo_asset, load_desktop_reference_preview, take_review_key,
+    DesktopFilmstripItem,
 };
 use eframe::egui::{self, Align2, Color32, FontId, Sense, Stroke, StrokeKind, Ui};
 use std::collections::HashSet;
@@ -22,8 +23,24 @@ static REFERENCE_PREVIEW_SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
 
 pub(crate) struct Develop;
 
+/// Opens the folder photo before or after the open one, as the library
+/// shows them; media-library photos have no neighbours here.
+fn open_adjacent_photo(app: &mut CalibRawApp, forward: bool, frame: &eframe::Frame) {
+    let Some(current_path) = app.develop.current_path.as_deref() else {
+        return;
+    };
+    if let Some(item) = app
+        .library
+        .adjacent_library_item_for_path(current_path, forward)
+    {
+        app.switch_to_path(item.path, frame);
+    }
+}
+
 impl Develop {
-    pub(crate) fn handle_image_navigation_shortcuts(
+    /// ← and → open the previous and next photo; rating and flag keys
+    /// change the open photo, and with Shift also open the next one.
+    pub(crate) fn handle_shortcuts(
         context: &egui::Context,
         app: &mut CalibRawApp,
         frame: &eframe::Frame,
@@ -32,27 +49,23 @@ impl Develop {
             return;
         }
 
+        if let Some(key) = take_review_key(context) {
+            if let Some(asset) = current_photo_asset(app) {
+                app.review_photos_from_keyboard(vec![asset], key.change);
+                if key.advance {
+                    open_adjacent_photo(app, true, frame);
+                }
+            }
+            return;
+        }
+
         let previous = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::ArrowLeft);
         let next = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::ArrowRight);
-        let direction = if context.input_mut(|input| input.consume_shortcut(&previous)) {
-            -1_i8
+        if context.input_mut(|input| input.consume_shortcut(&previous)) {
+            open_adjacent_photo(app, false, frame);
         } else if context.input_mut(|input| input.consume_shortcut(&next)) {
-            1_i8
-        } else {
-            return;
-        };
-
-        let Some(current_path) = app.develop.current_path.as_deref() else {
-            return;
-        };
-        let Some(item) = app
-            .library
-            .adjacent_library_item_for_path(current_path, direction > 0)
-        else {
-            return;
-        };
-
-        app.switch_to_path(item.path, frame);
+            open_adjacent_photo(app, true, frame);
+        }
     }
 
     pub(crate) fn show_filmstrip(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {

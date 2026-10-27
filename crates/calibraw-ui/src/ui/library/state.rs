@@ -1,7 +1,12 @@
 use super::*;
 
+mod reviews;
 mod scan;
 mod selection;
+
+pub(crate) use reviews::ReviewSave;
+pub(super) use reviews::ReviewWriter;
+pub(super) use selection::LibrarySelection;
 
 /// Library settings restored from the persisted performance settings.
 #[derive(Clone, Copy, Debug)]
@@ -149,9 +154,8 @@ impl LibraryState {
             review_filter: LibraryReviewFilter::default(),
             stack_raw_companions,
             raw_companions: RawCompanions::default(),
-            selected_assets: HashSet::new(),
-            selection_mode: false,
-            selection_anchor: None,
+            selection: LibrarySelection::default(),
+            reviews: ReviewWriter::default(),
             image_clipboard: None,
             adjustment_clipboard: None,
             asset_transfer_receiver: None,
@@ -222,26 +226,19 @@ impl LibraryState {
         !library_search_terms(&self.search_query).is_empty()
     }
 
-    pub(super) fn filtered_entry_indices(&self) -> Vec<usize> {
+    /// Entry indices the grid shows, ascending.
+    pub(super) fn visible_entry_indices(&self) -> Vec<usize> {
         let terms = library_search_terms(&self.search_query);
         self.entries
             .iter()
             .enumerate()
             .filter_map(|(index, entry)| {
                 (library_filename_matches(&entry.asset.display_name, &terms)
-                    && self.review_filter.matches(entry.review)
+                    && self.review_filter.matches(entry.review())
                     && !self.hides_raw_companion(&entry.asset.id))
                 .then_some(index)
             })
             .collect()
-    }
-
-    /// Entry indices the grid shows, or `None` when it shows every entry.
-    pub(super) fn visible_entry_indices(&self) -> Option<Vec<usize>> {
-        let hides_entries = self.search_active()
-            || self.review_filter.active()
-            || (self.stack_raw_companions && !self.raw_companions.is_empty());
-        hides_entries.then(|| self.filtered_entry_indices())
     }
 
     /// Photos in the folder, counting each stacked RAW+JPEG pair once.
@@ -261,7 +258,7 @@ impl LibraryState {
             return false;
         }
         self.stack_raw_companions = stack;
-        self.retain_visible_selection();
+        self.retain_visible_selection(&self.visible_entry_indices());
         true
     }
 
@@ -345,6 +342,60 @@ impl LibraryState {
         self.sort_order = sort_order;
         self.sort_entries();
         true
+    }
+
+    /// Empties the grid for another folder until its scan arrives.
+    pub(super) fn reset_folder_contents(&mut self) {
+        self.entries.clear();
+        self.entry_indices.clear();
+        self.reset_selection();
+        self.catalog_ready = false;
+    }
+
+    fn sorts_by_review(&self) -> bool {
+        matches!(
+            self.sort_order,
+            LibrarySortOrder::RatingHighestFirst
+                | LibrarySortOrder::RatingLowestFirst
+                | LibrarySortOrder::FlagPickedFirst
+                | LibrarySortOrder::FlagRejectedFirst
+        )
+    }
+
+    /// The photo's review as the library shows it.
+    pub(crate) fn review_of(
+        &self,
+        asset_id: &LibraryAssetId,
+    ) -> Option<crate::sidecar::PhotoReview> {
+        let index = *self.entry_indices.get(asset_id)?;
+        Some(self.entries[index].review())
+    }
+
+    /// Shows `review` for the photo; returns whether that changed the order
+    /// the grid sorts by.
+    pub(super) fn show_review(
+        &mut self,
+        asset_id: &LibraryAssetId,
+        review: crate::sidecar::PhotoReview,
+    ) -> bool {
+        let Some(index) = self.entry_indices.get(asset_id).copied() else {
+            return false;
+        };
+        let metadata = &mut self.entries[index].asset.metadata;
+        let changed = metadata.review != review;
+        metadata.review = review;
+        changed && self.sorts_by_review()
+    }
+
+    /// Shows a review saved outside the library, re-sorting when needed.
+    pub(crate) fn show_saved_review(
+        &mut self,
+        asset_id: &LibraryAssetId,
+        review: crate::sidecar::PhotoReview,
+    ) {
+        if self.show_review(asset_id, review) {
+            self.sort_entries();
+        }
     }
 
     pub(super) fn sort_entries(&mut self) {

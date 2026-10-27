@@ -46,10 +46,6 @@ impl RawCompanions {
         index
     }
 
-    pub(super) fn is_empty(&self) -> bool {
-        self.companions.is_empty()
-    }
-
     /// Whether `asset` is the rendered copy of a RAW in the same folder.
     pub(super) fn is_companion(&self, asset: &LibraryAssetId) -> bool {
         self.companions.contains(asset)

@@ -266,9 +266,7 @@ impl LibraryState {
 
 pub(super) fn new_library_entry(asset: LibraryAsset) -> LibraryEntry {
     let layout_size = Some(asset.metadata.dimensions_hint.unwrap_or([3, 2]));
-    let review = asset.metadata.review;
     LibraryEntry {
-        review,
         asset,
         texture: None,
         resident_thumbnail: None,
@@ -300,26 +298,26 @@ pub(super) fn compare_library_entries(
 
     match sort_order {
         LibrarySortOrder::RatingHighestFirst => right
-            .review
+            .review()
             .rating
-            .cmp(&left.review.rating)
+            .cmp(&left.review().rating)
             .then(name_order),
         LibrarySortOrder::RatingLowestFirst => left
-            .review
+            .review()
             .rating
-            .cmp(&right.review.rating)
+            .cmp(&right.review().rating)
             .then(name_order),
         LibrarySortOrder::FlagPickedFirst => right
-            .review
+            .review()
             .flag
-            .cmp(&left.review.flag)
-            .then_with(|| right.review.rating.cmp(&left.review.rating))
+            .cmp(&left.review().flag)
+            .then_with(|| right.review().rating.cmp(&left.review().rating))
             .then(name_order),
         LibrarySortOrder::FlagRejectedFirst => left
-            .review
+            .review()
             .flag
-            .cmp(&right.review.flag)
-            .then_with(|| right.review.rating.cmp(&left.review.rating))
+            .cmp(&right.review().flag)
+            .then_with(|| right.review().rating.cmp(&left.review().rating))
             .then(name_order),
         LibrarySortOrder::NewestFirst => right
             .asset

@@ -136,7 +136,7 @@ impl CalibRawApp {
                 ui.ctx().request_repaint();
             } else if self.ui.active_tab == AppTab::Library && self.library.folder_sidebar_open() {
                 self.set_library_folder_sidebar_open(false);
-            } else if self.ui.active_tab == AppTab::Library && self.library.has_selection() {
+            } else if self.ui.active_tab == AppTab::Library && self.library.is_selecting() {
                 self.library.clear_selection();
             } else {
                 self.activate_tab(AppTab::Library);
@@ -200,24 +200,25 @@ impl CalibRawApp {
         self.poll_people_composes();
         self.poll_library_ai_mask_refresh(frame);
         self.poll_merge();
+        self.poll_library_review_saves();
         self.resume_pending_ai_denoise(frame);
         if caps.tasks_need_foreground {
             self.sync_android_export_notification();
         }
     }
 
-    /// Edit-history, save and image-navigation shortcuts.
+    /// Edit-history, save, image-navigation and review shortcuts. The
+    /// library grid handles its own keys, as they depend on its layout.
     fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.caps().is_desktop() {
             self.handle_settings_request(ctx);
-            self.handle_edit_history_shortcuts(ctx);
-            self.handle_sidecar_shortcut(ctx);
-            if self.ui.active_tab == AppTab::Develop {
-                Develop::handle_image_navigation_shortcuts(ctx, self, frame);
-            }
-        } else if !self.android_foreground_task_active() {
-            self.handle_edit_history_shortcuts(ctx);
-            self.handle_sidecar_shortcut(ctx);
+        } else if self.android_foreground_task_active() {
+            return;
+        }
+        self.handle_edit_history_shortcuts(ctx);
+        self.handle_sidecar_shortcut(ctx);
+        if self.ui.active_tab == AppTab::Develop {
+            Develop::handle_shortcuts(ctx, self, frame);
         }
     }
 
@@ -485,6 +486,7 @@ impl eframe::App for CalibRawApp {
         if raw_drop_hovered {
             show_raw_drop_overlay(ui, self.library.folder());
         }
+        crate::ui::library::show_review_feedback(ui.ctx(), &mut self.ui.review_feedback);
         self.show_dialogs(ui.ctx(), frame);
         self.sync_persistence(ui.ctx(), frame);
         // The only place the system back-press routing is published: after
@@ -503,6 +505,7 @@ impl eframe::App for CalibRawApp {
         self.platform.detach_ui();
         self.persist_performance_settings();
         self.flush_sidecar_on_exit();
+        self.finish_library_review_saves_on_exit();
     }
 }
 

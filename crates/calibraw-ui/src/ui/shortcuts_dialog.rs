@@ -1,8 +1,9 @@
 //! The keyboard and mouse controls reference opened from the toolbar.
 //!
 //! The list is documentation of controls implemented elsewhere (see the
-//! `handle_*_shortcuts` functions, the preview viewport and the tool
-//! modules); change both when a control changes. Controls are grouped by
+//! `handle_*_shortcuts` functions, the library's `keys` and `review`
+//! modules, the preview viewport and the tool modules); change both when a
+//! control changes. Controls are grouped by
 //! what the user is doing, most general first.
 
 use crate::app::CalibRawApp;
@@ -59,19 +60,39 @@ fn groups() -> Vec<Group> {
         Group {
             title: "Library",
             controls: vec![
+                control("Open a photo", &["Click", "Enter"]),
+                control("Move between photos", &["←", "→", "↑", "↓"]),
+                control(
+                    "Jump a screen, or to the first or last photo",
+                    &["Page Up", "Page Down", "Home", "End"],
+                ),
+                control(
+                    "Add or remove a photo from the selection",
+                    &[&with_command("Click"), "Click its check circle"],
+                ),
+                control("Select a range", &["Shift+Click", "Shift+Arrow"]),
+                control("Add or remove the active photo while selecting", &["Space"]),
+                control("Select all", &[&with_command("A")]),
+                control("Stop selecting", &["Esc"]),
+                control("Photo menu", &["Right-click"]),
+                control("Copy adjustments", &[&with_command("Shift+C")]),
+                control("Paste adjustments", &[&with_command("Shift+V")]),
+                control("Export", &[&with_command("Shift+E")]),
+                control("Delete", &["Delete", "Backspace"]),
                 control("Search filenames", &[&with_command("F")]),
                 control("Select all search matches", &["Enter in search"]),
                 control("Clear search", &["Esc in search"]),
-                control(
-                    "Add or remove a photo from the selection",
-                    &[&with_command("Click")],
-                ),
-                control("Select a range", &["Shift+Click"]),
-                control(
-                    "Extend the selection by a range",
-                    &[&with_command("Shift+Click")],
-                ),
-                control("Photo menu (select, select all)", &["Right-click"]),
+            ],
+        },
+        Group {
+            title: "Rating and flags",
+            controls: vec![
+                control("Rate 1 to 5 stars", &["1", "2", "3", "4", "5"]),
+                control("Clear the rating", &["0"]),
+                control("Lower or raise the rating", &["[", "]"]),
+                control("Pick, reject or unflag", &["P", "X", "U"]),
+                control("Switch between picked and unflagged", &["`"]),
+                control("Rate or flag, then go to the next photo", &["Shift+Key"]),
             ],
         },
         Group {

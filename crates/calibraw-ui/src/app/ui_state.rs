@@ -99,6 +99,8 @@ pub(crate) struct UiState {
     pub(crate) desktop_picker_receiver: Option<mpsc::Receiver<DesktopPickerEvent>>,
     /// The platform was last asked for the soft keyboard's number layout.
     pub(in crate::app) numeric_keyboard: bool,
+    /// The confirmation of the last rating or flag key, while it shows.
+    pub(crate) review_feedback: Option<crate::ui::library::ReviewFeedback>,
 }
 
 /// Media-library workflows the platform finishes asynchronously: its picker,
