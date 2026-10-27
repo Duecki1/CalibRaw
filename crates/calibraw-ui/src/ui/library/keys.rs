@@ -95,11 +95,10 @@ pub(super) fn apply_grid_key(
                 app.library.activate(visible, target, extend);
             }
         }
+        // While browsing, this starts selecting with the active photo.
         GridKey::ToggleActive => {
-            if app.library.is_selecting() {
-                if let Some(asset_id) = app.library.active_asset_id().cloned() {
-                    app.library.toggle_selected(&asset_id);
-                }
+            if let Some(asset) = app.library.active_asset(visible) {
+                app.library.toggle_selected(&asset.id);
             }
         }
         GridKey::Open => *open_asset = app.library.active_asset(visible),

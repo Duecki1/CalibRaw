@@ -71,7 +71,7 @@ fn groups() -> Vec<Group> {
                     &[&with_command("Click"), "Click its check circle"],
                 ),
                 control("Select a range", &["Shift+Click", "Shift+Arrow"]),
-                control("Add or remove the active photo while selecting", &["Space"]),
+                control("Add or remove the active photo", &["Space"]),
                 control("Select all", &[&with_command("A")]),
                 control("Stop selecting", &["Esc"]),
                 control("Photo menu", &["Right-click"]),
