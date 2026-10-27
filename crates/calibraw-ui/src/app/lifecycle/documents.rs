@@ -306,7 +306,7 @@ impl CalibRawApp {
         self.masks.stack.clear();
         self.reset_inpainting_state();
         self.masks.reset_transient_state();
-        self.forget_people();
+        self.ai.people.forget();
         self.ai.update_needed = false;
         self.reset_ai_update_state();
         self.preview.pending_stage = None;
@@ -421,7 +421,7 @@ impl CalibRawApp {
                 if loaded.mask_source.is_some() {
                     self.masks.source_cache = loaded.mask_source;
                 }
-                self.ai.people = loaded.people_analysis;
+                self.ai.people.analysis = loaded.people_analysis;
                 self.preview.reset_view_keeping(kept_view);
                 self.preview.original_rendered_state = None;
                 self.preview.detail = None;

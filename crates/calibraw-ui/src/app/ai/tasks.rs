@@ -210,7 +210,7 @@ impl CalibRawApp {
         }
         match feature {
             AiFeature::Object => self.ai.object_pending_target = None,
-            AiFeature::People => self.ai.people_pending.clear(),
+            AiFeature::People => self.ai.people.pending.clear(),
             AiFeature::Remove => {
                 self.inpaint.pending_brush = None;
                 self.inpaint.pending_retouch = None;

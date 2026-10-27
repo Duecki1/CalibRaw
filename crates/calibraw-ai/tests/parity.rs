@@ -44,9 +44,9 @@ use calibraw_ai::models::object::{
     DECODER_MODEL, ENCODER_MODEL,
 };
 use calibraw_ai::models::people::{
-    content_fingerprint, foreground_model, spawn_people_mask, ForegroundModel, PeopleAnalysis,
-    PeopleAnalysisFile, PeopleMaskProgress, PeopleMaskRequest, PeopleMaskWorkerRequest,
-    PeopleModels, PeopleSegmentation, PeopleSource, PeopleTarget, BODY_PARTS_MODEL, DETECTOR_MODEL,
+    content_fingerprint, spawn_people_mask, PeopleAnalysis, PeopleAnalysisFile, PeopleMaskProgress,
+    PeopleMaskRequest, PeopleMaskWorkerRequest, PeopleModels, PeopleSegmentation, PeopleSource,
+    PeopleTarget,
 };
 use calibraw_ai::models::remove::{spawn_remove, RemoveRequest};
 use calibraw_ai::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
@@ -568,29 +568,7 @@ impl Harness {
         keep: Option<PeopleAnalysisFile>,
     ) -> (Output, Vec<[f32; 2]>, bool) {
         let scene = self.people_scene();
-        let precision = SubjectModelPrecision::Float32;
-        let detector = self.models.join(DETECTOR_MODEL.cache_filename);
-        let body_parts = self.models.join(BODY_PARTS_MODEL.cache_filename);
-        let foreground = ForegroundModel {
-            path: self.models.join(foreground_model(precision).cache_filename),
-            precision,
-        };
-        let models = match segmentation {
-            PeopleSegmentation::Outline => PeopleModels::Outline {
-                detector,
-                foreground,
-            },
-            PeopleSegmentation::BodyParts => PeopleModels::BodyParts {
-                detector,
-                body_parts,
-                foreground: None,
-            },
-            PeopleSegmentation::OutlinedBodyParts => PeopleModels::BodyParts {
-                detector,
-                body_parts,
-                foreground: Some(foreground),
-            },
-        };
+        let models = PeopleModels::new(segmentation, &self.models, SubjectModelPrecision::Float32);
         let events = spawn_people_mask(PeopleMaskWorkerRequest {
             models,
             allow_download: self.download,

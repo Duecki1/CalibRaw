@@ -217,34 +217,11 @@ impl CalibRawApp {
 
     /// The models people masks made now need.
     pub(in crate::app) fn people_models(&self) -> calibraw_ai::models::people::PeopleModels {
-        use calibraw_ai::models::people::{
-            foreground_model, ForegroundModel, PeopleModels, PeopleSegmentation, BODY_PARTS_MODEL,
-            DETECTOR_MODEL,
-        };
-        let root = self.ai_model_root();
-        let detector = root.join(DETECTOR_MODEL.cache_filename);
-        let body_parts = root.join(BODY_PARTS_MODEL.cache_filename);
-        let precision = self.subject_model_precision();
-        let foreground = ForegroundModel {
-            path: root.join(foreground_model(precision).cache_filename),
-            precision,
-        };
-        match self.people_segmentation() {
-            PeopleSegmentation::Outline => PeopleModels::Outline {
-                detector,
-                foreground,
-            },
-            PeopleSegmentation::BodyParts => PeopleModels::BodyParts {
-                detector,
-                body_parts,
-                foreground: None,
-            },
-            PeopleSegmentation::OutlinedBodyParts => PeopleModels::BodyParts {
-                detector,
-                body_parts,
-                foreground: Some(foreground),
-            },
-        }
+        calibraw_ai::models::people::PeopleModels::new(
+            self.people_segmentation(),
+            &self.ai_model_root(),
+            self.subject_model_precision(),
+        )
     }
 
     /// Float16 when subject masks are expected to run on the GPU; see

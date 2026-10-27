@@ -2,12 +2,7 @@ use super::adjustments::{
     apply_local_adjustment_response, LocalAdjustmentTabs, LocalAdjustmentTarget,
 };
 use super::*;
-use crate::app::{
-    apply_mask_property_actions, MaskPropertiesControls, PeopleChoices, PersonThumbnail,
-};
-use crate::pipeline::PersonPart;
-use calibraw_ai::models::people::PeopleSegmentation;
-use std::collections::BTreeSet;
+use crate::app::{apply_mask_property_actions, MaskPropertiesControls};
 
 fn mask_creation_menu_button<R>(
     ui: &mut Ui,
@@ -254,49 +249,6 @@ impl Sidebar {
             });
     }
 
-    /// The person and parts `component_index` shows, and the people found in
-    /// the photo, when it is a people mask.
-    fn people_choices(
-        app: &CalibRawApp,
-        mask_index: usize,
-        component_index: usize,
-    ) -> PeopleChoices {
-        let Some(choice) = app.shown_person_choice(mask_index, component_index) else {
-            return PeopleChoices::default();
-        };
-        let segmentation = app.people_segmentation();
-        let Some(analysis) = app.ai.people.as_ref() else {
-            // A device that outlines people finds no parts.
-            let shown = (segmentation == PeopleSegmentation::Outline)
-                .then(|| BTreeSet::from([PersonPart::EntirePerson]));
-            return PeopleChoices {
-                parts: choice.parts,
-                shown,
-                ..PeopleChoices::default()
-            };
-        };
-        let people = app
-            .ai
-            .people_chips
-            .iter()
-            .flatten()
-            .take(analysis.people().len())
-            .enumerate()
-            .map(|(index, chip)| PersonThumbnail {
-                texture: chip.id(),
-                segmented: analysis.is_segmented(index, segmentation),
-            })
-            .collect();
-        let selected = analysis.resolve(&choice.anchors);
-        PeopleChoices {
-            analysed: true,
-            people,
-            shown: analysis.parts_shown(&selected, segmentation),
-            selected,
-            parts: choice.parts,
-        }
-    }
-
     fn show_mask_details(
         ui: &mut Ui,
         app: &mut CalibRawApp,
@@ -346,14 +298,7 @@ impl Sidebar {
             separate_person_parts: false,
             hovered_person: None,
         };
-        let selected_is_person = app.masks.stack.masks[mask_index]
-            .components
-            .get(component_index)
-            .is_some_and(|component| component.kind == MaskKind::Person);
-        if selected_is_person {
-            app.ensure_people_chips(frame);
-        }
-        let people = Self::people_choices(app, mask_index, component_index);
+        let people = app.people_choices(mask_index, component_index, frame);
         let point_color_preview = |develop_ui: &crate::app::DevelopUiState| {
             (
                 develop_ui.mask_point_color.visualize_range,
@@ -552,7 +497,7 @@ impl Sidebar {
         if controls.request_object {
             app.request_object_mask(mask_index, component_index);
         }
-        app.ai.people_hovered = controls.hovered_person;
+        app.ai.people.hovered = controls.hovered_person;
         if controls.separate_person_parts {
             app.separate_person_parts(mask_index, component_index, frame);
         } else if let Some(edit) = controls.people_edit {

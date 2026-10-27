@@ -894,15 +894,7 @@ fn load_people_analysis(
     raw: &LoadedRaw,
     remove: &RemoveEditState,
 ) -> Option<PeopleAnalysis> {
-    let path = path.filter(|path| path.is_file())?;
-    let has_people = masks
-        .masks
-        .iter()
-        .flat_map(|mask| &mask.components)
-        .any(|component| component.kind == MaskKind::Person);
-    if !has_people {
-        return None;
-    }
+    let path = path.filter(|path| path.is_file() && masks.has_people_masks())?;
     let started = Instant::now();
     let loaded = calibraw_ai::models::people::content_fingerprint(raw, remove)
         .and_then(|content| PeopleAnalysis::load(path, content));

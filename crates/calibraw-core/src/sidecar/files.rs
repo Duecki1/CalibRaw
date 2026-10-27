@@ -87,12 +87,7 @@ impl CompanionUse {
 /// Whether `edits` has a people mask, whose people analysis beside the RAW
 /// is kept while it does.
 pub fn uses_people_analysis(edits: &EditState) -> bool {
-    edits
-        .masks
-        .masks
-        .iter()
-        .flat_map(|mask| &mask.components)
-        .any(|component| component.kind == MaskKind::Person)
+    edits.masks.has_people_masks()
 }
 
 /// Deletes the derived files next to a RAW that its saved edit no longer

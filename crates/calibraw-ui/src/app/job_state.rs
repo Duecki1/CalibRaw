@@ -144,19 +144,7 @@ pub(crate) struct AiState {
     pub(crate) consent: Option<AiConsent>,
     pub(crate) object_pending_target: Option<(usize, usize)>,
     pub(crate) object_cache: Option<((usize, usize), ObjectInferenceCache)>,
-    /// People components waiting for their job to start.
-    pub(crate) people_pending: Vec<(usize, usize)>,
-    /// The people found in the photo and the body parts of those segmented,
-    /// while the content they were found in is unchanged.
-    pub(crate) people: Option<PeopleAnalysis>,
-    /// A thumbnail of each person in `people`, once made from the mask source.
-    pub(crate) people_chips: Option<Vec<egui::TextureHandle>>,
-    /// People masks being made from `people`.
-    pub(crate) people_composes: Vec<PeopleCompose>,
-    /// The person whose chip the pointer is over in the mask panel, for the
-    /// canvas to highlight. Set while the panel shows; the canvas takes it.
-    pub(crate) people_hovered: Option<usize>,
-    pub(crate) people_highlight: Option<PersonHighlight>,
+    pub(crate) people: PeopleState,
     pub(crate) denoise_resume_pending: bool,
 }
 

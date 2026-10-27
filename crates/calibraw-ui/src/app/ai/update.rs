@@ -93,7 +93,7 @@ impl CalibRawApp {
         let in_flight = self.content_job_active()
             || self.content_consent_open()
             || self.ai.object_pending_target.is_some()
-            || !self.ai.people_pending.is_empty();
+            || !self.ai.people.pending.is_empty();
         update.steps.len() + usize::from(in_flight)
     }
 
@@ -259,7 +259,7 @@ impl CalibRawApp {
     pub(in crate::app) fn cancel_ai_update(&mut self) {
         self.ai.update = None;
         self.ai.object_pending_target = None;
-        self.ai.people_pending.clear();
+        self.ai.people.pending.clear();
         self.ai.update_needed = true;
         self.ui.notice = Some("AI update canceled.".to_owned());
         self.egui_ctx.request_repaint();
@@ -274,7 +274,7 @@ impl CalibRawApp {
         }
         self.ai.object_pending_target = None;
         self.ai.object_cache = None;
-        self.ai.people_pending.clear();
+        self.ai.people.pending.clear();
     }
 
     /// Requests content an edit newly depends on, such as scene depth after

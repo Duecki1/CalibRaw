@@ -704,7 +704,7 @@ impl CalibRawApp {
             self.masks.source_cache = restored_source;
         }
         // People masks being made were for the components before the restore.
-        self.ai.people_composes.clear();
+        self.ai.people.composes.clear();
         if self.ai.update_needed {
             self.masks.clear_generated_caches();
         } else {

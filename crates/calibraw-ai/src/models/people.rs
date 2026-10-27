@@ -14,7 +14,7 @@ use crate::config::{MemoryClass, CAPABILITIES};
 use crate::jobs::{spawn_job, AiJobEvent, JobContext, JobKind};
 use crate::models::masks::mask_model_retention;
 use crate::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
-use crate::pipeline::{LoadedRaw, MaskImage, PersonPart, RemoveEditState};
+use crate::pipeline::{LoadedRaw, MaskImage, MaskRgbImage, PersonPart, RemoveEditState};
 use crate::registry::{AiModel, ModelInfo};
 use crate::runtime::initialize_runtime;
 use crate::slot::with_model_session;
@@ -133,6 +133,15 @@ pub enum PeopleSegmentation {
     OutlinedBodyParts,
 }
 
+impl PeopleSegmentation {
+    /// The parts a mask can select of people whose body parts are not
+    /// known: the entire person where body parts are never segmented,
+    /// `None` elsewhere until they are.
+    pub fn unsegmented_parts(self) -> Option<BTreeSet<PersonPart>> {
+        (self == Self::Outline).then(|| BTreeSet::from([PersonPart::EntirePerson]))
+    }
+}
+
 /// The models a people job runs, and where they are.
 #[derive(Clone, Debug)]
 pub enum PeopleModels {
@@ -150,6 +159,37 @@ pub enum PeopleModels {
 }
 
 impl PeopleModels {
+    /// The models masks made with `segmentation` need, in the model folder
+    /// `root`, with BiRefNet in `precision`.
+    pub fn new(
+        segmentation: PeopleSegmentation,
+        root: &Path,
+        precision: SubjectModelPrecision,
+    ) -> Self {
+        let detector = root.join(DETECTOR_MODEL.cache_filename);
+        let body_parts = root.join(BODY_PARTS_MODEL.cache_filename);
+        let foreground = ForegroundModel {
+            path: root.join(foreground_model(precision).cache_filename),
+            precision,
+        };
+        match segmentation {
+            PeopleSegmentation::Outline => Self::Outline {
+                detector,
+                foreground,
+            },
+            PeopleSegmentation::BodyParts => Self::BodyParts {
+                detector,
+                body_parts,
+                foreground: None,
+            },
+            PeopleSegmentation::OutlinedBodyParts => Self::BodyParts {
+                detector,
+                body_parts,
+                foreground: Some(foreground),
+            },
+        }
+    }
+
     pub fn segmentation(&self) -> PeopleSegmentation {
         match self {
             Self::Outline { .. } => PeopleSegmentation::Outline,
@@ -223,6 +263,16 @@ pub struct PeopleSource {
     pub rgba: Arc<[u8]>,
 }
 
+impl From<&MaskRgbImage> for PeopleSource {
+    fn from(source: &MaskRgbImage) -> Self {
+        Self {
+            width: source.width,
+            height: source.height,
+            rgba: Arc::clone(&source.rgba),
+        }
+    }
+}
+
 impl PeopleSource {
     fn image(&self) -> Result<RgbaView<'_>> {
         let pixels = u64::from(self.width) * u64::from(self.height);
@@ -278,7 +328,6 @@ pub struct DetectedPerson {
 #[derive(Clone)]
 pub struct PeopleAnalysis {
     detection: Arc<Detection>,
-    people: Arc<[DetectedPerson]>,
     /// Width over height of the photo analysed.
     aspect: f32,
     /// By person, those segmented so far.
@@ -293,26 +342,25 @@ impl fmt::Debug for PeopleAnalysis {
         formatter
             .debug_struct("PeopleAnalysis")
             .field("aspect", &self.aspect)
-            .field("people", &self.people)
+            .field("people", &self.people())
             .finish_non_exhaustive()
     }
 }
 
 impl PeopleAnalysis {
     fn new(detection: Detection, aspect: f32) -> Self {
-        let people: Arc<[DetectedPerson]> = detection.people().into();
+        let people = detection.people().len();
         Self {
             aspect,
-            parts: vec![None; people.len()],
-            foregrounds: vec![None; people.len()],
+            parts: vec![None; people],
+            foregrounds: vec![None; people],
             detection: Arc::new(detection),
-            people,
         }
     }
 
     /// Left to right.
     pub fn people(&self) -> &[DetectedPerson] {
-        &self.people
+        self.detection.people()
     }
 
     /// The people a people mask anchored at `anchors` selects, in order and
@@ -351,7 +399,7 @@ impl PeopleAnalysis {
     /// nothing, for one of another analysis.
     pub fn insert(&mut self, segmented: SegmentedPerson) -> bool {
         if !Arc::ptr_eq(&self.detection, &segmented.detection)
-            || segmented.person >= self.people.len()
+            || segmented.person >= self.people().len()
         {
             return false;
         }
@@ -403,8 +451,7 @@ impl PeopleAnalysis {
             .map(|&person| self.parts.get(person)?.as_deref())
             .collect();
         let Some(segmented) = segmented else {
-            return (segmentation == PeopleSegmentation::Outline)
-                .then(|| BTreeSet::from([PersonPart::EntirePerson]));
+            return segmentation.unsegmented_parts();
         };
         Some(
             PersonPart::ALL
@@ -418,7 +465,7 @@ impl PeopleAnalysis {
     /// body parts, foreground or, while neither is known, outline cover it.
     /// `None` over no one.
     pub fn person_under(&self, point: [f32; 2]) -> Option<usize> {
-        (0..self.people.len())
+        (0..self.people().len())
             .map(|person| {
                 let probability = match (&self.parts[person], &self.foregrounds[person]) {
                     (Some(parts), _) => parts.coverage_at(point),
@@ -438,7 +485,7 @@ impl PeopleAnalysis {
     /// left, top, right and bottom as fractions. Around their face and hair
     /// once segmented, else the top of their box.
     pub fn portrait(&self, person: usize) -> Option<[f32; 4]> {
-        let [left, top, right, bottom] = self.people.get(person)?.bounds;
+        let [left, top, right, bottom] = self.people().get(person)?.bounds;
         let aspect = self.aspect;
         // Sides in photo heights, so the square is square in pixels.
         let (centre, side) = match self.parts[person].as_ref().and_then(|parts| parts.head()) {
@@ -464,7 +511,7 @@ impl PeopleAnalysis {
     /// Where `person` is, to show them over the photo: from their body
     /// parts once segmented, else their foreground, else their outline.
     pub fn silhouette(&self, person: usize) -> Option<PersonSilhouette> {
-        let bounds = self.people.get(person)?.bounds;
+        let bounds = self.people().get(person)?.bounds;
         let found = match (&self.parts[person], &self.foregrounds[person]) {
             (Some(parts), _) => Some((parts.crop, parts.coverage())),
             (None, Some(found)) => Some((found.crop, found.probabilities.to_vec())),
@@ -528,7 +575,7 @@ impl PeopleAnalysis {
         Ok(Some(PersonMask {
             anchors: people
                 .iter()
-                .map(|&person| self.people[person].anchor)
+                .map(|&person| self.people()[person].anchor)
                 .collect(),
             width: image.width(),
             height: image.height(),

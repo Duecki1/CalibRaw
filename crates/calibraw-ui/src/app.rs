@@ -333,7 +333,7 @@ mod sidecar_persistence;
 #[cfg(test)]
 mod ui_review_tests;
 
-use ai::{AiUpdate, PeopleCompose, PersonHighlight};
+use ai::{AiUpdate, PeopleState};
 use lifecycle::needs_canonical_mask_source;
 pub(crate) use lifecycle::{
     install_missing_range_sources, masks_have_missing_range_sources, DocumentSource,

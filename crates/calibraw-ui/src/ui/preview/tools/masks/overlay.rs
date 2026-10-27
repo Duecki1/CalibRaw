@@ -344,8 +344,8 @@ impl Preview {
         mask_index: usize,
         component_index: usize,
     ) {
-        let from_chip = app.ai.people_hovered.take();
-        let Some(analysis) = app.ai.people.as_ref() else {
+        let from_chip = app.ai.people.hovered.take();
+        let Some(analysis) = app.ai.people.analysis.as_ref() else {
             return;
         };
         let selected = app

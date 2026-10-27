@@ -1,12 +1,12 @@
 //! People masks. The first people job on a photo finds everyone in the mask
-//! source and segments them all. `AiState::people` keeps that analysis while
+//! source and segments them all. `PeopleState::analysis` keeps it while
 //! the photo's content is unchanged, and the job keeps it beside the RAW for
 //! the next time the photo opens. A mask of any person and parts is then made
 //! from the analysis on a worker thread (`PeopleCompose`), without a model or
 //! a progress dialog; only a person not segmented yet goes through the job.
 
 use super::*;
-use crate::app::PeopleEdit;
+use crate::app::{PeopleChoices, PeopleEdit, PersonThumbnail};
 use crate::pipeline::PersonPart;
 use calibraw_ai::models::people::{
     spawn_people_mask, PeopleAnalysis, PeopleAnalysisFile, PeopleMaskProgress, PeopleMaskRequest,
@@ -96,8 +96,8 @@ pub(crate) struct PersonHighlight {
 
 /// A people mask being made from the analysis on a worker thread.
 pub(crate) struct PeopleCompose {
-    mask_index: usize,
-    component_index: usize,
+    /// The component's mask and component index.
+    location: (usize, usize),
     /// The component's choice when this started. A component changed since,
     /// by an undo for example, keeps its change.
     base: PersonChoice,
@@ -108,7 +108,50 @@ pub(crate) struct PeopleCompose {
 
 impl PeopleCompose {
     fn is_for(&self, location: (usize, usize)) -> bool {
-        (self.mask_index, self.component_index) == location
+        self.location == location
+    }
+}
+
+/// The people in the open photo, what is shown of them, and the people
+/// masks being made from them.
+#[derive(Default)]
+pub(crate) struct PeopleState {
+    /// People components waiting for their job to start.
+    pub(in crate::app) pending: Vec<(usize, usize)>,
+    /// The people found in the photo and the body parts of those segmented,
+    /// while the content they were found in is unchanged.
+    pub(crate) analysis: Option<PeopleAnalysis>,
+    /// A thumbnail of each person in `analysis`, once made from the mask
+    /// source.
+    chips: Option<Vec<egui::TextureHandle>>,
+    /// People masks being made from `analysis`.
+    pub(in crate::app) composes: Vec<PeopleCompose>,
+    /// The person whose chip the pointer is over in the mask panel, for the
+    /// canvas to highlight. Set while the panel shows; the canvas takes it.
+    pub(crate) hovered: Option<usize>,
+    highlight: Option<PersonHighlight>,
+}
+
+impl PeopleState {
+    /// Forgets the people found, when the content they were found in
+    /// changes or another photo opens. Replacing the mask source with a new
+    /// rendering of the same content keeps them.
+    pub(in crate::app) fn forget(&mut self) {
+        self.analysis = None;
+        self.forget_views();
+        self.composes.clear();
+    }
+
+    /// Drops the thumbnails and highlight made from the people found, when
+    /// those change.
+    fn forget_views(&mut self) {
+        self.chips = None;
+        self.highlight = None;
+        self.hovered = None;
+    }
+
+    fn cancel_compose(&mut self, location: (usize, usize)) {
+        self.composes.retain(|compose| !compose.is_for(location));
     }
 }
 
@@ -164,7 +207,7 @@ impl CalibRawApp {
             self.report_ai_mask_error(error);
             return;
         }
-        self.ai.people_pending = needs_job;
+        self.ai.people.pending = needs_job;
         self.request_content_job(AiFeature::People);
     }
 
@@ -195,14 +238,12 @@ impl CalibRawApp {
         ) else {
             return;
         };
-        let Some(next) = shown.edited(edit, self.ai.people.as_ref()) else {
+        let Some(next) = shown.edited(edit, self.ai.people.analysis.as_ref()) else {
             return;
         };
         if next == current {
             // Back to the component's own choice: its mask still fits.
-            self.ai
-                .people_composes
-                .retain(|compose| !compose.is_for(location));
+            self.ai.people.cancel_compose(location);
             return;
         }
         if self.segmented_people(&next.anchors).is_some() {
@@ -212,16 +253,9 @@ impl CalibRawApp {
         if !self.people_job_may_start() {
             return;
         }
-        self.ai
-            .people_composes
-            .retain(|compose| !compose.is_for(location));
-        if let Some(MaskGeometry::Person { anchors, parts, .. }) = self
-            .masks
-            .stack
-            .masks
-            .get_mut(mask_index)
-            .and_then(|mask| mask.components.get_mut(component_index))
-            .map(|component| &mut component.geometry)
+        self.ai.people.cancel_compose(location);
+        if let Some(MaskGeometry::Person { anchors, parts, .. }) =
+            self.component_geometry_mut(location)
         {
             *anchors = next.anchors;
             *parts = next.parts;
@@ -242,6 +276,7 @@ impl CalibRawApp {
         let Some(person) = self
             .ai
             .people
+            .analysis
             .as_ref()
             .and_then(|analysis| analysis.person_under(point))
         else {
@@ -264,11 +299,12 @@ impl CalibRawApp {
     ) -> Option<&PersonHighlight> {
         let current = self
             .ai
-            .people_highlight
+            .people
+            .highlight
             .as_ref()
             .is_some_and(|highlight| highlight.person == person && highlight.color == color);
         if !current {
-            let silhouette = self.ai.people.as_ref()?.silhouette(person)?;
+            let silhouette = self.ai.people.analysis.as_ref()?.silhouette(person)?;
             let rgba: Vec<u8> = silhouette
                 .coverage
                 .iter()
@@ -281,14 +317,14 @@ impl CalibRawApp {
                 [silhouette.width as usize, silhouette.height as usize],
                 &rgba,
             );
-            self.ai.people_highlight = Some(PersonHighlight {
+            self.ai.people.highlight = Some(PersonHighlight {
                 person,
                 color,
                 texture: ctx.load_texture("person-highlight", image, egui::TextureOptions::LINEAR),
                 region: silhouette.region,
             });
         }
-        self.ai.people_highlight.as_ref()
+        self.ai.people.highlight.as_ref()
     }
 
     /// What a people component shows: the choice its mask is being made
@@ -300,27 +336,38 @@ impl CalibRawApp {
     ) -> Option<PersonChoice> {
         let location = (mask_index, component_index);
         self.ai
-            .people_composes
+            .people
+            .composes
             .iter()
             .find(|compose| compose.is_for(location))
             .map(|compose| compose.target.clone())
             .or_else(|| self.person_choice(location))
     }
 
-    fn person_choice(&self, (mask_index, component_index): (usize, usize)) -> Option<PersonChoice> {
-        self.masks
-            .stack
-            .masks
-            .get(mask_index)?
-            .components
-            .get(component_index)
-            .and_then(|component| PersonChoice::of(&component.geometry))
+    fn person_choice(&self, location: (usize, usize)) -> Option<PersonChoice> {
+        PersonChoice::of(self.component_geometry(location)?)
+    }
+
+    fn component_geometry(
+        &self,
+        (mask_index, component_index): (usize, usize),
+    ) -> Option<&MaskGeometry> {
+        let mask = self.masks.stack.masks.get(mask_index)?;
+        Some(&mask.components.get(component_index)?.geometry)
+    }
+
+    fn component_geometry_mut(
+        &mut self,
+        (mask_index, component_index): (usize, usize),
+    ) -> Option<&mut MaskGeometry> {
+        let mask = self.masks.stack.masks.get_mut(mask_index)?;
+        Some(&mut mask.components.get_mut(component_index)?.geometry)
     }
 
     /// The people `anchors` select, while the analysis has all their masks
     /// need at the people-mask quality.
     fn segmented_people(&self, anchors: &[[f32; 2]]) -> Option<Vec<usize>> {
-        let analysis = self.ai.people.as_ref()?;
+        let analysis = self.ai.people.analysis.as_ref()?;
         let segmentation = self.people_segmentation();
         let people = analysis.resolve(anchors);
         (!people.is_empty()
@@ -339,12 +386,10 @@ impl CalibRawApp {
         target: PersonChoice,
         frame: &eframe::Frame,
     ) {
-        self.ai
-            .people_composes
-            .retain(|compose| !compose.is_for(location));
+        self.ai.people.cancel_compose(location);
         let (Some(people), Some(analysis)) = (
             self.segmented_people(&target.anchors),
-            self.ai.people.clone(),
+            self.ai.people.analysis.clone(),
         ) else {
             return;
         };
@@ -352,13 +397,8 @@ impl CalibRawApp {
             self.report_ai_mask_error(error);
             return;
         }
-        let Some(source) = self.masks.source_cache.as_ref() else {
+        let Some(source) = self.masks.source_cache.as_ref().map(PeopleSource::from) else {
             return;
-        };
-        let source = PeopleSource {
-            width: source.width,
-            height: source.height,
-            rgba: Arc::clone(&source.rgba),
         };
         let parts = target.parts.clone();
         let segmentation = self.people_segmentation();
@@ -367,10 +407,8 @@ impl CalibRawApp {
                 .person_mask(&source, &people, &parts, segmentation)
                 .map_err(|error| format!("{error:#}"))
         });
-        let (mask_index, component_index) = location;
-        self.ai.people_composes.push(PeopleCompose {
-            mask_index,
-            component_index,
+        self.ai.people.composes.push(PeopleCompose {
+            location,
             base,
             target,
             receiver,
@@ -380,8 +418,8 @@ impl CalibRawApp {
     /// Gives each component whose people mask is ready its mask and choice.
     pub(in crate::app) fn poll_people_composes(&mut self) {
         let mut index = 0;
-        while index < self.ai.people_composes.len() {
-            let result = match self.ai.people_composes[index].receiver.try_recv() {
+        while index < self.ai.people.composes.len() {
+            let result = match self.ai.people.composes[index].receiver.try_recv() {
                 Ok(result) => result,
                 Err(mpsc::TryRecvError::Empty) => {
                     index += 1;
@@ -391,7 +429,7 @@ impl CalibRawApp {
                     Err("its worker stopped unexpectedly".to_owned())
                 }
             };
-            let compose = self.ai.people_composes.swap_remove(index);
+            let compose = self.ai.people.composes.swap_remove(index);
             self.apply_people_compose(compose, result);
         }
     }
@@ -411,7 +449,7 @@ impl CalibRawApp {
                 return;
             }
         };
-        let location = (compose.mask_index, compose.component_index);
+        let location = compose.location;
         if self.person_choice(location).as_ref() != Some(&compose.base) {
             return;
         }
@@ -427,25 +465,19 @@ impl CalibRawApp {
             parts,
             mask,
             ..
-        }) = self
-            .masks
-            .stack
-            .masks
-            .get_mut(compose.mask_index)
-            .and_then(|mask| mask.components.get_mut(compose.component_index))
-            .map(|component| &mut component.geometry)
+        }) = self.component_geometry_mut(location)
         {
             *anchors = people_anchors;
             *parts = compose.target.parts;
             *mask = Some(image);
         }
-        self.mark_mask_geometry_dirty(compose.mask_index);
+        self.mark_mask_geometry_dirty(location.0);
         self.blink_selected_component();
     }
 
     /// Every people component of the stack, for an update.
     pub(in crate::app) fn queue_all_people_masks(&mut self) {
-        self.ai.people_pending = self
+        self.ai.people.pending = self
             .masks
             .stack
             .masks
@@ -459,23 +491,6 @@ impl CalibRawApp {
                     .map(move |(component_index, _)| (mask_index, component_index))
             })
             .collect();
-    }
-
-    /// Forgets the people found, when the content they were found in
-    /// changes or another photo opens. Replacing the mask source with a new
-    /// rendering of the same content keeps them.
-    pub(in crate::app) fn forget_people(&mut self) {
-        self.ai.people = None;
-        self.forget_people_views();
-        self.ai.people_composes.clear();
-    }
-
-    /// Drops the thumbnails and highlight made from the people found, when
-    /// those change.
-    fn forget_people_views(&mut self) {
-        self.ai.people_chips = None;
-        self.ai.people_highlight = None;
-        self.ai.people_hovered = None;
     }
 
     /// Where the people analysis of the photo `target` names is kept, next
@@ -515,21 +530,16 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn start_people_worker(&mut self, allow_download: bool) {
-        let components = std::mem::take(&mut self.ai.people_pending);
+        let components = std::mem::take(&mut self.ai.people.pending);
         if self.foreground_operation_active() || components.is_empty() {
             return;
         }
-        let Some(source) = self.masks.source_cache.as_ref() else {
+        let Some(source) = self.masks.source_cache.as_ref().map(PeopleSource::from) else {
             self.report_error(
                 ErrorKind::AiMask,
                 "The preview could not be prepared for people selection.".to_owned(),
             );
             return;
-        };
-        let source = PeopleSource {
-            width: source.width,
-            height: source.height,
-            rgba: Arc::clone(&source.rgba),
         };
         let (targets, captured): (Vec<_>, Vec<_>) = components
             .into_iter()
@@ -552,7 +562,7 @@ impl CalibRawApp {
             );
             return;
         }
-        let analysis = self.ai.people.clone();
+        let analysis = self.ai.people.analysis.clone();
         let models = self.people_models();
         let segmentation = models.segmentation();
         let segments = analysis.as_ref().is_none_or(|analysis| {
@@ -647,7 +657,7 @@ impl CalibRawApp {
         if !cancelled && !stale {
             match result {
                 Ok(analysis) => {
-                    self.ai.people = Some(analysis);
+                    self.ai.people.analysis = Some(analysis);
                     error_message = error;
                 }
                 Err(error) => error_message = Some(format!("People selection failed: {error}")),
@@ -706,16 +716,16 @@ impl CalibRawApp {
                 );
             }
             PeopleMaskProgress::Found(analysis) if accepts => {
-                self.ai.people = Some(analysis);
-                self.forget_people_views();
+                self.ai.people.analysis = Some(analysis);
+                self.ai.people.forget_views();
             }
             PeopleMaskProgress::Segmented(person) if accepts => {
-                if let Some(analysis) = self.ai.people.as_mut() {
+                if let Some(analysis) = self.ai.people.analysis.as_mut() {
                     analysis.insert(person);
                 }
                 // Their thumbnail now centres on their face, and their
                 // highlight follows their body.
-                self.forget_people_views();
+                self.ai.people.forget_views();
             }
             PeopleMaskProgress::Masks(masks) if accepts => {
                 if let ForegroundOperationContext::People { targets, error, .. } =
@@ -777,22 +787,15 @@ impl CalibRawApp {
                 error = Some("People selection returned an invalid mask image.".to_owned());
                 continue;
             };
-            let (mask_index, component_index) = location;
             if let Some(MaskGeometry::Person {
                 anchors: target_anchors,
                 mask: target_mask,
                 ..
-            }) = self
-                .masks
-                .stack
-                .masks
-                .get_mut(mask_index)
-                .and_then(|local| local.components.get_mut(component_index))
-                .map(|component| &mut component.geometry)
+            }) = self.component_geometry_mut(location)
             {
                 *target_anchors = anchors;
                 *target_mask = Some(image);
-                changed_layers.insert(mask_index);
+                changed_layers.insert(location.0);
             }
         }
         if found_no_one && self.ai.update.is_none() {
@@ -810,28 +813,72 @@ impl CalibRawApp {
         error
     }
 
+    /// The people and parts a people component shows, and the people found
+    /// in the photo, for its properties; empty for another component. Makes
+    /// the people's chips first.
+    pub(crate) fn people_choices(
+        &mut self,
+        mask_index: usize,
+        component_index: usize,
+        frame: &eframe::Frame,
+    ) -> PeopleChoices {
+        let Some(choice) = self.shown_person_choice(mask_index, component_index) else {
+            return PeopleChoices::default();
+        };
+        self.ensure_people_chips(frame);
+        let segmentation = self.people_segmentation();
+        let Some(analysis) = self.ai.people.analysis.as_ref() else {
+            return PeopleChoices {
+                parts: choice.parts,
+                shown: segmentation.unsegmented_parts(),
+                ..PeopleChoices::default()
+            };
+        };
+        let people = self
+            .ai
+            .people
+            .chips
+            .iter()
+            .flatten()
+            .take(analysis.people().len())
+            .enumerate()
+            .map(|(index, chip)| PersonThumbnail {
+                texture: chip.id(),
+                segmented: analysis.is_segmented(index, segmentation),
+            })
+            .collect();
+        let selected = analysis.resolve(&choice.anchors);
+        PeopleChoices {
+            analysed: true,
+            people,
+            shown: analysis.parts_shown(&selected, segmentation),
+            selected,
+            parts: choice.parts,
+        }
+    }
+
     /// Makes the chips of the people found, from the mask source. A photo
     /// opened with its analysis has none until its people mask is shown.
-    pub(crate) fn ensure_people_chips(&mut self, frame: &eframe::Frame) {
-        let Some(analysis) = self.ai.people.as_ref() else {
+    fn ensure_people_chips(&mut self, frame: &eframe::Frame) {
+        let Some(analysis) = self.ai.people.analysis.as_ref() else {
             return;
         };
-        if self.ai.people_chips.is_some() {
+        if self.ai.people.chips.is_some() {
             return;
         }
         if !analysis.people().is_empty() {
             if let Err(error) = self.capture_mask_source(frame) {
                 // Reported once; the panel offers to find people instead.
-                self.ai.people_chips = Some(Vec::new());
+                self.ai.people.chips = Some(Vec::new());
                 self.report_ai_mask_error(error);
                 return;
             }
         }
-        let chips = match (&self.masks.source_cache, &self.ai.people) {
+        let chips = match (&self.masks.source_cache, &self.ai.people.analysis) {
             (Some(source), Some(analysis)) => person_chips(&self.egui_ctx, source, analysis),
             _ => Vec::new(),
         };
-        self.ai.people_chips = Some(chips);
+        self.ai.people.chips = Some(chips);
     }
 
     /// Keeps the first part of a people component and moves each other part
@@ -848,17 +895,11 @@ impl CalibRawApp {
         else {
             return;
         };
-        let Some(MaskGeometry::Person { grow, feather, .. }) = self
-            .masks
-            .stack
-            .masks
-            .get(mask_index)
-            .and_then(|mask| mask.components.get(component_index))
-            .map(|component| &component.geometry)
+        let Some(&MaskGeometry::Person { grow, feather, .. }) =
+            self.component_geometry((mask_index, component_index))
         else {
             return;
         };
-        let (grow, feather) = (*grow, *feather);
         let mut parts = parts.into_iter();
         let Some(first) = parts.next() else {
             return;
@@ -910,9 +951,7 @@ impl CalibRawApp {
             return;
         }
         self.masks.stack = candidate;
-        self.ai
-            .people_composes
-            .retain(|compose| !compose.is_for((mask_index, component_index)));
+        self.ai.people.cancel_compose((mask_index, component_index));
         self.mark_all_mask_layers_dirty();
         self.sync_selected_mask_tool();
         self.request_people_masks(components, frame);

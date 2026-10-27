@@ -395,6 +395,14 @@ impl MaskStack {
         })
     }
 
+    /// Whether any component is a Select People one, enabled or not.
+    pub fn has_people_masks(&self) -> bool {
+        self.masks
+            .iter()
+            .flat_map(|mask| &mask.components)
+            .any(|component| component.kind == MaskKind::Person)
+    }
+
     pub fn has_depth_fog_effect(&self) -> bool {
         self.has_fog_effect_matching(|settings| settings.depth_enabled)
     }

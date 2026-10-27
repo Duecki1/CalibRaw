@@ -294,10 +294,8 @@ impl PeopleAnalysis {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let people = detection.people();
         Ok(Some(Self {
             detection: Arc::new(detection),
-            people: people.into(),
             aspect: manifest.aspect,
             parts,
             foregrounds,

@@ -38,8 +38,9 @@ pub(super) const MAX_PEOPLE: usize = crate::pipeline::MAX_MASK_PEOPLE;
 pub(super) struct Detection {
     /// The offered people left to right, then the other candidates.
     candidates: Vec<Candidate>,
-    /// Offered people: the first entries of `candidates`.
-    people: usize,
+    /// Offered people: the first entries of `candidates`, with their anchors
+    /// worked out once.
+    people: Box<[DetectedPerson]>,
     /// Edge of every outline grid.
     outline_edge: usize,
 }
@@ -76,28 +77,84 @@ impl Candidate {
     fn outline_area(&self) -> usize {
         self.outline.iter().filter(|&&logit| logit >= 0.0).count()
     }
+
+    fn person(&self, edge: usize) -> DetectedPerson {
+        DetectedPerson {
+            bounds: self.bounds,
+            anchor: self.anchor(edge),
+        }
+    }
 }
 
 impl Detection {
-    pub(super) fn people(&self) -> Vec<DetectedPerson> {
-        self.candidates[..self.people]
+    /// The candidates of one RF-DETR-Seg run, in any order: drops those
+    /// found twice, offers the likely people in the foreground, at most
+    /// `MAX_PEOPLE`, and orders them left to right.
+    fn new(mut found: Vec<Candidate>, outline_edge: usize) -> Self {
+        found.sort_by(|a, b| b.score.total_cmp(&a.score));
+        let mut candidates: Vec<Candidate> = Vec::with_capacity(found.len());
+        for candidate in found {
+            let duplicate = candidates
+                .iter()
+                .any(|kept| box_overlap(kept.bounds, candidate.bounds) > DUPLICATE_OVERLAP);
+            if !duplicate {
+                candidates.push(candidate);
+            }
+        }
+        let likely = candidates
             .iter()
-            .map(|candidate| DetectedPerson {
-                bounds: candidate.bounds,
-                anchor: candidate.anchor(self.outline_edge),
-            })
-            .collect()
+            .take_while(|candidate| candidate.score >= PERSON_SCORE)
+            .count();
+        let areas: Vec<usize> = candidates[..likely]
+            .iter()
+            .map(Candidate::outline_area)
+            .collect();
+        let largest = areas.iter().copied().max().unwrap_or(0) as f32;
+        // The likely people in the foreground first, then the others, each
+        // in score order, so the cap drops the least likely.
+        let (foreground, background): (Vec<_>, Vec<_>) =
+            candidates.into_iter().enumerate().partition(|&(index, _)| {
+                areas
+                    .get(index)
+                    .is_some_and(|&area| area as f32 >= largest * FOREGROUND_SHARE)
+            });
+        let offered = foreground.len().min(MAX_PEOPLE);
+        let mut candidates: Vec<Candidate> = foreground
+            .into_iter()
+            .chain(background)
+            .map(|(_, candidate)| candidate)
+            .collect();
+        let mut others = candidates.split_off(offered);
+        let mut people: Vec<(DetectedPerson, Candidate)> = candidates
+            .into_iter()
+            .map(|candidate| (candidate.person(outline_edge), candidate))
+            .collect();
+        people.sort_by(|a, b| a.0.anchor[0].total_cmp(&b.0.anchor[0]));
+        let (people, mut candidates): (Vec<_>, Vec<_>) = people.into_iter().unzip();
+        candidates.append(&mut others);
+        Self {
+            candidates,
+            people: people.into(),
+            outline_edge,
+        }
+    }
+
+    /// Left to right.
+    pub(super) fn people(&self) -> &[DetectedPerson] {
+        &self.people
     }
 
     /// The offered person whose outline is largest.
     pub(super) fn most_prominent(&self) -> Option<usize> {
-        (0..self.people).max_by_key(|&person| self.candidates[person].outline_area())
+        (0..self.people.len()).max_by_key(|&person| self.candidates[person].outline_area())
     }
 
     /// The offered people, largest outline first.
     pub(super) fn by_prominence(&self) -> Vec<usize> {
-        let mut people: Vec<usize> = (0..self.people).collect();
-        people.sort_by_key(|&person| std::cmp::Reverse(self.candidates[person].outline_area()));
+        let mut people: Vec<usize> = (0..self.people.len()).collect();
+        people.sort_by_cached_key(|&person| {
+            std::cmp::Reverse(self.candidates[person].outline_area())
+        });
         people
     }
 
@@ -106,7 +163,7 @@ impl Detection {
     /// else the one whose own anchor is nearest.
     pub(super) fn person_at(&self, anchor: [f32; 2], aspect: f32) -> Option<usize> {
         let [u, v] = anchor;
-        let containing = (0..self.people)
+        let containing = (0..self.people.len())
             .map(|person| (person, self.outline_probability(person, u, v)))
             .filter(|&(_, probability)| probability >= 0.5)
             .max_by(|a, b| a.1.total_cmp(&b.1))
@@ -114,12 +171,12 @@ impl Detection {
         containing.or_else(|| {
             // In photo heights, so both axes share a unit.
             let distance = |person: usize| {
-                let [x, y] = self.candidates[person].anchor(self.outline_edge);
+                let [x, y] = self.people[person].anchor;
                 let dx = f64::from(x - u) * f64::from(aspect);
                 let dy = f64::from(y - v);
                 dx * dx + dy * dy
             };
-            (0..self.people).min_by(|&a, &b| distance(a).total_cmp(&distance(b)))
+            (0..self.people.len()).min_by(|&a, &b| distance(a).total_cmp(&distance(b)))
         })
     }
 
@@ -135,7 +192,7 @@ impl Detection {
     /// Every candidate, the offered people first; how many of them are
     /// offered; and the edge of their outline grids. What `from_parts` takes.
     pub(super) fn parts(&self) -> (&[Candidate], usize, usize) {
-        (&self.candidates, self.people, self.outline_edge)
+        (&self.candidates, self.people.len(), self.outline_edge)
     }
 
     /// A detection from what `parts` returned, checked as an untrusted file
@@ -169,6 +226,10 @@ impl Detection {
                 "invalid candidate outline"
             );
         }
+        let people = candidates[..people]
+            .iter()
+            .map(|candidate| candidate.person(outline_edge))
+            .collect();
         Ok(Self {
             candidates,
             people,
@@ -299,54 +360,6 @@ fn read_candidates(outputs: &SessionOutputs<'_>) -> Result<(usize, Vec<Candidate
         });
     }
     Ok((outline_edge, candidates))
-}
-
-impl Detection {
-    fn new(mut found: Vec<Candidate>, outline_edge: usize) -> Self {
-        found.sort_by(|a, b| b.score.total_cmp(&a.score));
-        let mut candidates: Vec<Candidate> = Vec::with_capacity(found.len());
-        for candidate in found {
-            let duplicate = candidates
-                .iter()
-                .any(|kept| box_overlap(kept.bounds, candidate.bounds) > DUPLICATE_OVERLAP);
-            if !duplicate {
-                candidates.push(candidate);
-            }
-        }
-        let likely = candidates
-            .iter()
-            .take_while(|candidate| candidate.score >= PERSON_SCORE)
-            .count();
-        let areas: Vec<usize> = candidates[..likely]
-            .iter()
-            .map(Candidate::outline_area)
-            .collect();
-        let largest = areas.iter().copied().max().unwrap_or(0) as f32;
-        // The likely people in the foreground first, then the others, each
-        // in score order, so the cap drops the least likely.
-        let (foreground, background): (Vec<_>, Vec<_>) =
-            candidates.into_iter().enumerate().partition(|&(index, _)| {
-                areas
-                    .get(index)
-                    .is_some_and(|&area| area as f32 >= largest * FOREGROUND_SHARE)
-            });
-        let people = foreground.len().min(MAX_PEOPLE);
-        let mut candidates: Vec<Candidate> = foreground
-            .into_iter()
-            .chain(background)
-            .map(|(_, candidate)| candidate)
-            .collect();
-        candidates[..people].sort_by(|a, b| {
-            let a = a.anchor(outline_edge)[0];
-            let b = b.anchor(outline_edge)[0];
-            a.total_cmp(&b)
-        });
-        Self {
-            candidates,
-            people,
-            outline_edge,
-        }
-    }
 }
 
 /// Intersection over union of two boxes.

@@ -26,7 +26,7 @@
 //!   same layout and which those readers report as newer.
 
 use super::effect_sliders::GlobalSliders;
-use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskKind, MaskRgbImage};
+use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskRgbImage};
 use crate::sidecar::EditState;
 use serde::{Serialize, Serializer};
 
@@ -95,12 +95,7 @@ pub(crate) fn serialize_color_range<S: Serializer>(
 /// otherwise `current`.
 pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     let masks = &edits.masks;
-    let uses_people = masks
-        .masks
-        .iter()
-        .flat_map(|mask| &mask.components)
-        .any(|component| component.kind == MaskKind::Person);
-    if edits.look_lut.is_some() || uses_people {
+    if edits.look_lut.is_some() || masks.has_people_masks() {
         return current;
     }
     let uses_relight = masks

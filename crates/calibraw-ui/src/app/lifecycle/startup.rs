@@ -224,12 +224,7 @@ impl CalibRawApp {
                 consent: None,
                 object_pending_target: None,
                 object_cache: None,
-                people_pending: Vec::new(),
-                people: None,
-                people_chips: None,
-                people_composes: Vec::new(),
-                people_hovered: None,
-                people_highlight: None,
+                people: PeopleState::default(),
                 denoise_resume_pending: false,
             },
             inpaint: InpaintState {
