@@ -2,6 +2,7 @@
 //! masks made from them.
 
 use super::detect::Detection;
+use super::distance::{nearest_seeds, NO_SEED};
 use super::{PersonBounds, RgbaView};
 use crate::models::{mask_refine, normalized_rgb_input};
 use crate::pipeline::PersonPart;
@@ -174,50 +175,61 @@ impl PersonParts {
         image: &RgbaView<'_>,
         parts: &BTreeSet<PersonPart>,
     ) -> Result<Vec<u8>> {
-        let planes: Vec<usize> = if parts.contains(&PersonPart::EntirePerson) {
-            vec![part_index(PersonPart::EntirePerson)]
-        } else {
-            parts.iter().map(|&part| part_index(part)).collect()
-        };
-        let selected = self
-            .probabilities
-            .par_iter()
-            .map(|pixel| {
-                let sum: u16 = planes.iter().map(|&plane| u16::from(pixel[plane])).sum();
-                sum.min(255) as u8
-            })
-            .collect();
-        let selected = GrayImage::from_raw(INPUT_WIDTH, INPUT_HEIGHT, selected)
-            .context("invalid body-part plane")?;
-        let PersonBounds {
-            x,
-            y,
-            width,
-            height,
-        } = crop_pixels(self.crop, image.width(), image.height());
-        let mut alpha =
-            image::imageops::resize(&selected, width, height, FilterType::Triangle).into_raw();
-        let photo_width = image.width() as usize;
-        let mut guide = Vec::with_capacity(width as usize * height as usize * 4);
-        for row in y as usize..(y + height) as usize {
-            let start = (row * photo_width + x as usize) * 4;
-            guide.extend_from_slice(&image.as_raw()[start..start + width as usize * 4]);
-        }
-        // About two model pixels: enough to move a boundary onto the photo's
-        // edge, too little to bleed into a neighbouring part.
-        let radius = (width.max(height) / 512).clamp(2, 8);
-        mask_refine::guided_filter_color(&guide, &mut alpha, width, height, radius, 1e-4)?;
-
-        let mut mask = vec![0u8; photo_width * image.height() as usize];
-        for (row, source) in alpha.chunks_exact(width as usize).enumerate() {
-            let start = (y as usize + row) * photo_width + x as usize;
-            mask[start..start + width as usize].copy_from_slice(source);
-        }
-        Ok(mask)
+        crop_mask(self.crop, &self.probabilities, image, parts)
     }
 }
 
-const fn part_index(part: PersonPart) -> usize {
+/// The photo's mask of `parts` from `probabilities`, planes as
+/// `PersonParts::probabilities` holds them over `crop`, its edges refined
+/// against the photo.
+pub(super) fn crop_mask(
+    crop: [f32; 4],
+    probabilities: &[[u8; PARTS]],
+    image: &RgbaView<'_>,
+    parts: &BTreeSet<PersonPart>,
+) -> Result<Vec<u8>> {
+    let planes: Vec<usize> = if parts.contains(&PersonPart::EntirePerson) {
+        vec![part_index(PersonPart::EntirePerson)]
+    } else {
+        parts.iter().map(|&part| part_index(part)).collect()
+    };
+    let selected = probabilities
+        .par_iter()
+        .map(|pixel| {
+            let sum: u16 = planes.iter().map(|&plane| u16::from(pixel[plane])).sum();
+            sum.min(255) as u8
+        })
+        .collect();
+    let selected = GrayImage::from_raw(INPUT_WIDTH, INPUT_HEIGHT, selected)
+        .context("invalid body-part plane")?;
+    let PersonBounds {
+        x,
+        y,
+        width,
+        height,
+    } = crop_pixels(crop, image.width(), image.height());
+    let mut alpha =
+        image::imageops::resize(&selected, width, height, FilterType::Triangle).into_raw();
+    let photo_width = image.width() as usize;
+    let mut guide = Vec::with_capacity(width as usize * height as usize * 4);
+    for row in y as usize..(y + height) as usize {
+        let start = (row * photo_width + x as usize) * 4;
+        guide.extend_from_slice(&image.as_raw()[start..start + width as usize * 4]);
+    }
+    // About two model pixels: enough to move a boundary onto the photo's
+    // edge, too little to bleed into a neighbouring part.
+    let radius = (width.max(height) / 512).clamp(2, 8);
+    mask_refine::guided_filter_color(&guide, &mut alpha, width, height, radius, 1e-4)?;
+
+    let mut mask = vec![0u8; photo_width * image.height() as usize];
+    for (row, source) in alpha.chunks_exact(width as usize).enumerate() {
+        let start = (y as usize + row) * photo_width + x as usize;
+        mask[start..start + width as usize].copy_from_slice(source);
+    }
+    Ok(mask)
+}
+
+pub(super) const fn part_index(part: PersonPart) -> usize {
     match part {
         PersonPart::EntirePerson => 0,
         PersonPart::FaceNeck => 1,
@@ -233,7 +245,7 @@ const fn part_index(part: PersonPart) -> usize {
 /// `crop` (fractions of the photo) in pixels of a `width` x `height` photo.
 /// Exactly the pixels it was made from on a photo of the size segmented,
 /// the nearest ones on another.
-fn crop_pixels(crop: [f32; 4], width: u32, height: u32) -> PersonBounds {
+pub(super) fn crop_pixels(crop: [f32; 4], width: u32, height: u32) -> PersonBounds {
     let edge = |fraction: f32, limit: u32| {
         ((f64::from(fraction) * f64::from(limit)).round() as u32).min(limit)
     };
@@ -248,16 +260,17 @@ fn crop_pixels(crop: [f32; 4], width: u32, height: u32) -> PersonBounds {
     }
 }
 
-/// Runs Sapiens2 on a crop around `person` and keeps the parts of the pixels
-/// that are theirs.
+/// Runs Sapiens2 on `crop` (fractions of the photo) around `person` and
+/// keeps the parts of the pixels that are theirs.
 pub(super) fn segment(
     session: &mut FallbackSession,
     image: &RgbaView<'_>,
     detection: &Detection,
     person: usize,
+    crop_fractions: [f32; 4],
 ) -> Result<PersonParts> {
     let (photo_width, photo_height) = image.dimensions();
-    let crop = model_crop(detection.bounds(person), photo_width, photo_height);
+    let crop = crop_pixels(crop_fractions, photo_width, photo_height);
     let cropped = image::imageops::crop_imm(image, crop.x, crop.y, crop.width, crop.height);
     let resized =
         image::imageops::resize(&*cropped, INPUT_WIDTH, INPUT_HEIGHT, FilterType::Triangle);
@@ -289,17 +302,23 @@ pub(super) fn segment(
         );
         part_probabilities(logits, &owned)
     })?;
+    Ok(PersonParts::new(crop_fractions, probabilities))
+}
+
+/// The crop a person is first segmented on, by either model: their box
+/// (fractions of the photo) with a margin, at the input's aspect ratio
+/// (`model_crop`), as fractions of the photo on its pixel edges. Later
+/// passes over the person reuse it.
+pub(super) fn person_crop(bounds: [f32; 4], photo_width: u32, photo_height: u32) -> [f32; 4] {
+    let crop = model_crop(bounds, photo_width, photo_height);
     let (width, height) = (f64::from(photo_width), f64::from(photo_height));
     let fraction = |pixels: u32, limit: f64| (f64::from(pixels) / limit) as f32;
-    Ok(PersonParts::new(
-        [
-            fraction(crop.x, width),
-            fraction(crop.y, height),
-            fraction(crop.x + crop.width, width),
-            fraction(crop.y + crop.height, height),
-        ],
-        probabilities,
-    ))
+    [
+        fraction(crop.x, width),
+        fraction(crop.y, height),
+        fraction(crop.x + crop.width, width),
+        fraction(crop.y + crop.height, height),
+    ]
 }
 
 /// Per pixel, the softmax of the class logits summed into parts; zero where
@@ -388,7 +407,7 @@ fn fit_span(start: f32, end: f32, limit: f32) -> (f32, f32) {
 /// to the nearest outline within `OUTLINE_REACH`, and to no one beyond it.
 /// Every candidate competes, also those not offered as people. Distances are
 /// in input pixels, chamfer-approximated.
-fn ownership(
+pub(super) fn ownership(
     detection: &Detection,
     person: usize,
     crop: PersonBounds,
@@ -433,51 +452,18 @@ fn ownership(
             }
         });
 
-    // Two chamfer passes carry each outline's owner outward with its distance.
-    let mut distance: Vec<f32> = owner
-        .iter()
-        .map(|&owner| if owner == NO_ONE { f32::INFINITY } else { 0.0 })
-        .collect();
-    let diagonal = std::f32::consts::SQRT_2;
-    let forward = [
-        (-1isize, 0isize, 1.0f32),
-        (-1, -1, diagonal),
-        (0, -1, 1.0),
-        (1, -1, diagonal),
-    ];
-    let backward = forward.map(|(dx, dy, cost)| (-dx, -dy, cost));
-    let mut relax = |x: usize, y: usize, steps: &[(isize, isize, f32)]| {
-        let index = y * width + x;
-        for &(dx, dy, cost) in steps {
-            let (nx, ny) = (x as isize + dx, y as isize + dy);
-            if nx < 0 || ny < 0 || nx >= width as isize || ny >= height as isize {
-                continue;
-            }
-            let neighbour = ny as usize * width + nx as usize;
-            if distance[neighbour] + cost < distance[index] {
-                distance[index] = distance[neighbour] + cost;
-                owner[index] = owner[neighbour];
-            }
-        }
-    };
-    for y in 0..height {
-        for x in 0..width {
-            relax(x, y, &forward);
-        }
-    }
-    for y in (0..height).rev() {
-        for x in (0..width).rev() {
-            relax(x, y, &backward);
-        }
-    }
+    // Each pixel goes to the owner of the nearest pixel inside an outline.
+    let (distance, nearest) = nearest_seeds(width, height, |index| owner[index] != NO_ONE);
 
     let [left, top, right, bottom] = detection.bounds(person);
     let box_width = (right - left) * photo_width as f32 / crop.width as f32 * width as f32;
     let box_height = (bottom - top) * photo_height as f32 / crop.height as f32 * height as f32;
     let reach = OUTLINE_REACH * box_width.max(box_height);
-    owner
+    nearest
         .iter()
         .zip(&distance)
-        .map(|(&owner, &distance)| owner == person && distance <= reach)
+        .map(|(&seed, &distance)| {
+            seed != NO_SEED && owner[seed as usize] == person && distance <= reach
+        })
         .collect()
 }

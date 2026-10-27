@@ -131,6 +131,7 @@ pub(crate) struct AiConsent {
 
 pub(crate) struct AiState {
     pub(crate) subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality,
+    pub(crate) people_mask_quality: calibraw_ai::models::people::PeopleMaskQuality,
     pub(crate) gpu_acceleration: bool,
     /// Content results (AI masks, scene depth, range sources) were made from an
     /// image that has since changed. Persisted as `ai_masks_need_update`.

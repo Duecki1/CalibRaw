@@ -218,6 +218,23 @@ impl CalibRawApp {
         )
     }
 
+    /// BiRefNet for high-quality people masks; `None` at medium quality.
+    pub(in crate::app) fn people_foreground_model(
+        &self,
+    ) -> Option<calibraw_ai::models::people::ForegroundModel> {
+        use calibraw_ai::models::people::{foreground_model, ForegroundModel, PeopleMaskQuality};
+        if self.ai.people_mask_quality != PeopleMaskQuality::High {
+            return None;
+        }
+        let precision = self.subject_model_precision();
+        Some(ForegroundModel {
+            path: self
+                .ai_model_root()
+                .join(foreground_model(precision).cache_filename),
+            precision,
+        })
+    }
+
     /// Float16 when subject masks are expected to run on the GPU; see
     /// `SubjectModelPrecision::for_current_sessions`.
     pub(in crate::app) fn subject_model_precision(

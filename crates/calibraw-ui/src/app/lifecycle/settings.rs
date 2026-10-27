@@ -345,6 +345,7 @@ impl CalibRawApp {
             github_update_check_allowed: self.preferences.github_update_check_allowed,
             ignored_update_version: self.preferences.ignored_update_version.clone(),
             subject_mask_quality: self.ai.subject_mask_quality,
+            people_mask_quality: self.ai.people_mask_quality,
             ai_gpu_acceleration: self.ai.gpu_acceleration,
             onnx_runtime_mode: self.ai.runtime_mode,
             discord_rich_presence: self.preferences.discord_rich_presence,

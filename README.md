@@ -122,7 +122,7 @@ Set `WGPU_BACKEND` (for example `vulkan`) to choose the graphics API yourself.
 
 ### Masking & AI
 - **Masks:** Brush, Linear Gradient, Radial Gradient, and Shape masks with independent curves and adjustments.
-- **AI Masks:** Subject and background (BiRefNet), sky (SkySeg U2Net), depth range (experimental; Depth Anything V2), click-to-select objects (SAM 2.1), and people with their face, skin, hair, clothes, lips, teeth or glasses on desktop (RF-DETR-Seg and Sapiens2).
+- **AI Masks:** Subject and background (BiRefNet), sky (SkySeg U2Net), depth range (experimental; Depth Anything V2), click-to-select objects (SAM 2.1), and people with their face, skin, hair, clothes, lips, teeth or glasses on desktop (RF-DETR-Seg and Sapiens2, with BiRefNet outlines at High quality).
 - **AI Remove:** Big-LaMa fills removed objects at native resolution where possible and restores the photo's own grain around the fill.
 - **Clone & Heal:** Classic retouching brushes with aligned, fixed and registered source modes.
 - **AI Denoise:** RawNIND denoises Bayer RAWs while demosaicing them and X-Trans RAWs in linear RGB.

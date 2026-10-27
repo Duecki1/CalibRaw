@@ -113,6 +113,18 @@ impl PeopleCompose {
 }
 
 impl CalibRawApp {
+    /// Masks made from now on are of `quality`; existing ones keep theirs.
+    pub(crate) fn set_people_mask_quality(
+        &mut self,
+        quality: calibraw_ai::models::people::PeopleMaskQuality,
+    ) {
+        if self.ai.people_mask_quality == quality {
+            return;
+        }
+        self.ai.people_mask_quality = quality;
+        self.persist_performance_settings();
+    }
+
     /// Makes the masks of these people components: from the analysis for
     /// those whose person is segmented, through the people job, which finds
     /// and segments people, for the others.
@@ -297,13 +309,17 @@ impl CalibRawApp {
             .and_then(|component| PersonChoice::of(&component.geometry))
     }
 
-    /// The people `anchors` select, while the analysis has all their body
-    /// parts.
+    /// The people `anchors` select, while the analysis has all their masks
+    /// need at the people-mask quality.
     fn segmented_people(&self, anchors: &[[f32; 2]]) -> Option<Vec<usize>> {
         let analysis = self.ai.people.as_ref()?;
+        let quality = self.ai.people_mask_quality;
         let people = analysis.resolve(anchors);
-        (!people.is_empty() && people.iter().all(|&person| analysis.is_segmented(person)))
-            .then_some(people)
+        (!people.is_empty()
+            && people
+                .iter()
+                .all(|&person| analysis.is_segmented(person, quality)))
+        .then_some(people)
     }
 
     /// Starts making the mask of `target`, whose people are segmented, for
@@ -337,9 +353,10 @@ impl CalibRawApp {
             rgba: Arc::clone(&source.rgba),
         };
         let parts = target.parts.clone();
+        let quality = self.ai.people_mask_quality;
         let receiver = spawn_ui_worker(&self.egui_ctx, move || {
             analysis
-                .person_mask(&source, &people, &parts)
+                .person_mask(&source, &people, &parts, quality)
                 .map_err(|error| format!("{error:#}"))
         });
         let (mask_index, component_index) = location;
@@ -525,28 +542,32 @@ impl CalibRawApp {
             return;
         }
         let analysis = self.ai.people.clone();
+        let quality = self.ai.people_mask_quality;
         let segments = analysis.as_ref().is_none_or(|analysis| {
             targets.iter().any(|target| {
                 analysis
                     .resolve(&target.anchors)
                     .iter()
-                    .any(|&person| !analysis.is_segmented(person))
+                    .any(|&person| !analysis.is_segmented(person, quality))
             })
         });
         let (detector_path, body_parts_path) = self.people_model_paths();
-        let phase = if !people_models_are_verified(&detector_path, &body_parts_path) {
-            "Preparing people models…"
-        } else if analysis.is_none() {
-            "Finding people…"
-        } else if segments {
-            "Segmenting body parts…"
-        } else {
-            "Updating the people mask…"
-        };
+        let foreground = self.people_foreground_model();
+        let phase =
+            if !people_models_are_verified(&detector_path, &body_parts_path, foreground.as_ref()) {
+                "Preparing people models…"
+            } else if analysis.is_none() {
+                "Finding people…"
+            } else if segments {
+                "Segmenting body parts…"
+            } else {
+                "Updating the people mask…"
+            };
         let cancellation = Arc::new(AtomicBool::new(false));
         let receiver = spawn_people_mask(PeopleMaskWorkerRequest {
             detector_path,
             body_parts_path,
+            foreground,
             allow_download,
             request: PeopleMaskRequest {
                 source,
@@ -658,6 +679,14 @@ impl CalibRawApp {
         match progress {
             PeopleMaskProgress::FindingPeople => {
                 operation.progress = ForegroundProgress::indeterminate("Finding people…");
+            }
+            PeopleMaskProgress::OutliningPeople { done, total } => {
+                operation.progress = ForegroundProgress::units(
+                    done as u64,
+                    total as u64,
+                    None::<String>,
+                    "Outlining people…",
+                );
             }
             PeopleMaskProgress::SegmentingBodyParts { done, total } => {
                 operation.progress = ForegroundProgress::units(

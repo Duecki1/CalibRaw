@@ -276,7 +276,7 @@ impl Sidebar {
             .enumerate()
             .map(|(index, chip)| PersonThumbnail {
                 texture: chip.id(),
-                segmented: analysis.is_segmented(index),
+                segmented: analysis.is_segmented(index, app.ai.people_mask_quality),
             })
             .collect();
         let selected = analysis.resolve(&choice.anchors);

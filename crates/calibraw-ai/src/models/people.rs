@@ -1,20 +1,24 @@
 //! People masks: RF-DETR-Seg finds the people in a photo and outlines them
 //! coarsely; Sapiens2 then segments the body parts of each person, on a crop
-//! around them. Both run once per photo, for everyone: the masks of any
-//! person and parts are then made from that analysis without a model
+//! around them. For high-quality masks BiRefNet first finds the foreground
+//! of the same crops, whose finer outline replaces Sapiens2's near its edge
+//! (`foreground`). The models run once per photo, for everyone: the masks of
+//! any person and parts are then made from that analysis without a model
 //! (`PeopleAnalysis::person_mask`), and the analysis is kept beside the photo
-//! (`store`) for the next time it opens. The outlines only decide whose a
-//! pixel is; every edge comes from Sapiens2.
+//! (`store`) for the next time it opens. The coarse outlines only decide
+//! whose a pixel is; every edge comes from Sapiens2 or BiRefNet.
 
 use crate::config::CAPABILITIES;
 use crate::jobs::{spawn_job, AiJobEvent, JobContext, JobKind};
 use crate::models::masks::mask_model_retention;
+use crate::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
 use crate::pipeline::{LoadedRaw, MaskImage, PersonPart, RemoveEditState};
 use crate::registry::{AiModel, ModelInfo};
 use crate::runtime::initialize_runtime;
 use crate::slot::with_model_session;
 use anyhow::{Context, Result};
 use image::{ImageBuffer, Rgba};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     fmt,
@@ -23,9 +27,12 @@ use std::{
 };
 
 mod detect;
+mod distance;
+mod foreground;
 mod parts;
 mod store;
 use detect::Detection;
+use foreground::PersonForeground;
 use parts::PersonParts;
 pub use store::{content_fingerprint, ContentFingerprint};
 
@@ -56,9 +63,60 @@ const PEOPLE_JOB: JobKind = JobKind {
 /// The photo as the models and the masks read it.
 type RgbaView<'a> = ImageBuffer<Rgba<u8>, &'a [u8]>;
 
-pub fn people_models_are_verified(detector: &Path, body_parts: &Path) -> bool {
+/// How much work a people mask may take. Serialized in the performance
+/// settings; keep the names stable.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PeopleMaskQuality {
+    /// Sapiens2's outline of each person.
+    #[default]
+    Medium,
+    /// BiRefNet's finer outline of each person, from one more model run per
+    /// person and the `foreground_model` download.
+    High,
+}
+
+impl PeopleMaskQuality {
+    pub const ALL: [Self; 2] = [Self::Medium, Self::High];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Medium => "Medium",
+            Self::High => "High",
+        }
+    }
+}
+
+/// The BiRefNet model of high-quality people masks: the subject model with
+/// the 1024 x 1024 input, one file with it.
+pub const fn foreground_model(precision: SubjectModelPrecision) -> ModelInfo {
+    SubjectMaskQuality::High.model(precision)
+}
+
+/// Where the BiRefNet model of high-quality people masks is, and which of
+/// its files.
+#[derive(Clone, Debug)]
+pub struct ForegroundModel {
+    pub path: PathBuf,
+    pub precision: SubjectModelPrecision,
+}
+
+impl ForegroundModel {
+    fn ai_model(&self) -> AiModel {
+        SubjectMaskQuality::High.ai_model(self.precision)
+    }
+}
+
+/// Whether the models of people masks are installed; BiRefNet's only with
+/// `foreground`, for high-quality masks.
+pub fn people_models_are_verified(
+    detector: &Path,
+    body_parts: &Path,
+    foreground: Option<&ForegroundModel>,
+) -> bool {
     AiModel::PersonDetector.spec().is_installed(detector)
         && AiModel::BodyParts.spec().is_installed(body_parts)
+        && foreground.is_none_or(|model| model.ai_model().spec().is_installed(&model.path))
 }
 
 /// The photo people are found in, and their masks refined against: RGBA,
@@ -119,9 +177,9 @@ pub struct DetectedPerson {
     pub anchor: [f32; 2],
 }
 
-/// The people found in one photo, and the body parts of those segmented so
-/// far. Positions are fractions of the photo, so the analysis serves every
-/// rendering of the same content, whatever its size.
+/// The people found in one photo, and the body parts and foreground of
+/// those segmented so far. Positions are fractions of the photo, so the
+/// analysis serves every rendering of the same content, whatever its size.
 #[derive(Clone)]
 pub struct PeopleAnalysis {
     detection: Arc<Detection>,
@@ -130,6 +188,9 @@ pub struct PeopleAnalysis {
     aspect: f32,
     /// By person, those segmented so far.
     parts: Vec<Option<Arc<PersonParts>>>,
+    /// By person, those whose foreground BiRefNet found so far. A person
+    /// with both has them over the same crop.
+    foregrounds: Vec<Option<Arc<PersonForeground>>>,
 }
 
 impl fmt::Debug for PeopleAnalysis {
@@ -148,6 +209,7 @@ impl PeopleAnalysis {
         Self {
             aspect,
             parts: vec![None; people.len()],
+            foregrounds: vec![None; people.len()],
             detection: Arc::new(detection),
             people,
         }
@@ -177,34 +239,53 @@ impl PeopleAnalysis {
         people
     }
 
-    /// Whether `person`'s body parts are known, so their masks need no model.
-    pub fn is_segmented(&self, person: usize) -> bool {
-        self.parts.get(person).is_some_and(Option::is_some)
+    /// Whether what `person`'s masks of `quality` are made from is known, so
+    /// they need no model.
+    pub fn is_segmented(&self, person: usize, quality: PeopleMaskQuality) -> bool {
+        let parts = self.parts.get(person).is_some_and(Option::is_some);
+        let foreground = self.foregrounds.get(person).is_some_and(Option::is_some);
+        parts && (quality == PeopleMaskQuality::Medium || foreground)
     }
 
-    /// Adds a person a job segmented for this analysis. False, changing
+    /// Adds what a job found of a person for this analysis. False, changing
     /// nothing, for one of another analysis.
     pub fn insert(&mut self, segmented: SegmentedPerson) -> bool {
-        if !Arc::ptr_eq(&self.detection, &segmented.detection) {
+        if !Arc::ptr_eq(&self.detection, &segmented.detection)
+            || segmented.person >= self.people.len()
+        {
             return false;
         }
-        let Some(slot) = self.parts.get_mut(segmented.person) else {
-            return false;
-        };
-        *slot = Some(segmented.parts);
+        match segmented.found {
+            PersonFound::Parts(parts) => self.parts[segmented.person] = Some(parts),
+            PersonFound::Foreground(foreground) => {
+                self.foregrounds[segmented.person] = Some(foreground);
+            }
+        }
         true
     }
 
-    /// The mask of `parts` of `people` over `source`, its edges refined
-    /// against it; runs no model. `None` for no one, or until everyone is
-    /// segmented.
+    /// The crop `person`'s models run on, as fractions of the photo: the one
+    /// a model already ran on, else the first for their box on a `width` x
+    /// `height` photo.
+    fn crop(&self, person: usize, width: u32, height: u32) -> [f32; 4] {
+        self.parts[person]
+            .as_ref()
+            .map(|parts| parts.crop)
+            .or_else(|| self.foregrounds[person].as_ref().map(|found| found.crop))
+            .unwrap_or_else(|| parts::person_crop(self.detection.bounds(person), width, height))
+    }
+
+    /// The mask of `parts` of `people` over `source` at `quality`, its edges
+    /// refined against it; runs no model. `None` for no one, or until
+    /// everyone is segmented for `quality`.
     pub fn person_mask(
         &self,
         source: &PeopleSource,
         people: &[usize],
         parts: &BTreeSet<PersonPart>,
+        quality: PeopleMaskQuality,
     ) -> Result<Option<PersonMask>> {
-        self.mask_of(&source.image()?, people, parts)
+        self.mask_of(&source.image()?, people, parts, quality)
     }
 
     /// The parts any of `people` shows; `None` until they are all
@@ -313,11 +394,17 @@ impl PeopleAnalysis {
         image: &RgbaView<'_>,
         people: &[usize],
         parts: &BTreeSet<PersonPart>,
+        quality: PeopleMaskQuality,
     ) -> Result<Option<PersonMask>> {
-        let Some(segmented) = self.segmented(people) else {
+        if !people
+            .iter()
+            .all(|&person| self.is_segmented(person, quality))
+        {
             return Ok(None);
-        };
-        let mut masks = segmented.iter().map(|person| person.mask(image, parts));
+        }
+        let mut masks = people
+            .iter()
+            .map(|&person| self.mask_of_person(image, person, parts, quality));
         let Some(first) = masks.next() else {
             return Ok(None);
         };
@@ -337,6 +424,29 @@ impl PeopleAnalysis {
             mask,
         }))
     }
+
+    /// The mask of `parts` of one person segmented for `quality`.
+    fn mask_of_person(
+        &self,
+        image: &RgbaView<'_>,
+        person: usize,
+        parts: &BTreeSet<PersonPart>,
+        quality: PeopleMaskQuality,
+    ) -> Result<Vec<u8>> {
+        let segmented = self.parts[person]
+            .as_deref()
+            .context("a selected person has no body parts")?;
+        if quality == PeopleMaskQuality::Medium {
+            return segmented.mask(image, parts);
+        }
+        let found = self.foregrounds[person]
+            .as_deref()
+            .context("a selected person has no foreground")?;
+        match foreground::refine(segmented, found) {
+            Some(planes) => parts::crop_mask(segmented.crop, &planes, image, parts),
+            None => segmented.mask(image, parts),
+        }
+    }
 }
 
 /// Where one person is in the photo.
@@ -350,12 +460,19 @@ pub struct PersonSilhouette {
     pub coverage: Vec<u8>,
 }
 
-/// One person's body parts, as a job reports them while it runs.
+/// One person's body parts or foreground, as a job reports them while it
+/// runs.
 #[derive(Clone)]
 pub struct SegmentedPerson {
     detection: Arc<Detection>,
     person: usize,
-    parts: Arc<PersonParts>,
+    found: PersonFound,
+}
+
+#[derive(Clone)]
+enum PersonFound {
+    Parts(Arc<PersonParts>),
+    Foreground(Arc<PersonForeground>),
 }
 
 impl fmt::Debug for SegmentedPerson {
@@ -416,6 +533,11 @@ pub enum PeopleMaskProgress {
     FindingPeople,
     /// Everyone the job found, none segmented yet.
     Found(PeopleAnalysis),
+    /// BiRefNet found the foreground of `done` of `total` people.
+    OutliningPeople {
+        done: usize,
+        total: usize,
+    },
     /// `done` of `total` people are segmented.
     SegmentingBodyParts {
         done: usize,
@@ -434,6 +556,8 @@ pub type PeopleMaskEvent = AiJobEvent<PeopleAnalysis, PeopleMaskProgress>;
 pub struct PeopleMaskWorkerRequest {
     pub detector_path: PathBuf,
     pub body_parts_path: PathBuf,
+    /// BiRefNet, for high-quality masks; `None` makes medium-quality ones.
+    pub foreground: Option<ForegroundModel>,
     pub allow_download: bool,
     pub request: PeopleMaskRequest,
     pub cancellation: Arc<AtomicBool>,
@@ -443,6 +567,7 @@ pub fn spawn_people_mask(worker: PeopleMaskWorkerRequest) -> mpsc::Receiver<Peop
     let PeopleMaskWorkerRequest {
         detector_path,
         body_parts_path,
+        foreground,
         allow_download,
         request,
         cancellation,
@@ -454,18 +579,31 @@ pub fn spawn_people_mask(worker: PeopleMaskWorkerRequest) -> mpsc::Receiver<Peop
             allow_download,
         )?;
         job.install(AiModel::BodyParts.spec(), &body_parts_path, allow_download)?;
+        if let Some(model) = &foreground {
+            job.install(model.ai_model().spec(), &model.path, allow_download)?;
+        }
         job.ensure_not_cancelled()?;
-        infer_people_masks(job, &detector_path, &body_parts_path, request)
+        infer_people_masks(
+            job,
+            &detector_path,
+            &body_parts_path,
+            foreground.as_ref(),
+            request,
+        )
     })
 }
 
-/// Finds the people unless `request` brings them, segments the targets'
-/// people and sends their masks, then segments everyone else the job found.
-/// A cancelled job keeps and reports those segmented before it stopped.
+/// Finds the people unless `request` brings them, then segments the
+/// targets' people and everyone else the job found, the targets first, and
+/// sends the targets' masks as soon as their people are segmented. With
+/// `foreground`, BiRefNet finds their foregrounds before Sapiens2 segments
+/// them: one model is loaded at a time, so each runs for everyone at once.
+/// A cancelled job keeps and reports what it found before it stopped.
 fn infer_people_masks(
     job: &JobContext<PeopleAnalysis, PeopleMaskProgress>,
     detector_path: &Path,
     body_parts_path: &Path,
+    foreground: Option<&ForegroundModel>,
     request: PeopleMaskRequest,
 ) -> Result<PeopleAnalysis> {
     let PeopleMaskRequest {
@@ -495,6 +633,11 @@ fn infer_people_masks(
     };
     job.ensure_not_cancelled()?;
 
+    let quality = if foreground.is_some() {
+        PeopleMaskQuality::High
+    } else {
+        PeopleMaskQuality::Medium
+    };
     let people: Vec<Vec<usize>> = targets
         .iter()
         .map(|target| analysis.resolve(&target.anchors))
@@ -502,8 +645,8 @@ fn infer_people_masks(
     let mut order: Vec<usize> = people.iter().flatten().copied().collect();
     order.sort_unstable();
     order.dedup();
-    order.retain(|&person| !analysis.is_segmented(person));
-    let targets_waiting = order.len();
+    order.retain(|&person| !analysis.is_segmented(person, quality));
+    let mut masks_sent = order.is_empty();
     if detects {
         for person in analysis.detection.by_prominence() {
             if !order.contains(&person) {
@@ -521,19 +664,94 @@ fn infer_people_masks(
                     return Ok(None);
                 }
                 analysis
-                    .mask_of(&image, people, &target.parts)?
-                    .context("a selected person has no body parts")
+                    .mask_of(&image, people, &target.parts, quality)?
+                    .context("a selected person is not segmented")
                     .map(Some)
             })
             .collect::<Result<_>>()?;
         job.progress(PeopleMaskProgress::Masks(masks));
         Ok(())
     };
-    if targets_waiting == 0 {
+    let targets_segmented = |analysis: &PeopleAnalysis| {
+        people
+            .iter()
+            .flatten()
+            .all(|&person| analysis.is_segmented(person, quality))
+    };
+    if masks_sent {
         send_masks(&analysis)?;
     }
-    let mut segmented_any = false;
-    if !order.is_empty() {
+    // Reports what was found of a person, and sends the masks once the
+    // targets' people are segmented.
+    let mut found_any = false;
+    let mut found = |analysis: &mut PeopleAnalysis, person: usize, found: PersonFound| {
+        let segmented = SegmentedPerson {
+            detection: Arc::clone(&analysis.detection),
+            person,
+            found,
+        };
+        analysis.insert(segmented.clone());
+        found_any = true;
+        job.progress(PeopleMaskProgress::Segmented(segmented));
+        if !masks_sent && targets_segmented(analysis) {
+            masks_sent = true;
+            send_masks(analysis)?;
+        }
+        anyhow::Ok(())
+    };
+    let (width, height) = image.dimensions();
+
+    if let Some(model) = foreground {
+        let outline: Vec<usize> = order
+            .iter()
+            .copied()
+            .filter(|&person| analysis.foregrounds[person].is_none())
+            .collect();
+        if !outline.is_empty() {
+            let ai_model = model.ai_model();
+            let spec = ai_model.spec();
+            let edge = spec.input.edge();
+            with_model_session(
+                ai_model,
+                &model.path,
+                spec.session,
+                mask_model_retention(true),
+                |session| {
+                    for (done, &person) in outline.iter().enumerate() {
+                        if job.ensure_not_cancelled().is_err() {
+                            break;
+                        }
+                        job.progress(PeopleMaskProgress::OutliningPeople {
+                            done,
+                            total: outline.len(),
+                        });
+                        let crop = analysis.crop(person, width, height);
+                        let person_foreground = foreground::segment(
+                            session,
+                            edge,
+                            &image,
+                            &analysis.detection,
+                            person,
+                            crop,
+                        )?;
+                        found(
+                            &mut analysis,
+                            person,
+                            PersonFound::Foreground(Arc::new(person_foreground)),
+                        )?;
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+    }
+
+    let segment: Vec<usize> = order
+        .iter()
+        .copied()
+        .filter(|&person| analysis.parts[person].is_none())
+        .collect();
+    if !segment.is_empty() && job.ensure_not_cancelled().is_ok() {
         let spec = AiModel::BodyParts.spec();
         with_model_session(
             AiModel::BodyParts,
@@ -541,33 +759,24 @@ fn infer_people_masks(
             spec.session,
             mask_model_retention(true),
             |session| {
-                for (done, &person) in order.iter().enumerate() {
+                for (done, &person) in segment.iter().enumerate() {
                     if job.ensure_not_cancelled().is_err() {
                         break;
                     }
                     job.progress(PeopleMaskProgress::SegmentingBodyParts {
                         done,
-                        total: order.len(),
+                        total: segment.len(),
                     });
-                    let parts = parts::segment(session, &image, &analysis.detection, person)?;
-                    let segmented = SegmentedPerson {
-                        detection: Arc::clone(&analysis.detection),
-                        person,
-                        parts: Arc::new(parts),
-                    };
-                    analysis.insert(segmented.clone());
-                    segmented_any = true;
-                    job.progress(PeopleMaskProgress::Segmented(segmented));
-                    if done + 1 == targets_waiting {
-                        send_masks(&analysis)?;
-                    }
+                    let crop = analysis.crop(person, width, height);
+                    let parts = parts::segment(session, &image, &analysis.detection, person, crop)?;
+                    found(&mut analysis, person, PersonFound::Parts(Arc::new(parts)))?;
                 }
                 Ok(())
             },
         )?;
     }
 
-    if let Some(file) = keep.filter(|_| detects || segmented_any) {
+    if let Some(file) = keep.filter(|_| detects || found_any) {
         let saved = content_fingerprint(&file.raw, &file.remove)
             .and_then(|content| analysis.save(&file.path, content));
         if let Err(error) = saved {

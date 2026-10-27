@@ -1,11 +1,13 @@
 //! The analysis kept beside a photo (`<RAW>.calibraw-people`), so opening
 //! it again neither finds nor segments anyone. A zip of a JSON manifest, the
-//! detection outlines and each segmented person's part planes: boxes,
-//! outlines and probabilities, never pixels of the photo. A file of another
+//! detection outlines, each segmented person's part planes and the
+//! foreground of those BiRefNet ran on: boxes, outlines and probabilities,
+//! never pixels of the photo. A file of another
 //! version, or of other content than the photo has now, is ignored, and the
 //! next analysis replaces it.
 
 use super::detect::{Candidate, Detection};
+use super::foreground::PersonForeground;
 use super::parts::{PersonParts, INPUT_HEIGHT, INPUT_PIXELS, INPUT_WIDTH, PARTS};
 use super::PeopleAnalysis;
 use crate::pipeline::{CfaKind, LoadedRaw, RemoveEditState};
@@ -24,7 +26,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 const FORMAT: &str = "CalibRaw people analysis";
 /// Bump for every change to the layout or to what an analysis holds; files
 /// of another version are made again.
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MANIFEST: &str = "manifest.json";
 /// Every candidate's outline logits in candidate order, `f32` little-endian.
 const OUTLINES: &str = "outlines.f32";
@@ -38,6 +40,11 @@ const MAX_OUTLINE_EDGE: usize = 256;
 /// One person's part planes: `PARTS` bytes per pixel, by row.
 fn parts_entry(person: usize) -> String {
     format!("person-{person}.parts")
+}
+
+/// One person's foreground: a byte per pixel of the part planes, by row.
+fn foreground_entry(person: usize) -> String {
+    format!("person-{person}.foreground")
 }
 
 #[derive(Serialize, Deserialize)]
@@ -54,6 +61,9 @@ struct Manifest {
     candidates: Vec<StoredCandidate>,
     /// By person, the crop their part planes cover once they are segmented.
     crops: Vec<Option<[f32; 4]>>,
+    /// By person, the crop their foreground covers once BiRefNet found it;
+    /// the same as their part planes' when both are known.
+    foreground_crops: Vec<Option<[f32; 4]>>,
     /// Width and height of every part plane, and parts per pixel.
     planes: [usize; 3],
 }
@@ -138,6 +148,11 @@ impl PeopleAnalysis {
                 .iter()
                 .map(|parts| parts.as_ref().map(|parts| parts.crop))
                 .collect(),
+            foreground_crops: self
+                .foregrounds
+                .iter()
+                .map(|found| found.as_ref().map(|found| found.crop))
+                .collect(),
             planes: PLANES,
         })
         .context("encode the people analysis manifest")?;
@@ -161,6 +176,12 @@ impl PeopleAnalysis {
                 if let Some(parts) = parts {
                     archive.start_file(parts_entry(person), compressed)?;
                     archive.write_all(bytemuck::cast_slice(&parts.probabilities))?;
+                }
+            }
+            for (person, found) in self.foregrounds.iter().enumerate() {
+                if let Some(found) = found {
+                    archive.start_file(foreground_entry(person), compressed)?;
+                    archive.write_all(&found.probabilities)?;
                 }
             }
             archive.finish()?;
@@ -210,7 +231,8 @@ impl PeopleAnalysis {
         anyhow::ensure!(
             manifest.candidates.len() <= MAX_CANDIDATES
                 && (1..=MAX_OUTLINE_EDGE).contains(&manifest.outline_edge)
-                && manifest.crops.len() == manifest.people,
+                && manifest.crops.len() == manifest.people
+                && manifest.foreground_crops.len() == manifest.people,
             "the people analysis manifest is inconsistent"
         );
 
@@ -240,13 +262,7 @@ impl PeopleAnalysis {
                 let Some(crop) = *crop else {
                     return Ok(None);
                 };
-                let [left, top, right, bottom] = crop;
-                anyhow::ensure!(
-                    crop.iter().all(|value| (0.0..=1.0).contains(value))
-                        && left < right
-                        && top < bottom,
-                    "invalid crop of person {person}"
-                );
+                ensure_crop(crop, person)?;
                 let mut probabilities = vec![[0u8; PARTS]; INPUT_PIXELS].into_boxed_slice();
                 read_entry(
                     &mut archive,
@@ -256,6 +272,27 @@ impl PeopleAnalysis {
                 Ok(Some(Arc::new(PersonParts::new(crop, probabilities))))
             })
             .collect::<Result<Vec<_>>>()?;
+        let foregrounds = manifest
+            .foreground_crops
+            .iter()
+            .enumerate()
+            .map(|(person, crop)| {
+                let Some(crop) = *crop else {
+                    return Ok(None);
+                };
+                ensure_crop(crop, person)?;
+                anyhow::ensure!(
+                    manifest.crops[person].is_none_or(|parts_crop| parts_crop == crop),
+                    "the foreground of person {person} is not over their part planes"
+                );
+                let mut probabilities = vec![0u8; INPUT_PIXELS].into_boxed_slice();
+                read_entry(&mut archive, &foreground_entry(person), &mut probabilities)?;
+                Ok(Some(Arc::new(PersonForeground {
+                    crop,
+                    probabilities,
+                })))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let people = detection.people();
         Ok(Some(Self {
@@ -263,8 +300,19 @@ impl PeopleAnalysis {
             people: people.into(),
             aspect: manifest.aspect,
             parts,
+            foregrounds,
         }))
     }
+}
+
+/// Checks a person's crop (left, top, right, bottom) read from a file.
+fn ensure_crop(crop: [f32; 4], person: usize) -> Result<()> {
+    let [left, top, right, bottom] = crop;
+    anyhow::ensure!(
+        crop.iter().all(|value| (0.0..=1.0).contains(value)) && left < right && top < bottom,
+        "invalid crop of person {person}"
+    );
+    Ok(())
 }
 
 /// Fills `buffer` with the entry `name`, which must be exactly as long.

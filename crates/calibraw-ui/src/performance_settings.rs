@@ -62,6 +62,7 @@ pub(crate) struct PerformanceSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignored_update_version: Option<String>,
     pub subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality,
+    pub people_mask_quality: calibraw_ai::models::people::PeopleMaskQuality,
     // The fields below are read only where the platform offers what they
     // configure; every platform writes all of them.
     /// Where the AI runtime is configurable.
@@ -165,6 +166,7 @@ impl Default for PerformanceSettings {
             github_update_check_allowed: None,
             ignored_update_version: None,
             subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality::default(),
+            people_mask_quality: calibraw_ai::models::people::PeopleMaskQuality::default(),
             ai_gpu_acceleration: true,
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::default(),
             discord_rich_presence: false,

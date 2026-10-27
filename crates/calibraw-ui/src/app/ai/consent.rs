@@ -107,21 +107,36 @@ impl CalibRawApp {
             },
             AiFeature::People => {
                 use calibraw_ai::models::people::{
-                    BODY_PARTS_LICENSE, BODY_PARTS_MODEL, DETECTOR_MODEL,
+                    foreground_model, BODY_PARTS_LICENSE, BODY_PARTS_MODEL, DETECTOR_MODEL,
+                };
+                let foreground = self
+                    .people_foreground_model()
+                    .map(|model| foreground_model(model.precision));
+                let bytes = DETECTOR_MODEL.download_bytes
+                    + BODY_PARTS_MODEL.download_bytes
+                    + foreground.map_or(0, |model| model.download_bytes);
+                let (models, foreground_details) = match foreground {
+                    Some(model) => (
+                        "RF-DETR-Seg, Sapiens2 and BiRefNet",
+                        format!(
+                            " For high quality, {} first outlines each person more finely \
+                             (License: MIT).",
+                            model.name
+                        ),
+                    ),
+                    None => ("RF-DETR-Seg and Sapiens2", String::new()),
                 };
                 AiJobDescription {
                     label: "people selection",
-                    model: format!(
-                        "RF-DETR-Seg and Sapiens2 (~{:.0} MB)",
-                        megabytes(DETECTOR_MODEL.download_bytes + BODY_PARTS_MODEL.download_bytes)
-                    ),
+                    model: format!("{models} (~{:.0} MB)", megabytes(bytes)),
                     purpose: "create people masks",
                     details_id: "people-download-details",
                     artifact: ("People model artifacts", ARTIFACTS_URL.to_owned()),
                     details: format!(
                         "{detector} finds the people in the photo (License: Apache-2.0). \
                          {body_parts} then segments the body parts of each person you \
-                         choose, on a crop around them (License: Sapiens2 License).",
+                         choose, on a crop around them (License: Sapiens2 License).\
+                         {foreground_details}",
                         detector = DETECTOR_MODEL.name,
                         body_parts = BODY_PARTS_MODEL.name,
                     ),
