@@ -3,6 +3,7 @@ use crate::app::{MaskPropertiesControls, MaskPropertyAction, PeopleChoices, Pers
 use crate::pipeline::PersonPart;
 use crate::pipeline::DEFAULT_COLOR_TOLERANCE;
 use crate::ui::components::luminance_range_slider::{luminance_range_slider, LuminanceRange};
+use std::collections::BTreeSet;
 
 /// Edge of a person's chip in the properties panel, in points.
 const PERSON_CHIP_SIZE: f32 = 44.0;
@@ -885,7 +886,17 @@ impl Sidebar {
             });
             ui.add_space(moduwu_design::SPACE_XS);
         }
-        for part in PersonPart::ALL {
+        // Where the entire person is all a device can select, there is
+        // nothing to choose.
+        let entire_only = |parts: &BTreeSet<PersonPart>| {
+            parts.iter().all(|&part| part == PersonPart::EntirePerson)
+        };
+        let choosable = !entire_only(&people.parts)
+            || people
+                .shown
+                .as_ref()
+                .is_none_or(|shown| !entire_only(shown));
+        for part in PersonPart::ALL.into_iter().filter(|_| choosable) {
             let mut selected = people.parts.contains(&part);
             // A selected part stays enabled so it can be removed.
             let shown = selected

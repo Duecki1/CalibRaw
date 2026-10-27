@@ -181,13 +181,6 @@ impl CalibRawApp {
                     self.ai.object_pending_target = Some((mask_index, component_index));
                     AiFeature::Object
                 }
-                AiUpdateStep::People if !calibraw_ai::models::people::AVAILABLE => {
-                    self.report_error(ErrorKind::AiUpdate, Self::PEOPLE_UNAVAILABLE.to_owned());
-                    if let Some(update) = self.ai.update.as_mut() {
-                        update.failed = true;
-                    }
-                    continue;
-                }
                 AiUpdateStep::People => {
                     self.queue_all_people_masks();
                     AiFeature::People

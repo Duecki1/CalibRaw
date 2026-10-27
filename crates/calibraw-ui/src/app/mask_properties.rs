@@ -48,7 +48,8 @@ pub(crate) struct PeopleChoices {
 /// One person's chip in a people mask's properties.
 pub(crate) struct PersonThumbnail {
     pub(crate) texture: egui::TextureId,
-    /// Their body parts are known, so adding them runs no model.
+    /// What their masks are made from is known, so adding them runs no
+    /// model.
     pub(crate) segmented: bool,
 }
 

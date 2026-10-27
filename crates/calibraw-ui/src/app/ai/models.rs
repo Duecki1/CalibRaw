@@ -209,30 +209,42 @@ impl CalibRawApp {
         )
     }
 
-    /// The people detector and body-part model.
-    pub(in crate::app) fn people_model_paths(&self) -> (PathBuf, PathBuf) {
-        let root = self.ai_model_root();
-        (
-            root.join(calibraw_ai::models::people::DETECTOR_MODEL.cache_filename),
-            root.join(calibraw_ai::models::people::BODY_PARTS_MODEL.cache_filename),
-        )
+    /// What people masks made now are made from: the people-mask quality on
+    /// this device.
+    pub(crate) fn people_segmentation(&self) -> calibraw_ai::models::people::PeopleSegmentation {
+        self.ai.people_mask_quality.segmentation()
     }
 
-    /// BiRefNet for high-quality people masks; `None` at medium quality.
-    pub(in crate::app) fn people_foreground_model(
-        &self,
-    ) -> Option<calibraw_ai::models::people::ForegroundModel> {
-        use calibraw_ai::models::people::{foreground_model, ForegroundModel, PeopleMaskQuality};
-        if self.ai.people_mask_quality != PeopleMaskQuality::High {
-            return None;
-        }
+    /// The models people masks made now need.
+    pub(in crate::app) fn people_models(&self) -> calibraw_ai::models::people::PeopleModels {
+        use calibraw_ai::models::people::{
+            foreground_model, ForegroundModel, PeopleModels, PeopleSegmentation, BODY_PARTS_MODEL,
+            DETECTOR_MODEL,
+        };
+        let root = self.ai_model_root();
+        let detector = root.join(DETECTOR_MODEL.cache_filename);
+        let body_parts = root.join(BODY_PARTS_MODEL.cache_filename);
         let precision = self.subject_model_precision();
-        Some(ForegroundModel {
-            path: self
-                .ai_model_root()
-                .join(foreground_model(precision).cache_filename),
+        let foreground = ForegroundModel {
+            path: root.join(foreground_model(precision).cache_filename),
             precision,
-        })
+        };
+        match self.people_segmentation() {
+            PeopleSegmentation::Outline => PeopleModels::Outline {
+                detector,
+                foreground,
+            },
+            PeopleSegmentation::BodyParts => PeopleModels::BodyParts {
+                detector,
+                body_parts,
+                foreground: None,
+            },
+            PeopleSegmentation::OutlinedBodyParts => PeopleModels::BodyParts {
+                detector,
+                body_parts,
+                foreground: Some(foreground),
+            },
+        }
     }
 
     /// Float16 when subject masks are expected to run on the GPU; see

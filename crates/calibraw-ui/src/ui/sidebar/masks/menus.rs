@@ -17,10 +17,7 @@ impl Sidebar {
             MaskKind::LuminanceRange,
             MaskKind::ColorRange,
             MaskKind::DepthRange,
-        ]
-        .into_iter()
-        .filter(|&kind| kind != MaskKind::Person || calibraw_ai::models::people::AVAILABLE)
-        {
+        ] {
             let label = if !kind.is_available() {
                 format!("{} · soon", kind.label())
             } else if kind.is_experimental() {

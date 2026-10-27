@@ -5,6 +5,9 @@ use super::*;
 use crate::app::{
     apply_mask_property_actions, MaskPropertiesControls, PeopleChoices, PersonThumbnail,
 };
+use crate::pipeline::PersonPart;
+use calibraw_ai::models::people::PeopleSegmentation;
+use std::collections::BTreeSet;
 
 fn mask_creation_menu_button<R>(
     ui: &mut Ui,
@@ -261,9 +264,14 @@ impl Sidebar {
         let Some(choice) = app.shown_person_choice(mask_index, component_index) else {
             return PeopleChoices::default();
         };
+        let segmentation = app.people_segmentation();
         let Some(analysis) = app.ai.people.as_ref() else {
+            // A device that outlines people finds no parts.
+            let shown = (segmentation == PeopleSegmentation::Outline)
+                .then(|| BTreeSet::from([PersonPart::EntirePerson]));
             return PeopleChoices {
                 parts: choice.parts,
+                shown,
                 ..PeopleChoices::default()
             };
         };
@@ -276,14 +284,14 @@ impl Sidebar {
             .enumerate()
             .map(|(index, chip)| PersonThumbnail {
                 texture: chip.id(),
-                segmented: analysis.is_segmented(index, app.ai.people_mask_quality),
+                segmented: analysis.is_segmented(index, segmentation),
             })
             .collect();
         let selected = analysis.resolve(&choice.anchors);
         PeopleChoices {
             analysed: true,
             people,
-            shown: analysis.parts_shown(&selected),
+            shown: analysis.parts_shown(&selected, segmentation),
             selected,
             parts: choice.parts,
         }

@@ -25,6 +25,11 @@ const CANDIDATE_SCORE: f32 = 0.25;
 /// A candidate whose box overlaps a likelier one's by more than this
 /// intersection over union is the same person found twice.
 const DUPLICATE_OVERLAP: f32 = 0.7;
+/// Someone whose outline covers less than this share of the most prominent
+/// person's, about a third of their height, is in the background: not
+/// offered, so no job segments them, though they still claim the pixels
+/// inside their outline.
+const FOREGROUND_SHARE: f32 = 1.0 / 9.0;
 /// At most this many people are offered, the likeliest ones; a people mask
 /// can select them all.
 pub(super) const MAX_PEOPLE: usize = crate::pipeline::MAX_MASK_PEOPLE;
@@ -120,6 +125,11 @@ impl Detection {
 
     pub(super) fn bounds(&self, person: usize) -> [f32; 4] {
         self.candidates[person].bounds
+    }
+
+    /// Edge of every outline grid, which spans the whole photo.
+    pub(super) fn outline_edge(&self) -> usize {
+        self.outline_edge
     }
 
     /// Every candidate, the offered people first; how many of them are
@@ -303,11 +313,29 @@ impl Detection {
                 candidates.push(candidate);
             }
         }
-        let people = candidates
+        let likely = candidates
             .iter()
             .take_while(|candidate| candidate.score >= PERSON_SCORE)
-            .count()
-            .min(MAX_PEOPLE);
+            .count();
+        let areas: Vec<usize> = candidates[..likely]
+            .iter()
+            .map(Candidate::outline_area)
+            .collect();
+        let largest = areas.iter().copied().max().unwrap_or(0) as f32;
+        // The likely people in the foreground first, then the others, each
+        // in score order, so the cap drops the least likely.
+        let (foreground, background): (Vec<_>, Vec<_>) =
+            candidates.into_iter().enumerate().partition(|&(index, _)| {
+                areas
+                    .get(index)
+                    .is_some_and(|&area| area as f32 >= largest * FOREGROUND_SHARE)
+            });
+        let people = foreground.len().min(MAX_PEOPLE);
+        let mut candidates: Vec<Candidate> = foreground
+            .into_iter()
+            .chain(background)
+            .map(|(_, candidate)| candidate)
+            .collect();
         candidates[..people].sort_by(|a, b| {
             let a = a.anchor(outline_edge)[0];
             let b = b.anchor(outline_edge)[0];

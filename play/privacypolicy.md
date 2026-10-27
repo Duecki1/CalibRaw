@@ -1,6 +1,6 @@
 # CalibRaw App Privacy Policy
 
-Last updated: October 16, 2026
+Last updated: October 27, 2026
 
 ## 1. Controller
 
@@ -37,7 +37,7 @@ By default, CalibRaw works fully offline. The app only connects to the internet 
 
 ### 4.1 Downloading AI models and the ONNX Runtime
 
-If you use the AI features (subject, sky and object masks, depth masks, AI Remove, AI Denoise), CalibRaw downloads the required model files and, on desktop platforms, the ONNX Runtime once from our model repository on **Hugging Face** (Hugging Face, Inc., USA).
+If you use the AI features (subject, sky, object and people masks, depth masks, AI Remove, AI Denoise), CalibRaw downloads the required model files and, on desktop platforms, the ONNX Runtime once from our model repository on **Hugging Face** (Hugging Face, Inc., USA).
 
 - **What is transmitted:** During the download, your **IP address**, the time of the request and the requested file are technically transmitted to Hugging Face. This is required to deliver the file.
 - **What is not transmitted:** CalibRaw does not send any device identifier, user identifier, or any information about your photos or your use of the app.
@@ -110,7 +110,7 @@ CalibRaw is not directed at children. The app is not marketed to children under 
 All data created by CalibRaw is stored exclusively on your device and can be deleted there at any time. CalibRaw never stores data about you on any server.
 
 - **App data** (settings, presets, previews, model cache, imported camera profiles) is removed when you uninstall the app. On Android, this data is not included in Android backups.
-- **Files you save outside the app** – exports in your media library or folders, and `.calibraw` sidecars saved next to your photos – are your files. They remain on your device after uninstalling and can be deleted like any other file.
+- **Files you save outside the app** – exports in your media library or folders, `.calibraw` sidecars saved next to your photos and, while a photo has a people mask, the `.calibraw-people` file next to it – are your files. They remain on your device after uninstalling and can be deleted like any other file. A `.calibraw-people` file holds where the people in the photo are and the shapes of their body parts, so the mask can be changed without finding them again; it holds no pixels of the photo and nothing that identifies a person.
 
 ## 12. Your rights under the GDPR
 

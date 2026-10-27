@@ -386,6 +386,10 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::ai_denoise_result_path(&self.app, raw_uri, display_name)
     }
 
+    fn people_analysis_path(&self, raw_uri: &str, display_name: &str) -> Result<PathBuf, String> {
+        calibraw_ffi::people_analysis_path(&self.app, raw_uri, display_name)
+    }
+
     fn load_library_thumbnail(
         &self,
         uri: &str,

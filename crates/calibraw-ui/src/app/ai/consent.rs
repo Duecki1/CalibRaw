@@ -107,24 +107,54 @@ impl CalibRawApp {
             },
             AiFeature::People => {
                 use calibraw_ai::models::people::{
-                    foreground_model, BODY_PARTS_LICENSE, BODY_PARTS_MODEL, DETECTOR_MODEL,
+                    foreground_model, PeopleModels, BODY_PARTS_LICENSE, BODY_PARTS_MODEL,
+                    DETECTOR_MODEL,
                 };
-                let foreground = self
-                    .people_foreground_model()
-                    .map(|model| foreground_model(model.precision));
-                let bytes = DETECTOR_MODEL.download_bytes
-                    + BODY_PARTS_MODEL.download_bytes
-                    + foreground.map_or(0, |model| model.download_bytes);
-                let (models, foreground_details) = match foreground {
-                    Some(model) => (
-                        "RF-DETR-Seg, Sapiens2 and BiRefNet",
-                        format!(
-                            " For high quality, {} first outlines each person more finely \
-                             (License: MIT).",
-                            model.name
-                        ),
-                    ),
-                    None => ("RF-DETR-Seg and Sapiens2", String::new()),
+                let detector = format!(
+                    "{} finds the people in the photo (License: Apache-2.0).",
+                    DETECTOR_MODEL.name
+                );
+                let (models, bytes, details, terms) = match self.people_models() {
+                    PeopleModels::Outline { foreground, .. } => {
+                        let foreground = foreground_model(foreground.precision);
+                        (
+                            "RF-DETR-Seg and BiRefNet",
+                            DETECTOR_MODEL.download_bytes + foreground.download_bytes,
+                            format!(
+                                "{detector} {} then outlines each person you choose, on a \
+                                 crop around them (License: MIT).",
+                                foreground.name
+                            ),
+                            None,
+                        )
+                    }
+                    PeopleModels::BodyParts { foreground, .. } => {
+                        let foreground = foreground.map(|model| foreground_model(model.precision));
+                        let (models, foreground_details) = match foreground {
+                            Some(model) => (
+                                "RF-DETR-Seg, Sapiens2 and BiRefNet",
+                                format!(
+                                    " For high quality, {} first outlines each person more \
+                                     finely (License: MIT).",
+                                    model.name
+                                ),
+                            ),
+                            None => ("RF-DETR-Seg and Sapiens2", String::new()),
+                        };
+                        (
+                            models,
+                            DETECTOR_MODEL.download_bytes
+                                + BODY_PARTS_MODEL.download_bytes
+                                + foreground.map_or(0, |model| model.download_bytes),
+                            format!(
+                                "{detector} {} then segments the body parts of each person \
+                                 you choose, on a crop around them (License: Sapiens2 \
+                                 License).{foreground_details}",
+                                BODY_PARTS_MODEL.name
+                            ),
+                            Some(("Sapiens2 License", BODY_PARTS_LICENSE)),
+                        )
+                    }
                 };
                 AiJobDescription {
                     label: "people selection",
@@ -132,15 +162,8 @@ impl CalibRawApp {
                     purpose: "create people masks",
                     details_id: "people-download-details",
                     artifact: ("People model artifacts", ARTIFACTS_URL.to_owned()),
-                    details: format!(
-                        "{detector} finds the people in the photo (License: Apache-2.0). \
-                         {body_parts} then segments the body parts of each person you \
-                         choose, on a crop around them (License: Sapiens2 License).\
-                         {foreground_details}",
-                        detector = DETECTOR_MODEL.name,
-                        body_parts = BODY_PARTS_MODEL.name,
-                    ),
-                    terms: Some(("Sapiens2 License", BODY_PARTS_LICENSE)),
+                    details,
+                    terms,
                     restore: None,
                 }
             }

@@ -45,8 +45,8 @@ use calibraw_ai::models::object::{
 };
 use calibraw_ai::models::people::{
     content_fingerprint, foreground_model, spawn_people_mask, ForegroundModel, PeopleAnalysis,
-    PeopleAnalysisFile, PeopleMaskProgress, PeopleMaskQuality, PeopleMaskRequest,
-    PeopleMaskWorkerRequest, PeopleSource, PeopleTarget, BODY_PARTS_MODEL, DETECTOR_MODEL,
+    PeopleAnalysisFile, PeopleMaskProgress, PeopleMaskRequest, PeopleMaskWorkerRequest,
+    PeopleModels, PeopleSegmentation, PeopleSource, PeopleTarget, BODY_PARTS_MODEL, DETECTOR_MODEL,
 };
 use calibraw_ai::models::remove::{spawn_remove, RemoveRequest};
 use calibraw_ai::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
@@ -215,7 +215,8 @@ fn object() {
 /// from a job that finds and segments everyone and keeps the analysis beside
 /// the photo; then their clothes and skin from the analysis read back, which
 /// runs no model; then the entire person at high quality from it, which runs
-/// only BiRefNet.
+/// only BiRefNet; then the entire person as a device without Sapiens2 makes
+/// it, from a job that runs RF-DETR-Seg and BiRefNet.
 #[test]
 #[ignore = "needs CALIBRAW_PARITY_PHOTOS, the RF-DETR-Seg, Sapiens2 and BiRefNet models and ONNX Runtime"]
 fn people() {
@@ -229,7 +230,7 @@ fn people() {
     let (output, anchors, ran_models) = harness.people_job(
         Vec::new(),
         &[PersonPart::FaceNeck, PersonPart::Hair],
-        PeopleMaskQuality::Medium,
+        PeopleSegmentation::BodyParts,
         None,
         Some(PeopleAnalysisFile {
             path: path.clone(),
@@ -250,7 +251,7 @@ fn people() {
     let (output, _, ran_models) = harness.people_job(
         anchors.clone(),
         &[PersonPart::Clothes, PersonPart::BodySkin],
-        PeopleMaskQuality::Medium,
+        PeopleSegmentation::BodyParts,
         Some(analysis.clone()),
         None,
     );
@@ -261,14 +262,24 @@ fn people() {
     harness.check("people-clothes-skin", Tolerance::MaskIou(0.98), &output);
 
     let (output, _, ran_models) = harness.people_job(
-        anchors,
+        anchors.clone(),
         &[PersonPart::EntirePerson],
-        PeopleMaskQuality::High,
+        PeopleSegmentation::OutlinedBodyParts,
         Some(analysis),
         None,
     );
     assert!(ran_models, "a high-quality mask runs BiRefNet");
     harness.check("people-entire-high", Tolerance::MaskIou(0.98), &output);
+
+    let (output, _, ran_models) = harness.people_job(
+        anchors,
+        &[PersonPart::EntirePerson],
+        PeopleSegmentation::Outline,
+        None,
+        None,
+    );
+    assert!(ran_models, "an outline runs RF-DETR-Seg and BiRefNet");
+    harness.check("people-entire-outline", Tolerance::MaskIou(0.98), &output);
 }
 
 /// Big-LaMa through the Remove job: a short stroke on a RAW crop. Scene
@@ -552,19 +563,36 @@ impl Harness {
         &self,
         anchors: Vec<[f32; 2]>,
         parts: &[PersonPart],
-        quality: PeopleMaskQuality,
+        segmentation: PeopleSegmentation,
         analysis: Option<PeopleAnalysis>,
         keep: Option<PeopleAnalysisFile>,
     ) -> (Output, Vec<[f32; 2]>, bool) {
         let scene = self.people_scene();
         let precision = SubjectModelPrecision::Float32;
+        let detector = self.models.join(DETECTOR_MODEL.cache_filename);
+        let body_parts = self.models.join(BODY_PARTS_MODEL.cache_filename);
+        let foreground = ForegroundModel {
+            path: self.models.join(foreground_model(precision).cache_filename),
+            precision,
+        };
+        let models = match segmentation {
+            PeopleSegmentation::Outline => PeopleModels::Outline {
+                detector,
+                foreground,
+            },
+            PeopleSegmentation::BodyParts => PeopleModels::BodyParts {
+                detector,
+                body_parts,
+                foreground: None,
+            },
+            PeopleSegmentation::OutlinedBodyParts => PeopleModels::BodyParts {
+                detector,
+                body_parts,
+                foreground: Some(foreground),
+            },
+        };
         let events = spawn_people_mask(PeopleMaskWorkerRequest {
-            detector_path: self.models.join(DETECTOR_MODEL.cache_filename),
-            body_parts_path: self.models.join(BODY_PARTS_MODEL.cache_filename),
-            foreground: (quality == PeopleMaskQuality::High).then(|| ForegroundModel {
-                path: self.models.join(foreground_model(precision).cache_filename),
-                precision,
-            }),
+            models,
             allow_download: self.download,
             request: PeopleMaskRequest {
                 source: PeopleSource {

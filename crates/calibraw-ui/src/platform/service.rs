@@ -407,6 +407,9 @@ pub(crate) trait Platform: Send + Sync {
     ) -> Result<PathBuf, String> {
         Err(unavailable("media-library AI denoise results"))
     }
+    fn people_analysis_path(&self, _raw_uri: &str, _display_name: &str) -> Result<PathBuf, String> {
+        Err(unavailable("media-library people analyses"))
+    }
     fn load_library_thumbnail(
         &self,
         _uri: &str,

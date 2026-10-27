@@ -9,9 +9,9 @@ use super::*;
 use crate::app::PeopleEdit;
 use crate::pipeline::PersonPart;
 use calibraw_ai::models::people::{
-    people_models_are_verified, spawn_people_mask, PeopleAnalysis, PeopleAnalysisFile,
-    PeopleMaskProgress, PeopleMaskRequest, PeopleMaskWorkerRequest, PeopleSource, PeopleTarget,
-    PersonBounds, PersonMask, AVAILABLE,
+    spawn_people_mask, PeopleAnalysis, PeopleAnalysisFile, PeopleMaskProgress, PeopleMaskRequest,
+    PeopleMaskWorkerRequest, PeopleModels, PeopleSegmentation, PeopleSource, PeopleTarget,
+    PersonBounds, PersonMask,
 };
 use calibraw_ai::AiFeature;
 use image::{Rgba, RgbaImage};
@@ -135,15 +135,27 @@ impl CalibRawApp {
     ) {
         self.ui.error_dialogs.dismiss_kind(ErrorKind::AiMask);
         let mut needs_job = Vec::new();
+        let mut parts_unavailable = false;
         for location in components {
             let Some(choice) = self.person_choice(location) else {
                 continue;
             };
             if self.segmented_people(&choice.anchors).is_some() {
                 self.start_people_compose(location, choice.clone(), choice, frame);
+            } else if self.people_segmentation() == PeopleSegmentation::Outline
+                && choice.parts != BTreeSet::from([PersonPart::EntirePerson])
+            {
+                // Outlining the people would not make their parts.
+                parts_unavailable = true;
             } else {
                 needs_job.push(location);
             }
+        }
+        if parts_unavailable {
+            self.report_ai_mask_error(format!(
+                "The people mask could not be made: {}. It keeps its last result.",
+                calibraw_ai::models::people::PartsUnavailable
+            ));
         }
         if needs_job.is_empty() || !self.people_job_may_start() {
             return;
@@ -158,10 +170,6 @@ impl CalibRawApp {
 
     /// Whether a people job may start now; reports why not otherwise.
     fn people_job_may_start(&mut self) -> bool {
-        if !AVAILABLE {
-            self.report_ai_mask_error(Self::PEOPLE_UNAVAILABLE.to_owned());
-            return false;
-        }
         if self.foreground_operation_active() {
             self.ui.notice =
                 Some("Finish or cancel the current editing operation first.".to_owned());
@@ -313,12 +321,12 @@ impl CalibRawApp {
     /// need at the people-mask quality.
     fn segmented_people(&self, anchors: &[[f32; 2]]) -> Option<Vec<usize>> {
         let analysis = self.ai.people.as_ref()?;
-        let quality = self.ai.people_mask_quality;
+        let segmentation = self.people_segmentation();
         let people = analysis.resolve(anchors);
         (!people.is_empty()
             && people
                 .iter()
-                .all(|&person| analysis.is_segmented(person, quality)))
+                .all(|&person| analysis.is_segmented(person, segmentation)))
         .then_some(people)
     }
 
@@ -353,10 +361,10 @@ impl CalibRawApp {
             rgba: Arc::clone(&source.rgba),
         };
         let parts = target.parts.clone();
-        let quality = self.ai.people_mask_quality;
+        let segmentation = self.people_segmentation();
         let receiver = spawn_ui_worker(&self.egui_ctx, move || {
             analysis
-                .person_mask(&source, &people, &parts, quality)
+                .person_mask(&source, &people, &parts, segmentation)
                 .map_err(|error| format!("{error:#}"))
         });
         let (mask_index, component_index) = location;
@@ -435,10 +443,6 @@ impl CalibRawApp {
         self.blink_selected_component();
     }
 
-    pub(in crate::app) const PEOPLE_UNAVAILABLE: &str =
-        "People masks are not available on this device. Existing people masks keep the result \
-         they were made with.";
-
     /// Every people component of the stack, for an update.
     pub(in crate::app) fn queue_all_people_masks(&mut self) {
         self.ai.people_pending = self
@@ -474,8 +478,8 @@ impl CalibRawApp {
         self.ai.people_hovered = None;
     }
 
-    /// Where the people analysis of the photo `target` names is kept. `None`
-    /// without folder storage: Android keeps no analysis yet.
+    /// Where the people analysis of the photo `target` names is kept, next
+    /// to it. `None` when the photo has no writable location.
     pub(crate) fn people_analysis_path_for_target(
         &self,
         target: &crate::sidecar::SidecarTarget,
@@ -485,7 +489,14 @@ impl CalibRawApp {
                 .caps()
                 .has_folders()
                 .then(|| crate::sidecar::people_analysis_path_for_raw(raw_path)),
-            crate::sidecar::SidecarTarget::Android { .. } => None,
+            crate::sidecar::SidecarTarget::Android {
+                raw_uri,
+                display_name,
+            } => self
+                .platform
+                .people_analysis_path(raw_uri, display_name)
+                .map_err(|error| log::warn!("{error}"))
+                .ok(),
         }
     }
 
@@ -542,32 +553,30 @@ impl CalibRawApp {
             return;
         }
         let analysis = self.ai.people.clone();
-        let quality = self.ai.people_mask_quality;
+        let models = self.people_models();
+        let segmentation = models.segmentation();
         let segments = analysis.as_ref().is_none_or(|analysis| {
             targets.iter().any(|target| {
                 analysis
                     .resolve(&target.anchors)
                     .iter()
-                    .any(|&person| !analysis.is_segmented(person, quality))
+                    .any(|&person| !analysis.is_segmented(person, segmentation))
             })
         });
-        let (detector_path, body_parts_path) = self.people_model_paths();
-        let foreground = self.people_foreground_model();
-        let phase =
-            if !people_models_are_verified(&detector_path, &body_parts_path, foreground.as_ref()) {
-                "Preparing people models…"
-            } else if analysis.is_none() {
-                "Finding people…"
-            } else if segments {
-                "Segmenting body parts…"
-            } else {
-                "Updating the people mask…"
-            };
+        let phase = if !models.are_verified() {
+            "Preparing people models…"
+        } else if analysis.is_none() {
+            "Finding people…"
+        } else if segments && matches!(models, PeopleModels::Outline { .. }) {
+            "Outlining people…"
+        } else if segments {
+            "Segmenting body parts…"
+        } else {
+            "Updating the people mask…"
+        };
         let cancellation = Arc::new(AtomicBool::new(false));
         let receiver = spawn_people_mask(PeopleMaskWorkerRequest {
-            detector_path,
-            body_parts_path,
-            foreground,
+            models,
             allow_download,
             request: PeopleMaskRequest {
                 source,

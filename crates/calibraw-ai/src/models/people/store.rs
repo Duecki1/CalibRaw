@@ -26,7 +26,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 const FORMAT: &str = "CalibRaw people analysis";
 /// Bump for every change to the layout or to what an analysis holds; files
 /// of another version are made again.
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const MANIFEST: &str = "manifest.json";
 /// Every candidate's outline logits in candidate order, `f32` little-endian.
 const OUTLINES: &str = "outlines.f32";

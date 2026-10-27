@@ -1,11 +1,13 @@
-//! High-quality people masks: BiRefNet's foreground over each person's crop,
-//! whose fine outline replaces Sapiens2's soft one near its edge, while
-//! Sapiens2 still decides which part each pixel is.
+//! BiRefNet's foreground over each person's crop. For high-quality masks its
+//! fine outline replaces Sapiens2's soft one near its edge, while Sapiens2
+//! still decides which part each pixel is. Without Sapiens2 it replaces
+//! RF-DETR-Seg's coarse outline the same way, for the entire person.
 
 use super::detect::Detection;
 use super::distance::{nearest_seeds, NO_SEED};
 use super::parts::{
-    crop_pixels, ownership, part_index, PersonParts, INPUT_HEIGHT, INPUT_PIXELS, INPUT_WIDTH, PARTS,
+    crop_pixels, ownership, part_index, plane_index, plane_u, plane_v, PersonParts, INPUT_HEIGHT,
+    INPUT_PIXELS, INPUT_WIDTH, PARTS,
 };
 use super::RgbaView;
 use crate::models::subject::infer_birefnet;
@@ -31,6 +33,11 @@ const MIN_AGREEMENT: f32 = 0.6;
 /// Pixels at least this likely the person, of 255, lend the shares of their
 /// parts to the pixels BiRefNet adds beyond Sapiens2's outline.
 const SHARE_FLOOR: u8 = 64;
+/// RF-DETR-Seg's outline grid spans the whole photo, so its outline of
+/// someone small is coarse and may miss their edge by about a cell. Without
+/// Sapiens2, BiRefNet draws the edge within this many cells of that outline,
+/// and at least `BAND` plane pixels.
+const OUTLINE_BAND_CELLS: f32 = 2.0;
 
 /// BiRefNet's foreground over a crop around one person.
 pub(super) struct PersonForeground {
@@ -41,6 +48,15 @@ pub(super) struct PersonForeground {
     /// how likely each is foreground, 0 to 255. Zero where the pixel belongs
     /// to someone else.
     pub(super) probabilities: Box<[u8]>,
+}
+
+impl PersonForeground {
+    /// How likely `point` (fractions of the photo) is foreground of theirs,
+    /// 0 to 1.
+    pub(super) fn coverage_at(&self, point: [f32; 2]) -> f32 {
+        plane_index(self.crop, point)
+            .map_or(0.0, |index| f32::from(self.probabilities[index]) / 255.0)
+    }
 }
 
 /// Runs BiRefNet, with its square input `edge`, on `crop` (fractions of the
@@ -92,40 +108,19 @@ pub(super) fn refine(
         .iter()
         .map(|pixel| pixel[entire])
         .collect();
-    let (mut both, mut either) = (0usize, 0usize);
-    for (&person, &foreground) in person.iter().zip(foreground.probabilities.iter()) {
-        let (person, foreground) = (person >= 128, foreground >= 128);
-        both += usize::from(person && foreground);
-        either += usize::from(person || foreground);
-    }
-    if either == 0 || (both as f32) < MIN_AGREEMENT * either as f32 {
+    if !agrees(&person, &foreground.probabilities) {
         return None;
     }
 
     let (width, height) = (INPUT_WIDTH as usize, INPUT_HEIGHT as usize);
-    // From inside the outline to the nearest pixel outside it, and back.
-    let (to_outside, _) = nearest_seeds(width, height, |index| person[index] < 128);
-    let (to_inside, _) = nearest_seeds(width, height, |index| person[index] >= 128);
+    let band = Band::new(&person, &foreground.probabilities, BAND);
     let (_, likely) = nearest_seeds(width, height, |index| person[index] >= SHARE_FLOOR);
-    let (to_found, _) = nearest_seeds(width, height, |index| {
-        foreground.probabilities[index] >= 128
-    });
 
     let refined = (0..INPUT_PIXELS)
         .into_par_iter()
         .map(|index| {
-            // Positive inside the outline.
-            let signed = if person[index] >= 128 {
-                to_outside[index]
-            } else {
-                -to_inside[index]
-            };
-            let keep = smoothstep(BAND * 0.5, BAND, signed);
-            let allow = 1.0 - smoothstep(BAND * 0.5, BAND, -signed);
-            let coverage =
-                (f32::from(foreground.probabilities[index]) / 255.0).clamp(keep, allow.max(keep));
-            // How far BiRefNet's outline counts here; Sapiens2's planes the rest.
-            let trust = 1.0 - smoothstep(BAND * 0.5, BAND, to_found[index]);
+            let (coverage, trust) =
+                band.coverage(index, person[index], foreground.probabilities[index]);
             let own = &parts.probabilities[index];
             let mut pixel = [0u8; PARTS];
             let source = match likely[index] {
@@ -146,6 +141,108 @@ pub(super) fn refine(
         })
         .collect::<Vec<_>>();
     Some(refined.into_boxed_slice())
+}
+
+/// The entire person from their foreground alone, for a device without
+/// Sapiens2: as `refine` makes it, with RF-DETR-Seg's outline of them in
+/// place of Sapiens2's, within `OUTLINE_BAND_CELLS` of it. Their outline
+/// itself where BiRefNet found something other than them. A plane over the
+/// foreground's crop of a photo `width` x `height` pixels.
+pub(super) fn outline(
+    found: &PersonForeground,
+    detection: &Detection,
+    person: usize,
+    (photo_width, photo_height): (u32, u32),
+) -> Vec<u8> {
+    let crop = crop_pixels(found.crop, photo_width, photo_height);
+    let owned = ownership(detection, person, crop, photo_width, photo_height);
+    let width = INPUT_WIDTH as usize;
+    let outline: Vec<u8> = (0..INPUT_PIXELS)
+        .into_par_iter()
+        .map(|index| {
+            if !owned[index] {
+                return 0;
+            }
+            let u = plane_u(crop, photo_width, index % width);
+            let v = plane_v(crop, photo_height, index / width);
+            (detection.outline_probability(person, u, v) * 255.0 + 0.5) as u8
+        })
+        .collect();
+    if !agrees(&outline, &found.probabilities) {
+        return outline;
+    }
+
+    // One grid cell in plane pixels, along the axis it spans most of.
+    let edge = detection.outline_edge() as f32;
+    let cell_width = photo_width as f32 / edge / crop.width as f32 * INPUT_WIDTH as f32;
+    let cell_height = photo_height as f32 / edge / crop.height as f32 * INPUT_HEIGHT as f32;
+    let width = (OUTLINE_BAND_CELLS * cell_width.max(cell_height)).max(BAND);
+    let band = Band::new(&outline, &found.probabilities, width);
+    (0..INPUT_PIXELS)
+        .into_par_iter()
+        .map(|index| {
+            let (coverage, trust) =
+                band.coverage(index, outline[index], found.probabilities[index]);
+            let own = f32::from(outline[index]);
+            (trust * coverage * 255.0 + (1.0 - trust) * own + 0.5) as u8
+        })
+        .collect()
+}
+
+/// Whether BiRefNet's `foreground` and a person's plane, both 0 to 255,
+/// overlap by at least `MIN_AGREEMENT`: otherwise BiRefNet found something
+/// else.
+fn agrees(person: &[u8], foreground: &[u8]) -> bool {
+    let (mut both, mut either) = (0usize, 0usize);
+    for (&person, &foreground) in person.iter().zip(foreground) {
+        let (person, foreground) = (person >= 128, foreground >= 128);
+        both += usize::from(person && foreground);
+        either += usize::from(person || foreground);
+    }
+    either != 0 && (both as f32) >= MIN_AGREEMENT * either as f32
+}
+
+/// Where BiRefNet draws a person's edge: within `width` plane pixels of the
+/// outline of their plane, and of its own foreground.
+struct Band {
+    width: f32,
+    /// From inside the outline to the nearest pixel outside it, and back.
+    to_outside: Vec<f32>,
+    to_inside: Vec<f32>,
+    to_found: Vec<f32>,
+}
+
+impl Band {
+    fn new(person: &[u8], foreground: &[u8], width: f32) -> Self {
+        let (columns, rows) = (INPUT_WIDTH as usize, INPUT_HEIGHT as usize);
+        let (to_outside, _) = nearest_seeds(columns, rows, |index| person[index] < 128);
+        let (to_inside, _) = nearest_seeds(columns, rows, |index| person[index] >= 128);
+        let (to_found, _) = nearest_seeds(columns, rows, |index| foreground[index] >= 128);
+        Self {
+            width,
+            to_outside,
+            to_inside,
+            to_found,
+        }
+    }
+
+    /// At plane pixel `index`, where the person's plane is `person` and
+    /// BiRefNet's `foreground`: the person's coverage by BiRefNet's outline,
+    /// 0 to 1, and how far that outline counts there rather than the plane's.
+    fn coverage(&self, index: usize, person: u8, foreground: u8) -> (f32, f32) {
+        let width = self.width;
+        // Positive inside the outline.
+        let signed = if person >= 128 {
+            self.to_outside[index]
+        } else {
+            -self.to_inside[index]
+        };
+        let keep = smoothstep(width * 0.5, width, signed);
+        let allow = 1.0 - smoothstep(width * 0.5, width, -signed);
+        let coverage = (f32::from(foreground) / 255.0).clamp(keep, allow.max(keep));
+        let trust = 1.0 - smoothstep(width * 0.5, width, self.to_found[index]);
+        (coverage, trust)
+    }
 }
 
 fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {

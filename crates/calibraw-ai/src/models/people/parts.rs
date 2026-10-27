@@ -147,18 +147,10 @@ impl PersonParts {
 
     /// How likely `point` (fractions of the photo) is theirs, 0 to 1.
     pub(super) fn coverage_at(&self, point: [f32; 2]) -> f32 {
-        let [left, top, right, bottom] = self.crop;
-        let [u, v] = point;
-        if u < left || u >= right || v < top || v >= bottom {
-            return 0.0;
-        }
-        let x = (((u - left) / (right - left) * INPUT_WIDTH as f32) as usize)
-            .min(INPUT_WIDTH as usize - 1);
-        let y = (((v - top) / (bottom - top) * INPUT_HEIGHT as f32) as usize)
-            .min(INPUT_HEIGHT as usize - 1);
-        let probability =
-            self.probabilities[y * INPUT_WIDTH as usize + x][part_index(PersonPart::EntirePerson)];
-        f32::from(probability) / 255.0
+        plane_index(self.crop, point).map_or(0.0, |index| {
+            let probability = self.probabilities[index][part_index(PersonPart::EntirePerson)];
+            f32::from(probability) / 255.0
+        })
     }
 
     /// How likely each plane pixel is theirs, 0 to 255, by row.
@@ -200,8 +192,15 @@ pub(super) fn crop_mask(
             sum.min(255) as u8
         })
         .collect();
-    let selected = GrayImage::from_raw(INPUT_WIDTH, INPUT_HEIGHT, selected)
-        .context("invalid body-part plane")?;
+    plane_mask(crop, selected, image)
+}
+
+/// The photo's mask from `plane`, `INPUT_WIDTH` x `INPUT_HEIGHT`
+/// probabilities stretched over `crop` (fractions of the photo), its edges
+/// refined against the photo.
+pub(super) fn plane_mask(crop: [f32; 4], plane: Vec<u8>, image: &RgbaView<'_>) -> Result<Vec<u8>> {
+    let selected =
+        GrayImage::from_raw(INPUT_WIDTH, INPUT_HEIGHT, plane).context("invalid body-part plane")?;
     let PersonBounds {
         x,
         y,
@@ -227,6 +226,34 @@ pub(super) fn crop_mask(
         mask[start..start + width as usize].copy_from_slice(source);
     }
     Ok(mask)
+}
+
+/// The pixel of a plane stretched over `crop` that holds `point`, both
+/// fractions of the photo; `None` outside the crop.
+pub(super) fn plane_index(crop: [f32; 4], point: [f32; 2]) -> Option<usize> {
+    let [left, top, right, bottom] = crop;
+    let [u, v] = point;
+    if u < left || u >= right || v < top || v >= bottom {
+        return None;
+    }
+    let x =
+        (((u - left) / (right - left) * INPUT_WIDTH as f32) as usize).min(INPUT_WIDTH as usize - 1);
+    let y = (((v - top) / (bottom - top) * INPUT_HEIGHT as f32) as usize)
+        .min(INPUT_HEIGHT as usize - 1);
+    Some(y * INPUT_WIDTH as usize + x)
+}
+
+/// The centre of plane column `x` over `crop` (pixels of a photo
+/// `photo_width` wide), as a fraction of the photo's width.
+pub(super) fn plane_u(crop: PersonBounds, photo_width: u32, x: usize) -> f32 {
+    (crop.x as f32 + (x as f32 + 0.5) / INPUT_WIDTH as f32 * crop.width as f32) / photo_width as f32
+}
+
+/// The centre of plane row `y` over `crop` (pixels of a photo
+/// `photo_height` high), as a fraction of the photo's height.
+pub(super) fn plane_v(crop: PersonBounds, photo_height: u32, y: usize) -> f32 {
+    (crop.y as f32 + (y as f32 + 0.5) / INPUT_HEIGHT as f32 * crop.height as f32)
+        / photo_height as f32
 }
 
 pub(super) const fn part_index(part: PersonPart) -> usize {
@@ -416,13 +443,6 @@ pub(super) fn ownership(
 ) -> Vec<bool> {
     const NO_ONE: usize = usize::MAX;
     let (width, height) = (INPUT_WIDTH as usize, INPUT_HEIGHT as usize);
-    let to_u = |x: usize| {
-        (crop.x as f32 + (x as f32 + 0.5) / width as f32 * crop.width as f32) / photo_width as f32
-    };
-    let to_v = |y: usize| {
-        (crop.y as f32 + (y as f32 + 0.5) / height as f32 * crop.height as f32)
-            / photo_height as f32
-    };
     let crop_fractions = [
         crop.x as f32 / photo_width as f32,
         crop.y as f32 / photo_height as f32,
@@ -437,9 +457,9 @@ pub(super) fn ownership(
         .par_chunks_mut(width)
         .enumerate()
         .for_each(|(y, row)| {
-            let v = to_v(y);
+            let v = plane_v(crop, photo_height, y);
             for (x, owner) in row.iter_mut().enumerate() {
-                let u = to_u(x);
+                let u = plane_u(crop, photo_width, x);
                 let likeliest = nearby
                     .iter()
                     .map(|&candidate| (candidate, detection.outline_probability(candidate, u, v)))

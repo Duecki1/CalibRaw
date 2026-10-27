@@ -130,14 +130,15 @@ pub(crate) fn subject_mask_quality_control(
 }
 
 /// People-mask quality, below the subject-mask quality where the device
-/// offers people masks. Locked while an AI mask is being generated.
+/// offers a choice. Locked while an AI mask is being generated.
 pub(crate) fn people_mask_quality_control(
     ui: &mut Ui,
     app: &mut CalibRawApp,
     id_salt: &'static str,
 ) {
-    use calibraw_ai::models::people::{PeopleMaskQuality, AVAILABLE};
-    if !AVAILABLE {
+    use calibraw_ai::models::people::PeopleMaskQuality;
+    let available = PeopleMaskQuality::available();
+    if available.len() < 2 {
         return;
     }
     let help = "Applies to newly generated people masks.\n\
@@ -154,7 +155,7 @@ pub(crate) fn people_mask_quality_control(
             160.0,
             help,
             |ui| {
-                for option in PeopleMaskQuality::ALL {
+                for &option in available {
                     ui.selectable_value(&mut quality, option, option.label());
                 }
             },

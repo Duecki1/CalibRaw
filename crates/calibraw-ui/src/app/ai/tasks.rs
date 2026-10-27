@@ -108,14 +108,7 @@ impl CalibRawApp {
                 let (encoder, decoder) = self.sam21_model_paths();
                 !calibraw_ai::models::object::object_models_are_verified(&encoder, &decoder)
             }
-            AiFeature::People => {
-                let (detector, body_parts) = self.people_model_paths();
-                !calibraw_ai::models::people::people_models_are_verified(
-                    &detector,
-                    &body_parts,
-                    self.people_foreground_model().as_ref(),
-                )
-            }
+            AiFeature::People => !self.people_models().are_verified(),
             AiFeature::Remove => !calibraw_ai::models::remove::big_lama_model_is_verified(
                 &self.big_lama_model_path(),
             ),

@@ -70,10 +70,6 @@ pub fn backup_and_replace_desktop_sidecar(
 /// result while it uses AI denoise, the people analysis while it has a
 /// people mask.
 #[derive(Clone, Copy)]
-#[cfg_attr(
-    target_os = "android",
-    allow(dead_code, reason = "Android removes no companions here")
-)]
 struct CompanionUse {
     ai_denoise: bool,
     people: bool,
@@ -83,26 +79,30 @@ impl CompanionUse {
     fn of(edits: &EditState) -> Self {
         Self {
             ai_denoise: edits.exposure.ai_denoise_enabled,
-            people: edits
-                .masks
-                .masks
-                .iter()
-                .flat_map(|mask| &mask.components)
-                .any(|component| component.kind == MaskKind::Person),
+            people: uses_people_analysis(edits),
         }
     }
 }
 
+/// Whether `edits` has a people mask, whose people analysis beside the RAW
+/// is kept while it does.
+pub fn uses_people_analysis(edits: &EditState) -> bool {
+    edits
+        .masks
+        .masks
+        .iter()
+        .flat_map(|mask| &mask.components)
+        .any(|component| component.kind == MaskKind::Person)
+}
+
 /// Deletes the derived files next to a RAW that its saved edit no longer
 /// uses. A failure only leaves a stale file behind, so it is logged instead
-/// of failing the save.
-/// Android keeps AI-denoise results in app storage and makes no people
-/// analyses, so there is nothing to remove here.
-#[cfg(target_os = "android")]
-fn remove_unused_companions(_raw_path: &Path, _uses: CompanionUse) {}
-
-#[cfg(not(target_os = "android"))]
+/// of failing the save. Android saves its library's sidecars through
+/// `calibraw-ffi`, which removes their companions, so it removes none here.
 fn remove_unused_companions(raw_path: &Path, uses: CompanionUse) {
+    if cfg!(target_os = "android") {
+        return;
+    }
     let unused = [
         (!uses.ai_denoise).then(|| ai_denoise_path_for_raw(raw_path)),
         (!uses.people).then(|| people_analysis_path_for_raw(raw_path)),

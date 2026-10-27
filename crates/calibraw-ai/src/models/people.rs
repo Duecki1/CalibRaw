@@ -2,13 +2,15 @@
 //! coarsely; Sapiens2 then segments the body parts of each person, on a crop
 //! around them. For high-quality masks BiRefNet first finds the foreground
 //! of the same crops, whose finer outline replaces Sapiens2's near its edge
-//! (`foreground`). The models run once per photo, for everyone: the masks of
-//! any person and parts are then made from that analysis without a model
-//! (`PeopleAnalysis::person_mask`), and the analysis is kept beside the photo
-//! (`store`) for the next time it opens. The coarse outlines only decide
-//! whose a pixel is; every edge comes from Sapiens2 or BiRefNet.
+//! (`foreground`). Devices without the memory for Sapiens2 run only BiRefNet,
+//! inside RF-DETR-Seg's outline, and select entire people. The models run
+//! once per photo, for everyone: the masks of any person and parts are then
+//! made from that analysis without a model (`PeopleAnalysis::person_mask`),
+//! and the analysis is kept beside the photo (`store`) for the next time it
+//! opens. The coarse outlines only decide whose a pixel is; every edge comes
+//! from Sapiens2 or BiRefNet.
 
-use crate::config::CAPABILITIES;
+use crate::config::{MemoryClass, CAPABILITIES};
 use crate::jobs::{spawn_job, AiJobEvent, JobContext, JobKind};
 use crate::models::masks::mask_model_retention;
 use crate::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
@@ -23,7 +25,7 @@ use std::{
     collections::BTreeSet,
     fmt,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, mpsc, Arc},
+    sync::{atomic::AtomicBool, mpsc, Arc, OnceLock},
 };
 
 mod detect;
@@ -38,8 +40,6 @@ pub use store::{content_fingerprint, ContentFingerprint};
 
 pub const DETECTOR_MODEL: ModelInfo = AiModel::PersonDetector.spec().info();
 pub const BODY_PARTS_MODEL: ModelInfo = AiModel::BodyParts.spec().info();
-/// Whether this device offers people masks.
-pub const AVAILABLE: bool = CAPABILITIES.people_masks;
 /// Where the body-part model's license is published; its download consent
 /// names and links it.
 pub const BODY_PARTS_LICENSE: &str =
@@ -77,7 +77,17 @@ pub enum PeopleMaskQuality {
 }
 
 impl PeopleMaskQuality {
-    pub const ALL: [Self; 2] = [Self::Medium, Self::High];
+    /// The qualities this device offers: `High` only with standard memory,
+    /// and none where it does not segment body parts.
+    pub fn available() -> &'static [Self] {
+        if !body_parts_available() {
+            return &[];
+        }
+        match CAPABILITIES.memory {
+            MemoryClass::Standard => &[Self::Medium, Self::High],
+            MemoryClass::Constrained => &[Self::Medium],
+        }
+    }
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -85,16 +95,113 @@ impl PeopleMaskQuality {
             Self::High => "High",
         }
     }
+
+    /// What masks of this quality are made from on this device.
+    pub fn segmentation(self) -> PeopleSegmentation {
+        if !body_parts_available() {
+            PeopleSegmentation::Outline
+        } else if self == Self::High && CAPABILITIES.memory == MemoryClass::Standard {
+            PeopleSegmentation::OutlinedBodyParts
+        } else {
+            PeopleSegmentation::BodyParts
+        }
+    }
 }
 
-/// The BiRefNet model of high-quality people masks: the subject model with
-/// the 1024 x 1024 input, one file with it.
+/// Whether this device has the memory to segment body parts
+/// (`AiCapabilities::people_body_parts_memory`). A device that does not
+/// report its memory has too little.
+fn body_parts_available() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let required = CAPABILITIES.people_body_parts_memory;
+        required == 0
+            || calibraw_core::system_memory::total_memory_bytes()
+                .is_some_and(|bytes| bytes >= required)
+    })
+}
+
+/// What a person's masks are made from: which models ran on them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeopleSegmentation {
+    /// BiRefNet's foreground within RF-DETR-Seg's outline: the entire person
+    /// only, for devices without the memory for Sapiens2.
+    Outline,
+    /// Sapiens2's body parts.
+    BodyParts,
+    /// Sapiens2's body parts within BiRefNet's finer outline.
+    OutlinedBodyParts,
+}
+
+/// The models a people job runs, and where they are.
+#[derive(Clone, Debug)]
+pub enum PeopleModels {
+    /// RF-DETR-Seg and BiRefNet: entire people only.
+    Outline {
+        detector: PathBuf,
+        foreground: ForegroundModel,
+    },
+    /// RF-DETR-Seg and Sapiens2, and BiRefNet for high-quality masks.
+    BodyParts {
+        detector: PathBuf,
+        body_parts: PathBuf,
+        foreground: Option<ForegroundModel>,
+    },
+}
+
+impl PeopleModels {
+    pub fn segmentation(&self) -> PeopleSegmentation {
+        match self {
+            Self::Outline { .. } => PeopleSegmentation::Outline,
+            Self::BodyParts {
+                foreground: None, ..
+            } => PeopleSegmentation::BodyParts,
+            Self::BodyParts {
+                foreground: Some(_),
+                ..
+            } => PeopleSegmentation::OutlinedBodyParts,
+        }
+    }
+
+    fn detector(&self) -> &Path {
+        match self {
+            Self::Outline { detector, .. } | Self::BodyParts { detector, .. } => detector,
+        }
+    }
+
+    fn body_parts(&self) -> Option<&Path> {
+        match self {
+            Self::Outline { .. } => None,
+            Self::BodyParts { body_parts, .. } => Some(body_parts),
+        }
+    }
+
+    fn foreground(&self) -> Option<&ForegroundModel> {
+        match self {
+            Self::Outline { foreground, .. } => Some(foreground),
+            Self::BodyParts { foreground, .. } => foreground.as_ref(),
+        }
+    }
+
+    /// Whether every model is installed.
+    pub fn are_verified(&self) -> bool {
+        AiModel::PersonDetector.spec().is_installed(self.detector())
+            && self
+                .body_parts()
+                .is_none_or(|path| AiModel::BodyParts.spec().is_installed(path))
+            && self
+                .foreground()
+                .is_none_or(|model| model.ai_model().spec().is_installed(&model.path))
+    }
+}
+
+/// The BiRefNet model that outlines people: the subject model with the
+/// 1024 x 1024 input, one file with it.
 pub const fn foreground_model(precision: SubjectModelPrecision) -> ModelInfo {
     SubjectMaskQuality::High.model(precision)
 }
 
-/// Where the BiRefNet model of high-quality people masks is, and which of
-/// its files.
+/// Where the BiRefNet model that outlines people is, and which of its files.
 #[derive(Clone, Debug)]
 pub struct ForegroundModel {
     pub path: PathBuf,
@@ -105,18 +212,6 @@ impl ForegroundModel {
     fn ai_model(&self) -> AiModel {
         SubjectMaskQuality::High.ai_model(self.precision)
     }
-}
-
-/// Whether the models of people masks are installed; BiRefNet's only with
-/// `foreground`, for high-quality masks.
-pub fn people_models_are_verified(
-    detector: &Path,
-    body_parts: &Path,
-    foreground: Option<&ForegroundModel>,
-) -> bool {
-    AiModel::PersonDetector.spec().is_installed(detector)
-        && AiModel::BodyParts.spec().is_installed(body_parts)
-        && foreground.is_none_or(|model| model.ai_model().spec().is_installed(&model.path))
 }
 
 /// The photo people are found in, and their masks refined against: RGBA,
@@ -239,12 +334,17 @@ impl PeopleAnalysis {
         people
     }
 
-    /// Whether what `person`'s masks of `quality` are made from is known, so
-    /// they need no model.
-    pub fn is_segmented(&self, person: usize, quality: PeopleMaskQuality) -> bool {
+    /// Whether what `person`'s masks are made from with `segmentation` is
+    /// known, so they need no model. A device that outlines people takes
+    /// their body parts where another device segmented them.
+    pub fn is_segmented(&self, person: usize, segmentation: PeopleSegmentation) -> bool {
         let parts = self.parts.get(person).is_some_and(Option::is_some);
         let foreground = self.foregrounds.get(person).is_some_and(Option::is_some);
-        parts && (quality == PeopleMaskQuality::Medium || foreground)
+        match segmentation {
+            PeopleSegmentation::Outline => parts || foreground,
+            PeopleSegmentation::BodyParts => parts,
+            PeopleSegmentation::OutlinedBodyParts => parts && foreground,
+        }
     }
 
     /// Adds what a job found of a person for this analysis. False, changing
@@ -275,23 +375,37 @@ impl PeopleAnalysis {
             .unwrap_or_else(|| parts::person_crop(self.detection.bounds(person), width, height))
     }
 
-    /// The mask of `parts` of `people` over `source` at `quality`, its edges
-    /// refined against it; runs no model. `None` for no one, or until
-    /// everyone is segmented for `quality`.
+    /// The mask of `parts` of `people` over `source` with `segmentation`, its
+    /// edges refined against it; runs no model. `None` for no one, or until
+    /// everyone is segmented for `segmentation`. Fails for parts of someone
+    /// only outlined.
     pub fn person_mask(
         &self,
         source: &PeopleSource,
         people: &[usize],
         parts: &BTreeSet<PersonPart>,
-        quality: PeopleMaskQuality,
+        segmentation: PeopleSegmentation,
     ) -> Result<Option<PersonMask>> {
-        self.mask_of(&source.image()?, people, parts, quality)
+        self.mask_of(&source.image()?, people, parts, segmentation)
     }
 
-    /// The parts any of `people` shows; `None` until they are all
-    /// segmented.
-    pub fn parts_shown(&self, people: &[usize]) -> Option<BTreeSet<PersonPart>> {
-        let segmented = self.segmented(people)?;
+    /// The parts any of `people` shows; `None` until their body parts are
+    /// known. A device that outlines people makes masks of parts only from
+    /// body parts segmented elsewhere, of everyone in the mask; otherwise
+    /// only of the entire person.
+    pub fn parts_shown(
+        &self,
+        people: &[usize],
+        segmentation: PeopleSegmentation,
+    ) -> Option<BTreeSet<PersonPart>> {
+        let segmented: Option<Vec<&PersonParts>> = people
+            .iter()
+            .map(|&person| self.parts.get(person)?.as_deref())
+            .collect();
+        let Some(segmented) = segmented else {
+            return (segmentation == PeopleSegmentation::Outline)
+                .then(|| BTreeSet::from([PersonPart::EntirePerson]));
+        };
         Some(
             PersonPart::ALL
                 .into_iter()
@@ -300,24 +414,16 @@ impl PeopleAnalysis {
         )
     }
 
-    /// The body parts of each of `people`; `None` unless they are all
-    /// segmented.
-    fn segmented(&self, people: &[usize]) -> Option<Vec<&PersonParts>> {
-        people
-            .iter()
-            .map(|&person| self.parts.get(person)?.as_deref())
-            .collect()
-    }
-
     /// The person at `point` (fractions of the photo): the likeliest whose
-    /// body parts, or outline while not segmented, cover it. `None` over no
-    /// one.
+    /// body parts, foreground or, while neither is known, outline cover it.
+    /// `None` over no one.
     pub fn person_under(&self, point: [f32; 2]) -> Option<usize> {
         (0..self.people.len())
             .map(|person| {
-                let probability = match &self.parts[person] {
-                    Some(parts) => parts.coverage_at(point),
-                    None => self
+                let probability = match (&self.parts[person], &self.foregrounds[person]) {
+                    (Some(parts), _) => parts.coverage_at(point),
+                    (None, Some(found)) => found.coverage_at(point),
+                    (None, None) => self
                         .detection
                         .outline_probability(person, point[0], point[1]),
                 };
@@ -356,15 +462,20 @@ impl PeopleAnalysis {
     }
 
     /// Where `person` is, to show them over the photo: from their body
-    /// parts once segmented, else their outline.
+    /// parts once segmented, else their foreground, else their outline.
     pub fn silhouette(&self, person: usize) -> Option<PersonSilhouette> {
         let bounds = self.people.get(person)?.bounds;
-        if let Some(parts) = &self.parts[person] {
+        let found = match (&self.parts[person], &self.foregrounds[person]) {
+            (Some(parts), _) => Some((parts.crop, parts.coverage())),
+            (None, Some(found)) => Some((found.crop, found.probabilities.to_vec())),
+            (None, None) => None,
+        };
+        if let Some((region, coverage)) = found {
             return Some(PersonSilhouette {
-                region: parts.crop,
+                region,
                 width: parts::INPUT_WIDTH,
                 height: parts::INPUT_HEIGHT,
-                coverage: parts.coverage(),
+                coverage,
             });
         }
         let [left, top, right, bottom] = bounds;
@@ -394,17 +505,17 @@ impl PeopleAnalysis {
         image: &RgbaView<'_>,
         people: &[usize],
         parts: &BTreeSet<PersonPart>,
-        quality: PeopleMaskQuality,
+        segmentation: PeopleSegmentation,
     ) -> Result<Option<PersonMask>> {
         if !people
             .iter()
-            .all(|&person| self.is_segmented(person, quality))
+            .all(|&person| self.is_segmented(person, segmentation))
         {
             return Ok(None);
         }
         let mut masks = people
             .iter()
-            .map(|&person| self.mask_of_person(image, person, parts, quality));
+            .map(|&person| self.mask_of_person(image, person, parts, segmentation));
         let Some(first) = masks.next() else {
             return Ok(None);
         };
@@ -425,29 +536,55 @@ impl PeopleAnalysis {
         }))
     }
 
-    /// The mask of `parts` of one person segmented for `quality`.
+    /// The mask of `parts` of one person segmented for `segmentation`. A
+    /// device that outlines people refines body parts segmented elsewhere
+    /// with their foreground where it is known too.
     fn mask_of_person(
         &self,
         image: &RgbaView<'_>,
         person: usize,
         parts: &BTreeSet<PersonPart>,
-        quality: PeopleMaskQuality,
+        segmentation: PeopleSegmentation,
     ) -> Result<Vec<u8>> {
-        let segmented = self.parts[person]
-            .as_deref()
-            .context("a selected person has no body parts")?;
-        if quality == PeopleMaskQuality::Medium {
-            return segmented.mask(image, parts);
-        }
-        let found = self.foregrounds[person]
-            .as_deref()
-            .context("a selected person has no foreground")?;
-        match foreground::refine(segmented, found) {
+        let found = self.foregrounds[person].as_deref();
+        let Some(segmented) = self.parts[person].as_deref() else {
+            anyhow::ensure!(
+                segmentation == PeopleSegmentation::Outline,
+                "a selected person has no body parts"
+            );
+            let found = found.context("a selected person has no foreground")?;
+            if parts != &BTreeSet::from([PersonPart::EntirePerson]) {
+                return Err(PartsUnavailable.into());
+            }
+            let plane = foreground::outline(found, &self.detection, person, image.dimensions());
+            return parts::plane_mask(found.crop, plane, image);
+        };
+        let found = match segmentation {
+            PeopleSegmentation::BodyParts => None,
+            PeopleSegmentation::Outline => found,
+            PeopleSegmentation::OutlinedBodyParts => {
+                Some(found.context("a selected person has no foreground")?)
+            }
+        };
+        match found.and_then(|found| foreground::refine(segmented, found)) {
             Some(planes) => parts::crop_mask(segmented.crop, &planes, image, parts),
             None => segmented.mask(image, parts),
         }
     }
 }
+
+/// A mask of body parts was asked of someone only outlined, on a device that
+/// does not segment body parts.
+#[derive(Debug)]
+pub struct PartsUnavailable;
+
+impl fmt::Display for PartsUnavailable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("this device selects entire people only, not their body parts")
+    }
+}
+
+impl std::error::Error for PartsUnavailable {}
 
 /// Where one person is in the photo.
 pub struct PersonSilhouette {
@@ -554,10 +691,7 @@ pub enum PeopleMaskProgress {
 pub type PeopleMaskEvent = AiJobEvent<PeopleAnalysis, PeopleMaskProgress>;
 
 pub struct PeopleMaskWorkerRequest {
-    pub detector_path: PathBuf,
-    pub body_parts_path: PathBuf,
-    /// BiRefNet, for high-quality masks; `None` makes medium-quality ones.
-    pub foreground: Option<ForegroundModel>,
+    pub models: PeopleModels,
     pub allow_download: bool,
     pub request: PeopleMaskRequest,
     pub cancellation: Arc<AtomicBool>,
@@ -565,9 +699,7 @@ pub struct PeopleMaskWorkerRequest {
 
 pub fn spawn_people_mask(worker: PeopleMaskWorkerRequest) -> mpsc::Receiver<PeopleMaskEvent> {
     let PeopleMaskWorkerRequest {
-        detector_path,
-        body_parts_path,
-        foreground,
+        models,
         allow_download,
         request,
         cancellation,
@@ -575,35 +707,30 @@ pub fn spawn_people_mask(worker: PeopleMaskWorkerRequest) -> mpsc::Receiver<Peop
     spawn_job(&PEOPLE_JOB, cancellation, move |job| {
         job.install(
             AiModel::PersonDetector.spec(),
-            &detector_path,
+            models.detector(),
             allow_download,
         )?;
-        job.install(AiModel::BodyParts.spec(), &body_parts_path, allow_download)?;
-        if let Some(model) = &foreground {
+        if let Some(path) = models.body_parts() {
+            job.install(AiModel::BodyParts.spec(), path, allow_download)?;
+        }
+        if let Some(model) = models.foreground() {
             job.install(model.ai_model().spec(), &model.path, allow_download)?;
         }
         job.ensure_not_cancelled()?;
-        infer_people_masks(
-            job,
-            &detector_path,
-            &body_parts_path,
-            foreground.as_ref(),
-            request,
-        )
+        infer_people_masks(job, &models, request)
     })
 }
 
 /// Finds the people unless `request` brings them, then segments the
 /// targets' people and everyone else the job found, the targets first, and
-/// sends the targets' masks as soon as their people are segmented. With
-/// `foreground`, BiRefNet finds their foregrounds before Sapiens2 segments
-/// them: one model is loaded at a time, so each runs for everyone at once.
-/// A cancelled job keeps and reports what it found before it stopped.
+/// sends the targets' masks as soon as their people are segmented. With a
+/// foreground model, BiRefNet finds their foregrounds before Sapiens2
+/// segments them: one model is loaded at a time, so each runs for everyone
+/// at once. A cancelled job keeps and reports what it found before it
+/// stopped.
 fn infer_people_masks(
     job: &JobContext<PeopleAnalysis, PeopleMaskProgress>,
-    detector_path: &Path,
-    body_parts_path: &Path,
-    foreground: Option<&ForegroundModel>,
+    models: &PeopleModels,
     request: PeopleMaskRequest,
 ) -> Result<PeopleAnalysis> {
     let PeopleMaskRequest {
@@ -624,7 +751,7 @@ fn infer_people_masks(
         Some(analysis) => analysis,
         None => {
             job.progress(PeopleMaskProgress::FindingPeople);
-            let detection = detect::detect(detector_path, &image)?;
+            let detection = detect::detect(models.detector(), &image)?;
             let analysis =
                 PeopleAnalysis::new(detection, source.width as f32 / source.height as f32);
             job.progress(PeopleMaskProgress::Found(analysis.clone()));
@@ -633,11 +760,7 @@ fn infer_people_masks(
     };
     job.ensure_not_cancelled()?;
 
-    let quality = if foreground.is_some() {
-        PeopleMaskQuality::High
-    } else {
-        PeopleMaskQuality::Medium
-    };
+    let segmentation = models.segmentation();
     let people: Vec<Vec<usize>> = targets
         .iter()
         .map(|target| analysis.resolve(&target.anchors))
@@ -645,7 +768,7 @@ fn infer_people_masks(
     let mut order: Vec<usize> = people.iter().flatten().copied().collect();
     order.sort_unstable();
     order.dedup();
-    order.retain(|&person| !analysis.is_segmented(person, quality));
+    order.retain(|&person| !analysis.is_segmented(person, segmentation));
     let mut masks_sent = order.is_empty();
     if detects {
         for person in analysis.detection.by_prominence() {
@@ -664,7 +787,7 @@ fn infer_people_masks(
                     return Ok(None);
                 }
                 analysis
-                    .mask_of(&image, people, &target.parts, quality)?
+                    .mask_of(&image, people, &target.parts, segmentation)?
                     .context("a selected person is not segmented")
                     .map(Some)
             })
@@ -676,7 +799,7 @@ fn infer_people_masks(
         people
             .iter()
             .flatten()
-            .all(|&person| analysis.is_segmented(person, quality))
+            .all(|&person| analysis.is_segmented(person, segmentation))
     };
     if masks_sent {
         send_masks(&analysis)?;
@@ -701,7 +824,7 @@ fn infer_people_masks(
     };
     let (width, height) = image.dimensions();
 
-    if let Some(model) = foreground {
+    if let Some(model) = models.foreground() {
         let outline: Vec<usize> = order
             .iter()
             .copied()
@@ -751,7 +874,10 @@ fn infer_people_masks(
         .copied()
         .filter(|&person| analysis.parts[person].is_none())
         .collect();
-    if !segment.is_empty() && job.ensure_not_cancelled().is_ok() {
+    let body_parts_path = models
+        .body_parts()
+        .filter(|_| !segment.is_empty() && job.ensure_not_cancelled().is_ok());
+    if let Some(body_parts_path) = body_parts_path {
         let spec = AiModel::BodyParts.spec();
         with_model_session(
             AiModel::BodyParts,
