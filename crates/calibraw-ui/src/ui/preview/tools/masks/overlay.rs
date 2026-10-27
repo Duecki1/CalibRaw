@@ -334,8 +334,8 @@ impl Preview {
 
     /// Highlights the person whose chip the mask panel has the pointer over,
     /// else the one under the pointer, whom a click adds or removes: green
-    /// when it adds them, red when it removes them, and in the component's
-    /// colour for the last person, whom a click keeps.
+    /// when it adds them and red when it removes them. The only person
+    /// selected stays on a click, so they show nothing.
     fn paint_person_highlight(
         ui: &Ui,
         app: &mut CalibRawApp,
@@ -348,26 +348,29 @@ impl Preview {
         let Some(analysis) = app.ai.people.as_ref() else {
             return;
         };
+        let selected = app
+            .shown_person_choice(mask_index, component_index)
+            .map(|choice| analysis.resolve(&choice.anchors))
+            .unwrap_or_default();
+        let click_color = |person: usize| match (selected.contains(&person), selected.len()) {
+            (false, _) => Some(crate::ui::theme::PERSON_ADD),
+            (true, 1) => None,
+            (true, _) => Some(crate::ui::theme::PERSON_REMOVE),
+        };
         let under_pointer = ui
             .ctx()
             .pointer_hover_pos()
             .filter(|position| layout.visible_rect.contains(*position))
             .and_then(|position| editable_source_uv(projection.to_source(position)))
             .and_then(|point| analysis.person_under(point));
-        if under_pointer.is_some() {
+        if under_pointer.and_then(click_color).is_some() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        let Some(person) = from_chip.or(under_pointer) else {
+        let Some((person, color)) = from_chip
+            .or(under_pointer)
+            .and_then(|person| Some((person, click_color(person)?)))
+        else {
             return;
-        };
-        let selected = app
-            .shown_person_choice(mask_index, component_index)
-            .map(|choice| analysis.resolve(&choice.anchors))
-            .unwrap_or_default();
-        let color = match (selected.contains(&person), selected.len()) {
-            (false, _) => crate::ui::theme::PERSON_ADD,
-            (true, 1) => mask_component_color(component_index),
-            (true, _) => crate::ui::theme::PERSON_REMOVE,
         };
         let Some(highlight) = app.person_highlight(ui.ctx(), person, color) else {
             return;
