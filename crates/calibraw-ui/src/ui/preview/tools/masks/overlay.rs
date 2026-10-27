@@ -240,7 +240,7 @@ impl Preview {
                 .and_then(|mask| mask.components.get(index))
                 .is_some_and(|component| component.kind == MaskKind::Person && component.enabled)
         }) {
-            Self::paint_person_highlight(ui, app, layout, projection, component_index);
+            Self::paint_person_highlight(ui, app, layout, projection, mask_index, component_index);
         }
 
         let refining_subject = app.masks.subject_refinement_active
@@ -333,12 +333,15 @@ impl Preview {
     }
 
     /// Highlights the person whose chip the mask panel has the pointer over,
-    /// else the one under the pointer, whom a click adds or removes.
+    /// else the one under the pointer, whom a click adds or removes: green
+    /// when it adds them, red when it removes them, and in the component's
+    /// colour for the last person, whom a click keeps.
     fn paint_person_highlight(
         ui: &Ui,
         app: &mut CalibRawApp,
         layout: PreviewLayout,
         projection: SourceProjection<'_>,
+        mask_index: usize,
         component_index: usize,
     ) {
         let from_chip = app.ai.people_hovered.take();
@@ -357,7 +360,15 @@ impl Preview {
         let Some(person) = from_chip.or(under_pointer) else {
             return;
         };
-        let color = mask_component_color(component_index);
+        let selected = app
+            .shown_person_choice(mask_index, component_index)
+            .map(|choice| analysis.resolve(&choice.anchors))
+            .unwrap_or_default();
+        let color = match (selected.contains(&person), selected.len()) {
+            (false, _) => crate::ui::theme::PERSON_ADD,
+            (true, 1) => mask_component_color(component_index),
+            (true, _) => crate::ui::theme::PERSON_REMOVE,
+        };
         let Some(highlight) = app.person_highlight(ui.ctx(), person, color) else {
             return;
         };
