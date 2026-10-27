@@ -78,6 +78,7 @@ pub(crate) use export_state::*;
 pub(crate) use job_state::*;
 pub(crate) use mask_properties::{
     apply_mask_property_actions, MaskPropertiesControls, MaskPropertyAction, PeopleChoices,
+    PeopleEdit,
 };
 pub(crate) use mask_state::*;
 pub(crate) use mask_strip::{MaskStripActions, MaskStripCommand, MaskStripEdit};
@@ -332,7 +333,7 @@ mod sidecar_persistence;
 #[cfg(test)]
 mod ui_review_tests;
 
-use ai::AiUpdate;
+use ai::{AiUpdate, PeopleCompose};
 use lifecycle::needs_canonical_mask_source;
 pub(crate) use lifecycle::{
     install_missing_range_sources, masks_have_missing_range_sources, DocumentSource,

@@ -2,13 +2,13 @@
 //! masks made from them.
 
 use super::detect::Detection;
-use super::PersonBounds;
+use super::{PersonBounds, RgbaView};
 use crate::models::{mask_refine, normalized_rgb_input};
 use crate::pipeline::PersonPart;
 use crate::placement::FallbackSession;
 use crate::registry::{AiModel, InputShape};
 use anyhow::{Context, Result};
-use image::{imageops::FilterType, GrayImage, ImageBuffer, Rgba};
+use image::{imageops::FilterType, GrayImage};
 use ort::value::Tensor;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
@@ -19,9 +19,9 @@ const INPUT_SIZE: (u32, u32) = match AiModel::BodyParts.spec().input {
         panic!("Sapiens2 takes a 3:4 input")
     }
 };
-const INPUT_WIDTH: u32 = INPUT_SIZE.0;
-const INPUT_HEIGHT: u32 = INPUT_SIZE.1;
-const INPUT_PIXELS: usize = INPUT_WIDTH as usize * INPUT_HEIGHT as usize;
+pub(super) const INPUT_WIDTH: u32 = INPUT_SIZE.0;
+pub(super) const INPUT_HEIGHT: u32 = INPUT_SIZE.1;
+pub(super) const INPUT_PIXELS: usize = INPUT_WIDTH as usize * INPUT_HEIGHT as usize;
 /// The Sapiens2 classes (docs/SEG.md in its repository), 0 being background.
 const CLASSES: usize = 29;
 /// The part each class belongs to besides `EntirePerson`, which holds every
@@ -60,7 +60,7 @@ const CLASS_PARTS: [Option<PersonPart>; CLASSES] = {
         None,             // Tongue
     ]
 };
-const PARTS: usize = PersonPart::ALL.len();
+pub(super) const PARTS: usize = PersonPart::ALL.len();
 /// The crop extends the person's box by this fraction of its longer side on
 /// every side, so hair and hands just outside the box stay in it.
 const CROP_MARGIN: f32 = 0.1;
@@ -71,19 +71,20 @@ const OUTLINE_REACH: f32 = 0.1;
 
 /// The probabilities of each part of one person over a crop around them.
 pub(super) struct PersonParts {
-    /// The photo pixels the planes cover.
-    crop: PersonBounds,
+    /// The part of the photo the planes cover: left, top, right and bottom
+    /// as fractions of the photo, on pixel edges of the photo segmented.
+    pub(super) crop: [f32; 4],
     /// `INPUT_WIDTH` x `INPUT_HEIGHT` pixels stretched over `crop`, by row:
     /// each part's probability, 0 to 255, in `PersonPart::ALL` order. Zero
     /// where the pixel belongs to someone else.
-    probabilities: Box<[[u8; PARTS]]>,
+    pub(super) probabilities: Box<[[u8; PARTS]]>,
 }
 
 impl PersonParts {
     /// The photo's mask of `parts`, its edges refined against the photo.
     pub(super) fn mask(
         &self,
-        image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+        image: &RgbaView<'_>,
         parts: &BTreeSet<PersonPart>,
     ) -> Result<Vec<u8>> {
         let planes: Vec<usize> = if parts.contains(&PersonPart::EntirePerson) {
@@ -106,16 +107,20 @@ impl PersonParts {
             y,
             width,
             height,
-        } = self.crop;
+        } = crop_pixels(self.crop, image.width(), image.height());
         let mut alpha =
             image::imageops::resize(&selected, width, height, FilterType::Triangle).into_raw();
-        let guide = image::imageops::crop_imm(image, x, y, width, height).to_image();
+        let photo_width = image.width() as usize;
+        let mut guide = Vec::with_capacity(width as usize * height as usize * 4);
+        for row in y as usize..(y + height) as usize {
+            let start = (row * photo_width + x as usize) * 4;
+            guide.extend_from_slice(&image.as_raw()[start..start + width as usize * 4]);
+        }
         // About two model pixels: enough to move a boundary onto the photo's
         // edge, too little to bleed into a neighbouring part.
         let radius = (width.max(height) / 512).clamp(2, 8);
-        mask_refine::guided_filter_color(guide.as_raw(), &mut alpha, width, height, radius, 1e-4)?;
+        mask_refine::guided_filter_color(&guide, &mut alpha, width, height, radius, 1e-4)?;
 
-        let photo_width = image.width() as usize;
         let mut mask = vec![0u8; photo_width * image.height() as usize];
         for (row, source) in alpha.chunks_exact(width as usize).enumerate() {
             let start = (y as usize + row) * photo_width + x as usize;
@@ -138,11 +143,29 @@ const fn part_index(part: PersonPart) -> usize {
     }
 }
 
+/// `crop` (fractions of the photo) in pixels of a `width` x `height` photo.
+/// Exactly the pixels it was made from on a photo of the size segmented,
+/// the nearest ones on another.
+fn crop_pixels(crop: [f32; 4], width: u32, height: u32) -> PersonBounds {
+    let edge = |fraction: f32, limit: u32| {
+        ((f64::from(fraction) * f64::from(limit)).round() as u32).min(limit)
+    };
+    let [left, top, right, bottom] = crop;
+    let x = edge(left, width).min(width.saturating_sub(1));
+    let y = edge(top, height).min(height.saturating_sub(1));
+    PersonBounds {
+        x,
+        y,
+        width: edge(right, width).max(x + 1) - x,
+        height: edge(bottom, height).max(y + 1) - y,
+    }
+}
+
 /// Runs Sapiens2 on a crop around `person` and keeps the parts of the pixels
 /// that are theirs.
 pub(super) fn segment(
     session: &mut FallbackSession,
-    image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+    image: &RgbaView<'_>,
     detection: &Detection,
     person: usize,
 ) -> Result<PersonParts> {
@@ -179,8 +202,15 @@ pub(super) fn segment(
         );
         part_probabilities(logits, &owned)
     })?;
+    let (width, height) = (f64::from(photo_width), f64::from(photo_height));
+    let fraction = |pixels: u32, limit: f64| (f64::from(pixels) / limit) as f32;
     Ok(PersonParts {
-        crop,
+        crop: [
+            fraction(crop.x, width),
+            fraction(crop.y, height),
+            fraction(crop.x + crop.width, width),
+            fraction(crop.y + crop.height, height),
+        ],
         probabilities,
     })
 }

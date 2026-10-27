@@ -510,12 +510,9 @@ impl Sidebar {
                 MaskGeometry::DepthRange { depth, range } => {
                     Self::depth_range_properties(ui, depth.is_some(), *range, &mut edits);
                 }
-                MaskGeometry::Person {
-                    parts,
-                    grow,
-                    feather,
-                    ..
-                } => Self::person_properties(ui, people, parts, *grow, *feather, &mut edits),
+                MaskGeometry::Person { grow, feather, .. } => {
+                    Self::person_properties(ui, people, *grow, *feather, &mut edits);
+                }
                 MaskGeometry::Placeholder => {
                     ui.label("This mask has no shape data.");
                 }
@@ -848,7 +845,6 @@ impl Sidebar {
     fn person_properties(
         ui: &mut Ui,
         people: &PeopleChoices,
-        parts: &std::collections::BTreeSet<PersonPart>,
         grow: f32,
         feather: f32,
         edits: &mut PropertyEdits,
@@ -876,12 +872,12 @@ impl Sidebar {
         ui.add_space(moduwu_design::SPACE_XS);
         ui.horizontal_wrapped(|ui| {
             for part in PersonPart::ALL {
-                if moduwu_design::chip(ui, part.label(), parts.contains(&part)).clicked() {
+                if moduwu_design::chip(ui, part.label(), people.parts.contains(&part)).clicked() {
                     edits.push(MaskPropertyAction::TogglePersonPart(part));
                 }
             }
         });
-        if parts.len() > 1
+        if people.parts.len() > 1
             && moduwu_design::secondary_button(ui, "Separate masks")
                 .on_hover_text("Move each part to a mask group of its own")
                 .clicked()

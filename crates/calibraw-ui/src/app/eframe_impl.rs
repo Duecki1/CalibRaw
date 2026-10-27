@@ -56,7 +56,6 @@ impl CalibRawApp {
         }
         self.masks.source_cache = None;
         self.ai.object_cache = None;
-        self.forget_people();
         if self.caps().configurable_ai_runtime && self.ai.gpu_acceleration {
             self.set_ai_gpu_acceleration(false);
         }
@@ -198,6 +197,7 @@ impl CalibRawApp {
             self.resume_android_library_batch_export_if_possible(frame);
         }
         self.poll_foreground_operation(frame);
+        self.poll_people_composes();
         self.poll_library_ai_mask_refresh(frame);
         self.poll_merge();
         self.resume_pending_ai_denoise(frame);

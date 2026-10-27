@@ -252,35 +252,36 @@ impl Sidebar {
             });
     }
 
-    /// The people found in the photo, when `component_index` is a people mask.
+    /// The person and parts `component_index` shows, and the people found in
+    /// the photo, when it is a people mask.
     fn people_choices(
         app: &CalibRawApp,
         mask_index: usize,
         component_index: usize,
     ) -> PeopleChoices {
-        let Some(geometry @ MaskGeometry::Person { .. }) = app.masks.stack.masks[mask_index]
-            .components
-            .get(component_index)
-            .map(|component| &component.geometry)
-        else {
+        let Some(choice) = app.shown_person_choice(mask_index, component_index) else {
             return PeopleChoices::default();
         };
-        let Some(analysis) = app.ai.people.as_ref() else {
-            return PeopleChoices::default();
+        let (people, selected) = match (app.ai.people.as_ref(), app.ai.people_chips.as_ref()) {
+            (Some(analysis), Some(chips)) => (
+                analysis
+                    .people()
+                    .iter()
+                    .zip(chips)
+                    .map(|(person, chip)| {
+                        let size = chip.size_vec2();
+                        let scale = PERSON_CHIP_HEIGHT / size.y.max(1.0);
+                        (chip.id(), size * scale, person.anchor)
+                    })
+                    .collect(),
+                choice.anchor.and_then(|anchor| analysis.person_at(anchor)),
+            ),
+            _ => (Vec::new(), None),
         };
-        let people = analysis
-            .people()
-            .iter()
-            .zip(&app.ai.people_chips)
-            .map(|(person, chip)| {
-                let size = chip.size_vec2();
-                let scale = PERSON_CHIP_HEIGHT / size.y.max(1.0);
-                (chip.id(), size * scale, person.anchor)
-            })
-            .collect();
         PeopleChoices {
             people,
-            selected: app.selected_person(geometry),
+            selected,
+            parts: choice.parts,
         }
     }
 
@@ -329,8 +330,16 @@ impl Sidebar {
             request_generation: false,
             request_object: false,
             request_people: false,
+            people_edit: None,
             separate_person_parts: false,
         };
+        let selected_is_person = app.masks.stack.masks[mask_index]
+            .components
+            .get(component_index)
+            .is_some_and(|component| component.kind == MaskKind::Person);
+        if selected_is_person {
+            app.ensure_people_chips(frame);
+        }
         let people = Self::people_choices(app, mask_index, component_index);
         let point_color_preview = |develop_ui: &crate::app::DevelopUiState| {
             (
@@ -532,6 +541,8 @@ impl Sidebar {
         }
         if controls.separate_person_parts {
             app.separate_person_parts(mask_index, component_index, frame);
+        } else if let Some(edit) = controls.people_edit {
+            app.edit_people_mask(mask_index, component_index, edit, frame);
         } else if controls.request_people {
             app.request_people_masks(vec![(mask_index, component_index)], frame);
         }

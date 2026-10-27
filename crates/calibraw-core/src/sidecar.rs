@@ -37,6 +37,10 @@ pub const SIDECAR_SUFFIX: &str = ".calibraw";
 /// The AI-denoise result saved next to a RAW. It is large derived data, so it
 /// lives outside the sidecar and only while the saved edit uses AI denoise.
 pub const AI_DENOISE_SUFFIX: &str = ".calibraw-denoise";
+/// The people analysis kept next to a RAW, so its people masks change person
+/// and parts without running a model. Derived data like the AI-denoise
+/// result, kept while the saved edit has a people mask.
+pub const PEOPLE_ANALYSIS_SUFFIX: &str = ".calibraw-people";
 pub const DEVELOPED_THUMBNAIL_SUFFIX: &str = ".calibraw-thumb.jpg";
 const DEVELOPED_THUMBNAIL_FINGERPRINT_SUFFIX: &str = ".calibraw-thumb.fingerprint";
 pub const MAX_SIDECAR_BYTES: u64 = if cfg!(target_os = "android") {
@@ -377,8 +381,9 @@ pub use desktop::sidecar_path_for_raw;
 pub use desktop::{
     ai_denoise_path_for_raw, copy_developed_thumbnail_cache, desktop_sidecar_fingerprint,
     developed_thumbnail_cache_is_fresh, developed_thumbnail_path_for_raw,
-    invalidate_developed_thumbnail_cache, load_developed_thumbnail_cache, raw_companion_paths,
-    remove_desktop_edits, save_developed_thumbnail_cache,
+    invalidate_developed_thumbnail_cache, load_developed_thumbnail_cache,
+    people_analysis_path_for_raw, raw_companion_paths, remove_desktop_edits,
+    save_developed_thumbnail_cache,
 };
 
 pub fn encode(edits: EditState) -> Result<Vec<u8>, SidecarError> {

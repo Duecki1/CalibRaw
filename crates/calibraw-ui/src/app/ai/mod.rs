@@ -36,4 +36,5 @@ mod state;
 mod tasks;
 mod update;
 
+pub(crate) use people::PeopleCompose;
 pub(crate) use update::AiUpdate;

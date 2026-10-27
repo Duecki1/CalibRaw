@@ -44,8 +44,9 @@ use calibraw_ai::models::object::{
     DECODER_MODEL, ENCODER_MODEL,
 };
 use calibraw_ai::models::people::{
-    spawn_people_mask, PeopleAnalysis, PeopleMaskRequest, PeopleMaskWorkerRequest, PeopleTarget,
-    BODY_PARTS_MODEL, DETECTOR_MODEL,
+    content_fingerprint, spawn_people_mask, PeopleAnalysis, PeopleAnalysisFile, PeopleMaskProgress,
+    PeopleMaskRequest, PeopleMaskWorkerRequest, PeopleSource, PeopleTarget, BODY_PARTS_MODEL,
+    DETECTOR_MODEL,
 };
 use calibraw_ai::models::remove::{spawn_remove, RemoveRequest};
 use calibraw_ai::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
@@ -211,23 +212,44 @@ fn object() {
 }
 
 /// RF-DETR-Seg and Sapiens2: the face and hair of the most prominent person,
-/// then their clothes and skin from the same analysis, which runs no model.
+/// from a job that finds and segments everyone and keeps the analysis beside
+/// the photo; then their clothes and skin from the analysis read back, which
+/// runs no model.
 #[test]
 #[ignore = "needs CALIBRAW_PARITY_PHOTOS, the RF-DETR-Seg and Sapiens2 models and ONNX Runtime"]
 fn people() {
     let harness = Harness::lock();
-    let (output, anchor, analysis, ran_models) =
-        harness.people_job(None, &[PersonPart::FaceNeck, PersonPart::Hair], None);
+    let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("parity.calibraw-people");
+    let photo = harness.photo(&PEOPLE_PHOTO);
+    let raw = Arc::new(
+        load_raw_file(&photo).unwrap_or_else(|error| panic!("load {}: {error:#}", photo.display())),
+    );
+    let remove = Arc::new(RemoveEditState::default());
+    let (output, anchor, ran_models) = harness.people_job(
+        None,
+        &[PersonPart::FaceNeck, PersonPart::Hair],
+        None,
+        Some(PeopleAnalysisFile {
+            path: path.clone(),
+            raw: Arc::clone(&raw),
+            remove: Arc::clone(&remove),
+        }),
+    );
     assert!(
         ran_models,
         "a first people job finds and segments the person"
     );
     harness.check("people-face-hair", Tolerance::MaskIou(0.98), &output);
 
-    let (output, _, _, ran_models) = harness.people_job(
+    let content = content_fingerprint(&raw, &remove).expect("fingerprint the people photo");
+    let analysis = PeopleAnalysis::load(&path, content)
+        .expect("read the kept people analysis")
+        .expect("the kept analysis is of the people photo");
+    let (output, _, ran_models) = harness.people_job(
         Some(anchor),
         &[PersonPart::Clothes, PersonPart::BodySkin],
         Some(analysis),
+        None,
     );
     assert!(
         !ran_models,
@@ -511,33 +533,45 @@ impl Harness {
         (output, result.cache)
     }
 
-    /// One people mask of `parts`, the anchor of the person it selected, the
-    /// analysis to reuse, and whether the job ran a model.
+    /// One people mask of `parts`, the anchor of the person it selected, and
+    /// whether the job ran a model.
     fn people_job(
         &self,
         anchor: Option<[f32; 2]>,
         parts: &[PersonPart],
         analysis: Option<PeopleAnalysis>,
-    ) -> (Output, [f32; 2], PeopleAnalysis, bool) {
+        keep: Option<PeopleAnalysisFile>,
+    ) -> (Output, [f32; 2], bool) {
         let scene = self.people_scene();
         let events = spawn_people_mask(PeopleMaskWorkerRequest {
             detector_path: self.models.join(DETECTOR_MODEL.cache_filename),
             body_parts_path: self.models.join(BODY_PARTS_MODEL.cache_filename),
             allow_download: self.download,
             request: PeopleMaskRequest {
-                source_width: scene.width(),
-                source_height: scene.height(),
-                source_rgba: scene.as_raw().clone(),
+                source: PeopleSource {
+                    width: scene.width(),
+                    height: scene.height(),
+                    rgba: Arc::from(scene.as_raw().as_slice()),
+                },
                 analysis,
                 targets: vec![PeopleTarget {
                     anchor,
                     parts: parts.iter().copied().collect::<BTreeSet<_>>(),
                 }],
+                keep,
             },
             cancellation: Arc::new(AtomicBool::new(false)),
         });
         let mut ran_models = false;
-        let result = finish(events, |event| match event {
+        let mut masks = None;
+        finish(events, |event| match event {
+            AiJobEvent::Progress(PeopleMaskProgress::Masks(sent)) => {
+                masks = Some(sent);
+                None
+            }
+            AiJobEvent::Progress(PeopleMaskProgress::NotKept(error)) => {
+                panic!("the people analysis was not kept: {error}")
+            }
             AiJobEvent::Progress(_) => {
                 ran_models = true;
                 None
@@ -545,7 +579,8 @@ impl Harness {
             AiJobEvent::Finished(result) => Some(result),
             AiJobEvent::DownloadProgress(_) => None,
         });
-        let [Some(mask)] = <[_; 1]>::try_from(result.masks).expect("one mask per target") else {
+        let masks = masks.expect("the job sends its masks");
+        let [Some(mask)] = <[_; 1]>::try_from(masks).expect("one mask per target") else {
             panic!("the people photo has a person");
         };
         let anchor = mask.anchor;
@@ -554,7 +589,7 @@ impl Harness {
             height: mask.height,
             values: mask.mask,
         });
-        (output, anchor, result.analysis, ran_models)
+        (output, anchor, ran_models)
     }
 
     fn denoise_job(&self, raw: LoadedRaw) -> Output {

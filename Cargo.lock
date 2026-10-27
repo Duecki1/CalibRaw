@@ -642,6 +642,7 @@ dependencies = [
  "rayon",
  "ring",
  "serde",
+ "serde_json",
  "tar",
  "tempfile",
  "ureq",

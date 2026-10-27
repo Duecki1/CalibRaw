@@ -21,11 +21,11 @@ pub fn save_desktop(raw_path: &Path, edits: EditState) -> Result<PathBuf, Sideca
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
     let metadata = load_sidecar_metadata(raw_path)?;
-    let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
+    let companions = CompanionUse::of(&edits);
     let bytes =
         encode_with_review_and_editing_time(edits, metadata.review, metadata.editing_time_ms)?;
     atomic_write(&path, &bytes)?;
-    remove_unused_ai_denoise_result(raw_path, uses_ai_denoise);
+    remove_unused_companions(raw_path, companions);
     Ok(path)
 }
 
@@ -39,10 +39,10 @@ pub fn save_desktop_with_editing_time(
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
     let review = load_sidecar_metadata(raw_path)?.review;
-    let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
+    let companions = CompanionUse::of(&edits);
     let bytes = encode_with_review_and_editing_time(edits, review, editing_time_ms)?;
     atomic_write(&path, &bytes)?;
-    remove_unused_ai_denoise_result(raw_path, uses_ai_denoise);
+    remove_unused_companions(raw_path, companions);
     Ok(path)
 }
 
@@ -57,33 +57,62 @@ pub fn backup_and_replace_desktop_sidecar(
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
-    let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
+    let companions = CompanionUse::of(&edits);
     let bytes =
         encode_with_review_and_editing_time(edits, PhotoReview::default(), editing_time_ms)?;
     let backup = create_backup_copy(&path)?;
     atomic_write(&path, &bytes)?;
-    remove_unused_ai_denoise_result(raw_path, uses_ai_denoise);
+    remove_unused_companions(raw_path, companions);
     Ok(backup)
 }
 
-/// Deletes the AI-denoise result next to a RAW once its saved edit no longer
-/// uses AI denoise. A failure only leaves a stale file behind, so it is logged
-/// instead of failing the save.
-/// Android keeps AI-denoise results in app storage, never next to the RAW,
-/// so there is nothing to remove here.
+/// Which derived files beside a RAW its saved edit uses: the AI-denoise
+/// result while it uses AI denoise, the people analysis while it has a
+/// people mask.
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    target_os = "android",
+    allow(dead_code, reason = "Android removes no companions here")
+)]
+struct CompanionUse {
+    ai_denoise: bool,
+    people: bool,
+}
+
+impl CompanionUse {
+    fn of(edits: &EditState) -> Self {
+        Self {
+            ai_denoise: edits.exposure.ai_denoise_enabled,
+            people: edits
+                .masks
+                .masks
+                .iter()
+                .flat_map(|mask| &mask.components)
+                .any(|component| component.kind == MaskKind::Person),
+        }
+    }
+}
+
+/// Deletes the derived files next to a RAW that its saved edit no longer
+/// uses. A failure only leaves a stale file behind, so it is logged instead
+/// of failing the save.
+/// Android keeps AI-denoise results in app storage and makes no people
+/// analyses, so there is nothing to remove here.
 #[cfg(target_os = "android")]
-fn remove_unused_ai_denoise_result(_raw_path: &Path, _uses_ai_denoise: bool) {}
+fn remove_unused_companions(_raw_path: &Path, _uses: CompanionUse) {}
 
 #[cfg(not(target_os = "android"))]
-fn remove_unused_ai_denoise_result(raw_path: &Path, uses_ai_denoise: bool) {
-    if uses_ai_denoise {
-        return;
-    }
-    let path = ai_denoise_path_for_raw(raw_path);
-    match std::fs::remove_file(&path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => log::warn!("could not remove {}: {error}", path.display()),
+fn remove_unused_companions(raw_path: &Path, uses: CompanionUse) {
+    let unused = [
+        (!uses.ai_denoise).then(|| ai_denoise_path_for_raw(raw_path)),
+        (!uses.people).then(|| people_analysis_path_for_raw(raw_path)),
+    ];
+    for path in unused.into_iter().flatten() {
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => log::warn!("could not remove {}: {error}", path.display()),
+        }
     }
 }
 

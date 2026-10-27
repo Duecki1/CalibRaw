@@ -114,10 +114,11 @@ impl CalibRawApp {
             return;
         }
 
+        // People found before stay: they are forgotten as soon as the
+        // content changes, so any still known were found in this content.
         self.masks.source_cache = None;
         self.masks.clear_generated_caches();
         self.ai.object_cache = None;
-        self.forget_people();
         if let Err(error) = self.capture_mask_source(frame) {
             self.report_error(ErrorKind::AiUpdate, error);
             return;

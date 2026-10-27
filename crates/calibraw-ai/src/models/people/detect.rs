@@ -2,13 +2,13 @@
 //! outline per person. The outlines only decide whose a pixel is; Sapiens2's
 //! body parts supply every edge.
 
-use super::{DetectedPerson, PersonBounds};
+use super::{DetectedPerson, RgbaView};
 use crate::models::masks::mask_model_retention;
 use crate::models::{normalized_rgb_input, sigmoid_probability};
 use crate::registry::AiModel;
 use crate::slot::with_model_session;
 use anyhow::{Context, Result};
-use image::{imageops::FilterType, ImageBuffer, Rgba};
+use image::imageops::FilterType;
 use ort::session::SessionOutputs;
 use ort::value::Tensor;
 use std::path::Path;
@@ -26,7 +26,7 @@ const CANDIDATE_SCORE: f32 = 0.25;
 /// intersection over union is the same person found twice.
 const DUPLICATE_OVERLAP: f32 = 0.7;
 /// At most this many people are offered, the likeliest ones.
-const MAX_PEOPLE: usize = 32;
+pub(super) const MAX_PEOPLE: usize = 32;
 
 /// The people and other candidates found in one photo.
 pub(super) struct Detection {
@@ -38,13 +38,13 @@ pub(super) struct Detection {
     outline_edge: usize,
 }
 
-struct Candidate {
-    score: f32,
+pub(super) struct Candidate {
+    pub(super) score: f32,
     /// Left, top, right and bottom as fractions of the photo.
-    bounds: [f32; 4],
+    pub(super) bounds: [f32; 4],
     /// Outline logits over the whole photo, `outline_edge` squared, by row.
     /// Positive inside the person.
-    outline: Box<[f32]>,
+    pub(super) outline: Box<[f32]>,
 }
 
 impl Candidate {
@@ -73,11 +73,11 @@ impl Candidate {
 }
 
 impl Detection {
-    pub(super) fn people(&self, width: u32, height: u32) -> Vec<DetectedPerson> {
+    pub(super) fn people(&self) -> Vec<DetectedPerson> {
         self.candidates[..self.people]
             .iter()
             .map(|candidate| DetectedPerson {
-                bounds: PersonBounds::from_fractions(candidate.bounds, width, height),
+                bounds: candidate.bounds,
                 anchor: candidate.anchor(self.outline_edge),
             })
             .collect()
@@ -88,10 +88,17 @@ impl Detection {
         (0..self.people).max_by_key(|&person| self.candidates[person].outline_area())
     }
 
-    /// The offered person at `anchor` (fractions of a `width` x `height`
-    /// photo): the likeliest one whose outline contains it, else the one
-    /// whose own anchor is nearest.
-    pub(super) fn person_at(&self, anchor: [f32; 2], width: u32, height: u32) -> Option<usize> {
+    /// The offered people, largest outline first.
+    pub(super) fn by_prominence(&self) -> Vec<usize> {
+        let mut people: Vec<usize> = (0..self.people).collect();
+        people.sort_by_key(|&person| std::cmp::Reverse(self.candidates[person].outline_area()));
+        people
+    }
+
+    /// The offered person at `anchor` (fractions of a photo `aspect` times
+    /// as wide as it is high): the likeliest one whose outline contains it,
+    /// else the one whose own anchor is nearest.
+    pub(super) fn person_at(&self, anchor: [f32; 2], aspect: f32) -> Option<usize> {
         let [u, v] = anchor;
         let containing = (0..self.people)
             .map(|person| (person, self.outline_probability(person, u, v)))
@@ -99,10 +106,11 @@ impl Detection {
             .max_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(person, _)| person);
         containing.or_else(|| {
+            // In photo heights, so both axes share a unit.
             let distance = |person: usize| {
                 let [x, y] = self.candidates[person].anchor(self.outline_edge);
-                let dx = f64::from(x - u) * f64::from(width);
-                let dy = f64::from(y - v) * f64::from(height);
+                let dx = f64::from(x - u) * f64::from(aspect);
+                let dy = f64::from(y - v);
                 dx * dx + dy * dy
             };
             (0..self.people).min_by(|&a, &b| distance(a).total_cmp(&distance(b)))
@@ -111,6 +119,50 @@ impl Detection {
 
     pub(super) fn bounds(&self, person: usize) -> [f32; 4] {
         self.candidates[person].bounds
+    }
+
+    /// Every candidate, the offered people first; how many of them are
+    /// offered; and the edge of their outline grids. What `from_parts` takes.
+    pub(super) fn parts(&self) -> (&[Candidate], usize, usize) {
+        (&self.candidates, self.people, self.outline_edge)
+    }
+
+    /// A detection from what `parts` returned, checked as an untrusted file
+    /// is: in that order, the offered people still left to right.
+    pub(super) fn from_parts(
+        candidates: Vec<Candidate>,
+        people: usize,
+        outline_edge: usize,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            people <= candidates.len().min(MAX_PEOPLE),
+            "{people} people of {} candidates",
+            candidates.len()
+        );
+        anyhow::ensure!(outline_edge > 0, "empty outline grid");
+        for candidate in &candidates {
+            let [left, top, right, bottom] = candidate.bounds;
+            anyhow::ensure!(
+                candidate.score.is_finite()
+                    && candidate
+                        .bounds
+                        .iter()
+                        .all(|value| (0.0..=1.0).contains(value))
+                    && left <= right
+                    && top <= bottom,
+                "invalid candidate box"
+            );
+            anyhow::ensure!(
+                candidate.outline.len() == outline_edge * outline_edge
+                    && candidate.outline.iter().all(|logit| logit.is_finite()),
+                "invalid candidate outline"
+            );
+        }
+        Ok(Self {
+            candidates,
+            people,
+            outline_edge,
+        })
     }
 
     /// Every candidate whose box overlaps `region` (fractions: left, top,
@@ -142,10 +194,7 @@ impl Detection {
 }
 
 /// Runs RF-DETR-Seg on the whole photo, stretched to its square input.
-pub(super) fn detect(
-    model_path: &Path,
-    image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-) -> Result<Detection> {
+pub(super) fn detect(model_path: &Path, image: &RgbaView<'_>) -> Result<Detection> {
     let resized = image::imageops::resize(image, INPUT_EDGE, INPUT_EDGE, FilterType::Triangle);
     let edge = INPUT_EDGE as usize;
     let input = Tensor::from_array(([1usize, 3, edge, edge], normalized_rgb_input(&resized)?))

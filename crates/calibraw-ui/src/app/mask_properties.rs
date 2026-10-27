@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::pipeline::{DepthRangeSettings, LocalMask, MaskCombineMode, MaskComponent, PersonPart};
+use std::collections::BTreeSet;
 
 /// Mask-tool state edited by the properties panel. The caller loads it from
 /// the app before drawing and applies it, with its requests, afterwards.
@@ -23,16 +24,28 @@ pub(crate) struct MaskPropertiesControls {
     pub(crate) request_object: bool,
     /// Make the people mask again, for its person and parts.
     pub(crate) request_people: bool,
+    pub(crate) people_edit: Option<PeopleEdit>,
     pub(crate) separate_person_parts: bool,
 }
 
-/// The people found in the photo, for a people mask's properties.
+/// A people mask's person and parts, for its properties.
 #[derive(Default)]
 pub(crate) struct PeopleChoices {
     /// Each person's thumbnail, its size and their anchor, left to right.
     pub(crate) people: Vec<(egui::TextureId, egui::Vec2, [f32; 2])>,
     /// The person the mask selects.
     pub(crate) selected: Option<usize>,
+    pub(crate) parts: BTreeSet<PersonPart>,
+}
+
+/// A change to a people mask's person or parts, which
+/// `CalibRawApp::edit_people_mask` makes together with the mask it needs.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum PeopleEdit {
+    /// The person, by their anchor.
+    SelectPerson([f32; 2]),
+    /// Adds or removes a part; the last part stays.
+    TogglePart(PersonPart),
 }
 
 pub(crate) enum MaskPropertyAction {
@@ -145,15 +158,14 @@ fn apply_mask_property_action(
             controls.request_people = true;
             false
         }
-        action
-        @ (MaskPropertyAction::SelectPerson(_) | MaskPropertyAction::TogglePersonPart(_)) => {
-            let changed = mask
-                .components
-                .get_mut(component_index)
-                .is_some_and(|component| apply_geometry_action(&mut component.geometry, action));
-            // The mask itself follows once the people job has made it.
-            controls.request_people |= changed;
-            changed
+        // The person and parts change with the mask they need.
+        MaskPropertyAction::SelectPerson(anchor) => {
+            controls.people_edit = Some(PeopleEdit::SelectPerson(anchor));
+            false
+        }
+        MaskPropertyAction::TogglePersonPart(part) => {
+            controls.people_edit = Some(PeopleEdit::TogglePart(part));
+            false
         }
         component_action => mask
             .components
@@ -324,19 +336,6 @@ fn apply_geometry_action(geometry: &mut MaskGeometry, action: MaskPropertyAction
         }
         (MaskGeometry::DepthRange { range, .. }, MaskPropertyAction::SetDepthRange(value)) => {
             *range = value;
-            true
-        }
-        (MaskGeometry::Person { anchor, .. }, MaskPropertyAction::SelectPerson(value)) => {
-            *anchor = Some(value);
-            true
-        }
-        (MaskGeometry::Person { parts, .. }, MaskPropertyAction::TogglePersonPart(part)) => {
-            if !parts.remove(&part) {
-                parts.insert(part);
-            } else if parts.is_empty() {
-                parts.insert(part);
-                return false;
-            }
             true
         }
         _ => false,

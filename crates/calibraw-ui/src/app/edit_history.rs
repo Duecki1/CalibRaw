@@ -701,16 +701,10 @@ impl CalibRawApp {
                 })
         });
         if restored_source.is_some() || !needs_canonical_mask_source(&self.masks.stack) {
-            let same_source = match (&self.masks.source_cache, &restored_source) {
-                (Some(current), Some(restored)) => Arc::ptr_eq(&current.rgba, &restored.rgba),
-                _ => false,
-            };
-            if !same_source {
-                // The people were found in the source being replaced.
-                self.forget_people();
-            }
             self.masks.source_cache = restored_source;
         }
+        // People masks being made were for the components before the restore.
+        self.ai.people_composes.clear();
         if self.ai.update_needed {
             self.masks.clear_generated_caches();
         } else {

@@ -89,8 +89,6 @@ impl CalibRawApp {
         if self.masks.source_cache.is_some() {
             return Ok(());
         }
-        // People found in an earlier source are not in this one.
-        self.forget_people();
 
         // Constrained memory reads the source back from the preview instead
         // of rendering a separate proxy.

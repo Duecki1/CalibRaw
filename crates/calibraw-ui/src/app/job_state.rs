@@ -78,8 +78,10 @@ pub(super) enum ForegroundOperationContext {
     /// targets.
     People {
         targets: Vec<AiMaskTarget>,
-        /// The job finds the people again, so their chips change.
-        detects: bool,
+        /// The error its masks came with, reported once the job ends.
+        error: Option<String>,
+        /// Why the analysis could not be kept beside the photo.
+        not_kept: Option<String>,
     },
     AiDenoise,
     LensCorrection,
@@ -143,10 +145,13 @@ pub(crate) struct AiState {
     pub(crate) object_cache: Option<((usize, usize), ObjectInferenceCache)>,
     /// People components waiting for their job to start.
     pub(crate) people_pending: Vec<(usize, usize)>,
-    /// The people found in `MaskState::source_cache`, valid while it is.
+    /// The people found in the photo and the body parts of those segmented,
+    /// while the content they were found in is unchanged.
     pub(crate) people: Option<PeopleAnalysis>,
-    /// A thumbnail of each person in `people`.
-    pub(crate) people_chips: Vec<egui::TextureHandle>,
+    /// A thumbnail of each person in `people`, once made from the mask source.
+    pub(crate) people_chips: Option<Vec<egui::TextureHandle>>,
+    /// People masks being made from `people`.
+    pub(crate) people_composes: Vec<PeopleCompose>,
     pub(crate) denoise_resume_pending: bool,
 }
 
