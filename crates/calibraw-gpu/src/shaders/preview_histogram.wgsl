@@ -1,10 +1,10 @@
 // Display histogram, separate from the scene EV histogram used by tone mapping.
 // Workgroup-local bins avoid global atomic contention on flat/clipped images.
 struct Histogram { bins: array<atomic<u32>, 1024> }
+// Rows of the homography from sample (x, y, 1) to source pixel, the output geometry of
+// `extent` samples; source pixel centres are at whole coordinates.
 struct Sampling {
-    origin: vec4<f32>,
-    step_x: vec4<f32>,
-    step_y: vec4<f32>,
+    source_from_sample: array<vec4<f32>, 3>,
     extent: vec4<u32>,
 }
 @group(0) @binding(0) var preview: texture_2d<f32>;
@@ -34,11 +34,14 @@ fn preview_histogram(@builtin(global_invocation_id) gid: vec3<u32>,
     }
     workgroupBarrier();
     if all(gid.xy < sampling.extent.xy) {
-        let position = sampling.origin.xy + f32(gid.x) * sampling.step_x.xy
-                                            + f32(gid.y) * sampling.step_y.xy;
+        let sample = vec3<f32>(f32(gid.x), f32(gid.y), 1.0);
+        let rows = sampling.source_from_sample;
+        let w = dot(rows[2].xyz, sample);
+        let position = vec2<f32>(dot(rows[0].xyz, sample), dot(rows[1].xyz, sample)) / w;
         let size = vec2<f32>(textureDimensions(preview));
-        // Exclude the blank corners introduced by rotation/geometry.
-        if all(position >= vec2<f32>(-0.5)) && all(position < size - 0.5) {
+        // Exclude the blank corners introduced by rotation/geometry, and samples beyond a
+        // perspective correction's vanishing line (w <= 0).
+        if w > 0.0 && all(position >= vec2<f32>(-0.5)) && all(position < size - 0.5) {
             let rgb = textureLoad(preview, vec2<i32>(floor(position + 0.5)), 0).rgb;
             // Relative sRGB luminance, encoded onto the same display axis as RGB.
             let luminance = encode_srgb(dot(decode_srgb(rgb), vec3<f32>(0.2126, 0.7152, 0.0722)));

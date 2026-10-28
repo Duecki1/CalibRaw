@@ -21,9 +21,10 @@
 //!   report as newer instead of as corrupt, so they never replace the file
 //!   with an unedited one. Every other edit is written with schema 1, whose
 //!   layout schema 2 shares.
-//! - Up to v1.3, readers would drop a LUT and cannot decode a Select People
-//!   mask. Edits with either are written with schema 3, which shares the
-//!   same layout and which those readers report as newer.
+//! - Up to v1.3, readers would drop a LUT, a perspective correction or an
+//!   aspect stretch and cannot decode a Select People mask. Edits with any of them are written
+//!   with schema 3, which shares the same layout and which those readers
+//!   report as newer.
 
 use super::effect_sliders::GlobalSliders;
 use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskRgbImage};
@@ -95,7 +96,11 @@ pub(crate) fn serialize_color_range<S: Serializer>(
 /// otherwise `current`.
 pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     let masks = &edits.masks;
-    if edits.look_lut.is_some() || masks.has_people_masks() {
+    if edits.look_lut.is_some()
+        || masks.has_people_masks()
+        || !edits.geometry.perspective.is_identity()
+        || edits.geometry.aspect_stretch != 0.0
+    {
         return current;
     }
     let uses_relight = masks

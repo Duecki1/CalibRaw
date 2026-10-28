@@ -25,12 +25,16 @@ pub(crate) fn source_angle_from(
 }
 
 /// Projects normalized source-image coordinates onto the screen: optional lens
-/// correction, then the output geometry (crop, rotation, perspective), then
+/// correction, then the output geometry (perspective, crop, rotation), then
 /// the on-screen image rectangle.
 #[derive(Clone, Copy)]
 pub(crate) struct SourceProjection<'a> {
     pub(in crate::ui::preview) image_rect: Rect,
-    pub(in crate::ui::preview) geometry: GeometryTransform,
+    pub(in crate::ui::preview) mapping: GeometryMapping,
+    /// Normalized corrected source position to output position (0–1 across
+    /// `image_rect`), and back.
+    output_from_source: Homography,
+    source_from_output: Homography,
     /// Maps native sensor coordinates to lens-corrected ones. `None` when the
     /// projected coordinates are already corrected.
     pub(in crate::ui::preview) lens: Option<&'a LensGeometryMap>,
@@ -46,9 +50,13 @@ impl<'a> SourceProjection<'a> {
         source_width: u32,
         source_height: u32,
     ) -> Self {
+        let mapping = GeometryMapping::new(geometry, source_width, source_height);
+        let output_from_source = mapping.output_uv_from_source_uv();
         Self {
             image_rect,
-            geometry,
+            mapping,
+            output_from_source,
+            source_from_output: output_from_source.inverse(),
             lens,
             source_width,
             source_height,
@@ -64,23 +72,13 @@ impl<'a> SourceProjection<'a> {
         let corrected_uv = self.lens.map_or(source_uv, |lens| {
             native_source_to_corrected_uv(lens, self.source_width, self.source_height, source_uv)
         });
-        final_geometry_source_to_screen(
-            self.image_rect,
-            self.geometry,
-            self.source_width,
-            self.source_height,
-            corrected_uv,
-        )
+        normalized_to_screen(self.image_rect, self.output_from_source.apply(corrected_uv))
     }
 
     pub(crate) fn to_source(self, screen: Pos2) -> [f32; 2] {
-        let corrected_uv = final_geometry_screen_to_source(
-            self.image_rect,
-            self.geometry,
-            self.source_width,
-            self.source_height,
-            screen,
-        );
+        let corrected_uv = self
+            .source_from_output
+            .apply(screen_to_normalized_unclamped(self.image_rect, screen));
         corrected_uv_to_native_source(
             corrected_uv,
             self.lens,

@@ -74,7 +74,8 @@ pub(super) fn paint_textured_geometry_quad(
 
 /// Paints the `source_uv` region of a texture through `projection`, either in
 /// the final output view or, with `crop_workspace`, on the uncropped crop
-/// editing canvas. Lens correction is approximated with a dense mesh.
+/// editing canvas. Lens and perspective correction, which a textured quad
+/// cannot follow, are approximated with a dense mesh.
 fn paint_projected_texture(
     ui: &Ui,
     texture_id: egui::TextureId,
@@ -85,35 +86,24 @@ fn paint_projected_texture(
 ) {
     let SourceProjection {
         image_rect,
-        geometry,
+        mapping,
         lens,
         source_width,
         source_height,
+        ..
     } = projection;
-    let corrected_to_screen = |corrected_uv: [f32; 2]| {
-        if crop_workspace {
-            crop_workspace_source_to_screen(
-                image_rect,
-                geometry,
-                source_width,
-                source_height,
-                corrected_uv,
-            )
-        } else {
-            final_geometry_source_to_screen(
-                image_rect,
-                geometry,
-                source_width,
-                source_height,
-                corrected_uv,
-            )
-        }
+    let view = if crop_workspace {
+        mapping.canvas_uv_from_source_uv()
+    } else {
+        mapping.output_uv_from_source_uv()
     };
-    let Some(lens) = lens else {
+    let corrected_to_screen =
+        |corrected_uv: [f32; 2]| normalized_to_screen(image_rect, view.apply(corrected_uv));
+    if lens.is_none() && mapping.is_affine() {
         let positions = source_uv_corners(source_uv).map(corrected_to_screen);
         paint_textured_geometry_quad(ui, texture_id, image_rect, positions, texture_uv);
         return;
-    };
+    }
 
     let span_u = (source_uv[2] - source_uv[0]).abs().max(1e-6);
     let span_v = (source_uv[3] - source_uv[1]).abs().max(1e-6);
@@ -130,8 +120,9 @@ fn paint_projected_texture(
             let tx = gx as f32 / grid_x as f32;
             let raw_u = source_uv[0] + (source_uv[2] - source_uv[0]) * tx;
             let texture_u = texture_uv.left() + (texture_uv.right() - texture_uv.left()) * tx;
-            let corrected_uv =
-                native_source_to_corrected_uv(lens, source_width, source_height, [raw_u, raw_v]);
+            let corrected_uv = lens.map_or([raw_u, raw_v], |lens| {
+                native_source_to_corrected_uv(lens, source_width, source_height, [raw_u, raw_v])
+            });
             mesh.vertices.push(egui::epaint::Vertex {
                 pos: corrected_to_screen(corrected_uv),
                 uv: Pos2::new(texture_u, texture_v),
@@ -191,7 +182,7 @@ pub(super) fn paint_final_geometry_overlay_texture(
 }
 
 /// Paints on the uncropped crop-editing canvas, using `projection`'s geometry
-/// for rotation and perspective but not its crop.
+/// for perspective, rotation, skew and flips but not its crop.
 pub(super) fn paint_crop_workspace_texture(
     ui: &Ui,
     texture_id: egui::TextureId,

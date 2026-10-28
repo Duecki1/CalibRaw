@@ -69,7 +69,6 @@
             "builddir": true,
             "config-opts": [
                 "-DCMAKE_BUILD_TYPE=Release",
-                "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
                 "-DCMAKE_INSTALL_LIBDIR=lib",
                 "-DBUILD_STATIC=OFF",
                 "-DBUILD_TESTS=OFF",
@@ -86,8 +85,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://github.com/lensfun/lensfun/archive/refs/tags/v0.3.4.tar.gz",
-                    "sha256": "dafb39c08ef24a0e2abd00d05d7341b1bf1f0c38bfcd5a4c69cf5f0ecb6db112"
+                    "url": "https://github.com/lensfun/lensfun/archive/bc5615d6278cb5fb75dd53e74015367453d5591d.tar.gz",
+                    "sha256": "b56bff238bd9b8f6e517785de9361a11608f0d2afbfa9e21ce4a33d69d5c2046"
                 }
             ]
         },

@@ -16,20 +16,16 @@ pub(in crate::ui::preview) fn editable_source_uv(uv: [f32; 2]) -> Option<[f32; 2
     Some([uv[0].clamp(0.0, 1.0), uv[1].clamp(0.0, 1.0)])
 }
 
-/// The crop workspace applies rotation, shear and flips about the image
-/// centre, so the image stays put while the crop changes. The stored crop is
-/// relative to the same transform about the crop centre; the two frames differ
-/// only by where the crop centre lands. This returns `crop` in workspace
-/// coordinates: normalized source units before quarter turns, same size.
+/// `crop` (stored, normalized to the corrected frame) in crop workspace coordinates: normalized
+/// to the frame before quarter turns, with the rotation, skews and flips applied about the
+/// frame centre, so the image stays put while the crop changes (see [`GeometryMapping`]).
 pub(in crate::ui::preview) fn crop_to_workspace(
     geometry: GeometryTransform,
     crop: [f32; 4],
     source_width: u32,
     source_height: u32,
 ) -> [f32; 4] {
-    map_crop_center(crop, source_width, source_height, |dx, dy| {
-        geometry_forward_affine(geometry, dx, dy)
-    })
+    GeometryMapping::new(geometry, source_width, source_height).workspace_crop(crop)
 }
 
 /// The inverse of [`crop_to_workspace`].
@@ -39,36 +35,7 @@ pub(in crate::ui::preview) fn crop_from_workspace(
     source_width: u32,
     source_height: u32,
 ) -> [f32; 4] {
-    map_crop_center(crop, source_width, source_height, |dx, dy| {
-        geometry_inverse_affine(geometry, dx, dy)
-    })
-}
-
-/// Moves the centre of `crop` by `map` applied to its pixel offset from the
-/// image centre, keeping the crop's size.
-fn map_crop_center(
-    crop: [f32; 4],
-    source_width: u32,
-    source_height: u32,
-    map: impl Fn(f32, f32) -> [f32; 2],
-) -> [f32; 4] {
-    let source_width_f = source_width.max(1) as f32;
-    let source_height_f = source_height.max(1) as f32;
-    let offset = map(
-        ((crop[0] + crop[2]) * 0.5 - 0.5) * source_width_f,
-        ((crop[1] + crop[3]) * 0.5 - 0.5) * source_height_f,
-    );
-    let center = [
-        0.5 + offset[0] / source_width_f,
-        0.5 + offset[1] / source_height_f,
-    ];
-    let half = [(crop[2] - crop[0]) * 0.5, (crop[3] - crop[1]) * 0.5];
-    [
-        center[0] - half[0],
-        center[1] - half[1],
-        center[0] + half[0],
-        center[1] + half[1],
-    ]
+    GeometryMapping::new(geometry, source_width, source_height).stored_crop(crop)
 }
 
 pub(in crate::ui::preview) fn crop_workspace_source_to_screen(
@@ -78,32 +45,10 @@ pub(in crate::ui::preview) fn crop_workspace_source_to_screen(
     source_height: u32,
     source_uv: [f32; 2],
 ) -> Pos2 {
-    let geometry = geometry.sanitized();
-    let source_width_f = source_width.max(1) as f32;
-    let source_height_f = source_height.max(1) as f32;
-    let [center_x, center_y] = [source_width_f * 0.5, source_height_f * 0.5];
-    let source_x = source_uv[0] * source_width_f;
-    let source_y = source_uv[1] * source_height_f;
-    let transformed = geometry_forward_affine(geometry, source_x - center_x, source_y - center_y);
-    let pre_quarter = [center_x + transformed[0], center_y + transformed[1]];
-    let canvas_point = quarter_rotate_image_point(
-        geometry.quarter_turns,
-        source_width_f,
-        source_height_f,
-        pre_quarter,
-    );
-    let (canvas_width, canvas_height) = if geometry.quarter_turns.is_multiple_of(2) {
-        (source_width_f, source_height_f)
-    } else {
-        (source_height_f, source_width_f)
-    };
-    normalized_to_screen(
-        image_rect,
-        [
-            canvas_point[0] / canvas_width,
-            canvas_point[1] / canvas_height,
-        ],
-    )
+    let canvas_uv = GeometryMapping::new(geometry, source_width, source_height)
+        .canvas_uv_from_source_uv()
+        .apply(source_uv);
+    normalized_to_screen(image_rect, canvas_uv)
 }
 
 pub(in crate::ui::preview) fn crop_workspace_screen_to_source(
@@ -113,32 +58,10 @@ pub(in crate::ui::preview) fn crop_workspace_screen_to_source(
     source_height: u32,
     screen: Pos2,
 ) -> [f32; 2] {
-    let geometry = geometry.sanitized();
-    let source_width_f = source_width.max(1) as f32;
-    let source_height_f = source_height.max(1) as f32;
-    let [center_x, center_y] = [source_width_f * 0.5, source_height_f * 0.5];
-    let (canvas_width, canvas_height) = if geometry.quarter_turns.is_multiple_of(2) {
-        (source_width_f, source_height_f)
-    } else {
-        (source_height_f, source_width_f)
-    };
-    let canvas_uv = screen_to_normalized_unclamped(image_rect, screen);
-    let canvas_point = [canvas_uv[0] * canvas_width, canvas_uv[1] * canvas_height];
-    let pre_quarter = quarter_unrotate_image_point(
-        geometry.quarter_turns,
-        source_width_f,
-        source_height_f,
-        canvas_point,
-    );
-    let source_delta = geometry_inverse_affine(
-        geometry,
-        pre_quarter[0] - center_x,
-        pre_quarter[1] - center_y,
-    );
-    [
-        (center_x + source_delta[0]) / source_width_f,
-        (center_y + source_delta[1]) / source_height_f,
-    ]
+    GeometryMapping::new(geometry, source_width, source_height)
+        .canvas_uv_from_source_uv()
+        .inverse()
+        .apply(screen_to_normalized_unclamped(image_rect, screen))
 }
 
 pub(in crate::ui::preview) fn source_uv_bbox(
@@ -281,40 +204,16 @@ pub(in crate::ui::preview) fn crop_preview_screen_rect(
     source_width: u32,
     source_height: u32,
 ) -> Rect {
-    let geometry = geometry.sanitized();
-    let source_width_f = source_width.max(1) as f32;
-    let source_height_f = source_height.max(1) as f32;
-    let crop = crop_to_workspace(geometry, geometry.crop, source_width, source_height);
-    let crop_center = [
-        (crop[0] + crop[2]) * 0.5 * source_width_f,
-        (crop[1] + crop[3]) * 0.5 * source_height_f,
-    ];
-    let display_center = quarter_rotate_image_point(
-        geometry.quarter_turns,
-        source_width_f,
-        source_height_f,
-        crop_center,
-    );
-    let crop_width = (crop[2] - crop[0]) * source_width_f;
-    let crop_height = (crop[3] - crop[1]) * source_height_f;
-    let (canvas_width, canvas_height, display_width, display_height) =
-        if geometry.quarter_turns.is_multiple_of(2) {
-            (source_width_f, source_height_f, crop_width, crop_height)
-        } else {
-            (source_height_f, source_width_f, crop_height, crop_width)
-        };
-    let center = normalized_to_screen(
-        image_rect,
-        [
-            display_center[0] / canvas_width,
-            display_center[1] / canvas_height,
-        ],
-    );
-    Rect::from_center_size(
-        center,
-        egui::vec2(
-            display_width / canvas_width * image_rect.width(),
-            display_height / canvas_height * image_rect.height(),
+    let mapping = GeometryMapping::new(geometry, source_width, source_height);
+    let crop = mapping.workspace_crop(geometry.sanitized().crop);
+    Rect::from_two_pos(
+        normalized_to_screen(
+            image_rect,
+            mapping.canvas_from_workspace([crop[0], crop[1]]),
+        ),
+        normalized_to_screen(
+            image_rect,
+            mapping.canvas_from_workspace([crop[2], crop[3]]),
         ),
     )
 }
@@ -362,31 +261,16 @@ pub(in crate::ui::preview) fn crop_source_handle_for_display(
     }
 }
 
-pub(in crate::ui::preview) fn crop_preview_pointer_to_source_normalized(
+/// The crop workspace position (see [`crop_to_workspace`]) under `pointer`.
+pub(in crate::ui::preview) fn crop_preview_pointer_to_workspace(
     image_rect: Rect,
-    quarter_turns: u8,
+    geometry: GeometryTransform,
     source_width: u32,
     source_height: u32,
     pointer: Pos2,
 ) -> [f32; 2] {
-    let source_width_f = source_width.max(1) as f32;
-    let source_height_f = source_height.max(1) as f32;
-    let (canvas_width, canvas_height) = if quarter_turns.is_multiple_of(2) {
-        (source_width_f, source_height_f)
-    } else {
-        (source_height_f, source_width_f)
-    };
-    let canvas_uv = screen_to_normalized_unclamped(image_rect, pointer);
-    let source_point = quarter_unrotate_image_point(
-        quarter_turns,
-        source_width_f,
-        source_height_f,
-        [canvas_uv[0] * canvas_width, canvas_uv[1] * canvas_height],
-    );
-    [
-        source_point[0] / source_width_f,
-        source_point[1] / source_height_f,
-    ]
+    GeometryMapping::new(geometry, source_width, source_height)
+        .workspace_from_canvas(screen_to_normalized_unclamped(image_rect, pointer))
 }
 
 pub(in crate::ui::preview) fn source_uv_inside_image(uv: [f32; 2]) -> bool {

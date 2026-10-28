@@ -411,9 +411,8 @@ impl CalibRawApp {
                 self.develop.exposure = loaded.rendered_exposure;
                 self.develop.geometry = loaded.geometry.sanitized();
                 self.develop_ui.crop_constraint_reference = None;
-                self.develop_ui.crop_drag = None;
-                self.develop_ui.straighten_tool_active = false;
-                self.develop_ui.straighten_drag = None;
+                self.develop_ui.set_crop_tool(CropTool::Crop);
+                self.develop_ui.perspective_guides.clear();
                 self.develop.geometry_revision = 0;
                 self.masks.stack = loaded.rendered_masks;
                 self.install_remove_edits(Arc::new(loaded.remove));

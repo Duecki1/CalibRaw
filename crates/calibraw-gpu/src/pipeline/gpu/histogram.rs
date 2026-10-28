@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::geometry::GeometryInverseMap;
+use crate::pipeline::geometry::GeometryMapping;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 const HISTOGRAM_BYTES: u64 = 4 * 256 * std::mem::size_of::<u32>() as u64;
@@ -23,27 +23,23 @@ pub struct PreviewHistogramGpu {
     pending: Option<Receiver<std::result::Result<(), wgpu::BufferAsyncError>>>,
 }
 
+/// The homography from histogram sample to source pixel (see `preview_histogram.wgsl`).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Sampling {
-    origin: [f32; 4],
-    step_x: [f32; 4],
-    step_y: [f32; 4],
+    /// Rows of the homography, each with one reserved.
+    source_from_sample: [[f32; 4]; 3],
     extent: [u32; 4],
 }
 
 impl Sampling {
     fn new(width: u32, height: u32, geometry: GeometryTransform) -> Self {
         let extent = [width.clamp(1, SAMPLE_EDGE), height.clamp(1, SAMPLE_EDGE)];
-        let map =
-            GeometryInverseMap::new_with_lens(geometry, None, width, height, extent[0], extent[1]);
-        let origin = map.source_position(0.0, 0.0);
-        let x = map.source_position(1.0, 0.0);
-        let y = map.source_position(0.0, 1.0);
+        let rows = GeometryMapping::new(geometry, width, height)
+            .source_pixel_from_output_pixel(extent[0], extent[1])
+            .rows();
         Self {
-            origin: [origin[0], origin[1], 0.0, 0.0],
-            step_x: [x[0] - origin[0], x[1] - origin[1], 0.0, 0.0],
-            step_y: [y[0] - origin[0], y[1] - origin[1], 0.0, 0.0],
+            source_from_sample: rows.map(|[x, y, w]| [x, y, w, 0.0]),
             extent: [extent[0], extent[1], 0, 0],
         }
     }

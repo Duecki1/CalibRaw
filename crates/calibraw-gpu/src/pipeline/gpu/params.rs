@@ -229,9 +229,11 @@ pub(super) struct EffectsUniforms {
     pub(super) sharpen: [f32; 4],
     // Radius of the shared Glow diffusion, reserved, reserved, reserved.
     pub(super) glow_diffusion: [f32; 4],
-    // The frame and calibration of Vignette effects.
+    // The frame and calibration of Vignette effects: the output width and height, two reserved,
+    // then the rows of the homography from normalized source to output position (0–1 across
+    // the output), each with one reserved.
     pub(super) vignette_frame: [f32; 4],
-    pub(super) vignette_transform: [f32; 4],
+    pub(super) vignette_projection: [[f32; 4]; 3],
     pub(super) vignette_dark_half_fit: [f32; 4],
     pub(super) vignette_dark_full_fit: [f32; 4],
     pub(super) vignette_light_half_fit: [f32; 4],
@@ -243,7 +245,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_384);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_416);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -620,54 +622,17 @@ impl GpuParams {
         scene_tone
     }
 
+    /// Places Vignette effects in the output frame of `geometry`: the shaders map each source
+    /// position to its output position.
     pub fn with_vignette_geometry(mut self, geometry: GeometryTransform) -> Self {
-        let geometry = geometry.sanitized();
-        let crop = geometry.crop;
-        let source_width = self.camera.full_width.max(1) as f32;
-        let source_height = self.camera.full_height.max(1) as f32;
-        let crop_width = ((crop[2] - crop[0]) * source_width).max(1e-6);
-        let crop_height = ((crop[3] - crop[1]) * source_height).max(1e-6);
-        let center_u = (crop[0] + crop[2]) * 0.5;
-        let center_v = (crop[1] + crop[3]) * 0.5;
-
-        let fx = if geometry.flip_horizontal { -1.0 } else { 1.0 };
-        let fy = if geometry.flip_vertical { -1.0 } else { 1.0 };
-        let shx = geometry.horizontal_transform.to_radians().tan();
-        let shy = geometry.vertical_transform.to_radians().tan();
-        let angle = geometry.rotation_degrees.to_radians();
-        let cos = angle.cos();
-        let sin = angle.sin();
-        let affine = [
-            cos * fx - sin * shy * fx,
-            cos * shx * fy - sin * fy,
-            sin * fx + cos * shy * fx,
-            sin * shx * fy + cos * fy,
-        ];
-        let quarter = match geometry.quarter_turns % 4 {
-            0 => [1.0, 0.0, 0.0, 1.0],
-            1 => [0.0, -1.0, 1.0, 0.0],
-            2 => [-1.0, 0.0, 0.0, -1.0],
-            _ => [0.0, 1.0, -1.0, 0.0],
-        };
-        let forward = [
-            quarter[0] * affine[0] + quarter[1] * affine[2],
-            quarter[0] * affine[1] + quarter[1] * affine[3],
-            quarter[2] * affine[0] + quarter[3] * affine[2],
-            quarter[2] * affine[1] + quarter[3] * affine[3],
-        ];
-        let (output_width, output_height) = if geometry.quarter_turns.is_multiple_of(2) {
-            (crop_width, crop_height)
-        } else {
-            (crop_height, crop_width)
-        };
-
-        self.effects.vignette_frame = [center_u, center_v, output_width, output_height];
-        self.effects.vignette_transform = [
-            forward[0] * source_width / output_width,
-            forward[1] * source_height / output_width,
-            forward[2] * source_width / output_height,
-            forward[3] * source_height / output_height,
-        ];
+        let mapping =
+            GeometryMapping::new(geometry, self.camera.full_width, self.camera.full_height);
+        let [output_width, output_height] = mapping.output_size();
+        self.effects.vignette_frame = [output_width, output_height, 0.0, 0.0];
+        self.effects.vignette_projection = mapping
+            .output_uv_from_source_uv()
+            .rows()
+            .map(|[x, y, w]| [x, y, w, 0.0]);
         self
     }
 

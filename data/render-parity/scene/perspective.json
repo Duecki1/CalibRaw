@@ -1,0 +1,19 @@
+{
+  "edits": {
+    "geometry": {
+      "aspect_stretch": 30.0,
+      "crop": [0.2,0.18,0.8,0.82],
+      "horizontal_transform": 4.0,
+      "perspective": {"focal_length_35mm": 28.0, "pitch_degrees": 14.0, "yaw_degrees": -8.0},
+      "quarter_turns": 3,
+      "rotation_degrees": -3.0
+    },
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Vignette"
+        }
+      ]
+    }
+  }
+}

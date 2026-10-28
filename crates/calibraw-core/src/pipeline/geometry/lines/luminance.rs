@@ -19,8 +19,7 @@ const MAX_PERCENTILE_SAMPLES: usize = 1 << 16;
 ///
 /// The raster is a uniform downscale of the source (the same bin size on both axes), so angles
 /// measured on it equal angles in source pixels. When the source carries a lens geometry map the
-/// raster is resampled into corrected space, matching what [`super::super::GeometryInverseMap`]
-/// rotates.
+/// raster is resampled into corrected space, the space [`super::super::GeometryMapping`] maps.
 #[derive(Clone, Debug)]
 pub struct LineAnalysisImage {
     pub(super) width: usize,

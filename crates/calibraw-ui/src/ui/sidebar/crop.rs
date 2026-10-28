@@ -1,23 +1,18 @@
 use super::*;
-use crate::pipeline::{CropAspectRatio, GeometryTransform};
+use crate::app::{AutoGeometry, CropTool};
+use crate::pipeline::{CropAspectRatio, GeometryTransform, PerspectiveCorrection};
 
 impl Sidebar {
     pub(super) fn reset_crop(app: &mut CalibRawApp) {
         app.develop.geometry = GeometryTransform::default();
         app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
-        app.develop_ui.crop_drag = None;
-        app.develop_ui.straighten_tool_active = false;
-        app.develop_ui.straighten_drag = None;
+        app.develop_ui.set_crop_tool(CropTool::Crop);
+        app.develop_ui.perspective_guides.clear();
         app.note_geometry_changed();
     }
 
     pub(super) fn show_crop(ui: &mut Ui, app: &mut CalibRawApp, _layout: ScreenLayout) {
-        let source_dimensions = app
-            .develop
-            .loaded_raw
-            .as_ref()
-            .map(|raw| (raw.width, raw.height))
-            .unwrap_or((1, 1));
+        let source_dimensions = app.source_dimensions().unwrap_or((1, 1));
 
         let before = app.develop.geometry;
         if app.develop_ui.crop_constraint_reference.is_none() {
@@ -35,7 +30,9 @@ impl Sidebar {
                 output_height > output_width,
             );
             if app.develop.geometry.aspect_ratio != previous_aspect {
-                Self::apply_crop_aspect(app, source_dimensions.0, source_dimensions.1);
+                app.develop
+                    .geometry
+                    .conform_crop_to_aspect(source_dimensions.0, source_dimensions.1);
                 app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
             }
         });
@@ -87,7 +84,8 @@ impl Sidebar {
                     app.develop.geometry.flip_vertical = !app.develop.geometry.flip_vertical;
                 }
                 ui.separator();
-                let straighten_tooltip = if app.develop_ui.straighten_tool_active {
+                let straightening = app.develop_ui.crop_tool == CropTool::Straighten;
+                let straighten_tooltip = if straightening {
                     "Cancel straighten line"
                 } else {
                     "Draw straighten line: drag along a horizon or vertical edge in the preview to level it"
@@ -95,18 +93,20 @@ impl Sidebar {
                 if moduwu_design::ghost_icon_toggle_button(
                     ui,
                     egui_phosphor::regular::RULER,
-                    app.develop_ui.straighten_tool_active,
+                    straightening,
                     size,
                     straighten_tooltip,
                 )
                 .clicked()
                 {
-                    app.develop_ui.straighten_tool_active = !app.develop_ui.straighten_tool_active;
-                    app.develop_ui.straighten_drag = None;
-                    app.develop_ui.crop_drag = None;
+                    app.develop_ui.set_crop_tool(if straightening {
+                        CropTool::Crop
+                    } else {
+                        CropTool::Straighten
+                    });
                 }
                 if ui
-                    .add_enabled_ui(app.auto_straighten_available(), |ui| {
+                    .add_enabled_ui(app.auto_geometry_available(), |ui| {
                         moduwu_design::ghost_icon_button(
                             ui,
                             egui_phosphor::regular::MAGIC_WAND,
@@ -117,15 +117,14 @@ impl Sidebar {
                     .inner
                     .clicked()
                 {
-                    app.develop_ui.straighten_tool_active = false;
-                    app.develop_ui.straighten_drag = None;
-                    app.start_auto_straighten();
+                    app.develop_ui.set_crop_tool(CropTool::Crop);
+                    app.start_auto_geometry(AutoGeometry::Straighten);
                 }
             });
             AdjustmentSlider::new(
                 "Straighten",
                 &mut app.develop.geometry.rotation_degrees,
-                -45.0..=45.0,
+                -GeometryTransform::MAX_ROTATION_DEGREES..=GeometryTransform::MAX_ROTATION_DEGREES,
             )
             .decimals(1)
             .step(0.1)
@@ -134,39 +133,103 @@ impl Sidebar {
 
         moduwu_design::card_gap(ui);
         moduwu_design::section_card(ui, "Transform", |ui| {
-            AdjustmentSlider::new(
-                "Horizontal",
-                &mut app.develop.geometry.horizontal_transform,
-                -30.0..=30.0,
+            let size = moduwu_design::toolbar_icon_size();
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled_ui(app.auto_geometry_available(), |ui| {
+                        moduwu_design::ghost_icon_button(
+                            ui,
+                            egui_phosphor::regular::MAGIC_WAND,
+                            size,
+                            "Auto perspective: make vertical lines parallel and level the image",
+                        )
+                    })
+                    .inner
+                    .clicked()
+                {
+                    app.develop_ui.set_crop_tool(CropTool::Crop);
+                    app.start_auto_geometry(AutoGeometry::Perspective);
+                }
+                let guiding = app.develop_ui.crop_tool == CropTool::Guides;
+                let guides_tooltip = if guiding {
+                    "Stop drawing guides"
+                } else {
+                    "Guided perspective: draw up to four lines along edges that should be vertical or horizontal; right-click a line to remove it"
+                };
+                if moduwu_design::ghost_icon_toggle_button(
+                    ui,
+                    egui_phosphor::regular::LINE_SEGMENTS,
+                    guiding,
+                    size,
+                    guides_tooltip,
+                )
+                .clicked()
+                {
+                    app.develop_ui.set_crop_tool(if guiding {
+                        CropTool::Crop
+                    } else {
+                        CropTool::Guides
+                    });
+                }
+            });
+            let range = -PerspectiveCorrection::MAX_DEGREES..=PerspectiveCorrection::MAX_DEGREES;
+            let mut perspective = app.develop.geometry.displayed_perspective();
+            let mut perspective_changed = false;
+            for (label, value) in ["Vertical", "Horizontal"].into_iter().zip(&mut perspective) {
+                perspective_changed |= AdjustmentSlider::new(label, value, range.clone())
+                    .decimals(1)
+                    .step(0.1)
+                    .show(ui);
+            }
+            if perspective_changed {
+                // A new correction is made with this photo's lens; an existing one keeps its own.
+                if before.perspective.is_identity() {
+                    app.develop.geometry.perspective.focal_length_35mm =
+                        app.perspective_focal_length();
+                }
+                app.develop.geometry.set_displayed_perspective(perspective);
+            }
+            let mut aspect = app.develop.geometry.displayed_aspect_stretch();
+            if AdjustmentSlider::new(
+                "Aspect",
+                &mut aspect,
+                -GeometryTransform::MAX_ASPECT_STRETCH..=GeometryTransform::MAX_ASPECT_STRETCH,
             )
-            .decimals(1)
-            .step(0.1)
-            .show(ui);
-            AdjustmentSlider::new(
-                "Vertical",
-                &mut app.develop.geometry.vertical_transform,
-                -30.0..=30.0,
-            )
-            .decimals(1)
-            .step(0.1)
-            .show(ui);
+            .decimals(0)
+            .step(1.0)
+            .show(ui)
+            {
+                app.develop.geometry.set_displayed_aspect_stretch(aspect);
+            }
+            let skew_range =
+                -GeometryTransform::MAX_SKEW_DEGREES..=GeometryTransform::MAX_SKEW_DEGREES;
+            let geometry = &mut app.develop.geometry;
+            for (label, value) in [
+                ("Horizontal skew", &mut geometry.horizontal_skew_degrees),
+                ("Vertical skew", &mut geometry.vertical_skew_degrees),
+            ] {
+                AdjustmentSlider::new(label, value, skew_range.clone())
+                    .decimals(1)
+                    .step(0.1)
+                    .show(ui);
+            }
         });
 
         app.develop.geometry = app.develop.geometry.sanitized();
+        let geometry = app.develop.geometry;
         let containment_transform_changed =
-            (app.develop.geometry.rotation_degrees - before.rotation_degrees).abs() > 1e-6
-                || (app.develop.geometry.horizontal_transform - before.horizontal_transform).abs()
-                    > 1e-6
-                || (app.develop.geometry.vertical_transform - before.vertical_transform).abs()
-                    > 1e-6;
+            (geometry.rotation_degrees - before.rotation_degrees).abs() > 1e-6
+                || (geometry.horizontal_skew_degrees - before.horizontal_skew_degrees).abs() > 1e-6
+                || (geometry.vertical_skew_degrees - before.vertical_skew_degrees).abs() > 1e-6
+                || geometry.perspective != before.perspective
+                || geometry.aspect_stretch != before.aspect_stretch;
         if containment_transform_changed {
-            if let Some(reference) = app.develop_ui.crop_constraint_reference {
-                app.develop.geometry.crop = reference;
-            }
+            app.refit_crop(source_dimensions.0, source_dimensions.1);
+        } else {
+            app.develop
+                .geometry
+                .fit_crop_inside_transformed_source(source_dimensions.0, source_dimensions.1);
         }
-        app.develop
-            .geometry
-            .fit_crop_inside_transformed_source(source_dimensions.0, source_dimensions.1);
         if app.develop.geometry != before {
             app.note_geometry_changed();
         }
@@ -217,31 +280,6 @@ impl Sidebar {
             });
             *ratio = CropAspectRatio::Custom { width, height };
         }
-    }
-
-    fn apply_crop_aspect(app: &mut CalibRawApp, source_width: u32, source_height: u32) {
-        let Some(target_normalized_ratio) = app
-            .develop
-            .geometry
-            .normalized_crop_aspect(source_width, source_height)
-        else {
-            return;
-        };
-        let crop = app.develop.geometry.crop;
-        let center_x = (crop[0] + crop[2]) * 0.5;
-        let center_y = (crop[1] + crop[3]) * 0.5;
-        let mut width = crop[2] - crop[0];
-        let mut height = crop[3] - crop[1];
-        if width / height.max(f32::EPSILON) > target_normalized_ratio {
-            width = height * target_normalized_ratio;
-        } else {
-            height = width / target_normalized_ratio;
-        }
-        width = width.clamp(GeometryTransform::MIN_CROP_EXTENT, 1.0);
-        height = height.clamp(GeometryTransform::MIN_CROP_EXTENT, 1.0);
-        let left = (center_x - width * 0.5).clamp(0.0, 1.0 - width);
-        let top = (center_y - height * 0.5).clamp(0.0, 1.0 - height);
-        app.develop.geometry.crop = [left, top, left + width, top + height];
     }
 }
 

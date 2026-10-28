@@ -37,7 +37,10 @@ jobs:
               mingw-w64-x86_64-lcms2
               mingw-w64-x86_64-libjpeg-turbo
               mingw-w64-x86_64-zlib
-            lensfun_package: mingw-w64-x86_64-lensfun
+            lensfun_deps: >-
+              mingw-w64-x86_64-cmake
+              mingw-w64-x86_64-glib2
+              mingw-w64-x86_64-ninja
             compiler: x86_64-w64-mingw32-gcc
             cxx_compiler: x86_64-w64-mingw32-g++
             artifact_arch: x86_64
@@ -55,7 +58,10 @@ jobs:
               mingw-w64-clang-aarch64-lcms2
               mingw-w64-clang-aarch64-libjpeg-turbo
               mingw-w64-clang-aarch64-zlib
-            lensfun_package: mingw-w64-clang-aarch64-lensfun
+            lensfun_deps: >-
+              mingw-w64-clang-aarch64-cmake
+              mingw-w64-clang-aarch64-glib2
+              mingw-w64-clang-aarch64-ninja
             compiler: clang
             cxx_compiler: clang++
             artifact_arch: arm64
@@ -138,7 +144,7 @@ jobs:
             ${{ matrix.clang_package }}
             ${{ matrix.autotools_package }}
             ${{ matrix.libraw_deps }}
-            ${{ matrix.lensfun_package }}
+            ${{ matrix.lensfun_deps }}
 
       # MSYS2's LibRaw package is a release that lacks newer cameras, so build
       # the pinned commit into the MSYS2 prefix, where packaging finds its DLL.
@@ -149,6 +155,15 @@ jobs:
             --host="$MINGW_CHOST" \
             CC=${{ matrix.compiler }} \
             CXX=${{ matrix.cxx_compiler }}
+
+      # MSYS2's Lensfun package is the 0.3.4 release, so build the pinned
+      # commit into the MSYS2 prefix as well.
+      - name: Build pinned Lensfun
+        run: |
+          bash scripts/build_lensfun.sh ${{ matrix.msys_prefix }} \
+            -G Ninja \
+            -DCMAKE_C_COMPILER=${{ matrix.compiler }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cxx_compiler }}
 
       - name: Verify native dependencies
         run: |
@@ -161,6 +176,7 @@ jobs:
           rustc --version
           pkg-config --modversion libraw || pkg-config --modversion libraw_r
           pkg-config --modversion lensfun
+          cat ${{ matrix.msys_prefix }}/share/calibraw/lensfun-revision
           test -f ${{ matrix.msys_prefix }}/bin/libclang.dll
 
       - name: Test LibRaw Unicode paths
@@ -291,7 +307,7 @@ jobs:
           done
 
           libraw_version="$(pkg-config --modversion libraw 2>/dev/null || pkg-config --modversion libraw_r) ($(cat ${{ matrix.msys_prefix }}/share/calibraw/libraw-revision))"
-          lensfun_version="$(pkg-config --modversion lensfun)"
+          lensfun_version="$(pkg-config --modversion lensfun) ($(cat ${{ matrix.msys_prefix }}/share/calibraw/lensfun-revision))"
           {
             echo "CalibRaw Windows ${{ matrix.artifact_arch }} build"
             echo "Source revision: $(git rev-parse --verify HEAD)"

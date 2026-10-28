@@ -43,6 +43,8 @@ impl LensfunLens {
 pub struct LensfunCatalog {
     pub available: bool,
     pub camera_label: String,
+    /// The matched camera's sensor diagonal relative to 35 mm film.
+    pub camera_crop_factor: Option<f32>,
     pub lenses: Vec<LensfunLens>,
     pub auto_match: Option<LensfunLens>,
     pub status: String,

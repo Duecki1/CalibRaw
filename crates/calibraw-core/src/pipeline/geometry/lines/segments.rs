@@ -20,24 +20,24 @@ const MAGNITUDE_BINS: usize = 1024;
 
 /// A straight edge in raster pixel coordinates (x right, y down, pixel centres on integers).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct LineSegment {
-    pub(super) start: [f32; 2],
-    pub(super) end: [f32; 2],
+pub(in crate::pipeline::geometry) struct LineSegment {
+    pub(in crate::pipeline::geometry) start: [f32; 2],
+    pub(in crate::pipeline::geometry) end: [f32; 2],
 }
 
 impl LineSegment {
-    pub(super) fn delta(self) -> [f32; 2] {
+    pub(in crate::pipeline::geometry) fn delta(self) -> [f32; 2] {
         [self.end[0] - self.start[0], self.end[1] - self.start[1]]
     }
 
-    pub(super) fn midpoint(self) -> [f32; 2] {
+    pub(in crate::pipeline::geometry) fn midpoint(self) -> [f32; 2] {
         [
             (self.start[0] + self.end[0]) * 0.5,
             (self.start[1] + self.end[1]) * 0.5,
         ]
     }
 
-    pub(super) fn length(self) -> f32 {
+    pub(in crate::pipeline::geometry) fn length(self) -> f32 {
         let [dx, dy] = self.delta();
         dx.hypot(dy)
     }

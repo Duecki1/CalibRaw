@@ -306,8 +306,14 @@ impl Preview {
             input
                 .geometry
                 .crop_pixel_dimensions(source_size.0, source_size.1)
-        } else if crop_preview && input.geometry.quarter_turns % 2 == 1 {
-            (source_size.1, source_size.0)
+        } else if crop_preview {
+            // The canvas shows the corrected frame, which perspective makes larger than the
+            // source and the aspect stretches.
+            let [width, height] =
+                GeometryMapping::new(input.geometry, source_size.0, source_size.1)
+                    .canvas_size()
+                    .map(|extent| extent.round().max(1.0) as u32);
+            (width, height)
         } else {
             source_size
         };

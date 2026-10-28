@@ -172,9 +172,11 @@ struct EffectsUniforms {
     sharpen: vec4<f32>,
     // Radius of the shared Glow diffusion, reserved, reserved, reserved.
     glow_diffusion: vec4<f32>,
-    // The frame and calibration of Vignette effects.
+    // The frame and calibration of Vignette effects: the output width and height, two reserved,
+    // then the rows of the homography from normalized source to output position (0–1 across
+    // the output), each with one reserved.
     vignette_frame: vec4<f32>,
-    vignette_transform: vec4<f32>,
+    vignette_projection: array<vec4<f32>, 3>,
     vignette_dark_half_fit: vec4<f32>,
     vignette_dark_full_fit: vec4<f32>,
     vignette_light_half_fit: vec4<f32>,

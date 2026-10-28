@@ -1,10 +1,12 @@
-//! `GeometryInverseMap`: output pixel to source position through crop, rotation and lens maps.
+//! `GeometryInverseMap`: output pixel to source position through the geometry and lens maps.
 
 use super::*;
 
 #[derive(Clone, Copy, Debug)]
 pub struct GeometryInverseMap<'a> {
-    pub(super) geometry: GeometryTransform,
+    /// Output pixel to lens-corrected source pixel.
+    source_from_output: Homography,
+    projective: bool,
     lens_geometry: Option<&'a LensGeometryMap>,
     source_width: u32,
     source_height: u32,
@@ -13,24 +15,6 @@ pub struct GeometryInverseMap<'a> {
 }
 
 impl<'a> GeometryInverseMap<'a> {
-    #[cfg(test)]
-    pub fn new(
-        geometry: GeometryTransform,
-        source_width: u32,
-        source_height: u32,
-        output_width: u32,
-        output_height: u32,
-    ) -> Self {
-        Self::new_with_lens(
-            geometry,
-            None,
-            source_width,
-            source_height,
-            output_width,
-            output_height,
-        )
-    }
-
     pub fn new_with_lens(
         geometry: GeometryTransform,
         lens_geometry: Option<&'a LensGeometryMap>,
@@ -39,8 +23,11 @@ impl<'a> GeometryInverseMap<'a> {
         output_width: u32,
         output_height: u32,
     ) -> Self {
+        let geometry = geometry.sanitized();
         Self {
-            geometry: geometry.sanitized(),
+            source_from_output: GeometryMapping::new(geometry, source_width, source_height)
+                .source_pixel_from_output_pixel(output_width, output_height),
+            projective: !geometry.perspective.is_identity(),
             lens_geometry,
             source_width: source_width.max(1),
             source_height: source_height.max(1),
@@ -49,10 +36,14 @@ impl<'a> GeometryInverseMap<'a> {
         }
     }
 
+    /// Whether one Jacobian holds for every output pixel: without lens correction and
+    /// perspective the map is affine.
+    pub fn is_affine(self) -> bool {
+        self.lens_geometry.is_none() && !self.projective
+    }
+
     pub fn source_position(self, output_x: f32, output_y: f32) -> [f32; 2] {
-        let output_u = (output_x + 0.5) / self.output_width as f32;
-        let output_v = (output_y + 0.5) / self.output_height as f32;
-        let corrected = self.corrected_position_normalized(output_u, output_v);
+        let corrected = self.source_from_output.apply([output_x, output_y]);
         if corrected[0] < -0.5
             || corrected[1] < -0.5
             || corrected[0] > self.source_width as f32 - 0.5
@@ -106,47 +97,6 @@ impl<'a> GeometryInverseMap<'a> {
             [(step[0] - origin[0]) * sign, (step[1] - origin[1]) * sign]
         };
         [jx, jy]
-    }
-
-    fn corrected_position_normalized(self, output_u: f32, output_v: f32) -> [f32; 2] {
-        let geometry = self.geometry;
-        let crop = geometry.crop;
-        let source_width = self.source_width as f32;
-        let source_height = self.source_height as f32;
-        let crop_width = (crop[2] - crop[0]) * source_width;
-        let crop_height = (crop[3] - crop[1]) * source_height;
-        let center_x = (crop[0] + crop[2]) * 0.5 * source_width;
-        let center_y = (crop[1] + crop[3]) * 0.5 * source_height;
-
-        let (u, v) = match geometry.quarter_turns % 4 {
-            0 => (output_u, output_v),
-            1 => (output_v, 1.0 - output_u),
-            2 => (1.0 - output_u, 1.0 - output_v),
-            _ => (1.0 - output_v, output_u),
-        };
-        let dx = (u - 0.5) * crop_width;
-        let dy = (v - 0.5) * crop_height;
-
-        let fx = if geometry.flip_horizontal { -1.0 } else { 1.0 };
-        let fy = if geometry.flip_vertical { -1.0 } else { 1.0 };
-        let shx = geometry.horizontal_transform.to_radians().tan();
-        let shy = geometry.vertical_transform.to_radians().tan();
-        let angle = geometry.rotation_degrees.to_radians();
-        let c = angle.cos();
-        let s = angle.sin();
-
-        let a = c * fx - s * shy * fx;
-        let b = c * shx * fy - s * fy;
-        let c2 = s * fx + c * shy * fx;
-        let d = s * shx * fy + c * fy;
-        let determinant = a * d - b * c2;
-        if determinant.abs() < 1e-6 {
-            return [center_x - 0.5, center_y - 0.5];
-        }
-        let source_dx = (d * dx - b * dy) / determinant;
-        let source_dy = (-c2 * dx + a * dy) / determinant;
-
-        [center_x + source_dx - 0.5, center_y + source_dy - 0.5]
     }
 }
 

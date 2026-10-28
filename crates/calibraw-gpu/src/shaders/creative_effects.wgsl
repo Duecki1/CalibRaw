@@ -79,13 +79,13 @@ fn full_image_uv(pos: vec2<i32>) -> vec2<f32> {
 }
 
 fn vignette_distance_from_center(pos: vec2<i32>, roundness: f32, center: vec2<f32>) -> f32 {
-    let dimensions = max(Common::effects_uniforms.vignette_frame.zw, vec2<f32>(1.0));
-    let source_delta = full_image_uv(pos) - Common::effects_uniforms.vignette_frame.xy;
-    let transform = Common::effects_uniforms.vignette_transform;
-    let frame_uv = vec2<f32>(
-        0.5 + transform.x * source_delta.x + transform.y * source_delta.y,
-        0.5 + transform.z * source_delta.x + transform.w * source_delta.y,
-    );
+    let dimensions = max(Common::effects_uniforms.vignette_frame.xy, vec2<f32>(1.0));
+    // The output position of this source position. The divisor is positive across the source,
+    // whose perspective correction keeps its vanishing line outside the frame.
+    let source = vec3<f32>(full_image_uv(pos), 1.0);
+    let projection = Common::effects_uniforms.vignette_projection;
+    let frame_uv = vec2<f32>(dot(projection[0].xyz, source), dot(projection[1].xyz, source))
+        / dot(projection[2].xyz, source);
     let p = abs((frame_uv - center) * 2.0);
     let frame_ellipse = length(p);
     let frame_rectangle = pow(pow(p.x, 8.0) + pow(p.y, 8.0), 1.0 / 8.0);

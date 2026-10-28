@@ -7,10 +7,10 @@ use crate::pipeline::{
     ExportSettings, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm,
     LensCorrection, LensfunCatalog, LensfunCorrections, LensfunLens, LoadedRaw,
     ManualLensCorrection, MaskGeometry, MaskImage, MaskKind, MaskRgbImage, MaskStack,
-    MobilePreviewRole, PipelineOptions, PreviewResourceShape, ProcessingQuality, ProcessingStage,
-    ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveBrushPoint, RemoveBrushStroke,
-    RemoveEditState, RemoveSceneContext, RetouchAlignment, RetouchStroke, RetouchTool,
-    SubjectRefinement, TileSpec, TiledExportJob, MAX_LOCAL_MASKS,
+    MobilePreviewRole, PerspectiveGuide, PipelineOptions, PreviewResourceShape, ProcessingQuality,
+    ProcessingStage, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveBrushPoint,
+    RemoveBrushStroke, RemoveEditState, RemoveSceneContext, RetouchAlignment, RetouchStroke,
+    RetouchTool, SubjectRefinement, TileSpec, TiledExportJob, MAX_LOCAL_MASKS,
 };
 use crate::platform::{Platform, PlatformCaps};
 use crate::sidecar::{
@@ -325,9 +325,10 @@ pub(crate) use interactive_preview::{shown_pipeline, InteractiveState};
 pub(crate) use preview_dispatch_gate::{Batch, PreviewDispatchGate};
 pub(crate) use preview_texture::{PreviewPipeline, TextureRetirement};
 pub(crate) use preview_viewport::PreviewViewportAction;
+mod geometry;
 mod processing_export;
-mod straighten;
-use straighten::AutoStraightenResult;
+pub(crate) use geometry::AutoGeometry;
+use geometry::AutoGeometryResult;
 mod tips;
 pub(crate) use tips::{ShownTip, TipPreferences};
 mod unsupported_gpu;

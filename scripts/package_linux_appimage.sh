@@ -13,7 +13,7 @@ test -f "$LENSFUN_SO"
 echo "Bundling LibRaw from $LIBRAW_SO"
 echo "Bundling Lensfun from $LENSFUN_SO"
 
-LENSFUN_DB="$(find /usr/share/lensfun -type f -name '*.xml' -printf '%h\n' | head -n 1)"
+LENSFUN_DB="$(find "$LENSFUN_PREFIX/share/lensfun" -type f -name '*.xml' -printf '%h\n' | head -n 1)"
 test -n "$LENSFUN_DB"
 
 rm -rf AppDir dist appimage-packaging

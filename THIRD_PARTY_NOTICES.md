@@ -115,11 +115,9 @@ balance preset database. It is covered by the darktable GPL-3.0-or-later notice
 above. The exact CalibRaw snapshot has SHA-256
 `a3cefd7cbd6ff107dc7c28f0b363b673aa4061d37180408d4ee4150ff8af5b0c`.
 
-Release packages include the Lensfun profile database. Lensfun licenses its
-database under
-[CC BY-SA 3.0](https://github.com/lensfun/lensfun/blob/v0.3.4/data/COPYING.CC_BY-SA_3.0).
-The database snapshot supplied by a desktop package manager can differ from the
-Lensfun library version.
+Release packages include the Lensfun profile database from the pinned Lensfun
+commit below. Lensfun licenses its database under
+[CC BY-SA 3.0](https://github.com/lensfun/lensfun/blob/bc5615d6278cb5fb75dd53e74015367453d5591d/data/COPYING.CC_BY-SA_3.0).
 
 ## Optional AI models
 
@@ -187,7 +185,7 @@ native components:
   Copyright LibRaw LLC and other named contributors. LibRaw is dual-licensed
   under LGPL-2.1 and CDDL-1.0; CalibRaw uses the
   [LGPL-2.1 option](https://github.com/LibRaw/LibRaw/blob/830ac963b40223c6a25add5be65036fa8d56e2d6/LICENSE.LGPL).
-- [Lensfun 0.3.4](https://github.com/lensfun/lensfun/tree/v0.3.4). The library
+- [Lensfun master at bc5615d](https://github.com/lensfun/lensfun/tree/bc5615d6278cb5fb75dd53e74015367453d5591d). The library
   is [LGPL-3.0](https://www.gnu.org/licenses/lgpl-3.0.html) and its separately
   packaged profile database is
   [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/legalcode).

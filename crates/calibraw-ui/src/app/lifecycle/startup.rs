@@ -165,8 +165,10 @@ impl CalibRawApp {
                 sidebar_open: true,
                 crop_constraint_reference: None,
                 crop_drag: None,
-                straighten_tool_active: false,
+                crop_tool: CropTool::Crop,
                 straighten_drag: None,
+                perspective_guides: Vec::new(),
+                guide_drag: None,
                 area_picker: None,
                 area_picker_drag: None,
                 adjustment_section: AdjustmentSection::default(),
@@ -454,6 +456,14 @@ impl CalibRawApp {
         if std::env::var_os("CALIBRAW_LENSFUN_DB").is_none() {
             match platform.lensfun_database_dir() {
                 Ok(Some(path)) => {
+                    // Android copied Lensfun 0.3.4's database into `version_1`;
+                    // the bundled `version_2` beside it replaces it.
+                    // migration: remove in v1.5.0. Listed in `calibraw_core`'s
+                    // `migrations`.
+                    let retired = path.join("version_1");
+                    if retired.is_dir() {
+                        Self::remove_retired_app_data(retired, "Lensfun 0.3.4 database");
+                    }
                     std::env::set_var("CALIBRAW_LENSFUN_DB", &path);
                     calibraw_core::diagnostics::record(format!(
                         "bundled Lensfun database materialized at {}",

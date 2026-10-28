@@ -39,8 +39,9 @@ jobs:
     env:
       CALIBRAW_REQUIRE_LENSFUN: "1"
       LIBRAW_PREFIX: /tmp/calibraw-libraw
-      PKG_CONFIG_PATH: /tmp/calibraw-libraw/lib/pkgconfig
-      LD_LIBRARY_PATH: /tmp/calibraw-libraw/lib
+      LENSFUN_PREFIX: /tmp/calibraw-lensfun
+      PKG_CONFIG_PATH: /tmp/calibraw-libraw/lib/pkgconfig:/tmp/calibraw-lensfun/lib/pkgconfig
+      LD_LIBRARY_PATH: /tmp/calibraw-libraw/lib:/tmp/calibraw-lensfun/lib
 
     steps:
       - name: Check out repository
@@ -56,10 +57,11 @@ jobs:
             ~/.cargo/git
             target
             /tmp/calibraw-libraw
+            /tmp/calibraw-lensfun
             /tmp/linuxdeploy-${{ matrix.linuxdeploy_arch }}.AppImage
-          key: calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-830ac96-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
+          key: calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-830ac96-lensfun-bc5615d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
           restore-keys: |
-            calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-830ac96-
+            calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-830ac96-lensfun-bc5615d-
 
       - name: Install Linux build dependencies
         shell: bash
@@ -79,6 +81,7 @@ jobs:
             automake \
             ca-certificates \
             clang \
+            cmake \
             curl \
             file \
             libasound2-dev \
@@ -89,8 +92,6 @@ jobs:
             libglib2.0-dev \
             libgl1-mesa-dev \
             libjpeg-dev \
-            liblensfun-dev \
-            liblensfun-data-v1 \
             libtool \
             libudev-dev \
             libwayland-dev \

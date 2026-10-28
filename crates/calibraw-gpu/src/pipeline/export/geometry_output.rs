@@ -122,8 +122,8 @@ impl<'a> GeometryResampler<'a> {
             output_width,
             output_height,
         );
-        let affine_filter = lens_geometry
-            .is_none()
+        let affine_filter = inverse_map
+            .is_affine()
             .then(|| geometry_filter_axes(inverse_map.pixel_jacobian()));
         Ok(Self {
             source,
@@ -141,7 +141,7 @@ impl<'a> GeometryResampler<'a> {
         rows: std::ops::Range<u32>,
         cancellation: &AtomicBool,
     ) -> Result<Vec<Vec<f32>>> {
-        // Lens correction, rotation and crop run after the last rendered tile.
+        // Lens correction, perspective, rotation and crop run after the last rendered tile.
         // Process a bounded band across CPU cores without changing sampling order
         // within a pixel or the row order seen by sharpening and the encoder.
         rows.into_par_iter()

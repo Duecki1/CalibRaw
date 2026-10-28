@@ -620,8 +620,7 @@ impl CalibRawApp {
             // changes refit, and a drag from the replaced view must not
             // continue against it.
             self.develop_ui.crop_constraint_reference = Some(self.develop.geometry.crop);
-            self.develop_ui.crop_drag = None;
-            self.develop_ui.straighten_drag = None;
+            self.develop_ui.cancel_crop_drags();
             self.note_geometry_changed();
         }
         self.rehydrate_restored_mask_state();
