@@ -228,7 +228,7 @@ fn prepare_desktop_library_export_item(
     let remove = Arc::unwrap_or_clone(edits.remove);
     let mut masks = Arc::unwrap_or_clone(edits.masks);
     if needs_canonical_mask_source(&masks) {
-        let neutral_exposure = ExposureParams::scene_referred_default();
+        let neutral_exposure = edits.exposure.source_reference();
         if raw.uses_opposed_chroma(&neutral_exposure) {
             raw.inpaint_opposed_chroma_for_exposure(&neutral_exposure);
         }

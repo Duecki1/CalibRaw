@@ -798,7 +798,7 @@ impl CalibRawApp {
         self.select_look_lut(None);
         self.develop.exposure = exposure;
         self.develop_ui.point_color = Default::default();
-        self.develop_ui.cancel_white_balance_picker();
+        self.develop_ui.cancel_area_picker();
         self.mark_pipeline_dirty();
     }
 }

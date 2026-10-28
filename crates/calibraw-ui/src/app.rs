@@ -295,6 +295,8 @@ mod background_tasks;
 mod eframe_impl;
 mod error_dialogs;
 pub(crate) use error_dialogs::{ErrorDialogQueue, ErrorKind};
+mod film_negative;
+pub(crate) use film_negative::FILM_NEGATIVE_CARD_TITLE;
 mod foreground;
 mod gpu_recovery;
 mod hover_preview;

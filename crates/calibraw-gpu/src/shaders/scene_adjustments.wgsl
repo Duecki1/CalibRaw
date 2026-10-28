@@ -217,6 +217,16 @@ fn local_curve_tangent(mask_index: u32, curve: u32, index: u32, count: u32) -> f
     return Tonemap::tone_curve_interior_tangent(previous, next);
 }
 
+// As Tonemap::tone_curve_floor, for a mask's curve.
+fn local_curve_floor(mask_index: u32, curve: u32) -> f32 {
+    let count = u32(clamp(local_curve_block(mask_index, curve, 8u).x, 2.0, 16.0));
+    var lowest = local_curve_point(mask_index, curve, 0u).y;
+    for (var index = 1u; index < count; index = index + 1u) {
+        lowest = min(lowest, local_curve_point(mask_index, curve, index).y);
+    }
+    return lowest;
+}
+
 fn local_curve_value(mask_index: u32, curve: u32, input: f32) -> f32 {
     let count = u32(clamp(local_curve_block(mask_index, curve, 8u).x, 2.0, 16.0));
     let x = clamp(input, 0.0, 1.0);
@@ -276,6 +286,7 @@ fn apply_local_curves_for_mask(mask_index: u32, input_rgb: vec3<f32>) -> vec3<f3
         adjusted = Tonemap::remap_scene_luminance(
             adjusted,
             curved,
+            Tonemap::scene_curve_decode(local_curve_floor(mask_index, 0u)),
             black_luminance,
             max(local_scene_curve_zero_slope(mask_index, 0u), 0.0),
         );

@@ -96,6 +96,7 @@ mod ai_update;
 mod crop;
 mod develop;
 mod export;
+mod film_negative;
 mod info;
 mod inpainting;
 mod look_lut;

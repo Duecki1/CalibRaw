@@ -172,7 +172,7 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
     )
     .map_err(|error| format!("could not prepare edited thumbnail rendering: {error:#}"))?;
     if crate::app::masks_have_missing_range_sources(&masks) {
-        let neutral_exposure = crate::pipeline::ExposureParams::scene_referred_default();
+        let neutral_exposure = edits.exposure.source_reference();
         let neutral_masks = MaskStack::default();
         let neutral_params = GpuParams::new(&neutral_exposure, &neutral_masks, &preview_raw);
         pipeline.recompute(&gpu.queue, &gpu.device, &neutral_params);

@@ -7,6 +7,7 @@ mod chromatic_aberration;
 pub mod color_profile;
 mod display_raster;
 mod exif_metadata;
+pub mod film_negative;
 pub mod focus_stack;
 pub mod geometry;
 pub mod hdr;
@@ -39,6 +40,7 @@ pub use color_profile::{
     CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, SrgbOutputTransform,
     ToneCurve,
 };
+pub use film_negative::{FilmNegative, FilmSource, FilmStock};
 pub use geometry::{
     estimate_straighten_rotation, transform_thumbnail_geometry,
     transform_thumbnail_geometry_with_lens, CropAspectRatio, GeometryTransform, LensGeometryMap,

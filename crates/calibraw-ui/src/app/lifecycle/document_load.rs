@@ -305,6 +305,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 &queue,
                 &full_raw,
                 &preview_raw,
+                &exposure,
                 &mut masks,
             )?)
         } else {
@@ -1050,10 +1051,11 @@ fn reconstruct_canonical_mask_source(
     queue: &wgpu::Queue,
     full_raw: &LoadedRaw,
     preview_raw: &LoadedRaw,
+    exposure: &ExposureParams,
     masks: &mut MaskStack,
 ) -> Result<MaskRgbImage, String> {
     let started = Instant::now();
-    let reference_exposure = ExposureParams::scene_referred_default();
+    let reference_exposure = exposure.source_reference();
     if full_raw.uses_opposed_chroma(&reference_exposure) {
         full_raw.inpaint_opposed_chroma_for_exposure(&reference_exposure);
     }

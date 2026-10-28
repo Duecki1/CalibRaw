@@ -102,7 +102,7 @@ impl CalibRawApp {
         }
         if tab != SidebarTab::Adjustments {
             self.develop_ui.cancel_point_color_preview();
-            self.develop_ui.cancel_white_balance_picker();
+            self.develop_ui.cancel_area_picker();
         }
         if tab == SidebarTab::Masks {
             self.offer_tip(crate::ui::tips::Tip::MasksTab);

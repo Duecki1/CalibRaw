@@ -25,7 +25,7 @@ pub(crate) enum PreviewViewportAction {
     /// The source region in view; a larger one may need a sharper preview.
     SetVisibleUv(PreviewUvRect),
     NoteMotion,
-    EndWhiteBalancePickerDrag,
+    EndAreaPickerDrag,
     CancelMaskGesture,
     CancelCropDrag,
     CancelInpaintStroke,
@@ -151,8 +151,8 @@ impl CalibRawApp {
                 self.preview_source_region_changed();
             }
             PreviewViewportAction::NoteMotion => self.note_preview_motion(),
-            PreviewViewportAction::EndWhiteBalancePickerDrag => {
-                self.develop_ui.white_balance_picker_drag = None;
+            PreviewViewportAction::EndAreaPickerDrag => {
+                self.develop_ui.area_picker_drag = None;
             }
             PreviewViewportAction::CancelMaskGesture => self.cancel_mask_touch_gesture(),
             PreviewViewportAction::CancelCropDrag => {

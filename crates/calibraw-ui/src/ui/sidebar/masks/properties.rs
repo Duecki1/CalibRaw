@@ -188,7 +188,10 @@ impl Sidebar {
             components.remove(index);
             changed = true;
         }
-        if let Some(effect) = mask_effects::add_effect_button(ui, components) {
+        if let Some(effect) =
+            mask_effects::add_effect_button(ui, components, mask_effects::FilmNegativeTile::Hidden)
+                .and_then(mask_effects::EffectPick::effect)
+        {
             components.push(crate::pipeline::EffectComponent::new(effect));
             moduwu_design::request_scroll_into_view(
                 ui.ctx(),

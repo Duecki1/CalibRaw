@@ -221,9 +221,14 @@ pub fn transfer_edits(
         destination.ai_masks_need_update |= destination.masks.scene_depth_missing();
     }
     if selection.raw_processing {
+        let film_changed = destination.exposure.film != source.exposure.film;
         destination
             .exposure
             .copy_raw_processing_from(&source.exposure);
+        // Mask sources develop the positive (`ExposureParams::source_reference`).
+        if film_changed && !destination.masks.content_dependencies().is_empty() {
+            destination.ai_masks_need_update = true;
+        }
     }
     if selection.geometry {
         destination.geometry = source.geometry;

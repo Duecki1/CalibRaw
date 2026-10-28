@@ -44,7 +44,7 @@ fn physical_pixels_per_point(ctx: &egui::Context) -> f32 {
         .max(0.1)
 }
 
-fn white_balance_picker_owns_canvas(sidebar_tab: SidebarTab, picker_active: bool) -> bool {
+fn area_picker_owns_canvas(sidebar_tab: SidebarTab, picker_active: bool) -> bool {
     sidebar_tab == SidebarTab::Adjustments && picker_active
 }
 

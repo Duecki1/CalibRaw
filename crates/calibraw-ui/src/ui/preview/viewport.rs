@@ -64,7 +64,7 @@ pub(crate) struct PreviewViewportInput {
     geometry: GeometryTransform,
     sidebar_tab: SidebarTab,
     original_visible: bool,
-    white_balance_picker_active: bool,
+    area_picker_active: bool,
     point_color_picker_active: bool,
     zoom: f32,
     center: [f32; 2],
@@ -87,7 +87,7 @@ impl PreviewViewportInput {
             geometry: app.develop.geometry,
             sidebar_tab: app.ui.sidebar_tab,
             original_visible: app.preview.original_visible(),
-            white_balance_picker_active: app.develop_ui.white_balance_picker_active,
+            area_picker_active: app.develop_ui.area_picker.is_some(),
             point_color_picker_active: match app.ui.sidebar_tab {
                 SidebarTab::Masks => app.develop_ui.mask_point_color.picker_active,
                 _ => app.develop_ui.point_color.picker_active,
@@ -120,7 +120,7 @@ pub(crate) struct PreviewViewport {
     sidebar_tab: SidebarTab,
     crop_preview: bool,
     final_geometry_preview: bool,
-    white_balance_canvas: bool,
+    area_picker_canvas: bool,
     point_color_canvas: bool,
     brush_canvas: bool,
     touch_navigation: bool,
@@ -331,22 +331,22 @@ impl Preview {
         let zoom = zoom.clamp(MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM);
         clamp_preview_center(&mut center, outer_rect.size(), base_size * zoom);
 
-        let white_balance_canvas =
-            white_balance_picker_owns_canvas(input.sidebar_tab, input.white_balance_picker_active);
+        let area_picker_canvas =
+            area_picker_owns_canvas(input.sidebar_tab, input.area_picker_active);
         let point_color_canvas =
             point_color_picker_owns_canvas(input.sidebar_tab, input.point_color_picker_active);
-        if !white_balance_canvas {
-            actions.push(PreviewViewportAction::EndWhiteBalancePickerDrag);
+        if !area_picker_canvas {
+            actions.push(PreviewViewportAction::EndAreaPickerDrag);
         }
         let brush_canvas = matches!(
             input.sidebar_tab,
             SidebarTab::Masks | SidebarTab::Inpainting
-        ) || white_balance_canvas;
+        ) || area_picker_canvas;
         let response = Self::canvas_response(
             ui,
             outer_rect,
             input.sidebar_tab,
-            white_balance_canvas,
+            area_picker_canvas,
             point_color_canvas,
         );
 
@@ -384,7 +384,7 @@ impl Preview {
             sidebar_tab: input.sidebar_tab,
             crop_preview,
             final_geometry_preview,
-            white_balance_canvas,
+            area_picker_canvas,
             point_color_canvas,
             brush_canvas,
             touch_navigation,
@@ -410,7 +410,7 @@ impl Preview {
         if multi_touch.is_some() {
             actions.extend(Self::second_finger_cancellation(
                 input.sidebar_tab,
-                white_balance_canvas,
+                area_picker_canvas,
             ));
         }
         Some((viewport, actions))
@@ -453,7 +453,7 @@ impl Preview {
         ui: &mut Ui,
         interaction_rect: Rect,
         sidebar_tab: SidebarTab,
-        white_balance_canvas: bool,
+        area_picker_canvas: bool,
         point_color_canvas: bool,
     ) -> egui::Response {
         let interaction_id = match sidebar_tab {
@@ -462,15 +462,15 @@ impl Preview {
             }
             SidebarTab::Masks => ui.id().with("develop-preview-mask-interaction"),
             SidebarTab::Inpainting => ui.id().with("develop-preview-inpaint-interaction"),
-            SidebarTab::Adjustments if white_balance_canvas => {
-                ui.id().with("develop-preview-white-balance-interaction")
+            SidebarTab::Adjustments if area_picker_canvas => {
+                ui.id().with("develop-preview-area-picker-interaction")
             }
             SidebarTab::Adjustments if point_color_canvas => {
                 ui.id().with("develop-preview-point-color-interaction")
             }
             _ => ui.id().with("develop-preview-interaction"),
         };
-        let interaction_sense = if white_balance_canvas || point_color_canvas {
+        let interaction_sense = if area_picker_canvas || point_color_canvas {
             Sense::drag()
         } else {
             Sense::click_and_drag()
@@ -481,11 +481,10 @@ impl Preview {
     /// A second finger turns a tool gesture into navigation.
     fn second_finger_cancellation(
         sidebar_tab: SidebarTab,
-        white_balance_canvas: bool,
+        area_picker_canvas: bool,
     ) -> Option<PreviewViewportAction> {
-        Self::tool_gesture_cancellation(sidebar_tab).or_else(|| {
-            white_balance_canvas.then_some(PreviewViewportAction::EndWhiteBalancePickerDrag)
-        })
+        Self::tool_gesture_cancellation(sidebar_tab)
+            .or_else(|| area_picker_canvas.then_some(PreviewViewportAction::EndAreaPickerDrag))
     }
 
     /// Reverts the stroke or drag a press started with the tab's canvas tool.
@@ -516,7 +515,7 @@ impl Preview {
             Self::zoom_with_keyboard(ui, viewport);
         }
         Self::pan(ui, viewport, original_hold_tracking);
-        viewport.fit_gesture = !viewport.white_balance_canvas
+        viewport.fit_gesture = !viewport.area_picker_canvas
             && !viewport.point_color_canvas
             && !viewport.touch_navigation
             && moduwu_design::double_tapped(&viewport.response);
@@ -781,11 +780,11 @@ impl Preview {
         }
         Self::paint_inpaint_overlay(ui, app, layout);
 
-        if viewport.white_balance_canvas {
+        if viewport.area_picker_canvas {
             if !viewport.touch_navigation && !viewport.space_pan {
-                Self::handle_white_balance_picker(ui, app, layout, response);
+                Self::handle_area_picker(ui, app, layout, response);
             }
-            Self::paint_white_balance_picker(ui, app, layout);
+            Self::paint_area_picker(ui, app, layout);
         }
 
         if viewport.point_color_canvas {
@@ -810,7 +809,7 @@ impl Preview {
         // scroll.
         if gesture_free
             && !viewport.crop_preview
-            && !viewport.white_balance_canvas
+            && !viewport.area_picker_canvas
             && !viewport.point_color_canvas
         {
             let screen_layout =

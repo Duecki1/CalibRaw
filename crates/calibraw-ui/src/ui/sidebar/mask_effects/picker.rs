@@ -11,27 +11,59 @@ const TILE_ICON_SIZE: f32 = 20.0;
 const TILE_LABEL_SIZE: f32 = 11.5;
 /// The picker's width when its button is narrower, as the touch Add tab is.
 const PICKER_MIN_WIDTH: f32 = 264.0;
+const FILM_NEGATIVE_LABEL: &str = "Film negative";
+
+/// What an effect picker adds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::sidebar) enum EffectPick {
+    Effect(MaskEffect),
+    /// Develops the photo as the positive of a scanned film negative. It is
+    /// not an effect, but people look for it among them; only photo-wide
+    /// pickers offer it ([`FilmNegativeTile`]).
+    FilmNegative,
+}
+
+impl EffectPick {
+    pub(in crate::ui::sidebar) const fn effect(self) -> Option<MaskEffect> {
+        match self {
+            Self::Effect(effect) => Some(effect),
+            Self::FilmNegative => None,
+        }
+    }
+}
+
+/// Whether a picker shows the [`EffectPick::FilmNegative`] tile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::sidebar) enum FilmNegativeTile {
+    /// Mask pickers: a mask cannot develop part of a photo as a negative.
+    Hidden,
+    Offered,
+    /// The photo is developed as a negative already.
+    Added,
+}
 
 /// The add controls of an Effects card: a quick-add button per effect in
-/// `featured`, then [`add_effect_button`]. Returns the effect to add to
-/// `components`.
+/// `featured`, then [`add_effect_button`]. Returns what to add to
+/// `components` or the photo.
 pub(in crate::ui::sidebar) fn add_effect_controls(
     ui: &mut Ui,
     featured: &[MaskEffect],
     components: &[EffectComponent],
-) -> Option<MaskEffect> {
-    let featured_added = add_effect_buttons(ui, featured, components);
+    film_negative: FilmNegativeTile,
+) -> Option<EffectPick> {
+    let featured_added = add_effect_buttons(ui, featured, components).map(EffectPick::Effect);
     ui.add_space(moduwu_design::SPACE_XS);
-    let picked = add_effect_button(ui, components);
+    let picked = add_effect_button(ui, components, film_negative);
     featured_added.or(picked)
 }
 
 /// A full-width Add effect button that opens [`effect_picker_popup`].
-/// Disabled once `components` is full. Returns the picked effect.
+/// Disabled once `components` is full. Returns what was picked.
 pub(in crate::ui::sidebar) fn add_effect_button(
     ui: &mut Ui,
     components: &[EffectComponent],
-) -> Option<MaskEffect> {
+    film_negative: FilmNegativeTile,
+) -> Option<EffectPick> {
     let full = components.len() >= MAX_EFFECT_COMPONENTS;
     let response = ui
         .add_enabled_ui(!full, |ui| {
@@ -44,17 +76,18 @@ pub(in crate::ui::sidebar) fn add_effect_button(
         .on_disabled_hover_text(format!(
             "At most {MAX_EFFECT_COMPONENTS} effects can be added"
         ));
-    effect_picker_popup(&response, components)
+    effect_picker_popup(&response, components, film_negative)
 }
 
 /// Opens [`effect_picker`] when `button` is clicked, as wide as the button
 /// and at least [`PICKER_MIN_WIDTH`]. It opens on the side of the button with
-/// more room, and scrolls if it is taller than that room. Returns the picked
-/// effect.
+/// more room, and scrolls if it is taller than that room. Returns what was
+/// picked.
 pub(in crate::ui::sidebar) fn effect_picker_popup(
     button: &egui::Response,
     components: &[EffectComponent],
-) -> Option<MaskEffect> {
+    film_negative: FilmNegativeTile,
+) -> Option<EffectPick> {
     let screen = button.ctx.content_rect();
     let gap = moduwu_design::SPACE_XS;
     let room_above = button.rect.top() - screen.top();
@@ -76,20 +109,32 @@ pub(in crate::ui::sidebar) fn effect_picker_popup(
         .align_alternatives(&[])
         .gap(gap)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| effect_picker(ui, components, size))
+        .show(|ui| effect_picker(ui, components, film_negative, size))
         .and_then(|response| response.inner)
 }
 
+/// One tile of the picker.
+struct Tile {
+    pick: EffectPick,
+    label: &'static str,
+    icon: &'static str,
+    help: Option<&'static str>,
+    added: bool,
+    enabled: bool,
+}
+
 /// Every effect as a tile under its category's heading, filling a popup of
-/// at most `size`, to add one to `components`. An effect already in
+/// at most `size`, to add one to `components`; the film negative tile leads
+/// Film & Finish unless `film_negative` hides it. An effect already in
 /// `components` shows a check mark and is disabled; once `components` is
-/// full, every effect is disabled. Returns the clicked effect and closes the
-/// popup.
+/// full, every effect is disabled. Returns the clicked tile's pick and
+/// closes the popup.
 fn effect_picker(
     ui: &mut Ui,
     components: &[EffectComponent],
+    film_negative: FilmNegativeTile,
     size: egui::Vec2,
-) -> Option<MaskEffect> {
+) -> Option<EffectPick> {
     let full = components.len() >= MAX_EFFECT_COMPONENTS;
     // The popup frame's margin and border lie outside the contents.
     let size = size
@@ -122,30 +167,52 @@ fn effect_picker(
                     ui.add_space(moduwu_design::SPACE_SM);
                 }
                 category_heading(ui, category.label());
-                let effects: Vec<_> = MaskEffect::ALL
-                    .into_iter()
-                    .filter(|effect| effect.category() == Some(category))
-                    .collect();
-                for row in effects.chunks(TILES_PER_ROW) {
-                    ui.horizontal(|ui| {
-                        for &effect in row {
+                let mut tiles = Vec::new();
+                if category == MaskEffectCategory::FilmAndFinish
+                    && film_negative != FilmNegativeTile::Hidden
+                {
+                    let added = film_negative == FilmNegativeTile::Added;
+                    tiles.push(Tile {
+                        pick: EffectPick::FilmNegative,
+                        label: FILM_NEGATIVE_LABEL,
+                        icon: egui_phosphor::regular::FILM_STRIP,
+                        help: Some("Develop a scanned film negative as its positive."),
+                        added,
+                        enabled: !added,
+                    });
+                }
+                tiles.extend(
+                    MaskEffect::ALL
+                        .into_iter()
+                        .filter(|effect| effect.category() == Some(category))
+                        .map(|effect| {
                             let added = components
                                 .iter()
                                 .any(|component| component.effect == effect);
-                            let mut response =
-                                effect_tile(ui, effect, tile_size, added, !added && !full)
-                                    .on_disabled_hover_text(if added {
-                                        format!("{} is already added", effect.label())
-                                    } else {
-                                        format!(
-                                            "At most {MAX_EFFECT_COMPONENTS} effects can be added"
-                                        )
-                                    });
-                            if let Some(help) = effect_description(effect) {
+                            Tile {
+                                pick: EffectPick::Effect(effect),
+                                label: effect.label(),
+                                icon: effect_icon(effect),
+                                help: effect_description(effect),
+                                added,
+                                enabled: !added && !full,
+                            }
+                        }),
+                );
+                for row in tiles.chunks(TILES_PER_ROW) {
+                    ui.horizontal(|ui| {
+                        for tile in row {
+                            let mut response = effect_tile(ui, tile, tile_size)
+                                .on_disabled_hover_text(if tile.added {
+                                    format!("{} is already added", tile.label)
+                                } else {
+                                    format!("At most {MAX_EFFECT_COMPONENTS} effects can be added")
+                                });
+                            if let Some(help) = tile.help {
                                 response = response.on_hover_text(help);
                             }
                             if response.clicked() {
-                                picked = Some(effect);
+                                picked = Some(tile.pick);
                             }
                         }
                     });
@@ -183,24 +250,18 @@ fn category_heading(ui: &mut Ui, label: &str) {
     painter.galley(rect.left_top(), galley, ui.visuals().weak_text_color());
 }
 
-/// A button showing `effect`'s icon above its name, framed like the
-/// quick-add buttons. An `added` effect shows a check mark and reports itself
-/// selected to assistive technology.
-fn effect_tile(
-    ui: &mut Ui,
-    effect: MaskEffect,
-    size: egui::Vec2,
-    added: bool,
-    enabled: bool,
-) -> egui::Response {
-    ui.add_enabled_ui(enabled, |ui| {
+/// A button showing `tile`'s icon above its name, framed like the quick-add
+/// buttons. An added tile shows a check mark and reports itself selected to
+/// assistive technology.
+fn effect_tile(ui: &mut Ui, tile: &Tile, size: egui::Vec2) -> egui::Response {
+    ui.add_enabled_ui(tile.enabled, |ui| {
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::Button,
                 ui.is_enabled(),
-                added,
-                effect.label(),
+                tile.added,
+                tile.label,
             )
         });
         if !ui.is_rect_visible(rect) {
@@ -217,21 +278,20 @@ fn effect_tile(
         );
 
         let padding = ui.spacing().button_padding.x;
-        let label =
-            egui::WidgetText::from(egui::RichText::new(effect.label()).size(TILE_LABEL_SIZE))
-                .into_galley(
-                    ui,
-                    Some(egui::TextWrapMode::Truncate),
-                    rect.width() - 2.0 * padding,
-                    egui::TextStyle::Button,
-                );
+        let label = egui::WidgetText::from(egui::RichText::new(tile.label).size(TILE_LABEL_SIZE))
+            .into_galley(
+                ui,
+                Some(egui::TextWrapMode::Truncate),
+                rect.width() - 2.0 * padding,
+                egui::TextStyle::Button,
+            );
         // The icon and the name are centred as one block.
         let icon_gap = moduwu_design::SPACE_XXS;
         let top = rect.center().y - (TILE_ICON_SIZE + icon_gap + label.size().y) * 0.5;
         painter.text(
             egui::pos2(rect.center().x, top + TILE_ICON_SIZE * 0.5),
             egui::Align2::CENTER_CENTER,
-            effect_icon(effect),
+            tile.icon,
             egui::FontId::proportional(TILE_ICON_SIZE),
             visuals.foreground,
         );
@@ -243,7 +303,7 @@ fn effect_tile(
             label,
             visuals.foreground,
         );
-        if added {
+        if tile.added {
             painter.text(
                 rect.right_top() + egui::vec2(-padding, padding),
                 egui::Align2::RIGHT_TOP,

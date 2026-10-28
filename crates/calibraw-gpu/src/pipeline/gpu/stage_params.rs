@@ -70,6 +70,8 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
     } else {
         [1.0; 3]
     };
+    let (film_base, film_exponents, film_gains) =
+        pack_film(&exposure.film, raw, white_balance, camera_linear_raster);
     // The lateral shift grows linearly with the amount.
     let lateral_chromatic_aberration = |channel| {
         raw.lateral_chromatic_aberration
@@ -153,7 +155,88 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         ],
         lateral_ca_red: lateral_chromatic_aberration(LateralChannel::Red),
         lateral_ca_blue: lateral_chromatic_aberration(LateralChannel::Blue),
+        film_base,
+        film_exponents,
+        film_gains,
     }
+}
+
+/// The film-negative uniforms of `film` (`film_positive` in
+/// scene_source.wgsl): base, exponents and gains. `white_balance` holds the
+/// multipliers of this render. A mosaic's scene texture carries them, so the
+/// base is scaled into its units and the division by the base cancels them;
+/// a raster's scene does not. The positive then takes the white balance
+/// relative to the as-shot one, which leaves an as-shot positive neutral on
+/// the base, less what a camera-linear raster's camera transform applies.
+fn pack_film(
+    film: &FilmSource,
+    raw: &LoadedRaw,
+    white_balance: [f32; 4],
+    camera_linear_raster: bool,
+) -> ([f32; 4], [f32; 4], [f32; 4]) {
+    let Some(negative) = film.negative().map(|negative| negative.sanitized()) else {
+        return (
+            [0.0, 0.0, 0.0, FILM_MODE_POSITIVE as f32],
+            [0.0; 4],
+            [1.0, 1.0, 1.0, 0.0],
+        );
+    };
+    let mode = match negative.stock {
+        FilmStock::Color => FILM_MODE_COLOR,
+        FilmStock::BlackAndWhite => FILM_MODE_MONOCHROME,
+    };
+    let multiplier = |channel: usize| {
+        let gain = white_balance[channel];
+        if gain.is_finite() && gain > 0.0 {
+            gain
+        } else {
+            1.0
+        }
+    };
+    let relative = |channel: usize| {
+        let as_shot = raw.wb_coeffs[channel];
+        if as_shot.is_finite() && as_shot > 0.0 {
+            multiplier(channel) / as_shot
+        } else {
+            1.0
+        }
+    };
+    let scene_gain = |channel| {
+        if raw.is_pre_demosaiced_raster() {
+            1.0
+        } else {
+            multiplier(channel)
+        }
+    };
+    let transform_gain = |channel| {
+        if camera_linear_raster {
+            multiplier(channel)
+        } else {
+            1.0
+        }
+    };
+    let [red, green, blue] = negative.base;
+    let [red_exponent, green_exponent, blue_exponent] = negative.exponents;
+    (
+        [
+            red * scene_gain(0),
+            green * scene_gain(1),
+            blue * scene_gain(2),
+            mode as f32,
+        ],
+        [
+            red_exponent,
+            green_exponent,
+            blue_exponent,
+            negative.print_exposure,
+        ],
+        [
+            relative(0) / relative(1) / transform_gain(0),
+            1.0 / transform_gain(1),
+            relative(2) / relative(1) / transform_gain(2),
+            0.0,
+        ],
+    )
 }
 
 pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {

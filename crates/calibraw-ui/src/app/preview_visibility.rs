@@ -119,7 +119,9 @@ impl PreviewVisibility {
         let mut preview = saved;
         for (scope, title) in &self.hidden {
             if scope.is_none() {
-                if let Some(group) = Self::group(title) {
+                if *title == super::FILM_NEGATIVE_CARD_TITLE {
+                    preview.film = crate::pipeline::FilmSource::Positive;
+                } else if let Some(group) = Self::group(title) {
                     preview.reset_group(group);
                     if group == crate::pipeline::AdjustmentGroup::Detail {
                         preview.sharpen_amount = 0.0;

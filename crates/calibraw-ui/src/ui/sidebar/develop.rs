@@ -709,14 +709,14 @@ impl Sidebar {
         (changed, ai_request)
     }
 
-    /// The Effects card. Returns whether a slider changed and the effect its
-    /// add controls asked to add to `global_effects`.
+    /// The Effects card. Returns whether a slider changed and what its add
+    /// controls asked to add to `global_effects` or the photo.
     pub(super) fn show_presence(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         global_effects: &[crate::pipeline::EffectComponent],
         foldable: bool,
-    ) -> (bool, Option<MaskEffect>) {
+    ) -> (bool, Option<mask_effects::EffectPick>) {
         let mut changed = false;
         let mut added = None;
         let action = Self::adjustment_card(ui, "Effects", false, foldable, true, |ui| {
@@ -734,10 +734,16 @@ impl Sidebar {
                 .show(ui);
 
             moduwu_design::section_separator(ui);
+            let film_negative = if exposure.film.is_positive() {
+                mask_effects::FilmNegativeTile::Offered
+            } else {
+                mask_effects::FilmNegativeTile::Added
+            };
             added = mask_effects::add_effect_controls(
                 ui,
                 &mask_effects::FINISH_EFFECTS,
                 global_effects,
+                film_negative,
             );
         });
         changed |= action.apply(exposure, AdjustmentGroup::Effects);

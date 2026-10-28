@@ -1,0 +1,14 @@
+{
+  "edits": {
+    "exposure": {
+      "film": {
+        "negative": {
+          "stock": "color",
+          "base": [0.24, 0.5, 0.31],
+          "exponents": [1.9, 1.6666666, 1.45],
+          "print_exposure": -5.5
+        }
+      }
+    }
+  }
+}

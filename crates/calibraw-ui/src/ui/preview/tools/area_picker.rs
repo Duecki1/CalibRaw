@@ -1,7 +1,10 @@
 use super::super::*;
+use crate::app::AreaPicker;
 
 impl Preview {
-    pub(in crate::ui::preview) fn handle_white_balance_picker(
+    /// Drags out an area of the photo for the active [`AreaPicker`] and hands
+    /// it to that picker on release.
+    pub(in crate::ui::preview) fn handle_area_picker(
         ui: &Ui,
         app: &mut CalibRawApp,
         layout: PreviewLayout,
@@ -29,13 +32,13 @@ impl Preview {
                 .filter(|position| visible_rect.contains(*position))
                 .and_then(|position| editable_source_uv(projection.to_source(position)))
             {
-                app.develop_ui.white_balance_picker_drag = Some([uv, uv]);
+                app.develop_ui.area_picker_drag = Some([uv, uv]);
             }
         } else if down || released {
             // ...but may be dragged past its edge, which pins that corner to
             // the edge rather than leaving it wherever the pointer last was.
             if let (Some(area), Some(position)) =
-                (app.develop_ui.white_balance_picker_drag.as_mut(), pointer)
+                (app.develop_ui.area_picker_drag.as_mut(), pointer)
             {
                 let uv = projection.to_source(image_rect.clamp(position));
                 if uv.iter().all(|value| value.is_finite()) {
@@ -46,27 +49,38 @@ impl Preview {
         }
 
         if released {
-            if let Some(area) = app.develop_ui.white_balance_picker_drag.take() {
-                app.apply_white_balance_area(area);
+            if let Some(area) = app.develop_ui.area_picker_drag.take() {
+                match app.develop_ui.area_picker {
+                    Some(AreaPicker::WhiteBalance) => {
+                        app.apply_white_balance_area(area);
+                    }
+                    Some(AreaPicker::FilmBase) => app.apply_film_base_area(area),
+                    None => {}
+                }
             }
         }
     }
 
-    pub(in crate::ui::preview) fn paint_white_balance_picker(
+    pub(in crate::ui::preview) fn paint_area_picker(
         ui: &Ui,
         app: &CalibRawApp,
         layout: PreviewLayout,
     ) {
         let PreviewLayout { visible_rect, .. } = layout;
         let painter = ui.painter_at(visible_rect);
+        let hint = match app.develop_ui.area_picker {
+            Some(AreaPicker::WhiteBalance) => "Drag over a neutral gray or white area",
+            Some(AreaPicker::FilmBase) => "Drag over unexposed film, such as the frame border",
+            None => return,
+        };
         painter.text(
             visible_rect.left_top() + egui::vec2(12.0, 12.0),
             egui::Align2::LEFT_TOP,
-            "Drag over a neutral gray or white area",
+            hint,
             egui::FontId::proportional(13.0),
             Color32::WHITE,
         );
-        let Some(area) = app.develop_ui.white_balance_picker_drag else {
+        let Some(area) = app.develop_ui.area_picker_drag else {
             return;
         };
         let projection = layout.projection(
