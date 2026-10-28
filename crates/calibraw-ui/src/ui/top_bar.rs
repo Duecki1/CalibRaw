@@ -386,10 +386,13 @@ impl TopBar {
                 egui::Label::new(egui::RichText::new(zoom_text).monospace())
                     .sense(egui::Sense::click()),
             );
-            egui::Popup::menu(&readout_response).show(|ui| {
+            moduwu_design::dropdown_menu(&readout_response, |ui| {
                 for (label, scale) in DEVELOP_ZOOM_PRESETS {
                     let available = scale.is_none() || native_zoom.is_some();
-                    if moduwu_design::menu_item(ui, available, label).clicked() {
+                    if ui
+                        .add_enabled(available, moduwu_design::MenuItem::new(label))
+                        .clicked()
+                    {
                         match scale.zip(native_zoom) {
                             Some((scale, native)) => requested_zoom = Some(scale * native),
                             None => reset_requested = true,

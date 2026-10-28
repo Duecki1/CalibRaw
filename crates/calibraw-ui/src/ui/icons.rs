@@ -1,4 +1,4 @@
-use eframe::egui::{self, Response, RichText, Ui, Vec2};
+use eframe::egui::{self, Response, Sense, Ui, Vec2};
 use egui_phosphor::regular;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,35 +26,35 @@ pub(crate) fn icon_toggle_button(
     moduwu_design::ghost_icon_toggle_button(ui, icon.glyph(), selected, size, tooltip)
 }
 
-pub(crate) fn folder_disclosure_size() -> Vec2 {
-    egui::vec2(
-        if crate::platform::PlatformCaps::CURRENT.is_mobile() {
-            30.0
+/// One folder of a folder tree, `depth` levels below its top folder.
+/// `expanded` is `None` for a folder without subfolders.
+pub(crate) fn folder_tree_row(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    name: &str,
+    depth: usize,
+    expanded: Option<bool>,
+    selected: bool,
+    sense: Sense,
+) -> moduwu_design::TreeRowResponse {
+    let open = expanded == Some(true);
+    let mut response = moduwu_design::TreeRow::new(id_salt, name)
+        .depth(depth)
+        .expanded(expanded)
+        .icon(if open {
+            regular::FOLDER_OPEN
         } else {
-            26.0
-        },
-        moduwu_design::CONTROL_HEIGHT,
-    )
-}
-
-pub(crate) fn folder_disclosure_button(ui: &mut Ui, expanded: bool) -> Response {
-    let glyph = if expanded {
-        regular::CARET_DOWN
-    } else {
-        regular::CARET_RIGHT
-    };
-    let font_size = if crate::platform::PlatformCaps::CURRENT.is_mobile() {
-        13.0
-    } else {
-        12.0
-    };
-    ui.add_sized(
-        folder_disclosure_size(),
-        egui::Button::new(RichText::new(glyph).size(font_size)).frame(false),
-    )
-    .on_hover_text(if expanded {
-        "Collapse folder"
-    } else {
-        "Expand folder"
-    })
+            regular::FOLDER
+        })
+        .selected(selected)
+        .sense(sense)
+        .show(ui);
+    response.disclosure = response.disclosure.map(|disclosure| {
+        disclosure.on_hover_text(if open {
+            "Collapse folder"
+        } else {
+            "Expand folder"
+        })
+    });
+    response
 }

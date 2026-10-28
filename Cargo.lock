@@ -2686,8 +2686,8 @@ dependencies = [
 
 [[package]]
 name = "moduwu-design"
-version = "3.3.0"
-source = "git+https://github.com/Duecki1/Moduwu?rev=f54ff3097cba5dbc45393bc604570c8fb9517a7f#f54ff3097cba5dbc45393bc604570c8fb9517a7f"
+version = "4.0.0"
+source = "git+https://github.com/Duecki1/Moduwu?rev=8db4cd66bdd85b30fb96e168c50a6b0bbc1bde09#8db4cd66bdd85b30fb96e168c50a6b0bbc1bde09"
 dependencies = [
  "egui",
  "image",
@@ -4254,7 +4254,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",

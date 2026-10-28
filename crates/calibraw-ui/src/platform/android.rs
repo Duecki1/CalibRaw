@@ -79,6 +79,13 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::set_back_navigation_active(active);
     }
 
+    fn long_press_duration(&self) -> std::time::Duration {
+        calibraw_ffi::long_press_timeout(&self.app).unwrap_or_else(|error| {
+            log::warn!("{error}");
+            super::service::DEFAULT_LONG_PRESS
+        })
+    }
+
     fn take_back_request(&self) -> bool {
         calibraw_ffi::take_back_request()
     }

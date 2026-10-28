@@ -262,9 +262,13 @@ impl Sidebar {
                 }
             }
         }
-        moduwu_design::context_menu(&response, |ui| {
-            Self::mask_group_context_menu(ui, mask, can_add_group, index, requests);
-        });
+        // On touch screens a long press drags the card, and its overflow
+        // button opens the menu.
+        if !crate::platform::PlatformCaps::CURRENT.is_mobile() {
+            moduwu_design::context_menu(&response, |ui| {
+                Self::mask_group_context_menu(ui, mask, can_add_group, index, requests);
+            });
+        }
     }
 
     fn show_submask_cards(
@@ -404,9 +408,13 @@ impl Sidebar {
                 state.hover_group = None;
             }
         }
-        moduwu_design::context_menu(&response, |ui| {
-            Self::submask_context_menu(ui, component, menu, requests);
-        });
+        // On touch screens a long press drags the card, and its overflow
+        // button opens the menu.
+        if !crate::platform::PlatformCaps::CURRENT.is_mobile() {
+            moduwu_design::context_menu(&response, |ui| {
+                Self::submask_context_menu(ui, component, menu, requests);
+            });
+        }
     }
 }
 

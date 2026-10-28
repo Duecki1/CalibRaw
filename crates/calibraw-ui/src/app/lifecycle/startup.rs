@@ -349,6 +349,7 @@ impl CalibRawApp {
                 shortcuts_dialog_open: false,
                 settings_dialog: None,
                 numeric_keyboard: false,
+                review_feedback: None,
             },
             library: if caps.has_media_library() {
                 LibraryState::new_android(

@@ -46,10 +46,11 @@ pub(crate) enum ErrorKind {
     Tip,
     EditNotApplied,
     LibraryAdjustments,
+    PhotoReview,
 }
 
 impl ErrorKind {
-    fn title(self) -> &'static str {
+    pub(in crate::app) fn title(self) -> &'static str {
         match self {
             Self::Export => "Export failed",
             Self::ExportUnavailable => "Export unavailable",
@@ -84,6 +85,7 @@ impl ErrorKind {
             Self::Tip => "Tip unavailable",
             Self::EditNotApplied => "Edit not applied",
             Self::LibraryAdjustments => "Library adjustment failed",
+            Self::PhotoReview => "Rating not saved",
         }
     }
 }

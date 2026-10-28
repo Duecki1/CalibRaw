@@ -24,10 +24,7 @@ impl LibraryState {
             .extend(android_folder_ancestors(&selected_folder));
         let location = android_library_location_label(&self.media.root_location, &selected_folder);
         self.location = Some(location);
-        self.entries.clear();
-        self.entry_indices.clear();
-        self.clear_selection();
-        self.catalog_ready = false;
+        self.reset_folder_contents();
         self.refresh(context);
         true
     }

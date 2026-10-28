@@ -30,6 +30,8 @@ mod dialogs;
 mod export;
 mod filter;
 mod folders;
+mod hover;
+mod keys;
 mod local;
 mod media_library;
 mod merge;
@@ -40,8 +42,12 @@ pub(crate) use state::LibraryPreferences;
 mod storage;
 mod thumbnails;
 mod view;
-use review::thumbnail_hover_overlay;
-pub(crate) use review::{paint_review_badge, show_current_photo_review};
+use hover::thumbnail_hover_overlay;
+pub(crate) use review::{
+    current_photo_asset, paint_review_badge, show_current_photo_review, show_review_feedback,
+    take_review_key, ReviewChange, ReviewFeedback,
+};
+pub(crate) use state::ReviewSave;
 
 use actions::*;
 use adjustments::*;
@@ -53,12 +59,13 @@ use export::*;
 use filter::*;
 use folders::catalog::*;
 use folders::files::*;
+use keys::*;
 use media_library::{android_folder_ancestors, android_library_location_label};
 use sources::*;
 use storage::*;
 use thumbnails::*;
 
-pub(crate) use actions::library_image_context_menu;
+pub(crate) use actions::photo_actions_menu;
 pub(crate) use actions::{apply_library_action, show_library_action_overlays};
 pub(crate) use companions::{paint_format_badge, rendered_format_label};
 pub(crate) use merge::{MergeKind, MergeOutcome};
@@ -292,7 +299,6 @@ impl LibraryAsset {
 }
 
 pub(crate) struct LibraryEntry {
-    review: crate::sidecar::PhotoReview,
     asset: LibraryAsset,
     texture: Option<egui::TextureHandle>,
     resident_thumbnail: Option<RawThumbnail>,
@@ -306,6 +312,12 @@ pub(crate) struct LibraryEntry {
     developed_thumbnail: bool,
     developed_thumbnail_pending: bool,
     last_used: u64,
+}
+
+impl LibraryEntry {
+    fn review(&self) -> crate::sidecar::PhotoReview {
+        self.asset.metadata.review
+    }
 }
 
 #[derive(Clone)]
@@ -721,9 +733,8 @@ pub(crate) struct LibraryState {
     /// Show RAW+JPEG pairs once, as the RAW. Rebuilt with the entry indices.
     stack_raw_companions: bool,
     raw_companions: RawCompanions,
-    selected_assets: HashSet<LibraryAssetId>,
-    selection_mode: bool,
-    selection_anchor: Option<LibraryAssetId>,
+    selection: state::LibrarySelection,
+    reviews: state::ReviewWriter,
     image_clipboard: Option<ImageClipboard>,
     pub(crate) adjustment_clipboard: Option<AdjustmentClipboard>,
     asset_transfer_receiver: Option<mpsc::Receiver<AssetTransferCompletion>>,

@@ -3,6 +3,11 @@ use crate::pipeline::RawThumbnail;
 use crate::sidecar::{EditState, LoadedSidecar, PhotoReview, SidecarError};
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// How long a touch is held to become a long press where the platform has
+/// no setting of its own: Android's default Touch & hold delay.
+pub(super) const DEFAULT_LONG_PRESS: Duration = Duration::from_millis(400);
 
 /// A photo the platform's document picker or another app handed over.
 #[derive(Debug)]
@@ -176,6 +181,10 @@ pub(crate) trait Platform: Send + Sync {
     }
     fn set_light_system_bars(&self, _light: bool) -> Result<(), String> {
         Ok(())
+    }
+    /// How long a touch is held to become a long press, as the user set it.
+    fn long_press_duration(&self) -> Duration {
+        DEFAULT_LONG_PRESS
     }
     fn device_diagnostics(&self) -> Result<Option<String>, String> {
         Ok(None)

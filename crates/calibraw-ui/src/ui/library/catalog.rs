@@ -4,7 +4,7 @@ use super::*;
 /// selected thumbnail height rather than enlarging their images to fill space.
 const THUMBNAIL_IMAGE_HORIZONTAL_INSET: f32 = 0.0;
 const THUMBNAIL_IMAGE_VERTICAL_CHROME: f32 = 0.0;
-const THUMBNAIL_CARD_RADIUS: f32 = moduwu_design::CARD_RADIUS;
+pub(super) const THUMBNAIL_CARD_RADIUS: f32 = moduwu_design::CARD_RADIUS;
 
 pub(super) fn send_scan_failure(
     sender: &mpsc::SyncSender<ScanEvent>,
@@ -108,21 +108,9 @@ pub(super) fn justified_thumbnail_row_ranges(
     ranges
 }
 
+/// Thumbnail rectangles for the entries at `indices`, in their order, and the
+/// grid's height.
 pub(super) fn justified_thumbnail_layout(
-    entries: &[LibraryEntry],
-    available_width: f32,
-    target_height: f32,
-    gap: f32,
-) -> (Vec<egui::Rect>, f32) {
-    justified_thumbnail_layout_from_aspects(
-        entries.iter().map(library_entry_aspect).collect(),
-        available_width,
-        target_height,
-        gap,
-    )
-}
-
-pub(super) fn justified_thumbnail_layout_for_indices(
     entries: &[LibraryEntry],
     indices: &[usize],
     available_width: f32,
@@ -209,6 +197,88 @@ fn justified_thumbnail_layout_from_aspects(
     (placements, total_height)
 }
 
+/// A keyboard move through the thumbnail grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GridStep {
+    Previous,
+    Next,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    First,
+    Last,
+}
+
+/// Rows share their top edge; this absorbs float noise between them.
+const GRID_ROW_EPSILON: f32 = 0.5;
+
+/// The position a step from `from` lands on; with no position to start
+/// from, the first photo (or the last for End).
+pub(super) fn grid_step_target(
+    placements: &[egui::Rect],
+    from: Option<usize>,
+    step: GridStep,
+    page_height: f32,
+) -> Option<usize> {
+    let last = placements.len().checked_sub(1)?;
+    let Some(from) = from.filter(|from| *from <= last) else {
+        return Some(if step == GridStep::Last { last } else { 0 });
+    };
+    Some(match step {
+        GridStep::Previous => from.saturating_sub(1),
+        GridStep::Next => (from + 1).min(last),
+        GridStep::First => 0,
+        GridStep::Last => last,
+        GridStep::Up => grid_row_target(placements, from, false, 0.0).unwrap_or(from),
+        GridStep::Down => grid_row_target(placements, from, true, 0.0).unwrap_or(from),
+        GridStep::PageUp => grid_row_target(placements, from, false, page_height).unwrap_or(0),
+        GridStep::PageDown => grid_row_target(placements, from, true, page_height).unwrap_or(last),
+    })
+}
+
+/// The photo in the row `distance` points above or below `from`'s row
+/// (the adjacent row for zero) whose centre is nearest horizontally.
+fn grid_row_target(
+    placements: &[egui::Rect],
+    from: usize,
+    below: bool,
+    distance: f32,
+) -> Option<usize> {
+    let current = placements[from];
+    let target_top = if below {
+        current.top() + distance
+    } else {
+        current.top() - distance
+    };
+    let row_top = placements
+        .iter()
+        .map(|rect| rect.top())
+        .filter(|top| {
+            if below {
+                *top > current.top() + GRID_ROW_EPSILON
+            } else {
+                *top < current.top() - GRID_ROW_EPSILON
+            }
+        })
+        .min_by(|left, right| {
+            (left - target_top)
+                .abs()
+                .total_cmp(&(right - target_top).abs())
+        })?;
+    let x = current.center().x;
+    placements
+        .iter()
+        .enumerate()
+        .filter(|(_, rect)| (rect.top() - row_top).abs() <= GRID_ROW_EPSILON)
+        .min_by(|(_, left), (_, right)| {
+            (left.center().x - x)
+                .abs()
+                .total_cmp(&(right.center().x - x).abs())
+        })
+        .map(|(position, _)| position)
+}
+
 pub(super) fn thumbnail_cover_uv(
     source_size: Option<[u32; 2]>,
     target_size: egui::Vec2,
@@ -240,18 +310,38 @@ pub(super) fn thumbnail_cover_uv(
     }
 }
 
+/// A painted thumbnail.
+pub(super) struct ThumbnailTile {
+    pub(super) response: egui::Response,
+    /// Bottom edge of the badges in the top-right corner, or the tile's top
+    /// edge when it has none.
+    pub(super) corner_badges_bottom: f32,
+}
+
+/// Paints a thumbnail and its badges. The grid handles the keyboard, so
+/// tiles take clicks but not keyboard focus.
 pub(super) fn thumbnail_tile(
     ui: &mut Ui,
     entry: &LibraryEntry,
     rect: egui::Rect,
-    selected: bool,
-    caps: PlatformCaps,
-) -> egui::Response {
+    selected: Option<bool>,
+) -> ThumbnailTile {
     let response = ui.interact(
         rect,
         ui.make_persistent_id(("library-thumbnail-tile", entry.asset.display_path.as_str())),
-        Sense::click(),
+        Sense::CLICK,
     );
+    response.widget_info(|| match selected {
+        Some(selected) => egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            true,
+            selected,
+            &entry.asset.display_name,
+        ),
+        None => {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &entry.asset.display_name)
+        }
+    });
     let tile_rect = rect;
     let image_rect = tile_rect;
     let painter = ui.painter_at(tile_rect);
@@ -288,6 +378,7 @@ pub(super) fn thumbnail_tile(
     }
 
     let mut corner_inset = 0.0;
+    let mut corner_badges_bottom = rect.top();
     if entry.developed_thumbnail_pending {
         let badge_edge = 25.0_f32.min(rect.width() * 0.32).min(rect.height() * 0.32);
         let center = egui::pos2(
@@ -301,37 +392,53 @@ pub(super) fn thumbnail_tile(
             (badge_edge * 0.72).max(12.0),
         );
         corner_inset = badge_edge + 4.0;
+        corner_badges_bottom = center.y + badge_edge * 0.5;
     }
     if entry.texture.is_some() {
-        if let Some(label) = rendered_format_label(&entry.asset.display_name) {
-            paint_format_badge(ui, tile_rect, label, corner_inset);
+        if let Some(badge) = rendered_format_label(&entry.asset.display_name)
+            .and_then(|label| paint_format_badge(ui, tile_rect, label, corner_inset))
+        {
+            corner_badges_bottom = corner_badges_bottom.max(badge.bottom());
         }
     }
 
-    // Touch screens show selection with a checkbox instead.
-    if caps.is_desktop() && selected {
-        let badge_edge = 24.0_f32.min(tile_rect.width() * 0.28);
-        let badge_rect = egui::Rect::from_min_size(
-            tile_rect.min + egui::vec2(7.0, 7.0),
-            egui::Vec2::splat(badge_edge),
-        );
-        painter.rect_filled(badge_rect, badge_edge * 0.5, ui.visuals().selection.bg_fill);
-        painter.text(
-            badge_rect.center(),
-            Align2::CENTER_CENTER,
-            egui_phosphor::regular::CHECK,
-            FontId::proportional((badge_edge * 0.58).max(10.0)),
-            Color32::WHITE,
-        );
+    ThumbnailTile {
+        response,
+        corner_badges_bottom,
     }
-
-    response
 }
 
-pub(super) fn thumbnail_hover_details(
+/// Outlines a selected thumbnail and tints it, and rings the active one.
+/// Painted over the hover details so both stay visible.
+pub(super) fn paint_thumbnail_selection(ui: &Ui, rect: egui::Rect, selected: bool, active: bool) {
+    let painter = ui.painter_at(rect);
+    let accent = ui.visuals().selection.bg_fill;
+    if selected {
+        painter.rect_filled(rect, THUMBNAIL_CARD_RADIUS, accent.gamma_multiply(0.28));
+        painter.rect_stroke(
+            rect,
+            THUMBNAIL_CARD_RADIUS,
+            Stroke::new(3.0, accent),
+            StrokeKind::Inside,
+        );
+    }
+    if active {
+        let inset = if selected { 3.0 } else { 0.0 };
+        painter.rect_stroke(
+            rect.shrink(inset),
+            THUMBNAIL_CARD_RADIUS,
+            Stroke::new(2.0, ui.visuals().strong_text_color()),
+            StrokeKind::Inside,
+        );
+    }
+}
+
+/// The format, with the rendered formats stacked under it, then the pixel
+/// size when known.
+pub(super) fn thumbnail_file_fields(
     asset: &LibraryAsset,
     stacked_formats: &[crate::pipeline::RenderedImageFormat],
-) -> String {
+) -> Vec<String> {
     let mut format = Path::new(&asset.display_name)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -342,123 +449,134 @@ pub(super) fn thumbnail_hover_details(
         format.push_str(" + ");
         format.push_str(stacked.label());
     }
-    asset
+    let size = asset
         .metadata
         .dimensions_hint
-        .map_or(format.clone(), |[width, height]| {
-            format!("{format}  ·  {width} × {height}")
-        })
+        .map(|[width, height]| format!("{width} × {height}"));
+    std::iter::once(format).chain(size).collect()
 }
 
-pub(super) fn thumbnail_capture_details(asset: &LibraryAsset) -> String {
+/// The known capture settings, most telling first: aperture, shutter speed,
+/// ISO and focal length.
+pub(super) fn thumbnail_capture_fields(asset: &LibraryAsset) -> Vec<String> {
     let metadata = &asset.metadata;
-    format!(
-        "{}  ·  {}  ·  {}  ·  {}",
-        format_thumbnail_iso(metadata.iso_speed),
-        format_thumbnail_shutter(metadata.shutter_seconds),
+    [
         format_thumbnail_aperture(metadata.aperture),
+        format_thumbnail_shutter(metadata.shutter_seconds),
+        format_thumbnail_iso(metadata.iso_speed),
         format_thumbnail_focal_length(metadata.focal_length),
-    )
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
-fn format_thumbnail_aperture(value: f32) -> String {
-    if value.is_finite() && value > 0.0 {
-        format!("f/{value:.1}")
-    } else {
-        "f/—".to_owned()
-    }
+/// Metadata values are zero or non-finite when the file does not record them.
+fn known(value: f32) -> Option<f32> {
+    (value.is_finite() && value > 0.0).then_some(value)
 }
 
-fn format_thumbnail_iso(value: f32) -> String {
-    if !value.is_finite() || value <= 0.0 {
-        return "ISO —".to_owned();
-    }
-    if (value - value.round()).abs() < 0.05 {
-        format!("ISO {value:.0}")
-    } else {
-        format!("ISO {value:.1}")
-    }
+fn format_thumbnail_aperture(value: f32) -> Option<String> {
+    known(value).map(|value| format!("f/{value:.1}"))
 }
 
-fn format_thumbnail_shutter(seconds: f32) -> String {
-    if !seconds.is_finite() || seconds <= 0.0 {
-        return "— s".to_owned();
-    }
-    if seconds < 0.5 {
-        let denominator = (1.0 / seconds).round().max(1.0);
-        format!("1/{denominator:.0} s")
-    } else if (seconds - seconds.round()).abs() < 0.05 {
-        format!("{seconds:.0} s")
-    } else {
-        format!("{seconds:.1} s")
-    }
+fn format_thumbnail_iso(value: f32) -> Option<String> {
+    known(value).map(|value| {
+        if (value - value.round()).abs() < 0.05 {
+            format!("ISO {value:.0}")
+        } else {
+            format!("ISO {value:.1}")
+        }
+    })
 }
 
-fn format_thumbnail_focal_length(value: f32) -> String {
-    if !value.is_finite() || value <= 0.0 {
-        return "— mm".to_owned();
-    }
-    if (value - value.round()).abs() < 0.05 {
-        format!("{value:.0} mm")
-    } else {
-        format!("{value:.1} mm")
-    }
+fn format_thumbnail_shutter(seconds: f32) -> Option<String> {
+    known(seconds).map(|seconds| {
+        if seconds < 0.5 {
+            let denominator = (1.0 / seconds).round().max(1.0);
+            format!("1/{denominator:.0} s")
+        } else if (seconds - seconds.round()).abs() < 0.05 {
+            format!("{seconds:.0} s")
+        } else {
+            format!("{seconds:.1} s")
+        }
+    })
 }
 
-pub(super) fn thumbnail_selection_checkbox(
+fn format_thumbnail_focal_length(value: f32) -> Option<String> {
+    known(value).map(|value| {
+        if (value - value.round()).abs() < 0.05 {
+            format!("{value:.0} mm")
+        } else {
+            format!("{value:.1} mm")
+        }
+    })
+}
+
+// The select check in a thumbnail's top-left corner, in points.
+/// The check's circle.
+pub(super) const CHECK_EDGE: f32 = 24.0;
+/// From the tile's edges to the check's circle.
+const CHECK_INSET: f32 = 7.0;
+/// The check's hit square.
+pub(super) const CHECK_HIT_EDGE: f32 = 42.0;
+
+/// The round check in a thumbnail's corner that adds it to the selection
+/// or removes it, without opening the photo.
+pub(super) fn thumbnail_check_circle(
     ui: &mut Ui,
     entry: &LibraryEntry,
     thumbnail_rect: egui::Rect,
     selected: bool,
 ) -> egui::Response {
-    const HIT_EDGE: f32 = 42.0;
-    const BOX_EDGE: f32 = 23.0;
-    const BOX_INSET: f32 = 7.0;
-
     let hit_rect = egui::Rect::from_min_size(
         thumbnail_rect.min,
         egui::vec2(
-            HIT_EDGE.min(thumbnail_rect.width()),
-            HIT_EDGE.min(thumbnail_rect.height()),
+            CHECK_HIT_EDGE.min(thumbnail_rect.width()),
+            CHECK_HIT_EDGE.min(thumbnail_rect.height()),
         ),
     );
     let response = ui
         .interact(
             hit_rect,
             ui.make_persistent_id((
-                "library-thumbnail-selection-checkbox",
+                "library-thumbnail-check-circle",
                 entry.asset.display_path.as_str(),
             )),
-            Sense::click(),
+            Sense::CLICK,
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-    let box_rect = egui::Rect::from_min_size(
-        thumbnail_rect.min + egui::vec2(BOX_INSET, BOX_INSET),
-        egui::Vec2::splat(BOX_EDGE),
-    );
-    let visuals = ui.visuals();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            true,
+            selected,
+            format!("Select {}", entry.asset.display_name),
+        )
+    });
+    let radius = CHECK_EDGE * 0.5;
+    let center = thumbnail_rect.min + egui::Vec2::splat(CHECK_INSET + radius);
+    let painter = ui.painter_at(thumbnail_rect);
     let fill = if selected {
-        visuals.selection.bg_fill
+        ui.visuals().selection.bg_fill
     } else if response.hovered() {
-        Color32::from_black_alpha(220)
+        Color32::from_black_alpha(200)
     } else {
-        Color32::from_black_alpha(180)
+        Color32::from_black_alpha(130)
     };
-    ui.painter().rect_filled(box_rect, 4.0, fill);
-    ui.painter().rect_stroke(
-        box_rect,
-        4.0,
-        Stroke::new(1.5, Color32::WHITE),
-        StrokeKind::Inside,
-    );
-    if selected {
-        let left = egui::pos2(box_rect.left() + 5.0, box_rect.center().y);
-        let middle = egui::pos2(box_rect.left() + 9.5, box_rect.bottom() - 5.5);
-        let right = egui::pos2(box_rect.right() - 4.5, box_rect.top() + 5.5);
-        ui.painter()
-            .line_segment([left, middle], Stroke::new(2.2, Color32::WHITE));
-        ui.painter()
-            .line_segment([middle, right], Stroke::new(2.2, Color32::WHITE));
+    painter.circle(center, radius, fill, Stroke::new(1.5, Color32::WHITE));
+    if selected || response.hovered() {
+        let tick = [
+            center + egui::vec2(-5.0, 0.5),
+            center + egui::vec2(-1.5, 4.0),
+            center + egui::vec2(5.0, -3.5),
+        ];
+        let color = if selected {
+            Color32::WHITE
+        } else {
+            Color32::from_white_alpha(170)
+        };
+        painter.add(egui::Shape::line(tick.to_vec(), Stroke::new(2.2, color)));
     }
 
     response.on_hover_text(if selected {

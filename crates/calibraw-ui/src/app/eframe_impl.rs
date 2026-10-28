@@ -124,23 +124,31 @@ impl CalibRawApp {
         self.library.poll_dropped_raw_import(ctx);
     }
 
-    /// Picker and publish results, the back button, system-bar safe areas,
-    /// the soft keyboard's height, which dialogs stay above, and its layout.
+    /// Picker and publish results, the back button, the Touch & hold delay,
+    /// system-bar safe areas, the soft keyboard's height, which dialogs stay
+    /// above, and its layout.
     fn handle_android_platform_events(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.poll_android_picker(frame);
         self.poll_android_export_publish();
         if self.platform.take_back_request() {
             if self.ui.error_dialogs.is_open() {
                 self.ui.error_dialogs.dismiss_current();
+            } else if moduwu_design::dismiss_menu_sheet(ui.ctx()) {
+                // Back left a menu's submenu page, or closed the menu.
             } else if self.android_foreground_task_active() {
                 ui.ctx().request_repaint();
             } else if self.ui.active_tab == AppTab::Library && self.library.folder_sidebar_open() {
                 self.set_library_folder_sidebar_open(false);
-            } else if self.ui.active_tab == AppTab::Library && self.library.has_selection() {
+            } else if self.ui.active_tab == AppTab::Library && self.library.is_selecting() {
                 self.library.clear_selection();
             } else {
                 self.activate_tab(AppTab::Library);
             }
+        }
+        // Read as a touch begins, so a changed Touch & hold delay applies
+        // from the next touch on.
+        if ui.input(|input| input.any_touches() && input.pointer.any_pressed()) {
+            moduwu_design::set_long_press_duration(ui.ctx(), self.platform.long_press_duration());
         }
 
         let numeric_keyboard = moduwu_design::numeric_keyboard_requested(ui.ctx());
@@ -200,24 +208,25 @@ impl CalibRawApp {
         self.poll_people_composes();
         self.poll_library_ai_mask_refresh(frame);
         self.poll_merge();
+        self.poll_library_review_saves();
         self.resume_pending_ai_denoise(frame);
         if caps.tasks_need_foreground {
             self.sync_android_export_notification();
         }
     }
 
-    /// Edit-history, save and image-navigation shortcuts.
+    /// Edit-history, save, image-navigation and review shortcuts. The
+    /// library grid handles its own keys, as they depend on its layout.
     fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.caps().is_desktop() {
             self.handle_settings_request(ctx);
-            self.handle_edit_history_shortcuts(ctx);
-            self.handle_sidecar_shortcut(ctx);
-            if self.ui.active_tab == AppTab::Develop {
-                Develop::handle_image_navigation_shortcuts(ctx, self, frame);
-            }
-        } else if !self.android_foreground_task_active() {
-            self.handle_edit_history_shortcuts(ctx);
-            self.handle_sidecar_shortcut(ctx);
+        } else if self.android_foreground_task_active() {
+            return;
+        }
+        self.handle_edit_history_shortcuts(ctx);
+        self.handle_sidecar_shortcut(ctx);
+        if self.ui.active_tab == AppTab::Develop {
+            Develop::handle_shortcuts(ctx, self, frame);
         }
     }
 
@@ -485,12 +494,14 @@ impl eframe::App for CalibRawApp {
         if raw_drop_hovered {
             show_raw_drop_overlay(ui, self.library.folder());
         }
+        crate::ui::library::show_review_feedback(ui.ctx(), &mut self.ui.review_feedback);
         self.show_dialogs(ui.ctx(), frame);
         self.sync_persistence(ui.ctx(), frame);
         // The only place the system back-press routing is published: after
         // every view and handler has run, so it reflects this frame's state.
-        self.platform
-            .set_back_navigation_active(self.handles_back_navigation());
+        let handles_back =
+            self.handles_back_navigation() || moduwu_design::menu_sheet_open(ui.ctx());
+        self.platform.set_back_navigation_active(handles_back);
     }
 
     fn on_exit(&mut self) {
@@ -503,6 +514,7 @@ impl eframe::App for CalibRawApp {
         self.platform.detach_ui();
         self.persist_performance_settings();
         self.flush_sidecar_on_exit();
+        self.finish_library_review_saves_on_exit();
     }
 }
 

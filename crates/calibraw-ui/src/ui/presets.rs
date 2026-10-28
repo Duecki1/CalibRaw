@@ -7,6 +7,8 @@ use crate::sidecar::EditSelection;
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
 use crate::ui::components::preview_list::pointer_previews;
 use eframe::egui::{self, Ui};
+use egui_phosphor::regular;
+use moduwu_design::MenuItem;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -83,7 +85,8 @@ impl PresetList {
         let mut chosen = None;
         let mut show_entries = |ui: &mut Ui, group: &PresetListGroup| {
             for entry in &group.presets {
-                if moduwu_design::menu_item(ui, true, &entry.name)
+                if ui
+                    .add(MenuItem::new(&entry.name))
                     .on_hover_text(&entry.summary)
                     .clicked()
                 {
@@ -101,7 +104,9 @@ impl PresetList {
             [group] => show_entries(ui, group),
             groups => {
                 for group in groups {
-                    ui.menu_button(&group.name, |ui| show_entries(ui, group));
+                    moduwu_design::submenu(ui, MenuItem::new(&group.name), |ui| {
+                        show_entries(ui, group)
+                    });
                 }
             }
         }
@@ -333,12 +338,18 @@ fn show_group_title(
     action: &mut Option<PresetAction>,
 ) {
     let menu = |ui: &mut Ui, action: &mut Option<PresetAction>| {
-        if moduwu_design::menu_item(ui, true, "Rename group…").clicked() {
+        if ui
+            .add(MenuItem::new("Rename group…").icon(regular::PENCIL_SIMPLE))
+            .clicked()
+        {
             *action = Some(PresetAction::RenameGroup(group.to_owned()));
             ui.close();
         }
         ui.separator();
-        if moduwu_design::destructive_menu_item(ui, "Delete group…").clicked() {
+        let delete_item = MenuItem::new("Delete group…")
+            .icon(regular::TRASH)
+            .destructive();
+        if ui.add(delete_item).clicked() {
             *action = Some(PresetAction::DeleteGroup(group.to_owned()));
             ui.close();
         }
@@ -414,20 +425,31 @@ fn preset_actions_menu(
     entry: &PresetListEntry,
     action: &mut Option<PresetAction>,
 ) {
-    if moduwu_design::menu_item(ui, true, "Apply to this photo").clicked() {
+    if ui
+        .add(MenuItem::new("Apply to this photo").icon(regular::PALETTE))
+        .clicked()
+    {
         *action = Some(PresetAction::Apply(entry.path.clone()));
         ui.close();
     }
-    if moduwu_design::menu_item(ui, true, "Rename…").clicked() {
+    if ui
+        .add(MenuItem::new("Rename…").icon(regular::PENCIL_SIMPLE))
+        .clicked()
+    {
         *action = Some(PresetAction::Rename(entry.path.clone()));
         ui.close();
     }
-    if caps.has_folders() && moduwu_design::menu_item(ui, true, "Export…").clicked() {
+    if caps.has_folders()
+        && ui
+            .add(MenuItem::new("Export…").icon(regular::EXPORT))
+            .clicked()
+    {
         *action = Some(PresetAction::Export(entry.path.clone()));
         ui.close();
     }
     ui.separator();
-    if moduwu_design::destructive_menu_item(ui, "Delete…").clicked() {
+    let delete_item = MenuItem::new("Delete…").icon(regular::TRASH).destructive();
+    if ui.add(delete_item).clicked() {
         *action = Some(PresetAction::Delete(entry.path.clone()));
         ui.close();
     }

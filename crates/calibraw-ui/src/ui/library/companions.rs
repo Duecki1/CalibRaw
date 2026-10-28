@@ -46,10 +46,6 @@ impl RawCompanions {
         index
     }
 
-    pub(super) fn is_empty(&self) -> bool {
-        self.companions.is_empty()
-    }
-
     /// Whether `asset` is the rendered copy of a RAW in the same folder.
     pub(super) fn is_companion(&self, asset: &LibraryAssetId) -> bool {
         self.companions.contains(asset)
@@ -82,8 +78,14 @@ pub(crate) fn rendered_format_label(display_name: &str) -> Option<&'static str> 
 }
 
 /// Paints a small format pill (e.g. "JPEG") in the top-right corner of a
-/// thumbnail. `right_inset` leaves room for other corner indicators.
-pub(crate) fn paint_format_badge(ui: &Ui, rect: egui::Rect, label: &str, right_inset: f32) {
+/// thumbnail. `right_inset` leaves room for other corner indicators. Returns
+/// the pill, unless the thumbnail is too small for it.
+pub(crate) fn paint_format_badge(
+    ui: &Ui,
+    rect: egui::Rect,
+    label: &str,
+    right_inset: f32,
+) -> Option<egui::Rect> {
     const HEIGHT: f32 = 18.0;
     const MARGIN: f32 = 6.0;
     let font = FontId::proportional(10.0);
@@ -91,7 +93,7 @@ pub(crate) fn paint_format_badge(ui: &Ui, rect: egui::Rect, label: &str, right_i
     let text = painter.layout_no_wrap(label.to_owned(), font, Color32::WHITE);
     let size = egui::vec2(text.size().x + 10.0, HEIGHT);
     if size.x + MARGIN * 2.0 + right_inset > rect.width() || HEIGHT + MARGIN * 2.0 > rect.height() {
-        return;
+        return None;
     }
     let badge = egui::Rect::from_min_size(
         egui::pos2(
@@ -102,4 +104,5 @@ pub(crate) fn paint_format_badge(ui: &Ui, rect: egui::Rect, label: &str, right_i
     );
     painter.rect_filled(badge, 5.0, Color32::from_black_alpha(160));
     painter.galley(badge.center() - text.size() * 0.5, text, Color32::WHITE);
+    Some(badge)
 }

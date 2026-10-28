@@ -57,12 +57,12 @@ cargo deny check
   declaration, and every Rust-to-Java call, against each other.
 - `cargo xtask ui-lint` reports UI code that bypasses an established shared
   control (`DragValue` instead of `NumberField`, raw `ComboBox`, `egui::Slider`,
-  singleline `TextEdit` or `Window`) or re-exports Moduwu items. Findings are
-  keyed by rule, enclosing function and source line, so moving code keeps its
-  approval but replacing one bypass with another does not. Approved findings
-  live in `xtask/ui-lint-baseline.json`, each with a reason; stale approvals
-  fail too. `--suggest` prints entries for new findings, whose reasons must be
-  written before they pass. Review baseline changes like code.
+  singleline `TextEdit`, `Window` or egui menus) or re-exports Moduwu items.
+  Findings are keyed by rule, enclosing function and source line, so moving
+  code keeps its approval but replacing one bypass with another does not.
+  Approved findings live in `xtask/ui-lint-baseline.json`, each with a reason;
+  stale approvals fail too. `--suggest` prints entries for new findings, whose
+  reasons must be written before they pass. Review baseline changes like code.
 - `cargo xtask migrations` lists every `migration: remove in vX.Y.Z` marker
   under `crates/` and fails once the workspace version reaches one, or when a
   file in `crates/calibraw-core/src/migrations/` has no marker. Bumping the
@@ -230,14 +230,24 @@ installation and photo/editor-specific colours, and `appearance.rs` the
 persisted `UiDesign` and `PreviewBackdrop` settings. Keep specialized image
 canvases, mask cards, and colour controls in their existing components.
 
-- Use secondary/primary action buttons for forms, settings and dialog footers,
-  `menu_item` for regular menu actions, `menu_checkbox_item` for on/off options
-  in menus, and `context_menu_item` for selectable navigation menus. Preserve
-  each menu's explicit `ui.close()` behavior.
+- Use secondary/primary action buttons for forms, settings and dialog footers.
+- Open menus with `moduwu_design::context_menu`, `dropdown_menu` or
+  `overflow_menu`: popups on desktop, bottom sheets on Android, where a context
+  menu opens on a long press. Add actions as `MenuItem`s with the icon the
+  sheet shows, `MenuItem::destructive` for actions such as Delete,
+  `menu_checkbox_item` for on/off options and `submenu` for nested menus,
+  which become pages in the sheet. A menu opened on something the finger
+  covers, such as a photo, starts with a `menu_title`; one whose options leave
+  it open, such as Sort & filter, starts with `menu_title_with_close`. A
+  setting with several values is a `submenu` row showing its
+  `MenuItem::value`, listing the values as `MenuItem::selected` rows. Preserve
+  each menu's explicit `ui.close()` behavior. The grid, the filmstrip and the selection
+  bar share one photo menu, `photo_actions_menu`.
 - Icon actions in toolbars, panel and card headers and tool rows use
   `ghost_icon_button` and `ghost_icon_toggle_button`, which show a frame only on
   hover, focus or selection; wrap them in `add_enabled_ui` to disable them.
-  `icons` holds the folder disclosure control and the desktop tool rail glyphs.
+  `icons` holds the folder tree row (`moduwu_design::TreeRow` with folder
+  glyphs) and the desktop tool rail glyphs.
 - Use the shared form rows, text edits, `NumberField` and combo builders.
   `moduwu_design::Slider` owns value editing, reset, focus, keyboard and
   accessibility actions, and pointer/scroll handling on desktop and touch

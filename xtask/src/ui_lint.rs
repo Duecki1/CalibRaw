@@ -65,6 +65,18 @@ const RULES: &[Rule] = &[
         advice: "use moduwu_design::dialog_window",
     },
     Rule {
+        id: "menu",
+        patterns: &[
+            "menu_button",
+            "Popup::menu",
+            "Popup::context_menu",
+            "MenuButton",
+            "SubMenuButton",
+        ],
+        advice: "use moduwu_design::context_menu, dropdown_menu or submenu, which become \
+                 bottom sheets on touch layouts",
+    },
+    Rule {
         id: "moduwu-reexport",
         patterns: &[
             "pub use moduwu_design",

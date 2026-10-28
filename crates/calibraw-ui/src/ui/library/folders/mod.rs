@@ -2,6 +2,8 @@
 //! root, with photos and their sidecars read and changed by path.
 
 use super::*;
+use egui_phosphor::regular;
+use moduwu_design::MenuItem;
 
 pub(super) mod catalog;
 pub(super) mod files;
@@ -58,6 +60,7 @@ fn automatic_thumbnail_worker_count_for(cores: usize, total_memory_bytes: Option
 pub(super) fn show_library_folder_node(
     ui: &mut Ui,
     node: &LibraryFolderNode,
+    depth: usize,
     root_folder: &Path,
     selected_folder: Option<&Path>,
     clipboard: Option<&LibraryFolderClipboard>,
@@ -69,158 +72,143 @@ pub(super) fn show_library_folder_node(
 ) {
     let has_children = !node.children.is_empty();
     let expanded = has_children && expanded_folders.contains(&node.path);
-    let selected = selected_folder == Some(node.path.as_path());
-
-    ui.push_id(&node.path, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = moduwu_design::SPACE_XS;
-            let disclosure_size = crate::ui::icons::folder_disclosure_size();
-            if has_children {
-                if crate::ui::icons::folder_disclosure_button(ui, expanded).clicked() {
-                    if expanded {
-                        expanded_folders.remove(&node.path);
-                    } else {
-                        expanded_folders.insert(node.path.clone());
-                    }
-                }
-            } else {
-                ui.allocate_space(disclosure_size);
-            }
-
-            let folder_icon = if expanded && has_children {
-                egui_phosphor::regular::FOLDER_OPEN
-            } else {
-                egui_phosphor::regular::FOLDER
-            };
-            let response = moduwu_design::navigation_row(
-                ui,
-                egui::RichText::new(format!("{folder_icon}  {}", node.name)),
-                selected,
-                Sense::click_and_drag(),
-            )
-            .on_hover_text(format!(
-                "{}\nDrag onto another folder to move",
-                node.path.display()
-            ));
-            response.dnd_set_drag_payload(LibraryFolderDrag(node.path.clone()));
-            if response.clicked() {
-                *requested_folder = Some(node.path.clone());
-            }
-
-            let is_root = node.path == root_folder;
-            moduwu_design::context_menu(&response, |ui| {
-                let enabled = !action_in_progress;
-                if moduwu_design::context_menu_item(ui, enabled, "New Folder…").clicked() {
-                    *requested_action = Some(LibraryFolderUiAction::New(node.path.clone()));
-                    ui.close();
-                }
-
-                let paste_label = image_clipboard.map_or_else(
-                    || {
-                        clipboard
-                            .and_then(|clipboard| clipboard.path.file_name())
-                            .map(|name| format!("Paste “{}”", name.to_string_lossy()))
-                            .unwrap_or_else(|| "Paste".to_owned())
-                    },
-                    ImageClipboard::paste_label,
-                );
-                if moduwu_design::context_menu_item(
-                    ui,
-                    enabled && (clipboard.is_some() || image_clipboard.is_some()),
-                    paste_label,
-                )
-                .clicked()
-                {
-                    *requested_action = Some(if image_clipboard.is_some() {
-                        LibraryFolderUiAction::PasteImages(node.path.clone())
-                    } else {
-                        LibraryFolderUiAction::Paste(node.path.clone())
-                    });
-                    ui.close();
-                }
-                ui.separator();
-                if moduwu_design::context_menu_item(ui, enabled && !is_root, "Copy Folder")
-                    .clicked()
-                {
-                    *requested_action = Some(LibraryFolderUiAction::Copy(node.path.clone()));
-                    ui.close();
-                }
-                if moduwu_design::context_menu_item(ui, enabled && !is_root, "Cut Folder").clicked()
-                {
-                    *requested_action = Some(LibraryFolderUiAction::Cut(node.path.clone()));
-                    ui.close();
-                }
-                if moduwu_design::context_menu_item(ui, enabled && !is_root, "Rename Folder…")
-                    .clicked()
-                {
-                    *requested_action = Some(LibraryFolderUiAction::Rename(node.path.clone()));
-                    ui.close();
-                }
-                ui.separator();
-                if moduwu_design::context_menu_item(ui, enabled && !is_root, "Delete Folder…")
-                    .clicked()
-                {
-                    *requested_action = Some(LibraryFolderUiAction::Delete(node.path.clone()));
-                    ui.close();
-                }
-                if moduwu_design::context_menu_item(ui, enabled, "Refresh Folders").clicked() {
-                    *requested_action = Some(LibraryFolderUiAction::Refresh);
-                    ui.close();
-                }
-            });
-
-            if let Some(payload) = response.dnd_hover_payload::<LibraryFolderDrag>() {
-                let source = &payload.0;
-                let can_drop = !action_in_progress
-                    && source != root_folder
-                    && source != &node.path
-                    && !node.path.starts_with(source);
-                if can_drop {
-                    ui.painter().rect_stroke(
-                        response.rect.expand(2.0),
-                        3.0,
-                        Stroke::new(2.0, ui.visuals().selection.stroke.color),
-                        StrokeKind::Outside,
-                    );
-                    if let Some(payload) = response.dnd_release_payload::<LibraryFolderDrag>() {
-                        *requested_action = Some(LibraryFolderUiAction::Move {
-                            source: payload.0.clone(),
-                            destination_parent: node.path.clone(),
-                        });
-                    }
-                }
-            }
-        });
-
+    let row = crate::ui::icons::folder_tree_row(
+        ui,
+        &node.path,
+        &node.name,
+        depth,
+        has_children.then_some(expanded),
+        selected_folder == Some(node.path.as_path()),
+        Sense::click_and_drag(),
+    );
+    if row.toggled() {
         if expanded {
-            let children = ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                ui.vertical(|ui| {
-                    ui.set_width(ui.available_width());
-                    for child in &node.children {
-                        show_library_folder_node(
-                            ui,
-                            child,
-                            root_folder,
-                            selected_folder,
-                            clipboard,
-                            image_clipboard,
-                            action_in_progress,
-                            expanded_folders,
-                            requested_folder,
-                            requested_action,
-                        );
-                    }
+            expanded_folders.remove(&node.path);
+        } else {
+            expanded_folders.insert(node.path.clone());
+        }
+    }
+
+    let response = row.row.on_hover_text(format!(
+        "{}\nDrag onto another folder to move",
+        node.path.display()
+    ));
+    response.dnd_set_drag_payload(LibraryFolderDrag(node.path.clone()));
+    if response.clicked() {
+        *requested_folder = Some(node.path.clone());
+    }
+
+    let is_root = node.path == root_folder;
+    moduwu_design::context_menu(&response, |ui| {
+        let enabled = !action_in_progress;
+        let path = &node.path;
+        let mut row = |ui: &mut Ui, enabled: bool, item, action| {
+            if ui.add_enabled(enabled, item).clicked() {
+                *requested_action = Some(action);
+                ui.close();
+            }
+        };
+        row(
+            ui,
+            enabled,
+            MenuItem::new("New Folder…").icon(regular::FOLDER_PLUS),
+            LibraryFolderUiAction::New(path.clone()),
+        );
+        let paste_label = image_clipboard.map_or_else(
+            || {
+                clipboard
+                    .and_then(|clipboard| clipboard.path.file_name())
+                    .map(|name| format!("Paste “{}”", name.to_string_lossy()))
+                    .unwrap_or_else(|| "Paste".to_owned())
+            },
+            ImageClipboard::paste_label,
+        );
+        row(
+            ui,
+            enabled && (clipboard.is_some() || image_clipboard.is_some()),
+            MenuItem::new(paste_label).icon(regular::CLIPBOARD),
+            if image_clipboard.is_some() {
+                LibraryFolderUiAction::PasteImages(path.clone())
+            } else {
+                LibraryFolderUiAction::Paste(path.clone())
+            },
+        );
+        ui.separator();
+        let movable = enabled && !is_root;
+        row(
+            ui,
+            movable,
+            MenuItem::new("Copy Folder").icon(regular::COPY),
+            LibraryFolderUiAction::Copy(path.clone()),
+        );
+        row(
+            ui,
+            movable,
+            MenuItem::new("Cut Folder").icon(regular::SCISSORS),
+            LibraryFolderUiAction::Cut(path.clone()),
+        );
+        row(
+            ui,
+            movable,
+            MenuItem::new("Rename Folder…").icon(regular::PENCIL_SIMPLE),
+            LibraryFolderUiAction::Rename(path.clone()),
+        );
+        ui.separator();
+        row(
+            ui,
+            movable,
+            MenuItem::new("Delete Folder…")
+                .icon(regular::TRASH)
+                .destructive(),
+            LibraryFolderUiAction::Delete(path.clone()),
+        );
+        row(
+            ui,
+            enabled,
+            MenuItem::new("Refresh Folders").icon(regular::ARROWS_CLOCKWISE),
+            LibraryFolderUiAction::Refresh,
+        );
+    });
+
+    if let Some(payload) = response.dnd_hover_payload::<LibraryFolderDrag>() {
+        let source = &payload.0;
+        let can_drop = !action_in_progress
+            && source != root_folder
+            && source != &node.path
+            && !node.path.starts_with(source);
+        if can_drop {
+            ui.painter().rect_stroke(
+                response.rect,
+                moduwu_design::CARD_RADIUS,
+                Stroke::new(2.0, ui.visuals().selection.stroke.color),
+                StrokeKind::Inside,
+            );
+            if let Some(payload) = response.dnd_release_payload::<LibraryFolderDrag>() {
+                *requested_action = Some(LibraryFolderUiAction::Move {
+                    source: payload.0.clone(),
+                    destination_parent: node.path.clone(),
                 });
-            });
-            let guide_x = children.response.rect.left() + 5.0;
-            ui.painter().vline(
-                guide_x,
-                children.response.rect.y_range(),
-                Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+            }
+        }
+    }
+
+    if expanded {
+        for child in &node.children {
+            show_library_folder_node(
+                ui,
+                child,
+                depth + 1,
+                root_folder,
+                selected_folder,
+                clipboard,
+                image_clipboard,
+                action_in_progress,
+                expanded_folders,
+                requested_folder,
+                requested_action,
             );
         }
-    });
+    }
 }
 
 pub(super) fn apply_library_folder_ui_action(
@@ -439,18 +427,21 @@ pub(in crate::ui::library) fn show_local_folder_tree(
     let mut requested_action = None;
 
     if let (Some(tree), Some(root_folder)) = (tree, root_folder) {
-        show_library_folder_node(
-            ui,
-            tree,
-            root_folder,
-            selected_folder,
-            clipboard,
-            image_clipboard,
-            action_in_progress,
-            expanded_folders,
-            &mut requested_folder,
-            &mut requested_action,
-        );
+        moduwu_design::tree(ui, |ui| {
+            show_library_folder_node(
+                ui,
+                tree,
+                0,
+                root_folder,
+                selected_folder,
+                clipboard,
+                image_clipboard,
+                action_in_progress,
+                expanded_folders,
+                &mut requested_folder,
+                &mut requested_action,
+            );
+        });
     } else {
         ui.label(
             egui::RichText::new("Open a top-level folder to browse its hierarchy.")

@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.graphics.Insets;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -397,6 +398,11 @@ public final class CalibRawActivity extends NativeActivity {
                 + "\nandroid_release=" + Build.VERSION.RELEASE
                 + "\nsdk=" + Build.VERSION.SDK_INT
                 + "\nsupported_abis=" + String.join(",", Build.SUPPORTED_ABIS);
+    }
+
+    /** Milliseconds a touch is held to become a long press: the Touch & hold delay. */
+    public int longPressTimeout() {
+        return ViewConfiguration.getLongPressTimeout();
     }
 
     public boolean gpuStageTimingRequested() {
