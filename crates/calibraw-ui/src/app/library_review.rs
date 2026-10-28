@@ -65,9 +65,21 @@ impl CalibRawApp {
     /// Lets queued ratings reach their sidecars before the app closes; no
     /// dialog can show any more, so failures are logged.
     pub(in crate::app) fn finish_library_review_saves_on_exit(&mut self) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        for failure in self.library.finish_review_saves(deadline) {
+        for failure in self.library.finish_review_saves(review_save_deadline()) {
             log::error!("{}: {failure}", ErrorKind::PhotoReview.title());
+        }
+    }
+
+    /// Lets queued ratings reach their sidecars before something else reads
+    /// or writes them: a media-library rating rewrites the whole sidecar, so
+    /// a paste or an opened document racing it would lose one of the two.
+    pub(crate) fn settle_library_review_saves(&mut self) {
+        if !self.library.review_saves_pending() {
+            return;
+        }
+        let failures = self.library.finish_review_saves(review_save_deadline());
+        if !failures.is_empty() {
+            self.report_error(ErrorKind::PhotoReview, failures.join("\n"));
         }
     }
 
@@ -77,4 +89,9 @@ impl CalibRawApp {
             self.report_error(ErrorKind::PhotoReview, failures.join("\n"));
         }
     }
+}
+
+/// How long the app waits for queued ratings before going on without them.
+fn review_save_deadline() -> std::time::Instant {
+    std::time::Instant::now() + std::time::Duration::from_secs(2)
 }

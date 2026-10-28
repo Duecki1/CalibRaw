@@ -20,6 +20,30 @@ pub(crate) enum LibraryAction {
     Delete(Vec<LibraryAsset>),
 }
 
+fn duplicate_label(count: usize) -> &'static str {
+    if count > 1 {
+        "Duplicate selected (RAW + sidecars)"
+    } else {
+        "Duplicate (RAW + sidecar)"
+    }
+}
+
+fn reset_adjustments_label(count: usize) -> &'static str {
+    if count > 1 {
+        "Reset adjustments for selected"
+    } else {
+        "Reset all adjustments"
+    }
+}
+
+fn delete_label(count: usize) -> &'static str {
+    if count > 1 {
+        "Delete selected…"
+    } else {
+        "Delete…"
+    }
+}
+
 /// Whether photo actions can start: no file action, batch export or AI mask
 /// refresh is running.
 pub(super) fn library_actions_enabled(app: &CalibRawApp) -> bool {
@@ -177,16 +201,8 @@ pub(crate) fn library_image_context_menu(
         action = Some(LibraryAction::PasteIntoAssetFolder(context_asset.clone()));
         ui.close();
     }
-    if moduwu_design::context_menu_item(
-        ui,
-        action_enabled,
-        if selected_count > 1 {
-            "Duplicate selected (RAW + sidecars)"
-        } else {
-            "Duplicate (RAW + sidecar)"
-        },
-    )
-    .clicked()
+    if moduwu_design::context_menu_item(ui, action_enabled, duplicate_label(selected_count))
+        .clicked()
     {
         action = Some(LibraryAction::Duplicate(context_assets.to_vec()));
         ui.close();
@@ -203,11 +219,7 @@ pub(crate) fn library_image_context_menu(
         format!(
             "{}  {}",
             egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-            if selected_count > 1 {
-                "Reset adjustments for selected"
-            } else {
-                "Reset all adjustments"
-            }
+            reset_adjustments_label(selected_count)
         ),
     )
     .clicked()
@@ -216,16 +228,7 @@ pub(crate) fn library_image_context_menu(
         ui.close();
     }
     ui.separator();
-    if moduwu_design::context_menu_item(
-        ui,
-        action_enabled,
-        if selected_count > 1 {
-            "Delete selected…"
-        } else {
-            "Delete…"
-        },
-    )
-    .clicked()
+    if moduwu_design::context_menu_item(ui, action_enabled, delete_label(selected_count)).clicked()
     {
         action = Some(LibraryAction::Delete(context_assets.to_vec()));
         ui.close();
@@ -239,6 +242,10 @@ pub(crate) fn apply_library_action(
     frame: &eframe::Frame,
     action: LibraryAction,
 ) {
+    // Every other action reads, writes, moves or deletes the photos' files.
+    if !matches!(action, LibraryAction::Review(..)) {
+        app.settle_library_review_saves();
+    }
     match action {
         LibraryAction::Merge(kind, assets) => {
             super::merge::start(app, frame, kind, assets, ui.ctx())
@@ -528,7 +535,10 @@ enum BarLayout {
     Icons { inline: usize },
 }
 
-const BAR_MORE_TEXT: &str = "More";
+/// The More button's text while the bar shows labels.
+fn bar_more_text() -> String {
+    format!("{}  More", egui_phosphor::regular::DOTS_THREE)
+}
 /// egui's default separator width, fixed here so the bar can measure itself.
 const BAR_SEPARATOR_SPACING: f32 = 6.0;
 /// Keeps the bar this far from the library's edges.
@@ -551,10 +561,7 @@ fn selection_bar_layout(ui: &Ui, actions: &[BarAction], room: f32) -> BarLayout 
     let padding = ui.spacing().button_padding.x;
     let labeled_width =
         |text: String| text_width(ui, text, egui::TextStyle::Button, padding) + spacing;
-    let more = labeled_width(format!(
-        "{}  {BAR_MORE_TEXT}",
-        egui_phosphor::regular::DOTS_THREE
-    ));
+    let more = labeled_width(bar_more_text());
     let labeled = actions
         .iter()
         .map(|action| labeled_width(action.labeled_text()))
@@ -629,17 +636,7 @@ fn selection_bar_more_menu(
         action = Some(LibraryAction::Cut(assets.to_vec()));
         ui.close();
     }
-    if moduwu_design::menu_item(
-        ui,
-        true,
-        if count > 1 {
-            "Duplicate selected (RAW + sidecars)"
-        } else {
-            "Duplicate (RAW + sidecar)"
-        },
-    )
-    .clicked()
-    {
+    if moduwu_design::menu_item(ui, true, duplicate_label(count)).clicked() {
         action = Some(LibraryAction::Duplicate(assets.to_vec()));
         ui.close();
     }
@@ -649,32 +646,12 @@ fn selection_bar_more_menu(
             ui.close();
         }
     }
-    if moduwu_design::menu_item(
-        ui,
-        true,
-        if count > 1 {
-            "Reset adjustments for selected"
-        } else {
-            "Reset all adjustments"
-        },
-    )
-    .clicked()
-    {
+    if moduwu_design::menu_item(ui, true, reset_adjustments_label(count)).clicked() {
         action = Some(LibraryAction::ResetAdjustments(assets.to_vec()));
         ui.close();
     }
     ui.separator();
-    if moduwu_design::menu_item(
-        ui,
-        true,
-        if count > 1 {
-            "Delete selected…"
-        } else {
-            "Delete…"
-        },
-    )
-    .clicked()
-    {
+    if moduwu_design::menu_item(ui, true, delete_label(count)).clicked() {
         action = Some(LibraryAction::Delete(assets.to_vec()));
         ui.close();
     }
@@ -805,10 +782,7 @@ pub(super) fn show_library_selection_action_bar(
                             }
                         }
                         let more_label = if labeled {
-                            egui::RichText::new(format!(
-                                "{}  {BAR_MORE_TEXT}",
-                                egui_phosphor::regular::DOTS_THREE
-                            ))
+                            egui::RichText::new(bar_more_text())
                         } else {
                             egui::RichText::new(egui_phosphor::regular::DOTS_THREE)
                                 .size(moduwu_design::CONTROL_HEIGHT * 0.55)

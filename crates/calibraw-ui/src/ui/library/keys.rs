@@ -17,6 +17,12 @@ pub(super) enum GridKey {
     StopSelecting,
     SelectAll,
     Review(ReviewKey),
+    Photo(PhotoKey),
+}
+
+/// A key that starts a photo action, as the bar and menus do.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum PhotoKey {
     Delete,
     CopyAdjustments,
     PasteAdjustments,
@@ -40,9 +46,17 @@ pub(super) fn take_grid_key(ctx: &egui::Context) -> Option<GridKey> {
     let command_shift = Modifiers::COMMAND | Modifiers::SHIFT;
     // `consume_key` ignores an extra Shift, so every Shift form comes first.
     let shortcuts = [
-        (command_shift, Key::C, GridKey::CopyAdjustments),
-        (command_shift, Key::V, GridKey::PasteAdjustments),
-        (command_shift, Key::E, GridKey::Export),
+        (
+            command_shift,
+            Key::C,
+            GridKey::Photo(PhotoKey::CopyAdjustments),
+        ),
+        (
+            command_shift,
+            Key::V,
+            GridKey::Photo(PhotoKey::PasteAdjustments),
+        ),
+        (command_shift, Key::E, GridKey::Photo(PhotoKey::Export)),
         (Modifiers::COMMAND, Key::A, GridKey::SelectAll),
     ]
     .into_iter()
@@ -63,8 +77,16 @@ pub(super) fn take_grid_key(ctx: &egui::Context) -> Option<GridKey> {
         (Modifiers::NONE, Key::Space, GridKey::ToggleActive),
         (Modifiers::NONE, Key::Enter, GridKey::Open),
         (Modifiers::NONE, Key::Escape, GridKey::StopSelecting),
-        (Modifiers::NONE, Key::Delete, GridKey::Delete),
-        (Modifiers::NONE, Key::Backspace, GridKey::Delete),
+        (
+            Modifiers::NONE,
+            Key::Delete,
+            GridKey::Photo(PhotoKey::Delete),
+        ),
+        (
+            Modifiers::NONE,
+            Key::Backspace,
+            GridKey::Photo(PhotoKey::Delete),
+        ),
     ]);
     let pressed = ctx.input_mut(|input| {
         for (modifiers, key, command) in shortcuts {
@@ -133,10 +155,7 @@ pub(super) fn apply_grid_key(
                 }
             }
         }
-        GridKey::CopyAdjustments
-        | GridKey::PasteAdjustments
-        | GridKey::Delete
-        | GridKey::Export => {
+        GridKey::Photo(key) => {
             // Like the bar and menus, no photo action starts while another runs.
             if library_actions_enabled(app) {
                 *library_action = photo_action(app, key, visible);
@@ -145,24 +164,19 @@ pub(super) fn apply_grid_key(
     }
 }
 
-fn photo_action(app: &CalibRawApp, key: GridKey, visible: &[usize]) -> Option<LibraryAction> {
-    if let GridKey::CopyAdjustments = key {
-        return app
-            .library
-            .active_asset(visible)
-            .map(LibraryAction::CopyAdjustments);
-    }
-    let targets = app.library.target_assets(visible);
-    if targets.is_empty() {
-        return None;
-    }
+/// Copying adjustments takes the active photo; the others take the selection
+/// while selecting.
+fn photo_action(app: &CalibRawApp, key: PhotoKey, visible: &[usize]) -> Option<LibraryAction> {
+    let library = &app.library;
+    let targets = || Some(library.target_assets(visible)).filter(|targets| !targets.is_empty());
     match key {
-        GridKey::PasteAdjustments => app
-            .library
-            .has_copied_adjustments()
-            .then_some(LibraryAction::PasteAdjustments(targets)),
-        GridKey::Delete => Some(LibraryAction::Delete(targets)),
-        GridKey::Export => Some(LibraryAction::Export(targets)),
-        _ => None,
+        PhotoKey::CopyAdjustments => library
+            .active_asset(visible)
+            .map(LibraryAction::CopyAdjustments),
+        PhotoKey::PasteAdjustments => targets()
+            .filter(|_| library.has_copied_adjustments())
+            .map(LibraryAction::PasteAdjustments),
+        PhotoKey::Delete => targets().map(LibraryAction::Delete),
+        PhotoKey::Export => targets().map(LibraryAction::Export),
     }
 }

@@ -176,21 +176,22 @@ fn paint_feedback_change(ui: &mut Ui, change: ReviewChange) {
         let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(ICON), Sense::hover());
         paint(ui.painter(), rect.center());
     };
+    let star = |ui: &mut Ui| {
+        icon(ui, &|painter, center| {
+            paint_star(painter, center, ICON, STAR_COLOR, true)
+        });
+    };
     match change {
         ReviewChange::Rating(0) => {
             ui.label("No rating");
         }
         ReviewChange::Rating(rating) => {
             for _ in 0..rating {
-                icon(ui, &|painter, center| {
-                    paint_star(painter, center, ICON, STAR_COLOR, true)
-                });
+                star(ui);
             }
         }
         ReviewChange::StepRating(step) => {
-            icon(ui, &|painter, center| {
-                paint_star(painter, center, ICON, STAR_COLOR, true)
-            });
+            star(ui);
             ui.label(if step > 0 { "+1" } else { "−1" });
         }
         ReviewChange::Flag(flag) => {
@@ -251,28 +252,23 @@ pub(crate) fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview)
 
     let full_rating_width = f32::from(review.rating) * BADGE_ICON_STEP + BADGE_PADDING;
     let flag_width = BADGE_ICON_STEP + BADGE_PADDING;
-    let full_required_width = if has_rating { full_rating_width } else { 0.0 }
-        + if has_flag {
-            flag_width + if has_rating { BADGE_GAP } else { 0.0 }
-        } else {
-            0.0
-        }
-        + BADGE_MARGIN * 2.0;
-    let compact_rating = review.rating >= 3 && full_required_width > rect.width();
+    let required_width = |rating_width: f32| {
+        let rating = if has_rating { rating_width } else { 0.0 };
+        let flag = match (has_flag, has_rating) {
+            (true, true) => flag_width + BADGE_GAP,
+            (true, false) => flag_width,
+            (false, _) => 0.0,
+        };
+        rating + flag + BADGE_MARGIN * 2.0
+    };
+    let compact_rating = review.rating >= 3 && required_width(full_rating_width) > rect.width();
     let rating_width = if compact_rating {
         COMPACT_RATING_WIDTH
     } else {
         full_rating_width
     };
-    let required_width = if has_rating { rating_width } else { 0.0 }
-        + if has_flag {
-            flag_width + if has_rating { BADGE_GAP } else { 0.0 }
-        } else {
-            0.0
-        }
-        + BADGE_MARGIN * 2.0;
-    let scale = (rect.width() / required_width).clamp(0.0, 1.0);
-    let margin = 8.0 * scale;
+    let scale = (rect.width() / required_width(rating_width)).clamp(0.0, 1.0);
+    let margin = BADGE_MARGIN * scale;
     let badge_y = rect.bottom() - margin - BADGE_HEIGHT * scale;
     let painter = ui.painter_at(rect);
 
@@ -351,14 +347,7 @@ fn review_editor(
     // The same surface treatment as the app's standard toolbar buttons, so
     // the review controls read as one compact group.
     let painter = ui.painter_at(bounds);
-    let visuals = &ui.visuals().widgets.inactive;
-    painter.rect_filled(bounds, visuals.corner_radius, visuals.weak_bg_fill);
-    painter.rect_stroke(
-        bounds,
-        visuals.corner_radius,
-        visuals.bg_stroke,
-        StrokeKind::Inside,
-    );
+    paint_button_frame(&painter, bounds, &ui.visuals().widgets.inactive);
     let edge = (bounds.width() - 24.0) / 7.0;
     let button = |index: usize| {
         let divider = if index >= 5 { 12.0 } else { 0.0 };
@@ -514,17 +503,11 @@ fn review_button(
     }
     let painter = ui.painter();
     match surface {
-        ReviewSurface::Toolbar => {
-            let visuals = ui.style().interact(&response);
-            let highlight = button.shrink2(egui::vec2(1.0, 4.0));
-            painter.rect_filled(highlight, visuals.corner_radius, visuals.weak_bg_fill);
-            painter.rect_stroke(
-                highlight,
-                visuals.corner_radius,
-                visuals.bg_stroke,
-                StrokeKind::Inside,
-            );
-        }
+        ReviewSurface::Toolbar => paint_button_frame(
+            painter,
+            button.shrink2(egui::vec2(1.0, 4.0)),
+            ui.style().interact(&response),
+        ),
         // Fixed colours, as the card under the button is dark in every theme.
         ReviewSurface::Photo => {
             let fill = Color32::from_white_alpha(if engaged { 56 } else { 32 });
@@ -532,6 +515,21 @@ fn review_button(
         }
     }
     response
+}
+
+/// A standard button's fill and outline in `visuals`.
+fn paint_button_frame(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    visuals: &egui::style::WidgetVisuals,
+) {
+    painter.rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+    painter.rect_stroke(
+        rect,
+        visuals.corner_radius,
+        visuals.bg_stroke,
+        StrokeKind::Inside,
+    );
 }
 
 fn paint_star(
@@ -600,14 +598,7 @@ pub(super) fn compact_review_editor(
         Sense::click(),
     );
     let painter = ui.painter_at(rect);
-    let visuals = ui.style().interact(&response);
-    painter.rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
-    painter.rect_stroke(
-        rect,
-        visuals.corner_radius,
-        visuals.bg_stroke,
-        StrokeKind::Inside,
-    );
+    paint_button_frame(&painter, rect, ui.style().interact(&response));
     paint_star(
         &painter,
         rect.left_center() + egui::vec2(14.0, 0.0),
@@ -703,23 +694,19 @@ pub(crate) fn current_photo_asset(app: &CalibRawApp) -> Option<LibraryAsset> {
     if let Some(index) = app.library.entry_indices.get(&asset_id) {
         return Some(app.library.entries[*index].asset.clone());
     }
-    match asset_id {
-        LibraryAssetId::Desktop(path) => Some(LibraryAsset::from_desktop_path(path, 0, 0, None)),
-        LibraryAssetId::Android(uri) => {
-            let Some(crate::sidecar::SidecarTarget::Android { display_name, .. }) =
-                app.persistence.sidecar_target.as_ref()
-            else {
-                return None;
-            };
-            Some(LibraryAsset::from_android_document(
-                crate::platform::LibraryDocument {
-                    uri,
-                    display_name: display_name.clone(),
-                    display_path: display_name.clone(),
-                    bytes: 0,
-                    modified_seconds: 0,
-                },
-            ))
-        }
-    }
+    Some(match (asset_id, app.persistence.sidecar_target.as_ref()) {
+        (
+            LibraryAssetId::Android(uri),
+            Some(crate::sidecar::SidecarTarget::Android { display_name, .. }),
+        ) => LibraryAsset::from_android_document(crate::platform::LibraryDocument {
+            uri,
+            display_name: display_name.clone(),
+            display_path: display_name.clone(),
+            bytes: 0,
+            modified_seconds: 0,
+        }),
+        (LibraryAssetId::Desktop(path), _) => LibraryAsset::from_desktop_path(path, 0, 0, None),
+        // `current_document_id` gives an Android id only for an Android target.
+        (LibraryAssetId::Android(_), _) => return None,
+    })
 }

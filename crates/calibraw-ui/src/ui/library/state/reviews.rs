@@ -33,35 +33,43 @@ pub(crate) struct ReviewWriter {
     pending: HashMap<LibraryAssetId, usize>,
 }
 
+const WRITER_STOPPED: &str = "The rating saver stopped unexpectedly.";
+
 impl ReviewWriter {
+    /// The worker's request channel, starting the worker on first use.
     fn sender(
         &mut self,
         platform: &Arc<dyn Platform>,
         context: &egui::Context,
-    ) -> Result<&mpsc::Sender<ReviewSave>, String> {
-        if self.worker.is_none() {
-            let (request_sender, request_receiver) = mpsc::channel::<ReviewSave>();
-            let (result_sender, result_receiver) = mpsc::channel();
-            let platform = Arc::clone(platform);
-            let repaint = context.clone();
-            std::thread::Builder::new()
-                .name("calibraw-review-writer".to_owned())
-                .spawn(move || {
-                    for request in request_receiver {
-                        let saved = save_review(platform.as_ref(), &request);
-                        if result_sender.send(saved).is_err() {
-                            break;
-                        }
-                        repaint.request_repaint();
-                    }
-                })
-                .map_err(|error| format!("Could not start saving ratings: {error}"))?;
-            self.worker = Some((request_sender, result_receiver));
+    ) -> Result<mpsc::Sender<ReviewSave>, String> {
+        if let Some((sender, _)) = &self.worker {
+            return Ok(sender.clone());
         }
-        self.worker
-            .as_ref()
-            .map(|(sender, _)| sender)
-            .ok_or_else(|| "Could not start saving ratings.".to_owned())
+        let (request_sender, request_receiver) = mpsc::channel::<ReviewSave>();
+        let (result_sender, result_receiver) = mpsc::channel();
+        let platform = Arc::clone(platform);
+        let repaint = context.clone();
+        std::thread::Builder::new()
+            .name("calibraw-review-writer".to_owned())
+            .spawn(move || {
+                for request in request_receiver {
+                    let saved = save_review(platform.as_ref(), &request);
+                    if result_sender.send(saved).is_err() {
+                        break;
+                    }
+                    repaint.request_repaint();
+                }
+            })
+            .map_err(|error| format!("Could not start saving ratings: {error}"))?;
+        self.worker = Some((request_sender.clone(), result_receiver));
+        Ok(request_sender)
+    }
+
+    /// Forgets a worker that ended; the next save starts another.
+    fn stopped(&mut self, failures: &mut Vec<String>) {
+        self.worker = None;
+        self.pending.clear();
+        failures.push(WRITER_STOPPED.to_owned());
     }
 }
 
@@ -156,12 +164,10 @@ impl LibraryState {
         if resort {
             self.sort_entries();
         }
-        let sender = self.reviews.sender(&self.platform, context)?.clone();
+        let sender = self.reviews.sender(&self.platform, context)?;
         for save in saves {
             let asset_id = save.asset.id.clone();
-            sender
-                .send(save)
-                .map_err(|_| "The rating saver stopped unexpectedly.".to_owned())?;
+            sender.send(save).map_err(|_| WRITER_STOPPED.to_owned())?;
             *self.reviews.pending.entry(asset_id).or_default() += 1;
         }
         Ok(())
@@ -172,31 +178,13 @@ impl LibraryState {
         let mut failures = Vec::new();
         let mut resort = false;
         while let Some((_, receiver)) = &self.reviews.worker {
-            let saved = match receiver.try_recv() {
-                Ok(saved) => saved,
+            match receiver.try_recv() {
+                Ok(saved) => resort |= self.settle_review_save(saved, &mut failures),
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.reviews.worker = None;
-                    self.reviews.pending.clear();
-                    failures.push("The rating saver stopped unexpectedly.".to_owned());
+                    self.reviews.stopped(&mut failures);
                     break;
                 }
-            };
-            let settled = match self.reviews.pending.get_mut(&saved.asset_id) {
-                Some(pending) if *pending > 1 => {
-                    *pending -= 1;
-                    false
-                }
-                _ => {
-                    self.reviews.pending.remove(&saved.asset_id);
-                    true
-                }
-            };
-            if let Some(review) = saved.review.filter(|_| settled) {
-                resort |= self.show_review(&saved.asset_id, review);
-            }
-            if let Some(error) = saved.error {
-                failures.push(format!("{}: {error}", saved.display_name));
             }
         }
         if resort {
@@ -206,34 +194,33 @@ impl LibraryState {
     }
 
     /// Waits until every review save has finished or `deadline` passes, so
-    /// closing the app right after a key press keeps the rating. Returns
-    /// the photos that could not be saved.
+    /// a sidecar write or an app exit that follows keeps the rating.
+    /// Returns the photos that could not be saved.
     pub(crate) fn finish_review_saves(&mut self, deadline: Instant) -> Vec<String> {
         let mut failures = Vec::new();
+        let mut resort = false;
         while !self.reviews.pending.is_empty() {
             let Some((_, receiver)) = &self.reviews.worker else {
                 break;
             };
             let wait = deadline.saturating_duration_since(Instant::now());
             match receiver.recv_timeout(wait) {
-                Ok(saved) => {
-                    self.reviews.pending.remove(&saved.asset_id);
-                    if let Some(error) = saved.error {
-                        failures.push(format!("{}: {error}", saved.display_name));
-                    }
-                }
+                Ok(saved) => resort |= self.settle_review_save(saved, &mut failures),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     failures.push(format!(
-                        "{} ratings were still being saved when the app closed.",
+                        "Ratings of {} photos were still being saved.",
                         self.reviews.pending.len()
                     ));
                     break;
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    failures.push("The rating saver stopped unexpectedly.".to_owned());
+                    self.reviews.stopped(&mut failures);
                     break;
                 }
             }
+        }
+        if resort {
+            self.sort_entries();
         }
         failures
     }
@@ -242,5 +229,31 @@ impl LibraryState {
     /// read before it must not replace the one the grid shows.
     pub(super) fn review_save_pending(&self, asset_id: &LibraryAssetId) -> bool {
         self.reviews.pending.contains_key(asset_id)
+    }
+
+    pub(crate) fn review_saves_pending(&self) -> bool {
+        !self.reviews.pending.is_empty()
+    }
+
+    /// Counts off a finished save and shows its review once its photo has no
+    /// later save waiting. Returns whether that changed the sort order.
+    fn settle_review_save(&mut self, saved: ReviewSaved, failures: &mut Vec<String>) -> bool {
+        if let Some(error) = saved.error {
+            failures.push(format!("{}: {error}", saved.display_name));
+        }
+        let last = match self.reviews.pending.get_mut(&saved.asset_id) {
+            Some(pending) if *pending > 1 => {
+                *pending -= 1;
+                false
+            }
+            _ => {
+                self.reviews.pending.remove(&saved.asset_id);
+                true
+            }
+        };
+        match saved.review.filter(|_| last) {
+            Some(review) => self.show_review(&saved.asset_id, review),
+            None => false,
+        }
     }
 }

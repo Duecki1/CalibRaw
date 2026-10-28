@@ -171,6 +171,8 @@ impl CalibRawApp {
             self.refresh_status();
             return;
         };
+        // The document reads its review from the sidecar and saves it back.
+        self.settle_library_review_saves();
         self.prepare_loading_thumbnail_for(&source.sidecar_target);
         self.library.prepare_for_develop();
 
