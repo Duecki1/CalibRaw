@@ -1,18 +1,21 @@
 //! The details and review buttons shown over a library thumbnail under the
 //! pointer.
 //!
-//! They sit on a card along the photo's bottom edge: the rating badge, grown
-//! upwards, so the rest of the photo stays visible. The card stacks rows
-//! bottom-up in a fixed priority: review buttons, name, capture settings,
-//! file. It adds rows while it stays within `MAX_CARD_SHARE` of the tile
-//! height, and the first row that does not fit ends the stack. A row is never
-//! swapped for another, so tiles of one size show the same rows for every
-//! photo. Tiles too narrow for the stars and flags in one row move Pick and
-//! Reject to round buttons in the top-right corner.
+//! They sit on a card along the photo's bottom edge, where the review badges
+//! rest, so the rest of the photo stays visible. Its review buttons are as
+//! large as the corner toggles and carry the icons of Develop's rating
+//! editor. The card stacks rows bottom-up in a fixed priority: review
+//! buttons, name, capture settings, file. It adds rows while it stays within
+//! `MAX_CARD_SHARE` of the tile height, and the first row that does not fit
+//! ends the stack. A row is never swapped for another, so tiles of one size
+//! show the same rows for every photo. Tiles too narrow for the stars and
+//! flags in one row move Pick and Reject to round buttons in the top-right
+//! corner.
 
 use std::sync::Arc;
 
-use eframe::egui::{self, pos2, vec2, Color32, FontId, Galley, Rect, Sense, Ui, UiBuilder};
+use eframe::egui::{self, pos2, vec2, Color32, FontId, Galley, Rect, Sense, Ui, UiBuilder, Vec2};
+use moduwu_design::{CARD_RADIUS, SPACE_SM, SPACE_XS, SPACE_XXS};
 
 use super::catalog::{
     paint_corner_toggle, thumbnail_capture_fields, thumbnail_file_fields, CHECK_HIT_EDGE,
@@ -20,9 +23,8 @@ use super::catalog::{
 };
 use super::review::{
     flag_button_id, flag_button_info, flag_buttons, flag_change, flag_color, paint_flag,
-    paint_review_badge, star_buttons, ReviewChange, ReviewSurface, BADGE_FILL, BADGE_FLAG_SIZE,
-    BADGE_HEIGHT, BADGE_ICON_INSET, BADGE_ICON_STEP, BADGE_MARGIN, BADGE_RADIUS, BADGE_STAR_SIZE,
-    FLAG_BUTTONS,
+    paint_review_badge, star_buttons, ReviewChange, ReviewSurface, BADGE_FILL, FLAG_BUTTONS,
+    REVIEW_ICON_SIZE,
 };
 use super::{LibraryAction, LibraryEntry};
 use crate::pipeline::RenderedImageFormat;
@@ -31,10 +33,23 @@ use crate::sidecar::PhotoReview;
 const ANIMATION_SECONDS: f32 = 0.18;
 /// Share of the tile height the card may cover.
 const MAX_CARD_SHARE: f32 = 0.45;
-/// Above the card's top row, in points at full size.
-const CARD_TOP_PADDING: f32 = 5.0;
-/// Between text rows, in points.
-const ROW_GAP: f32 = 1.0;
+
+// Card layout, in points at full size.
+/// From the tile's edges to the card.
+const CARD_INSET: f32 = SPACE_SM;
+/// From the card's sides and bottom to the review buttons.
+const BUTTON_PADDING: f32 = SPACE_XS;
+/// Edge of a square review button.
+const BUTTON_EDGE: f32 = CORNER_TOGGLE_EDGE;
+/// Least space between the last star and Pick.
+const FLAG_GAP: f32 = SPACE_SM;
+/// From the card's top and sides to the text, in line with the first star.
+const TEXT_PADDING: f32 = SPACE_SM;
+/// A hovered review button's corners, nested in the card's.
+pub(super) const BUTTON_HIGHLIGHT_RADIUS: f32 = CARD_RADIUS - BUTTON_PADDING;
+
+/// Between text rows, and between the text and the buttons, in points.
+const ROW_GAP: f32 = SPACE_XXS;
 /// Between the corner flags, in points.
 const CORNER_FLAG_GAP: f32 = 6.0;
 const CORNER_FLAG_SIZE: f32 = 13.0;
@@ -44,10 +59,10 @@ const MIN_NAME_STEM: usize = 4;
 const MAX_EXTENSION_LEN: usize = 6;
 const FIELD_SEPARATOR: &str = " · ";
 
-/// The hover card of the thumbnail at `rect`. The review badge fades into
-/// the card's buttons in the same place, and the card stays while the
-/// pointer moves from the photo onto a button. `corner_badges_bottom` is
-/// where the tile's top-right badges end, which corner flags stay below.
+/// The hover card of the thumbnail at `rect`. The review badges fade into
+/// the card, and the card stays while the pointer moves from the photo onto
+/// a button. `corner_badges_bottom` is where the tile's top-right badges
+/// end, which corner flags stay below.
 pub(super) fn thumbnail_hover_overlay(
     ui: &mut Ui,
     rect: Rect,
@@ -77,15 +92,12 @@ pub(super) fn thumbnail_hover_overlay(
     overlay.multiply_opacity(progress);
     let card = CardLayout::new(rect);
     let text_rows = stack_text_rows(&overlay, rect, &card, entry, stacked_formats);
-    let top_row = text_rows
-        .last()
-        .map_or(card.review_top, |(row_top, _)| *row_top);
-    let painter = overlay.painter_at(rect);
-    painter.rect_filled(
-        card.rect(top_row - CARD_TOP_PADDING * card.scale),
-        BADGE_RADIUS * card.scale,
-        BADGE_FILL,
+    let card_top = text_rows.last().map_or(
+        card.review_top - BUTTON_PADDING * card.scale,
+        |(row_top, _)| row_top - TEXT_PADDING * card.scale,
     );
+    let painter = overlay.painter_at(rect);
+    painter.rect_filled(card.rect(card_top), CARD_RADIUS * card.scale, BADGE_FILL);
     for (row_top, galley) in text_rows {
         painter.galley(
             pos2(rect.left() + card.text_inset, row_top),
@@ -95,23 +107,10 @@ pub(super) fn thumbnail_hover_overlay(
     }
     let review = entry.review();
     let surface = ReviewSurface::Photo;
-    let rating = star_buttons(
-        &overlay,
-        card.stars,
-        BADGE_STAR_SIZE * card.scale,
-        &asset.id,
-        review,
-        surface,
-    );
+    let icon_size = REVIEW_ICON_SIZE * card.scale;
+    let rating = star_buttons(&overlay, card.stars, icon_size, &asset.id, review, surface);
     let flag = match card.flags {
-        Some(flags) => flag_buttons(
-            &overlay,
-            flags,
-            BADGE_FLAG_SIZE * card.scale,
-            &asset.id,
-            review,
-            surface,
-        ),
+        Some(flags) => flag_buttons(&overlay, flags, icon_size, &asset.id, review, surface),
         None => corner_flag_buttons(&overlay, rect, corner_badges_bottom, &asset.id, review),
     };
     rating
@@ -120,59 +119,54 @@ pub(super) fn thumbnail_hover_overlay(
         .map(|change| LibraryAction::Review(vec![asset.clone()], change))
 }
 
-/// The card's place and its review buttons, over the resting badges: stars
-/// where the rating badge's stars are, Pick and Reject at the right edge
+/// The card's place and its review buttons along its bottom edge: stars
+/// from the left, as on the rating badge, and Pick and Reject at the right,
 /// where the flag badge is.
 struct CardLayout {
     tile: Rect,
-    /// Below 1 on tiles too narrow for five stars, which shrink the card as
-    /// the badge shrinks.
+    /// Below 1 on tiles too narrow for five full-size stars, which shrink
+    /// the card's buttons and spacing but not its text.
     scale: f32,
     stars: [Rect; 5],
     /// `None` when the stars leave no room for the flags beside them.
     flags: Option<[Rect; 2]>,
     /// Top of the buttons, where the text rows start.
     review_top: f32,
-    /// From either tile edge to the text, in line with the outer icons.
+    /// From either tile edge to the text.
     text_inset: f32,
 }
 
 impl CardLayout {
     fn new(tile: Rect) -> Self {
-        // From the tile edge to the centre of the outermost icon.
-        let icon_inset = BADGE_MARGIN + BADGE_ICON_INSET;
-        let scale = (tile.width() / (2.0 * icon_inset + 4.0 * BADGE_ICON_STEP)).min(1.0);
-        let height = BADGE_HEIGHT * scale;
-        let row_y = tile.bottom() - (BADGE_MARGIN + BADGE_HEIGHT / 2.0) * scale;
-        let button =
-            |x: f32| Rect::from_center_size(pos2(x, row_y), vec2(BADGE_ICON_STEP * scale, height));
-        let stars = std::array::from_fn(|index| {
-            button(tile.left() + (icon_inset + BADGE_ICON_STEP * index as f32) * scale)
-        });
-        // The flags share the row while one empty step separates them from
-        // the stars.
-        let flags = (tile.width() >= 2.0 * icon_inset + 7.0 * BADGE_ICON_STEP).then(|| {
-            [
-                button(tile.right() - icon_inset - BADGE_ICON_STEP),
-                button(tile.right() - icon_inset),
-            ]
+        // From either tile edge to the outermost button, at full size.
+        let button_inset = CARD_INSET + BUTTON_PADDING;
+        let scale = (tile.width() / (2.0 * button_inset + 5.0 * BUTTON_EDGE)).min(1.0);
+        let inset = button_inset * scale;
+        let edge = BUTTON_EDGE * scale;
+        let top = tile.bottom() - inset - edge;
+        let button = |left: f32| Rect::from_min_size(pos2(left, top), Vec2::splat(edge));
+        let stars = std::array::from_fn(|index| button(tile.left() + inset + edge * index as f32));
+        let one_row = 2.0 * button_inset + 7.0 * BUTTON_EDGE + FLAG_GAP;
+        let flags = (tile.width() >= one_row).then(|| {
+            let reject = tile.right() - inset - edge;
+            [button(reject - edge), button(reject)]
         });
         Self {
             tile,
             scale,
             stars,
             flags,
-            review_top: row_y - height / 2.0,
-            text_inset: (icon_inset - BADGE_STAR_SIZE / 2.0) * scale,
+            review_top: top,
+            text_inset: (CARD_INSET + TEXT_PADDING) * scale,
         }
     }
 
-    /// The card from `top` down, where the rating badge sits but full width.
+    /// The card from `top` down to its inset from the tile's bottom edge.
     fn rect(&self, top: f32) -> Rect {
-        let margin = BADGE_MARGIN * self.scale;
+        let inset = CARD_INSET * self.scale;
         Rect::from_min_max(
-            pos2(self.tile.left() + margin, top),
-            self.tile.max - vec2(margin, margin),
+            pos2(self.tile.left() + inset, top),
+            self.tile.max - Vec2::splat(inset),
         )
     }
 }
@@ -298,8 +292,7 @@ fn stack_text_rows(
     stacked_formats: &[RenderedImageFormat],
 ) -> Vec<(f32, Arc<Galley>)> {
     let width = tile.width() - 2.0 * card.text_inset;
-    let highest_top =
-        tile.bottom() - tile.height() * MAX_CARD_SHARE + CARD_TOP_PADDING * card.scale;
+    let highest_top = tile.bottom() - tile.height() * MAX_CARD_SHARE + TEXT_PADDING * card.scale;
     let mut top = card.review_top;
     let mut rows = Vec::new();
     for row in TextRow::STACK {

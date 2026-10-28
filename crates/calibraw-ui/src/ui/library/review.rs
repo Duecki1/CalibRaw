@@ -1,3 +1,4 @@
+use super::hover::BUTTON_HIGHLIGHT_RADIUS;
 use super::*;
 use crate::sidecar::{PhotoFlag, PhotoReview};
 use crate::ui::theme;
@@ -221,18 +222,21 @@ fn flag_label(flag: PhotoFlag) -> &'static str {
     }
 }
 
-// Review badge look, in points at full size. The library hover grows the
-// rating badge into its card, so the badge's stars do not move under it.
-pub(super) const BADGE_MARGIN: f32 = 8.0;
-pub(super) const BADGE_HEIGHT: f32 = 22.0;
-pub(super) const BADGE_RADIUS: f32 = 6.0;
+// Review badge look, in points at full size.
+const BADGE_MARGIN: f32 = 8.0;
+const BADGE_HEIGHT: f32 = 22.0;
+const BADGE_RADIUS: f32 = 6.0;
+/// Also the library hover card's fill.
 pub(super) const BADGE_FILL: Color32 = Color32::from_black_alpha(150);
 /// Between the centres of neighbouring icons.
-pub(super) const BADGE_ICON_STEP: f32 = 15.0;
+const BADGE_ICON_STEP: f32 = 15.0;
 /// From a badge's edge to the centre of its first icon.
-pub(super) const BADGE_ICON_INSET: f32 = 13.5;
-pub(super) const BADGE_STAR_SIZE: f32 = 11.0;
-pub(super) const BADGE_FLAG_SIZE: f32 = 12.0;
+const BADGE_ICON_INSET: f32 = 13.5;
+const BADGE_STAR_SIZE: f32 = 11.0;
+const BADGE_FLAG_SIZE: f32 = 12.0;
+
+/// The largest star and flag icon on rating and flag buttons, in points.
+pub(super) const REVIEW_ICON_SIZE: f32 = 15.0;
 
 pub(crate) fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview) {
     const BADGE_PADDING: f32 = 12.0;
@@ -332,7 +336,7 @@ pub(super) fn flag_color(flag: PhotoFlag) -> Color32 {
 pub(super) enum ReviewSurface {
     /// The Develop toolbar, on its button fill.
     Toolbar,
-    /// A library photo, on the hover scrim.
+    /// A library photo, on its hover card.
     Photo,
 }
 
@@ -366,7 +370,7 @@ fn review_editor(
             egui::vec2(edge, bounds.height()),
         )
     };
-    let icon_size = (edge * 0.62).min(15.0);
+    let icon_size = (edge * 0.62).min(REVIEW_ICON_SIZE);
     let surface = ReviewSurface::Toolbar;
     let rating = star_buttons(
         ui,
@@ -521,24 +525,28 @@ fn review_button(
     marked: bool,
 ) -> egui::Response {
     let response = ui.interact(button, ui.make_persistent_id(id_salt), Sense::click());
-    if marked || response.hovered() || response.has_focus() || response.is_pointer_button_down_on()
-    {
-        let visuals = ui.style().interact(&response);
-        let highlight = button.shrink2(egui::vec2(
-            1.0,
-            match surface {
-                ReviewSurface::Toolbar => 4.0,
-                ReviewSurface::Photo => 1.0,
-            },
-        ));
-        let painter = ui.painter();
-        painter.rect_filled(highlight, visuals.corner_radius, visuals.weak_bg_fill);
-        painter.rect_stroke(
-            highlight,
-            visuals.corner_radius,
-            visuals.bg_stroke,
-            StrokeKind::Inside,
-        );
+    let engaged = response.has_focus() || response.is_pointer_button_down_on();
+    if !(marked || engaged || response.hovered()) {
+        return response;
+    }
+    let painter = ui.painter();
+    match surface {
+        ReviewSurface::Toolbar => {
+            let visuals = ui.style().interact(&response);
+            let highlight = button.shrink2(egui::vec2(1.0, 4.0));
+            painter.rect_filled(highlight, visuals.corner_radius, visuals.weak_bg_fill);
+            painter.rect_stroke(
+                highlight,
+                visuals.corner_radius,
+                visuals.bg_stroke,
+                StrokeKind::Inside,
+            );
+        }
+        // Fixed colours, as the card under the button is dark in every theme.
+        ReviewSurface::Photo => {
+            let fill = Color32::from_white_alpha(if engaged { 56 } else { 32 });
+            painter.rect_filled(button, BUTTON_HIGHLIGHT_RADIUS, fill);
+        }
     }
     response
 }
