@@ -136,6 +136,11 @@ pub struct GeometryTransform {
     /// (`migrations::older_readers`).
     #[serde(default, skip_serializing_if = "PerspectiveCorrection::is_identity")]
     pub perspective: PerspectiveCorrection,
+    /// Stretch of the output along its axes before quarter turns, from -100 to 100: its width
+    /// over its height is multiplied by `2^(value / 100)` at the same pixel count. Sidecars with
+    /// one are written as schema 3.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub aspect_stretch: f32,
 }
 
 const fn default_crop_rect() -> [f32; 4] {
@@ -154,12 +159,16 @@ impl Default for GeometryTransform {
             horizontal_skew_degrees: 0.0,
             vertical_skew_degrees: 0.0,
             perspective: PerspectiveCorrection::default(),
+            aspect_stretch: 0.0,
         }
     }
 }
 
 impl GeometryTransform {
     pub const MIN_CROP_EXTENT: f32 = 0.01;
+    /// Largest [`Self::aspect_stretch`] either way, which doubles or halves the output's width
+    /// over its height.
+    pub const MAX_ASPECT_STRETCH: f32 = 100.0;
 
     pub fn sanitized(mut self) -> Self {
         for value in &mut self.crop {
@@ -177,6 +186,11 @@ impl GeometryTransform {
         self.horizontal_skew_degrees = finite_clamp(self.horizontal_skew_degrees, -30.0, 30.0);
         self.vertical_skew_degrees = finite_clamp(self.vertical_skew_degrees, -30.0, 30.0);
         self.perspective = self.perspective.sanitized();
+        self.aspect_stretch = finite_clamp(
+            self.aspect_stretch,
+            -Self::MAX_ASPECT_STRETCH,
+            Self::MAX_ASPECT_STRETCH,
+        );
         self
     }
 
@@ -190,17 +204,20 @@ impl GeometryTransform {
             && value.horizontal_skew_degrees.abs() < 1e-4
             && value.vertical_skew_degrees.abs() < 1e-4
             && value.perspective.is_identity()
+            && value.aspect_stretch.abs() < 1e-4
     }
 
-    /// Output size in pixels: the crop's share of the corrected frame (see [`GeometryMapping`]).
+    /// Output size in pixels: the crop's share of the corrected frame, stretched for the aspect
+    /// (see [`GeometryMapping`]).
     pub fn crop_pixel_dimensions(self, source_width: u32, source_height: u32) -> (u32, u32) {
         let value = self.sanitized();
         let [frame_width, frame_height] =
             GeometryMapping::new(value, source_width, source_height).frame_size();
-        let width = ((value.crop[2] - value.crop[0]) * frame_width)
+        let [stretch_x, stretch_y] = value.aspect_stretch_factors().map(|factor| factor as f32);
+        let width = ((value.crop[2] - value.crop[0]) * frame_width * stretch_x)
             .round()
             .max(1.0) as u32;
-        let height = ((value.crop[3] - value.crop[1]) * frame_height)
+        let height = ((value.crop[3] - value.crop[1]) * frame_height * stretch_y)
             .round()
             .max(1.0) as u32;
         if value.quarter_turns.is_multiple_of(2) {
@@ -222,12 +239,16 @@ impl GeometryTransform {
     }
 
     /// The crop's width / height in units normalized to the corrected frame for the chosen
-    /// aspect ratio, which applies to the output as displayed (after quarter turns).
-    /// `Original` is the source's own shape.
+    /// aspect ratio, which applies to the output as displayed (after the aspect stretch and
+    /// quarter turns). `Original` is the source's own shape.
     pub fn normalized_crop_aspect(self, source_width: u32, source_height: u32) -> Option<f32> {
         let [frame_width, frame_height] =
             GeometryMapping::new(self, source_width, source_height).frame_size();
-        let frame_aspect = frame_width / frame_height;
+        let [stretch_x, stretch_y] = self
+            .sanitized()
+            .aspect_stretch_factors()
+            .map(|factor| factor as f32);
+        let frame_aspect = frame_width * stretch_x / (frame_height * stretch_y);
         let swapped = self.quarter_turns % 2 == 1;
         let (output_width, output_height) = if swapped {
             (source_height, source_width)
@@ -244,8 +265,6 @@ impl GeometryTransform {
         (normalized.is_finite() && normalized > f32::EPSILON).then_some(normalized)
     }
 
-    /// Shrinks the crop about its centre until it fits inside the transformed source, moving
-    /// it no further than needed. Returns whether it changed.
     /// Reshapes the crop about its centre to the chosen aspect ratio by shortening one side,
     /// keeping it within the frame; `Free` leaves it as it is.
     pub fn conform_crop_to_aspect(&mut self, source_width: u32, source_height: u32) {
@@ -271,6 +290,8 @@ impl GeometryTransform {
         self.crop = [left, top, left + width, top + height];
     }
 
+    /// Shrinks the crop about its centre until it fits inside the transformed source, moving
+    /// it no further than needed. Returns whether it changed.
     pub fn fit_crop_inside_transformed_source(
         &mut self,
         source_width: u32,
@@ -433,6 +454,47 @@ impl GeometryTransform {
         }
     }
 
+    /// The aspect stretch as the photo is displayed, after quarter turns: positive values make
+    /// it wider.
+    pub fn displayed_aspect_stretch(self) -> f32 {
+        if self.quarter_turns % 2 == 1 {
+            -self.aspect_stretch
+        } else {
+            self.aspect_stretch
+        }
+    }
+
+    /// Sets the aspect stretch from its displayed value (see
+    /// [`Self::displayed_aspect_stretch`]).
+    pub fn set_displayed_aspect_stretch(&mut self, displayed: f32) {
+        self.aspect_stretch = if self.quarter_turns % 2 == 1 {
+            -displayed
+        } else {
+            displayed
+        };
+    }
+
+    /// How much the aspect stretch scales the displayed photo horizontally and vertically.
+    pub fn displayed_stretch_factors(self) -> [f32; 2] {
+        let [x, y] = self
+            .sanitized()
+            .aspect_stretch_factors()
+            .map(|factor| factor as f32);
+        if self.quarter_turns % 2 == 1 {
+            [y, x]
+        } else {
+            [x, y]
+        }
+    }
+
+    /// How much [`Self::aspect_stretch`] scales the output's width and height, before quarter
+    /// turns. Their product is 1, and both are exactly 1 without a stretch.
+    fn aspect_stretch_factors(self) -> [f64; 2] {
+        // Each side takes half of the ratio's change, 2^(value / 100).
+        let half_log2 = 0.5 * f64::from(self.aspect_stretch) / 100.0;
+        [half_log2.exp2(), (-half_log2).exp2()]
+    }
+
     /// Which source side the displayed side `side` shows, as `[pitch, yaw]` signs: widening it
     /// adds to exactly one of them.
     fn source_side(self, [x, y]: [i8; 2]) -> [f32; 2] {
@@ -453,6 +515,10 @@ impl GeometryTransform {
 
 /// The displayed top and right side, as directions in y-down coordinates.
 const DISPLAYED_SIDES: [[i8; 2]; 2] = [[0, -1], [1, 0]];
+
+fn is_zero(value: &f32) -> bool {
+    *value == 0.0
+}
 
 fn finite_clamp(value: f32, min: f32, max: f32) -> f32 {
     if value.is_finite() {

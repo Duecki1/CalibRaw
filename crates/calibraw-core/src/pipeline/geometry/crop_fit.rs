@@ -57,8 +57,8 @@ impl CropCenters {
     }
 }
 
-/// The centres, frame pixels, at which a crop of `size` (output pixels before quarter turns)
-/// lies inside the corrected source, or `None` when it fits nowhere.
+/// The centres, frame pixels, at which a crop of `size` (output pixels before the aspect stretch
+/// and quarter turns) lies inside the corrected source, or `None` when it fits nowhere.
 pub(super) fn feasible_crop_centers(
     mapping: &GeometryMapping,
     size: [f64; 2],

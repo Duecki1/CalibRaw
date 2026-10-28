@@ -21,8 +21,8 @@
 //!   report as newer instead of as corrupt, so they never replace the file
 //!   with an unedited one. Every other edit is written with schema 1, whose
 //!   layout schema 2 shares.
-//! - Up to v1.3, readers would drop a LUT or a perspective correction and
-//!   cannot decode a Select People mask. Edits with any of them are written
+//! - Up to v1.3, readers would drop a LUT, a perspective correction or an
+//!   aspect stretch and cannot decode a Select People mask. Edits with any of them are written
 //!   with schema 3, which shares the same layout and which those readers
 //!   report as newer.
 
@@ -99,6 +99,7 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     if edits.look_lut.is_some()
         || masks.has_people_masks()
         || !edits.geometry.perspective.is_identity()
+        || edits.geometry.aspect_stretch != 0.0
     {
         return current;
     }

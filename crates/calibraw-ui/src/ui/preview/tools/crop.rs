@@ -60,7 +60,13 @@ impl Preview {
                 if let Some(drag) = app.develop_ui.straighten_drag.take() {
                     let delta = drag.current - drag.start;
                     if delta.length() >= 12.0 {
-                        let angle = delta.y.atan2(delta.x).to_degrees();
+                        // The rotation acts before the aspect stretch, so the line is measured
+                        // unstretched.
+                        let [stretch_x, stretch_y] =
+                            app.develop.geometry.displayed_stretch_factors();
+                        let angle = (delta.y / stretch_y)
+                            .atan2(delta.x / stretch_x)
+                            .to_degrees();
                         let target = nearest_straight_axis_degrees(angle);
                         let correction = normalize_degrees(target - angle);
                         let rotation = app.develop.geometry.rotation_degrees + correction;

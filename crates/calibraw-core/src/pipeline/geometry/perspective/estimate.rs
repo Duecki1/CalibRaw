@@ -66,8 +66,11 @@ pub fn estimate_perspective(
     geometry: GeometryTransform,
     focal_length_35mm: f32,
 ) -> Option<PerspectiveEstimate> {
+    // The aspect stretch keeps lines upright and is the user's to choose, so the estimate
+    // leaves it out.
     let geometry = GeometryTransform {
         perspective: PerspectiveCorrection::default(),
+        aspect_stretch: 0.0,
         ..geometry.sanitized()
     };
     let (width, height) = (image.width(), image.height());

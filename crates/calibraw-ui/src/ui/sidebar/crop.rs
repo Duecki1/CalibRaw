@@ -173,6 +173,18 @@ impl Sidebar {
                 }
                 app.develop.geometry.set_displayed_perspective(perspective);
             }
+            let mut aspect = app.develop.geometry.displayed_aspect_stretch();
+            if AdjustmentSlider::new(
+                "Aspect",
+                &mut aspect,
+                -GeometryTransform::MAX_ASPECT_STRETCH..=GeometryTransform::MAX_ASPECT_STRETCH,
+            )
+            .decimals(0)
+            .step(1.0)
+            .show(ui)
+            {
+                app.develop.geometry.set_displayed_aspect_stretch(aspect);
+            }
             AdjustmentSlider::new(
                 "Horizontal skew",
                 &mut app.develop.geometry.horizontal_skew_degrees,
@@ -197,7 +209,8 @@ impl Sidebar {
             (geometry.rotation_degrees - before.rotation_degrees).abs() > 1e-6
                 || (geometry.horizontal_skew_degrees - before.horizontal_skew_degrees).abs() > 1e-6
                 || (geometry.vertical_skew_degrees - before.vertical_skew_degrees).abs() > 1e-6
-                || geometry.perspective != before.perspective;
+                || geometry.perspective != before.perspective
+                || geometry.aspect_stretch != before.aspect_stretch;
         if containment_transform_changed {
             app.refit_crop(source_dimensions.0, source_dimensions.1);
         } else {

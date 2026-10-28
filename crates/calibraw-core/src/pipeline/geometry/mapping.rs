@@ -117,15 +117,18 @@ impl Homography {
 /// The perspective correction `G` maps them into perspective space, where the corrected frame is
 /// the bounding box of the corrected source. Frame pixels are perspective-space positions with
 /// the frame's top-left corner at 0. A source position `p` lands in the output at
-/// `Q · A · (G(p) - c)` from its centre: `A = R · S · F` rotates, skews and flips, `Q` applies
-/// the quarter turns and `c` is the crop centre in frame pixels. Without perspective `G` is the
-/// identity and the frame is the source.
+/// `Q · Σ · A · (G(p) - c)` from its centre: `A = R · S · F` rotates, skews and flips, `Σ`
+/// stretches for the aspect, `Q` applies the quarter turns and `c` is the crop centre in frame
+/// pixels. Without perspective `G` is the identity and the frame is the source.
 ///
 /// The stored crop is normalized to the frame: its centre is `c` and its extent is the output
-/// size before quarter turns. The crop workspace shows the frame with `A` applied about the
-/// frame centre, so the image stays put while the crop changes; the crop is axis-aligned there.
+/// size before `Σ` and `Q`. The crop workspace shows the frame with `A` applied about the frame
+/// centre, so the image stays put while the crop changes; the crop is axis-aligned there.
 /// Workspace coordinates are normalized to the frame, before quarter turns; the canvas shows the
 /// workspace after them.
+///
+/// `Σ` is diagonal, so it only changes sizes in pixels: positions normalized to the output, the
+/// workspace or the canvas do not depend on it, and neither does where the crop fits.
 #[derive(Clone, Copy, Debug)]
 pub struct GeometryMapping {
     quarter_turns: u8,
@@ -135,11 +138,13 @@ pub struct GeometryMapping {
     /// `A`.
     linear: [[f64; 2]; 2],
     linear_inverse: [[f64; 2]; 2],
+    /// `Σ`, as its scale of the output's width and height.
+    stretch: [f64; 2],
     source_size: [f64; 2],
     frame_size: [f64; 2],
     /// Crop centre in frame pixels.
     crop_center: [f64; 2],
-    /// Crop size in output pixels before quarter turns.
+    /// Crop size in output pixels before `Σ` and quarter turns.
     crop_size: [f64; 2],
 }
 
@@ -172,6 +177,7 @@ impl GeometryMapping {
             source_from_frame: frame_from_source.inverse(),
             linear,
             linear_inverse: inverse_2x2(linear),
+            stretch: geometry.aspect_stretch_factors(),
             source_size,
             frame_size: [max[0] - min[0], max[1] - min[1]],
             crop_center: [0.0; 2],
@@ -211,7 +217,15 @@ impl GeometryMapping {
 
     /// Size of the output in pixels, after quarter turns.
     pub fn output_size(&self) -> [f32; 2] {
-        self.turned(self.crop_size).map(|value| value as f32)
+        self.turned(self.stretched(self.crop_size))
+            .map(|value| value as f32)
+    }
+
+    /// Size of the crop canvas in pixels, after quarter turns: the frame, stretched like the
+    /// output.
+    pub fn canvas_size(&self) -> [f32; 2] {
+        self.turned(self.stretched(self.frame_size))
+            .map(|value| value as f32)
     }
 
     /// Normalized source position to output position, 0–1 across the cropped output after
@@ -315,6 +329,11 @@ impl GeometryMapping {
         Homography::affine(scaled, [0.5 - moved_center[0], 0.5 - moved_center[1]])
     }
 
+    /// `size` (before quarter turns) stretched by `Σ`.
+    fn stretched(&self, size: [f64; 2]) -> [f64; 2] {
+        [size[0] * self.stretch[0], size[1] * self.stretch[1]]
+    }
+
     /// `size` after quarter turns.
     fn turned(&self, size: [f64; 2]) -> [f64; 2] {
         if self.quarter_turns.is_multiple_of(2) {
@@ -365,7 +384,8 @@ impl GeometryMapping {
         })
     }
 
-    /// `A⁻¹ · offset`: the frame offset that `A` turns into the output offset `offset`.
+    /// `A⁻¹ · offset`: the frame offset that `A` turns into the output offset `offset`, before
+    /// `Σ`.
     pub(super) fn unrotate(&self, offset: [f64; 2]) -> [f64; 2] {
         apply_2x2(self.linear_inverse, offset)
     }

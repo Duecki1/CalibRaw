@@ -110,6 +110,7 @@
       },
       "geometry": {
         "aspect_ratio": "original",
+        "aspect_stretch": -20.0,
         "crop": [0.08,0.12,0.9,0.95],
         "flip_horizontal": false,
         "flip_vertical": false,

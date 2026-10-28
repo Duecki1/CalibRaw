@@ -103,6 +103,7 @@ pub(super) fn replay_stage_plan(
         current.geometry.horizontal_skew_degrees = final_geometry.horizontal_skew_degrees;
         current.geometry.vertical_skew_degrees = final_geometry.vertical_skew_degrees;
         current.geometry.perspective = final_geometry.perspective;
+        current.geometry.aspect_stretch = final_geometry.aspect_stretch;
         stages.push(ReplayStage {
             kind: ReplayStageKind::Transform,
             state: current.clone(),
@@ -196,6 +197,7 @@ fn transform_used(geometry: GeometryTransform) -> bool {
     geometry.horizontal_skew_degrees.abs() >= 1e-4
         || geometry.vertical_skew_degrees.abs() >= 1e-4
         || !geometry.perspective.is_identity()
+        || geometry.aspect_stretch.abs() >= 1e-4
 }
 
 fn masks_used(masks: &MaskStack) -> bool {
