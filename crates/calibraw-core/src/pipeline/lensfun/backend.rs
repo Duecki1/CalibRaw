@@ -85,7 +85,7 @@ fn catalog_result(raw: &LoadedRaw) -> Result<LensfunCatalog> {
         .unwrap_or_else(|| all_lenses(&database));
     sort_and_deduplicate_lenses(&mut lenses);
 
-    let auto_match = find_auto_lens(&database, camera, raw);
+    let auto_match = find_auto_lens(&database, camera, raw, &lenses);
     let message = if let Some(found) = &auto_match {
         format!("Auto-detected {} from RAW metadata", found.label())
     } else if raw.lens_model.trim().is_empty() {

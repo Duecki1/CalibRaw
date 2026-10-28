@@ -76,10 +76,13 @@ pub(super) fn sort_and_deduplicate_lenses(lenses: &mut Vec<LensfunLens>) {
     });
 }
 
+/// Picks the profile for the RAW's lens. `catalog` lists the profiles that
+/// fit the camera, or every profile when the camera is unknown.
 pub(super) fn find_auto_lens(
     database: &Database,
     camera: Option<*const lfCamera>,
     raw: &LoadedRaw,
+    catalog: &[LensfunLens],
 ) -> Option<LensfunLens> {
     if raw.lens_model.trim().is_empty() {
         return None;
@@ -112,9 +115,7 @@ pub(super) fn find_auto_lens(
     };
 
     if candidates.is_empty() {
-        candidates = camera
-            .map(|camera| compatible_lenses(database, camera))
-            .unwrap_or_else(|| all_lenses(database));
+        candidates = catalog.to_vec();
     }
     sort_and_deduplicate_lenses(&mut candidates);
 
@@ -134,6 +135,16 @@ pub(super) fn find_auto_lens(
         return candidates.into_iter().next();
     }
 
+    ranked_match(database, camera, raw, candidates)
+        .or_else(|| optics_match(database, camera, raw, catalog))
+}
+
+fn ranked_match(
+    database: &Database,
+    camera: Option<*const lfCamera>,
+    raw: &LoadedRaw,
+    candidates: Vec<LensfunLens>,
+) -> Option<LensfunLens> {
     let mut ranked = candidates
         .into_iter()
         .filter_map(|candidate| {
@@ -157,6 +168,185 @@ pub(super) fn find_auto_lens(
         }
     }
     Some(best.clone())
+}
+
+/// Matches EXIF names that abbreviate the Lensfun name, such as
+/// `OLYMPUS M.12-40mm F2.8` for `Olympus M.Zuiko Digital ED 12-40mm f/2.8 Pro`
+/// or `LEICA DG SUMMILUX 25/F1.4` for `Leica DG Summilux 25mm f/1.4 Asph.`.
+/// Focal range, aperture and version numeral must agree, and every other word
+/// of the EXIF name must appear in the profile's maker or model. Of the
+/// profiles left, the one adding the fewest words wins, so a plain
+/// `M.14-42mm F3.5-5.6` does not pick the `EZ` or `L` variant; a tie matches
+/// nothing.
+fn optics_match(
+    database: &Database,
+    camera: Option<*const lfCamera>,
+    raw: &LoadedRaw,
+    catalog: &[LensfunLens],
+) -> Option<LensfunLens> {
+    let optics = lens_optics(&raw.lens_model)?;
+    let raw_maker_words = tokenized(&raw.lens_make);
+    let raw_words = lens_words(&raw.lens_model)
+        .into_iter()
+        .filter(|word| !raw_maker_words.contains(word))
+        .collect::<Vec<_>>();
+    let raw_versions = version_numerals(&raw_words);
+    let raw_names = raw_words
+        .iter()
+        .filter(|word| !is_version_numeral(word))
+        .collect::<Vec<_>>();
+    // Optics and a version numeral alone do not identify a lens.
+    if raw_names.is_empty() {
+        return None;
+    }
+
+    let mut best: Option<(usize, &LensfunLens)> = None;
+    let mut tied = false;
+    for candidate in catalog {
+        if lens_optics(&candidate.model) != Some(optics)
+            || !maker_is_compatible(&raw.lens_make, &raw.lens_model, &candidate.maker)
+        {
+            continue;
+        }
+        let words = lens_words(&candidate.model);
+        if version_numerals(&words) != raw_versions {
+            continue;
+        }
+        let maker_words = lens_maker_words(&candidate.maker);
+        if !raw_names
+            .iter()
+            .all(|name| words.contains(name) || maker_words.contains(name))
+        {
+            continue;
+        }
+        if !profile_supports_capture(database, camera, raw, candidate) {
+            continue;
+        }
+        let added = words
+            .iter()
+            .filter(|word| !raw_names.contains(word) && !is_version_numeral(word))
+            .count();
+        match best {
+            Some((fewest, _)) if added > fewest => {}
+            Some((fewest, _)) if added == fewest => tied = true,
+            _ => {
+                best = Some((added, candidate));
+                tied = false;
+            }
+        }
+    }
+    if tied {
+        return None;
+    }
+    best.map(|(_, candidate)| candidate.clone())
+}
+
+/// Focal range in millimetres and maximum aperture as f-numbers, read from a
+/// lens name; a prime or a constant-aperture zoom repeats its single value.
+#[derive(Clone, Copy, PartialEq)]
+struct LensOptics {
+    focal: [f32; 2],
+    aperture: [f32; 2],
+}
+
+/// Reads `12-40mm f/2.8`, `12-40mm F2.8` and Panasonic's `25/F1.4`. Names
+/// without both values, such as `Summilux-TL 1:1.4/35`, give `None`.
+fn lens_optics(model: &str) -> Option<LensOptics> {
+    let text = model.to_ascii_lowercase();
+    let bytes = text.as_bytes();
+    let mut focal = None;
+    let mut aperture = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let starts_word = index == 0 || !bytes[index - 1].is_ascii_alphabetic();
+        if aperture.is_none() && bytes[index] == b'f' && starts_word {
+            let start = index + 1 + usize::from(bytes.get(index + 1) == Some(&b'/'));
+            if let Some((range, end)) = number_range(bytes, start) {
+                aperture = Some(range);
+                index = end;
+                continue;
+            }
+        }
+        if focal.is_none() {
+            if let Some((range, end)) = number_range(bytes, index) {
+                if bytes[end..].starts_with(b"mm") || bytes[end..].starts_with(b"/f") {
+                    focal = Some(range);
+                }
+                index = end;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    Some(LensOptics {
+        focal: focal?,
+        aperture: aperture?,
+    })
+}
+
+/// A decimal number or a `low-high` range starting at `start`, and the index
+/// after it.
+fn number_range(bytes: &[u8], start: usize) -> Option<([f32; 2], usize)> {
+    let (low, end) = decimal(bytes, start)?;
+    if bytes.get(end) == Some(&b'-') {
+        if let Some((high, end)) = decimal(bytes, end + 1) {
+            return Some(([low, high], end));
+        }
+    }
+    Some(([low, low], end))
+}
+
+fn decimal(bytes: &[u8], start: usize) -> Option<(f32, usize)> {
+    let digits_from = |from: usize| {
+        from + bytes[from.min(bytes.len())..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count()
+    };
+    let mut end = digits_from(start);
+    if end == start {
+        return None;
+    }
+    if bytes.get(end) == Some(&b'.') && bytes.get(end + 1).is_some_and(u8::is_ascii_digit) {
+        end = digits_from(end + 1);
+    }
+    let value = std::str::from_utf8(&bytes[start..end]).ok()?.parse().ok()?;
+    Some((value, end))
+}
+
+/// The words of a lens name without numbers, so `M.12-40mm F2.8 Pro` gives
+/// `m` and `pro`.
+fn lens_words(model: &str) -> Vec<String> {
+    tokenized(model)
+        .into_iter()
+        .filter(|token| !token.chars().any(|character| character.is_ascii_digit()))
+        .filter(|token| !matches!(token.as_str(), "f" | "mm" | "lens"))
+        .collect()
+}
+
+/// Lensfun files lenses that OM Digital Solutions names `OM …` in EXIF under
+/// Olympus, and its own lenses under OM Digital Solutions.
+fn lens_maker_words(maker: &str) -> Vec<String> {
+    let mut words = tokenized(maker);
+    if words.iter().any(|word| word == "olympus" || word == "om") {
+        words.extend(["olympus".to_owned(), "om".to_owned()]);
+    }
+    words
+}
+
+fn is_version_numeral(word: &str) -> bool {
+    matches!(word, "ii" | "iii" | "iv")
+}
+
+fn version_numerals(words: &[String]) -> Vec<&str> {
+    let mut numerals = words
+        .iter()
+        .map(String::as_str)
+        .filter(|word| is_version_numeral(word))
+        .collect::<Vec<_>>();
+    numerals.sort_unstable();
+    numerals.dedup();
+    numerals
 }
 
 fn lens_metadata_is_exact(raw: &LoadedRaw, candidate: &LensfunLens) -> bool {
