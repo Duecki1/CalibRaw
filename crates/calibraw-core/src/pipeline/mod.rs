@@ -40,7 +40,7 @@ pub use color_profile::{
     CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, SrgbOutputTransform,
     ToneCurve,
 };
-pub use film_negative::{FilmNegative, FilmSource, FilmStock};
+pub use film_negative::{FilmNegative, FilmSettlement, FilmSource, FilmStock};
 pub use geometry::{
     estimate_straighten_rotation, transform_thumbnail_geometry,
     transform_thumbnail_geometry_with_lens, CropAspectRatio, GeometryTransform, LensGeometryMap,

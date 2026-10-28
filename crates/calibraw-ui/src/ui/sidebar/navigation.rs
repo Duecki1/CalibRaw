@@ -576,12 +576,22 @@ impl Sidebar {
                 &effect_frame,
             )
         } else {
-            Self::show_effect_components(
+            let film_negative = if app.develop.exposure.film.is_positive() {
+                mask_effects::FilmNegativeTile::Offered
+            } else {
+                mask_effects::FilmNegativeTile::Added
+            };
+            let (changed, film_picked) = Self::show_effect_components(
                 ui,
                 &mut app.masks.stack.global_effects,
                 true,
+                film_negative,
                 &effect_frame,
-            )
+            );
+            if film_picked {
+                Self::start_film_negative(ui.ctx(), app, layout);
+            }
+            changed
         };
         if changed {
             app.mark_mask_adjustments_dirty();

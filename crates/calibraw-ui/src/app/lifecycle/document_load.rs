@@ -3,6 +3,7 @@
 //! GPU preview. The UI-thread half lives in `documents.rs`.
 
 use super::*;
+use crate::pipeline::FilmSettlement;
 use std::sync::RwLock;
 
 /// The load notice for edits migrated to the current sidecar format. It is
@@ -270,6 +271,19 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         let lens_state_saved = saved_lens.is_some();
         let (lens_correction, full_raw) =
             apply_saved_lens_correction(&decoded, saved_lens, automatic_lens, &mut sidecar_warning);
+        // A film negative the Library marked is estimated from this photo as
+        // the Film negative card's Auto would, and saved.
+        match exposure.settle_film(&full_raw, geometry) {
+            FilmSettlement::Unchanged => {}
+            FilmSettlement::Estimated => sidecar_needs_rewrite = true,
+            FilmSettlement::NotFound => {
+                sidecar_needs_rewrite = true;
+                append_notice(
+                    &mut sidecar_warning,
+                    "No film negative was found to invert, so the photo is shown as it is.",
+                );
+            }
+        }
         let lens_profile_missing = !lens_state_saved
             && automatic_lens.enabled
             && lens_correction.catalog.available

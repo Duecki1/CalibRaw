@@ -373,8 +373,10 @@ impl Sidebar {
                         ui,
                         &mut mask.effect_components,
                         fullscreen,
+                        mask_effects::FilmNegativeTile::Hidden,
                         &effect_frame,
-                    );
+                    )
+                    .0;
                 }
                 MaskStripOrientation::Vertical => {
                     let mask_section = vertical_section.expect("vertical details have a section");

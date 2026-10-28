@@ -115,7 +115,10 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
         requested_camera_profile.as_deref(),
     )
     .map_err(|error| format!("could not decode edited RAW {}: {error:#}", path.display()))?;
-    let edits = loaded_sidecar.edits;
+    let mut edits = loaded_sidecar.edits;
+    // A film negative the Library marked renders as its estimate; opening
+    // the photo saves one.
+    edits.exposure.settle_film(&full_raw, edits.geometry);
     if full_raw.uses_opposed_chroma(&edits.exposure) {
         full_raw.inpaint_opposed_chroma_for_exposure(&edits.exposure);
     }

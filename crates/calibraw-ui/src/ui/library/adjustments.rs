@@ -34,6 +34,29 @@ pub(super) fn apply_library_preset(
     finish_library_edit_transfer(app, &verb, total, outcome, context);
 }
 
+/// Develops `assets` as film negatives, estimated when each is next decoded,
+/// or as they are when `film` is positive.
+pub(super) fn apply_library_film(
+    app: &mut CalibRawApp,
+    assets: Vec<LibraryAsset>,
+    film: crate::pipeline::FilmSource,
+    context: &egui::Context,
+    frame: &eframe::Frame,
+) {
+    let total = assets.len();
+    let outcome = app.apply_edit_transfer_to_library_assets(
+        &assets,
+        crate::app::EditTransfer::Film(film),
+        frame,
+    );
+    let verb = if film.is_positive() {
+        "Removed Film negative from"
+    } else {
+        "Applied Film negative to"
+    };
+    finish_library_edit_transfer(app, verb, total, outcome, context);
+}
+
 fn finish_library_edit_transfer(
     app: &mut CalibRawApp,
     verb: &str,

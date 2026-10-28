@@ -21,7 +21,7 @@
 //! `film_positive` in scene_source.wgsl applies this on the GPU and
 //! [`FilmNegative::positive`] on the CPU, for pickers.
 
-use super::{GeometryTransform, LoadedRaw};
+use super::{ExposureParams, GeometryTransform, LoadedRaw};
 use crate::pipeline::geometry::GeometryInverseMap;
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +34,10 @@ pub enum FilmSource {
     Positive,
     /// A scan of a film negative, developed as its positive.
     Negative(FilmNegative),
+    /// A scan of a film negative whose settings are estimated when its photo
+    /// is next decoded ([`ExposureParams::settle_film`]): the Library marks
+    /// photos so without reading them. Renders as it is until then.
+    NegativeToEstimate(FilmStock),
 }
 
 impl FilmSource {
@@ -43,8 +47,40 @@ impl FilmSource {
 
     pub fn negative(&self) -> Option<&FilmNegative> {
         match self {
-            Self::Positive => None,
+            Self::Positive | Self::NegativeToEstimate(_) => None,
             Self::Negative(negative) => Some(negative),
+        }
+    }
+}
+
+/// What [`ExposureParams::settle_film`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FilmSettlement {
+    /// There was no negative to estimate.
+    Unchanged,
+    Estimated,
+    /// The photo showed no negative, so it is developed as it is.
+    NotFound,
+}
+
+impl ExposureParams {
+    /// Estimates a [`FilmSource::NegativeToEstimate`] from `raw`, the photo's
+    /// decoded source, inside the crop of `geometry`, as the Film negative
+    /// card's Auto does. Every other source stays as it is.
+    pub fn settle_film(&mut self, raw: &LoadedRaw, geometry: GeometryTransform) -> FilmSettlement {
+        let FilmSource::NegativeToEstimate(stock) = self.film else {
+            return FilmSettlement::Unchanged;
+        };
+        let samples = raw.film_samples_in_view(geometry, self.black_point);
+        match FilmNegative::estimate(stock, &samples, None) {
+            Some(negative) => {
+                self.film = FilmSource::Negative(negative);
+                FilmSettlement::Estimated
+            }
+            None => {
+                self.film = FilmSource::Positive;
+                FilmSettlement::NotFound
+            }
         }
     }
 }

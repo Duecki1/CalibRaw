@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::FilmSettlement;
 
 use super::export::run_export_item;
 
@@ -224,6 +225,14 @@ fn prepare_desktop_library_export_item(
         )?),
         None => Arc::clone(&original_raw),
     };
+    // A film negative the Library marked exports as its estimate, as opening
+    // the photo would settle it.
+    if edits.exposure.settle_film(&raw, edits.geometry) == FilmSettlement::NotFound {
+        return Err(format!(
+            "{}: no film negative was found to invert",
+            job.source.display()
+        ));
+    }
 
     let remove = Arc::unwrap_or_clone(edits.remove);
     let mut masks = Arc::unwrap_or_clone(edits.masks);
