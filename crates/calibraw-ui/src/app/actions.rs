@@ -96,9 +96,7 @@ impl CalibRawApp {
         self.develop_ui.sidebar_open = true;
         self.ui.sidebar_tab = tab;
         if previous == SidebarTab::Crop && tab != SidebarTab::Crop {
-            self.develop_ui.crop_drag = None;
-            self.develop_ui.straighten_tool_active = false;
-            self.develop_ui.straighten_drag = None;
+            self.develop_ui.set_crop_tool(CropTool::Crop);
         }
         if tab != SidebarTab::Adjustments {
             self.develop_ui.cancel_point_color_preview();

@@ -7,10 +7,10 @@ use crate::pipeline::{
     ExportSettings, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm,
     LensCorrection, LensfunCatalog, LensfunCorrections, LensfunLens, LoadedRaw,
     ManualLensCorrection, MaskGeometry, MaskImage, MaskKind, MaskRgbImage, MaskStack,
-    MobilePreviewRole, PipelineOptions, PreviewResourceShape, ProcessingQuality, ProcessingStage,
-    ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveBrushPoint, RemoveBrushStroke,
-    RemoveEditState, RemoveSceneContext, RetouchAlignment, RetouchStroke, RetouchTool,
-    SubjectRefinement, TileSpec, TiledExportJob, MAX_LOCAL_MASKS,
+    MobilePreviewRole, PerspectiveGuide, PipelineOptions, PreviewResourceShape, ProcessingQuality,
+    ProcessingStage, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveBrushPoint,
+    RemoveBrushStroke, RemoveEditState, RemoveSceneContext, RetouchAlignment, RetouchStroke,
+    RetouchTool, SubjectRefinement, TileSpec, TiledExportJob, MAX_LOCAL_MASKS,
 };
 use crate::platform::{Platform, PlatformCaps};
 use crate::sidecar::{

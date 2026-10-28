@@ -249,6 +249,22 @@ pub(crate) struct StraightenDragState {
     pub current: egui::Pos2,
 }
 
+/// A perspective guide being drawn or reshaped, in screen points.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum GuideDrag {
+    /// A new guide from `start` to the pointer at `current`.
+    Draw {
+        start: egui::Pos2,
+        current: egui::Pos2,
+    },
+    /// End `end` (0 for the start, 1 for the end) of guide `guide`, moved to `current`.
+    MoveEnd {
+        guide: usize,
+        end: usize,
+        current: egui::Pos2,
+    },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PreviewUvRect {
     pub min: [f32; 2],

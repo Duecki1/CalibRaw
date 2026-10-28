@@ -171,6 +171,18 @@ impl InpaintTool {
     }
 }
 
+/// What a drag over the photo does in the Crop tab.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum CropTool {
+    /// Moves and resizes the crop.
+    #[default]
+    Crop,
+    /// Draws a line along a horizon or vertical edge to level the photo.
+    Straighten,
+    /// Draws and reshapes perspective guides.
+    Guides,
+}
+
 /// What a drag over the photo samples.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AreaPicker {
@@ -491,8 +503,12 @@ pub(crate) struct DevelopUiState {
     pub(crate) sidebar_open: bool,
     pub(crate) crop_constraint_reference: Option<[f32; 4]>,
     pub(crate) crop_drag: Option<CropDragState>,
-    pub(crate) straighten_tool_active: bool,
+    pub(crate) crop_tool: CropTool,
     pub(crate) straighten_drag: Option<StraightenDragState>,
+    /// The guided perspective correction's lines on the open photo. They are not saved, and are
+    /// kept until another photo opens or the transform is reset.
+    pub(crate) perspective_guides: Vec<PerspectiveGuide>,
+    pub(crate) guide_drag: Option<GuideDrag>,
     /// The value a drag over the photo samples, while one is being picked.
     pub(crate) area_picker: Option<AreaPicker>,
     /// The area dragged so far, in normalized source coordinates.
@@ -527,6 +543,19 @@ pub(crate) struct ManualLensDialog {
 }
 
 impl DevelopUiState {
+    /// Ends any drag of the crop, the straighten line or a guide.
+    pub(crate) fn cancel_crop_drags(&mut self) {
+        self.crop_drag = None;
+        self.straighten_drag = None;
+        self.guide_drag = None;
+    }
+
+    /// Switches the Crop tab's preview to `tool`, ending any drag.
+    pub(crate) fn set_crop_tool(&mut self, tool: CropTool) {
+        self.crop_tool = tool;
+        self.cancel_crop_drags();
+    }
+
     pub(crate) fn cancel_area_picker(&mut self) {
         self.area_picker = None;
         self.area_picker_drag = None;

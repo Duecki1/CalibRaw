@@ -1,14 +1,13 @@
 use super::*;
-use crate::app::AutoGeometry;
+use crate::app::{AutoGeometry, CropTool};
 use crate::pipeline::{CropAspectRatio, GeometryTransform, PerspectiveCorrection};
 
 impl Sidebar {
     pub(super) fn reset_crop(app: &mut CalibRawApp) {
         app.develop.geometry = GeometryTransform::default();
         app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
-        app.develop_ui.crop_drag = None;
-        app.develop_ui.straighten_tool_active = false;
-        app.develop_ui.straighten_drag = None;
+        app.develop_ui.set_crop_tool(CropTool::Crop);
+        app.develop_ui.perspective_guides.clear();
         app.note_geometry_changed();
     }
 
@@ -90,7 +89,8 @@ impl Sidebar {
                     app.develop.geometry.flip_vertical = !app.develop.geometry.flip_vertical;
                 }
                 ui.separator();
-                let straighten_tooltip = if app.develop_ui.straighten_tool_active {
+                let straightening = app.develop_ui.crop_tool == CropTool::Straighten;
+                let straighten_tooltip = if straightening {
                     "Cancel straighten line"
                 } else {
                     "Draw straighten line: drag along a horizon or vertical edge in the preview to level it"
@@ -98,15 +98,17 @@ impl Sidebar {
                 if moduwu_design::ghost_icon_toggle_button(
                     ui,
                     egui_phosphor::regular::RULER,
-                    app.develop_ui.straighten_tool_active,
+                    straightening,
                     size,
                     straighten_tooltip,
                 )
                 .clicked()
                 {
-                    app.develop_ui.straighten_tool_active = !app.develop_ui.straighten_tool_active;
-                    app.develop_ui.straighten_drag = None;
-                    app.develop_ui.crop_drag = None;
+                    app.develop_ui.set_crop_tool(if straightening {
+                        CropTool::Crop
+                    } else {
+                        CropTool::Straighten
+                    });
                 }
                 if ui
                     .add_enabled_ui(app.auto_geometry_available(), |ui| {
@@ -120,8 +122,7 @@ impl Sidebar {
                     .inner
                     .clicked()
                 {
-                    app.develop_ui.straighten_tool_active = false;
-                    app.develop_ui.straighten_drag = None;
+                    app.develop_ui.set_crop_tool(CropTool::Crop);
                     app.start_auto_geometry(AutoGeometry::Straighten);
                 }
             });
@@ -151,9 +152,29 @@ impl Sidebar {
                     .inner
                     .clicked()
                 {
-                    app.develop_ui.straighten_tool_active = false;
-                    app.develop_ui.straighten_drag = None;
+                    app.develop_ui.set_crop_tool(CropTool::Crop);
                     app.start_auto_geometry(AutoGeometry::Perspective);
+                }
+                let guiding = app.develop_ui.crop_tool == CropTool::Guides;
+                let guides_tooltip = if guiding {
+                    "Stop drawing guides"
+                } else {
+                    "Guided perspective: draw up to four lines along edges that should be vertical or horizontal; right-click a line to remove it"
+                };
+                if moduwu_design::ghost_icon_toggle_button(
+                    ui,
+                    egui_phosphor::regular::LINE_SEGMENTS,
+                    guiding,
+                    size,
+                    guides_tooltip,
+                )
+                .clicked()
+                {
+                    app.develop_ui.set_crop_tool(if guiding {
+                        CropTool::Crop
+                    } else {
+                        CropTool::Guides
+                    });
                 }
             });
             let range = -PerspectiveCorrection::MAX_DEGREES..=PerspectiveCorrection::MAX_DEGREES;

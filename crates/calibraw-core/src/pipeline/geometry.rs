@@ -15,7 +15,10 @@ pub use inverse_map::*;
 pub use lens_map::*;
 pub use lines::LineAnalysisImage;
 pub use mapping::{GeometryMapping, Homography};
-pub use perspective::{estimate_perspective, PerspectiveCorrection, PerspectiveEstimate};
+pub use perspective::{
+    estimate_perspective, solve_guided_perspective, PerspectiveCorrection, PerspectiveEstimate,
+    PerspectiveGuide,
+};
 pub use straighten::{estimate_straighten_rotation, StraightenEstimate};
 pub use thumbnail::*;
 

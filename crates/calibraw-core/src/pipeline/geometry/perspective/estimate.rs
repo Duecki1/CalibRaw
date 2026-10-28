@@ -15,9 +15,10 @@
 
 use super::super::crop_fit::polygon_area;
 use super::super::lines::{distinct_segments, LineAnalysisImage, LineSegment};
-use super::super::mapping::{apply_2x2, multiply_2x2, skew_and_flip, GeometryMapping};
+use super::super::mapping::GeometryMapping;
 use super::super::straighten::{estimate_from_segments, MAX_TILT_DEGREES};
 use super::super::{CropAspectRatio, GeometryTransform};
+use super::fit::{levenberg_marquardt, LineView, Linearized};
 use super::PerspectiveCorrection;
 
 /// Edges further than this from both axes after a correction are diagonal scene content.
@@ -43,15 +44,16 @@ const MIN_VERTICAL_ANCHOR: f64 = 0.10;
 const MIN_CORRECTION_GAIN: f64 = 1.25;
 /// Share of the photo the largest crop of its own shape must still show after the correction.
 const MIN_SHOWN_FRACTION: f64 = 0.7;
-const MAX_ITERATIONS: usize = 30;
 
-/// A suggested perspective correction and straighten angle for the current flips and skews.
+/// A perspective correction and straighten angle suggested by a photo's lines or the user's
+/// guides, for the current flips and skews.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PerspectiveEstimate {
-    /// Replacement for [`GeometryTransform::perspective`]: a displayed vertical correction
-    /// only, or the identity when the photo only needs levelling.
+    /// Replacement for [`GeometryTransform::perspective`]. The automatic estimate holds a
+    /// displayed vertical correction only, or the identity when the photo only needs levelling.
     pub perspective: PerspectiveCorrection,
-    /// Replacement for [`GeometryTransform::rotation_degrees`], within ±20°.
+    /// Replacement for [`GeometryTransform::rotation_degrees`], within ±20° for the automatic
+    /// estimate.
     pub rotation_degrees: f32,
 }
 
@@ -115,11 +117,7 @@ struct Fit {
     /// The raster's extent across the displayed width.
     across: f64,
     longest: f64,
-    geometry: GeometryTransform,
-    focal_length_35mm: f32,
-    skew_flip: [[f64; 2]; 2],
-    /// Added to every edge angle: the quarter turns, so edges are classified as displayed.
-    turn_degrees: f64,
+    view: LineView,
 }
 
 /// Where an edge lies after a correction.
@@ -155,7 +153,6 @@ impl Fit {
         geometry: GeometryTransform,
         focal_length_35mm: f32,
     ) -> Self {
-        let [shear, flip] = skew_and_flip(geometry);
         let turned = geometry.quarter_turns % 2 == 1;
         Self {
             edges: segments
@@ -171,40 +168,23 @@ impl Fit {
             height,
             across: if turned { height } else { width } as f64,
             longest: width.max(height) as f64,
-            geometry,
-            focal_length_35mm,
-            skew_flip: multiply_2x2(shear, flip),
-            turn_degrees: 90.0 * f64::from(geometry.quarter_turns % 4),
+            view: LineView::new(geometry, width, height, focal_length_35mm),
         }
     }
 
     /// The displayed vertical correction `vertical`, degrees.
     fn correction(&self, vertical: f64) -> PerspectiveCorrection {
-        let mut geometry = self.geometry;
-        geometry.perspective.focal_length_35mm = self.focal_length_35mm;
-        geometry.set_displayed_perspective([vertical as f32, 0.0]);
-        geometry.perspective.sanitized()
+        self.view.correction([vertical, 0.0])
+    }
+
+    fn lines(&self) -> impl Iterator<Item = [[f32; 2]; 2]> + Clone + '_ {
+        self.edges.iter().map(|edge| [edge.start, edge.end])
     }
 
     /// Every edge's direction as displayed after the vertical correction `vertical`, before
     /// the roll, degrees; `None` where it has none.
     fn angles(&self, vertical: f64) -> Vec<Option<f64>> {
-        let homography = self
-            .correction(vertical)
-            .homography([self.width as f64, self.height as f64]);
-        self.edges
-            .iter()
-            .map(|edge| {
-                let start = homography.apply(edge.start);
-                let end = homography.apply(edge.end);
-                let [dx, dy] = apply_2x2(
-                    self.skew_flip,
-                    [f64::from(end[0] - start[0]), f64::from(end[1] - start[1])],
-                );
-                (dx.is_finite() && dy.is_finite() && dx.hypot(dy) > 0.0)
-                    .then(|| dy.atan2(dx).to_degrees() + self.turn_degrees)
-            })
-            .collect()
+        self.view.angles([vertical, 0.0], self.lines())
     }
 
     fn weight(&self, edge: &Edge, tilt: Tilt) -> f64 {
@@ -278,86 +258,38 @@ impl Fit {
     /// Minimizes the robust cost with Levenberg–Marquardt steps on iteratively reweighted
     /// residuals (each edge's tilt), differentiated numerically in the vertical correction; a
     /// tilt changes one-for-one with the roll.
-    fn levenberg_marquardt(&self, mut params: [f64; 2], free: [bool; 2], scale: f64) -> [f64; 2] {
-        const STEP_DEGREES: f64 = 1e-3;
-        let indices: Vec<usize> = (0..2).filter(|&index| free[index]).collect();
-        let size = indices.len();
-        let mut cost = self.cost(params, scale);
-        let mut damping = 1e-3;
-        for _ in 0..MAX_ITERATIONS {
-            let angles = self.angles(params[0]);
-            // d(tilt)/d(vertical) per edge, when the correction is free.
-            let vertical_derivatives: Option<Vec<Option<f64>>> = free[0].then(|| {
-                self.angles(params[0] + STEP_DEGREES)
-                    .into_iter()
-                    .zip(self.angles(params[0] - STEP_DEGREES))
-                    .map(|(plus, minus)| {
-                        let difference = (plus? - minus? + 180.0).rem_euclid(360.0) - 180.0;
-                        Some(difference / (2.0 * STEP_DEGREES))
-                    })
-                    .collect()
+    fn levenberg_marquardt(&self, params: [f64; 2], free: [bool; 2], scale: f64) -> [f64; 2] {
+        let linearize = |[vertical, roll]: [f64; 2]| {
+            let angles = self.angles(vertical);
+            let vertical_derivatives = free[0].then(|| {
+                self.view
+                    .angle_derivatives([vertical, 0.0], 0, self.lines())
             });
-
-            let mut normal = [[0.0f64; 2]; 2];
-            let mut gradient = [0.0f64; 2];
-            for (index, (angle, edge)) in angles.iter().zip(&self.edges).enumerate() {
-                let Some(tilt) = angle.and_then(|angle| tilt(angle, params[1])) else {
-                    continue;
-                };
-                let Some(row) = indices
-                    .iter()
-                    .map(|&parameter| match parameter {
-                        0 => vertical_derivatives
-                            .as_ref()
-                            .and_then(|column| column[index]),
-                        _ => Some(1.0),
+            angles
+                .iter()
+                .zip(&self.edges)
+                .enumerate()
+                .filter_map(|(index, (angle, edge))| {
+                    let tilt = angle.and_then(|angle| tilt(angle, roll))?;
+                    let vertical = match &vertical_derivatives {
+                        Some(column) => column[index]?,
+                        None => 0.0,
+                    };
+                    Some(Linearized {
+                        weight: self.weight(edge, tilt) / (1.0 + (tilt.degrees / scale).powi(2)),
+                        value: tilt.degrees,
+                        derivatives: [vertical, 1.0],
                     })
-                    .collect::<Option<Vec<f64>>>()
-                else {
-                    continue;
-                };
-                let weight = self.weight(edge, tilt) / (1.0 + (tilt.degrees / scale).powi(2));
-                for a in 0..size {
-                    gradient[a] += weight * row[a] * tilt.degrees;
-                    for b in 0..size {
-                        normal[a][b] += weight * row[a] * row[b];
-                    }
-                }
-            }
-
-            let mut improved = false;
-            while damping < 1e8 {
-                let mut damped = normal;
-                for (index, row) in damped.iter_mut().enumerate().take(size) {
-                    row[index] += damping * normal[index][index].max(1e-12);
-                }
-                let Some(step) = solve(damped, gradient, size) else {
-                    damping *= 10.0;
-                    continue;
-                };
-                let mut candidate = params;
-                for (slot, &index) in indices.iter().enumerate() {
-                    candidate[index] -= step[slot];
-                }
-                candidate = clamp_params(candidate);
-                let candidate_cost = self.cost(candidate, scale);
-                if candidate_cost < cost {
-                    let moved = (0..2)
-                        .map(|index| (candidate[index] - params[index]).abs())
-                        .fold(0.0, f64::max);
-                    params = candidate;
-                    cost = candidate_cost;
-                    damping = (damping * 0.3).max(1e-9);
-                    improved = moved >= 1e-4;
-                    break;
-                }
-                damping *= 4.0;
-            }
-            if !improved {
-                break;
-            }
-        }
-        params
+                })
+                .collect()
+        };
+        levenberg_marquardt(
+            params,
+            free,
+            linearize,
+            |params| self.cost(params, scale),
+            clamp_params,
+        )
     }
 
     /// The verticals within `SUPPORT_DEGREES` of upright after `[vertical, roll]`.
@@ -410,7 +342,7 @@ impl Fit {
             aspect_ratio: CropAspectRatio::Original,
             rotation_degrees: roll as f32,
             perspective: self.correction(vertical),
-            ..self.geometry
+            ..self.view.geometry()
         };
         geometry.conform_crop_to_aspect(width, height);
         geometry.fit_crop_inside_transformed_source(width, height);
@@ -441,35 +373,4 @@ fn clamp_params([vertical, roll]: [f64; 2]) -> [f64; 2] {
 fn grid(limit: f64, step: f64) -> impl Iterator<Item = f64> + Clone {
     let steps = (limit / step).floor() as i32;
     (-steps..=steps).map(move |index| f64::from(index) * step)
-}
-
-/// Solves the leading `size`×`size` block of `matrix · x = rhs` by Gaussian elimination with
-/// partial pivoting; `None` when it is singular.
-fn solve(mut matrix: [[f64; 2]; 2], mut rhs: [f64; 2], size: usize) -> Option<[f64; 2]> {
-    for column in 0..size {
-        let pivot = (column..size)
-            .max_by(|&a, &b| matrix[a][column].abs().total_cmp(&matrix[b][column].abs()))?;
-        if matrix[pivot][column].abs() < 1e-15 {
-            return None;
-        }
-        matrix.swap(column, pivot);
-        rhs.swap(column, pivot);
-        let pivot_row = matrix[column];
-        for row in column + 1..size {
-            let factor = matrix[row][column] / pivot_row[column];
-            for (value, pivot_value) in matrix[row][column..size]
-                .iter_mut()
-                .zip(&pivot_row[column..size])
-            {
-                *value -= factor * pivot_value;
-            }
-            rhs[row] -= factor * rhs[column];
-        }
-    }
-    let mut solution = [0.0; 2];
-    for row in (0..size).rev() {
-        let known: f64 = (row + 1..size).map(|k| matrix[row][k] * solution[k]).sum();
-        solution[row] = (rhs[row] - known) / matrix[row][row];
-    }
-    Some(solution)
 }

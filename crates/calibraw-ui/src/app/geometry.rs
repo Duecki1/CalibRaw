@@ -1,10 +1,11 @@
 //! Geometry edits that refit the crop: the straighten rotation, from the straighten line or an
-//! automatic estimate, and the perspective correction, and running the automatic estimates as
-//! foreground operations.
+//! automatic estimate, and the perspective correction, from guides or an automatic estimate, and
+//! running the automatic estimates as foreground operations.
 
 use super::*;
 use crate::pipeline::{
-    estimate_perspective, estimate_straighten_rotation, LineAnalysisImage, PerspectiveCorrection,
+    estimate_perspective, estimate_straighten_rotation, solve_guided_perspective,
+    LineAnalysisImage, PerspectiveCorrection,
 };
 use std::sync::atomic::Ordering;
 
@@ -211,6 +212,23 @@ impl CalibRawApp {
     }
 
     fn apply_auto_geometry(&mut self, kind: AutoGeometry, estimate: AutoGeometryEstimate) {
+        if self.develop.loaded_raw.is_none()
+            || self.set_rotation_and_perspective(estimate.rotation_degrees, estimate.perspective)
+        {
+            return;
+        }
+        self.ui.notice = Some(
+            match kind {
+                AutoGeometry::Straighten => "The photo is already level.",
+                AutoGeometry::Perspective => "The photo is already upright.",
+            }
+            .to_owned(),
+        );
+    }
+
+    /// Fits the perspective correction and straighten rotation to the perspective guides and
+    /// refits the crop.
+    pub(crate) fn apply_perspective_guides(&mut self) {
         let Some((width, height)) = self
             .develop
             .loaded_raw
@@ -219,25 +237,45 @@ impl CalibRawApp {
         else {
             return;
         };
-        let previous = self.develop.geometry;
-        let geometry = &mut self.develop.geometry;
-        geometry.rotation_degrees = estimate.rotation_degrees.clamp(-45.0, 45.0);
-        geometry.perspective = estimate.perspective.sanitized();
-        if (geometry.rotation_degrees - previous.rotation_degrees).abs() <= 1e-4
-            && geometry.perspective == previous.perspective.sanitized()
-        {
-            *geometry = previous;
-            self.ui.notice = Some(
-                match kind {
-                    AutoGeometry::Straighten => "The photo is already level.",
-                    AutoGeometry::Perspective => "The photo is already upright.",
-                }
-                .to_owned(),
-            );
-            return;
+        if let Some(solved) = solve_guided_perspective(
+            &self.develop_ui.perspective_guides,
+            self.develop.geometry,
+            width,
+            height,
+            self.perspective_focal_length(),
+        ) {
+            self.set_rotation_and_perspective(solved.rotation_degrees, solved.perspective);
         }
+    }
+
+    /// Replaces the straighten rotation and perspective correction and refits the crop. Returns
+    /// whether either changed.
+    fn set_rotation_and_perspective(
+        &mut self,
+        rotation_degrees: f32,
+        perspective: PerspectiveCorrection,
+    ) -> bool {
+        let Some((width, height)) = self
+            .develop
+            .loaded_raw
+            .as_ref()
+            .map(|raw| (raw.width, raw.height))
+        else {
+            return false;
+        };
+        let rotation_degrees = rotation_degrees.clamp(-45.0, 45.0);
+        let perspective = perspective.sanitized();
+        let geometry = &mut self.develop.geometry;
+        if (rotation_degrees - geometry.rotation_degrees).abs() <= 1e-4
+            && perspective == geometry.perspective.sanitized()
+        {
+            return false;
+        }
+        geometry.rotation_degrees = rotation_degrees;
+        geometry.perspective = perspective;
         self.refit_crop(width, height);
         self.note_geometry_changed();
+        true
     }
 }
 

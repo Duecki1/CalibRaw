@@ -1,12 +1,15 @@
 //! Perspective correction: a rotation of a virtual camera about the photo's centre that makes
-//! converging lines parallel, and its automatic estimate.
+//! converging lines parallel, and its automatic and guided estimates.
 
 use super::mapping::Homography;
 use serde::{Deserialize, Serialize};
 use std::ops::RangeInclusive;
 
 mod estimate;
+mod fit;
+mod guided;
 pub use estimate::{estimate_perspective, PerspectiveEstimate};
+pub use guided::{solve_guided_perspective, PerspectiveGuide};
 
 /// Diagonal of the 35 mm film frame, mm.
 const FULL_FRAME_DIAGONAL_MM: f32 = 43.266_617;

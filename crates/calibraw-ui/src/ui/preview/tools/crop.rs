@@ -1,7 +1,14 @@
 use super::super::*;
+use crate::app::{CropTool, GuideDrag};
+use crate::pipeline::PerspectiveGuide;
 
 /// Screen distance at which a crop corner or edge can be grabbed.
 const CROP_HANDLE_RADIUS: f32 = 28.0;
+/// Shortest straighten line or guide, in points; a shorter drag is a tap, and a guide whose end
+/// is dragged this close to its other end is removed.
+const MIN_LINE_LENGTH: f32 = 12.0;
+/// Most perspective guides at once, as other editors allow: two along each axis.
+const MAX_PERSPECTIVE_GUIDES: usize = 4;
 
 impl Preview {
     pub(in crate::ui::preview) fn handle_crop_interaction(
@@ -28,7 +35,28 @@ impl Preview {
         let primary_released = ui.input(|input| input.pointer.primary_released());
         let quarter_turns = app.develop.geometry.quarter_turns % 4;
 
-        if app.develop_ui.straighten_tool_active {
+        if app.develop_ui.crop_tool == CropTool::Guides {
+            let secondary_clicked = ui.input(|input| input.pointer.secondary_clicked())
+                && pointer.is_some_and(|point| {
+                    viewport_rect.contains(point)
+                        && ui.ctx().layer_id_at(point) == Some(ui.layer_id())
+                });
+            Self::handle_guide_interaction(
+                ui,
+                app,
+                layout,
+                pointer,
+                [
+                    primary_pressed,
+                    primary_down,
+                    primary_released,
+                    secondary_clicked,
+                ],
+            );
+            return;
+        }
+
+        if app.develop_ui.crop_tool == CropTool::Straighten {
             if primary_pressed {
                 if let Some(pointer) = pointer.filter(|point| image_rect.contains(*point)) {
                     let uv = crop_workspace_screen_to_source(
@@ -59,7 +87,7 @@ impl Preview {
             if primary_released {
                 if let Some(drag) = app.develop_ui.straighten_drag.take() {
                     let delta = drag.current - drag.start;
-                    if delta.length() >= 12.0 {
+                    if delta.length() >= MIN_LINE_LENGTH {
                         // The rotation acts before the aspect stretch, so the line is measured
                         // unstretched.
                         let [stretch_x, stretch_y] =
@@ -73,7 +101,7 @@ impl Preview {
                         app.set_straighten_rotation(rotation, source_width, source_height);
                         // One line levels the photo; the crop handles return.
                         // A tap too short to measure keeps the tool active.
-                        app.develop_ui.straighten_tool_active = false;
+                        app.develop_ui.crop_tool = CropTool::Crop;
                     }
                 }
             } else if !primary_down {
@@ -151,6 +179,137 @@ impl Preview {
 
         if primary_released || !primary_down {
             app.develop_ui.crop_drag = None;
+        }
+    }
+
+    /// Draws perspective guides, moves their ends and removes them, refitting the correction to
+    /// them after every change. `buttons` holds whether the primary button was pressed, is down
+    /// or was released and whether a secondary click landed over the preview. A guide is removed
+    /// by a secondary click on it or by dragging one of its ends onto the other.
+    fn handle_guide_interaction(
+        ui: &Ui,
+        app: &mut CalibRawApp,
+        layout: PreviewLayout,
+        pointer: Option<Pos2>,
+        [primary_pressed, primary_down, primary_released, secondary_clicked]: [bool; 4],
+    ) {
+        let screen_ends = guide_screen_ends(app, layout);
+        let end_at = |point: Pos2| {
+            screen_ends
+                .iter()
+                .enumerate()
+                .flat_map(|(guide, ends)| (0..2).map(move |end| (guide, end, ends[end])))
+                .map(|(guide, end, position)| (guide, end, position.distance(point)))
+                .filter(|(_, _, distance)| *distance <= handles::POINT_REACH)
+                .min_by(|a, b| a.2.total_cmp(&b.2))
+                .map(|(guide, end, _)| (guide, end))
+        };
+        let to_source = |point: Pos2| {
+            let uv = crop_workspace_screen_to_source(
+                layout.image_rect,
+                app.develop.geometry,
+                layout.source_width,
+                layout.source_height,
+                point,
+            );
+            (uv[0].is_finite() && uv[1].is_finite()).then_some(uv)
+        };
+
+        if primary_pressed {
+            app.develop_ui.guide_drag = pointer.and_then(|pointer| match end_at(pointer) {
+                Some((guide, end)) => Some(GuideDrag::MoveEnd {
+                    guide,
+                    end,
+                    current: pointer,
+                }),
+                None => (app.develop_ui.perspective_guides.len() < MAX_PERSPECTIVE_GUIDES
+                    && layout.image_rect.contains(pointer)
+                    && to_source(pointer).is_some_and(source_uv_inside_image))
+                .then_some(GuideDrag::Draw {
+                    start: pointer,
+                    current: pointer,
+                }),
+            });
+        }
+        if primary_down {
+            if let (
+                Some(pointer),
+                Some(GuideDrag::Draw { current, .. } | GuideDrag::MoveEnd { current, .. }),
+            ) = (pointer, app.develop_ui.guide_drag.as_mut())
+            {
+                *current = pointer;
+            }
+        }
+        if primary_released {
+            let changed = match app.develop_ui.guide_drag.take() {
+                Some(GuideDrag::Draw { start, current }) => {
+                    let ends = (start.distance(current) >= MIN_LINE_LENGTH)
+                        .then(|| to_source(start).zip(to_source(current)))
+                        .flatten();
+                    ends.map(|(start, end)| {
+                        app.develop_ui
+                            .perspective_guides
+                            .push(PerspectiveGuide { start, end });
+                    })
+                    .is_some()
+                }
+                Some(GuideDrag::MoveEnd {
+                    guide,
+                    end,
+                    current,
+                }) => {
+                    let other = screen_ends.get(guide).map(|ends| ends[1 - end]);
+                    let guides = &mut app.develop_ui.perspective_guides;
+                    match (other, to_source(current)) {
+                        (Some(other), _) if other.distance(current) < MIN_LINE_LENGTH => {
+                            guides.remove(guide);
+                            true
+                        }
+                        (Some(_), Some(position)) => {
+                            let moved = &mut guides[guide];
+                            if end == 0 {
+                                moved.start = position;
+                            } else {
+                                moved.end = position;
+                            }
+                            true
+                        }
+                        _ => false,
+                    }
+                }
+                None => false,
+            };
+            if changed {
+                app.apply_perspective_guides();
+            }
+        } else if !primary_down {
+            app.develop_ui.guide_drag = None;
+        }
+
+        if secondary_clicked && app.develop_ui.guide_drag.is_none() {
+            let hit = pointer.and_then(|pointer| {
+                screen_ends
+                    .iter()
+                    .enumerate()
+                    .map(|(guide, ends)| (guide, distance_to_segment(pointer, ends[0], ends[1])))
+                    .filter(|(_, distance)| *distance <= handles::GUIDE_REACH)
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(guide, _)| guide)
+            });
+            if let Some(guide) = hit {
+                app.develop_ui.perspective_guides.remove(guide);
+                app.apply_perspective_guides();
+            }
+        }
+
+        let hovered_end = ui
+            .input(|input| input.pointer.hover_pos())
+            .filter(|point| ui.ctx().layer_id_at(*point) == Some(ui.layer_id()))
+            .and_then(end_at);
+        if matches!(app.develop_ui.guide_drag, Some(GuideDrag::MoveEnd { .. })) {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if hovered_end.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
     }
 
@@ -346,10 +505,30 @@ impl Preview {
             }
         }
 
+        let mut lines: Vec<[Pos2; 2]> = Vec::new();
         if let Some(line) = app.develop_ui.straighten_drag {
-            let stroke = Stroke::new(2.0, Color32::WHITE);
-            painter.line_segment([line.start, line.current], stroke);
-            for end in [line.start, line.current] {
+            lines.push([line.start, line.current]);
+        }
+        if app.develop_ui.crop_tool == CropTool::Guides {
+            lines.extend(guide_screen_ends(app, layout));
+            match app.develop_ui.guide_drag {
+                Some(GuideDrag::Draw { start, current }) => lines.push([start, current]),
+                Some(GuideDrag::MoveEnd {
+                    guide,
+                    end,
+                    current,
+                }) => {
+                    if let Some(ends) = lines.get_mut(guide) {
+                        ends[end] = current;
+                    }
+                }
+                None => {}
+            }
+        }
+        let stroke = Stroke::new(2.0, Color32::WHITE);
+        for ends in lines {
+            painter.line_segment(ends, stroke);
+            for end in ends {
                 handles::paint_point(
                     &painter,
                     end,
@@ -359,4 +538,22 @@ impl Preview {
             }
         }
     }
+}
+
+/// Where each perspective guide's ends are on screen, in the order of the guides.
+fn guide_screen_ends(app: &CalibRawApp, layout: PreviewLayout) -> Vec<[Pos2; 2]> {
+    let mapping = GeometryMapping::new(
+        app.develop.geometry,
+        layout.source_width,
+        layout.source_height,
+    );
+    let canvas = mapping.canvas_uv_from_source_uv();
+    app.develop_ui
+        .perspective_guides
+        .iter()
+        .map(|guide| {
+            [guide.start, guide.end]
+                .map(|uv| normalized_to_screen(layout.image_rect, canvas.apply(uv)))
+        })
+        .collect()
 }

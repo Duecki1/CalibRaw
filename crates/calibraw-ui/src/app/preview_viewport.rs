@@ -155,10 +155,7 @@ impl CalibRawApp {
                 self.develop_ui.area_picker_drag = None;
             }
             PreviewViewportAction::CancelMaskGesture => self.cancel_mask_touch_gesture(),
-            PreviewViewportAction::CancelCropDrag => {
-                self.develop_ui.crop_drag = None;
-                self.develop_ui.straighten_drag = None;
-            }
+            PreviewViewportAction::CancelCropDrag => self.develop_ui.cancel_crop_drags(),
             PreviewViewportAction::CancelInpaintStroke => {
                 self.inpaint.active_points.clear();
                 self.inpaint.last_brush_uv = None;
