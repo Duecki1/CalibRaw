@@ -184,7 +184,6 @@ impl Library {
                             &mut stack_raw_companions,
                             Some(&mut selected_size),
                             64.0,
-                            caps,
                         );
                     } else {
                         show_library_view_combos(
@@ -193,7 +192,6 @@ impl Library {
                             &mut selected_size,
                             &mut selected_filter,
                             &mut stack_raw_companions,
-                            caps,
                         );
                     }
                 });
@@ -619,7 +617,6 @@ fn show_library_view_combos(
     selected_size: &mut LibraryThumbnailSize,
     selected_filter: &mut LibraryReviewFilter,
     stack_raw_companions: &mut bool,
-    caps: PlatformCaps,
 ) {
     const SORT_WIDTH: f32 = 154.0;
     const SIZE_WIDTH: f32 = 118.0;
@@ -639,7 +636,6 @@ fn show_library_view_combos(
         stack_raw_companions,
         None,
         sort_width,
-        caps,
     );
     moduwu_design::responsive_combo_box(
         ui,

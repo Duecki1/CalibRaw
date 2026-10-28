@@ -237,8 +237,11 @@ canvases, mask cards, and colour controls in their existing components.
   sheet shows, `MenuItem::destructive` for actions such as Delete,
   `menu_checkbox_item` for on/off options and `submenu` for nested menus,
   which become pages in the sheet. A menu opened on something the finger
-  covers, such as a photo, starts with a `menu_title`. Preserve each menu's
-  explicit `ui.close()` behavior. The grid, the filmstrip and the selection
+  covers, such as a photo, starts with a `menu_title`; one whose options leave
+  it open, such as Sort & filter, starts with `menu_title_with_close`. A
+  setting with several values is a `submenu` row showing its
+  `MenuItem::value`, listing the values as `MenuItem::selected` rows. Preserve
+  each menu's explicit `ui.close()` behavior. The grid, the filmstrip and the selection
   bar share one photo menu, `photo_actions_menu`.
 - Icon actions in toolbars, panel and card headers and tool rows use
   `ghost_icon_button` and `ghost_icon_toggle_button`, which show a frame only on
