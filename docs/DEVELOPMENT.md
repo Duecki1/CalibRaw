@@ -237,7 +237,8 @@ canvases, mask cards, and colour controls in their existing components.
 - Icon actions in toolbars, panel and card headers and tool rows use
   `ghost_icon_button` and `ghost_icon_toggle_button`, which show a frame only on
   hover, focus or selection; wrap them in `add_enabled_ui` to disable them.
-  `icons` holds the folder disclosure control and the desktop tool rail glyphs.
+  `icons` holds the folder tree row (`moduwu_design::TreeRow` with folder
+  glyphs) and the desktop tool rail glyphs.
 - Use the shared form rows, text edits, `NumberField` and combo builders.
   `moduwu_design::Slider` owns value editing, reset, focus, keyboard and
   accessibility actions, and pointer/scroll handling on desktop and touch

@@ -2686,8 +2686,8 @@ dependencies = [
 
 [[package]]
 name = "moduwu-design"
-version = "3.3.0"
-source = "git+https://github.com/Duecki1/Moduwu?rev=f54ff3097cba5dbc45393bc604570c8fb9517a7f#f54ff3097cba5dbc45393bc604570c8fb9517a7f"
+version = "3.4.0"
+source = "git+https://github.com/Duecki1/Moduwu?rev=f3b9af652b8c1d14938a57eebad296c8a3a337b3#f3b9af652b8c1d14938a57eebad296c8a3a337b3"
 dependencies = [
  "egui",
  "image",

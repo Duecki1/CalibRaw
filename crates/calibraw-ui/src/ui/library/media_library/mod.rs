@@ -22,6 +22,7 @@ pub(super) fn show_android_library_folder_node(
     ui: &mut Ui,
     path: &str,
     name: &str,
+    depth: usize,
     children_by_parent: &HashMap<&str, Vec<&crate::platform::LibraryFolder>>,
     selected_folder: &str,
     action_in_progress: bool,
@@ -34,79 +35,55 @@ pub(super) fn show_android_library_folder_node(
         .unwrap_or(&[]);
     let has_children = !children.is_empty();
     let expanded = has_children && expanded_folders.contains(path);
-    let selected = selected_folder == path;
-
-    ui.push_id(("android-library-folder", path), |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = moduwu_design::SPACE_XS;
-            let disclosure_size = crate::ui::icons::folder_disclosure_size();
-            if has_children {
-                if crate::ui::icons::folder_disclosure_button(ui, expanded).clicked() {
-                    if expanded {
-                        expanded_folders.remove(path);
-                    } else {
-                        expanded_folders.insert(path.to_owned());
-                    }
-                }
-            } else {
-                ui.allocate_space(disclosure_size);
-            }
-
-            let icon = if expanded && has_children {
-                egui_phosphor::regular::FOLDER_OPEN
-            } else {
-                egui_phosphor::regular::FOLDER
-            };
-            let response = ui.add_enabled_ui(!action_in_progress, |ui| {
-                moduwu_design::navigation_row(
-                    ui,
-                    egui::RichText::new(format!("{icon}  {name}")),
-                    selected,
-                    Sense::click(),
-                )
-            });
-            if response.inner.clicked() {
-                *requested_action = Some(AndroidLibraryFolderUiAction::Select(path.to_owned()));
-            }
-            moduwu_design::context_menu(&response.inner, |ui| {
-                if moduwu_design::context_menu_item(ui, true, "New folder here…").clicked() {
-                    *requested_action = Some(AndroidLibraryFolderUiAction::New(path.to_owned()));
-                    ui.close();
-                }
-                if moduwu_design::context_menu_item(ui, true, "Refresh folders").clicked() {
-                    *requested_action = Some(AndroidLibraryFolderUiAction::Refresh);
-                    ui.close();
-                }
-            });
-        });
-
+    let row = ui
+        .add_enabled_ui(!action_in_progress, |ui| {
+            crate::ui::icons::folder_tree_row(
+                ui,
+                path,
+                name,
+                depth,
+                has_children.then_some(expanded),
+                selected_folder == path,
+                Sense::click(),
+            )
+        })
+        .inner;
+    if row.toggled() {
         if expanded {
-            let children = ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                ui.vertical(|ui| {
-                    ui.set_width(ui.available_width());
-                    for child in children {
-                        show_android_library_folder_node(
-                            ui,
-                            &child.path,
-                            &child.name,
-                            children_by_parent,
-                            selected_folder,
-                            action_in_progress,
-                            expanded_folders,
-                            requested_action,
-                        );
-                    }
-                });
-            });
-            let guide_x = children.response.rect.left() + 5.0;
-            ui.painter().vline(
-                guide_x,
-                children.response.rect.y_range(),
-                Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-            );
+            expanded_folders.remove(path);
+        } else {
+            expanded_folders.insert(path.to_owned());
+        }
+    }
+    if row.row.clicked() {
+        *requested_action = Some(AndroidLibraryFolderUiAction::Select(path.to_owned()));
+    }
+    moduwu_design::context_menu(&row.row, |ui| {
+        if moduwu_design::context_menu_item(ui, true, "New folder here…").clicked() {
+            *requested_action = Some(AndroidLibraryFolderUiAction::New(path.to_owned()));
+            ui.close();
+        }
+        if moduwu_design::context_menu_item(ui, true, "Refresh folders").clicked() {
+            *requested_action = Some(AndroidLibraryFolderUiAction::Refresh);
+            ui.close();
         }
     });
+
+    if expanded {
+        for child in children {
+            show_android_library_folder_node(
+                ui,
+                &child.path,
+                &child.name,
+                depth + 1,
+                children_by_parent,
+                selected_folder,
+                action_in_progress,
+                expanded_folders,
+                requested_action,
+            );
+        }
+    }
 }
 
 pub(super) fn apply_android_library_folder_ui_action(
@@ -204,16 +181,19 @@ pub(in crate::ui::library) fn show_local_folder_tree(
     }
     let mut requested_action = None;
 
-    show_android_library_folder_node(
-        ui,
-        "",
-        "Library",
-        &children_by_parent,
-        selected_folder.as_str(),
-        action_in_progress,
-        expanded_folders,
-        &mut requested_action,
-    );
+    moduwu_design::tree(ui, |ui| {
+        show_android_library_folder_node(
+            ui,
+            "",
+            "Library",
+            0,
+            &children_by_parent,
+            selected_folder.as_str(),
+            action_in_progress,
+            expanded_folders,
+            &mut requested_action,
+        );
+    });
 
     if let Some(action) = requested_action {
         apply_android_library_folder_ui_action(app, action, ui.ctx());
