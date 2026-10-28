@@ -1,6 +1,7 @@
 //! Matching the camera and lens of a RAW against the Lensfun database.
 
 use super::*;
+use std::collections::HashMap;
 
 pub(super) fn find_camera(database: &Database, make: &str, model: &str) -> Option<*const lfCamera> {
     if model.trim().is_empty() {
@@ -119,13 +120,20 @@ pub(super) fn find_auto_lens(
     }
     sort_and_deduplicate_lenses(&mut candidates);
 
+    let names = ProfileNames::load(database);
     let exact = candidates
         .iter()
-        .filter(|candidate| lens_metadata_is_exact(raw, candidate))
-        .cloned()
+        .filter(|candidate| {
+            names
+                .models(candidate)
+                .into_iter()
+                .any(|model| lens_metadata_is_exact(raw, &candidate.maker, model))
+        })
         .collect::<Vec<_>>();
-    if exact.len() == 1 {
-        return exact.into_iter().next();
+    if let Some(&first) = exact.first() {
+        if exact.iter().all(|other| same_lens(first, other)) {
+            return Some(first.clone());
+        }
     }
 
     if camera.is_some()
@@ -135,22 +143,86 @@ pub(super) fn find_auto_lens(
         return candidates.into_iter().next();
     }
 
-    ranked_match(database, camera, raw, candidates)
-        .or_else(|| optics_match(database, camera, raw, catalog))
+    ranked_match(database, camera, raw, &names, candidates)
+        .or_else(|| optics_match(database, camera, raw, &names, catalog))
+}
+
+/// Every model name of each profile, by the name `lens_name` shows. Lensfun
+/// master shows many profiles by an `en` manufacturer name, while EXIF often
+/// reports the default one: `E 70-300mm F4.5-6.3 A047` is shown as
+/// `Tamron 70-300mm F4.5-6.3 Di III RXD`.
+struct ProfileNames(HashMap<(String, String), Vec<String>>);
+
+impl ProfileNames {
+    fn load(database: &Database) -> Self {
+        let mut names = HashMap::<_, Vec<String>>::new();
+        for pointer in pointer_list(unsafe { lf_db_get_lenses(database.0) }) {
+            let Some(lens) = lens_name(pointer) else {
+                continue;
+            };
+            // SAFETY: `pointer_list` returns only non-null lenses the database owns.
+            let variants = multilingual_variants(unsafe { (*pointer).Model });
+            let models = names.entry(profile_key(&lens)).or_default();
+            for variant in variants {
+                if !models.contains(&variant) {
+                    models.push(variant);
+                }
+            }
+        }
+        Self(names)
+    }
+
+    /// The model names of `candidate`'s profile, its shown name first.
+    fn models<'a>(&'a self, candidate: &'a LensfunLens) -> Vec<&'a str> {
+        let mut models = vec![candidate.model.as_str()];
+        if let Some(variants) = self.0.get(&profile_key(candidate)) {
+            models.extend(
+                variants
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|variant| *variant != candidate.model),
+            );
+        }
+        models
+    }
+}
+
+fn profile_key(lens: &LensfunLens) -> (String, String) {
+    (lens.maker.to_lowercase(), lens.model.to_lowercase())
+}
+
+/// Whether two profiles name the same lens. Lensfun lists some lenses twice,
+/// such as `Tamron 70-300mm F4.5-6.3 Di III RXD` and `… F/4.5-6.3 …`; the
+/// matchers then take the first instead of treating them as rivals.
+fn same_lens(left: &LensfunLens, right: &LensfunLens) -> bool {
+    canonical_text(&left.maker) == canonical_text(&right.maker)
+        && canonical_text(&left.model) == canonical_text(&right.model)
 }
 
 fn ranked_match(
     database: &Database,
     camera: Option<*const lfCamera>,
     raw: &LoadedRaw,
+    names: &ProfileNames,
     candidates: Vec<LensfunLens>,
 ) -> Option<LensfunLens> {
     let mut ranked = candidates
         .into_iter()
         .filter_map(|candidate| {
-            automatic_match_score(database, camera, raw, &candidate).map(|score| (score, candidate))
+            if !maker_is_compatible(&raw.lens_make, &raw.lens_model, &candidate.maker)
+                || !profile_supports_capture(database, camera, raw, &candidate)
+            {
+                return None;
+            }
+            let score = names
+                .models(&candidate)
+                .into_iter()
+                .filter_map(|model| automatic_match_score(raw, &candidate.maker, model))
+                .max_by(f32::total_cmp)?;
+            Some((score, candidate))
         })
         .collect::<Vec<_>>();
+    // A stable sort keeps catalog order among equal scores.
     ranked.sort_by(|left, right| {
         right
             .0
@@ -162,7 +234,11 @@ fn ranked_match(
     if *best_score < 0.90 {
         return None;
     }
-    if let Some((runner_up, _)) = ranked.get(1) {
+    let rival = ranked
+        .iter()
+        .skip(1)
+        .find(|(_, other)| !same_lens(best, other));
+    if let Some((runner_up, _)) = rival {
         if *best_score - *runner_up < 0.08 {
             return None;
         }
@@ -176,12 +252,13 @@ fn ranked_match(
 /// Focal range, aperture and version numeral must agree, and every other word
 /// of the EXIF name must appear in the profile's maker or model. Of the
 /// profiles left, the one adding the fewest words wins, so a plain
-/// `M.14-42mm F3.5-5.6` does not pick the `EZ` or `L` variant; a tie matches
-/// nothing.
+/// `M.14-42mm F3.5-5.6` does not pick the `EZ` or `L` variant; a tie between
+/// different lenses matches nothing. Every name of a profile is tried.
 fn optics_match(
     database: &Database,
     camera: Option<*const lfCamera>,
     raw: &LoadedRaw,
+    names: &ProfileNames,
     catalog: &[LensfunLens],
 ) -> Option<LensfunLens> {
     let optics = lens_optics(&raw.lens_model)?;
@@ -200,35 +277,52 @@ fn optics_match(
         return None;
     }
 
-    let mut best: Option<(usize, &LensfunLens)> = None;
-    let mut tied = false;
-    for candidate in catalog {
-        if lens_optics(&candidate.model) != Some(optics)
-            || !maker_is_compatible(&raw.lens_make, &raw.lens_model, &candidate.maker)
-        {
-            continue;
+    // The words `model` adds to the EXIF name, when it names the same optics.
+    let added_words = |maker: &str, model: &str| {
+        if lens_optics(model) != Some(optics) {
+            return None;
         }
-        let words = lens_words(&candidate.model);
+        let words = lens_words(model);
         if version_numerals(&words) != raw_versions {
-            continue;
+            return None;
         }
-        let maker_words = lens_maker_words(&candidate.maker);
+        let maker_words = lens_maker_words(maker);
         if !raw_names
             .iter()
             .all(|name| words.contains(name) || maker_words.contains(name))
         {
+            return None;
+        }
+        Some(
+            words
+                .iter()
+                .filter(|word| !raw_names.contains(word) && !is_version_numeral(word))
+                .count(),
+        )
+    };
+
+    let mut best: Option<(usize, &LensfunLens)> = None;
+    let mut tied = false;
+    for candidate in catalog {
+        if !maker_is_compatible(&raw.lens_make, &raw.lens_model, &candidate.maker) {
             continue;
         }
+        let Some(added) = names
+            .models(candidate)
+            .into_iter()
+            .filter_map(|model| added_words(&candidate.maker, model))
+            .min()
+        else {
+            continue;
+        };
         if !profile_supports_capture(database, camera, raw, candidate) {
             continue;
         }
-        let added = words
-            .iter()
-            .filter(|word| !raw_names.contains(word) && !is_version_numeral(word))
-            .count();
         match best {
             Some((fewest, _)) if added > fewest => {}
-            Some((fewest, _)) if added == fewest => tied = true,
+            Some((fewest, first)) if added == fewest => {
+                tied |= !same_lens(first, candidate);
+            }
             _ => {
                 best = Some((added, candidate));
                 tied = false;
@@ -349,39 +443,20 @@ fn version_numerals(words: &[String]) -> Vec<&str> {
     numerals
 }
 
-fn lens_metadata_is_exact(raw: &LoadedRaw, candidate: &LensfunLens) -> bool {
-    if !maker_is_compatible(&raw.lens_make, &raw.lens_model, &candidate.maker) {
+/// Whether `model`, one name of a profile by `maker`, is the RAW's lens name.
+fn lens_metadata_is_exact(raw: &LoadedRaw, maker: &str, model: &str) -> bool {
+    if !maker_is_compatible(&raw.lens_make, &raw.lens_model, maker) {
         return false;
     }
-    canonical_lens_model(
-        &raw.lens_model,
-        &[raw.lens_make.as_str(), candidate.maker.as_str()],
-    ) == canonical_lens_model(
-        &candidate.model,
-        &[candidate.maker.as_str(), raw.lens_make.as_str()],
-    )
+    canonical_lens_model(&raw.lens_model, &[raw.lens_make.as_str(), maker])
+        == canonical_lens_model(model, &[maker, raw.lens_make.as_str()])
 }
 
-fn automatic_match_score(
-    database: &Database,
-    camera: Option<*const lfCamera>,
-    raw: &LoadedRaw,
-    candidate: &LensfunLens,
-) -> Option<f32> {
-    if !maker_is_compatible(&raw.lens_make, &raw.lens_model, &candidate.maker)
-        || !profile_supports_capture(database, camera, raw, candidate)
-    {
-        return None;
-    }
-
-    let raw_model = canonical_lens_model(
-        &raw.lens_model,
-        &[raw.lens_make.as_str(), candidate.maker.as_str()],
-    );
-    let candidate_model = canonical_lens_model(
-        &candidate.model,
-        &[candidate.maker.as_str(), raw.lens_make.as_str()],
-    );
+/// How well `model`, one name of a profile by `maker`, matches the RAW's lens
+/// name, from 0.78 to 1; `None` when it does not.
+fn automatic_match_score(raw: &LoadedRaw, maker: &str, model: &str) -> Option<f32> {
+    let raw_model = canonical_lens_model(&raw.lens_model, &[raw.lens_make.as_str(), maker]);
+    let candidate_model = canonical_lens_model(model, &[maker, raw.lens_make.as_str()]);
     if raw_model.is_empty() || candidate_model.is_empty() {
         return None;
     }
@@ -390,7 +465,7 @@ fn automatic_match_score(
     }
 
     let raw_codes = lens_model_codes(&raw.lens_model);
-    let candidate_codes = lens_model_codes(&candidate.model);
+    let candidate_codes = lens_model_codes(model);
     if raw_codes
         .iter()
         .any(|code| candidate_codes.iter().any(|other| other == code))
@@ -404,8 +479,8 @@ fn automatic_match_score(
         return Some(0.96);
     }
 
-    let raw_tokens = lens_tokens(&raw.lens_model, &raw.lens_make, &candidate.maker);
-    let candidate_tokens = lens_tokens(&candidate.model, &candidate.maker, &raw.lens_make);
+    let raw_tokens = lens_tokens(&raw.lens_model, &raw.lens_make, maker);
+    let candidate_tokens = lens_tokens(model, maker, &raw.lens_make);
     if raw_tokens.is_empty() || candidate_tokens.is_empty() {
         return None;
     }
