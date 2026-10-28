@@ -103,31 +103,36 @@ fn toggle_chip(ui: &mut Ui, selected: &mut bool, label: impl Into<egui::WidgetTe
     }
 }
 
-pub(super) fn show_sort_filter_options(
+/// The index in `SORT_GROUPS` of the group `sort` belongs to.
+fn sort_group(sort: LibrarySortOrder) -> usize {
+    SORT_GROUPS
+        .iter()
+        .position(|(_, choices)| choices.iter().any(|(order, _)| *order == sort))
+        .unwrap_or(0)
+}
+
+/// The sort order, the RAW + JPEG pairs and the rating and flag filters,
+/// the same on every platform, then the thumbnail size where the header has
+/// no room for its own control.
+fn sort_filter_options(
     ui: &mut Ui,
     sort: &mut LibrarySortOrder,
     filter: &mut LibraryReviewFilter,
     stack_raw_companions: &mut bool,
-    caps: PlatformCaps,
+    compact_size: Option<&mut LibraryThumbnailSize>,
 ) {
     ui.set_min_width(280.0);
     ui.strong("Sort by");
-    let mut group = SORT_GROUPS
-        .iter()
-        .position(|(_, choices)| choices.iter().any(|(order, _)| order == sort))
-        .unwrap_or(0);
-    let previous = group;
-    moduwu_design::submenu(ui, MenuItem::new(SORT_GROUPS[group].0), |ui| {
-        ui.set_min_width(220.0);
-        for (index, (label, _)) in SORT_GROUPS.iter().enumerate() {
-            ui.selectable_value(&mut group, index, *label);
+    let group = sort_group(*sort);
+    moduwu_design::action_row(ui, |ui| {
+        for (index, (label, choices)) in SORT_GROUPS.iter().enumerate() {
+            if moduwu_design::chip(ui, *label, index == group).clicked() && index != group {
+                *sort = choices[0].0;
+            }
         }
     });
-    if group != previous {
-        *sort = SORT_GROUPS[group].1[0].0;
-    }
     moduwu_design::action_row(ui, |ui| {
-        for (order, label) in SORT_GROUPS[group].1 {
+        for (order, label) in SORT_GROUPS[sort_group(*sort)].1 {
             if moduwu_design::chip(ui, label, *sort == order).clicked() {
                 *sort = order;
             }
@@ -141,73 +146,81 @@ pub(super) fn show_sort_filter_options(
              as the RAW, and hide the JPEG or HEIC with the same name.",
     );
 
-    if caps.is_desktop() {
-        ui.separator();
-        ui.strong("Show ratings");
-        let had_ratings = filter.ratings.iter().any(|selected| *selected);
-        moduwu_design::action_row(ui, |ui| {
-            if moduwu_design::chip(ui, "All", !had_ratings).clicked() {
-                filter.ratings = [false; 6];
-            }
-            toggle_chip(ui, &mut filter.ratings[0], "Unrated");
-            for rating in (1..=5).rev() {
-                toggle_chip(
-                    ui,
-                    &mut filter.ratings[rating],
-                    format!("{rating} {}", egui_phosphor::regular::STAR),
-                );
-            }
-        });
-        let has_ratings = filter.ratings.iter().any(|selected| *selected);
-        if !had_ratings
-            && has_ratings
-            && !matches!(
-                sort,
-                LibrarySortOrder::RatingHighestFirst | LibrarySortOrder::RatingLowestFirst
-            )
-        {
-            *sort = LibrarySortOrder::RatingHighestFirst;
+    ui.separator();
+    ui.strong("Show ratings");
+    let had_ratings = filter.ratings.iter().any(|selected| *selected);
+    moduwu_design::action_row(ui, |ui| {
+        if moduwu_design::chip(ui, "All", !had_ratings).clicked() {
+            filter.ratings = [false; 6];
         }
+        toggle_chip(ui, &mut filter.ratings[0], "Unrated");
+        for rating in (1..=5).rev() {
+            toggle_chip(
+                ui,
+                &mut filter.ratings[rating],
+                format!("{rating} {}", egui_phosphor::regular::STAR),
+            );
+        }
+    });
+    let has_ratings = filter.ratings.iter().any(|selected| *selected);
+    if !had_ratings
+        && has_ratings
+        && !matches!(
+            sort,
+            LibrarySortOrder::RatingHighestFirst | LibrarySortOrder::RatingLowestFirst
+        )
+    {
+        *sort = LibrarySortOrder::RatingHighestFirst;
+    }
 
+    ui.separator();
+    ui.strong("Show flags");
+    let had_flags = filter.flags.iter().any(|selected| *selected);
+    moduwu_design::action_row(ui, |ui| {
+        if moduwu_design::chip(ui, "All", !had_flags).clicked() {
+            filter.flags = [false; 3];
+        }
+        toggle_chip(
+            ui,
+            &mut filter.flags[0],
+            egui::RichText::new(format!("{} Pick", egui_phosphor::regular::FLAG))
+                .color(crate::ui::theme::CHANNEL_GREEN),
+        );
+        toggle_chip(ui, &mut filter.flags[1], "Unflagged");
+        toggle_chip(
+            ui,
+            &mut filter.flags[2],
+            egui::RichText::new(format!("{} Reject", egui_phosphor::regular::FLAG))
+                .color(crate::ui::theme::CHANNEL_RED),
+        );
+    });
+    if !had_flags
+        && filter.flags.iter().any(|selected| *selected)
+        && !has_ratings
+        && !matches!(
+            sort,
+            LibrarySortOrder::FlagPickedFirst | LibrarySortOrder::FlagRejectedFirst
+        )
+    {
+        *sort = LibrarySortOrder::FlagPickedFirst;
+    }
+    ui.add_space(moduwu_design::SPACE_XS);
+    ui.weak("Select several values to include them together.");
+    let clear = MenuItem::new("Clear filters").icon(egui_phosphor::regular::FUNNEL_X);
+    if ui.add_enabled(filter.active(), clear).clicked() {
+        *filter = LibraryReviewFilter::default();
+    }
+
+    if let Some(size) = compact_size {
         ui.separator();
-        ui.strong("Show flags");
-        let had_flags = filter.flags.iter().any(|selected| *selected);
+        ui.strong("Thumbnail size");
         moduwu_design::action_row(ui, |ui| {
-            if moduwu_design::chip(ui, "All", !had_flags).clicked() {
-                filter.flags = [false; 3];
+            for value in LibraryThumbnailSize::ALL {
+                if moduwu_design::chip(ui, value.label(), *size == value).clicked() {
+                    *size = value;
+                }
             }
-            toggle_chip(
-                ui,
-                &mut filter.flags[0],
-                egui::RichText::new(format!("{} Pick", egui_phosphor::regular::FLAG))
-                    .color(crate::ui::theme::CHANNEL_GREEN),
-            );
-            toggle_chip(ui, &mut filter.flags[1], "Unflagged");
-            toggle_chip(
-                ui,
-                &mut filter.flags[2],
-                egui::RichText::new(format!("{} Reject", egui_phosphor::regular::FLAG))
-                    .color(crate::ui::theme::CHANNEL_RED),
-            );
         });
-        if !had_flags
-            && filter.flags.iter().any(|selected| *selected)
-            && !has_ratings
-            && !matches!(
-                sort,
-                LibrarySortOrder::FlagPickedFirst | LibrarySortOrder::FlagRejectedFirst
-            )
-        {
-            *sort = LibrarySortOrder::FlagPickedFirst;
-        }
-        ui.add_space(moduwu_design::SPACE_XS);
-        ui.weak("Select several values to include them together.");
-        if ui
-            .add_enabled(filter.active(), MenuItem::new("Clear filters"))
-            .clicked()
-        {
-            *filter = LibraryReviewFilter::default();
-        }
     }
 }
 
@@ -247,19 +260,16 @@ pub(super) fn sort_filter_popup(
         }
     ));
     moduwu_design::dropdown_menu(&response, |ui| {
-        egui::ScrollArea::vertical()
-            .max_height(480.0)
-            .show(ui, |ui| {
-                show_sort_filter_options(ui, sort, filter, stack_raw_companions, caps);
-                if let Some(size) = compact_size {
-                    ui.separator();
-                    ui.strong("Thumbnail size");
-                    ui.horizontal_wrapped(|ui| {
-                        for value in LibraryThumbnailSize::ALL {
-                            ui.selectable_value(size, value, value.label());
-                        }
-                    });
-                }
-            });
+        moduwu_design::menu_title(ui, "Sort & filter");
+        // On touch screens the menu is a sheet, which scrolls by itself.
+        if caps.is_mobile() {
+            sort_filter_options(ui, sort, filter, stack_raw_companions, compact_size);
+        } else {
+            egui::ScrollArea::vertical()
+                .max_height(480.0)
+                .show(ui, |ui| {
+                    sort_filter_options(ui, sort, filter, stack_raw_companions, compact_size);
+                });
+        }
     });
 }
