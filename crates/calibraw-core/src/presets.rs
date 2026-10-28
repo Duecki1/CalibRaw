@@ -29,8 +29,8 @@ use std::sync::Arc;
 pub const PRESET_SUFFIX: &str = ".calibraw-preset";
 /// The newest schema. Bump for every incompatible change to the serialized
 /// layout. Schemas 2 and 3 share the layout of schema 1; schema 2 adds the
-/// Relight effect and schema 3 the LUT. Presets are written with the oldest
-/// schema that holds them (`migrations::older_readers`).
+/// Relight effect and schema 3 the LUT and perspective correction. Presets are
+/// written with the oldest schema that holds them (`migrations::older_readers`).
 pub const PRESET_SCHEMA_VERSION: u32 = 3;
 pub const DEFAULT_PRESET_GROUP: &str = "User Presets";
 pub const MAX_PRESET_NAME_CHARS: usize = 64;

@@ -1,5 +1,6 @@
 use super::*;
-use crate::pipeline::{CropAspectRatio, GeometryTransform};
+use crate::app::AutoGeometry;
+use crate::pipeline::{CropAspectRatio, GeometryTransform, PerspectiveCorrection};
 
 impl Sidebar {
     pub(super) fn reset_crop(app: &mut CalibRawApp) {
@@ -35,7 +36,9 @@ impl Sidebar {
                 output_height > output_width,
             );
             if app.develop.geometry.aspect_ratio != previous_aspect {
-                Self::apply_crop_aspect(app, source_dimensions.0, source_dimensions.1);
+                app.develop
+                    .geometry
+                    .conform_crop_to_aspect(source_dimensions.0, source_dimensions.1);
                 app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
             }
         });
@@ -106,7 +109,7 @@ impl Sidebar {
                     app.develop_ui.crop_drag = None;
                 }
                 if ui
-                    .add_enabled_ui(app.auto_straighten_available(), |ui| {
+                    .add_enabled_ui(app.auto_geometry_available(), |ui| {
                         moduwu_design::ghost_icon_button(
                             ui,
                             egui_phosphor::regular::MAGIC_WAND,
@@ -119,7 +122,7 @@ impl Sidebar {
                 {
                     app.develop_ui.straighten_tool_active = false;
                     app.develop_ui.straighten_drag = None;
-                    app.start_auto_straighten();
+                    app.start_auto_geometry(AutoGeometry::Straighten);
                 }
             });
             AdjustmentSlider::new(
@@ -134,17 +137,53 @@ impl Sidebar {
 
         moduwu_design::card_gap(ui);
         moduwu_design::section_card(ui, "Transform", |ui| {
+            let size = moduwu_design::toolbar_icon_size();
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled_ui(app.auto_geometry_available(), |ui| {
+                        moduwu_design::ghost_icon_button(
+                            ui,
+                            egui_phosphor::regular::MAGIC_WAND,
+                            size,
+                            "Auto perspective: make vertical lines parallel and level the image",
+                        )
+                    })
+                    .inner
+                    .clicked()
+                {
+                    app.develop_ui.straighten_tool_active = false;
+                    app.develop_ui.straighten_drag = None;
+                    app.start_auto_geometry(AutoGeometry::Perspective);
+                }
+            });
+            let range = -PerspectiveCorrection::MAX_DEGREES..=PerspectiveCorrection::MAX_DEGREES;
+            let mut perspective = app.develop.geometry.displayed_perspective();
+            let mut perspective_changed = false;
+            for (label, value) in ["Vertical", "Horizontal"].into_iter().zip(&mut perspective) {
+                perspective_changed |= AdjustmentSlider::new(label, value, range.clone())
+                    .decimals(1)
+                    .step(0.1)
+                    .show(ui);
+            }
+            if perspective_changed {
+                // A new correction is made with this photo's lens; an existing one keeps its own.
+                if before.perspective.is_identity() {
+                    app.develop.geometry.perspective.focal_length_35mm =
+                        app.perspective_focal_length();
+                }
+                app.develop.geometry.set_displayed_perspective(perspective);
+            }
             AdjustmentSlider::new(
-                "Horizontal",
-                &mut app.develop.geometry.horizontal_transform,
+                "Horizontal skew",
+                &mut app.develop.geometry.horizontal_skew_degrees,
                 -30.0..=30.0,
             )
             .decimals(1)
             .step(0.1)
             .show(ui);
             AdjustmentSlider::new(
-                "Vertical",
-                &mut app.develop.geometry.vertical_transform,
+                "Vertical skew",
+                &mut app.develop.geometry.vertical_skew_degrees,
                 -30.0..=30.0,
             )
             .decimals(1)
@@ -153,20 +192,19 @@ impl Sidebar {
         });
 
         app.develop.geometry = app.develop.geometry.sanitized();
+        let geometry = app.develop.geometry;
         let containment_transform_changed =
-            (app.develop.geometry.rotation_degrees - before.rotation_degrees).abs() > 1e-6
-                || (app.develop.geometry.horizontal_transform - before.horizontal_transform).abs()
-                    > 1e-6
-                || (app.develop.geometry.vertical_transform - before.vertical_transform).abs()
-                    > 1e-6;
+            (geometry.rotation_degrees - before.rotation_degrees).abs() > 1e-6
+                || (geometry.horizontal_skew_degrees - before.horizontal_skew_degrees).abs() > 1e-6
+                || (geometry.vertical_skew_degrees - before.vertical_skew_degrees).abs() > 1e-6
+                || geometry.perspective != before.perspective;
         if containment_transform_changed {
-            if let Some(reference) = app.develop_ui.crop_constraint_reference {
-                app.develop.geometry.crop = reference;
-            }
+            app.refit_crop(source_dimensions.0, source_dimensions.1);
+        } else {
+            app.develop
+                .geometry
+                .fit_crop_inside_transformed_source(source_dimensions.0, source_dimensions.1);
         }
-        app.develop
-            .geometry
-            .fit_crop_inside_transformed_source(source_dimensions.0, source_dimensions.1);
         if app.develop.geometry != before {
             app.note_geometry_changed();
         }
@@ -217,31 +255,6 @@ impl Sidebar {
             });
             *ratio = CropAspectRatio::Custom { width, height };
         }
-    }
-
-    fn apply_crop_aspect(app: &mut CalibRawApp, source_width: u32, source_height: u32) {
-        let Some(target_normalized_ratio) = app
-            .develop
-            .geometry
-            .normalized_crop_aspect(source_width, source_height)
-        else {
-            return;
-        };
-        let crop = app.develop.geometry.crop;
-        let center_x = (crop[0] + crop[2]) * 0.5;
-        let center_y = (crop[1] + crop[3]) * 0.5;
-        let mut width = crop[2] - crop[0];
-        let mut height = crop[3] - crop[1];
-        if width / height.max(f32::EPSILON) > target_normalized_ratio {
-            width = height * target_normalized_ratio;
-        } else {
-            height = width / target_normalized_ratio;
-        }
-        width = width.clamp(GeometryTransform::MIN_CROP_EXTENT, 1.0);
-        height = height.clamp(GeometryTransform::MIN_CROP_EXTENT, 1.0);
-        let left = (center_x - width * 0.5).clamp(0.0, 1.0 - width);
-        let top = (center_y - height * 0.5).clamp(0.0, 1.0 - height);
-        app.develop.geometry.crop = [left, top, left + width, top + height];
     }
 }
 

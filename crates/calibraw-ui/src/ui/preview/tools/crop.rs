@@ -91,9 +91,9 @@ impl Preview {
                     crop_handle_at(display_crop_rect, pointer, CROP_HANDLE_RADIUS)
                 {
                     let handle = crop_source_handle_for_display(display_handle, quarter_turns);
-                    let start = crop_preview_pointer_to_source_normalized(
+                    let start = crop_preview_pointer_to_workspace(
                         image_rect,
-                        quarter_turns,
+                        app.develop.geometry,
                         source_width,
                         source_height,
                         pointer,
@@ -125,9 +125,9 @@ impl Preview {
 
         if primary_down {
             if let (Some(pointer), Some(drag)) = (pointer, app.develop_ui.crop_drag) {
-                let current = crop_preview_pointer_to_source_normalized(
+                let current = crop_preview_pointer_to_workspace(
                     image_rect,
-                    quarter_turns,
+                    app.develop.geometry,
                     source_width,
                     source_height,
                     pointer,
@@ -149,7 +149,7 @@ impl Preview {
     }
 
     /// The crop for `drag` with the pointer at `current` (`delta` from where
-    /// the drag started), kept inside the rotated and sheared source. The
+    /// the drag started), kept inside the transformed source. The
     /// pointer positions are crop workspace coordinates; the handles follow
     /// them there, and the result is converted back to a stored crop.
     fn dragged_crop(

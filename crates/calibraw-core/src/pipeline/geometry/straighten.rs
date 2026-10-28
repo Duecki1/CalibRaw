@@ -1,17 +1,12 @@
 //! Automatic levelling: estimates the `rotation_degrees` that makes the photo's dominant
 //! straight edges horizontal or vertical.
 
+use super::lines::{distinct_segments, LineAnalysisImage, LineSegment};
+use super::mapping::{apply_2x2, multiply_2x2, skew_and_flip};
 use super::GeometryTransform;
 
-mod luminance;
-mod segments;
-pub use luminance::LineAnalysisImage;
-use segments::{detect_line_segments_multiscale, LineSegment};
-
 /// Segments tilted further than this from both axes are treated as diagonal scene content.
-const MAX_TILT_DEGREES: f32 = 20.0;
-/// Shortest segment considered, as a share of the raster's longest edge.
-const MIN_SEGMENT_FRACTION: f32 = 0.03;
+pub(super) const MAX_TILT_DEGREES: f32 = 20.0;
 /// Evidence needed for a level photo's estimate, as a share of the longest edge: the combined
 /// length of agreeing structures, each scaled by its orientation weight. A level vertical counts
 /// fully; a horizontal needs to be much longer.
@@ -34,11 +29,6 @@ const MIN_ANCHOR_FRACTION: f32 = 0.10;
 /// Supporters that make a long anchor unnecessary: this many independent structures agreeing
 /// within a fraction of a degree is not a coincidence, as in a street of windows and doors.
 const MIN_CORROBORATING_LINES: usize = 16;
-/// Parallel segments closer than this share of the longest edge, and overlapping along their
-/// length, are one structure: two sides of a pole, a set of rails, a grating or light trails.
-const STRUCTURE_DISTANCE_FRACTION: f32 = 0.03;
-/// Largest angle between segments of one structure.
-const STRUCTURE_PARALLEL_DEGREES: f32 = 3.0;
 /// Floor for a segment's angular uncertainty; shorter segments use about one pixel of rise.
 const MIN_ANGLE_SIGMA_DEGREES: f32 = 0.15;
 /// Relative weight of near-horizontal edges. Verticals stay nearly vertical under the usual
@@ -70,25 +60,31 @@ struct Vote {
 /// Estimates the straighten angle for `image`, or `None` when it has no clear horizontal or
 /// vertical edges.
 ///
-/// The result replaces the current rotation, so it does not depend on it. Flips and the
-/// horizontal/vertical perspective of `geometry` are applied to the detected edges first,
-/// because they change edge angles before the rotation does; quarter turns do not change which
-/// angles are level.
+/// The result replaces the current rotation, so it does not depend on it. The perspective
+/// correction, flips and skews of `geometry` are applied to the detected edges first, because
+/// they change edge angles before the rotation does; quarter turns do not change which angles
+/// are level.
 pub fn estimate_straighten_rotation(
     image: &LineAnalysisImage,
     geometry: GeometryTransform,
 ) -> Option<StraightenEstimate> {
-    let longest = image.width.max(image.height) as f32;
-    let segments = distinct_structures(
-        detect_line_segments_multiscale(
-            image.width,
-            image.height,
-            &image.values,
-            longest * MIN_SEGMENT_FRACTION,
-        ),
-        longest * STRUCTURE_DISTANCE_FRACTION,
-    );
-    let votes = votes(&segments, image.width, image.height, geometry.sanitized());
+    estimate_from_segments(
+        &distinct_segments(image),
+        image.width(),
+        image.height(),
+        geometry,
+    )
+}
+
+/// [`estimate_straighten_rotation`] for segments already found in a `width`×`height` raster.
+pub(super) fn estimate_from_segments(
+    segments: &[LineSegment],
+    width: usize,
+    height: usize,
+    geometry: GeometryTransform,
+) -> Option<StraightenEstimate> {
+    let longest = width.max(height) as f32;
+    let votes = votes(segments, width, height, geometry.sanitized());
     let peak = density_peak(&votes)?;
 
     let mut longest_supporting = 0.0f32;
@@ -123,59 +119,33 @@ pub fn estimate_straighten_rotation(
     })
 }
 
-/// Keeps the longest segment of each structure, so that repeated texture (gratings, rails,
-/// light trails, both edges of a bar) votes once instead of once per line.
-fn distinct_structures(mut segments: Vec<LineSegment>, max_distance: f32) -> Vec<LineSegment> {
-    segments.sort_by(|a, b| b.length().total_cmp(&a.length()));
-    let max_angle = STRUCTURE_PARALLEL_DEGREES.to_radians();
-    let mut kept: Vec<LineSegment> = Vec::with_capacity(segments.len());
-    for segment in segments {
-        let [dx, dy] = segment.delta();
-        let length = segment.length();
-        let midpoint = segment.midpoint();
-        let duplicate = kept.iter().any(|structure| {
-            let [sx, sy] = structure.delta();
-            let structure_length = structure.length();
-            // |sin| of the angle between the lines, independent of direction.
-            let sin = (sx * dy - sy * dx).abs() / (structure_length * length);
-            if sin > max_angle.sin() {
-                return false;
-            }
-            let centre = structure.midpoint();
-            let (ox, oy) = (midpoint[0] - centre[0], midpoint[1] - centre[1]);
-            let across = (sx * oy - sy * ox).abs() / structure_length;
-            let along = (sx * ox + sy * oy).abs() / structure_length;
-            across <= max_distance && along <= (structure_length + length) * 0.5
-        });
-        if !duplicate {
-            kept.push(segment);
-        }
-    }
-    kept
-}
-
 /// Converts segments into votes in the space the rotation acts on.
 ///
-/// The output displacement is `R(rotation) · S · F · source` (see `GeometryInverseMap`), with
-/// `S` the perspective shear and `F` the flips, so an edge at angle φ after `S · F` is level when
-/// the rotation is −φ modulo 90°.
+/// The output displacement is `R(rotation) · S · F · G(source)` (see `GeometryMapping`), with
+/// `G` the perspective correction, `S` the skews and `F` the flips, so an edge at angle φ after
+/// `S · F · G` is level when the rotation is −φ modulo 90°.
 fn votes(
     segments: &[LineSegment],
     width: usize,
     height: usize,
     geometry: GeometryTransform,
 ) -> Vec<Vote> {
-    let fx = if geometry.flip_horizontal { -1.0 } else { 1.0 };
-    let fy = if geometry.flip_vertical { -1.0 } else { 1.0 };
-    let shx = geometry.horizontal_transform.to_radians().tan();
-    let shy = geometry.vertical_transform.to_radians().tan();
-    let transform = |[x, y]: [f32; 2]| [fx * x + shx * fy * y, shy * fx * x + fy * y];
+    let perspective = geometry
+        .perspective
+        .homography([width as f64, height as f64]);
+    let [shear, flip] = skew_and_flip(geometry);
+    let skew_flip = multiply_2x2(shear, flip);
+    let transform = |[x, y]: [f32; 2]| {
+        apply_2x2(skew_flip, [f64::from(x), f64::from(y)]).map(|value| value as f32)
+    };
     let centre = [width as f32 * 0.5, height as f32 * 0.5];
 
     segments
         .iter()
         .filter_map(|segment| {
-            let [dx, dy] = transform(segment.delta());
+            let start = perspective.apply(segment.start);
+            let end = perspective.apply(segment.end);
+            let [dx, dy] = transform([end[0] - start[0], end[1] - start[1]]);
             let length = dx.hypot(dy);
             if length <= 0.0 {
                 return None;
@@ -191,7 +161,7 @@ fn votes(
             // Pitch makes verticals converge and yaw makes horizontals converge, but a line
             // through the image centre keeps its roll-only angle under both. Lines far from the
             // centre therefore count less.
-            let midpoint = segment.midpoint();
+            let midpoint = perspective.apply(segment.midpoint());
             let [mx, my] = transform([midpoint[0] - centre[0], midpoint[1] - centre[1]]);
             let offset = (mx * dy - my * dx).abs() / length;
             let half_extent = if vertical { centre[0] } else { centre[1] };

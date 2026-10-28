@@ -5,12 +5,18 @@ use std::sync::Arc;
 mod crop_fit;
 mod inverse_map;
 mod lens_map;
+mod lines;
+mod mapping;
+mod perspective;
 mod straighten;
 mod thumbnail;
 use crop_fit::*;
 pub use inverse_map::*;
 pub use lens_map::*;
-pub use straighten::{estimate_straighten_rotation, LineAnalysisImage, StraightenEstimate};
+pub use lines::LineAnalysisImage;
+pub use mapping::{GeometryMapping, Homography};
+pub use perspective::{estimate_perspective, PerspectiveCorrection, PerspectiveEstimate};
+pub use straighten::{estimate_straighten_rotation, StraightenEstimate};
 pub use thumbnail::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -118,10 +124,18 @@ pub struct GeometryTransform {
     pub flip_horizontal: bool,
     #[serde(default)]
     pub flip_vertical: bool,
-    #[serde(default)]
-    pub horizontal_transform: f32,
-    #[serde(default)]
-    pub vertical_transform: f32,
+    /// Horizontal skew, degrees: source rows shift sideways by the tangent of this angle per
+    /// pixel down.
+    #[serde(default, rename = "horizontal_transform")]
+    pub horizontal_skew_degrees: f32,
+    /// Vertical skew, degrees: source columns shift down by the tangent of this angle per pixel
+    /// to the right.
+    #[serde(default, rename = "vertical_transform")]
+    pub vertical_skew_degrees: f32,
+    /// Applied to the source before everything else; sidecars with one are written as schema 3
+    /// (`migrations::older_readers`).
+    #[serde(default, skip_serializing_if = "PerspectiveCorrection::is_identity")]
+    pub perspective: PerspectiveCorrection,
 }
 
 const fn default_crop_rect() -> [f32; 4] {
@@ -137,8 +151,9 @@ impl Default for GeometryTransform {
             rotation_degrees: 0.0,
             flip_horizontal: false,
             flip_vertical: false,
-            horizontal_transform: 0.0,
-            vertical_transform: 0.0,
+            horizontal_skew_degrees: 0.0,
+            vertical_skew_degrees: 0.0,
+            perspective: PerspectiveCorrection::default(),
         }
     }
 }
@@ -159,8 +174,9 @@ impl GeometryTransform {
         self.quarter_turns %= 4;
         self.aspect_ratio = self.aspect_ratio.sanitized();
         self.rotation_degrees = finite_clamp(self.rotation_degrees, -45.0, 45.0);
-        self.horizontal_transform = finite_clamp(self.horizontal_transform, -30.0, 30.0);
-        self.vertical_transform = finite_clamp(self.vertical_transform, -30.0, 30.0);
+        self.horizontal_skew_degrees = finite_clamp(self.horizontal_skew_degrees, -30.0, 30.0);
+        self.vertical_skew_degrees = finite_clamp(self.vertical_skew_degrees, -30.0, 30.0);
+        self.perspective = self.perspective.sanitized();
         self
     }
 
@@ -171,16 +187,20 @@ impl GeometryTransform {
             && value.rotation_degrees.abs() < 1e-4
             && !value.flip_horizontal
             && !value.flip_vertical
-            && value.horizontal_transform.abs() < 1e-4
-            && value.vertical_transform.abs() < 1e-4
+            && value.horizontal_skew_degrees.abs() < 1e-4
+            && value.vertical_skew_degrees.abs() < 1e-4
+            && value.perspective.is_identity()
     }
 
+    /// Output size in pixels: the crop's share of the corrected frame (see [`GeometryMapping`]).
     pub fn crop_pixel_dimensions(self, source_width: u32, source_height: u32) -> (u32, u32) {
         let value = self.sanitized();
-        let width = ((value.crop[2] - value.crop[0]) * source_width.max(1) as f32)
+        let [frame_width, frame_height] =
+            GeometryMapping::new(value, source_width, source_height).frame_size();
+        let width = ((value.crop[2] - value.crop[0]) * frame_width)
             .round()
             .max(1.0) as u32;
-        let height = ((value.crop[3] - value.crop[1]) * source_height.max(1) as f32)
+        let height = ((value.crop[3] - value.crop[1]) * frame_height)
             .round()
             .max(1.0) as u32;
         if value.quarter_turns.is_multiple_of(2) {
@@ -201,11 +221,13 @@ impl GeometryTransform {
         self.aspect_ratio = self.aspect_ratio.transposed();
     }
 
-    /// The crop's width / height in normalized source units for the chosen
-    /// aspect ratio, which applies to the output as displayed (after quarter
-    /// turns). `Original` is the uncropped output's own shape.
+    /// The crop's width / height in units normalized to the corrected frame for the chosen
+    /// aspect ratio, which applies to the output as displayed (after quarter turns).
+    /// `Original` is the source's own shape.
     pub fn normalized_crop_aspect(self, source_width: u32, source_height: u32) -> Option<f32> {
-        let source_aspect = source_width.max(1) as f32 / source_height.max(1) as f32;
+        let [frame_width, frame_height] =
+            GeometryMapping::new(self, source_width, source_height).frame_size();
+        let frame_aspect = frame_width / frame_height;
         let swapped = self.quarter_turns % 2 == 1;
         let (output_width, output_height) = if swapped {
             (source_height, source_width)
@@ -218,8 +240,35 @@ impl GeometryTransform {
         } else {
             output_ratio
         };
-        let normalized = source_ratio / source_aspect;
+        let normalized = source_ratio / frame_aspect;
         (normalized.is_finite() && normalized > f32::EPSILON).then_some(normalized)
+    }
+
+    /// Shrinks the crop about its centre until it fits inside the transformed source, moving
+    /// it no further than needed. Returns whether it changed.
+    /// Reshapes the crop about its centre to the chosen aspect ratio by shortening one side,
+    /// keeping it within the frame; `Free` leaves it as it is.
+    pub fn conform_crop_to_aspect(&mut self, source_width: u32, source_height: u32) {
+        let Some(target_normalized_ratio) =
+            self.normalized_crop_aspect(source_width, source_height)
+        else {
+            return;
+        };
+        let crop = self.crop;
+        let center_x = (crop[0] + crop[2]) * 0.5;
+        let center_y = (crop[1] + crop[3]) * 0.5;
+        let mut width = crop[2] - crop[0];
+        let mut height = crop[3] - crop[1];
+        if width / height.max(f32::EPSILON) > target_normalized_ratio {
+            width = height * target_normalized_ratio;
+        } else {
+            height = width / target_normalized_ratio;
+        }
+        width = width.clamp(Self::MIN_CROP_EXTENT, 1.0);
+        height = height.clamp(Self::MIN_CROP_EXTENT, 1.0);
+        let left = (center_x - width * 0.5).clamp(0.0, 1.0 - width);
+        let top = (center_y - height * 0.5).clamp(0.0, 1.0 - height);
+        self.crop = [left, top, left + width, top + height];
     }
 
     pub fn fit_crop_inside_transformed_source(
@@ -229,33 +278,19 @@ impl GeometryTransform {
     ) -> bool {
         let mut geometry = self.sanitized();
         let original_crop = geometry.crop;
-        if crop_fits_transformed_source(geometry, original_crop, source_width, source_height) {
+        let mapping = GeometryMapping::new(geometry, source_width, source_height);
+        if crop_fits(&mapping) {
             *self = geometry;
             return false;
         }
 
-        let source_width_f = source_width.max(1) as f32;
-        let source_height_f = source_height.max(1) as f32;
-        let width = (original_crop[2] - original_crop[0]) * source_width_f;
-        let height = (original_crop[3] - original_crop[1]) * source_height_f;
-        let original_center = [
-            (original_crop[0] + original_crop[2]) * 0.5 * source_width_f,
-            (original_crop[1] + original_crop[3]) * 0.5 * source_height_f,
-        ];
-
-        let mut low = 0.0_f32;
-        let mut high = 1.0_f32;
+        let size = mapping.crop_size();
+        let frame = mapping.frame_size_f64();
+        let mut low = 0.0_f64;
+        let mut high = 1.0_f64;
         for _ in 0..32 {
             let mid = (low + high) * 0.5;
-            if feasible_crop_center_bounds(
-                geometry,
-                width * mid,
-                height * mid,
-                source_width_f,
-                source_height_f,
-            )
-            .is_some()
-            {
+            if feasible_crop_centers(&mapping, [size[0] * mid, size[1] * mid]).is_some() {
                 low = mid;
             } else {
                 high = mid;
@@ -263,30 +298,16 @@ impl GeometryTransform {
         }
 
         let scale = (low * 0.999_999).clamp(0.0, 1.0);
-        let fitted_width = (width * scale)
-            .max(Self::MIN_CROP_EXTENT * source_width_f)
-            .min(source_width_f);
-        let fitted_height = (height * scale)
-            .max(Self::MIN_CROP_EXTENT * source_height_f)
-            .min(source_height_f);
-
-        let Some(([min_cx, max_cx], [min_cy, max_cy])) = feasible_crop_center_bounds(
-            geometry,
-            fitted_width,
-            fitted_height,
-            source_width_f,
-            source_height_f,
-        ) else {
+        let min_extent = f64::from(Self::MIN_CROP_EXTENT);
+        let fitted = [0, 1].map(|axis| {
+            (size[axis] * scale)
+                .max(min_extent * frame[axis])
+                .min(frame[axis])
+        });
+        let Some(centers) = feasible_crop_centers(&mapping, fitted) else {
             return false;
         };
-        let center_x = original_center[0].clamp(min_cx, max_cx);
-        let center_y = original_center[1].clamp(min_cy, max_cy);
-        geometry.crop = [
-            (center_x - fitted_width * 0.5) / source_width_f,
-            (center_y - fitted_height * 0.5) / source_height_f,
-            (center_x + fitted_width * 0.5) / source_width_f,
-            (center_y + fitted_height * 0.5) / source_height_f,
-        ];
+        geometry.crop = crop_around(centers.nearest(mapping.crop_center()), fitted, frame);
         geometry = geometry.sanitized();
         let changed = geometry.crop != original_crop;
         *self = geometry;
@@ -301,12 +322,13 @@ impl GeometryTransform {
         source_height: u32,
     ) -> [f32; 4] {
         let geometry = self.sanitized();
+        let mapping = GeometryMapping::new(geometry, source_width, source_height);
         let proposed = sanitized_crop(proposed_crop);
-        if crop_fits_transformed_source(geometry, proposed, source_width, source_height) {
+        if crop_fits(&mapping.with_crop(proposed)) {
             return proposed;
         }
         let start = sanitized_crop(start_crop);
-        if !crop_fits_transformed_source(geometry, start, source_width, source_height) {
+        if !crop_fits(&mapping.with_crop(start)) {
             let mut fitted = geometry;
             fitted.crop = start;
             fitted.fit_crop_inside_transformed_source(source_width, source_height);
@@ -318,7 +340,7 @@ impl GeometryTransform {
         for _ in 0..28 {
             let mid = (low + high) * 0.5;
             let candidate = lerp_crop(start, proposed, mid);
-            if crop_fits_transformed_source(geometry, candidate, source_width, source_height) {
+            if crop_fits(&mapping.with_crop(candidate)) {
                 low = mid;
             } else {
                 high = mid;
@@ -327,16 +349,17 @@ impl GeometryTransform {
         sanitized_crop(lerp_crop(start, proposed, low * 0.999_999))
     }
 
-    /// Whether `crop` (normalized source units) lies inside the rotated,
-    /// sheared and flipped source.
+    /// Whether `crop` (normalized to the corrected frame) lies inside the transformed source.
     pub fn contains_crop(self, crop: [f32; 4], source_width: u32, source_height: u32) -> bool {
-        crop_fits_transformed_source(self.sanitized(), crop, source_width, source_height)
+        crop_fits(
+            &GeometryMapping::new(self, source_width, source_height)
+                .with_crop(sanitized_crop(crop)),
+        )
     }
 
-    /// Translates `start_crop` by `delta` (normalized source units) without
-    /// resizing it. The crop slides along any source edge it reaches instead
-    /// of stopping, because for a fixed size the valid centers form an
-    /// axis-aligned rectangle.
+    /// Translates `start_crop` by `delta` (normalized to the corrected frame) without resizing
+    /// it. The crop slides along any source edge it reaches instead of stopping, because for a
+    /// fixed size the valid centres form a convex polygon.
     pub fn constrain_crop_move_to_transformed_source(
         self,
         start_crop: [f32; 4],
@@ -346,36 +369,38 @@ impl GeometryTransform {
     ) -> [f32; 4] {
         let geometry = self.sanitized();
         let start = sanitized_crop(start_crop);
-        let source_width_f = source_width.max(1) as f32;
-        let source_height_f = source_height.max(1) as f32;
-        let width = (start[2] - start[0]) * source_width_f;
-        let height = (start[3] - start[1]) * source_height_f;
-        let Some(([min_cx, max_cx], [min_cy, max_cy])) =
-            feasible_crop_center_bounds(geometry, width, height, source_width_f, source_height_f)
-        else {
+        let mapping = GeometryMapping::new(geometry, source_width, source_height).with_crop(start);
+        let size = mapping.crop_size();
+        let frame = mapping.frame_size_f64();
+        let Some(centers) = feasible_crop_centers(&mapping, size) else {
             let mut fitted = geometry;
             fitted.crop = start;
             fitted.fit_crop_inside_transformed_source(source_width, source_height);
             return fitted.crop;
         };
-        // The stored rectangle must also stay inside [0, 1], or sanitizing
-        // would resize it.
-        let min_cx = min_cx.max(width * 0.5);
-        let max_cx = max_cx.min(source_width_f - width * 0.5);
-        let min_cy = min_cy.max(height * 0.5);
-        let max_cy = max_cy.min(source_height_f - height * 0.5);
-        if min_cx > max_cx || min_cy > max_cy {
+        // The stored rectangle must also stay inside the frame, or sanitizing would resize it.
+        let Some(centers) = centers.within(
+            [size[0] * 0.5, size[1] * 0.5],
+            [frame[0] - size[0] * 0.5, frame[1] - size[1] * 0.5],
+        ) else {
             return start;
-        }
-        let delta = delta.map(|value| if value.is_finite() { value } else { 0.0 });
-        let center_x =
-            (((start[0] + start[2]) * 0.5 + delta[0]) * source_width_f).clamp(min_cx, max_cx);
-        let center_y =
-            (((start[1] + start[3]) * 0.5 + delta[1]) * source_height_f).clamp(min_cy, max_cy);
+        };
+        let delta = delta.map(|value| {
+            if value.is_finite() {
+                f64::from(value)
+            } else {
+                0.0
+            }
+        });
+        let start_center = mapping.crop_center();
+        let center = centers.nearest([
+            start_center[0] + delta[0] * frame[0],
+            start_center[1] + delta[1] * frame[1],
+        ]);
         let half_width = (start[2] - start[0]) * 0.5;
         let half_height = (start[3] - start[1]) * 0.5;
-        let center_u = center_x / source_width_f;
-        let center_v = center_y / source_height_f;
+        let center_u = (center[0] / frame[0]) as f32;
+        let center_v = (center[1] / frame[1]) as f32;
         [
             center_u - half_width,
             center_v - half_height,
@@ -383,7 +408,51 @@ impl GeometryTransform {
             center_v + half_height,
         ]
     }
+
+    /// The perspective correction as the photo is displayed, after flips and quarter turns:
+    /// `[vertical, horizontal]` in degrees, where a positive vertical widens the top of the
+    /// displayed photo and a positive horizontal widens its right side.
+    pub fn displayed_perspective(self) -> [f32; 2] {
+        let perspective = self.perspective;
+        DISPLAYED_SIDES.map(|side| {
+            let [pitch, yaw] = self.source_side(side);
+            pitch * perspective.pitch_degrees + yaw * perspective.yaw_degrees
+        })
+    }
+
+    /// Sets the perspective correction from displayed angles (see
+    /// [`Self::displayed_perspective`]), keeping its focal length.
+    pub fn set_displayed_perspective(&mut self, displayed: [f32; 2]) {
+        for (side, degrees) in DISPLAYED_SIDES.into_iter().zip(displayed) {
+            let [pitch, yaw] = self.source_side(side);
+            if pitch != 0.0 {
+                self.perspective.pitch_degrees = pitch * degrees;
+            } else {
+                self.perspective.yaw_degrees = yaw * degrees;
+            }
+        }
+    }
+
+    /// Which source side the displayed side `side` shows, as `[pitch, yaw]` signs: widening it
+    /// adds to exactly one of them.
+    fn source_side(self, [x, y]: [i8; 2]) -> [f32; 2] {
+        // Undo the quarter turns, then the flips; rotation and skew do not change which side
+        // is which.
+        let [x, y] = match self.quarter_turns % 4 {
+            0 => [x, y],
+            1 => [y, -x],
+            2 => [-x, -y],
+            _ => [-y, x],
+        };
+        let x = if self.flip_horizontal { -x } else { x };
+        let y = if self.flip_vertical { -y } else { y };
+        // A positive pitch widens the top (y = -1), a positive yaw the right side (x = 1).
+        [f32::from(-y), f32::from(x)]
+    }
 }
+
+/// The displayed top and right side, as directions in y-down coordinates.
+const DISPLAYED_SIDES: [[i8; 2]; 2] = [[0, -1], [1, 0]];
 
 fn finite_clamp(value: f32, min: f32, max: f32) -> f32 {
     if value.is_finite() {

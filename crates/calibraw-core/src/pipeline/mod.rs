@@ -42,9 +42,10 @@ pub use color_profile::{
 };
 pub use film_negative::{FilmNegative, FilmSettlement, FilmSource, FilmStock};
 pub use geometry::{
-    estimate_straighten_rotation, transform_thumbnail_geometry,
-    transform_thumbnail_geometry_with_lens, CropAspectRatio, GeometryTransform, LensGeometryMap,
-    LineAnalysisImage, StraightenEstimate,
+    estimate_perspective, estimate_straighten_rotation, transform_thumbnail_geometry,
+    transform_thumbnail_geometry_with_lens, CropAspectRatio, GeometryMapping, GeometryTransform,
+    Homography, LensGeometryMap, LineAnalysisImage, PerspectiveCorrection, PerspectiveEstimate,
+    StraightenEstimate,
 };
 pub use lens_correction::{
     apply_lens_correction, LensCorrection, ManualLensCorrection, ManualLensModel,

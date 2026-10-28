@@ -274,7 +274,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 sharpen,
                 glow_diffusion,
                 vignette_frame,
-                vignette_transform,
+                vignette_projection,
                 vignette_dark_half_fit,
                 vignette_dark_full_fit,
                 vignette_light_half_fit,

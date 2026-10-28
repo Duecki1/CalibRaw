@@ -3,8 +3,8 @@ use crate::app::{
     SidebarTab, StraightenDragState,
 };
 use crate::pipeline::{
-    BrushMode, GeometryTransform, LensGeometryMap, MaskCombineMode, MaskGeometry, MaskKind,
-    RetouchStroke,
+    BrushMode, GeometryMapping, GeometryTransform, Homography, LensGeometryMap, MaskCombineMode,
+    MaskGeometry, MaskKind, RetouchStroke,
 };
 use crate::ui::mask_component_color;
 use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui};

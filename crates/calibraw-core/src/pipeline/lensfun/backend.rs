@@ -106,6 +106,7 @@ fn catalog_result(raw: &LoadedRaw) -> Result<LensfunCatalog> {
     Ok(LensfunCatalog {
         available: true,
         camera_label,
+        camera_crop_factor: camera.and_then(camera_crop_factor).and_then(positive),
         lenses,
         auto_match,
         status,

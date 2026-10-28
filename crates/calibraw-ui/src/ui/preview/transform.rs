@@ -1,10 +1,8 @@
 use super::*;
 
-mod affine;
 mod crop_handles;
 mod crop_workspace;
 mod source_projection;
-pub(super) use affine::*;
 pub(super) use crop_handles::*;
 pub(super) use crop_workspace::*;
 pub(crate) use source_projection::*;

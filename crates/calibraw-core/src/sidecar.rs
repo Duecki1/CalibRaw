@@ -29,7 +29,7 @@ pub use size_limits::*;
 // The newest schema of the "CalibRaw edit sidecar" format. Bump this for every incompatible
 // serialized layout change; pre-release AuRaw sidecars use a different format discriminator.
 // Schemas 2 and 3 share the layout of schema 1. Schema 2 adds the Relight effect and manual lens
-// correction, schema 3 the LUT; edits are written with the oldest schema that holds them
+// correction, schema 3 the LUT and perspective correction; edits are written with the oldest schema that holds them
 // (`migrations::older_readers`).
 pub const SIDECAR_SCHEMA_VERSION: u32 = 3;
 pub const DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT: u64 = 0x4155_5241_5700_0007;
