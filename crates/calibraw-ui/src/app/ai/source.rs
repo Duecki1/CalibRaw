@@ -18,7 +18,7 @@ impl CalibRawApp {
             .pipeline()
             .ok_or_else(|| "Open an image before creating this mask.".to_owned())?;
 
-        let reference_exposure = ExposureParams::scene_referred_default();
+        let reference_exposure = self.develop.exposure.source_reference();
         let reference_masks = MaskStack::default();
         let reference_params = GpuParams::new(&reference_exposure, &reference_masks, raw);
         let source_raw = self
@@ -111,7 +111,7 @@ impl CalibRawApp {
                 .loaded_raw
                 .as_ref()
                 .ok_or_else(|| "The original photo is not available.".to_owned())?;
-            let reference_exposure = ExposureParams::scene_referred_default();
+            let reference_exposure = self.develop.exposure.source_reference();
             if full_raw.uses_opposed_chroma(&reference_exposure) {
                 full_raw.inpaint_opposed_chroma_for_exposure(&reference_exposure);
             }

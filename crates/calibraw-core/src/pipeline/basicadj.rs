@@ -1,3 +1,4 @@
+use super::film_negative::FilmSource;
 use super::noise::DenoiseQuality;
 use super::sigmoid::SigmoidParams;
 
@@ -296,6 +297,10 @@ pub struct ExposureParams {
     /// [`LoadedRaw::lateral_chromatic_aberration`]: super::LoadedRaw::lateral_chromatic_aberration
     #[serde(default)]
     pub chromatic_aberration: f32,
+    /// How the source is read: a scanned film negative is developed as its
+    /// positive. Left out of saved positives, whose files stay as they were.
+    #[serde(default, skip_serializing_if = "FilmSource::is_positive")]
+    pub film: FilmSource,
 
     pub highlights: f32,
     pub shadows: f32,
@@ -351,6 +356,16 @@ impl ExposureParams {
     pub fn scene_referred_default() -> Self {
         Self::default()
     }
+
+    /// The default edit of this edit's source, which canonical renderings
+    /// such as mask sources develop. A film negative stays one: it is how the
+    /// source is read, not an edit of it.
+    pub fn source_reference(&self) -> Self {
+        Self {
+            film: self.film,
+            ..Self::scene_referred_default()
+        }
+    }
 }
 
 impl Default for ExposureParams {
@@ -381,6 +396,7 @@ impl Default for ExposureParams {
             highlight_clip: 1.0,
             highlight_reconstruction: 1.0,
             chromatic_aberration: 0.0,
+            film: FilmSource::Positive,
             highlights: 0.0,
             shadows: 0.0,
             whites: 0.0,

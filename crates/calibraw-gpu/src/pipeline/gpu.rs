@@ -4,11 +4,11 @@ use super::sigmoid::{coefficients as sigmoid_coefficients, SigmoidCoefficients};
 use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
-    GeometryTransform, HighlightReconstructionMethod, LateralChannel, LensGeometryMap, LoadedRaw,
-    LocalMask, MaskEffect, MaskImage, MaskStack, PointColor, PointCurve, ProcessingStage,
-    ProfileColor, RawThumbnail, RemoveEditState, RemovePatch, SensorSaturation, SigmoidParams,
-    GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS,
-    MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
+    FilmSource, FilmStock, GeometryTransform, HighlightReconstructionMethod, LateralChannel,
+    LensGeometryMap, LoadedRaw, LocalMask, MaskEffect, MaskImage, MaskStack, PointColor,
+    PointCurve, ProcessingStage, ProfileColor, RawThumbnail, RemoveEditState, RemovePatch,
+    SensorSaturation, SigmoidParams, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
+    MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -64,7 +64,7 @@ pub use params::*;
 pub use remove_scene::*;
 use stage_params::*;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 15;
+const GPU_PARAMS_ABI_VERSION: u32 = 16;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -72,7 +72,7 @@ pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android"
     512
 };
 const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_120;
-const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 384;
+const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 432;
 const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_760;
 const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 192;
 const GPU_STAGE_UNIFORM_SIZE_BYTES: u32 =

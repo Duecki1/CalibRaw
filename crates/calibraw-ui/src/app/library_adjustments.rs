@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::WhiteBalance;
+use crate::pipeline::{FilmSettlement, FilmSource, WhiteBalance};
 use crate::ui::library::LibraryLocator;
 
 /// Settings to apply to one or more photos.
@@ -11,6 +11,9 @@ pub(crate) enum EditTransfer<'a> {
         mode: AdjustmentPasteMode,
     },
     Preset(&'a crate::presets::Preset),
+    /// How the photos are read: as they are, or as film negatives to
+    /// estimate ([`FilmSource::NegativeToEstimate`]).
+    Film(FilmSource),
 }
 
 impl EditTransfer<'_> {
@@ -18,6 +21,10 @@ impl EditTransfer<'_> {
         match self {
             Self::Paste { clipboard, .. } => clipboard.selection,
             Self::Preset(preset) => preset.selection(),
+            Self::Film(_) => EditSelection {
+                raw_processing: true,
+                ..EditSelection::default()
+            },
         }
     }
 
@@ -36,8 +43,13 @@ impl EditTransfer<'_> {
     /// takes the form that photo keeps (`LoadedRaw::resolve_white_balance`).
     /// A photo without a white-balance model shows no white-balance controls
     /// and renders none, so it stays as shot instead of carrying a hidden
-    /// white balance into later copies.
-    fn apply(self, destination: &mut SidecarEditState, photo: TransferDestination<'_>) {
+    /// white balance into later copies. A film negative to estimate is
+    /// estimated on an open photo, and when a closed one is next decoded.
+    fn apply(
+        self,
+        destination: &mut SidecarEditState,
+        photo: TransferDestination<'_>,
+    ) -> FilmSettlement {
         match self {
             Self::Paste { clipboard, mode } => crate::sidecar::transfer_edits(
                 destination,
@@ -46,17 +58,29 @@ impl EditTransfer<'_> {
                 mode,
             ),
             Self::Preset(preset) => preset.apply_to(destination),
+            Self::Film(film) => {
+                // Mask sources develop the positive
+                // (`ExposureParams::source_reference`).
+                if destination.exposure.film != film
+                    && !destination.masks.content_dependencies().is_empty()
+                {
+                    destination.ai_masks_need_update = true;
+                }
+                destination.exposure.film = film;
+            }
         }
         let exposure = &mut destination.exposure;
         match photo {
             TransferDestination::Open(raw) => {
                 exposure.white_balance = raw.resolve_white_balance(exposure.white_balance);
+                exposure.settle_film(raw, destination.geometry)
             }
             TransferDestination::Closed { raster: true } => {
                 exposure.white_balance = WhiteBalance::AsShot;
+                FilmSettlement::Unchanged
             }
             // Resolved when the photo is opened.
-            TransferDestination::Closed { raster: false } => {}
+            TransferDestination::Closed { raster: false } => FilmSettlement::Unchanged,
         }
     }
 }
@@ -110,7 +134,19 @@ impl CalibRawApp {
         self.finish_mask_geometry_interaction();
         self.commit_edit_history_now();
         let mut merged = self.capture_sidecar_edit_state();
-        transfer.apply(&mut merged, TransferDestination::Open(&raw));
+        let film = transfer.apply(&mut merged, TransferDestination::Open(&raw));
+        if film == FilmSettlement::NotFound {
+            self.report_error(
+                ErrorKind::Sampling,
+                format!(
+                    "Could not find a negative to invert in {}, so it is shown as it is.",
+                    self.develop
+                        .current_label
+                        .as_deref()
+                        .unwrap_or("the open photo")
+                ),
+            );
+        }
 
         let previous_camera_profile = self.develop.selected_camera_profile.clone();
         let pasted_camera_profile = merged.camera_profile.as_ref().and_then(|relative| {
@@ -148,6 +184,10 @@ impl CalibRawApp {
 
         let ai_denoise_was_enabled = self.develop.exposure.ai_denoise_enabled;
         if adjustments_changed {
+            if merged.exposure.film != self.develop.exposure.film {
+                // The mask source develops the positive.
+                self.masks.source_cache = None;
+            }
             self.develop.exposure = merged.exposure;
             self.develop.exposure.sanitize_tone_curves();
         }

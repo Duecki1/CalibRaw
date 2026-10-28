@@ -71,6 +71,7 @@ impl ExposureParams {
             highlight_clip,
             highlight_reconstruction,
             chromatic_aberration,
+            film: _,
             highlights,
             shadows,
             whites,
@@ -118,6 +119,8 @@ impl ExposureParams {
             highlight_reconstruction: highlight_reconstruction
                 .blend(target.highlight_reconstruction, amount),
             chromatic_aberration: chromatic_aberration.blend(target.chromatic_aberration, amount),
+            // How the source is read is one choice.
+            film: target.film,
             highlights: highlights.blend(target.highlights, amount),
             shadows: shadows.blend(target.shadows, amount),
             whites: whites.blend(target.whites, amount),

@@ -1,5 +1,6 @@
+use super::film_negative::FilmNegativeAction;
 use super::*;
-use crate::app::CameraProfileChoice;
+use crate::app::{AreaPicker, CameraProfileChoice, FILM_NEGATIVE_CARD_TITLE};
 use crate::ui::components::preview_list::{preview_combo, PreviewListItem};
 
 mod mobile;
@@ -359,7 +360,7 @@ impl Sidebar {
         let mut lens_changed = false;
         let mut ai_denoise_request = None;
         let white_balance_raw = app.develop.loaded_raw.clone();
-        let white_balance_was_active = app.develop_ui.white_balance_picker_active;
+        let area_picker_before = app.develop_ui.area_picker;
         // Matches the GPU pipeline: only a Bayer-mosaic AI result is blended.
         // X-Trans and raster results are demosaiced RGB and always apply fully.
         let ai_strength_available = app.develop.loaded_raw.as_deref().is_some_and(|raw| {
@@ -379,6 +380,7 @@ impl Sidebar {
             match app.develop_ui.adjustment_section {
                 AdjustmentSection::Light => {
                     Self::show_camera_profile_selector(ui, app, frame);
+                    Self::show_film_negative_card(ui, app, layout);
                     changed |= Self::show_basic(ui, &mut app.develop.exposure, false);
                 }
                 AdjustmentSection::ToneCurve => {
@@ -391,13 +393,7 @@ impl Sidebar {
                 }
                 AdjustmentSection::Lut => Self::show_look_lut_card(ui, app, layout),
                 AdjustmentSection::Color => {
-                    changed |= Self::show_color(
-                        ui,
-                        &mut app.develop.exposure,
-                        white_balance_raw.as_deref(),
-                        &mut app.develop_ui.white_balance_picker_active,
-                        false,
-                    );
+                    changed |= Self::show_color_card(ui, app, white_balance_raw.as_deref(), false);
                 }
                 AdjustmentSection::ColorGrading => {
                     changed |= Self::show_color_grading(
@@ -430,6 +426,7 @@ impl Sidebar {
                         changed |= presence_changed;
                         added = presence_added;
                     }
+                    let added = Self::take_film_negative_pick(ui, app, layout, added);
                     Self::show_global_effects(ui, app, frame, layout, added);
                 }
                 AdjustmentSection::ColorMixer => {
@@ -450,6 +447,8 @@ impl Sidebar {
             }
         } else {
             let mut added = None;
+            // Ahead of the cards the user orders: it changes what they edit.
+            Self::show_film_negative_card(ui, app, layout);
             let order = app.preferences.develop_card_order.clone();
             for card in order.cards() {
                 match card {
@@ -469,13 +468,8 @@ impl Sidebar {
                     }
                     DevelopCard::Lut => Self::show_look_lut_card(ui, app, layout),
                     DevelopCard::Color => {
-                        changed |= Self::show_color(
-                            ui,
-                            &mut app.develop.exposure,
-                            white_balance_raw.as_deref(),
-                            &mut app.develop_ui.white_balance_picker_active,
-                            true,
-                        );
+                        changed |=
+                            Self::show_color_card(ui, app, white_balance_raw.as_deref(), true);
                     }
                     DevelopCard::ColorGrading => {
                         changed |= Self::show_color_grading(
@@ -524,14 +518,17 @@ impl Sidebar {
                 }
             }
             // The effect cards follow every adjustment card, whatever their order.
+            let added = Self::take_film_negative_pick(ui, app, layout, added);
             Self::show_global_effects(ui, app, frame, layout, added);
         }
 
-        if !white_balance_was_active && app.develop_ui.white_balance_picker_active {
+        // One picker at a time: one started this pass ends the other.
+        if app.develop_ui.area_picker.is_some() && app.develop_ui.area_picker != area_picker_before
+        {
             app.develop_ui.point_color.picker_active = false;
         }
         if app.develop_ui.point_color.picker_active {
-            app.develop_ui.cancel_white_balance_picker();
+            app.develop_ui.cancel_area_picker();
         }
         if changed {
             app.develop.exposure.sanitize_tone_curves();
@@ -579,16 +576,80 @@ impl Sidebar {
                 &effect_frame,
             )
         } else {
-            Self::show_effect_components(
+            let (changed, film_picked) = Self::show_effect_components(
                 ui,
                 &mut app.masks.stack.global_effects,
                 true,
+                mask_effects::FilmNegativeTile::for_film(&app.develop.exposure.film),
                 &effect_frame,
-            )
+            );
+            if film_picked {
+                Self::start_film_negative(ui.ctx(), app, layout);
+            }
+            changed
         };
         if changed {
             app.mark_mask_adjustments_dirty();
         }
+    }
+
+    /// The Film negative card, while the photo is developed as a negative.
+    fn show_film_negative_card(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
+        let Some(negative) = app.develop.exposure.film.negative().copied() else {
+            return;
+        };
+        let picking_base = app.develop_ui.area_picker == Some(AreaPicker::FilmBase);
+        let foldable = layout == ScreenLayout::Horizontal;
+        match Self::show_film_negative(ui, &negative, picking_base, foldable) {
+            Some(FilmNegativeAction::Stock(stock)) => app.set_film_stock(stock),
+            Some(FilmNegativeAction::PickBase(active)) => {
+                app.develop_ui.set_area_picker(AreaPicker::FilmBase, active);
+            }
+            Some(FilmNegativeAction::Auto) => app.auto_film_negative(),
+            Some(FilmNegativeAction::Remove) => app.remove_film_negative(),
+            None => {}
+        }
+    }
+
+    /// The effect of an Add effect `pick` of the global effects. The film
+    /// negative tile instead develops the photo as a negative.
+    fn take_film_negative_pick(
+        ui: &Ui,
+        app: &mut CalibRawApp,
+        layout: ScreenLayout,
+        pick: Option<mask_effects::EffectPick>,
+    ) -> Option<MaskEffect> {
+        if pick == Some(mask_effects::EffectPick::FilmNegative) {
+            Self::start_film_negative(ui.ctx(), app, layout);
+        }
+        pick.and_then(mask_effects::EffectPick::effect)
+    }
+
+    /// Develops the photo as a film negative and shows its card, which leads
+    /// the Light section of the vertical layout.
+    fn start_film_negative(ctx: &egui::Context, app: &mut CalibRawApp, layout: ScreenLayout) {
+        if !app.enable_film_negative() {
+            return;
+        }
+        if layout == ScreenLayout::Vertical {
+            app.develop_ui.adjustment_section = AdjustmentSection::Light;
+            app.develop_ui.effect_component = None;
+        }
+        adjustment_cards::reveal_adjustment_card(ctx, FILM_NEGATIVE_CARD_TITLE);
+    }
+
+    /// The Color card, whose eyedropper is the white balance [`AreaPicker`].
+    fn show_color_card(
+        ui: &mut Ui,
+        app: &mut CalibRawApp,
+        raw: Option<&LoadedRaw>,
+        foldable: bool,
+    ) -> bool {
+        let mut picking = app.develop_ui.area_picker == Some(AreaPicker::WhiteBalance);
+        let changed = Self::show_color(ui, &mut app.develop.exposure, raw, &mut picking, foldable);
+        app.develop_ui
+            .set_area_picker(AreaPicker::WhiteBalance, picking);
+        changed
     }
 
     /// Whether a photo is open and there is a LUT to show or a library to

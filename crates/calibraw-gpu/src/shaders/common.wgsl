@@ -106,6 +106,12 @@ struct CameraUniforms {
     chromatic_aberration: vec4<f32>,
     lateral_ca_red: vec4<f32>,
     lateral_ca_blue: vec4<f32>,
+    // Film negative (film_positive in scene_source.wgsl): the base in scene
+    // texture units, then the mode (FILM_MODE_*); each channel's exponent,
+    // then the print exposure in EV; and the gains of the positive.
+    film_base: vec4<f32>,
+    film_exponents: vec4<f32>,
+    film_gains: vec4<f32>,
 }
 
 struct SceneToneUniforms {

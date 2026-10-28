@@ -20,7 +20,9 @@ pub(super) mod vignette;
 
 pub(crate) use controls::EffectFrame;
 use controls::{effect_details, effect_position, image_lights_toggle, pattern_seed, PositionSpace};
-pub(super) use picker::{add_effect_button, add_effect_controls, effect_picker_popup};
+pub(super) use picker::{
+    add_effect_button, add_effect_controls, effect_picker_popup, EffectPick, FilmNegativeTile,
+};
 
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::ColorParamSpec;

@@ -171,6 +171,26 @@ impl InpaintTool {
     }
 }
 
+/// What a drag over the photo samples.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AreaPicker {
+    /// A neutral area, for the white balance.
+    WhiteBalance,
+    /// Unexposed film, for the base of a film negative.
+    FilmBase,
+}
+
+impl AreaPicker {
+    /// The vertical layout's section that holds the picker's card.
+    pub(crate) const fn section(self) -> AdjustmentSection {
+        match self {
+            Self::WhiteBalance => AdjustmentSection::Color,
+            // The Film negative card leads the Light section.
+            Self::FilmBase => AdjustmentSection::Light,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum AdjustmentSection {
     #[default]
@@ -473,8 +493,10 @@ pub(crate) struct DevelopUiState {
     pub(crate) crop_drag: Option<CropDragState>,
     pub(crate) straighten_tool_active: bool,
     pub(crate) straighten_drag: Option<StraightenDragState>,
-    pub(crate) white_balance_picker_active: bool,
-    pub(crate) white_balance_picker_drag: Option<[[f32; 2]; 2]>,
+    /// The value a drag over the photo samples, while one is being picked.
+    pub(crate) area_picker: Option<AreaPicker>,
+    /// The area dragged so far, in normalized source coordinates.
+    pub(crate) area_picker_drag: Option<[[f32; 2]; 2]>,
     pub(crate) adjustment_section: AdjustmentSection,
     /// Unfold and scroll to the Lens Corrections card when the sidebar next
     /// draws it.
@@ -505,9 +527,19 @@ pub(crate) struct ManualLensDialog {
 }
 
 impl DevelopUiState {
-    pub(crate) fn cancel_white_balance_picker(&mut self) {
-        self.white_balance_picker_active = false;
-        self.white_balance_picker_drag = None;
+    pub(crate) fn cancel_area_picker(&mut self) {
+        self.area_picker = None;
+        self.area_picker_drag = None;
+    }
+
+    /// Starts or stops picking `picker`. Starting one ends any other.
+    pub(crate) fn set_area_picker(&mut self, picker: AreaPicker, active: bool) {
+        if active && self.area_picker != Some(picker) {
+            self.area_picker = Some(picker);
+            self.area_picker_drag = None;
+        } else if !active && self.area_picker == Some(picker) {
+            self.cancel_area_picker();
+        }
     }
 
     /// Stops picking global point colors and hides their range overlay.

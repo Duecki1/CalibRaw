@@ -126,8 +126,9 @@ impl ExposureParams {
         self.copy_section_from(source, ExposureSection::Group(group));
     }
 
-    /// Copies the RAW decoding settings that no sidebar card owns: black point,
-    /// tone mapper, demosaic and highlight reconstruction.
+    /// Copies the RAW decoding settings: black point, tone mapper, demosaic
+    /// and highlight reconstruction, which no sidebar card owns, and the film
+    /// negative, which a roll of scans shares.
     pub fn copy_raw_processing_from(&mut self, source: &Self) {
         self.copy_section_from(source, ExposureSection::RawProcessing);
     }
@@ -168,6 +169,7 @@ impl ExposureParams {
             highlight_clip,
             highlight_reconstruction,
             chromatic_aberration,
+            film,
             highlights,
             shadows,
             whites,
@@ -247,6 +249,7 @@ impl ExposureParams {
                 self.highlight_method = highlight_method;
                 self.highlight_clip = highlight_clip;
                 self.highlight_reconstruction = highlight_reconstruction;
+                self.film = film;
             }
         }
     }

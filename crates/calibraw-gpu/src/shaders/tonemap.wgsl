@@ -258,6 +258,17 @@ fn tone_curve_is_identity(curve: u32) -> bool {
     return tone_curve_block(curve, 8u).y > 0.5;
 }
 
+// The curve's lowest output, curve-encoded: its lowest point, since each
+// segment stays within its end points' range (tone_curve_hermite).
+fn tone_curve_floor(curve: u32) -> f32 {
+    let count = tone_curve_count(curve);
+    var lowest = tone_curve_point(curve, 0u).y;
+    for (var index = 1u; index < count; index = index + 1u) {
+        lowest = min(lowest, tone_curve_point(curve, index).y);
+    }
+    return lowest;
+}
+
 // Monotone cubic Hermite pieces shared by the global curves here and the
 // mask curves in scene_adjustments.wgsl, which only fetch points differently.
 fn tone_curve_secant(a: vec2<f32>, b: vec2<f32>) -> f32 {
@@ -460,21 +471,31 @@ fn limit_scene_curve_rgb_ratio_preserving(value: vec3<f32>) -> vec3<f32> {
     );
 }
 
+// Gives `rgb` the luminance a master curve maps it to, `adjusted_luminance`.
+// The curve's lowest output, `floor_luminance`, is added as neutral grey and
+// the rest scales the colour, so a lifted black stays neutral. A rising
+// curve is lowest at 0; a falling one, such as an inverted curve, reaches its
+// floor at the bright end and leaves colours their hue. Luminance at or below
+// 0 continues the curve from its value there, `zero_luminance`, at
+// `zero_slope`.
 fn remap_scene_luminance(
     rgb: vec3<f32>,
     adjusted_luminance: f32,
-    black_luminance: f32,
+    floor_luminance: f32,
+    zero_luminance: f32,
     zero_slope: f32,
 ) -> vec3<f32> {
     let luminance = dot(rgb, Common::LUMA);
-    let black = max(black_luminance, 0.0);
     if luminance <= 0.0 {
-        return limit_scene_curve_rgb_ratio_preserving(vec3<f32>(black) + rgb * zero_slope);
+        return limit_scene_curve_rgb_ratio_preserving(
+            vec3<f32>(max(zero_luminance, 0.0)) + rgb * zero_slope,
+        );
     }
-    let mapped_luminance = max(adjusted_luminance, black);
-    let chromatic_luminance = mapped_luminance - black;
+    let lowest = max(floor_luminance, 0.0);
+    let mapped_luminance = max(adjusted_luminance, lowest);
+    let chromatic_luminance = mapped_luminance - lowest;
     return limit_scene_curve_rgb_ratio_preserving(
-        vec3<f32>(black) + rgb * (chromatic_luminance / luminance),
+        vec3<f32>(lowest) + rgb * (chromatic_luminance / luminance),
     );
 }
 
@@ -515,6 +536,7 @@ fn apply_point_tone_curve(rgb: vec3<f32>) -> vec3<f32> {
     return remap_scene_luminance(
         rgb,
         adjusted_luminance,
+        scene_curve_decode(tone_curve_floor(0u)),
         black_luminance,
         max(scene_curve_zero_slope(0u), 0.0),
     );

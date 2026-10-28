@@ -61,6 +61,16 @@ pub(super) struct CameraUniforms {
     /// scaled by the amount.
     pub(super) lateral_ca_red: [f32; 4],
     pub(super) lateral_ca_blue: [f32; 4],
+    /// The film negative `film_positive` in scene_source.wgsl inverts: its
+    /// base in the units of the scene texture, then the mode (`FILM_MODE_*`)
+    /// as a float.
+    pub(super) film_base: [f32; 4],
+    /// The exponent of each channel's density, then the print exposure in EV.
+    pub(super) film_exponents: [f32; 4],
+    /// Gains of the positive's camera RGB, then 0. They apply the white
+    /// balance relative to the as-shot one, less any the camera transform
+    /// applies.
+    pub(super) film_gains: [f32; 4],
 }
 
 #[repr(C)]
@@ -74,6 +84,13 @@ pub(super) struct PackedPointColor {
 }
 
 const _: () = assert!(std::mem::size_of::<CameraUniforms>() == CAMERA_UNIFORMS_SIZE_BYTES as usize);
+
+/// How `film_positive` in scene_source.wgsl reads the scene: as it is, or as
+/// a colour or black-and-white negative (`FILM_MODE_*` there, where colour is
+/// any value but the other two).
+pub(super) const FILM_MODE_POSITIVE: u32 = 0;
+pub(super) const FILM_MODE_COLOR: u32 = 1;
+pub(super) const FILM_MODE_MONOCHROME: u32 = 2;
 
 /// How `apply_view_node` maps graded RGB to display-linear RGB
 /// (`VIEW_TRANSFORM_*` in common.wgsl).
@@ -99,7 +116,13 @@ impl ViewTransformMode {
         exposure: &ExposureParams,
         camera_linear_raster: bool,
     ) -> Self {
-        if camera_linear_raster || !raw.is_pre_demosaiced_raster() || raw.scene_referred_raster {
+        // The positive of a negative scan is scene radiance, whatever the
+        // scan's own encoding.
+        if camera_linear_raster
+            || !raw.is_pre_demosaiced_raster()
+            || raw.scene_referred_raster
+            || !exposure.film.is_positive()
+        {
             Self::SceneSigmoid
         } else if same_tone_curve(
             tone_sigmoid_coefficients(exposure),
@@ -220,7 +243,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_336);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_384);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

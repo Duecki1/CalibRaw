@@ -176,22 +176,25 @@ impl Sidebar {
                         if section != AdjustmentSection::ColorMixer {
                             app.develop_ui.cancel_point_color_preview();
                         }
-                        if section != AdjustmentSection::Color {
-                            app.develop_ui.cancel_white_balance_picker();
+                        if app.develop_ui.area_picker.map(AreaPicker::section) != Some(section) {
+                            app.develop_ui.cancel_area_picker();
                         }
                     }
                 }
                 let selected_before = app.develop_ui.effect_component;
-                let added = Self::show_mobile_effect_tabs(
+                let picked = Self::show_mobile_effect_tabs(
                     ui,
                     &mut app.masks.stack.global_effects,
                     &mut app.develop_ui.effect_component,
+                    mask_effects::FilmNegativeTile::for_film(&app.develop.exposure.film),
                     tab_height,
                     show_labels,
                 );
+                let added = Self::take_film_negative_pick(ui, app, ScreenLayout::Vertical, picked)
+                    .is_some();
                 if added || selected_before != app.develop_ui.effect_component {
                     app.develop_ui.cancel_point_color_preview();
-                    app.develop_ui.cancel_white_balance_picker();
+                    app.develop_ui.cancel_area_picker();
                 }
                 if added {
                     app.develop_ui.adjustment_section = AdjustmentSection::Effects;
@@ -251,9 +254,11 @@ impl Sidebar {
                         ui,
                         &mut mask.effect_components,
                         &mut app.develop_ui.mask_effect_component,
+                        mask_effects::FilmNegativeTile::Hidden,
                         tab_height,
                         show_labels,
-                    );
+                    )
+                    .is_some();
                     if added || selected_before != app.develop_ui.mask_effect_component {
                         app.cancel_mask_point_color_preview();
                     }
@@ -278,13 +283,16 @@ impl Sidebar {
         });
     }
 
+    /// A tab per effect in `components` and an Add tab. Returns what the Add
+    /// tab's picker picked; a picked effect is already in `components`.
     pub(in crate::ui::sidebar) fn show_mobile_effect_tabs(
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,
         selection: &mut Option<MaskEffect>,
+        film_negative: mask_effects::FilmNegativeTile,
         tab_height: f32,
         show_labels: bool,
-    ) -> bool {
+    ) -> Option<mask_effects::EffectPick> {
         use egui_phosphor::regular;
 
         let mut selected_tab = None;
@@ -313,7 +321,7 @@ impl Sidebar {
         }
 
         if components.len() >= crate::pipeline::MAX_EFFECT_COMPONENTS {
-            return false;
+            return None;
         }
         let response = ui
             .push_id("add-effect-tab", |ui| {
@@ -328,12 +336,12 @@ impl Sidebar {
                 )
             })
             .inner;
-        if let Some(effect) = mask_effects::effect_picker_popup(&response, components) {
+        let picked = mask_effects::effect_picker_popup(&response, components, film_negative);
+        if let Some(effect) = picked.and_then(mask_effects::EffectPick::effect) {
             components.push(crate::pipeline::EffectComponent::new(effect));
             *selection = Some(effect);
-            return true;
         }
-        false
+        picked
     }
 
     fn mobile_icon_tab(

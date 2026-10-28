@@ -1,6 +1,7 @@
 //! White balance of a loaded RAW: as-shot values, temperature/tint and presets.
 
 use super::*;
+use crate::pipeline::film_negative::FilmSource;
 
 impl ProfileColor {
     pub fn as_shot_white_balance(&self) -> Option<(f32, f32)> {
@@ -261,11 +262,15 @@ impl LoadedRaw {
         }
     }
 
+    /// Offsets of the white balance that makes the area from `first` to
+    /// `second` (normalized source coordinates) neutral. On a film negative
+    /// that is the area's positive, which `film` gives.
     pub fn white_balance_offsets_from_area(
         &self,
         first: [f32; 2],
         second: [f32; 2],
         black_point: f32,
+        film: &FilmSource,
     ) -> Option<(f32, f32)> {
         if self.is_pre_demosaiced_raster() {
             return None;
@@ -311,14 +316,7 @@ impl LoadedRaw {
             for x in (x0..x1).step_by(stride) {
                 let index = y as usize * self.width as usize + x as usize;
                 let channel = usize::from(self.color_indices[index].min(3));
-                let metadata_black = self.black_levels_per_pixel[index];
-                let white = self.white_levels[channel].max(metadata_black + 1.0);
-                let sensor_range = (white - metadata_black).max(1.0);
-                let calibrated_black = (metadata_black
-                    + black_point.clamp(-0.25, 0.25) * sensor_range)
-                    .clamp(0.0, white - 1.0);
-                let value = (f32::from(self.raw_pixels[index]) - calibrated_black)
-                    / (white - calibrated_black);
+                let value = self.normalized_sensor_value(index, black_point);
                 if value.is_finite() && (0.001..0.98).contains(&value) {
                     sums[channel] += f64::from(value);
                     counts[channel] += 1;
@@ -335,10 +333,33 @@ impl LoadedRaw {
             return None;
         }
         let green = greens.iter().sum::<f32>() / greens.len() as f32;
-        if red <= 1e-6 || green <= 1e-6 || blue <= 1e-6 {
+        // The colour the white balance must neutralize, in the units of its
+        // multipliers. A negative's positive follows the white balance
+        // relative to the as-shot one (`pack_camera_params`).
+        let [red, green, blue] = match film.negative() {
+            None => [red, green, blue],
+            Some(negative) => {
+                let positive = negative.positive([red, green, blue]);
+                std::array::from_fn(|channel| positive[channel] / self.wb_coeffs[channel])
+            }
+        };
+        if !(red > 1e-6 && green > 1e-6 && blue > 1e-6) {
             return None;
         }
         self.white_balance_offsets_from_coefficients([green / red, 1.0, green / blue, 1.0])
+    }
+
+    /// The sample at `index` of the sensor mosaic, from black (0) to the
+    /// white level (1), with the edit's `black_point` applied as the GPU's
+    /// `raw_sensor_at` applies it.
+    pub(crate) fn normalized_sensor_value(&self, index: usize, black_point: f32) -> f32 {
+        let channel = usize::from(self.color_indices[index].min(3));
+        let metadata_black = self.black_levels_per_pixel[index];
+        let white = self.white_levels[channel].max(metadata_black + 1.0);
+        let sensor_range = (white - metadata_black).max(1.0);
+        let calibrated_black = (metadata_black + black_point.clamp(-0.25, 0.25) * sensor_range)
+            .clamp(0.0, white - 1.0);
+        (f32::from(self.raw_pixels[index]) - calibrated_black) / (white - calibrated_black)
     }
 
     pub fn rawnind_daylight_white_balance(&self) -> [f32; 3] {

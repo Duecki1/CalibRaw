@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::{FilmSource, FilmStock};
 use egui_phosphor::regular;
 use moduwu_design::MenuItem;
 
@@ -12,6 +13,7 @@ pub(crate) enum LibraryAction {
     CopyAdjustments(LibraryAsset),
     PasteAdjustments(Vec<LibraryAsset>),
     ApplyPreset(Vec<LibraryAsset>, PathBuf),
+    SetFilm(Vec<LibraryAsset>, FilmSource),
     Copy(Vec<LibraryAsset>),
     Cut(Vec<LibraryAsset>),
     PasteIntoAssetFolder(LibraryAsset),
@@ -105,6 +107,16 @@ pub(crate) fn photo_actions_menu(
     if let Some(preset) = apply_preset_menu(ui, app, enabled) {
         action = Some(LibraryAction::ApplyPreset(assets.to_vec(), preset));
     }
+    let film = ui.add_enabled_ui(enabled, |ui| {
+        moduwu_design::submenu(
+            ui,
+            MenuItem::new("Film negative").icon(regular::FILM_STRIP),
+            film_menu,
+        )
+    });
+    if let Some(Some(film)) = film.inner.inner {
+        action = Some(LibraryAction::SetFilm(assets.to_vec(), film));
+    }
     if menu_row(
         ui,
         enabled,
@@ -165,6 +177,30 @@ fn menu_row(ui: &mut Ui, enabled: bool, item: MenuItem<'_>) -> egui::Response {
 
 fn duplicate_item() -> MenuItem<'static> {
     MenuItem::new("Duplicate").icon(regular::COPY_SIMPLE)
+}
+
+/// How the photos are read: as colour or black-and-white negatives, each
+/// estimated when it is next decoded, or as they are.
+fn film_menu(ui: &mut Ui) -> Option<FilmSource> {
+    let mut chosen = None;
+    for (film, label, icon) in [
+        (
+            FilmSource::NegativeToEstimate(FilmStock::Color),
+            "Color negative",
+            regular::DROP_HALF_BOTTOM,
+        ),
+        (
+            FilmSource::NegativeToEstimate(FilmStock::BlackAndWhite),
+            "Black & white negative",
+            regular::CIRCLE_HALF,
+        ),
+        (FilmSource::Positive, "Not a negative", regular::IMAGE),
+    ] {
+        if menu_row(ui, true, MenuItem::new(label).icon(icon)).clicked() {
+            chosen = Some(film);
+        }
+    }
+    chosen
 }
 
 /// HDR merge and focus stacking, for two or more photos.
@@ -296,6 +332,9 @@ pub(crate) fn apply_library_action(
         }
         LibraryAction::ApplyPreset(assets, preset) => {
             apply_library_preset(app, assets, &preset, ui.ctx(), frame);
+        }
+        LibraryAction::SetFilm(assets, film) => {
+            apply_library_film(app, assets, film, ui.ctx(), frame);
         }
         LibraryAction::Copy(assets) => {
             set_library_clipboard(app, ImageClipboardMode::Copy, assets);

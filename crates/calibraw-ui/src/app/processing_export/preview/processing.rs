@@ -71,10 +71,15 @@ impl CalibRawApp {
     pub(crate) fn apply_white_balance_area(&mut self, area: [[f32; 2]; 2]) -> bool {
         let preview_source = self.develop.loaded_raw.clone();
         let result = preview_source.as_ref().and_then(|raw| {
-            raw.white_balance_offsets_from_area(area[0], area[1], self.develop.exposure.black_point)
-                .and_then(|offsets| raw.white_balance_from_offsets(offsets))
+            raw.white_balance_offsets_from_area(
+                area[0],
+                area[1],
+                self.develop.exposure.black_point,
+                &self.develop.exposure.film,
+            )
+            .and_then(|offsets| raw.white_balance_from_offsets(offsets))
         });
-        self.develop_ui.cancel_white_balance_picker();
+        self.develop_ui.cancel_area_picker();
         let Some(white_balance) = result else {
             self.report_error(ErrorKind::Sampling, "Could not estimate white balance there. Choose a brighter, unclipped neutral area."
                     .to_owned(),);

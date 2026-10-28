@@ -1,6 +1,6 @@
 use super::{
-    CompactPixelMap, DemosaicMode, DenoiseQuality, ExposureParams, HighlightReconstructionMethod,
-    LoadedRaw, MaskEffect, MaskStack, WhiteBalance,
+    CompactPixelMap, DemosaicMode, DenoiseQuality, ExposureParams, FilmSource,
+    HighlightReconstructionMethod, LoadedRaw, MaskEffect, MaskStack, WhiteBalance,
 };
 use rayon::prelude::*;
 
@@ -60,6 +60,8 @@ struct RawStageControls {
     highlight_clip: f32,
     highlight_reconstruction: f32,
     chromatic_aberration: f32,
+    /// Tone analysis measures the positive, so the stages it starts must run again.
+    film: FilmSource,
 }
 
 impl RawStageControls {
@@ -93,6 +95,7 @@ impl RawStageControls {
             highlight_clip,
             highlight_reconstruction,
             chromatic_aberration,
+            film,
             highlights: _,
             shadows: _,
             whites: _,
@@ -127,6 +130,7 @@ impl RawStageControls {
             highlight_clip,
             highlight_reconstruction,
             chromatic_aberration,
+            film,
         }
     }
 }

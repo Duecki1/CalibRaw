@@ -11,9 +11,9 @@ use super::{
     effect_lanes, processing_work_format, shader_manager::ShaderManager, shaders,
     work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
     ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, ViewTransformMode,
-    HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG, IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG,
-    MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS, RELIGHT_SHADOW_MAP_CHANNELS,
-    TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE, HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG,
+    IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
+    RELIGHT_SHADOW_MAP_CHANNELS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::MaskEffect;
@@ -226,6 +226,9 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 chromatic_aberration,
                 lateral_ca_red,
                 lateral_ca_blue,
+                film_base,
+                film_exponents,
+                film_gains,
             }),
         ),
         (
@@ -448,6 +451,8 @@ fn shared_constants_and_effect_ids_match_rust() {
         constant("TONE_HISTOGRAM_BIN_COUNT"),
         TONE_HISTOGRAM_BIN_COUNT
     );
+    assert_eq!(constant("FILM_MODE_POSITIVE"), FILM_MODE_POSITIVE);
+    assert_eq!(constant("FILM_MODE_MONOCHROME"), FILM_MODE_MONOCHROME);
     // The image-light grid buffer and textures are sized from these.
     assert_eq!(constant("IMAGE_LIGHT_GRID_LONG"), IMAGE_LIGHT_GRID_LONG);
     assert_eq!(constant("IMAGE_LIGHT_BANDS"), IMAGE_LIGHT_BANDS);
