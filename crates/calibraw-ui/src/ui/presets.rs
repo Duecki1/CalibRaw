@@ -223,9 +223,19 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
     if !notes.is_empty() {
         moduwu_design::content_card(ui, |ui| {
             for (text, color, details) in &notes {
-                let response = show_note(ui, text, *color);
+                show_note(ui, text, *color);
                 if let Some(details) = details {
-                    response.on_hover_text(details);
+                    egui::CollapsingHeader::new("Show file errors")
+                        .id_salt("preset-load-errors")
+                        .show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(160.0)
+                                .show(ui, |ui| {
+                                    for detail in details.lines() {
+                                        ui.label(egui::RichText::new(detail).small());
+                                    }
+                                });
+                        });
                 }
             }
         });

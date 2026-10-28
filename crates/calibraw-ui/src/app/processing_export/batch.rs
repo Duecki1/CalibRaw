@@ -290,11 +290,22 @@ fn prepare_desktop_library_export_item(
         },
         destination: match &job.destination {
             LibraryExportDestination::Chosen(path) => ExportDestination::File(path.clone()),
-            LibraryExportDestination::InFolder { folder, stem } => ExportDestination::NewFile {
-                directory: folder.clone(),
-                stem: stem.clone(),
-                extension: format.extension().to_owned(),
-            },
+            LibraryExportDestination::InFolder {
+                folder,
+                stem,
+                overwrite,
+            } => {
+                let path = folder.join(format!("{stem}.{}", format.extension()));
+                if *overwrite {
+                    ExportDestination::File(path)
+                } else {
+                    ExportDestination::NewFile {
+                        directory: folder.clone(),
+                        stem: stem.clone(),
+                        extension: format.extension().to_owned(),
+                    }
+                }
+            }
         },
         format,
         settings: settings.clone(),

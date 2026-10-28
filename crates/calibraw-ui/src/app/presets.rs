@@ -457,29 +457,37 @@ impl CalibRawApp {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            let result = read_preset_for_import(path).and_then(|imported| {
-                let name = self.presets.unique_name(&imported.preset);
-                let preset = imported.preset.renamed(&name, imported.preset.group())?;
-                match imported.source {
-                    Some(source) => {
-                        crate::presets::save_new_xmp_preset(&folder, &preset, &source)?;
-                    }
-                    None => {
-                        crate::presets::save_new_preset(&folder, &preset)?;
-                    }
-                }
-                Ok(imported.warnings)
-            });
-            match result {
-                Ok(file_warnings) => {
-                    imported += 1;
-                    for warning in file_warnings {
-                        log::warn!("{label}: {warning}");
-                        warnings.push(format!("{label}: {warning}"));
-                    }
-                    // Later files in this import must see the new names.
-                    if let Err(error) = self.presets.reload() {
-                        failures.push(error);
+            match read_preset_for_import(path) {
+                Ok(file_presets) => {
+                    for imported_preset in file_presets {
+                        let result = (|| {
+                            let name = self.presets.unique_name(&imported_preset.preset);
+                            let preset = imported_preset
+                                .preset
+                                .renamed(&name, imported_preset.preset.group())?;
+                            match imported_preset.source.as_deref() {
+                                Some(source) => {
+                                    crate::presets::save_new_xmp_preset(&folder, &preset, source)?;
+                                }
+                                None => {
+                                    crate::presets::save_new_preset(&folder, &preset)?;
+                                }
+                            }
+                            Ok::<_, PresetError>(())
+                        })();
+                        match result {
+                            Ok(()) => {
+                                imported += 1;
+                                for warning in imported_preset.warnings {
+                                    log::warn!("{label}: {warning}");
+                                    warnings.push(format!("{label}: {warning}"));
+                                }
+                                if let Err(error) = self.presets.reload() {
+                                    failures.push(error);
+                                }
+                            }
+                            Err(error) => failures.push(format!("{label}: {error}")),
+                        }
                     }
                 }
                 Err(error) => failures.push(format!("{label}: {error}")),
@@ -572,7 +580,8 @@ const PRESET_FILE_EXTENSIONS: &[&str] = &["calibraw-preset"];
 const XMP_FILE_EXTENSIONS: &[&str] = &["xmp"];
 /// Both preset formats in one import filter, so users see every preset file
 /// at once. Some tools export `.XMP`; Linux pickers match case-sensitively.
-const PRESET_IMPORT_EXTENSIONS: &[&str] = &["calibraw-preset", "xmp", "XMP"];
+const PRESET_IMPORT_EXTENSIONS: &[&str] =
+    &["calibraw-preset", "xmp", "XMP", "rrpreset", "RRPRESET"];
 
 struct ImportedPreset {
     preset: Preset,
@@ -583,20 +592,40 @@ struct ImportedPreset {
 
 /// Reads a native or XMP preset file, with the warnings of an XMP
 /// translation and the XMP source when there is one.
-fn read_preset_for_import(path: &Path) -> Result<ImportedPreset, PresetError> {
+fn read_preset_for_import(path: &Path) -> Result<Vec<ImportedPreset>, PresetError> {
     if crate::presets::xmp::is_xmp_preset_file(path) {
         let (import, source) = crate::presets::xmp::read_xmp_preset_file(path)?;
-        Ok(ImportedPreset {
+        Ok(vec![ImportedPreset {
             preset: import.preset,
             warnings: import.warnings,
             source: Some(source),
-        })
+        }])
+    } else if path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("rrpreset"))
+    {
+        crate::presets::rapidraw::read_rrpreset_file(path)?
+            .into_iter()
+            .map(|import| {
+                Ok(ImportedPreset {
+                    preset: Preset::new(
+                        &import.name,
+                        &import.group,
+                        import.selection,
+                        &import.edits,
+                    )?,
+                    warnings: import.warnings,
+                    source: None,
+                })
+            })
+            .collect()
     } else {
-        Ok(ImportedPreset {
+        Ok(vec![ImportedPreset {
             preset: crate::presets::read_preset_file(path)?,
             warnings: Vec::new(),
             source: None,
-        })
+        }])
     }
 }
 

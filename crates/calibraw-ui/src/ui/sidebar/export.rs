@@ -361,6 +361,10 @@ impl Sidebar {
             |ui| {
                 ui.set_min_width(column_width);
                 ui.set_max_width(column_width);
+                if app.caps().has_folders() {
+                    show_export_destination(ui, app);
+                    moduwu_design::card_gap(ui);
+                }
                 let format_changed = export_settings_controls(
                     ui,
                     &mut app.export.format,
@@ -441,4 +445,140 @@ impl Sidebar {
             },
         );
     }
+}
+
+fn show_export_destination(ui: &mut Ui, app: &mut CalibRawApp) {
+    let has_filename = app.refresh_export_filename().is_some();
+    let source_directory = app
+        .develop
+        .current_path
+        .as_deref()
+        .and_then(std::path::Path::parent)
+        .map(std::path::Path::to_path_buf);
+    let directory = app
+        .preferences
+        .last_export_directory
+        .as_ref()
+        .filter(|path| path.is_dir())
+        .cloned()
+        .or(source_directory);
+    moduwu_design::section_card(ui, "Destination", |ui| {
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(
+                        directory
+                            .as_deref()
+                            .map_or("Choose a folder".to_owned(), |path| {
+                                path.display().to_string()
+                            }),
+                    )
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+                )
+                .truncate(),
+            );
+            if moduwu_design::secondary_button(ui, "Choose…").clicked() {
+                app.choose_export_folder();
+            }
+        });
+        ui.add_space(moduwu_design::SPACE_XS);
+        if has_filename {
+            ui.label("File name");
+            ui.horizontal(|ui| {
+                let extension = format!(".{}", app.export.format.extension());
+                ui.add(
+                    moduwu_design::singleline_text_edit(&mut app.export.filename_stem)
+                        .desired_width((ui.available_width() - 48.0).max(64.0))
+                        .hint_text("Export name"),
+                );
+                ui.label(extension);
+            });
+        }
+        let mut conflict = app.preferences.export_conflict_behavior;
+        let conflict_label = match conflict {
+            crate::performance_settings::ExportConflictBehavior::AddNumber => {
+                "Add number (-2, -3…)"
+            }
+            crate::performance_settings::ExportConflictBehavior::Overwrite => "Overwrite",
+        };
+        moduwu_design::form_combo_with_help(
+            ui,
+            "If file exists",
+            "develop-export-file-exists",
+            conflict_label,
+            220.0,
+            "Add a number to preserve existing exports, or replace the matching file.",
+            |ui| {
+                ui.selectable_value(
+                    &mut conflict,
+                    crate::performance_settings::ExportConflictBehavior::AddNumber,
+                    "Add number (-2, -3…)",
+                );
+                ui.selectable_value(
+                    &mut conflict,
+                    crate::performance_settings::ExportConflictBehavior::Overwrite,
+                    "Overwrite",
+                );
+            },
+        );
+        if conflict != app.preferences.export_conflict_behavior {
+            app.preferences.export_conflict_behavior = conflict;
+            app.persist_performance_settings();
+        }
+        if has_filename {
+            if let Some(directory) = directory.as_deref() {
+                let mut files = std::fs::read_dir(directory)
+                    .ok()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Result::ok)
+                    .filter_map(|entry| {
+                        let path = entry.path();
+                        let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+                        let image_format = matches!(
+                            extension.as_str(),
+                            "jpg" | "jpeg" | "png" | "tif" | "tiff" | "jxl"
+                        );
+                        let file_stem = path.file_stem()?.to_string_lossy();
+                        let target_stem = app.export.filename_stem.as_str();
+                        let same_name = !target_stem.is_empty()
+                            && (file_stem == target_stem
+                                || file_stem.strip_prefix(target_stem).is_some_and(|suffix| {
+                                    suffix.strip_prefix('-').is_some_and(|number| {
+                                        !number.is_empty()
+                                            && number.chars().all(|ch| ch.is_ascii_digit())
+                                    })
+                                }));
+                        (image_format && same_name)
+                            .then(|| {
+                                path.file_name()
+                                    .map(|name| name.to_string_lossy().into_owned())
+                            })
+                            .flatten()
+                    })
+                    .collect::<Vec<_>>();
+                files.sort_by_key(|name| name.to_lowercase());
+                ui.add_space(moduwu_design::SPACE_XS);
+                egui::ScrollArea::vertical()
+                    .id_salt("export-folder-files")
+                    .max_height(144.0)
+                    .show(ui, |ui| {
+                        if files.is_empty() {
+                            ui.label(
+                                egui::RichText::new("No existing files with this name")
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
+                        } else {
+                            for name in files {
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(name).small()).truncate(),
+                                );
+                            }
+                        }
+                    });
+            }
+        }
+    });
 }

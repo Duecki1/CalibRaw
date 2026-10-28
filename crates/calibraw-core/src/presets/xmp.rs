@@ -812,10 +812,5 @@ fn custom_white_balance(temperature: f32, tint: f32) -> WhiteBalance {
 /// Maps the 0–100 grain size to CalibRaw's 0.5–4.0. The format's default 25
 /// lands on CalibRaw's default 1.0.
 fn grain_size(value: f32) -> f32 {
-    let value = value.clamp(0.0, 100.0);
-    if value <= 25.0 {
-        0.5 + value / 25.0 * 0.5
-    } else {
-        1.0 + (value - 25.0) / 75.0 * 3.0
-    }
+    super::grain_size_from_import(value)
 }

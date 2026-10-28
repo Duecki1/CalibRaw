@@ -15,9 +15,10 @@ Checked items are done. Order within a section is not a priority.
 - [X]  Temp and tint slider fixes
 - [X]  Separate lens correction toggles: geometry, vignette
 - [X]  Lightroom preset import
+- [X]  RapidRAW preset import
 - [X]  DCP profile import setup
 - [X]  Camera profile highlight fixes
-- [X]  Export: JPEG XL, single export button, remembered settings
+- [X]  Export: JPEG XL, file conflict choices, remembered destination
 - [X]  Grain module
 - [X]  Chromatic aberration and color fringing
 - [ ]  Dead and hot pixel correction
@@ -96,6 +97,7 @@ Checked items are done. Order within a section is not a priority.
 - [X]  Double-click slider reset fixes
 - [X]  Grey theme
 - [X]  Issue and PR templates
+- [X]  Export tab: destination, matching files, editable filename and conflict choice
 - [ ]  Simpler right-click menu and detail card
 - [ ]  New app icon
 - [ ]  Tutorial pop-ups with images/GIFs, smaller GIFs

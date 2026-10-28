@@ -251,6 +251,8 @@ impl CalibRawApp {
             },
             export: ExportState {
                 format: performance.export_format,
+                filename_stem: String::new(),
+                filename_key: None,
                 gpu_prewarm: None,
                 settings: ExportSettings::default(),
                 task: None,
@@ -308,6 +310,8 @@ impl CalibRawApp {
                 missing_lens_profile_prompt: performance.missing_lens_profile_prompt,
                 new_photo_preset: performance.new_photo_preset.clone(),
                 export_name_template: performance.export_name_template.clone(),
+                last_export_directory: performance.last_export_directory.clone(),
+                export_conflict_behavior: performance.export_conflict_behavior,
                 discord_rich_presence: performance.discord_rich_presence,
                 hdd_mode: performance.hdd_mode,
                 ui_design: performance.ui_design,

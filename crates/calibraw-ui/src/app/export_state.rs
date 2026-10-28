@@ -117,9 +117,13 @@ impl LibraryJobPhoto {
 pub(crate) enum LibraryExportDestination {
     /// A path from a save dialog, which already asked before replacing a file.
     Chosen(PathBuf),
-    /// `{stem}.{extension}` in `folder`, numbered on when the name is taken.
-    /// Nobody confirmed this name, so it never replaces an existing file.
-    InFolder { folder: PathBuf, stem: String },
+    /// `{stem}.{extension}` in `folder`; existing files are replaced only
+    /// when the user selected that behavior in export settings.
+    InFolder {
+        folder: PathBuf,
+        stem: String,
+        overwrite: bool,
+    },
 }
 
 /// A media-library photo, by URI and display name.
@@ -300,6 +304,9 @@ pub(super) struct LensCorrectionTaskRequest {
 
 pub(crate) struct ExportState {
     pub(crate) format: ExportFormat,
+    /// The editable filename stem for the current photo and template.
+    pub(crate) filename_stem: String,
+    pub(crate) filename_key: Option<String>,
     pub(crate) gpu_prewarm: Option<Arc<GpuProgramPrewarm>>,
     pub(crate) settings: ExportSettings,
     pub(crate) task: Option<ExportTask>,

@@ -9,6 +9,7 @@
 //! Presets live one per file in a folder, so they can be shared by copying
 //! files and a damaged file never hides the others.
 
+pub mod rapidraw;
 pub mod xmp;
 
 use crate::file_ops::write_bytes_atomically;
@@ -36,6 +37,17 @@ pub const DEFAULT_PRESET_GROUP: &str = "User Presets";
 pub const MAX_PRESET_NAME_CHARS: usize = 64;
 /// Presets hold no image data, so anything larger is not a preset.
 pub const MAX_PRESET_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Maps preset formats' 0–100 grain-size slider to CalibRaw's 0.5–4 range.
+/// The common default (25) maps to CalibRaw's default size (1).
+pub(crate) fn grain_size_from_import(value: f32) -> f32 {
+    let value = value.clamp(0.0, 100.0);
+    if value <= 25.0 {
+        0.5 + value / 25.0 * 0.5
+    } else {
+        1.0 + (value - 25.0) / 75.0 * 3.0
+    }
+}
 
 const PRESET_FORMAT: &str = "CalibRaw preset";
 const MAX_PRESET_FILES: usize = 4096;
@@ -335,6 +347,10 @@ impl Preset {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, PresetError> {
+        Self::decode_with_migration(bytes).map(|(preset, _)| preset)
+    }
+
+    fn decode_with_migration(bytes: &[u8]) -> Result<(Self, bool), PresetError> {
         if bytes.len() as u64 > MAX_PRESET_BYTES {
             return Err(PresetError::TooLarge(bytes.len() as u64));
         }
@@ -376,7 +392,8 @@ impl Preset {
         } else {
             header.edits.without_global()
         };
-        migrations::migrate_edits(&mut document.edits, legacy);
+        let _legacy_edits_migrated = migrations::migrate_edits(&mut document.edits, legacy);
+        let grain_size_migrated = migrations::rapidraw_grain_size::migrate(&mut document.edits);
 
         // Rebuild through `new` so a hand-edited file gets the same filtering
         // as a preset created in the app.
@@ -404,7 +421,7 @@ impl Preset {
         for mask in &mut Arc::make_mut(&mut preset.edits.masks).masks {
             mask.adjustments.sanitize_tone_curves();
         }
-        Ok(preset)
+        Ok((preset, grain_size_migrated))
     }
 }
 
@@ -794,7 +811,12 @@ fn read_preset_file_for_load(path: &Path) -> Result<Preset, PresetError> {
     if xmp::is_xmp_preset_file(path) {
         xmp::read_xmp_preset_file(path).map(|(import, _)| import.preset)
     } else {
-        read_preset_file(path)
+        let bytes = read_preset_bytes(path)?;
+        let (preset, migrated) = Preset::decode_with_migration(&bytes)?;
+        if migrated {
+            write_preset_file(path, &preset)?;
+        }
+        Ok(preset)
     }
 }
 

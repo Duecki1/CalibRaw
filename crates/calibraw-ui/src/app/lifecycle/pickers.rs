@@ -57,6 +57,20 @@ impl CalibRawApp {
         }));
     }
 
+    pub(crate) fn choose_export_folder(&mut self) {
+        if self.ui.desktop_picker_receiver.is_some() || !self.caps().has_folders() {
+            return;
+        }
+        let initial = self.preferences.last_export_directory.as_deref();
+        let mut dialog = crate::platform::FileDialog::new().set_title("Choose export folder");
+        if let Some(directory) = initial.filter(|directory| directory.is_dir()) {
+            dialog = dialog.set_directory(directory);
+        }
+        self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
+            crate::app::DesktopPickerEvent::ExportFolder(dialog.pick_folder_on_worker())
+        }));
+    }
+
     fn open_platform_document_picker(&mut self) {
         if self.android_foreground_task_active() {
             self.ui.notice = Some(
@@ -108,6 +122,9 @@ impl CalibRawApp {
             }
             crate::app::DesktopPickerEvent::CameraProfileFolder(Some(folder)) => {
                 self.apply_camera_profile_folder(folder);
+            }
+            crate::app::DesktopPickerEvent::ExportFolder(Some(folder)) => {
+                self.remember_export_directory(&folder);
             }
             crate::app::DesktopPickerEvent::OnnxRuntime(Ok(Some((path, sha256)))) => {
                 self.ai.manual_runtime = Some((path, sha256));
