@@ -1,54 +1,59 @@
 //! The details and review buttons shown over a library thumbnail under the
 //! pointer.
 //!
-//! They sit in a band along the photo's bottom edge, on a scrim that ramps up
-//! from clear, so the rest of the photo stays visible. The band stacks rows
+//! They sit on a card along the photo's bottom edge: the rating badge, grown
+//! upwards, so the rest of the photo stays visible. The card stacks rows
 //! bottom-up in a fixed priority: review buttons, name, capture settings,
-//! file. It adds rows while they fit within `MAX_BAND_SHARE` of the tile
+//! file. It adds rows while it stays within `MAX_CARD_SHARE` of the tile
 //! height, and the first row that does not fit ends the stack. A row is never
 //! swapped for another, so tiles of one size show the same rows for every
-//! photo.
+//! photo. Tiles too narrow for the stars and flags in one row move Pick and
+//! Reject to round buttons in the top-right corner.
 
 use std::sync::Arc;
 
-use eframe::egui::{
-    self, pos2, vec2, Color32, ColorImage, FontId, Galley, Id, Rect, TextureHandle, TextureOptions,
-    Ui, UiBuilder,
-};
+use eframe::egui::{self, pos2, vec2, Color32, FontId, Galley, Rect, Sense, Ui, UiBuilder};
 
-use super::catalog::{thumbnail_capture_fields, thumbnail_file_fields, THUMBNAIL_CARD_RADIUS};
+use super::catalog::{
+    paint_corner_toggle, thumbnail_capture_fields, thumbnail_file_fields, CHECK_HIT_EDGE,
+    CORNER_TOGGLE_EDGE, CORNER_TOGGLE_INSET,
+};
 use super::review::{
-    paint_review_badge, review_buttons, ReviewSurface, BADGE_HEIGHT, BADGE_ICON_INSET,
-    BADGE_ICON_STEP, BADGE_MARGIN, BADGE_STAR_SIZE,
+    flag_button_id, flag_button_info, flag_buttons, flag_change, flag_color, paint_flag,
+    paint_review_badge, star_buttons, ReviewChange, ReviewSurface, BADGE_FILL, BADGE_FLAG_SIZE,
+    BADGE_HEIGHT, BADGE_ICON_INSET, BADGE_ICON_STEP, BADGE_MARGIN, BADGE_RADIUS, BADGE_STAR_SIZE,
+    FLAG_BUTTONS,
 };
 use super::{LibraryAction, LibraryEntry};
 use crate::pipeline::RenderedImageFormat;
+use crate::sidecar::PhotoReview;
 
 const ANIMATION_SECONDS: f32 = 0.18;
-/// Share of the tile height the rows may cover.
-const MAX_BAND_SHARE: f32 = 0.45;
-/// Height of the scrim's ramp from clear, above the top row, in points.
-const SCRIM_FADE: f32 = 36.0;
-/// Scrim opacity behind the rows.
-const SCRIM_ALPHA: u8 = 176;
-/// Texels in the scrim's ramp texture.
-const SCRIM_TEXELS: usize = 64;
+/// Share of the tile height the card may cover.
+const MAX_CARD_SHARE: f32 = 0.45;
+/// Above the card's top row, in points at full size.
+const CARD_TOP_PADDING: f32 = 5.0;
 /// Between text rows, in points.
 const ROW_GAP: f32 = 1.0;
+/// Between the corner flags, in points.
+const CORNER_FLAG_GAP: f32 = 6.0;
+const CORNER_FLAG_SIZE: f32 = 13.0;
 /// Characters a shortened file name keeps of its stem, at least.
 const MIN_NAME_STEM: usize = 4;
 /// Longest suffix, dot included, a shortened name keeps whole as its extension.
 const MAX_EXTENSION_LEN: usize = 6;
 const FIELD_SEPARATOR: &str = " · ";
 
-/// The hover band of the thumbnail at `rect`. The review badge fades into the
-/// band's buttons in the same place, and the band stays while the pointer
-/// moves from the photo onto a button.
+/// The hover card of the thumbnail at `rect`. The review badge fades into
+/// the card's buttons in the same place, and the card stays while the
+/// pointer moves from the photo onto a button. `corner_badges_bottom` is
+/// where the tile's top-right badges end, which corner flags stay below.
 pub(super) fn thumbnail_hover_overlay(
     ui: &mut Ui,
     rect: Rect,
     entry: &LibraryEntry,
     stacked_formats: &[RenderedImageFormat],
+    corner_badges_bottom: f32,
 ) -> Option<LibraryAction> {
     let asset = &entry.asset;
     let hovered = ui.rect_contains_pointer(rect);
@@ -68,81 +73,171 @@ pub(super) fn thumbnail_hover_overlay(
         paint_review_badge(&badge, rect, entry.review());
     }
 
-    let mut band = ui.new_child(UiBuilder::new());
-    band.multiply_opacity(progress);
-    let review_row = ReviewRow::new(rect);
-    let text_rows = stack_text_rows(&band, rect, &review_row, entry, stacked_formats);
-    let top = text_rows
+    let mut overlay = ui.new_child(UiBuilder::new());
+    overlay.multiply_opacity(progress);
+    let card = CardLayout::new(rect);
+    let text_rows = stack_text_rows(&overlay, rect, &card, entry, stacked_formats);
+    let top_row = text_rows
         .last()
-        .map_or(review_row.top, |(row_top, _)| *row_top);
-    paint_scrim(&band, rect, top - SCRIM_FADE);
-    let painter = band.painter_at(rect);
+        .map_or(card.review_top, |(row_top, _)| *row_top);
+    let painter = overlay.painter_at(rect);
+    painter.rect_filled(
+        card.rect(top_row - CARD_TOP_PADDING * card.scale),
+        BADGE_RADIUS * card.scale,
+        BADGE_FILL,
+    );
     for (row_top, galley) in text_rows {
         painter.galley(
-            pos2(rect.left() + review_row.text_inset, row_top),
+            pos2(rect.left() + card.text_inset, row_top),
             galley,
             Color32::WHITE,
         );
     }
-    review_buttons(
-        &band,
-        review_row.buttons,
-        review_row.icon_size,
+    let review = entry.review();
+    let surface = ReviewSurface::Photo;
+    let rating = star_buttons(
+        &overlay,
+        card.stars,
+        BADGE_STAR_SIZE * card.scale,
         &asset.id,
-        entry.review(),
-        ReviewSurface::Photo,
-    )
-    .filter(|_| hovered)
-    .map(|change| LibraryAction::Review(vec![asset.clone()], change))
+        review,
+        surface,
+    );
+    let flag = match card.flags {
+        Some(flags) => flag_buttons(
+            &overlay,
+            flags,
+            BADGE_FLAG_SIZE * card.scale,
+            &asset.id,
+            review,
+            surface,
+        ),
+        None => corner_flag_buttons(&overlay, rect, corner_badges_bottom, &asset.id, review),
+    };
+    rating
+        .or(flag)
+        .filter(|_| hovered)
+        .map(|change| LibraryAction::Review(vec![asset.clone()], change))
 }
 
-/// The review buttons over the resting badge: stars where its stars are,
-/// Pick and Reject at the right edge where its flag is.
-struct ReviewRow {
-    buttons: [Rect; 7],
-    icon_size: f32,
+/// The card's place and its review buttons, over the resting badges: stars
+/// where the rating badge's stars are, Pick and Reject at the right edge
+/// where the flag badge is.
+struct CardLayout {
+    tile: Rect,
+    /// Below 1 on tiles too narrow for five stars, which shrink the card as
+    /// the badge shrinks.
+    scale: f32,
+    stars: [Rect; 5],
+    /// `None` when the stars leave no room for the flags beside them.
+    flags: Option<[Rect; 2]>,
     /// Top of the buttons, where the text rows start.
-    top: f32,
+    review_top: f32,
     /// From either tile edge to the text, in line with the outer icons.
     text_inset: f32,
 }
 
-impl ReviewRow {
+impl CardLayout {
     fn new(tile: Rect) -> Self {
         // From the tile edge to the centre of the outermost icon.
         let icon_inset = BADGE_MARGIN + BADGE_ICON_INSET;
-        // Tiles too narrow for five stars scale the buttons down, as the badge does.
         let scale = (tile.width() / (2.0 * icon_inset + 4.0 * BADGE_ICON_STEP)).min(1.0);
-        // The flags share the stars' row while one empty step separates them.
-        let one_row = tile.width() >= 2.0 * icon_inset + 7.0 * BADGE_ICON_STEP;
         let height = BADGE_HEIGHT * scale;
-        let star_y = tile.bottom() - (BADGE_MARGIN + BADGE_HEIGHT / 2.0) * scale;
-        let flag_y = if one_row { star_y } else { star_y - height };
-        let button = |x: f32, y: f32| {
-            Rect::from_center_size(pos2(x, y), vec2(BADGE_ICON_STEP * scale, height))
-        };
-        let buttons = std::array::from_fn(|index| match index {
-            0..=4 => button(
-                tile.left() + (icon_inset + BADGE_ICON_STEP * index as f32) * scale,
-                star_y,
-            ),
-            // Pick, then Reject.
-            _ => button(
-                tile.right() - (icon_inset + BADGE_ICON_STEP * (6 - index) as f32) * scale,
-                flag_y,
-            ),
+        let row_y = tile.bottom() - (BADGE_MARGIN + BADGE_HEIGHT / 2.0) * scale;
+        let button =
+            |x: f32| Rect::from_center_size(pos2(x, row_y), vec2(BADGE_ICON_STEP * scale, height));
+        let stars = std::array::from_fn(|index| {
+            button(tile.left() + (icon_inset + BADGE_ICON_STEP * index as f32) * scale)
         });
-        let icon_size = BADGE_STAR_SIZE * scale;
+        // The flags share the row while one empty step separates them from
+        // the stars.
+        let flags = (tile.width() >= 2.0 * icon_inset + 7.0 * BADGE_ICON_STEP).then(|| {
+            [
+                button(tile.right() - icon_inset - BADGE_ICON_STEP),
+                button(tile.right() - icon_inset),
+            ]
+        });
         Self {
-            buttons,
-            icon_size,
-            top: flag_y - height / 2.0,
-            text_inset: icon_inset * scale - icon_size / 2.0,
+            tile,
+            scale,
+            stars,
+            flags,
+            review_top: row_y - height / 2.0,
+            text_inset: (icon_inset - BADGE_STAR_SIZE / 2.0) * scale,
         }
+    }
+
+    /// The card from `top` down, where the rating badge sits but full width.
+    fn rect(&self, top: f32) -> Rect {
+        let margin = BADGE_MARGIN * self.scale;
+        Rect::from_min_max(
+            pos2(self.tile.left() + margin, top),
+            self.tile.max - vec2(margin, margin),
+        )
     }
 }
 
-/// A text row of the band, from the bottom up in priority order.
+/// Pick and Reject as round buttons in the tile's top-right corner, below
+/// `badges_bottom`, styled like the select check in the opposite corner.
+/// Side by side when that leaves the select check clear, else stacked.
+fn corner_flag_buttons(
+    ui: &Ui,
+    tile: Rect,
+    badges_bottom: f32,
+    id_salt: impl std::hash::Hash + std::fmt::Debug + Copy,
+    review: PhotoReview,
+) -> Option<ReviewChange> {
+    let radius = CORNER_TOGGLE_EDGE / 2.0;
+    // Each button's hit square reaches halfway to its neighbour.
+    let step = CORNER_TOGGLE_EDGE + CORNER_FLAG_GAP;
+    let corner = pos2(
+        tile.right() - CORNER_TOGGLE_INSET - radius,
+        badges_bottom.max(tile.top()) + CORNER_TOGGLE_INSET + radius,
+    );
+    let side_by_side =
+        tile.right() - CORNER_TOGGLE_INSET - radius - 1.5 * step >= tile.left() + CHECK_HIT_EDGE;
+    let centers = if side_by_side {
+        [corner - vec2(step, 0.0), corner]
+    } else {
+        [corner, corner + vec2(0.0, step)]
+    };
+    let painter = ui.painter_at(tile);
+    let mut change = None;
+    for (index, (flag, center)) in FLAG_BUTTONS.into_iter().zip(centers).enumerate() {
+        let response = ui
+            .interact(
+                Rect::from_center_size(center, egui::Vec2::splat(step)),
+                ui.make_persistent_id(flag_button_id(id_salt, index)),
+                Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let active = review.flag == flag;
+        flag_button_info(&response, flag, active);
+        paint_corner_toggle(
+            &painter,
+            center,
+            active.then(|| flag_color(flag)),
+            response.hovered(),
+        );
+        paint_flag(
+            &painter,
+            center,
+            CORNER_FLAG_SIZE,
+            if active {
+                Color32::WHITE
+            } else {
+                flag_color(flag)
+            },
+            active,
+        );
+        if response.clicked() {
+            change = Some(flag_change(review, flag));
+        }
+    }
+    change
+}
+
+/// A text row of the card, from the bottom up in priority order.
 #[derive(Clone, Copy)]
 enum TextRow {
     Name,
@@ -198,13 +293,14 @@ enum RowFit {
 fn stack_text_rows(
     ui: &Ui,
     tile: Rect,
-    review_row: &ReviewRow,
+    card: &CardLayout,
     entry: &LibraryEntry,
     stacked_formats: &[RenderedImageFormat],
 ) -> Vec<(f32, Arc<Galley>)> {
-    let width = tile.width() - 2.0 * review_row.text_inset;
-    let highest_top = tile.bottom() - tile.height() * MAX_BAND_SHARE;
-    let mut top = review_row.top;
+    let width = tile.width() - 2.0 * card.text_inset;
+    let highest_top =
+        tile.bottom() - tile.height() * MAX_CARD_SHARE + CARD_TOP_PADDING * card.scale;
+    let mut top = card.review_top;
     let mut rows = Vec::new();
     for row in TextRow::STACK {
         let galley = match row.fit(ui, entry, stacked_formats, width) {
@@ -285,51 +381,4 @@ fn preview_status(entry: &LibraryEntry) -> Option<String> {
             .to_owned()
         })
     })
-}
-
-/// Paints the scrim from `top` to the tile's bottom edge: clear at `top`,
-/// ramping up over `SCRIM_FADE` points and solid below, with the card's
-/// rounded bottom corners.
-fn paint_scrim(ui: &Ui, tile: Rect, top: f32) {
-    let band = Rect::from_min_max(pos2(tile.left(), top.max(tile.top())), tile.max);
-    // Past v = 1, clamp-to-edge sampling repeats the ramp's solid last texel.
-    let uv = Rect::from_min_max(
-        pos2(0.0, (band.top() - top) / SCRIM_FADE),
-        pos2(1.0, (band.bottom() - top) / SCRIM_FADE),
-    );
-    let corners = egui::epaint::CornerRadiusF32 {
-        nw: 0.0,
-        ne: 0.0,
-        sw: THUMBNAIL_CARD_RADIUS,
-        se: THUMBNAIL_CARD_RADIUS,
-    };
-    ui.painter_at(tile).add(
-        egui::epaint::RectShape::filled(band, corners, Color32::from_black_alpha(SCRIM_ALPHA))
-            .with_texture(scrim_texture(ui.ctx()).id(), uv),
-    );
-}
-
-/// A one-texel-wide white ramp from clear to opaque, uploaded once per context
-/// and kept in temporary memory. The scrim tints it, so the texture holds the
-/// ramp's shape and `SCRIM_ALPHA` its strength.
-fn scrim_texture(ctx: &egui::Context) -> TextureHandle {
-    let id = Id::new("calibraw-library-hover-scrim");
-    if let Some(texture) = ctx.data(|data| data.get_temp::<TextureHandle>(id)) {
-        return texture;
-    }
-    let pixels = (0..SCRIM_TEXELS)
-        .map(|texel| {
-            let t = texel as f32 / (SCRIM_TEXELS - 1) as f32;
-            // Smoothstep, so neither end of the ramp shows an edge.
-            let alpha = t * t * (3.0 - 2.0 * t);
-            Color32::from_white_alpha((alpha * 255.0).round() as u8)
-        })
-        .collect();
-    let texture = ctx.load_texture(
-        "library-hover-scrim",
-        ColorImage::new([1, SCRIM_TEXELS], pixels),
-        TextureOptions::LINEAR,
-    );
-    ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
-    texture
 }

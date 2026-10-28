@@ -534,7 +534,8 @@ fn show_thumbnail_grid(
                 let entry = &app.library.entries[index];
                 let asset_id = entry.asset.id.clone();
                 let selected = app.library.is_selected(&asset_id);
-                let response = thumbnail_tile(ui, entry, item_rect, selecting.then_some(selected));
+                let tile = thumbnail_tile(ui, entry, item_rect, selecting.then_some(selected));
+                let response = tile.response;
                 // Browsing with a pointer, hovering shows the details and
                 // rating controls; otherwise the review badge stays.
                 if pointer_hovers && !selecting {
@@ -543,6 +544,7 @@ fn show_thumbnail_grid(
                         item_rect,
                         entry,
                         app.library.stacked_formats(&asset_id),
+                        tile.corner_badges_bottom,
                     ) {
                         *library_action = Some(action);
                         continue;

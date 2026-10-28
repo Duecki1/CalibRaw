@@ -221,15 +221,18 @@ fn flag_label(flag: PhotoFlag) -> &'static str {
     }
 }
 
-// Review badge metrics, in points at full size. The library hover's review
-// buttons take the same places, so the badge's stars do not move under them.
+// Review badge look, in points at full size. The library hover grows the
+// rating badge into its card, so the badge's stars do not move under it.
 pub(super) const BADGE_MARGIN: f32 = 8.0;
 pub(super) const BADGE_HEIGHT: f32 = 22.0;
+pub(super) const BADGE_RADIUS: f32 = 6.0;
+pub(super) const BADGE_FILL: Color32 = Color32::from_black_alpha(150);
 /// Between the centres of neighbouring icons.
 pub(super) const BADGE_ICON_STEP: f32 = 15.0;
 /// From a badge's edge to the centre of its first icon.
 pub(super) const BADGE_ICON_INSET: f32 = 13.5;
 pub(super) const BADGE_STAR_SIZE: f32 = 11.0;
+pub(super) const BADGE_FLAG_SIZE: f32 = 12.0;
 
 pub(crate) fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview) {
     const BADGE_PADDING: f32 = 12.0;
@@ -274,7 +277,7 @@ pub(crate) fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview)
             egui::pos2(rect.left() + margin, badge_y),
             egui::vec2(rating_width * scale, BADGE_HEIGHT * scale),
         );
-        painter.rect_filled(rating_badge, 6.0 * scale, Color32::from_black_alpha(150));
+        painter.rect_filled(rating_badge, BADGE_RADIUS * scale, BADGE_FILL);
         let painted_stars = if compact_rating { 1 } else { review.rating };
         for index in 0..painted_stars {
             paint_star(
@@ -305,18 +308,18 @@ pub(crate) fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview)
             egui::pos2(rect.right() - margin - flag_width * scale, badge_y),
             egui::vec2(flag_width * scale, BADGE_HEIGHT * scale),
         );
-        painter.rect_filled(flag_badge, 6.0 * scale, Color32::from_black_alpha(150));
+        painter.rect_filled(flag_badge, BADGE_RADIUS * scale, BADGE_FILL);
         paint_flag(
             &painter,
             flag_badge.center(),
-            12.0 * scale,
+            BADGE_FLAG_SIZE * scale,
             flag_color(review.flag),
             true,
         );
     }
 }
 
-fn flag_color(flag: PhotoFlag) -> Color32 {
+pub(super) fn flag_color(flag: PhotoFlag) -> Color32 {
     match flag {
         PhotoFlag::Picked => theme::CHANNEL_GREEN,
         PhotoFlag::Rejected => theme::CHANNEL_RED,
@@ -353,7 +356,7 @@ fn review_editor(
         StrokeKind::Inside,
     );
     let edge = (bounds.width() - 24.0) / 7.0;
-    let buttons = std::array::from_fn(|index| {
+    let button = |index: usize| {
         let divider = if index >= 5 { 12.0 } else { 0.0 };
         egui::Rect::from_min_size(
             egui::pos2(
@@ -362,14 +365,24 @@ fn review_editor(
             ),
             egui::vec2(edge, bounds.height()),
         )
-    });
-    let change = review_buttons(
+    };
+    let icon_size = (edge * 0.62).min(15.0);
+    let surface = ReviewSurface::Toolbar;
+    let rating = star_buttons(
         ui,
-        buttons,
-        (edge * 0.62).min(15.0),
+        std::array::from_fn(button),
+        icon_size,
         id_salt,
         review,
-        ReviewSurface::Toolbar,
+        surface,
+    );
+    let flag = flag_buttons(
+        ui,
+        [button(5), button(6)],
+        icon_size,
+        id_salt,
+        review,
+        surface,
     );
     let x = bounds.left() + 6.0 + edge * 5.0 + 6.0;
     painter.line_segment(
@@ -379,36 +392,138 @@ fn review_editor(
         ],
         Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
     );
-    change
+    rating.or(flag)
 }
 
-/// Five rating stars, then Pick and Reject, at `buttons`. Returns the change
-/// the clicked button makes; clicking the current rating or flag clears it.
-pub(super) fn review_buttons(
+/// Five rating stars at `buttons`. Returns the rating the clicked star sets;
+/// clicking the current rating clears it.
+pub(super) fn star_buttons(
     ui: &Ui,
-    buttons: [egui::Rect; 7],
+    buttons: [egui::Rect; 5],
     icon_size: f32,
     id_salt: impl std::hash::Hash + std::fmt::Debug + Copy,
     review: PhotoReview,
     surface: ReviewSurface,
 ) -> Option<ReviewChange> {
-    let painter = ui.painter();
-    let hovered_rating = buttons[..5]
+    let hovered_rating = buttons
         .iter()
         .position(|button| ui.rect_contains_pointer(*button))
         .map(|index| index as u8 + 1);
     let mut change = None;
     for (index, button) in buttons.into_iter().enumerate() {
-        let response = ui.interact(
-            button,
-            ui.make_persistent_id(("photo-review", id_salt, index)),
-            Sense::click(),
-        );
-        let active = match index {
-            0..=4 => review.rating > index as u8,
-            5 => review.flag == PhotoFlag::Picked,
-            _ => review.flag == PhotoFlag::Rejected,
+        let rating = index as u8 + 1;
+        let label = if rating == 1 {
+            "1 star".to_owned()
+        } else {
+            format!("{rating} stars")
         };
+        let response = review_button(ui, button, ("photo-review", id_salt, index), surface, false);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::RadioButton,
+                true,
+                review.rating == rating,
+                &label,
+            )
+        });
+        let active = review.rating >= rating;
+        paint_star(
+            ui.painter(),
+            button.center(),
+            icon_size,
+            if active {
+                STAR_COLOR
+            } else if hovered_rating.is_some_and(|hovered| hovered >= rating) {
+                STAR_PREVIEW_COLOR
+            } else {
+                match surface {
+                    ReviewSurface::Toolbar => ui.visuals().weak_text_color(),
+                    ReviewSurface::Photo => MUTED,
+                }
+            },
+            active,
+        );
+        if response.clicked() {
+            change = Some(ReviewChange::Rating(if review.rating == rating {
+                0
+            } else {
+                rating
+            }));
+        }
+    }
+    change
+}
+
+/// Pick, then Reject, at `buttons`. Returns the flag the clicked button sets.
+pub(super) fn flag_buttons(
+    ui: &Ui,
+    buttons: [egui::Rect; 2],
+    icon_size: f32,
+    id_salt: impl std::hash::Hash + std::fmt::Debug + Copy,
+    review: PhotoReview,
+    surface: ReviewSurface,
+) -> Option<ReviewChange> {
+    let mut change = None;
+    for (index, (flag, button)) in FLAG_BUTTONS.into_iter().zip(buttons).enumerate() {
+        let active = review.flag == flag;
+        // The toolbar keeps its set flag highlighted.
+        let marked = surface == ReviewSurface::Toolbar && active;
+        let response = review_button(ui, button, flag_button_id(id_salt, index), surface, marked);
+        flag_button_info(&response, flag, active);
+        paint_flag(
+            ui.painter(),
+            button.center(),
+            icon_size,
+            flag_color(flag),
+            active,
+        );
+        if response.clicked() {
+            change = Some(flag_change(review, flag));
+        }
+    }
+    change
+}
+
+/// Pick and Reject, in the order their buttons appear.
+pub(super) const FLAG_BUTTONS: [PhotoFlag; 2] = [PhotoFlag::Picked, PhotoFlag::Rejected];
+
+/// The id of the flag button at `index` in [`FLAG_BUTTONS`], after the stars'.
+pub(super) fn flag_button_id(
+    id_salt: impl std::hash::Hash + std::fmt::Debug + Copy,
+    index: usize,
+) -> impl std::hash::Hash + std::fmt::Debug {
+    ("photo-review", id_salt, 5 + index)
+}
+
+/// The change a Pick or Reject button makes: it sets its flag, or clears the
+/// one the photo has.
+pub(super) fn flag_change(review: PhotoReview, flag: PhotoFlag) -> ReviewChange {
+    ReviewChange::Flag(if review.flag == flag {
+        PhotoFlag::Unflagged
+    } else {
+        flag
+    })
+}
+
+pub(super) fn flag_button_info(response: &egui::Response, flag: PhotoFlag, active: bool) {
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, active, flag_label(flag))
+    });
+}
+
+/// A rating or flag button's click area, highlighted while hovered, focused,
+/// pressed or `marked`.
+fn review_button(
+    ui: &Ui,
+    button: egui::Rect,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    surface: ReviewSurface,
+    marked: bool,
+) -> egui::Response {
+    let response = ui.interact(button, ui.make_persistent_id(id_salt), Sense::click());
+    if marked || response.hovered() || response.has_focus() || response.is_pointer_button_down_on()
+    {
+        let visuals = ui.style().interact(&response);
         let highlight = button.shrink2(egui::vec2(
             1.0,
             match surface {
@@ -416,63 +531,16 @@ pub(super) fn review_buttons(
                 ReviewSurface::Photo => 1.0,
             },
         ));
-        if response.hovered()
-            || response.has_focus()
-            || response.is_pointer_button_down_on()
-            || (surface == ReviewSurface::Toolbar && index >= 5 && active)
-        {
-            let visuals = ui.style().interact(&response);
-            painter.rect_filled(highlight, visuals.corner_radius, visuals.weak_bg_fill);
-            painter.rect_stroke(
-                highlight,
-                visuals.corner_radius,
-                visuals.bg_stroke,
-                StrokeKind::Inside,
-            );
-        }
-        let value = if index < 5 {
-            paint_star(
-                painter,
-                button.center(),
-                icon_size,
-                if active {
-                    STAR_COLOR
-                } else if hovered_rating.is_some_and(|rating| rating > index as u8) {
-                    STAR_PREVIEW_COLOR
-                } else {
-                    match surface {
-                        ReviewSurface::Toolbar => ui.visuals().weak_text_color(),
-                        ReviewSurface::Photo => MUTED,
-                    }
-                },
-                active,
-            );
-            let rating = index as u8 + 1;
-            ReviewChange::Rating(if review.rating == rating { 0 } else { rating })
-        } else {
-            let flag = if index == 5 {
-                PhotoFlag::Picked
-            } else {
-                PhotoFlag::Rejected
-            };
-            paint_flag(
-                painter,
-                button.center(),
-                icon_size,
-                flag_color(flag),
-                active,
-            );
-            ReviewChange::Flag(if review.flag == flag {
-                PhotoFlag::Unflagged
-            } else {
-                flag
-            })
-        };
-        if response.clicked() {
-            change = Some(value);
-        }
+        let painter = ui.painter();
+        painter.rect_filled(highlight, visuals.corner_radius, visuals.weak_bg_fill);
+        painter.rect_stroke(
+            highlight,
+            visuals.corner_radius,
+            visuals.bg_stroke,
+            StrokeKind::Inside,
+        );
     }
-    change
+    response
 }
 
 fn paint_star(
@@ -503,7 +571,7 @@ fn paint_star(
     painter.add(egui::Shape::closed_line(points, Stroke::new(1.0, color)));
 }
 
-fn paint_flag(
+pub(super) fn paint_flag(
     painter: &egui::Painter,
     center: egui::Pos2,
     size: f32,

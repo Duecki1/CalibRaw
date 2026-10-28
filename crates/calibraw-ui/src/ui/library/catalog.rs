@@ -310,6 +310,14 @@ pub(super) fn thumbnail_cover_uv(
     }
 }
 
+/// A painted thumbnail.
+pub(super) struct ThumbnailTile {
+    pub(super) response: egui::Response,
+    /// Bottom edge of the badges in the top-right corner, or the tile's top
+    /// edge when it has none.
+    pub(super) corner_badges_bottom: f32,
+}
+
 /// Paints a thumbnail and its badges. The grid handles the keyboard, so
 /// tiles take clicks but not keyboard focus.
 pub(super) fn thumbnail_tile(
@@ -317,7 +325,7 @@ pub(super) fn thumbnail_tile(
     entry: &LibraryEntry,
     rect: egui::Rect,
     selected: Option<bool>,
-) -> egui::Response {
+) -> ThumbnailTile {
     let response = ui.interact(
         rect,
         ui.make_persistent_id(("library-thumbnail-tile", entry.asset.display_path.as_str())),
@@ -370,6 +378,7 @@ pub(super) fn thumbnail_tile(
     }
 
     let mut corner_inset = 0.0;
+    let mut corner_badges_bottom = rect.top();
     if entry.developed_thumbnail_pending {
         let badge_edge = 25.0_f32.min(rect.width() * 0.32).min(rect.height() * 0.32);
         let center = egui::pos2(
@@ -383,14 +392,20 @@ pub(super) fn thumbnail_tile(
             (badge_edge * 0.72).max(12.0),
         );
         corner_inset = badge_edge + 4.0;
+        corner_badges_bottom = center.y + badge_edge * 0.5;
     }
     if entry.texture.is_some() {
-        if let Some(label) = rendered_format_label(&entry.asset.display_name) {
-            paint_format_badge(ui, tile_rect, label, corner_inset);
+        if let Some(badge) = rendered_format_label(&entry.asset.display_name)
+            .and_then(|label| paint_format_badge(ui, tile_rect, label, corner_inset))
+        {
+            corner_badges_bottom = corner_badges_bottom.max(badge.bottom());
         }
     }
 
-    response
+    ThumbnailTile {
+        response,
+        corner_badges_bottom,
+    }
 }
 
 /// Outlines a selected thumbnail and tints it, and rings the active one.
@@ -498,6 +513,35 @@ fn format_thumbnail_focal_length(value: f32) -> Option<String> {
     })
 }
 
+// Round toggles in a thumbnail's corners, in points: the select check, and
+// the hover's Pick and Reject on tiles too narrow to hold them in its card.
+pub(super) const CORNER_TOGGLE_EDGE: f32 = 24.0;
+/// From the tile's edges to a corner toggle's circle.
+pub(super) const CORNER_TOGGLE_INSET: f32 = 7.0;
+/// The select check's hit square, in the top-left corner.
+pub(super) const CHECK_HIT_EDGE: f32 = 42.0;
+
+/// A corner toggle's circle: dark, darker under the pointer, `on_fill` while
+/// on, with a white ring.
+pub(super) fn paint_corner_toggle(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    on_fill: Option<Color32>,
+    hovered: bool,
+) {
+    let fill = on_fill.unwrap_or(if hovered {
+        Color32::from_black_alpha(200)
+    } else {
+        Color32::from_black_alpha(130)
+    });
+    painter.circle(
+        center,
+        CORNER_TOGGLE_EDGE * 0.5,
+        fill,
+        Stroke::new(1.5, Color32::WHITE),
+    );
+}
+
 /// The round check in a thumbnail's corner that adds it to the selection
 /// or removes it, without opening the photo.
 pub(super) fn thumbnail_check_circle(
@@ -506,15 +550,11 @@ pub(super) fn thumbnail_check_circle(
     thumbnail_rect: egui::Rect,
     selected: bool,
 ) -> egui::Response {
-    const HIT_EDGE: f32 = 42.0;
-    const CIRCLE_EDGE: f32 = 24.0;
-    const CIRCLE_INSET: f32 = 7.0;
-
     let hit_rect = egui::Rect::from_min_size(
         thumbnail_rect.min,
         egui::vec2(
-            HIT_EDGE.min(thumbnail_rect.width()),
-            HIT_EDGE.min(thumbnail_rect.height()),
+            CHECK_HIT_EDGE.min(thumbnail_rect.width()),
+            CHECK_HIT_EDGE.min(thumbnail_rect.height()),
         ),
     );
     let response = ui
@@ -535,17 +575,15 @@ pub(super) fn thumbnail_check_circle(
             format!("Select {}", entry.asset.display_name),
         )
     });
-    let radius = CIRCLE_EDGE * 0.5;
-    let center = thumbnail_rect.min + egui::Vec2::splat(CIRCLE_INSET + radius);
+    let center =
+        thumbnail_rect.min + egui::Vec2::splat(CORNER_TOGGLE_INSET + CORNER_TOGGLE_EDGE * 0.5);
     let painter = ui.painter_at(thumbnail_rect);
-    let fill = if selected {
-        ui.visuals().selection.bg_fill
-    } else if response.hovered() {
-        Color32::from_black_alpha(200)
-    } else {
-        Color32::from_black_alpha(130)
-    };
-    painter.circle(center, radius, fill, Stroke::new(1.5, Color32::WHITE));
+    paint_corner_toggle(
+        &painter,
+        center,
+        selected.then(|| ui.visuals().selection.bg_fill),
+        response.hovered(),
+    );
     if selected || response.hovered() {
         let tick = [
             center + egui::vec2(-5.0, 0.5),
