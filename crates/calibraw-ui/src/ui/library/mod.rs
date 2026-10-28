@@ -65,7 +65,7 @@ use sources::*;
 use storage::*;
 use thumbnails::*;
 
-pub(crate) use actions::library_image_context_menu;
+pub(crate) use actions::photo_actions_menu;
 pub(crate) use actions::{apply_library_action, show_library_action_overlays};
 pub(crate) use companions::{paint_format_badge, rendered_format_label};
 pub(crate) use merge::{MergeKind, MergeOutcome};

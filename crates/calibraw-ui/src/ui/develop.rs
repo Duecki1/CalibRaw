@@ -1,10 +1,12 @@
 use crate::app::CalibRawApp;
-use crate::ui::library::library_image_context_menu;
+use crate::ui::library::photo_actions_menu;
 use crate::ui::library::{
     apply_library_action, current_photo_asset, load_desktop_reference_preview, take_review_key,
     DesktopFilmstripItem,
 };
 use eframe::egui::{self, Align2, Color32, FontId, Sense, Stroke, StrokeKind, Ui};
+use egui_phosphor::regular;
+use moduwu_design::MenuItem;
 use std::collections::HashSet;
 use std::sync::{mpsc, Mutex, OnceLock};
 
@@ -290,28 +292,26 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                     }
 
                     moduwu_design::context_menu(&response, |ui| {
-                        let context_assets = [item.asset.clone()];
+                        let assets = [item.asset.clone()];
                         if let Some(action) =
-                            library_image_context_menu(ui, app, &item.asset, &context_assets, false)
+                            photo_actions_menu(ui, app, &assets, Some(&item.asset))
                         {
                             library_action = Some(action);
                         }
                         ui.separator();
-                        if reference {
-                            if moduwu_design::context_menu_item(ui, true, "Clear Reference Image")
-                                .clicked()
-                            {
+                        let label = if reference {
+                            "Clear Reference Image"
+                        } else {
+                            "Set as Reference Image"
+                        };
+                        let reference_item =
+                            MenuItem::new(label).icon(regular::SQUARE_SPLIT_HORIZONTAL);
+                        if ui.add(reference_item).clicked() {
+                            if reference {
                                 app.develop_ui.reference.clear();
-                                ui.close();
+                            } else {
+                                set_reference_image(app, &item, ui.ctx());
                             }
-                        } else if moduwu_design::context_menu_item(
-                            ui,
-                            true,
-                            "Set as Reference Image",
-                        )
-                        .clicked()
-                        {
-                            set_reference_image(app, &item, ui.ctx());
                             ui.close();
                         }
                     });

@@ -1,5 +1,6 @@
 use super::*;
 use crate::sidecar::{PhotoFlag, PhotoReview};
+use moduwu_design::MenuItem;
 
 /// An empty selection means all values; choices within a group are combined with OR.
 /// The rating, flag and filename groups are combined with AND.
@@ -116,7 +117,7 @@ pub(super) fn show_sort_filter_options(
         .position(|(_, choices)| choices.iter().any(|(order, _)| order == sort))
         .unwrap_or(0);
     let previous = group;
-    moduwu_design::dropdown_submenu(ui, SORT_GROUPS[group].0, |ui| {
+    moduwu_design::submenu(ui, MenuItem::new(SORT_GROUPS[group].0), |ui| {
         ui.set_min_width(220.0);
         for (index, (label, _)) in SORT_GROUPS.iter().enumerate() {
             ui.selectable_value(&mut group, index, *label);
@@ -201,7 +202,10 @@ pub(super) fn show_sort_filter_options(
         }
         ui.add_space(moduwu_design::SPACE_XS);
         ui.weak("Select several values to include them together.");
-        if moduwu_design::menu_item(ui, filter.active(), "Clear filters").clicked() {
+        if ui
+            .add_enabled(filter.active(), MenuItem::new("Clear filters"))
+            .clicked()
+        {
             *filter = LibraryReviewFilter::default();
         }
     }

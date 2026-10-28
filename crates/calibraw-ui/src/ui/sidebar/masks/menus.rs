@@ -1,4 +1,6 @@
 use super::*;
+use egui_phosphor::regular;
+use moduwu_design::MenuItem;
 
 impl Sidebar {
     pub(super) fn mask_kind_menu(ui: &mut Ui, unavailable_message: &str) -> Option<MaskKind> {
@@ -26,8 +28,7 @@ impl Sidebar {
                 kind.label().to_owned()
             };
             let response = ui
-                .add_enabled_ui(kind.is_available(), |ui| ui.selectable_label(false, label))
-                .inner
+                .add_enabled(kind.is_available(), MenuItem::new(label))
                 .on_disabled_hover_text(unavailable_message);
             if response.clicked() {
                 selected = Some(kind);
@@ -43,12 +44,12 @@ impl Sidebar {
     ) -> Option<(MaskKind, MaskCombineMode)> {
         let mut selected = None;
         ui.label(egui::RichText::new("Combine as").weak());
-        for combine in [
-            MaskCombineMode::Add,
-            MaskCombineMode::Subtract,
-            MaskCombineMode::Intersect,
+        for (combine, icon) in [
+            (MaskCombineMode::Add, regular::PLUS),
+            (MaskCombineMode::Subtract, regular::MINUS),
+            (MaskCombineMode::Intersect, regular::INTERSECT),
         ] {
-            moduwu_design::dropdown_submenu(ui, combine.label(), |ui| {
+            moduwu_design::submenu(ui, MenuItem::new(combine.label()).icon(icon), |ui| {
                 if let Some(kind) = Self::mask_kind_menu(ui, unavailable_message) {
                     selected = Some((kind, combine));
                 }
@@ -64,7 +65,10 @@ impl Sidebar {
         mask_index: usize,
         requests: &mut MaskStripRequests,
     ) {
-        if moduwu_design::menu_item(ui, true, "Rename…").clicked() {
+        if ui
+            .add(MenuItem::new("Rename…").icon(regular::PENCIL_SIMPLE))
+            .clicked()
+        {
             Self::open_mask_rename_dialog(
                 ui.ctx(),
                 MaskRenameTarget::Group(mask_index),
@@ -80,7 +84,13 @@ impl Sidebar {
                 enabled,
             });
         }
-        if moduwu_design::menu_item(ui, can_add_group, "Duplicate").clicked() {
+        if ui
+            .add_enabled(
+                can_add_group,
+                MenuItem::new("Duplicate").icon(regular::COPY_SIMPLE),
+            )
+            .clicked()
+        {
             requests.duplicate_mask = Some((mask_index, false));
             ui.close();
         }
@@ -91,19 +101,32 @@ impl Sidebar {
                 .push(MaskStripEdit::ToggleGroupInvert(mask_index));
             ui.close();
         }
-        if moduwu_design::menu_item(ui, can_add_group, "Duplicate & Invert").clicked() {
+        if ui
+            .add_enabled(
+                can_add_group,
+                MenuItem::new("Duplicate & Invert").icon(regular::SELECTION_INVERSE),
+            )
+            .clicked()
+        {
             requests.duplicate_mask = Some((mask_index, true));
             ui.close();
         }
         ui.separator();
-        if moduwu_design::menu_item(ui, true, "Copy Mask Group").clicked() {
+        if ui
+            .add(MenuItem::new("Copy Mask Group").icon(regular::COPY))
+            .clicked()
+        {
             ui.ctx().data_mut(|data| {
                 data.insert_temp(Self::mask_group_clipboard_id(), mask.clone());
             });
             ui.close();
         }
         let can_paste = can_add_group && Self::copied_mask_group(ui.ctx()).is_some();
-        if moduwu_design::menu_item(ui, can_paste, "Paste Mask Group")
+        if ui
+            .add_enabled(
+                can_paste,
+                MenuItem::new("Paste Mask Group").icon(regular::CLIPBOARD),
+            )
             .on_disabled_hover_text("Copy a mask group first")
             .clicked()
         {
@@ -111,12 +134,10 @@ impl Sidebar {
             ui.close();
         }
         ui.separator();
-        if moduwu_design::destructive_menu_item(
-            ui,
-            format!("{}  Delete mask group", egui_phosphor::regular::TRASH),
-        )
-        .clicked()
-        {
+        let delete_item = MenuItem::new("Delete mask group")
+            .icon(regular::TRASH)
+            .destructive();
+        if ui.add(delete_item).clicked() {
             Self::open_mask_delete_dialog(
                 ui.ctx(),
                 MaskDeleteTarget::Group(mask_index),
@@ -138,7 +159,10 @@ impl Sidebar {
             can_delete,
             can_add_component,
         } = menu;
-        if moduwu_design::menu_item(ui, true, "Rename…").clicked() {
+        if ui
+            .add(MenuItem::new("Rename…").icon(regular::PENCIL_SIMPLE))
+            .clicked()
+        {
             Self::open_mask_rename_dialog(
                 ui.ctx(),
                 MaskRenameTarget::Component {
@@ -158,7 +182,13 @@ impl Sidebar {
                 enabled,
             });
         }
-        if moduwu_design::menu_item(ui, can_add_component, "Duplicate").clicked() {
+        if ui
+            .add_enabled(
+                can_add_component,
+                MenuItem::new("Duplicate").icon(regular::COPY_SIMPLE),
+            )
+            .clicked()
+        {
             requests.duplicate_component = Some((mask_index, component_index, false));
             ui.close();
         }
@@ -170,19 +200,32 @@ impl Sidebar {
             });
             ui.close();
         }
-        if moduwu_design::menu_item(ui, can_add_component, "Duplicate & Invert").clicked() {
+        if ui
+            .add_enabled(
+                can_add_component,
+                MenuItem::new("Duplicate & Invert").icon(regular::SELECTION_INVERSE),
+            )
+            .clicked()
+        {
             requests.duplicate_component = Some((mask_index, component_index, true));
             ui.close();
         }
         ui.separator();
-        if moduwu_design::menu_item(ui, true, "Copy Component").clicked() {
+        if ui
+            .add(MenuItem::new("Copy Component").icon(regular::COPY))
+            .clicked()
+        {
             ui.ctx().data_mut(|data| {
                 data.insert_temp(Self::mask_component_clipboard_id(), component.clone());
             });
             ui.close();
         }
         let can_paste = can_add_component && Self::copied_mask_component(ui.ctx()).is_some();
-        if moduwu_design::menu_item(ui, can_paste, "Paste Component")
+        if ui
+            .add_enabled(
+                can_paste,
+                MenuItem::new("Paste Component").icon(regular::CLIPBOARD),
+            )
             .on_disabled_hover_text("Copy a component first")
             .clicked()
         {
@@ -191,13 +234,12 @@ impl Sidebar {
         }
         ui.separator();
         if ui
-            .add_enabled_ui(can_delete, |ui| {
-                moduwu_design::destructive_menu_item(
-                    ui,
-                    format!("{}  Delete sub-mask", egui_phosphor::regular::TRASH),
-                )
-            })
-            .inner
+            .add_enabled(
+                can_delete,
+                MenuItem::new("Delete sub-mask")
+                    .icon(regular::TRASH)
+                    .destructive(),
+            )
             .on_disabled_hover_text("A mask group must contain at least one sub-mask")
             .clicked()
         {

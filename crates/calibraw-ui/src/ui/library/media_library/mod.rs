@@ -2,6 +2,8 @@
 //! photos by content URI, listed and changed through the platform.
 
 use super::*;
+use egui_phosphor::regular;
+use moduwu_design::MenuItem;
 
 mod local;
 
@@ -59,11 +61,13 @@ pub(super) fn show_android_library_folder_node(
         *requested_action = Some(AndroidLibraryFolderUiAction::Select(path.to_owned()));
     }
     moduwu_design::context_menu(&row.row, |ui| {
-        if moduwu_design::context_menu_item(ui, true, "New folder here…").clicked() {
+        let new_item = MenuItem::new("New folder here…").icon(regular::FOLDER_PLUS);
+        if ui.add(new_item).clicked() {
             *requested_action = Some(AndroidLibraryFolderUiAction::New(path.to_owned()));
             ui.close();
         }
-        if moduwu_design::context_menu_item(ui, true, "Refresh folders").clicked() {
+        let refresh_item = MenuItem::new("Refresh folders").icon(regular::ARROWS_CLOCKWISE);
+        if ui.add(refresh_item).clicked() {
             *requested_action = Some(AndroidLibraryFolderUiAction::Refresh);
             ui.close();
         }

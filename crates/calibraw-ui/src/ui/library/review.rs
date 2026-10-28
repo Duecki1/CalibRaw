@@ -637,16 +637,34 @@ pub(super) fn compact_review_editor(
     );
     let mut change = None;
     moduwu_design::dropdown_menu(&response, |ui| {
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(EDITOR_WIDTH, moduwu_design::CONTROL_HEIGHT),
-            Sense::hover(),
-        );
-        change = review_editor(ui, rect, id_salt, review);
+        change = menu_review_row(ui, id_salt, review);
         if change.is_some() {
             ui.close();
         }
     });
     change
+}
+
+/// The width of a menu's rating and flag row on touch screens: seven
+/// finger-sized buttons.
+const TOUCH_MENU_EDITOR_WIDTH: f32 = 7.0 * 44.0 + 24.0;
+
+/// The rating and flag editor as a menu row, wider on touch screens.
+pub(super) fn menu_review_row(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug + Copy,
+    review: PhotoReview,
+) -> Option<ReviewChange> {
+    let width = if PlatformCaps::CURRENT.is_mobile() {
+        TOUCH_MENU_EDITOR_WIDTH.min(ui.available_width())
+    } else {
+        EDITOR_WIDTH
+    };
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(width, moduwu_design::CONTROL_HEIGHT),
+        Sense::hover(),
+    );
+    review_editor(ui, rect, id_salt, review)
 }
 
 /// The open photo's rating and flag editor; `false` when no photo is open.

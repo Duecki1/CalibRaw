@@ -6,6 +6,7 @@ use crate::ui::components::feathered_range::{
 };
 use eframe::egui::{self, Color32, Mesh, Rect, Sense, Shape, Stroke, StrokeKind, Ui};
 use egui_phosphor::regular;
+use moduwu_design::MenuItem;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PointColorUiState {
@@ -95,18 +96,26 @@ pub(crate) fn point_color(
                 if response.clicked() {
                     state.selected = index;
                 }
-                response.context_menu(|ui| {
-                    if moduwu_design::menu_item(ui, true, "Reset color").clicked() {
+                moduwu_design::context_menu(&response, |ui| {
+                    let reset_item =
+                        MenuItem::new("Reset color").icon(regular::ARROW_COUNTER_CLOCKWISE);
+                    if ui.add(reset_item).clicked() {
                         state.selected = index;
                         reset = true;
                         ui.close();
                     }
-                    if moduwu_design::destructive_menu_item(ui, "Delete color").clicked() {
+                    let delete_item = MenuItem::new("Delete color")
+                        .icon(regular::TRASH)
+                        .destructive();
+                    if ui.add(delete_item).clicked() {
                         state.selected = index;
                         delete = true;
                         ui.close();
                     }
-                    if moduwu_design::destructive_menu_item(ui, "Delete all colors").clicked() {
+                    let delete_all_item = MenuItem::new("Delete all colors")
+                        .icon(regular::TRASH)
+                        .destructive();
+                    if ui.add(delete_all_item).clicked() {
                         delete_all = true;
                         ui.close();
                     }

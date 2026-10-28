@@ -353,79 +353,6 @@ fn selected_library_folder_name(app: &CalibRawApp) -> Option<String> {
     })
 }
 
-/// A touch held still on the grid, timed against the platform's long-press
-/// delay. Gesture state of the view, kept in egui's memory between frames.
-#[derive(Clone, Copy, Debug)]
-struct TouchHold {
-    press_start: f64,
-    /// Seconds the touch must be held, read when it began.
-    duration: f64,
-    moved: bool,
-    fired: bool,
-}
-
-/// What the current touch does this frame.
-#[derive(Clone, Copy, Debug, Default)]
-struct TouchHoldFrame {
-    /// Where a hold became a long press on this frame.
-    long_press_at: Option<egui::Pos2>,
-    /// The touch became a long press, so lifting it is no tap.
-    suppress_tap: bool,
-}
-
-/// Times touches with the platform's delay rather than egui's, which is
-/// twice Android's default and ignores the Touch & hold delay setting.
-fn track_touch_hold(ui: &Ui, platform: &dyn crate::platform::Platform) -> TouchHoldFrame {
-    let id = egui::Id::new("library-touch-hold");
-    let ctx = ui.ctx();
-    let stored = ctx.data(|data| data.get_temp::<TouchHold>(id));
-    let slop = ctx.options(|options| options.input_options.max_click_dist);
-    let (held, press_start, origin, position, now) = ui.input(|input| {
-        (
-            input.any_touches() && input.pointer.primary_down(),
-            input.pointer.press_start_time(),
-            input.pointer.press_origin(),
-            input.pointer.interact_pos(),
-            input.time,
-        )
-    });
-    let Some(press_start) = press_start.filter(|_| held) else {
-        // Lifted: this frame's tap belongs to the hold that just ended.
-        ctx.data_mut(|data| data.remove::<TouchHold>(id));
-        return TouchHoldFrame {
-            long_press_at: None,
-            suppress_tap: stored.is_some_and(|hold| hold.fired),
-        };
-    };
-    let mut hold = stored
-        .filter(|hold| hold.press_start == press_start)
-        .unwrap_or_else(|| TouchHold {
-            press_start,
-            duration: platform.long_press_duration().as_secs_f64(),
-            moved: false,
-            fired: false,
-        });
-    hold.moved |= origin
-        .zip(position)
-        .is_some_and(|(origin, position)| origin.distance(position) > slop);
-    let mut long_press_at = None;
-    if !hold.fired && !hold.moved {
-        let remaining = hold.duration - (now - press_start);
-        if remaining <= 0.0 {
-            hold.fired = true;
-            long_press_at = origin;
-        } else {
-            // A still finger sends no events; wake up when the delay ends.
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(remaining));
-        }
-    }
-    ctx.data_mut(|data| data.insert_temp(id, hold));
-    TouchHoldFrame {
-        long_press_at,
-        suppress_tap: hold.fired,
-    }
-}
-
 /// How close to the grid's top or bottom edge a selecting drag scrolls it,
 /// and how fast at the very edge, in points per second.
 const DRAG_SCROLL_EDGE: f32 = 56.0;
@@ -484,7 +411,7 @@ fn show_thumbnail_grid(
         .filter(|_| app.library.shows_active_photo(caps))
         .cloned();
     let drag_selecting = app.library.drag_selecting();
-    let touch_hold = track_touch_hold(ui, app.platform.as_ref());
+    let touch_hold = moduwu_design::touch_hold(ui.ctx());
     // Touch shows no hover; its press must not grow a check under the finger.
     let pointer_hovers = caps.is_desktop() && !ui.input(|input| input.any_touches());
     let mut scroll_source = egui::scroll_area::ScrollSource::default();
@@ -602,43 +529,23 @@ fn show_thumbnail_context_menu(
     index: usize,
     library_action: &mut Option<LibraryAction>,
 ) {
-    if !response.secondary_clicked() && !response.context_menu_opened() {
-        return;
+    if response.secondary_clicked() && app.library.is_selecting() {
+        let id = app.library.entries[index].asset.id.clone();
+        if !app.library.is_selected(&id) {
+            app.library.add_to_selection(&id);
+        }
     }
-    let asset = app.library.entries[index].asset.clone();
-    if response.secondary_clicked()
-        && app.library.is_selecting()
-        && !app.library.is_selected(&asset.id)
-    {
-        app.library.add_to_selection(&asset.id);
-    }
-    let mut select = false;
-    let mut select_all = false;
     moduwu_design::context_menu(response, |ui| {
-        let selecting = app.library.is_selecting();
-        let context_assets = if selecting {
+        let anchor = &app.library.entries[index].asset;
+        let assets = if app.library.is_selecting() {
             app.library.selected_assets()
         } else {
-            vec![asset.clone()]
+            vec![anchor.clone()]
         };
-        if !selecting && moduwu_design::context_menu_item(ui, true, "Select").clicked() {
-            select = true;
-            ui.close();
-        }
-        if moduwu_design::context_menu_item(ui, true, "Select All").clicked() {
-            select_all = true;
-            ui.close();
-        }
-        ui.separator();
-        if let Some(action) = library_image_context_menu(ui, app, &asset, &context_assets, true) {
+        if let Some(action) = photo_actions_menu(ui, app, &assets, Some(anchor)) {
             *library_action = Some(action);
         }
     });
-    if select_all {
-        app.library.select_all();
-    } else if select {
-        app.library.add_to_selection(&asset.id);
-    }
 }
 
 /// Scrolls the grid while a selecting drag holds the finger near its top

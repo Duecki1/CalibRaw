@@ -2,6 +2,8 @@
 //! root, with photos and their sidecars read and changed by path.
 
 use super::*;
+use egui_phosphor::regular;
+use moduwu_design::MenuItem;
 
 pub(super) mod catalog;
 pub(super) mod files;
@@ -99,11 +101,19 @@ pub(super) fn show_library_folder_node(
     let is_root = node.path == root_folder;
     moduwu_design::context_menu(&response, |ui| {
         let enabled = !action_in_progress;
-        if moduwu_design::context_menu_item(ui, enabled, "New Folder…").clicked() {
-            *requested_action = Some(LibraryFolderUiAction::New(node.path.clone()));
-            ui.close();
-        }
-
+        let path = &node.path;
+        let mut row = |ui: &mut Ui, enabled: bool, item, action| {
+            if ui.add_enabled(enabled, item).clicked() {
+                *requested_action = Some(action);
+                ui.close();
+            }
+        };
+        row(
+            ui,
+            enabled,
+            MenuItem::new("New Folder…").icon(regular::FOLDER_PLUS),
+            LibraryFolderUiAction::New(path.clone()),
+        );
         let paste_label = image_clipboard.map_or_else(
             || {
                 clipboard
@@ -113,42 +123,51 @@ pub(super) fn show_library_folder_node(
             },
             ImageClipboard::paste_label,
         );
-        if moduwu_design::context_menu_item(
+        row(
             ui,
             enabled && (clipboard.is_some() || image_clipboard.is_some()),
-            paste_label,
-        )
-        .clicked()
-        {
-            *requested_action = Some(if image_clipboard.is_some() {
-                LibraryFolderUiAction::PasteImages(node.path.clone())
+            MenuItem::new(paste_label).icon(regular::CLIPBOARD),
+            if image_clipboard.is_some() {
+                LibraryFolderUiAction::PasteImages(path.clone())
             } else {
-                LibraryFolderUiAction::Paste(node.path.clone())
-            });
-            ui.close();
-        }
+                LibraryFolderUiAction::Paste(path.clone())
+            },
+        );
         ui.separator();
-        if moduwu_design::context_menu_item(ui, enabled && !is_root, "Copy Folder").clicked() {
-            *requested_action = Some(LibraryFolderUiAction::Copy(node.path.clone()));
-            ui.close();
-        }
-        if moduwu_design::context_menu_item(ui, enabled && !is_root, "Cut Folder").clicked() {
-            *requested_action = Some(LibraryFolderUiAction::Cut(node.path.clone()));
-            ui.close();
-        }
-        if moduwu_design::context_menu_item(ui, enabled && !is_root, "Rename Folder…").clicked() {
-            *requested_action = Some(LibraryFolderUiAction::Rename(node.path.clone()));
-            ui.close();
-        }
+        let movable = enabled && !is_root;
+        row(
+            ui,
+            movable,
+            MenuItem::new("Copy Folder").icon(regular::COPY),
+            LibraryFolderUiAction::Copy(path.clone()),
+        );
+        row(
+            ui,
+            movable,
+            MenuItem::new("Cut Folder").icon(regular::SCISSORS),
+            LibraryFolderUiAction::Cut(path.clone()),
+        );
+        row(
+            ui,
+            movable,
+            MenuItem::new("Rename Folder…").icon(regular::PENCIL_SIMPLE),
+            LibraryFolderUiAction::Rename(path.clone()),
+        );
         ui.separator();
-        if moduwu_design::context_menu_item(ui, enabled && !is_root, "Delete Folder…").clicked() {
-            *requested_action = Some(LibraryFolderUiAction::Delete(node.path.clone()));
-            ui.close();
-        }
-        if moduwu_design::context_menu_item(ui, enabled, "Refresh Folders").clicked() {
-            *requested_action = Some(LibraryFolderUiAction::Refresh);
-            ui.close();
-        }
+        row(
+            ui,
+            movable,
+            MenuItem::new("Delete Folder…")
+                .icon(regular::TRASH)
+                .destructive(),
+            LibraryFolderUiAction::Delete(path.clone()),
+        );
+        row(
+            ui,
+            enabled,
+            MenuItem::new("Refresh Folders").icon(regular::ARROWS_CLOCKWISE),
+            LibraryFolderUiAction::Refresh,
+        );
     });
 
     if let Some(payload) = response.dnd_hover_payload::<LibraryFolderDrag>() {
