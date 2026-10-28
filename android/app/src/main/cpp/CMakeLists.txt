@@ -47,9 +47,12 @@ if(DEFINED CALIBRAW_LIBRAW_VERSION AND NOT CALIBRAW_LIBRAW_VERSION STREQUAL CALI
     message(FATAL_ERROR
         "Cargo.toml requests LibRaw ${CALIBRAW_LIBRAW_VERSION}, but this CMake pin is ${CALIBRAW_LIBRAW_COMMIT}")
 endif()
-if(DEFINED CALIBRAW_LENSFUN_VERSION AND NOT CALIBRAW_LENSFUN_VERSION STREQUAL "0.3.4")
+# Lensfun master commit; it reports version 0.3.99, so Cargo.toml pins it by
+# commit. Keep in sync with scripts/build_lensfun.sh and the Flatpak manifest.
+set(CALIBRAW_LENSFUN_COMMIT bc5615d6278cb5fb75dd53e74015367453d5591d)
+if(DEFINED CALIBRAW_LENSFUN_VERSION AND NOT CALIBRAW_LENSFUN_VERSION STREQUAL CALIBRAW_LENSFUN_COMMIT)
     message(FATAL_ERROR
-        "Cargo.toml requests Lensfun ${CALIBRAW_LENSFUN_VERSION}, but this CMake pin is 0.3.4")
+        "Cargo.toml requests Lensfun ${CALIBRAW_LENSFUN_VERSION}, but this CMake pin is ${CALIBRAW_LENSFUN_COMMIT}")
 endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -86,8 +89,8 @@ FetchContent_Declare(
 )
 FetchContent_Declare(
     calibraw_lensfun_source
-    URL https://github.com/lensfun/lensfun/archive/101c745e847a5de4a1e569a94368ce2027198598.tar.gz
-    URL_HASH SHA256=a11cbe6aeec657839540448b253217c25d20b7a45b6aebfef406f7239933c7a6
+    URL https://github.com/lensfun/lensfun/archive/${CALIBRAW_LENSFUN_COMMIT}.tar.gz
+    URL_HASH SHA256=b56bff238bd9b8f6e517785de9361a11608f0d2afbfa9e21ce4a33d69d5c2046
     SOURCE_SUBDIR _calibraw_do_not_add
 )
 # GLib uses Meson. Fetch Meson's pinned source and invoke meson.py directly;
@@ -174,10 +177,10 @@ add_custom_target(calibraw_stage_libraw
 )
 
 # -----------------------------------------------------------------------------
-# Lensfun 0.3.4 and its mandatory core GLib dependency
+# Lensfun and its mandatory core GLib dependency
 # -----------------------------------------------------------------------------
 # Lensfun's BUILD_TESTS/BUILD_LENSTOOL/etc. switches remove optional consumers,
-# but Lensfun 0.3.4 still calls find_package(GLIB2 REQUIRED) for the core library.
+# but Lensfun still calls find_package(GLIB2 REQUIRED) for the core library.
 # Build the smallest pinned static GLib stack as CMake ExternalProject targets.
 if(ANDROID_ABI STREQUAL "arm64-v8a")
     set(CALIBRAW_CLANG_TARGET "aarch64-linux-android${CALIBRAW_ANDROID_MIN_SDK}")
@@ -417,7 +420,11 @@ ExternalProject_Add(calibraw_lensfun
         -DBUILD_FOR_SSE2=OFF
         "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
         "-DCMAKE_EXE_LINKER_FLAGS=-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
+    # Clear the staged database first, so the APK packages only the pinned
+    # commit's profiles and not those of an earlier pin.
     BUILD_COMMAND
+        "${CMAKE_COMMAND}" -E rm -rf "${CALIBRAW_LENSFUN_STAGE}/apk-assets/lensfun"
+    COMMAND
         "${CMAKE_COMMAND}" --build <BINARY_DIR> --target install --parallel "${CALIBRAW_BUILD_JOBS}"
     INSTALL_COMMAND ""
     BUILD_BYPRODUCTS

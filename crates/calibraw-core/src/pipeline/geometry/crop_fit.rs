@@ -6,7 +6,7 @@
 //! fits at are the intersection of four half-planes: a convex polygon. Without perspective the
 //! edges are axis-aligned and the polygon is a rectangle.
 
-use super::mapping::GeometryMapping;
+use super::mapping::{bounds, GeometryMapping};
 
 /// Distance, frame pixels, by which each source edge is relaxed when looking for centres, so a
 /// crop that fits exactly is still found.
@@ -63,20 +63,9 @@ pub(super) fn feasible_crop_centers(
     mapping: &GeometryMapping,
     size: [f64; 2],
 ) -> Option<CropCenters> {
-    let corners = crop_corner_offsets(mapping, size);
+    let corners = mapping.crop_corner_offsets(size);
     let source = mapping.frame_corners();
-    let min = [0, 1].map(|axis| {
-        source
-            .iter()
-            .map(|point| point[axis])
-            .fold(f64::INFINITY, f64::min)
-    });
-    let max = [0, 1].map(|axis| {
-        source
-            .iter()
-            .map(|point| point[axis])
-            .fold(f64::NEG_INFINITY, f64::max)
-    });
+    let [min, max] = bounds(&source);
     let mut vertices = vec![
         [min[0] - 1.0, min[1] - 1.0],
         [max[0] + 1.0, min[1] - 1.0],
@@ -134,18 +123,6 @@ pub(super) fn polygon_area(vertices: &[[f64; 2]]) -> f64 {
         .map(|index| cross(vertices[index], vertices[(index + 1) % count]))
         .sum();
     0.5 * twice.abs()
-}
-
-/// The crop's corners relative to its centre, frame pixels.
-fn crop_corner_offsets(mapping: &GeometryMapping, size: [f64; 2]) -> [[f64; 2]; 4] {
-    let [half_width, half_height] = size.map(|value| value * 0.5);
-    [
-        [-half_width, -half_height],
-        [half_width, -half_height],
-        [half_width, half_height],
-        [-half_width, half_height],
-    ]
-    .map(|corner| mapping.unrotate(corner))
 }
 
 /// The part of the convex polygon `vertices` where `normal · p >= bound`.

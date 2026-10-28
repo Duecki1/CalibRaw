@@ -12,12 +12,7 @@ impl Sidebar {
     }
 
     pub(super) fn show_crop(ui: &mut Ui, app: &mut CalibRawApp, _layout: ScreenLayout) {
-        let source_dimensions = app
-            .develop
-            .loaded_raw
-            .as_ref()
-            .map(|raw| (raw.width, raw.height))
-            .unwrap_or((1, 1));
+        let source_dimensions = app.source_dimensions().unwrap_or((1, 1));
 
         let before = app.develop.geometry;
         if app.develop_ui.crop_constraint_reference.is_none() {
@@ -129,7 +124,7 @@ impl Sidebar {
             AdjustmentSlider::new(
                 "Straighten",
                 &mut app.develop.geometry.rotation_degrees,
-                -45.0..=45.0,
+                -GeometryTransform::MAX_ROTATION_DEGREES..=GeometryTransform::MAX_ROTATION_DEGREES,
             )
             .decimals(1)
             .step(0.1)
@@ -206,22 +201,18 @@ impl Sidebar {
             {
                 app.develop.geometry.set_displayed_aspect_stretch(aspect);
             }
-            AdjustmentSlider::new(
-                "Horizontal skew",
-                &mut app.develop.geometry.horizontal_skew_degrees,
-                -30.0..=30.0,
-            )
-            .decimals(1)
-            .step(0.1)
-            .show(ui);
-            AdjustmentSlider::new(
-                "Vertical skew",
-                &mut app.develop.geometry.vertical_skew_degrees,
-                -30.0..=30.0,
-            )
-            .decimals(1)
-            .step(0.1)
-            .show(ui);
+            let skew_range =
+                -GeometryTransform::MAX_SKEW_DEGREES..=GeometryTransform::MAX_SKEW_DEGREES;
+            let geometry = &mut app.develop.geometry;
+            for (label, value) in [
+                ("Horizontal skew", &mut geometry.horizontal_skew_degrees),
+                ("Vertical skew", &mut geometry.vertical_skew_degrees),
+            ] {
+                AdjustmentSlider::new(label, value, skew_range.clone())
+                    .decimals(1)
+                    .step(0.1)
+                    .show(ui);
+            }
         });
 
         app.develop.geometry = app.develop.geometry.sanitized();

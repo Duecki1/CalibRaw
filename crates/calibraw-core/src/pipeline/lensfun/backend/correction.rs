@@ -13,6 +13,8 @@ pub(super) struct ModifierConfig {
     pub(super) requested_flags: c_int,
 }
 
+/// A modifier for `lens` with the corrections in `config.requested_flags`
+/// enabled, and the flags Lensfun could enable from the profile.
 pub(super) fn initialize_modifier(
     lens: *const lfLens,
     config: ModifierConfig,
@@ -25,28 +27,32 @@ pub(super) fn initialize_modifier(
         distance,
         requested_flags,
     } = config;
-    let pointer = unsafe { lf_modifier_new(lens, crop.max(0.1), width, height) };
+    let pointer = unsafe {
+        lf_modifier_create(
+            lens,
+            focal,
+            crop.max(0.1),
+            width,
+            height,
+            ffi::LF_PF_F32,
+            false,
+        )
+    };
     if pointer.is_null() {
         return Err(anyhow!("Lensfun could not create a modifier"));
     }
     let modifier = Modifier(pointer);
-    let lens_type = lens_fields(lens)
-        .ok_or_else(|| anyhow!("Lensfun returned a null lens profile"))?
-        .lens_type;
-    let flags = unsafe {
-        lf_modifier_initialize(
-            modifier.0,
-            lens,
-            ffi::LF_PF_F32,
-            focal,
-            aperture,
-            distance,
-            1.0,
-            lens_type,
-            requested_flags,
-            0,
-        )
-    };
+    // Each call returns every correction enabled so far.
+    let mut flags = 0;
+    if requested_flags & LF_MODIFY_TCA != 0 {
+        flags = unsafe { lf_modifier_enable_tca_correction(modifier.0) };
+    }
+    if requested_flags & LF_MODIFY_VIGNETTING != 0 {
+        flags = unsafe { lf_modifier_enable_vignetting_correction(modifier.0, aperture, distance) };
+    }
+    if requested_flags & LF_MODIFY_DISTORTION != 0 {
+        flags = unsafe { lf_modifier_enable_distortion_correction(modifier.0) };
+    }
     Ok((modifier, flags))
 }
 

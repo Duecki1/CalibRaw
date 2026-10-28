@@ -31,7 +31,7 @@ pub(super) fn compatible_lenses(database: &Database, camera: *const lfCamera) ->
     let empty = CString::new("").expect("an empty string contains no NUL byte");
     let list = OwnedPointerList {
         pointer: unsafe {
-            lf_db_find_lenses_hd(
+            lf_db_find_lenses(
                 database.0,
                 camera,
                 ptr::null(),
@@ -97,7 +97,7 @@ pub(super) fn find_auto_lens(
         let model = CString::new(raw.lens_model.trim()).ok()?;
         let list = OwnedPointerList {
             pointer: unsafe {
-                lf_db_find_lenses_hd(
+                lf_db_find_lenses(
                     database.0,
                     camera,
                     maker.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
@@ -552,7 +552,7 @@ pub(super) fn find_lens(
         let model = CString::new(selection.model.as_str()).ok()?;
         let list = OwnedPointerList {
             pointer: unsafe {
-                lf_db_find_lenses_hd(
+                lf_db_find_lenses(
                     database.0,
                     camera,
                     maker.as_ptr(),
@@ -569,15 +569,22 @@ pub(super) fn find_lens(
     find_lens_in_database(database, selection)
 }
 
+/// Compares every name a profile has, so a selection saved before the profile
+/// gained a translated name still finds it: Lensfun master gives many lenses
+/// an `en` manufacturer name, which `lens_name` now returns.
 fn find_lens_in_database(database: &Database, selection: &LensfunLens) -> Option<*const lfLens> {
+    let has_name = |names: *mut c_char, wanted: &str| {
+        multilingual_variants(names)
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(wanted))
+    };
     pointer_list(unsafe { lf_db_get_lenses(database.0) })
         .into_iter()
-        .find(|pointer| {
-            lens_name(*pointer).is_some_and(|candidate| {
-                candidate.model.eq_ignore_ascii_case(&selection.model)
-                    && (selection.maker.trim().is_empty()
-                        || candidate.maker.eq_ignore_ascii_case(&selection.maker))
-            })
+        .find(|&pointer| {
+            // SAFETY: `pointer_list` returns only non-null lenses the database owns.
+            let lens = unsafe { &*pointer };
+            has_name(lens.Model, &selection.model)
+                && (selection.maker.trim().is_empty() || has_name(lens.Maker, &selection.maker))
         })
 }
 
@@ -586,7 +593,6 @@ pub(super) struct LensFields {
     pub(super) crop_factor: f32,
     pub(super) min_focal: f32,
     pub(super) max_focal: f32,
-    pub(super) lens_type: ffi::lfLensType,
 }
 
 pub(super) fn camera_name(pointer: *const lfCamera) -> Option<(String, String)> {
@@ -616,7 +622,6 @@ pub(super) fn lens_fields(pointer: *const lfLens) -> Option<LensFields> {
         crop_factor: lens.CropFactor,
         min_focal: lens.MinFocal,
         max_focal: lens.MaxFocal,
-        lens_type: lens.Type,
     })
 }
 
@@ -653,6 +658,39 @@ pub(super) fn pointer_list<T>(pointer: *const *const T) -> Vec<*const T> {
         index += 1;
     }
     result
+}
+
+/// The default string and every translation of a Lensfun multi-language
+/// string, trimmed.
+fn multilingual_variants(pointer: *mut c_char) -> Vec<String> {
+    if pointer.is_null() {
+        return Vec::new();
+    }
+    let mut variants = Vec::new();
+    // SAFETY: a Lensfun multi-language string is its default string followed
+    // by `language`, `translation` string pairs and ends with an empty string;
+    // the walk stops there as `lf_mlstr_get` does, so it stays inside it.
+    unsafe {
+        let default = CStr::from_ptr(pointer);
+        variants.push(default);
+        let mut cursor = pointer.add(default.to_bytes_with_nul().len());
+        while *cursor != 0 {
+            let language = CStr::from_ptr(cursor);
+            let translation = CStr::from_ptr(cursor.add(language.to_bytes_with_nul().len()));
+            if translation.is_empty() {
+                break;
+            }
+            variants.push(translation);
+            cursor = translation
+                .as_ptr()
+                .add(translation.to_bytes_with_nul().len())
+                .cast_mut();
+        }
+    }
+    variants
+        .into_iter()
+        .map(|variant| variant.to_string_lossy().trim().to_owned())
+        .collect()
 }
 
 fn multilingual_string(pointer: *mut c_char) -> String {

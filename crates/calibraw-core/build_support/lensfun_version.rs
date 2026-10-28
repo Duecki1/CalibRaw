@@ -1,9 +1,10 @@
 use std::fmt;
 
-pub(crate) const MIN_SUPPORTED: LensfunVersion = LensfunVersion::new(0, 3, 2);
-pub(crate) const MAX_SUPPORTED: LensfunVersion = LensfunVersion::new(0, 3, 4);
+/// The version Lensfun master reports. Its API replaced the 0.3.x modifier and
+/// database calls, so the generated bindings target only this version.
+pub(crate) const SUPPORTED: LensfunVersion = LensfunVersion::new(0, 3, 99);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LensfunVersion {
     pub major: u32,
     pub minor: u32,
@@ -88,9 +89,9 @@ pub(crate) fn parse_lensfun_header_version(contents: &str) -> Result<LensfunVers
 
 pub(crate) fn validate_supported_lensfun_version(value: &str) -> Result<LensfunVersion, String> {
     let version = parse_lensfun_version(value)?;
-    if !(MIN_SUPPORTED..=MAX_SUPPORTED).contains(&version) {
+    if version != SUPPORTED {
         return Err(format!(
-            "unsupported Lensfun {version}; CalibRaw supports Lensfun {MIN_SUPPORTED} through {MAX_SUPPORTED} because its generated FFI bindings and runtime ABI contract target the stable 0.3.x interface"
+            "unsupported Lensfun {version}; CalibRaw needs the Lensfun {SUPPORTED} master commit pinned as workspace.metadata.lensfun_revision"
         ));
     }
     Ok(version)

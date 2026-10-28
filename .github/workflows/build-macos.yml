@@ -39,7 +39,8 @@ jobs:
       CARGO_INCREMENTAL: "0"
       RUST_BACKTRACE: "1"
       LIBRAW_PREFIX: /tmp/calibraw-libraw
-      PKG_CONFIG_PATH: /tmp/calibraw-libraw/lib/pkgconfig
+      LENSFUN_PREFIX: /tmp/calibraw-lensfun
+      PKG_CONFIG_PATH: /tmp/calibraw-libraw/lib/pkgconfig:/tmp/calibraw-lensfun/lib/pkgconfig
 
     steps:
       - name: Check out source
@@ -67,7 +68,7 @@ jobs:
         run: >-
           brew install
           autoconf automake libtool jpeg-turbo little-cms2 libomp
-          lensfun llvm pkg-config dylibbundler
+          cmake glib llvm pkg-config dylibbundler
 
       # Homebrew's LibRaw is a release that lacks newer cameras, so build the
       # pinned commit. Apple Clang has no built-in OpenMP, so LibRaw's OpenMP
@@ -83,6 +84,10 @@ jobs:
             "LDFLAGS=-L$jpeg_prefix/lib -L$libomp_prefix/lib -lomp" \
             "ax_cv_c_openmp=-Xpreprocessor -fopenmp"
 
+      # Homebrew's Lensfun is the 0.3.4 release, so build the pinned commit.
+      - name: Build pinned Lensfun
+        run: bash scripts/build_lensfun.sh "$LENSFUN_PREFIX"
+
       - name: Verify native toolchain
         run: |
           set -euxo pipefail
@@ -92,6 +97,7 @@ jobs:
           cargo --version
           pkg-config --modversion libraw
           pkg-config --modversion lensfun
+          cat "$LENSFUN_PREFIX/share/calibraw/lensfun-revision"
           test -d "$(brew --prefix llvm)/lib"
 
       - name: Build release application
@@ -164,7 +170,7 @@ jobs:
           test "$(sips -g pixelHeight "$verify_icon" | awk '/pixelHeight/ { print $2 }')" = "1024"
           rm -rf "$(dirname "$verify_iconset")"
 
-          lensfun_db="$(find "$(brew --prefix lensfun)/share/lensfun" -type f -name '*.xml' -print | head -n 1)"
+          lensfun_db="$(find "$LENSFUN_PREFIX/share/lensfun" -type f -name '*.xml' -print | head -n 1)"
           test -n "$lensfun_db"
           lensfun_db="$(dirname "$lensfun_db")"
           cp -a "$lensfun_db"/. "$contents/MacOS/lensfun/"
@@ -216,7 +222,7 @@ jobs:
             echo "Rust compiler: $(rustc --version)"
             echo "Target: ${{ matrix.target }}"
             echo "LibRaw: $(pkg-config --modversion libraw) ($(cat "$LIBRAW_PREFIX/share/calibraw/libraw-revision"))"
-            echo "Lensfun: $(pkg-config --modversion lensfun)"
+            echo "Lensfun: $(pkg-config --modversion lensfun) ($(cat "$LENSFUN_PREFIX/share/calibraw/lensfun-revision"))"
           } > "$contents/Resources/BUILD-INFO.txt"
 
           # Ad-hoc signatures are only applied to main and version-tag builds.

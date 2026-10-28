@@ -1,6 +1,7 @@
 //! Perspective correction: a rotation of a virtual camera about the photo's centre that makes
 //! converging lines parallel, and its automatic and guided estimates.
 
+use super::bisect_largest;
 use super::mapping::Homography;
 use serde::{Deserialize, Serialize};
 use std::ops::RangeInclusive;
@@ -103,16 +104,9 @@ impl PerspectiveCorrection {
             return Self::default();
         }
         if value.magnification_slack(1.0) < 0.0 {
-            let mut low = 0.0f32;
-            let mut high = 1.0f32;
-            for _ in 0..24 {
-                let mid = 0.5 * (low + high);
-                if value.magnification_slack(mid) >= 0.0 {
-                    low = mid;
-                } else {
-                    high = mid;
-                }
-            }
+            // Exact in single precision: 24 halvings stay within its mantissa.
+            let low =
+                bisect_largest(24, |scale| value.magnification_slack(scale as f32) >= 0.0) as f32;
             value.pitch_degrees *= low;
             value.yaw_degrees *= low;
         }

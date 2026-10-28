@@ -22,6 +22,10 @@ jobs:
     name: Format, lint, and tests
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      CALIBRAW_REQUIRE_LENSFUN: "1"
+      PKG_CONFIG_PATH: /tmp/calibraw-lensfun/lib/pkgconfig
+      LD_LIBRARY_PATH: /tmp/calibraw-lensfun/lib
 
     steps:
       - name: Check out source
@@ -33,10 +37,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libclang-dev libraw-dev liblensfun-dev liblensfun-data-v1 \
+            build-essential cmake pkg-config libclang-dev libraw-dev \
             libasound2-dev libdbus-1-dev libegl1-mesa-dev libfontconfig1-dev libglib2.0-dev \
             libgl1-mesa-dev libudev-dev libwayland-dev libx11-dev libxkbcommon-dev \
             mesa-vulkan-drivers
+
+      - name: Build pinned Lensfun
+        run: bash scripts/build_lensfun.sh /tmp/calibraw-lensfun
 
       - name: Read the Rust version from rust-toolchain.toml
         id: rust

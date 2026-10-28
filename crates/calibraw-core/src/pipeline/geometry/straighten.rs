@@ -2,7 +2,7 @@
 //! straight edges horizontal or vertical.
 
 use super::lines::{distinct_segments, LineAnalysisImage, LineSegment};
-use super::mapping::{apply_2x2, multiply_2x2, skew_and_flip};
+use super::mapping::{apply_2x2, skew_flip};
 use super::GeometryTransform;
 
 /// Segments tilted further than this from both axes are treated as diagonal scene content.
@@ -133,8 +133,7 @@ fn votes(
     let perspective = geometry
         .perspective
         .homography([width as f64, height as f64]);
-    let [shear, flip] = skew_and_flip(geometry);
-    let skew_flip = multiply_2x2(shear, flip);
+    let skew_flip = skew_flip(geometry);
     let transform = |[x, y]: [f32; 2]| {
         apply_2x2(skew_flip, [f64::from(x), f64::from(y)]).map(|value| value as f32)
     };

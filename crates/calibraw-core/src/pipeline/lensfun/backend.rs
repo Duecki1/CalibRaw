@@ -30,11 +30,13 @@ mod ffi {
 }
 
 use ffi::{
-    lfCamera, lfDatabase, lfLens, lfModifier, lf_db_destroy, lf_db_find_cameras,
-    lf_db_find_cameras_ext, lf_db_find_lenses_hd, lf_db_get_lenses, lf_db_load, lf_db_load_file,
-    lf_db_new, lf_free, lf_mlstr_get, lf_modifier_add_coord_callback_scale,
-    lf_modifier_apply_color_modification, lf_modifier_apply_subpixel_geometry_distortion,
-    lf_modifier_destroy, lf_modifier_get_auto_scale, lf_modifier_initialize, lf_modifier_new,
+    lfCamera, lfDatabase, lfLens, lfModifier, lf_db_create, lf_db_destroy, lf_db_find_cameras,
+    lf_db_find_cameras_ext, lf_db_find_lenses, lf_db_get_lenses, lf_db_load, lf_db_load_path,
+    lf_free, lf_mlstr_get, lf_modifier_apply_color_modification,
+    lf_modifier_apply_subpixel_geometry_distortion, lf_modifier_create, lf_modifier_destroy,
+    lf_modifier_enable_distortion_correction, lf_modifier_enable_scaling,
+    lf_modifier_enable_tca_correction, lf_modifier_enable_vignetting_correction,
+    lf_modifier_get_auto_scale,
 };
 
 const LF_NO_ERROR: ffi::lfError = ffi::LF_NO_ERROR;
@@ -178,11 +180,7 @@ pub(super) fn apply(raw: &LoadedRaw, selection: &LensfunLens) -> Result<LoadedRa
         if scale_probe_flags & (LF_MODIFY_DISTORTION | LF_MODIFY_GEOMETRY | LF_MODIFY_TCA) != 0 {
             let scale = unsafe { lf_modifier_get_auto_scale(scale_probe_modifier.0, 0) };
             if scale.is_finite() && scale > 0.0 {
-                let scaling_added =
-                    unsafe { lf_modifier_add_coord_callback_scale(modifier.0, scale, 0) };
-                if scaling_added != 0 {
-                    geometry_flags |= LF_MODIFY_SCALE;
-                }
+                geometry_flags = unsafe { lf_modifier_enable_scaling(modifier.0, scale) };
             }
         }
         geometry_modifier = Some(modifier);

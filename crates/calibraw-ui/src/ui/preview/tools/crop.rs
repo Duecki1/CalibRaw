@@ -27,20 +27,17 @@ impl Preview {
             return;
         }
         let pointer = ui.input(|input| input.pointer.interact_pos());
-        let primary_pressed = ui.input(|input| input.pointer.primary_pressed())
-            && pointer.is_some_and(|point| {
-                viewport_rect.contains(point) && ui.ctx().layer_id_at(point) == Some(ui.layer_id())
-            });
+        let on_top = |point: Pos2| ui.ctx().layer_id_at(point) == Some(ui.layer_id());
+        let over_preview = |point: Pos2| viewport_rect.contains(point) && on_top(point);
+        let primary_pressed =
+            ui.input(|input| input.pointer.primary_pressed()) && pointer.is_some_and(over_preview);
         let primary_down = ui.input(|input| input.pointer.primary_down());
         let primary_released = ui.input(|input| input.pointer.primary_released());
         let quarter_turns = app.develop.geometry.quarter_turns % 4;
 
         if app.develop_ui.crop_tool == CropTool::Guides {
             let secondary_clicked = ui.input(|input| input.pointer.secondary_clicked())
-                && pointer.is_some_and(|point| {
-                    viewport_rect.contains(point)
-                        && ui.ctx().layer_id_at(point) == Some(ui.layer_id())
-                });
+                && pointer.is_some_and(over_preview);
             Self::handle_guide_interaction(
                 ui,
                 app,
@@ -98,7 +95,7 @@ impl Preview {
                         let target = nearest_straight_axis_degrees(angle);
                         let correction = normalize_degrees(target - angle);
                         let rotation = app.develop.geometry.rotation_degrees + correction;
-                        app.set_straighten_rotation(rotation, source_width, source_height);
+                        app.set_straighten_rotation(rotation);
                         // One line levels the photo; the crop handles return.
                         // A tap too short to measure keeps the tool active.
                         app.develop_ui.crop_tool = CropTool::Crop;
@@ -148,9 +145,7 @@ impl Preview {
             )),
             None => ui
                 .input(|input| input.pointer.hover_pos())
-                .filter(|point| {
-                    grabbable(*point) && ui.ctx().layer_id_at(*point) == Some(ui.layer_id())
-                })
+                .filter(|point| grabbable(*point) && on_top(*point))
                 .and_then(|point| crop_handle_at(display_crop_rect, point, CROP_HANDLE_RADIUS)),
         };
         if let Some(handle) = cursor_handle {

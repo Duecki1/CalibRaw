@@ -169,6 +169,10 @@ impl Default for GeometryTransform {
 
 impl GeometryTransform {
     pub const MIN_CROP_EXTENT: f32 = 0.01;
+    /// Largest [`Self::rotation_degrees`] either way.
+    pub const MAX_ROTATION_DEGREES: f32 = 45.0;
+    /// Largest skew either way, degrees.
+    pub const MAX_SKEW_DEGREES: f32 = 30.0;
     /// Largest [`Self::aspect_stretch`] either way, which doubles or halves the output's width
     /// over its height.
     pub const MAX_ASPECT_STRETCH: f32 = 100.0;
@@ -185,9 +189,17 @@ impl GeometryTransform {
         self.crop[3] = self.crop[3].clamp(self.crop[1] + Self::MIN_CROP_EXTENT, 1.0);
         self.quarter_turns %= 4;
         self.aspect_ratio = self.aspect_ratio.sanitized();
-        self.rotation_degrees = finite_clamp(self.rotation_degrees, -45.0, 45.0);
-        self.horizontal_skew_degrees = finite_clamp(self.horizontal_skew_degrees, -30.0, 30.0);
-        self.vertical_skew_degrees = finite_clamp(self.vertical_skew_degrees, -30.0, 30.0);
+        self.rotation_degrees = finite_clamp(
+            self.rotation_degrees,
+            -Self::MAX_ROTATION_DEGREES,
+            Self::MAX_ROTATION_DEGREES,
+        );
+        for skew in [
+            &mut self.horizontal_skew_degrees,
+            &mut self.vertical_skew_degrees,
+        ] {
+            *skew = finite_clamp(*skew, -Self::MAX_SKEW_DEGREES, Self::MAX_SKEW_DEGREES);
+        }
         self.perspective = self.perspective.sanitized();
         self.aspect_stretch = finite_clamp(
             self.aspect_stretch,
@@ -310,16 +322,9 @@ impl GeometryTransform {
 
         let size = mapping.crop_size();
         let frame = mapping.frame_size_f64();
-        let mut low = 0.0_f64;
-        let mut high = 1.0_f64;
-        for _ in 0..32 {
-            let mid = (low + high) * 0.5;
-            if feasible_crop_centers(&mapping, [size[0] * mid, size[1] * mid]).is_some() {
-                low = mid;
-            } else {
-                high = mid;
-            }
-        }
+        let low = bisect_largest(32, |scale| {
+            feasible_crop_centers(&mapping, [size[0] * scale, size[1] * scale]).is_some()
+        });
 
         let scale = (low * 0.999_999).clamp(0.0, 1.0);
         let min_extent = f64::from(Self::MIN_CROP_EXTENT);
@@ -359,18 +364,10 @@ impl GeometryTransform {
             return fitted.crop;
         }
 
-        let mut low = 0.0_f32;
-        let mut high = 1.0_f32;
-        for _ in 0..28 {
-            let mid = (low + high) * 0.5;
-            let candidate = lerp_crop(start, proposed, mid);
-            if crop_fits(&mapping.with_crop(candidate)) {
-                low = mid;
-            } else {
-                high = mid;
-            }
-        }
-        sanitized_crop(lerp_crop(start, proposed, low * 0.999_999))
+        let low = bisect_largest(28, |t| {
+            crop_fits(&mapping.with_crop(lerp_crop(start, proposed, t as f32)))
+        });
+        sanitized_crop(lerp_crop(start, proposed, (low * 0.999_999) as f32))
     }
 
     /// Whether `crop` (normalized to the corrected frame) lies inside the transformed source.
@@ -518,6 +515,22 @@ impl GeometryTransform {
 
 /// The displayed top and right side, as directions in y-down coordinates.
 const DISPLAYED_SIDES: [[i8; 2]; 2] = [[0, -1], [1, 0]];
+
+/// The largest `t` in `0..=1` at which `fits` holds, to `iterations` halvings, for a `fits` that
+/// holds up to some limit and fails beyond it; 0 when it fails everywhere above 0.
+fn bisect_largest(iterations: usize, mut fits: impl FnMut(f64) -> bool) -> f64 {
+    let mut low = 0.0;
+    let mut high = 1.0;
+    for _ in 0..iterations {
+        let mid = 0.5 * (low + high);
+        if fits(mid) {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    low
+}
 
 fn is_zero(value: &f32) -> bool {
     *value == 0.0

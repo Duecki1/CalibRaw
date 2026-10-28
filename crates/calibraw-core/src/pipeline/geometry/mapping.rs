@@ -156,19 +156,8 @@ impl GeometryMapping {
             f64::from(source_height.max(1)),
         ];
         let perspective = geometry.perspective.homography(source_size);
-        let corners = rectangle_corners(source_size).map(|corner| perspective.apply_f64(corner));
-        let min = [0, 1].map(|axis| {
-            corners
-                .iter()
-                .map(|corner| corner[axis])
-                .fold(f64::INFINITY, f64::min)
-        });
-        let max = [0, 1].map(|axis| {
-            corners
-                .iter()
-                .map(|corner| corner[axis])
-                .fold(f64::NEG_INFINITY, f64::max)
-        });
+        let [min, max] =
+            bounds(&rectangle_corners(source_size).map(|corner| perspective.apply_f64(corner)));
         let frame_from_source = perspective.then(Homography::translation([-min[0], -min[1]]));
         let linear = linear_part(geometry);
         let mut mapping = Self {
@@ -368,15 +357,7 @@ impl GeometryMapping {
 
     /// The crop's corners in source pixels, in the orientation of [`Self::frame_corners`].
     pub(super) fn crop_source_corners(&self) -> [[f64; 2]; 4] {
-        let [half_width, half_height] = self.crop_size.map(|value| value * 0.5);
-        [
-            [-half_width, -half_height],
-            [half_width, -half_height],
-            [half_width, half_height],
-            [-half_width, half_height],
-        ]
-        .map(|corner| {
-            let offset = apply_2x2(self.linear_inverse, corner);
+        self.crop_corner_offsets(self.crop_size).map(|offset| {
             self.source_from_frame.apply_f64([
                 self.crop_center[0] + offset[0],
                 self.crop_center[1] + offset[1],
@@ -384,11 +365,25 @@ impl GeometryMapping {
         })
     }
 
-    /// `A⁻¹ · offset`: the frame offset that `A` turns into the output offset `offset`, before
-    /// `Σ`.
-    pub(super) fn unrotate(&self, offset: [f64; 2]) -> [f64; 2] {
-        apply_2x2(self.linear_inverse, offset)
+    /// The corners of a crop of `size` (output pixels before `Σ` and quarter turns) relative to
+    /// its centre, frame pixels: `A⁻¹` of the output rectangle's corners, in the orientation of
+    /// [`Self::frame_corners`].
+    pub(super) fn crop_corner_offsets(&self, size: [f64; 2]) -> [[f64; 2]; 4] {
+        let [width, height] = size;
+        rectangle_corners(size)
+            .map(|[x, y]| apply_2x2(self.linear_inverse, [x - width * 0.5, y - height * 0.5]))
     }
+}
+
+/// `[min, max]` of `points` along each axis.
+pub(super) fn bounds(points: &[[f64; 2]]) -> [[f64; 2]; 2] {
+    let fold = |start: f64, pick: fn(f64, f64) -> f64| {
+        [0, 1].map(|axis| points.iter().map(|point| point[axis]).fold(start, pick))
+    };
+    [
+        fold(f64::INFINITY, f64::min),
+        fold(f64::NEG_INFINITY, f64::max),
+    ]
 }
 
 fn rectangle_corners(size: [f64; 2]) -> [[f64; 2]; 4] {
@@ -402,20 +397,20 @@ fn rectangle_corners(size: [f64; 2]) -> [[f64; 2]; 4] {
 
 /// `R · S · F`: the straighten rotation after the skews after the flips.
 fn linear_part(geometry: GeometryTransform) -> [[f64; 2]; 2] {
-    let [shear, flip] = skew_and_flip(geometry);
     let (sin, cos) = f64::from(geometry.rotation_degrees).to_radians().sin_cos();
-    multiply_2x2([[cos, -sin], [sin, cos]], multiply_2x2(shear, flip))
+    multiply_2x2([[cos, -sin], [sin, cos]], skew_flip(geometry))
 }
 
-/// The skew matrix `S` and the flip matrix `F` of `geometry`.
-pub(super) fn skew_and_flip(geometry: GeometryTransform) -> [[[f64; 2]; 2]; 2] {
+/// `S · F`: the skews of `geometry` after its flips, which act on edge angles before the
+/// rotation does.
+pub(super) fn skew_flip(geometry: GeometryTransform) -> [[f64; 2]; 2] {
     let fx = if geometry.flip_horizontal { -1.0 } else { 1.0 };
     let fy = if geometry.flip_vertical { -1.0 } else { 1.0 };
     let shx = f64::from(geometry.horizontal_skew_degrees)
         .to_radians()
         .tan();
     let shy = f64::from(geometry.vertical_skew_degrees).to_radians().tan();
-    [[[1.0, shx], [shy, 1.0]], [[fx, 0.0], [0.0, fy]]]
+    multiply_2x2([[1.0, shx], [shy, 1.0]], [[fx, 0.0], [0.0, fy]])
 }
 
 /// The quarter turns as a map of offsets: the first turns `(x, y)` into `(-y, x)`.

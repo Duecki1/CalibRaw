@@ -13,6 +13,7 @@
 //! wrong guess distorts the whole photo. Without convincing verticals the photo is only
 //! levelled, as automatic straightening does.
 
+use super::super::bisect_largest;
 use super::super::crop_fit::polygon_area;
 use super::super::lines::{distinct_segments, LineAnalysisImage, LineSegment};
 use super::super::mapping::GeometryMapping;
@@ -224,14 +225,9 @@ impl Fit {
             PerspectiveCorrection::MAX_DEGREES.into(),
             CORRECTION_GRID_STEP_DEGREES,
         )
-        .flat_map(|vertical| {
-            let angles = self.angles(vertical);
-            grid(MAX_TILT_DEGREES.into(), ROLL_GRID_STEP_DEGREES)
-                .map(|roll| {
-                    let cost = self.cost_of(&angles, roll, ROBUST_SCALES_DEGREES[0]);
-                    ([vertical, roll], cost)
-                })
-                .collect::<Vec<_>>()
+        .map(|vertical| {
+            let (roll, cost) = self.best_roll(vertical);
+            ([vertical, roll], cost)
         })
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map_or([0.0; 2], |(params, _)| params)
@@ -239,11 +235,17 @@ impl Fit {
 
     /// The best roll on a coarse grid, without a correction.
     fn roll_start(&self) -> f64 {
-        let angles = self.angles(0.0);
+        self.best_roll(0.0).0
+    }
+
+    /// The roll on a coarse grid with the lowest cost after the vertical correction `vertical`,
+    /// and that cost.
+    fn best_roll(&self, vertical: f64) -> (f64, f64) {
+        let angles = self.angles(vertical);
         grid(MAX_TILT_DEGREES.into(), ROLL_GRID_STEP_DEGREES)
             .map(|roll| (roll, self.cost_of(&angles, roll, ROBUST_SCALES_DEGREES[0])))
             .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map_or(0.0, |(roll, _)| roll)
+            .unwrap_or((0.0, f64::INFINITY))
     }
 
     /// Refines the parameters marked `free` from `start`, narrowing the robust scale.
@@ -320,17 +322,10 @@ impl Fit {
         if self.shown_fraction(vertical, roll) >= MIN_SHOWN_FRACTION {
             return [vertical, roll];
         }
-        let mut low = 0.0;
-        let mut high = 1.0;
-        for _ in 0..16 {
-            let mid = 0.5 * (low + high);
-            if self.shown_fraction(vertical * mid, roll) >= MIN_SHOWN_FRACTION {
-                low = mid;
-            } else {
-                high = mid;
-            }
-        }
-        [vertical * low, roll]
+        let scale = bisect_largest(16, |scale| {
+            self.shown_fraction(vertical * scale, roll) >= MIN_SHOWN_FRACTION
+        });
+        [vertical * scale, roll]
     }
 
     /// The share of the photo the largest crop of its own shape shows after the vertical

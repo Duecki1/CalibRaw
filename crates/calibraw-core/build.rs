@@ -28,13 +28,16 @@ fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os == "android" {
         configure_android_libraw(build_metadata.android_min_sdk);
-        configure_android_lensfun(&build_metadata);
+        configure_android_lensfun();
     } else if target_os == "ios" {
         configure_ios_libraw();
         configure_ios_lensfun();
     } else {
-        configure_desktop_libraw();
+        // Lensfun first: LibRaw's probe can add a system library folder to the
+        // link search path, which would otherwise find a distribution Lensfun
+        // before the pinned one.
         configure_desktop_lensfun();
+        configure_desktop_libraw();
     }
 }
 
@@ -219,7 +222,7 @@ fn configure_android_libraw(android_min_sdk: u32) {
     generate_bindings(&header, &[root.join("include")], Some(android_min_sdk));
 }
 
-fn configure_android_lensfun(build_metadata: &workspace_metadata::WorkspaceMetadata) {
+fn configure_android_lensfun() {
     let target = std::env::var("TARGET").expect("Cargo did not set TARGET");
     let abi =
         android_abi(&target).unwrap_or_else(|| panic!("unsupported Android target: {target}"));
@@ -247,16 +250,15 @@ fn configure_android_lensfun(build_metadata: &workspace_metadata::WorkspaceMetad
         println!("cargo:rustc-link-lib=static={library}");
     }
 
-    let version = supported_lensfun_header_version(&header);
-    assert_eq!(
-        version.to_string(),
-        build_metadata.lensfun_revision.as_str(),
-        "Android Lensfun headers do not match workspace.metadata.lensfun_revision"
-    );
+    let version = supported_lensfun_header_version(&header).unwrap_or_else(|error| {
+        panic!("{error}. Restage it with `cargo xtask build-android-lensfun {abi}`.")
+    });
     generate_lensfun_bindings(&header, &[root.join("include")]);
     println!("cargo:rustc-env=CALIBRAW_LENSFUN_BUILD_VERSION={version}");
     println!("cargo:rustc-cfg=lensfun_available");
 }
+
+const LENSFUN_BUILD_HINT: &str = "Build the pinned Lensfun with scripts/build_lensfun.sh and add its lib/pkgconfig to PKG_CONFIG_PATH to enable it.";
 
 fn configure_desktop_lensfun() {
     for variable in [
@@ -268,32 +270,41 @@ fn configure_desktop_lensfun() {
     }
     println!("cargo:rerun-if-changed=build_support/lensfun_version.rs");
 
+    let require_lensfun = std::env::var("CALIBRAW_REQUIRE_LENSFUN")
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"));
     let lensfun = match pkg_config::Config::new().probe("lensfun") {
         Ok(lensfun) => lensfun,
         Err(error) => {
-            if std::env::var("CALIBRAW_REQUIRE_LENSFUN")
-                .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
-            {
+            if require_lensfun {
                 panic!(
                     "Lensfun is required for this production build, but pkg-config could not find it: {error}"
                 );
             }
             println!(
-                "cargo:warning=Lensfun was not found through pkg-config; lens correction will be disabled. Install a supported Lensfun 0.3.2 through 0.3.4 development package to enable it."
+                "cargo:warning=Lensfun was not found through pkg-config; lens correction will be disabled. {LENSFUN_BUILD_HINT}"
             );
             return;
         }
     };
 
-    let version = lensfun_version::validate_supported_lensfun_version(&lensfun.version)
-        .unwrap_or_else(|error| panic!("{error}"));
+    let version = match lensfun_version::validate_supported_lensfun_version(&lensfun.version) {
+        Ok(version) => version,
+        Err(error) if require_lensfun => panic!("{error}"),
+        Err(error) => {
+            println!(
+                "cargo:warning={error}; lens correction will be disabled. {LENSFUN_BUILD_HINT}"
+            );
+            return;
+        }
+    };
     let header = find_lensfun_header(&lensfun.include_paths).unwrap_or_else(|| {
         panic!(
             "Lensfun {} was found, but lensfun.h was not present in the pkg-config include paths: {:?}",
             lensfun.version, lensfun.include_paths
         )
     });
-    let header_version = supported_lensfun_header_version(&header);
+    let header_version =
+        supported_lensfun_header_version(&header).unwrap_or_else(|error| panic!("{error}"));
     if header_version != version {
         panic!(
             "Lensfun pkg-config reports {version}, but {} declares {header_version}; refusing to generate bindings from a mismatched ABI",
@@ -305,14 +316,16 @@ fn configure_desktop_lensfun() {
     println!("cargo:rustc-cfg=lensfun_available");
 }
 
-fn supported_lensfun_header_version(header: &Path) -> lensfun_version::LensfunVersion {
+fn supported_lensfun_header_version(
+    header: &Path,
+) -> Result<lensfun_version::LensfunVersion, String> {
     let source = std::fs::read_to_string(header)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", header.display()));
+        .map_err(|error| format!("could not read {}: {error}", header.display()))?;
     lensfun_version::parse_lensfun_header_version(&source)
         .and_then(|version| {
             lensfun_version::validate_supported_lensfun_version(&version.to_string())
         })
-        .unwrap_or_else(|error| panic!("{}: {error}", header.display()))
+        .map_err(|error| format!("{}: {error}", header.display()))
 }
 
 fn find_lensfun_header(include_paths: &[PathBuf]) -> Option<PathBuf> {
@@ -325,7 +338,7 @@ fn find_lensfun_header(include_paths: &[PathBuf]) -> Option<PathBuf> {
 fn generate_lensfun_bindings(header: &Path, include_paths: &[PathBuf]) {
     let bindings = binding_builder(header, include_paths)
         .allowlist_function(
-            "lf_(free|mlstr_get|db_new|db_destroy|db_load|db_load_file|db_find_cameras|db_find_cameras_ext|db_find_lenses_hd|db_get_lenses|modifier_new|modifier_destroy|modifier_initialize|modifier_get_auto_scale|modifier_add_coord_callback_scale|modifier_apply_subpixel_geometry_distortion|modifier_apply_color_modification)",
+            "lf_(free|mlstr_get|db_create|db_destroy|db_load|db_load_path|db_find_cameras|db_find_cameras_ext|db_find_lenses|db_get_lenses|modifier_create|modifier_destroy|modifier_enable_distortion_correction|modifier_enable_tca_correction|modifier_enable_vignetting_correction|modifier_enable_scaling|modifier_get_auto_scale|modifier_apply_subpixel_geometry_distortion|modifier_apply_color_modification)",
         )
         .allowlist_type(
             "lf(Camera|Lens|Database|Modifier|LensType|PixelFormat|ComponentRole|Error)",

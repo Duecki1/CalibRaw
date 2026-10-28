@@ -14,8 +14,6 @@ use super::estimate::PerspectiveEstimate;
 use super::fit::{levenberg_marquardt, LineView, Linearized};
 use super::PerspectiveCorrection;
 
-/// Largest straighten rotation, degrees, as the rotation slider allows.
-const MAX_ROLL_DEGREES: f64 = 45.0;
 /// Weight of a correction fitted to a single guide staying at its current value: the square
 /// of its change, degrees, against the squared tilt of the guides.
 const SINGLE_GUIDE_ANCHOR: f64 = 1e-4;
@@ -127,11 +125,12 @@ pub fn solve_guided_perspective(
         guides + anchors
     };
     let max = f64::from(PerspectiveCorrection::MAX_DEGREES);
+    let max_roll = f64::from(GeometryTransform::MAX_ROTATION_DEGREES);
     let clamp = |[vertical, horizontal, roll]: [f64; 3]| {
         [
             vertical.clamp(-max, max),
             horizontal.clamp(-max, max),
-            roll.clamp(-MAX_ROLL_DEGREES, MAX_ROLL_DEGREES),
+            roll.clamp(-max_roll, max_roll),
         ]
     };
     let [vertical, horizontal, roll] = levenberg_marquardt(start, free, linearize, cost, clamp);

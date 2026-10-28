@@ -35,6 +35,8 @@
 //!   CUDA and Windows DirectML), removed from the model folder on desktop
 //!   start-up (`calibraw-ai`, `runtime/package.rs`, which lists them, and
 //!   `calibraw-ui`, `app/ai/models.rs`).
+//! - The Lensfun 0.3.4 database Android copied into app data, removed on
+//!   start-up (`calibraw-ui`, `app/lifecycle/startup.rs`).
 //!
 //! The start-up removals run through `remove_retired_app_data`
 //! (`calibraw-ui`, `app/lifecycle/startup.rs`). The desktop model folder and

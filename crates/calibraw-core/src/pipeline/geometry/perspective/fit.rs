@@ -1,7 +1,7 @@
 //! What the automatic and guided corrections share: how a line of the source is displayed under
 //! a candidate correction, and the damped least-squares fit of the corrections and the roll.
 
-use super::super::mapping::{apply_2x2, multiply_2x2, skew_and_flip};
+use super::super::mapping::{apply_2x2, skew_flip};
 use super::super::GeometryTransform;
 use super::PerspectiveCorrection;
 
@@ -29,12 +29,11 @@ impl LineView {
         height: usize,
         focal_length_35mm: f32,
     ) -> Self {
-        let [shear, flip] = skew_and_flip(geometry);
         Self {
             size: [width as f64, height as f64],
             geometry,
             focal_length_35mm,
-            skew_flip: multiply_2x2(shear, flip),
+            skew_flip: skew_flip(geometry),
             turn_degrees: 90.0 * f64::from(geometry.quarter_turns % 4),
         }
     }

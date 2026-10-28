@@ -24,6 +24,23 @@ To move the pin, update `Cargo.toml`, `scripts/build_libraw.sh`,
 `android/app/src/main/cpp/CMakeLists.txt`, the Flatpak manifest and the
 `libraw-<commit>` cache key in `build-linux-appimage.yml` together.
 
+Lensfun works the same way: every platform builds the master commit pinned as
+`lensfun_revision` and bundles its profile database, because the last release,
+0.3.4 from 2023, lacks newer lenses. Master's API differs from 0.3.x, so a
+distribution Lensfun is not used; without the pinned build, lens correction is
+disabled. To build it on Linux or macOS:
+
+```sh
+scripts/build_lensfun.sh "$HOME/.local/calibraw-lensfun"
+export PKG_CONFIG_PATH="$HOME/.local/calibraw-lensfun/lib/pkgconfig"
+export LD_LIBRARY_PATH="$HOME/.local/calibraw-lensfun/lib"
+```
+
+Combine these with the LibRaw paths above when using both. To move the pin,
+update `Cargo.toml`, `scripts/build_lensfun.sh`,
+`android/app/src/main/cpp/CMakeLists.txt`, the Flatpak manifest and the
+`lensfun-<commit>` cache key in `build-linux-appimage.yml` together.
+
 ## Checks
 
 Ordinary CI runs these on every push and pull request; run them before

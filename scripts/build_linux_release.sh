@@ -17,6 +17,7 @@ rust_version="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
 source "$HOME/.cargo/env"
 
 bash scripts/build_libraw.sh "$LIBRAW_PREFIX"
+bash scripts/build_lensfun.sh "$LENSFUN_PREFIX"
 
 LIBCLANG_SO="$(find /usr/lib -path '*/llvm-*/lib/libclang.so*' -print -quit 2>/dev/null || true)"
 if [ -n "$LIBCLANG_SO" ]; then
@@ -26,6 +27,7 @@ fi
 pkg-config --modversion libraw
 cat "$LIBRAW_PREFIX/share/calibraw/libraw-revision"
 pkg-config --modversion lensfun
+cat "$LENSFUN_PREFIX/share/calibraw/lensfun-revision"
 REVISION="$(git rev-parse --verify HEAD)"
 export CALIBRAW_REQUIRE_COMMITTED_SOURCE=1
 export CALIBRAW_SOURCE_REVISION="$REVISION"

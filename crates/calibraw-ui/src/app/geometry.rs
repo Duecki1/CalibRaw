@@ -58,20 +58,16 @@ pub(crate) type AutoGeometryResult = Result<Option<AutoGeometryEstimate>, String
 
 impl CalibRawApp {
     /// Sets the fine rotation and refits the crop. Returns whether the rotation changed.
-    pub(crate) fn set_straighten_rotation(
-        &mut self,
-        degrees: f32,
-        source_width: u32,
-        source_height: u32,
-    ) -> bool {
-        let previous = self.develop.geometry.rotation_degrees;
-        self.develop.geometry.rotation_degrees = degrees.clamp(-45.0, 45.0);
-        if (self.develop.geometry.rotation_degrees - previous).abs() <= 1e-4 {
-            return false;
-        }
-        self.refit_crop(source_width, source_height);
-        self.note_geometry_changed();
-        true
+    pub(crate) fn set_straighten_rotation(&mut self, degrees: f32) -> bool {
+        self.set_rotation_and_perspective(degrees, self.develop.geometry.perspective)
+    }
+
+    /// Width and height of the open photo's source, in pixels.
+    pub(crate) fn source_dimensions(&self) -> Option<(u32, u32)> {
+        self.develop
+            .loaded_raw
+            .as_ref()
+            .map(|raw| (raw.width, raw.height))
     }
 
     /// Restores the last crop the user set, in the chosen aspect ratio, and fits it inside the
@@ -229,12 +225,7 @@ impl CalibRawApp {
     /// Fits the perspective correction and straighten rotation to the perspective guides and
     /// refits the crop.
     pub(crate) fn apply_perspective_guides(&mut self) {
-        let Some((width, height)) = self
-            .develop
-            .loaded_raw
-            .as_ref()
-            .map(|raw| (raw.width, raw.height))
-        else {
+        let Some((width, height)) = self.source_dimensions() else {
             return;
         };
         if let Some(solved) = solve_guided_perspective(
@@ -255,15 +246,11 @@ impl CalibRawApp {
         rotation_degrees: f32,
         perspective: PerspectiveCorrection,
     ) -> bool {
-        let Some((width, height)) = self
-            .develop
-            .loaded_raw
-            .as_ref()
-            .map(|raw| (raw.width, raw.height))
-        else {
+        let Some((width, height)) = self.source_dimensions() else {
             return false;
         };
-        let rotation_degrees = rotation_degrees.clamp(-45.0, 45.0);
+        let max = GeometryTransform::MAX_ROTATION_DEGREES;
+        let rotation_degrees = rotation_degrees.clamp(-max, max);
         let perspective = perspective.sanitized();
         let geometry = &mut self.develop.geometry;
         if (rotation_degrees - geometry.rotation_degrees).abs() <= 1e-4
