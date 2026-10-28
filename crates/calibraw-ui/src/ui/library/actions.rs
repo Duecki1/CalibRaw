@@ -179,7 +179,6 @@ fn duplicate_item() -> MenuItem<'static> {
     MenuItem::new("Duplicate").icon(regular::COPY_SIMPLE)
 }
 
-/// HDR merge and focus stacking, for two or more photos.
 /// How the photos are read: as colour or black-and-white negatives, each
 /// estimated when it is next decoded, or as they are.
 fn film_menu(ui: &mut Ui) -> Option<FilmSource> {
@@ -204,6 +203,7 @@ fn film_menu(ui: &mut Ui) -> Option<FilmSource> {
     chosen
 }
 
+/// HDR merge and focus stacking, for two or more photos.
 fn merge_menu(ui: &mut Ui) -> Option<super::MergeKind> {
     let mut chosen = None;
     for (kind, help) in [

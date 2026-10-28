@@ -576,16 +576,11 @@ impl Sidebar {
                 &effect_frame,
             )
         } else {
-            let film_negative = if app.develop.exposure.film.is_positive() {
-                mask_effects::FilmNegativeTile::Offered
-            } else {
-                mask_effects::FilmNegativeTile::Added
-            };
             let (changed, film_picked) = Self::show_effect_components(
                 ui,
                 &mut app.masks.stack.global_effects,
                 true,
-                film_negative,
+                mask_effects::FilmNegativeTile::for_film(&app.develop.exposure.film),
                 &effect_frame,
             );
             if film_picked {
@@ -616,7 +611,7 @@ impl Sidebar {
         }
     }
 
-    /// The effect an Add effect pick adds to the global effects. The film
+    /// The effect of an Add effect `pick` of the global effects. The film
     /// negative tile instead develops the photo as a negative.
     fn take_film_negative_pick(
         ui: &Ui,
@@ -632,11 +627,7 @@ impl Sidebar {
 
     /// Develops the photo as a film negative and shows its card, which leads
     /// the Light section of the vertical layout.
-    pub(super) fn start_film_negative(
-        ctx: &egui::Context,
-        app: &mut CalibRawApp,
-        layout: ScreenLayout,
-    ) {
+    fn start_film_negative(ctx: &egui::Context, app: &mut CalibRawApp, layout: ScreenLayout) {
         if !app.enable_film_negative() {
             return;
         }

@@ -21,7 +21,8 @@
 //! `film_positive` in scene_source.wgsl applies this on the GPU and
 //! [`FilmNegative::positive`] on the CPU, for pickers.
 
-use super::{ExposureParams, GeometryTransform, LoadedRaw};
+use super::sigmoid::MIDDLE_GREY;
+use super::{CfaKind, ExposureParams, GeometryTransform, LoadedRaw};
 use crate::pipeline::geometry::GeometryInverseMap;
 use serde::{Deserialize, Serialize};
 
@@ -49,38 +50,6 @@ impl FilmSource {
         match self {
             Self::Positive | Self::NegativeToEstimate(_) => None,
             Self::Negative(negative) => Some(negative),
-        }
-    }
-}
-
-/// What [`ExposureParams::settle_film`] did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FilmSettlement {
-    /// There was no negative to estimate.
-    Unchanged,
-    Estimated,
-    /// The photo showed no negative, so it is developed as it is.
-    NotFound,
-}
-
-impl ExposureParams {
-    /// Estimates a [`FilmSource::NegativeToEstimate`] from `raw`, the photo's
-    /// decoded source, inside the crop of `geometry`, as the Film negative
-    /// card's Auto does. Every other source stays as it is.
-    pub fn settle_film(&mut self, raw: &LoadedRaw, geometry: GeometryTransform) -> FilmSettlement {
-        let FilmSource::NegativeToEstimate(stock) = self.film else {
-            return FilmSettlement::Unchanged;
-        };
-        let samples = raw.film_samples_in_view(geometry, self.black_point);
-        match FilmNegative::estimate(stock, &samples, None) {
-            Some(negative) => {
-                self.film = FilmSource::Negative(negative);
-                FilmSettlement::Estimated
-            }
-            None => {
-                self.film = FilmSource::Positive;
-                FilmSettlement::NotFound
-            }
         }
     }
 }
@@ -127,8 +96,6 @@ pub const MONOCHROME_DENSITY_WEIGHTS: [f32; 3] = [0.25, 0.5, 0.25];
 /// black finite. Matches `FILM_MIN_TRANSMITTANCE` in scene_source.wgsl.
 pub const FILM_MIN_TRANSMITTANCE: f32 = 1.0 / 16384.0;
 
-/// Scene middle grey, where the estimate puts the scan's median.
-const MIDDLE_GREY: f32 = 0.1845;
 /// Bounds that keep a hand-edited or damaged sidecar renderable. The largest
 /// exponent at the 14 stops of [`FILM_MIN_TRANSMITTANCE`] plus the largest
 /// print exposure stays below 2^128, within f32.
@@ -137,12 +104,19 @@ const EXPONENT_RANGE: std::ops::RangeInclusive<f32> = 0.2..=8.0;
 const PRINT_EXPOSURE_RANGE: std::ops::RangeInclusive<f32> = -40.0..=8.0;
 /// Red and blue exponents stay within this factor of green's.
 const MAX_CHANNEL_RATIO: f32 = 2.0;
+/// Highlight density, in stops, that a channel and green both need before
+/// the channel is balanced against green; thinner film shows too little of
+/// its dyes, and the channel keeps green's exponent.
+const MIN_BALANCE_DENSITY: f32 = 0.25;
 
 /// Sample values from this fraction of the white level up are clipped: light
 /// around the film, which tells nothing about it.
 const CLIPPED: f32 = 0.97;
 /// Samples along each axis of the region an estimate reads.
 const SAMPLE_GRID_EDGE: u32 = 256;
+/// Source pixels along each axis a picked area covers at least, so a click
+/// without a drag reads the few pixels around it.
+const MIN_AREA_EDGE: f32 = 6.0;
 /// Share of the brightest samples averaged into an estimated base.
 const BASE_SHARE: f32 = 0.005;
 /// Percentile of each channel's density taken as the scan's highlights.
@@ -176,12 +150,13 @@ impl FilmNegative {
             .iter()
             .map(|sample| density(*sample, base).map(|value| value.max(0.0)))
             .collect();
-        let brightness: Vec<f32> = densities.iter().map(|density| weighted(*density)).collect();
-        let surround = surround_density(&brightness);
+        let weighted_densities: Vec<f32> =
+            densities.iter().map(|density| weighted(*density)).collect();
+        let surround = surround_density(&weighted_densities);
         let picture: Vec<[f32; 3]> = densities
             .iter()
-            .zip(&brightness)
-            .filter(|(_, density)| **density < surround)
+            .zip(&weighted_densities)
+            .filter(|(_, weighted_density)| **weighted_density < surround)
             .map(|(density, _)| *density)
             .collect();
         if picture.len() < MIN_PICTURE_SAMPLES {
@@ -198,7 +173,9 @@ impl FilmNegative {
                     )
                 });
                 std::array::from_fn(|channel| {
-                    let ratio = if highlights[channel] > 0.25 && highlights[1] > 0.25 {
+                    let ratio = if highlights[channel] > MIN_BALANCE_DENSITY
+                        && highlights[1] > MIN_BALANCE_DENSITY
+                    {
                         highlights[1] / highlights[channel]
                     } else {
                         1.0
@@ -223,6 +200,7 @@ impl FilmNegative {
         if median <= f32::EPSILON {
             return None;
         }
+        // The scan's median goes to scene middle grey.
         negative.print_exposure = MIDDLE_GREY.log2() - median.log2();
         Some(negative.sanitized())
     }
@@ -260,10 +238,42 @@ impl FilmNegative {
         }
     }
 
-    /// The mean of the unclipped `samples` of an area chosen as unexposed
-    /// film, or `None` without any.
+    /// The base of an area chosen as unexposed film: the mean of its
+    /// `samples` ([`LoadedRaw::film_samples_in_area`]), or `None` without any.
     pub fn base_of_area(samples: &[[f32; 3]]) -> Option<[f32; 3]> {
         mean(samples)
+    }
+}
+
+/// What [`ExposureParams::settle_film`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FilmSettlement {
+    /// There was no negative to estimate.
+    Unchanged,
+    Estimated,
+    /// The photo showed no negative, so it is developed as it is.
+    NotFound,
+}
+
+impl ExposureParams {
+    /// Estimates a [`FilmSource::NegativeToEstimate`] from `raw`, the photo's
+    /// decoded source, inside the crop of `geometry`, as the Film negative
+    /// card's Auto does. Every other source stays as it is.
+    pub fn settle_film(&mut self, raw: &LoadedRaw, geometry: GeometryTransform) -> FilmSettlement {
+        let FilmSource::NegativeToEstimate(stock) = self.film else {
+            return FilmSettlement::Unchanged;
+        };
+        let samples = raw.film_samples_in_view(geometry, self.black_point);
+        match FilmNegative::estimate(stock, &samples, None) {
+            Some(negative) => {
+                self.film = FilmSource::Negative(negative);
+                FilmSettlement::Estimated
+            }
+            None => {
+                self.film = FilmSource::Positive;
+                FilmSettlement::NotFound
+            }
+        }
     }
 }
 
@@ -298,12 +308,12 @@ fn mean(samples: &[[f32; 3]]) -> Option<[f32; 3]> {
     Some(sum.map(|total| (total / samples.len() as f64) as f32))
 }
 
-/// The mean of the brightest [`BASE_SHARE`] of `samples`.
+/// The mean of the brightest [`BASE_SHARE`] of `samples`, at least one.
 fn brightest_mean(samples: &[[f32; 3]]) -> Option<[f32; 3]> {
-    let mut sorted: Vec<[f32; 3]> = samples.to_vec();
+    let mut sorted = samples.to_vec();
     sorted.sort_by(|a, b| weighted(*b).total_cmp(&weighted(*a)));
-    let count = ((sorted.len() as f32 * BASE_SHARE).ceil() as usize).clamp(1, sorted.len().max(1));
-    mean(&sorted[..count.min(sorted.len())])
+    let count = ((sorted.len() as f32 * BASE_SHARE).ceil() as usize).min(sorted.len());
+    mean(&sorted[..count])
 }
 
 /// The `fraction` (0–1) percentile of `values`; 0 without any.
@@ -394,15 +404,13 @@ impl LoadedRaw {
         second: [f32; 2],
         black_point: f32,
     ) -> Vec<[f32; 3]> {
-        let to_pixels =
-            |u: f32, extent: u32| (u.clamp(0.0, 1.0) * extent as f32).clamp(0.0, extent as f32);
+        let to_pixels = |u: f32, extent: u32| u.clamp(0.0, 1.0) * extent as f32;
         let x0 = to_pixels(first[0].min(second[0]), self.width);
         let x1 = to_pixels(first[0].max(second[0]), self.width);
         let y0 = to_pixels(first[1].min(second[1]), self.height);
         let y1 = to_pixels(first[1].max(second[1]), self.height);
-        // A click without a drag reads the few pixels around it.
-        let (x0, x1) = widen(x0, x1, 6.0, self.width);
-        let (y0, y1) = widen(y0, y1, 6.0, self.height);
+        let (x0, x1) = widen(x0, x1, MIN_AREA_EDGE, self.width);
+        let (y0, y1) = widen(y0, y1, MIN_AREA_EDGE, self.height);
         let edge = SAMPLE_GRID_EDGE / 2;
         let columns = ((x1 - x0).ceil() as u32).clamp(1, edge);
         let rows = ((y1 - y0).ceil() as u32).clamp(1, edge);
@@ -441,8 +449,8 @@ impl LoadedRaw {
             [raster[start], raster[start + 1], raster[start + 2]]
         } else if !self.raw_pixels.is_empty() {
             let period = match self.cfa_kind {
-                super::CfaKind::Bayer => 2,
-                super::CfaKind::XTrans => 6,
+                CfaKind::Bayer => 2,
+                CfaKind::XTrans => 6,
             };
             let (left, top) = (x - x % period, y - y % period);
             let mut sums = [0.0f32; 3];
@@ -450,6 +458,7 @@ impl LoadedRaw {
             for row in top..(top + period).min(self.height) {
                 for column in left..(left + period).min(self.width) {
                     let index = row as usize * width + column as usize;
+                    // The mosaic's second green (3) counts as green.
                     let channel = [0, 1, 2, 1][usize::from(self.color_indices[index].min(3))];
                     sums[channel] += self.normalized_sensor_value(index, black_point);
                     counts[channel] += 1;

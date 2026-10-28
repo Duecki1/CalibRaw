@@ -39,7 +39,7 @@ impl CalibRawApp {
         self.develop_ui.cancel_area_picker();
         let (Some(negative), Some(raw)) = (
             self.develop.exposure.film.negative().copied(),
-            self.develop.loaded_raw.clone(),
+            self.develop.loaded_raw.as_deref(),
         ) else {
             return;
         };
@@ -70,8 +70,7 @@ impl CalibRawApp {
     /// or an estimated one, and develops the photo as it. Reports a failure
     /// and returns false when the photo shows no negative to estimate.
     fn estimate_film_negative(&mut self, stock: FilmStock, base: Option<[f32; 3]>) -> bool {
-        let Some(raw) = self.develop.loaded_raw.clone() else {
-            self.ui.notice = Some("Open a photo first.".to_owned());
+        let Some(raw) = self.develop.loaded_raw.as_deref() else {
             return false;
         };
         let samples =

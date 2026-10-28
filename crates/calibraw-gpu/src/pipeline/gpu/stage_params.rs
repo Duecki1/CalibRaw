@@ -185,43 +185,41 @@ fn pack_film(
         FilmStock::Color => FILM_MODE_COLOR,
         FilmStock::BlackAndWhite => FILM_MODE_MONOCHROME,
     };
-    let multiplier = |channel: usize| {
+    let usable = |gain: f32| gain.is_finite() && gain > 0.0;
+    let multipliers: [f32; 3] = std::array::from_fn(|channel| {
         let gain = white_balance[channel];
-        if gain.is_finite() && gain > 0.0 {
+        if usable(gain) {
             gain
         } else {
             1.0
         }
-    };
-    let relative = |channel: usize| {
+    });
+    // 1 where the photo has no as-shot multiplier.
+    let relative: [f32; 3] = std::array::from_fn(|channel| {
         let as_shot = raw.wb_coeffs[channel];
-        if as_shot.is_finite() && as_shot > 0.0 {
-            multiplier(channel) / as_shot
+        if usable(as_shot) {
+            multipliers[channel] / as_shot
         } else {
             1.0
         }
+    });
+    let scene_gains = if raw.is_pre_demosaiced_raster() {
+        [1.0; 3]
+    } else {
+        multipliers
     };
-    let scene_gain = |channel| {
-        if raw.is_pre_demosaiced_raster() {
-            1.0
-        } else {
-            multiplier(channel)
-        }
-    };
-    let transform_gain = |channel| {
-        if camera_linear_raster {
-            multiplier(channel)
-        } else {
-            1.0
-        }
+    let transform_gains = if camera_linear_raster {
+        multipliers
+    } else {
+        [1.0; 3]
     };
     let [red, green, blue] = negative.base;
     let [red_exponent, green_exponent, blue_exponent] = negative.exponents;
     (
         [
-            red * scene_gain(0),
-            green * scene_gain(1),
-            blue * scene_gain(2),
+            red * scene_gains[0],
+            green * scene_gains[1],
+            blue * scene_gains[2],
             mode as f32,
         ],
         [
@@ -231,9 +229,9 @@ fn pack_film(
             negative.print_exposure,
         ],
         [
-            relative(0) / relative(1) / transform_gain(0),
-            1.0 / transform_gain(1),
-            relative(2) / relative(1) / transform_gain(2),
+            relative[0] / relative[1] / transform_gains[0],
+            1.0 / transform_gains[1],
+            relative[2] / relative[1] / transform_gains[2],
             0.0,
         ],
     )

@@ -182,23 +182,16 @@ impl Sidebar {
                     }
                 }
                 let selected_before = app.develop_ui.effect_component;
-                let film_negative = if app.develop.exposure.film.is_positive() {
-                    mask_effects::FilmNegativeTile::Offered
-                } else {
-                    mask_effects::FilmNegativeTile::Added
-                };
                 let picked = Self::show_mobile_effect_tabs(
                     ui,
                     &mut app.masks.stack.global_effects,
                     &mut app.develop_ui.effect_component,
-                    film_negative,
+                    mask_effects::FilmNegativeTile::for_film(&app.develop.exposure.film),
                     tab_height,
                     show_labels,
                 );
-                if picked == Some(mask_effects::EffectPick::FilmNegative) {
-                    Self::start_film_negative(ui.ctx(), app, ScreenLayout::Vertical);
-                }
-                let added = picked.and_then(mask_effects::EffectPick::effect).is_some();
+                let added = Self::take_film_negative_pick(ui, app, ScreenLayout::Vertical, picked)
+                    .is_some();
                 if added || selected_before != app.develop_ui.effect_component {
                     app.develop_ui.cancel_point_color_preview();
                     app.develop_ui.cancel_area_picker();

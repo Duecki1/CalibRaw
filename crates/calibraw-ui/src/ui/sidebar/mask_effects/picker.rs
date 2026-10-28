@@ -2,7 +2,8 @@
 //! every effect as an icon tile under its category.
 
 use super::{add_effect_buttons, effect_description, egui, MaskEffect, Ui};
-use crate::pipeline::{EffectComponent, MaskEffectCategory, MAX_EFFECT_COMPONENTS};
+use crate::app::FILM_NEGATIVE_CARD_TITLE;
+use crate::pipeline::{EffectComponent, FilmSource, MaskEffectCategory, MAX_EFFECT_COMPONENTS};
 
 const TILES_PER_ROW: usize = 3;
 /// Scales with the platform's control height, so tiles stay touch-sized.
@@ -11,7 +12,6 @@ const TILE_ICON_SIZE: f32 = 20.0;
 const TILE_LABEL_SIZE: f32 = 11.5;
 /// The picker's width when its button is narrower, as the touch Add tab is.
 const PICKER_MIN_WIDTH: f32 = 264.0;
-const FILM_NEGATIVE_LABEL: &str = "Film negative";
 
 /// What an effect picker adds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,6 +40,17 @@ pub(in crate::ui::sidebar) enum FilmNegativeTile {
     Offered,
     /// The photo is developed as a negative already.
     Added,
+}
+
+impl FilmNegativeTile {
+    /// The tile of a photo-wide picker for a photo read as `film`.
+    pub(in crate::ui::sidebar) fn for_film(film: &FilmSource) -> Self {
+        if film.is_positive() {
+            Self::Offered
+        } else {
+            Self::Added
+        }
+    }
 }
 
 /// The add controls of an Effects card: a quick-add button per effect in
@@ -174,7 +185,7 @@ fn effect_picker(
                     let added = film_negative == FilmNegativeTile::Added;
                     tiles.push(Tile {
                         pick: EffectPick::FilmNegative,
-                        label: FILM_NEGATIVE_LABEL,
+                        label: FILM_NEGATIVE_CARD_TITLE,
                         icon: egui_phosphor::regular::FILM_STRIP,
                         help: Some("Develop a scanned film negative as its positive."),
                         added,

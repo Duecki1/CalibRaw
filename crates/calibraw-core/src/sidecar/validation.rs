@@ -512,20 +512,9 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
         },
     )?;
     if let Some(negative) = exposure.film.negative() {
-        let [base_red, base_green, base_blue] = negative.base;
-        let [red, green, blue] = negative.exponents;
-        finite(
-            "film negative",
-            &[
-                base_red,
-                base_green,
-                base_blue,
-                red,
-                green,
-                blue,
-                negative.print_exposure,
-            ],
-        )?;
+        finite("film negative", &negative.base)?;
+        finite("film negative", &negative.exponents)?;
+        finite("film negative", &[negative.print_exposure])?;
         if negative.base.iter().any(|value| *value <= 0.0) {
             return invalid("film negative base must be positive");
         }

@@ -734,16 +734,11 @@ impl Sidebar {
                 .show(ui);
 
             moduwu_design::section_separator(ui);
-            let film_negative = if exposure.film.is_positive() {
-                mask_effects::FilmNegativeTile::Offered
-            } else {
-                mask_effects::FilmNegativeTile::Added
-            };
             added = mask_effects::add_effect_controls(
                 ui,
                 &mask_effects::FINISH_EFFECTS,
                 global_effects,
-                film_negative,
+                mask_effects::FilmNegativeTile::for_film(&exposure.film),
             );
         });
         changed |= action.apply(exposure, AdjustmentGroup::Effects);
