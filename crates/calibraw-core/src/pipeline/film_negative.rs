@@ -125,21 +125,12 @@ const HIGHLIGHT_PERCENTILE: f32 = 0.995;
 const MIN_PICTURE_SAMPLES: usize = 64;
 
 impl FilmNegative {
-    /// Estimates a negative of `stock` from `samples` of its scan (linear
-    /// camera RGB, see [`LoadedRaw::film_samples_in_view`]). The base is
-    /// `base`, or else the mean of the brightest samples: in a scan that
-    /// shows some film border those are unexposed film, otherwise the
-    /// thinnest shadows, which lie just above it. `None` when the samples do
+    /// Estimates a negative of `stock` on film of `base` from `samples` of
+    /// its picture (linear camera RGB, see [`LoadedRaw::film_samples_in_view`]):
+    /// the exponents that leave its highlights neutral and the print exposure
+    /// that puts its middle tones at middle grey. `None` when the samples do
     /// not show enough of a picture.
-    pub fn estimate(
-        stock: FilmStock,
-        samples: &[[f32; 3]],
-        base: Option<[f32; 3]>,
-    ) -> Option<Self> {
-        let base = match base {
-            Some(base) => base,
-            None => brightest_mean(samples)?,
-        };
+    fn estimate(stock: FilmStock, samples: &[[f32; 3]], base: [f32; 3]) -> Option<Self> {
         if !base
             .iter()
             .all(|value| value.is_finite() && *value > MIN_BASE)
@@ -263,8 +254,7 @@ impl ExposureParams {
         let FilmSource::NegativeToEstimate(stock) = self.film else {
             return FilmSettlement::Unchanged;
         };
-        let samples = raw.film_samples_in_view(geometry, self.black_point);
-        match FilmNegative::estimate(stock, &samples, None) {
+        match raw.estimate_film_negative(stock, None, geometry, self.black_point) {
             Some(negative) => {
                 self.film = FilmSource::Negative(negative);
                 FilmSettlement::Estimated
@@ -362,14 +352,35 @@ fn surround_density(densities: &[f32]) -> f32 {
 }
 
 impl LoadedRaw {
+    /// Estimates a negative of `stock` from this scan, as the Film negative
+    /// card's Auto does. The base is `base`, or else the mean of the
+    /// brightest samples of the whole scan, so a crop that leaves out the
+    /// film border does not change it: in a scan that shows some border
+    /// those are unexposed film, otherwise the thinnest shadows, which lie
+    /// just above it. The rest is measured on the picture, inside the crop of
+    /// `geometry`. `None` when that does not show enough of a picture.
+    pub fn estimate_film_negative(
+        &self,
+        stock: FilmStock,
+        base: Option<[f32; 3]>,
+        geometry: GeometryTransform,
+        black_point: f32,
+    ) -> Option<FilmNegative> {
+        let base = match base {
+            Some(base) => base,
+            None => brightest_mean(&self.film_samples_in_scan(black_point))?,
+        };
+        FilmNegative::estimate(
+            stock,
+            &self.film_samples_in_view(geometry, black_point),
+            base,
+        )
+    }
+
     /// Samples of the scan inside the photo's crop under `geometry`, on a
     /// grid of at most [`SAMPLE_GRID_EDGE`] per axis, for
     /// [`FilmNegative::estimate`]. Clipped samples are left out.
-    pub fn film_samples_in_view(
-        &self,
-        geometry: GeometryTransform,
-        black_point: f32,
-    ) -> Vec<[f32; 3]> {
+    fn film_samples_in_view(&self, geometry: GeometryTransform, black_point: f32) -> Vec<[f32; 3]> {
         let (output_width, output_height) = geometry.crop_pixel_dimensions(self.width, self.height);
         let inverse_map = GeometryInverseMap::new_with_lens(
             geometry,
@@ -409,11 +420,37 @@ impl LoadedRaw {
         let x1 = to_pixels(first[0].max(second[0]), self.width);
         let y0 = to_pixels(first[1].min(second[1]), self.height);
         let y1 = to_pixels(first[1].max(second[1]), self.height);
-        let (x0, x1) = widen(x0, x1, MIN_AREA_EDGE, self.width);
-        let (y0, y1) = widen(y0, y1, MIN_AREA_EDGE, self.height);
-        let edge = SAMPLE_GRID_EDGE / 2;
-        let columns = ((x1 - x0).ceil() as u32).clamp(1, edge);
-        let rows = ((y1 - y0).ceil() as u32).clamp(1, edge);
+        self.film_samples_in_pixels(
+            widen(x0, x1, MIN_AREA_EDGE, self.width),
+            widen(y0, y1, MIN_AREA_EDGE, self.height),
+            SAMPLE_GRID_EDGE / 2,
+            black_point,
+        )
+    }
+
+    /// Samples of the whole scan, whatever its crop, on a grid of at most
+    /// [`SAMPLE_GRID_EDGE`] per axis. Clipped samples are left out.
+    fn film_samples_in_scan(&self, black_point: f32) -> Vec<[f32; 3]> {
+        self.film_samples_in_pixels(
+            (0.0, self.width as f32),
+            (0.0, self.height as f32),
+            SAMPLE_GRID_EDGE,
+            black_point,
+        )
+    }
+
+    /// Samples of the source pixels from `x0` to `x1` and from `y0` to `y1`,
+    /// on a grid of at most `grid_edge` per axis and at most one per pixel.
+    /// Clipped samples are left out.
+    fn film_samples_in_pixels(
+        &self,
+        (x0, x1): (f32, f32),
+        (y0, y1): (f32, f32),
+        grid_edge: u32,
+        black_point: f32,
+    ) -> Vec<[f32; 3]> {
+        let columns = ((x1 - x0).ceil() as u32).clamp(1, grid_edge);
+        let rows = ((y1 - y0).ceil() as u32).clamp(1, grid_edge);
         let mut samples = Vec::with_capacity((columns * rows) as usize);
         for row in 0..rows {
             for column in 0..columns {

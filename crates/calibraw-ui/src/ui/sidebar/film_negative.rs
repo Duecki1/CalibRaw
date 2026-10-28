@@ -66,7 +66,7 @@ impl Sidebar {
                             ui,
                             egui_phosphor::regular::MAGIC_WAND,
                             size,
-                            "Estimate the base and colors again from the cropped photo",
+                            "Estimate the base from the whole scan and the colors from the crop",
                         )
                         .clicked()
                         {

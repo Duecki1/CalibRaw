@@ -9,15 +9,15 @@ use crate::pipeline::{FilmNegative, FilmSource, FilmStock};
 pub(crate) const FILM_NEGATIVE_CARD_TITLE: &str = "Film negative";
 
 impl CalibRawApp {
-    /// Develops the open photo as a colour negative, estimated from what its
-    /// crop shows. Returns whether it is one now.
+    /// Develops the open photo as a colour negative, estimated as Auto does.
+    /// Returns whether it is one now.
     pub(crate) fn enable_film_negative(&mut self) -> bool {
         self.develop.exposure.film.negative().is_some()
             || self.estimate_film_negative(FilmStock::Color, None)
     }
 
-    /// Estimates the negative again, base included, from what the crop
-    /// shows now.
+    /// Estimates the negative again: the base from the whole scan, the rest
+    /// from what the crop shows now.
     pub(crate) fn auto_film_negative(&mut self) {
         if let Some(negative) = self.develop.exposure.film.negative().copied() {
             self.estimate_film_negative(negative.stock, None);
@@ -66,16 +66,20 @@ impl CalibRawApp {
         self.set_film_source(FilmSource::Positive);
     }
 
-    /// Estimates a negative of `stock` from what the crop shows, with `base`
-    /// or an estimated one, and develops the photo as it. Reports a failure
-    /// and returns false when the photo shows no negative to estimate.
+    /// Estimates a negative of `stock` with `base`, or one from the whole
+    /// scan, and develops the photo as it
+    /// (`LoadedRaw::estimate_film_negative`). Reports a failure and returns
+    /// false when the photo shows no negative to estimate.
     fn estimate_film_negative(&mut self, stock: FilmStock, base: Option<[f32; 3]>) -> bool {
         let Some(raw) = self.develop.loaded_raw.as_deref() else {
             return false;
         };
-        let samples =
-            raw.film_samples_in_view(self.develop.geometry, self.develop.exposure.black_point);
-        let Some(negative) = FilmNegative::estimate(stock, &samples, base) else {
+        let Some(negative) = raw.estimate_film_negative(
+            stock,
+            base,
+            self.develop.geometry,
+            self.develop.exposure.black_point,
+        ) else {
             self.report_error(
                 ErrorKind::Sampling,
                 "Could not find a negative to invert. Crop to one frame, or pick its unexposed film."
