@@ -446,176 +446,238 @@ fn set_library_clipboard(
     );
 }
 
-fn selection_bar_action_button(
-    ui: &mut Ui,
-    enabled: bool,
-    compact: bool,
-    glyph: &'static str,
-    label: &'static str,
-) -> egui::Response {
-    if compact {
-        ui.add_enabled_ui(enabled, |ui| {
-            moduwu_design::ghost_icon_button(ui, glyph, moduwu_design::toolbar_icon_size(), label)
+/// A photo action on the selection bar: a button while the bar has room,
+/// otherwise an item in its More menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BarAction {
+    Export,
+    Merge(super::MergeKind),
+    CopyAdjustments,
+    PasteAdjustments,
+    Copy,
+}
+
+impl BarAction {
+    /// The actions for `count` selected photos, in the order they give up
+    /// their buttons last to first.
+    fn available(count: usize, caps: PlatformCaps) -> Vec<Self> {
+        let mut actions = vec![Self::Export];
+        if count >= 2 {
+            actions.extend([
+                Self::Merge(super::MergeKind::Hdr),
+                Self::Merge(super::MergeKind::FocusStack),
+            ]);
+        }
+        if count == 1 {
+            actions.push(Self::CopyAdjustments);
+        }
+        actions.push(Self::PasteAdjustments);
+        // Copying and cutting work on photos in folders.
+        if caps.has_folders() {
+            actions.push(Self::Copy);
+        }
+        actions
+    }
+
+    fn glyph(self) -> &'static str {
+        match self {
+            Self::Export => egui_phosphor::regular::EXPORT,
+            Self::Merge(super::MergeKind::Hdr) => egui_phosphor::regular::STACK,
+            Self::Merge(super::MergeKind::FocusStack) => egui_phosphor::regular::CROSSHAIR_SIMPLE,
+            Self::CopyAdjustments => egui_phosphor::regular::SLIDERS_HORIZONTAL,
+            Self::PasteAdjustments => egui_phosphor::regular::CLIPBOARD_TEXT,
+            Self::Copy => egui_phosphor::regular::COPY,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Export => "Export",
+            Self::Merge(kind) => kind.title(),
+            Self::CopyAdjustments => "Copy adjustments",
+            Self::PasteAdjustments => "Paste adjustments",
+            Self::Copy => "Copy",
+        }
+    }
+
+    fn labeled_text(self) -> String {
+        format!("{}  {}", self.glyph(), self.label())
+    }
+
+    fn enabled(self, can_paste_adjustments: bool) -> bool {
+        self != Self::PasteAdjustments || can_paste_adjustments
+    }
+
+    fn action(self, assets: &[LibraryAsset]) -> Option<LibraryAction> {
+        Some(match self {
+            Self::Export => LibraryAction::Export(assets.to_vec()),
+            Self::Merge(kind) => LibraryAction::Merge(kind, assets.to_vec()),
+            Self::CopyAdjustments => LibraryAction::CopyAdjustments(assets.first()?.clone()),
+            Self::PasteAdjustments => LibraryAction::PasteAdjustments(assets.to_vec()),
+            Self::Copy => LibraryAction::Copy(assets.to_vec()),
         })
-        .inner
-    } else {
-        moduwu_design::secondary_button_enabled(ui, enabled, format!("{glyph}  {label}"))
-            .on_hover_text(label)
     }
 }
 
-fn selection_bar_more_menu<R>(
-    ui: &mut Ui,
-    enabled: bool,
-    compact: bool,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> egui::InnerResponse<Option<R>> {
-    let label = if compact {
-        egui::RichText::new(egui_phosphor::regular::DOTS_THREE)
-            .size(moduwu_design::CONTROL_HEIGHT * 0.55)
-    } else {
-        egui::RichText::new(format!("{}  More", egui_phosphor::regular::DOTS_THREE))
-    };
-    ui.add_enabled_ui(enabled, |ui| ui.menu_button(label, add_contents))
-        .inner
+/// How the bar shows its photo actions in the width it has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BarLayout {
+    /// Every action as a labelled button.
+    Labeled,
+    /// The first `inline` actions as icons; the others in More.
+    Icons { inline: usize },
 }
 
-/// The selection bar's photo actions for `assets`.
-fn selection_bar_actions(
+const BAR_MORE_TEXT: &str = "More";
+/// egui's default separator width, fixed here so the bar can measure itself.
+const BAR_SEPARATOR_SPACING: f32 = 6.0;
+/// Keeps the bar this far from the library's edges.
+const BAR_OUTER_MARGIN: f32 = 12.0;
+
+/// The width a widget showing `text` in `style` needs, padding included.
+fn text_width(ui: &Ui, text: String, style: egui::TextStyle, padding: f32) -> f32 {
+    let font = style.resolve(ui.style());
+    ui.painter()
+        .layout_no_wrap(text, font, Color32::WHITE)
+        .size()
+        .x
+        + 2.0 * padding
+}
+
+/// Labels when all of them fit in `room`, otherwise as many icons as fit
+/// beside the More button.
+fn selection_bar_layout(ui: &Ui, actions: &[BarAction], room: f32) -> BarLayout {
+    let spacing = ui.spacing().item_spacing.x;
+    let padding = ui.spacing().button_padding.x;
+    let labeled_width =
+        |text: String| text_width(ui, text, egui::TextStyle::Button, padding) + spacing;
+    let more = labeled_width(format!(
+        "{}  {BAR_MORE_TEXT}",
+        egui_phosphor::regular::DOTS_THREE
+    ));
+    let labeled = actions
+        .iter()
+        .map(|action| labeled_width(action.labeled_text()))
+        .sum::<f32>();
+    if labeled + more <= room {
+        return BarLayout::Labeled;
+    }
+    let icon = moduwu_design::toolbar_icon_size().x + spacing;
+    let fitting = ((room - icon) / icon).floor().max(0.0) as usize;
+    BarLayout::Icons {
+        inline: fitting.min(actions.len()),
+    }
+}
+
+fn selection_bar_action_button(
+    ui: &mut Ui,
+    action: BarAction,
+    enabled: bool,
+    labeled: bool,
+) -> egui::Response {
+    let response = if labeled {
+        moduwu_design::secondary_button_enabled(ui, enabled, action.labeled_text())
+            .on_hover_text(action.label())
+    } else {
+        ui.add_enabled_ui(enabled, |ui| {
+            moduwu_design::ghost_icon_button(
+                ui,
+                action.glyph(),
+                moduwu_design::toolbar_icon_size(),
+                action.label(),
+            )
+        })
+        .inner
+    };
+    if action == BarAction::PasteAdjustments {
+        response.on_disabled_hover_text("Copy adjustments from an image first")
+    } else {
+        response
+    }
+}
+
+/// The More menu: the actions without a button, then the rest.
+fn selection_bar_more_menu(
     ui: &mut Ui,
     assets: &[LibraryAsset],
-    action_enabled: bool,
+    overflow: &[BarAction],
     can_paste_adjustments: bool,
     presets: &crate::ui::presets::PresetList,
-    compact: bool,
     caps: PlatformCaps,
 ) -> Option<LibraryAction> {
     let count = assets.len();
     let mut action = None;
-    if selection_bar_action_button(
+    for bar_action in overflow {
+        if moduwu_design::menu_item(
+            ui,
+            bar_action.enabled(can_paste_adjustments),
+            bar_action.labeled_text(),
+        )
+        .clicked()
+        {
+            action = bar_action.action(assets);
+            ui.close();
+        }
+    }
+    if !overflow.is_empty() {
+        ui.separator();
+    }
+    if let Some(preset) = presets_submenu(ui, presets, true) {
+        action = Some(LibraryAction::ApplyPreset(assets.to_vec(), preset));
+    }
+    if caps.has_folders() && moduwu_design::menu_item(ui, true, "Cut").clicked() {
+        action = Some(LibraryAction::Cut(assets.to_vec()));
+        ui.close();
+    }
+    if moduwu_design::menu_item(
         ui,
-        action_enabled,
-        compact,
-        egui_phosphor::regular::EXPORT,
-        "Export",
+        true,
+        if count > 1 {
+            "Duplicate selected (RAW + sidecars)"
+        } else {
+            "Duplicate (RAW + sidecar)"
+        },
     )
     .clicked()
     {
-        action = Some(LibraryAction::Export(assets.to_vec()));
-    }
-    if count >= 2 {
-        for (kind, glyph) in [
-            (super::MergeKind::Hdr, egui_phosphor::regular::STACK),
-            (
-                super::MergeKind::FocusStack,
-                egui_phosphor::regular::CROSSHAIR_SIMPLE,
-            ),
-        ] {
-            if selection_bar_action_button(ui, action_enabled, compact, glyph, kind.title())
-                .clicked()
-            {
-                action = Some(LibraryAction::Merge(kind, assets.to_vec()));
-            }
-        }
+        action = Some(LibraryAction::Duplicate(assets.to_vec()));
+        ui.close();
     }
     if let [asset] = assets {
-        if selection_bar_action_button(
-            ui,
-            action_enabled,
-            compact,
-            egui_phosphor::regular::SLIDERS_HORIZONTAL,
-            "Copy adjustments",
-        )
-        .clicked()
-        {
-            action = Some(LibraryAction::CopyAdjustments(asset.clone()));
+        if moduwu_design::menu_item(ui, true, "Rename…").clicked() {
+            action = Some(LibraryAction::Rename(asset.clone()));
+            ui.close();
         }
     }
-    if selection_bar_action_button(
+    if moduwu_design::menu_item(
         ui,
-        action_enabled && can_paste_adjustments,
-        compact,
-        egui_phosphor::regular::CLIPBOARD_TEXT,
-        "Paste adjustments",
+        true,
+        if count > 1 {
+            "Reset adjustments for selected"
+        } else {
+            "Reset all adjustments"
+        },
     )
-    .on_disabled_hover_text("Copy adjustments from an image first")
     .clicked()
     {
-        action = Some(LibraryAction::PasteAdjustments(assets.to_vec()));
+        action = Some(LibraryAction::ResetAdjustments(assets.to_vec()));
+        ui.close();
     }
-    // Copying and cutting work on photos in folders.
-    if caps.has_folders()
-        && selection_bar_action_button(
-            ui,
-            action_enabled,
-            compact,
-            egui_phosphor::regular::COPY,
-            "Copy",
-        )
-        .clicked()
+    ui.separator();
+    if moduwu_design::menu_item(
+        ui,
+        true,
+        if count > 1 {
+            "Delete selected…"
+        } else {
+            "Delete…"
+        },
+    )
+    .clicked()
     {
-        action = Some(LibraryAction::Copy(assets.to_vec()));
+        action = Some(LibraryAction::Delete(assets.to_vec()));
+        ui.close();
     }
-    selection_bar_more_menu(ui, action_enabled, compact, |ui| {
-        if let Some(preset) = presets_submenu(ui, presets, true) {
-            action = Some(LibraryAction::ApplyPreset(assets.to_vec(), preset));
-        }
-        if caps.has_folders() && moduwu_design::menu_item(ui, true, "Cut").clicked() {
-            action = Some(LibraryAction::Cut(assets.to_vec()));
-            ui.close();
-        }
-        if moduwu_design::menu_item(
-            ui,
-            true,
-            if count > 1 {
-                "Duplicate selected (RAW + sidecars)"
-            } else {
-                "Duplicate (RAW + sidecar)"
-            },
-        )
-        .clicked()
-        {
-            action = Some(LibraryAction::Duplicate(assets.to_vec()));
-            ui.close();
-        }
-        if let [asset] = assets {
-            if moduwu_design::menu_item(ui, true, "Rename…").clicked() {
-                action = Some(LibraryAction::Rename(asset.clone()));
-                ui.close();
-            }
-        }
-        if moduwu_design::menu_item(
-            ui,
-            true,
-            if count > 1 {
-                "Reset adjustments for selected"
-            } else {
-                "Reset all adjustments"
-            },
-        )
-        .clicked()
-        {
-            action = Some(LibraryAction::ResetAdjustments(assets.to_vec()));
-            ui.close();
-        }
-        ui.separator();
-        if moduwu_design::menu_item(
-            ui,
-            true,
-            if count > 1 {
-                "Delete selected…"
-            } else {
-                "Delete…"
-            },
-        )
-        .clicked()
-        {
-            action = Some(LibraryAction::Delete(assets.to_vec()));
-            ui.close();
-        }
-    })
-    .response
-    .on_hover_text("More selection actions");
     action
 }
 
@@ -640,8 +702,9 @@ fn shared_review(assets: &[LibraryAsset]) -> crate::sidecar::PhotoReview {
     })
 }
 
-/// The bar shown while selecting: the count, Select all, rating and
-/// flags, the photo actions and the way back to browsing.
+/// The bar shown while selecting: the count, Select all, rating and flags,
+/// the photo actions and the way back to browsing. It always fits the
+/// library's width: actions give up their labels first, then their buttons.
 pub(super) fn show_library_selection_action_bar(
     ui: &Ui,
     app: &mut CalibRawApp,
@@ -654,17 +717,26 @@ pub(super) fn show_library_selection_action_bar(
     let bounds = ui.max_rect();
     let compact = !moduwu_design::ResponsiveWidth::from_width(bounds.width()).is_wide();
     let count = selected.len();
+    let caps = app.caps();
+    let actions = BarAction::available(count, caps);
+    let action_enabled = library_actions_enabled(app) && count > 0;
+    let can_paste_adjustments = app.library.has_copied_adjustments();
+    let presets = crate::ui::presets::PresetList::from_app(app);
+    let inner_margin = moduwu_design::SPACE_SM;
     let mut select_all = false;
     let mut clear_selection = false;
     egui::Area::new(egui::Id::new("library-selection-action-bar"))
         .order(egui::Order::Foreground)
         .pivot(egui::Align2::CENTER_BOTTOM)
-        .fixed_pos(egui::pos2(bounds.center().x, bounds.bottom() - 12.0))
+        .fixed_pos(egui::pos2(
+            bounds.center().x,
+            bounds.bottom() - BAR_OUTER_MARGIN,
+        ))
         .constrain_to(bounds)
         .movable(false)
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::symmetric(moduwu_design::SPACE_SM as i8, 6))
+                .inner_margin(egui::Margin::symmetric(inner_margin as i8, 6))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.x = if compact {
                         moduwu_design::SPACE_XS
@@ -672,13 +744,33 @@ pub(super) fn show_library_selection_action_bar(
                         6.0
                     };
                     ui.spacing_mut().interact_size.y = moduwu_design::CONTROL_HEIGHT;
+                    let spacing = ui.spacing().item_spacing.x;
+                    let icon = moduwu_design::toolbar_icon_size().x + spacing;
+                    let separator = BAR_SEPARATOR_SPACING + spacing;
+                    let count_label = if bounds.width() < SELECTION_BAR_COUNT_LABEL_BREAKPOINT {
+                        count.to_string()
+                    } else {
+                        format!("{count} selected")
+                    };
+                    // The count, Select all, rating, ✕ and the separators
+                    // always show; the actions share what is left.
+                    let fixed = text_width(ui, count_label.clone(), egui::TextStyle::Body, 0.0)
+                        + spacing
+                        + icon
+                        + super::review::COMPACT_REVIEW_EDITOR_WIDTH
+                        + spacing
+                        + 2.0 * separator
+                        + icon;
+                    let room =
+                        bounds.width() - 2.0 * (BAR_OUTER_MARGIN + inner_margin + 1.0) - fixed;
+                    let layout = selection_bar_layout(ui, &actions, room);
+                    let (inline, overflow) = match layout {
+                        BarLayout::Labeled => (&actions[..], &[][..]),
+                        BarLayout::Icons { inline } => actions.split_at(inline),
+                    };
+                    let labeled = layout == BarLayout::Labeled;
+
                     ui.horizontal(|ui| {
-                        let count_label =
-                            if compact && bounds.width() < SELECTION_BAR_COUNT_LABEL_BREAKPOINT {
-                                count.to_string()
-                            } else {
-                                format!("{count} selected")
-                            };
                         ui.strong(count_label).on_hover_text(format!(
                             "{count} selected {}",
                             if count == 1 { "photo" } else { "photos" }
@@ -690,8 +782,7 @@ pub(super) fn show_library_selection_action_bar(
                             "Select all",
                         )
                         .clicked();
-                        ui.separator();
-                        let action_enabled = library_actions_enabled(app) && count > 0;
+                        ui.add(egui::Separator::default().spacing(BAR_SEPARATOR_SPACING));
                         let review = ui
                             .add_enabled_ui(action_enabled, |ui| {
                                 super::review::compact_review_editor(
@@ -704,19 +795,41 @@ pub(super) fn show_library_selection_action_bar(
                         if let Some(change) = review {
                             *library_action = Some(LibraryAction::Review(selected.clone(), change));
                         }
-                        let presets = crate::ui::presets::PresetList::from_app(app);
-                        if let Some(action) = selection_bar_actions(
-                            ui,
-                            &selected,
-                            action_enabled,
-                            app.library.has_copied_adjustments(),
-                            &presets,
-                            compact,
-                            app.caps(),
-                        ) {
+                        for bar_action in inline {
+                            let enabled =
+                                action_enabled && bar_action.enabled(can_paste_adjustments);
+                            if selection_bar_action_button(ui, *bar_action, enabled, labeled)
+                                .clicked()
+                            {
+                                *library_action = bar_action.action(&selected);
+                            }
+                        }
+                        let more_label = if labeled {
+                            egui::RichText::new(format!(
+                                "{}  {BAR_MORE_TEXT}",
+                                egui_phosphor::regular::DOTS_THREE
+                            ))
+                        } else {
+                            egui::RichText::new(egui_phosphor::regular::DOTS_THREE)
+                                .size(moduwu_design::CONTROL_HEIGHT * 0.55)
+                        };
+                        let more = ui.add_enabled_ui(action_enabled, |ui| {
+                            ui.menu_button(more_label, |ui| {
+                                selection_bar_more_menu(
+                                    ui,
+                                    &selected,
+                                    overflow,
+                                    can_paste_adjustments,
+                                    &presets,
+                                    caps,
+                                )
+                            })
+                        });
+                        more.inner.response.on_hover_text("More selection actions");
+                        if let Some(action) = more.inner.inner.flatten() {
                             *library_action = Some(action);
                         }
-                        ui.separator();
+                        ui.add(egui::Separator::default().spacing(BAR_SEPARATOR_SPACING));
                         clear_selection = moduwu_design::ghost_icon_button(
                             ui,
                             egui_phosphor::regular::X,

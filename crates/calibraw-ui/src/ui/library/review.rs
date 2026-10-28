@@ -633,6 +633,8 @@ fn paint_flag(
     ));
 }
 
+pub(super) const COMPACT_REVIEW_EDITOR_WIDTH: f32 = 92.0;
+
 /// A button showing the rating and flag that opens the full editor.
 pub(super) fn compact_review_editor(
     ui: &mut Ui,
@@ -640,7 +642,7 @@ pub(super) fn compact_review_editor(
     review: PhotoReview,
 ) -> Option<ReviewChange> {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(92.0, moduwu_design::CONTROL_HEIGHT),
+        egui::vec2(COMPACT_REVIEW_EDITOR_WIDTH, moduwu_design::CONTROL_HEIGHT),
         Sense::click(),
     );
     let painter = ui.painter_at(rect);

@@ -444,6 +444,22 @@ pub fn gpu_pipeline_cache_dir(app: &AndroidApp) -> Result<PathBuf, String> {
     non_empty_path(path, "Android returned no GPU pipeline cache directory")
 }
 
+/// How long a touch must be held to become a long press: the Touch & hold
+/// delay the user chose under Accessibility (400 ms unless changed).
+pub fn long_press_timeout(app: &AndroidApp) -> Result<Duration, String> {
+    with_activity(app, |env, activity| {
+        env.call_method(
+            activity,
+            jni::jni_str!("longPressTimeout"),
+            jni::jni_sig!(() -> i32),
+            &[],
+        )?
+        .i()
+    })
+    .map(|millis| Duration::from_millis(u64::try_from(millis).unwrap_or_default()))
+    .map_err(|error| format!("could not read the touch & hold delay: {error:#}"))
+}
+
 pub fn lensfun_database_dir(app: &AndroidApp) -> Result<PathBuf, String> {
     let path = with_activity(app, |env, activity| {
         let value = env.call_method(

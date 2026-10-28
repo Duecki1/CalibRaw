@@ -364,6 +364,79 @@ fn selected_library_folder_name(app: &CalibRawApp) -> Option<String> {
     })
 }
 
+/// A touch held still on the grid, timed against the platform's long-press
+/// delay. Gesture state of the view, kept in egui's memory between frames.
+#[derive(Clone, Copy, Debug)]
+struct TouchHold {
+    press_start: f64,
+    /// Seconds the touch must be held, read when it began.
+    duration: f64,
+    moved: bool,
+    fired: bool,
+}
+
+/// What the current touch does this frame.
+#[derive(Clone, Copy, Debug, Default)]
+struct TouchHoldFrame {
+    /// Where a hold became a long press on this frame.
+    long_press_at: Option<egui::Pos2>,
+    /// The touch became a long press, so lifting it is no tap.
+    suppress_tap: bool,
+}
+
+/// Times touches with the platform's delay rather than egui's, which is
+/// twice Android's default and ignores the Touch & hold delay setting.
+fn track_touch_hold(ui: &Ui, platform: &dyn crate::platform::Platform) -> TouchHoldFrame {
+    let id = egui::Id::new("library-touch-hold");
+    let ctx = ui.ctx();
+    let stored = ctx.data(|data| data.get_temp::<TouchHold>(id));
+    let slop = ctx.options(|options| options.input_options.max_click_dist);
+    let (held, press_start, origin, position, now) = ui.input(|input| {
+        (
+            input.any_touches() && input.pointer.primary_down(),
+            input.pointer.press_start_time(),
+            input.pointer.press_origin(),
+            input.pointer.interact_pos(),
+            input.time,
+        )
+    });
+    let Some(press_start) = press_start.filter(|_| held) else {
+        // Lifted: this frame's tap belongs to the hold that just ended.
+        ctx.data_mut(|data| data.remove::<TouchHold>(id));
+        return TouchHoldFrame {
+            long_press_at: None,
+            suppress_tap: stored.is_some_and(|hold| hold.fired),
+        };
+    };
+    let mut hold = stored
+        .filter(|hold| hold.press_start == press_start)
+        .unwrap_or_else(|| TouchHold {
+            press_start,
+            duration: platform.long_press_duration().as_secs_f64(),
+            moved: false,
+            fired: false,
+        });
+    hold.moved |= origin
+        .zip(position)
+        .is_some_and(|(origin, position)| origin.distance(position) > slop);
+    let mut long_press_at = None;
+    if !hold.fired && !hold.moved {
+        let remaining = hold.duration - (now - press_start);
+        if remaining <= 0.0 {
+            hold.fired = true;
+            long_press_at = origin;
+        } else {
+            // A still finger sends no events; wake up when the delay ends.
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(remaining));
+        }
+    }
+    ctx.data_mut(|data| data.insert_temp(id, hold));
+    TouchHoldFrame {
+        long_press_at,
+        suppress_tap: hold.fired,
+    }
+}
+
 /// How close to the grid's top or bottom edge a selecting drag scrolls it,
 /// and how fast at the very edge, in points per second.
 const DRAG_SCROLL_EDGE: f32 = 56.0;
@@ -422,6 +495,7 @@ fn show_thumbnail_grid(
         .filter(|_| app.library.shows_active_photo(caps))
         .cloned();
     let drag_selecting = app.library.drag_selecting();
+    let touch_hold = track_touch_hold(ui, app.platform.as_ref());
     // Touch shows no hover; its press must not grow a check under the finger.
     let pointer_hovers = caps.is_desktop() && !ui.input(|input| input.any_touches());
     let mut scroll_source = egui::scroll_area::ScrollSource::default();
@@ -489,12 +563,17 @@ fn show_thumbnail_grid(
                 if drag_selecting && pointer.is_some_and(|pointer| item_rect.contains(pointer)) {
                     drag_target = Some(asset_id.clone());
                 }
-                let long_pressed = response.long_touched();
+                let long_pressed = touch_hold
+                    .long_press_at
+                    .is_some_and(|origin| item_rect.contains(origin));
+                // Lifting a finger after a long press is no tap: the long
+                // press already selected.
+                let tapped = !touch_hold.suppress_tap;
                 if long_pressed {
                     app.library.begin_drag_selection(&asset_id);
-                } else if check_clicked {
+                } else if tapped && check_clicked {
                     app.library.toggle_selected(&asset_id);
-                } else if response.clicked() {
+                } else if tapped && response.clicked() {
                     let modifiers = ui.input(|input| input.modifiers);
                     if modifiers.shift {
                         app.library.select_range_to(&asset_id, &visible);
@@ -504,7 +583,9 @@ fn show_thumbnail_grid(
                         *open_asset = Some(app.library.entries[index].asset.clone());
                     }
                 }
-                if caps.is_desktop() && !long_pressed {
+                // egui opens menus on its own, longer hold; a long press
+                // that selected has done its job.
+                if caps.is_desktop() && tapped {
                     show_thumbnail_context_menu(app, &response, index, library_action);
                 }
             }
