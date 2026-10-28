@@ -513,34 +513,13 @@ fn format_thumbnail_focal_length(value: f32) -> Option<String> {
     })
 }
 
-// Round toggles in a thumbnail's corners, in points: the select check, and
-// the hover's Pick and Reject on tiles too narrow to hold them in its card.
-pub(super) const CORNER_TOGGLE_EDGE: f32 = 24.0;
-/// From the tile's edges to a corner toggle's circle.
-pub(super) const CORNER_TOGGLE_INSET: f32 = 7.0;
-/// The select check's hit square, in the top-left corner.
+// The select check in a thumbnail's top-left corner, in points.
+/// The check's circle.
+pub(super) const CHECK_EDGE: f32 = 24.0;
+/// From the tile's edges to the check's circle.
+const CHECK_INSET: f32 = 7.0;
+/// The check's hit square.
 pub(super) const CHECK_HIT_EDGE: f32 = 42.0;
-
-/// A corner toggle's circle: dark, darker under the pointer, `on_fill` while
-/// on, with a white ring.
-pub(super) fn paint_corner_toggle(
-    painter: &egui::Painter,
-    center: egui::Pos2,
-    on_fill: Option<Color32>,
-    hovered: bool,
-) {
-    let fill = on_fill.unwrap_or(if hovered {
-        Color32::from_black_alpha(200)
-    } else {
-        Color32::from_black_alpha(130)
-    });
-    painter.circle(
-        center,
-        CORNER_TOGGLE_EDGE * 0.5,
-        fill,
-        Stroke::new(1.5, Color32::WHITE),
-    );
-}
 
 /// The round check in a thumbnail's corner that adds it to the selection
 /// or removes it, without opening the photo.
@@ -575,15 +554,17 @@ pub(super) fn thumbnail_check_circle(
             format!("Select {}", entry.asset.display_name),
         )
     });
-    let center =
-        thumbnail_rect.min + egui::Vec2::splat(CORNER_TOGGLE_INSET + CORNER_TOGGLE_EDGE * 0.5);
+    let radius = CHECK_EDGE * 0.5;
+    let center = thumbnail_rect.min + egui::Vec2::splat(CHECK_INSET + radius);
     let painter = ui.painter_at(thumbnail_rect);
-    paint_corner_toggle(
-        &painter,
-        center,
-        selected.then(|| ui.visuals().selection.bg_fill),
-        response.hovered(),
-    );
+    let fill = if selected {
+        ui.visuals().selection.bg_fill
+    } else if response.hovered() {
+        Color32::from_black_alpha(200)
+    } else {
+        Color32::from_black_alpha(130)
+    };
+    painter.circle(center, radius, fill, Stroke::new(1.5, Color32::WHITE));
     if selected || response.hovered() {
         let tick = [
             center + egui::vec2(-5.0, 0.5),

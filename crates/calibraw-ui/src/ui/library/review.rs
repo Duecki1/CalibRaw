@@ -323,7 +323,7 @@ pub(crate) fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview)
     }
 }
 
-pub(super) fn flag_color(flag: PhotoFlag) -> Color32 {
+fn flag_color(flag: PhotoFlag) -> Color32 {
     match flag {
         PhotoFlag::Picked => theme::CHANNEL_GREEN,
         PhotoFlag::Rejected => theme::CHANNEL_RED,
@@ -458,7 +458,8 @@ pub(super) fn star_buttons(
     change
 }
 
-/// Pick, then Reject, at `buttons`. Returns the flag the clicked button sets.
+/// Pick, then Reject, at `buttons`. Returns the flag the clicked button sets;
+/// clicking the photo's own flag clears it.
 pub(super) fn flag_buttons(
     ui: &Ui,
     buttons: [egui::Rect; 2],
@@ -467,13 +468,18 @@ pub(super) fn flag_buttons(
     review: PhotoReview,
     surface: ReviewSurface,
 ) -> Option<ReviewChange> {
+    let flags = [PhotoFlag::Picked, PhotoFlag::Rejected];
     let mut change = None;
-    for (index, (flag, button)) in FLAG_BUTTONS.into_iter().zip(buttons).enumerate() {
+    for (index, (flag, button)) in flags.into_iter().zip(buttons).enumerate() {
         let active = review.flag == flag;
         // The toolbar keeps its set flag highlighted.
         let marked = surface == ReviewSurface::Toolbar && active;
-        let response = review_button(ui, button, flag_button_id(id_salt, index), surface, marked);
-        flag_button_info(&response, flag, active);
+        // Numbered after the stars.
+        let id_salt = ("photo-review", id_salt, 5 + index);
+        let response = review_button(ui, button, id_salt, surface, marked);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, active, flag_label(flag))
+        });
         paint_flag(
             ui.painter(),
             button.center(),
@@ -482,37 +488,14 @@ pub(super) fn flag_buttons(
             active,
         );
         if response.clicked() {
-            change = Some(flag_change(review, flag));
+            change = Some(ReviewChange::Flag(if active {
+                PhotoFlag::Unflagged
+            } else {
+                flag
+            }));
         }
     }
     change
-}
-
-/// Pick and Reject, in the order their buttons appear.
-pub(super) const FLAG_BUTTONS: [PhotoFlag; 2] = [PhotoFlag::Picked, PhotoFlag::Rejected];
-
-/// The id of the flag button at `index` in [`FLAG_BUTTONS`], after the stars'.
-pub(super) fn flag_button_id(
-    id_salt: impl std::hash::Hash + std::fmt::Debug + Copy,
-    index: usize,
-) -> impl std::hash::Hash + std::fmt::Debug {
-    ("photo-review", id_salt, 5 + index)
-}
-
-/// The change a Pick or Reject button makes: it sets its flag, or clears the
-/// one the photo has.
-pub(super) fn flag_change(review: PhotoReview, flag: PhotoFlag) -> ReviewChange {
-    ReviewChange::Flag(if review.flag == flag {
-        PhotoFlag::Unflagged
-    } else {
-        flag
-    })
-}
-
-pub(super) fn flag_button_info(response: &egui::Response, flag: PhotoFlag, active: bool) {
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, active, flag_label(flag))
-    });
 }
 
 /// A rating or flag button's click area, highlighted while hovered, focused,
@@ -579,7 +562,7 @@ fn paint_star(
     painter.add(egui::Shape::closed_line(points, Stroke::new(1.0, color)));
 }
 
-pub(super) fn paint_flag(
+fn paint_flag(
     painter: &egui::Painter,
     center: egui::Pos2,
     size: f32,
