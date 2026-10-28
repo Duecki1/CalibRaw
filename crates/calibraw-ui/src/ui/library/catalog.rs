@@ -4,7 +4,7 @@ use super::*;
 /// selected thumbnail height rather than enlarging their images to fill space.
 const THUMBNAIL_IMAGE_HORIZONTAL_INSET: f32 = 0.0;
 const THUMBNAIL_IMAGE_VERTICAL_CHROME: f32 = 0.0;
-const THUMBNAIL_CARD_RADIUS: f32 = moduwu_design::CARD_RADIUS;
+pub(super) const THUMBNAIL_CARD_RADIUS: f32 = moduwu_design::CARD_RADIUS;
 
 pub(super) fn send_scan_failure(
     sender: &mpsc::SyncSender<ScanEvent>,
@@ -418,10 +418,12 @@ pub(super) fn paint_thumbnail_selection(ui: &Ui, rect: egui::Rect, selected: boo
     }
 }
 
-pub(super) fn thumbnail_hover_details(
+/// The format, with the rendered formats stacked under it, then the pixel
+/// size when known.
+pub(super) fn thumbnail_file_fields(
     asset: &LibraryAsset,
     stacked_formats: &[crate::pipeline::RenderedImageFormat],
-) -> String {
+) -> Vec<String> {
     let mut format = Path::new(&asset.display_name)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -432,67 +434,68 @@ pub(super) fn thumbnail_hover_details(
         format.push_str(" + ");
         format.push_str(stacked.label());
     }
-    asset
+    let size = asset
         .metadata
         .dimensions_hint
-        .map_or(format.clone(), |[width, height]| {
-            format!("{format}  ·  {width} × {height}")
-        })
+        .map(|[width, height]| format!("{width} × {height}"));
+    std::iter::once(format).chain(size).collect()
 }
 
-pub(super) fn thumbnail_capture_details(asset: &LibraryAsset) -> String {
+/// The known capture settings, most telling first: aperture, shutter speed,
+/// ISO and focal length.
+pub(super) fn thumbnail_capture_fields(asset: &LibraryAsset) -> Vec<String> {
     let metadata = &asset.metadata;
-    format!(
-        "{}  ·  {}  ·  {}  ·  {}",
-        format_thumbnail_iso(metadata.iso_speed),
-        format_thumbnail_shutter(metadata.shutter_seconds),
+    [
         format_thumbnail_aperture(metadata.aperture),
+        format_thumbnail_shutter(metadata.shutter_seconds),
+        format_thumbnail_iso(metadata.iso_speed),
         format_thumbnail_focal_length(metadata.focal_length),
-    )
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
-fn format_thumbnail_aperture(value: f32) -> String {
-    if value.is_finite() && value > 0.0 {
-        format!("f/{value:.1}")
-    } else {
-        "f/—".to_owned()
-    }
+/// Metadata values are zero or non-finite when the file does not record them.
+fn known(value: f32) -> Option<f32> {
+    (value.is_finite() && value > 0.0).then_some(value)
 }
 
-fn format_thumbnail_iso(value: f32) -> String {
-    if !value.is_finite() || value <= 0.0 {
-        return "ISO —".to_owned();
-    }
-    if (value - value.round()).abs() < 0.05 {
-        format!("ISO {value:.0}")
-    } else {
-        format!("ISO {value:.1}")
-    }
+fn format_thumbnail_aperture(value: f32) -> Option<String> {
+    known(value).map(|value| format!("f/{value:.1}"))
 }
 
-fn format_thumbnail_shutter(seconds: f32) -> String {
-    if !seconds.is_finite() || seconds <= 0.0 {
-        return "— s".to_owned();
-    }
-    if seconds < 0.5 {
-        let denominator = (1.0 / seconds).round().max(1.0);
-        format!("1/{denominator:.0} s")
-    } else if (seconds - seconds.round()).abs() < 0.05 {
-        format!("{seconds:.0} s")
-    } else {
-        format!("{seconds:.1} s")
-    }
+fn format_thumbnail_iso(value: f32) -> Option<String> {
+    known(value).map(|value| {
+        if (value - value.round()).abs() < 0.05 {
+            format!("ISO {value:.0}")
+        } else {
+            format!("ISO {value:.1}")
+        }
+    })
 }
 
-fn format_thumbnail_focal_length(value: f32) -> String {
-    if !value.is_finite() || value <= 0.0 {
-        return "— mm".to_owned();
-    }
-    if (value - value.round()).abs() < 0.05 {
-        format!("{value:.0} mm")
-    } else {
-        format!("{value:.1} mm")
-    }
+fn format_thumbnail_shutter(seconds: f32) -> Option<String> {
+    known(seconds).map(|seconds| {
+        if seconds < 0.5 {
+            let denominator = (1.0 / seconds).round().max(1.0);
+            format!("1/{denominator:.0} s")
+        } else if (seconds - seconds.round()).abs() < 0.05 {
+            format!("{seconds:.0} s")
+        } else {
+            format!("{seconds:.1} s")
+        }
+    })
+}
+
+fn format_thumbnail_focal_length(value: f32) -> Option<String> {
+    known(value).map(|value| {
+        if (value - value.round()).abs() < 0.05 {
+            format!("{value:.0} mm")
+        } else {
+            format!("{value:.1} mm")
+        }
+    })
 }
 
 /// The round check in a thumbnail's corner that adds it to the selection

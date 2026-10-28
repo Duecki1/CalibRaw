@@ -30,6 +30,7 @@ mod dialogs;
 mod export;
 mod filter;
 mod folders;
+mod hover;
 mod keys;
 mod local;
 mod media_library;
@@ -41,7 +42,7 @@ pub(crate) use state::LibraryPreferences;
 mod storage;
 mod thumbnails;
 mod view;
-use review::thumbnail_hover_overlay;
+use hover::thumbnail_hover_overlay;
 pub(crate) use review::{
     current_photo_asset, paint_review_badge, show_current_photo_review, show_review_feedback,
     take_review_key, ReviewChange, ReviewFeedback,
