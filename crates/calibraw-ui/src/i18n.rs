@@ -29,10 +29,11 @@ pub(crate) enum Language {
     Hindi,
     SimplifiedChinese,
     TraditionalChinese,
+    PoshEnglish,
 }
 
 impl Language {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::English,
         Self::German,
         Self::French,
@@ -41,9 +42,10 @@ impl Language {
         Self::Hindi,
         Self::SimplifiedChinese,
         Self::TraditionalChinese,
+        Self::PoshEnglish,
     ];
 
-    /// The primary BCP 47 subtag matched against the system's languages.
+    /// Locale identifier; Posh English is manual-only, not an OS language.
     const fn code(self) -> &'static str {
         match self {
             Self::English => "en",
@@ -53,6 +55,7 @@ impl Language {
             Self::Polish => "pl",
             Self::Hindi => "hi",
             Self::SimplifiedChinese | Self::TraditionalChinese => "zh",
+            Self::PoshEnglish => "en-posh",
         }
     }
 
@@ -68,6 +71,7 @@ impl Language {
             Self::Hindi => "हिन्दी",
             Self::SimplifiedChinese => "简体中文",
             Self::TraditionalChinese => "繁體中文",
+            Self::PoshEnglish => "Posh English",
         }
     }
 
@@ -82,6 +86,8 @@ impl Language {
         static SIMPLIFIED_CHINESE: OnceLock<Result<HashMap<String, String>, CatalogError>> =
             OnceLock::new();
         static TRADITIONAL_CHINESE: OnceLock<Result<HashMap<String, String>, CatalogError>> =
+            OnceLock::new();
+        static POSH_ENGLISH: OnceLock<Result<HashMap<String, String>, CatalogError>> =
             OnceLock::new();
         match self {
             Self::English => Ok(ENGLISH.get_or_init(HashMap::new)),
@@ -113,10 +119,19 @@ impl Language {
                 .get_or_init(|| parse_catalog(self, include_str!("../locales/zh-TW.json")))
                 .as_ref()
                 .map_err(Clone::clone),
+            Self::PoshEnglish => POSH_ENGLISH
+                .get_or_init(|| parse_catalog(self, include_str!("../locales/en-posh.json")))
+                .as_ref()
+                .map_err(Clone::clone),
         }
     }
 
     fn matches_system_tag(self, tag: &str) -> bool {
+        // Posh English is a deliberately selected stylistic variant, never an
+        // automatic match for the system's ordinary English preference.
+        if matches!(self, Self::PoshEnglish) {
+            return false;
+        }
         let mut subtags = tag.split(['-', '_']);
         let primary = subtags.next().unwrap_or_default();
         if !primary.eq_ignore_ascii_case(self.code()) {
@@ -176,10 +191,11 @@ pub(crate) enum LanguageChoice {
     Hindi,
     SimplifiedChinese,
     TraditionalChinese,
+    PoshEnglish,
 }
 
 impl LanguageChoice {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 10] = [
         Self::System,
         Self::English,
         Self::German,
@@ -189,6 +205,7 @@ impl LanguageChoice {
         Self::Hindi,
         Self::SimplifiedChinese,
         Self::TraditionalChinese,
+        Self::PoshEnglish,
     ];
 
     pub(crate) fn resolve(self) -> Language {
@@ -202,6 +219,7 @@ impl LanguageChoice {
             Self::Hindi => Language::Hindi,
             Self::SimplifiedChinese => Language::SimplifiedChinese,
             Self::TraditionalChinese => Language::TraditionalChinese,
+            Self::PoshEnglish => Language::PoshEnglish,
         }
     }
 
@@ -216,6 +234,7 @@ impl LanguageChoice {
             Self::Hindi => Language::Hindi.native_name(),
             Self::SimplifiedChinese => Language::SimplifiedChinese.native_name(),
             Self::TraditionalChinese => Language::TraditionalChinese.native_name(),
+            Self::PoshEnglish => Language::PoshEnglish.native_name(),
         }
     }
 }
