@@ -96,13 +96,14 @@ pub(crate) enum CameraProfileFolderResult {
     Failed(String),
 }
 
-/// `.cube` files picked for the LUT library.
+/// Files a platform picker copied into app storage: `.cube` files for the
+/// LUT library or the watermark image.
 #[cfg_attr(
     not(target_os = "android"),
     allow(dead_code, reason = "constructed only by the Android backend")
 )]
 #[derive(Debug)]
-pub(crate) enum LutFilesResult {
+pub(crate) enum StagedFilesResult {
     /// The picked files, copied into this folder, which the receiver deletes
     /// after importing them.
     Staged(PathBuf),
@@ -270,7 +271,10 @@ pub(crate) trait Platform: Send + Sync {
     fn take_export_publish_result(&self) -> Option<ExportPublishResult> {
         None
     }
-    fn take_lut_files_result(&self) -> Option<LutFilesResult> {
+    fn take_lut_files_result(&self) -> Option<StagedFilesResult> {
+        None
+    }
+    fn take_watermark_image_result(&self) -> Option<StagedFilesResult> {
         None
     }
 
@@ -280,6 +284,12 @@ pub(crate) trait Platform: Send + Sync {
     /// [`Self::take_lut_files_result`]. Folder storage uses `FileDialog`.
     fn open_lut_files(&self) -> Result<(), String> {
         Err(unavailable("the LUT file picker"))
+    }
+
+    /// Asks for one image; the result arrives through
+    /// [`Self::take_watermark_image_result`]. Folder storage uses `FileDialog`.
+    fn open_watermark_image(&self) -> Result<(), String> {
+        Err(unavailable("the watermark image picker"))
     }
 
     fn open_camera_profile_folder(&self) -> Result<(), String> {

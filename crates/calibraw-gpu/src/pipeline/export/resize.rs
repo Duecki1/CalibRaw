@@ -22,6 +22,7 @@ pub(super) struct FinalSizeOutputSharpen {
     pub(super) pending: Vec<[Arc<Vec<f32>>; 3]>,
     pub(super) encoded_rows: u32,
     passthrough: bool,
+    watermark: Option<PreparedWatermark>,
 }
 
 impl FinalSizeOutputSharpen {
@@ -48,11 +49,18 @@ impl FinalSizeOutputSharpen {
             pending: Vec::new(),
             encoded_rows: 0,
             passthrough: false,
+            watermark: None,
         }
     }
 
     pub(super) fn with_passthrough(mut self, passthrough: bool) -> Self {
         self.passthrough = passthrough;
+        self
+    }
+
+    /// Blends `watermark` over the sharpened rows.
+    pub(super) fn with_watermark(mut self, watermark: Option<PreparedWatermark>) -> Self {
+        self.watermark = watermark;
         self
     }
 
@@ -122,16 +130,26 @@ impl FinalSizeOutputSharpen {
     ) -> Result<()> {
         // Only a small band is retained. Rayon preserves indexed row order;
         // compression and writes stay sequential, with identical pixel math.
+        let first_row = self.encoded_rows;
         let encoded: Result<Vec<Vec<u8>>> = self
             .pending
             .par_iter()
-            .map(|[top, center, bottom]| {
-                if self.passthrough {
-                    encode_output_row(center, output_transform, row_format)
+            .enumerate()
+            .map(|(index, [top, center, bottom])| {
+                let mut row = if self.passthrough {
+                    Cow::Borrowed(center.as_slice())
                 } else {
-                    let sharpened = output_sharpen_linear_row(top, center, bottom, self.strength)?;
-                    encode_output_row(&sharpened, output_transform, row_format)
+                    Cow::Owned(output_sharpen_linear_row(
+                        top,
+                        center,
+                        bottom,
+                        self.strength,
+                    )?)
+                };
+                if let Some(watermark) = &self.watermark {
+                    watermark.blend_row(first_row + index as u32, row.to_mut());
                 }
+                encode_output_row(&row, output_transform, row_format)
             })
             .collect();
         for row in encoded? {
@@ -268,6 +286,12 @@ impl LinearLightResizer {
             )
             .with_passthrough(row_format == ExportRowFormat::RgbF32Le),
         })
+    }
+
+    /// Blends `watermark` over the output rows.
+    pub(super) fn with_watermark(mut self, watermark: Option<PreparedWatermark>) -> Self {
+        self.output_sharpen = self.output_sharpen.with_watermark(watermark);
+        self
     }
 
     pub(super) fn push_source_row<W: Write>(

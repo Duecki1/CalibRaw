@@ -105,9 +105,10 @@ pub enum CameraProfileFolderResult {
     Failed(String),
 }
 
-/// `.cube` files picked for the LUT library.
+/// Files picked into app storage: `.cube` files for the LUT library or the
+/// watermark image.
 #[derive(Debug)]
-pub enum LutFilesResult {
+pub enum StagedFilesResult {
     /// The picked files, copied into this folder in the app's cache. The
     /// receiver imports them and deletes the folder.
     Staged(PathBuf),
@@ -121,7 +122,8 @@ static RESULTS: OnceLock<Mutex<VecDeque<PickerResult>>> = OnceLock::new();
 static EXTERNAL_OPEN_RESULTS: OnceLock<Mutex<VecDeque<PickerResult>>> = OnceLock::new();
 static CAMERA_PROFILE_FOLDER_RESULTS: OnceLock<Mutex<VecDeque<CameraProfileFolderResult>>> =
     OnceLock::new();
-static LUT_FILES_RESULTS: OnceLock<Mutex<VecDeque<LutFilesResult>>> = OnceLock::new();
+static LUT_FILES_RESULTS: OnceLock<Mutex<VecDeque<StagedFilesResult>>> = OnceLock::new();
+static WATERMARK_IMAGE_RESULTS: OnceLock<Mutex<VecDeque<StagedFilesResult>>> = OnceLock::new();
 static EXPORT_RESULTS: OnceLock<Mutex<VecDeque<ExportPublishResult>>> = OnceLock::new();
 /// Only the newest progress matters, so this is a slot rather than a queue.
 static IMPORT_PROGRESS: Mutex<Option<ImportProgress>> = Mutex::new(None);
@@ -151,8 +153,12 @@ fn camera_profile_folder_results() -> &'static Mutex<VecDeque<CameraProfileFolde
     CAMERA_PROFILE_FOLDER_RESULTS.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
-fn lut_files_results() -> &'static Mutex<VecDeque<LutFilesResult>> {
+fn lut_files_results() -> &'static Mutex<VecDeque<StagedFilesResult>> {
     LUT_FILES_RESULTS.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn watermark_image_results() -> &'static Mutex<VecDeque<StagedFilesResult>> {
+    WATERMARK_IMAGE_RESULTS.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
 fn export_results() -> &'static Mutex<VecDeque<ExportPublishResult>> {
@@ -250,8 +256,12 @@ pub fn take_camera_profile_folder_result() -> Option<CameraProfileFolderResult> 
     take_queued(camera_profile_folder_results())
 }
 
-pub fn take_lut_files_result() -> Option<LutFilesResult> {
+pub fn take_lut_files_result() -> Option<StagedFilesResult> {
     take_queued(lut_files_results())
+}
+
+pub fn take_watermark_image_result() -> Option<StagedFilesResult> {
+    take_queued(watermark_image_results())
 }
 
 pub fn take_export_publish_result() -> Option<ExportPublishResult> {
@@ -310,6 +320,19 @@ pub fn open_lut_files(app: &AndroidApp) -> Result<(), String> {
         Ok(())
     })
     .map_err(|error| format!("could not open Android's LUT file picker: {error:#}"))
+}
+
+pub fn open_watermark_image(app: &AndroidApp) -> Result<(), String> {
+    with_activity(app, |env, activity| {
+        env.call_method(
+            activity,
+            jni::jni_str!("openWatermarkImage"),
+            jni::jni_sig!(() -> void),
+            &[],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("could not open Android's image picker: {error:#}"))
 }
 
 pub fn remove_camera_profile_mirror(app: &AndroidApp, path: &Path) -> Result<(), String> {

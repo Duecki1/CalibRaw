@@ -132,6 +132,9 @@ impl CalibRawApp {
             crate::app::DesktopPickerEvent::LutFiles(None) => {
                 self.luts.apply_next_import = false;
             }
+            crate::app::DesktopPickerEvent::WatermarkImage(Some(path)) => {
+                self.import_watermark_image(path);
+            }
             _ => {}
         }
     }
@@ -197,14 +200,29 @@ impl CalibRawApp {
 
         while let Some(result) = self.platform.take_lut_files_result() {
             match result {
-                crate::platform::LutFilesResult::Staged(folder) => {
+                crate::platform::StagedFilesResult::Staged(folder) => {
                     self.import_staged_lut_files(&folder);
                 }
-                crate::platform::LutFilesResult::Cancelled => self.luts.apply_next_import = false,
-                crate::platform::LutFilesResult::Failed(error) => {
+                crate::platform::StagedFilesResult::Cancelled => {
+                    self.luts.apply_next_import = false
+                }
+                crate::platform::StagedFilesResult::Failed(error) => {
                     self.luts.apply_next_import = false;
                     self.report_error(ErrorKind::Luts, format!("Could not import LUTs: {error}"));
                 }
+            }
+        }
+
+        while let Some(result) = self.platform.take_watermark_image_result() {
+            match result {
+                crate::platform::StagedFilesResult::Staged(folder) => {
+                    self.import_staged_watermark_image(folder);
+                }
+                crate::platform::StagedFilesResult::Cancelled => {}
+                crate::platform::StagedFilesResult::Failed(error) => self.report_error(
+                    ErrorKind::Watermark,
+                    format!("Could not import the watermark image: {error}"),
+                ),
             }
         }
 

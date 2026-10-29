@@ -133,6 +133,7 @@ fn run_export_worker(
             geometry,
             bit_depth,
             color: &color,
+            watermark: job.settings.watermark.as_ref(),
         };
         match format {
             ExportFormat::Png => export_tiled_png(context, request),

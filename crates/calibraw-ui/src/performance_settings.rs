@@ -1,4 +1,4 @@
-use crate::pipeline::{CameraProfileMode, ExportFormat};
+use crate::pipeline::{CameraProfileMode, ExportFormat, WatermarkAnchor, WatermarkPlacement};
 use crate::platform::PlatformCaps;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -44,6 +44,7 @@ pub(crate) struct PerformanceSettings {
     pub export_name_template: String,
     #[serde(with = "export_format_serde")]
     pub export_format: ExportFormat,
+    pub export_watermark: SavedWatermark,
     pub ui_design: crate::appearance::UiDesign,
     pub preview_backdrop: crate::appearance::PreviewBackdrop,
     pub onboarding_completed: bool,
@@ -103,6 +104,73 @@ pub(crate) struct PerformanceSettings {
     pub develop_filmstrip_open: bool,
 }
 
+/// The export watermark's switch and placement. The image is kept beside the
+/// settings file (`app::watermark`).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct SavedWatermark {
+    pub enabled: bool,
+    #[serde(with = "watermark_anchor_serde")]
+    pub anchor: WatermarkAnchor,
+    /// The distance from the edges, in percent of the output's shorter edge.
+    pub margin: f32,
+    /// The longer side, in percent of the output's shorter edge.
+    pub size: f32,
+}
+
+impl Default for SavedWatermark {
+    fn default() -> Self {
+        let placement = WatermarkPlacement::default();
+        Self {
+            enabled: false,
+            anchor: placement.anchor(),
+            margin: placement.margin(),
+            size: placement.size(),
+        }
+    }
+}
+
+mod watermark_anchor_serde {
+    use super::WatermarkAnchor;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    /// The stored name of each anchor.
+    const NAMES: [(WatermarkAnchor, &str); 9] = [
+        (WatermarkAnchor::TopLeft, "top-left"),
+        (WatermarkAnchor::Top, "top"),
+        (WatermarkAnchor::TopRight, "top-right"),
+        (WatermarkAnchor::Left, "left"),
+        (WatermarkAnchor::Center, "center"),
+        (WatermarkAnchor::Right, "right"),
+        (WatermarkAnchor::BottomLeft, "bottom-left"),
+        (WatermarkAnchor::Bottom, "bottom"),
+        (WatermarkAnchor::BottomRight, "bottom-right"),
+    ];
+
+    pub(super) fn serialize<S>(anchor: &WatermarkAnchor, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let (_, name) = NAMES
+            .iter()
+            .find(|(candidate, _)| candidate == anchor)
+            .ok_or_else(|| serde::ser::Error::custom("watermark anchor has no stored name"))?;
+        serializer.serialize_str(name)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<WatermarkAnchor, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        NAMES
+            .iter()
+            .find(|(_, name)| *name == value)
+            .map(|(anchor, _)| *anchor)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown watermark anchor `{value}`")))
+    }
+}
+
 mod export_format_serde {
     use super::ExportFormat;
     use serde::{Deserialize, Deserializer, Serializer};
@@ -156,6 +224,7 @@ impl Default for PerformanceSettings {
             develop_card_order: crate::app::DevelopCardOrder::default(),
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
             export_format: ExportFormat::Jpeg,
+            export_watermark: SavedWatermark::default(),
             ui_design: crate::appearance::UiDesign::default(),
             preview_backdrop: crate::appearance::PreviewBackdrop::default(),
             onboarding_completed: false,

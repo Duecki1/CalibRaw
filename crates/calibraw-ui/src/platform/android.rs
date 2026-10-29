@@ -2,8 +2,8 @@
 
 use super::service::{
     CameraProfileFolderResult, ExportPublishResult, ImportProgress, ImportedLibraryDocument,
-    LibraryDocument, LibraryFolder, LutFilesResult, PickedDocument, PickerResult, Platform,
-    PublishedExport, ReplayVideoEncoder, TaskNotification,
+    LibraryDocument, LibraryFolder, PickedDocument, PickerResult, Platform, PublishedExport,
+    ReplayVideoEncoder, StagedFilesResult, TaskNotification,
 };
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
@@ -212,16 +212,20 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::open_camera_profile_folder(&self.app)
     }
 
-    fn take_lut_files_result(&self) -> Option<LutFilesResult> {
-        calibraw_ffi::take_lut_files_result().map(|result| match result {
-            calibraw_ffi::LutFilesResult::Staged(folder) => LutFilesResult::Staged(folder),
-            calibraw_ffi::LutFilesResult::Cancelled => LutFilesResult::Cancelled,
-            calibraw_ffi::LutFilesResult::Failed(error) => LutFilesResult::Failed(error),
-        })
+    fn take_lut_files_result(&self) -> Option<StagedFilesResult> {
+        calibraw_ffi::take_lut_files_result().map(staged_files_result)
+    }
+
+    fn take_watermark_image_result(&self) -> Option<StagedFilesResult> {
+        calibraw_ffi::take_watermark_image_result().map(staged_files_result)
     }
 
     fn open_lut_files(&self) -> Result<(), String> {
         calibraw_ffi::open_lut_files(&self.app)
+    }
+
+    fn open_watermark_image(&self) -> Result<(), String> {
+        calibraw_ffi::open_watermark_image(&self.app)
     }
 
     fn remove_camera_profile_mirror(&self, path: &Path) -> Result<(), String> {
@@ -507,6 +511,14 @@ impl ReplayVideoEncoder for MediaCodecEncoder {
 
     fn finish(self: Box<Self>) -> Result<(), String> {
         self.0.finish()
+    }
+}
+
+fn staged_files_result(result: calibraw_ffi::StagedFilesResult) -> StagedFilesResult {
+    match result {
+        calibraw_ffi::StagedFilesResult::Staged(folder) => StagedFilesResult::Staged(folder),
+        calibraw_ffi::StagedFilesResult::Cancelled => StagedFilesResult::Cancelled,
+        calibraw_ffi::StagedFilesResult::Failed(error) => StagedFilesResult::Failed(error),
     }
 }
 

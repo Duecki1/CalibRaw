@@ -39,13 +39,15 @@ public final class CalibRawActivity extends NativeActivity {
     private static final int OPEN_RAW_DOCUMENT = 1001;
     private static final int OPEN_CAMERA_PROFILE_FOLDER = 1003;
     private static final int OPEN_LUT_FILES = 1004;
+    private static final int OPEN_WATERMARK_IMAGE = 1005;
     // A launch with this extra set to true times GPU processing stages
     // (`cargo xtask android-bench`).
     private static final String EXTRA_GPU_STAGE_TIMING = "de.duecki.calibraw.GPU_STAGE_TIMING";
 
     private StorageManager storageManager;
     private ProfileImporter profileImporter;
-    private LutImporter lutImporter;
+    private StagedFileImporter lutImporter;
+    private StagedFileImporter watermarkImporter;
     private ExportPublisher exportPublisher;
     private TaskNotificationController taskNotificationController;
     // Created on first use; UI thread only.
@@ -120,7 +122,12 @@ public final class CalibRawActivity extends NativeActivity {
                 nativeOnCameraProfileFolderPicked(cachedPath, displayName, profileCount, error);
             }
         });
-        lutImporter = new LutImporter(this, CalibRawActivity::nativeOnLutFilesPicked);
+        lutImporter = new StagedFileImporter(
+                this, StagedFileImporter.LUTS, CalibRawActivity::nativeOnLutFilesPicked);
+        watermarkImporter = new StagedFileImporter(
+                this,
+                StagedFileImporter.WATERMARK,
+                CalibRawActivity::nativeOnWatermarkImagePicked);
         exportPublisher = new ExportPublisher(this, CalibRawActivity::nativeOnExportPublished);
 
         configureSystemBarsAndInsets();
@@ -316,6 +323,8 @@ public final class CalibRawActivity extends NativeActivity {
     private static native void nativeOnCameraProfileFolderPicked(
             String cachedPath, String displayName, int profileCount, String error);
     private static native void nativeOnLutFilesPicked(String stagingDirectory, String error);
+    private static native void nativeOnWatermarkImagePicked(
+            String stagingDirectory, String error);
     private static native void nativeOnExportPublished(String location, String uri, String error);
 
     public void openRawDocument() {
@@ -333,6 +342,11 @@ public final class CalibRawActivity extends NativeActivity {
                 lutImporter.createFilePickerIntent(), OPEN_LUT_FILES));
     }
 
+    public void openWatermarkImage() {
+        runOnUiThread(() -> startActivityForResult(
+                watermarkImporter.createFilePickerIntent(), OPEN_WATERMARK_IMAGE));
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -340,6 +354,8 @@ public final class CalibRawActivity extends NativeActivity {
             profileImporter.handleFolderPickerResult(resultCode, data);
         } else if (requestCode == OPEN_LUT_FILES) {
             lutImporter.handleFilePickerResult(resultCode, data);
+        } else if (requestCode == OPEN_WATERMARK_IMAGE) {
+            watermarkImporter.handleFilePickerResult(resultCode, data);
         } else if (requestCode == OPEN_RAW_DOCUMENT) {
             storageManager.handleRawDocumentResult(resultCode, data);
         }

@@ -312,4 +312,6 @@ pub(crate) struct ExportState {
     /// ends before its gallery publish does.
     pub(crate) share_mime_type: Option<&'static str>,
     pub(crate) override_choice: ExportOverrideChoice,
+    /// Drawn over every export while it is on; see `app::watermark`.
+    pub(crate) watermark: WatermarkState,
 }

@@ -715,7 +715,7 @@ impl CalibRawApp {
                 device: render_state.device.clone(),
                 queue: render_state.queue.clone(),
                 format,
-                settings: settings.clone(),
+                settings: self.export.watermark.export_settings(&settings),
                 camera_profile_mode: self.preferences.camera_profile_mode,
                 camera_profile_folder: self.preferences.camera_profile_folder.clone(),
                 last_camera_profile: self.preferences.last_camera_profile.clone(),

@@ -55,11 +55,24 @@ fn export_number_row<Num>(
     });
 }
 
+/// The Format, Resize and Metadata cards. Returns whether the format changed.
 pub(crate) fn export_settings_controls(
     ui: &mut Ui,
     format: &mut ExportFormat,
     settings: &mut crate::pipeline::ExportSettings,
     _fallback_picker_directory: Option<&std::path::Path>,
+) -> bool {
+    let format_changed = export_format_card(ui, format, settings);
+    moduwu_design::card_gap(ui);
+    export_size_and_metadata_cards(ui, settings);
+    format_changed
+}
+
+/// The format, its quality and precision. Returns whether the format changed.
+fn export_format_card(
+    ui: &mut Ui,
+    format: &mut ExportFormat,
+    settings: &mut crate::pipeline::ExportSettings,
 ) -> bool {
     let previous_format = *format;
     moduwu_design::section_card(ui, "Format", |ui| {
@@ -146,8 +159,10 @@ pub(crate) fn export_settings_controls(
             );
         }
     });
-    moduwu_design::card_gap(ui);
+    *format != previous_format
+}
 
+fn export_size_and_metadata_cards(ui: &mut Ui, settings: &mut crate::pipeline::ExportSettings) {
     moduwu_design::section_card_with_help(
         ui,
         "Resize",
@@ -217,8 +232,6 @@ pub(crate) fn export_settings_controls(
             "Embeds available source, camera, lens, exposure, creator, original-size, software, and normalized-orientation metadata in the exported image.",
         );
     });
-
-    *format != previous_format
 }
 
 /// A square, glyph-only touch action filling `rect` exactly.
@@ -345,31 +358,22 @@ impl Sidebar {
         let content_width = ui.available_width().max(1.0);
         let column_width = content_width;
 
-        let export_picker_directory = if app.caps().has_folders() {
-            app.develop
-                .current_path
-                .as_deref()
-                .and_then(|path| path.parent())
-                .filter(|parent| !parent.as_os_str().is_empty())
-                .map(std::path::Path::to_path_buf)
-        } else {
-            None
-        };
         ui.allocate_ui_with_layout(
             egui::vec2(column_width, 0.0),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 ui.set_min_width(column_width);
                 ui.set_max_width(column_width);
-                let format_changed = export_settings_controls(
-                    ui,
-                    &mut app.export.format,
-                    &mut app.export.settings,
-                    export_picker_directory.as_deref(),
-                );
-                if format_changed {
+                if export_format_card(ui, &mut app.export.format, &mut app.export.settings) {
                     app.persist_performance_settings();
                 }
+                moduwu_design::card_gap(ui);
+                if let Some(action) = super::watermark::watermark_card(ui, app.export.watermark.view())
+                {
+                    app.apply_watermark_action(action);
+                }
+                moduwu_design::card_gap(ui);
+                export_size_and_metadata_cards(ui, &mut app.export.settings);
 
                 if let Some((fraction, phase)) = app.edit_replay_progress_state() {
                     ui.add_space(moduwu_design::SPACE_SM);

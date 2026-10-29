@@ -9,6 +9,7 @@ pub(crate) enum DesktopPickerEvent {
     OnnxRuntime(Result<Option<(PathBuf, calibraw_ai::Sha256)>, String>),
     PresetFiles(Option<Vec<PathBuf>>),
     LutFiles(Option<Vec<PathBuf>>),
+    WatermarkImage(Option<PathBuf>),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

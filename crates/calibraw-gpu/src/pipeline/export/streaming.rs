@@ -20,7 +20,8 @@ pub(super) fn render_export_output<W: Write>(
         request.output_width,
         request.output_height,
         row_format,
-    )?;
+    )?
+    .with_watermark(PreparedWatermark::for_request(&request)?);
     stream_tiled_linear_rows(context, request, |source_y, source| {
         resizer.push_source_row(source_y, source, output_transform, output)
     })?;
@@ -58,6 +59,7 @@ where
         geometry,
         bit_depth: _,
         color: _,
+        watermark: _,
     } = request;
     let export_started = Instant::now();
     ensure_export_not_cancelled(cancellation)?;

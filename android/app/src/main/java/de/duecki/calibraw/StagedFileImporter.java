@@ -15,14 +15,42 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Copies picked .cube files into a staging folder in the cache. Rust imports
- * them into the LUT library, which validates them, and deletes the folder.
+ * Copies picked files into a staging folder in the cache. Rust imports them,
+ * validating each, and deletes the folder.
  */
-final class LutImporter {
-    // Matches MAX_CUBE_FILE_BYTES in calibraw-core.
-    static final long MAX_LUT_FILE_BYTES = 32L * 1024L * 1024L;
-    private static final int MAX_LUT_FILES = 256;
-    private static final String STAGING_PREFIX = "lut-import-";
+final class StagedFileImporter {
+    /** What one picker accepts and how its files are staged. */
+    static final class Spec {
+        final String label;
+        final String mimeType;
+        final int maxFiles;
+        final long maxFileBytes;
+        final String stagingPrefix;
+        final String fallbackName;
+
+        Spec(
+                String label,
+                String mimeType,
+                int maxFiles,
+                long maxFileBytes,
+                String stagingPrefix,
+                String fallbackName) {
+            this.label = label;
+            this.mimeType = mimeType;
+            this.maxFiles = maxFiles;
+            this.maxFileBytes = maxFileBytes;
+            this.stagingPrefix = stagingPrefix;
+            this.fallbackName = fallbackName;
+        }
+    }
+
+    // .cube files have no registered MIME type, so any file can be picked.
+    // The size matches MAX_CUBE_FILE_BYTES in calibraw-core.
+    static final Spec LUTS = new Spec(
+            "LUT", "*/*", 256, 32L * 1024L * 1024L, "lut-import-", "LUT.cube");
+    // The size matches MAX_WATERMARK_FILE_BYTES in calibraw-ui.
+    static final Spec WATERMARK = new Spec(
+            "watermark", "image/*", 1, 64L * 1024L * 1024L, "watermark-import-", "watermark.png");
 
     interface Callbacks {
         /** An empty folder and error mean the picker was cancelled. */
@@ -30,19 +58,20 @@ final class LutImporter {
     }
 
     private final Activity storage;
+    private final Spec spec;
     private final Callbacks callbacks;
 
-    LutImporter(Activity storage, Callbacks callbacks) {
+    StagedFileImporter(Activity storage, Spec spec, Callbacks callbacks) {
         this.storage = storage;
+        this.spec = spec;
         this.callbacks = callbacks;
     }
 
     Intent createFilePickerIntent() {
-        // .cube files have no registered MIME type, so any file can be picked.
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        intent.setType(spec.mimeType);
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, spec.maxFiles > 1);
         return intent;
     }
 
@@ -52,17 +81,17 @@ final class LutImporter {
             callbacks.onFilesPicked("", "");
             return;
         }
-        new Thread(() -> stageFiles(uris), "CalibRaw LUT import").start();
+        new Thread(() -> stageFiles(uris), "CalibRaw " + spec.label + " import").start();
     }
 
-    private static List<Uri> pickedUris(int resultCode, Intent data) {
+    private List<Uri> pickedUris(int resultCode, Intent data) {
         List<Uri> uris = new ArrayList<>();
         if (resultCode != CalibRawActivity.RESULT_OK || data == null) {
             return uris;
         }
         ClipData clip = data.getClipData();
         if (clip != null) {
-            for (int index = 0; index < clip.getItemCount() && uris.size() < MAX_LUT_FILES; index++) {
+            for (int index = 0; index < clip.getItemCount() && uris.size() < spec.maxFiles; index++) {
                 Uri uri = clip.getItemAt(index).getUri();
                 if (uri != null) {
                     uris.add(uri);
@@ -76,10 +105,12 @@ final class LutImporter {
 
     private void stageFiles(List<Uri> uris) {
         File staging = new File(
-                storage.getCacheDir(), STAGING_PREFIX + Long.toUnsignedString(System.nanoTime()));
+                storage.getCacheDir(),
+                spec.stagingPrefix + Long.toUnsignedString(System.nanoTime()));
         try {
             if (!staging.mkdirs()) {
-                throw new IllegalStateException("Could not create the LUT import folder");
+                throw new IllegalStateException(
+                        "Could not create the " + spec.label + " import folder");
             }
             for (int index = 0; index < uris.size(); index++) {
                 Uri uri = uris.get(index);
@@ -93,8 +124,9 @@ final class LutImporter {
                     BoundedStreams.copy(
                             input,
                             output,
-                            MAX_LUT_FILE_BYTES,
-                            "A LUT file is larger than " + MAX_LUT_FILE_BYTES + " bytes");
+                            spec.maxFileBytes,
+                            "A " + spec.label + " file is larger than "
+                                    + spec.maxFileBytes + " bytes");
                 }
             }
             String stagedPath = staging.getAbsolutePath();
@@ -120,7 +152,7 @@ final class LutImporter {
             }
         } catch (Exception ignored) {
         }
-        return "LUT.cube";
+        return spec.fallbackName;
     }
 
     // Keeps the name readable for the library while removing path separators.

@@ -170,6 +170,7 @@ fn render_still(
         keep_metadata: false,
         jpeg_quality: 90,
         bit_depth: ExportBitDepth::Eight,
+        watermark: None,
     };
     let receiver = spawn_tiled_export(
         ExportFormat::Png,

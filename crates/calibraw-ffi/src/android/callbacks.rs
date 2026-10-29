@@ -245,24 +245,53 @@ pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnLutFiles
 ) {
     unowned_env
         .with_env(|_env| -> jni::errors::Result<()> {
-            let staging_directory = staging_directory.to_string();
-            let error = error.to_string();
-            let result = if !error.is_empty() {
-                LutFilesResult::Failed(error)
-            } else if staging_directory.is_empty() {
-                LutFilesResult::Cancelled
-            } else {
-                LutFilesResult::Staged(PathBuf::from(staging_directory))
-            };
-            if let Ok(mut queue) = lut_files_results().lock() {
-                queue.push_back(result);
-            }
-            request_repaint();
+            queue_staged_files(lut_files_results(), &staging_directory, &error);
             Ok(())
         })
         .resolve_with::<LogContextErrorAndDefault, _>(|| {
             "CalibRawActivity.nativeOnLutFilesPicked".to_owned()
         });
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnWatermarkImagePicked<
+    'local,
+>(
+    mut unowned_env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    staging_directory: JString<'local>,
+    error: JString<'local>,
+) {
+    unowned_env
+        .with_env(|_env| -> jni::errors::Result<()> {
+            queue_staged_files(watermark_image_results(), &staging_directory, &error);
+            Ok(())
+        })
+        .resolve_with::<LogContextErrorAndDefault, _>(|| {
+            "CalibRawActivity.nativeOnWatermarkImagePicked".to_owned()
+        });
+}
+
+/// Queues a staging importer's result: an error, a cancelled picker (an
+/// empty folder) or the folder the picked files were copied into.
+fn queue_staged_files(
+    queue: &Mutex<VecDeque<StagedFilesResult>>,
+    staging_directory: &JString<'_>,
+    error: &JString<'_>,
+) {
+    let staging_directory = staging_directory.to_string();
+    let error = error.to_string();
+    let result = if !error.is_empty() {
+        StagedFilesResult::Failed(error)
+    } else if staging_directory.is_empty() {
+        StagedFilesResult::Cancelled
+    } else {
+        StagedFilesResult::Staged(PathBuf::from(staging_directory))
+    };
+    if let Ok(mut queue) = queue.lock() {
+        queue.push_back(result);
+    }
+    request_repaint();
 }
 
 #[unsafe(no_mangle)]

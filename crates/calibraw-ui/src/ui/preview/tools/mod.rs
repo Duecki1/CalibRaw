@@ -7,3 +7,4 @@ mod masks;
 pub(super) use masks::MaskToolInput;
 mod area_picker;
 mod point_color;
+mod watermark;

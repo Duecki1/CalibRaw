@@ -826,6 +826,12 @@ impl Preview {
                 app.apply_effect_handle_actions(actions);
             }
         }
+
+        // The export watermark shows only beside the Export panel; it is not
+        // part of the edit.
+        if app.ui.sidebar_tab == SidebarTab::Export {
+            Self::paint_watermark(ui, app.export.watermark.view(), layout);
+        }
     }
 }
 

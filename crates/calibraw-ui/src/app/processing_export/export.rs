@@ -423,7 +423,7 @@ impl CalibRawApp {
             },
             destination,
             format,
-            settings: self.export.settings.clone(),
+            settings: self.export.watermark.export_settings(&self.export.settings),
         }))
     }
 

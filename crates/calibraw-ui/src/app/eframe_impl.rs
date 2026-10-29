@@ -317,6 +317,7 @@ impl eframe::App for CalibRawApp {
 
         self.poll_desktop_picker(frame);
         self.poll_look_lut_table();
+        self.poll_watermark();
         if caps.is_mobile() {
             self.handle_android_platform_events(ui, frame);
         }

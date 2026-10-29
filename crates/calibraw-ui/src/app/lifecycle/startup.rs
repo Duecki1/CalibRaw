@@ -261,6 +261,7 @@ impl CalibRawApp {
                 android_batch_load_pending: false,
                 share_mime_type: None,
                 override_choice: ExportOverrideChoice::default(),
+                watermark: WatermarkState::new(performance.export_watermark),
             },
             persistence: PersistenceState {
                 history: edit_history,
@@ -383,6 +384,7 @@ impl CalibRawApp {
             platform,
         };
         let mut app = app;
+        app.load_saved_watermark();
         app.ui.onboarding_step = OnboardingStep::pending(&app).first().copied();
         if caps.has_folders() {
             if let Some(folder) = last_library_folder.filter(|folder| folder.is_dir()) {

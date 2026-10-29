@@ -101,6 +101,8 @@ pub struct ExportSettings {
     pub keep_metadata: bool,
     pub jpeg_quality: u8,
     pub bit_depth: ExportBitDepth,
+    /// Drawn over the output; `None` exports the photo alone.
+    pub watermark: Option<ExportWatermark>,
 }
 
 impl Default for ExportSettings {
@@ -113,6 +115,7 @@ impl Default for ExportSettings {
             keep_metadata: true,
             jpeg_quality: 90,
             bit_depth: ExportBitDepth::Sixteen,
+            watermark: None,
         }
     }
 }

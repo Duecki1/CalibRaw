@@ -51,7 +51,8 @@ pub(super) fn render_geometry_output<W: Write>(
             request.output_width,
             request.output_height,
         )
-        .with_passthrough(row_format == ExportRowFormat::RgbF32Le);
+        .with_passthrough(row_format == ExportRowFormat::RgbF32Le)
+        .with_watermark(PreparedWatermark::for_request(&request)?);
         let output_transform = request.color.transform.as_ref();
         let finalize_started = Instant::now();
         for first_y in (0..request.output_height).step_by(EXPORT_CPU_ROW_BATCH) {

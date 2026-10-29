@@ -103,6 +103,7 @@ mod look_lut;
 mod masks;
 mod navigation;
 mod portrait_fill;
+mod watermark;
 
 pub(crate) use export::export_settings_controls;
 pub(crate) use mask_effects::effect_card_open;

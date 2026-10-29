@@ -38,10 +38,13 @@ use tiff::*;
 mod rows;
 mod settings;
 mod streaming;
+mod watermark;
 mod worker;
 use rows::*;
 pub use settings::*;
 use streaming::*;
+use watermark::PreparedWatermark;
+pub use watermark::{ExportWatermark, WatermarkAnchor, WatermarkImage, WatermarkPlacement};
 pub use worker::*;
 
 const EXPORT_CPU_ROW_BATCH: usize = 32;
@@ -144,6 +147,7 @@ struct ExportRequest<'a> {
     geometry: GeometryTransform,
     bit_depth: ExportBitDepth,
     color: &'a ResolvedExportColor,
+    watermark: Option<&'a ExportWatermark>,
 }
 
 mod color;

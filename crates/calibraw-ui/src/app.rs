@@ -69,6 +69,7 @@ mod mask_tool;
 mod persistence_state;
 mod preview_state;
 mod ui_state;
+mod watermark;
 pub(crate) use decoded_raw_cache::{DecodeKey, DecodeRequest, DecodedRaw, DecodedRawCache};
 pub(crate) use develop_state::*;
 pub(crate) use effect_handles::{
@@ -86,6 +87,7 @@ pub(crate) use mask_tool::{BrushStrokeSamples, MaskPointerEdit, MaskToolAction};
 pub(crate) use persistence_state::*;
 pub(crate) use preview_state::*;
 pub(crate) use ui_state::*;
+pub(crate) use watermark::{WatermarkAction, WatermarkState, WatermarkView};
 
 pub struct CalibRawApp {
     pub(crate) develop: DevelopState,

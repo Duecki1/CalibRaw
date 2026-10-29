@@ -335,6 +335,7 @@ impl CalibRawApp {
             develop_card_order: self.preferences.develop_card_order.clone(),
             export_name_template: self.preferences.export_name_template.clone(),
             export_format: self.export.format,
+            export_watermark: self.export.watermark.saved(),
             ui_design: self.preferences.ui_design,
             preview_backdrop: self.preferences.preview_backdrop,
             onboarding_completed: self.preferences.onboarding_completed,
