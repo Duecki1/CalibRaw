@@ -121,7 +121,7 @@ job records the value it started with.
 |---|---|---|---|---|
 | Document load | single receiver; a new load replaces it | the replaced receiver is dropped and its result discarded | the load installs the new document and bumps `document_generation` | notice or unsupported-file dialog; a disconnected worker is reported |
 | Neighbour prefetch (desktop) | one thread after each interactive load; prepares the library neighbours into `DecodedRawCache` | `AtomicBool` checked between steps; a new load or a profile-settings change cancels it | results only fill caches; an open of a photo being prefetched waits for that decode | ignored; the open reports its own failure |
-| Preview rebuild / detail | single receiver each; latest request wins | replaced receiver discards the stale result; `PreviewState::revision` rejects outdated detail renders. The zoomed crop's worker (`DetailRebuild`) also holds an `AtomicBool`, set when the view moves (`note_preview_motion`): it checks it for every row it resamples (`build_region_proxy_until`) and ends with `Cancelled`; the next crop starts once that is reported and the view has settled. A finished crop is not installed while a drag is followed by the reduced preview | receivers cleared with the preview (`drop_detail_rebuild` also sets the flag) | disconnect clears the pending state |
+| Preview rebuild / detail | single receiver each; latest request wins | replaced receiver discards the stale result; `PreviewState::revision` rejects outdated detail renders. The zoomed crop's worker (`DetailRebuild`) also holds an `AtomicBool`, set when the view moves (`note_preview_motion`): it checks it every few rows it resamples (`build_region_proxy_until`) and ends with `Cancelled`; the next crop starts once that is reported and the view has settled. A finished crop is not installed while a drag is followed by the reduced preview | receivers cleared with the preview (`drop_detail_rebuild` also sets the flag) | disconnect clears the pending state |
 | Reduced preview warm-up | one receiver in `InteractiveState`, started when the editor is quiet and the GPU is slow | none; short | the result is used only while its source is still the fitted proxy or the zoomed crop's raw (`Arc::ptr_eq`); the graph is dropped when that changes (the fitted proxy, or the zoomed crop's raw), when an export starts, or when the GPU is no longer slow | a dead worker is an error dialog; a graph the budget cannot hold is skipped with a diagnostics line; neither is retried for that proxy |
 | Full-resolution preview (desktop) | one `RunningRender` in `PreviewState::full_resolution`, started after the editor has been idle; no second one starts until its result arrives | `AtomicBool`, set by `FullResolutionState::observe` when the fitted preview shows another `FittedOutput` (texture and `output_revision`), and at once by an edit, a moved view or a pressed pointer. The worker renders one stage at a time and waits for the GPU between them (`wait_for_gpu`), so a cancel is noticed before the next stage | the result is installed only when `FittedOutput` and `document_generation` still match | a photo whose graph does not fit the adapter's free memory or texture limit is skipped with a diagnostics line; a failed render is an error dialog; neither is retried for the document |
 | Foreground AI / lens correction / auto straighten and perspective | one `ForegroundOperation` slot; a second request is refused | shared `AtomicBool`; the worker stops at its next safe point | results are applied only if `document_id` equals the current `document_generation`; an automatic geometry estimate also needs the flips and skews it was made for (and, for straightening, the perspective correction) | error dialog or notice; slot cleared |
@@ -193,6 +193,15 @@ released when their owners drop.
 The LUT texture is sized by its LUT, so it is not part of that plan: it takes
 a reservation of its own when a LUT is first uploaded, and pipelines without a
 LUT reserve nothing for it.
+A graph is built for one `PixelLayout` of its source. A mosaic is
+reconstructed and demosaiced from the CFA textures. A preview proxy that
+reduces a mosaic is binned to co-sited RGB instead (`BinnedSensor`, built by
+`build_region_proxy`), so detail near the reduced resolution cannot demosaic
+into false colour: its graph keeps the pixels in the RGB source texture and
+replaces highlight reconstruction and demosaicing with
+`binned_highlight_reconstruct` and the raster finish program. A raster takes
+the raster finish alone. Graphs reused for new pixels (`upload_raw_tile`)
+take only sources of their own layout.
 The graphs that show a photo with camera profiles to choose from (fitted,
 navigation and zoomed crop) size their profile buffer for
 `PREVIEWED_PROFILE_BYTES`, so a hovered profile renders on them

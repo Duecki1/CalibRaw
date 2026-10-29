@@ -101,13 +101,13 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
             opposed_chroma[1],
             opposed_chroma[2],
         ],
-        noise_shot: canonicalize_green_noise(
+        noise_shot: canonicalize_greens(
             std::array::from_fn(|channel| {
                 raw.noise_profile.shot[channel] * white_balance[channel].max(0.0)
             }),
             raw.noise_profile.green2_present,
         ),
-        noise_read: canonicalize_green_noise(
+        noise_read: canonicalize_greens(
             std::array::from_fn(|channel| {
                 let wb = white_balance[channel].max(0.0);
                 raw.noise_profile.read[channel] * wb * wb
@@ -120,7 +120,13 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
             exposure.denoise_quality.shader_value(),
             raw.noise_profile.confidence.clamp(0.0, 1.0),
         ],
-        wb: white_balance,
+        // A binned green averages both Bayer greens, so the binned highlight
+        // pass takes their mean multiplier from wb.g.
+        wb: if raw.pixel_layout() == PixelLayout::Binned {
+            canonicalize_greens(white_balance, raw.noise_profile.green2_present)
+        } else {
+            white_balance
+        },
         cam_to_srgb_0: camera_transform[0],
         cam_to_srgb_1: camera_transform[1],
         cam_to_srgb_2: camera_transform[2],

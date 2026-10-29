@@ -5,6 +5,7 @@ use super::{
 use rayon::prelude::*;
 
 mod ai_denoised_regions;
+mod binning;
 mod display_downscale;
 mod proxy;
 mod tiles;
@@ -168,6 +169,7 @@ mod tests {
             capture_metadata: Default::default(),
             cfa_kind: CfaKind::Bayer,
             raw_pixels: pixels.into(),
+            binned_sensor: None,
             scene_linear_raster: None,
             scene_referred_raster: false,
             color_indices: CompactPixelMap::dense(
@@ -225,7 +227,8 @@ mod tests {
             if raster {
                 assert_eq!(built.scene_linear_raster(), plain.scene_linear_raster());
             } else {
-                assert_eq!(built.raw_pixels, plain.raw_pixels);
+                let binned = |raw: &LoadedRaw| raw.binned_sensor.as_ref().unwrap().rgb().to_vec();
+                assert_eq!(binned(&built), binned(&plain));
             }
         }
     }

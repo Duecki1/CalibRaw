@@ -153,7 +153,7 @@ impl RawGpuPipeline {
                     let canonical = sample_remove_patch_scene(patch, local_x, local_y);
                     let source_scene =
                         canonical_remove_scene_to_pipeline_scene(source_raw, exposure, canonical);
-                    let scene = if self.has_raster_scene {
+                    let scene = if self.layout == PixelLayout::Raster {
                         pipeline_scene_to_working_rec2020(source_raw, source_scene)
                     } else {
                         source_scene

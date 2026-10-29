@@ -26,12 +26,14 @@ use std::ops::{Deref, DerefMut, Index, RangeInclusive};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+mod binned_sensor;
 mod compact_pixel_map;
 mod opposed_chroma;
 mod profile_color;
 mod sensor_samples;
 mod sensor_saturation;
 mod white_balance;
+pub use binned_sensor::BinnedSensor;
 pub use compact_pixel_map::*;
 pub use opposed_chroma::*;
 pub use profile_color::{ProfileColor, ProfileColorSource};
@@ -310,9 +312,22 @@ impl AiDenoisedImage {
     }
 }
 
+/// How a [`LoadedRaw`] holds its pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PixelLayout {
+    /// One sample per photosite in `raw_pixels`, demosaiced on the GPU.
+    Mosaic,
+    /// Co-sited sensor RGB in `binned_sensor`: a reduced view of a mosaic,
+    /// processed like one except that it skips demosaicing.
+    Binned,
+    /// Demosaiced RGB in `scene_linear_raster`.
+    Raster,
+}
+
 /// A decoded source photo ready for the develop pipeline. Despite the name it
-/// holds either sensor data (`raw_pixels` + CFA metadata) or, for rendered
-/// TIFF/JPEG/PNG/HEIF photos, a scene-linear Rec.2020 raster; see
+/// holds sensor data (`raw_pixels` + CFA metadata), a reduced sensor view
+/// binned to RGB (`binned_sensor`) or, for rendered TIFF/JPEG/PNG/HEIF photos,
+/// a scene-linear Rec.2020 raster; see [`LoadedRaw::pixel_layout`] and
 /// [`LoadedRaw::is_display_referred_raster`].
 #[derive(Clone, Debug)]
 pub struct LoadedRaw {
@@ -333,6 +348,10 @@ pub struct LoadedRaw {
     pub capture_metadata: CaptureMetadata,
     pub cfa_kind: CfaKind,
     pub raw_pixels: SensorSamples,
+    /// The pixels of a reduced sensor view. Such a view keeps the mosaic's
+    /// metadata and `cfa_kind`, but its `raw_pixels` are empty and its CFA and
+    /// black-level maps are uniform placeholders.
+    pub binned_sensor: Option<BinnedSensor>,
     pub scene_linear_raster: Option<Arc<[f32]>>,
     /// The raster holds scene radiance whose tones were never rendered, such as a
     /// floating-point HDR or focus-stack master, rather than a developed photo. It may
@@ -400,6 +419,7 @@ impl LoadedRaw {
             capture_metadata: self.capture_metadata.clone(),
             cfa_kind: self.cfa_kind,
             raw_pixels: raw_pixels.into(),
+            binned_sensor: None,
             scene_linear_raster: None,
             scene_referred_raster: self.scene_referred_raster,
             color_indices,
@@ -450,6 +470,7 @@ impl LoadedRaw {
             capture_metadata: CaptureMetadata::default(),
             cfa_kind: CfaKind::Bayer,
             raw_pixels: SensorSamples::default(),
+            binned_sensor: None,
             scene_linear_raster: Some(rgb.into()),
             scene_referred_raster: false,
             color_indices: CompactPixelMap::repeating(width, height, 1, 1, vec![1]),
@@ -470,6 +491,16 @@ impl LoadedRaw {
             opposed_chroma_source_identity: Default::default(),
             opposed_chroma_reference_source: true,
         })
+    }
+
+    pub fn pixel_layout(&self) -> PixelLayout {
+        if self.binned_sensor.is_some() {
+            PixelLayout::Binned
+        } else if self.is_pre_demosaiced_raster() {
+            PixelLayout::Raster
+        } else {
+            PixelLayout::Mosaic
+        }
     }
 
     pub fn is_pre_demosaiced_raster(&self) -> bool {

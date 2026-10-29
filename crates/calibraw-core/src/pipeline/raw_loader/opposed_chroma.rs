@@ -321,6 +321,7 @@ impl LoadedRaw {
         } else {
             // A derived crop/proxy must never populate full-source prepared state. This fallback
             // preserves standalone behavior if the caller forgot to prime the full source first.
+            // A binned view has no mosaic to estimate from, so it finds no chroma.
             self.calculate_opposed_chroma(black_point, clip_threshold, pixels, wb_coeffs)
         };
         if self.opposed_chroma_reference_source {

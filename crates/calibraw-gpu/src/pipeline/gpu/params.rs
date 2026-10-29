@@ -471,10 +471,10 @@ pub(super) fn pack_view_color_options(
     ]
 }
 
-pub(super) fn canonicalize_green_noise(
-    mut coefficients: [f32; 4],
-    green2_present: bool,
-) -> [f32; 4] {
+/// Per-channel `coefficients` (R, G1, B, G2) with both greens at their mean
+/// when the sensor has a second green, for stages that treat the greens as
+/// one colour.
+pub(super) fn canonicalize_greens(mut coefficients: [f32; 4], green2_present: bool) -> [f32; 4] {
     if green2_present {
         let green = 0.5 * (coefficients[1] + coefficients[3]);
         coefficients[1] = green;

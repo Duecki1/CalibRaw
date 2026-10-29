@@ -12,7 +12,7 @@ use super::resources::{
 use super::{
     ProcessingQuality, RawGpuPipeline, GPU_STAGE_UNIFORM_ALLOCATION_BYTES, MASK_DATA_SIZE_BYTES,
 };
-use crate::pipeline::{CfaKind, MAX_LOCAL_MASKS};
+use crate::pipeline::{CfaKind, PixelLayout, MAX_LOCAL_MASKS};
 use anyhow::Result;
 
 /// Which preview graph a mobile size bound is for. The fitted graph and the
@@ -210,10 +210,10 @@ fn preview_plan_input(
         profile_buffer_bytes: PREVIEW_PROFILE_BUFFER_BYTES,
         stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
         mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
+        // Sized for mosaics: the RGB source of a binned view or raster, without
+        // AI denoise, needs less than the CFA textures it replaces.
+        layout: PixelLayout::Mosaic,
         ai_cfa: false,
-        // Sized for sensor sources: a raster's RGB source is within a byte
-        // per pixel of the CFA textures it replaces.
-        raster_source: false,
         cfa_kind,
     }
 }

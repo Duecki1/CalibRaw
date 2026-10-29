@@ -86,10 +86,10 @@ pub use raw_loader::{
     load_raw_display_dimensions, load_raw_display_metadata, load_raw_embedded_thumbnail,
     load_raw_file, load_raw_file_with_dcp, load_raw_file_with_profile_config,
     load_raw_file_with_profile_selection, load_raw_thumbnail,
-    load_raw_thumbnail_with_display_metadata, AiDenoisedImage, CameraProfileCandidate,
-    CameraProfileMode, CfaKind, CompactPixelMap, LoadedRaw, ProfileColor, ProfileColorSource,
-    RawDisplayMetadata, RawThumbnail, SensorSamples, SensorSaturation, WhiteBalanceRanges,
-    SUPPORTED_RAW_EXTENSIONS,
+    load_raw_thumbnail_with_display_metadata, AiDenoisedImage, BinnedSensor,
+    CameraProfileCandidate, CameraProfileMode, CfaKind, CompactPixelMap, LoadedRaw, PixelLayout,
+    ProfileColor, ProfileColorSource, RawDisplayMetadata, RawThumbnail, SensorSamples,
+    SensorSaturation, WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
 };
 pub use raw_loader::{
     invalidate_dcp_profile_index, prewarm_dcp_profile_index, take_dcp_profile_limit_notice,

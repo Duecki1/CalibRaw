@@ -4,7 +4,8 @@ use super::{
     DETAIL_PYRAMID_LEVELS,
 };
 use crate::pipeline::{
-    CameraProfile, CfaKind, CompactPixelMap, ExposureParams, LoadedRaw, MaskStack, SensorSaturation,
+    build_proxy, CameraProfile, CfaKind, CompactPixelMap, ExposureParams, LoadedRaw, MaskStack,
+    ProxySpec, SensorSaturation,
 };
 
 /// Composes `shader` the way production does for `quality` and validates it.
@@ -104,6 +105,7 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         capture_metadata: Default::default(),
         cfa_kind: CfaKind::Bayer,
         raw_pixels: pixels.into(),
+        binned_sensor: None,
         scene_linear_raster: None,
         scene_referred_raster: false,
         color_indices: CompactPixelMap::dense(width, height, colors),
@@ -205,15 +207,20 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
         (indices.haze_accumulate_pass_index, "accumulate_haze"),
         (indices.haze_resolve_pass_index, "resolve_haze_airlight"),
         (indices.haze_end_index - 1, "smooth_haze_coefficients"),
+        (
+            indices.binned_highlight_pass_index,
+            "binned_highlight_reconstruct",
+        ),
     ] {
         assert_eq!(entry(index), expected, "pass {index}");
     }
     assert_eq!(pipeline.passes.len(), indices.pass_count);
 }
 
-/// Builds and runs the whole graph for each sensor layout and quality, so
-/// wgpu checks every entry shader against the Rust bind group layouts it is
-/// given. Naga validation alone checks each shader in isolation.
+/// Builds and runs the whole graph for each sensor and pixel layout and
+/// quality, so wgpu checks every entry shader against the Rust bind group
+/// layouts it is given. Naga validation alone checks each shader in
+/// isolation.
 #[test]
 fn pipelines_build_and_render_for_every_sensor_layout_and_quality() -> anyhow::Result<()> {
     const EDGE: u32 = 96;
@@ -241,24 +248,27 @@ fn pipelines_build_and_render_for_every_sensor_layout_and_quality() -> anyhow::R
             .collect(),
     );
     let raster = tone_consistency_scene(EDGE, EDGE);
-    for raw in [&bayer, &xtrans, &raster] {
+    let binned = ProxySpec { max_edge: EDGE / 2 };
+    let binned_bayer = build_proxy(&bayer, binned);
+    let binned_xtrans = build_proxy(&xtrans, binned);
+    for raw in [&bayer, &xtrans, &raster, &binned_bayer, &binned_xtrans] {
+        let source = (raw.cfa_kind, raw.pixel_layout());
         let params = GpuParams::new(&ExposureParams::default(), &MaskStack::default(), raw);
         for quality in [ProcessingQuality::Preview, ProcessingQuality::High] {
             let pipeline =
                 RawGpuPipeline::new(&device, &queue, raw, &params, PipelineOptions::new(quality))?;
             assert_planned_programs(&pipeline);
             pipeline.recompute(&queue, &device, &params);
-            let rgba = pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)?;
+            let rgba = pipeline
+                .read_output_region_blocking(&device, &queue, 0, 0, raw.width, raw.height)?;
             assert_eq!(
                 rgba.len(),
-                (EDGE * EDGE * 4) as usize,
-                "{:?} {quality:?}",
-                raw.cfa_kind
+                (raw.width * raw.height * 4) as usize,
+                "{source:?} {quality:?}"
             );
             assert!(
                 rgba.chunks_exact(4).any(|pixel| pixel[..3] != [0, 0, 0]),
-                "{:?} {quality:?} rendered black",
-                raw.cfa_kind
+                "{source:?} {quality:?} rendered black"
             );
         }
     }

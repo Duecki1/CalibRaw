@@ -21,8 +21,9 @@
 
 use calibraw_core::sidecar::{self, EditState};
 use calibraw_gpu::pipeline::{
-    spawn_tiled_export, CfaKind, CompactPixelMap, ExportBitDepth, ExportEvent, ExportFormat,
-    ExportMetadata, ExportSettings, ExportTarget, LoadedRaw, TileSpec, TiledExportJob,
+    build_proxy, spawn_tiled_export, CfaKind, CompactPixelMap, ExportBitDepth, ExportEvent,
+    ExportFormat, ExportMetadata, ExportSettings, ExportTarget, LoadedRaw, ProxySpec, TileSpec,
+    TiledExportJob,
 };
 use calibraw_gpu::{request_headless_device, wgpu, HeadlessAdapter, HeadlessDeviceRequest};
 use image::{ImageBuffer, Rgb, RgbImage};
@@ -153,8 +154,18 @@ fn merge(base: &mut Value, changes: Value) {
 /// - `scene`: the test scene as scene-linear Rec.2020, which skips the sensor
 ///   stages;
 /// - `bayer` and `xtrans`: the scene seen through an RGGB or X-Trans mosaic,
-///   with black level, white balance, clipped highlights and noise.
+///   with black level, white balance, clipped highlights and noise;
+/// - `bayer-binned` and `xtrans-binned`: those mosaics at half their size,
+///   binned to RGB as a reduced preview's proxy is.
 fn input(name: &str) -> LoadedRaw {
+    if let Some(sensor) = name.strip_suffix("-binned") {
+        return build_proxy(
+            &input(sensor),
+            ProxySpec {
+                max_edge: WIDTH / 2,
+            },
+        );
+    }
     let scene: Vec<f32> = (0..HEIGHT)
         .flat_map(|y| (0..WIDTH).flat_map(move |x| scene(x, y)))
         .collect();
@@ -164,7 +175,9 @@ fn input(name: &str) -> LoadedRaw {
         "scene" => return raster,
         "bayer" => (CfaKind::Bayer, 2, vec![0, 1, 3, 2]),
         "xtrans" => (CfaKind::XTrans, 6, XTRANS.concat()),
-        _ => panic!("unknown input {name:?}; use scene, bayer or xtrans"),
+        _ => panic!(
+            "unknown input {name:?}; use scene, bayer, xtrans, bayer-binned or xtrans-binned"
+        ),
     };
     const BLACK: f32 = 512.0;
     const WHITE: f32 = 16383.0;

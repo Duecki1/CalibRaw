@@ -68,7 +68,8 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) reconstructed_raw_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) highlight_work_a: wgpu::Texture,
     pub(in crate::pipeline::gpu) highlight_work_b: wgpu::Texture,
-    pub(in crate::pipeline::gpu) raster_source_texture: wgpu::Texture,
+    pub(in crate::pipeline::gpu) rgb_source_texture: wgpu::Texture,
+    pub(in crate::pipeline::gpu) binned_ai_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) scene_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) display_linear_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) out_texture: wgpu::Texture,
@@ -84,7 +85,8 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) reconstructed_raw_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) highlight_work_a_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) highlight_work_b_view: wgpu::TextureView,
-    pub(in crate::pipeline::gpu) raster_source_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) rgb_source_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) binned_ai_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) scene_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) tex1_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) tex2_view: wgpu::TextureView,
@@ -108,6 +110,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     queue: &wgpu::Queue,
     raw: &LoadedRaw,
     ai_cfa: Option<&[u16]>,
+    ai_binned: Option<&[f32]>,
     geometry: &DerivedGeometry,
 ) -> Result<(PipelineSurfaces, bool)> {
     let DerivedGeometry {
@@ -127,9 +130,14 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     let black_texture = create_black_texture(device, queue, raw);
     let lens_shading_texture = create_lens_shading_texture(device, queue, raw);
 
+    // Only a mosaic is reconstructed photosite by photosite.
     let reconstructed_raw_texture = create_processing_texture(
         device,
-        size,
+        if raw.pixel_layout() == PixelLayout::Mosaic {
+            size
+        } else {
+            texture_size(1, 1)
+        },
         wgpu::TextureFormat::R32Float,
         wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
         "calibraw reconstructed raw CFA",
@@ -154,7 +162,9 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         "calibraw highlight work B",
     );
 
-    let raster_source_texture = create_raster_source_texture(device, queue, raw, demosaic_format)?;
+    let rgb_source_texture = create_rgb_source_texture(device, queue, raw, demosaic_format)?;
+    let binned_ai_texture =
+        create_binned_ai_texture(device, queue, raw, ai_binned, demosaic_format)?;
     let scene_texture = create_demosaic_texture(
         device,
         size,
@@ -240,7 +250,8 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     let reconstructed_raw_view = default_texture_view(&reconstructed_raw_texture);
     let highlight_work_a_view = default_texture_view(&highlight_work_a);
     let highlight_work_b_view = default_texture_view(&highlight_work_b);
-    let raster_source_view = default_texture_view(&raster_source_texture);
+    let rgb_source_view = default_texture_view(&rgb_source_texture);
+    let binned_ai_view = default_texture_view(&binned_ai_texture);
     let scene_view = default_texture_view(&scene_texture);
     let tex1_view = default_texture_view(&tex1);
     let tex2_view = default_texture_view(&tex2);
@@ -282,7 +293,8 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             reconstructed_raw_texture,
             highlight_work_a,
             highlight_work_b,
-            raster_source_texture,
+            rgb_source_texture,
+            binned_ai_texture,
             scene_texture,
             display_linear_texture,
             out_texture,
@@ -298,7 +310,8 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             reconstructed_raw_view,
             highlight_work_a_view,
             highlight_work_b_view,
-            raster_source_view,
+            rgb_source_view,
+            binned_ai_view,
             scene_view,
             tex1_view,
             tex2_view,

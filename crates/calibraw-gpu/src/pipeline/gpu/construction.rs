@@ -93,6 +93,7 @@ impl RawGpuPipeline {
             capture_metadata: Default::default(),
             cfa_kind,
             raw_pixels: vec![0u16; pixels].into(),
+            binned_sensor: None,
             scene_linear_raster: None,
             scene_referred_raster: false,
             color_indices: crate::pipeline::CompactPixelMap::repeating(
@@ -221,13 +222,19 @@ impl RawGpuPipeline {
         )
         .map_err(|_| anyhow!("GPU profile buffer size does not fit in u64"))?;
 
+        // The AI-denoised sensor samples the RAW stage blends in: a Bayer
+        // mosaic's, or a binned view's.
         let ai_image = raw.ai_denoised_image();
         let ai_cfa = params
             .uses_ai_denoise()
             .then(|| ai_image.as_ref().and_then(AiDenoisedImage::bayer_cfa))
             .flatten();
-        let has_ai_cfa = ai_cfa.is_some();
-        let has_raster_scene = raw.is_pre_demosaiced_raster();
+        let ai_binned = params
+            .uses_ai_denoise()
+            .then(|| raw.binned_sensor.as_ref().and_then(BinnedSensor::ai_rgb))
+            .flatten();
+        let has_ai_cfa = ai_cfa.is_some() || ai_binned.is_some();
+        let layout = raw.pixel_layout();
         let resource_plan = build_gpu_resource_plan(GpuResourcePlanInput {
             width: raw.width,
             height: raw.height,
@@ -239,8 +246,8 @@ impl RawGpuPipeline {
             profile_buffer_bytes: profile_buffer_size_bytes,
             stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
+            layout,
             ai_cfa: has_ai_cfa,
-            raster_source: has_raster_scene,
             cfa_kind: raw.cfa_kind,
         })?;
         let gpu_budget_reservation =
@@ -249,7 +256,7 @@ impl RawGpuPipeline {
         let gpu_error_scopes = GpuErrorScopes::push(device);
 
         let (surfaces, has_ai_scene) =
-            create_pipeline_surfaces(device, queue, raw, ai_cfa, &geometry)?;
+            create_pipeline_surfaces(device, queue, raw, ai_cfa, ai_binned, &geometry)?;
 
         let camera = params.camera_for_raw_texture(has_ai_cfa);
         let buffers = create_pipeline_buffers(device, params, &camera, &profile_words);
@@ -292,6 +299,7 @@ impl RawGpuPipeline {
             post_blur_scene_depth_guide_pass,
             post_blur_creative_pass,
             post_blur_render_pass,
+            binned_finish_pass,
             indices,
         } = assembled;
 
@@ -340,6 +348,7 @@ impl RawGpuPipeline {
             post_blur_scene_depth_guide_pass,
             post_blur_creative_pass,
             post_blur_render_pass,
+            binned_finish_pass,
             passes,
             raw_texture: surfaces.raw_texture,
             color_texture: surfaces.color_texture,
@@ -351,12 +360,13 @@ impl RawGpuPipeline {
             _highlight_work_b: surfaces.highlight_work_b,
             _tex1: surfaces.tex1,
             _tex2: surfaces.tex2,
-            raster_source_texture: surfaces.raster_source_texture,
+            rgb_source_texture: surfaces.rgb_source_texture,
+            binned_ai_texture: surfaces.binned_ai_texture,
             _xtrans_homogeneity: surfaces.xtrans_homogeneity,
             scene_texture: surfaces.scene_texture,
             scene_format: geometry.demosaic_format,
             has_ai_scene,
-            has_raster_scene,
+            layout,
             has_ai_cfa,
             display_linear_texture: surfaces.display_linear_texture,
             _tone_guide_a: surfaces.tone_guide_a,

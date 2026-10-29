@@ -1,7 +1,10 @@
 //! Reduced and cropped proxies of a RAW for previews and regions.
 
+use super::binning::{bin_mosaic, BinnedMosaic};
 use super::*;
+use crate::pipeline::{AiDenoisedImage, BinnedSensor};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ProxySpec {
@@ -44,67 +47,91 @@ fn raster_with_metadata(
     output.white_levels = raw.white_levels;
     output.cfa_kind = raw.cfa_kind;
     output.noise_profile = raw.noise_profile;
-    output.profile_color = std::sync::Arc::clone(&raw.profile_color);
+    output.profile_color = Arc::clone(&raw.profile_color);
     output.color_source = raw.color_source.clone();
     output.available_camera_profiles = raw.available_camera_profiles.clone();
     output.lens_geometry = preserve_lens_geometry
         .then(|| raw.lens_geometry.clone())
         .flatten();
     output.lateral_chromatic_aberration = raw.lateral_chromatic_aberration;
-    output.opposed_chroma_cache = std::sync::Arc::clone(&raw.opposed_chroma_cache);
+    output.opposed_chroma_cache = Arc::clone(&raw.opposed_chroma_cache);
     output
 }
 
-fn crop_raster(raw: &LoadedRaw, x: u32, y: u32, width: u32, height: u32) -> LoadedRaw {
-    let x = x.min(raw.width.saturating_sub(1));
-    let y = y.min(raw.height.saturating_sub(1));
-    let width = width.max(1).min(raw.width - x);
-    let height = height.max(1).min(raw.height - y);
-    let source = raw
-        .scene_linear_raster()
-        .expect("raster source flag requires RGB pixels");
-    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
-    let source_width = raw.width as usize;
-    for row in y..y + height {
-        let start = (row as usize * source_width + x as usize) * 3;
-        let end = start + width as usize * 3;
-        rgb.extend_from_slice(&source[start..end]);
+/// A binned view of `raw`'s capture, `width` by `height`, with `binned` as its
+/// pixels and `ai_denoised` as its X-Trans AI-denoised scene: the mosaic's
+/// metadata with uniform placeholder CFA and black-level maps.
+fn binned_with_metadata(
+    raw: &LoadedRaw,
+    [width, height]: [u32; 2],
+    binned: BinnedSensor,
+    ai_denoised: Option<AiDenoisedImage>,
+    preserve_lens_geometry: bool,
+) -> LoadedRaw {
+    LoadedRaw {
+        binned_sensor: Some(binned),
+        lens_geometry: preserve_lens_geometry
+            .then(|| raw.lens_geometry.clone())
+            .flatten(),
+        ai_denoised: Arc::new(RwLock::new(ai_denoised)),
+        ..raw.derive_with(
+            width,
+            height,
+            Vec::new(),
+            CompactPixelMap::repeating(width, height, 1, 1, vec![1]),
+            CompactPixelMap::repeating(width, height, 1, 1, vec![0.0]),
+        )
     }
-    raster_with_metadata(
-        raw,
-        width,
-        height,
-        rgb,
-        x == 0 && y == 0 && width == raw.width && height == raw.height,
-    )
 }
 
-fn build_raster_region_proxy(
-    raw: &LoadedRaw,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-    spec: ProxySpec,
-    cancel: &AtomicBool,
-) -> Option<LoadedRaw> {
+/// `[x, y, width, height]` limited to `raw`: the origin inside the image and
+/// a size of at least one pixel that ends at its edge.
+fn clamped_region(raw: &LoadedRaw, x: u32, y: u32, width: u32, height: u32) -> [u32; 4] {
     let x = x.min(raw.width.saturating_sub(1));
     let y = y.min(raw.height.saturating_sub(1));
-    let region_width = width.max(1).min(raw.width - x);
-    let region_height = height.max(1).min(raw.height - y);
-    let max_edge = spec.max_edge.max(1);
-    let longest = region_width.max(region_height);
-    if longest <= max_edge {
-        return Some(crop_raster(raw, x, y, region_width, region_height));
-    }
+    [
+        x,
+        y,
+        width.max(1).min(raw.width - x),
+        height.max(1).min(raw.height - y),
+    ]
+}
 
-    let scale = max_edge as f64 / longest as f64;
-    let output_width = (region_width as f64 * scale).round().max(1.0) as u32;
-    let output_height = (region_height as f64 * scale).round().max(1.0) as u32;
-    let source = raw
-        .scene_linear_raster()
-        .expect("raster source flag requires RGB pixels");
-    let source_width = raw.width as usize;
+fn is_whole_image(raw: &LoadedRaw, [x, y, width, height]: [u32; 4]) -> bool {
+    x == 0 && y == 0 && width == raw.width && height == raw.height
+}
+
+/// The size a `region_width` by `region_height` region takes when its longer
+/// edge is reduced to `max_edge`.
+fn reduced_size(region_width: u32, region_height: u32, max_edge: u32) -> [u32; 2] {
+    let scale = f64::from(max_edge) / f64::from(region_width.max(region_height));
+    [
+        (f64::from(region_width) * scale).round().max(1.0) as u32,
+        (f64::from(region_height) * scale).round().max(1.0) as u32,
+    ]
+}
+
+/// The pixels of `region` in interleaved RGB rows `source_width` wide.
+fn crop_rgb(source: &[f32], source_width: u32, [x, y, width, height]: [u32; 4]) -> Vec<f32> {
+    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
+    for row in y..y + height {
+        let start = (row as usize * source_width as usize + x as usize) * 3;
+        rgb.extend_from_slice(&source[start..start + width as usize * 3]);
+    }
+    rgb
+}
+
+/// The box-filtered mean of `region` of interleaved RGB rows `source_width`
+/// wide, `output` pixels in size: every source pixel belongs to exactly one
+/// output pixel. `None` once `cancel` is set, which is checked every row.
+fn average_rgb_region(
+    source: &[f32],
+    source_width: u32,
+    [x, y, region_width, region_height]: [u32; 4],
+    [output_width, output_height]: [u32; 2],
+    cancel: &AtomicBool,
+) -> Option<Vec<f32>> {
+    let source_width = source_width as usize;
     let mut rgb = vec![0.0f32; output_width as usize * output_height as usize * 3];
     rgb.par_chunks_mut(output_width as usize * 3)
         .enumerate()
@@ -133,22 +160,95 @@ fn build_raster_region_proxy(
                 row[destination + 2] = (sum[2] / divisor) as f32;
             }
         });
-    if cancel.load(Ordering::Relaxed) {
-        return None;
-    }
-    let mut proxy = raster_with_metadata(
+    (!cancel.load(Ordering::Relaxed)).then_some(rgb)
+}
+
+fn crop_raster(raw: &LoadedRaw, region: [u32; 4]) -> LoadedRaw {
+    let source = raw
+        .scene_linear_raster()
+        .expect("raster source flag requires RGB pixels");
+    let [_, _, width, height] = region;
+    raster_with_metadata(
         raw,
-        output_width,
-        output_height,
-        rgb,
-        x == 0 && y == 0 && region_width == raw.width && region_height == raw.height,
-    );
+        width,
+        height,
+        crop_rgb(source, raw.width, region),
+        is_whole_image(raw, region),
+    )
+}
+
+fn build_raster_region_proxy(
+    raw: &LoadedRaw,
+    region: [u32; 4],
+    spec: ProxySpec,
+    cancel: &AtomicBool,
+) -> Option<LoadedRaw> {
+    let [_, _, region_width, region_height] = region;
+    let max_edge = spec.max_edge.max(1);
+    if region_width.max(region_height) <= max_edge {
+        return Some(crop_raster(raw, region));
+    }
+    let output = reduced_size(region_width, region_height, max_edge);
+    let source = raw
+        .scene_linear_raster()
+        .expect("raster source flag requires RGB pixels");
+    let rgb = average_rgb_region(source, raw.width, region, output, cancel)?;
+    let mut proxy =
+        raster_with_metadata(raw, output[0], output[1], rgb, is_whole_image(raw, region));
     // Box-filtered pixels average their footprint, so noise variance scales
     // with the area ratio, as for sensor proxies.
-    proxy.noise_profile = raw.noise_profile.scaled_variance(
-        [area_ratio([output_width, output_height], [region_width, region_height]); 4],
-    );
+    proxy.noise_profile = raw
+        .noise_profile
+        .scaled_variance([area_ratio(output, [region_width, region_height]); 4]);
     Some(proxy)
+}
+
+fn crop_binned(raw: &LoadedRaw, binned: &BinnedSensor, region: [u32; 4]) -> LoadedRaw {
+    let [x, y, width, height] = region;
+    let crop = |rgb: &[f32]| crop_rgb(rgb, raw.width, region);
+    binned_with_metadata(
+        raw,
+        [width, height],
+        BinnedSensor::new(crop(binned.rgb()), binned.ai_rgb().map(crop)),
+        crop_ai_denoised(raw, x, y, width, height),
+        is_whole_image(raw, region),
+    )
+}
+
+/// A binned view reduced further: its pixels already hold every colour, so
+/// they are averaged like a raster's.
+fn build_binned_region_proxy(
+    raw: &LoadedRaw,
+    binned: &BinnedSensor,
+    region: [u32; 4],
+    spec: ProxySpec,
+    cancel: &AtomicBool,
+) -> Option<LoadedRaw> {
+    let [x, y, region_width, region_height] = region;
+    let max_edge = spec.max_edge.max(1);
+    if region_width.max(region_height) <= max_edge {
+        return Some(crop_binned(raw, binned, region));
+    }
+    let output = reduced_size(region_width, region_height, max_edge);
+    let [width, height] = output;
+    let average = |rgb: &[f32]| average_rgb_region(rgb, raw.width, region, output, cancel);
+    let rgb = average(binned.rgb())?;
+    let ai_rgb = match binned.ai_rgb() {
+        Some(ai) => Some(average(ai)?),
+        None => None,
+    };
+    Some(LoadedRaw {
+        noise_profile: raw
+            .noise_profile
+            .scaled_variance([area_ratio(output, [region_width, region_height]); 4]),
+        ..binned_with_metadata(
+            raw,
+            output,
+            BinnedSensor::new(rgb, ai_rgb),
+            proxy_ai_denoised(raw, x, y, region_width, region_height, width, height),
+            is_whole_image(raw, region),
+        )
+    })
 }
 
 /// The fraction of `region`'s area that `output` covers, at most 1.
@@ -158,18 +258,22 @@ fn area_ratio(output: [u32; 2], region: [u32; 2]) -> f32 {
         .clamp(0.0, 1.0) as f32
 }
 
-pub(super) fn fill_padded_raster_pixels(raw: &LoadedRaw, tile: ExportTile, rgb: &mut [f32]) {
-    let source = raw
-        .scene_linear_raster()
-        .expect("raster source flag requires RGB pixels");
+/// Copies the padded `tile` of interleaved RGB rows `source_size[0]` wide
+/// into `rgb`; positions outside the image take its nearest edge pixel.
+pub(super) fn fill_padded_rgb(
+    source: &[f32],
+    source_size: [u32; 2],
+    tile: ExportTile,
+    rgb: &mut [f32],
+) {
     let width = tile.padded_width as usize;
     let expected = width
         .saturating_mul(tile.padded_height as usize)
         .saturating_mul(3);
     debug_assert_eq!(rgb.len(), expected);
-    let max_x = i64::from(raw.width.saturating_sub(1));
-    let max_y = i64::from(raw.height.saturating_sub(1));
-    let source_width = raw.width as usize;
+    let max_x = i64::from(source_size[0].saturating_sub(1));
+    let max_y = i64::from(source_size[1].saturating_sub(1));
+    let source_width = source_size[0] as usize;
     for local_y in 0..tile.padded_height {
         let source_y =
             (i64::from(tile.global_origin_y) + i64::from(local_y)).clamp(0, max_y) as usize;
@@ -184,22 +288,54 @@ pub(super) fn fill_padded_raster_pixels(raw: &LoadedRaw, tile: ExportTile, rgb: 
     }
 }
 
+/// The padded `tile` of interleaved RGB rows `source_size[0]` wide.
+fn padded_rgb(source: &[f32], source_size: [u32; 2], tile: ExportTile) -> Vec<f32> {
+    let mut rgb = vec![
+        0.0f32;
+        (tile.padded_width as usize)
+            .saturating_mul(tile.padded_height as usize)
+            .saturating_mul(3)
+    ];
+    fill_padded_rgb(source, source_size, tile, &mut rgb);
+    rgb
+}
+
 pub(super) fn extract_padded_raster_tile(raw: &LoadedRaw, tile: ExportTile) -> LoadedRaw {
-    let width = tile.padded_width as usize;
-    let height = tile.padded_height as usize;
-    let mut rgb = vec![0.0f32; width.saturating_mul(height).saturating_mul(3)];
-    fill_padded_raster_pixels(raw, tile, &mut rgb);
+    let source = raw
+        .scene_linear_raster()
+        .expect("raster source flag requires RGB pixels");
+    let rgb = padded_rgb(source, [raw.width, raw.height], tile);
     raster_with_metadata(raw, tile.padded_width, tile.padded_height, rgb, false)
 }
 
+pub(super) fn extract_padded_binned_tile(
+    raw: &LoadedRaw,
+    binned: &BinnedSensor,
+    tile: ExportTile,
+) -> LoadedRaw {
+    let pad = |rgb: &[f32]| padded_rgb(rgb, [raw.width, raw.height], tile);
+    binned_with_metadata(
+        raw,
+        [tile.padded_width, tile.padded_height],
+        BinnedSensor::new(pad(binned.rgb()), binned.ai_rgb().map(pad)),
+        padded_tile_ai_denoised(raw, tile),
+        false,
+    )
+}
+
 pub fn crop_raw(raw: &LoadedRaw, x: u32, y: u32, width: u32, height: u32) -> LoadedRaw {
-    if raw.is_pre_demosaiced_raster() {
-        return crop_raster(raw, x, y, width, height);
+    let region = clamped_region(raw, x, y, width, height);
+    if let Some(binned) = &raw.binned_sensor {
+        return crop_binned(raw, binned, region);
     }
-    let x = x.min(raw.width.saturating_sub(1));
-    let y = y.min(raw.height.saturating_sub(1));
-    let width = width.max(1).min(raw.width - x);
-    let height = height.max(1).min(raw.height - y);
+    if raw.is_pre_demosaiced_raster() {
+        return crop_raster(raw, region);
+    }
+    crop_mosaic(raw, region)
+}
+
+fn crop_mosaic(raw: &LoadedRaw, region: [u32; 4]) -> LoadedRaw {
+    let [x, y, width, height] = region;
     let mut raw_pixels = Vec::with_capacity((width * height) as usize);
     for row in y..y + height {
         let start = (row * raw.width + x) as usize;
@@ -214,12 +350,10 @@ pub fn crop_raw(raw: &LoadedRaw, x: u32, y: u32, width: u32, height: u32) -> Loa
             .subregion_clamped(i64::from(x), i64::from(y), width, height);
 
     LoadedRaw {
-        lens_geometry: (x == 0 && y == 0 && width == raw.width && height == raw.height)
+        lens_geometry: is_whole_image(raw, region)
             .then(|| raw.lens_geometry.clone())
             .flatten(),
-        ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(crop_ai_denoised(
-            raw, x, y, width, height,
-        ))),
+        ai_denoised: Arc::new(RwLock::new(crop_ai_denoised(raw, x, y, width, height))),
         ..raw.derive_with(
             width,
             height,
@@ -234,51 +368,41 @@ pub fn build_proxy(raw: &LoadedRaw, spec: ProxySpec) -> LoadedRaw {
     build_region_proxy(raw, 0, 0, raw.width, raw.height, spec)
 }
 
-/// Down-scale ratios (source pixels per proxy pixel) below this resample each
-/// colour plane with a triangle filter instead of averaging the same-coloured
-/// samples of a footprint. A footprint of one or two pixels holds a sample of a
-/// given colour only some of the time, so averaging falls back to the nearest
-/// sample and every proxy pixel lands up to a pixel from where it belongs:
-/// thin lines come out wobbly. The filter places each pixel exactly.
-const SMOOTH_RESAMPLE_BELOW: f64 = 3.0;
-
-/// The half-width, in source pixels, of the triangle filter at least: the
-/// spacing of same-coloured samples along an axis, so that a window holds one
-/// on either side of the pixel.
-fn smooth_resample_min_radius(cfa_period: u32) -> f64 {
-    f64::from(cfa_period.min(6) / 2).max(2.0)
-}
-
-/// One axis of the triangle filter for output pixel `index`: the source
-/// positions in the window, clamped to `0..limit`, and their weights.
-fn triangle_taps(
-    origin: u32,
-    index: u32,
-    scale: f64,
-    radius: f64,
-    limit: u32,
-    taps: &mut Vec<(u32, f64)>,
-) {
-    taps.clear();
-    let center = f64::from(origin) + (f64::from(index) + 0.5) * scale;
-    let first = (center - radius).floor().max(0.0) as u32;
-    let last = ((center + radius).ceil().max(0.0) as u32).min(limit.saturating_sub(1));
-    for position in first..=last {
-        let weight = 1.0 - ((f64::from(position) + 0.5) - center).abs() / radius;
-        if weight > 0.0 {
-            taps.push((position, weight));
-        }
-    }
+/// A proxy of `region` of `raw`'s mosaic binned to `output` pixels
+/// ([`bin_mosaic`]).
+fn build_binned_mosaic_proxy(
+    raw: &LoadedRaw,
+    region: [u32; 4],
+    output: [u32; 2],
+    cancel: &AtomicBool,
+) -> Option<LoadedRaw> {
+    let [x, y, region_width, region_height] = region;
+    let [width, height] = output;
+    let BinnedMosaic {
+        sensor,
+        variance_scale,
+    } = bin_mosaic(raw, region, output, cancel)?;
+    Some(LoadedRaw {
+        noise_profile: raw.noise_profile.scaled_variance(variance_scale),
+        ..binned_with_metadata(
+            raw,
+            output,
+            sensor,
+            // A Bayer result is binned with the mosaic; an X-Trans one is a
+            // demosaiced scene, which is averaged as it is.
+            proxy_ai_denoised(raw, x, y, region_width, region_height, width, height),
+            is_whole_image(raw, region),
+        )
+    })
 }
 
 /// Builds a bounded, interactive approximation of a source region.
 ///
-/// For sensor RAW inputs this averages samples of the same CFA colour before
-/// highlight reconstruction, demosaic, and denoise.  It is consequently not a
-/// fidelity reference: averaging can hide clipped samples, erase sub-footprint
-/// colour structure, and reduce the noise seen by RAW-domain processing.  Use a
-/// native crop (or native tiles) and resize the developed linear result for a
-/// settled/final comparison.
+/// A sensor mosaic is binned to co-sited RGB ([`bin_mosaic`]) before
+/// highlight reconstruction and denoise. It is consequently not a fidelity
+/// reference: averaging can hide clipped samples, and it reduces the noise
+/// seen by RAW-domain processing. Use a native crop (or native tiles) and
+/// resize the developed linear result for a settled/final comparison.
 pub fn build_region_proxy(
     raw: &LoadedRaw,
     x: u32,
@@ -292,7 +416,7 @@ pub fn build_region_proxy(
 }
 
 /// [`build_region_proxy`] that gives up, returning `None`, soon after `cancel`
-/// is set: it looks at the flag for every row it resamples. For a build whose
+/// is set: it looks at the flag every few rows it resamples. For a build whose
 /// result is no longer wanted, such as a zoomed crop of a view that moved on.
 pub fn build_region_proxy_until(
     raw: &LoadedRaw,
@@ -303,239 +427,21 @@ pub fn build_region_proxy_until(
     spec: ProxySpec,
     cancel: &AtomicBool,
 ) -> Option<LoadedRaw> {
+    let region = clamped_region(raw, x, y, width, height);
+    if let Some(binned) = &raw.binned_sensor {
+        return build_binned_region_proxy(raw, binned, region, spec, cancel);
+    }
     if raw.is_pre_demosaiced_raster() {
-        return build_raster_region_proxy(raw, x, y, width, height, spec, cancel);
+        return build_raster_region_proxy(raw, region, spec, cancel);
     }
-    let x = x.min(raw.width.saturating_sub(1));
-    let y = y.min(raw.height.saturating_sub(1));
-    let region_width = width.max(1).min(raw.width - x);
-    let region_height = height.max(1).min(raw.height - y);
+    let [_, _, region_width, region_height] = region;
     let max_edge = spec.max_edge.max(1);
-    let longest = region_width.max(region_height);
-    if longest <= max_edge {
-        if x == 0 && y == 0 && region_width == raw.width && region_height == raw.height {
-            return Some(raw.clone());
-        }
-        return Some(crop_raw(raw, x, y, region_width, region_height));
+    if region_width.max(region_height) > max_edge {
+        let output = reduced_size(region_width, region_height, max_edge);
+        return build_binned_mosaic_proxy(raw, region, output, cancel);
     }
-
-    let cfa_period = match raw.cfa_kind {
-        crate::pipeline::CfaKind::Bayer => 2,
-        crate::pipeline::CfaKind::XTrans => 6,
-    };
-    let target_scale = max_edge as f64 / longest as f64;
-    let target_width = (region_width as f64 * target_scale).floor().max(1.0) as u32;
-    let target_height = (region_height as f64 * target_scale).floor().max(1.0) as u32;
-    let phase_aligned_dimension = |source: u32, target: u32| {
-        if target >= source {
-            source
-        } else {
-            target
-                .div_euclid(cfa_period)
-                .max(1)
-                .saturating_mul(cfa_period)
-                .min(source)
-        }
-    };
-    let width = phase_aligned_dimension(region_width, target_width);
-    let height = phase_aligned_dimension(region_height, target_height);
-    let len = (width * height) as usize;
-    let row_stride = width as usize;
-    let scale_x = f64::from(region_width) / f64::from(width);
-    let scale_y = f64::from(region_height) / f64::from(height);
-    let smooth = scale_x.max(scale_y) < SMOOTH_RESAMPLE_BELOW;
-    let smooth_radius_x = scale_x.max(smooth_resample_min_radius(cfa_period));
-    let smooth_radius_y = scale_y.max(smooth_resample_min_radius(cfa_period));
-    // The filter's columns depend only on the output column, so they are worked
-    // out once instead of for every row.
-    let column_taps: Vec<Vec<(u32, f64)>> = if smooth {
-        (0..width)
-            .map(|px| {
-                let mut taps = Vec::new();
-                triangle_taps(x, px, scale_x, smooth_radius_x, raw.width, &mut taps);
-                taps
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let mut raw_pixels = vec![0u16; len];
-    let mut color_indices = vec![0u8; len];
-    let mut black_levels_per_pixel = vec![0.0f32; len];
-    // Per CFA channel: the sum over proxy pixels of 1/n, n being the sensor
-    // samples a pixel averages, and the number of those pixels.
-    let (inverse_counts, pixel_counts) = raw_pixels
-        .par_chunks_mut(row_stride)
-        .zip(color_indices.par_chunks_mut(row_stride))
-        .zip(black_levels_per_pixel.par_chunks_mut(row_stride))
-        .enumerate()
-        .map(|(py, ((raw_row, cfa_row), black_row))| {
-            let mut inverse_counts = [0.0f64; 4];
-            let mut pixel_counts = [0u64; 4];
-            if cancel.load(Ordering::Relaxed) {
-                return (inverse_counts, pixel_counts);
-            }
-            let py = py as u32;
-            let output_phase_y = py % cfa_period;
-            let (source_y0, source_y1) = proportional_partition(py, region_height, height);
-            let footprint_y0 = y + source_y0;
-            let footprint_y1 = (y + source_y1).min(y + region_height);
-
-            let mut row_taps = Vec::new();
-            if smooth {
-                triangle_taps(y, py, scale_y, smooth_radius_y, raw.height, &mut row_taps);
-            }
-            for px in 0..width {
-                let output_phase_x = px % cfa_period;
-                let (source_x0, source_x1) = proportional_partition(px, region_width, width);
-                let footprint_x0 = x + source_x0;
-                let footprint_x1 = (x + source_x1).min(x + region_width);
-                let center_x = (footprint_x0 + (footprint_x1.saturating_sub(footprint_x0)) / 2)
-                    .min(raw.width - 1);
-                let center_y = (footprint_y0 + (footprint_y1.saturating_sub(footprint_y0)) / 2)
-                    .min(raw.height - 1);
-
-                let phase_x = (x + output_phase_x).min(raw.width - 1);
-                let phase_y = (y + output_phase_y).min(raw.height - 1);
-                let phase_index = (phase_y * raw.width + phase_x) as usize;
-                let cfa = raw.color_indices[phase_index];
-
-                let mut pixel_sum = 0u64;
-                let mut black_sum = 0.0f64;
-                let mut count = 0u32;
-                // The triangle-filtered sum, for the ratios that use it.
-                let mut weighted = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-
-                if smooth {
-                    for &(sy, weight_y) in &row_taps {
-                        let row = sy * raw.width;
-                        for &(sx, weight_x) in &column_taps[px as usize] {
-                            let index = (row + sx) as usize;
-                            if raw.color_indices[index] == cfa {
-                                let weight = weight_x * weight_y;
-                                weighted.0 += weight * f64::from(raw.raw_pixels[index]);
-                                weighted.1 += weight * f64::from(raw.black_levels_per_pixel[index]);
-                                weighted.2 += weight;
-                                weighted.3 += weight * weight;
-                            }
-                        }
-                    }
-                } else {
-                    for sy in footprint_y0..footprint_y1 {
-                        let row = sy * raw.width;
-                        for sx in footprint_x0..footprint_x1 {
-                            let index = (row + sx) as usize;
-                            if raw.color_indices[index] == cfa {
-                                pixel_sum += u64::from(raw.raw_pixels[index]);
-                                black_sum += f64::from(raw.black_levels_per_pixel[index]);
-                                count += 1;
-                            }
-                        }
-                    }
-                }
-
-                let px = px as usize;
-                if smooth && weighted.2 > 0.0 {
-                    raw_row[px] = (weighted.0 / weighted.2).round().clamp(0.0, 65_535.0) as u16;
-                    black_row[px] = (weighted.1 / weighted.2) as f32;
-                    cfa_row[px] = cfa;
-                    let channel = usize::from(cfa.min(3));
-                    // Samples a pixel effectively averages: (Σw)² / Σw².
-                    inverse_counts[channel] += weighted.3 / (weighted.2 * weighted.2);
-                    pixel_counts[channel] += 1;
-                    continue;
-                }
-                if count == 0 {
-                    let fallback = nearest_cfa_sample(raw, center_x, center_y, cfa, cfa_period);
-                    raw_row[px] = raw.raw_pixels[fallback];
-                    black_row[px] = raw.black_levels_per_pixel[fallback];
-                } else {
-                    raw_row[px] = (pixel_sum / u64::from(count)) as u16;
-                    black_row[px] = (black_sum / f64::from(count)) as f32;
-                }
-                cfa_row[px] = cfa;
-                let channel = usize::from(cfa.min(3));
-                inverse_counts[channel] += 1.0 / f64::from(count.max(1));
-                pixel_counts[channel] += 1;
-            }
-            (inverse_counts, pixel_counts)
-        })
-        .reduce(
-            || ([0.0f64; 4], [0u64; 4]),
-            |(mut inverse, mut pixels), (row_inverse, row_pixels)| {
-                for channel in 0..4 {
-                    inverse[channel] += row_inverse[channel];
-                    pixels[channel] += row_pixels[channel];
-                }
-                (inverse, pixels)
-            },
-        );
-    if cancel.load(Ordering::Relaxed) {
-        return None;
+    if is_whole_image(raw, region) {
+        return Some(raw.clone());
     }
-    // A proxy pixel averages only the footprint's samples of its own colour, a
-    // quarter of the footprint on Bayer, so its variance is the sensor's over
-    // that sample count, not over the footprint area.
-    let variance_factors = std::array::from_fn(|channel| {
-        if pixel_counts[channel] == 0 {
-            1.0
-        } else {
-            (inverse_counts[channel] / pixel_counts[channel] as f64) as f32
-        }
-    });
-
-    Some(LoadedRaw {
-        noise_profile: raw.noise_profile.scaled_variance(variance_factors),
-        lens_geometry: (x == 0
-            && y == 0
-            && region_width == raw.width
-            && region_height == raw.height)
-            .then(|| raw.lens_geometry.clone())
-            .flatten(),
-        ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(proxy_ai_denoised(
-            raw,
-            x,
-            y,
-            region_width,
-            region_height,
-            width,
-            height,
-        ))),
-        ..raw.derive_with(
-            width,
-            height,
-            raw_pixels,
-            CompactPixelMap::compact_from_dense(width, height, color_indices, 64),
-            CompactPixelMap::compact_from_dense(width, height, black_levels_per_pixel, 64),
-        )
-    })
-}
-
-pub(super) fn nearest_cfa_sample(
-    raw: &LoadedRaw,
-    center_x: u32,
-    center_y: u32,
-    cfa: u8,
-    search_radius: u32,
-) -> usize {
-    let max_x = raw.width.saturating_sub(1) as i64;
-    let max_y = raw.height.saturating_sub(1) as i64;
-    for radius in 0..=search_radius.max(1) {
-        let r = i64::from(radius);
-        for dy in -r..=r {
-            for dx in -r..=r {
-                if radius > 0 && dx.abs() != r && dy.abs() != r {
-                    continue;
-                }
-                let x = (i64::from(center_x) + dx).clamp(0, max_x) as u32;
-                let y = (i64::from(center_y) + dy).clamp(0, max_y) as u32;
-                let index = (y * raw.width + x) as usize;
-                if raw.color_indices[index] == cfa {
-                    return index;
-                }
-            }
-        }
-    }
-
-    (center_y * raw.width + center_x) as usize
+    Some(crop_mosaic(raw, region))
 }

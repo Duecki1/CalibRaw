@@ -293,6 +293,9 @@ impl TilePlan {
 }
 
 pub fn extract_padded_tile(raw: &LoadedRaw, tile: ExportTile) -> LoadedRaw {
+    if let Some(binned) = &raw.binned_sensor {
+        return extract_padded_binned_tile(raw, binned, tile);
+    }
     if raw.is_pre_demosaiced_raster() {
         return extract_padded_raster_tile(raw, tile);
     }
@@ -318,6 +321,12 @@ pub fn extract_padded_tile(raw: &LoadedRaw, tile: ExportTile) -> LoadedRaw {
 }
 
 pub fn extract_padded_tile_into(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mut LoadedRaw) {
+    if let Some(binned) = &raw.binned_sensor {
+        // Binned views are previews, so their tiles are built afresh rather
+        // than in `tile_raw`'s buffers.
+        *tile_raw = extract_padded_binned_tile(raw, binned, tile);
+        return;
+    }
     tile_raw.opposed_chroma_cache = std::sync::Arc::clone(&raw.opposed_chroma_cache);
     tile_raw.opposed_chroma_source_identity =
         std::sync::Arc::clone(&raw.opposed_chroma_source_identity);
@@ -349,7 +358,10 @@ pub fn extract_padded_tile_into(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mu
                 .as_mut()
                 .expect("raster tile allocation must exist"),
         );
-        fill_padded_raster_pixels(raw, tile, rgb);
+        let source = raw
+            .scene_linear_raster()
+            .expect("raster source flag requires RGB pixels");
+        fill_padded_rgb(source, [raw.width, raw.height], tile, rgb);
         tile_raw.raw_pixels = Default::default();
         tile_raw.lens_geometry = None;
         tile_raw.clear_ai_denoised_image();

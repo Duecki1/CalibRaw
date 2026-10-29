@@ -48,6 +48,8 @@ pub(super) fn proportional_partition(
     (start, end.max(start + 1).min(source_count))
 }
 
+/// The demosaiced AI-denoised scene (X-Trans) of `raw`'s region, box-averaged
+/// to the proxy's size.
 pub(super) fn proxy_ai_denoised(
     raw: &LoadedRaw,
     x: u32,
@@ -57,63 +59,8 @@ pub(super) fn proxy_ai_denoised(
     output_width: u32,
     output_height: u32,
 ) -> Option<crate::pipeline::AiDenoisedImage> {
+    // A Bayer result is binned with its mosaic (`bin_mosaic`).
     let source = raw.ai_denoised_image()?;
-    if let Some(source_cfa) = source.bayer_cfa() {
-        let elements = u64::from(output_width)
-            .checked_mul(u64::from(output_height))
-            .and_then(|count| usize::try_from(count).ok())?;
-        let mut raw_cfa16 = vec![0u16; elements];
-        raw_cfa16
-            .par_chunks_mut(output_width as usize)
-            .enumerate()
-            .for_each(|(output_y, row)| {
-                let output_y = output_y as u32;
-                let phase_y = output_y % 2;
-                let (source_y0, source_y1) =
-                    proportional_partition(output_y, region_height, output_height);
-                let footprint_y0 = y + source_y0;
-                let footprint_y1 = (y + source_y1).min(y + region_height);
-                for output_x in 0..output_width {
-                    let phase_x = output_x % 2;
-                    let (source_x0, source_x1) =
-                        proportional_partition(output_x, region_width, output_width);
-                    let footprint_x0 = x + source_x0;
-                    let footprint_x1 = (x + source_x1).min(x + region_width);
-                    let phase_index = (((y + phase_y).min(raw.height - 1) * raw.width)
-                        + (x + phase_x).min(raw.width - 1))
-                        as usize;
-                    let cfa = raw.color_indices[phase_index];
-                    let mut sum = 0u64;
-                    let mut count = 0u64;
-                    for source_y in footprint_y0..footprint_y1 {
-                        for source_x in footprint_x0..footprint_x1 {
-                            let source_index = (source_y * raw.width + source_x) as usize;
-                            if raw.color_indices[source_index] == cfa {
-                                sum += u64::from(source_cfa[source_index]);
-                                count += 1;
-                            }
-                        }
-                    }
-                    row[output_x as usize] = if count > 0 {
-                        (sum / count) as u16
-                    } else {
-                        let center_x = (footprint_x0
-                            + footprint_x1.saturating_sub(footprint_x0) / 2)
-                            .min(raw.width - 1);
-                        let center_y = (footprint_y0
-                            + footprint_y1.saturating_sub(footprint_y0) / 2)
-                            .min(raw.height - 1);
-                        source_cfa[nearest_cfa_sample(raw, center_x, center_y, cfa, 2)]
-                    };
-                }
-            });
-        return crate::pipeline::AiDenoisedImage::new_bayer_cfa(
-            output_width,
-            output_height,
-            raw_cfa16,
-        )
-        .ok();
-    }
     let source_rgb = source.camera_rgb16f()?;
     let elements = u64::from(output_width)
         .checked_mul(u64::from(output_height))?

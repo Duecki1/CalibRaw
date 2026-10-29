@@ -6,6 +6,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_scene_tone: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_effects: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_highlights: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_binned_highlights: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl1: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl2: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl3: wgpu::BindGroupLayout,
@@ -93,6 +94,23 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             ],
         )
     });
+
+    // Highlight reconstruction of a binned source: its RGB source and
+    // AI-denoised RGB in, camera RGB out (highlights.wgsl).
+    let bgl_binned_highlights =
+        reused_layout(plan.binned_highlight_pass_index).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl binned highlights",
+                &[
+                    common_entries[0],
+                    storage_texture_entry(10, work_format, wgpu::StorageTextureAccess::WriteOnly),
+                    texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(12, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(13, wgpu::TextureSampleType::Float { filterable: false }),
+                ],
+            )
+        });
 
     let bgl1 = (matches!(cfa_kind, CfaKind::Bayer)
         .then(|| reused_layout(plan.demosaic_start_index))
@@ -678,6 +696,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_scene_tone,
         bgl_effects,
         bgl_highlights,
+        bgl_binned_highlights,
         bgl1,
         bgl2,
         bgl3,

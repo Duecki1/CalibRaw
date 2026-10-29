@@ -98,6 +98,11 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// adding them kept earlier positions.
     pub(in crate::pipeline::gpu) chromatic_aberration_prepare_pass_index: usize,
     pub(in crate::pipeline::gpu) chromatic_aberration_fringe_pass_index: usize,
+    /// A binned source's replacement for highlight reconstruction and
+    /// demosaicing (`binned_highlight_reconstruct`); the raster finish program
+    /// follows as `AssembledPasses::binned_finish_pass`. It runs with the RAW
+    /// stage but comes last so that adding it kept earlier positions.
+    pub(in crate::pipeline::gpu) binned_highlight_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -151,6 +156,7 @@ impl StageIndices {
         let haze_end_index = take(0);
         let chromatic_aberration_prepare_pass_index = take(1);
         let chromatic_aberration_fringe_pass_index = take(1);
+        let binned_highlight_pass_index = take(1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -190,6 +196,7 @@ impl StageIndices {
             haze_end_index,
             chromatic_aberration_prepare_pass_index,
             chromatic_aberration_fringe_pass_index,
+            binned_highlight_pass_index,
             pass_count,
         }
     }
@@ -228,6 +235,9 @@ pub(in crate::pipeline::gpu) struct AssembledPasses {
     pub(in crate::pipeline::gpu) post_blur_scene_depth_guide_pass: Pass,
     pub(in crate::pipeline::gpu) post_blur_creative_pass: Pass,
     pub(in crate::pipeline::gpu) post_blur_render_pass: Pass,
+    /// The raster finish program reading a binned source's reconstructed
+    /// camera RGB instead of a raster.
+    pub(in crate::pipeline::gpu) binned_finish_pass: Pass,
     pub(in crate::pipeline::gpu) indices: StageIndices,
 }
 
@@ -700,6 +710,24 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         ),
     ]);
 
+    ensure_planned(
+        &passes,
+        indices.binned_highlight_pass_index,
+        "binned highlights",
+    )?;
+    passes.push(assembler.make_pass(
+        shaders.highlight_module.as_ref(),
+        "binned_highlight_reconstruct",
+        &layouts.bgl_binned_highlights,
+        groups.bg_binned_highlights.clone(),
+        image_workgroups,
+    ));
+    let binned_finish_pass = Pass {
+        pipeline: passes[indices.raster_finish_pass_index].pipeline.clone(),
+        bindings: groups.bg_binned_finish.clone().into(),
+        workgroups: image_workgroups,
+    };
+
     // The post-blur variants reuse the programs above with bind groups that
     // read the mask-blurred scene.
     let mut post_blur_glow_passes = vec![Pass {
@@ -762,6 +790,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         post_blur_scene_depth_guide_pass,
         post_blur_creative_pass,
         post_blur_render_pass,
+        binned_finish_pass,
         indices,
     })
 }

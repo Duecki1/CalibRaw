@@ -3,13 +3,13 @@ use super::gpu_cache::PersistentGpuPipelineCache;
 use super::sigmoid::{coefficients as sigmoid_coefficients, SigmoidCoefficients};
 use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
-    mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
-    FilmSource, FilmStock, GeometryMapping, GeometryTransform, HighlightReconstructionMethod,
-    LateralChannel, LensGeometryMap, LoadedRaw, LocalMask, MaskEffect, MaskImage, MaskStack,
-    PointColor, PointCurve, ProcessingStage, ProfileColor, RawThumbnail, RemoveEditState,
-    RemovePatch, SensorSaturation, SigmoidParams, GLOBAL_TEMPERATURE_LIMIT,
-    GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS,
-    MAX_POINT_CURVE_POINTS,
+    mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, BinnedSensor, CfaKind,
+    ExposureParams, FilmSource, FilmStock, GeometryMapping, GeometryTransform,
+    HighlightReconstructionMethod, LateralChannel, LensGeometryMap, LoadedRaw, LocalMask,
+    MaskEffect, MaskImage, MaskStack, PixelLayout, PointColor, PointCurve, ProcessingStage,
+    ProfileColor, RawThumbnail, RemoveEditState, RemovePatch, SensorSaturation, SigmoidParams,
+    GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS,
+    MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -451,6 +451,9 @@ pub struct RawGpuPipeline {
     post_blur_scene_depth_guide_pass: Pass,
     post_blur_creative_pass: Pass,
     post_blur_render_pass: Pass,
+    /// The raster finish program reading a binned source's reconstructed
+    /// camera RGB from highlight work A.
+    binned_finish_pass: Pass,
     passes: Vec<Pass>,
     raw_texture: wgpu::Texture,
     color_texture: wgpu::Texture,
@@ -468,11 +471,16 @@ pub struct RawGpuPipeline {
     _tex1: wgpu::Texture,
     _tex2: wgpu::Texture,
     _xtrans_homogeneity: Option<wgpu::Texture>,
-    raster_source_texture: wgpu::Texture,
+    rgb_source_texture: wgpu::Texture,
+    binned_ai_texture: wgpu::Texture,
     scene_texture: wgpu::Texture,
     scene_format: wgpu::TextureFormat,
     has_ai_scene: bool,
-    has_raster_scene: bool,
+    /// The layout of the source the graph was built for; uploaded tiles must
+    /// share it.
+    layout: PixelLayout,
+    /// Whether the RAW stage blends in AI-denoised sensor samples: a Bayer
+    /// mosaic's in the raw texture, or a binned view's in its own texture.
     has_ai_cfa: bool,
     display_linear_texture: wgpu::Texture,
     _tone_guide_a: wgpu::Texture,
@@ -624,6 +632,12 @@ impl RawGpuPipeline {
         self.mask_layer_capacity
     }
 
+    /// The layout of the source the graph was built for, which
+    /// [`Self::upload_raw_tile`] requires of every tile.
+    pub const fn pixel_layout(&self) -> PixelLayout {
+        self.layout
+    }
+
     pub fn immutable_ai_source_matches(&self, cfa_kind: CfaKind, enabled: bool) -> bool {
         match cfa_kind {
             CfaKind::Bayer => self.has_ai_cfa == enabled,
@@ -704,34 +718,55 @@ impl RawGpuPipeline {
             ));
         }
         validate_raw(raw)?;
+        anyhow::ensure!(
+            raw.pixel_layout() == self.layout,
+            "reusable {:?} pipeline received a {:?} tile",
+            self.layout,
+            raw.pixel_layout()
+        );
 
-        if self.has_raster_scene {
-            anyhow::ensure!(
-                raw.is_pre_demosaiced_raster(),
-                "reusable raster pipeline received a sensor RAW tile"
-            );
-            return upload_raster_source_texture(
-                queue,
-                &self.raster_source_texture,
-                self.scene_format,
-                raw,
-            );
+        if let Some(rgb) = rgb_source_pixels(raw) {
+            upload_rgb_texture(queue, &self.rgb_source_texture, self.scene_format, raw, rgb)?;
         }
-
-        let ai_image = raw.ai_denoised_image();
-        let ai_cfa = if self.has_ai_cfa {
-            Some(
-                ai_image
-                    .as_ref()
-                    .and_then(AiDenoisedImage::bayer_cfa)
-                    .context("reusable AI-denoise pipeline received a tile without denoised CFA")?,
-            )
-        } else {
-            None
-        };
-        upload_raw_texture(queue, &self.raw_texture, raw, ai_cfa)?;
-        upload_color_texture(queue, &self.color_texture, raw);
-        upload_black_texture(queue, &self.black_texture, raw);
+        match self.layout {
+            PixelLayout::Raster => return Ok(()),
+            PixelLayout::Binned => {
+                if self.has_ai_cfa {
+                    let ai_rgb = raw
+                        .binned_sensor
+                        .as_ref()
+                        .and_then(BinnedSensor::ai_rgb)
+                        .context(
+                            "reusable AI-denoise pipeline received a tile without denoised RGB",
+                        )?;
+                    upload_rgb_texture(
+                        queue,
+                        &self.binned_ai_texture,
+                        self.scene_format,
+                        raw,
+                        ai_rgb,
+                    )?;
+                }
+            }
+            PixelLayout::Mosaic => {
+                let ai_image = raw.ai_denoised_image();
+                let ai_cfa = if self.has_ai_cfa {
+                    Some(
+                        ai_image
+                            .as_ref()
+                            .and_then(AiDenoisedImage::bayer_cfa)
+                            .context(
+                                "reusable AI-denoise pipeline received a tile without denoised CFA",
+                            )?,
+                    )
+                } else {
+                    None
+                };
+                upload_raw_texture(queue, &self.raw_texture, raw, ai_cfa)?;
+                upload_color_texture(queue, &self.color_texture, raw);
+                upload_black_texture(queue, &self.black_texture, raw);
+            }
+        }
         upload_lens_shading_texture(queue, &self.lens_shading_texture, raw);
         if self.has_ai_scene {
             anyhow::ensure!(
@@ -1054,7 +1089,7 @@ impl RawGpuPipeline {
     }
 
     fn encode_raw_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
-        if self.has_raster_scene {
+        if self.layout == PixelLayout::Raster {
             self.encode_pass(encoder, self.indices.raster_finish_pass_index);
             self.encode_chromatic_aberration(encoder, params);
             self.encode_color_denoise(encoder, params);
@@ -1075,6 +1110,18 @@ impl RawGpuPipeline {
         }
         // Highlight reconstruction and demosaicing write highlight work A.
         self.ai_scene_intact.store(false, Ordering::Release);
+        if self.layout == PixelLayout::Binned {
+            self.encode_pass(encoder, self.indices.binned_highlight_pass_index);
+            self.encode_bound_pass(encoder, &self.binned_finish_pass, "binned finish");
+        } else {
+            self.encode_demosaic(encoder, params);
+        }
+        self.encode_chromatic_aberration(encoder, params);
+        self.encode_color_denoise(encoder, params);
+    }
+
+    /// Reconstructs a mosaic's highlights and demosaics it into the scene.
+    fn encode_demosaic(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
         self.encode_pass(encoder, self.indices.highlight_pass_index);
         self.encode_pass_range(
             encoder,
@@ -1100,8 +1147,6 @@ impl RawGpuPipeline {
             ],
             finish.workgroups,
         );
-        self.encode_chromatic_aberration(encoder, params);
-        self.encode_color_denoise(encoder, params);
     }
 
     /// Moves red and blue onto green and removes colour fringes in the scene

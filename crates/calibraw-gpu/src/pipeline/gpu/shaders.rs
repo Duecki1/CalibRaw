@@ -229,7 +229,7 @@ const fn entry(
 }
 
 pub(super) const HIGHLIGHTS_ENTRY: EntryShader =
-    entry("calibraw highlight module", HIGHLIGHTS, false, None);
+    entry("calibraw highlight module", HIGHLIGHTS, true, None);
 pub(super) const BAYER_RCD_P1_ENTRY: EntryShader = entry(
     "calibraw Bayer RCD pass 1",
     BAYER_RCD_P1,

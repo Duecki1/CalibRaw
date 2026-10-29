@@ -6,6 +6,7 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) scene_tone_bind_group: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) effects_bind_group: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_highlights: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_binned_highlights: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg1: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg2: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg3: wgpu::BindGroup,
@@ -17,6 +18,9 @@ pub(in crate::pipeline::gpu) struct BindGroups {
         Option<[wgpu::BindGroup; XTRANS_MARKESTEIJN_ENTRIES.len()]>,
     pub(in crate::pipeline::gpu) bg_xtrans_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_raster_finish: wgpu::BindGroup,
+    /// The raster finish program reading a binned source's reconstructed
+    /// camera RGB.
+    pub(in crate::pipeline::gpu) bg_binned_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_color_denoise: [wgpu::BindGroup; 6],
     pub(in crate::pipeline::gpu) bg_chromatic_aberration_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_chromatic_aberration_fringes: wgpu::BindGroup,
@@ -60,7 +64,8 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         reconstructed_raw_view,
         highlight_work_a_view,
         highlight_work_b_view,
-        raster_source_view,
+        rgb_source_view,
+        binned_ai_view,
         scene_view,
         tex1_view,
         tex2_view,
@@ -99,6 +104,19 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             texture_binding(2, color_view),
             texture_binding(19, black_view),
             texture_binding(3, reconstructed_raw_view),
+            texture_binding(13, lens_shading_view),
+        ],
+    );
+
+    let bg_binned_highlights = create_bind_group(
+        device,
+        "bg binned highlight reconstruction",
+        &layouts.bgl_binned_highlights,
+        &[
+            buffer_binding(0, camera_uniforms_buffer),
+            texture_binding(10, highlight_work_a_view),
+            texture_binding(11, rgb_source_view),
+            texture_binding(12, binned_ai_view),
             texture_binding(13, lens_shading_view),
         ],
     );
@@ -334,7 +352,9 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             )
         };
     let bg_raster_finish =
-        make_color_denoise_bind_group("bg raster finish", raster_source_view, scene_view);
+        make_color_denoise_bind_group("bg raster finish", rgb_source_view, scene_view);
+    let bg_binned_finish =
+        make_color_denoise_bind_group("bg binned finish", highlight_work_a_view, scene_view);
     let bg_color_denoise = [
         make_color_denoise_bind_group("bg color denoise scale 1", scene_view, tex1_view),
         make_color_denoise_bind_group("bg color denoise scale 2", tex1_view, tex2_view),
@@ -570,6 +590,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         scene_tone_bind_group,
         effects_bind_group,
         bg_highlights,
+        bg_binned_highlights,
         bg1,
         bg2,
         bg3,
@@ -579,6 +600,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_xtrans_markesteijn,
         bg_xtrans_finish,
         bg_raster_finish,
+        bg_binned_finish,
         bg_color_denoise,
         bg_chromatic_aberration_prepare,
         bg_chromatic_aberration_fringes,

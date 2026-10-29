@@ -754,6 +754,7 @@ fn loaded_raw_from_context(
         },
         cfa_kind,
         raw_pixels: raw_pixels.into(),
+        binned_sensor: None,
         scene_linear_raster: None,
         scene_referred_raster: false,
         color_indices,

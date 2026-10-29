@@ -717,6 +717,7 @@ fn adapt(
         capture_metadata,
         cfa_kind: CfaKind::Bayer,
         raw_pixels: Default::default(),
+        binned_sensor: None,
         scene_linear_raster: None,
         scene_referred_raster: false,
         color_indices: CompactPixelMap::repeating(width, height, 1, 1, vec![1]),

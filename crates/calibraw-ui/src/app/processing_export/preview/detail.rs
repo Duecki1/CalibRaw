@@ -326,6 +326,7 @@ impl CalibRawApp {
         if let Some(detail) = self.preview.detail.as_mut().filter(|detail| {
             detail.pipeline.gpu().width == detail_raw.width
                 && detail.pipeline.gpu().height == detail_raw.height
+                && detail.pipeline.gpu().pixel_layout() == detail_raw.pixel_layout()
                 && detail
                     .pipeline
                     .gpu()

@@ -123,12 +123,13 @@ pub fn record_raw(label: &str, raw: &LoadedRaw) {
     let cfa_sample_counts = sampled_cfa_counts(&raw.color_indices);
 
     record(format!(
-        "{label}: camera=\"{} {}\" size={}x{} cfa={:?} raw_len={} cfa_len={} black_map_len={}",
+        "{label}: camera=\"{} {}\" size={}x{} cfa={:?} layout={:?} raw_len={} cfa_len={} black_map_len={}",
         raw.camera_make,
         raw.camera_model,
         raw.width,
         raw.height,
         raw.cfa_kind,
+        raw.pixel_layout(),
         raw.raw_pixels.len(),
         raw.color_indices.len(),
         raw.black_levels_per_pixel.len(),

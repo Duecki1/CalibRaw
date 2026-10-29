@@ -1,0 +1,8 @@
+{
+  "edits": {
+    "exposure": {
+      "chroma_denoise": 0.5,
+      "luminance_denoise": 30.0
+    }
+  }
+}

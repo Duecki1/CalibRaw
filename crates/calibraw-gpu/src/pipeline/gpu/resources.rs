@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::{LensShadingMap, TONE_GUIDE_CELL_SIZE};
+use crate::pipeline::{LensShadingMap, PixelLayout, TONE_GUIDE_CELL_SIZE};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -116,11 +116,13 @@ pub(super) struct GpuResourcePlanInput {
     pub profile_buffer_bytes: u64,
     pub stage_uniform_buffer_bytes: u64,
     pub mask_data_buffer_bytes: u64,
-    /// Whether the raw texture also carries the AI-denoised Bayer mosaic.
+    /// How the source holds its pixels: a mosaic in the CFA textures, or a
+    /// binned view or raster in an RGB source texture while the CFA textures
+    /// shrink to placeholders.
+    pub layout: PixelLayout,
+    /// Whether the source also carries AI-denoised sensor samples: in the raw
+    /// texture of a Bayer mosaic, or in a second RGB texture of a binned view.
     pub ai_cfa: bool,
-    /// Whether the source is a pre-demosaiced raster, held in an RGB source
-    /// texture while the CFA textures shrink to placeholders.
-    pub raster_source: bool,
     /// X-Trans pipelines also hold Markesteijn's homogeneity map.
     pub cfa_kind: CfaKind,
 }
@@ -292,14 +294,7 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
     let work_format = processing_work_format(input.quality);
     let full = |format| texture_allocation_bytes(input.width, input.height, 1, 1, format);
 
-    if input.raster_source {
-        push_entry(
-            &mut entries,
-            "raster source texture",
-            GpuResourceResidency::Persistent,
-            full(work_format)?,
-        );
-    } else {
+    if input.layout == PixelLayout::Mosaic {
         push_entry(
             &mut entries,
             "raw CFA texture",
@@ -318,13 +313,28 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             GpuResourceResidency::Persistent,
             full(wgpu::TextureFormat::R32Float)?,
         );
+        push_entry(
+            &mut entries,
+            "reconstructed raw texture",
+            GpuResourceResidency::Persistent,
+            full(wgpu::TextureFormat::R32Float)?,
+        );
+    } else {
+        push_entry(
+            &mut entries,
+            "RGB source texture",
+            GpuResourceResidency::Persistent,
+            full(work_format)?,
+        );
+        if input.layout == PixelLayout::Binned && input.ai_cfa {
+            push_entry(
+                &mut entries,
+                "binned AI-denoise texture",
+                GpuResourceResidency::Persistent,
+                full(work_format)?,
+            );
+        }
     }
-    push_entry(
-        &mut entries,
-        "reconstructed raw texture",
-        GpuResourceResidency::Persistent,
-        full(wgpu::TextureFormat::R32Float)?,
-    );
     for name in [
         "highlight work A",
         "highlight work B",
@@ -691,18 +701,67 @@ pub(super) fn create_demosaic_texture(
     )
 }
 
-/// The source of a pre-demosaiced raster, which the raster finish pass turns
-/// into the scene each RAW stage. It stays untouched so denoise and Remove
-/// re-run from the original pixels. Sensor sources get a 1x1 placeholder, as
-/// rasters do for the CFA textures.
-pub(super) fn create_raster_source_texture(
+/// The RGB pixels a source keeps in its RGB source texture: a raster's
+/// scene-linear RGB or a binned view's sensor RGB. Mosaics have none.
+pub(super) fn rgb_source_pixels(raw: &LoadedRaw) -> Option<&[f32]> {
+    match raw.pixel_layout() {
+        PixelLayout::Binned => raw.binned_sensor.as_ref().map(BinnedSensor::rgb),
+        PixelLayout::Raster => raw.scene_linear_raster(),
+        PixelLayout::Mosaic => None,
+    }
+}
+
+/// The RGB source of a pre-demosaiced raster or a binned sensor view, which
+/// the RAW stage turns into the scene each time: the raster finish pass, or
+/// highlight reconstruction before it. It stays untouched so denoise and
+/// Remove re-run from the original pixels. Mosaics get a 1x1 placeholder, as
+/// RGB sources do for the CFA textures.
+pub(super) fn create_rgb_source_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     raw: &LoadedRaw,
     format: wgpu::TextureFormat,
 ) -> Result<wgpu::Texture> {
-    let raster = raw.is_pre_demosaiced_raster();
-    let size = if raster {
+    create_rgb_texture(
+        device,
+        queue,
+        raw,
+        rgb_source_pixels(raw),
+        format,
+        "calibraw RGB source",
+    )
+}
+
+/// The AI-denoised sensor RGB of a binned view (`BinnedSensor::ai_rgb`),
+/// which the binned highlight pass blends in by the AI denoise amount, or a
+/// 1x1 placeholder.
+pub(super) fn create_binned_ai_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    raw: &LoadedRaw,
+    ai_rgb: Option<&[f32]>,
+    format: wgpu::TextureFormat,
+) -> Result<wgpu::Texture> {
+    create_rgb_texture(
+        device,
+        queue,
+        raw,
+        ai_rgb,
+        format,
+        "calibraw binned AI-denoise source",
+    )
+}
+
+/// A texture the size of `raw` holding `rgb`, or a 1x1 placeholder without.
+fn create_rgb_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    raw: &LoadedRaw,
+    rgb: Option<&[f32]>,
+    format: wgpu::TextureFormat,
+    label: &'static str,
+) -> Result<wgpu::Texture> {
+    let size = if rgb.is_some() {
         texture_size(raw.width, raw.height)
     } else {
         texture_size(1, 1)
@@ -712,28 +771,26 @@ pub(super) fn create_raster_source_texture(
         size,
         format,
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        "calibraw raster source",
+        label,
     );
-    if raster {
-        upload_raster_source_texture(queue, &texture, format, raw)?;
+    if let Some(rgb) = rgb {
+        upload_rgb_texture(queue, &texture, format, raw, rgb)?;
     }
     Ok(texture)
 }
 
-/// Uploads a raster's scene-linear RGB pixels into its source texture.
-pub(super) fn upload_raster_source_texture(
+/// Uploads interleaved RGB pixels the size of `raw` into `texture`.
+pub(super) fn upload_rgb_texture(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
     format: wgpu::TextureFormat,
     raw: &LoadedRaw,
+    rgb: &[f32],
 ) -> Result<()> {
-    let rgb = raw
-        .scene_linear_raster()
-        .context("raster source is missing scene-linear RGB pixels")?;
     let expected = raw.width as usize * raw.height as usize * 3;
     anyhow::ensure!(
         rgb.len() == expected,
-        "scene-linear raster has {} values, expected {expected}",
+        "RGB source has {} values, expected {expected}",
         rgb.len()
     );
     upload_rgba_texture_chunks(
@@ -1125,7 +1182,16 @@ pub(super) fn storage_texture_entry(
 
 pub(super) fn validate_raw(raw: &LoadedRaw) -> Result<()> {
     let pixels = crate::pipeline::raw_loader::validate_raw_dimensions(raw.width, raw.height)?;
-    if raw.is_pre_demosaiced_raster() {
+    if let Some(binned) = &raw.binned_sensor {
+        let expected = pixels
+            .checked_mul(3)
+            .ok_or_else(|| anyhow!("binned RGB element count overflows"))?;
+        let valid =
+            |rgb: &[f32]| rgb.len() == expected && rgb.iter().all(|value| value.is_finite());
+        if !valid(binned.rgb()) || !binned.ai_rgb().is_none_or(valid) {
+            return Err(anyhow!("binned sensor payload is invalid"));
+        }
+    } else if raw.is_pre_demosaiced_raster() {
         let expected = pixels
             .checked_mul(3)
             .ok_or_else(|| anyhow!("raster RGB element count overflows"))?;
@@ -1322,10 +1388,10 @@ pub(super) fn create_raw_texture(
     raw: &LoadedRaw,
     ai_cfa: Option<&[u16]>,
 ) -> Result<wgpu::Texture> {
-    let sensor_size = if raw.is_pre_demosaiced_raster() {
-        texture_size(1, 1)
-    } else {
+    let sensor_size = if raw.pixel_layout() == PixelLayout::Mosaic {
         texture_size(raw.width, raw.height)
+    } else {
+        texture_size(1, 1)
     };
     let format = raw_texture_format(ai_cfa.is_some());
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -1388,7 +1454,7 @@ pub(super) fn create_black_texture(
         wgpu::TextureFormat::R32Float,
         "calibraw per-pixel black levels",
     );
-    if !raw.is_pre_demosaiced_raster() {
+    if raw.pixel_layout() == PixelLayout::Mosaic {
         upload_black_texture(queue, &texture, raw);
     }
     texture
@@ -1467,7 +1533,7 @@ pub(super) fn create_color_texture(
         wgpu::TextureFormat::R8Uint,
         "calibraw CFA color indices",
     );
-    if !raw.is_pre_demosaiced_raster() {
+    if raw.pixel_layout() == PixelLayout::Mosaic {
         upload_color_texture(queue, &texture, raw);
     }
     texture
@@ -1529,10 +1595,10 @@ fn create_per_pixel_texture(
     format: wgpu::TextureFormat,
     label: &'static str,
 ) -> wgpu::Texture {
-    let sensor_size = if raw.is_pre_demosaiced_raster() {
-        texture_size(1, 1)
-    } else {
+    let sensor_size = if raw.pixel_layout() == PixelLayout::Mosaic {
         texture_size(raw.width, raw.height)
+    } else {
+        texture_size(1, 1)
     };
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
