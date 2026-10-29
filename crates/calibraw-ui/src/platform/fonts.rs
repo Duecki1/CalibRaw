@@ -78,6 +78,32 @@ pub(crate) fn chinese_font() -> Option<SystemFont> {
     })
 }
 
+/// The system's Devanagari font, or `None` when none is installed or loadable.
+/// Looked up and read once.
+pub(crate) fn hindi_font() -> Option<SystemFont> {
+    static FONT: OnceLock<Option<SystemFont>> = OnceLock::new();
+    *FONT.get_or_init(|| {
+        for candidate in hindi_candidates() {
+            match load_script_face(&candidate, covers_hindi) {
+                Ok(Some(font)) => return Some(font),
+                Ok(None) => log::debug!(
+                    "skipping font {}: no face covers Devanagari",
+                    candidate.path.display()
+                ),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    log::debug!("no Devanagari font at {}", candidate.path.display())
+                }
+                Err(error) => log::warn!(
+                    "could not load Devanagari font {}: {error}",
+                    candidate.path.display()
+                ),
+            }
+        }
+        log::info!("no system Devanagari font found; Hindi text may use replacement glyphs");
+        None
+    })
+}
+
 /// The fonts each OS ships, in preference order. Fontconfig's choice comes
 /// first on desktop Linux; the other systems name their Chinese font.
 fn candidates() -> Vec<FontCandidate> {
@@ -145,7 +171,7 @@ fn candidates() -> Vec<FontCandidate> {
         target_os = "android"
     )))]
     {
-        if let Some(candidate) = fontconfig_candidate() {
+        if let Some(candidate) = fontconfig_candidate("zh-cn") {
             candidates.push(candidate);
         }
         // Fallbacks for systems without fontconfig's `fc-match`; the files
@@ -170,7 +196,72 @@ fn candidates() -> Vec<FontCandidate> {
     candidates
 }
 
-/// The font fontconfig prefers for Simplified Chinese, honouring the user's
+/// Devanagari fonts supplied by each OS. Fontconfig's choice comes first on
+/// Linux; the other platforms have stable system font names.
+fn hindi_candidates() -> Vec<FontCandidate> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        let fonts = PathBuf::from(root).join("Fonts");
+        for name in ["Nirmala.ttf", "NirmalaB.ttf", "NirmalaS.ttf", "Mangal.ttf"] {
+            candidates.push(FontCandidate::new(fonts.join(name)));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    for path in [
+        "/System/Library/Fonts/Supplemental/Devanagari Sangam MN.ttc",
+        "/System/Library/Fonts/Devanagari Sangam MN.ttc",
+    ] {
+        candidates.push(FontCandidate::new(path));
+    }
+
+    #[cfg(target_os = "ios")]
+    for path in [
+        "/System/Library/Fonts/Core/DevanagariSangamMN.ttc",
+        "/System/Library/Fonts/LanguageSupport/DevanagariSangamMN.ttc",
+    ] {
+        candidates.push(FontCandidate::new(path));
+    }
+
+    #[cfg(target_os = "android")]
+    for path in [
+        "/system/fonts/NotoSansDevanagari-VF.ttf",
+        "/system/fonts/NotoSansDevanagari-Regular.ttf",
+        "/system/fonts/NotoSansDevanagariUI-Regular.ttf",
+        "/system/fonts/NotoSerifDevanagari-VF.ttf",
+        "/system/fonts/NotoSerifDevanagari-Regular.ttf",
+        "/product/fonts/NotoSansDevanagari-VF.ttf",
+        "/product/fonts/NotoSansDevanagari-Regular.ttf",
+    ] {
+        candidates.push(FontCandidate::new(path));
+    }
+
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "android"
+    )))]
+    {
+        if let Some(candidate) = fontconfig_candidate("hi") {
+            candidates.push(candidate);
+        }
+        for path in [
+            "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSansDevanagari-Regular.ttf",
+            "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf",
+            "/usr/share/fonts/truetype/indic-fonts-core/lohit-devanagari/lohit_devanagari.ttf",
+        ] {
+            candidates.push(FontCandidate::new(path));
+        }
+    }
+
+    candidates
+}
+
+/// The font fontconfig prefers for `language`, honouring the user's
 /// configuration, or `None` when `fc-match` is missing or prints nothing.
 #[cfg(not(any(
     target_os = "windows",
@@ -178,9 +269,12 @@ fn candidates() -> Vec<FontCandidate> {
     target_os = "ios",
     target_os = "android"
 )))]
-fn fontconfig_candidate() -> Option<FontCandidate> {
+fn fontconfig_candidate(language: &str) -> Option<FontCandidate> {
     let output = std::process::Command::new("fc-match")
-        .args(["--format=%{file}\n%{index}\n", "sans-serif:lang=zh-cn"])
+        .args([
+            "--format=%{file}\n%{index}\n",
+            &format!("sans-serif:lang={language}"),
+        ])
         .output()
         .ok()
         .filter(|output| output.status.success())?;
@@ -210,6 +304,14 @@ fn parse_fc_match(output: &str) -> Option<(PathBuf, u32)> {
 /// exists but contains no such face. Missing files are returned as errors and
 /// skipped by the caller.
 fn load_chinese_face(candidate: &FontCandidate) -> io::Result<Option<SystemFont>> {
+    load_script_face(candidate, covers_chinese)
+}
+
+/// Reads `candidate` and returns a face containing the requested script.
+fn load_script_face(
+    candidate: &FontCandidate,
+    covers_script: fn(&[u8], u32) -> bool,
+) -> io::Result<Option<SystemFont>> {
     let metadata = std::fs::metadata(&candidate.path)?;
     if !metadata.is_file() {
         return Ok(None);
@@ -228,7 +330,7 @@ fn load_chinese_face(candidate: &FontCandidate) -> io::Result<Option<SystemFont>
             format!("font file is larger than {MAX_FONT_FILE_BYTES} bytes"),
         ));
     }
-    let Some(index) = chinese_face(&bytes, candidate.index) else {
+    let Some(index) = script_face(&bytes, candidate.index, covers_script) else {
         return Ok(None);
     };
 
@@ -239,14 +341,18 @@ fn load_chinese_face(candidate: &FontCandidate) -> io::Result<Option<SystemFont>
     Ok(Some(SystemFont { bytes, index }))
 }
 
-/// The preferred face when it covers Chinese, otherwise the first face that
-/// does. Trying the preferred face first keeps the language variant the OS
-/// chose (Simplified rather than Japanese, for example).
-fn chinese_face(bytes: &[u8], preferred: Option<u32>) -> Option<u32> {
-    if preferred.is_some_and(|index| covers_chinese(bytes, index)) {
+/// The preferred face when it covers the requested script, otherwise the
+/// first face that does. Trying the preferred face first keeps the variant
+/// chosen by the OS.
+fn script_face(
+    bytes: &[u8],
+    preferred: Option<u32>,
+    covers_script: fn(&[u8], u32) -> bool,
+) -> Option<u32> {
+    if preferred.is_some_and(|index| covers_script(bytes, index)) {
         return preferred;
     }
-    (0..MAX_FACES).find(|&index| Some(index) != preferred && covers_chinese(bytes, index))
+    (0..MAX_FACES).find(|&index| Some(index) != preferred && covers_script(bytes, index))
 }
 
 /// Whether `bytes` at `index` is a font whose character map has common
@@ -258,4 +364,13 @@ fn covers_chinese(bytes: &[u8], index: u32) -> bool {
     };
     let charmap = font.charmap();
     "中文照片".chars().all(|ch| charmap.map(ch).is_some())
+}
+
+/// Whether a font can display a small Hindi sample, including vowel marks.
+fn covers_hindi(bytes: &[u8], index: u32) -> bool {
+    let Ok(font) = skrifa::FontRef::from_index(bytes, index) else {
+        return false;
+    };
+    let charmap = font.charmap();
+    "हिन्दीफ़ोटो".chars().all(|ch| charmap.map(ch).is_some())
 }
