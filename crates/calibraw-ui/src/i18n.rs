@@ -26,15 +26,17 @@ pub(crate) enum Language {
     French,
     Japanese,
     Hindi,
+    SimplifiedChinese,
 }
 
 impl Language {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::English,
         Self::German,
         Self::French,
         Self::Japanese,
         Self::Hindi,
+        Self::SimplifiedChinese,
     ];
 
     /// The primary BCP 47 subtag matched against the system's languages.
@@ -45,6 +47,7 @@ impl Language {
             Self::French => "fr",
             Self::Japanese => "ja",
             Self::Hindi => "hi",
+            Self::SimplifiedChinese => "zh",
         }
     }
 
@@ -57,6 +60,7 @@ impl Language {
             Self::French => "Français",
             Self::Japanese => "日本語",
             Self::Hindi => "हिन्दी",
+            Self::SimplifiedChinese => "简体中文",
         }
     }
 
@@ -67,6 +71,8 @@ impl Language {
         static FRENCH: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static JAPANESE: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static HINDI: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
+        static SIMPLIFIED_CHINESE: OnceLock<Result<HashMap<String, String>, CatalogError>> =
+            OnceLock::new();
         match self {
             Self::English => Ok(ENGLISH.get_or_init(HashMap::new)),
             Self::German => GERMAN
@@ -85,7 +91,33 @@ impl Language {
                 .get_or_init(|| parse_catalog(self, include_str!("../locales/hi.json")))
                 .as_ref()
                 .map_err(Clone::clone),
+            Self::SimplifiedChinese => SIMPLIFIED_CHINESE
+                .get_or_init(|| parse_catalog(self, include_str!("../locales/zh.json")))
+                .as_ref()
+                .map_err(Clone::clone),
         }
+    }
+
+    fn matches_system_tag(self, tag: &str) -> bool {
+        let mut subtags = tag.split(['-', '_']);
+        let primary = subtags.next().unwrap_or_default();
+        if !primary.eq_ignore_ascii_case(self.code()) {
+            return false;
+        }
+
+        if self != Self::SimplifiedChinese {
+            return true;
+        }
+
+        // Do not choose Simplified Chinese when the system explicitly asks
+        // for Traditional Chinese. A bare `zh` or a Simplified region/script
+        // still selects this catalog.
+        !subtags.any(|subtag| {
+            subtag.eq_ignore_ascii_case("Hant")
+                || ["TW", "HK", "MO"]
+                    .into_iter()
+                    .any(|region| subtag.eq_ignore_ascii_case(region))
+        })
     }
 
     /// The first of the system's preferred languages CalibRaw has, else English.
@@ -93,10 +125,9 @@ impl Language {
         crate::platform::preferred_languages()
             .iter()
             .find_map(|tag| {
-                let primary = tag.split(['-', '_']).next().unwrap_or_default();
                 Self::ALL
                     .into_iter()
-                    .find(|language| primary.eq_ignore_ascii_case(language.code()))
+                    .find(|language| language.matches_system_tag(tag))
             })
             .unwrap_or(Self::English)
     }
@@ -115,16 +146,18 @@ pub(crate) enum LanguageChoice {
     French,
     Japanese,
     Hindi,
+    SimplifiedChinese,
 }
 
 impl LanguageChoice {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::System,
         Self::English,
         Self::German,
         Self::French,
         Self::Japanese,
         Self::Hindi,
+        Self::SimplifiedChinese,
     ];
 
     pub(crate) fn resolve(self) -> Language {
@@ -135,6 +168,7 @@ impl LanguageChoice {
             Self::French => Language::French,
             Self::Japanese => Language::Japanese,
             Self::Hindi => Language::Hindi,
+            Self::SimplifiedChinese => Language::SimplifiedChinese,
         }
     }
 
@@ -146,6 +180,7 @@ impl LanguageChoice {
             Self::French => Language::French.native_name(),
             Self::Japanese => Language::Japanese.native_name(),
             Self::Hindi => Language::Hindi.native_name(),
+            Self::SimplifiedChinese => Language::SimplifiedChinese.native_name(),
         }
     }
 }
