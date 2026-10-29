@@ -10,48 +10,12 @@ impl LibraryState {
         self.root_folder.as_deref()
     }
 
-    /// Entry indices in filmstrip order: every photo, with RAW+JPEG pairs
-    /// stacked like the library grid.
-    pub(crate) fn filmstrip_entry_indices(&self) -> Vec<usize> {
-        (0..self.entries.len())
-            .filter(|index| !self.hides_raw_companion(&self.entries[*index].asset.id))
-            .collect()
-    }
-
-    pub(crate) fn filmstrip_item_aspect(&self, index: usize) -> f32 {
-        self.entries
-            .get(index)
-            .and_then(|entry| entry.layout_size.or(entry.thumbnail_size))
-            .and_then(|[width, height]| {
-                (width > 0 && height > 0).then_some(width as f32 / height as f32)
-            })
-            .filter(|aspect| aspect.is_finite() && *aspect > 0.0)
-            .unwrap_or(1.5)
-    }
-
-    pub(crate) fn filmstrip_item(&self, index: usize) -> Option<DesktopFilmstripItem> {
-        let entry = self.entries.get(index)?;
-        let path = entry.asset.desktop_path()?.to_owned();
-        Some(DesktopFilmstripItem {
-            asset: entry.asset.clone(),
-            path,
-            texture: entry.texture.clone(),
-            thumbnail_size: entry.thumbnail_size,
-            developed_thumbnail_pending: entry.developed_thumbnail_pending,
-        })
-    }
-
     pub(crate) fn filmstrip_index_for_path(&self, path: &Path) -> Option<usize> {
-        self.entry_indices
-            .get(&LibraryAssetId::Desktop(path.to_owned()))
-            .copied()
+        self.filmstrip_index(&LibraryAssetId::Desktop(path.to_owned()))
     }
 
-    pub(crate) fn adjacent_library_item_for_path(
-        &self,
-        path: &Path,
-        forward: bool,
-    ) -> Option<DesktopFilmstripItem> {
+    /// The folder photo before or after `path` in the library grid's order.
+    pub(crate) fn adjacent_library_path(&self, path: &Path, forward: bool) -> Option<PathBuf> {
         let current_index = self.filmstrip_index_for_path(path)?;
         let visible_indices = self.visible_entry_indices();
         let target_position = match visible_indices.binary_search(&current_index) {
@@ -61,7 +25,13 @@ impl LibraryState {
             Err(position) => position.checked_sub(1),
         }?;
         let target_index = *visible_indices.get(target_position)?;
-        self.filmstrip_item(target_index)
+        Some(
+            self.entries
+                .get(target_index)?
+                .asset
+                .desktop_path()?
+                .to_owned(),
+        )
     }
 
     pub(crate) fn desktop_asset_bytes(&self, path: &Path) -> Option<u64> {

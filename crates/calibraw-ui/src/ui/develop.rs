@@ -2,8 +2,8 @@ use crate::app::CalibRawApp;
 use crate::i18n::{tr, tr_fmt};
 use crate::ui::library::photo_actions_menu;
 use crate::ui::library::{
-    apply_library_action, current_photo_asset, load_desktop_reference_preview, take_review_key,
-    DesktopFilmstripItem,
+    apply_library_action, current_document_id, current_photo_asset, load_desktop_reference_preview,
+    take_review_key, FilmstripItem, LibraryLocator,
 };
 use eframe::egui::{self, Align2, Color32, FontId, Sense, Stroke, StrokeKind, Ui};
 use egui_phosphor::regular;
@@ -32,11 +32,8 @@ fn open_adjacent_photo(app: &mut CalibRawApp, forward: bool, frame: &eframe::Fra
     let Some(current_path) = app.develop.current_path.as_deref() else {
         return;
     };
-    if let Some(item) = app
-        .library
-        .adjacent_library_item_for_path(current_path, forward)
-    {
-        app.switch_to_path(item.path, frame);
+    if let Some(path) = app.library.adjacent_library_path(current_path, forward) {
+        app.switch_to_path(path, frame);
     }
 }
 
@@ -190,20 +187,20 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
         return;
     }
 
-    let active_path = app.develop.current_path.clone();
+    let active_id = current_document_id(app);
     let reference_path = app.develop_ui.reference.path.clone();
-    let center_request = active_path.as_ref().and_then(|path| {
-        if app.develop_ui.filmstrip_centered_path.as_ref() == Some(path) {
+    let center_request = active_id.as_ref().and_then(|id| {
+        if app.develop_ui.filmstrip_centered.as_ref() == Some(id) {
             None
         } else {
             app.library
-                .filmstrip_index_for_path(path)
+                .filmstrip_index(id)
                 .and_then(|index| filmstrip.binary_search(&index).ok())
-                .map(|position| (position, path.clone()))
+                .map(|position| (position, id.clone()))
         }
     });
-    let mut centered_path = None;
-    let mut open_path: Option<std::path::PathBuf> = None;
+    let mut centered_id = None;
+    let mut open_asset = None;
     let mut library_action = None;
     let mut protected_indices = HashSet::new();
     let mut cards_width = 0.0;
@@ -239,7 +236,7 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                 );
                 let items_left = content_rect.left();
 
-                if let Some((position, path)) = center_request.as_ref() {
+                if let Some((position, id)) = center_request.as_ref() {
                     let index = filmstrip[*position];
                     let (offset, width) = filmstrip_cards[*position];
                     let x = items_left + offset;
@@ -249,7 +246,7 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                         egui::vec2(width, FILMSTRIP_CARD_HEIGHT),
                     );
                     ui.scroll_to_rect(active_rect, Some(egui::Align::Center));
-                    centered_path = Some(path.clone());
+                    centered_id = Some(id.clone());
                     protected_indices.insert(index);
                     app.library.touch_and_request_thumbnail(index, ui.ctx());
                     ui.ctx().request_repaint();
@@ -284,12 +281,13 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                         egui::pos2(x, y),
                         egui::vec2(width, FILMSTRIP_CARD_HEIGHT),
                     );
-                    let active = active_path.as_deref() == Some(item.path.as_path());
-                    let reference = reference_path.as_deref() == Some(item.path.as_path());
+                    let active = active_id.as_ref() == Some(&item.asset.id);
+                    let item_path = item.asset.desktop_path();
+                    let reference = item_path.is_some() && reference_path.as_deref() == item_path;
                     let response = filmstrip_thumbnail(ui, &item, rect, active, reference);
 
                     if response.clicked() && !response.secondary_clicked() && !active {
-                        open_path = Some(item.path.clone());
+                        open_asset = Some(item.asset.clone());
                     }
 
                     moduwu_design::context_menu(&response, |ui| {
@@ -299,6 +297,10 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                         {
                             library_action = Some(action);
                         }
+                        // Reference previews are decoded from a file path.
+                        let Some(path) = item_path else {
+                            return;
+                        };
                         ui.separator();
                         let label = if reference {
                             tr("Clear Reference Image")
@@ -311,7 +313,7 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                             if reference {
                                 app.develop_ui.reference.clear();
                             } else {
-                                set_reference_image(app, &item, ui.ctx());
+                                set_reference_image(app, &item, path.to_owned(), ui.ctx());
                             }
                             ui.close();
                         }
@@ -320,8 +322,8 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
             });
     });
 
-    if let Some(path) = centered_path {
-        app.develop_ui.filmstrip_centered_path = Some(path);
+    if let Some(id) = centered_id {
+        app.develop_ui.filmstrip_centered = Some(id);
     }
 
     app.library.evict_old_textures(&protected_indices);
@@ -329,17 +331,22 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
     if let Some(action) = library_action {
         apply_library_action(ui, app, frame, action);
     }
-    if let Some(path) = open_path {
-        app.switch_to_path(path, frame);
+    if let Some(asset) = open_asset {
+        match asset.locator {
+            LibraryLocator::Desktop(path) => app.switch_to_path(path, frame),
+            LibraryLocator::Android { uri } => {
+                app.open_android_library_document(&uri, &asset.display_name);
+            }
+        }
     }
 }
 
 fn set_reference_image(
     app: &mut CalibRawApp,
-    item: &DesktopFilmstripItem,
+    item: &FilmstripItem,
+    path: std::path::PathBuf,
     context: &egui::Context,
 ) {
-    let path = item.path.clone();
     app.develop_ui.reference.path = Some(path);
     app.develop_ui.reference.label = Some(item.asset.display_name.clone());
     app.develop_ui.reference.texture = item.texture.clone();
@@ -570,7 +577,7 @@ fn show_reference_pane(ui: &mut Ui, app: &mut CalibRawApp) {
 
 fn filmstrip_thumbnail(
     ui: &mut Ui,
-    item: &DesktopFilmstripItem,
+    item: &FilmstripItem,
     rect: egui::Rect,
     active: bool,
     reference: bool,

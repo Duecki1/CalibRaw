@@ -406,8 +406,7 @@ impl eframe::App for CalibRawApp {
             }
         }
 
-        if caps.is_desktop()
-            && self.ui.active_tab == AppTab::Develop
+        if self.ui.active_tab == AppTab::Develop
             && !overlay_develop
             && self.develop_ui.filmstrip_open
         {
@@ -489,7 +488,8 @@ impl eframe::App for CalibRawApp {
         self.sync_ai_runtime();
         self.sync_discord_presence();
 
-        if caps.is_desktop() && self.ui.active_tab == AppTab::Develop {
+        // The filmstrip's photo actions confirm and name through these dialogs.
+        if self.ui.active_tab == AppTab::Develop && !overlay_develop {
             crate::ui::library::show_library_action_overlays(ui, self, frame);
         }
 

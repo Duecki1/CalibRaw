@@ -313,23 +313,21 @@ impl Sidebar {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
             ui.add_space(5.0);
 
-            if app.caps().is_desktop() {
-                let filmstrip_tooltip = if app.develop_ui.filmstrip_open {
-                    tr("Hide filmstrip")
-                } else {
-                    tr("Show filmstrip")
-                };
-                if icon_toggle_button(
-                    ui,
-                    UiIcon::Filmstrip,
-                    app.develop_ui.filmstrip_open,
-                    moduwu_design::tool_rail_icon_size(),
-                    filmstrip_tooltip,
-                )
-                .clicked()
-                {
-                    app.set_develop_filmstrip_open(!app.develop_ui.filmstrip_open);
-                }
+            let filmstrip_tooltip = if app.develop_ui.filmstrip_open {
+                tr("Hide filmstrip")
+            } else {
+                tr("Show filmstrip")
+            };
+            if icon_toggle_button(
+                ui,
+                UiIcon::Filmstrip,
+                app.develop_ui.filmstrip_open,
+                moduwu_design::tool_rail_icon_size(),
+                filmstrip_tooltip,
+            )
+            .clicked()
+            {
+                app.set_develop_filmstrip_open(!app.develop_ui.filmstrip_open);
             }
 
             let sidebar_tooltip = if app.develop_ui.sidebar_open {

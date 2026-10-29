@@ -45,8 +45,8 @@ mod thumbnails;
 mod view;
 use hover::thumbnail_hover_overlay;
 pub(crate) use review::{
-    current_photo_asset, paint_review_badge, show_current_photo_review, show_review_feedback,
-    take_review_key, ReviewChange, ReviewFeedback,
+    current_document_id, current_photo_asset, paint_review_badge, show_current_photo_review,
+    show_review_feedback, take_review_key, ReviewChange, ReviewFeedback,
 };
 pub(crate) use state::ReviewSave;
 
@@ -321,10 +321,10 @@ impl LibraryEntry {
     }
 }
 
+/// A photo as Develop's filmstrip shows it, from folders or the media library.
 #[derive(Clone)]
-pub(crate) struct DesktopFilmstripItem {
+pub(crate) struct FilmstripItem {
     pub(crate) asset: LibraryAsset,
-    pub(crate) path: PathBuf,
     pub(crate) texture: Option<egui::TextureHandle>,
     pub(crate) thumbnail_size: Option<[u32; 2]>,
     pub(crate) developed_thumbnail_pending: bool,

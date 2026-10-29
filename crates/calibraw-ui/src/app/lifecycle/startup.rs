@@ -163,7 +163,7 @@ impl CalibRawApp {
                 reference: DevelopReferenceState::default(),
                 loading_thumbnail: DevelopLoadingThumbnailState::default(),
                 filmstrip_open: performance.develop_filmstrip_open,
-                filmstrip_centered_path: None,
+                filmstrip_centered: None,
                 sidebar_open: true,
                 crop_constraint_reference: None,
                 crop_drag: None,

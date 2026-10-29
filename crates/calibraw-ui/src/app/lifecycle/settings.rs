@@ -326,7 +326,7 @@ impl CalibRawApp {
         }
         self.develop_ui.filmstrip_open = open;
         if open {
-            self.develop_ui.filmstrip_centered_path = None;
+            self.develop_ui.filmstrip_centered = None;
         }
         self.persist_performance_settings();
         self.egui_ctx.request_repaint();

@@ -26,8 +26,8 @@ pub(crate) struct PlatformCaps {
 /// How the person works with the app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FormFactor {
-    /// Resizable windows, pointer and keyboard: menus, hover, shortcuts,
-    /// resizable panels and the filmstrip.
+    /// Resizable windows, pointer and keyboard: menus, hover, shortcuts and
+    /// resizable panels.
     Desktop,
     /// One full-screen touch surface with system bars and a back gesture.
     Mobile,

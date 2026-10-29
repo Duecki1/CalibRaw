@@ -498,7 +498,9 @@ pub(crate) struct DevelopUiState {
     pub(crate) reference: DevelopReferenceState,
     pub(crate) loading_thumbnail: DevelopLoadingThumbnailState,
     pub(crate) filmstrip_open: bool,
-    pub(crate) filmstrip_centered_path: Option<PathBuf>,
+    /// The photo the filmstrip last scrolled to, so it centres each newly
+    /// opened photo once.
+    pub(crate) filmstrip_centered: Option<crate::ui::library::LibraryAssetId>,
     /// Whether the Develop tool surface is shown. Selecting the active sidebar
     /// tab again toggles it; selecting another tab opens it.
     pub(crate) sidebar_open: bool,

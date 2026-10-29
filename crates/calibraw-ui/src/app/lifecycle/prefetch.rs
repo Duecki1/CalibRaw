@@ -37,11 +37,7 @@ impl CalibRawApp {
         let current = current.as_path();
         let neighbours = [!browsing_backwards, browsing_backwards]
             .into_iter()
-            .filter_map(|forward| {
-                self.library
-                    .adjacent_library_item_for_path(current, forward)
-            })
-            .map(|item| item.path)
+            .filter_map(|forward| self.library.adjacent_library_path(current, forward))
             .take(self.develop.decoded_raws.limit().saturating_sub(1))
             .collect::<Vec<_>>();
         if neighbours.is_empty() {

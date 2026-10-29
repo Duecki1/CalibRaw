@@ -242,6 +242,39 @@ impl LibraryState {
             .collect()
     }
 
+    /// Entry indices in filmstrip order: every photo, with RAW+JPEG pairs
+    /// stacked like the library grid.
+    pub(crate) fn filmstrip_entry_indices(&self) -> Vec<usize> {
+        (0..self.entries.len())
+            .filter(|index| !self.hides_raw_companion(&self.entries[*index].asset.id))
+            .collect()
+    }
+
+    pub(crate) fn filmstrip_item_aspect(&self, index: usize) -> f32 {
+        self.entries
+            .get(index)
+            .and_then(|entry| entry.layout_size.or(entry.thumbnail_size))
+            .and_then(|[width, height]| {
+                (width > 0 && height > 0).then_some(width as f32 / height as f32)
+            })
+            .filter(|aspect| aspect.is_finite() && *aspect > 0.0)
+            .unwrap_or(1.5)
+    }
+
+    pub(crate) fn filmstrip_item(&self, index: usize) -> Option<FilmstripItem> {
+        let entry = self.entries.get(index)?;
+        Some(FilmstripItem {
+            asset: entry.asset.clone(),
+            texture: entry.texture.clone(),
+            thumbnail_size: entry.thumbnail_size,
+            developed_thumbnail_pending: entry.developed_thumbnail_pending,
+        })
+    }
+
+    pub(crate) fn filmstrip_index(&self, asset: &LibraryAssetId) -> Option<usize> {
+        self.entry_indices.get(asset).copied()
+    }
+
     /// Photos in the folder, counting each stacked RAW+JPEG pair once.
     pub(super) fn photo_count(&self) -> usize {
         self.entries

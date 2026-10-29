@@ -693,7 +693,7 @@ pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp, comp
 }
 
 /// The library identity of the photo open in Develop.
-pub(super) fn current_document_id(app: &CalibRawApp) -> Option<LibraryAssetId> {
+pub(crate) fn current_document_id(app: &CalibRawApp) -> Option<LibraryAssetId> {
     match app.persistence.sidecar_target.as_ref() {
         Some(crate::sidecar::SidecarTarget::Android { raw_uri, .. }) => {
             Some(LibraryAssetId::Android(raw_uri.clone()))
