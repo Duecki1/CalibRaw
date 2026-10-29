@@ -26,17 +26,13 @@ pub(crate) enum Language {
     French,
     Japanese,
     Polish,
-}
-
-impl Language {
-    const ALL: [Self; 5] = [
     Hindi,
     SimplifiedChinese,
     TraditionalChinese,
 }
 
 impl Language {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::English,
         Self::German,
         Self::French,
@@ -177,17 +173,13 @@ pub(crate) enum LanguageChoice {
     French,
     Japanese,
     Polish,
-}
-
-impl LanguageChoice {
-    pub(crate) const ALL: [Self; 6] = [
     Hindi,
     SimplifiedChinese,
     TraditionalChinese,
 }
 
 impl LanguageChoice {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::System,
         Self::English,
         Self::German,
