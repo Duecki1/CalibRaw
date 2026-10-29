@@ -4,7 +4,10 @@ use super::batch::batch_export_overall_fraction;
 use super::preview::DETAIL_ZOOM_START;
 use crate::i18n::{tr, tr_fmt};
 
+mod ai_denoise;
 mod task_view;
+
+use ai_denoise::{export_needs_ai_denoise, install_export_ai_denoise};
 
 impl ExportTask {
     pub(super) fn new(
@@ -35,7 +38,7 @@ impl ExportTask {
 
     fn start_item(
         &mut self,
-        receiver: mpsc::Receiver<ExportEvent>,
+        receiver: mpsc::Receiver<ExportItemEvent>,
         destination: ExportDestination,
     ) {
         self.receiver = Some(ExportTaskReceiver::Tiled(receiver));
@@ -74,10 +77,12 @@ pub(in crate::app) fn export_source_stem(
         .to_owned()
 }
 
+/// Renders one export on a worker, after installing the AI denoise the edit
+/// needs ([`install_export_ai_denoise`]).
 pub(in crate::app) fn spawn_export_item(
     request: ExportItemRequest,
     cancellation: Arc<std::sync::atomic::AtomicBool>,
-) -> mpsc::Receiver<ExportEvent> {
+) -> mpsc::Receiver<ExportItemEvent> {
     let ExportItemRequest {
         device,
         queue,
@@ -89,50 +94,104 @@ pub(in crate::app) fn spawn_export_item(
     let PreparedExportSource {
         raw,
         geometry,
-        exposure,
+        mut exposure,
         masks,
         remove,
         look,
         source_file_name,
         gpu_export_prewarm,
+        ai_denoise_result,
     } = source;
+    // Rendered photos cannot be AI-denoised and show without it in Develop.
+    exposure.ai_denoise_enabled &= !raw.is_pre_demosaiced_raster();
     let metadata = ExportMetadata::from_raw(&raw, source_file_name);
     let target = destination.target();
-    spawn_tiled_export(
-        format,
-        TiledExportJob {
-            device,
-            queue,
-            raw,
-            geometry,
-            exposure,
-            masks,
-            remove,
-            look,
-            target,
-            tile_spec: TileSpec::default(),
-            settings,
-            metadata,
-            cancellation,
-            program_prewarm: gpu_export_prewarm,
-        },
-    )
+    let (sender, receiver) = mpsc::channel();
+    let worker_sender = sender.clone();
+    let spawn_result = std::thread::Builder::new()
+        .name("calibraw-export-item".to_owned())
+        .spawn(move || {
+            if export_needs_ai_denoise(&raw, &exposure) {
+                let _ = worker_sender.send(ExportItemEvent::Denoising {
+                    completed: 0,
+                    total: 0,
+                });
+                if let Err(error) = install_export_ai_denoise(
+                    &raw,
+                    ai_denoise_result.as_deref(),
+                    &device,
+                    &queue,
+                    &cancellation,
+                    |completed, total| {
+                        let _ = worker_sender.send(ExportItemEvent::Denoising { completed, total });
+                    },
+                ) {
+                    let _ = worker_sender.send(ExportItemEvent::Render(ExportEvent::Finished(
+                        Err(tr_fmt("AI denoise failed: {error}", &[("error", &error)])),
+                    )));
+                    return;
+                }
+            }
+            let render = spawn_tiled_export(
+                format,
+                TiledExportJob {
+                    device,
+                    queue,
+                    raw,
+                    geometry,
+                    exposure,
+                    masks,
+                    remove,
+                    look,
+                    target,
+                    tile_spec: TileSpec::default(),
+                    settings,
+                    metadata,
+                    cancellation,
+                    program_prewarm: gpu_export_prewarm,
+                },
+            );
+            for event in render {
+                if worker_sender.send(ExportItemEvent::Render(event)).is_err() {
+                    break;
+                }
+            }
+        });
+    if let Err(error) = spawn_result {
+        let _ = sender.send(ExportItemEvent::Render(ExportEvent::Finished(Err(tr_fmt(
+            "could not start export worker: {error}",
+            &[("error", &error)],
+        )))));
+    }
+    receiver
 }
 
+/// The export phase while [`ExportItemEvent::Denoising`] reports progress.
+pub(super) fn ai_denoise_phase(completed: usize, total: usize) -> String {
+    if total == 0 {
+        tr("Applying AI denoise").to_owned()
+    } else {
+        tr_fmt(
+            "Applying AI denoise: tile {completed}/{total}",
+            &[("completed", &completed), ("total", &total)],
+        )
+    }
+}
+
+/// Runs one export to completion on the calling thread, passing on its
+/// progress.
 pub(in crate::app) fn run_export_item(
     request: ExportItemRequest,
     cancellation: Arc<std::sync::atomic::AtomicBool>,
-    mut progress: impl FnMut(usize, usize),
+    mut progress: impl FnMut(ExportItemEvent),
 ) -> Result<(), String> {
     let receiver = spawn_export_item(request, cancellation);
     while let Ok(event) = receiver.recv() {
         match event {
-            ExportEvent::Progress {
-                completed_tiles,
-                total_tiles,
-            } => progress(completed_tiles, total_tiles),
-            ExportEvent::WaitingForGpu { .. } => {}
-            ExportEvent::Finished(result) => return result.map(|_| ()),
+            ExportItemEvent::Render(ExportEvent::Finished(result)) => {
+                return result.map(|_| ());
+            }
+            event => progress(event),
         }
     }
     Err(tr("export worker stopped unexpectedly").to_owned())
@@ -425,6 +484,7 @@ impl CalibRawApp {
                 look,
                 source_file_name,
                 gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),
+                ai_denoise_result: self.ai_denoise_result_path(),
             },
             destination,
             format,
@@ -539,7 +599,7 @@ impl CalibRawApp {
         {
             Some(ExportTaskReceiver::Tiled(receiver)) => {
                 drain_worker_events(Some(receiver), |event| {
-                    matches!(event, ExportEvent::Finished(_))
+                    matches!(event, ExportItemEvent::Render(ExportEvent::Finished(_)))
                 })
             }
             _ => return,
@@ -551,10 +611,15 @@ impl CalibRawApp {
         let mut android_batch_result: Option<Result<(), String>> = None;
         for event in events {
             match event {
-                ExportEvent::Progress {
+                ExportItemEvent::Denoising { completed, total } => {
+                    if let Some(task) = self.export.task.as_mut() {
+                        task.phase = ai_denoise_phase(completed, total);
+                    }
+                }
+                ExportItemEvent::Render(ExportEvent::Progress {
                     completed_tiles,
                     total_tiles,
-                } => {
+                }) => {
                     let batch_current = self
                         .export
                         .batch
@@ -594,7 +659,7 @@ impl CalibRawApp {
                         };
                     }
                 }
-                ExportEvent::WaitingForGpu { waited } => {
+                ExportItemEvent::Render(ExportEvent::WaitingForGpu { waited }) => {
                     if let Some(task) = self.export.task.as_mut() {
                         let waiting = tr_fmt(
                             "waiting for the GPU ({seconds} s)",
@@ -617,7 +682,7 @@ impl CalibRawApp {
                         };
                     }
                 }
-                ExportEvent::Finished(result) => {
+                ExportItemEvent::Render(ExportEvent::Finished(result)) => {
                     finished = true;
                     if let Some(task) = self.export.task.as_mut() {
                         task.receiver = None;

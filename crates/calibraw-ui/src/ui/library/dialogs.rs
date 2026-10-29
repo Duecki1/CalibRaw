@@ -160,19 +160,19 @@ pub(super) fn show_ai_mask_refresh_choice(
     can_regenerate: bool,
 ) -> Option<AiMaskRefreshChoice> {
     let mut action = moduwu_design::DialogAction::None;
-    moduwu_design::Dialog::new(id, tr("Regenerate AI masks?"))
+    moduwu_design::Dialog::new(id, tr("Regenerate AI results?"))
         .size(moduwu_design::DialogSize::Wide)
         .show_with_footer(
             ui.ctx(),
             |ui| {
                 ui.label(if target_count == 1 {
                     tr_fmt(
-                        "{target_count} pasted image contain content-aware masks that belong to the source image.",
+                        "{target_count} pasted image has AI masks or AI denoise that must be generated for it.",
                         &[("target_count", &target_count)],
                     )
                 } else {
                     tr_fmt(
-                        "{target_count} pasted images contain content-aware masks that belong to the source image.",
+                        "{target_count} pasted images have AI masks or AI denoise that must be generated for them.",
                         &[("target_count", &target_count)],
                     )
                 });
@@ -224,14 +224,14 @@ pub(super) fn show_ai_mask_refresh_progress(
     let mut cancel = false;
     moduwu_design::Dialog::new(
         "library-ai-mask-refresh-progress",
-        tr("Regenerating AI masks"),
+        tr("Regenerating AI results"),
     )
     .show_with_footer(
         ui.ctx(),
         |ui| {
             ui.label(
                 egui::RichText::new(tr_fmt(
-                    "{completed} / {total} AI masks updated",
+                    "{completed} / {total} AI results updated",
                     &[("completed", &completed), ("total", &total)],
                 ))
                 .strong(),

@@ -23,16 +23,18 @@ use serde::{Deserialize, Serialize};
 pub(crate) enum Language {
     English,
     German,
+    French,
 }
 
 impl Language {
-    const ALL: [Self; 2] = [Self::English, Self::German];
+    const ALL: [Self; 3] = [Self::English, Self::German, Self::French];
 
     /// The primary BCP 47 subtag matched against the system's languages.
     const fn code(self) -> &'static str {
         match self {
             Self::English => "en",
             Self::German => "de",
+            Self::French => "fr",
         }
     }
 
@@ -42,6 +44,7 @@ impl Language {
         match self {
             Self::English => "English",
             Self::German => "Deutsch",
+            Self::French => "Français",
         }
     }
 
@@ -49,10 +52,15 @@ impl Language {
     fn catalog(self) -> Result<&'static HashMap<String, String>, CatalogError> {
         static ENGLISH: OnceLock<HashMap<String, String>> = OnceLock::new();
         static GERMAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
+        static FRENCH: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         match self {
             Self::English => Ok(ENGLISH.get_or_init(HashMap::new)),
             Self::German => GERMAN
                 .get_or_init(|| parse_catalog(self, include_str!("../locales/de.json")))
+                .as_ref()
+                .map_err(Clone::clone),
+            Self::French => FRENCH
+                .get_or_init(|| parse_catalog(self, include_str!("../locales/fr.json")))
                 .as_ref()
                 .map_err(Clone::clone),
         }
@@ -82,16 +90,18 @@ pub(crate) enum LanguageChoice {
     System,
     English,
     German,
+    French,
 }
 
 impl LanguageChoice {
-    pub(crate) const ALL: [Self; 3] = [Self::System, Self::English, Self::German];
+    pub(crate) const ALL: [Self; 4] = [Self::System, Self::English, Self::German, Self::French];
 
     pub(crate) fn resolve(self) -> Language {
         match self {
             Self::System => Language::from_system(),
             Self::English => Language::English,
             Self::German => Language::German,
+            Self::French => Language::French,
         }
     }
 
@@ -100,6 +110,7 @@ impl LanguageChoice {
             Self::System => tr("System default"),
             Self::English => Language::English.native_name(),
             Self::German => Language::German.native_name(),
+            Self::French => Language::French.native_name(),
         }
     }
 }

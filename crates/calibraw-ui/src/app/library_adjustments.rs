@@ -109,7 +109,8 @@ pub(crate) enum EditTransferOrigin {
 #[derive(Debug, Default)]
 pub(crate) struct LibraryEditTransferOutcome {
     pub(crate) completed: usize,
-    /// Photos whose new edit has AI masks that must be regenerated.
+    /// Photos whose new edit has AI masks that must be regenerated, or AI
+    /// denoise without a result.
     pub(crate) ai_refresh: Vec<crate::ui::library::LibraryAsset>,
     pub(crate) failures: Vec<String>,
 }
@@ -431,12 +432,18 @@ impl CalibRawApp {
         for asset in &ordered_assets {
             let result = if self.library_asset_is_current(asset) {
                 self.apply_edit_transfer_to_current(transfer, EditTransferOrigin::Library, frame)
+                    .map(|needs_ai_refresh| {
+                        needs_ai_refresh || self.open_photo_ai_denoise_missing()
+                    })
             } else {
                 (|| {
                     let mut destination = self.library_asset_edit_state(asset)?;
                     let raster = library_asset_is_raster(asset);
                     transfer.apply(&mut destination, TransferDestination::Closed { raster });
-                    let needs_ai_refresh = destination.ai_masks_need_update;
+                    let needs_ai_refresh = destination.ai_masks_need_update
+                        || (destination.exposure.ai_denoise_enabled
+                            && !raster
+                            && self.library_asset_ai_denoise_missing(asset));
                     self.save_library_asset_edit_state(asset, destination)?;
                     Ok(needs_ai_refresh)
                 })()
@@ -518,7 +525,7 @@ pub(super) fn desktop_library_sidecar_edits(
 pub(super) fn complete_library_ai_mask_refresh_item(state: &mut LibraryAiMaskRefreshState) {
     if let Some(job) = state.current.take() {
         state.completed += 1;
-        state.mask_completed += job.mask_targets;
+        state.mask_completed += job.ai_runs();
     }
 }
 
@@ -534,18 +541,18 @@ impl CalibRawApp {
         &self,
     ) -> Option<(usize, usize, usize, Option<String>)> {
         self.ai.library_mask_refresh.as_ref().map(|state| {
-            let current_mask_progress = state.current.as_ref().map_or(0, |job| {
-                if state.phase == LibraryAiMaskRefreshPhase::Loading {
-                    return 0;
-                }
-                if state.phase == LibraryAiMaskRefreshPhase::Updating
-                    && self.ai_update_needed()
-                    && !self.ai_update_busy()
+            let current_mask_progress = state.current.as_ref().map_or(0, |job| match state.phase {
+                LibraryAiMaskRefreshPhase::Loading => 0,
+                LibraryAiMaskRefreshPhase::Updating
+                    if self.ai_update_needed() && !self.ai_update_busy() =>
                 {
-                    return 0;
+                    0
                 }
-                job.mask_targets
-                    .saturating_sub(self.ai_update_remaining_runs())
+                LibraryAiMaskRefreshPhase::Updating => job
+                    .mask_targets
+                    .saturating_sub(self.ai_update_remaining_runs()),
+                LibraryAiMaskRefreshPhase::Denoising => job.mask_targets,
+                LibraryAiMaskRefreshPhase::Saving => job.ai_runs(),
             });
             let current = state.current.as_ref().map(|job| job.photo.name());
             (
@@ -604,6 +611,7 @@ impl CalibRawApp {
             .map(|photo| LibraryAiMaskRefreshJob {
                 photo,
                 mask_targets: 0,
+                denoise: false,
             })
             .collect::<VecDeque<_>>();
         let total = pending.len();
@@ -734,13 +742,18 @@ impl CalibRawApp {
         }
 
         let mask_targets = self.masks.stack.content_dependencies().ai_run_count();
+        let denoise = self.open_photo_ai_denoise_missing();
         if let Some(state) = self.ai.library_mask_refresh.as_mut() {
-            let previous_targets = state.current.as_ref().map_or(0, |job| job.mask_targets);
-            state.mask_total = state.mask_total.saturating_sub(previous_targets);
+            let previous_runs = state
+                .current
+                .as_ref()
+                .map_or(0, LibraryAiMaskRefreshJob::ai_runs);
+            state.mask_total = state.mask_total.saturating_sub(previous_runs);
             if let Some(current) = state.current.as_mut() {
                 current.mask_targets = mask_targets;
+                current.denoise = denoise;
+                state.mask_total = state.mask_total.saturating_add(current.ai_runs());
             }
-            state.mask_total = state.mask_total.saturating_add(mask_targets);
             state.phase = LibraryAiMaskRefreshPhase::Updating;
         }
         self.request_ai_update(frame);
@@ -777,8 +790,11 @@ impl CalibRawApp {
             state.cancel_requested = true;
             state.pending.clear();
         }
-        if self.content_job_active() {
+        if self.content_job_active() || self.ai_denoise_running() {
             self.cancel_foreground_operation();
+        }
+        if self.ai_consent_is_for(calibraw_ai::AiFeature::Denoise) {
+            self.ai.consent = None;
         }
         self.egui_ctx.request_repaint();
     }
@@ -806,10 +822,12 @@ impl CalibRawApp {
             .library_mask_refresh
             .as_ref()
             .is_some_and(|state| state.cancel_requested);
-        if cancel_after_phase
-            && phase == LibraryAiMaskRefreshPhase::Updating
-            && !self.ai_update_busy()
-        {
+        let phase_idle = match phase {
+            LibraryAiMaskRefreshPhase::Updating => !self.ai_update_busy(),
+            LibraryAiMaskRefreshPhase::Denoising => !self.ai_denoise_running(),
+            LibraryAiMaskRefreshPhase::Loading | LibraryAiMaskRefreshPhase::Saving => false,
+        };
+        if cancel_after_phase && phase_idle {
             if let Some(state) = self.ai.library_mask_refresh.as_mut() {
                 state.current = None;
             }
@@ -846,11 +864,43 @@ impl CalibRawApp {
                     return;
                 }
 
-                self.commit_edit_history_now();
-                self.queue_explicit_sidecar_save();
-                if let Some(state) = self.ai.library_mask_refresh.as_mut() {
-                    state.phase = LibraryAiMaskRefreshPhase::Saving;
+                let denoise = self
+                    .ai
+                    .library_mask_refresh
+                    .as_ref()
+                    .and_then(|state| state.current.as_ref())
+                    .is_some_and(|job| job.denoise);
+                if denoise && self.open_photo_ai_denoise_missing() {
+                    if let Some(state) = self.ai.library_mask_refresh.as_mut() {
+                        state.phase = LibraryAiMaskRefreshPhase::Denoising;
+                    }
+                    // The user asked for the refresh, so a saved result or
+                    // installed models start without a prompt; a download
+                    // still asks first.
+                    self.enable_ai_denoise(frame, AiJobOrigin::Requested);
+                    self.ui.active_tab = AppTab::Library;
+                    return;
                 }
+                self.save_library_ai_refresh();
+            }
+            LibraryAiMaskRefreshPhase::Denoising => {
+                if self.ai_denoise_running()
+                    || self.ai_consent_is_for(calibraw_ai::AiFeature::Denoise)
+                {
+                    return;
+                }
+                // A failed or declined run turns AI denoise off.
+                if !self.develop.exposure.ai_denoise_enabled || self.open_photo_ai_denoise_missing()
+                {
+                    let reason = tr("AI denoise was not applied").to_owned();
+                    if let Some(state) = self.ai.library_mask_refresh.as_mut() {
+                        state.failures.push(format!("{label}: {reason}"));
+                        complete_library_ai_mask_refresh_item(state);
+                    }
+                    self.start_next_library_ai_mask_refresh(frame);
+                    return;
+                }
+                self.save_library_ai_refresh();
             }
             LibraryAiMaskRefreshPhase::Saving => {
                 if self.sidecar_save_in_progress() {
@@ -876,6 +926,14 @@ impl CalibRawApp {
         }
     }
 
+    fn save_library_ai_refresh(&mut self) {
+        self.commit_edit_history_now();
+        self.queue_explicit_sidecar_save();
+        if let Some(state) = self.ai.library_mask_refresh.as_mut() {
+            state.phase = LibraryAiMaskRefreshPhase::Saving;
+        }
+    }
+
     pub(super) fn finish_library_ai_mask_refresh(&mut self) {
         let Some(state) = self.ai.library_mask_refresh.take() else {
             return;
@@ -886,24 +944,24 @@ impl CalibRawApp {
         self.library.refresh(&self.egui_ctx);
         let summary = if cancelled {
             tr_fmt(
-                "AI-mask refresh cancelled after {completed}/{total} images.",
+                "AI refresh cancelled after {completed}/{total} images.",
                 &[("completed", &state.completed), ("total", &state.total)],
             )
         } else if state.failures.is_empty() {
             if succeeded == 1 {
                 tr_fmt(
-                    "Regenerated AI masks for {count} image.",
+                    "Regenerated AI results for {count} image.",
                     &[("count", &succeeded)],
                 )
             } else {
                 tr_fmt(
-                    "Regenerated AI masks for {count} images.",
+                    "Regenerated AI results for {count} images.",
                     &[("count", &succeeded)],
                 )
             }
         } else {
             tr_fmt(
-                "Regenerated AI masks for {succeeded} of {total} images. {failures}",
+                "Regenerated AI results for {succeeded} of {total} images. {failures}",
                 &[
                     ("succeeded", &succeeded),
                     ("total", &state.total),

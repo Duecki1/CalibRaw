@@ -73,7 +73,7 @@ impl ErrorKind {
             Self::AiDenoise => tr("AI denoise failed"),
             Self::AiDenoiseNotSaved => tr("AI denoise not saved"),
             Self::AiMask => tr("AI mask failed"),
-            Self::AiMaskRefresh => tr("AI mask refresh failed"),
+            Self::AiMaskRefresh => tr("AI refresh failed"),
             Self::NoPeopleFound => tr("No people found"),
             Self::PeopleNotSaved => tr("People not saved"),
             Self::AiUpdate => tr("AI update failed"),

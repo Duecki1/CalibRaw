@@ -24,8 +24,7 @@ impl ExportOverride {
     }
 
     /// Applies the preset, then the LUT, to `edits`. The photo keeps its own
-    /// AI denoise setting, since its denoised result is not computed for an
-    /// export.
+    /// AI denoise setting.
     pub(crate) fn apply(&self, edits: &mut SidecarEditState) {
         if let Some(preset) = &self.preset {
             let ai_denoise_enabled = edits.exposure.ai_denoise_enabled;
@@ -135,16 +134,28 @@ impl AndroidLibraryExportTarget {
     }
 }
 
+/// One photo of a Library AI refresh, which regenerates its AI masks and then
+/// its AI denoise.
 #[derive(Clone, Debug)]
 pub(super) struct LibraryAiMaskRefreshJob {
     pub(super) photo: LibraryJobPhoto,
     pub(super) mask_targets: usize,
+    /// AI denoise is on but its result is missing.
+    pub(super) denoise: bool,
+}
+
+impl LibraryAiMaskRefreshJob {
+    /// Model runs the photo needs, counted in the refresh progress.
+    pub(super) fn ai_runs(&self) -> usize {
+        self.mask_targets + usize::from(self.denoise)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LibraryAiMaskRefreshPhase {
     Loading,
     Updating,
+    Denoising,
     Saving,
 }
 
@@ -183,6 +194,11 @@ pub(super) enum LibraryBatchExportEvent {
         completed_tiles: usize,
         total_tiles: usize,
     },
+    /// See [`ExportItemEvent::Denoising`].
+    Denoising {
+        completed: usize,
+        total: usize,
+    },
     ItemFinished {
         error: Option<String>,
     },
@@ -199,8 +215,19 @@ pub(super) enum ExportTaskKind {
     Replay,
 }
 
+/// What the worker of one export reports.
+pub(super) enum ExportItemEvent {
+    /// The AI denoise the edit needs is being restored or run; rendering
+    /// starts after it. `total` is 0 while no tile count is known.
+    Denoising {
+        completed: usize,
+        total: usize,
+    },
+    Render(ExportEvent),
+}
+
 pub(super) enum ExportTaskReceiver {
-    Tiled(mpsc::Receiver<ExportEvent>),
+    Tiled(mpsc::Receiver<ExportItemEvent>),
     LibraryBatch(mpsc::Receiver<LibraryBatchExportEvent>),
     Replay(mpsc::Receiver<ReplayExportEvent>),
 }
@@ -279,6 +306,9 @@ pub(super) struct PreparedExportSource {
     pub(super) look: Option<crate::luts::ResolvedLook>,
     pub(super) source_file_name: Option<String>,
     pub(super) gpu_export_prewarm: Option<Arc<GpuProgramPrewarm>>,
+    /// Where the photo's AI-denoise result is saved, restored from there or
+    /// saved there when the export has to run RawNIND.
+    pub(super) ai_denoise_result: Option<PathBuf>,
 }
 
 pub(super) struct ExportItemRequest {

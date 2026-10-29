@@ -1,6 +1,7 @@
-use super::super::{ExportDestination, ExportTask, ExportTaskKind, ExportTaskReceiver};
+use super::super::{
+    ExportDestination, ExportItemEvent, ExportTask, ExportTaskKind, ExportTaskReceiver,
+};
 use super::batch::batch_export_overall_fraction;
-use crate::pipeline::ExportEvent;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc,
@@ -13,7 +14,7 @@ fn stale_tile_progress_is_ignored_without_a_current_image() {
 }
 
 fn test_export_task() -> ExportTask {
-    let (_sender, receiver) = mpsc::channel::<ExportEvent>();
+    let (_sender, receiver) = mpsc::channel::<ExportItemEvent>();
     ExportTask {
         kind: ExportTaskKind::Single,
         cancellation: Arc::new(AtomicBool::new(false)),

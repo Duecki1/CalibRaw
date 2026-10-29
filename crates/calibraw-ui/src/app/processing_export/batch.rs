@@ -2,7 +2,7 @@ use super::*;
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::FilmSettlement;
 
-use super::export::run_export_item;
+use super::export::{ai_denoise_phase, run_export_item};
 
 pub(in crate::app) fn batch_export_overall_fraction(
     completed: usize,
@@ -93,17 +93,24 @@ fn spawn_desktop_library_batch_export(
                     }
                 };
 
-                let item_result = run_export_item(
-                    request,
-                    Arc::clone(&context.cancellation),
-                    |completed_tiles, total_tiles| {
-                        let _ = worker_sender.send(LibraryBatchExportEvent::Progress {
-                            completed_tiles,
-                            total_tiles,
-                        });
+                let item_result =
+                    run_export_item(request, Arc::clone(&context.cancellation), |event| {
+                        let event = match event {
+                            ExportItemEvent::Denoising { completed, total } => {
+                                LibraryBatchExportEvent::Denoising { completed, total }
+                            }
+                            ExportItemEvent::Render(ExportEvent::Progress {
+                                completed_tiles,
+                                total_tiles,
+                            }) => LibraryBatchExportEvent::Progress {
+                                completed_tiles,
+                                total_tiles,
+                            },
+                            ExportItemEvent::Render(_) => return,
+                        };
+                        let _ = worker_sender.send(event);
                         repaint.request_repaint();
-                    },
-                );
+                    });
 
                 let cancelled = context.cancellation.load(Ordering::Acquire);
                 if !cancelled || item_result.is_ok() {
@@ -327,6 +334,7 @@ fn prepare_desktop_library_export_item(
             look,
             source_file_name,
             gpu_export_prewarm: None,
+            ai_denoise_result: Some(crate::sidecar::ai_denoise_path_for_raw(&job.source)),
         },
         destination: match &job.destination {
             LibraryExportDestination::Chosen(path) => ExportDestination::File(path.clone()),
@@ -883,6 +891,11 @@ impl CalibRawApp {
                         task.phase = tr("Rendering image…").to_owned();
                     }
                     self.update_library_batch_export_progress();
+                }
+                LibraryBatchExportEvent::Denoising { completed, total } => {
+                    if let Some(task) = self.export.task.as_mut() {
+                        task.phase = ai_denoise_phase(completed, total);
+                    }
                 }
                 LibraryBatchExportEvent::ItemFinished { error } => {
                     if let Some(batch) = self.export.batch.as_mut() {

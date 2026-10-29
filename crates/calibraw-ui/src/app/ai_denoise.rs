@@ -42,7 +42,40 @@ impl CalibRawApp {
         }
     }
 
-    fn ai_denoise_result_path(&self) -> Option<PathBuf> {
+    /// Whether the photo of `asset` has no AI-denoise result saved where its
+    /// result belongs, so turning AI denoise on for it has to run RawNIND.
+    /// False where no result can be saved, since running it there would not
+    /// last.
+    pub(in crate::app) fn library_asset_ai_denoise_missing(
+        &self,
+        asset: &crate::ui::library::LibraryAsset,
+    ) -> bool {
+        let target = match &asset.locator {
+            crate::ui::library::LibraryLocator::Desktop(path) => {
+                crate::sidecar::SidecarTarget::Desktop {
+                    raw_path: path.clone(),
+                }
+            }
+            crate::ui::library::LibraryLocator::Android { uri } => {
+                crate::sidecar::SidecarTarget::Android {
+                    raw_uri: uri.clone(),
+                    display_name: asset.display_name.clone(),
+                }
+            }
+        };
+        self.ai_denoise_result_path_for_target(&target)
+            .is_some_and(|path| !path.is_file())
+    }
+
+    /// AI denoise is on for the open photo but its result is not installed.
+    pub(in crate::app) fn open_photo_ai_denoise_missing(&self) -> bool {
+        self.develop.exposure.ai_denoise_enabled
+            && self.develop.loaded_raw.as_ref().is_some_and(|raw| {
+                !raw.is_pre_demosaiced_raster() && raw.ai_denoised_image().is_none()
+            })
+    }
+
+    pub(in crate::app) fn ai_denoise_result_path(&self) -> Option<PathBuf> {
         self.persistence
             .sidecar_target
             .as_ref()
@@ -93,7 +126,7 @@ impl CalibRawApp {
         self.enable_ai_denoise(frame, AiJobOrigin::Requested);
     }
 
-    fn enable_ai_denoise(&mut self, frame: &eframe::Frame, origin: AiJobOrigin) {
+    pub(in crate::app) fn enable_ai_denoise(&mut self, frame: &eframe::Frame, origin: AiJobOrigin) {
         if self.foreground_operation_active() {
             self.ui.notice =
                 Some(tr("Finish or cancel the current editing operation first.").to_owned());
@@ -321,6 +354,9 @@ impl CalibRawApp {
         self.preview.navigation_pending_stage = None;
         self.preview.detail_urgent = false;
         match result {
+            // A cancelled Library refresh keeps the photo's AI denoise for
+            // its next open.
+            _ if operation.is_cancelled() && self.document_load_is_background() => {}
             Ok(image) if self.develop.exposure.ai_denoise_enabled && !operation.is_cancelled() => {
                 let install = self
                     .develop
