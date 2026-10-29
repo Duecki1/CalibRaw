@@ -64,12 +64,20 @@ impl Library {
             scroll_style.bar_inner_margin = 7.0;
             ui.spacing_mut().scroll = scroll_style;
 
+            // While the scroll bar animates in or out, egui rounds the content
+            // width up to whole pixels, so the area can report a fraction of a
+            // pixel more than it was given. The resizable panel would persist
+            // that as its width and creep wider on every folder toggle, so the
+            // area gets a fixed rect and its overflow is not reported upward.
+            let rect = ui.available_rect_before_wrap();
+            let mut scroll_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
             egui::ScrollArea::vertical()
                 .id_salt("library-folder-sidebar-content")
                 .auto_shrink([false, false])
-                .show(ui, |ui| {
+                .show(&mut scroll_ui, |ui| {
                     sources::show_local_folder_tree(ui, app, action_in_progress);
                 });
+            ui.advance_cursor_after_rect(rect);
         });
 
         if let Some(action) = requested_toolbar_action {
