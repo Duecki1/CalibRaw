@@ -113,7 +113,7 @@ pub(crate) fn text_on_backdrop(color: Color32) -> Color32 {
 pub(crate) fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-    if let Some(font) = platform::chinese_font() {
+    if let Some(font) = platform::chinese_font(crate::i18n::active_uses_traditional_chinese()) {
         add_fallback_font(&mut fonts, font, "system-chinese");
     }
     if let Some(font) = platform::hindi_font() {

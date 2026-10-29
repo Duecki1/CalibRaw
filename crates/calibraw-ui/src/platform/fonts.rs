@@ -8,9 +8,10 @@
 //! Candidates are parsed with `skrifa` before they reach `egui::Context`,
 //! which panics on a font file or face index it cannot parse.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use skrifa::MetadataProvider as _;
 
@@ -52,12 +53,18 @@ impl FontCandidate {
     }
 }
 
-/// The system's Chinese font, or `None` when none is installed or loadable.
-/// Looked up and read once.
-pub(crate) fn chinese_font() -> Option<SystemFont> {
-    static FONT: OnceLock<Option<SystemFont>> = OnceLock::new();
-    *FONT.get_or_init(|| {
-        for candidate in candidates() {
+/// The system's Chinese font for the active script, or `None` when none is
+/// installed or loadable. Each script's face is looked up and read once.
+pub(crate) fn chinese_font(traditional: bool) -> Option<SystemFont> {
+    static SIMPLIFIED: OnceLock<Option<SystemFont>> = OnceLock::new();
+    static TRADITIONAL: OnceLock<Option<SystemFont>> = OnceLock::new();
+    let font = if traditional {
+        &TRADITIONAL
+    } else {
+        &SIMPLIFIED
+    };
+    *font.get_or_init(|| {
+        for candidate in candidates(traditional) {
             match load_chinese_face(&candidate) {
                 Ok(Some(font)) => return Some(font),
                 Ok(None) => log::debug!(
@@ -106,60 +113,106 @@ pub(crate) fn hindi_font() -> Option<SystemFont> {
 
 /// The fonts each OS ships, in preference order. Fontconfig's choice comes
 /// first on desktop Linux; the other systems name their Chinese font.
-fn candidates() -> Vec<FontCandidate> {
+fn candidates(traditional: bool) -> Vec<FontCandidate> {
     let mut candidates = Vec::new();
 
     #[cfg(target_os = "windows")]
     if let Some(root) = std::env::var_os("SystemRoot") {
         let fonts = PathBuf::from(root).join("Fonts");
-        for name in [
-            "msyh.ttc",
-            "msyh.ttf",
-            "simsun.ttc",
-            "simhei.ttf",
-            "Deng.ttf",
-        ] {
+        let names: &[&str] = if traditional {
+            &[
+                "msjh.ttc",
+                "msjh.ttf",
+                "mingliu.ttc",
+                "mingliu.ttf",
+                "msyh.ttc",
+                "simsun.ttc",
+                "simhei.ttf",
+                "Deng.ttf",
+            ]
+        } else {
+            &[
+                "msyh.ttc",
+                "msyh.ttf",
+                "simsun.ttc",
+                "simhei.ttf",
+                "Deng.ttf",
+            ]
+        };
+        for name in names {
             candidates.push(FontCandidate::new(fonts.join(name)));
         }
     }
 
     #[cfg(target_os = "macos")]
-    for path in [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/Supplemental/PingFang.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/Supplemental/Songti.ttc",
-    ] {
+    for path in if traditional {
+        [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/Supplemental/PingFang.ttc",
+            "/System/Library/Fonts/Hiragino Sans TC.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            "/System/Library/Fonts/Supplemental/Songti.ttc",
+        ]
+    } else {
+        [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/Supplemental/PingFang.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            "/System/Library/Fonts/Supplemental/Songti.ttc",
+        ]
+    } {
         candidates.push(FontCandidate::new(path));
     }
 
     #[cfg(target_os = "ios")]
-    for path in [
-        "/System/Library/Fonts/LanguageSupport/PingFang.ttc",
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/LanguageSupport/Hiragino Sans GB.ttc",
-    ] {
+    for path in if traditional {
+        [
+            "/System/Library/Fonts/LanguageSupport/PingFang.ttc",
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/LanguageSupport/Hiragino Sans TC.ttc",
+        ]
+    } else {
+        [
+            "/System/Library/Fonts/LanguageSupport/PingFang.ttc",
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/LanguageSupport/Hiragino Sans GB.ttc",
+        ]
+    } {
         candidates.push(FontCandidate::new(path));
     }
 
     #[cfg(target_os = "android")]
     {
-        // Face 2 is Simplified Chinese, as Android's fonts.xml maps zh-Hans.
-        // Vendors sometimes ship a different collection; scanning the other
-        // faces below recovers from that.
+        // Noto CJK face 2 is Simplified Chinese and face 3 is Traditional
+        // Chinese. Vendors sometimes ship a different collection; scanning
+        // the other faces below recovers from that.
         candidates.push(FontCandidate::with_index(
             "/system/fonts/NotoSansCJK-Regular.ttc",
-            2,
+            if traditional { 3 } else { 2 },
         ));
-        for path in [
-            "/system/fonts/NotoSansCJKsc-Regular.otf",
-            "/system/fonts/NotoSansSC-Regular.otf",
-            "/system/fonts/NotoSansHans-Regular.otf",
-            "/system/fonts/DroidSansFallback.ttf",
-            "/system/fonts/DroidSansChinese.ttf",
-            "/product/fonts/NotoSansCJK-Regular.ttc",
-        ] {
+        let paths: &[&str] = if traditional {
+            &[
+                "/system/fonts/NotoSansCJKtc-Regular.otf",
+                "/system/fonts/NotoSansTC-Regular.otf",
+                "/system/fonts/NotoSansCJKsc-Regular.otf",
+                "/system/fonts/NotoSansSC-Regular.otf",
+                "/system/fonts/NotoSansHans-Regular.otf",
+                "/system/fonts/DroidSansFallback.ttf",
+                "/system/fonts/DroidSansChinese.ttf",
+                "/product/fonts/NotoSansCJK-Regular.ttc",
+            ]
+        } else {
+            &[
+                "/system/fonts/NotoSansCJKsc-Regular.otf",
+                "/system/fonts/NotoSansSC-Regular.otf",
+                "/system/fonts/NotoSansHans-Regular.otf",
+                "/system/fonts/DroidSansFallback.ttf",
+                "/system/fonts/DroidSansChinese.ttf",
+                "/product/fonts/NotoSansCJK-Regular.ttc",
+            ]
+        };
+        for path in paths {
             candidates.push(FontCandidate::new(path));
         }
     }
@@ -171,24 +224,38 @@ fn candidates() -> Vec<FontCandidate> {
         target_os = "android"
     )))]
     {
-        if let Some(candidate) = fontconfig_candidate("zh-cn") {
+        if let Some(candidate) = fontconfig_candidate(if traditional { "zh-tw" } else { "zh-cn" }) {
             candidates.push(candidate);
         }
         // Fallbacks for systems without fontconfig's `fc-match`; the files
         // are present on most distributions that package a Chinese font.
-        // Noto's collection has Simplified Chinese at face 2, like Android's.
+        // Noto's collection has Simplified Chinese at face 2 and Traditional
+        // Chinese at face 3, like Android's.
         for path in [
             "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         ] {
-            candidates.push(FontCandidate::with_index(path, 2));
+            candidates.push(FontCandidate::with_index(
+                path,
+                if traditional { 3 } else { 2 },
+            ));
         }
-        for path in [
-            "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
-            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
-        ] {
+        let paths: &[&str] = if traditional {
+            &[
+                "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf",
+                "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+                "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+                "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            ]
+        } else {
+            &[
+                "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+                "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+                "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            ]
+        };
+        for path in paths {
             candidates.push(FontCandidate::new(path));
         }
     }
@@ -304,7 +371,50 @@ fn parse_fc_match(output: &str) -> Option<(PathBuf, u32)> {
 /// exists but contains no such face. Missing files are returned as errors and
 /// skipped by the caller.
 fn load_chinese_face(candidate: &FontCandidate) -> io::Result<Option<SystemFont>> {
-    load_script_face(candidate, covers_chinese)
+    let Some(bytes) = cached_chinese_font_bytes(&candidate.path)? else {
+        return Ok(None);
+    };
+    let Some(index) = script_face(bytes, candidate.index, covers_chinese) else {
+        return Ok(None);
+    };
+    Ok(Some(SystemFont { bytes, index }))
+}
+
+/// Reads each Chinese font file once. Both locale faces commonly come from
+/// different faces in the same large TTC collection.
+fn cached_chinese_font_bytes(path: &PathBuf) -> io::Result<Option<&'static [u8]>> {
+    static FONT_BYTES: OnceLock<Mutex<HashMap<PathBuf, &'static [u8]>>> = OnceLock::new();
+    let mut cache = FONT_BYTES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|error| io::Error::other(format!("Chinese font cache lock failed: {error}")))?;
+    if let Some(bytes) = cache.get(path) {
+        return Ok(Some(bytes));
+    }
+
+    let metadata = std::fs::metadata(path)?;
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+    if metadata.len() > MAX_FONT_FILE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("font file is larger than {MAX_FONT_FILE_BYTES} bytes"),
+        ));
+    }
+    let bytes = std::fs::read(path)?;
+    if bytes.len() as u64 > MAX_FONT_FILE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("font file is larger than {MAX_FONT_FILE_BYTES} bytes"),
+        ));
+    }
+
+    // egui borrows this process-wide font data. Sharing it avoids retaining
+    // a second copy when both script faces use the same TTC collection.
+    let bytes = Box::leak(bytes.into_boxed_slice());
+    cache.insert(path.clone(), bytes);
+    Ok(Some(bytes))
 }
 
 /// Reads `candidate` and returns a face containing the requested script.

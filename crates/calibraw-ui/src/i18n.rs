@@ -27,16 +27,18 @@ pub(crate) enum Language {
     Japanese,
     Hindi,
     SimplifiedChinese,
+    TraditionalChinese,
 }
 
 impl Language {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::English,
         Self::German,
         Self::French,
         Self::Japanese,
         Self::Hindi,
         Self::SimplifiedChinese,
+        Self::TraditionalChinese,
     ];
 
     /// The primary BCP 47 subtag matched against the system's languages.
@@ -47,7 +49,7 @@ impl Language {
             Self::French => "fr",
             Self::Japanese => "ja",
             Self::Hindi => "hi",
-            Self::SimplifiedChinese => "zh",
+            Self::SimplifiedChinese | Self::TraditionalChinese => "zh",
         }
     }
 
@@ -61,6 +63,7 @@ impl Language {
             Self::Japanese => "日本語",
             Self::Hindi => "हिन्दी",
             Self::SimplifiedChinese => "简体中文",
+            Self::TraditionalChinese => "繁體中文",
         }
     }
 
@@ -72,6 +75,8 @@ impl Language {
         static JAPANESE: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static HINDI: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static SIMPLIFIED_CHINESE: OnceLock<Result<HashMap<String, String>, CatalogError>> =
+            OnceLock::new();
+        static TRADITIONAL_CHINESE: OnceLock<Result<HashMap<String, String>, CatalogError>> =
             OnceLock::new();
         match self {
             Self::English => Ok(ENGLISH.get_or_init(HashMap::new)),
@@ -95,6 +100,10 @@ impl Language {
                 .get_or_init(|| parse_catalog(self, include_str!("../locales/zh.json")))
                 .as_ref()
                 .map_err(Clone::clone),
+            Self::TraditionalChinese => TRADITIONAL_CHINESE
+                .get_or_init(|| parse_catalog(self, include_str!("../locales/zh-TW.json")))
+                .as_ref()
+                .map_err(Clone::clone),
         }
     }
 
@@ -105,19 +114,28 @@ impl Language {
             return false;
         }
 
-        if self != Self::SimplifiedChinese {
+        if !matches!(self, Self::SimplifiedChinese | Self::TraditionalChinese) {
             return true;
         }
 
-        // Do not choose Simplified Chinese when the system explicitly asks
-        // for Traditional Chinese. A bare `zh` or a Simplified region/script
-        // still selects this catalog.
-        !subtags.any(|subtag| {
-            subtag.eq_ignore_ascii_case("Hant")
-                || ["TW", "HK", "MO"]
+        // An explicit script takes precedence over the region. A bare `zh`
+        // keeps its existing Simplified Chinese default.
+        let script = subtags.clone().find(|subtag| {
+            subtag.eq_ignore_ascii_case("Hans") || subtag.eq_ignore_ascii_case("Hant")
+        });
+        let traditional = match script {
+            Some(script) => script.eq_ignore_ascii_case("Hant"),
+            None => subtags.any(|subtag| {
+                ["TW", "HK", "MO"]
                     .into_iter()
                     .any(|region| subtag.eq_ignore_ascii_case(region))
-        })
+            }),
+        };
+        match self {
+            Self::SimplifiedChinese => !traditional,
+            Self::TraditionalChinese => traditional,
+            _ => true,
+        }
     }
 
     /// The first of the system's preferred languages CalibRaw has, else English.
@@ -147,10 +165,11 @@ pub(crate) enum LanguageChoice {
     Japanese,
     Hindi,
     SimplifiedChinese,
+    TraditionalChinese,
 }
 
 impl LanguageChoice {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::System,
         Self::English,
         Self::German,
@@ -158,6 +177,7 @@ impl LanguageChoice {
         Self::Japanese,
         Self::Hindi,
         Self::SimplifiedChinese,
+        Self::TraditionalChinese,
     ];
 
     pub(crate) fn resolve(self) -> Language {
@@ -169,6 +189,7 @@ impl LanguageChoice {
             Self::Japanese => Language::Japanese,
             Self::Hindi => Language::Hindi,
             Self::SimplifiedChinese => Language::SimplifiedChinese,
+            Self::TraditionalChinese => Language::TraditionalChinese,
         }
     }
 
@@ -181,6 +202,7 @@ impl LanguageChoice {
             Self::Japanese => Language::Japanese.native_name(),
             Self::Hindi => Language::Hindi.native_name(),
             Self::SimplifiedChinese => Language::SimplifiedChinese.native_name(),
+            Self::TraditionalChinese => Language::TraditionalChinese.native_name(),
         }
     }
 }
@@ -209,6 +231,10 @@ fn active() -> Language {
         .into_iter()
         .find(|language| *language as u8 == value)
         .unwrap_or(Language::English)
+}
+
+pub(crate) fn active_uses_traditional_chinese() -> bool {
+    active() == Language::TraditionalChinese
 }
 
 /// `english` in the active language.

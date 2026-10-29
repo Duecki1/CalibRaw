@@ -437,7 +437,6 @@ impl CalibRawApp {
         }
         let repaint = cc.egui_ctx.clone();
         platform.attach_ui(Box::new(move || repaint.request_repaint()));
-        crate::ui::theme::install(&cc.egui_ctx);
         match platform.device_diagnostics() {
             Ok(Some(info)) => calibraw_core::diagnostics::set_device_info(info),
             Ok(None) => {}
@@ -520,10 +519,11 @@ impl CalibRawApp {
         );
         app.preview.gpu_prewarm_receiver = gpu_preview_prewarm_receiver;
         app.export.gpu_prewarm = Some(gpu_export_prewarm);
-        crate::ui::theme::apply(&cc.egui_ctx, app.preferences.ui_design);
         if let Err(error) = crate::i18n::set_active(app.preferences.language.resolve()) {
             app.report_error(ErrorKind::Settings, error.to_string());
         }
+        crate::ui::theme::install(&cc.egui_ctx);
+        crate::ui::theme::apply(&cc.egui_ctx, app.preferences.ui_design);
         if let Err(error) = app
             .platform
             .set_light_system_bars(!app.preferences.ui_design.is_dark())
