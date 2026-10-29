@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{FilmSettlement, FilmSource, WhiteBalance};
 use crate::ui::library::LibraryLocator;
 
@@ -128,7 +129,7 @@ impl CalibRawApp {
             .clone()
             .filter(|_| self.persistence.sidecar_target.is_some())
         else {
-            return Err("The destination image is not loaded.".to_owned());
+            return Err(tr("The destination image is not loaded.").to_owned());
         };
 
         self.finish_mask_geometry_interaction();
@@ -138,12 +139,16 @@ impl CalibRawApp {
         if film == FilmSettlement::NotFound {
             self.report_error(
                 ErrorKind::Sampling,
-                format!(
-                    "Could not find a negative to invert in {}, so it is shown as it is.",
-                    self.develop
-                        .current_label
-                        .as_deref()
-                        .unwrap_or("the open photo")
+                tr_fmt(
+                    "Could not find a negative to invert in {photo}, so it is shown as it is.",
+                    &[(
+                        "photo",
+                        &self
+                            .develop
+                            .current_label
+                            .as_deref()
+                            .unwrap_or(tr("the open photo")),
+                    )],
                 ),
             );
         }
@@ -176,8 +181,9 @@ impl CalibRawApp {
 
         if masks_changed {
             crate::sidecar::preflight_mask_change(&merged.masks).map_err(|error| {
-                format!(
-                    "The adjustments were not applied because the resulting edit could not be saved: {error}"
+                tr_fmt(
+                    "The adjustments were not applied because the resulting edit could not be saved: {error}",
+                    &[("error", &error)],
                 )
             })?;
         }
@@ -281,8 +287,9 @@ impl CalibRawApp {
                     self.android.picker_pending = true;
                 }
                 Err(error) => {
-                    self.report_error(ErrorKind::LibraryAdjustments, format!(
-                        "The adjustments were applied, but the camera profile could not be reloaded: {error}"
+                    self.report_error(ErrorKind::LibraryAdjustments, tr_fmt(
+                        "The adjustments were applied, but the camera profile could not be reloaded: {error}",
+                        &[("error", &error)],
                     ));
                     return;
                 }
@@ -458,7 +465,7 @@ impl CalibRawApp {
     ) -> LibraryEditTransferOutcome {
         let Some(clipboard) = self.library.adjustment_clipboard.clone() else {
             return LibraryEditTransferOutcome {
-                failures: vec!["Copy adjustments from an image first.".to_owned()],
+                failures: vec![tr("Copy adjustments from an image first.").to_owned()],
                 ..LibraryEditTransferOutcome::default()
             };
         };
@@ -587,7 +594,7 @@ impl CalibRawApp {
         }
         if !self.can_start_library_ai_mask_refresh() {
             self.ui.notice = Some(
-                "Finish the current editing operation or sidecar save before refreshing AI masks."
+                tr("Finish the current editing operation or sidecar save before refreshing AI masks.")
                     .to_owned(),
             );
             return;
@@ -652,9 +659,10 @@ impl CalibRawApp {
                     }
 
                     if let Some(state) = self.ai.library_mask_refresh.as_mut() {
-                        state
-                            .failures
-                            .push(format!("{}: could not start photo load", source.display()));
+                        state.failures.push(tr_fmt(
+                            "{photo}: could not start photo load",
+                            &[("photo", &source.display())],
+                        ));
                         complete_library_ai_mask_refresh_item(state);
                     }
                 }
@@ -667,7 +675,8 @@ impl CalibRawApp {
                         Ok(()) => {
                             self.android.picker_pending = true;
                             self.ui.notice = None;
-                            self.ui.status = format!("Opening {}…", target.display_name);
+                            self.ui.status =
+                                tr_fmt("Opening {name}…", &[("name", &target.display_name)]);
                             // AI mask refresh owns this transition; activating interactively
                             // would cancel the refresh's document-bound operation.
                             self.ui.active_tab = AppTab::Library;
@@ -715,7 +724,9 @@ impl CalibRawApp {
         if !success {
             let label = current.photo.label();
             if let Some(state) = self.ai.library_mask_refresh.as_mut() {
-                state.failures.push(format!("{label}: photo load failed"));
+                state
+                    .failures
+                    .push(tr_fmt("{label}: photo load failed", &[("label", &label)]));
                 complete_library_ai_mask_refresh_item(state);
             }
             self.start_next_library_ai_mask_refresh(frame);
@@ -749,7 +760,7 @@ impl CalibRawApp {
             .as_ref()
             .and_then(|state| state.current.as_ref())
             .map(|job| job.photo.label())
-            .unwrap_or_else(|| "image".to_owned());
+            .unwrap_or_else(|| tr("image").to_owned());
         if let Some(state) = self.ai.library_mask_refresh.as_mut() {
             if state.cancel_requested {
                 state.current = None;
@@ -812,7 +823,7 @@ impl CalibRawApp {
             .as_ref()
             .and_then(|state| state.current.as_ref())
             .map(|job| job.photo.label())
-            .unwrap_or_else(|| "image".to_owned());
+            .unwrap_or_else(|| tr("image").to_owned());
 
         match phase {
             LibraryAiMaskRefreshPhase::Loading => (),
@@ -826,7 +837,7 @@ impl CalibRawApp {
                         .ui
                         .notice
                         .clone()
-                        .unwrap_or_else(|| "AI results still need an update".to_owned());
+                        .unwrap_or_else(|| tr("AI results still need an update").to_owned());
                     if let Some(state) = self.ai.library_mask_refresh.as_mut() {
                         state.failures.push(format!("{label}: {reason}"));
                         complete_library_ai_mask_refresh_item(state);
@@ -848,11 +859,10 @@ impl CalibRawApp {
 
                 let revision = self.edit_commit_revision();
                 if self.persistence.sidecar_failed_revision == Some(revision) {
-                    let reason = self
-                        .ui
-                        .notice
-                        .clone()
-                        .unwrap_or_else(|| "could not save regenerated AI masks".to_owned());
+                    let reason =
+                        self.ui.notice.clone().unwrap_or_else(|| {
+                            tr("could not save regenerated AI masks").to_owned()
+                        });
                     if let Some(state) = self.ai.library_mask_refresh.as_mut() {
                         state.failures.push(format!("{label}: {reason}"));
                     }
@@ -875,20 +885,30 @@ impl CalibRawApp {
         self.ui.active_tab = AppTab::Library;
         self.library.refresh(&self.egui_ctx);
         let summary = if cancelled {
-            format!(
-                "AI-mask refresh cancelled after {}/{} images.",
-                state.completed, state.total
+            tr_fmt(
+                "AI-mask refresh cancelled after {completed}/{total} images.",
+                &[("completed", &state.completed), ("total", &state.total)],
             )
         } else if state.failures.is_empty() {
-            format!(
-                "Regenerated AI masks for {succeeded} {}.",
-                if succeeded == 1 { "image" } else { "images" }
-            )
+            if succeeded == 1 {
+                tr_fmt(
+                    "Regenerated AI masks for {count} image.",
+                    &[("count", &succeeded)],
+                )
+            } else {
+                tr_fmt(
+                    "Regenerated AI masks for {count} images.",
+                    &[("count", &succeeded)],
+                )
+            }
         } else {
-            format!(
-                "Regenerated AI masks for {succeeded} of {} images. {}",
-                state.total,
-                state.failures.join(" · ")
+            tr_fmt(
+                "Regenerated AI masks for {succeeded} of {total} images. {failures}",
+                &[
+                    ("succeeded", &succeeded),
+                    ("total", &state.total),
+                    ("failures", &state.failures.join(" · ")),
+                ],
             )
         };
         self.library.set_status(summary.clone());

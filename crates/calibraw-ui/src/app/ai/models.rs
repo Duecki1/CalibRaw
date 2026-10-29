@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     pub(crate) fn set_onnx_runtime_mode(&mut self, mode: OnnxRuntimeMode) {
@@ -10,10 +11,10 @@ impl CalibRawApp {
         self.ai.consent = None;
         self.persist_performance_settings();
         self.ui.notice = Some(
-            "ONNX Runtime mode changed. Restart CalibRaw if an AI runtime was already used in this session."
+            tr("ONNX Runtime mode changed. Restart CalibRaw if an AI runtime was already used in this session.")
                 .to_owned(),
         );
-        self.prompt_restart_for_runtime_change("ONNX Runtime mode changed.");
+        self.prompt_restart_for_runtime_change(tr("ONNX Runtime mode changed."));
     }
 
     /// Asks for a restart when this process already loaded an ONNX Runtime
@@ -21,9 +22,7 @@ impl CalibRawApp {
     /// starts again, and AI jobs would fail until then.
     pub(in crate::app) fn prompt_restart_for_runtime_change(&mut self, change: &str) {
         if calibraw_ai::runtime::runtime_loaded_in_process() {
-            self.ui.runtime_restart_prompt = Some(format!(
-                "{change} The ONNX Runtime already loaded in this session cannot be replaced while CalibRaw runs. Restart CalibRaw before using AI features again."
-            ));
+            self.ui.runtime_restart_prompt = Some(tr_fmt("{change} The ONNX Runtime already loaded in this session cannot be replaced while CalibRaw runs. Restart CalibRaw before using AI features again.", &[("change", &change)]));
         }
     }
 
@@ -38,7 +37,7 @@ impl CalibRawApp {
                 ui.label(&message);
             },
             |ui| {
-                close |= moduwu_design::primary_action_button(ui, "OK").clicked();
+                close |= moduwu_design::primary_action_button(ui, tr("OK")).clicked();
                 if !close
                     && moduwu_design::dialog_keyboard_action(
                         ui,
@@ -64,25 +63,32 @@ impl CalibRawApp {
 
     pub(in crate::app) fn show_automatic_onnx_runtime_download_details(ui: &mut egui::Ui) {
         ui.separator();
-        ui.strong("ONNX Runtime");
+        ui.strong(tr("ONNX Runtime"));
         let runtime = calibraw_ai::runtime::automatic_onnx_runtime_info();
         if let Some(runtime) = runtime {
-            ui.label(format!(
-                "ONNX Runtime {} for {}: {:.1} MB download.",
-                runtime.version,
-                runtime.platform,
-                runtime.download_bytes as f64 / 1_000_000.0
+            ui.label(tr_fmt(
+                "ONNX Runtime {version} for {platform}: {size} MB download.",
+                &[
+                    ("version", &runtime.version),
+                    ("platform", &runtime.platform),
+                    (
+                        "size",
+                        &format!("{:.1}", runtime.download_bytes as f64 / 1_000_000.0),
+                    ),
+                ],
             ));
         } else {
-            ui.label(format!(
-                "Automatic ONNX Runtime for {} / {}.",
-                std::env::consts::OS,
-                std::env::consts::ARCH
+            ui.label(tr_fmt(
+                "Automatic ONNX Runtime for {os} / {arch}.",
+                &[
+                    ("os", &std::env::consts::OS),
+                    ("arch", &std::env::consts::ARCH),
+                ],
             ));
         }
-        ui.label("SHA-256 verified and cached locally (MIT license).");
+        ui.label(tr("SHA-256 verified and cached locally (MIT license)."));
         if let Some(url) = runtime.and_then(|runtime| runtime.download_url) {
-            ui.hyperlink_to("Runtime source", url);
+            ui.hyperlink_to(tr("Runtime source"), url);
         }
     }
 
@@ -105,18 +111,24 @@ impl CalibRawApp {
         runtime_download_needed: bool,
     ) {
         let download = match (model_download_needed, runtime_download_needed) {
-            (true, true) => format!("{model_name} and ONNX Runtime"),
+            (true, true) => tr_fmt(
+                "{model_name} and ONNX Runtime",
+                &[("model_name", &model_name)],
+            ),
             (true, false) => model_name.to_owned(),
-            (false, true) => "ONNX Runtime".to_owned(),
+            (false, true) => tr("ONNX Runtime").to_owned(),
             (false, false) => String::new(),
         };
         if download.is_empty() {
-            ui.label(format!("CalibRaw will {task} locally."));
+            ui.label(tr_fmt("CalibRaw will {task} locally.", &[("task", &task)]));
         } else {
-            ui.label(format!(
-                "CalibRaw will download {download} to {task} locally."
+            ui.label(tr_fmt(
+                "CalibRaw will download {download} to {task} locally.",
+                &[("download", &download), ("task", &task)],
             ));
-            ui.label("Your photo stays on this device; Hugging Face receives your IP address.");
+            ui.label(tr(
+                "Your photo stays on this device; Hugging Face receives your IP address.",
+            ));
         }
     }
 
@@ -132,7 +144,7 @@ impl CalibRawApp {
         if !model_download_needed && !runtime_download_needed {
             return;
         }
-        egui::CollapsingHeader::new("Model, runtime and privacy details")
+        egui::CollapsingHeader::new(tr("Model, runtime and privacy details"))
             .id_salt(id)
             .show(ui, |ui| {
                 if model_download_needed {
@@ -156,7 +168,7 @@ impl CalibRawApp {
         if self.manual_onnx_runtime() && self.ai.manual_runtime.is_none() {
             ui.colored_label(
                 egui::Color32::YELLOW,
-                "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
+                tr("Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic."),
             );
         }
     }
@@ -184,10 +196,10 @@ impl CalibRawApp {
         ui: &mut egui::Ui,
         license_links: &[(&str, &str)],
     ) {
-        ui.label("Hugging Face receives your IP address and request time; CalibRaw sends no photo, account ID, or telemetry.");
+        ui.label(tr("Hugging Face receives your IP address and request time; CalibRaw sends no photo, account ID, or telemetry."));
         ui.horizontal_wrapped(|ui| {
             ui.hyperlink_to(
-                "Hugging Face privacy policy",
+                tr("Hugging Face privacy policy"),
                 "https://huggingface.co/privacy",
             );
             for &(label, url) in license_links {
@@ -321,11 +333,7 @@ impl CalibRawApp {
         onnx_runtime_selection::move_onnx_runtime_selection(&legacy, &selection)
             .err()
             .map(|error| {
-                format!(
-                    "CalibRaw could not move the ONNX Runtime selection from {} to {} ({error}). Select the ONNX Runtime library again in Settings.",
-                    legacy.display(),
-                    selection.display()
-                )
+                tr_fmt("CalibRaw could not move the ONNX Runtime selection from {legacy} to {selection} ({error}). Select the ONNX Runtime library again in Settings.", &[("legacy", &legacy.display()), ("selection", &selection.display()), ("error", &error)])
             })
     }
 
@@ -347,11 +355,7 @@ impl CalibRawApp {
         desktop_model_folder::move_desktop_models(&legacy, model_root, manual_runtime.as_deref())
             .err()
             .map(|error| {
-                format!(
-                    "CalibRaw could not move the downloaded AI models from {} to {} ({error}). Models left behind are downloaded again when needed, and the old folder can then be deleted.",
-                    legacy.display(),
-                    model_root.display()
-                )
+                tr_fmt("CalibRaw could not move the downloaded AI models from {legacy} to {model_root} ({error}). Models left behind are downloaded again when needed, and the old folder can then be deleted.", &[("legacy", &legacy.display()), ("model_root", &model_root.display()), ("error", &error)])
             })
     }
 
@@ -378,32 +382,47 @@ impl CalibRawApp {
             None if selection.is_none() => return Ok(()),
             None => {
                 return Err(
-                    "there is no settings folder to save the ONNX Runtime selection in".to_owned(),
+                    tr("there is no settings folder to save the ONNX Runtime selection in")
+                        .to_owned(),
                 )
             }
         };
         if let Some((path, sha256)) = selection {
             let path_text = path
                 .to_str()
-                .ok_or_else(|| "the ONNX Runtime path is not valid UTF-8".to_owned())?;
+                .ok_or_else(|| tr("the ONNX Runtime path is not valid UTF-8").to_owned())?;
             if path_text.contains('\n') || path_text.contains('\r') {
-                return Err("the ONNX Runtime path contains a line break".to_owned());
+                return Err(tr("the ONNX Runtime path contains a line break").to_owned());
             }
             let payload = format!("sha256={sha256}\npath={path_text}\n");
-            calibraw_core::file_ops::write_bytes_atomically(&config, payload.as_bytes())
-                .map_err(|error| format!("could not save {}: {error}", config.display()))?;
+            calibraw_core::file_ops::write_bytes_atomically(&config, payload.as_bytes()).map_err(
+                |error| {
+                    tr_fmt(
+                        "could not save {config}: {error}",
+                        &[("config", &config.display()), ("error", &error)],
+                    )
+                },
+            )?;
         } else {
             match std::fs::remove_file(&config) {
                 Ok(()) => {
                     if let Some(parent) = config.parent() {
                         calibraw_core::file_ops::sync_parent_directory(parent).map_err(
-                            |error| format!("could not flush {}: {error}", parent.display()),
+                            |error| {
+                                tr_fmt(
+                                    "could not flush {parent}: {error}",
+                                    &[("parent", &parent.display()), ("error", &error)],
+                                )
+                            },
                         )?;
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
-                    return Err(format!("could not remove {}: {error}", config.display()));
+                    return Err(tr_fmt(
+                        "could not remove {config}: {error}",
+                        &[("config", &config.display()), ("error", &error)],
+                    ));
                 }
             }
         }
@@ -440,7 +459,10 @@ impl CalibRawApp {
         settings_path: Option<&std::path::Path>,
     ) -> Result<(PathBuf, calibraw_ai::Sha256), String> {
         if !path.is_file() {
-            return Err(format!("{} is not a file.", path.display()));
+            return Err(tr_fmt(
+                "{path} is not a file.",
+                &[("path", &path.display())],
+            ));
         }
         let file_name = path
             .file_name()
@@ -449,15 +471,20 @@ impl CalibRawApp {
             .to_ascii_lowercase();
         if !crate::platform::is_onnx_runtime_library_name(&file_name) {
             return Err(
-                "Select the ONNX Runtime shared library (onnxruntime.dll, libonnxruntime.so, or libonnxruntime.dylib)."
+                tr("Select the ONNX Runtime shared library (onnxruntime.dll, libonnxruntime.so, or libonnxruntime.dylib).")
                     .to_owned(),
             );
         }
-        let sha256 = calibraw_ai::Sha256::of_file(&path)
-            .map_err(|error| format!("Could not hash selected ONNX Runtime: {error:#}"))?;
+        let sha256 = calibraw_ai::Sha256::of_file(&path).map_err(|error| {
+            tr_fmt(
+                "Could not hash selected ONNX Runtime: {error}",
+                &[("error", &format!("{error:#}"))],
+            )
+        })?;
         if let Err(error) = calibraw_ai::runtime::probe_runtime_subprocess(&path, &sha256) {
-            return Err(format!(
-                "This ONNX Runtime could not be loaded safely: {error:#}"
+            return Err(tr_fmt(
+                "This ONNX Runtime could not be loaded safely: {error}",
+                &[("error", &format!("{error:#}"))],
             ));
         }
         Self::persist_onnx_runtime_selection(settings_path, Some((&path, &sha256)))?;
@@ -473,10 +500,12 @@ impl CalibRawApp {
                 self.ai.manual_runtime = None;
                 self.sync_onnx_runtime_source();
                 self.ui.notice = Some(
-                    "Manual ONNX Runtime selection cleared. Choose another library or switch to Automatic. Restart CalibRaw to apply the change."
+                    tr("Manual ONNX Runtime selection cleared. Choose another library or switch to Automatic. Restart CalibRaw to apply the change.")
                         .to_owned(),
                 );
-                self.prompt_restart_for_runtime_change("Manual ONNX Runtime selection cleared.");
+                self.prompt_restart_for_runtime_change(tr(
+                    "Manual ONNX Runtime selection cleared.",
+                ));
             }
             Err(error) => self.report_error(ErrorKind::AiRuntime, error),
         }

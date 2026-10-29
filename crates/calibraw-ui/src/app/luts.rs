@@ -11,6 +11,7 @@
 use super::*;
 use crate::app::hover_preview::HoverPreview;
 use crate::app::preview_visibility::PreviewVisibility;
+use crate::i18n::{tr, tr_fmt};
 use crate::luts::{
     CubeLut, LookLut, LutEntry, LutId, LutLibrary, LutLibraryError, LutStore, ResolvedLook,
 };
@@ -78,7 +79,7 @@ impl LutTableLoad {
             Ok(result) => Some(result),
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => Some(Err(LutLibraryError::InvalidIndex(
-                "the LUT reader stopped unexpectedly".to_owned(),
+                tr("the LUT reader stopped unexpectedly").to_owned(),
             ))),
         }
     }
@@ -97,7 +98,10 @@ impl LutState {
             Err(error) => {
                 log::warn!("could not read the LUT library: {error}");
                 Self {
-                    failure: Some(format!("Could not read the LUT library: {error}")),
+                    failure: Some(tr_fmt(
+                        "Could not read the LUT library: {error}",
+                        &[("error", &error)],
+                    )),
                     ..Self::default()
                 }
             }
@@ -145,9 +149,9 @@ fn same_look(left: Option<&ResolvedLook>, right: Option<&ResolvedLook>) -> bool 
 
 /// The notice for a LUT the library does not hold.
 pub(crate) fn missing_look_lut_notice(look: &LookLut) -> String {
-    format!(
-        "The LUT “{}” is not in the LUT library; the photo is shown without it.",
-        look.name
+    tr_fmt(
+        "The LUT “{name}” is not in the LUT library; the photo is shown without it.",
+        &[("name", &look.name)],
     )
 }
 
@@ -158,9 +162,9 @@ pub(in crate::app) fn resolve_look_for_export(
     look: &LookLut,
 ) -> Result<ResolvedLook, String> {
     let missing = || {
-        format!(
-            "The LUT “{}” is not in the LUT library. Import it, or choose another LUT, to export this photo.",
-            look.name
+        tr_fmt(
+            "The LUT “{name}” is not in the LUT library. Import it, or choose another LUT, to export this photo.",
+            &[("name", &look.name)],
         )
     };
     let lut = store
@@ -168,7 +172,10 @@ pub(in crate::app) fn resolve_look_for_export(
         .load(look.id)
         .map_err(|error| match error {
             LutLibraryError::NotFound(_) => missing(),
-            error => format!("Could not read the LUT “{}”: {error}", look.name),
+            error => tr_fmt(
+                "Could not read the LUT “{name}”: {error}",
+                &[("name", &look.name), ("error", &error)],
+            ),
         })?;
     Ok(ResolvedLook {
         lut,
@@ -311,7 +318,10 @@ impl CalibRawApp {
             Err(LutLibraryError::NotFound(_)) => self.report_missing_look_lut(),
             Err(error) => self.report_error(
                 ErrorKind::Luts,
-                format!("Could not read the photo's LUT: {error}"),
+                tr_fmt(
+                    "Could not read the photo's LUT: {error}",
+                    &[("error", &error)],
+                ),
             ),
         }
     }
@@ -326,7 +336,10 @@ impl CalibRawApp {
         self.luts.reported_upload_failure = id;
         self.report_error(
             ErrorKind::Preview,
-            format!("The preview is shown without its LUT: {error:#}"),
+            tr_fmt(
+                "The preview is shown without its LUT: {error}",
+                &[("error", &format!("{error:#}"))],
+            ),
         );
     }
 
@@ -455,7 +468,7 @@ impl CalibRawApp {
             if self.ui.desktop_picker_receiver.is_some() {
                 return;
             }
-            let dialog = crate::platform::FileDialog::new().add_filter("3D LUTs", &["cube"]);
+            let dialog = crate::platform::FileDialog::new().add_filter(tr("3D LUTs"), &["cube"]);
             self.luts.apply_next_import = apply;
             self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
                 DesktopPickerEvent::LutFiles(dialog.pick_files_on_worker())
@@ -490,11 +503,11 @@ impl CalibRawApp {
                 self.select_look_lut(Some(entry.id));
             }
         }
-        let summary = format!(
-            "Imported {} {}.",
-            imported.len(),
-            if imported.len() == 1 { "LUT" } else { "LUTs" }
-        );
+        let summary = if imported.len() == 1 {
+            tr_fmt("Imported {count} LUT.", &[("count", &imported.len())])
+        } else {
+            tr_fmt("Imported {count} LUTs.", &[("count", &imported.len())])
+        };
         if failures.is_empty() {
             self.ui.notice = Some(summary);
         } else {
@@ -515,7 +528,10 @@ impl CalibRawApp {
                 self.luts.apply_next_import = false;
                 self.report_error(
                     ErrorKind::Luts,
-                    format!("Could not read the picked LUT files: {error}"),
+                    tr_fmt(
+                        "Could not read the picked LUT files: {error}",
+                        &[("error", &error)],
+                    ),
                 );
                 return;
             }
@@ -544,11 +560,11 @@ impl CalibRawApp {
         match library.rename(id, name) {
             Ok(name) => {
                 self.luts.rename = None;
-                self.ui.notice = Some(format!("Renamed the LUT to “{name}”."));
+                self.ui.notice = Some(tr_fmt("Renamed the LUT to “{name}”.", &[("name", &name)]));
             }
             Err(error) => self.report_error(
                 ErrorKind::Luts,
-                format!("Could not rename the LUT: {error}"),
+                tr_fmt("Could not rename the LUT: {error}", &[("error", &error)]),
             ),
         }
     }
@@ -567,11 +583,12 @@ impl CalibRawApp {
                     self.develop.look_lut_table = None;
                     self.sync_preview_look();
                 }
-                self.ui.notice = name.map(|name| format!("Removed the LUT “{name}”."));
+                self.ui.notice =
+                    name.map(|name| tr_fmt("Removed the LUT “{name}”.", &[("name", &name)]));
             }
             Err(error) => self.report_error(
                 ErrorKind::Luts,
-                format!("Could not remove the LUT: {error}"),
+                tr_fmt("Could not remove the LUT: {error}", &[("error", &error)]),
             ),
         }
     }

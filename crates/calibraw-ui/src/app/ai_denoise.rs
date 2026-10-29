@@ -1,5 +1,6 @@
 use super::worker::megabytes_detail;
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use calibraw_ai::models::denoise::{AiDenoiseProgress, RawNindJob};
 use calibraw_ai::AiFeature;
 use std::{
@@ -95,13 +96,13 @@ impl CalibRawApp {
     fn enable_ai_denoise(&mut self, frame: &eframe::Frame, origin: AiJobOrigin) {
         if self.foreground_operation_active() {
             self.ui.notice =
-                Some("Finish or cancel the current editing operation first.".to_owned());
+                Some(tr("Finish or cancel the current editing operation first.").to_owned());
             return;
         }
         if self.develop.loaded_raw.is_none() {
             self.develop.exposure.ai_denoise_enabled = false;
             self.develop.target_exposure.ai_denoise_enabled = false;
-            self.ui.notice = Some("Open a photo before enabling AI denoise.".to_owned());
+            self.ui.notice = Some(tr("Open a photo before enabling AI denoise.").to_owned());
             self.egui_ctx.request_repaint();
             return;
         }
@@ -114,7 +115,7 @@ impl CalibRawApp {
             self.develop.exposure.ai_denoise_enabled = false;
             self.develop.target_exposure.ai_denoise_enabled = false;
             self.ui.notice = Some(
-                "AI denoise works on sensor RAW data; rendered photos (JPEG, PNG, HEIC, TIFF) use the standard Detail controls."
+                tr("AI denoise works on sensor RAW data; rendered photos (JPEG, PNG, HEIC, TIFF) use the standard Detail controls.")
                     .to_owned(),
             );
             self.egui_ctx.request_repaint();
@@ -150,7 +151,7 @@ impl CalibRawApp {
             return;
         }
         let Some(raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {
-            self.ui.notice = Some("Open a photo before enabling AI denoise.".to_owned());
+            self.ui.notice = Some(tr("Open a photo before enabling AI denoise.").to_owned());
             return;
         };
         let result_path = self.ai_denoise_result_path();
@@ -169,7 +170,10 @@ impl CalibRawApp {
                 self.develop.target_exposure.ai_denoise_enabled = false;
                 self.report_error(
                     ErrorKind::AiDenoise,
-                    format!("Could not initialize Android AI denoise: {error:#}"),
+                    tr_fmt(
+                        "Could not initialize Android AI denoise: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 calibraw_core::diagnostics::record(format!(
                     "Android RawNIND runtime initialization failed before worker start: {error:#}"
@@ -181,7 +185,7 @@ impl CalibRawApp {
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
                 ErrorKind::AiDenoise,
-                "AI denoise requires CalibRaw's wgpu renderer.".to_owned(),
+                tr("AI denoise requires CalibRaw's wgpu renderer.").to_owned(),
             );
             self.develop.exposure.ai_denoise_enabled = false;
             self.develop.target_exposure.ai_denoise_enabled = false;
@@ -219,9 +223,9 @@ impl CalibRawApp {
             self.ai.consent = None;
         }
         let progress = ForegroundProgress::indeterminate(if saved_result_exists {
-            "Restoring saved AI denoise…"
+            tr("Restoring saved AI denoise…")
         } else {
-            "Preparing RawNIND models…"
+            tr("Preparing RawNIND models…")
         });
         self.begin_foreground_operation(ForegroundOperation {
             kind: DENOISE_JOB,
@@ -267,7 +271,7 @@ impl CalibRawApp {
         let finished = poll_ai_job(
             self.platform.as_ref(),
             receiver,
-            || "RawNIND worker stopped unexpectedly.".to_owned(),
+            || tr("RawNIND worker stopped unexpectedly.").to_owned(),
             |update| match update {
                 AiJobUpdate::Progress(AiDenoiseProgress::SavedResultUnusable) => {
                     saved_result_unusable = true;
@@ -280,7 +284,7 @@ impl CalibRawApp {
                         progress.downloaded,
                         progress.total,
                         Some("bytes".to_owned()),
-                        "Downloading verified RawNIND model package",
+                        tr("Downloading verified RawNIND model package"),
                     )
                     .with_detail(megabytes_detail(progress));
                 }
@@ -293,7 +297,7 @@ impl CalibRawApp {
                         ForegroundProgress::units(
                             completed as u64,
                             total as u64,
-                            Some("tiles".to_owned()),
+                            Some(tr("tiles").to_owned()),
                             phase,
                         )
                     } else {
@@ -322,20 +326,21 @@ impl CalibRawApp {
                     .develop
                     .loaded_raw
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("the RAW was closed"))
+                    .ok_or_else(|| anyhow::anyhow!(tr("the RAW was closed")))
                     .and_then(|raw| raw.set_ai_denoised_image(image));
                 match install {
                     Ok(()) => {
                         match save_error {
                             Some(error) => self.report_error(
                                 ErrorKind::AiDenoiseNotSaved,
-                                format!(
-                                    "AI denoise applied, but its result could not be saved next to the photo ({error}). It will need to run again the next time the photo is opened."
+                                tr_fmt(
+                                    "AI denoise applied, but its result could not be saved next to the photo ({error}). It will need to run again the next time the photo is opened.",
+                                    &[("error", &error)],
                                 ),
                             ),
                             None => {
                                 self.ui.notice = Some(
-                                    "AI denoise applied locally. Standard denoise values were preserved."
+                                    tr("AI denoise applied locally. Standard denoise values were preserved.")
                                         .to_owned(),
                                 );
                             }
@@ -348,7 +353,7 @@ impl CalibRawApp {
                         if changed {
                             self.note_edit_changed();
                         }
-                        self.report_error(ErrorKind::AiDenoise, format!("Could not install AI denoise: {error:#}"));
+                        self.report_error(ErrorKind::AiDenoise, tr_fmt("Could not install AI denoise: {error}", &[("error", &format!("{error:#}"))]));
                     }
                 }
             }
@@ -369,7 +374,10 @@ impl CalibRawApp {
                     self.note_edit_changed();
                 }
                 if !error.contains("cancelled") {
-                    self.report_error(ErrorKind::AiDenoise, format!("AI denoise failed: {error}"));
+                    self.report_error(
+                        ErrorKind::AiDenoise,
+                        tr_fmt("AI denoise failed: {error}", &[("error", &error)]),
+                    );
                 }
             }
         }

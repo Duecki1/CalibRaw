@@ -1,6 +1,7 @@
 //! Touch navigation: the portrait shell, primary/context/effect tabs and footer actions.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl Sidebar {
     pub(super) fn show_vertical_mobile_shell(
@@ -148,15 +149,15 @@ impl Sidebar {
                     .collect();
                 for section in sections {
                     let (icon, label) = match section {
-                        AdjustmentSection::Light => (regular::SUN, "Light"),
-                        AdjustmentSection::ToneCurve => (regular::WAVE_SINE, "Curve"),
-                        AdjustmentSection::Lut => (regular::CUBE, "LUT"),
-                        AdjustmentSection::Color => (regular::DROP, "Color"),
-                        AdjustmentSection::ColorGrading => (regular::CIRCLES_THREE, "Grading"),
-                        AdjustmentSection::Detail => (regular::APERTURE, "Detail"),
-                        AdjustmentSection::Effects => (regular::SPARKLE, "Effects"),
-                        AdjustmentSection::ColorMixer => (regular::SWATCHES, "Mixer"),
-                        AdjustmentSection::Optics => (regular::EYE, "Optics"),
+                        AdjustmentSection::Light => (regular::SUN, tr("Light")),
+                        AdjustmentSection::ToneCurve => (regular::WAVE_SINE, tr("Curve")),
+                        AdjustmentSection::Lut => (regular::CUBE, tr("LUT")),
+                        AdjustmentSection::Color => (regular::DROP, tr("Color")),
+                        AdjustmentSection::ColorGrading => (regular::CIRCLES_THREE, tr("Grading")),
+                        AdjustmentSection::Detail => (regular::APERTURE, tr("Detail")),
+                        AdjustmentSection::Effects => (regular::SPARKLE, tr("Effects")),
+                        AdjustmentSection::ColorMixer => (regular::SWATCHES, tr("Mixer")),
+                        AdjustmentSection::Optics => (regular::EYE, tr("Optics")),
                     };
                     if Self::mobile_icon_tab(
                         ui,
@@ -215,13 +216,17 @@ impl Sidebar {
                     .selected_mask()
                     .is_none_or(|mask| mask.effect.uses_adjustments());
                 for (section, icon, label) in [
-                    (MaskSection::Properties, regular::SELECTION, "Mask"),
-                    (MaskSection::Light, regular::SUN, "Light"),
-                    (MaskSection::ToneCurve, regular::WAVE_SINE, "Curve"),
-                    (MaskSection::Color, regular::DROP, "Color"),
-                    (MaskSection::ColorGrading, regular::CIRCLES_THREE, "Grading"),
-                    (MaskSection::Effects, regular::SPARKLE, "Effects"),
-                    (MaskSection::ColorMixer, regular::SWATCHES, "Mixer"),
+                    (MaskSection::Properties, regular::SELECTION, tr("Mask")),
+                    (MaskSection::Light, regular::SUN, tr("Light")),
+                    (MaskSection::ToneCurve, regular::WAVE_SINE, tr("Curve")),
+                    (MaskSection::Color, regular::DROP, tr("Color")),
+                    (
+                        MaskSection::ColorGrading,
+                        regular::CIRCLES_THREE,
+                        tr("Grading"),
+                    ),
+                    (MaskSection::Effects, regular::SPARKLE, tr("Effects")),
+                    (MaskSection::ColorMixer, regular::SWATCHES, tr("Mixer")),
                 ] {
                     if section != MaskSection::Properties && !adjustment_mask {
                         continue;
@@ -303,11 +308,11 @@ impl Sidebar {
                     Self::mobile_icon_tab(
                         ui,
                         regular::SPARKLE,
-                        effect.label(),
+                        tr(effect.label()),
                         show_labels,
                         *selection == Some(effect),
                         egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
-                        effect.label(),
+                        tr(effect.label()),
                     )
                     .clicked()
                 })
@@ -328,11 +333,11 @@ impl Sidebar {
                 Self::mobile_icon_tab(
                     ui,
                     regular::PLUS,
-                    "Add",
+                    tr("Add"),
                     show_labels,
                     false,
                     egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
-                    "Add effect",
+                    tr("Add effect"),
                 )
             })
             .inner;
@@ -408,7 +413,7 @@ impl Sidebar {
                             ui,
                             egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                             moduwu_design::toolbar_icon_size(),
-                            "Reset crop and geometry",
+                            tr("Reset crop and geometry"),
                         )
                         .clicked()
                         {
@@ -420,7 +425,7 @@ impl Sidebar {
                             ui,
                             egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                             moduwu_design::toolbar_icon_size(),
-                            "Reset all masks and clear the subject mask cache",
+                            tr("Reset all masks and clear the subject mask cache"),
                         )
                         .clicked()
                         {
@@ -447,7 +452,10 @@ impl Sidebar {
                                         ui,
                                         egui_phosphor::regular::TRASH,
                                         moduwu_design::toolbar_icon_size(),
-                                        &format!("Clear all {} strokes", active_tool.label()),
+                                        &tr_fmt(
+                                            "Clear all {tool} strokes",
+                                            &[("tool", &active_tool.label())],
+                                        ),
                                     )
                                 },
                             )

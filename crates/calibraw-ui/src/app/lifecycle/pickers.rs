@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     /// Asks for a photo to open: a native file dialog, or the platform's
@@ -31,7 +32,7 @@ impl CalibRawApp {
             .and_then(selected_picker_directory)
             .or_else(|| self.library.folder().map(std::path::Path::to_path_buf));
         let mut dialog = crate::platform::FileDialog::new()
-            .add_filter("RAW, TIFF, JPEG, PNG and HEIC images", &extensions);
+            .add_filter(tr("RAW, TIFF, JPEG, PNG and HEIC images"), &extensions);
         if let Some(directory) = initial_directory {
             dialog = dialog.set_directory(directory);
         }
@@ -46,8 +47,9 @@ impl CalibRawApp {
         }
         let mut dialog = crate::platform::FileDialog::new();
         if crate::platform::is_flatpak() {
-            dialog =
-                dialog.set_title("Choose a photo folder to save edits; select a RAW in Library");
+            dialog = dialog.set_title(tr(
+                "Choose a photo folder to save edits; select a RAW in Library",
+            ));
         }
         if let Some(folder) = self.library.folder() {
             dialog = dialog.set_directory(folder);
@@ -60,7 +62,7 @@ impl CalibRawApp {
     fn open_platform_document_picker(&mut self) {
         if self.android_foreground_task_active() {
             self.ui.notice = Some(
-                "Wait for the current foreground operation to finish before opening another photo."
+                tr("Wait for the current foreground operation to finish before opening another photo.")
                     .to_owned(),
             );
             self.egui_ctx.request_repaint();
@@ -83,7 +85,7 @@ impl CalibRawApp {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.ui.notice = None;
-                self.ui.status = "Choose one or more photos…".to_owned();
+                self.ui.status = tr("Choose one or more photos…").to_owned();
             }
             Err(error) => self.report_error(ErrorKind::OpenPhoto, error),
         }
@@ -113,12 +115,12 @@ impl CalibRawApp {
                 self.ai.manual_runtime = Some((path, sha256));
                 self.sync_onnx_runtime_source();
                 self.ui.notice = Some(
-                    "ONNX Runtime selection and SHA-256 pin saved. Restart CalibRaw before generating another subject mask."
+                    tr("ONNX Runtime selection and SHA-256 pin saved. Restart CalibRaw before generating another subject mask.")
                         .to_owned(),
                 );
-                self.prompt_restart_for_runtime_change(
+                self.prompt_restart_for_runtime_change(tr(
                     "ONNX Runtime selection and SHA-256 pin saved.",
-                );
+                ));
             }
             crate::app::DesktopPickerEvent::OnnxRuntime(Err(error)) => {
                 self.report_error(ErrorKind::AiRuntime, error);
@@ -148,7 +150,8 @@ impl CalibRawApp {
             match result {
                 crate::platform::CameraProfileFolderResult::ImportStarted { label } => {
                     self.android.camera_profile_folder_importing_label = Some(label.clone());
-                    self.ui.status = format!("Importing DCP profiles from {label}…");
+                    self.ui.status =
+                        tr_fmt("Importing DCP profiles from {label}…", &[("label", &label)]);
                     self.ui.notice = None;
                 }
                 crate::platform::CameraProfileFolderResult::Picked {
@@ -177,22 +180,26 @@ impl CalibRawApp {
                             }
                         }
                     }
-                    self.ui.notice = Some(format!(
-                        "Camera profile folder '{label}' imported with {profiles} DCP {}. Reopen the RAW to apply the new profile selection.",
-                        if profiles == 1 { "profile" } else { "profiles" }
-                    ));
+                    self.ui.notice = Some(if profiles == 1 {
+                        tr_fmt("Camera profile folder '{label}' imported with {profiles} DCP profile. Reopen the RAW to apply the new profile selection.", &[("label", &label), ("profiles", &profiles)])
+                    } else {
+                        tr_fmt("Camera profile folder '{label}' imported with {profiles} DCP profiles. Reopen the RAW to apply the new profile selection.", &[("label", &label), ("profiles", &profiles)])
+                    });
                 }
                 crate::platform::CameraProfileFolderResult::Cancelled => {
                     self.android.picker_pending = false;
                     self.android.camera_profile_folder_importing_label = None;
-                    self.ui.notice = Some("No camera profile folder selected.".to_owned());
+                    self.ui.notice = Some(tr("No camera profile folder selected.").to_owned());
                 }
                 crate::platform::CameraProfileFolderResult::Failed(error) => {
                     self.android.picker_pending = false;
                     self.android.camera_profile_folder_importing_label = None;
                     self.report_error(
                         ErrorKind::CameraProfile,
-                        format!("Could not import camera profiles: {error}"),
+                        tr_fmt(
+                            "Could not import camera profiles: {error}",
+                            &[("error", &error)],
+                        ),
                     );
                 }
             }
@@ -208,7 +215,10 @@ impl CalibRawApp {
                 }
                 crate::platform::StagedFilesResult::Failed(error) => {
                     self.luts.apply_next_import = false;
-                    self.report_error(ErrorKind::Luts, format!("Could not import LUTs: {error}"));
+                    self.report_error(
+                        ErrorKind::Luts,
+                        tr_fmt("Could not import LUTs: {error}", &[("error", &error)]),
+                    );
                 }
             }
         }
@@ -221,7 +231,10 @@ impl CalibRawApp {
                 crate::platform::StagedFilesResult::Cancelled => {}
                 crate::platform::StagedFilesResult::Failed(error) => self.report_error(
                     ErrorKind::Watermark,
-                    format!("Could not import the watermark image: {error}"),
+                    tr_fmt(
+                        "Could not import the watermark image: {error}",
+                        &[("error", &error)],
+                    ),
                 ),
             }
         }
@@ -316,7 +329,7 @@ impl CalibRawApp {
 
                 if self.develop.load_receiver.is_none() {
                     let error = self.ui.notice.clone().unwrap_or_else(|| {
-                        "The photo decode worker could not be started.".to_owned()
+                        tr("The photo decode worker could not be started.").to_owned()
                     });
                     if batch_owned_open {
                         self.export.android_batch_load_pending = false;
@@ -340,23 +353,33 @@ impl CalibRawApp {
                 // Keep the import popup until the rescan shows the new photos.
                 self.android.photo_import = (imported > 0).then_some(PhotoImportStatus::Loading);
                 self.ui.status = match (imported, failed) {
-                    (0, 0) => "No photos were imported.".to_owned(),
-                    (_, 0) => format!(
-                        "Imported {imported} {}.",
-                        if imported == 1 { "photo" } else { "photos" }
+                    (0, 0) => tr("No photos were imported.").to_owned(),
+                    (_, 0) if imported == 1 => {
+                        tr_fmt("Imported {imported} photo.", &[("imported", &imported)])
+                    }
+                    (_, 0) => tr_fmt("Imported {imported} photos.", &[("imported", &imported)]),
+                    _ if imported == 1 => tr_fmt(
+                        "Imported {imported} photo; {failed} failed.",
+                        &[("imported", &imported), ("failed", &failed)],
                     ),
-                    _ => format!(
-                        "Imported {imported} {}; {failed} failed.",
-                        if imported == 1 { "photo" } else { "photos" }
+                    _ => tr_fmt(
+                        "Imported {imported} photos; {failed} failed.",
+                        &[("imported", &imported), ("failed", &failed)],
                     ),
                 };
                 if failed > 0 {
                     self.report_error(
                         ErrorKind::Import,
                         if errors.is_empty() {
-                            format!("{failed} selected photo imports failed.")
+                            tr_fmt(
+                                "{failed} selected photo imports failed.",
+                                &[("failed", &failed)],
+                            )
                         } else {
-                            format!("Some photos could not be imported:\n{errors}")
+                            tr_fmt(
+                                "Some photos could not be imported:\n{errors}",
+                                &[("errors", &errors)],
+                            )
                         },
                     );
                 } else {
@@ -370,19 +393,20 @@ impl CalibRawApp {
                     std::mem::take(&mut self.android.pending_android_library_reset_reload);
                 if self.export.android_batch_load_pending {
                     self.export.android_batch_load_pending = false;
-                    self.complete_android_library_batch_export_item(Err(
-                        "RAW open was canceled".to_owned()
-                    ));
+                    self.complete_android_library_batch_export_item(Err(tr(
+                        "RAW open was canceled",
+                    )
+                    .to_owned()));
                 } else if self.ai.library_mask_refresh.is_some() {
                     self.complete_android_library_ai_mask_open_failure(
-                        "RAW open was canceled".to_owned(),
+                        tr("RAW open was canceled").to_owned(),
                         frame,
                     );
                 } else if was_reset_reload {
-                    self.report_error(ErrorKind::OpenPhoto, "The photo could not be reloaded after resetting adjustments. Reopen it from the Library before continuing in Develop."
+                    self.report_error(ErrorKind::OpenPhoto, tr("The photo could not be reloaded after resetting adjustments. Reopen it from the Library before continuing in Develop.")
                             .to_owned(),);
                 } else {
-                    self.ui.notice = Some("No photos selected.".to_owned());
+                    self.ui.notice = Some(tr("No photos selected.").to_owned());
                 }
             }
             crate::platform::PickerResult::Failed(error) => {
@@ -406,13 +430,20 @@ impl CalibRawApp {
                     self.report_error(
                         ErrorKind::OpenPhoto,
                         if was_profile_reload {
-                            format!("Could not reload RAW for camera profile: {error}")
+                            tr_fmt(
+                                "Could not reload RAW for camera profile: {error}",
+                                &[("error", &error)],
+                            )
                         } else if was_reset_reload {
-                            format!(
-                                "Could not reload the photo after resetting adjustments: {error}"
+                            tr_fmt(
+                                "Could not reload the photo after resetting adjustments: {error}",
+                                &[("error", &error)],
                             )
                         } else {
-                            format!("Could not import the selected file: {error}")
+                            tr_fmt(
+                                "Could not import the selected file: {error}",
+                                &[("error", &error)],
+                            )
                         },
                     );
                 }

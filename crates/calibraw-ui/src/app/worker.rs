@@ -1,4 +1,5 @@
 use super::job_state::ForegroundProgress;
+use crate::i18n::tr_fmt;
 use crate::platform::Platform;
 use calibraw_ai::{AiJobEvent, ModelDownloadProgress};
 use eframe::egui;
@@ -91,7 +92,7 @@ pub(crate) fn model_download_progress(progress: ModelDownloadProgress) -> Foregr
         progress.downloaded,
         progress.total,
         Some("bytes".to_owned()),
-        format!("Downloading {}", progress.label),
+        tr_fmt("Downloading {model}", &[("model", &progress.label)]),
     )
     .with_detail(megabytes_detail(progress))
 }

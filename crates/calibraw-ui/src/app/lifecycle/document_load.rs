@@ -3,13 +3,15 @@
 //! GPU preview. The UI-thread half lives in `documents.rs`.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::FilmSettlement;
 use std::sync::RwLock;
 
 /// The load notice for edits migrated to the current sidecar format. It is
 /// informational; every other load warning reports a problem.
-pub(super) const SIDECAR_MIGRATED_NOTICE: &str =
-    "Loaded edits were migrated to the current sidecar format.";
+pub(super) fn sidecar_migrated_notice() -> &'static str {
+    tr("Loaded edits were migrated to the current sidecar format.")
+}
 
 /// A RAW file to open in Develop.
 pub(crate) struct DocumentSource {
@@ -254,7 +256,10 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 Some(Err(error)) => {
                     append_notice(
                         &mut sidecar_warning,
-                        &format!("Could not read the LUT “{}”: {error}", look.name),
+                        &tr_fmt(
+                            "Could not read the LUT “{name}”: {error}",
+                            &[("name", &look.name), ("error", &error)],
+                        ),
                     );
                     None
                 }
@@ -280,7 +285,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 sidecar_needs_rewrite = true;
                 append_notice(
                     &mut sidecar_warning,
-                    "No film negative was found to invert, so the photo is shown as it is.",
+                    tr("No film negative was found to invert, so the photo is shown as it is."),
                 );
             }
         }
@@ -342,7 +347,12 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 &params,
                 RemoveSceneContext::full_frame(&remove, &full_raw, &exposure),
             )
-            .map_err(|error| format!("initial Remove scene integration failed: {error:#}"))?;
+            .map_err(|error| {
+                tr_fmt(
+                    "initial Remove scene integration failed: {error}",
+                    &[("error", &format!("{error:#}"))],
+                )
+            })?;
         calibraw_core::diagnostics::record(format!(
             "Initial GPU preview dispatch submitted in {:.3}s",
             render_started.elapsed().as_secs_f64()
@@ -615,7 +625,7 @@ fn decode_cached(
                 ));
                 raw
             };
-            let poisoned = || anyhow::anyhow!("RAW decode gate was poisoned");
+            let poisoned = || anyhow::anyhow!(tr("RAW decode gate was poisoned"));
             match priority {
                 DecodePriority::Interactive => {
                     let _exclusive = decode_gate.write().map_err(|_| poisoned())?;
@@ -688,7 +698,9 @@ impl InitialEdits {
                 }
             }
             Ok(Some(loaded)) => {
-                let warning = loaded.migrated.then(|| SIDECAR_MIGRATED_NOTICE.to_owned());
+                let warning = loaded
+                    .migrated
+                    .then(|| sidecar_migrated_notice().to_owned());
                 Self::from_edits(
                     loaded.edits,
                     loaded.editing_time_ms,
@@ -701,8 +713,9 @@ impl InitialEdits {
                 starts_unedited: false,
                 ..Self::defaults(
                     default_exposure,
-                    Some(format!(
-                        "Could not load this RAW's sidecar; using default edits: {error}"
+                    Some(tr_fmt(
+                        "Could not load this RAW's sidecar; using default edits: {error}",
+                        &[("error", &error)],
                     )),
                 )
             },
@@ -791,7 +804,7 @@ fn apply_saved_lens_correction(
         if saved.enabled && !lens_correction.catalog.available {
             append_notice(
                 sidecar_warning,
-                "The saved lens correction is unavailable in this build.",
+                tr("The saved lens correction is unavailable in this build."),
             );
         }
     }
@@ -814,9 +827,9 @@ fn apply_saved_lens_correction(
                         apply_started.elapsed().as_secs_f64()
                     ));
                     lens_correction.applied = true;
-                    lens_correction.catalog.status = format!(
-                        "Automatically applied {} from RAW metadata",
-                        selection.label()
+                    lens_correction.catalog.status = tr_fmt(
+                        "Automatically applied {selection} from RAW metadata",
+                        &[("selection", &selection.label())],
                     );
                     corrected
                 }
@@ -827,13 +840,16 @@ fn apply_saved_lens_correction(
                     ));
                     lens_correction.enabled = false;
                     lens_correction.applied = false;
-                    lens_correction.catalog.status = format!(
-                        "Matched {}, but correction failed: {error:#}",
-                        selection.label()
+                    lens_correction.catalog.status = tr_fmt(
+                        "Matched {selection}, but correction failed: {error}",
+                        &[
+                            ("selection", &selection.label()),
+                            ("error", &format!("{error:#}")),
+                        ],
                     );
                     append_notice(
                         sidecar_warning,
-                        "The saved lens correction failed; the original geometry is shown.",
+                        tr("The saved lens correction failed; the original geometry is shown."),
                     );
                     Arc::clone(original_raw)
                 }
@@ -869,8 +885,12 @@ fn restore_ai_denoise_result(
     let restore_started = Instant::now();
     match calibraw_ai::models::denoise::load_saved_result(result_path, raw) {
         Ok(Some(image)) => {
-            raw.set_ai_denoised_image(image)
-                .map_err(|error| format!("could not install saved AI-denoise result: {error:#}"))?;
+            raw.set_ai_denoised_image(image).map_err(|error| {
+                tr_fmt(
+                    "could not install saved AI-denoise result: {error}",
+                    &[("error", &format!("{error:#}"))],
+                )
+            })?;
             calibraw_core::diagnostics::record(format!(
                 "AI-denoise result restored in {:.3}s from {}",
                 restore_started.elapsed().as_secs_f64(),
@@ -1024,8 +1044,12 @@ fn create_preview_pipeline(
     let options =
         fitted_pipeline_options(mask_count).profile_preview(reserves_profile_preview(preview_raw));
     let compile = || {
-        RawGpuPipeline::new(device, queue, preview_raw, params, options)
-            .map_err(|error| format!("GPU preview setup failed: {error:#}"))
+        RawGpuPipeline::new(device, queue, preview_raw, params, options).map_err(|error| {
+            tr_fmt(
+                "GPU preview setup failed: {error}",
+                &[("error", &format!("{error:#}"))],
+            )
+        })
     };
     let pipeline_started = Instant::now();
     let pipeline = match template {
@@ -1078,9 +1102,14 @@ fn reconstruct_canonical_mask_source(
     pipeline.recompute(queue, device, &reference_params);
     let rgba = pipeline
         .read_output_region_blocking(device, queue, 0, 0, pipeline.width, pipeline.height)
-        .map_err(|error| format!("range-mask source readback failed: {error:#}"))?;
+        .map_err(|error| {
+            tr_fmt(
+                "range-mask source readback failed: {error}",
+                &[("error", &format!("{error:#}"))],
+            )
+        })?;
     let source = MaskRgbImage::new(pipeline.width, pipeline.height, rgba)
-        .ok_or_else(|| "range-mask source dimensions are invalid".to_owned())?;
+        .ok_or_else(|| tr("range-mask source dimensions are invalid").to_owned())?;
     install_missing_range_sources(masks, &source);
     calibraw_core::diagnostics::record(format!(
         "Canonical mask source reconstructed with the preview pipeline in {:.3}s",

@@ -19,6 +19,7 @@ pub(crate) mod discord;
 mod files;
 mod fonts;
 mod graphics;
+mod locale;
 mod service;
 
 #[cfg(target_os = "android")]
@@ -40,6 +41,7 @@ pub(crate) use files::{
 };
 pub(crate) use fonts::{chinese_font, SystemFont};
 pub(crate) use graphics::{PROCESSING_DRIVER_INSTALL_HINT, PROCESSING_GRAPHICS_API};
+pub(crate) use locale::preferred_languages;
 pub(crate) use service::{
     CameraProfileFolderResult, ExportPublishResult, ImportProgress, ImportedLibraryDocument,
     LibraryDocument, LibraryFolder, PickerResult, Platform, PublishedExport, ReplayVideoEncoder,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 pub(super) fn show_export_action_panel<R>(
     ui: &mut Ui,
@@ -87,7 +88,7 @@ fn export_format_card(
     settings: &mut crate::pipeline::ExportSettings,
 ) -> bool {
     let previous_format = *format;
-    moduwu_design::section_card(ui, "Format", |ui| {
+    moduwu_design::section_card(ui, tr("Format"), |ui| {
         ui.horizontal(|ui| {
             let spacing = ui.spacing().item_spacing.x;
             let format_width = ((ui.available_width() - spacing * 3.0) / 4.0).max(1.0);
@@ -114,20 +115,23 @@ fn export_format_card(
 
         if *format == ExportFormat::Jpeg {
             let default_quality = crate::pipeline::ExportSettings::default().jpeg_quality;
-            AdjustmentSlider::new("JPEG quality", &mut settings.jpeg_quality, 1..=100)
+            AdjustmentSlider::new(tr("JPEG quality"), &mut settings.jpeg_quality, 1..=100)
                 .reset_to(default_quality)
                 .show(ui);
             ui.horizontal(|ui| {
                 let spacing = ui.spacing().item_spacing.x;
                 let choice_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
-                let default_help = format!("Restore the default JPEG quality: {default_quality}.");
+                let default_help = tr_fmt(
+                    "Restore the default JPEG quality: {quality}.",
+                    &[("quality", &default_quality)],
+                );
                 for (quality, label, help) in [
-                    (80, "Small", "Quality 80: smaller files."),
-                    (default_quality, "Default", default_help.as_str()),
+                    (80, tr("Small"), tr("Quality 80: smaller files.")),
+                    (default_quality, tr("Default"), default_help.as_str()),
                     (
                         100,
-                        "Max",
-                        "Quality 100: maximum JPEG quality, with larger files.",
+                        tr("Max"),
+                        tr("Quality 100: maximum JPEG quality, with larger files."),
                     ),
                 ] {
                     if moduwu_design::segmented_button(
@@ -146,11 +150,11 @@ fn export_format_card(
         } else {
             moduwu_design::form_combo_with_help(
                 ui,
-                "Precision",
+                tr("Precision"),
                 "export-bit-depth",
-                settings.bit_depth.label(),
+                tr(settings.bit_depth.label()),
                 EXPORT_FIELD_WIDTH,
-                "8-bit is broadly compatible; 16-bit retains more tonal precision; 32-bit float writes a scene-linear TIFF master.",
+                tr("8-bit is broadly compatible; 16-bit retains more tonal precision; 32-bit float writes a scene-linear TIFF master."),
                 |ui| {
                     for depth in [
                         ExportBitDepth::Eight,
@@ -164,7 +168,7 @@ fn export_format_card(
                             ExportFormat::JpegXl => !depth.is_float(),
                         };
                         if supported {
-                            ui.selectable_value(&mut settings.bit_depth, depth, depth.label());
+                            ui.selectable_value(&mut settings.bit_depth, depth, tr(depth.label()));
                         }
                     }
                 },
@@ -177,14 +181,14 @@ fn export_format_card(
 fn export_size_and_metadata_cards(ui: &mut Ui, settings: &mut crate::pipeline::ExportSettings) {
     moduwu_design::section_card_with_help(
         ui,
-        "Resize",
-        "Choose how the exported image is sized. Original uses the full dimensions after cropping and transforms; edge and dimension modes preserve the aspect ratio.",
+        tr("Resize"),
+        tr("Choose how the exported image is sized. Original uses the full dimensions after cropping and transforms; edge and dimension modes preserve the aspect ratio."),
         |ui| {
             moduwu_design::form_combo(
                 ui,
-                "Size",
+                tr("Size"),
                 "export-resize-mode",
-                settings.resize_mode.label(),
+                tr(settings.resize_mode.label()),
                 EXPORT_FIELD_WIDTH,
                 |ui| {
                     for mode in [
@@ -195,7 +199,7 @@ fn export_size_and_metadata_cards(ui: &mut Ui, settings: &mut crate::pipeline::E
                         ExportResizeMode::Height,
                         ExportResizeMode::Percentage,
                     ] {
-                        ui.selectable_value(&mut settings.resize_mode, mode, mode.label());
+                        ui.selectable_value(&mut settings.resize_mode, mode, tr(mode.label()));
                     }
                 },
             );
@@ -203,7 +207,7 @@ fn export_size_and_metadata_cards(ui: &mut Ui, settings: &mut crate::pipeline::E
             match settings.resize_mode {
                 ExportResizeMode::Original => {}
                 ExportResizeMode::Percentage => {
-                    AdjustmentSlider::new("Scale (%)", &mut settings.percentage, 1.0..=400.0)
+                    AdjustmentSlider::new(tr("Scale (%)"), &mut settings.percentage, 1.0..=400.0)
                         .decimals(1)
                         .step(0.1)
                         .reset_to(crate::pipeline::ExportSettings::default().percentage)
@@ -215,11 +219,11 @@ fn export_size_and_metadata_cards(ui: &mut Ui, settings: &mut crate::pipeline::E
                 | ExportResizeMode::Height => {
                     export_number_row(
                         ui,
-                        settings.resize_mode.label(),
+                        tr(settings.resize_mode.label()),
                         &mut settings.edge_or_dimension,
                         1..=crate::pipeline::MAX_EXPORT_EDGE,
                         " px",
-                        "Target size in pixels; the aspect ratio is preserved.",
+                        tr("Target size in pixels; the aspect ratio is preserved."),
                     );
                 }
             }
@@ -228,20 +232,20 @@ fn export_size_and_metadata_cards(ui: &mut Ui, settings: &mut crate::pipeline::E
                 moduwu_design::toggle_with_help(
                     ui,
                     &mut settings.allow_upscale,
-                    "Allow upscaling",
-                    "Allow exports to exceed the original image dimensions when the requested size is larger.",
+                    tr("Allow upscaling"),
+                    tr("Allow exports to exceed the original image dimensions when the requested size is larger."),
                 );
             }
         },
     );
     moduwu_design::card_gap(ui);
 
-    moduwu_design::section_card(ui, "Metadata", |ui| {
+    moduwu_design::section_card(ui, tr("Metadata"), |ui| {
         moduwu_design::toggle_with_help(
             ui,
             &mut settings.keep_metadata,
-            "Keep metadata",
-            "Embeds available source, camera, lens, exposure, creator, original-size, software, and normalized-orientation metadata in the exported image.",
+            tr("Keep metadata"),
+            tr("Embeds available source, camera, lens, exposure, creator, original-size, software, and normalized-orientation metadata in the exported image."),
         );
     });
 }
@@ -324,7 +328,7 @@ impl Sidebar {
                 replay_rect,
                 app.can_export(),
                 egui_phosphor::regular::FILM_STRIP,
-                "Create and share edit replay",
+                tr("Create and share edit replay"),
             )
             .clicked()
             {
@@ -334,7 +338,7 @@ impl Sidebar {
                 .scope_builder(egui::UiBuilder::new().max_rect(export_rect), |ui| {
                     ui.add_enabled(
                         export_enabled,
-                        egui::Button::new("Export…").min_size(export_rect.size()),
+                        egui::Button::new(tr("Export…")).min_size(export_rect.size()),
                     )
                 })
                 .inner;
@@ -343,7 +347,7 @@ impl Sidebar {
                 share_rect,
                 export_enabled,
                 egui_phosphor::regular::SHARE_NETWORK,
-                "Export and share",
+                tr("Export and share"),
             )
             .clicked()
             {
@@ -352,7 +356,7 @@ impl Sidebar {
             export
         } else {
             ui.add_enabled_ui(export_enabled, |ui| {
-                moduwu_design::full_width_button(ui, "Export…")
+                moduwu_design::full_width_button(ui, tr("Export…"))
             })
             .inner
         };
@@ -400,11 +404,11 @@ impl Sidebar {
                 if let Some((completed, total)) = app.export_progress_state() {
                     ui.add_space(moduwu_design::SPACE_SM);
                     let (fraction, text) = if total == 0 {
-                        (0.0, "Preparing export…".to_owned())
+                        (0.0, tr("Preparing export…").to_owned())
                     } else {
                         (
                             (completed as f32 / total as f32).clamp(0.0, 1.0),
-                            format!("Exporting — {completed}/{total} tiles"),
+                            tr_fmt("Exporting — {completed}/{total} tiles", &[("completed", &completed), ("total", &total)]),
                         )
                     };
                     ui.add_sized(
@@ -413,9 +417,7 @@ impl Sidebar {
                     );
                     if let Some((done, batch_total)) = app.library_batch_export_progress() {
                         ui.label(
-                            egui::RichText::new(format!(
-                                "Batch: {done}/{batch_total} images completed"
-                            ))
+                            egui::RichText::new(tr_fmt("Batch: {done}/{batch_total} images completed", &[("done", &done), ("batch_total", &batch_total)]))
                             .small()
                             .color(ui.visuals().weak_text_color()),
                         );
@@ -429,11 +431,11 @@ impl Sidebar {
                     moduwu_design::section_separator(ui);
                     let replay_response = ui
                         .add_enabled_ui(export_enabled, |ui| {
-                            moduwu_design::full_width_button(ui, "Create Edit Replay…")
+                            moduwu_design::full_width_button(ui, tr("Create Edit Replay…"))
                         })
                         .inner
                         .on_hover_text(
-                            "Create a short 30 FPS MP4 that replays the current edit by category.",
+                            tr("Create a short 30 FPS MP4 that replays the current edit by category."),
                         );
                     if replay_response.clicked() {
                         app.create_edit_replay(_frame);
@@ -442,7 +444,7 @@ impl Sidebar {
                 if app.export_task_active() {
                     ui.label(
                         egui::RichText::new(
-                            "An export is already running. Minimize its progress window to keep editing.",
+                            tr("An export is already running. Minimize its progress window to keep editing."),
                         )
                         .small()
                         .color(ui.visuals().weak_text_color()),
@@ -450,7 +452,7 @@ impl Sidebar {
                 } else if !app.can_export() && app.export_progress_state().is_none() {
                     ui.label(
                         egui::RichText::new(
-                            "Export becomes available after a RAW image has finished loading.",
+                            tr("Export becomes available after a RAW image has finished loading."),
                         )
                         .small()
                         .color(ui.visuals().weak_text_color()),

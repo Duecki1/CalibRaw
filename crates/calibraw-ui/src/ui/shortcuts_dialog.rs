@@ -7,6 +7,7 @@
 //! what the user is doing, most general first.
 
 use crate::app::CalibRawApp;
+use crate::i18n::tr;
 use eframe::egui;
 
 /// Primary modifier in the platform's own spelling (egui's `COMMAND`).
@@ -38,94 +39,112 @@ fn with_command(rest: &str) -> String {
 fn groups() -> Vec<Group> {
     vec![
         Group {
-            title: "General",
+            title: tr("General"),
             controls: vec![
-                control("Undo", &[&with_command("Z")]),
-                control("Redo", &[&with_command("Shift+Z"), &with_command("Y")]),
-                control("Save edits now", &[&with_command("S")]),
-                control("Previous / next photo in Develop", &["←", "→"]),
+                control(tr("Undo"), &[&with_command("Z")]),
+                control(tr("Redo"), &[&with_command("Shift+Z"), &with_command("Y")]),
+                control(tr("Save edits now"), &[&with_command("S")]),
+                control(tr("Previous / next photo in Develop"), &["←", "→"]),
             ],
         },
         Group {
-            title: "Zoom and pan",
+            title: tr("Zoom and pan"),
             controls: vec![
-                control("Zoom in", &[&with_command("+"), "Scroll up", "Pinch out"]),
-                control("Zoom out", &[&with_command("-"), "Scroll down", "Pinch in"]),
-                control("Fit photo to view", &[&with_command("0")]),
-                control("Zoom to 100%", &[&with_command("1")]),
-                control("Switch between fit and 100%", &["Double-click photo"]),
-                control("Pan", &["Drag", "Middle-drag", "Space+Drag"]),
-            ],
-        },
-        Group {
-            title: "Library",
-            controls: vec![
-                control("Open a photo", &["Click", "Enter"]),
-                control("Move between photos", &["←", "→", "↑", "↓"]),
                 control(
-                    "Jump a screen, or to the first or last photo",
+                    tr("Zoom in"),
+                    &[&with_command("+"), tr("Scroll up"), tr("Pinch out")],
+                ),
+                control(
+                    tr("Zoom out"),
+                    &[&with_command("-"), tr("Scroll down"), tr("Pinch in")],
+                ),
+                control(tr("Fit photo to view"), &[&with_command("0")]),
+                control(tr("Zoom to 100%"), &[&with_command("1")]),
+                control(
+                    tr("Switch between fit and 100%"),
+                    &[tr("Double-click photo")],
+                ),
+                control(
+                    tr("Pan"),
+                    &[tr("Drag"), tr("Middle-drag"), tr("Space+Drag")],
+                ),
+            ],
+        },
+        Group {
+            title: tr("Library"),
+            controls: vec![
+                control(tr("Open a photo"), &[tr("Click"), "Enter"]),
+                control(tr("Move between photos"), &["←", "→", "↑", "↓"]),
+                control(
+                    tr("Jump a screen, or to the first or last photo"),
                     &["Page Up", "Page Down", "Home", "End"],
                 ),
                 control(
-                    "Add or remove a photo from the selection",
-                    &[&with_command("Click"), "Click its check circle"],
+                    tr("Add or remove a photo from the selection"),
+                    &[&with_command(tr("Click")), tr("Click its check circle")],
                 ),
-                control("Select a range", &["Shift+Click", "Shift+Arrow"]),
-                control("Add or remove the active photo", &["Space"]),
-                control("Select all", &[&with_command("A")]),
-                control("Stop selecting", &["Esc"]),
-                control("Photo menu", &["Right-click"]),
-                control("Copy adjustments", &[&with_command("Shift+C")]),
-                control("Paste adjustments", &[&with_command("Shift+V")]),
-                control("Export", &[&with_command("Shift+E")]),
-                control("Delete", &["Delete", "Backspace"]),
-                control("Search filenames", &[&with_command("F")]),
-                control("Select all search matches", &["Enter in search"]),
-                control("Clear search", &["Esc in search"]),
+                control(tr("Select a range"), &[tr("Shift+Click"), "Shift+Arrow"]),
+                control(tr("Add or remove the active photo"), &["Space"]),
+                control(tr("Select all"), &[&with_command("A")]),
+                control(tr("Stop selecting"), &["Esc"]),
+                control(tr("Photo menu"), &[tr("Right-click")]),
+                control(tr("Copy adjustments"), &[&with_command("Shift+C")]),
+                control(tr("Paste adjustments"), &[&with_command("Shift+V")]),
+                control(tr("Export"), &[&with_command("Shift+E")]),
+                control(tr("Delete"), &["Delete", "Backspace"]),
+                control(tr("Search filenames"), &[&with_command("F")]),
+                control(tr("Select all search matches"), &[tr("Enter in search")]),
+                control(tr("Clear search"), &[tr("Esc in search")]),
             ],
         },
         Group {
-            title: "Rating and flags",
+            title: tr("Rating and flags"),
             controls: vec![
-                control("Rate 1 to 5 stars", &["1", "2", "3", "4", "5"]),
-                control("Clear the rating", &["0"]),
-                control("Lower or raise the rating", &["[", "]"]),
-                control("Pick, reject or unflag", &["P", "X", "U"]),
-                control("Switch between picked and unflagged", &["`"]),
-                control("Rate or flag, then go to the next photo", &["Shift+Key"]),
-            ],
-        },
-        Group {
-            title: "Masks and tools",
-            controls: vec![
-                control("Bend a path mask while drawing", &["Alt+Drag"]),
+                control(tr("Rate 1 to 5 stars"), &["1", "2", "3", "4", "5"]),
+                control(tr("Clear the rating"), &["0"]),
+                control(tr("Lower or raise the rating"), &["[", "]"]),
+                control(tr("Pick, reject or unflag"), &["P", "X", "U"]),
+                control(tr("Switch between picked and unflagged"), &["`"]),
                 control(
-                    "Set the retouch source",
-                    &[&with_command("Click"), "Right-click"],
+                    tr("Rate or flag, then go to the next photo"),
+                    &[tr("Shift+Key")],
                 ),
-                control("Snap a band angle to steps", &["Shift+Drag knob"]),
-                control("Nudge a focused handle", &["←", "→", "↑", "↓"]),
-                control("Nudge a focused handle finely", &["Shift+Arrow"]),
-                control(
-                    "Change a light's depth",
-                    &["Scroll over handle", "Page Up", "Page Down"],
-                ),
-                control("Reset a handle", &["Double-click"]),
-                control("Cancel the point-colour picker", &["Esc"]),
             ],
         },
         Group {
-            title: "Sliders, curves and pads",
+            title: tr("Masks and tools"),
             controls: vec![
-                control("Reset a slider, dial or wheel", &["Double-click"]),
-                control("Step a slider or range handle", &["←", "→"]),
-                control("Step range handles in larger steps", &["Shift+Arrow"]),
-                control("Switch range handle", &["↑", "↓"]),
-                control("Move a 2D pad marker", &["←", "→", "↑", "↓"]),
-                control("Move a 2D pad marker in larger steps", &["Shift+Arrow"]),
-                control("Add a tone-curve point", &["Click"]),
-                control("Remove a tone-curve point", &["Right-click point"]),
-                control("Reset the reference split", &["Double-click divider"]),
+                control(tr("Bend a path mask while drawing"), &[tr("Alt+Drag")]),
+                control(
+                    tr("Set the retouch source"),
+                    &[&with_command(tr("Click")), tr("Right-click")],
+                ),
+                control(tr("Snap a band angle to steps"), &[tr("Shift+Drag knob")]),
+                control(tr("Nudge a focused handle"), &["←", "→", "↑", "↓"]),
+                control(tr("Nudge a focused handle finely"), &["Shift+Arrow"]),
+                control(
+                    tr("Change a light's depth"),
+                    &[tr("Scroll over handle"), "Page Up", "Page Down"],
+                ),
+                control(tr("Reset a handle"), &[tr("Double-click")]),
+                control(tr("Cancel the point-colour picker"), &["Esc"]),
+            ],
+        },
+        Group {
+            title: tr("Sliders, curves and pads"),
+            controls: vec![
+                control(tr("Reset a slider, dial or wheel"), &[tr("Double-click")]),
+                control(tr("Step a slider or range handle"), &["←", "→"]),
+                control(tr("Step range handles in larger steps"), &["Shift+Arrow"]),
+                control(tr("Switch range handle"), &["↑", "↓"]),
+                control(tr("Move a 2D pad marker"), &["←", "→", "↑", "↓"]),
+                control(tr("Move a 2D pad marker in larger steps"), &["Shift+Arrow"]),
+                control(tr("Add a tone-curve point"), &[tr("Click")]),
+                control(tr("Remove a tone-curve point"), &[tr("Right-click point")]),
+                control(
+                    tr("Reset the reference split"),
+                    &[tr("Double-click divider")],
+                ),
             ],
         },
     ]
@@ -166,7 +185,7 @@ fn show_group(ui: &mut egui::Ui, group: &Group) {
                 for (index, input) in control.inputs.iter().enumerate().rev() {
                     key_cap(ui, input);
                     if index > 0 {
-                        ui.label("or");
+                        ui.label(tr("or"));
                     }
                 }
             });
@@ -184,7 +203,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
     // so the sidebar scrollbar style is applied around the call.
     let page_scroll = ctx.global_style().spacing.scroll;
     ctx.global_style_mut(|style| style.spacing.scroll = sidebar_scroll_style());
-    moduwu_design::Dialog::new("keyboard-shortcuts", "Keyboard shortcuts")
+    moduwu_design::Dialog::new("keyboard-shortcuts", tr("Keyboard shortcuts"))
         .size(moduwu_design::DialogSize::Wide)
         .show_with_footer(
             ctx,
@@ -194,7 +213,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
                 }
             },
             |ui| {
-                if moduwu_design::primary_action_button(ui, "Close").clicked() {
+                if moduwu_design::primary_action_button(ui, tr("Close")).clicked() {
                     close = true;
                 }
                 if !close

@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use calibraw_ai::AiFeature;
 
 const ARTIFACTS_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models";
@@ -38,30 +39,32 @@ impl CalibRawApp {
             AiFeature::Subject => {
                 let checkpoint = self.subject_model();
                 AiJobDescription {
-                    label: "subject selection",
-                    model: format!("BiRefNet (~{:.0} MB)", megabytes(checkpoint.download_bytes)),
-                    purpose: "create subject and background masks",
+                    label: tr("subject selection"),
+                    model: tr_fmt("BiRefNet (~{size} MB)", &[("size", &format!("{:.0}", megabytes(checkpoint.download_bytes)))]),
+                    purpose: tr("create subject and background masks"),
                     details_id: "subject-download-details",
                     artifact: (
-                        "Subject model artifacts",
+                        tr("Subject model artifacts"),
                         format!("{ARTIFACTS_URL}/briefnet"),
                     ),
-                    details: format!(
-                        "{} runs locally with a {} × {} input. License: MIT.",
-                        checkpoint.name,
-                        checkpoint.input.edge(),
-                        checkpoint.input.edge()
+                    details: tr_fmt(
+                        "{name} runs locally with a {width} × {height} input. License: MIT.",
+                        &[
+                            ("name", &checkpoint.name),
+                            ("width", &checkpoint.input.edge()),
+                            ("height", &checkpoint.input.edge()),
+                        ],
                     ),
                     terms: None,
                     restore: None,
                 }
             }
             AiFeature::Sky => AiJobDescription {
-                label: "sky selection",
-                model: "SkySeg U2Net (~176 MB)".to_owned(),
-                purpose: "create sky masks",
+                label: tr("sky selection"),
+                model: tr("SkySeg U2Net (~176 MB)").to_owned(),
+                purpose: tr("create sky masks"),
                 details_id: "sky-download-details",
-                artifact: ("Sky model artifact", format!("{ARTIFACTS_URL}/skyseg")),
+                artifact: (tr("Sky model artifact"), format!("{ARTIFACTS_URL}/skyseg")),
                 details: "SkySeg U2Net runs locally on a 320 × 320 image and produces a sky \
                           probability mask. License: MIT."
                     .to_owned(),
@@ -71,16 +74,18 @@ impl CalibRawApp {
             AiFeature::SceneDepth => {
                 let depth_model = calibraw_ai::models::depth::MODEL;
                 AiJobDescription {
-                    label: "scene depth",
-                    model: format!(
-                        "{} (~{:.0} MB)",
-                        depth_model.name,
-                        megabytes(depth_model.download_bytes)
+                    label: tr("scene depth"),
+                    model: tr_fmt(
+                        "{name} (~{size} MB)",
+                        &[
+                            ("name", &depth_model.name),
+                            ("size", &format!("{:.0}", megabytes(depth_model.download_bytes))),
+                        ],
                     ),
-                    purpose: "estimate scene depth for depth masks and effects",
+                    purpose: tr("estimate scene depth for depth masks and effects"),
                     details_id: "depth-download-details",
                     artifact: (
-                        "Depth model artifact",
+                        tr("Depth model artifact"),
                         calibraw_ai::models::depth::ARTIFACT_PAGE_URL.to_owned(),
                     ),
                     details: format!(
@@ -94,11 +99,11 @@ impl CalibRawApp {
                 }
             }
             AiFeature::Object => AiJobDescription {
-                label: "object selection",
-                model: format!("SAM 2.1 (~{:.0} MB)", megabytes(SAM21_MODEL_BYTES_ESTIMATE)),
-                purpose: "create object masks",
+                label: tr("object selection"),
+                model: tr_fmt("SAM 2.1 (~{size} MB)", &[("size", &format!("{:.0}", megabytes(SAM21_MODEL_BYTES_ESTIMATE)))]),
+                purpose: tr("create object masks"),
                 details_id: "object-download-details",
-                artifact: ("Object model artifacts", format!("{ARTIFACTS_URL}/sam2")),
+                artifact: (tr("Object model artifacts"), format!("{ARTIFACTS_URL}/sam2")),
                 details: "SAM 2.1 Hiera Tiny uses an encoder and decoder with local \
                           edge-aware cleanup. License: Apache-2.0."
                     .to_owned(),
@@ -110,20 +115,20 @@ impl CalibRawApp {
                     foreground_model, PeopleModels, BODY_PARTS_LICENSE, BODY_PARTS_MODEL,
                     DETECTOR_MODEL,
                 };
-                let detector = format!(
-                    "{} finds the people in the photo (License: Apache-2.0).",
-                    DETECTOR_MODEL.name
+                let detector = tr_fmt(
+                    "{name} finds the people in the photo (License: Apache-2.0).",
+                    &[("name", &DETECTOR_MODEL.name)],
                 );
                 let (models, bytes, details, terms) = match self.people_models() {
                     PeopleModels::Outline { foreground, .. } => {
                         let foreground = foreground_model(foreground.precision);
                         (
-                            "RF-DETR-Seg and BiRefNet",
+                            tr("RF-DETR-Seg and BiRefNet"),
                             DETECTOR_MODEL.download_bytes + foreground.download_bytes,
-                            format!(
-                                "{detector} {} then outlines each person you choose, on a \
+                            tr_fmt(
+                                "{detector} {model} then outlines each person you choose, on a \
                                  crop around them (License: MIT).",
-                                foreground.name
+                                &[("detector", &detector), ("model", &foreground.name)],
                             ),
                             None,
                         )
@@ -132,80 +137,88 @@ impl CalibRawApp {
                         let foreground = foreground.map(|model| foreground_model(model.precision));
                         let (models, foreground_details) = match foreground {
                             Some(model) => (
-                                "RF-DETR-Seg, Sapiens2 and BiRefNet",
-                                format!(
-                                    " For high quality, {} first outlines each person more \
+                                tr("RF-DETR-Seg, Sapiens2 and BiRefNet"),
+                                tr_fmt(
+                                    " For high quality, {model} first outlines each person more \
                                      finely (License: MIT).",
-                                    model.name
+                                    &[("model", &model.name)],
                                 ),
                             ),
-                            None => ("RF-DETR-Seg and Sapiens2", String::new()),
+                            None => (tr("RF-DETR-Seg and Sapiens2"), String::new()),
                         };
                         (
                             models,
                             DETECTOR_MODEL.download_bytes
                                 + BODY_PARTS_MODEL.download_bytes
                                 + foreground.map_or(0, |model| model.download_bytes),
-                            format!(
-                                "{detector} {} then segments the body parts of each person \
+                            tr_fmt(
+                                "{detector} {model} then segments the body parts of each person \
                                  you choose, on a crop around them (License: Sapiens2 \
                                  License).{foreground_details}",
-                                BODY_PARTS_MODEL.name
+                                &[
+                                    ("detector", &detector),
+                                    ("model", &BODY_PARTS_MODEL.name),
+                                    ("foreground_details", &foreground_details),
+                                ],
                             ),
-                            Some(("Sapiens2 License", BODY_PARTS_LICENSE)),
+                            Some((tr("Sapiens2 License"), BODY_PARTS_LICENSE)),
                         )
                     }
                 };
                 AiJobDescription {
-                    label: "people selection",
-                    model: format!("{models} (~{:.0} MB)", megabytes(bytes)),
-                    purpose: "create people masks",
+                    label: tr("people selection"),
+                    model: tr_fmt("{models} (~{size} MB)", &[("models", &models), ("size", &format!("{:.0}", megabytes(bytes)))]),
+                    purpose: tr("create people masks"),
                     details_id: "people-download-details",
-                    artifact: ("People model artifacts", ARTIFACTS_URL.to_owned()),
+                    artifact: (tr("People model artifacts"), ARTIFACTS_URL.to_owned()),
                     details,
                     terms,
                     restore: None,
                 }
             }
             AiFeature::Remove => AiJobDescription {
-                label: "Remove",
-                model: format!(
-                    "Big-LaMa (~{:.0} MB)",
-                    megabytes(calibraw_ai::models::remove::MODEL.download_bytes)
+                label: tr("Remove"),
+                model: tr_fmt(
+                    "Big-LaMa (~{size} MB)",
+                    &[(
+                        "size",
+                        &format!(
+                            "{:.0}",
+                            megabytes(calibraw_ai::models::remove::MODEL.download_bytes)
+                        ),
+                    )],
                 ),
-                purpose: "remove unwanted content",
+                purpose: tr("remove unwanted content"),
                 details_id: "remove-download-details",
-                artifact: ("Big-LaMa model artifact", format!("{ARTIFACTS_URL}/lama")),
-                details: format!(
-                    "Big-LaMa Places2 ONNX repairs a local context crop. License: {}. \
-                     Source: {}. CalibRaw verifies its pinned size and SHA-256 ({}).",
-                    calibraw_ai::models::remove::MODEL_LICENSE,
-                    calibraw_ai::models::remove::MODEL_PROVENANCE,
-                    &calibraw_ai::models::remove::MODEL.sha256[..12]
-                ),
+                artifact: (tr("Big-LaMa model artifact"), format!("{ARTIFACTS_URL}/lama")),
+                details: tr_fmt("Big-LaMa Places2 ONNX repairs a local context crop. License: {model_license}. \
+                     Source: {model_provenance}. CalibRaw verifies its pinned size and SHA-256 ({sha}).", &[("model_license", &calibraw_ai::models::remove::MODEL_LICENSE), ("model_provenance", &calibraw_ai::models::remove::MODEL_PROVENANCE), ("sha", &&calibraw_ai::models::remove::MODEL.sha256[..12])]),
                 terms: None,
                 restore: None,
             },
             AiFeature::Denoise => AiJobDescription {
-                label: "AI denoise",
-                model: format!(
-                    "RawNIND (~{:.1} MB)",
-                    megabytes(calibraw_ai::models::denoise::PACKAGE_BYTES)
+                label: tr("AI denoise"),
+                model: tr_fmt(
+                    "RawNIND (~{size} MB)",
+                    &[(
+                        "size",
+                        &format!("{:.1}", megabytes(calibraw_ai::models::denoise::PACKAGE_BYTES)),
+                    )],
                 ),
-                purpose: "apply AI denoise",
+                purpose: tr("apply AI denoise"),
                 details_id: "denoise-download-details",
-                artifact: ("RawNIND model artifact", format!("{ARTIFACTS_URL}/rawnind")),
+                artifact: (tr("RawNIND model artifact"), format!("{ARTIFACTS_URL}/rawnind")),
                 details: "RawNIND handles Bayer denoise/demosaic and X-Trans images. The \
                           verified models are cached locally under GPL-3.0."
                     .to_owned(),
                 terms: None,
                 restore: Some(AiRestorePrompt {
-                    title: "Re-apply AI denoise?",
+                    title: tr("Re-apply AI denoise?"),
                     explanation: "AI denoise is turned on for this image, but there is no saved \
                                   AI-denoise result for it. Applying it runs RawNIND on this \
                                   device again, which can take a few minutes.",
-                    accept: "Re-apply",
-                    decline: "Turn off AI denoise",
+                    accept: tr("Re-apply"),
+                    decline: tr("Turn off AI denoise"),
                 }),
             },
         }
@@ -234,12 +247,15 @@ impl CalibRawApp {
             .filter(|_| origin == AiJobOrigin::Restore);
         let title = match (restore, model_download_needed, runtime_download_needed) {
             (Some(restore), ..) => restore.title.to_owned(),
-            (None, true, true) => {
-                format!("Download {} model and ONNX Runtime?", description.label)
+            (None, true, true) => tr_fmt(
+                "Download {label} model and ONNX Runtime?",
+                &[("label", &description.label)],
+            ),
+            (None, true, false) => {
+                tr_fmt("Download {label} model?", &[("label", &description.label)])
             }
-            (None, true, false) => format!("Download {} model?", description.label),
-            (None, false, true) => "Download ONNX Runtime?".to_owned(),
-            (None, false, false) => format!("Prepare {}?", description.label),
+            (None, false, true) => tr("Download ONNX Runtime?").to_owned(),
+            (None, false, false) => tr_fmt("Prepare {label}?", &[("label", &description.label)]),
         };
         let runtime_ready = self.ai_runtime_ready();
         let mut action = moduwu_design::DialogAction::None;
@@ -264,9 +280,9 @@ impl CalibRawApp {
                         description.terms.filter(|_| model_download_needed)
                     {
                         ui.horizontal_wrapped(|ui| {
-                            ui.label("Downloading accepts the model's");
+                            ui.label(tr("Downloading accepts the model's"));
                             ui.hyperlink_to(license, url);
-                            ui.label("which prohibits some uses, such as surveillance.");
+                            ui.label(tr("which prohibits some uses, such as surveillance."));
                         });
                     }
                     self.show_ai_download_details(
@@ -283,11 +299,11 @@ impl CalibRawApp {
                 },
                 |ui| {
                     let accept = match restore {
-                        _ if download_needed => "Accept & download",
+                        _ if download_needed => tr("Accept & download"),
                         Some(restore) => restore.accept,
-                        None => "Continue",
+                        None => tr("Continue"),
                     };
-                    let decline = restore.map_or("Cancel", |restore| restore.decline);
+                    let decline = restore.map_or(tr("Cancel"), |restore| restore.decline);
                     action = Self::show_ai_consent_buttons(ui, decline, accept, runtime_ready);
                 },
             );

@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::{MaskStripActions, MaskStripCommand};
+use crate::i18n::tr;
 
 impl Sidebar {
     fn strip_drag_id() -> egui::Id {
@@ -15,7 +16,7 @@ impl Sidebar {
         Self::show_ai_update_card(ui, app, frame);
 
         if app.masks.stack.masks.is_empty() {
-            moduwu_design::section_card(ui, "No masks yet", |_| {});
+            moduwu_design::section_card(ui, tr("No masks yet"), |_| {});
             return None;
         }
 

@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::{AutoGeometry, CropTool};
+use crate::i18n::tr;
 use crate::pipeline::{CropAspectRatio, GeometryTransform, PerspectiveCorrection};
 
 impl Sidebar {
@@ -18,7 +19,7 @@ impl Sidebar {
         if app.develop_ui.crop_constraint_reference.is_none() {
             app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
         }
-        moduwu_design::section_card(ui, "Aspect ratio", |ui| {
+        moduwu_design::section_card(ui, tr("Aspect ratio"), |ui| {
             let previous_aspect = app.develop.geometry.aspect_ratio;
             let (output_width, output_height) = app
                 .develop
@@ -38,14 +39,14 @@ impl Sidebar {
         });
 
         moduwu_design::card_gap(ui);
-        moduwu_design::section_card(ui, "Rotate & flip", |ui| {
+        moduwu_design::section_card(ui, tr("Rotate & flip"), |ui| {
             let size = moduwu_design::toolbar_icon_size();
             ui.horizontal_wrapped(|ui| {
                 if moduwu_design::ghost_icon_button(
                     ui,
                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                     size,
-                    "Rotate 90° counter-clockwise",
+                    tr("Rotate 90° counter-clockwise"),
                 )
                 .clicked()
                 {
@@ -55,7 +56,7 @@ impl Sidebar {
                     ui,
                     egui_phosphor::regular::ARROW_CLOCKWISE,
                     size,
-                    "Rotate 90° clockwise",
+                    tr("Rotate 90° clockwise"),
                 )
                 .clicked()
                 {
@@ -66,7 +67,7 @@ impl Sidebar {
                     egui_phosphor::regular::FLIP_HORIZONTAL,
                     app.develop.geometry.flip_horizontal,
                     size,
-                    "Flip horizontal",
+                    tr("Flip horizontal"),
                 )
                 .clicked()
                 {
@@ -77,7 +78,7 @@ impl Sidebar {
                     egui_phosphor::regular::FLIP_VERTICAL,
                     app.develop.geometry.flip_vertical,
                     size,
-                    "Flip vertical",
+                    tr("Flip vertical"),
                 )
                 .clicked()
                 {
@@ -86,9 +87,9 @@ impl Sidebar {
                 ui.separator();
                 let straightening = app.develop_ui.crop_tool == CropTool::Straighten;
                 let straighten_tooltip = if straightening {
-                    "Cancel straighten line"
+                    tr("Cancel straighten line")
                 } else {
-                    "Draw straighten line: drag along a horizon or vertical edge in the preview to level it"
+                    tr("Draw straighten line: drag along a horizon or vertical edge in the preview to level it")
                 };
                 if moduwu_design::ghost_icon_toggle_button(
                     ui,
@@ -111,7 +112,7 @@ impl Sidebar {
                             ui,
                             egui_phosphor::regular::MAGIC_WAND,
                             size,
-                            "Auto straighten: level the image using its horizon and vertical edges",
+                            tr("Auto straighten: level the image using its horizon and vertical edges"),
                         )
                     })
                     .inner
@@ -122,7 +123,7 @@ impl Sidebar {
                 }
             });
             AdjustmentSlider::new(
-                "Straighten",
+                tr("Straighten"),
                 &mut app.develop.geometry.rotation_degrees,
                 -GeometryTransform::MAX_ROTATION_DEGREES..=GeometryTransform::MAX_ROTATION_DEGREES,
             )
@@ -132,7 +133,7 @@ impl Sidebar {
         });
 
         moduwu_design::card_gap(ui);
-        moduwu_design::section_card(ui, "Transform", |ui| {
+        moduwu_design::section_card(ui, tr("Transform"), |ui| {
             let size = moduwu_design::toolbar_icon_size();
             ui.horizontal_wrapped(|ui| {
                 if ui
@@ -141,7 +142,7 @@ impl Sidebar {
                             ui,
                             egui_phosphor::regular::MAGIC_WAND,
                             size,
-                            "Auto perspective: make vertical lines parallel and level the image",
+                            tr("Auto perspective: make vertical lines parallel and level the image"),
                         )
                     })
                     .inner
@@ -152,9 +153,9 @@ impl Sidebar {
                 }
                 let guiding = app.develop_ui.crop_tool == CropTool::Guides;
                 let guides_tooltip = if guiding {
-                    "Stop drawing guides"
+                    tr("Stop drawing guides")
                 } else {
-                    "Guided perspective: draw up to four lines along edges that should be vertical or horizontal; right-click a line to remove it"
+                    tr("Guided perspective: draw up to four lines along edges that should be vertical or horizontal; right-click a line to remove it")
                 };
                 if moduwu_design::ghost_icon_toggle_button(
                     ui,
@@ -175,7 +176,10 @@ impl Sidebar {
             let range = -PerspectiveCorrection::MAX_DEGREES..=PerspectiveCorrection::MAX_DEGREES;
             let mut perspective = app.develop.geometry.displayed_perspective();
             let mut perspective_changed = false;
-            for (label, value) in ["Vertical", "Horizontal"].into_iter().zip(&mut perspective) {
+            for (label, value) in [tr("Vertical"), tr("Horizontal")]
+                .into_iter()
+                .zip(&mut perspective)
+            {
                 perspective_changed |= AdjustmentSlider::new(label, value, range.clone())
                     .decimals(1)
                     .step(0.1)
@@ -191,7 +195,7 @@ impl Sidebar {
             }
             let mut aspect = app.develop.geometry.displayed_aspect_stretch();
             if AdjustmentSlider::new(
-                "Aspect",
+                tr("Aspect"),
                 &mut aspect,
                 -GeometryTransform::MAX_ASPECT_STRETCH..=GeometryTransform::MAX_ASPECT_STRETCH,
             )
@@ -205,8 +209,8 @@ impl Sidebar {
                 -GeometryTransform::MAX_SKEW_DEGREES..=GeometryTransform::MAX_SKEW_DEGREES;
             let geometry = &mut app.develop.geometry;
             for (label, value) in [
-                ("Horizontal skew", &mut geometry.horizontal_skew_degrees),
-                ("Vertical skew", &mut geometry.vertical_skew_degrees),
+                (tr("Horizontal skew"), &mut geometry.horizontal_skew_degrees),
+                (tr("Vertical skew"), &mut geometry.vertical_skew_degrees),
             ] {
                 AdjustmentSlider::new(label, value, skew_range.clone())
                     .decimals(1)
@@ -240,8 +244,10 @@ impl Sidebar {
     /// fixed.
     fn show_aspect_ratio_picker(ui: &mut Ui, ratio: &mut CropAspectRatio, crop_is_portrait: bool) {
         moduwu_design::action_row(ui, |ui| {
-            for (choice, label) in AspectChoice::ALL {
-                if moduwu_design::chip(ui, label, AspectChoice::of(*ratio) == choice).clicked() {
+            for choice in AspectChoice::ALL {
+                if moduwu_design::chip(ui, choice.label(), AspectChoice::of(*ratio) == choice)
+                    .clicked()
+                {
                     *ratio = choice.pick(*ratio, crop_is_portrait);
                 }
             }
@@ -251,7 +257,7 @@ impl Sidebar {
             if moduwu_design::segmented_control(
                 ui,
                 &mut portrait,
-                &[(false, "Landscape"), (true, "Portrait")],
+                &[(false, tr("Landscape")), (true, tr("Portrait"))],
                 width,
             )
             .changed()
@@ -297,15 +303,28 @@ enum AspectChoice {
 }
 
 impl AspectChoice {
-    const ALL: [(Self, &'static str); 7] = [
-        (Self::Free, "Free"),
-        (Self::Original, "Original"),
-        (Self::Square, "1:1"),
-        (Self::FourThree, "4:3"),
-        (Self::ThreeTwo, "3:2"),
-        (Self::SixteenNine, "16:9"),
-        (Self::Custom, "Custom"),
+    const ALL: [Self; 7] = [
+        Self::Free,
+        Self::Original,
+        Self::Square,
+        Self::FourThree,
+        Self::ThreeTwo,
+        Self::SixteenNine,
+        Self::Custom,
     ];
+
+    /// The chip's text. Ratios are numbers and stay as they are.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Free => tr("Free"),
+            Self::Original => tr("Original"),
+            Self::Square => "1:1",
+            Self::FourThree => "4:3",
+            Self::ThreeTwo => "3:2",
+            Self::SixteenNine => "16:9",
+            Self::Custom => tr("Custom"),
+        }
+    }
 
     fn of(ratio: CropAspectRatio) -> Self {
         match ratio {

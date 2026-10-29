@@ -1,6 +1,7 @@
 //! Rendering edited (developed) thumbnails on a shared headless GPU device.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 pub(in crate::ui::library) type ThumbnailLoader = Arc<
     dyn Fn(&LibraryAsset, ThumbnailLoadStage) -> Result<LoadedLibraryThumbnail, String>
@@ -29,15 +30,13 @@ pub(in crate::ui::library) fn developed_thumbnail_gpu(
         })
         .map_err(|error| match error {
             calibraw_gpu::HeadlessDeviceError::NoAdapter(error) => {
-                format!("could not find a GPU for edited thumbnails: {error}")
+                tr_fmt("could not find a GPU for edited thumbnails: {error}", &[("error", &error)])
             }
             calibraw_gpu::HeadlessDeviceError::TextureTooLarge {
                 required, supported, ..
-            } => format!(
-                "edited thumbnails require a {required}-pixel GPU texture, but this adapter supports {supported}"
-            ),
+            } => tr_fmt("edited thumbnails require a {required}-pixel GPU texture, but this adapter supports {supported}", &[("required", &required), ("supported", &supported)]),
             calibraw_gpu::HeadlessDeviceError::Device(error) => {
-                format!("could not create the edited-thumbnail GPU device: {error}")
+                tr_fmt("could not create the edited-thumbnail GPU device: {error}", &[("error", &error)])
             }
         })?;
         let (device, queue) = (gpu.device, gpu.queue);
@@ -66,9 +65,9 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
             return Ok(None);
         }
         Err(error) => {
-            return Err(format!(
-                "could not load edits for {}: {error}",
-                path.display()
+            return Err(tr_fmt(
+                "could not load edits for {path}: {error}",
+                &[("path", &path.display()), ("error", &error)],
             ))
         }
     };
@@ -76,7 +75,7 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
         return Ok(None);
     }
     let sidecar_fingerprint = crate::sidecar::desktop_sidecar_fingerprint(path)?
-        .ok_or_else(|| "edit sidecar disappeared before thumbnail rendering".to_owned())?;
+        .ok_or_else(|| tr("edit sidecar disappeared before thumbnail rendering").to_owned())?;
 
     let _render_permit = calibraw_core::thumbnail_cache::acquire_rendered_thumbnail_worker();
 
@@ -114,7 +113,15 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
         camera_profile_folder.as_deref(),
         requested_camera_profile.as_deref(),
     )
-    .map_err(|error| format!("could not decode edited RAW {}: {error:#}", path.display()))?;
+    .map_err(|error| {
+        tr_fmt(
+            "could not decode edited RAW {path}: {error}",
+            &[
+                ("path", &path.display()),
+                ("error", &format!("{:#}", error)),
+            ],
+        )
+    })?;
     let mut edits = loaded_sidecar.edits;
     // A film negative the Library marked renders as its estimate; opening
     // the photo saves one.
@@ -173,7 +180,12 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
         &initial_params,
         PipelineOptions::new(ProcessingQuality::Preview),
     )
-    .map_err(|error| format!("could not prepare edited thumbnail rendering: {error:#}"))?;
+    .map_err(|error| {
+        tr_fmt(
+            "could not prepare edited thumbnail rendering: {error}",
+            &[("error", &format!("{:#}", error))],
+        )
+    })?;
     if crate::app::masks_have_missing_range_sources(&masks) {
         let neutral_exposure = edits.exposure.source_reference();
         let neutral_masks = MaskStack::default();
@@ -188,9 +200,14 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
                 preview_raw.width,
                 preview_raw.height,
             )
-            .map_err(|error| format!("could not build range-mask thumbnail source: {error:#}"))?;
+            .map_err(|error| {
+                tr_fmt(
+                    "could not build range-mask thumbnail source: {error}",
+                    &[("error", &format!("{:#}", error))],
+                )
+            })?;
         let source = MaskRgbImage::new(preview_raw.width, preview_raw.height, rgba)
-            .ok_or_else(|| "range-mask thumbnail source has invalid dimensions".to_owned())?;
+            .ok_or_else(|| tr("range-mask thumbnail source has invalid dimensions").to_owned())?;
         crate::app::install_missing_range_sources(&mut masks, &source);
     }
 
@@ -205,7 +222,12 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
         );
         pipeline
             .update_mask_layer(&gpu.queue, layer, &values)
-            .map_err(|error| format!("could not apply thumbnail local mask: {error:#}"))?;
+            .map_err(|error| {
+                tr_fmt(
+                    "could not apply thumbnail local mask: {error}",
+                    &[("error", &format!("{:#}", error))],
+                )
+            })?;
     }
     pipeline
         .update_light_rays_mask_layers(
@@ -215,7 +237,12 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
             preview_raw.height,
             preview_raw.lens_geometry.as_deref(),
         )
-        .map_err(|error| format!("could not apply thumbnail Light Rays mask: {error:#}"))?;
+        .map_err(|error| {
+            tr_fmt(
+                "could not apply thumbnail Light Rays mask: {error}",
+                &[("error", &format!("{:#}", error))],
+            )
+        })?;
     let params = GpuParams::new(&edits.exposure, &masks, &preview_raw)
         .with_vignette_geometry(geometry)
         .with_look_lut(look.as_ref());
@@ -223,7 +250,12 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
     let thumbnail = pipeline
         .output_snapshot(&gpu.device, &gpu.queue)
         .read_thumbnail_blocking(&gpu.device, &gpu.queue, maximum_edge)
-        .map_err(|error| format!("could not read edited thumbnail pixels: {error:#}"))?;
+        .map_err(|error| {
+            tr_fmt(
+                "could not read edited thumbnail pixels: {error}",
+                &[("error", &format!("{:#}", error))],
+            )
+        })?;
     let thumbnail = crate::pipeline::transform_thumbnail_geometry_with_lens(
         &thumbnail,
         geometry,

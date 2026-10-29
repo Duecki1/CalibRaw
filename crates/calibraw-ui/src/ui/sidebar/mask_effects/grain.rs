@@ -1,4 +1,5 @@
 use super::{effect_card, effect_details, float_param_slider, pattern_seed};
+use crate::i18n::tr;
 use crate::pipeline::{effect_params::grain, GrainEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
@@ -17,7 +18,7 @@ pub(crate) fn show(
         |ui, settings| {
             let mut changed = float_param_slider(ui, &mut settings.amount, grain::AMOUNT);
             changed |= float_param_slider(ui, &mut settings.size, grain::SIZE);
-            changed |= effect_details(ui, "Texture details", |ui| {
+            changed |= effect_details(ui, tr("Texture details"), |ui| {
                 float_param_slider(ui, &mut settings.roughness, grain::ROUGHNESS)
                     | float_param_slider(ui, &mut settings.color, grain::COLOR)
                     | pattern_seed(ui, &mut settings.seed, grain::SEED)

@@ -1,5 +1,6 @@
 //! Preset storage, editing and application for the open photo.
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::presets::{Preset, PresetError, StoredPreset};
 
 mod amount;
@@ -46,8 +47,12 @@ impl PresetState {
         let Some(folder) = self.folder.as_deref() else {
             return Ok(());
         };
-        let contents = crate::presets::load_preset_folder(folder)
-            .map_err(|error| format!("Could not read presets in {}: {error}", folder.display()))?;
+        let contents = crate::presets::load_preset_folder(folder).map_err(|error| {
+            tr_fmt(
+                "Could not read presets in {folder}: {error}",
+                &[("folder", &folder.display()), ("error", &error)],
+            )
+        })?;
         self.presets = contents.presets;
         self.groups = contents.groups;
         self.load_failures = contents.failures;
@@ -111,7 +116,7 @@ impl PresetState {
 
     fn folder(&self) -> Result<&Path, String> {
         self.folder.as_deref().ok_or_else(|| {
-            "Presets are unavailable because CalibRaw has no settings folder.".to_owned()
+            tr("Presets are unavailable because CalibRaw has no settings folder.").to_owned()
         })
     }
 
@@ -240,18 +245,26 @@ impl CalibRawApp {
                     .map(|stored| stored.path.clone());
                 match existing {
                     Some(path) => {
-                        crate::presets::write_preset_file(&path, &preset)
-                            .map_err(|error| format!("Could not save the preset: {error}"))?;
-                        Ok(format!("Replaced preset “{}”.", preset.name()))
+                        crate::presets::write_preset_file(&path, &preset).map_err(|error| {
+                            tr_fmt("Could not save the preset: {error}", &[("error", &error)])
+                        })?;
+                        Ok(tr_fmt(
+                            "Replaced preset “{name}”.",
+                            &[("name", &preset.name())],
+                        ))
                     }
                     None => {
                         let name = self.presets.unique_name(&preset);
                         let preset = preset
                             .renamed(&name, preset.group())
                             .map_err(|error| sentence_case(&error.to_string()))?;
-                        crate::presets::save_new_preset(folder, &preset)
-                            .map_err(|error| format!("Could not save the preset: {error}"))?;
-                        Ok(format!("Saved preset “{}”.", preset.name()))
+                        crate::presets::save_new_preset(folder, &preset).map_err(|error| {
+                            tr_fmt("Could not save the preset: {error}", &[("error", &error)])
+                        })?;
+                        Ok(tr_fmt(
+                            "Saved preset “{name}”.",
+                            &[("name", &preset.name())],
+                        ))
                     }
                 }
             }
@@ -259,7 +272,7 @@ impl CalibRawApp {
                 let preset = self
                     .presets
                     .get(path)
-                    .ok_or_else(|| "That preset no longer exists.".to_owned())?
+                    .ok_or_else(|| tr("That preset no longer exists.").to_owned())?
                     .renamed(&editor.name, &editor.group)
                     .map_err(|error| sentence_case(&error.to_string()))?;
                 if self
@@ -267,15 +280,18 @@ impl CalibRawApp {
                     .find_named(preset.name(), preset.group(), Some(path))
                     .is_some()
                 {
-                    return Err(format!(
-                        "A preset named “{}” already exists in {}.",
-                        preset.name(),
-                        preset.group()
+                    return Err(tr_fmt(
+                        "A preset named “{name}” already exists in {group}.",
+                        &[("name", &preset.name()), ("group", &preset.group())],
                     ));
                 }
-                crate::presets::write_preset_file(path, &preset)
-                    .map_err(|error| format!("Could not rename the preset: {error}"))?;
-                Ok(format!("Renamed preset to “{}”.", preset.name()))
+                crate::presets::write_preset_file(path, &preset).map_err(|error| {
+                    tr_fmt("Could not rename the preset: {error}", &[("error", &error)])
+                })?;
+                Ok(tr_fmt(
+                    "Renamed preset to “{name}”.",
+                    &[("name", &preset.name())],
+                ))
             }
         }
     }
@@ -347,10 +363,15 @@ impl CalibRawApp {
                 .map_err(|error| sentence_case(&error.to_string()))
         });
         match result {
-            Ok(()) => self.ui.notice = Some(format!("Deleted group “{group}”.")),
+            Ok(()) => {
+                self.ui.notice = Some(tr_fmt("Deleted group “{group}”.", &[("group", &group)]))
+            }
             Err(error) => self.report_error(
                 ErrorKind::Presets,
-                format!("Could not delete group “{group}”: {error}"),
+                tr_fmt(
+                    "Could not delete group “{group}”: {error}",
+                    &[("group", &group), ("error", &error)],
+                ),
             ),
         }
         if let Err(error) = self.presets.reload() {
@@ -366,10 +387,13 @@ impl CalibRawApp {
             .map(|preset| preset.name().to_owned())
             .unwrap_or_default();
         match std::fs::remove_file(path) {
-            Ok(()) => self.ui.notice = Some(format!("Deleted preset “{name}”.")),
+            Ok(()) => self.ui.notice = Some(tr_fmt("Deleted preset “{name}”.", &[("name", &name)])),
             Err(error) => self.report_error(
                 ErrorKind::Presets,
-                format!("Could not delete preset “{name}”: {error}"),
+                tr_fmt(
+                    "Could not delete preset “{name}”: {error}",
+                    &[("name", &name), ("error", &error)],
+                ),
             ),
         }
         if let Err(error) = self.presets.reload() {
@@ -398,7 +422,10 @@ impl CalibRawApp {
         ) {
             self.report_error(
                 ErrorKind::Presets,
-                format!("Could not apply preset “{}”: {error}", preset.name()),
+                tr_fmt(
+                    "Could not apply preset “{name}”: {error}",
+                    &[("name", &preset.name()), ("error", &error)],
+                ),
             );
         }
     }
@@ -415,11 +442,11 @@ impl CalibRawApp {
     /// Applies a preset to the open photo as one undoable edit.
     pub(crate) fn apply_preset_to_current(&mut self, path: &Path, frame: &eframe::Frame) {
         let Some(preset) = self.presets.get(path).cloned() else {
-            self.ui.notice = Some("That preset no longer exists.".to_owned());
+            self.ui.notice = Some(tr("That preset no longer exists.").to_owned());
             return;
         };
         if self.develop.load_receiver.is_some() {
-            self.ui.notice = Some("Wait for the current photo to finish opening.".to_owned());
+            self.ui.notice = Some(tr("Wait for the current photo to finish opening.").to_owned());
             return;
         }
         self.end_preset_hover_preview_for(path);
@@ -431,7 +458,7 @@ impl CalibRawApp {
             )
         });
         self.ui.notice = Some(match result {
-            Ok(_) => format!("Applied preset “{}”.", preset.name()),
+            Ok(_) => tr_fmt("Applied preset “{name}”.", &[("name", &preset.name())]),
             Err(error) => error,
         });
     }
@@ -485,10 +512,11 @@ impl CalibRawApp {
                 Err(error) => failures.push(format!("{label}: {error}")),
             }
         }
-        let summary = format!(
-            "Imported {imported} {}.",
-            if imported == 1 { "preset" } else { "presets" }
-        );
+        let summary = if imported == 1 {
+            tr_fmt("Imported {count} preset.", &[("count", &imported)])
+        } else {
+            tr_fmt("Imported {count} presets.", &[("count", &imported)])
+        };
         let warning_text = warnings.join(" ");
         if failures.is_empty() {
             self.ui.notice = Some(if warning_text.is_empty() {
@@ -511,7 +539,7 @@ impl CalibRawApp {
             return;
         }
         let dialog =
-            crate::platform::FileDialog::new().add_filter("Presets", PRESET_IMPORT_EXTENSIONS);
+            crate::platform::FileDialog::new().add_filter(tr("Presets"), PRESET_IMPORT_EXTENSIONS);
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
             DesktopPickerEvent::PresetFiles(dialog.pick_files_on_worker())
         }));
@@ -531,13 +559,13 @@ impl CalibRawApp {
             .collect();
         let (filter, extensions, suffix) = if crate::presets::xmp::is_xmp_preset_file(path) {
             (
-                "XMP preset",
+                tr("XMP preset"),
                 XMP_FILE_EXTENSIONS,
                 crate::presets::xmp::XMP_PRESET_SUFFIX,
             )
         } else {
             (
-                "CalibRaw preset",
+                tr("CalibRaw preset"),
                 PRESET_FILE_EXTENSIONS,
                 crate::presets::PRESET_SUFFIX,
             )
@@ -552,15 +580,17 @@ impl CalibRawApp {
         };
         match crate::presets::export_preset_file(path, &destination, &preset) {
             Ok(()) => {
-                self.ui.notice = Some(format!(
-                    "Exported preset “{}” to {}.",
-                    preset.name(),
-                    destination.display()
+                self.ui.notice = Some(tr_fmt(
+                    "Exported preset “{name}” to {destination}.",
+                    &[
+                        ("name", &preset.name()),
+                        ("destination", &destination.display()),
+                    ],
                 ));
             }
             Err(error) => self.report_error(
                 ErrorKind::Presets,
-                format!("Could not export the preset: {error}"),
+                tr_fmt("Could not export the preset: {error}", &[("error", &error)]),
             ),
         }
     }

@@ -2,6 +2,7 @@
 //! root, with photos and their sidecars read and changed by path.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use egui_phosphor::regular;
 use moduwu_design::MenuItem;
 
@@ -89,9 +90,9 @@ pub(super) fn show_library_folder_node(
         }
     }
 
-    let response = row.row.on_hover_text(format!(
-        "{}\nDrag onto another folder to move",
-        node.path.display()
+    let response = row.row.on_hover_text(tr_fmt(
+        "{path}\nDrag onto another folder to move",
+        &[("path", &node.path.display())],
     ));
     response.dnd_set_drag_payload(LibraryFolderDrag(node.path.clone()));
     if response.clicked() {
@@ -111,15 +112,20 @@ pub(super) fn show_library_folder_node(
         row(
             ui,
             enabled,
-            MenuItem::new("New Folder…").icon(regular::FOLDER_PLUS),
+            MenuItem::new(tr("New Folder…")).icon(regular::FOLDER_PLUS),
             LibraryFolderUiAction::New(path.clone()),
         );
         let paste_label = image_clipboard.map_or_else(
             || {
                 clipboard
                     .and_then(|clipboard| clipboard.path.file_name())
-                    .map(|name| format!("Paste “{}”", name.to_string_lossy()))
-                    .unwrap_or_else(|| "Paste".to_owned())
+                    .map(|name| {
+                        tr_fmt(
+                            "Paste “{to_string_lossy}”",
+                            &[("to_string_lossy", &name.to_string_lossy())],
+                        )
+                    })
+                    .unwrap_or_else(|| tr("Paste").to_owned())
             },
             ImageClipboard::paste_label,
         );
@@ -138,26 +144,26 @@ pub(super) fn show_library_folder_node(
         row(
             ui,
             movable,
-            MenuItem::new("Copy Folder").icon(regular::COPY),
+            MenuItem::new(tr("Copy Folder")).icon(regular::COPY),
             LibraryFolderUiAction::Copy(path.clone()),
         );
         row(
             ui,
             movable,
-            MenuItem::new("Cut Folder").icon(regular::SCISSORS),
+            MenuItem::new(tr("Cut Folder")).icon(regular::SCISSORS),
             LibraryFolderUiAction::Cut(path.clone()),
         );
         row(
             ui,
             movable,
-            MenuItem::new("Rename Folder…").icon(regular::PENCIL_SIMPLE),
+            MenuItem::new(tr("Rename Folder…")).icon(regular::PENCIL_SIMPLE),
             LibraryFolderUiAction::Rename(path.clone()),
         );
         ui.separator();
         row(
             ui,
             movable,
-            MenuItem::new("Delete Folder…")
+            MenuItem::new(tr("Delete Folder…"))
                 .icon(regular::TRASH)
                 .destructive(),
             LibraryFolderUiAction::Delete(path.clone()),
@@ -165,7 +171,7 @@ pub(super) fn show_library_folder_node(
         row(
             ui,
             enabled,
-            MenuItem::new("Refresh Folders").icon(regular::ARROWS_CLOCKWISE),
+            MenuItem::new(tr("Refresh Folders")).icon(regular::ARROWS_CLOCKWISE),
             LibraryFolderUiAction::Refresh,
         );
     });
@@ -236,9 +242,9 @@ pub(super) fn apply_library_folder_ui_action(
                         mode: LibraryFolderClipboardMode::Copy,
                     });
                     app.library.image_clipboard = None;
-                    app.library.status = format!(
-                        "Copied folder {}. Choose Paste Folder in a destination.",
-                        path.display()
+                    app.library.status = tr_fmt(
+                        "Copied folder {path}. Choose Paste Folder in a destination.",
+                        &[("path", &path.display())],
                     );
                 }
                 Err(error) => app.library.status = error,
@@ -252,9 +258,9 @@ pub(super) fn apply_library_folder_ui_action(
                         mode: LibraryFolderClipboardMode::Cut,
                     });
                     app.library.image_clipboard = None;
-                    app.library.status = format!(
-                        "Cut folder {}. Choose Paste Folder in a destination.",
-                        path.display()
+                    app.library.status = tr_fmt(
+                        "Cut folder {path}. Choose Paste Folder in a destination.",
+                        &[("path", &path.display())],
                     );
                 }
                 Err(error) => app.library.status = error,
@@ -262,7 +268,7 @@ pub(super) fn apply_library_folder_ui_action(
         }
         LibraryFolderUiAction::Paste(destination_parent) => {
             let Some(clipboard) = app.library.folder_clipboard.clone() else {
-                app.library.status = "Copy or cut a folder first.".to_owned();
+                app.library.status = tr("Copy or cut a folder first.").to_owned();
                 return;
             };
             if clipboard.mode == LibraryFolderClipboardMode::Cut
@@ -273,7 +279,7 @@ pub(super) fn apply_library_folder_ui_action(
                     .is_some_and(|path| path.starts_with(&clipboard.path))
             {
                 app.library.status =
-                    "Open an image outside this folder before moving it.".to_owned();
+                    tr("Open an image outside this folder before moving it.").to_owned();
                 return;
             }
             let operation = match clipboard.mode {
@@ -306,7 +312,7 @@ pub(super) fn apply_library_folder_ui_action(
                 .is_some_and(|path| path.starts_with(&source))
             {
                 app.library.status =
-                    "Open an image outside this folder before renaming it.".to_owned();
+                    tr("Open an image outside this folder before renaming it.").to_owned();
                 return;
             }
             let Some(name) = source
@@ -314,7 +320,7 @@ pub(super) fn apply_library_folder_ui_action(
                 .and_then(|name| name.to_str())
                 .map(str::to_owned)
             else {
-                app.library.status = "This folder name cannot be edited as text.".to_owned();
+                app.library.status = tr("This folder name cannot be edited as text.").to_owned();
                 return;
             };
             app.library.folder_name_dialog = Some(LibraryFolderNameDialog {
@@ -338,7 +344,7 @@ pub(super) fn apply_library_folder_ui_action(
                 .is_some_and(|path| path.starts_with(&source))
             {
                 app.library.status =
-                    "Open an image outside this folder before moving it.".to_owned();
+                    tr("Open an image outside this folder before moving it.").to_owned();
                 return;
             }
             app.library.start_folder_operation(
@@ -444,7 +450,7 @@ pub(in crate::ui::library) fn show_local_folder_tree(
         });
     } else {
         ui.label(
-            egui::RichText::new("Open a top-level folder to browse its hierarchy.")
+            egui::RichText::new(tr("Open a top-level folder to browse its hierarchy."))
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );

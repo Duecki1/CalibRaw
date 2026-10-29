@@ -3,6 +3,7 @@
 //! `app/background_tasks.rs`.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     pub(crate) fn sync_android_export_notification(&self) {
@@ -11,7 +12,7 @@ impl CalibRawApp {
                 Some(merge) => {
                     self.platform
                         .update_task_notification(crate::platform::TaskNotification {
-                            title: &format!("CalibRaw {}", merge.title),
+                            title: &tr_fmt("CalibRaw {title}", &[("title", &merge.title)]),
                             phase: &merge.detail,
                             detail: None,
                             progress_percent: 0,
@@ -27,15 +28,17 @@ impl CalibRawApp {
             return;
         };
         let title = if task.kind == ExportTaskKind::LibraryBatch {
-            "CalibRaw batch export"
+            tr("CalibRaw batch export")
         } else {
-            "CalibRaw export"
+            tr("CalibRaw export")
         };
         let detail = (task.total > 1).then(|| {
-            format!(
-                "{} / {} images complete",
-                task.completed.min(task.total),
-                task.total
+            tr_fmt(
+                "{completed} / {total} images complete",
+                &[
+                    ("completed", &task.completed.min(task.total)),
+                    ("total", &task.total),
+                ],
             )
         });
         let percent = (task.progress.clamp(0.0, 1.0) * 100.0).round() as i32;

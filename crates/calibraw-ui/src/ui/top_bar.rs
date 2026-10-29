@@ -1,4 +1,5 @@
 use crate::app::{AppAction, AppTab, CalibRawApp};
+use crate::i18n::{tr, tr_fmt};
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
 use eframe::egui::{self, Ui};
 
@@ -41,7 +42,7 @@ const DEVELOP_ZOOM_PRESETS: [(&str, Option<f32>); 4] = [
 /// where 100% shows one photo pixel per screen pixel.
 fn develop_zoom_readout(zoom: f32, native_zoom: Option<f32>) -> String {
     if crate::ui::preview::zoom_is_fit(zoom) {
-        return "Fit".to_owned();
+        return tr("Fit").to_owned();
     }
     match native_zoom.filter(|native| native.is_finite() && *native > 0.0) {
         Some(native) => format!("{:.0}%", zoom / native * 100.0),
@@ -174,7 +175,7 @@ impl TopBar {
             ui,
             egui_phosphor::regular::ARROW_LEFT,
             size,
-            "Back to Library",
+            tr("Back to Library"),
         )
     }
 
@@ -198,14 +199,14 @@ impl TopBar {
 
     fn show_history_controls(ui: &mut Ui, app: &mut CalibRawApp, shortcuts: bool) {
         let undo_tip = if shortcuts {
-            "Undo the last edit (Ctrl/Cmd+Z)"
+            tr("Undo the last edit (Ctrl/Cmd+Z)")
         } else {
-            "Undo the last edit"
+            tr("Undo the last edit")
         };
         let redo_tip = if shortcuts {
-            "Redo the last edit (Ctrl/Cmd+Shift+Z or Ctrl+Y)"
+            tr("Redo the last edit (Ctrl/Cmd+Shift+Z or Ctrl+Y)")
         } else {
-            "Redo the last edit"
+            tr("Redo the last edit")
         };
         for (redo, tooltip) in [(false, undo_tip), (true, redo_tip)] {
             if Self::history_icon_button(
@@ -232,13 +233,13 @@ impl TopBar {
 
     fn show_save_control(ui: &mut Ui, app: &mut CalibRawApp, shortcut: bool) {
         let tooltip = if app.sidecar_save_in_progress() {
-            "Saving non-destructive edits…"
+            tr("Saving non-destructive edits…")
         } else if app.sidecar_save_succeeded_recently() {
-            "Edits saved"
+            tr("Edits saved")
         } else if shortcut {
-            "Save non-destructive edits beside the photo (Ctrl/Cmd+S)"
+            tr("Save non-destructive edits beside the photo (Ctrl/Cmd+S)")
         } else {
-            "Save non-destructive edits"
+            tr("Save non-destructive edits")
         };
         let icon = if app.sidecar_save_succeeded_recently() {
             egui_phosphor::regular::CHECK
@@ -355,9 +356,9 @@ impl TopBar {
                     .sense(egui::Sense::click()),
                 ),
                 if touch {
-                    "Preview zoom\nDouble-tap to reset."
+                    tr("Preview zoom\nDouble-tap to reset.")
                 } else {
-                    "Preview zoom\nDouble-click to reset."
+                    tr("Preview zoom\nDouble-click to reset.")
                 },
             );
             if moduwu_design::double_tapped(&icon_response) {
@@ -390,7 +391,7 @@ impl TopBar {
                 for (label, scale) in DEVELOP_ZOOM_PRESETS {
                     let available = scale.is_none() || native_zoom.is_some();
                     if ui
-                        .add_enabled(available, moduwu_design::MenuItem::new(label))
+                        .add_enabled(available, moduwu_design::MenuItem::new(tr(label)))
                         .clicked()
                     {
                         match scale.zip(native_zoom) {
@@ -403,17 +404,19 @@ impl TopBar {
             });
 
             let help = if touch {
-                "Preview zoom. 100% shows one photo pixel per screen pixel. Tap the value for \
-                 Fit and 100%, or double-tap the photo to switch between them."
+                tr("Preview zoom. 100% shows one photo pixel per screen pixel. Tap the value for \
+                 Fit and 100%, or double-tap the photo to switch between them.")
                     .to_owned()
             } else {
                 let ctx = ui.ctx();
-                format!(
+                tr_fmt(
                     "Preview zoom. 100% shows one photo pixel per screen pixel. Click the value \
-                     for Fit and 100%, or press {} and {}. Double-click the photo to switch \
+                     for Fit and 100%, or press {fit} and {native}. Double-click the photo to switch \
                      between them.",
-                    ctx.format_shortcut(&crate::ui::preview::ZOOM_FIT_SHORTCUT),
-                    ctx.format_shortcut(&crate::ui::preview::ZOOM_NATIVE_SHORTCUT),
+                    &[
+                        ("fit", &ctx.format_shortcut(&crate::ui::preview::ZOOM_FIT_SHORTCUT)),
+                        ("native", &ctx.format_shortcut(&crate::ui::preview::ZOOM_NATIVE_SHORTCUT)),
+                    ],
                 )
             };
             icon_response.union(readout_response).on_hover_text(help);
@@ -545,7 +548,7 @@ impl TopBar {
                     ui,
                     egui_phosphor::regular::KEYBOARD,
                     moduwu_design::toolbar_icon_size(),
-                    "Keyboard shortcuts",
+                    tr("Keyboard shortcuts"),
                 )
                 .clicked()
             {
@@ -560,9 +563,9 @@ impl TopBar {
                     ui,
                     &mut tab,
                     &[
-                        (AppTab::Library, "Library"),
-                        (AppTab::Develop, "Develop"),
-                        (AppTab::Settings, "Settings"),
+                        (AppTab::Library, tr("Library")),
+                        (AppTab::Develop, tr("Develop")),
+                        (AppTab::Settings, tr("Settings")),
                     ],
                     tabs_width,
                 )
@@ -589,13 +592,14 @@ impl TopBar {
                             [search_width, moduwu_design::CONTROL_HEIGHT],
                             moduwu_design::singleline_text_edit(app.library.search_query_mut()).hint_text(
                                 format!(
-                                    "{} Search filenames…",
-                                    egui_phosphor::regular::MAGNIFYING_GLASS
+                                    "{} {}",
+                                    egui_phosphor::regular::MAGNIFYING_GLASS,
+                                    tr("Search filenames…"),
                                 ),
                             ),
                         )
                         .on_hover_text(
-                            "Filter by filename. Separate names with commas and press Enter to select every match (Ctrl/Cmd+F).",
+                            tr("Filter by filename. Separate names with commas and press Enter to select every match (Ctrl/Cmd+F)."),
                         );
                     if focus_search {
                         search_response.request_focus();
@@ -621,11 +625,11 @@ impl TopBar {
                             ui,
                             egui_phosphor::regular::FOLDER_OPEN,
                             moduwu_design::toolbar_icon_size(),
-                            "Open photo folder",
+                            tr("Open photo folder"),
                         )
                     } else {
-                        moduwu_design::toolbar_button(ui, "Open Folder…", 108.0)
-                            .on_hover_text("Open photo folder")
+                        moduwu_design::toolbar_button(ui, tr("Open Folder…"), 108.0)
+                            .on_hover_text(tr("Open photo folder"))
                     };
                     if open.clicked() {
                         app.open_library_folder_dialog();
@@ -642,9 +646,9 @@ impl TopBar {
                         egui_phosphor::regular::EYE_SLASH
                     };
                     let preview_tooltip = if original_visible {
-                        "Show edited preview"
+                        tr("Show edited preview")
                     } else {
-                        "Show original preview"
+                        tr("Show original preview")
                     };
                     if ui
                         .add_enabled_ui(app.preview.gpu_pipeline.is_some(), |ui| {

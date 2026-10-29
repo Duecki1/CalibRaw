@@ -1,6 +1,7 @@
 //! Painting mask overlays, coverage textures and tool hints over the preview.
 
 use super::*;
+use crate::i18n::tr;
 
 impl Preview {
     pub(in crate::ui::preview) fn paint_mask_overlay(
@@ -520,8 +521,8 @@ impl Preview {
         let text = match kind {
             MaskKind::Subject | MaskKind::Background if app.masks.subject_refinement_active => {
                 match app.masks.brush_mode {
-                    BrushMode::Paint => "Refine: paint subject",
-                    BrushMode::Erase => "Refine: subtract subject / paint background",
+                    BrushMode::Paint => tr("Refine: paint subject"),
+                    BrushMode::Erase => tr("Refine: subtract subject / paint background"),
                 }
             }
             MaskKind::Brush => return,
@@ -534,7 +535,7 @@ impl Preview {
                         matches!(&component.geometry, MaskGeometry::Object { mask: None, .. })
                     }) =>
             {
-                "Paint through the middle of the object part"
+                tr("Paint through the middle of the object part")
             }
             MaskKind::Radial
                 if !app
@@ -543,7 +544,7 @@ impl Preview {
                     .selected_component()
                     .is_some_and(|component| component.geometry.is_initialized()) =>
             {
-                "Drag from the center to create a radial gradient"
+                tr("Drag from the center to create a radial gradient")
             }
             MaskKind::Linear
                 if !app
@@ -552,10 +553,10 @@ impl Preview {
                     .selected_component()
                     .is_some_and(|component| component.geometry.is_initialized()) =>
             {
-                "Drag across the image to create a linear gradient"
+                tr("Drag across the image to create a linear gradient")
             }
             MaskKind::Path => {
-                "Click to add points · drag to curve · Alt/Option-drag a point for handles"
+                tr("Click to add points · drag to curve · Alt/Option-drag a point for handles")
             }
             MaskKind::ColorRange
                 if !app
@@ -569,7 +570,7 @@ impl Preview {
                         )
                     }) =>
             {
-                "Drag on the image to sample a color"
+                tr("Drag on the image to sample a color")
             }
             _ => return,
         };

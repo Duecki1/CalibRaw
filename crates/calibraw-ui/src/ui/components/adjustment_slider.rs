@@ -1,6 +1,7 @@
 //! CalibRaw's adjustment slider: [`moduwu_design::Slider`] configured from
 //! parameter specifications, with photographic track gradients.
 
+use crate::i18n::tr;
 use crate::pipeline::effect_params::FloatParamSpec;
 use eframe::egui::{self, Ui};
 use moduwu_design::{Slider, SliderScale};
@@ -106,7 +107,7 @@ where
 impl<'a> AdjustmentSlider<'a, f32> {
     /// A resettable slider configured from a shared parameter specification.
     pub(crate) fn from_spec(value: &'a mut f32, spec: FloatParamSpec) -> Self {
-        Self::new(spec.label, value, spec.range())
+        Self::new(tr(spec.label), value, spec.range())
             .decimals(spec.decimals)
             .step(spec.step)
             .reset_to(spec.default)
@@ -130,7 +131,7 @@ pub(crate) fn float_param_slider(ui: &mut Ui, value: &mut f32, spec: FloatParamS
 /// A direction parameter in degrees (0° right, clockwise positive, as the
 /// effect shaders use) on a [`moduwu_design::AngleDial`].
 pub(crate) fn float_param_angle(ui: &mut Ui, value: &mut f32, spec: FloatParamSpec) -> bool {
-    moduwu_design::AngleDial::new(spec.label, value)
+    moduwu_design::AngleDial::new(tr(spec.label), value)
         .range(spec.range())
         .decimals(spec.decimals)
         .step(spec.step as f32)

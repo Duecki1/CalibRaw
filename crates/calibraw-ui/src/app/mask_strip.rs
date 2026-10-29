@@ -4,6 +4,7 @@
 //! `apply_mask_strip_actions` applies them within the same frame.
 
 use super::*;
+use crate::i18n::tr;
 use crate::pipeline::{LocalMask, MaskCombineMode, MaskComponent};
 
 /// What the strip changed this frame, in the order it is applied.
@@ -212,12 +213,12 @@ impl CalibRawApp {
                 moved
             }
             MaskStripCommand::DuplicateGroup { mask_index, invert } => {
-                self.commit_mask_change("Mask-group copy", None, false, |stack| {
+                self.commit_mask_change(tr("Mask-group copy"), None, false, |stack| {
                     stack.duplicate_mask(mask_index, invert)
                 })
             }
             MaskStripCommand::PasteGroup { mask_index, mask } => {
-                self.commit_mask_change("Mask-group copy", None, false, |stack| {
+                self.commit_mask_change(tr("Mask-group copy"), None, false, |stack| {
                     stack.insert_mask_copy(mask_index, *mask, false)
                 })
             }
@@ -225,14 +226,14 @@ impl CalibRawApp {
                 mask_index,
                 component_index,
                 invert,
-            } => self.commit_mask_change("Sub-mask copy", Some(mask_index), true, |stack| {
+            } => self.commit_mask_change(tr("Sub-mask copy"), Some(mask_index), true, |stack| {
                 stack.duplicate_component(mask_index, component_index, invert)
             }),
             MaskStripCommand::PasteComponent {
                 mask_index,
                 component_index,
                 component,
-            } => self.commit_mask_change("Sub-mask copy", Some(mask_index), true, |stack| {
+            } => self.commit_mask_change(tr("Sub-mask copy"), Some(mask_index), true, |stack| {
                 stack.insert_component_copy(mask_index, component_index, *component, false)
             }),
             MaskStripCommand::CreateGroup(kind) => {

@@ -3,6 +3,7 @@
 
 use super::{add_effect_buttons, effect_description, egui, MaskEffect, Ui};
 use crate::app::FILM_NEGATIVE_CARD_TITLE;
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{EffectComponent, FilmSource, MaskEffectCategory, MAX_EFFECT_COMPONENTS};
 
 const TILES_PER_ROW: usize = 3;
@@ -80,12 +81,13 @@ pub(in crate::ui::sidebar) fn add_effect_button(
         .add_enabled_ui(!full, |ui| {
             moduwu_design::full_width_button(
                 ui,
-                format!("{}  Add effect", egui_phosphor::regular::PLUS),
+                format!("{}  {}", egui_phosphor::regular::PLUS, tr("Add effect")),
             )
         })
         .inner
-        .on_disabled_hover_text(format!(
-            "At most {MAX_EFFECT_COMPONENTS} effects can be added"
+        .on_disabled_hover_text(tr_fmt(
+            "At most {max} effects can be added",
+            &[("max", &MAX_EFFECT_COMPONENTS)],
         ));
     effect_picker_popup(&response, components, film_negative)
 }
@@ -177,7 +179,7 @@ fn effect_picker(
                 if index > 0 {
                     ui.add_space(moduwu_design::SPACE_SM);
                 }
-                category_heading(ui, category.label());
+                category_heading(ui, tr(category.label()));
                 let mut tiles = Vec::new();
                 if category == MaskEffectCategory::FilmAndFinish
                     && film_negative != FilmNegativeTile::Hidden
@@ -185,9 +187,11 @@ fn effect_picker(
                     let added = film_negative == FilmNegativeTile::Added;
                     tiles.push(Tile {
                         pick: EffectPick::FilmNegative,
-                        label: FILM_NEGATIVE_CARD_TITLE,
+                        label: super::super::adjustment_cards::card_title_text(
+                            FILM_NEGATIVE_CARD_TITLE,
+                        ),
                         icon: egui_phosphor::regular::FILM_STRIP,
-                        help: Some("Develop a scanned film negative as its positive."),
+                        help: Some(tr("Develop a scanned film negative as its positive.")),
                         added,
                         enabled: !added,
                     });
@@ -202,7 +206,7 @@ fn effect_picker(
                                 .any(|component| component.effect == effect);
                             Tile {
                                 pick: EffectPick::Effect(effect),
-                                label: effect.label(),
+                                label: tr(effect.label()),
                                 icon: effect_icon(effect),
                                 help: effect_description(effect),
                                 added,
@@ -215,9 +219,12 @@ fn effect_picker(
                         for tile in row {
                             let mut response = effect_tile(ui, tile, tile_size)
                                 .on_disabled_hover_text(if tile.added {
-                                    format!("{} is already added", tile.label)
+                                    tr_fmt("{label} is already added", &[("label", &tile.label)])
                                 } else {
-                                    format!("At most {MAX_EFFECT_COMPONENTS} effects can be added")
+                                    tr_fmt(
+                                        "At most {max} effects can be added",
+                                        &[("max", &MAX_EFFECT_COMPONENTS)],
+                                    )
                                 });
                             if let Some(help) = tile.help {
                                 response = response.on_hover_text(help);

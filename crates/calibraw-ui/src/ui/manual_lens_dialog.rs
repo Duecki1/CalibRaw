@@ -8,6 +8,7 @@
 //! difference between the draft and applied vignetting.
 
 use crate::app::{CalibRawApp, ManualLensDialog};
+use crate::i18n::tr;
 use crate::pipeline::{ManualLensCorrection, ManualLensModel};
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
 use eframe::egui::{self, epaint::Vertex, Color32, Mesh, Pos2, Rect, Shape, Ui};
@@ -34,12 +35,12 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
     // the preview catches up within the frame that follows.
     let painted = dialog;
     let mut action = moduwu_design::DialogAction::None;
-    moduwu_design::Dialog::new("manual-lens-correction", "Manual lens correction")
+    moduwu_design::Dialog::new("manual-lens-correction", tr("Manual lens correction"))
         .size(moduwu_design::DialogSize::Preview)
         .show_with_preview(
             ctx,
             moduwu_design::DialogPreview {
-                label: "Corrected preview",
+                label: tr("Corrected preview"),
                 aspect: texture.map_or(2.0 / 3.0, |(_, [width, height])| {
                     height as f32 / width as f32
                 }),
@@ -52,7 +53,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             },
             |ui| {
                 let distortion_changed = AdjustmentSlider::new(
-                    "Distortion",
+                    tr("Distortion"),
                     &mut dialog.draft.distortion,
                     ManualLensCorrection::RANGE,
                 )
@@ -60,7 +61,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
                 .step(1.0)
                 .show(ui);
                 let vignetting_changed = AdjustmentSlider::new(
-                    "Vignetting",
+                    tr("Vignetting"),
                     &mut dialog.draft.vignetting,
                     ManualLensCorrection::RANGE,
                 )
@@ -74,8 +75,8 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             |ui| {
                 action = moduwu_design::dialog_confirmation_actions(
                     ui,
-                    "Cancel",
-                    "Apply",
+                    tr("Cancel"),
+                    tr("Apply"),
                     true,
                     false,
                     moduwu_design::DialogKeyboard::CLOSE_ONLY,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::tr;
 use crate::ui::theme;
 
 impl Sidebar {
@@ -7,12 +8,12 @@ impl Sidebar {
             (
                 &mut app.preview.clipping.highlights,
                 egui_phosphor::regular::SUN,
-                "Highlight clipping: mark pixels red when any processed RGB channel reaches 255",
+                tr("Highlight clipping: mark pixels red when any processed RGB channel reaches 255"),
             ),
             (
                 &mut app.preview.clipping.shadows,
                 egui_phosphor::regular::MOON,
-                "Shadow clipping: mark pixels blue when all processed RGB channels reach 0",
+                tr("Shadow clipping: mark pixels blue when all processed RGB channels reach 0"),
             ),
         ] {
             if moduwu_design::ghost_icon_toggle_button(
@@ -37,9 +38,9 @@ impl Sidebar {
             open,
             moduwu_design::toolbar_icon_size(),
             if open {
-                "Hide RGB + luminance histogram"
+                tr("Hide RGB + luminance histogram")
             } else {
-                "Show RGB + luminance histogram"
+                tr("Show RGB + luminance histogram")
             },
         )
         .clicked()
@@ -60,13 +61,13 @@ impl Sidebar {
             .flatten();
         moduwu_design::content_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Histogram").strong());
+                ui.label(egui::RichText::new(tr("Histogram")).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     for (channel, label, name, color) in [
-                        (3, "L", "Luminance", ui.visuals().text_color()),
-                        (2, "B", "Blue", theme::CHANNEL_BLUE),
-                        (1, "G", "Green", theme::CHANNEL_GREEN),
-                        (0, "R", "Red", theme::CHANNEL_RED),
+                        (3, "L", tr("Luminance"), ui.visuals().text_color()),
+                        (2, "B", tr("Blue"), theme::CHANNEL_BLUE),
+                        (1, "G", tr("Green"), theme::CHANNEL_GREEN),
+                        (0, "R", tr("Red"), theme::CHANNEL_RED),
                     ] {
                         let active = selected == Some(channel);
                         let color = if active {
@@ -96,7 +97,7 @@ impl Sidebar {
                 egui::Sense::hover(),
             );
             app.preview.histogram.visible_this_frame |= ui.is_rect_visible(rect);
-            response.on_hover_text("RGB and luminance of the developed image, including crop. Shadows are on the left, highlights on the right. Luminance uses linear sRGB weights on a display-encoded axis. The vertical scale is square-root compressed to reveal smaller peaks.");
+            response.on_hover_text(tr("RGB and luminance of the developed image, including crop. Shadows are on the left, highlights on the right. Luminance uses linear sRGB weights on a display-encoded axis. The vertical scale is square-root compressed to reveal smaller peaks."));
             let painter = ui.painter_at(rect);
             painter.rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
             let plot = rect.shrink(4.0);
@@ -148,11 +149,11 @@ impl Sidebar {
                 }
             } else {
                 let message = if app.preview.gpu_pipeline.is_none() {
-                    "Open an image to see its histogram"
+                    tr("Open an image to see its histogram")
                 } else if app.preview.histogram.error {
-                    "Histogram unavailable"
+                    tr("Histogram unavailable")
                 } else {
-                    "Updating histogram…"
+                    tr("Updating histogram…")
                 };
                 painter.text(
                     rect.center(),

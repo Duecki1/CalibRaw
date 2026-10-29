@@ -1,4 +1,5 @@
 use crate::app::CalibRawApp;
+use crate::i18n::{tr, tr_fmt};
 use crate::ui::library::photo_actions_menu;
 use crate::ui::library::{
     apply_library_action, current_photo_asset, load_desktop_reference_preview, take_review_key,
@@ -181,7 +182,7 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
     if count == 0 {
         ui.centered_and_justified(|ui| {
             ui.label(
-                egui::RichText::new("No photos in the active folder")
+                egui::RichText::new(tr("No photos in the active folder"))
                     .small()
                     .color(ui.visuals().weak_text_color()),
             );
@@ -300,9 +301,9 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                         }
                         ui.separator();
                         let label = if reference {
-                            "Clear Reference Image"
+                            tr("Clear Reference Image")
                         } else {
-                            "Set as Reference Image"
+                            tr("Set as Reference Image")
                         };
                         let reference_item =
                             MenuItem::new(label).icon(regular::SQUARE_SPLIT_HORIZONTAL);
@@ -375,7 +376,7 @@ fn start_reference_preview_load(app: &mut CalibRawApp, context: &egui::Context) 
                 Ok(_decode_guard) => {
                     load_desktop_reference_preview(&worker_path, REFERENCE_PREVIEW_EDGE)
                 }
-                Err(_) => Err("reference preview decode gate is poisoned".to_owned()),
+                Err(_) => Err(tr("reference preview decode gate is poisoned").to_owned()),
             };
             let _ = sender.send((worker_path, result));
             repaint.request_repaint();
@@ -387,8 +388,10 @@ fn start_reference_preview_load(app: &mut CalibRawApp, context: &egui::Context) 
             app.develop_ui.reference.preview_receiver = Some(receiver);
         }
         Err(error) => {
-            app.develop_ui.reference.error =
-                Some(format!("could not start reference preview worker: {error}"));
+            app.develop_ui.reference.error = Some(tr_fmt(
+                "could not start reference preview worker: {error}",
+                &[("error", &error)],
+            ));
         }
     }
 }
@@ -406,9 +409,10 @@ fn sync_reference_texture(app: &mut CalibRawApp, context: &egui::Context) {
         .and_then(|receiver| match receiver.try_recv() {
             Ok(event) => Some(Ok(event)),
             Err(mpsc::TryRecvError::Empty) => None,
-            Err(mpsc::TryRecvError::Disconnected) => Some(Err(
-                "reference preview worker stopped unexpectedly".to_owned(),
-            )),
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err(tr(
+                "reference preview worker stopped unexpectedly",
+            )
+            .to_owned())),
         });
 
     if let Some(event) = event {
@@ -489,7 +493,7 @@ fn show_reference_pane(ui: &mut Ui, app: &mut CalibRawApp) {
                 painter.text(
                     rect.center(),
                     Align2::CENTER_CENTER,
-                    "Loading reference…",
+                    tr("Loading reference…"),
                     FontId::proportional(13.0),
                     crate::ui::theme::text_on_backdrop(backdrop),
                 );
@@ -504,7 +508,7 @@ fn show_reference_pane(ui: &mut Ui, app: &mut CalibRawApp) {
                 painter.text(
                     rect.right_bottom() - egui::vec2(12.0, 12.0),
                     Align2::RIGHT_BOTTOM,
-                    "Loading full reference preview…",
+                    tr("Loading full reference preview…"),
                     FontId::proportional(10.5),
                     Color32::from_white_alpha(180),
                 );
@@ -528,7 +532,7 @@ fn show_reference_pane(ui: &mut Ui, app: &mut CalibRawApp) {
             painter.text(
                 badge_rect.center(),
                 Align2::CENTER_CENTER,
-                "Reference",
+                tr("Reference"),
                 FontId::proportional(12.0),
                 Color32::WHITE,
             );
@@ -645,7 +649,7 @@ fn filmstrip_thumbnail(
         painter.text(
             ref_rect.center(),
             Align2::CENTER_CENTER,
-            "REF",
+            tr("REF"),
             FontId::proportional(9.5),
             REFERENCE_BADGE,
         );

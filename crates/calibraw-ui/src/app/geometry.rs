@@ -3,6 +3,7 @@
 //! running the automatic estimates as foreground operations.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{
     estimate_perspective, estimate_straighten_rotation, solve_guided_perspective,
     LineAnalysisImage, PerspectiveCorrection,
@@ -19,10 +20,10 @@ pub(crate) enum AutoGeometry {
 }
 
 impl AutoGeometry {
-    pub(crate) const fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> &'static str {
         match self {
-            Self::Straighten => "Straightening",
-            Self::Perspective => "Correcting perspective",
+            Self::Straighten => tr("Straightening"),
+            Self::Perspective => tr("Correcting perspective"),
         }
     }
 
@@ -122,7 +123,12 @@ impl CalibRawApp {
             .name("calibraw-auto-geometry".to_owned())
             .spawn(move || {
                 let result = LineAnalysisImage::from_raw(&raw)
-                    .map_err(|error| format!("Could not analyse the photo: {error:#}"))
+                    .map_err(|error| {
+                        tr_fmt(
+                            "Could not analyse the photo: {error}",
+                            &[("error", &format!("{error:#}"))],
+                        )
+                    })
                     .map(|image| {
                         // A cancelled job's result is discarded when polled, so any value works.
                         if worker_cancellation.load(Ordering::Acquire) {
@@ -140,7 +146,7 @@ impl CalibRawApp {
                     kind: ForegroundOperationKind::AutoGeometry(kind),
                     document_id: self.persistence.document_generation,
                     cancellation,
-                    progress: ForegroundProgress::indeterminate("Looking for straight lines…"),
+                    progress: ForegroundProgress::indeterminate(tr("Looking for straight lines…")),
                     cancelling: false,
                     receiver: ForegroundOperationReceiver::AutoGeometry(receiver),
                     context: ForegroundOperationContext::AutoGeometry { geometry },
@@ -149,7 +155,10 @@ impl CalibRawApp {
             Err(error) => {
                 self.report_error(
                     kind.error_kind(),
-                    format!("Could not start {}: {error}", kind.title().to_lowercase()),
+                    tr_fmt(
+                        "Could not start {action}: {error}",
+                        &[("action", &kind.title().to_lowercase()), ("error", &error)],
+                    ),
                 );
             }
         }
@@ -169,9 +178,9 @@ impl CalibRawApp {
         let (events, disconnected) = drain_worker_events(Some(receiver), |_| true);
         let result = match events.into_iter().next() {
             Some(result) => result,
-            None if disconnected => Err(format!(
-                "The {} worker stopped unexpectedly.",
-                kind.title().to_lowercase()
+            None if disconnected => Err(tr_fmt(
+                "The {action} worker stopped unexpectedly.",
+                &[("action", &kind.title().to_lowercase())],
             )),
             None => {
                 self.foreground_operation = Some(operation);
@@ -185,8 +194,9 @@ impl CalibRawApp {
             return;
         };
         if !kind.still_applies(geometry, self.develop.geometry) {
-            self.ui.notice =
-                Some("The transform changed while the photo was analysed; try again.".to_owned());
+            self.ui.notice = Some(
+                tr("The transform changed while the photo was analysed; try again.").to_owned(),
+            );
             return;
         }
         match result {
@@ -195,9 +205,9 @@ impl CalibRawApp {
                 self.ui.notice = Some(
                     match kind {
                         AutoGeometry::Straighten => {
-                            "No clear horizon or vertical edges to straighten by."
+                            tr("No clear horizon or vertical edges to straighten by.")
                         }
-                        AutoGeometry::Perspective => "No clear straight edges to correct by.",
+                        AutoGeometry::Perspective => tr("No clear straight edges to correct by."),
                     }
                     .to_owned(),
                 );
@@ -215,8 +225,8 @@ impl CalibRawApp {
         }
         self.ui.notice = Some(
             match kind {
-                AutoGeometry::Straighten => "The photo is already level.",
-                AutoGeometry::Perspective => "The photo is already upright.",
+                AutoGeometry::Straighten => tr("The photo is already level."),
+                AutoGeometry::Perspective => tr("The photo is already upright."),
             }
             .to_owned(),
         );

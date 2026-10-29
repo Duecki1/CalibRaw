@@ -2,6 +2,7 @@
 //! well as the status line, so it is never visible only in the logs.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 /// Errors waiting beyond this many are dropped; the status line still shows the latest.
 const MAX_QUEUED_ERROR_DIALOGS: usize = 8;
@@ -54,42 +55,42 @@ pub(crate) enum ErrorKind {
 impl ErrorKind {
     pub(in crate::app) fn title(self) -> &'static str {
         match self {
-            Self::Export => "Export failed",
-            Self::ExportUnavailable => "Export unavailable",
-            Self::BatchExport => "Batch export failed",
-            Self::Share => "Sharing failed",
-            Self::EditReplay => "Edit replay failed",
-            Self::Preview => "Preview failed",
-            Self::Sampling => "Sampling failed",
-            Self::LensCorrection => "Lens correction failed",
-            Self::OpenPhoto => "Could not open photo",
-            Self::Import => "Import failed",
-            Self::PhotoOpenedWithProblems => "Photo opened with problems",
-            Self::CameraProfile => "Camera profile failed",
-            Self::Presets => "Presets failed",
-            Self::Luts => "LUTs failed",
-            Self::Watermark => "Watermark failed",
-            Self::AiDenoise => "AI denoise failed",
-            Self::AiDenoiseNotSaved => "AI denoise not saved",
-            Self::AiMask => "AI mask failed",
-            Self::AiMaskRefresh => "AI mask refresh failed",
-            Self::NoPeopleFound => "No people found",
-            Self::PeopleNotSaved => "People not saved",
-            Self::AiUpdate => "AI update failed",
-            Self::AiRuntime => "AI runtime unavailable",
-            Self::AiFilesNotMoved => "AI files not moved",
-            Self::HdrMerge => "HDR merge failed",
-            Self::FocusStack => "Focus stacking failed",
-            Self::GpuMemory => "GPU memory exhausted",
-            Self::GpuAi => "GPU AI turned off",
-            Self::Retouch => "Retouch failed",
-            Self::Straighten => "Straightening failed",
-            Self::Perspective => "Perspective correction failed",
-            Self::Settings => "Settings error",
-            Self::Tip => "Tip unavailable",
-            Self::EditNotApplied => "Edit not applied",
-            Self::LibraryAdjustments => "Library adjustment failed",
-            Self::PhotoReview => "Rating not saved",
+            Self::Export => tr("Export failed"),
+            Self::ExportUnavailable => tr("Export unavailable"),
+            Self::BatchExport => tr("Batch export failed"),
+            Self::Share => tr("Sharing failed"),
+            Self::EditReplay => tr("Edit replay failed"),
+            Self::Preview => tr("Preview failed"),
+            Self::Sampling => tr("Sampling failed"),
+            Self::LensCorrection => tr("Lens correction failed"),
+            Self::OpenPhoto => tr("Could not open photo"),
+            Self::Import => tr("Import failed"),
+            Self::PhotoOpenedWithProblems => tr("Photo opened with problems"),
+            Self::CameraProfile => tr("Camera profile failed"),
+            Self::Presets => tr("Presets failed"),
+            Self::Luts => tr("LUTs failed"),
+            Self::Watermark => tr("Watermark failed"),
+            Self::AiDenoise => tr("AI denoise failed"),
+            Self::AiDenoiseNotSaved => tr("AI denoise not saved"),
+            Self::AiMask => tr("AI mask failed"),
+            Self::AiMaskRefresh => tr("AI mask refresh failed"),
+            Self::NoPeopleFound => tr("No people found"),
+            Self::PeopleNotSaved => tr("People not saved"),
+            Self::AiUpdate => tr("AI update failed"),
+            Self::AiRuntime => tr("AI runtime unavailable"),
+            Self::AiFilesNotMoved => tr("AI files not moved"),
+            Self::HdrMerge => tr("HDR merge failed"),
+            Self::FocusStack => tr("Focus stacking failed"),
+            Self::GpuMemory => tr("GPU memory exhausted"),
+            Self::GpuAi => tr("GPU AI turned off"),
+            Self::Retouch => tr("Retouch failed"),
+            Self::Straighten => tr("Straightening failed"),
+            Self::Perspective => tr("Perspective correction failed"),
+            Self::Settings => tr("Settings error"),
+            Self::Tip => tr("Tip unavailable"),
+            Self::EditNotApplied => tr("Edit not applied"),
+            Self::LibraryAdjustments => tr("Library adjustment failed"),
+            Self::PhotoReview => tr("Rating not saved"),
         }
     }
 }
@@ -170,9 +171,9 @@ impl CalibRawApp {
                     ui.add_space(moduwu_design::SPACE_XS);
                     ui.label(
                         egui::RichText::new(if remaining == 1 {
-                            "1 more error follows.".to_owned()
+                            tr("1 more error follows.").to_owned()
                         } else {
-                            format!("{remaining} more errors follow.")
+                            tr_fmt("{count} more errors follow.", &[("count", &remaining)])
                         })
                         .small()
                         .color(ui.visuals().weak_text_color()),
@@ -180,7 +181,7 @@ impl CalibRawApp {
                 }
             },
             |ui| {
-                close |= moduwu_design::secondary_button(ui, "Close").clicked();
+                close |= moduwu_design::secondary_button(ui, tr("Close")).clicked();
                 if !close
                     && moduwu_design::dialog_keyboard_action(
                         ui,

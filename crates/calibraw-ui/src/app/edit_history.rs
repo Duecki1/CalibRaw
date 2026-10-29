@@ -2,6 +2,7 @@ use super::{
     needs_canonical_mask_source, AppAction, AppTab, CalibRawApp, LensCorrectionState,
     LensfunCorrections,
 };
+use crate::i18n::tr;
 use crate::luts::LookLut;
 use crate::pipeline::{
     ExposureParams, GeometryTransform, ManualLensCorrection, MaskGeometry, MaskStack,
@@ -530,7 +531,7 @@ impl CalibRawApp {
         );
         if let Some((snapshot, masks_changed, remove_changed)) = snapshot {
             self.apply_edit_snapshot(snapshot, masks_changed, remove_changed);
-            self.ui.notice = Some("Undid edit.".to_owned());
+            self.ui.notice = Some(tr("Undid edit.").to_owned());
         }
     }
 
@@ -545,7 +546,7 @@ impl CalibRawApp {
         );
         if let Some((snapshot, masks_changed, remove_changed)) = snapshot {
             self.apply_edit_snapshot(snapshot, masks_changed, remove_changed);
-            self.ui.notice = Some("Redid edit.".to_owned());
+            self.ui.notice = Some(tr("Redid edit.").to_owned());
         }
     }
 

@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::app::EffectHandleEdit;
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::effect_params::{self, FloatParamSpec};
 
 /// Depth ring radius for a light at the camera and at the farthest surface:
@@ -40,7 +41,7 @@ impl PointSpec {
                 specs: [relight::SOURCE_X, relight::SOURCE_Y],
                 light: Some(settings.relight.color),
                 depth: Some(settings.relight.depth),
-                name: "Relight light",
+                name: tr("Relight light"),
             },
             MaskEffect::LightRays => Self {
                 frame: Frame::Source,
@@ -48,7 +49,7 @@ impl PointSpec {
                 specs: [light_rays::SOURCE_X, light_rays::SOURCE_Y],
                 light: Some(settings.light_rays.color),
                 depth: None,
-                name: "Light Rays source",
+                name: tr("Light Rays source"),
             },
             MaskEffect::RadialBlur => Self {
                 frame: Frame::Source,
@@ -56,7 +57,7 @@ impl PointSpec {
                 specs: [radial_blur::CENTER_X, radial_blur::CENTER_Y],
                 light: None,
                 depth: None,
-                name: "Radial Blur center",
+                name: tr("Radial Blur center"),
             },
             MaskEffect::Vignette => Self {
                 frame: Frame::Output,
@@ -64,7 +65,7 @@ impl PointSpec {
                 specs: [vignette::CENTER_X, vignette::CENTER_Y],
                 light: None,
                 depth: None,
-                name: "Vignette center",
+                name: tr("Vignette center"),
             },
             _ => return None,
         })
@@ -90,10 +91,17 @@ pub(super) fn show(
     let mut edits = Vec::new();
     let placement = Placement::of(frames.screen_of(spec.frame, spec.position), frames.viewport);
     let id = handle_id(ui, handle.target, "point");
-    let mut value = format!("{:.0}%, {:.0}%", spec.position[0], spec.position[1]);
-    if let Some(depth) = spec.depth {
-        value.push_str(&format!(", depth {}", format_signed(depth)));
-    }
+    let value = match spec.depth {
+        Some(depth) => tr_fmt(
+            "{x}%, {y}%, depth {depth}",
+            &[
+                ("x", &format!("{:.0}", spec.position[0])),
+                ("y", &format!("{:.0}", spec.position[1])),
+                ("depth", &format_signed(depth)),
+            ],
+        ),
+        None => format!("{:.0}%, {:.0}%", spec.position[0], spec.position[1]),
+    };
     let response = grab(ui, id, placement.drawn, spec.name, value);
 
     let mut position = spec.position;
@@ -182,7 +190,7 @@ fn paint(
 
     if active {
         let text = match depth {
-            Some(depth) => format!("Depth {}", format_signed(depth)),
+            Some(depth) => tr_fmt("Depth {depth}", &[("depth", &format_signed(depth))]),
             None => spec.name.to_owned(),
         };
         handles::paint_value_label(painter, center, ring + 14.0, text);

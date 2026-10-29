@@ -2,6 +2,7 @@
 //! which takes planar YUV.
 
 use super::REPLAY_FPS;
+use crate::i18n::tr;
 use crate::platform::{Platform, ReplayVideoEncoder};
 use std::path::Path;
 
@@ -31,14 +32,14 @@ impl ReplayFrameWriter {
         rgb_to_yuv420(rgb, self.width, self.height, &mut self.yuv);
         self.encoder
             .as_mut()
-            .ok_or("Replay encoder is closed")?
+            .ok_or(tr("Replay encoder is closed"))?
             .write_frame(&self.yuv)
     }
 
     pub(super) fn finish(mut self) -> Result<(), String> {
         self.encoder
             .take()
-            .ok_or("Replay encoder is closed")?
+            .ok_or(tr("Replay encoder is closed"))?
             .finish()
     }
 

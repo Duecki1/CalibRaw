@@ -6,6 +6,7 @@
 //! stay loaded between jobs; it never cancels a job.
 
 use super::*;
+use crate::i18n::tr;
 use calibraw_ai::{AiFeature, AiFeatureSet};
 
 /// Features whose results are derived from image content (masks and scene
@@ -46,16 +47,16 @@ impl ForegroundOperationKind {
         }
     }
 
-    pub(crate) const fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> &'static str {
         match self {
-            Self::Ai(AiFeature::Subject) => "Preparing subject mask",
-            Self::Ai(AiFeature::Sky) => "Preparing sky mask",
-            Self::Ai(AiFeature::SceneDepth) => "Estimating scene depth",
-            Self::Ai(AiFeature::Object) => "Preparing object mask",
-            Self::Ai(AiFeature::People) => "Preparing people mask",
-            Self::Ai(AiFeature::Remove) => "Applying Remove",
-            Self::Ai(AiFeature::Denoise) => "Applying AI denoise",
-            Self::LensCorrection => "Applying lens correction",
+            Self::Ai(AiFeature::Subject) => tr("Preparing subject mask"),
+            Self::Ai(AiFeature::Sky) => tr("Preparing sky mask"),
+            Self::Ai(AiFeature::SceneDepth) => tr("Estimating scene depth"),
+            Self::Ai(AiFeature::Object) => tr("Preparing object mask"),
+            Self::Ai(AiFeature::People) => tr("Preparing people mask"),
+            Self::Ai(AiFeature::Remove) => tr("Applying Remove"),
+            Self::Ai(AiFeature::Denoise) => tr("Applying AI denoise"),
+            Self::LensCorrection => tr("Applying lens correction"),
             Self::AutoGeometry(kind) => kind.title(),
         }
     }

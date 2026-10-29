@@ -6,6 +6,7 @@
 //! coordinates, only with fewer pixels.
 
 use super::*;
+use crate::i18n::tr;
 use anyhow::Context as _;
 
 impl CalibRawApp {
@@ -25,12 +26,12 @@ impl CalibRawApp {
             .develop
             .loaded_raw
             .as_ref()
-            .context("no photo is open")?;
+            .context(tr("no photo is open"))?;
         let template = self
             .preview
             .pipeline()
             .map(RawGpuPipeline::program_template)
-            .context("the fitted preview is gone")?;
+            .context(tr("the fitted preview is gone"))?;
         let masks = self.preview_mask_stack();
         let full_size = [full_raw.width, full_raw.height];
         let (virtual_origin, virtual_full_size) = detail_virtual_frame(

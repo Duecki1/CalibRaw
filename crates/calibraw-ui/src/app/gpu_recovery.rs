@@ -2,12 +2,15 @@
 //! previous run that died during GPU AI work.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 /// When AI had `activity` on the GPU, for a message: "while … was running".
 fn during(activity: &calibraw_ai::GpuAiActivity) -> String {
     match activity {
-        calibraw_ai::GpuAiActivity::Job(job) => format!("while {job} was running"),
-        calibraw_ai::GpuAiActivity::IdleModel(model) => format!("while {model} was loaded"),
+        calibraw_ai::GpuAiActivity::Job(job) => tr_fmt("while {job} was running", &[("job", &job)]),
+        calibraw_ai::GpuAiActivity::IdleModel(model) => {
+            tr_fmt("while {model} was loaded", &[("model", &model)])
+        }
     }
 }
 
@@ -29,9 +32,9 @@ impl CalibRawApp {
         self.set_ai_gpu_acceleration(false);
         self.report_error(
             ErrorKind::GpuAi,
-            format!(
-                "CalibRaw closed unexpectedly last time {}. AI tools now use the CPU; you can turn GPU acceleration back on in Settings.",
-                during(activity)
+            tr_fmt(
+                "CalibRaw closed unexpectedly last time {when}. AI tools now use the CPU; you can turn GPU acceleration back on in Settings.",
+                &[("when", &during(activity))],
             ),
         );
     }
@@ -56,23 +59,23 @@ impl CalibRawApp {
 
         let restart = self.platform.restart_after_gpu_loss_command();
         let mut message =
-            "The graphics driver reset the GPU, so CalibRaw cannot continue.".to_owned();
+            tr("The graphics driver reset the GPU, so CalibRaw cannot continue.").to_owned();
         match &save_failure {
-            None => message.push_str(" Your edits were saved."),
+            None => message.push_str(tr(" Your edits were saved.")),
             Some(error) => message.push_str(&format!(" {error}.")),
         }
         if let Some(activity) = &ai_activity {
-            message.push_str(&format!(
-                " This happened {}, so AI tools now use the CPU. You can turn GPU acceleration back on in Settings.",
-                during(activity)
+            message.push_str(&tr_fmt(
+                " This happened {when}, so AI tools now use the CPU. You can turn GPU acceleration back on in Settings.",
+                &[("when", &during(activity))],
             ));
         }
         message.push_str(if restart.is_some() {
-            " CalibRaw will restart."
+            tr(" CalibRaw will restart.")
         } else {
-            " Please start CalibRaw again."
+            tr(" Please start CalibRaw again.")
         });
-        crate::platform::show_fatal_message("CalibRaw has to restart", &message);
+        crate::platform::show_fatal_message(tr("CalibRaw has to restart"), &message);
 
         // This loss has been reported; the next start must not find the record
         // of a job that is still running and report it again.

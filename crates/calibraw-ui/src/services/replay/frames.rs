@@ -4,8 +4,12 @@
 
 use image::{imageops::FilterType, ImageBuffer, Rgb};
 
+use crate::i18n::tr_fmt;
+
 pub(super) const BRAND_TITLE: &str = "CalibRaw";
-pub(super) const BRAND_SUBTITLE: &str = "A fast, GPU-accelerated open source RAW editor.";
+/// Video text stays English: the bitmap font has only the letters it uses.
+const BRAND_SUBTITLE: &str = "A fast, GPU-accelerated open source RAW editor.";
+
 const BRAND_ICON_PNG: &[u8] = include_bytes!("../../../../../packaging/icons/calibraw-256.png");
 
 /// A developed edit state at replay resolution.
@@ -232,7 +236,12 @@ fn fitted_bitmap_scale(text: &str, max_width: u32, preferred: u32) -> i32 {
 pub(super) fn brand_outro_frame(width: u32, height: u32) -> Result<Vec<u8>, String> {
     let mut frame = vec![0u8; width as usize * height as usize * 3];
     let icon = image::load_from_memory(BRAND_ICON_PNG)
-        .map_err(|error| format!("Could not decode embedded CalibRaw icon: {error}"))?
+        .map_err(|error| {
+            tr_fmt(
+                "Could not decode embedded CalibRaw icon: {error}",
+                &[("error", &error)],
+            )
+        })?
         .into_rgb8();
     let short_edge = width.min(height);
     let icon_side = ((short_edge as f32 * 0.18).round() as u32).clamp(96, 256);

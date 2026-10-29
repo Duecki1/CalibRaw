@@ -1,6 +1,7 @@
 //! The open document's develop state and the develop view's interaction state.
 
 use super::*;
+use crate::i18n::tr;
 
 pub(crate) struct DevelopReferenceState {
     pub(crate) path: Option<PathBuf>,
@@ -83,40 +84,40 @@ impl SidebarTab {
     ];
 
     /// The sidebar header title.
-    pub(crate) const fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> &'static str {
         match self {
-            Self::Adjustments => "Edit",
-            Self::Presets => "Presets",
-            Self::Crop => "Crop",
-            Self::Masks => "Masking",
-            Self::Inpainting => "Inpaint",
-            Self::Export => "Export",
-            Self::Info => "Image Info",
+            Self::Adjustments => tr("Edit"),
+            Self::Presets => tr("Presets"),
+            Self::Crop => tr("Crop"),
+            Self::Masks => tr("Masking"),
+            Self::Inpainting => tr("Inpaint"),
+            Self::Export => tr("Export"),
+            Self::Info => tr("Image Info"),
         }
     }
 
     /// The label under the icon in compact navigation.
-    pub(crate) const fn short_label(self) -> &'static str {
+    pub(crate) fn short_label(self) -> &'static str {
         match self {
-            Self::Adjustments => "Edit",
-            Self::Presets => "Presets",
-            Self::Crop => "Crop",
-            Self::Masks => "Mask",
-            Self::Inpainting => "Remove",
-            Self::Export => "Export",
-            Self::Info => "Info",
+            Self::Adjustments => tr("Edit"),
+            Self::Presets => tr("Presets"),
+            Self::Crop => tr("Crop"),
+            Self::Masks => tr("Mask"),
+            Self::Inpainting => tr("Remove"),
+            Self::Export => tr("Export"),
+            Self::Info => tr("Info"),
         }
     }
 
-    pub(crate) const fn tooltip(self) -> &'static str {
+    pub(crate) fn tooltip(self) -> &'static str {
         match self {
-            Self::Adjustments => "Edit adjustments",
-            Self::Presets => "Presets",
-            Self::Crop => "Crop",
-            Self::Masks => "Masking",
-            Self::Inpainting => "Remove unwanted objects",
-            Self::Export => "Export",
-            Self::Info => "Image information",
+            Self::Adjustments => tr("Edit adjustments"),
+            Self::Presets => tr("Presets"),
+            Self::Crop => tr("Crop"),
+            Self::Masks => tr("Masking"),
+            Self::Inpainting => tr("Remove unwanted objects"),
+            Self::Export => tr("Export"),
+            Self::Info => tr("Image information"),
         }
     }
 
@@ -145,11 +146,11 @@ pub(crate) enum InpaintTool {
 impl InpaintTool {
     pub(crate) const ALL: [Self; 3] = [Self::Remove, Self::Clone, Self::Heal];
 
-    pub(crate) const fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Remove => "Remove",
-            Self::Clone => "Clone",
-            Self::Heal => "Heal",
+            Self::Remove => tr("Remove"),
+            Self::Clone => tr("Clone"),
+            Self::Heal => tr("Heal"),
         }
     }
 

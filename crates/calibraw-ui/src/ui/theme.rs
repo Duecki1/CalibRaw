@@ -35,6 +35,7 @@ pub(crate) const MASK_COMPONENT_COLORS: [Color32; 8] = [
     Color32::from_rgb(180, 205, 88),
 ];
 
+/// Channel names are translated where shown (`tr`).
 pub(crate) const HSL_CHANNELS: [(&str, Color32); 8] = [
     ("Red", Color32::from_rgb(232, 76, 82)),
     ("Orange", Color32::from_rgb(238, 137, 48)),

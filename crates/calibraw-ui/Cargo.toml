@@ -41,6 +41,7 @@ serde.workspace = true
 serde_json.workspace = true
 semver.workspace = true
 skrifa.workspace = true
+sys-locale.workspace = true
 tempfile.workspace = true
 ureq.workspace = true
 

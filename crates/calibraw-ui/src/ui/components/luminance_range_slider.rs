@@ -7,6 +7,7 @@
 use super::feathered_range::{
     self, round_to, EndEdit, FeatheredRange, RangeEdit, RangeHandle, RangePoints,
 };
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{
     lightness_to_luminance, luminance_range_weight, luminance_to_lightness, LUMINANCE_FEATHER_MAX,
     LUMINANCE_FEATHER_WIDTH,
@@ -61,10 +62,22 @@ impl FeatheredRange for LuminanceRange {
     fn handle_text(&self, handle: RangeHandle) -> String {
         let lightness = |luminance| luminance_to_lightness(luminance) * 100.0;
         match handle {
-            RangeHandle::Start => format!("Low {:.0}", lightness(self.low)),
-            RangeHandle::End => format!("High {:.0}", lightness(self.high)),
-            RangeHandle::StartFeather => format!("Low feather {:.2}", self.low_feather),
-            RangeHandle::EndFeather => format!("High feather {:.2}", self.high_feather),
+            RangeHandle::Start => tr_fmt(
+                "Low {low}",
+                &[("low", &format!("{:.0}", lightness(self.low)))],
+            ),
+            RangeHandle::End => tr_fmt(
+                "High {high}",
+                &[("high", &format!("{:.0}", lightness(self.high)))],
+            ),
+            RangeHandle::StartFeather => tr_fmt(
+                "Low feather {low_feather}",
+                &[("low_feather", &format!("{:.2}", self.low_feather))],
+            ),
+            RangeHandle::EndFeather => tr_fmt(
+                "High feather {high_feather}",
+                &[("high_feather", &format!("{:.2}", self.high_feather))],
+            ),
         }
     }
 
@@ -106,8 +119,8 @@ fn apply_end_edit(edit: EndEdit, bound: &mut f32, feather: &mut f32, direction: 
 /// Shows the luminance range and returns whether it changed.
 pub(crate) fn luminance_range_slider(ui: &mut Ui, range: &mut LuminanceRange) -> bool {
     let before = *range;
-    ui.label("Luminance range");
-    feathered_range::feathered_range_track(ui, range, "Luminance range", |painter, track| {
+    ui.label(tr("Luminance range"));
+    feathered_range::feathered_range_track(ui, range, tr("Luminance range"), |painter, track| {
         const COLUMNS: usize = 64;
         let mut mesh = egui::Mesh::default();
         for column in 0..=COLUMNS {

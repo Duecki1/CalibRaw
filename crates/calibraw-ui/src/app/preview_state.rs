@@ -1,6 +1,7 @@
 //! State of the develop preview: quality, detail and navigation renders, crop drags.
 
 use super::*;
+use crate::i18n::tr;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AndroidOriginalHold {
@@ -173,12 +174,12 @@ impl PreviewQuality {
         }
     }
 
-    pub(crate) const fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Low => "Low",
-            Self::Medium => "Medium",
-            Self::High => "High",
-            Self::Max => "Max",
+            Self::Low => tr("Low"),
+            Self::Medium => tr("Medium"),
+            Self::High => tr("High"),
+            Self::Max => tr("Max"),
         }
     }
 

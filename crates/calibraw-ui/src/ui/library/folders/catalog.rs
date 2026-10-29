@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::i18n::tr_fmt;
 use calibraw_core::display_metadata_cache::{FileStamp, FolderDisplayMetadataCache};
 use calibraw_core::pipeline::RawDisplayMetadata;
 use std::collections::BinaryHeap;
@@ -237,17 +238,28 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
     if is_cancelled() {
         return Ok(None);
     }
-    let metadata = std::fs::metadata(folder)
-        .map_err(|error| format!("Could not read {}: {error}", folder.display()))?;
+    let metadata = std::fs::metadata(folder).map_err(|error| {
+        tr_fmt(
+            "Could not read {folder}: {error}",
+            &[("folder", &folder.display()), ("error", &error)],
+        )
+    })?;
     if !metadata.is_dir() {
-        return Err(format!("{} is not a folder", folder.display()));
+        return Err(tr_fmt(
+            "{folder} is not a folder",
+            &[("folder", &folder.display())],
+        ));
     }
 
     let mut ranked_assets = BinaryHeap::with_capacity(maximum_files);
     let mut warning_count = 0usize;
     let mut truncated = false;
-    let entries = std::fs::read_dir(folder)
-        .map_err(|error| format!("Could not scan {}: {error}", folder.display()))?;
+    let entries = std::fs::read_dir(folder).map_err(|error| {
+        tr_fmt(
+            "Could not scan {folder}: {error}",
+            &[("folder", &folder.display()), ("error", &error)],
+        )
+    })?;
     for entry in entries {
         if is_cancelled() {
             return Ok(None);

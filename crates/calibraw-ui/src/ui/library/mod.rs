@@ -1,5 +1,6 @@
 use crate::app::CalibRawApp;
 use crate::app::LibraryExportDestination;
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{
     apply_lens_correction, build_proxy, is_supported_image_path, load_raw_display_metadata,
     load_raw_file_with_profile_selection, load_raw_thumbnail,
@@ -122,18 +123,18 @@ pub(crate) enum LibrarySortOrder {
 }
 
 impl LibrarySortOrder {
-    const fn label(self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
-            Self::NewestFirst => "Newest first",
-            Self::OldestFirst => "Oldest first",
-            Self::NameAscending => "Name A–Z",
-            Self::NameDescending => "Name Z–A",
-            Self::LargestFirst => "Largest first",
-            Self::SmallestFirst => "Smallest first",
-            Self::RatingHighestFirst => "Rating: highest first",
-            Self::RatingLowestFirst => "Rating: lowest first",
-            Self::FlagPickedFirst => "Flag: picks first",
-            Self::FlagRejectedFirst => "Flag: rejects first",
+            Self::NewestFirst => tr("Newest first"),
+            Self::OldestFirst => tr("Oldest first"),
+            Self::NameAscending => tr("Name A–Z"),
+            Self::NameDescending => tr("Name Z–A"),
+            Self::LargestFirst => tr("Largest first"),
+            Self::SmallestFirst => tr("Smallest first"),
+            Self::RatingHighestFirst => tr("Rating: highest first"),
+            Self::RatingLowestFirst => tr("Rating: lowest first"),
+            Self::FlagPickedFirst => tr("Flag: picks first"),
+            Self::FlagRejectedFirst => tr("Flag: rejects first"),
         }
     }
 }
@@ -151,12 +152,12 @@ pub(crate) enum LibraryThumbnailSize {
 impl LibraryThumbnailSize {
     const ALL: [Self; 4] = [Self::Small, Self::Medium, Self::Large, Self::Enormous];
 
-    const fn label(self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
-            Self::Small => "Small",
-            Self::Medium => "Medium",
-            Self::Large => "Large",
-            Self::Enormous => "Extra large",
+            Self::Small => tr("Small"),
+            Self::Medium => tr("Medium"),
+            Self::Large => tr("Large"),
+            Self::Enormous => tr("Extra large"),
         }
     }
 
@@ -496,7 +497,11 @@ struct ImageClipboard {
 impl ImageClipboard {
     fn paste_label(&self) -> String {
         let count = self.assets.len();
-        format!("Paste {count} photo{}", if count == 1 { "" } else { "s" })
+        if count == 1 {
+            tr_fmt("Paste {count} photo", &[("count", &count)])
+        } else {
+            tr_fmt("Paste {count} photos", &[("count", &count)])
+        }
     }
 }
 

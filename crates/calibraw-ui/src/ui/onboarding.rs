@@ -1,6 +1,8 @@
 use crate::app::{CalibRawApp, ErrorKind, OnboardingStep, PreviewQuality};
 use eframe::egui;
 
+use crate::i18n::{tr, tr_fmt};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OnboardingAction {
     Back,
@@ -37,7 +39,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             if !app.persist_performance_settings() {
                 app.report_error(
                     ErrorKind::Settings,
-                    "Setup is complete, but CalibRaw could not save the first-run preferences."
+                    tr("Setup is complete, but CalibRaw could not save the first-run preferences.")
                         .to_owned(),
                 );
             }
@@ -69,7 +71,10 @@ fn show_step_body(
 /// shows the step title.
 fn show_header(ui: &mut egui::Ui, steps: &[OnboardingStep], step: OnboardingStep) {
     if steps.len() > 1 {
-        ui.weak(format!("Step {} of {}", step.index(steps) + 1, steps.len()));
+        ui.weak(tr_fmt(
+            "Step {step} of {count}",
+            &[("step", &(step.index(steps) + 1)), ("count", &steps.len())],
+        ));
     }
     ui.label(step.introduction());
 }
@@ -78,7 +83,7 @@ fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut design = app.preferences.ui_design;
     moduwu_design::form_combo_with_help(
         ui,
-        "Design",
+        tr("Design"),
         "onboarding-ui-design",
         design.label(),
         220.0,
@@ -98,11 +103,11 @@ fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut backdrop = app.preferences.preview_backdrop;
     moduwu_design::form_combo_with_help(
         ui,
-        "Preview background",
+        tr("Preview background"),
         "onboarding-preview-backdrop",
         backdrop.label(),
         220.0,
-        "Sets the canvas color around the photo. Match photo derives a quiet color from each image.",
+        tr("Sets the canvas color around the photo. Match photo derives a quiet color from each image."),
         |ui| {
             for option in crate::appearance::PreviewBackdrop::ALL {
                 ui.selectable_value(&mut backdrop, option, option.label());
@@ -132,13 +137,13 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let constrained = app.caps().constrained_memory();
     let mut quality = app.preview.quality;
     let help = if constrained {
-        "Higher quality renders more preview pixels and uses more GPU memory. Max matches your screen pixel for pixel."
+        tr("Higher quality renders more preview pixels and uses more GPU memory. Max matches your screen pixel for pixel.")
     } else {
-        "Higher quality renders more preview pixels and uses more GPU memory. Max renders 150% of your screen pixels and averages them down, for the sharpest preview."
+        tr("Higher quality renders more preview pixels and uses more GPU memory. Max renders 150% of your screen pixels and averages them down, for the sharpest preview.")
     };
     moduwu_design::form_combo_with_help(
         ui,
-        "Preview quality",
+        tr("Preview quality"),
         "onboarding-preview-quality",
         quality.label(),
         180.0,
@@ -162,17 +167,17 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     ui.add_space(moduwu_design::SPACE_SM);
     ui.small(if constrained {
         match quality {
-            PreviewQuality::Low => "50% render density · lowest GPU memory use",
-            PreviewQuality::Medium => "75% render density · lighter on the GPU",
-            PreviewQuality::High => "90% render density · nearly exact previews",
-            PreviewQuality::Max => "100% render density · exact screen pixels",
+            PreviewQuality::Low => tr("50% render density · lowest GPU memory use"),
+            PreviewQuality::Medium => tr("75% render density · lighter on the GPU"),
+            PreviewQuality::High => tr("90% render density · nearly exact previews"),
+            PreviewQuality::Max => tr("100% render density · exact screen pixels"),
         }
     } else {
         match quality {
-            PreviewQuality::Low => "75% render density · lowest GPU memory use",
-            PreviewQuality::Medium => "100% render density · exact screen pixels",
-            PreviewQuality::High => "125% render density · finer detail",
-            PreviewQuality::Max => "150% render density · supersampled previews",
+            PreviewQuality::Low => tr("75% render density · lowest GPU memory use"),
+            PreviewQuality::Medium => tr("100% render density · exact screen pixels"),
+            PreviewQuality::High => tr("125% render density · finer detail"),
+            PreviewQuality::Max => tr("150% render density · supersampled previews"),
         }
     });
 }
@@ -189,46 +194,50 @@ fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.adjustments,
-        "Adjustments",
-        "Exposure, color, tone, detail, effects, and other Develop adjustments.",
+        tr("Adjustments"),
+        tr("Exposure, color, tone, detail, effects, and other Develop adjustments."),
     )
     .changed();
     changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.geometry,
-        "Crop & geometry",
-        "Crop, rotation, transforms, and flips.",
+        tr("Crop & geometry"),
+        tr("Crop, rotation, transforms, and flips."),
     )
     .changed();
     changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.camera_profile,
-        "Camera profile",
-        "The selected camera profile, when it is available for the destination image.",
+        tr("Camera profile"),
+        tr("The selected camera profile, when it is available for the destination image."),
     )
     .changed();
-    changed |=
-        moduwu_design::toggle_with_help(ui, &mut settings.lut, "LUT", "The LUT and its amount.")
-            .changed();
+    changed |= moduwu_design::toggle_with_help(
+        ui,
+        &mut settings.lut,
+        tr("LUT"),
+        tr("The LUT and its amount."),
+    )
+    .changed();
     changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.masks,
-        "Manual masks",
-        "Brush, linear, radial, and fullscreen mask components with their local edits.",
+        tr("Manual masks"),
+        tr("Brush, linear, radial, and fullscreen mask components with their local edits."),
     )
     .changed();
     changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.ai_masks,
-        "Content-aware masks",
-        "Subject, background, sky, object, luminance-range, and color-range components. They are regenerated for the destination image when needed.",
+        tr("Content-aware masks"),
+        tr("Subject, background, sky, object, luminance-range, and color-range components. They are regenerated for the destination image when needed."),
     )
     .changed();
     changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.lens_correction,
-        "Lens correction",
-        "The enabled state and selected lens profile.",
+        tr("Lens correction"),
+        tr("The enabled state and selected lens profile."),
     )
     .changed();
     if changed {
@@ -243,7 +252,7 @@ fn show_export_names(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 fn show_camera_profiles(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let auto_detect_available = !crate::platform::camera_profile_search_locations().is_empty();
     if auto_detect_available {
-        ui.small("Auto-detect looks for a CameraProfiles folder in:");
+        ui.small(tr("Auto-detect looks for a CameraProfiles folder in:"));
         for location in crate::platform::camera_profile_search_locations() {
             ui.add(egui::Label::new(egui::RichText::new(*location).monospace().small()).wrap());
         }
@@ -252,21 +261,21 @@ fn show_camera_profiles(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 
     moduwu_design::action_row(ui, |ui| {
         if auto_detect_available
-            && moduwu_design::primary_action_button(ui, "Auto-detect (Recommended)").clicked()
+            && moduwu_design::primary_action_button(ui, tr("Auto-detect (Recommended)")).clicked()
         {
             app.auto_detect_camera_profile_folder();
         }
         if moduwu_design::secondary_button_enabled(
             ui,
             app.ui.desktop_picker_receiver.is_none(),
-            "Choose folder…",
+            tr("Choose folder…"),
         )
-        .on_hover_text("CalibRaw searches subfolders recursively.")
+        .on_hover_text(tr("CalibRaw searches subfolders recursively."))
         .clicked()
         {
             app.choose_camera_profile_folder();
         }
-        if moduwu_design::secondary_button(ui, "Not now").clicked() {
+        if moduwu_design::secondary_button(ui, tr("Not now")).clicked() {
             app.clear_camera_profile_folder();
         }
     });
@@ -277,7 +286,7 @@ fn show_camera_profiles(ui: &mut egui::Ui, app: &mut CalibRawApp) {
             app.preferences
                 .camera_profile_folder_label
                 .as_deref()
-                .unwrap_or("DCP profiles"),
+                .unwrap_or(tr("DCP profiles")),
         );
         ui.add(
             egui::Label::new(egui::RichText::new(folder.display().to_string()).monospace()).wrap(),
@@ -285,10 +294,12 @@ fn show_camera_profiles(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     } else if auto_detect_available && app.preferences.camera_profile_auto_detect {
         ui.colored_label(
             ui.visuals().warn_fg_color,
-            "No CameraProfiles folder was found.",
+            tr("No CameraProfiles folder was found."),
         );
     } else {
-        ui.small("No DCP profile folder selected. You can add one later in Settings.");
+        ui.small(tr(
+            "No DCP profile folder selected. You can add one later in Settings.",
+        ));
     }
 }
 
@@ -297,8 +308,8 @@ fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     if moduwu_design::toggle_with_help(
         ui,
         &mut enabled,
-        "Enable Discord Rich Presence",
-        "Shares only whether you are browsing the Library or editing, plus the elapsed edit time. Photo names and paths are never sent. Discord's desktop client must be running.",
+        tr("Enable Discord Rich Presence"),
+        tr("Shares only whether you are browsing the Library or editing, plus the elapsed edit time. Photo names and paths are never sent. Discord's desktop client must be running."),
     )
     .changed()
     {
@@ -306,12 +317,14 @@ fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     }
 
     ui.add_space(moduwu_design::SPACE_SM);
-    ui.small("This is optional and disabled by default. You can change it later in Settings.");
+    ui.small(tr(
+        "This is optional and disabled by default. You can change it later in Settings.",
+    ));
     if !app.discord_rich_presence_configured() {
         ui.add_space(moduwu_design::SPACE_SM);
         ui.colored_label(
             ui.visuals().warn_fg_color,
-            "Unavailable in this build: CALIBRAW_DISCORD_APPLICATION_ID is not configured.",
+            tr("Unavailable in this build: CALIBRAW_DISCORD_APPLICATION_ID is not configured."),
         );
     }
 }
@@ -323,15 +336,16 @@ fn show_navigation(
 ) -> Option<OnboardingAction> {
     // Footer actions are added primary first.
     let (label, next) = if step.next(steps).is_some() {
-        ("Next", OnboardingAction::Next)
+        (tr("Next"), OnboardingAction::Next)
     } else if steps.len() > 1 {
-        ("Finish setup", OnboardingAction::Finish)
+        (tr("Finish setup"), OnboardingAction::Finish)
     } else {
-        ("Done", OnboardingAction::Finish)
+        (tr("Done"), OnboardingAction::Finish)
     };
     let forward = moduwu_design::primary_action_button(ui, label).clicked();
-    let back = moduwu_design::secondary_button_enabled(ui, step.previous(steps).is_some(), "Back")
-        .clicked();
+    let back =
+        moduwu_design::secondary_button_enabled(ui, step.previous(steps).is_some(), tr("Back"))
+            .clicked();
     if forward {
         Some(next)
     } else {
@@ -416,40 +430,40 @@ impl OnboardingStep {
             .and_then(|index| steps.get(index).copied())
     }
 
-    const fn title(self) -> &'static str {
+    fn title(self) -> &'static str {
         match self {
-            Self::Appearance => "Welcome to CalibRaw",
-            Self::Preview => "Preview setup",
-            Self::SubjectMasks => "Subject masks",
-            Self::CopyPaste => "Copy & paste setup",
-            Self::ExportNames => "Export file names",
-            Self::CameraProfiles => "Camera profiles",
-            Self::Discord => "Discord Rich Presence",
+            Self::Appearance => tr("Welcome to CalibRaw"),
+            Self::Preview => tr("Preview setup"),
+            Self::SubjectMasks => tr("Subject masks"),
+            Self::CopyPaste => tr("Copy & paste setup"),
+            Self::ExportNames => tr("Export file names"),
+            Self::CameraProfiles => tr("Camera profiles"),
+            Self::Discord => tr("Discord Rich Presence"),
         }
     }
 
-    const fn introduction(self) -> &'static str {
+    fn introduction(self) -> &'static str {
         match self {
             Self::Appearance => {
-                "Choose how CalibRaw looks and the background shown around your photographs."
+                tr("Choose how CalibRaw looks and the background shown around your photographs.")
             }
             Self::Preview => {
-                "Choose the balance between interactive preview detail and GPU memory use."
+                tr("Choose the balance between interactive preview detail and GPU memory use.")
             }
             Self::SubjectMasks => {
-                "Choose the balance between AI subject selection speed and edge detail on this device. Models are downloaded when you first select a subject."
+                tr("Choose the balance between AI subject selection speed and edge detail on this device. Models are downloaded when you first select a subject.")
             }
             Self::CopyPaste => {
-                "Choose which edit categories are included when copying and pasting adjustments."
+                tr("Choose which edit categories are included when copying and pasting adjustments.")
             }
             Self::ExportNames => {
-                "Choose how CalibRaw names exported files. You can combine source details with your own text."
+                tr("Choose how CalibRaw names exported files. You can combine source details with your own text.")
             }
             Self::CameraProfiles => {
-                "Choose where CalibRaw finds DCP camera profiles for your RAW files."
+                tr("Choose where CalibRaw finds DCP camera profiles for your RAW files.")
             }
             Self::Discord => {
-                "Choose whether Discord may show that you are browsing or editing in CalibRaw."
+                tr("Choose whether Discord may show that you are browsing or editing in CalibRaw.")
             }
         }
     }

@@ -1,12 +1,13 @@
 use super::*;
 use crate::app::MaskStripEdit;
+use crate::i18n::tr;
 
 pub(super) fn mask_component_badge(
     component_index: usize,
     combine: MaskCombineMode,
 ) -> &'static str {
     if component_index == 0 {
-        "BASE"
+        tr("BASE")
     } else {
         match combine {
             MaskCombineMode::Add => egui_phosphor::regular::PLUS,

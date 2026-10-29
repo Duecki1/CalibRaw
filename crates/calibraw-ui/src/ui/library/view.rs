@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::AppTab;
+use crate::i18n::{tr, tr_fmt};
 
 pub(crate) struct Library;
 
@@ -12,13 +13,13 @@ impl Library {
 
         moduwu_design::card_header(ui, |ui| {
             moduwu_design::toolbar_row(ui, |ui| {
-                moduwu_design::toolbar_title(ui, "Folders");
+                moduwu_design::toolbar_title(ui, tr("Folders"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if moduwu_design::ghost_icon_button(
                         ui,
                         egui_phosphor::regular::X,
                         moduwu_design::toolbar_icon_size(),
-                        "Close folder sidebar",
+                        tr("Close folder sidebar"),
                     )
                     .clicked()
                     {
@@ -30,7 +31,7 @@ impl Library {
                                 ui,
                                 egui_phosphor::regular::ARROW_CLOCKWISE,
                                 moduwu_design::toolbar_icon_size(),
-                                "Refresh folders",
+                                tr("Refresh folders"),
                             )
                         })
                         .inner
@@ -44,7 +45,7 @@ impl Library {
                                 ui,
                                 egui_phosphor::regular::FOLDER_PLUS,
                                 moduwu_design::toolbar_icon_size(),
-                                "Create folder here",
+                                tr("Create folder here"),
                             )
                         })
                         .inner
@@ -115,7 +116,7 @@ impl Library {
                         ui,
                         egui_phosphor::regular::SIDEBAR_SIMPLE,
                         moduwu_design::toolbar_icon_size(),
-                        "Open folder sidebar",
+                        tr("Open folder sidebar"),
                     )
                     .clicked()
                 {
@@ -123,7 +124,7 @@ impl Library {
                 }
 
                 if compact_header {
-                    moduwu_design::toolbar_title(ui, "Library");
+                    moduwu_design::toolbar_title(ui, tr("Library"));
                 } else {
                     moduwu_design::toolbar_title(ui, &header_title);
                 }
@@ -139,10 +140,10 @@ impl Library {
                                 ui,
                                 egui_phosphor::regular::GEAR,
                                 moduwu_design::toolbar_icon_size(),
-                                "Settings",
+                                tr("Settings"),
                             )
                         } else {
-                            moduwu_design::toolbar_button(ui, "Settings", 82.0)
+                            moduwu_design::toolbar_button(ui, tr("Settings"), 82.0)
                         })
                         .clicked()
                     {
@@ -157,7 +158,7 @@ impl Library {
                                     ui,
                                     egui_phosphor::regular::ARROW_CLOCKWISE,
                                     moduwu_design::toolbar_icon_size(),
-                                    "Refresh library",
+                                    tr("Refresh library"),
                                 )
                             },
                         )
@@ -175,7 +176,7 @@ impl Library {
                                 egui_phosphor::regular::CHECK_SQUARE_OFFSET,
                                 selecting,
                                 moduwu_design::toolbar_icon_size(),
-                                "Select photos",
+                                tr("Select photos"),
                             )
                         })
                         .inner
@@ -209,7 +210,13 @@ impl Library {
             let label = if compact_header {
                 format!("{}/{}", progress.completed, progress.total)
             } else {
-                format!("Previews {}/{}", progress.completed, progress.total)
+                tr_fmt(
+                    "Previews {completed}/{total}",
+                    &[
+                        ("completed", &progress.completed),
+                        ("total", &progress.total),
+                    ],
+                )
             };
             moduwu_design::progress_card_header(
                 ui,
@@ -237,13 +244,15 @@ impl Library {
         app.library.retain_visible_selection(&visible);
         if app.library.review_filter.active() {
             ui.horizontal_wrapped(|ui| {
-                ui.weak(format!(
-                    "Showing {} of {} · {}",
-                    visible.len(),
-                    app.library.photo_count(),
-                    app.library.review_filter.summary()
+                ui.weak(tr_fmt(
+                    "Showing {count} of {photo_count} · {summary}",
+                    &[
+                        ("count", &visible.len()),
+                        ("photo_count", &app.library.photo_count()),
+                        ("summary", &app.library.review_filter.summary()),
+                    ],
                 ));
-                if ui.small_button("Clear filters").clicked() {
+                if ui.small_button(tr("Clear filters")).clicked() {
                     app.library.review_filter = LibraryReviewFilter::default();
                 }
             });
@@ -255,17 +264,17 @@ impl Library {
             if caps.has_folders() {
                 if show_library_empty_state(
                     ui,
-                    "Build your photo library",
-                    "Choose a top-level photo folder. CalibRaw keeps your hierarchy intact and shows the RAW, JPEG, PNG and HEIC photos in each folder.",
-                    Some("Open Folder…"),
+                    tr("Build your photo library"),
+                    tr("Choose a top-level photo folder. CalibRaw keeps your hierarchy intact and shows the RAW, JPEG, PNG and HEIC photos in each folder."),
+                    Some(tr("Open Folder…")),
                 ) {
                     app.open_library_folder_dialog();
                 }
             } else {
                 show_library_empty_state(
                     ui,
-                    "Your library is ready",
-                    "Use the folder sidebar to browse your Library, or tap + to import photos.",
+                    tr("Your library is ready"),
+                    tr("Use the folder sidebar to browse your Library, or tap + to import photos."),
                     None,
                 );
             }
@@ -274,20 +283,20 @@ impl Library {
         } else if app.library.catalog_ready && app.library.entries.is_empty() {
             show_library_empty_state(
                 ui,
-                "No photos here yet",
+                tr("No photos here yet"),
                 if caps.has_folders() {
-                    "Choose another folder in the sidebar or add RAW, JPEG, PNG or HEIC photos to this folder."
+                    tr("Choose another folder in the sidebar or add RAW, JPEG, PNG or HEIC photos to this folder.")
                 } else {
-                    "Tap + to import RAW, JPEG, PNG or HEIC photos."
+                    tr("Tap + to import RAW, JPEG, PNG or HEIC photos.")
                 },
                 None,
             );
         } else if visible.is_empty() {
             if show_library_empty_state(
                 ui,
-                "No matching photos",
-                "Change the filename, rating or flag filters to show more photos.",
-                Some("Clear search & filters"),
+                tr("No matching photos"),
+                tr("Change the filename, rating or flag filters to show more photos."),
+                Some(tr("Clear search & filters")),
             ) {
                 app.library.clear_search();
                 app.library.review_filter = LibraryReviewFilter::default();
@@ -312,7 +321,7 @@ impl Library {
                 ui,
                 rect,
                 egui_phosphor::regular::PLUS,
-                "Import RAW files",
+                tr("Import RAW files"),
             );
             if response.clicked() {
                 import_raw = true;
@@ -338,14 +347,14 @@ impl Library {
 }
 
 fn library_header_title(app: &CalibRawApp) -> String {
-    selected_library_folder_name(app).unwrap_or_else(|| "Library".to_owned())
+    selected_library_folder_name(app).unwrap_or_else(|| tr("Library").to_owned())
 }
 
 fn selected_library_folder_name(app: &CalibRawApp) -> Option<String> {
     if app.caps().has_media_library() {
         let folder = app.library.media.folder.as_str();
         return Some(if folder.is_empty() {
-            "All photos".to_owned()
+            tr("All photos").to_owned()
         } else {
             folder.rsplit('/').next().unwrap_or(folder).to_owned()
         });
@@ -581,7 +590,7 @@ fn show_library_loading_state(ui: &mut Ui) {
         ui.vertical_centered(|ui| {
             ui.add(egui::Spinner::new().size(28.0));
             ui.add_space(moduwu_design::SPACE_SM);
-            ui.label("Loading photos…");
+            ui.label(tr("Loading photos…"));
         });
     });
 }
@@ -648,7 +657,7 @@ fn show_library_view_combos(
     moduwu_design::responsive_combo_box(
         ui,
         "library-thumbnail-size",
-        format!("Size: {}", selected_size.label()),
+        tr_fmt("Size: {label}", &[("label", &selected_size.label())]),
         size_width,
         LibraryThumbnailSize::ALL.len(),
         |ui| {

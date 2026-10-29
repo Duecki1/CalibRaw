@@ -2,6 +2,7 @@ use super::{
     effect_card, effect_color, effect_details, float_param_slider, image_lights_toggle,
     pattern_seed,
 };
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{effect_params::fog, FogEffectSettings, MaskEffect};
 use crate::ui::components::feathered_range::{
     self, EndEdit, FeatheredRange, RangeEdit, RangeHandle, RangePoints,
@@ -118,13 +119,15 @@ impl FeatheredRange for FogOnset {
     fn handle_text(&self, handle: RangeHandle) -> String {
         match handle {
             RangeHandle::StartFeather => {
-                format!("{} {:.0}", fog::START.label, self.settings.start)
+                format!("{} {:.0}", tr(fog::START.label), self.settings.start)
             }
-            _ => format!(
-                "Full strength at {:.0}, {} {:.0}",
-                self.points().full_from * 100.0,
-                fog::SOFTNESS.label,
-                self.settings.softness
+            _ => tr_fmt(
+                "Full strength at {full}, {softness_label} {softness}",
+                &[
+                    ("full", &format!("{:.0}", self.points().full_from * 100.0)),
+                    ("softness_label", &tr(fog::SOFTNESS.label)),
+                    ("softness", &format!("{:.0}", self.settings.softness)),
+                ],
             ),
         }
     }
@@ -147,11 +150,11 @@ fn fog_onset(ui: &mut Ui, settings: &mut FogEffectSettings) -> bool {
     let mut onset = FogOnset {
         settings: *settings,
     };
-    ui.label(fog::START.label);
+    ui.label(tr(fog::START.label));
     feathered_range::feathered_range_track(
         ui,
         &mut onset,
-        fog::START.label,
+        tr(fog::START.label),
         feathered_range::plain_track_background(ui.visuals()),
     );
     settings.start = onset.settings.start;
@@ -174,7 +177,7 @@ pub(crate) fn show(
         |ui, settings| {
             let mut changed = float_param_slider(ui, &mut settings.amount, fog::AMOUNT);
             changed |= float_param_slider(ui, &mut settings.density, fog::DENSITY);
-            if moduwu_design::toggle_with_help(ui, &mut settings.depth_enabled, "Scene depth", "Generate and use shared scene depth so distant areas collect more fog. Turn off to use a flat veil; depth settings are preserved.")
+            if moduwu_design::toggle_with_help(ui, &mut settings.depth_enabled, tr("Scene depth"), tr("Generate and use shared scene depth so distant areas collect more fog. Turn off to use a flat veil; depth settings are preserved."))
                 .changed()
             {
                 changed = true;
@@ -185,7 +188,7 @@ pub(crate) fn show(
             changed |= effect_color(ui, "fog-color-picker", &mut settings.color, fog::COLOR);
             changed |= float_param_slider(ui, &mut settings.light_glow, fog::LIGHT_GLOW);
             changed |= image_lights_toggle(ui, &mut settings.image_lights);
-            changed |= effect_details(ui, "Atmosphere details", |ui| {
+            changed |= effect_details(ui, tr("Atmosphere details"), |ui| {
                 let mut changed = false;
                 if settings.depth_enabled {
                     changed |=

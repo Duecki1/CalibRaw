@@ -2,6 +2,7 @@
 //! handlers of the Film negative card and of the film base picker.
 
 use super::*;
+use crate::i18n::tr;
 use crate::pipeline::{FilmNegative, FilmSource, FilmStock};
 
 /// Title of the Develop card of a film negative. Its eye shows the scan as it
@@ -47,12 +48,13 @@ impl CalibRawApp {
         match FilmNegative::base_of_area(&samples) {
             Some(base) => {
                 if self.estimate_film_negative(negative.stock, Some(base)) {
-                    self.ui.notice = Some("Film base sampled from the selected area.".to_owned());
+                    self.ui.notice =
+                        Some(tr("Film base sampled from the selected area.").to_owned());
                 }
             }
             None => self.report_error(
                 ErrorKind::Sampling,
-                "Could not read the film there. Choose unexposed film that is not blown out."
+                tr("Could not read the film there. Choose unexposed film that is not blown out.")
                     .to_owned(),
             ),
         }
@@ -82,7 +84,7 @@ impl CalibRawApp {
         ) else {
             self.report_error(
                 ErrorKind::Sampling,
-                "Could not find a negative to invert. Crop to one frame, or pick its unexposed film."
+                tr("Could not find a negative to invert. Crop to one frame, or pick its unexposed film.")
                     .to_owned(),
             );
             return false;

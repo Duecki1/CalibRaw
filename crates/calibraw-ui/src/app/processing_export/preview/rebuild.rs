@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 /// What the displayed fitted graph is, as far as deciding whether it must be
 /// built again.
@@ -194,7 +195,12 @@ impl CalibRawApp {
             let raster_elapsed = layer_started.elapsed();
             pipeline
                 .update_mask_layer(queue, layer, &bytes)
-                .map_err(|error| format!("Could not update preview mask: {error:#}"))?;
+                .map_err(|error| {
+                    tr_fmt(
+                        "Could not update preview mask: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    )
+                })?;
             calibraw_core::diagnostics::record(format!(
                 "Preview mask layer {} rasterized/uploaded in {:.3}s (raster {:.3}s)",
                 layer + 1,
@@ -210,7 +216,12 @@ impl CalibRawApp {
                 raw.height,
                 raw.lens_geometry.as_deref(),
             )
-            .map_err(|error| format!("Could not update Light Rays mask: {error:#}"))?;
+            .map_err(|error| {
+                tr_fmt(
+                    "Could not update Light Rays mask: {error}",
+                    &[("error", &format!("{error:#}"))],
+                )
+            })?;
         Ok(())
     }
 
@@ -236,7 +247,12 @@ impl CalibRawApp {
             );
             pipeline
                 .update_mask_layer_region(queue, layer, extent[0], extent[1], &bytes)
-                .map_err(|error| format!("Could not update zoomed local mask: {error:#}"))?;
+                .map_err(|error| {
+                    tr_fmt(
+                        "Could not update zoomed local mask: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    )
+                })?;
         }
         pipeline
             .update_dirty_light_rays_mask_layers(
@@ -247,7 +263,12 @@ impl CalibRawApp {
                 full_raw.lens_geometry.as_deref(),
                 dirty_layers,
             )
-            .map_err(|error| format!("Could not update zoomed Light Rays mask: {error:#}"))?;
+            .map_err(|error| {
+                tr_fmt(
+                    "Could not update zoomed Light Rays mask: {error}",
+                    &[("error", &format!("{error:#}"))],
+                )
+            })?;
         Ok(())
     }
 
@@ -273,7 +294,12 @@ impl CalibRawApp {
             );
             pipeline
                 .update_mask_layer(queue, layer, &bytes)
-                .map_err(|error| format!("Could not update preview mask: {error:#}"))?;
+                .map_err(|error| {
+                    tr_fmt(
+                        "Could not update preview mask: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    )
+                })?;
         }
         pipeline
             .update_dirty_light_rays_mask_layers(
@@ -284,7 +310,12 @@ impl CalibRawApp {
                 raw.lens_geometry.as_deref(),
                 Some(dirty_layers),
             )
-            .map_err(|error| format!("Could not update Light Rays mask: {error:#}"))?;
+            .map_err(|error| {
+                tr_fmt(
+                    "Could not update Light Rays mask: {error}",
+                    &[("error", &format!("{error:#}"))],
+                )
+            })?;
         // A shared-depth refresh marks every possible layer dirty. Slots outside
         // this graph's capacity are unused and must not prevent Output dispatch.
         dirty_layers.fill(false);
@@ -306,7 +337,7 @@ impl CalibRawApp {
                 self.preview.quality_dirty = false;
                 self.report_error(
                     ErrorKind::Preview,
-                    "Preview rebuild worker stopped unexpectedly.".to_owned(),
+                    tr("Preview rebuild worker stopped unexpectedly.").to_owned(),
                 );
                 None
             }
@@ -322,7 +353,10 @@ impl CalibRawApp {
                 self.preview.quality_dirty = false;
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not prepare the preview proxy: {error}"),
+                    tr_fmt(
+                        "Could not prepare the preview proxy: {error}",
+                        &[("error", &error)],
+                    ),
                 );
                 return;
             }
@@ -390,7 +424,10 @@ impl CalibRawApp {
                 self.preview.quality_dirty = false;
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not rebuild the GPU preview: {error:#}"),
+                    tr_fmt(
+                        "Could not rebuild the GPU preview: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 return;
             }
@@ -424,7 +461,10 @@ impl CalibRawApp {
             ) {
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not apply Remove to rebuilt preview: {error:#}"),
+                    tr_fmt(
+                        "Could not apply Remove to rebuilt preview: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 self.preview.quality_dirty = false;
                 return;
@@ -471,16 +511,7 @@ impl CalibRawApp {
         self.preview.revision = self.preview.revision.wrapping_add(1);
         self.preview.motion_at = (self.preview.zoom > DETAIL_ZOOM_START).then(Instant::now);
         if let (Some(full), Some(preview)) = (&preview_source, &self.develop.preview_raw) {
-            self.develop.image_status = format!(
-                "{} {} — full {}×{}, preview {}×{} ({})",
-                full.camera_make,
-                full.camera_model,
-                full.width,
-                full.height,
-                preview.width,
-                preview.height,
-                prepared.quality.label(),
-            );
+            self.develop.image_status = tr_fmt("{camera_make} {camera_model} — full {width}×{height}, preview {width2}×{height2} ({quality})", &[("camera_make", &full.camera_make), ("camera_model", &full.camera_model), ("width", &full.width), ("height", &full.height), ("width2", &preview.width), ("height2", &preview.height), ("quality", &prepared.quality.label())]);
             let latest_edge = self.requested_preview_edge_for_source(full);
             if prepared.quality != self.preview.quality
                 || preview
@@ -595,7 +626,10 @@ impl CalibRawApp {
                         .copied()
                         .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
                         .unwrap_or("unknown panic");
-                    Err(anyhow::anyhow!("preview rebuild panicked: {message}"))
+                    Err(anyhow::anyhow!(tr_fmt(
+                        "preview rebuild panicked: {message}",
+                        &[("message", &message)],
+                    )))
                 })
                 .map_err(|error| format!("{error:#}"));
                 let _ = sender.send(PreviewRebuildEvent::Finished(result));
@@ -611,7 +645,10 @@ impl CalibRawApp {
             Err(error) => {
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not start preview rebuild: {error}"),
+                    tr_fmt(
+                        "Could not start preview rebuild: {error}",
+                        &[("error", &error)],
+                    ),
                 );
             }
         }

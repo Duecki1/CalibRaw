@@ -22,6 +22,7 @@ use super::review::{
     flag_buttons, paint_review_badge, star_buttons, ReviewSurface, BADGE_FILL, REVIEW_ICON_SIZE,
 };
 use super::{LibraryAction, LibraryEntry};
+use crate::i18n::tr;
 use crate::pipeline::RenderedImageFormat;
 
 const ANIMATION_SECONDS: f32 = 0.18;
@@ -333,9 +334,9 @@ fn preview_status(entry: &LibraryEntry) -> Option<String> {
     entry.thumbnail_error.clone().or_else(|| {
         entry.developed_thumbnail_pending.then(|| {
             if entry.thumbnail_queued {
-                "Rendering edits…"
+                tr("Rendering edits…")
             } else {
-                "Preview awaiting saved edits"
+                tr("Preview awaiting saved edits")
             }
             .to_owned()
         })

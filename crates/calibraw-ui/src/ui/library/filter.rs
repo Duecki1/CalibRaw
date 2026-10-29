@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::sidecar::{PhotoFlag, PhotoReview};
 use egui_phosphor::regular;
 use moduwu_design::MenuItem;
@@ -35,7 +36,7 @@ impl LibraryReviewFilter {
                 .filter(|rating| self.ratings[*rating])
                 .map(|rating| {
                     if rating == 0 {
-                        "unrated".to_owned()
+                        tr("unrated").to_owned()
                     } else {
                         format!("{rating}★")
                     }
@@ -48,7 +49,7 @@ impl LibraryReviewFilter {
     /// The flags the filter shows, such as "Pick, Reject", or `None` for all.
     fn flag_summary(self) -> Option<String> {
         self.flags.iter().any(|selected| *selected).then(|| {
-            FLAG_LABELS
+            flag_labels()
                 .into_iter()
                 .enumerate()
                 .filter(|(index, _)| self.flags[*index])
@@ -67,8 +68,10 @@ impl LibraryReviewFilter {
     }
 }
 
-/// The flag filter's values, in the order of `LibraryReviewFilter::flags`.
-const FLAG_LABELS: [&str; 3] = ["Pick", "Unflagged", "Reject"];
+/// The flag filter's labels, in the order of `LibraryReviewFilter::flags`.
+fn flag_labels() -> [&'static str; 3] {
+    [tr("Pick"), tr("Unflagged"), tr("Reject")]
+}
 
 /// Every sort order, with the icon of what it sorts by.
 const SORT_ORDERS: [(LibrarySortOrder, &str); 10] = [
@@ -97,8 +100,8 @@ fn sort_filter_menu(
     stack_raw_companions: &mut bool,
     compact_size: Option<&mut LibraryThumbnailSize>,
 ) {
-    moduwu_design::menu_title_with_close(ui, "Sort & filter");
-    let sort_item = MenuItem::new("Sort by")
+    moduwu_design::menu_title_with_close(ui, tr("Sort & filter"));
+    let sort_item = MenuItem::new(tr("Sort by"))
         .icon(regular::SORT_ASCENDING)
         .value(sort.label());
     moduwu_design::submenu(ui, sort_item, |ui| {
@@ -113,7 +116,7 @@ fn sort_filter_menu(
         }
     });
     if let Some(size) = compact_size {
-        let size_item = MenuItem::new("Thumbnail size")
+        let size_item = MenuItem::new(tr("Thumbnail size"))
             .icon(regular::SQUARES_FOUR)
             .value(size.label());
         moduwu_design::submenu(ui, size_item, |ui| {
@@ -128,21 +131,26 @@ fn sort_filter_menu(
             }
         });
     }
-    moduwu_design::menu_checkbox_item(ui, stack_raw_companions, "Show only the RAW").on_hover_text(
-        "Cameras shooting RAW+JPEG or RAW+HEIC save both files. Show each pair once, \
+    moduwu_design::menu_checkbox_item(ui, stack_raw_companions, tr("Show only the RAW"))
+        .on_hover_text(tr(
+            "Cameras shooting RAW+JPEG or RAW+HEIC save both files. Show each pair once, \
              as the RAW, and hide the JPEG or HEIC with the same name.",
-    );
+        ));
 
     ui.separator();
-    let rating_item = MenuItem::new("Rating")
-        .icon(regular::STAR)
-        .value(filter.rating_summary().unwrap_or_else(|| "All".to_owned()));
+    let rating_item = MenuItem::new(tr("Rating")).icon(regular::STAR).value(
+        filter
+            .rating_summary()
+            .unwrap_or_else(|| tr("All").to_owned()),
+    );
     moduwu_design::submenu(ui, rating_item, |ui| rating_filter_menu(ui, sort, filter));
-    let flag_item = MenuItem::new("Flag")
-        .icon(regular::FLAG)
-        .value(filter.flag_summary().unwrap_or_else(|| "All".to_owned()));
+    let flag_item = MenuItem::new(tr("Flag")).icon(regular::FLAG).value(
+        filter
+            .flag_summary()
+            .unwrap_or_else(|| tr("All").to_owned()),
+    );
     moduwu_design::submenu(ui, flag_item, |ui| flag_filter_menu(ui, sort, filter));
-    let clear_item = MenuItem::new("Clear filters").icon(regular::ARROW_COUNTER_CLOCKWISE);
+    let clear_item = MenuItem::new(tr("Clear filters")).icon(regular::ARROW_COUNTER_CLOCKWISE);
     if ui.add_enabled(filter.active(), clear_item).clicked() {
         *filter = LibraryReviewFilter::default();
     }
@@ -153,16 +161,16 @@ fn sort_filter_menu(
 fn rating_filter_menu(ui: &mut Ui, sort: &mut LibrarySortOrder, filter: &mut LibraryReviewFilter) {
     let had_ratings = filter.ratings.iter().any(|selected| *selected);
     if ui
-        .add(MenuItem::new("All").selected(!had_ratings))
+        .add(MenuItem::new(tr("All")).selected(!had_ratings))
         .clicked()
     {
         filter.ratings = [false; 6];
     }
     for rating in (0..=5).rev() {
         let label = match rating {
-            0 => "Unrated".to_owned(),
-            1 => "1 star".to_owned(),
-            _ => format!("{rating} stars"),
+            0 => tr("Unrated").to_owned(),
+            1 => tr("1 star").to_owned(),
+            _ => tr_fmt("{rating} stars", &[("rating", &rating)]),
         };
         let selected = &mut filter.ratings[rating];
         if ui.add(MenuItem::new(label).selected(*selected)).clicked() {
@@ -184,10 +192,13 @@ fn rating_filter_menu(ui: &mut Ui, sort: &mut LibrarySortOrder, filter: &mut Lib
 /// flag, unless the photos are sorted by rating or flag already.
 fn flag_filter_menu(ui: &mut Ui, sort: &mut LibrarySortOrder, filter: &mut LibraryReviewFilter) {
     let had_flags = filter.flags.iter().any(|selected| *selected);
-    if ui.add(MenuItem::new("All").selected(!had_flags)).clicked() {
+    if ui
+        .add(MenuItem::new(tr("All")).selected(!had_flags))
+        .clicked()
+    {
         filter.flags = [false; 3];
     }
-    for (selected, label) in filter.flags.iter_mut().zip(FLAG_LABELS) {
+    for (selected, label) in filter.flags.iter_mut().zip(flag_labels()) {
         if ui.add(MenuItem::new(label).selected(*selected)).clicked() {
             *selected = !*selected;
         }
@@ -224,7 +235,8 @@ pub(super) fn sort_filter_popup(
         .into()
     } else {
         format!(
-            "Sort & filter{} {}",
+            "{}{} {}",
+            tr("Sort & filter"),
             if filter.active() { " •" } else { "" },
             regular::CARET_DOWN
         )

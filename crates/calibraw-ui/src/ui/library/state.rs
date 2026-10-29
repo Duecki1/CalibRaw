@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::tr;
 
 mod reviews;
 mod scan;
@@ -60,7 +61,7 @@ impl LibraryState {
             preferences,
             None,
             folder_sidebar_open,
-            "Open a folder to build your photo library.".to_owned(),
+            tr("Open a folder to build your photo library.").to_owned(),
             platform,
             MediaLibraryState::default(),
         )

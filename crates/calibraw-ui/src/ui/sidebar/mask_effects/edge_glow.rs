@@ -1,4 +1,5 @@
 use super::{effect_card, effect_color, effect_details, float_param_slider};
+use crate::i18n::tr;
 use crate::pipeline::{effect_params::edge_glow, EdgeGlowEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
@@ -23,7 +24,7 @@ pub(crate) fn show(
                 &mut settings.color,
                 edge_glow::COLOR,
             );
-            changed |= effect_details(ui, "Edge details", |ui| {
+            changed |= effect_details(ui, tr("Edge details"), |ui| {
                 float_param_slider(ui, &mut settings.detail, edge_glow::DETAIL)
                     | float_param_slider(ui, &mut settings.glow, edge_glow::GLOW)
             });

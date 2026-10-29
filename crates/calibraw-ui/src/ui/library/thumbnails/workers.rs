@@ -1,6 +1,7 @@
 //! The thumbnail worker pool: prioritized requests, pausing and generation checks.
 
 use super::*;
+use crate::i18n::tr;
 
 pub(in crate::ui::library) fn run_thumbnail_workers(
     worker: ThumbnailWorker,
@@ -76,7 +77,7 @@ pub(in crate::ui::library) fn run_thumbnail_workers(
         send_scan_failure(
             &event_sender,
             generation,
-            "Could not start any thumbnail workers.".to_owned(),
+            tr("Could not start any thumbnail workers.").to_owned(),
             &repaint,
         );
         return;
@@ -181,7 +182,7 @@ fn run_one_thumbnail_worker(context: ThumbnailWorkerContext) {
                 continue;
             }
             let Some(asset) = assets.iter().find(|asset| asset.id == request.asset_id) else {
-                break Err("thumbnail asset disappeared from the catalog".to_owned());
+                break Err(tr("thumbnail asset disappeared from the catalog").to_owned());
             };
             break load(asset, request.stage);
         };

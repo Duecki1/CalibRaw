@@ -1,5 +1,6 @@
 //! The Presets sidebar panel, its dialogs and the "Apply preset" menus.
 use crate::app::{CalibRawApp, GroupDialogMode, PresetEditor, PresetEditorMode};
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::AdjustmentGroup;
 use crate::platform::PlatformCaps;
 use crate::presets::DeletedGroupPresets;
@@ -118,22 +119,22 @@ impl PresetList {
 /// "Light, Color, Effects · Masks".
 fn selection_summary(selection: EditSelection) -> String {
     if selection.is_empty() {
-        return "No supported settings yet".to_owned();
+        return tr("No supported settings yet").to_owned();
     }
     let mut parts: Vec<&str> = selection
         .adjustment_groups
         .iter()
-        .map(AdjustmentGroup::label)
+        .map(|group| tr(group.label()))
         .collect();
     let mut extras = Vec::new();
     for (included, label) in [
-        (selection.raw_processing, "RAW processing"),
-        (selection.camera_profile, "Camera profile"),
-        (selection.lut, "LUT"),
-        (selection.masks, "Masks"),
-        (selection.ai_masks, "AI masks"),
-        (selection.geometry, "Crop & geometry"),
-        (selection.lens_correction, "Lens correction"),
+        (selection.raw_processing, tr("RAW processing")),
+        (selection.camera_profile, tr("Camera profile")),
+        (selection.lut, tr("LUT")),
+        (selection.masks, tr("Masks")),
+        (selection.ai_masks, tr("AI masks")),
+        (selection.geometry, tr("Crop & geometry")),
+        (selection.lens_correction, tr("Lens correction")),
     ] {
         if included {
             extras.push(label);
@@ -161,7 +162,7 @@ pub(crate) fn show_header_actions(ui: &mut Ui, app: &mut CalibRawApp) {
                 ui,
                 egui_phosphor::regular::DOWNLOAD_SIMPLE,
                 moduwu_design::toolbar_icon_size(),
-                "Import presets",
+                tr("Import presets"),
             )
         })
         .inner
@@ -180,7 +181,7 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
         let mut percent = amount * 100.0;
         let changed = moduwu_design::content_card(ui, |ui| {
             ui.add(egui::Label::new(egui::RichText::new(&name).strong()).truncate());
-            AdjustmentSlider::new("Amount", &mut percent, 0.0..=100.0)
+            AdjustmentSlider::new(tr("Amount"), &mut percent, 0.0..=100.0)
                 .decimals(0)
                 .step(1.0)
                 .reset_to(100.0)
@@ -196,7 +197,7 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
     let mut notes = Vec::new();
     if !app.presets.is_available() {
         notes.push((
-            "Presets are unavailable because CalibRaw has no settings folder.".to_owned(),
+            tr("Presets are unavailable because CalibRaw has no settings folder.").to_owned(),
             ui.visuals().warn_fg_color,
             None,
         ));
@@ -204,17 +205,24 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
     if !app.presets.load_failures.is_empty() {
         let count = app.presets.load_failures.len();
         notes.push((
-            format!(
-                "{count} preset {} could not be read.",
-                if count == 1 { "file" } else { "files" }
-            ),
+            if count == 1 {
+                tr_fmt(
+                    "{count} preset file could not be read.",
+                    &[("count", &count)],
+                )
+            } else {
+                tr_fmt(
+                    "{count} preset files could not be read.",
+                    &[("count", &count)],
+                )
+            },
             ui.visuals().warn_fg_color,
             Some(app.presets.load_failures.join("\n")),
         ));
     }
     if list.groups.is_empty() {
         notes.push((
-            "No presets yet. Create a group, then add presets to it from an edited photo."
+            tr("No presets yet. Create a group, then add presets to it from an edited photo.")
                 .to_owned(),
             ui.visuals().weak_text_color(),
             None,
@@ -245,9 +253,9 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
                     hovered = Some(entry.path.clone());
                 }
             }
-            if show_add_row(ui, can_create_preset, "New preset")
-                .on_hover_text("Save settings of this photo as a preset in this group")
-                .on_disabled_hover_text("Open a photo to create a preset from its settings")
+            if show_add_row(ui, can_create_preset, tr("New preset"))
+                .on_hover_text(tr("Save settings of this photo as a preset in this group"))
+                .on_disabled_hover_text(tr("Open a photo to create a preset from its settings"))
                 .clicked()
             {
                 action = Some(PresetAction::NewPreset(group.name.clone()));
@@ -261,7 +269,7 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
         .add_enabled_ui(app.presets.is_available(), |ui| {
             moduwu_design::full_width_button(
                 ui,
-                format!("{}  New group", egui_phosphor::regular::PLUS),
+                format!("{}  {}", egui_phosphor::regular::PLUS, tr("New group")),
             )
         })
         .inner
@@ -314,7 +322,7 @@ fn show_menu_row<R>(
                         ui,
                         egui_phosphor::regular::DOTS_THREE_VERTICAL,
                         moduwu_design::toolbar_icon_size(),
-                        "More actions",
+                        tr("More actions"),
                     );
                     moduwu_design::dropdown_menu(&button, add_menu);
                 });
@@ -339,14 +347,14 @@ fn show_group_title(
 ) {
     let menu = |ui: &mut Ui, action: &mut Option<PresetAction>| {
         if ui
-            .add(MenuItem::new("Rename group…").icon(regular::PENCIL_SIMPLE))
+            .add(MenuItem::new(tr("Rename group…")).icon(regular::PENCIL_SIMPLE))
             .clicked()
         {
             *action = Some(PresetAction::RenameGroup(group.to_owned()));
             ui.close();
         }
         ui.separator();
-        let delete_item = MenuItem::new("Delete group…")
+        let delete_item = MenuItem::new(tr("Delete group…"))
             .icon(regular::TRASH)
             .destructive();
         if ui.add(delete_item).clicked() {
@@ -426,14 +434,14 @@ fn preset_actions_menu(
     action: &mut Option<PresetAction>,
 ) {
     if ui
-        .add(MenuItem::new("Apply to this photo").icon(regular::PALETTE))
+        .add(MenuItem::new(tr("Apply to this photo")).icon(regular::PALETTE))
         .clicked()
     {
         *action = Some(PresetAction::Apply(entry.path.clone()));
         ui.close();
     }
     if ui
-        .add(MenuItem::new("Rename…").icon(regular::PENCIL_SIMPLE))
+        .add(MenuItem::new(tr("Rename…")).icon(regular::PENCIL_SIMPLE))
         .clicked()
     {
         *action = Some(PresetAction::Rename(entry.path.clone()));
@@ -441,14 +449,16 @@ fn preset_actions_menu(
     }
     if caps.has_folders()
         && ui
-            .add(MenuItem::new("Export…").icon(regular::EXPORT))
+            .add(MenuItem::new(tr("Export…")).icon(regular::EXPORT))
             .clicked()
     {
         *action = Some(PresetAction::Export(entry.path.clone()));
         ui.close();
     }
     ui.separator();
-    let delete_item = MenuItem::new("Delete…").icon(regular::TRASH).destructive();
+    let delete_item = MenuItem::new(tr("Delete…"))
+        .icon(regular::TRASH)
+        .destructive();
     if ui.add(delete_item).clicked() {
         *action = Some(PresetAction::Delete(entry.path.clone()));
         ui.close();
@@ -488,9 +498,9 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
     moduwu_design::Dialog::new(
         "preset-editor-dialog",
         if creating {
-            "New preset"
+            tr("New preset")
         } else {
-            "Rename preset"
+            tr("Rename preset")
         },
     )
     .size(if creating {
@@ -504,16 +514,16 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
             if group_dialog_open {
                 ui.disable();
             }
-            ui.label("Name");
+            ui.label(tr("Name"));
             let response = moduwu_design::dialog_text_field(
                 ui,
                 &mut editor.name,
                 "preset-editor-name",
-                "e.g. Warm matte",
+                tr("e.g. Warm matte"),
             );
             moduwu_design::request_initial_focus(&response, &mut editor.focus_requested);
 
-            ui.label("Group");
+            ui.label(tr("Group"));
             open_group_dialog |= show_group_dropdown(ui, editor, &groups);
 
             if let PresetEditorMode::Create { edits } = &editor.mode {
@@ -524,9 +534,9 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
             if replaces_existing {
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new(
+                        egui::RichText::new(tr(
                             "A preset with this name exists in this group and will be replaced.",
-                        )
+                        ))
                         .small()
                         .color(ui.visuals().warn_fg_color),
                     )
@@ -552,13 +562,13 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
                 ui.disable();
             }
             let confirm_label = match (creating, replaces_existing) {
-                (true, true) => "Replace",
-                (true, false) => "Save preset",
-                (false, _) => "Rename",
+                (true, true) => tr("Replace"),
+                (true, false) => tr("Save preset"),
+                (false, _) => tr("Rename"),
             };
             choice = moduwu_design::dialog_confirmation_actions(
                 ui,
-                "Cancel",
+                tr("Cancel"),
                 confirm_label,
                 confirm_enabled.get(),
                 false,
@@ -599,7 +609,7 @@ fn show_group_dropdown(ui: &mut Ui, editor: &mut PresetEditor, groups: &[String]
         if ui
             .selectable_label(
                 false,
-                format!("{}  New group…", egui_phosphor::regular::PLUS),
+                format!("{}  {}", egui_phosphor::regular::PLUS, tr("New group…")),
             )
             .clicked()
         {
@@ -614,20 +624,20 @@ fn show_group_dialog(ctx: &egui::Context, app: &mut CalibRawApp) {
         return;
     };
     let (title, confirm_label) = match dialog.mode {
-        GroupDialogMode::Create => ("New group", "Add group"),
-        GroupDialogMode::Rename { .. } => ("Rename group", "Rename"),
+        GroupDialogMode::Create => (tr("New group"), tr("Add group")),
+        GroupDialogMode::Rename { .. } => (tr("Rename group"), tr("Rename")),
     };
     let mut choice = moduwu_design::DialogAction::None;
     let confirm_enabled = std::cell::Cell::new(false);
     moduwu_design::Dialog::new("preset-group-dialog", title).show_with_footer(
         ctx,
         |ui| {
-            ui.label("Group name");
+            ui.label(tr("Group name"));
             let response = moduwu_design::dialog_text_field(
                 ui,
                 &mut dialog.name,
                 "preset-group-name",
-                "e.g. Film",
+                tr("e.g. Film"),
             );
             moduwu_design::request_initial_focus(&response, &mut dialog.focus_requested);
             if let Some(error) = &dialog.error {
@@ -638,7 +648,7 @@ fn show_group_dialog(ctx: &egui::Context, app: &mut CalibRawApp) {
         |ui| {
             choice = moduwu_design::dialog_confirmation_actions(
                 ui,
-                "Cancel",
+                tr("Cancel"),
                 confirm_label,
                 confirm_enabled.get(),
                 false,
@@ -670,24 +680,27 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
 
     let mut choice = None;
     let mut cancel = false;
-    moduwu_design::Dialog::new("preset-group-delete-confirmation", "Delete group?")
+    moduwu_design::Dialog::new("preset-group-delete-confirmation", tr("Delete group?"))
         .show_with_footer(
             ctx,
             |ui| {
                 ui.add(
                     egui::Label::new(match count {
-                        0 => format!("“{group}” will be deleted."),
-                        1 => format!("“{group}” contains 1 preset."),
-                        count => format!("“{group}” contains {count} presets."),
+                        0 => tr_fmt("“{group}” will be deleted.", &[("group", &group)]),
+                        1 => tr_fmt("“{group}” contains 1 preset.", &[("group", &group)]),
+                        count => tr_fmt(
+                            "“{group}” contains {count} presets.",
+                            &[("group", &group), ("count", &count)],
+                        ),
                     })
                     .wrap(),
                 );
             },
             |ui| {
                 let delete_label = if count == 0 {
-                    "Delete"
+                    tr("Delete")
                 } else {
-                    "Delete with presets"
+                    tr("Delete with presets")
                 };
                 if moduwu_design::destructive_button(ui, delete_label).clicked() {
                     choice = Some(DeletedGroupPresets::Delete);
@@ -696,13 +709,16 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
                     && can_move
                     && moduwu_design::primary_action_button(
                         ui,
-                        format!("Move presets to {}", crate::presets::DEFAULT_PRESET_GROUP),
+                        tr_fmt(
+                            "Move presets to {group}",
+                            &[("group", &crate::presets::DEFAULT_PRESET_GROUP)],
+                        ),
                     )
                     .clicked()
                 {
                     choice = Some(DeletedGroupPresets::MoveToDefaultGroup);
                 }
-                cancel |= moduwu_design::secondary_button(ui, "Cancel").clicked();
+                cancel |= moduwu_design::secondary_button(ui, tr("Cancel")).clicked();
                 cancel |= choice.is_none()
                     && moduwu_design::dialog_keyboard_action(
                         ui,
@@ -726,8 +742,8 @@ fn show_selection_controls(
 ) {
     moduwu_design::strong_with_help(
         ui,
-        "Include settings",
-        "Settings that are not selected keep the destination photo’s values. Selecting an unchanged group also saves its default values.",
+        tr("Include settings"),
+        tr("Settings that are not selected keep the destination photo’s values. Selecting an unchanged group also saves its default values."),
     );
     ui.add_space(moduwu_design::SPACE_XS);
     // Each column retains a readable checkbox width; small viewports stack the
@@ -760,16 +776,11 @@ fn show_selection_controls(
     ui.add(
         egui::Label::new(
             egui::RichText::new(if selected_count == 0 {
-                "Choose at least one setting to save this preset.".to_owned()
+                tr("Choose at least one setting to save this preset.").to_owned()
+            } else if selected_count == 1 {
+                tr_fmt("{count} setting selected", &[("count", &selected_count)])
             } else {
-                format!(
-                    "{selected_count} {} selected",
-                    if selected_count == 1 {
-                        "setting"
-                    } else {
-                        "settings"
-                    }
-                )
+                tr_fmt("{count} settings selected", &[("count", &selected_count)])
             })
             .small()
             .weak(),
@@ -786,7 +797,7 @@ fn show_selection_controls(
     if has_photo_specific_masks && (selection.masks || selection.ai_masks) {
         ui.add(egui::Label::new(
             egui::RichText::new(
-                "Brush, path and object masks follow this photo's content and are not saved in presets.",
+                tr("Brush, path and object masks follow this photo's content and are not saved in presets."),
             )
             .small()
             .weak(),
@@ -802,13 +813,13 @@ fn show_adjustment_selection(
     moduwu_design::content_card(ui, |ui| {
         moduwu_design::strong_with_help(
             ui,
-            "Adjustments",
-            "Each group matches a card in the Edit tab. Groups that are not selected keep the destination photo's settings. Edited groups are shown in bold.",
+            tr("Adjustments"),
+            tr("Each group matches a card in the Edit tab. Groups that are not selected keep the destination photo's settings. Edited groups are shown in bold."),
         );
         moduwu_design::action_row(ui, |ui| {
             let all = selection.adjustment_groups == crate::pipeline::AdjustmentGroupSet::ALL;
-            if moduwu_design::chip(ui, "All", all)
-                .on_hover_text("Include every adjustment group, including unchanged values. Click again to clear them.")
+            if moduwu_design::chip(ui, tr("All"), all)
+                .on_hover_text(tr("Include every adjustment group, including unchanged values. Click again to clear them."))
                 .clicked()
             {
                 selection.adjustment_groups = if all {
@@ -823,9 +834,9 @@ fn show_adjustment_selection(
                 let label = egui::RichText::new(group.label());
                 let label = if edited { label.strong() } else { label };
                 let help = if edited {
-                    "Edited on this photo. Include this group’s current settings."
+                    tr("Edited on this photo. Include this group’s current settings.")
                 } else {
-                    "Unchanged on this photo. Including this group replaces the destination’s settings with these defaults."
+                    tr("Unchanged on this photo. Including this group replaces the destination’s settings with these defaults.")
                 };
                 if moduwu_design::chip(ui, label, included)
                     .on_hover_text(help)
@@ -840,39 +851,39 @@ fn show_adjustment_selection(
 
 fn show_additional_selection(ui: &mut Ui, selection: &mut EditSelection) {
     moduwu_design::content_card(ui, |ui| {
-        ui.strong("Also include");
+        ui.strong(tr("Also include"));
         ui.add_space(moduwu_design::SPACE_XS);
         moduwu_design::action_row(ui, |ui| {
             for (included, label, help) in [
                 (
                     &mut selection.camera_profile,
-                    "Camera profile",
-                    "The DCP profile chosen for this photo. Photos from other camera models keep their automatic profile.",
+                    tr("Camera profile"),
+                    tr("The DCP profile chosen for this photo. Photos from other camera models keep their automatic profile."),
                 ),
                 (
                     &mut selection.lut,
-                    "LUT",
-                    "The LUT and its amount. Photos whose LUT library lacks it are shown without it.",
+                    tr("LUT"),
+                    tr("The LUT and its amount. Photos whose LUT library lacks it are shown without it."),
                 ),
                 (
                     &mut selection.masks,
-                    "Masks",
-                    "Fullscreen, linear and radial masks with their adjustments. They are added next to each photo's own masks.",
+                    tr("Masks"),
+                    tr("Fullscreen, linear and radial masks with their adjustments. They are added next to each photo's own masks."),
                 ),
                 (
                     &mut selection.ai_masks,
-                    "AI masks",
-                    "Subject, background, sky, depth and range masks. They are regenerated for each photo the preset is applied to.",
+                    tr("AI masks"),
+                    tr("Subject, background, sky, depth and range masks. They are regenerated for each photo the preset is applied to."),
                 ),
                 (
                     &mut selection.geometry,
-                    "Crop & geometry",
-                    "Crop, rotation, straighten, perspective and flips.",
+                    tr("Crop & geometry"),
+                    tr("Crop, rotation, straighten, perspective and flips."),
                 ),
                 (
                     &mut selection.lens_correction,
-                    "Lens correction",
-                    "Lens correction state and the selected lens profile.",
+                    tr("Lens correction"),
+                    tr("Lens correction state and the selected lens profile."),
                 ),
             ] {
                 if moduwu_design::chip(ui, label, *included)
@@ -895,24 +906,26 @@ fn show_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
         return;
     };
     let mut choice = moduwu_design::DialogAction::None;
-    moduwu_design::Dialog::new("preset-delete-confirmation", "Delete preset?").show_with_footer(
-        ctx,
-        |ui| {
-            ui.label(format!(
-                "“{name}” will be deleted. Photos it was applied to keep their adjustments."
-            ));
-        },
-        |ui| {
-            choice = moduwu_design::dialog_confirmation_actions(
-                ui,
-                "Cancel",
-                "Delete",
-                true,
-                true,
-                moduwu_design::DialogKeyboard::CLOSE_ONLY,
-            );
-        },
-    );
+    moduwu_design::Dialog::new("preset-delete-confirmation", tr("Delete preset?"))
+        .show_with_footer(
+            ctx,
+            |ui| {
+                ui.label(tr_fmt(
+                    "“{name}” will be deleted. Photos it was applied to keep their adjustments.",
+                    &[("name", &name)],
+                ));
+            },
+            |ui| {
+                choice = moduwu_design::dialog_confirmation_actions(
+                    ui,
+                    tr("Cancel"),
+                    tr("Delete"),
+                    true,
+                    true,
+                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                );
+            },
+        );
     match choice {
         moduwu_design::DialogAction::Cancel => app.presets.pending_delete = None,
         moduwu_design::DialogAction::Confirm => {

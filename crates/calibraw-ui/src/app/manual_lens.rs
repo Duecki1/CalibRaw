@@ -3,6 +3,7 @@
 //! Lensfun profile for a photo that just opened.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     /// Asks about the photo that just opened without its automatic lens
@@ -18,12 +19,14 @@ impl CalibRawApp {
             (maker, model) => Some(format!("{maker} {model}")),
         };
         self.ui.missing_lens_profile_prompt = Some(match lens {
-            Some(lens) => format!(
-                "No lens profile matches {lens}, so automatic lens correction was not applied."
+            Some(lens) => tr_fmt(
+                "No lens profile matches {lens}, so automatic lens correction was not applied.",
+                &[("lens", &lens)],
             ),
-            None => "The photo does not name its lens, so automatic lens correction was not \
-                     applied."
-                .to_owned(),
+            None => tr(
+                "The photo does not name its lens, so automatic lens correction was not applied.",
+            )
+            .to_owned(),
         });
     }
 
@@ -34,17 +37,17 @@ impl CalibRawApp {
         let mut close = false;
         let mut manual = false;
         let mut never_again = false;
-        moduwu_design::Dialog::new("missing-lens-profile", "Lens correction not applied")
+        moduwu_design::Dialog::new("missing-lens-profile", tr("Lens correction not applied"))
             .show_with_footer(
                 ctx,
                 |ui| {
                     ui.label(&message);
                 },
                 |ui| {
-                    close |= moduwu_design::primary_action_button(ui, "OK").clicked();
-                    manual |= moduwu_design::secondary_button(ui, "Correct manually").clicked();
+                    close |= moduwu_design::primary_action_button(ui, tr("OK")).clicked();
+                    manual |= moduwu_design::secondary_button(ui, tr("Correct manually")).clicked();
                     never_again |=
-                        moduwu_design::secondary_button(ui, "Never show again").clicked();
+                        moduwu_design::secondary_button(ui, tr("Never show again")).clicked();
                     if !(close || manual || never_again)
                         && moduwu_design::dialog_keyboard_action(
                             ui,

@@ -33,6 +33,7 @@ pub(crate) struct PreferencesState {
     pub(crate) hdd_mode: bool,
     pub(crate) ui_design: UiDesign,
     pub(crate) preview_backdrop: PreviewBackdrop,
+    pub(crate) language: crate::i18n::LanguageChoice,
     pub(crate) onboarding_completed: bool,
     pub(crate) subject_mask_quality_chosen: bool,
     pub(crate) tips: TipPreferences,

@@ -1,25 +1,30 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 fn inpaint_tool_help(tool: InpaintTool) -> &'static str {
     match tool {
         InpaintTool::Remove => {
-            "Paint over unwanted content, then release to fill the area using its surroundings."
+            tr("Paint over unwanted content, then release to fill the area using its surroundings.")
         }
         InpaintTool::Clone => {
-            "Choose a source point, then paint to copy that area."
+            tr("Choose a source point, then paint to copy that area.")
         }
         InpaintTool::Heal => {
-            "Choose a source point, then paint to blend its texture with the surrounding color and light."
+            tr("Choose a source point, then paint to blend its texture with the surrounding color and light.")
         }
     }
 }
 
 fn retouch_alignment_help(alignment: RetouchAlignment) -> &'static str {
     match alignment {
-        RetouchAlignment::None => "Source follows this stroke, then returns to the selected point.",
-        RetouchAlignment::Aligned => "Source keeps the same offset between separate strokes.",
-        RetouchAlignment::Registered => "Source and destination use the same image coordinates.",
-        RetouchAlignment::Fixed => "Every brush dab starts from the selected source point.",
+        RetouchAlignment::None => {
+            tr("Source follows this stroke, then returns to the selected point.")
+        }
+        RetouchAlignment::Aligned => tr("Source keeps the same offset between separate strokes."),
+        RetouchAlignment::Registered => {
+            tr("Source and destination use the same image coordinates.")
+        }
+        RetouchAlignment::Fixed => tr("Every brush dab starts from the selected source point."),
     }
 }
 
@@ -31,7 +36,7 @@ impl Sidebar {
         _frame: &eframe::Frame,
     ) {
         let tool_help = inpaint_tool_help(app.inpaint.tool);
-        moduwu_design::section_card_with_help(ui, "Tool", tool_help, |ui| {
+        moduwu_design::section_card_with_help(ui, tr("Tool"), tool_help, |ui| {
             ui.horizontal(|ui| {
                 let spacing = ui.spacing().item_spacing.x;
                 let tool_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
@@ -55,9 +60,9 @@ impl Sidebar {
                 let alignment_help = retouch_alignment_help(app.inpaint.alignment);
                 moduwu_design::form_combo_with_help(
                     ui,
-                    "Source alignment",
+                    tr("Source alignment"),
                     "retouch-source-alignment",
-                    app.inpaint.alignment.label(),
+                    tr(app.inpaint.alignment.label()),
                     180.0,
                     alignment_help,
                     |ui| {
@@ -65,7 +70,7 @@ impl Sidebar {
                             ui.selectable_value(
                                 &mut app.inpaint.alignment,
                                 alignment,
-                                alignment.label(),
+                                tr(alignment.label()),
                             )
                             .on_hover_text(retouch_alignment_help(alignment));
                         }
@@ -79,25 +84,25 @@ impl Sidebar {
                         moduwu_design::toggle_button(
                             ui,
                             if app.inpaint.source_pick_active {
-                                "Cancel source placement"
+                                tr("Cancel source placement")
                             } else {
-                                "Set source on canvas"
+                                tr("Set source on canvas")
                             },
                             app.inpaint.source_pick_active,
                         )
                     })
                     .inner
-                    .on_hover_text("Choose where to copy from. You can also Ctrl-click (Command-click on macOS) or right-click the image.")
+                    .on_hover_text(tr("Choose where to copy from. You can also Ctrl-click (Command-click on macOS) or right-click the image."))
                     .clicked()
                 {
                     app.inpaint.source_pick_active = !app.inpaint.source_pick_active;
                 }
                 let source_status = if app.inpaint.source_pick_active {
-                    "Click or tap the image to place the source"
+                    tr("Click or tap the image to place the source")
                 } else if app.inpaint.source_point.is_some() {
-                    "Source set · Paint on the image to apply"
+                    tr("Source set · Paint on the image to apply")
                 } else {
-                    "Choose a source with Set source on canvas"
+                    tr("Choose a source with Set source on canvas")
                 };
                 ui.label(egui::RichText::new(source_status).small().color(
                     if app.inpaint.source_point.is_some() {
@@ -110,16 +115,16 @@ impl Sidebar {
         });
 
         moduwu_design::card_gap(ui);
-        moduwu_design::section_card(ui, "Brush", |ui| {
+        moduwu_design::section_card(ui, tr("Brush"), |ui| {
             ui.add_enabled_ui(!app.inpaint_processing(), |ui| {
-                AdjustmentSlider::new("Size", &mut app.inpaint.brush_size, 0.0025..=0.25)
+                AdjustmentSlider::new(tr("Size"), &mut app.inpaint.brush_size, 0.0025..=0.25)
                     .decimals(3)
                     .step(0.0025)
                     .reset_to(0.055)
                     .show(ui);
                 if app.inpaint.tool.retouch().is_some() {
                     let mut feather_percent = (1.0 - app.inpaint.brush_hardness) * 100.0;
-                    if AdjustmentSlider::new("Feather (%)", &mut feather_percent, 0.0..=100.0)
+                    if AdjustmentSlider::new(tr("Feather (%)"), &mut feather_percent, 0.0..=100.0)
                         .decimals(0)
                         .step(1.0)
                         .reset_to(50.0)
@@ -129,7 +134,7 @@ impl Sidebar {
                     }
                 }
                 let mut opacity_percent = app.inpaint.brush_opacity * 100.0;
-                if AdjustmentSlider::new("Opacity (%)", &mut opacity_percent, 1.0..=100.0)
+                if AdjustmentSlider::new(tr("Opacity (%)"), &mut opacity_percent, 1.0..=100.0)
                     .decimals(0)
                     .step(1.0)
                     .reset_to(100.0)
@@ -153,7 +158,10 @@ impl Sidebar {
         });
 
         moduwu_design::card_gap(ui);
-        let history_title = format!("{} stroke history", app.inpaint.tool.label());
+        let history_title = tr_fmt(
+            "{tool} stroke history",
+            &[("tool", &app.inpaint.tool.label())],
+        );
         moduwu_design::section_card(ui, &history_title, |ui| {
             app.inpaint.hovered_stroke = None;
             let mut delete_stroke = None;
@@ -172,28 +180,31 @@ impl Sidebar {
                 .collect::<Vec<_>>();
             if visible_strokes.is_empty() {
                 ui.label(
-                    egui::RichText::new(format!("No {} strokes yet.", app.inpaint.tool.label()))
-                        .small()
-                        .color(ui.visuals().weak_text_color()),
+                    egui::RichText::new(tr_fmt(
+                        "No {tool} strokes yet.",
+                        &[("tool", &app.inpaint.tool.label())],
+                    ))
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
                 );
             } else {
                 for (history_index, index) in visible_strokes.iter().copied().enumerate().rev() {
                     moduwu_design::toolbar_row(ui, |ui| {
                         let selected = app.inpaint.selected_stroke == Some(index);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add_enabled_ui(!app.inpaint_processing(), |ui| moduwu_design::ghost_icon_button(ui, egui_phosphor::regular::TRASH, moduwu_design::toolbar_icon_size(), "Delete this stroke")).inner
+                            if ui.add_enabled_ui(!app.inpaint_processing(), |ui| moduwu_design::ghost_icon_button(ui, egui_phosphor::regular::TRASH, moduwu_design::toolbar_icon_size(), tr("Delete this stroke"))).inner
                             .clicked()
                             {
                                 delete_stroke = Some(index);
                             }
                             let stroke_response = moduwu_design::navigation_row(
                                 ui,
-                                format!("◎  Stroke {}", history_index + 1),
+                                tr_fmt("◎  Stroke {number}", &[("number", &(history_index + 1))]),
                                 selected,
                                 egui::Sense::click(),
                             )
                             .on_hover_text(
-                                "Hover to see the painted area. Select a stroke to highlight it and adjust its opacity.",
+                                tr("Hover to see the painted area. Select a stroke to highlight it and adjust its opacity."),
                             );
                             if stroke_response.hovered() {
                                 app.inpaint.hovered_stroke = Some(index);
@@ -235,18 +246,24 @@ impl Sidebar {
                 });
             if let Some((index, history_index, opacity, feather)) = selected_settings {
                 moduwu_design::section_separator(ui);
-                ui.strong(format!("Selected stroke {}", history_index + 1));
+                ui.strong(tr_fmt(
+                    "Selected stroke {number}",
+                    &[("number", &(history_index + 1))],
+                ));
                 if let Some(feather) = feather {
                     ui.label(
-                        egui::RichText::new(format!("Recorded feather: {:.0}%", feather * 100.0))
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
+                        egui::RichText::new(tr_fmt(
+                            "Recorded feather: {percent}%",
+                            &[("percent", &format!("{:.0}", feather * 100.0))],
+                        ))
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
                     );
                 }
                 let mut opacity_percent = opacity * 100.0;
                 let changed = ui
                     .add_enabled_ui(!app.inpaint_processing(), |ui| {
-                        AdjustmentSlider::new("Opacity (%)", &mut opacity_percent, 0.0..=100.0)
+                        AdjustmentSlider::new(tr("Opacity (%)"), &mut opacity_percent, 0.0..=100.0)
                             .decimals(0)
                             .step(1.0)
                             .reset_to(100.0)
@@ -268,7 +285,7 @@ impl Sidebar {
                 ui.add_space(moduwu_design::SPACE_SM);
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
-                    "Open a photo to use Remove, Clone or Heal.",
+                    tr("Open a photo to use Remove, Clone or Heal."),
                 );
             }
         });

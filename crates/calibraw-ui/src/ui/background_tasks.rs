@@ -4,6 +4,8 @@
 
 use eframe::egui::{self, Ui};
 
+use crate::i18n::{tr, tr_fmt};
+
 /// A task the indicator can show and cancel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BackgroundTaskId {
@@ -70,7 +72,7 @@ fn task_row(ui: &mut Ui, task: &BackgroundTaskView) -> bool {
                         ui,
                         egui_phosphor::regular::X,
                         moduwu_design::toolbar_icon_size(),
-                        &format!("Cancel {}", task.title),
+                        &tr_fmt("Cancel {title}", &[("title", &task.title)]),
                     )
                 })
                 .inner
@@ -78,7 +80,7 @@ fn task_row(ui: &mut Ui, task: &BackgroundTaskView) -> bool {
         });
     });
     let detail = if task.cancelling {
-        "Stopping…"
+        tr("Stopping…")
     } else {
         task.detail.as_str()
     };

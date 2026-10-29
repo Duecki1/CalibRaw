@@ -2,6 +2,7 @@ use super::*;
 
 use super::batch::batch_export_overall_fraction;
 use super::preview::DETAIL_ZOOM_START;
+use crate::i18n::{tr, tr_fmt};
 
 mod task_view;
 
@@ -20,9 +21,9 @@ impl ExportTask {
             destination,
             progress: 0.0,
             phase: match kind {
-                ExportTaskKind::LibraryBatch => "Preparing batch export…".to_owned(),
-                ExportTaskKind::Replay => "Preparing edit replay…".to_owned(),
-                ExportTaskKind::Single => "Preparing tiled export…".to_owned(),
+                ExportTaskKind::LibraryBatch => tr("Preparing batch export…").to_owned(),
+                ExportTaskKind::Replay => tr("Preparing edit replay…").to_owned(),
+                ExportTaskKind::Single => tr("Preparing tiled export…").to_owned(),
             },
             completed: 0,
             total,
@@ -41,7 +42,7 @@ impl ExportTask {
         self.destination = Some(destination);
         self.completed_tiles = 0;
         self.total_tiles = 0;
-        self.phase = "Preparing tiled export…".to_owned();
+        self.phase = tr("Preparing tiled export…").to_owned();
     }
 
     pub(super) fn request_cancel(&mut self) {
@@ -49,9 +50,9 @@ impl ExportTask {
         self.cancellation.store(true, Ordering::Release);
         self.cancelling = true;
         self.phase = match self.kind {
-            ExportTaskKind::LibraryBatch => "Cancelling batch export…".to_owned(),
-            ExportTaskKind::Replay => "Cancelling edit replay…".to_owned(),
-            ExportTaskKind::Single => "Cancelling export…".to_owned(),
+            ExportTaskKind::LibraryBatch => tr("Cancelling batch export…").to_owned(),
+            ExportTaskKind::Replay => tr("Cancelling edit replay…").to_owned(),
+            ExportTaskKind::Single => tr("Cancelling export…").to_owned(),
         };
     }
 }
@@ -134,7 +135,7 @@ pub(in crate::app) fn run_export_item(
             ExportEvent::Finished(result) => return result.map(|_| ()),
         }
     }
-    Err("export worker stopped unexpectedly".to_owned())
+    Err(tr("export worker stopped unexpectedly").to_owned())
 }
 
 impl CalibRawApp {
@@ -280,9 +281,9 @@ impl CalibRawApp {
         if published.uri.is_empty() {
             self.report_error(
                 ErrorKind::Share,
-                format!(
-                    "Exported to {}, but Android did not provide a link to share it.",
-                    published.location
+                tr_fmt(
+                    "Exported to {location}, but Android did not provide a link to share it.",
+                    &[("location", &published.location)],
                 ),
             );
             return;
@@ -290,9 +291,9 @@ impl CalibRawApp {
         if let Err(error) = self.platform.share_export(&published.uri, mime_type) {
             self.report_error(
                 ErrorKind::Share,
-                format!(
-                    "Exported to {}, but sharing failed: {error}",
-                    published.location
+                tr_fmt(
+                    "Exported to {location}, but sharing failed: {error}",
+                    &[("location", &published.location), ("error", &error)],
                 ),
             );
         }
@@ -305,11 +306,15 @@ impl CalibRawApp {
         format: ExportFormat,
     ) -> Result<ExportDestination, String> {
         let Some(data_dir) = self.platform.internal_data_dir() else {
-            return Err("Android did not provide an app data directory.".to_owned());
+            return Err(tr("Android did not provide an app data directory.").to_owned());
         };
         let export_dir = data_dir.join("cache").join("exports");
-        std::fs::create_dir_all(&export_dir)
-            .map_err(|error| format!("Could not prepare Android export cache: {error}"))?;
+        std::fs::create_dir_all(&export_dir).map_err(|error| {
+            tr_fmt(
+                "Could not prepare Android export cache: {error}",
+                &[("error", &error)],
+            )
+        })?;
         match self
             .platform
             .prepare_direct_export(&display_name, format.mime_type())
@@ -366,7 +371,7 @@ impl CalibRawApp {
             return Ok(None);
         };
         let Some(render_state) = frame.wgpu_render_state() else {
-            return Err("eframe is not running with the wgpu backend.".to_owned());
+            return Err(tr("eframe is not running with the wgpu backend.").to_owned());
         };
         let (exposure, geometry, masks, look) = match export_override {
             None => (
@@ -453,7 +458,10 @@ impl CalibRawApp {
             }
         };
         if let Err(error) = self.start_export_task(request, ExportTaskKind::Single) {
-            self.report_error(ErrorKind::Export, format!("Export failed: {error}"));
+            self.report_error(
+                ErrorKind::Export,
+                tr_fmt("Export failed: {error}", &[("error", &error)]),
+            );
             return None;
         }
         Some(())
@@ -467,7 +475,7 @@ impl CalibRawApp {
         let cancellation = match (kind, self.export.task.as_ref()) {
             (ExportTaskKind::Single, None) => Arc::new(std::sync::atomic::AtomicBool::new(false)),
             (ExportTaskKind::Single, Some(_)) => {
-                return Err("another export is already active".to_owned());
+                return Err(tr("another export is already active").to_owned());
             }
             (ExportTaskKind::LibraryBatch, Some(task))
                 if task.kind == ExportTaskKind::LibraryBatch =>
@@ -475,10 +483,10 @@ impl CalibRawApp {
                 Arc::clone(&task.cancellation)
             }
             (ExportTaskKind::LibraryBatch, _) => {
-                return Err("the library batch export is no longer active".to_owned());
+                return Err(tr("the library batch export is no longer active").to_owned());
             }
             (ExportTaskKind::Replay, _) => {
-                return Err("edit replay uses its dedicated export worker".to_owned());
+                return Err(tr("edit replay uses its dedicated export worker").to_owned());
             }
         };
         let destination = request.destination.clone();
@@ -572,23 +580,39 @@ impl CalibRawApp {
                                 .min(EXPORT_MAX_INCOMPLETE_FRACTION);
                         }
                         task.phase = if total_tiles == 0 {
-                            "Preparing tiled export…".to_owned()
+                            tr("Preparing tiled export…").to_owned()
                         } else if completed_tiles >= total_tiles {
-                            "Finalizing export…".to_owned()
+                            tr("Finalizing export…").to_owned()
                         } else {
-                            format!("Rendering tile {completed_tiles}/{total_tiles}")
+                            tr_fmt(
+                                "Rendering tile {completed_tiles}/{total_tiles}",
+                                &[
+                                    ("completed_tiles", &completed_tiles),
+                                    ("total_tiles", &total_tiles),
+                                ],
+                            )
                         };
                     }
                 }
                 ExportEvent::WaitingForGpu { waited } => {
                     if let Some(task) = self.export.task.as_mut() {
-                        let waiting = format!("waiting for the GPU ({} s)", waited.as_secs());
+                        let waiting = tr_fmt(
+                            "waiting for the GPU ({seconds} s)",
+                            &[("seconds", &waited.as_secs())],
+                        );
                         task.phase = if task.total_tiles == 0 {
-                            format!("Preparing tiled export: {waiting}")
+                            tr_fmt(
+                                "Preparing tiled export: {waiting}",
+                                &[("waiting", &waiting)],
+                            )
                         } else {
-                            format!(
-                                "Rendering tile {}/{}: {waiting}",
-                                task.completed_tiles, task.total_tiles
+                            tr_fmt(
+                                "Rendering tile {completed_tiles}/{total_tiles}: {waiting}",
+                                &[
+                                    ("completed_tiles", &task.completed_tiles),
+                                    ("total_tiles", &task.total_tiles),
+                                    ("waiting", &waiting),
+                                ],
                             )
                         };
                     }
@@ -600,7 +624,7 @@ impl CalibRawApp {
                         task.completed_tiles = 0;
                         task.total_tiles = 0;
                         task.progress = task.progress.min(EXPORT_MAX_INCOMPLETE_FRACTION);
-                        task.phase = "Finalizing export…".to_owned();
+                        task.phase = tr("Finalizing export…").to_owned();
                     }
                     let is_batch = self.export.batch.is_some();
                     let was_cancelled = self
@@ -613,7 +637,10 @@ impl CalibRawApp {
                         Ok(path) => {
                             if !publishes {
                                 if !is_batch {
-                                    self.ui.notice = Some(format!("Exported {}", path.display()));
+                                    self.ui.notice = Some(tr_fmt(
+                                        "Exported {path}",
+                                        &[("path", &path.display())],
+                                    ));
                                     self.export.task = None;
                                 }
                             } else {
@@ -633,9 +660,9 @@ impl CalibRawApp {
                                                 if is_batch {
                                                     android_batch_result = Some(Ok(()));
                                                 } else {
-                                                    self.ui.notice = Some(format!(
-                                                        "Exported to {}",
-                                                        published.location
+                                                    self.ui.notice = Some(tr_fmt(
+                                                        "Exported to {location}",
+                                                        &[("location", &published.location)],
                                                     ));
                                                     self.share_finished_export(&published);
                                                     self.export.task = None;
@@ -649,7 +676,10 @@ impl CalibRawApp {
                                                 }
                                                 self.report_error(
                                                     ErrorKind::Export,
-                                                    format!("Export failed: {error}"),
+                                                    tr_fmt(
+                                                        "Export failed: {error}",
+                                                        &[("error", &error)],
+                                                    ),
                                                 );
                                             }
                                         }
@@ -667,14 +697,20 @@ impl CalibRawApp {
                                         ) {
                                             Ok(()) => {
                                                 self.export.publish_pending = true;
-                                                self.ui.notice = Some(format!(
-                                                    "Saving to {}…",
-                                                    self.platform.export_location_label()
+                                                self.ui.notice = Some(tr_fmt(
+                                                    "Saving to {location}…",
+                                                    &[(
+                                                        "location",
+                                                        &self.platform.export_location_label(),
+                                                    )],
                                                 ));
                                                 if let Some(task) = self.export.task.as_mut() {
-                                                    task.phase = format!(
-                                                        "Publishing to {}…",
-                                                        self.platform.export_location_label()
+                                                    task.phase = tr_fmt(
+                                                        "Publishing to {location}…",
+                                                        &[(
+                                                            "location",
+                                                            &self.platform.export_location_label(),
+                                                        )],
                                                     );
                                                     task.progress = task
                                                         .progress
@@ -690,7 +726,10 @@ impl CalibRawApp {
                                                 }
                                                 self.report_error(
                                                     ErrorKind::Export,
-                                                    format!("Export failed: {error}"),
+                                                    tr_fmt(
+                                                        "Export failed: {error}",
+                                                        &[("error", &error)],
+                                                    ),
                                                 );
                                             }
                                         }
@@ -698,7 +737,8 @@ impl CalibRawApp {
                                     Some(ExportDestination::File(_))
                                     | Some(ExportDestination::NewFile { .. })
                                     | None => {
-                                        let error = "export destination state was lost".to_owned();
+                                        let error =
+                                            tr("export destination state was lost").to_owned();
                                         if is_batch {
                                             android_batch_result = Some(Err(error.clone()));
                                         } else {
@@ -706,7 +746,7 @@ impl CalibRawApp {
                                         }
                                         self.report_error(
                                             ErrorKind::Export,
-                                            format!("Export failed: {error}"),
+                                            tr_fmt("Export failed: {error}", &[("error", &error)]),
                                         );
                                     }
                                 }
@@ -724,12 +764,12 @@ impl CalibRawApp {
                                 self.export.task = None;
                             }
                             if was_cancelled {
-                                self.ui.notice = Some("Export cancelled.".to_owned());
+                                self.ui.notice = Some(tr("Export cancelled.").to_owned());
                                 log::info!("export cancelled");
                             } else {
                                 self.report_error(
                                     ErrorKind::Export,
-                                    format!("Export failed: {error}"),
+                                    tr_fmt("Export failed: {error}", &[("error", &error)]),
                                 );
                             }
                         }
@@ -742,12 +782,12 @@ impl CalibRawApp {
             if let Some(task) = self.export.task.as_mut() {
                 task.receiver = None;
             }
-            self.report_error(ErrorKind::Export, "Export worker stopped unexpectedly.");
+            self.report_error(ErrorKind::Export, tr("Export worker stopped unexpectedly."));
             if publishes {
                 self.platform.cancel_all_direct_exports();
                 if self.export.batch.is_some() {
                     android_batch_result =
-                        Some(Err("export worker stopped unexpectedly".to_owned()));
+                        Some(Err(tr("export worker stopped unexpectedly").to_owned()));
                 } else {
                     self.export.task = None;
                 }
@@ -763,23 +803,35 @@ impl CalibRawApp {
 
     pub(in crate::app) fn refresh_status(&mut self) {
         self.ui.status = if let Some(label) = &self.develop.loading_label {
-            format!("Decoding and preparing proxy for {label}…")
+            tr_fmt(
+                "Decoding and preparing proxy for {label}…",
+                &[("label", &label)],
+            )
         } else if self.lens_correction_busy() {
             self.develop.lens_correction.catalog.status.clone()
         } else if let Some(task) = self.export.task.as_ref() {
             task.phase.clone()
         } else if self.export.publish_pending {
-            format!("Saving to {}…", self.platform.export_location_label())
+            tr_fmt(
+                "Saving to {location}…",
+                &[("location", &self.platform.export_location_label())],
+            )
         } else if self.preview.zoom > DETAIL_ZOOM_START {
             if let Some(stage) = self.preview.detail_pending_stage {
-                format!("Updating visible zoom crop — {}…", stage.label())
+                tr_fmt(
+                    "Updating visible zoom crop — {stage}…",
+                    &[("stage", &tr(stage.label()))],
+                )
             } else if let Some(notice) = &self.ui.notice {
                 notice.clone()
             } else {
                 self.develop.image_status.clone()
             }
         } else if let Some(stage) = self.preview.pending_stage {
-            format!("Updating preview — {}…", stage.label())
+            tr_fmt(
+                "Updating preview — {stage}…",
+                &[("stage", &tr(stage.label()))],
+            )
         } else if let Some(notice) = &self.ui.notice {
             notice.clone()
         } else {

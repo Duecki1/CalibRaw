@@ -16,6 +16,7 @@
 //! to happen to this photo.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::downscale_display_rgba8;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -155,15 +156,24 @@ fn wait_before_render(idle: Duration, pointer_down: bool) -> Option<Duration> {
 /// limit, the bytes the graph reserves and the bytes it may take.
 fn declined(edge: u32, texture_limit: u32, needed: u64, allowed: u64) -> Option<String> {
     if edge > texture_limit {
-        return Some(format!(
-            "the photo is {edge} px wide and the GPU's texture limit is {texture_limit} px"
+        return Some(tr_fmt(
+            "the photo is {edge} px wide and the GPU's texture limit is {texture_limit} px",
+            &[("edge", &edge), ("texture_limit", &texture_limit)],
         ));
     }
     (needed > allowed).then(|| {
-        format!(
-            "it needs {:.0} MiB of GPU memory and {:.0} MiB are free to use",
-            needed as f64 / (1024.0 * 1024.0),
-            allowed as f64 / (1024.0 * 1024.0)
+        tr_fmt(
+            "it needs {needed} MiB of GPU memory and {allowed} MiB are free to use",
+            &[
+                (
+                    "needed",
+                    &format!("{:.0}", needed as f64 / (1024.0 * 1024.0)),
+                ),
+                (
+                    "allowed",
+                    &format!("{:.0}", allowed as f64 / (1024.0 * 1024.0)),
+                ),
+            ],
         )
     })
 }
@@ -331,9 +341,10 @@ impl CalibRawApp {
                         .copied()
                         .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
                         .unwrap_or("unknown panic");
-                    Err(anyhow::anyhow!(
-                        "full-resolution render panicked: {message}"
-                    ))
+                    Err(anyhow::anyhow!(tr_fmt(
+                        "full-resolution render panicked: {message}",
+                        &[("message", &message)],
+                    )))
                 })
                 .map_err(|error| format!("{error:#}"));
                 let _ = sender.send(FullResolutionResult {
@@ -354,7 +365,10 @@ impl CalibRawApp {
                 self.preview.full_resolution.given_up_for = Some(document_generation);
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not start the full-resolution preview: {error}"),
+                    tr_fmt(
+                        "Could not start the full-resolution preview: {error}",
+                        &[("error", &error)],
+                    ),
                 );
             }
         }
@@ -379,7 +393,7 @@ impl CalibRawApp {
                     self.preview.full_resolution.given_up_for = Some(document_generation);
                     self.report_error(
                         ErrorKind::Preview,
-                        "The full-resolution preview worker stopped unexpectedly.".to_owned(),
+                        tr("The full-resolution preview worker stopped unexpectedly.").to_owned(),
                     );
                 }
                 return;
@@ -414,7 +428,10 @@ impl CalibRawApp {
                 self.preview.full_resolution.given_up_for = Some(result.document_generation);
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not render the full-resolution preview: {error}"),
+                    tr_fmt(
+                        "Could not render the full-resolution preview: {error}",
+                        &[("error", &error)],
+                    ),
                 );
             }
         }

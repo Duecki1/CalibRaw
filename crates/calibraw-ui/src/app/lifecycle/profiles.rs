@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     /// Tells the user once per scan of the profile folder when it holds more DCP profiles
@@ -12,10 +13,11 @@ impl CalibRawApp {
         if let Some(limit) = limit {
             self.report_error(
                 ErrorKind::CameraProfile,
-                format!(
+                tr_fmt(
                     "The camera profile folder holds more than {limit} DCP profiles, so some \
                      are not listed. Choose a smaller folder, such as the CameraProfiles \
-                     folder inside it."
+                     folder inside it.",
+                    &[("limit", &limit)],
                 ),
             );
         }
@@ -56,14 +58,14 @@ impl CalibRawApp {
         self.clear_decoded_raws();
         self.persist_performance_settings();
         self.ui.notice = Some(
-            "Camera profile folder updated. Reopen the RAW to apply the new profile selection."
+            tr("Camera profile folder updated. Reopen the RAW to apply the new profile selection.")
                 .to_owned(),
         );
     }
 
     fn import_camera_profile_folder(&mut self) {
         if self.android.picker_pending {
-            self.ui.notice = Some("Finish the current Android file picker first.".to_owned());
+            self.ui.notice = Some(tr("Finish the current Android file picker first.").to_owned());
             return;
         }
         match self.platform.open_camera_profile_folder() {
@@ -71,7 +73,7 @@ impl CalibRawApp {
                 self.android.picker_pending = true;
                 self.android.camera_profile_folder_importing_label = None;
                 self.ui.notice = None;
-                self.ui.status = "Choose a CameraProfiles folder…".to_owned();
+                self.ui.status = tr("Choose a CameraProfiles folder…").to_owned();
             }
             Err(error) => self.report_error(ErrorKind::CameraProfile, error),
         }
@@ -102,7 +104,7 @@ impl CalibRawApp {
                 }
             }
             self.ui.notice = Some(
-                "Camera profile folder cleared. Reopen the RAW to apply the new profile selection."
+                tr("Camera profile folder cleared. Reopen the RAW to apply the new profile selection.")
                     .to_owned(),
             );
         }
@@ -115,13 +117,13 @@ impl CalibRawApp {
             Some(folder) => {
                 self.preferences.camera_profile_folder = Some(folder.clone());
                 self.preferences.camera_profile_folder_label =
-                    Some("DCP profiles (auto-detected)".to_owned());
+                    Some(tr("DCP profiles (auto-detected)").to_owned());
                 self.preferences.last_camera_profile = None;
                 self.clear_decoded_raws();
                 self.persist_performance_settings();
-                self.ui.notice = Some(format!(
-                    "Using DCP profiles from {}. Reopen the RAW to apply them.",
-                    folder.display()
+                self.ui.notice = Some(tr_fmt(
+                    "Using DCP profiles from {folder}. Reopen the RAW to apply them.",
+                    &[("folder", &folder.display())],
                 ));
             }
             None => {
@@ -130,8 +132,9 @@ impl CalibRawApp {
                 self.preferences.last_camera_profile = None;
                 self.clear_decoded_raws();
                 self.persist_performance_settings();
-                self.ui.notice =
-                    Some("No DCP profile folder was found in the standard locations.".to_owned());
+                self.ui.notice = Some(
+                    tr("No DCP profile folder was found in the standard locations.").to_owned(),
+                );
             }
         }
     }
@@ -144,7 +147,7 @@ impl CalibRawApp {
         self.clear_decoded_raws();
         self.persist_performance_settings();
         self.ui.notice = Some(
-            "RAW color profile mode changed. Reopen the RAW to apply the new profile selection."
+            tr("RAW color profile mode changed. Reopen the RAW to apply the new profile selection.")
                 .to_owned(),
         );
     }
@@ -156,7 +159,7 @@ impl CalibRawApp {
     ) {
         if self.android_foreground_task_active() {
             self.ui.notice = Some(
-                "Wait for the current foreground operation to finish before changing camera profile."
+                tr("Wait for the current foreground operation to finish before changing camera profile.")
                     .to_owned(),
             );
             self.egui_ctx.request_repaint();
@@ -164,7 +167,7 @@ impl CalibRawApp {
         }
         if self.develop.load_receiver.is_some() {
             self.ui.notice = Some(
-                "Wait for the current RAW load to finish before changing camera profile."
+                tr("Wait for the current RAW load to finish before changing camera profile.")
                     .to_owned(),
             );
             return;
@@ -173,7 +176,7 @@ impl CalibRawApp {
             return;
         }
         let Some(sidecar_target) = self.persistence.sidecar_target.clone() else {
-            self.ui.notice = Some("Open a RAW before choosing a camera profile.".to_owned());
+            self.ui.notice = Some(tr("Open a RAW before choosing a camera profile.").to_owned());
             return;
         };
         if let Some(selected) = selection.as_ref() {
@@ -188,7 +191,7 @@ impl CalibRawApp {
                     .any(|candidate| candidate.path == *selected)
             });
             if !embedded_matrix && !is_available {
-                self.report_error(ErrorKind::CameraProfile, "That DCP is no longer available for the current camera. Refresh the profile folder and reopen the RAW."
+                self.report_error(ErrorKind::CameraProfile, tr("That DCP is no longer available for the current camera. Refresh the profile folder and reopen the RAW.")
                         .to_owned(),);
                 return;
             }
@@ -224,7 +227,7 @@ impl CalibRawApp {
                 crate::sidecar::SidecarTarget::Desktop { .. } => {
                     self.report_error(
                         ErrorKind::CameraProfile,
-                        "The current Android RAW does not have a reloadable library target."
+                        tr("The current Android RAW does not have a reloadable library target.")
                             .to_owned(),
                     );
                     return;
@@ -235,12 +238,18 @@ impl CalibRawApp {
                     self.android.pending_android_profile_reload = Some(reload);
                     self.android.picker_pending = true;
                     self.ui.notice = None;
-                    self.ui.status = format!("Applying camera profile to {display_name}…");
+                    self.ui.status = tr_fmt(
+                        "Applying camera profile to {display_name}…",
+                        &[("display_name", &display_name)],
+                    );
                 }
                 Err(error) => {
                     self.report_error(
                         ErrorKind::CameraProfile,
-                        format!("Could not reload RAW for camera profile: {error}"),
+                        tr_fmt(
+                            "Could not reload RAW for camera profile: {error}",
+                            &[("error", &error)],
+                        ),
                     );
                 }
             }

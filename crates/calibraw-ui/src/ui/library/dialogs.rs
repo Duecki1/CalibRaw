@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 fn show_dialog_error(ui: &mut Ui, error: Option<&str>) {
     if let Some(error) = error {
@@ -20,44 +21,39 @@ pub(super) fn show_delete_originals_confirmation(
     }
     let count = assets.len();
     let title = if count == 1 {
-        "Delete original?".to_owned()
+        tr("Delete original?").to_owned()
     } else {
-        format!("Delete {count} originals?")
+        tr_fmt("Delete {count} originals?", &[("count", &count)])
     };
     // Folder photos go to the desktop trash; the media library deletes them.
     let recycles = caps.has_folders();
     let confirm_label = if recycles {
-        format!("Move to {}", crate::platform::trash_name())
+        tr_fmt(
+            "Move to {trash_name}",
+            &[("trash_name", &crate::platform::trash_name())],
+        )
     } else {
-        "Delete permanently".to_owned()
+        tr("Delete permanently").to_owned()
     };
     let mut action = moduwu_design::DialogAction::None;
     moduwu_design::Dialog::new("library-delete-originals-confirmation", title).show_with_footer(
         ui.ctx(),
         |ui| {
             if count == 1 {
-                ui.label(format!("Remove {} from the Library?", assets[0].display_name));
+                ui.label(tr_fmt("Remove {display_name} from the Library?", &[("display_name", &assets[0].display_name)]));
             } else {
-                ui.label(format!(
-                    "Remove the {count} selected originals from the Library?"
-                ));
+                ui.label(tr_fmt("Remove the {count} selected originals from the Library?", &[("count", &count)]));
             }
             if recycles {
             ui.label(if count == 1 {
-                format!(
-                    "The original photo and its saved adjustments will be moved to the system {}.",
-                    crate::platform::trash_name()
-                )
+                tr_fmt("The original photo and its saved adjustments will be moved to the system {trash_name}.", &[("trash_name", &crate::platform::trash_name())])
             } else {
-                format!(
-                    "The selected originals and their saved adjustments will be moved to the system {}.",
-                    crate::platform::trash_name()
-                )
+                tr_fmt("The selected originals and their saved adjustments will be moved to the system {trash_name}.", &[("trash_name", &crate::platform::trash_name())])
             });
             } else {
             ui.label(
                 egui::RichText::new(
-                    "CalibRaw's Android library does not support recycling. This cannot be undone.",
+                    tr("CalibRaw's Android library does not support recycling. This cannot be undone."),
                 )
                 .strong()
                 .color(ui.visuals().warn_fg_color),
@@ -67,7 +63,7 @@ pub(super) fn show_delete_originals_confirmation(
         |ui| {
             action = moduwu_design::dialog_confirmation_actions(
                 ui,
-                "Cancel",
+                tr("Cancel"),
                 confirm_label,
                 true,
                 true,
@@ -96,30 +92,45 @@ pub(super) fn show_adjustment_paste_choice(
     target_count: usize,
 ) -> Option<AdjustmentPasteChoice> {
     let mut choice = None;
-    moduwu_design::Dialog::new(id, "Paste adjustments").show_with_footer(
+    moduwu_design::Dialog::new(id, tr("Paste adjustments")).show_with_footer(
         ui.ctx(),
         |ui| {
-            ui.label(format!(
-                "{} of the {} selected {} already contain edits.",
-                edited_count,
-                target_count,
-                if target_count == 1 { "image" } else { "images" }
-            ));
+            ui.label(if target_count == 1 {
+                tr_fmt(
+                    "{edited_count} of the {target_count} selected image already contain edits.",
+                    &[
+                        ("edited_count", &edited_count),
+                        ("target_count", &target_count),
+                    ],
+                )
+            } else {
+                tr_fmt(
+                    "{edited_count} of the {target_count} selected images already contain edits.",
+                    &[
+                        ("edited_count", &edited_count),
+                        ("target_count", &target_count),
+                    ],
+                )
+            });
         },
         |ui| {
-            if moduwu_design::primary_action_button(ui, "Replace")
-                .on_hover_text("Clear the destination edits, then apply the copied settings.")
+            if moduwu_design::primary_action_button(ui, tr("Replace"))
+                .on_hover_text(tr(
+                    "Clear the destination edits, then apply the copied settings.",
+                ))
                 .clicked()
             {
                 choice = Some(AdjustmentPasteChoice::Replace);
             }
-            if moduwu_design::secondary_button(ui, "Merge")
-                .on_hover_text("Overwrite only the copied settings and keep everything else.")
+            if moduwu_design::secondary_button(ui, tr("Merge"))
+                .on_hover_text(tr(
+                    "Overwrite only the copied settings and keep everything else.",
+                ))
                 .clicked()
             {
                 choice = Some(AdjustmentPasteChoice::Merge);
             }
-            if moduwu_design::secondary_button(ui, "Cancel").clicked() {
+            if moduwu_design::secondary_button(ui, tr("Cancel")).clicked() {
                 choice = Some(AdjustmentPasteChoice::Cancel);
             }
             if choice.is_none()
@@ -149,23 +160,29 @@ pub(super) fn show_ai_mask_refresh_choice(
     can_regenerate: bool,
 ) -> Option<AiMaskRefreshChoice> {
     let mut action = moduwu_design::DialogAction::None;
-    moduwu_design::Dialog::new(id, "Regenerate AI masks?")
+    moduwu_design::Dialog::new(id, tr("Regenerate AI masks?"))
         .size(moduwu_design::DialogSize::Wide)
         .show_with_footer(
             ui.ctx(),
             |ui| {
-                ui.label(format!(
-                    "{} pasted {} contain content-aware masks that belong to the source image.",
-                    target_count,
-                    if target_count == 1 { "image" } else { "images" }
-                ));
+                ui.label(if target_count == 1 {
+                    tr_fmt(
+                        "{target_count} pasted image contain content-aware masks that belong to the source image.",
+                        &[("target_count", &target_count)],
+                    )
+                } else {
+                    tr_fmt(
+                        "{target_count} pasted images contain content-aware masks that belong to the source image.",
+                        &[("target_count", &target_count)],
+                    )
+                });
                 ui.label(
-                    "Regenerate them now for each destination image? Mask groups, settings, object strokes, and local adjustments are preserved.",
+                    tr("Regenerate them now for each destination image? Mask groups, settings, object strokes, and local adjustments are preserved."),
                 );
                 if !can_regenerate {
                     ui.label(
                         egui::RichText::new(
-                            "Waiting for the current photo load or edit save to finish…",
+                            tr("Waiting for the current photo load or edit save to finish…"),
                         )
                         .small()
                         .color(ui.visuals().weak_text_color()),
@@ -175,8 +192,8 @@ pub(super) fn show_ai_mask_refresh_choice(
             |ui| {
                 action = moduwu_design::dialog_confirmation_actions(
                     ui,
-                    "Not now",
-                    "Regenerate",
+                    tr("Not now"),
+                    tr("Regenerate"),
                     can_regenerate,
                     false,
                     moduwu_design::DialogKeyboard::CLOSE_ONLY,
@@ -205,45 +222,53 @@ pub(super) fn show_ai_mask_refresh_progress(
         (completed as f32 / total as f32).clamp(0.0, 1.0)
     };
     let mut cancel = false;
-    moduwu_design::Dialog::new("library-ai-mask-refresh-progress", "Regenerating AI masks")
-        .show_with_footer(
-            ui.ctx(),
-            |ui| {
+    moduwu_design::Dialog::new(
+        "library-ai-mask-refresh-progress",
+        tr("Regenerating AI masks"),
+    )
+    .show_with_footer(
+        ui.ctx(),
+        |ui| {
+            ui.label(
+                egui::RichText::new(tr_fmt(
+                    "{completed} / {total} AI masks updated",
+                    &[("completed", &completed), ("total", &total)],
+                ))
+                .strong(),
+            );
+            ui.add(
+                egui::ProgressBar::new(fraction)
+                    .show_percentage()
+                    .animate(completed < total),
+            );
+            if let Some(name) = current_name {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(tr_fmt("Refreshing {name}…", &[("name", &name)]));
+                });
+            }
+            if failed > 0 {
                 ui.label(
-                    egui::RichText::new(format!("{completed} / {total} AI masks updated")).strong(),
+                    egui::RichText::new(if failed == 1 {
+                        tr_fmt("{failed} image failed", &[("failed", &failed)])
+                    } else {
+                        tr_fmt("{failed} images failed", &[("failed", &failed)])
+                    })
+                    .small()
+                    .color(ui.visuals().warn_fg_color),
                 );
-                ui.add(
-                    egui::ProgressBar::new(fraction)
-                        .show_percentage()
-                        .animate(completed < total),
-                );
-                if let Some(name) = current_name {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(format!("Refreshing {name}…"));
-                    });
-                }
-                if failed > 0 {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{failed} {} failed",
-                            if failed == 1 { "image" } else { "images" }
-                        ))
-                        .small()
-                        .color(ui.visuals().warn_fg_color),
-                    );
-                }
-            },
-            |ui| {
-                cancel |= moduwu_design::secondary_button(ui, "Cancel").clicked();
-                cancel |= !cancel
-                    && moduwu_design::dialog_keyboard_action(
-                        ui,
-                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                        false,
-                    ) == moduwu_design::DialogAction::Cancel;
-            },
-        );
+            }
+        },
+        |ui| {
+            cancel |= moduwu_design::secondary_button(ui, tr("Cancel")).clicked();
+            cancel |= !cancel
+                && moduwu_design::dialog_keyboard_action(
+                    ui,
+                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                    false,
+                ) == moduwu_design::DialogAction::Cancel;
+        },
+    );
     cancel
 }
 
@@ -252,11 +277,11 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
     let mut create = None;
     if let Some(dialog) = app.library.media.folder_name_dialog.as_mut() {
         let mut action = moduwu_design::DialogAction::None;
-        moduwu_design::Dialog::new("android-library-folder-name-dialog", "New folder")
+        moduwu_design::Dialog::new("android-library-folder-name-dialog", tr("New folder"))
             .show_with_footer(
                 ui.ctx(),
                 |ui| {
-                    ui.label("Folder name");
+                    ui.label(tr("Folder name"));
                     let response = moduwu_design::dialog_text_field(
                         ui,
                         &mut dialog.name,
@@ -269,8 +294,8 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
                 |ui| {
                     action = moduwu_design::dialog_confirmation_actions(
                         ui,
-                        "Cancel",
-                        "Create",
+                        tr("Cancel"),
+                        tr("Create"),
                         true,
                         false,
                         moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
@@ -293,7 +318,7 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
             Ok(folder) => {
                 app.library.media.folder_name_dialog = None;
                 app.library.media.expanded_folders.insert(parent);
-                app.library.status = format!("Created folder {folder}");
+                app.library.status = tr_fmt("Created folder {folder}", &[("folder", &folder)]);
                 app.library.refresh(ui.ctx());
             }
             Err(error) => {
@@ -310,18 +335,18 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
     let mut name_operation = None;
     if let Some(dialog) = app.library.folder_name_dialog.as_mut() {
         let title = match dialog.kind {
-            LibraryFolderNameDialogKind::Create { .. } => "New folder",
-            LibraryFolderNameDialogKind::Rename { .. } => "Rename folder",
+            LibraryFolderNameDialogKind::Create { .. } => tr("New folder"),
+            LibraryFolderNameDialogKind::Rename { .. } => tr("Rename folder"),
         };
         let confirm_label = match dialog.kind {
-            LibraryFolderNameDialogKind::Create { .. } => "Create",
-            LibraryFolderNameDialogKind::Rename { .. } => "Rename",
+            LibraryFolderNameDialogKind::Create { .. } => tr("Create"),
+            LibraryFolderNameDialogKind::Rename { .. } => tr("Rename"),
         };
         let mut action = moduwu_design::DialogAction::None;
         moduwu_design::Dialog::new("library-folder-name-dialog", title).show_with_footer(
             ui.ctx(),
             |ui| {
-                ui.label("Folder name");
+                ui.label(tr("Folder name"));
                 let response = moduwu_design::dialog_text_field(
                     ui,
                     &mut dialog.name,
@@ -334,7 +359,7 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
             |ui| {
                 action = moduwu_design::dialog_confirmation_actions(
                     ui,
-                    "Cancel",
+                    tr("Cancel"),
                     confirm_label,
                     true,
                     false,
@@ -366,7 +391,8 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
                                 });
                                 close_name_dialog = true;
                             } else {
-                                dialog.error = Some("This folder has no parent folder.".to_owned());
+                                dialog.error =
+                                    Some(tr("This folder has no parent folder.").to_owned());
                             }
                         }
                     },
@@ -388,16 +414,16 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
     let mut confirm_delete = false;
     if let Some(target) = delete_target.as_ref() {
         let mut action = moduwu_design::DialogAction::None;
-        moduwu_design::Dialog::new("library-folder-delete-confirmation", "Delete folder?")
+        moduwu_design::Dialog::new("library-folder-delete-confirmation", tr("Delete folder?"))
             .show_with_footer(
                 ui.ctx(),
                 |ui| {
-                    ui.label(format!(
-                        "Delete {} and everything inside it?",
-                        target.display()
+                    ui.label(tr_fmt(
+                        "Delete {target} and everything inside it?",
+                        &[("target", &target.display())],
                     ));
                     ui.label(
-                        egui::RichText::new("This cannot be undone.")
+                        egui::RichText::new(tr("This cannot be undone."))
                             .strong()
                             .color(ui.visuals().warn_fg_color),
                     );
@@ -405,8 +431,8 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
                 |ui| {
                     action = moduwu_design::dialog_confirmation_actions(
                         ui,
-                        "Cancel",
-                        "Delete Folder",
+                        tr("Cancel"),
+                        tr("Delete Folder"),
                         true,
                         true,
                         moduwu_design::DialogKeyboard::CLOSE_ONLY,
@@ -449,10 +475,10 @@ pub(super) fn validate_library_item_name(name: &str, raw: bool) -> Result<(), St
         || name.contains('"')
         || name.chars().any(char::is_control)
     {
-        return Err("Enter a single safe name without leading or trailing spaces.".to_owned());
+        return Err(tr("Enter a single safe name without leading or trailing spaces.").to_owned());
     }
     if raw && !crate::pipeline::is_supported_image_path(Path::new(name)) {
-        return Err("Keep a supported photo filename extension.".to_owned());
+        return Err(tr("Keep a supported photo filename extension.").to_owned());
     }
     Ok(())
 }
@@ -466,10 +492,10 @@ pub(super) fn show_library_raw_name_dialog(
     let mut rename = None;
     if let Some(dialog) = app.library.raw_name_dialog.as_mut() {
         let mut action = moduwu_design::DialogAction::None;
-        moduwu_design::Dialog::new("library-raw-name-dialog", "Rename Photo").show_with_footer(
+        moduwu_design::Dialog::new("library-raw-name-dialog", tr("Rename Photo")).show_with_footer(
             ui.ctx(),
             |ui| {
-                ui.label("Filename");
+                ui.label(tr("Filename"));
                 let response = moduwu_design::dialog_text_field(
                     ui,
                     &mut dialog.name,
@@ -482,8 +508,8 @@ pub(super) fn show_library_raw_name_dialog(
             |ui| {
                 action = moduwu_design::dialog_confirmation_actions(
                     ui,
-                    "Cancel",
-                    "Rename",
+                    tr("Cancel"),
+                    tr("Rename"),
                     true,
                     false,
                     moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
@@ -529,7 +555,7 @@ pub(super) fn show_library_raw_name_dialog(
             app.library.raw_name_dialog = None;
             app.library.clear_selection();
             app.library.refresh(ui.ctx());
-            app.library.status = format!("Renamed photo to {name}.");
+            app.library.status = tr_fmt("Renamed photo to {name}.", &[("name", &name)]);
 
             if current_path.is_some() {
                 if let Some(destination) = renamed_asset.desktop_path().map(Path::to_path_buf) {
@@ -548,7 +574,7 @@ pub(super) fn show_library_raw_name_dialog(
                 let label = source
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .unwrap_or("local RAW")
+                    .unwrap_or(tr("local RAW"))
                     .to_owned();
                 app.open_document(crate::app::DocumentSource::desktop(source, label), frame);
             }

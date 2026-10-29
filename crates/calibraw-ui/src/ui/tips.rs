@@ -7,6 +7,8 @@ mod animation;
 pub(crate) use animation::TipAnimation;
 use eframe::egui;
 
+use crate::i18n::tr;
+
 /// The largest share of the window height a clip may take, so the text and
 /// buttons stay visible on short screens.
 const MAX_ANIMATION_HEIGHT_FRACTION: f32 = 0.45;
@@ -44,42 +46,42 @@ impl Tip {
         }
     }
 
-    pub(crate) const fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> &'static str {
         match self {
-            Self::MasksTab => "Masks",
-            Self::ObjectMask => "Object mask",
-            Self::DepthRange => "Depth range",
-            Self::PathMask => "Freeform mask",
-            Self::ColorRangeMask => "Color range mask",
-            Self::LuminanceRangeMask => "Luminance range mask",
+            Self::MasksTab => tr("Masks"),
+            Self::ObjectMask => tr("Object mask"),
+            Self::DepthRange => tr("Depth range"),
+            Self::PathMask => tr("Freeform mask"),
+            Self::ColorRangeMask => tr("Color range mask"),
+            Self::LuminanceRangeMask => tr("Luminance range mask"),
         }
     }
 
-    const fn body(self) -> &'static str {
+    fn body(self) -> &'static str {
         match self {
             Self::MasksTab => {
-                "Create a mask group with the plus card, then adjust only the masked area. \
-                 Add sub-masks to extend, subtract from or intersect a group."
+                tr("Create a mask group with the plus card, then adjust only the masked area. \
+                 Add sub-masks to extend, subtract from or intersect a group.")
             }
             Self::ObjectMask => {
-                "Paint roughly over the object you want to select. \
-                 CalibRaw finds its outline; paint again to include more of it."
+                tr("Paint roughly over the object you want to select. \
+                 CalibRaw finds its outline; paint again to include more of it.")
             }
             Self::DepthRange => {
-                "Drag the solid handles to set Near and Far, the ends of the depth range. \
-                 Drag the hollow handles to feather each end."
+                tr("Drag the solid handles to set Near and Far, the ends of the depth range. \
+                 Drag the hollow handles to feather each end.")
             }
             Self::PathMask => {
-                "Click to add points around the subject; the outline closes itself. \
-                 Drag while adding a point to curve its edge, then drag its handles to reshape it."
+                tr("Click to add points around the subject; the outline closes itself. \
+                 Drag while adding a point to curve its edge, then drag its handles to reshape it.")
             }
             Self::ColorRangeMask => {
-                "Click or drag on the photo to sample a color. \
-                 Then use Tolerance to widen or narrow the selection, and Grow to expand or shrink it."
+                tr("Click or drag on the photo to sample a color. \
+                 Then use Tolerance to widen or narrow the selection, and Grow to expand or shrink it.")
             }
             Self::LuminanceRangeMask => {
-                "Drag the solid handles to set the luminance range, the darkest and brightest tones selected. \
-                 Drag the hollow handles to feather each end."
+                tr("Drag the solid handles to set the luminance range, the darkest and brightest tones selected. \
+                 Drag the hollow handles to feather each end.")
             }
         }
     }
@@ -126,10 +128,10 @@ pub(crate) fn show(
                 ui.label(tip.body());
             },
             |ui| {
-                if moduwu_design::primary_action_button(ui, "Got it").clicked() {
+                if moduwu_design::primary_action_button(ui, tr("Got it")).clicked() {
                     choice = Some(TipChoice::Dismiss);
                 }
-                if moduwu_design::secondary_button(ui, "Don't show tips").clicked() {
+                if moduwu_design::secondary_button(ui, tr("Don't show tips")).clicked() {
                     choice = Some(TipChoice::DisableTips);
                 }
                 if choice.is_none()

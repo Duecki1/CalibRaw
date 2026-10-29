@@ -1,5 +1,6 @@
 use super::{egui, float_param_slider, Ui};
 use crate::app::CalibRawApp;
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::effect_params::FloatParamSpec;
 use crate::pipeline::{GeometryTransform, LensGeometryMap};
 use crate::ui::preview::SourceProjection;
@@ -23,15 +24,15 @@ pub(super) fn image_lights_toggle(ui: &mut Ui, image_lights: &mut bool) -> bool 
     moduwu_design::toggle_with_help(
         ui,
         image_lights,
-        "Image lights",
-        "Let light sources in the photo, such as lamps, lit windows and signs, glow in it in their own colours. Light glow sets their strength.",
+        tr("Image lights"),
+        tr("Let light sources in the photo, such as lamps, lit windows and signs, glow in it in their own colours. Light glow sets their strength."),
     )
     .changed()
 }
 
 pub(super) fn pattern_seed(ui: &mut Ui, value: &mut f32, spec: FloatParamSpec) -> bool {
     let mut changed = false;
-    moduwu_design::property_row(ui, spec.label, |ui| {
+    moduwu_design::property_row(ui, tr(spec.label), |ui| {
         changed |= ui
             .add(
                 moduwu_design::NumberField::new(value, spec.range())
@@ -41,10 +42,14 @@ pub(super) fn pattern_seed(ui: &mut Ui, value: &mut f32, spec: FloatParamSpec) -
             .changed();
         let shuffle = moduwu_design::secondary_button(
             ui,
-            format!("{}  Shuffle", egui_phosphor::regular::SHUFFLE),
+            format!("{}  {}", egui_phosphor::regular::SHUFFLE, tr("Shuffle")),
         );
         if shuffle
-            .on_hover_text(spec.tooltip.unwrap_or("Choose a different random pattern."))
+            .on_hover_text(
+                spec.tooltip
+                    .map(tr)
+                    .unwrap_or(tr("Choose a different random pattern.")),
+            )
             .clicked()
         {
             *value = shuffled_pattern(*value, spec, shuffle_entropy());
@@ -167,14 +172,14 @@ pub(super) fn effect_position(
     ui.push_id(label, |ui| {
         ui.label(label).on_hover_text(match space {
             PositionSpace::Source => {
-                "Percent of the full, uncropped image: left/top is 0, right/bottom is 100."
+                tr("Percent of the full, uncropped image: left/top is 0, right/bottom is 100.")
             }
             PositionSpace::Output => {
-                "Percent of the cropped image: left/top is 0, right/bottom is 100."
+                tr("Percent of the cropped image: left/top is 0, right/bottom is 100.")
             }
         });
         let (_, mut changed) = position_pad(ui, label, position, specs, frame, space);
-        changed |= effect_details(ui, "Precise position", |ui| {
+        changed |= effect_details(ui, tr("Precise position"), |ui| {
             float_param_slider(ui, &mut position[0], specs[0])
                 | float_param_slider(ui, &mut position[1], specs[1])
         });
@@ -297,14 +302,11 @@ pub(super) fn position_pad(
         painter.text(
             canvas.center(),
             egui::Align2::CENTER_CENTER,
-            "Position outside frame",
+            tr("Position outside frame"),
             egui::TextStyle::Small.resolve(ui.style()),
             ui.visuals().text_color(),
         );
     }
-    let response = response.on_hover_text(format!(
-        "{label}: {:.1}%, {:.1}%\nDrag to position. Arrow keys move 1%; Shift moves 10%.\nDouble-click to reset. Use Precise position to enter coordinates.",
-        position[0], position[1],
-    ));
+    let response = response.on_hover_text(tr_fmt("{label}: {x}%, {y}%\nDrag to position. Arrow keys move 1%; Shift moves 10%.\nDouble-click to reset. Use Precise position to enter coordinates.", &[("label", &label), ("x", &format!("{:.1}", position[0])), ("y", &format!("{:.1}", position[1]))]));
     (response, changed)
 }

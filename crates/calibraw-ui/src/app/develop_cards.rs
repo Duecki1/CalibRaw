@@ -2,6 +2,7 @@
 //! settings. The wide (sidebar) layout shows the cards in this order; the
 //! vertical layout shows one section at a time and orders its tabs the same
 //! way (`AdjustmentSection::of_card`).
+use crate::i18n::tr;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,18 +33,18 @@ impl DevelopCard {
         Self::LensCorrections,
     ];
 
-    pub(crate) const fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::CameraProfile => "Camera profile",
-            Self::Light => "Light",
-            Self::ToneCurve => "Tone Curve",
-            Self::Lut => "LUT",
-            Self::Color => "Color",
-            Self::ColorGrading => "Color Grading",
-            Self::Detail => "Detail",
-            Self::Effects => "Effects",
-            Self::ColorMixer => "Color Mixer",
-            Self::LensCorrections => "Lens Corrections",
+            Self::CameraProfile => tr("Camera profile"),
+            Self::Light => tr("Light"),
+            Self::ToneCurve => tr("Tone Curve"),
+            Self::Lut => tr("LUT"),
+            Self::Color => tr("Color"),
+            Self::ColorGrading => tr("Color Grading"),
+            Self::Detail => tr("Detail"),
+            Self::Effects => tr("Effects"),
+            Self::ColorMixer => tr("Color Mixer"),
+            Self::LensCorrections => tr("Lens Corrections"),
         }
     }
 

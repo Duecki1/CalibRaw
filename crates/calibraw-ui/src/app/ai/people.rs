@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::app::{PeopleChoices, PeopleEdit, PersonThumbnail};
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::PersonPart;
 use calibraw_ai::models::people::{
     spawn_people_mask, PeopleAnalysis, PeopleAnalysisFile, PeopleMaskProgress, PeopleMaskRequest,
@@ -195,9 +196,12 @@ impl CalibRawApp {
             }
         }
         if parts_unavailable {
-            self.report_ai_mask_error(format!(
-                "The people mask could not be made: {}. It keeps its last result.",
-                calibraw_ai::models::people::PartsUnavailable
+            self.report_ai_mask_error(tr_fmt(
+                "The people mask could not be made: {PartsUnavailable}. It keeps its last result.",
+                &[(
+                    "PartsUnavailable",
+                    &calibraw_ai::models::people::PartsUnavailable,
+                )],
             ));
         }
         if needs_job.is_empty() || !self.people_job_may_start() {
@@ -215,7 +219,7 @@ impl CalibRawApp {
     fn people_job_may_start(&mut self) -> bool {
         if self.foreground_operation_active() {
             self.ui.notice =
-                Some("Finish or cancel the current editing operation first.".to_owned());
+                Some(tr("Finish or cancel the current editing operation first.").to_owned());
             return false;
         }
         true
@@ -426,7 +430,7 @@ impl CalibRawApp {
                     continue;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    Err("its worker stopped unexpectedly".to_owned())
+                    Err(tr("its worker stopped unexpectedly").to_owned())
                 }
             };
             let compose = self.ai.people.composes.swap_remove(index);
@@ -445,7 +449,10 @@ impl CalibRawApp {
             // compose started from one with them.
             Ok(None) => return,
             Err(error) => {
-                self.report_ai_mask_error(format!("The people mask could not be made: {error}"));
+                self.report_ai_mask_error(tr_fmt(
+                    "The people mask could not be made: {error}",
+                    &[("error", &error)],
+                ));
                 return;
             }
         };
@@ -456,7 +463,7 @@ impl CalibRawApp {
         let people_anchors = std::mem::take(&mut mask.anchors);
         let Some(image) = mask.into_probability_mask() else {
             self.report_ai_mask_error(
-                "People selection returned an invalid mask image.".to_owned(),
+                tr("People selection returned an invalid mask image.").to_owned(),
             );
             return;
         };
@@ -537,7 +544,7 @@ impl CalibRawApp {
         let Some(source) = self.masks.source_cache.as_ref().map(PeopleSource::from) else {
             self.report_error(
                 ErrorKind::AiMask,
-                "The preview could not be prepared for people selection.".to_owned(),
+                tr("The preview could not be prepared for people selection.").to_owned(),
             );
             return;
         };
@@ -558,7 +565,7 @@ impl CalibRawApp {
         if captured.is_empty() {
             self.report_error(
                 ErrorKind::AiMask,
-                "The people mask is no longer available.".to_owned(),
+                tr("The people mask is no longer available.").to_owned(),
             );
             return;
         }
@@ -574,15 +581,15 @@ impl CalibRawApp {
             })
         });
         let phase = if !models.are_verified() {
-            "Preparing people models…"
+            tr("Preparing people models…")
         } else if analysis.is_none() {
-            "Finding people…"
+            tr("Finding people…")
         } else if segments && matches!(models, PeopleModels::Outline { .. }) {
-            "Outlining people…"
+            tr("Outlining people…")
         } else if segments {
-            "Segmenting body parts…"
+            tr("Segmenting body parts…")
         } else {
-            "Updating the people mask…"
+            tr("Updating the people mask…")
         };
         let cancellation = Arc::new(AtomicBool::new(false));
         let receiver = spawn_people_mask(PeopleMaskWorkerRequest {
@@ -626,7 +633,7 @@ impl CalibRawApp {
         let finished = poll_ai_job(
             self.platform.as_ref(),
             receiver,
-            || "The people-mask worker stopped unexpectedly.".to_owned(),
+            || tr("The people-mask worker stopped unexpectedly.").to_owned(),
             |update| updates.push(update),
         );
         let accepts = operation.accepts_result(self.persistence.document_generation);
@@ -660,15 +667,21 @@ impl CalibRawApp {
                     self.ai.people.analysis = Some(analysis);
                     error_message = error;
                 }
-                Err(error) => error_message = Some(format!("People selection failed: {error}")),
+                Err(error) => {
+                    error_message = Some(tr_fmt(
+                        "People selection failed: {error}",
+                        &[("error", &error)],
+                    ))
+                }
             }
         }
         if let Some(reason) = not_kept.filter(|_| !stale) {
             self.report_error(
                 ErrorKind::PeopleNotSaved,
-                format!(
+                tr_fmt(
                     "The people in this photo could not be saved next to it ({reason}). They \
-                     will be found again the next time the photo is opened."
+                     will be found again the next time the photo is opened.",
+                    &[("reason", &reason)],
                 ),
             );
         }
@@ -680,7 +693,7 @@ impl CalibRawApp {
         } else if stale && !cancelled {
             self.report_error(
                 ErrorKind::AiMask,
-                "People selection became stale before inference completed.".to_owned(),
+                tr("People selection became stale before inference completed.").to_owned(),
             );
         }
         self.egui_ctx.request_repaint();
@@ -697,14 +710,14 @@ impl CalibRawApp {
     ) {
         match progress {
             PeopleMaskProgress::FindingPeople => {
-                operation.progress = ForegroundProgress::indeterminate("Finding people…");
+                operation.progress = ForegroundProgress::indeterminate(tr("Finding people…"));
             }
             PeopleMaskProgress::OutliningPeople { done, total } => {
                 operation.progress = ForegroundProgress::units(
                     done as u64,
                     total as u64,
                     None::<String>,
-                    "Outlining people…",
+                    tr("Outlining people…"),
                 );
             }
             PeopleMaskProgress::SegmentingBodyParts { done, total } => {
@@ -712,7 +725,7 @@ impl CalibRawApp {
                     done as u64,
                     total as u64,
                     None::<String>,
-                    "Segmenting body parts…",
+                    tr("Segmenting body parts…"),
                 );
             }
             PeopleMaskProgress::Found(analysis) if accepts => {
@@ -784,7 +797,7 @@ impl CalibRawApp {
             let mut mask = mask;
             let anchors = std::mem::take(&mut mask.anchors);
             let Some(image) = mask.into_probability_mask() else {
-                error = Some("People selection returned an invalid mask image.".to_owned());
+                error = Some(tr("People selection returned an invalid mask image.").to_owned());
                 continue;
             };
             if let Some(MaskGeometry::Person {
@@ -801,7 +814,7 @@ impl CalibRawApp {
         if found_no_one && self.ai.update.is_none() {
             self.report_error(
                 ErrorKind::NoPeopleFound,
-                "No people were found in this photo.".to_owned(),
+                tr("No people were found in this photo.").to_owned(),
             );
         }
         if !changed_layers.is_empty() {
@@ -928,9 +941,7 @@ impl CalibRawApp {
             let Some((new_mask, new_component)) = candidate.add_mask(MaskKind::Person) else {
                 self.report_error(
                     ErrorKind::EditNotApplied,
-                    format!(
-                        "The parts were not separated: a photo holds at most {MAX_LOCAL_MASKS} mask groups."
-                    ),
+                    tr_fmt("The parts were not separated: a photo holds at most {MAX_LOCAL_MASKS} mask groups.", &[("MAX_LOCAL_MASKS", &MAX_LOCAL_MASKS)]),
                 );
                 return;
             };
@@ -947,7 +958,7 @@ impl CalibRawApp {
         }
         candidate.select_component(mask_index, component_index);
         if let Err(error) = crate::sidecar::preflight_mask_change(&candidate) {
-            self.report_mask_persistence_limit("Separating the parts", &error);
+            self.report_mask_persistence_limit(tr("Separating the parts"), &error);
             return;
         }
         self.masks.stack = candidate;

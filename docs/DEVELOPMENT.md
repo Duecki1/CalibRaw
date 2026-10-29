@@ -313,6 +313,13 @@ canvases, mask cards, and colour controls in their existing components.
   help on a static label or card heading instead. Settings and the
   first-run setup may keep descriptions. Status lines (progress, empty states,
   "source set") and dialog text that explains a choice are not descriptions.
+- Pass text the user reads through `i18n::tr("English text")`, or
+  `i18n::tr_fmt("{count} photos", &[("count", &n)])` when it embeds values.
+  The English text is the key: each other language maps it to a translation in
+  `crates/calibraw-ui/locales/<code>.json`, and a missing entry shows in
+  English. Keep a sentence in one key with named placeholders, and add its
+  translations in the same change. Ids, serialized names, log messages and
+  text from Moduwu or other crates are not translated.
 
 Run the independent library checks above for reusable design-system regressions
 and the screenshot baselines (`cargo xtask baseline-run` and `baseline-compare`)

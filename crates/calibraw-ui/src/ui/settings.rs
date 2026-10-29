@@ -1,6 +1,7 @@
 use crate::app::maximum_raw_cache_limit;
 use crate::app::OnnxRuntimeMode;
 use crate::app::{CalibRawApp, PreviewQuality, GITHUB_UPDATE_CHECKS_AVAILABLE, UPDATE_STORE_NAME};
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::CameraProfileMode;
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
 use crate::ui::library::maximum_thumbnail_worker_count;
@@ -38,7 +39,10 @@ fn count_setting(
     AdjustmentSlider::new(label, &mut draft, range)
         .reset_to(default)
         .show(ui);
-    ui.small(format!("{help} Default: {default}."));
+    ui.small(tr_fmt(
+        "{help} Default: {default}.",
+        &[("help", &help), ("default", &default)],
+    ));
 
     // Only an edited draft is kept, so a value changed elsewhere is not
     // overwritten by a stale copy.
@@ -86,13 +90,21 @@ pub(crate) fn subject_mask_quality_descriptions() -> String {
         .iter()
         .map(|&quality| {
             let description = match quality {
-                SubjectMaskQuality::Low => "For older laptops and phones · fastest, softer edges",
-                SubjectMaskQuality::Medium => "For most devices · recommended",
+                SubjectMaskQuality::Low => {
+                    tr("For older laptops and phones · fastest, softer edges")
+                }
+                SubjectMaskQuality::Medium => tr("For most devices · recommended"),
                 SubjectMaskQuality::High => {
-                    "For computers with a dedicated GPU · finest edges, about twice as long"
+                    tr("For computers with a dedicated GPU · finest edges, about twice as long")
                 }
             };
-            format!("{}: {description}", quality.label())
+            tr_fmt(
+                "{quality}: {description}",
+                &[
+                    ("quality", &tr(quality.label())),
+                    ("description", &description),
+                ],
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -106,22 +118,22 @@ pub(crate) fn subject_mask_quality_control(
     id_salt: &'static str,
 ) {
     use calibraw_ai::models::subject::SubjectMaskQuality;
-    let help = format!(
-        "Applies to newly generated Subject and Background masks.\n{}",
-        subject_mask_quality_descriptions()
+    let help = tr_fmt(
+        "Applies to newly generated Subject and Background masks.\n{descriptions}",
+        &[("descriptions", &subject_mask_quality_descriptions())],
     );
     let mut quality = app.ai.subject_mask_quality;
     ui.add_enabled_ui(app.ai_mask_generation_idle(), |ui| {
         moduwu_design::form_combo_with_help(
             ui,
-            "Subject mask quality",
+            tr("Subject mask quality"),
             id_salt,
-            quality.label(),
+            tr(quality.label()),
             160.0,
             &help,
             |ui| {
                 for &option in SubjectMaskQuality::AVAILABLE {
-                    ui.selectable_value(&mut quality, option, option.label());
+                    ui.selectable_value(&mut quality, option, tr(option.label()));
                 }
             },
         );
@@ -141,22 +153,22 @@ pub(crate) fn people_mask_quality_control(
     if available.len() < 2 {
         return;
     }
-    let help = "Applies to newly generated people masks.\n\
+    let help = tr("Applies to newly generated people masks.\n\
                 Medium: recommended\n\
                 High: finer outlines, also runs the subject model on each person · \
-                takes longer";
+                takes longer");
     let mut quality = app.ai.people_mask_quality;
     ui.add_enabled_ui(app.ai_mask_generation_idle(), |ui| {
         moduwu_design::form_combo_with_help(
             ui,
-            "People mask quality",
+            tr("People mask quality"),
             id_salt,
-            quality.label(),
+            tr(quality.label()),
             160.0,
             help,
             |ui| {
                 for &option in available {
-                    ui.selectable_value(&mut quality, option, option.label());
+                    ui.selectable_value(&mut quality, option, tr(option.label()));
                 }
             },
         );
@@ -169,7 +181,7 @@ pub(crate) fn export_name_template_controls(
     app: &mut CalibRawApp,
     id_salt: &'static str,
 ) {
-    ui.label("Name template");
+    ui.label(tr("Name template"));
     let changed = ui
         .add(
             moduwu_design::singleline_text_edit(&mut app.preferences.export_name_template)
@@ -178,7 +190,9 @@ pub(crate) fn export_name_template_controls(
                 .desired_width(f32::INFINITY)
                 .hint_text(crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE),
         )
-        .on_hover_text("Enter literal text and any of the placeholders listed below.")
+        .on_hover_text(tr(
+            "Enter literal text and any of the placeholders listed below.",
+        ))
         .changed();
     if changed {
         app.persist_performance_settings();
@@ -194,7 +208,7 @@ pub(crate) fn export_name_template_controls(
         );
     });
     ui.small(
-        "Dates use YYYY-MM-DD. EditedDate uses the last saved edit or closest available file date, then today as a fallback. Missing capture metadata becomes “unknown”.",
+        tr("Dates use YYYY-MM-DD. EditedDate uses the last saved edit or closest available file date, then today as a fallback. Missing capture metadata becomes “unknown”."),
     );
 
     let original_name = app
@@ -224,7 +238,7 @@ pub(crate) fn export_name_template_controls(
     {
         Ok(preview) => {
             ui.label(
-                egui::RichText::new(format!("Example: {preview}.jpg"))
+                egui::RichText::new(tr_fmt("Example: {preview}.jpg", &[("preview", &preview)]))
                     .color(ui.visuals().weak_text_color()),
             );
         }
@@ -233,7 +247,7 @@ pub(crate) fn export_name_template_controls(
         }
     }
     if app.preferences.export_name_template != crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE
-        && moduwu_design::secondary_button(ui, "Reset to default").clicked()
+        && moduwu_design::secondary_button(ui, tr("Reset to default")).clicked()
     {
         app.preferences.export_name_template =
             crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned();
@@ -331,11 +345,11 @@ impl Settings {
     fn show_usage_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "Usage",
-            "Shows the accumulated time CalibRaw has been running across sessions.",
+            tr("Usage"),
+            tr("Shows the accumulated time CalibRaw has been running across sessions."),
         );
         ui.strong(crate::app::format_usage_duration(app.app_usage_duration()));
-        ui.small("Total app use");
+        ui.small(tr("Total app use"));
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs(1));
     }
@@ -343,14 +357,14 @@ impl Settings {
     fn show_appearance_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "Appearance",
-            "Choose the design used across every screen and the canvas color shown around the photo. Changes are saved and applied immediately.",
+            tr("Appearance"),
+            tr("Choose the design used across every screen and the canvas color shown around the photo. Changes are saved and applied immediately."),
         );
 
         let mut design = app.preferences.ui_design;
         moduwu_design::form_combo_with_help(
             ui,
-            "Design",
+            tr("Design"),
             "settings-ui-design",
             design.label(),
             220.0,
@@ -369,15 +383,15 @@ impl Settings {
         let mut backdrop = app.preferences.preview_backdrop;
         let backdrop_help = match backdrop {
             crate::appearance::PreviewBackdrop::MatchPhoto => {
-                "Derives a quiet, low-contrast canvas color from each image without competing with the edit. Toolbars, sidebars, and panels keep the selected design."
+                tr("Derives a quiet, low-contrast canvas color from each image without competing with the edit. Toolbars, sidebars, and panels keep the selected design.")
             }
             _ => {
-                "Changes only the canvas around the photo. Toolbars, sidebars, and panels keep the selected design."
+                tr("Changes only the canvas around the photo. Toolbars, sidebars, and panels keep the selected design.")
             }
         };
         moduwu_design::form_combo_with_help(
             ui,
-            "Preview background",
+            tr("Preview background"),
             "settings-preview-backdrop",
             backdrop.label(),
             220.0,
@@ -391,20 +405,38 @@ impl Settings {
         if backdrop != app.preferences.preview_backdrop {
             app.set_preview_backdrop(backdrop);
         }
+
+        let mut language = app.preferences.language;
+        moduwu_design::form_combo_with_help(
+            ui,
+            tr("Language"),
+            "settings-language",
+            language.label(),
+            220.0,
+            tr("System default follows the language set in your operating system. Text without a translation is shown in English."),
+            |ui| {
+                for option in crate::i18n::LanguageChoice::ALL {
+                    ui.selectable_value(&mut language, option, option.label());
+                }
+            },
+        );
+        if language != app.preferences.language {
+            app.set_language(language);
+        }
     }
 
     fn show_interface_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "Interface",
-            "Configure preview resolution, brush behavior, and library resource use.",
+            tr("Interface"),
+            tr("Configure preview resolution, brush behavior, and library resource use."),
         );
 
         if moduwu_design::toggle_with_help(
             ui,
             &mut app.preferences.show_develop_navigation_labels,
-            "Show Develop navigation labels",
-            "Shows a short name below each icon in the Develop navigation bars. Turn this off for a quieter, more compact interface.",
+            tr("Show Develop navigation labels"),
+            tr("Shows a short name below each icon in the Develop navigation bars. Turn this off for a quieter, more compact interface."),
         )
         .changed()
         {
@@ -417,8 +449,8 @@ impl Settings {
         if moduwu_design::toggle_with_help(
             ui,
             &mut tips_enabled,
-            "Show feature tips",
-            "Shows a short animated tip the first time you use a feature, such as the Masks tab or the object mask.",
+            tr("Show feature tips"),
+            tr("Shows a short animated tip the first time you use a feature, such as the Masks tab or the object mask."),
         )
         .changed()
         {
@@ -427,7 +459,7 @@ impl Settings {
         if moduwu_design::secondary_button_enabled(
             ui,
             !app.preferences.tips.seen.is_empty(),
-            "Show seen tips again",
+            tr("Show seen tips again"),
         )
         .clicked()
         {
@@ -439,8 +471,8 @@ impl Settings {
             if moduwu_design::toggle_with_help(
                 ui,
                 &mut enabled,
-                "Discord Rich Presence",
-                "Shares only whether you are browsing the Library or editing, plus the elapsed edit time. Photo names and paths are never sent. Discord's desktop client must be running.",
+                tr("Discord Rich Presence"),
+                tr("Shares only whether you are browsing the Library or editing, plus the elapsed edit time. Photo names and paths are never sent. Discord's desktop client must be running."),
             )
             .changed()
             {
@@ -449,29 +481,33 @@ impl Settings {
             if !app.discord_rich_presence_configured() {
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
-                    "Unavailable in this build: CALIBRAW_DISCORD_APPLICATION_ID is not configured.",
+                    tr("Unavailable in this build: CALIBRAW_DISCORD_APPLICATION_ID is not configured."),
                 );
             }
         }
 
         let previous_quality = app.preview.quality;
         let quality_help = if app.caps().constrained_memory() {
-            "Controls how many pixels the preview renders compared with the screen pixels it covers: Low 50%, Medium 75%, High 90%, and Max 100%, one rendered pixel per screen pixel. Zoom detail uses the same density. A device with little GPU memory may render fewer pixels than asked."
+            tr("Controls how many pixels the preview renders compared with the screen pixels it covers: Low 50%, Medium 75%, High 90%, and Max 100%, one rendered pixel per screen pixel. Zoom detail uses the same density. A device with little GPU memory may render fewer pixels than asked.")
         } else {
-            "Controls how many pixels the preview renders compared with the screen pixels it covers: Low 75%, Medium 100%, High 125%, and Max 150%. Above 100% the preview renders more pixels than the screen has and averages them down when scaled to it, which keeps the fitted view sharp. Zoom detail uses the same density."
+            tr("Controls how many pixels the preview renders compared with the screen pixels it covers: Low 75%, Medium 100%, High 125%, and Max 150%. Above 100% the preview renders more pixels than the screen has and averages them down when scaled to it, which keeps the fitted view sharp. Zoom detail uses the same density.")
         };
         moduwu_design::form_combo_with_help(
             ui,
-            "Preview quality",
+            tr("Preview quality"),
             "settings-preview-quality",
             app.preview.quality.label(),
             160.0,
             quality_help,
             |ui| {
-                ui.selectable_value(&mut app.preview.quality, PreviewQuality::Low, "Low");
-                ui.selectable_value(&mut app.preview.quality, PreviewQuality::Medium, "Medium");
-                ui.selectable_value(&mut app.preview.quality, PreviewQuality::High, "High");
-                ui.selectable_value(&mut app.preview.quality, PreviewQuality::Max, "Max");
+                ui.selectable_value(&mut app.preview.quality, PreviewQuality::Low, tr("Low"));
+                ui.selectable_value(
+                    &mut app.preview.quality,
+                    PreviewQuality::Medium,
+                    tr("Medium"),
+                );
+                ui.selectable_value(&mut app.preview.quality, PreviewQuality::High, tr("High"));
+                ui.selectable_value(&mut app.preview.quality, PreviewQuality::Max, tr("Max"));
             },
         );
         if app.preview.quality != previous_quality {
@@ -482,8 +518,8 @@ impl Settings {
             if moduwu_design::toggle_with_help(
                 ui,
                 &mut full_resolution,
-                "Full-resolution preview",
-                "When nothing has changed for a moment, renders the whole photo from the original RAW instead of the reduced preview and shows it scaled to your screen. Editing and zooming stay on the fast preview. Needs extra GPU memory and a few seconds on large photos.",
+                tr("Full-resolution preview"),
+                tr("When nothing has changed for a moment, renders the whole photo from the original RAW instead of the reduced preview and shows it scaled to your screen. Editing and zooming stay on the fast preview. Needs extra GPU memory and a few seconds on large photos."),
             )
             .changed()
             {
@@ -502,8 +538,8 @@ impl Settings {
         if moduwu_design::toggle_with_help(
             ui,
             &mut app.preferences.image_relative_brush_size,
-            "Keep brush size fixed to the image",
-            "When enabled, the brush keeps the same image footprint at every zoom level. When disabled, it keeps the same on-screen footprint.",
+            tr("Keep brush size fixed to the image"),
+            tr("When enabled, the brush keeps the same image footprint at every zoom level. When disabled, it keeps the same on-screen footprint."),
         )
             .changed()
         {
@@ -513,8 +549,8 @@ impl Settings {
         moduwu_design::section_separator(ui);
         moduwu_design::strong_with_help(
             ui,
-            "Library performance",
-            "Tune memory use and background preview generation. Conservative values are recommended on phones.",
+            tr("Library performance"),
+            tr("Tune memory use and background preview generation. Conservative values are recommended on phones."),
         );
         if app.caps().has_folders() {
             let mut render_edited_thumbnails =
@@ -522,8 +558,8 @@ impl Settings {
             if moduwu_design::toggle_with_help(
                 ui,
                 &mut render_edited_thumbnails,
-                "Render edited thumbnails while indexing",
-                "Applies saved edits to library thumbnails during indexing. Turning it off keeps indexing faster and memory use lower; existing edited previews are still reused.",
+                tr("Render edited thumbnails while indexing"),
+                tr("Applies saved edits to library thumbnails during indexing. Turning it off keeps indexing faster and memory use lower; existing edited previews are still reused."),
             )
                 .changed()
             {
@@ -535,11 +571,11 @@ impl Settings {
             let mut raw_cache_files = app.develop.decoded_raws.limit();
             if count_setting(
                 ui,
-                "Decoded RAW cache (files)",
+                tr("Decoded RAW cache (files)"),
                 &mut raw_cache_files,
                 0..=maximum_raw_cache_limit(),
                 crate::app::default_raw_cache_limit(),
-                "Keeps decoded RAW files in memory for faster switching, including the current image. Files beyond the current one are used to prepare the next and previous photos in advance. Set to 0 to disable reuse; the current edit stays loaded.",
+                tr("Keeps decoded RAW files in memory for faster switching, including the current image. Files beyond the current one are used to prepare the next and previous photos in advance. Set to 0 to disable reuse; the current edit stays loaded."),
             ) {
                 app.set_raw_cache_limit(raw_cache_files);
             }
@@ -549,8 +585,8 @@ impl Settings {
             if moduwu_design::toggle_with_help(
                 ui,
                 &mut hdd_mode,
-                "HDD mode",
-                "Reads one photo file at a time, which is faster for libraries on spinning hard drives. Thumbnail workers still decode in parallel. Leave it off for SSDs and memory cards.",
+                tr("HDD mode"),
+                tr("Reads one photo file at a time, which is faster for libraries on spinning hard drives. Thumbnail workers still decode in parallel. Leave it off for SSDs and memory cards."),
             )
             .changed()
             {
@@ -559,14 +595,14 @@ impl Settings {
 
             ui.add_space(moduwu_design::SPACE_SM);
             let mut automatic_workers = app.library.automatic_thumbnail_workers();
-            let automatic_help = format!(
-                "Uses {} concurrent thumbnail jobs on this computer, sized from its processor cores and memory. Turn off to set the number yourself. Changing this restarts the queue.",
-                crate::ui::library::automatic_thumbnail_worker_count()
+            let automatic_help = tr_fmt(
+                "Uses {count} concurrent thumbnail jobs on this computer, sized from its processor cores and memory. Turn off to set the number yourself. Changing this restarts the queue.",
+                &[("count", &crate::ui::library::automatic_thumbnail_worker_count())],
             );
             if moduwu_design::toggle_with_help(
                 ui,
                 &mut automatic_workers,
-                "Automatic thumbnail workers",
+                tr("Automatic thumbnail workers"),
                 &automatic_help,
             )
             .changed()
@@ -579,11 +615,11 @@ impl Settings {
                 let mut thumbnail_workers = app.thumbnail_worker_count();
                 if count_setting(
                     ui,
-                    "Thumbnail workers",
+                    tr("Thumbnail workers"),
                     &mut thumbnail_workers,
                     1..=maximum_thumbnail_worker_count(),
                     crate::ui::library::default_thumbnail_worker_count(),
-                    "Concurrent thumbnail jobs. More workers can fill the library faster but use more memory, especially for edited RAW files or files without embedded previews. Changing this restarts the queue.",
+                    tr("Concurrent thumbnail jobs. More workers can fill the library faster but use more memory, especially for edited RAW files or files without embedded previews. Changing this restarts the queue."),
                 ) {
                     app.set_thumbnail_worker_count(thumbnail_workers);
                 }
@@ -593,13 +629,15 @@ impl Settings {
         moduwu_design::section_separator(ui);
         moduwu_design::strong_with_help(
             ui,
-            "Thumbnail cache",
-            "Delete generated library previews. CalibRaw rebuilds them from the RAW files and saved edits when needed.",
+            tr("Thumbnail cache"),
+            tr("Delete generated library previews. CalibRaw rebuilds them from the RAW files and saved edits when needed."),
         );
         let cache_size = app.thumbnail_cache_size_label();
         moduwu_design::action_row(ui, |ui| {
-            if moduwu_design::secondary_button(ui, "Clear thumbnail cache")
-                .on_hover_text("Delete generated previews and rebuild them when needed.")
+            if moduwu_design::secondary_button(ui, tr("Clear thumbnail cache"))
+                .on_hover_text(tr(
+                    "Delete generated previews and rebuild them when needed.",
+                ))
                 .clicked()
             {
                 app.clear_thumbnail_cache();
@@ -611,8 +649,8 @@ impl Settings {
     fn show_adjustment_clipboard_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "Copy & paste adjustments",
-            "Choose which categories Library > Copy Adjustments stores for later pasting. The selection is remembered across restarts.",
+            tr("Copy & paste adjustments"),
+            tr("Choose which categories Library > Copy Adjustments stores for later pasting. The selection is remembered across restarts."),
         );
 
         let mut settings = app.preferences.adjustment_copy_settings;
@@ -620,50 +658,50 @@ impl Settings {
         changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.adjustments,
-            "Adjustments",
-            "Global light, color, white-balance temperature/tint, tone curve, effects (including the effects added on the Adjustments tab), color mixer, and RAW adjustment values.",
+            tr("Adjustments"),
+            tr("Global light, color, white-balance temperature/tint, tone curve, effects (including the effects added on the Adjustments tab), color mixer, and RAW adjustment values."),
         )
             .changed();
         changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.geometry,
-            "Geometry",
-            "Crop, rotation, straighten, perspective, flips, and geometry transforms. Disabled by default.",
+            tr("Geometry"),
+            tr("Crop, rotation, straighten, perspective, flips, and geometry transforms. Disabled by default."),
         )
             .changed();
         changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.camera_profile,
-            "Camera profile",
-            "The per-image camera/DCP profile selection. Enabled by default.",
+            tr("Camera profile"),
+            tr("The per-image camera/DCP profile selection. Enabled by default."),
         )
         .changed();
         changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.lut,
-            "LUT",
-            "The LUT and its amount. Enabled by default.",
+            tr("LUT"),
+            tr("The LUT and its amount. Enabled by default."),
         )
         .changed();
         changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.masks,
-            "Normal masks",
-            "Brush, radial-gradient, and linear-gradient mask components, including local adjustments. Mixed groups are split so disabling this never copies their manual components.",
+            tr("Normal masks"),
+            tr("Brush, radial-gradient, and linear-gradient mask components, including local adjustments. Mixed groups are split so disabling this never copies their manual components."),
         )
             .changed();
         changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.ai_masks,
-            "AI masks",
-            "Subject, background, sky, object, luminance-range, and color-range components. Source-dependent results are marked for regeneration on the destination image.",
+            tr("AI masks"),
+            tr("Subject, background, sky, object, luminance-range, and color-range components. Source-dependent results are marked for regeneration on the destination image."),
         )
             .changed();
         changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.lens_correction,
-            "Lens correction",
-            "Lens correction enabled state and selected lens profile.",
+            tr("Lens correction"),
+            tr("Lens correction enabled state and selected lens profile."),
         )
         .changed();
         if changed {
@@ -674,8 +712,8 @@ impl Settings {
     fn show_new_photo_preset_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "New photos",
-            "Choose a preset that is applied when you open a photo that has no saved edits. Photos you have already edited keep their edits, and the preset can be undone like any other edit.",
+            tr("New photos"),
+            tr("Choose a preset that is applied when you open a photo that has no saved edits. Photos you have already edited keep their edits, and the preset can be undone like any other edit."),
         );
 
         let current = app
@@ -685,16 +723,16 @@ impl Settings {
         let selected = current
             .as_deref()
             .and_then(|path| app.presets.get(path))
-            .map_or_else(|| "None".to_owned(), |preset| preset.name().to_owned());
+            .map_or_else(|| tr("None").to_owned(), |preset| preset.name().to_owned());
         moduwu_design::form_combo_with_help(
             ui,
-            "Default preset",
+            tr("Default preset"),
             "settings-new-photo-preset",
             selected,
             220.0,
-            "Applied once, when the photo first opens in Develop.",
+            tr("Applied once, when the photo first opens in Develop."),
             |ui| {
-                ui.selectable_value(&mut choice, None, "None");
+                ui.selectable_value(&mut choice, None, tr("None"));
                 for stored in app.presets.all() {
                     ui.selectable_value(
                         &mut choice,
@@ -714,8 +752,8 @@ impl Settings {
     fn show_lens_correction_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "Lens correction",
-            "Choose what happens when you open a photo that has no saved edits. Photos you have already edited keep their own lens settings, and you can always change them in the Lens Corrections card.",
+            tr("Lens correction"),
+            tr("Choose what happens when you open a photo that has no saved edits. Photos you have already edited keep their own lens settings, and you can always change them in the Lens Corrections card."),
         );
 
         let previous = app.preferences.automatic_lens_correction;
@@ -724,27 +762,27 @@ impl Settings {
         moduwu_design::toggle_with_help(
             ui,
             &mut automatic.enabled,
-            "Automatic lens correction",
-            "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.",
+            tr("Automatic lens correction"),
+            tr("Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default."),
         );
         ui.add_enabled_ui(automatic.enabled, |ui| {
             moduwu_design::toggle_with_help(
                 ui,
                 &mut automatic.corrections.geometry,
-                "Geometry",
-                "Corrects distortion and colour fringing (lateral chromatic aberration) automatically.",
+                tr("Geometry"),
+                tr("Corrects distortion and colour fringing (lateral chromatic aberration) automatically."),
             );
             moduwu_design::toggle_with_help(
                 ui,
                 &mut automatic.corrections.vignetting,
-                "Vignetting",
-                "Brightens the corners the lens darkens automatically.",
+                tr("Vignetting"),
+                tr("Brightens the corners the lens darkens automatically."),
             );
             moduwu_design::toggle_with_help(
                 ui,
                 &mut missing_profile_prompt,
-                "Ask when no profile matches",
-                "Offers manual lens correction when a RAW opens without a matching Lensfun profile.",
+                tr("Ask when no profile matches"),
+                tr("Offers manual lens correction when a RAW opens without a matching Lensfun profile."),
             );
         });
         // At least one correction must stay selected.
@@ -758,8 +796,8 @@ impl Settings {
     fn show_export_names_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "Export file names",
-            "Build export file names from the original name, dates, and capture metadata. The selected image format adds its extension automatically.",
+            tr("Export file names"),
+            tr("Build export file names from the original name, dates, and capture metadata. The selected image format adds its extension automatically."),
         );
         export_name_template_controls(ui, app, "settings-export-name-template");
     }
@@ -767,41 +805,41 @@ impl Settings {
     fn show_raw_color_profiles_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "RAW color profiles",
-            "Choose how CalibRaw builds the camera-to-working color transform and whether it applies DCP color-rendering stages.",
+            tr("RAW color profiles"),
+            tr("Choose how CalibRaw builds the camera-to-working color transform and whether it applies DCP color-rendering stages."),
         );
 
         let previous_mode = app.preferences.camera_profile_mode;
         let mut mode = previous_mode;
         let profile_mode_help = match mode {
             CameraProfileMode::Automatic => {
-                "Uses the RAW's embedded camera matrix by default. A DCP selected for an individual image remains explicit."
+                tr("Uses the RAW's embedded camera matrix by default. A DCP selected for an individual image remains explicit.")
             }
             CameraProfileMode::DcpProfiles => {
-                "Searches the configured folder for this camera. If no safe DCP match exists, CalibRaw falls back to the embedded camera matrix."
+                tr("Searches the configured folder for this camera. If no safe DCP match exists, CalibRaw falls back to the embedded camera matrix.")
             }
             CameraProfileMode::MatrixOnly => {
-                "Ignores DCP look tables, hue/saturation maps, and profile tone curves and uses the camera/DNG/LibRaw matrix path."
+                tr("Ignores DCP look tables, hue/saturation maps, and profile tone curves and uses the camera/DNG/LibRaw matrix path.")
             }
         };
         moduwu_design::form_combo_with_help(
             ui,
-            "Profile mode",
+            tr("Profile mode"),
             "settings-camera-profile-mode",
-            mode.label(),
+            tr(mode.label()),
             190.0,
             profile_mode_help,
             |ui| {
-                ui.selectable_value(&mut mode, CameraProfileMode::Automatic, "Automatic");
+                ui.selectable_value(&mut mode, CameraProfileMode::Automatic, tr("Automatic"));
                 ui.selectable_value(
                     &mut mode,
                     CameraProfileMode::DcpProfiles,
-                    "Use DCP profiles",
+                    tr("Use DCP profiles"),
                 );
                 ui.selectable_value(
                     &mut mode,
                     CameraProfileMode::MatrixOnly,
-                    "Embedded matrix only",
+                    tr("Embedded matrix only"),
                 );
             },
         );
@@ -812,15 +850,18 @@ impl Settings {
         moduwu_design::section_separator(ui);
         let has_folders = app.caps().has_folders();
         let camera_folder_help = if has_folders {
-            "Choose a top-level DCP profile folder. CalibRaw searches subfolders recursively. Auto-detect checks common CameraProfiles locations on Windows and macOS."
+            tr("Choose a top-level DCP profile folder. CalibRaw searches subfolders recursively. Auto-detect checks common CameraProfiles locations on Windows and macOS.")
         } else {
-            "Choose a top-level CameraProfiles folder with Android's system picker. CalibRaw recursively imports only .dcp files into private persistent storage, groups matches by camera, and exposes them in Develop."
+            tr("Choose a top-level CameraProfiles folder with Android's system picker. CalibRaw recursively imports only .dcp files into private persistent storage, groups matches by camera, and exposes them in Develop.")
         };
-        moduwu_design::strong_with_help(ui, "Camera profile folder", camera_folder_help);
+        moduwu_design::strong_with_help(ui, tr("Camera profile folder"), camera_folder_help);
         if let Some(label) = &app.android.camera_profile_folder_importing_label {
             ui.add(
-                egui::Label::new(egui::RichText::new(format!("Importing {label}…")).strong())
-                    .wrap(),
+                egui::Label::new(
+                    egui::RichText::new(tr_fmt("Importing {label}…", &[("label", &label)]))
+                        .strong(),
+                )
+                .wrap(),
             );
         } else if let Some(path) = &app.preferences.camera_profile_folder {
             if has_folders {
@@ -846,13 +887,13 @@ impl Settings {
                 );
             }
         } else {
-            ui.small("No external DCP folder selected.");
+            ui.small(tr("No external DCP folder selected."));
         }
         moduwu_design::action_row(ui, |ui| {
             let choose_label = if app.android.camera_profile_folder_importing_label.is_some() {
-                "Importing…"
+                tr("Importing…")
             } else {
-                "Choose folder…"
+                tr("Choose folder…")
             };
             let choose_enabled = !app.android.picker_pending;
 
@@ -863,8 +904,8 @@ impl Settings {
                 app.choose_camera_profile_folder();
             }
             if has_folders
-                && moduwu_design::secondary_button(ui, "Auto-detect DCP profiles")
-                    .on_hover_text("Check common CameraProfiles locations.")
+                && moduwu_design::secondary_button(ui, tr("Auto-detect DCP profiles"))
+                    .on_hover_text(tr("Check common CameraProfiles locations."))
                     .clicked()
             {
                 app.auto_detect_camera_profile_folder();
@@ -872,8 +913,8 @@ impl Settings {
             let can_clear = (app.preferences.camera_profile_folder.is_some()
                 || app.preferences.camera_profile_auto_detect)
                 && !app.android.picker_pending;
-            if moduwu_design::secondary_button_enabled(ui, can_clear, "Clear")
-                .on_hover_text("Stop using the configured external DCP profile folder.")
+            if moduwu_design::secondary_button_enabled(ui, can_clear, tr("Clear"))
+                .on_hover_text(tr("Stop using the configured external DCP profile folder."))
                 .clicked()
             {
                 app.clear_camera_profile_folder();
@@ -887,19 +928,23 @@ impl Settings {
         };
         let mut choice = moduwu_design::DialogAction::None;
         let confirm_enabled = !rename.name.trim().is_empty();
-        moduwu_design::Dialog::new("lut-rename-dialog", "Rename LUT").show_with_footer(
+        moduwu_design::Dialog::new("lut-rename-dialog", tr("Rename LUT")).show_with_footer(
             ctx,
             |ui| {
-                ui.label("LUT name");
-                let response =
-                    moduwu_design::dialog_text_field(ui, &mut rename.name, "lut-name", "e.g. Film");
+                ui.label(tr("LUT name"));
+                let response = moduwu_design::dialog_text_field(
+                    ui,
+                    &mut rename.name,
+                    "lut-name",
+                    tr("e.g. Film"),
+                );
                 moduwu_design::request_initial_focus(&response, &mut rename.focus_requested);
             },
             |ui| {
                 choice = moduwu_design::dialog_confirmation_actions(
                     ui,
-                    "Cancel",
-                    "Rename",
+                    tr("Cancel"),
+                    tr("Rename"),
                     confirm_enabled,
                     false,
                     moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
@@ -927,12 +972,13 @@ impl Settings {
             return;
         };
         let mut choice = moduwu_design::DialogAction::None;
-        moduwu_design::Dialog::new("lut-remove-confirmation", "Remove LUT?").show_with_footer(
+        moduwu_design::Dialog::new("lut-remove-confirmation", tr("Remove LUT?")).show_with_footer(
             ctx,
             |ui| {
                 ui.add(
-                    egui::Label::new(format!(
-                        "“{name}” will be removed. Photos that use it keep naming it and are shown without it until it is imported again."
+                    egui::Label::new(tr_fmt(
+                        "“{name}” will be removed. Photos that use it keep naming it and are shown without it until it is imported again.",
+                        &[("name", &name)],
                     ))
                     .wrap(),
                 );
@@ -940,8 +986,8 @@ impl Settings {
             |ui| {
                 choice = moduwu_design::dialog_confirmation_actions(
                     ui,
-                    "Cancel",
-                    "Remove",
+                    tr("Cancel"),
+                    tr("Remove"),
                     true,
                     true,
                     moduwu_design::DialogKeyboard::CLOSE_ONLY,
@@ -958,15 +1004,15 @@ impl Settings {
     fn show_ai_models_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "AI models",
-            "Configure local inference acceleration, Subject mask quality, and the trusted ONNX Runtime library used by AI tools.",
+            tr("AI models"),
+            tr("Configure local inference acceleration, Subject mask quality, and the trusted ONNX Runtime library used by AI tools."),
         );
         let mut acceleration = app.ai.gpu_acceleration;
         if moduwu_design::toggle_with_help(
             ui,
             &mut acceleration,
-            "Use GPU acceleration when available",
-            "Allows AI masks and AI denoise to use a supported GPU execution provider. A model that does not fit in free GPU memory runs on the CPU, and CPU fallback remains automatic. Turn this off if GPU inference causes driver errors, instability, or incorrect results.",
+            tr("Use GPU acceleration when available"),
+            tr("Allows AI masks and AI denoise to use a supported GPU execution provider. A model that does not fit in free GPU memory runs on the CPU, and CPU fallback remains automatic. Turn this off if GPU inference causes driver errors, instability, or incorrect results."),
         )
             .changed()
         {
@@ -977,10 +1023,10 @@ impl Settings {
         in_use.sort_unstable();
         in_use.dedup();
         if !in_use.is_empty() {
-            let text = format!("In use: {}", in_use.join(", "));
+            let text = tr_fmt("In use: {names}", &[("names", &in_use.join(", "))]);
             if statuses.iter().any(|status| status.gpu_failed()) {
                 ui.colored_label(ui.visuals().warn_fg_color, text).on_hover_text(
-                    "A GPU execution provider failed to start or run. The Diagnostics log lists the reason.",
+                    tr("A GPU execution provider failed to start or run. The Diagnostics log lists the reason."),
                 );
             } else {
                 ui.small(text);
@@ -994,31 +1040,31 @@ impl Settings {
         moduwu_design::section_separator(ui);
         let bundled_runtime = calibraw_ai::runtime::bundled_onnx_runtime_path();
         let automatic_help = if bundled_runtime.is_some() {
-            "Recommended. Use the ONNX Runtime included with CalibRaw, with CPU AI fallback and no runtime download."
+            tr("Recommended. Use the ONNX Runtime included with CalibRaw, with CPU AI fallback and no runtime download.")
         } else {
-            "Recommended. Download and use CalibRaw's verified runtime for this platform when AI is first used."
+            tr("Recommended. Download and use CalibRaw's verified runtime for this platform when AI is first used.")
         };
         let runtime_help = if bundled_runtime.is_some() {
-            "Automatic uses the ONNX Runtime included with CalibRaw. AI tools can fall back to CPU inference. Manual uses a local shared-library override."
+            tr("Automatic uses the ONNX Runtime included with CalibRaw. AI tools can fall back to CPU inference. Manual uses a local shared-library override.")
         } else {
-            "Automatic downloads the verified ONNX Runtime package matching this operating system and CPU architecture when an AI tool first needs it. Manual uses a local shared-library override."
+            tr("Automatic downloads the verified ONNX Runtime package matching this operating system and CPU architecture when an AI tool first needs it. Manual uses a local shared-library override.")
         };
-        moduwu_design::strong_with_help(ui, "ONNX Runtime", runtime_help);
+        moduwu_design::strong_with_help(ui, tr("ONNX Runtime"), runtime_help);
         let previous_mode = app.ai.runtime_mode;
         let mut runtime_mode = previous_mode;
         ui.horizontal(|ui| {
             ui.selectable_value(
                 &mut runtime_mode,
                 OnnxRuntimeMode::Automatic,
-                "Automatic",
+                tr("Automatic"),
             )
             .on_hover_text(automatic_help);
             ui.selectable_value(
                 &mut runtime_mode,
                 OnnxRuntimeMode::Manual,
-                "Manual",
+                tr("Manual"),
             )
-            .on_hover_text("Override automatic selection with a trusted local ONNX Runtime shared library.");
+            .on_hover_text(tr("Override automatic selection with a trusted local ONNX Runtime shared library."));
         });
         if runtime_mode != previous_mode {
             app.set_onnx_runtime_mode(runtime_mode);
@@ -1028,61 +1074,60 @@ impl Settings {
             OnnxRuntimeMode::Automatic => {
                 if let Some(path) = bundled_runtime {
                     if let Some(runtime) = calibraw_ai::runtime::automatic_onnx_runtime_info() {
-                        ui.label(format!(
-                            "ONNX Runtime {} is included with CalibRaw. No runtime download is needed.",
-                            runtime.version
+                        ui.label(tr_fmt(
+                            "ONNX Runtime {version} is included with CalibRaw. No runtime download is needed.",
+                            &[("version", &runtime.version)],
                         ));
                     }
-                    ui.small("AI tools can fall back to CPU inference. AI models are downloaded separately when needed.");
+                    ui.small(tr("AI tools can fall back to CPU inference. AI models are downloaded separately when needed."));
                     if !calibraw_ai::runtime::automatic_onnx_runtime_is_installed() {
                         ui.colored_label(
                             ui.visuals().error_fg_color,
-                            format!(
-                                "The included runtime is missing: {}. Repair the CalibRaw installation or select a trusted manual runtime.",
-                                path.display()
+                            tr_fmt(
+                                "The included runtime is missing: {path}. Repair the CalibRaw installation or select a trusted manual runtime.",
+                                &[("path", &path.display())],
                             ),
                         );
                     }
                 } else {
-                    ui.label(format!(
-                        "CalibRaw will select the {} / {} runtime and download it when an AI tool first needs it.",
-                        std::env::consts::OS,
-                        std::env::consts::ARCH
+                    ui.label(tr_fmt(
+                        "CalibRaw will select the {os} / {arch} runtime and download it when an AI tool first needs it.",
+                        &[("os", &std::env::consts::OS), ("arch", &std::env::consts::ARCH)],
                     ));
-                    ui.small("The archive and extracted runtime are cached locally and verified with pinned SHA-256 values.");
+                    ui.small(tr("The archive and extracted runtime are cached locally and verified with pinned SHA-256 values."));
                     if let Some(url) = calibraw_ai::runtime::automatic_onnx_runtime_info()
                         .and_then(|runtime| runtime.download_url)
                     {
-                        ui.hyperlink_to("View runtime source", url);
+                        ui.hyperlink_to(tr("View runtime source"), url);
                     }
                 }
             }
             OnnxRuntimeMode::Manual => {
                 let manual_help = if crate::platform::ONNX_RUNTIME_IS_DLL {
-                    "Choose a trusted ONNX Runtime 1.22 or newer onnxruntime.dll matching this CalibRaw build's CPU architecture. CalibRaw validates it in an isolated helper process. AI uses the GPU only if WebGPU is built into it. Dependencies must remain beside it."
+                    tr("Choose a trusted ONNX Runtime 1.22 or newer onnxruntime.dll matching this CalibRaw build's CPU architecture. CalibRaw validates it in an isolated helper process. AI uses the GPU only if WebGPU is built into it. Dependencies must remain beside it.")
                 } else {
-                    "Choose a trusted ONNX Runtime 1.22 or newer shared library built for this hardware. CalibRaw validates it in an isolated helper process. AI uses the GPU only if WebGPU is built into it. Dependencies must remain beside it."
+                    tr("Choose a trusted ONNX Runtime 1.22 or newer shared library built for this hardware. CalibRaw validates it in an isolated helper process. AI uses the GPU only if WebGPU is built into it. Dependencies must remain beside it.")
                 };
                 if let Some((path, sha256)) = &app.ai.manual_runtime {
-                    ui.label("Selected manual runtime:");
+                    ui.label(tr("Selected manual runtime:"));
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(path.display().to_string()).monospace(),
                         )
                         .wrap(),
                     );
-                    ui.small("Pinned SHA-256:");
+                    ui.small(tr("Pinned SHA-256:"));
                     ui.add(
                         egui::Label::new(egui::RichText::new(sha256.as_str()).monospace()).wrap(),
                     );
                 } else {
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
-                        "No manual runtime selected. AI tools need a file override or Automatic mode.",
+                        tr("No manual runtime selected. AI tools need a file override or Automatic mode."),
                     );
                 }
                 moduwu_design::action_row(ui, |ui| {
-                    if moduwu_design::secondary_button(ui, "Choose ONNX Runtime…")
+                    if moduwu_design::secondary_button(ui, tr("Choose ONNX Runtime…"))
                         .on_hover_text(manual_help)
                         .clicked()
                     {
@@ -1091,9 +1136,9 @@ impl Settings {
                     if moduwu_design::secondary_button_enabled(
                         ui,
                         app.ai.manual_runtime.is_some(),
-                        "Clear",
+                        tr("Clear"),
                     )
-                    .on_hover_text("Forget the selected manual runtime.")
+                    .on_hover_text(tr("Forget the selected manual runtime."))
                     .clicked()
                     {
                         app.clear_onnx_runtime();
@@ -1106,13 +1151,14 @@ impl Settings {
     fn show_updates_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "Updates",
-            "View the installed version and optionally ask GitHub for CalibRaw's latest stable release.",
+            tr("Updates"),
+            tr("View the installed version and optionally ask GitHub for CalibRaw's latest stable release."),
         );
         ui.strong(format!("CalibRaw {}", env!("CARGO_PKG_VERSION")));
         if !GITHUB_UPDATE_CHECKS_AVAILABLE {
-            ui.small(format!(
-                "Updates are delivered through {UPDATE_STORE_NAME}."
+            ui.small(tr_fmt(
+                "Updates are delivered through {store}.",
+                &[("store", &UPDATE_STORE_NAME)],
             ));
             return;
         }
@@ -1124,8 +1170,8 @@ impl Settings {
             if moduwu_design::toggle_with_help(
                 ui,
                 &mut auto_check,
-                "Automatically check for updates via GitHub",
-                "Requires GitHub version-check permission. When enabled, CalibRaw checks once at startup. The connection exposes its public IP address and sends CalibRaw/<version> as its User-Agent; CalibRaw sends no photos, paths, account identifier, or analytics/telemetry.",
+                tr("Automatically check for updates via GitHub"),
+                tr("Requires GitHub version-check permission. When enabled, CalibRaw checks once at startup. The connection exposes its public IP address and sends CalibRaw/<version> as its User-Agent; CalibRaw sends no photos, paths, account identifier, or analytics/telemetry."),
             )
             .changed()
             {
@@ -1134,24 +1180,26 @@ impl Settings {
         });
         if permission_denied {
             ui.small(
-                "Automatic and manual GitHub checks are disabled. Use ‘Review privacy & permission’ to explicitly change this choice.",
+                tr("Automatic and manual GitHub checks are disabled. Use ‘Review privacy & permission’ to explicitly change this choice."),
             );
         }
 
-        ui.small(format!(
-            "GitHub permission: {}",
-            app.version_check_permission_text()
+        ui.small(tr_fmt(
+            "GitHub permission: {status}",
+            &[("status", &app.version_check_permission_text())],
         ));
         moduwu_design::action_row(ui, |ui| {
-            if moduwu_design::secondary_button(ui, "Review privacy & permission").clicked() {
+            if moduwu_design::secondary_button(ui, tr("Review privacy & permission")).clicked() {
                 app.review_version_check_privacy();
             }
             if moduwu_design::secondary_button_enabled(
                 ui,
                 app.version_check_permission_granted(),
-                "Revoke permission",
+                tr("Revoke permission"),
             )
-            .on_hover_text("Stops future GitHub version checks and disables automatic checks.")
+            .on_hover_text(tr(
+                "Stops future GitHub version checks and disables automatic checks.",
+            ))
             .clicked()
             {
                 app.revoke_version_check_permission();
@@ -1164,18 +1212,21 @@ impl Settings {
             if moduwu_design::secondary_button_enabled(
                 ui,
                 !checking && !permission_denied,
-                "Check now",
+                tr("Check now"),
             )
                 .on_hover_text(if permission_denied {
-                    "GitHub checks are blocked because permission was declined. Use ‘Review privacy & permission’ to change that choice first."
+                    tr("GitHub checks are blocked because permission was declined. Use ‘Review privacy & permission’ to change that choice first.")
                 } else {
-                    "Check GitHub for the latest stable CalibRaw release. If permission has not been decided yet, CalibRaw asks first."
+                    tr("Check GitHub for the latest stable CalibRaw release. If permission has not been decided yet, CalibRaw asks first.")
                 })
                 .clicked()
             {
                 app.check_for_updates(true);
             }
-            ui.hyperlink_to("View releases", format!("{PROJECT_REPOSITORY}/releases"));
+            ui.hyperlink_to(
+                tr("View releases"),
+                format!("{PROJECT_REPOSITORY}/releases"),
+            );
         });
         ui.small(status);
     }
@@ -1183,17 +1234,22 @@ impl Settings {
     fn show_legal_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "Legal & attributions",
-            "Adapted code, bundled data, native libraries, optional AI models, Rust crates, fonts, and icons retain their listed upstream terms and notices.",
+            tr("Legal & attributions"),
+            tr("Adapted code, bundled data, native libraries, optional AI models, Rust crates, fonts, and icons retain their listed upstream terms and notices."),
         );
         ui.strong(format!("CalibRaw {}", env!("CARGO_PKG_VERSION")));
         ui.label("Copyright (C) 2026 Duecki and CalibRaw contributors");
-        ui.label(format!("Licensed under {PROJECT_LICENSE_ID}."));
-        ui.hyperlink_to("Project source and license", PROJECT_REPOSITORY);
+        ui.label(tr_fmt(
+            "Licensed under {license}.",
+            &[("license", &PROJECT_LICENSE_ID)],
+        ));
+        ui.hyperlink_to(tr("Project source and license"), PROJECT_REPOSITORY);
 
         moduwu_design::action_row(ui, |ui| {
-            if moduwu_design::secondary_button(ui, "Copy all legal text")
-                .on_hover_text("Copy the project license and every bundled third-party notice.")
+            if moduwu_design::secondary_button(ui, tr("Copy all legal text"))
+                .on_hover_text(tr(
+                    "Copy the project license and every bundled third-party notice.",
+                ))
                 .clicked()
             {
                 let legal_text = format!(
@@ -1214,10 +1270,10 @@ impl Settings {
         egui::CollapsingHeader::new("GNU GPL v3 or later")
             .default_open(false)
             .show(ui, |ui| Self::legal_text(ui, PROJECT_LICENSE, 16));
-        egui::CollapsingHeader::new("Project and third-party notices")
+        egui::CollapsingHeader::new(tr("Project and third-party notices"))
             .default_open(false)
             .show(ui, |ui| Self::legal_text(ui, THIRD_PARTY_NOTICES, 18));
-        egui::CollapsingHeader::new("Rust dependencies, fonts, and icons")
+        egui::CollapsingHeader::new(tr("Rust dependencies, fonts, and icons"))
             .default_open(false)
             .show(ui, |ui| Self::legal_text(ui, RUST_DEPENDENCY_LICENSES, 18));
     }
@@ -1225,14 +1281,14 @@ impl Settings {
     fn show_diagnostics_card(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
         moduwu_design::heading_with_help(
             ui,
-            "Diagnostics",
-            "For comparisons, open the same RAW and run an export on each device, then copy the log. It includes platform, GPU/backend, RAW calibration, fingerprints, and timing information.",
+            tr("Diagnostics"),
+            tr("For comparisons, open the same RAW and run an export on each device, then copy the log. It includes platform, GPU/backend, RAW calibration, fingerprints, and timing information."),
         );
 
         let mut diagnostic_log = diagnostics_snapshot_with_ai_backends();
         moduwu_design::action_row(ui, |ui| {
-            if moduwu_design::secondary_button(ui, "Copy log")
-                .on_hover_text("Copy the complete diagnostic report.")
+            if moduwu_design::secondary_button(ui, tr("Copy log"))
+                .on_hover_text(tr("Copy the complete diagnostic report."))
                 .clicked()
             {
                 match app.copy_text_to_clipboard("CalibRaw diagnostics", &diagnostic_log) {
@@ -1245,8 +1301,10 @@ impl Settings {
                     )),
                 }
             }
-            if moduwu_design::secondary_button(ui, "Clear events")
-                .on_hover_text("Clear recorded runtime events from the diagnostic report.")
+            if moduwu_design::secondary_button(ui, tr("Clear events"))
+                .on_hover_text(tr(
+                    "Clear recorded runtime events from the diagnostic report.",
+                ))
                 .clicked()
             {
                 calibraw_core::diagnostics::clear();
@@ -1259,7 +1317,7 @@ impl Settings {
             ScreenLayout::Vertical => 10,
         };
         let mut diagnostic_view = diagnostic_log.as_str();
-        egui::CollapsingHeader::new("View diagnostic log")
+        egui::CollapsingHeader::new(tr("View diagnostic log"))
             .default_open(false)
             .show(ui, |ui| {
                 ui.add(

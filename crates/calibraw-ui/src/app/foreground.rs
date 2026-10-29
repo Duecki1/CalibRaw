@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::tr;
 use calibraw_ai::AiFeature;
 use std::sync::atomic::Ordering;
 
@@ -18,7 +19,7 @@ impl ForegroundOperation {
     fn cancel(&mut self) {
         self.cancellation.store(true, Ordering::Release);
         self.cancelling = true;
-        self.progress = ForegroundProgress::indeterminate("Cancelling…");
+        self.progress = ForegroundProgress::indeterminate(tr(tr("Cancelling…")));
     }
 
     pub(in crate::app) fn is_cancelled(&self) -> bool {
@@ -105,7 +106,7 @@ pub(super) fn show_processing_dialog(
 
             if cancelling {
                 ui.label(
-                    egui::RichText::new("Stopping at the next safe point…")
+                    egui::RichText::new(tr(tr("Stopping at the next safe point…")))
                         .small()
                         .color(ui.visuals().weak_text_color()),
                 );
@@ -114,7 +115,7 @@ pub(super) fn show_processing_dialog(
         |ui| {
             cancel = ui
                 .add_enabled_ui(!cancelling, |ui| {
-                    moduwu_design::secondary_button(ui, "Cancel")
+                    moduwu_design::secondary_button(ui, tr(tr("Cancel")))
                 })
                 .inner
                 .clicked();

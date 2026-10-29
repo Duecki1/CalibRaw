@@ -1,6 +1,8 @@
 use eframe::egui::{self, Response, Sense, Ui, Vec2};
 use egui_phosphor::regular;
 
+use crate::i18n::tr;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiIcon {
     Sidebar,
@@ -51,9 +53,9 @@ pub(crate) fn folder_tree_row(
         .show(ui);
     response.disclosure = response.disclosure.map(|disclosure| {
         disclosure.on_hover_text(if open {
-            "Collapse folder"
+            tr("Collapse folder")
         } else {
-            "Expand folder"
+            tr("Expand folder")
         })
     });
     response

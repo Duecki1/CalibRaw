@@ -3,6 +3,7 @@
 //! (`ui::preview::tools::watermark`).
 
 use crate::app::{WatermarkAction, WatermarkView};
+use crate::i18n::tr;
 use crate::pipeline::{WatermarkAnchor, WatermarkPlacement};
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
 use eframe::egui::{self, Ui};
@@ -10,10 +11,10 @@ use egui_phosphor::regular;
 
 pub(super) fn watermark_card(ui: &mut Ui, view: WatermarkView) -> Option<WatermarkAction> {
     let mut action = None;
-    moduwu_design::section_card(ui, "Watermark", |ui| {
+    moduwu_design::section_card(ui, tr("Watermark"), |ui| {
         let mut enabled = view.enabled;
         ui.add_enabled_ui(!view.loading, |ui| {
-            if moduwu_design::toggle_row(ui, &mut enabled, "Add watermark").changed() {
+            if moduwu_design::toggle_row(ui, &mut enabled, tr("Add watermark")).changed() {
                 action = Some(WatermarkAction::SetEnabled(enabled));
             }
         });
@@ -28,8 +29,9 @@ pub(super) fn watermark_card(ui: &mut Ui, view: WatermarkView) -> Option<Waterma
             let bounds = egui::vec2(4.0, 2.0) * moduwu_design::CONTROL_HEIGHT;
             let image = egui::vec2(size[0].max(1) as f32, size[1].max(1) as f32);
             let fitted = image * (bounds.x / image.x).min(bounds.y / image.y);
-            ui.add(egui::Image::new((texture, fitted)).alt_text("Watermark image"));
-            if moduwu_design::secondary_button_enabled(ui, !view.loading, "Change image…").clicked()
+            ui.add(egui::Image::new((texture, fitted)).alt_text(tr("Watermark image")));
+            if moduwu_design::secondary_button_enabled(ui, !view.loading, tr("Change image…"))
+                .clicked()
             {
                 action = Some(WatermarkAction::ChooseImage);
             }
@@ -38,22 +40,26 @@ pub(super) fn watermark_card(ui: &mut Ui, view: WatermarkView) -> Option<Waterma
         let placement = view.placement;
         let (mut anchor, mut margin, mut size) =
             (placement.anchor(), placement.margin(), placement.size());
-        ui.label("Position");
+        ui.label(tr("Position"));
         if let Some(chosen) = anchor_grid(ui, anchor) {
             anchor = chosen;
         }
-        AdjustmentSlider::new("Size (%)", &mut size, WatermarkPlacement::SIZE_RANGE)
+        AdjustmentSlider::new(tr("Size (%)"), &mut size, WatermarkPlacement::SIZE_RANGE)
             .decimals(0)
             .step(1.0)
             .reset_to(WatermarkPlacement::DEFAULT_SIZE)
             .show(ui);
         // A centered watermark keeps no distance from the edges.
         if anchor != WatermarkAnchor::Center {
-            AdjustmentSlider::new("Margin (%)", &mut margin, WatermarkPlacement::MARGIN_RANGE)
-                .decimals(1)
-                .step(0.5)
-                .reset_to(WatermarkPlacement::DEFAULT_MARGIN)
-                .show(ui);
+            AdjustmentSlider::new(
+                tr("Margin (%)"),
+                &mut margin,
+                WatermarkPlacement::MARGIN_RANGE,
+            )
+            .decimals(1)
+            .step(0.5)
+            .reset_to(WatermarkPlacement::DEFAULT_MARGIN)
+            .show(ui);
         }
         let edited = WatermarkPlacement::new(anchor, margin, size);
         if edited != placement {
@@ -78,14 +84,14 @@ fn anchor_grid(ui: &mut Ui, current: WatermarkAnchor) -> Option<WatermarkAnchor>
                     anchor_glyph(anchor),
                     selected,
                     edge,
-                    anchor.label(),
+                    tr(anchor.label()),
                 );
                 response.widget_info(|| {
                     egui::WidgetInfo::selected(
                         egui::WidgetType::RadioButton,
                         enabled,
                         selected,
-                        anchor.label(),
+                        tr(anchor.label()),
                     )
                 });
                 if response.clicked() {

@@ -2,6 +2,7 @@ use super::{
     effect_card, effect_details, effect_position, float_param_angle, float_param_slider,
     EffectFrame, PositionSpace,
 };
+use crate::i18n::tr;
 use crate::pipeline::{effect_params::tilt_shift, MaskEffect, TiltShiftEffectSettings};
 use eframe::egui::Ui;
 
@@ -22,16 +23,16 @@ pub(crate) fn show(
         |ui, settings| {
             if !is_fullscreen_mask {
                 ui.add(eframe::egui::Label::new(eframe::egui::RichText::new(
-                    "This mask also limits the blur. Feather its edge for a smooth transition."
+                    tr("This mask also limits the blur. Feather its edge for a smooth transition.")
                 ).small()).wrap());
             }
             let mut changed = float_param_slider(ui, &mut settings.amount, tilt_shift::AMOUNT);
             changed |= float_param_slider(ui, &mut settings.radius, tilt_shift::RADIUS);
             changed |= float_param_slider(ui, &mut settings.focus_width, tilt_shift::FOCUS_WIDTH);
-            changed |= effect_details(ui, "Focus band details", |ui| {
+            changed |= effect_details(ui, tr("Focus band details"), |ui| {
                 let mut changed = effect_position(
                     ui,
-                    "Focus position",
+                    tr("Focus position"),
                     &mut settings.center,
                     [tilt_shift::CENTER_X, tilt_shift::CENTER_Y],
                     frame,

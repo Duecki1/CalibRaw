@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     pub(crate) fn set_subject_mask_quality(
@@ -40,7 +41,7 @@ impl CalibRawApp {
     ) -> bool {
         if self.foreground_operation_active() {
             self.ui.notice =
-                Some("Finish or cancel the current editing operation first.".to_owned());
+                Some(tr("Finish or cancel the current editing operation first.").to_owned());
             return false;
         }
         if let Some(mask) = self.masks.generated_cache_mut(model).clone() {
@@ -91,27 +92,24 @@ impl CalibRawApp {
 
     fn generated_mask_progress(&self, model: AiMaskModel, inferencing: bool) -> String {
         match (model, inferencing) {
-            (AiMaskModel::Subject, true) => {
-                format!("Running {} locally…", self.subject_model().name)
-            }
-            (AiMaskModel::Subject, false) => format!(
-                "Preparing {} download…",
-                self.subject_model().download_label
+            (AiMaskModel::Subject, true) => tr_fmt(
+                "Running {name} locally…",
+                &[("name", &self.subject_model().name)],
             ),
-            (AiMaskModel::Sky, true) => "Running SkySeg U2Net locally…".to_owned(),
-            (AiMaskModel::Sky, false) => "Preparing SkySeg U2Net download…".to_owned(),
-            (AiMaskModel::Depth, true) => {
-                format!(
-                    "Running {} locally…",
-                    calibraw_ai::models::depth::MODEL.name
-                )
-            }
-            (AiMaskModel::Depth, false) => {
-                format!(
-                    "Preparing {} download…",
-                    calibraw_ai::models::depth::MODEL.name
-                )
-            }
+            (AiMaskModel::Subject, false) => tr_fmt(
+                "Preparing {download_label} download…",
+                &[("download_label", &self.subject_model().download_label)],
+            ),
+            (AiMaskModel::Sky, true) => tr("Running SkySeg U2Net locally…").to_owned(),
+            (AiMaskModel::Sky, false) => tr("Preparing SkySeg U2Net download…").to_owned(),
+            (AiMaskModel::Depth, true) => tr_fmt(
+                "Running {name} locally…",
+                &[("name", &calibraw_ai::models::depth::MODEL.name)],
+            ),
+            (AiMaskModel::Depth, false) => tr_fmt(
+                "Preparing {name} download…",
+                &[("name", &calibraw_ai::models::depth::MODEL.name)],
+            ),
         }
     }
 
@@ -122,9 +120,9 @@ impl CalibRawApp {
         let Some(source) = self.masks.source_cache.clone() else {
             self.report_error(
                 ErrorKind::AiMask,
-                format!(
-                    "The preview could not be prepared for {} selection.",
-                    model.noun()
+                tr_fmt(
+                    "The preview could not be prepared for {model} selection.",
+                    &[("model", &model.noun())],
                 ),
             );
             return;
@@ -203,7 +201,12 @@ impl CalibRawApp {
         let finished = poll_ai_job(
             self.platform.as_ref(),
             receiver,
-            || format!("The {}-mask worker stopped unexpectedly.", model.noun()),
+            || {
+                tr_fmt(
+                    "The {model}-mask worker stopped unexpectedly.",
+                    &[("model", &model.noun())],
+                )
+            },
             |update| {
                 operation.progress = match update {
                     AiJobUpdate::Download(progress) => model_download_progress(progress),
@@ -230,20 +233,24 @@ impl CalibRawApp {
                     // found nothing, so an all-zero mask means no subject.
                     if model == AiMaskModel::Subject && result.mask.iter().all(|&alpha| alpha == 0)
                     {
-                        error_message =
-                            Some("Subject selection found no subject in this photo.".to_owned());
+                        error_message = Some(
+                            tr("Subject selection found no subject in this photo.").to_owned(),
+                        );
                     } else if let Some(mask) = result.into_probability_mask() {
                         self.apply_generated_mask(model, mask);
                         succeeded = true;
                     } else {
-                        error_message = Some(format!(
-                            "{} selection returned an invalid mask image.",
-                            model.label()
+                        error_message = Some(tr_fmt(
+                            "{model} selection returned an invalid mask image.",
+                            &[("model", &tr(model.label()))],
                         ));
                     }
                 }
                 Err(error) => {
-                    error_message = Some(format!("{} selection failed: {error}", model.label()))
+                    error_message = Some(tr_fmt(
+                        "{model} selection failed: {error}",
+                        &[("model", &tr(model.label())), ("error", &error)],
+                    ))
                 }
             }
         }
@@ -253,12 +260,15 @@ impl CalibRawApp {
         } else if !cancelled && !succeeded {
             let message = error_message.unwrap_or_else(|| {
                 if stale {
-                    format!(
-                        "{} selection became stale before inference completed.",
-                        model.label()
+                    tr_fmt(
+                        "{model} selection became stale before inference completed.",
+                        &[("model", &tr(model.label()))],
                     )
                 } else {
-                    format!("{} selection did not produce a mask.", model.label())
+                    tr_fmt(
+                        "{model} selection did not produce a mask.",
+                        &[("model", &tr(model.label()))],
+                    )
                 }
             });
             self.report_error(ErrorKind::AiMask, message);

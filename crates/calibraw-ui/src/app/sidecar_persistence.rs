@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 mod developed_thumbnail;
 mod failures;
@@ -270,7 +271,7 @@ impl CalibRawApp {
         self.persistence.sidecar_failed_revision = None;
         self.queue_current_sidecar_save(true);
         self.start_next_sidecar_save();
-        self.ui.notice = Some("Saving edits…".to_owned());
+        self.ui.notice = Some(tr("Saving edits…").to_owned());
     }
 
     pub(crate) fn handle_sidecar_shortcut(&mut self, ctx: &egui::Context) {
@@ -338,13 +339,17 @@ impl CalibRawApp {
                 if job.generation == self.persistence.document_generation {
                     self.report_sidecar_save_failure(
                         Some(job.revision),
-                        format!("could not start the edit-save worker: {error}"),
+                        tr_fmt(
+                            "could not start the edit-save worker: {error}",
+                            &[("error", &error)],
+                        ),
                     );
                 } else {
                     self.report_sidecar_save_failure(
                         None,
-                        format!(
-                            "could not start the edit-save worker for a previously opened RAW: {error}"
+                        tr_fmt(
+                            "could not start the edit-save worker for a previously opened RAW: {error}",
+                            &[("error", &error)],
                         ),
                     );
                 }
@@ -368,12 +373,12 @@ impl CalibRawApp {
                 {
                     self.report_sidecar_save_failure(
                         Some(job.revision),
-                        "the edit-save worker stopped unexpectedly",
+                        tr("the edit-save worker stopped unexpectedly"),
                     );
                 } else if job.is_some() {
                     self.report_sidecar_save_failure(
                         None,
-                        "the edit-save worker for a previously opened RAW stopped unexpectedly",
+                        tr("the edit-save worker for a previously opened RAW stopped unexpectedly"),
                     );
                 }
                 None
@@ -402,7 +407,10 @@ impl CalibRawApp {
                         event.job.revision,
                     );
                     if event.job.explicit || recovered_from_failure {
-                        self.ui.notice = Some(format!("Edits saved to {location}."));
+                        self.ui.notice = Some(tr_fmt(
+                            "Edits saved to {location}.",
+                            &[("location", &location)],
+                        ));
                     }
                     if event.job.explicit {
                         self.persistence.sidecar_save_feedback_until =
@@ -419,7 +427,10 @@ impl CalibRawApp {
         } else if let Err(error) = event.result {
             self.report_sidecar_save_failure(
                 None,
-                format!("saving a previously opened RAW failed: {error}"),
+                tr_fmt(
+                    "saving a previously opened RAW failed: {error}",
+                    &[("error", &error)],
+                ),
             );
             self.persistence.sidecar_recovery = event.recovery;
         }
@@ -475,7 +486,7 @@ impl CalibRawApp {
                         .map(|job| job.revision);
                     self.report_sidecar_save_failure(
                         revision,
-                        "the edit-save worker stopped unexpectedly while finishing the save",
+                        tr("the edit-save worker stopped unexpectedly while finishing the save"),
                     );
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => break,
@@ -491,7 +502,7 @@ impl CalibRawApp {
                 .map(|job| job.revision);
             self.report_sidecar_save_failure(
                 revision,
-                "timed out while finishing the edit save during shutdown",
+                tr("timed out while finishing the edit save during shutdown"),
             );
         }
     }

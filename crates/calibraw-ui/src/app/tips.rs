@@ -4,6 +4,7 @@
 //! time that feature is used. Its content lives in `ui::tips`.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::ui::tips::{Tip, TipAnimation, TipChoice};
 use std::collections::BTreeSet;
 
@@ -112,7 +113,7 @@ impl CalibRawApp {
         if !self.persist_performance_settings() {
             self.report_error(
                 ErrorKind::Settings,
-                "CalibRaw could not save your tip preferences.",
+                tr("CalibRaw could not save your tip preferences."),
             );
         }
     }
@@ -120,9 +121,9 @@ impl CalibRawApp {
     fn report_tip_animation_error(&mut self, tip: Tip, error: &image_webp::DecodingError) {
         self.report_error(
             ErrorKind::Tip,
-            format!(
-                "The animation of the “{}” tip could not be played: {error}",
-                tip.title()
+            tr_fmt(
+                "The animation of the “{tip}” tip could not be played: {error}",
+                &[("tip", &tip.title()), ("error", &error)],
             ),
         );
     }

@@ -2,6 +2,7 @@
 //! photos by content URI, listed and changed through the platform.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use egui_phosphor::regular;
 use moduwu_design::MenuItem;
 
@@ -61,12 +62,12 @@ pub(super) fn show_android_library_folder_node(
         *requested_action = Some(AndroidLibraryFolderUiAction::Select(path.to_owned()));
     }
     moduwu_design::context_menu(&row.row, |ui| {
-        let new_item = MenuItem::new("New folder here…").icon(regular::FOLDER_PLUS);
+        let new_item = MenuItem::new(tr("New folder here…")).icon(regular::FOLDER_PLUS);
         if ui.add(new_item).clicked() {
             *requested_action = Some(AndroidLibraryFolderUiAction::New(path.to_owned()));
             ui.close();
         }
-        let refresh_item = MenuItem::new("Refresh folders").icon(regular::ARROWS_CLOCKWISE);
+        let refresh_item = MenuItem::new(tr("Refresh folders")).icon(regular::ARROWS_CLOCKWISE);
         if ui.add(refresh_item).clicked() {
             *requested_action = Some(AndroidLibraryFolderUiAction::Refresh);
             ui.close();
@@ -189,7 +190,7 @@ pub(in crate::ui::library) fn show_local_folder_tree(
         show_android_library_folder_node(
             ui,
             "",
-            "Library",
+            tr("Library"),
             0,
             &children_by_parent,
             selected_folder.as_str(),
@@ -216,7 +217,7 @@ pub(in crate::ui::library) fn show_page_dialogs(ui: &mut Ui, app: &mut CalibRawA
 /// Covers the gap between picking photos and their placeholders appearing.
 /// Android copies them without a way to cancel, so the dialog has no buttons.
 fn show_photo_import_progress(ui: &mut Ui, status: crate::app::PhotoImportStatus) {
-    moduwu_design::Dialog::new("library-photo-import-progress", "Importing photos").show(
+    moduwu_design::Dialog::new("library-photo-import-progress", tr("Importing photos")).show(
         ui.ctx(),
         |ui| match status {
             crate::app::PhotoImportStatus::Copying(progress) => {
@@ -226,9 +227,12 @@ fn show_photo_import_progress(ui: &mut Ui, status: crate::app::PhotoImportStatus
                     (progress.completed as f32 / progress.total as f32).clamp(0.0, 1.0)
                 };
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} / {} photos copied",
-                        progress.completed, progress.total
+                    egui::RichText::new(tr_fmt(
+                        "{completed} / {total} photos copied",
+                        &[
+                            ("completed", &progress.completed),
+                            ("total", &progress.total),
+                        ],
                     ))
                     .strong(),
                 );
@@ -242,7 +246,7 @@ fn show_photo_import_progress(ui: &mut Ui, status: crate::app::PhotoImportStatus
             crate::app::PhotoImportStatus::Loading => {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Loading library…");
+                    ui.label(tr("Loading library…"));
                 });
             }
         },

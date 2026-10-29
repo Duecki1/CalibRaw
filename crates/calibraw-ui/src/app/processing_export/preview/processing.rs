@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     pub(in crate::app) fn interactive_detail_mask_edit(&self) -> bool {
@@ -81,13 +82,13 @@ impl CalibRawApp {
         });
         self.develop_ui.cancel_area_picker();
         let Some(white_balance) = result else {
-            self.report_error(ErrorKind::Sampling, "Could not estimate white balance there. Choose a brighter, unclipped neutral area."
+            self.report_error(ErrorKind::Sampling, tr("Could not estimate white balance there. Choose a brighter, unclipped neutral area.")
                     .to_owned(),);
             self.egui_ctx.request_repaint();
             return false;
         };
         self.develop.exposure.white_balance = white_balance;
-        self.ui.notice = Some("White balance sampled from the selected image area.".to_owned());
+        self.ui.notice = Some(tr("White balance sampled from the selected image area.").to_owned());
         self.mark_pipeline_dirty();
         true
     }
@@ -203,7 +204,10 @@ impl CalibRawApp {
         ) {
             self.report_error(
                 ErrorKind::Preview,
-                format!("Could not apply Remove to zoomed preview: {error:#}"),
+                tr_fmt(
+                    "Could not apply Remove to zoomed preview: {error}",
+                    &[("error", &format!("{error:#}"))],
+                ),
             );
             self.preview.detail_pending_stage = None;
             return;
@@ -395,7 +399,10 @@ impl CalibRawApp {
         ) {
             self.report_error(
                 ErrorKind::Preview,
-                format!("Could not apply Remove to preview: {error:#}"),
+                tr_fmt(
+                    "Could not apply Remove to preview: {error}",
+                    &[("error", &format!("{error:#}"))],
+                ),
             );
             self.preview.pending_stage = None;
             return;

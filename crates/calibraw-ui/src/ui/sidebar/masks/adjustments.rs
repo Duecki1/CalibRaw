@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::DevelopUiState;
+use crate::i18n::tr;
 use crate::ui::components::point_color::PointColorUiState;
 
 /// Sidebar tab selections used by the local mask adjustment sections.
@@ -271,8 +272,8 @@ impl Sidebar {
         point_color_tab: &mut bool,
     ) -> bool {
         ui.horizontal(|ui| {
-            ui.selectable_value(point_color_tab, false, "Mixer");
-            ui.selectable_value(point_color_tab, true, "Point Color");
+            ui.selectable_value(point_color_tab, false, tr("Mixer"));
+            ui.selectable_value(point_color_tab, true, tr("Point Color"));
         });
         ui.add_space(moduwu_design::SPACE_XS);
         if *point_color_tab {

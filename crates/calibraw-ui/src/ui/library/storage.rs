@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 pub(super) fn desktop_paths(assets: &[LibraryAsset]) -> Vec<PathBuf> {
     assets
@@ -95,10 +96,13 @@ pub(super) fn delete_library_asset(
 
 fn recycle_local_raw_bundle(raw_path: &Path) -> Result<(), String> {
     crate::platform::trash(raw_path).map_err(|error| {
-        format!(
-            "Could not move {} to the system {}: {error}",
-            raw_path.display(),
-            crate::platform::trash_name()
+        tr_fmt(
+            "Could not move {raw_path} to the system {trash_name}: {error}",
+            &[
+                ("raw_path", &raw_path.display()),
+                ("trash_name", &crate::platform::trash_name()),
+                ("error", &error),
+            ],
         )
     })?;
 
@@ -158,7 +162,10 @@ pub(super) fn materialize_library_asset(
                 let copy_result = fs::copy(&sidecar, &destination)
                     .map(|_| ())
                     .map_err(|error| {
-                        format!("could not stage {} sidecar: {error}", asset.display_name)
+                        tr_fmt(
+                            "could not stage {display_name} sidecar: {error}",
+                            &[("display_name", &asset.display_name), ("error", &error)],
+                        )
                     });
                 let _ = fs::remove_file(sidecar);
                 if let Err(error) = copy_result {
@@ -195,7 +202,7 @@ pub(super) fn duplicate_destination(
         LibraryLocator::Desktop(path) => {
             let parent = path
                 .parent()
-                .ok_or_else(|| "Library asset has no destination folder".to_owned())?;
+                .ok_or_else(|| tr("Library asset has no destination folder").to_owned())?;
             Ok(LibraryTransferDestination::LocalFolder(parent.to_owned()))
         }
         LibraryLocator::Android { .. } => Ok(LibraryTransferDestination::LocalLibrary),
@@ -238,9 +245,9 @@ pub(super) fn preserve_imported_thumbnail(
     match imported {
         ImportedLibraryAsset::Desktop(_) => Ok(()),
         ImportedLibraryAsset::Android(imported) => {
-            let source_uri = asset
-                .android_uri()
-                .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
+            let source_uri = asset.android_uri().ok_or_else(|| {
+                tr("Library asset is not available from Android storage").to_owned()
+            })?;
             platform.copy_library_developed_thumbnail_cache(source_uri, &imported.uri)
         }
     }
@@ -249,7 +256,7 @@ pub(super) fn preserve_imported_thumbnail(
 pub(super) fn remove_library_asset(asset: &LibraryAsset) -> Result<(), String> {
     let path = asset
         .desktop_path()
-        .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?;
+        .ok_or_else(|| tr("Library asset is not available from desktop storage").to_owned())?;
     remove_local_raw_bundle(path)
 }
 

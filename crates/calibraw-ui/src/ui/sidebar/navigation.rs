@@ -1,6 +1,7 @@
 use super::film_negative::FilmNegativeAction;
 use super::*;
 use crate::app::{AreaPicker, CameraProfileChoice, FILM_NEGATIVE_CARD_TITLE};
+use crate::i18n::{tr, tr_fmt};
 use crate::ui::components::preview_list::{preview_combo, PreviewListItem};
 
 mod mobile;
@@ -81,7 +82,7 @@ impl Sidebar {
                                     ui,
                                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                     moduwu_design::toolbar_icon_size(),
-                                    "Reset all develop adjustments",
+                                    tr("Reset all develop adjustments"),
                                 )
                                 .clicked()
                                 {
@@ -93,7 +94,7 @@ impl Sidebar {
                                     ui,
                                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                     moduwu_design::toolbar_icon_size(),
-                                    "Reset crop and geometry",
+                                    tr("Reset crop and geometry"),
                                 )
                                 .clicked()
                                 {
@@ -121,9 +122,9 @@ impl Sidebar {
                                                 ui,
                                                 egui_phosphor::regular::TRASH,
                                                 moduwu_design::toolbar_icon_size(),
-                                                &format!(
-                                                    "Clear all {} strokes",
-                                                    active_tool.label()
+                                                &tr_fmt(
+                                                    "Clear all {tool} strokes",
+                                                    &[("tool", &active_tool.label())],
                                                 ),
                                             )
                                         },
@@ -139,7 +140,7 @@ impl Sidebar {
                                     ui,
                                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                     moduwu_design::toolbar_icon_size(),
-                                    "Reset all masks and clear the subject mask cache",
+                                    tr("Reset all masks and clear the subject mask cache"),
                                 )
                                 .clicked()
                                 {
@@ -314,9 +315,9 @@ impl Sidebar {
 
             if app.caps().is_desktop() {
                 let filmstrip_tooltip = if app.develop_ui.filmstrip_open {
-                    "Hide filmstrip"
+                    tr("Hide filmstrip")
                 } else {
-                    "Show filmstrip"
+                    tr("Show filmstrip")
                 };
                 if icon_toggle_button(
                     ui,
@@ -332,9 +333,9 @@ impl Sidebar {
             }
 
             let sidebar_tooltip = if app.develop_ui.sidebar_open {
-                "Hide editing sidebar"
+                tr("Hide editing sidebar")
             } else {
-                "Show editing sidebar"
+                tr("Show editing sidebar")
             };
             if icon_toggle_button(
                 ui,
@@ -703,7 +704,7 @@ impl Sidebar {
             app.preferences.camera_profile_folder.as_ref(),
         );
         let mut combo = None;
-        moduwu_design::section_card(ui, "Camera profile", |ui| {
+        moduwu_design::section_card(ui, tr("Camera profile"), |ui| {
             combo = Some(preview_combo(ui, "current-image-camera-profile", items));
         });
         moduwu_design::card_gap(ui);
@@ -741,16 +742,16 @@ fn camera_profile_items(
                     .map(|candidate| candidate.name.clone())
             })
             .or_else(|| raw.profile_color.camera_profile.name.clone())
-            .unwrap_or_else(|| "Embedded Matrix".to_owned());
-        format!("Automatic — {active_name}")
+            .unwrap_or_else(|| tr("Embedded Matrix").to_owned());
+        tr_fmt("Automatic — {profile}", &[("profile", &active_name)])
     } else {
-        "Automatic".to_owned()
+        tr("Automatic").to_owned()
     };
     let mut items = vec![PreviewListItem::choice(None, automatic, selected.is_none())];
     if let Some(root) = root {
         items.push(PreviewListItem::choice(
             Some(root.clone()),
-            "Embedded Matrix",
+            tr("Embedded Matrix"),
             selected.as_ref() == Some(root),
         ));
     }

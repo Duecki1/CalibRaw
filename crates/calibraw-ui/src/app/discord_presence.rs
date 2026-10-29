@@ -1,4 +1,5 @@
 use super::AppTab;
+use crate::i18n::{tr, tr_fmt};
 use crate::platform::discord::{
     presence_supported, run_presence_worker, PresenceActivity, PresenceCommand,
 };
@@ -52,11 +53,14 @@ impl DiscordPresence {
 
     pub(super) fn set_enabled(&mut self, enabled: bool) -> Result<(), String> {
         if enabled && !self.supported {
-            return Err("Discord Rich Presence is unavailable in the Flatpak build.".to_owned());
+            return Err(
+                tr("Discord Rich Presence is unavailable in the Flatpak build.").to_owned(),
+            );
         }
         if enabled && self.application_id.is_none() {
-            return Err(format!(
-                "Discord Rich Presence is unavailable because this build has no {APPLICATION_ID_ENV}."
+            return Err(tr_fmt(
+                "Discord Rich Presence is unavailable because this build has no {variable}.",
+                &[("variable", &APPLICATION_ID_ENV)],
             ));
         }
         if self.enabled == enabled {

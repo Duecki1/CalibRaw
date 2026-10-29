@@ -12,6 +12,7 @@
 
 use super::*;
 use crate::app::EffectHandleEdit;
+use crate::i18n::tr;
 use crate::pipeline::effect_params::tilt_shift as params;
 use crate::pipeline::TiltShiftEffectSettings;
 
@@ -150,10 +151,10 @@ impl Part {
 
     fn name(self) -> &'static str {
         match self {
-            Self::Feather(_) => "Feather",
-            Self::Focus(_) => "Focus Width",
-            Self::Knob => "Angle",
-            Self::Center => "Focus position",
+            Self::Feather(_) => tr("Feather"),
+            Self::Focus(_) => tr("Focus Width"),
+            Self::Knob => tr("Angle"),
+            Self::Center => tr("Focus position"),
         }
     }
 

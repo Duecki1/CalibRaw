@@ -1,5 +1,6 @@
 use super::super::*;
 use crate::app::AreaPicker;
+use crate::i18n::tr;
 
 impl Preview {
     /// Drags out an area of the photo for the active [`AreaPicker`] and hands
@@ -69,8 +70,8 @@ impl Preview {
         let PreviewLayout { visible_rect, .. } = layout;
         let painter = ui.painter_at(visible_rect);
         let hint = match app.develop_ui.area_picker {
-            Some(AreaPicker::WhiteBalance) => "Drag over a neutral gray or white area",
-            Some(AreaPicker::FilmBase) => "Drag over unexposed film, such as the frame border",
+            Some(AreaPicker::WhiteBalance) => tr("Drag over a neutral gray or white area"),
+            Some(AreaPicker::FilmBase) => tr("Drag over unexposed film, such as the frame border"),
             None => return,
         };
         painter.text(

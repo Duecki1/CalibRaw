@@ -1,4 +1,5 @@
 use super::feathered_range::{self, round_to, FeatheredRange, RangeEdit, RangeHandle, RangePoints};
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::DepthRangeSettings;
 use eframe::egui::{Response, Ui};
 
@@ -58,10 +59,16 @@ impl FeatheredRange for DepthRangeSettings {
 
     fn handle_text(&self, handle: RangeHandle) -> String {
         match handle {
-            RangeHandle::Start => format!("Near {:.2}", self.near),
-            RangeHandle::End => format!("Far {:.2}", self.far),
-            RangeHandle::StartFeather => format!("Near feather {:.2}", self.near_feather),
-            RangeHandle::EndFeather => format!("Far feather {:.2}", self.far_feather),
+            RangeHandle::Start => tr_fmt("Near {near}", &[("near", &format!("{:.2}", self.near))]),
+            RangeHandle::End => tr_fmt("Far {far}", &[("far", &format!("{:.2}", self.far))]),
+            RangeHandle::StartFeather => tr_fmt(
+                "Near feather {near_feather}",
+                &[("near_feather", &format!("{:.2}", self.near_feather))],
+            ),
+            RangeHandle::EndFeather => tr_fmt(
+                "Far feather {far_feather}",
+                &[("far_feather", &format!("{:.2}", self.far_feather))],
+            ),
         }
     }
 
@@ -111,12 +118,12 @@ impl FeatheredRange for DepthRangeSettings {
 
 fn range_track(ui: &mut Ui, range: &mut DepthRangeSettings) -> Response {
     let background = feathered_range::plain_track_background(ui.visuals());
-    feathered_range::feathered_range_track(ui, range, "Depth range", background)
+    feathered_range::feathered_range_track(ui, range, tr("Depth range"), background)
 }
 
 pub(crate) fn depth_range_slider(ui: &mut Ui, range: &mut DepthRangeSettings) -> bool {
     let before = *range;
-    ui.label("Depth range");
+    ui.label(tr("Depth range"));
     range_track(ui, range);
     *range != before
 }

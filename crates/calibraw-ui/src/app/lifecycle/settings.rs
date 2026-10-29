@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     pub(crate) fn set_ui_design(&mut self, design: crate::appearance::UiDesign) {
@@ -18,6 +19,18 @@ impl CalibRawApp {
             return;
         }
         self.preferences.preview_backdrop = backdrop;
+        self.persist_performance_settings();
+        self.egui_ctx.request_repaint();
+    }
+
+    pub(crate) fn set_language(&mut self, language: crate::i18n::LanguageChoice) {
+        if self.preferences.language == language {
+            return;
+        }
+        self.preferences.language = language;
+        if let Err(error) = crate::i18n::set_active(language.resolve()) {
+            self.report_error(ErrorKind::Settings, error.to_string());
+        }
         self.persist_performance_settings();
         self.egui_ctx.request_repaint();
     }
@@ -88,10 +101,10 @@ impl CalibRawApp {
         self.sync_ai_runtime();
         self.persist_performance_settings();
         self.ui.notice = Some(if enabled {
-            "AI GPU acceleration enabled. New AI model sessions will use it when available."
+            tr("AI GPU acceleration enabled. New AI model sessions will use it when available.")
                 .to_owned()
         } else {
-            "AI GPU acceleration disabled. New AI model sessions will run on CPU.".to_owned()
+            tr("AI GPU acceleration disabled. New AI model sessions will run on CPU.").to_owned()
         });
         self.egui_ctx.request_repaint();
     }
@@ -118,10 +131,10 @@ impl CalibRawApp {
         self.sync_discord_presence();
         self.persist_performance_settings();
         self.ui.notice = Some(if enabled {
-            "Discord Rich Presence enabled. Discord will show Library browsing or the current edit timer when its desktop client is running."
+            tr("Discord Rich Presence enabled. Discord will show Library browsing or the current edit timer when its desktop client is running.")
                 .to_owned()
         } else {
-            "Discord Rich Presence disabled and cleared.".to_owned()
+            tr("Discord Rich Presence disabled and cleared.").to_owned()
         });
     }
 
@@ -157,9 +170,10 @@ impl CalibRawApp {
                 self.ui.thumbnail_cache_size_receiver = None;
             }
             Some(Err(mpsc::TryRecvError::Disconnected)) => {
-                self.ui.thumbnail_cache_size = Some(Err(
-                    "thumbnail cache size worker stopped unexpectedly".to_owned(),
-                ));
+                self.ui.thumbnail_cache_size = Some(Err(tr(
+                    "thumbnail cache size worker stopped unexpectedly",
+                )
+                .to_owned()));
                 self.ui.thumbnail_cache_size_receiver = None;
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => {}
@@ -180,18 +194,23 @@ impl CalibRawApp {
             match spawn {
                 Ok(_) => self.ui.thumbnail_cache_size_receiver = Some(receiver),
                 Err(error) => {
-                    self.ui.thumbnail_cache_size =
-                        Some(Err(format!("could not start cache size worker: {error}")));
+                    self.ui.thumbnail_cache_size = Some(Err(tr_fmt(
+                        "could not start cache size worker: {error}",
+                        &[("error", &error)],
+                    )));
                 }
             }
         }
 
         match self.ui.thumbnail_cache_size.as_ref() {
-            Some(Ok(0)) => "0 MB used".to_owned(),
-            Some(Ok(bytes)) if *bytes < 100_000 => "<0.1 MB used".to_owned(),
-            Some(Ok(bytes)) => format!("{:.1} MB used", *bytes as f64 / 1_000_000.0),
-            Some(Err(_)) => "Size unavailable".to_owned(),
-            None => "Calculating size…".to_owned(),
+            Some(Ok(0)) => tr("0 MB used").to_owned(),
+            Some(Ok(bytes)) if *bytes < 100_000 => tr("<0.1 MB used").to_owned(),
+            Some(Ok(bytes)) => tr_fmt(
+                "{size} MB used",
+                &[("size", &format!("{:.1}", *bytes as f64 / 1_000_000.0))],
+            ),
+            Some(Err(_)) => tr("Size unavailable").to_owned(),
+            None => tr("Calculating size…").to_owned(),
         }
     }
 
@@ -202,22 +221,26 @@ impl CalibRawApp {
         let decode_gate = self.library.decode_gate();
         let result = match decode_gate.write() {
             Ok(_decode_guard) => self.platform.clear_thumbnail_cache(),
-            Err(_) => Err("thumbnail decode gate was poisoned".to_owned()),
+            Err(_) => Err(tr("thumbnail decode gate was poisoned").to_owned()),
         };
 
         match result {
             Ok(()) => {
                 self.ui.thumbnail_cache_size = Some(Ok(0));
-                self.ui.notice = Some("Thumbnail cache cleared. Rebuilding previews…".to_owned());
+                self.ui.notice =
+                    Some(tr("Thumbnail cache cleared. Rebuilding previews…").to_owned());
                 self.library.refresh(&self.egui_ctx);
             }
             Err(error) => {
                 self.report_error(
                     ErrorKind::Settings,
-                    format!("Could not clear thumbnail cache: {error}"),
+                    tr_fmt(
+                        "Could not clear thumbnail cache: {error}",
+                        &[("error", &error)],
+                    ),
                 );
                 self.library
-                    .set_status("Could not clear the thumbnail cache.");
+                    .set_status(tr("Could not clear the thumbnail cache."));
             }
         }
     }
@@ -338,6 +361,7 @@ impl CalibRawApp {
             export_watermark: self.export.watermark.saved(),
             ui_design: self.preferences.ui_design,
             preview_backdrop: self.preferences.preview_backdrop,
+            language: self.preferences.language,
             onboarding_completed: self.preferences.onboarding_completed,
             subject_mask_quality_chosen: self.preferences.subject_mask_quality_chosen,
             tips_enabled: self.preferences.tips.enabled,

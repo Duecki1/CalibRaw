@@ -9,6 +9,7 @@ pub mod file_ops {
 }
 
 pub(crate) mod export_naming;
+pub(crate) mod i18n;
 pub(crate) mod performance_settings;
 pub(crate) mod platform;
 pub(crate) use calibraw_core::luts;

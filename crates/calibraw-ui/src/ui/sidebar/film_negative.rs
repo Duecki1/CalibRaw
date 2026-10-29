@@ -4,6 +4,7 @@
 use super::adjustment_cards::CardAction;
 use super::*;
 use crate::app::FILM_NEGATIVE_CARD_TITLE;
+use crate::i18n::tr;
 use crate::pipeline::{FilmNegative, FilmStock};
 
 /// What the Film negative card asks for.
@@ -28,15 +29,20 @@ impl Sidebar {
         foldable: bool,
     ) -> Option<FilmNegativeAction> {
         let mut action = None;
-        let card =
-            Self::adjustment_card(ui, FILM_NEGATIVE_CARD_TITLE, true, foldable, true, |ui| {
+        let card = Self::adjustment_card(
+            ui,
+            FILM_NEGATIVE_CARD_TITLE,
+            true,
+            foldable,
+            true,
+            |ui| {
                 let mut stock = negative.stock;
                 if moduwu_design::segmented_control(
                     ui,
                     &mut stock,
                     &[
-                        (FilmStock::Color, "Color"),
-                        (FilmStock::BlackAndWhite, "B&W"),
+                        (FilmStock::Color, tr("Color")),
+                        (FilmStock::BlackAndWhite, tr("B&W")),
                     ],
                     ui.available_width(),
                 )
@@ -45,7 +51,7 @@ impl Sidebar {
                     action = Some(FilmNegativeAction::Stock(stock));
                 }
                 ui.horizontal(|ui| {
-                    ui.label("Film base");
+                    ui.label(tr("Film base"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let size = egui::vec2(
                             moduwu_design::TOOLBAR_ICON_EDGE,
@@ -56,7 +62,7 @@ impl Sidebar {
                             egui_phosphor::regular::EYEDROPPER,
                             picking_base,
                             size,
-                            "Pick unexposed film, such as the border between frames",
+                            tr("Pick unexposed film, such as the border between frames"),
                         )
                         .clicked()
                         {
@@ -66,7 +72,7 @@ impl Sidebar {
                             ui,
                             egui_phosphor::regular::MAGIC_WAND,
                             size,
-                            "Estimate the base from the whole scan and the colors from the crop",
+                            tr("Estimate the base from the whole scan and the colors from the crop"),
                         )
                         .clicked()
                         {
@@ -74,7 +80,8 @@ impl Sidebar {
                         }
                     });
                 });
-            });
+            },
+        );
         if matches!(card, CardAction::Reset) {
             action = Some(FilmNegativeAction::Remove);
         }

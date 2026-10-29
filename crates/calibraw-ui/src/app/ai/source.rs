@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     pub(in crate::app) fn capture_mask_source_from_active_preview(
@@ -7,16 +8,16 @@ impl CalibRawApp {
     ) -> Result<MaskRgbImage, String> {
         let render_state = frame
             .wgpu_render_state()
-            .ok_or_else(|| "The GPU preview is not available.".to_owned())?;
+            .ok_or_else(|| tr("The GPU preview is not available.").to_owned())?;
         let raw = self
             .develop
             .preview_raw
             .as_ref()
-            .ok_or_else(|| "The preview image is not available yet.".to_owned())?;
+            .ok_or_else(|| tr("The preview image is not available yet.").to_owned())?;
         let pipeline = self
             .preview
             .pipeline()
-            .ok_or_else(|| "Open an image before creating this mask.".to_owned())?;
+            .ok_or_else(|| tr("Open an image before creating this mask.").to_owned())?;
 
         let reference_exposure = self.develop.exposure.source_reference();
         let reference_masks = MaskStack::default();
@@ -25,7 +26,7 @@ impl CalibRawApp {
             .develop
             .loaded_raw
             .as_deref()
-            .ok_or_else(|| "The original photo is not available.".to_owned())?;
+            .ok_or_else(|| tr("The original photo is not available.").to_owned())?;
         pipeline
             .recompute_with_remove(
                 &render_state.queue,
@@ -38,7 +39,10 @@ impl CalibRawApp {
                 ),
             )
             .map_err(|error| {
-                format!("Could not apply Remove edits to the mask source: {error:#}")
+                tr_fmt(
+                    "Could not apply Remove edits to the mask source: {error}",
+                    &[("error", &format!("{error:#}"))],
+                )
             })?;
 
         let readback = pipeline.read_output_region_blocking(
@@ -76,13 +80,22 @@ impl CalibRawApp {
                 ),
             )
         }
-        .map_err(|error| format!("Could not restore Remove edits to the preview: {error:#}"));
+        .map_err(|error| {
+            tr_fmt(
+                "Could not restore Remove edits to the preview: {error}",
+                &[("error", &format!("{error:#}"))],
+            )
+        });
 
         preview_restore?;
-        let rgba = readback
-            .map_err(|error| format!("Could not read the original photo for masking: {error:#}"))?;
+        let rgba = readback.map_err(|error| {
+            tr_fmt(
+                "Could not read the original photo for masking: {error}",
+                &[("error", &format!("{error:#}"))],
+            )
+        })?;
         MaskRgbImage::new(pipeline.width, pipeline.height, rgba)
-            .ok_or_else(|| "The canonical mask source has invalid dimensions.".to_owned())
+            .ok_or_else(|| tr("The canonical mask source has invalid dimensions.").to_owned())
     }
 
     pub(crate) fn capture_mask_source(&mut self, frame: &eframe::Frame) -> Result<(), String> {
@@ -99,18 +112,18 @@ impl CalibRawApp {
         } else {
             let render_state = frame
                 .wgpu_render_state()
-                .ok_or_else(|| "The GPU preview is not available.".to_owned())?;
+                .ok_or_else(|| tr("The GPU preview is not available.").to_owned())?;
             let program_template = self
                 .preview
                 .pipeline()
                 .map(RawGpuPipeline::program_template)
                 .or_else(|| self.preview.program_template.clone())
-                .ok_or_else(|| "Open an image before creating this mask.".to_owned())?;
+                .ok_or_else(|| tr("Open an image before creating this mask.").to_owned())?;
             let full_raw = self
                 .develop
                 .loaded_raw
                 .as_ref()
-                .ok_or_else(|| "The original photo is not available.".to_owned())?;
+                .ok_or_else(|| tr("The original photo is not available.").to_owned())?;
             let reference_exposure = self.develop.exposure.source_reference();
             if full_raw.uses_opposed_chroma(&reference_exposure) {
                 full_raw.inpaint_opposed_chroma_for_exposure(&reference_exposure);
@@ -149,8 +162,9 @@ impl CalibRawApp {
                     return Ok(());
                 }
                 Err(error) => {
-                    return Err(format!(
-                        "Could not prepare the original photo for masking: {error:#}"
+                    return Err(tr_fmt(
+                        "Could not prepare the original photo for masking: {error}",
+                        &[("error", &format!("{error:#}"))],
                     ));
                 }
             };
@@ -166,7 +180,10 @@ impl CalibRawApp {
                     ),
                 )
                 .map_err(|error| {
-                    format!("Could not apply Remove edits to the mask source: {error:#}")
+                    tr_fmt(
+                        "Could not apply Remove edits to the mask source: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    )
                 })?;
             let rgba = reference_pipeline
                 .read_output_region_blocking(
@@ -178,12 +195,15 @@ impl CalibRawApp {
                     reference_pipeline.height,
                 )
                 .map_err(|error| {
-                    format!("Could not read the original photo for masking: {error:#}")
+                    tr_fmt(
+                        "Could not read the original photo for masking: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    )
                 })?;
             let source =
                 MaskRgbImage::new(reference_pipeline.width, reference_pipeline.height, rgba)
                     .ok_or_else(|| {
-                        "The canonical mask source has invalid dimensions.".to_owned()
+                        tr("The canonical mask source has invalid dimensions.").to_owned()
                     })?;
             self.masks.source_cache = Some(source);
             Ok(())

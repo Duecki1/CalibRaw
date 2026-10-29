@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl LibraryState {
     pub(crate) fn folder(&self) -> Option<&Path> {
@@ -88,7 +89,7 @@ impl LibraryState {
         context: &egui::Context,
     ) {
         if self.file_action_in_progress() {
-            self.status = "Another library file action is still running.".to_owned();
+            self.status = tr("Another library file action is still running.").to_owned();
             return;
         }
 
@@ -115,7 +116,10 @@ impl LibraryState {
             });
         if let Err(error) = spawn {
             self.folder_operation_receiver = None;
-            self.status = format!("Could not start folder operation: {error}");
+            self.status = tr_fmt(
+                "Could not start folder operation: {error}",
+                &[("error", &error)],
+            );
         }
     }
 
@@ -129,7 +133,7 @@ impl LibraryState {
                 if let Some(parent) = path.parent() {
                     self.expanded_folders.insert(parent.to_path_buf());
                 }
-                self.status = format!("Created folder {}", path.display());
+                self.status = tr_fmt("Created folder {path}", &[("path", &path.display())]);
             }
             LibraryFolderOperationResult::Copied {
                 source,
@@ -138,7 +142,13 @@ impl LibraryState {
                 if let Some(parent) = destination.parent() {
                     self.expanded_folders.insert(parent.to_path_buf());
                 }
-                self.status = format!("Copied {} to {}", source.display(), destination.display());
+                self.status = tr_fmt(
+                    "Copied {source} to {destination}",
+                    &[
+                        ("source", &source.display()),
+                        ("destination", &destination.display()),
+                    ],
+                );
             }
             LibraryFolderOperationResult::Moved {
                 source,
@@ -173,7 +183,13 @@ impl LibraryState {
                         clipboard.path = destination.join(suffix);
                     }
                 }
-                self.status = format!("Moved {} to {}", source.display(), destination.display());
+                self.status = tr_fmt(
+                    "Moved {source} to {destination}",
+                    &[
+                        ("source", &source.display()),
+                        ("destination", &destination.display()),
+                    ],
+                );
             }
             LibraryFolderOperationResult::Deleted(path) => {
                 if let Some(folder) = self.folder.as_ref() {
@@ -201,7 +217,7 @@ impl LibraryState {
                 {
                     self.folder_clipboard = None;
                 }
-                self.status = format!("Deleted folder {}", path.display());
+                self.status = tr_fmt("Deleted folder {path}", &[("path", &path.display())]);
             }
         }
         self.refresh(context);
@@ -213,15 +229,15 @@ impl LibraryState {
         context: &egui::Context,
     ) {
         if self.file_action_in_progress() {
-            self.status = "Another library file action is still running.".to_owned();
+            self.status = tr("Another library file action is still running.").to_owned();
             return;
         }
         let Some(folder) = self.folder.clone() else {
-            self.status = "Open a library folder before dropping RAW files.".to_owned();
+            self.status = tr("Open a library folder before dropping RAW files.").to_owned();
             return;
         };
         let Some(root_folder) = self.root_folder.clone() else {
-            self.status = "Open a top-level library folder before dropping items.".to_owned();
+            self.status = tr("Open a top-level library folder before dropping items.").to_owned();
             return;
         };
         if source_paths.is_empty() {
@@ -231,11 +247,17 @@ impl LibraryState {
         let item_count = source_paths.len();
         let (sender, receiver) = mpsc::channel();
         self.raw_import_receiver = Some(receiver);
-        self.status = format!(
-            "Importing {item_count} dropped {} into {}…",
-            if item_count == 1 { "item" } else { "items" },
-            folder.display()
-        );
+        self.status = if item_count == 1 {
+            tr_fmt(
+                "Importing {item_count} dropped item into {folder}…",
+                &[("item_count", &item_count), ("folder", &folder.display())],
+            )
+        } else {
+            tr_fmt(
+                "Importing {item_count} dropped items into {folder}…",
+                &[("item_count", &item_count), ("folder", &folder.display())],
+            )
+        };
         let repaint = context.clone();
         let spawn = std::thread::Builder::new()
             .name("calibraw-library-drop-import".to_owned())
@@ -295,7 +317,7 @@ impl LibraryState {
             });
         if let Err(error) = spawn {
             self.raw_import_receiver = None;
-            self.status = format!("Could not start RAW import: {error}");
+            self.status = tr_fmt("Could not start RAW import: {error}", &[("error", &error)]);
         }
     }
 

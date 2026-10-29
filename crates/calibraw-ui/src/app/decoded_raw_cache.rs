@@ -18,6 +18,7 @@
 //! counts files, least recently used first out; entries still decoding are
 //! never evicted.
 
+use crate::i18n::tr;
 use crate::pipeline::{
     lensfun_catalog, CameraProfileMode, LensCorrection, LensfunCatalog, LoadedRaw,
 };
@@ -119,7 +120,9 @@ impl DecodedRaw {
                     request.profile.as_deref(),
                 )
                 .ok_or_else(|| {
-                    anyhow::anyhow!("the RAW was decoded without what this camera profile needs")
+                    anyhow::anyhow!(tr(
+                        "the RAW was decoded without what this camera profile needs"
+                    ))
                 })??;
             Arc::new(recolored)
         };

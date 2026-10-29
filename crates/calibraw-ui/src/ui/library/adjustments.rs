@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 pub(super) fn apply_library_adjustment_paste(
     app: &mut CalibRawApp,
@@ -9,7 +10,13 @@ pub(super) fn apply_library_adjustment_paste(
 ) {
     let total = assets.len();
     let outcome = app.paste_library_adjustments(&assets, mode, frame);
-    finish_library_edit_transfer(app, "Pasted adjustments to", total, outcome, context);
+    finish_library_edit_transfer(
+        app,
+        LibraryEditVerb::PastedAdjustments,
+        total,
+        outcome,
+        context,
+    );
 }
 
 /// Applies `preset_path` to `assets` and reports the result in the Library.
@@ -21,7 +28,7 @@ pub(super) fn apply_library_preset(
     frame: &eframe::Frame,
 ) {
     let Some(preset) = app.preset_at(preset_path).cloned() else {
-        app.library.status = "That preset no longer exists.".to_owned();
+        app.library.status = tr("That preset no longer exists.").to_owned();
         return;
     };
     let total = assets.len();
@@ -30,8 +37,8 @@ pub(super) fn apply_library_preset(
         crate::app::EditTransfer::Preset(&preset),
         frame,
     );
-    let verb = format!("Applied preset “{}” to", preset.name());
-    finish_library_edit_transfer(app, &verb, total, outcome, context);
+    let verb = LibraryEditVerb::AppliedPreset(preset.name().to_string());
+    finish_library_edit_transfer(app, verb, total, outcome, context);
 }
 
 /// Develops `assets` as film negatives, estimated when each is next decoded,
@@ -50,16 +57,108 @@ pub(super) fn apply_library_film(
         frame,
     );
     let verb = if film.is_positive() {
-        "Removed Film negative from"
+        LibraryEditVerb::RemovedFilmNegative
     } else {
-        "Applied Film negative to"
+        LibraryEditVerb::AppliedFilmNegative
     };
     finish_library_edit_transfer(app, verb, total, outcome, context);
 }
 
+/// The action a Library edit transfer reports, kept whole so every status
+/// sentence can be translated as one piece.
+enum LibraryEditVerb {
+    PastedAdjustments,
+    AppliedPreset(String),
+    RemovedFilmNegative,
+    AppliedFilmNegative,
+}
+
+/// The Library status after an edit transfer; `failures` are listed after the
+/// counts when any photo could not be changed.
+fn edit_transfer_status(
+    verb: &LibraryEditVerb,
+    completed: usize,
+    total: usize,
+    failures: &[String],
+) -> String {
+    if !failures.is_empty() {
+        let details = failures.join(" · ");
+        return match verb {
+            LibraryEditVerb::PastedAdjustments => tr_fmt(
+                "Pasted adjustments to {completed} of {total} selected images. {details}",
+                &[
+                    ("completed", &completed),
+                    ("total", &total),
+                    ("details", &details),
+                ],
+            ),
+            LibraryEditVerb::AppliedPreset(preset) => tr_fmt(
+                "Applied preset “{preset}” to {completed} of {total} selected images. {details}",
+                &[
+                    ("preset", preset),
+                    ("completed", &completed),
+                    ("total", &total),
+                    ("details", &details),
+                ],
+            ),
+            LibraryEditVerb::RemovedFilmNegative => tr_fmt(
+                "Removed Film negative from {completed} of {total} selected images. {details}",
+                &[
+                    ("completed", &completed),
+                    ("total", &total),
+                    ("details", &details),
+                ],
+            ),
+            LibraryEditVerb::AppliedFilmNegative => tr_fmt(
+                "Applied Film negative to {completed} of {total} selected images. {details}",
+                &[
+                    ("completed", &completed),
+                    ("total", &total),
+                    ("details", &details),
+                ],
+            ),
+        };
+    }
+    let one = completed == 1;
+    match (verb, one) {
+        (LibraryEditVerb::PastedAdjustments, true) => tr_fmt(
+            "Pasted adjustments to {completed} selected image",
+            &[("completed", &completed)],
+        ),
+        (LibraryEditVerb::PastedAdjustments, false) => tr_fmt(
+            "Pasted adjustments to {completed} selected images",
+            &[("completed", &completed)],
+        ),
+        (LibraryEditVerb::AppliedPreset(preset), true) => tr_fmt(
+            "Applied preset “{preset}” to {completed} selected image",
+            &[("preset", preset), ("completed", &completed)],
+        ),
+        (LibraryEditVerb::AppliedPreset(preset), false) => tr_fmt(
+            "Applied preset “{preset}” to {completed} selected images",
+            &[("preset", preset), ("completed", &completed)],
+        ),
+        (LibraryEditVerb::RemovedFilmNegative, true) => tr_fmt(
+            "Removed Film negative from {completed} selected image",
+            &[("completed", &completed)],
+        ),
+        (LibraryEditVerb::RemovedFilmNegative, false) => tr_fmt(
+            "Removed Film negative from {completed} selected images",
+            &[("completed", &completed)],
+        ),
+        (LibraryEditVerb::AppliedFilmNegative, true) => tr_fmt(
+            "Applied Film negative to {completed} selected image",
+            &[("completed", &completed)],
+        ),
+        (LibraryEditVerb::AppliedFilmNegative, false) => tr_fmt(
+            "Applied Film negative to {completed} selected images",
+            &[("completed", &completed)],
+        ),
+    }
+}
+
 fn finish_library_edit_transfer(
     app: &mut CalibRawApp,
-    verb: &str,
+    verb: LibraryEditVerb,
     total: usize,
     outcome: crate::app::LibraryEditTransferOutcome,
     context: &egui::Context,
@@ -71,17 +170,7 @@ fn finish_library_edit_transfer(
     } = outcome;
     app.library.clear_selection();
     app.library.refresh(context);
-    app.library.status = if failures.is_empty() {
-        format!(
-            "{verb} {completed} selected {}",
-            if completed == 1 { "image" } else { "images" }
-        )
-    } else {
-        format!(
-            "{verb} {completed} of {total} selected images. {}",
-            failures.join(" · ")
-        )
-    };
+    app.library.status = edit_transfer_status(&verb, completed, total, &failures);
     app.library.ai_mask_refresh_prompt =
         (!ai_refresh.is_empty()).then_some(LibraryAiMaskRefreshPrompt { assets: ai_refresh });
 }

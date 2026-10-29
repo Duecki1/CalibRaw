@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::FilmSettlement;
 
 use super::export::run_export_item;
@@ -109,7 +110,12 @@ fn spawn_desktop_library_batch_export(
                     let error = (!cancelled)
                         .then(|| item_result.err())
                         .flatten()
-                        .map(|error| format!("{}: {error}", job.source.display()));
+                        .map(|error| {
+                            tr_fmt(
+                                "{source}: {error}",
+                                &[("source", &job.source.display()), ("error", &error)],
+                            )
+                        });
                     let _ = worker_sender.send(LibraryBatchExportEvent::ItemFinished { error });
                     repaint.request_repaint();
                 }
@@ -128,7 +134,10 @@ fn spawn_desktop_library_batch_export(
     if let Err(error) = spawn_result {
         let _ = sender.send(LibraryBatchExportEvent::Finished {
             cancelled: false,
-            error: Some(format!("could not start batch export worker: {error}")),
+            error: Some(tr_fmt(
+                "could not start batch export worker: {error}",
+                &[("error", &error)],
+            )),
         });
     }
     receiver
@@ -189,7 +198,7 @@ fn prepare_desktop_library_export_item(
     let original_raw = {
         let _decode_guard = decode_gate
             .write()
-            .map_err(|_| "RAW decode gate was poisoned".to_owned())?;
+            .map_err(|_| tr("RAW decode gate was poisoned").to_owned())?;
         load_raw_file_with_profile_selection(
             &job.source,
             camera_profile_mode,
@@ -197,7 +206,15 @@ fn prepare_desktop_library_export_item(
             requested_camera_profile.as_deref(),
         )
         .map(Arc::new)
-        .map_err(|error| format!("{}: RAW decode failed: {error:#}", job.source.display()))?
+        .map_err(|error| {
+            tr_fmt(
+                "{source}: RAW decode failed: {error}",
+                &[
+                    ("source", &job.source.display()),
+                    ("error", &format!("{error:#}")),
+                ],
+            )
+        })?
     };
     if use_adaptive_detail_defaults {
         original_raw.apply_adaptive_detail_defaults(&mut edits.exposure);
@@ -208,7 +225,12 @@ fn prepare_desktop_library_export_item(
         .as_ref()
         .map(|look| crate::app::luts::resolve_look_for_export(context.luts.as_ref(), look))
         .transpose()
-        .map_err(|error| format!("{}: {error}", job.source.display()))?;
+        .map_err(|error| {
+            tr_fmt(
+                "{source}: {error}",
+                &[("source", &job.source.display()), ("error", &error)],
+            )
+        })?;
 
     if cancellation.load(Ordering::Acquire) {
         return Err("batch export cancelled".to_owned());
@@ -217,9 +239,12 @@ fn prepare_desktop_library_export_item(
     let raw = match edits.lens.requested_correction(&original_raw) {
         Some(correction) => Arc::new(apply_lens_correction(&original_raw, &correction).map_err(
             |error| {
-                format!(
-                    "{}: lens correction failed: {error:#}",
-                    job.source.display()
+                tr_fmt(
+                    "{source}: lens correction failed: {error}",
+                    &[
+                        ("source", &job.source.display()),
+                        ("error", &format!("{error:#}")),
+                    ],
                 )
             },
         )?),
@@ -228,9 +253,9 @@ fn prepare_desktop_library_export_item(
     // A film negative the Library marked exports as its estimate, as opening
     // the photo would settle it.
     if edits.exposure.settle_film(&raw, edits.geometry) == FilmSettlement::NotFound {
-        return Err(format!(
-            "{}: no film negative was found to invert",
-            job.source.display()
+        return Err(tr_fmt(
+            "{source}: no film negative was found to invert",
+            &[("source", &job.source.display())],
         ));
     }
 
@@ -256,22 +281,28 @@ fn prepare_desktop_library_export_item(
             PipelineOptions::new(ProcessingQuality::Preview),
         )
         .map_err(|error| {
-            format!(
-                "{}: range-mask source setup failed: {error:#}",
-                job.source.display()
+            tr_fmt(
+                "{source}: range-mask source setup failed: {error}",
+                &[
+                    ("source", &job.source.display()),
+                    ("error", &format!("{error:#}")),
+                ],
             )
         })?;
         pipeline.recompute(queue, device, &neutral_params);
         let rgba = pipeline
             .read_output_region_blocking(device, queue, 0, 0, source_raw.width, source_raw.height)
             .map_err(|error| {
-                format!(
-                    "{}: range-mask source readback failed: {error:#}",
-                    job.source.display()
+                tr_fmt(
+                    "{source}: range-mask source readback failed: {error}",
+                    &[
+                        ("source", &job.source.display()),
+                        ("error", &format!("{error:#}")),
+                    ],
                 )
             })?;
         let source = MaskRgbImage::new(source_raw.width, source_raw.height, rgba)
-            .ok_or_else(|| "range-mask source dimensions are invalid".to_owned())?;
+            .ok_or_else(|| tr("range-mask source dimensions are invalid").to_owned())?;
         install_missing_range_sources(&mut masks, &source);
     }
 
@@ -357,7 +388,7 @@ impl CalibRawApp {
             if self.export.task.is_some() {
                 self.report_error(
                     ErrorKind::ExportUnavailable,
-                    "An export is already running.".to_owned(),
+                    tr("An export is already running.").to_owned(),
                 );
             }
             return;
@@ -397,7 +428,7 @@ impl CalibRawApp {
         if self.ui.active_tab == AppTab::Develop {
             if let Some(task) = self.export.task.as_mut() {
                 if task.kind == ExportTaskKind::LibraryBatch {
-                    task.phase = "Paused while Develop is in use".to_owned();
+                    task.phase = tr("Paused while Develop is in use").to_owned();
                 }
             }
             return;
@@ -429,7 +460,10 @@ impl CalibRawApp {
             };
 
             if let Some(task) = self.export.task.as_mut() {
-                task.phase = format!("Opening {}…", target.display_name());
+                task.phase = tr_fmt(
+                    "Opening {display_name}…",
+                    &[("display_name", &target.display_name())],
+                );
                 task.completed_tiles = 0;
                 task.total_tiles = 0;
             }
@@ -442,7 +476,10 @@ impl CalibRawApp {
                     self.export.android_batch_load_pending = true;
                     self.android.picker_pending = true;
                     self.ui.notice = None;
-                    self.ui.status = format!("Opening {display_name}…");
+                    self.ui.status = tr_fmt(
+                        "Opening {display_name}…",
+                        &[("display_name", &display_name)],
+                    );
                     // Batch export owns this background transition; activating
                     // interactively could cancel unrelated AI work.
                     self.ui.active_tab = AppTab::Library;
@@ -451,7 +488,10 @@ impl CalibRawApp {
                 Err(error) => {
                     self.export.android_batch_load_pending = false;
                     if let Some(batch) = self.export.batch.as_mut() {
-                        batch.failures.push(format!("{display_name}: {error}"));
+                        batch.failures.push(tr_fmt(
+                            "{display_name}: {error}",
+                            &[("display_name", &display_name), ("error", &error)],
+                        ));
                         batch.completed += 1;
                         batch.current = None;
                     }
@@ -486,7 +526,9 @@ impl CalibRawApp {
             let name = current.display_name().to_owned();
             if let Some(batch) = self.export.batch.as_mut() {
                 if !batch.cancel_requested {
-                    batch.failures.push(format!("{name}: photo load failed"));
+                    batch
+                        .failures
+                        .push(tr_fmt("{name}: photo load failed", &[("name", &name)]));
                     batch.completed += 1;
                 }
                 batch.current = None;
@@ -502,8 +544,9 @@ impl CalibRawApp {
         self.export.settings = settings;
         let original_name = super::export::export_source_stem(None, Some(&display_name));
         let Some(raw) = self.develop.loaded_raw.as_deref() else {
-            self.complete_android_library_batch_export_item(Err(format!(
-                "{display_name}: loaded photo data is unavailable"
+            self.complete_android_library_batch_export_item(Err(tr_fmt(
+                "{display_name}: loaded photo data is unavailable",
+                &[("display_name", &display_name)],
             )));
             return;
         };
@@ -525,8 +568,9 @@ impl CalibRawApp {
             match self.prepare_android_export_destination(gallery_name, cache_file_name, format) {
                 Ok(destination) => destination,
                 Err(error) => {
-                    self.complete_android_library_batch_export_item(Err(format!(
-                        "{display_name}: {error}"
+                    self.complete_android_library_batch_export_item(Err(tr_fmt(
+                        "{display_name}: {error}",
+                        &[("display_name", &display_name), ("error", &error)],
                     )));
                     return;
                 }
@@ -559,9 +603,10 @@ impl CalibRawApp {
         self.ui.active_tab = AppTab::Library;
         if !started {
             self.cancel_android_export_destination(&cleanup);
-            let error = start_error.unwrap_or_else(|| "could not start export".to_owned());
-            self.complete_android_library_batch_export_item(Err(format!(
-                "{display_name}: {error}"
+            let error = start_error.unwrap_or_else(|| tr("could not start export").to_owned());
+            self.complete_android_library_batch_export_item(Err(tr_fmt(
+                "{display_name}: {error}",
+                &[("display_name", &display_name), ("error", &error)],
             )));
         }
     }
@@ -575,14 +620,14 @@ impl CalibRawApp {
                 .current
                 .as_ref()
                 .map(LibraryBatchExportJob::display_name)
-                .unwrap_or_else(|| "image".to_owned());
+                .unwrap_or_else(|| tr("image").to_owned());
             match result {
                 Ok(()) => batch.completed += 1,
                 Err(error) if !batch.cancel_requested => {
                     batch.failures.push(if error.starts_with(&name) {
                         error
                     } else {
-                        format!("{name}: {error}")
+                        tr_fmt("{name}: {error}", &[("name", &name), ("error", &error)])
                     });
                     batch.completed += 1;
                 }
@@ -596,7 +641,7 @@ impl CalibRawApp {
                 task.destination = None;
                 task.completed_tiles = 0;
                 task.total_tiles = 0;
-                task.phase = "Preparing next image…".to_owned();
+                task.phase = tr("Preparing next image…").to_owned();
             }
         }
         self.update_library_batch_export_progress();
@@ -639,37 +684,50 @@ impl CalibRawApp {
             return;
         };
         let succeeded = batch.completed.saturating_sub(batch.failures.len());
-        let mut message = if batch.cancel_requested {
-            format!(
-                "Batch export cancelled after {succeeded} of {} images exported.",
-                batch.total
+        let failure_count = batch.failures.len();
+        let failures = batch.failures.join(" · ");
+        let message = if batch.cancel_requested && !batch.failures.is_empty() {
+            tr_fmt(
+                "Batch export cancelled after {succeeded} of {total} images exported. {failure_count} failed. {failures}",
+                &[
+                    ("succeeded", &succeeded),
+                    ("total", &batch.total),
+                    ("failure_count", &failure_count),
+                    ("failures", &failures),
+                ],
+            )
+        } else if batch.cancel_requested {
+            tr_fmt(
+                "Batch export cancelled after {succeeded} of {total} images exported.",
+                &[("succeeded", &succeeded), ("total", &batch.total)],
             )
         } else if batch.failures.is_empty() {
-            if self.caps().has_media_library() {
-                format!(
-                    "Exported {succeeded} {} to Pictures/CalibRaw.",
-                    if succeeded == 1 { "image" } else { "images" }
-                )
-            } else {
-                format!(
-                    "Exported {succeeded} {}.",
-                    if succeeded == 1 { "image" } else { "images" }
-                )
+            match (self.caps().has_media_library(), succeeded == 1) {
+                (true, true) => tr_fmt(
+                    "Exported {succeeded} image to Pictures/CalibRaw.",
+                    &[("succeeded", &succeeded)],
+                ),
+                (true, false) => tr_fmt(
+                    "Exported {succeeded} images to Pictures/CalibRaw.",
+                    &[("succeeded", &succeeded)],
+                ),
+                (false, true) => {
+                    tr_fmt("Exported {succeeded} image.", &[("succeeded", &succeeded)])
+                }
+                (false, false) => {
+                    tr_fmt("Exported {succeeded} images.", &[("succeeded", &succeeded)])
+                }
             }
         } else {
-            format!(
-                "Exported {succeeded} of {} images. {}",
-                batch.total,
-                batch.failures.join(" · ")
+            tr_fmt(
+                "Exported {succeeded} of {total} images. {failures}",
+                &[
+                    ("succeeded", &succeeded),
+                    ("total", &batch.total),
+                    ("failures", &failures),
+                ],
             )
         };
-        if batch.cancel_requested && !batch.failures.is_empty() {
-            message.push_str(&format!(
-                " {} failed. {}",
-                batch.failures.len(),
-                batch.failures.join(" · ")
-            ));
-        }
         if batch.failures.is_empty() {
             self.ui.notice = Some(message);
         } else {
@@ -691,13 +749,16 @@ impl CalibRawApp {
             if self.export.task.is_some() {
                 self.report_error(
                     ErrorKind::ExportUnavailable,
-                    "An export is already running.".to_owned(),
+                    tr("An export is already running.").to_owned(),
                 );
             }
             return;
         }
         let Some(render_state) = frame.wgpu_render_state() else {
-            self.report_error(ErrorKind::BatchExport, "Export requires the wgpu renderer.");
+            self.report_error(
+                ErrorKind::BatchExport,
+                tr("Export requires the wgpu renderer."),
+            );
             return;
         };
         let pending = jobs
@@ -766,12 +827,18 @@ impl CalibRawApp {
             }
             match result {
                 crate::platform::ExportPublishResult::Published(published) => {
-                    self.ui.notice = Some(format!("Exported to {}", published.location));
+                    self.ui.notice = Some(tr_fmt(
+                        "Exported to {location}",
+                        &[("location", &published.location)],
+                    ));
                     self.share_finished_export(&published);
                 }
                 crate::platform::ExportPublishResult::Failed(error) => {
                     self.export.share_mime_type = None;
-                    self.report_error(ErrorKind::Export, format!("Export failed: {error}"));
+                    self.report_error(
+                        ErrorKind::Export,
+                        tr_fmt("Export failed: {error}", &[("error", &error)]),
+                    );
                 }
             }
             self.export.task = None;
@@ -802,7 +869,7 @@ impl CalibRawApp {
                     if let Some(task) = self.export.task.as_mut() {
                         task.completed_tiles = 0;
                         task.total_tiles = 0;
-                        task.phase = "Rendering image…".to_owned();
+                        task.phase = tr("Rendering image…").to_owned();
                     }
                     self.update_library_batch_export_progress();
                 }
@@ -813,7 +880,7 @@ impl CalibRawApp {
                     if let Some(task) = self.export.task.as_mut() {
                         task.completed_tiles = completed_tiles;
                         task.total_tiles = total_tiles;
-                        task.phase = "Rendering image…".to_owned();
+                        task.phase = tr("Rendering image…").to_owned();
                     }
                     self.update_library_batch_export_progress();
                 }
@@ -828,7 +895,7 @@ impl CalibRawApp {
                     if let Some(task) = self.export.task.as_mut() {
                         task.completed_tiles = 0;
                         task.total_tiles = 0;
-                        task.phase = "Preparing next image…".to_owned();
+                        task.phase = tr("Preparing next image…").to_owned();
                     }
                     self.update_library_batch_export_progress();
                 }
@@ -848,7 +915,7 @@ impl CalibRawApp {
             if let Some(batch) = self.export.batch.as_mut() {
                 batch
                     .failures
-                    .push("Batch export worker stopped unexpectedly.".to_owned());
+                    .push(tr("Batch export worker stopped unexpectedly.").to_owned());
             }
             finished = true;
         }

@@ -1,5 +1,6 @@
 //! Persisted appearance settings.
 
+use crate::i18n::tr;
 use eframe::egui::Color32;
 use serde::{Deserialize, Serialize};
 
@@ -77,13 +78,13 @@ impl PreviewBackdrop {
         Self::White,
     ];
 
-    pub(crate) const fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Black => "Black",
-            Self::DarkGrey => "Dark grey",
-            Self::LightGrey => "Light grey",
-            Self::White => "White",
-            Self::MatchPhoto => "Match photo",
+            Self::Black => tr("Black"),
+            Self::DarkGrey => tr("Dark grey"),
+            Self::LightGrey => tr("Light grey"),
+            Self::White => tr("White"),
+            Self::MatchPhoto => tr("Match photo"),
         }
     }
 

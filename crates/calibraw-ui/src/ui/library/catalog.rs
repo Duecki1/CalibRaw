@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 /// Rows with enough images shrink to fit the viewport. Sparse rows retain the
 /// selected thumbnail height rather than enlarging their images to fill space.
@@ -19,12 +20,20 @@ pub(super) fn send_scan_failure(
 pub(super) fn catalog_status(warning_count: usize, truncated: bool) -> String {
     let mut notices = Vec::new();
     if truncated {
-        notices.push(format!("Newest {MAX_LIBRARY_FILES} photos shown"));
+        notices.push(tr_fmt(
+            "Newest {max} photos shown",
+            &[("max", &MAX_LIBRARY_FILES)],
+        ));
     }
-    if warning_count > 0 {
-        notices.push(format!(
-            "{warning_count} unreadable {}",
-            if warning_count == 1 { "item" } else { "items" }
+    if warning_count == 1 {
+        notices.push(tr_fmt(
+            "{count} unreadable item",
+            &[("count", &warning_count)],
+        ));
+    } else if warning_count > 1 {
+        notices.push(tr_fmt(
+            "{count} unreadable items",
+            &[("count", &warning_count)],
         ));
     }
     notices.join(" · ")
@@ -366,9 +375,9 @@ pub(super) fn thumbnail_tile(
             image_rect.center(),
             Align2::CENTER_CENTER,
             if entry.thumbnail_error.is_some() {
-                "Retrying preview…"
+                tr("Retrying preview…")
             } else if entry.thumbnail_queued {
-                "Loading preview…"
+                tr("Loading preview…")
             } else {
                 rendered_format_label(&entry.asset.display_name).unwrap_or("RAW")
             },
@@ -551,7 +560,10 @@ pub(super) fn thumbnail_check_circle(
             egui::WidgetType::Checkbox,
             true,
             selected,
-            format!("Select {}", entry.asset.display_name),
+            tr_fmt(
+                "Select {display_name}",
+                &[("display_name", &entry.asset.display_name)],
+            ),
         )
     });
     let radius = CHECK_EDGE * 0.5;
@@ -580,8 +592,8 @@ pub(super) fn thumbnail_check_circle(
     }
 
     response.on_hover_text(if selected {
-        "Deselect photo"
+        tr("Deselect photo")
     } else {
-        "Select photo"
+        tr("Select photo")
     })
 }

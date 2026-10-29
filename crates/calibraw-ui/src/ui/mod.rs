@@ -16,6 +16,8 @@ pub(crate) mod theme;
 pub(crate) mod tips;
 pub(crate) mod top_bar;
 
+use crate::i18n::{tr, tr_fmt};
+
 /// The native “save as” picker, where storage is folders. Native paths receive a supported extension when needed;
 /// Flatpak paths keep the exact filename granted by the document portal.
 pub(crate) fn choose_save_path(
@@ -80,7 +82,7 @@ pub(crate) fn choose_export_file_path(
     initial_directory: Option<&std::path::Path>,
 ) -> Option<std::path::PathBuf> {
     choose_save_path(
-        format!("{} image", format.label()),
+        tr_fmt("{format} image", &[("format", &format.label())]),
         format.extensions(),
         default_name,
         initial_directory,
@@ -93,7 +95,7 @@ pub(crate) fn choose_edit_replay_file_path(
     initial_directory: Option<&std::path::Path>,
 ) -> Option<std::path::PathBuf> {
     choose_save_path(
-        "MP4 video".to_string(),
+        tr("MP4 video").to_owned(),
         MP4_EXTENSIONS,
         default_name,
         initial_directory,
@@ -116,7 +118,7 @@ pub(crate) fn android_overflow_menu<R>(
         id,
         edge,
         egui_phosphor::regular::DOTS_THREE_VERTICAL,
-        "More actions",
+        tr("More actions"),
         add_contents,
     )
 }

@@ -1,5 +1,6 @@
 use super::super::*;
 use super::brush::{sample_brush_stroke, STANDARD_BRUSH_MINIMUM_SPACING_FRACTION};
+use crate::i18n::tr;
 
 impl Preview {
     pub(in crate::ui::preview) fn handle_inpaint_interaction(
@@ -75,7 +76,7 @@ impl Preview {
         if primary_down {
             if app.inpaint.tool.retouch().is_some() && app.inpaint.source_point.is_none() {
                 app.ui.notice = Some(
-                    "Set a clone/heal source first with Ctrl-click (Command-click on macOS) or right-click."
+                    tr("Set a clone/heal source first with Ctrl-click (Command-click on macOS) or right-click.")
                         .to_owned(),
                 );
                 app.inpaint.last_brush_uv = None;

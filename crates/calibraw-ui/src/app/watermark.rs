@@ -8,6 +8,7 @@
 //! part of any photo's edit.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::performance_settings::SavedWatermark;
 use crate::pipeline::{ExportSettings, ExportWatermark, WatermarkImage, WatermarkPlacement};
 
@@ -161,7 +162,7 @@ impl CalibRawApp {
                 return;
             }
             let dialog = crate::platform::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "tif", "tiff"]);
+                .add_filter(tr("Images"), &["png", "jpg", "jpeg", "tif", "tiff"]);
             self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
                 DesktopPickerEvent::WatermarkImage(dialog.pick_file_on_worker())
             }));
@@ -213,7 +214,7 @@ impl CalibRawApp {
                 Err(mpsc::TryRecvError::Empty) => None,
                 Err(mpsc::TryRecvError::Disconnected) => Some((
                     pending.source,
-                    Err("the watermark worker stopped unexpectedly".to_owned()),
+                    Err(tr("the watermark worker stopped unexpectedly").to_owned()),
                 )),
             }
         });
@@ -257,7 +258,10 @@ impl CalibRawApp {
                 }
                 self.report_error(
                     ErrorKind::Watermark,
-                    format!("Could not load the watermark image: {error}"),
+                    tr_fmt(
+                        "Could not load the watermark image: {error}",
+                        &[("error", &error)],
+                    ),
                 );
             }
         }
@@ -274,10 +278,15 @@ impl CalibRawApp {
 /// The file a platform picker staged in `folder`.
 fn staged_image(folder: &Path) -> Result<PathBuf, String> {
     std::fs::read_dir(folder)
-        .map_err(|error| format!("could not read the picked image: {error}"))?
+        .map_err(|error| {
+            tr_fmt(
+                "could not read the picked image: {error}",
+                &[("error", &error)],
+            )
+        })?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .find(|path| path.is_file())
-        .ok_or_else(|| "the picked image could not be read".to_owned())
+        .ok_or_else(|| tr("the picked image could not be read").to_owned())
 }
 
 fn read_watermark(path: &Path) -> WatermarkLoad {
@@ -285,9 +294,9 @@ fn read_watermark(path: &Path) -> WatermarkLoad {
         .map_err(|error| format!("{}: {error}", path.display()))?
         .len();
     if size > MAX_WATERMARK_FILE_BYTES {
-        return Err(format!(
-            "the image is larger than {} MB",
-            MAX_WATERMARK_FILE_BYTES / (1024 * 1024)
+        return Err(tr_fmt(
+            "the image is larger than {megabytes} MB",
+            &[("megabytes", &(MAX_WATERMARK_FILE_BYTES / (1024 * 1024)))],
         ));
     }
     let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -310,9 +319,18 @@ fn import_watermark(source: &Path, destination: Option<&Path>) -> WatermarkLoad 
                 image.height(),
                 image::ExtendedColorType::Rgba8,
             )
-            .map_err(|error| format!("could not encode the watermark: {error}"))?;
-        calibraw_core::file_ops::write_bytes_atomically(destination, &png)
-            .map_err(|error| format!("could not save the watermark: {error}"))?;
+            .map_err(|error| {
+                tr_fmt(
+                    "could not encode the watermark: {error}",
+                    &[("error", &error)],
+                )
+            })?;
+        calibraw_core::file_ops::write_bytes_atomically(destination, &png).map_err(|error| {
+            tr_fmt(
+                "could not save the watermark: {error}",
+                &[("error", &error)],
+            )
+        })?;
     }
     Ok(image)
 }

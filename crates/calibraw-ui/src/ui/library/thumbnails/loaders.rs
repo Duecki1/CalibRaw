@@ -1,13 +1,14 @@
 //! Loading thumbnails and reference previews from desktop files and Android documents.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 pub(crate) fn load_desktop_reference_preview(
     path: &Path,
     maximum_edge: u32,
 ) -> Result<RawThumbnail, String> {
     if maximum_edge == 0 {
-        return Err("reference preview edge must be non-zero".to_owned());
+        return Err(tr("reference preview edge must be non-zero").to_owned());
     }
 
     match render_uncached_developed_thumbnail(path, maximum_edge) {
@@ -21,8 +22,12 @@ pub(crate) fn load_desktop_reference_preview(
         }
     }
 
-    load_raw_thumbnail(path, maximum_edge)
-        .map_err(|error| format!("could not render reference preview: {error:#}"))
+    load_raw_thumbnail(path, maximum_edge).map_err(|error| {
+        tr_fmt(
+            "could not render reference preview: {error}",
+            &[("error", &format!("{:#}", error))],
+        )
+    })
 }
 
 pub(crate) fn load_desktop_cached_thumbnail(
@@ -47,7 +52,7 @@ pub(in crate::ui::library) fn load_desktop_library_thumbnail(
     deferred_metadata: &DeferredDisplayMetadata,
 ) -> Result<LoadedLibraryThumbnail, String> {
     let Some(path) = asset.desktop_path() else {
-        return Err("invalid desktop thumbnail request".to_owned());
+        return Err(tr("invalid desktop thumbnail request").to_owned());
     };
     match stage {
         ThumbnailLoadStage::RawPreview => {
@@ -78,9 +83,9 @@ pub(in crate::ui::library) fn load_desktop_library_thumbnail(
                 Ok(None) => {
                     load_desktop_raw_library_thumbnail(path, false, false, deferred_metadata)
                 }
-                Err(error) => Err(format!(
-                    "could not render the edited RAW thumbnail for {}: {error}",
-                    path.display()
+                Err(error) => Err(tr_fmt(
+                    "could not render the edited RAW thumbnail for {path}: {error}",
+                    &[("path", &path.display()), ("error", &error)],
                 )),
             }
         }
@@ -114,12 +119,21 @@ fn load_desktop_raw_library_thumbnail(
                 let (thumbnail, display_metadata) = if deferred_metadata.is_pending(path) {
                     let (thumbnail, metadata) =
                         load_raw_thumbnail_with_display_metadata(path, THUMBNAIL_EDGE).map_err(
-                            |error| format!("could not render a RAW preview: {error:#}"),
+                            |error| {
+                                tr_fmt(
+                                    "could not render a RAW preview: {error}",
+                                    &[("error", &format!("{:#}", error))],
+                                )
+                            },
                         )?;
                     (thumbnail, deferred_metadata.complete(path, metadata))
                 } else {
-                    let thumbnail = load_raw_thumbnail(path, THUMBNAIL_EDGE)
-                        .map_err(|error| format!("could not render a RAW preview: {error:#}"))?;
+                    let thumbnail = load_raw_thumbnail(path, THUMBNAIL_EDGE).map_err(|error| {
+                        tr_fmt(
+                            "could not render a RAW preview: {error}",
+                            &[("error", &format!("{:#}", error))],
+                        )
+                    })?;
                     (thumbnail, None)
                 };
                 if let Err(error) =
@@ -152,7 +166,7 @@ pub(in crate::ui::library) fn load_android_library_thumbnail(
     _render_edited_thumbnails_during_indexing: bool,
 ) -> Result<LoadedLibraryThumbnail, String> {
     let Some(uri) = asset.android_uri() else {
-        return Err("invalid Android thumbnail request".to_owned());
+        return Err(tr("invalid Android thumbnail request").to_owned());
     };
     let display_name = asset.display_name.as_str();
     let bytes = asset.metadata.bytes;

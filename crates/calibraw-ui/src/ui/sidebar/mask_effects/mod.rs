@@ -18,6 +18,7 @@ pub(super) mod smoke;
 pub(super) mod tilt_shift;
 pub(super) mod vignette;
 
+use crate::i18n::{tr, tr_fmt};
 pub(crate) use controls::EffectFrame;
 use controls::{effect_details, effect_position, image_lights_toggle, pattern_seed, PositionSpace};
 pub(super) use picker::{
@@ -43,7 +44,7 @@ where
 {
     let body = |ui: &mut Ui, settings: &mut Settings| {
         if effect.is_experimental() {
-            ui.weak("Experimental");
+            ui.weak(tr("Experimental"));
         }
         body(ui, settings)
     };
@@ -85,14 +86,14 @@ where
                                 ui,
                                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                 size,
-                                &format!("Reset {}", effect.label()),
+                                &tr_fmt("Reset {title}", &[("title", &tr(effect.label()))]),
                             );
                             reset = reset_button.clicked();
                             let remove_button = moduwu_design::ghost_icon_button(
                                 ui,
                                 egui_phosphor::regular::TRASH,
                                 size,
-                                &format!("Remove {}", effect.label()),
+                                &tr_fmt("Remove {title}", &[("title", &tr(effect.label()))]),
                             );
                             *remove = remove_button.clicked();
                             let icon = if *enabled {
@@ -105,11 +106,11 @@ where
                                 icon,
                                 !*enabled,
                                 size,
-                                &format!(
-                                    "{} {}",
-                                    if *enabled { "Hide" } else { "Show" },
-                                    effect.label()
-                                ),
+                                &if *enabled {
+                                    tr_fmt("Hide {title}", &[("title", &tr(effect.label()))])
+                                } else {
+                                    tr_fmt("Show {title}", &[("title", &tr(effect.label()))])
+                                },
                             );
                             if visibility_button.clicked() {
                                 *enabled = !*enabled;
@@ -226,21 +227,30 @@ fn add_effect_buttons(
             let present = components
                 .iter()
                 .any(|component| component.effect == effect);
-            let label = format!("{}  {}", egui_phosphor::regular::PLUS, effect.label());
+            let label = format!("{}  {}", egui_phosphor::regular::PLUS, tr(effect.label()));
             let response = ui
                 .add_enabled_ui(!present && !full, |ui| {
                     moduwu_design::full_width_button(ui, label)
                 })
                 .inner
                 .on_hover_text(if effect.is_experimental() {
-                    format!("Add {} (experimental)", effect.label())
+                    tr_fmt(
+                        "Add {effect} (experimental)",
+                        &[("effect", &tr(effect.label()))],
+                    )
                 } else {
-                    format!("Add {}", effect.label())
+                    tr_fmt("Add {effect}", &[("effect", &tr(effect.label()))])
                 })
                 .on_disabled_hover_text(if present {
-                    format!("{} is already added", effect.label())
+                    tr_fmt(
+                        "{effect} is already added",
+                        &[("effect", &tr(effect.label()))],
+                    )
                 } else {
-                    format!("At most {MAX_EFFECT_COMPONENTS} effects can be added")
+                    tr_fmt(
+                        "At most {max} effects can be added",
+                        &[("max", &MAX_EFFECT_COMPONENTS)],
+                    )
                 });
             if response.clicked() {
                 added = Some(effect);
@@ -254,55 +264,55 @@ fn add_effect_buttons(
 pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
     match effect {
         MaskEffect::Blur => Some(
-            "Soften distracting detail. The mask controls where the blurred image is blended in.",
+            tr("Soften distracting detail. The mask controls where the blurred image is blended in."),
         ),
         MaskEffect::LensBlur => Some(
-            "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.",
+            tr("Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition."),
         ),
         MaskEffect::MotionBlur => Some(
-            "Add directional movement. Distance sets the trail length; the mask controls where the blur appears.",
+            tr("Add directional movement. Distance sets the trail length; the mask controls where the blur appears."),
         ),
         MaskEffect::RadialBlur => Some(
-            "Zoom toward a center or spin around it. Position is relative to the full image; the mask controls the blend.",
+            tr("Zoom toward a center or spin around it. Position is relative to the full image; the mask controls the blend."),
         ),
         MaskEffect::TiltShift => Some(
-            "Keep a band in focus and soften its surroundings. Position is relative to the full image. Use a Fullscreen mask for an uninterrupted focus transition.",
+            tr("Keep a band in focus and soften its surroundings. Position is relative to the full image. Use a Fullscreen mask for an uninterrupted focus transition."),
         ),
         MaskEffect::Sharpen => Some(
-            "Sharpen fine detail inside the mask with its own radius, detail and masking. It adds to the Detail card's sharpening.",
+            tr("Sharpen fine detail inside the mask with its own radius, detail and masking. It adds to the Detail card's sharpening."),
         ),
         MaskEffect::EdgeGlow => Some(
-            "Light up image contours with a soft halo. Both the outlines and their glow stay inside the mask.",
+            tr("Light up image contours with a soft halo. Both the outlines and their glow stay inside the mask."),
         ),
         MaskEffect::Glow => Some(
-            "Spread colored light from bright pixels. The mask selects the highlights that emit light; their glow can extend beyond the selection.",
+            tr("Spread colored light from bright pixels. The mask selects the highlights that emit light; their glow can extend beyond the selection."),
         ),
         MaskEffect::LightRays => Some(
-            "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.",
+            tr("Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them."),
         ),
         MaskEffect::Relight => Some(
-            "Add a light that shapes the scene in depth. Position it like Light Rays; scene depth is generated automatically. Turn on Shadows to let nearer objects block the light. The sky and anything the depth map places at its far limit stay unlit. The mask controls where the light falls.",
+            tr("Add a light that shapes the scene in depth. Position it like Light Rays; scene depth is generated automatically. Turn on Shadows to let nearer objects block the light. The sky and anything the depth map places at its far limit stay unlit. The mask controls where the light falls."),
         ),
         MaskEffect::Neon => Some(
-            "Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask.",
+            tr("Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask."),
         ),
         MaskEffect::Pixelate => Some(
-            "Create a graphic mosaic. Block size sets the tile scale; the mask controls where the result appears.",
+            tr("Create a graphic mosaic. Block size sets the tile scale; the mask controls where the result appears."),
         ),
         MaskEffect::Fog => Some(
-            "Add atmospheric haze through the mask. Scene depth builds fog with distance; turn it off for an even-distance veil.",
+            tr("Add atmospheric haze through the mask. Scene depth builds fog with distance; turn it off for an even-distance veil."),
         ),
         MaskEffect::Smoke => Some(
-            "Layer drifting plumes through the mask. The pattern stays anchored to the full image as you edit the selection.",
+            tr("Layer drifting plumes through the mask. The pattern stays anchored to the full image as you edit the selection."),
         ),
         MaskEffect::Grain => Some(
-            "Add photographic texture. Grain stays anchored to the image; the mask controls its local strength.",
+            tr("Add photographic texture. Grain stays anchored to the image; the mask controls its local strength."),
         ),
         MaskEffect::Halation => Some(
-            "Give bright highlights a warm film halo inside the mask. Nearby highlights outside the selection can cast a halo into it. Use Fullscreen for a whole-image finish.",
+            tr("Give bright highlights a warm film halo inside the mask. Nearby highlights outside the selection can cast a halo into it. Use Fullscreen for a whole-image finish."),
         ),
         MaskEffect::Vignette => Some(
-            "Darken edges with negative amounts or brighten them with positive amounts. The center follows the cropped, rotated frame; the mask controls the blend.",
+            tr("Darken edges with negative amounts or brighten them with positive amounts. The center follows the cropped, rotated frame; the mask controls the blend."),
         ),
         MaskEffect::Adjustment => None,
     }
@@ -318,7 +328,7 @@ fn effect_color(
         ui,
         id_salt,
         color,
-        spec.label,
-        spec.tooltip,
+        tr(spec.label),
+        tr(spec.tooltip),
     )
 }

@@ -2,6 +2,7 @@
 
 use super::Settings;
 use crate::app::{CalibRawApp, DevelopCardOrder, SettingsDialog};
+use crate::i18n::{tr, tr_fmt};
 use eframe::egui::{self, Ui};
 
 impl Settings {
@@ -9,11 +10,11 @@ impl Settings {
     pub(super) fn show_develop_card_order(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::form_row_with_help(
             ui,
-            "Develop card order",
+            tr("Develop card order"),
             160.0,
-            "The order of the Edit cards in the sidebar, and of the Edit tabs on phones in portrait.",
+            tr("The order of the Edit cards in the sidebar, and of the Edit tabs on phones in portrait."),
             |ui, _| {
-                if moduwu_design::secondary_button(ui, "Reorder…").clicked() {
+                if moduwu_design::secondary_button(ui, tr("Reorder…")).clicked() {
                     app.ui.settings_dialog = Some(SettingsDialog::DevelopCardOrder);
                 }
             },
@@ -29,7 +30,7 @@ impl Settings {
         let mut order = app.preferences.develop_card_order.clone();
         let mut close = false;
         let mut reset = false;
-        let moved = moduwu_design::Dialog::new("develop-card-order", "Develop card order")
+        let moved = moduwu_design::Dialog::new("develop-card-order", tr("Develop card order"))
             .show_with_footer(
                 ctx,
                 |ui| {
@@ -44,7 +45,7 @@ impl Settings {
                                     ui,
                                     egui_phosphor::regular::CARET_DOWN,
                                     size,
-                                    &format!("Move {} down", card.label()),
+                                    &tr_fmt("Move {name} down", &[("name", &card.label())]),
                                 )
                             });
                             let up = ui.add_enabled_ui(index > 0, |ui| {
@@ -52,7 +53,7 @@ impl Settings {
                                     ui,
                                     egui_phosphor::regular::CARET_UP,
                                     size,
-                                    &format!("Move {} up", card.label()),
+                                    &tr_fmt("Move {name} up", &[("name", &card.label())]),
                                 )
                             });
                             if up.inner.clicked() {
@@ -65,7 +66,7 @@ impl Settings {
                     moved
                 },
                 |ui| {
-                    close = moduwu_design::primary_action_button(ui, "Done").clicked()
+                    close = moduwu_design::primary_action_button(ui, tr("Done")).clicked()
                         || moduwu_design::dialog_keyboard_action(
                             ui,
                             moduwu_design::DialogKeyboard::CLOSE_ONLY,
@@ -74,7 +75,7 @@ impl Settings {
                     reset = moduwu_design::secondary_button_enabled(
                         ui,
                         !order.is_default(),
-                        "Reset order",
+                        tr("Reset order"),
                     )
                     .clicked();
                 },

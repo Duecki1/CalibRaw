@@ -6,6 +6,7 @@
 //! replaces it once its photo has no later save waiting.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::sidecar::PhotoReview;
 use crate::ui::library::review::ReviewChange;
 
@@ -33,8 +34,6 @@ pub(crate) struct ReviewWriter {
     pending: HashMap<LibraryAssetId, usize>,
 }
 
-const WRITER_STOPPED: &str = "The rating saver stopped unexpectedly.";
-
 impl ReviewWriter {
     /// The worker's request channel, starting the worker on first use.
     fn sender(
@@ -60,7 +59,12 @@ impl ReviewWriter {
                     repaint.request_repaint();
                 }
             })
-            .map_err(|error| format!("Could not start saving ratings: {error}"))?;
+            .map_err(|error| {
+                tr_fmt(
+                    "Could not start saving ratings: {error}",
+                    &[("error", &error)],
+                )
+            })?;
         self.worker = Some((request_sender.clone(), result_receiver));
         Ok(request_sender)
     }
@@ -69,7 +73,7 @@ impl ReviewWriter {
     fn stopped(&mut self, failures: &mut Vec<String>) {
         self.worker = None;
         self.pending.clear();
-        failures.push(WRITER_STOPPED.to_owned());
+        failures.push(tr("The rating saver stopped unexpectedly.").to_owned());
     }
 }
 
@@ -167,7 +171,9 @@ impl LibraryState {
         let sender = self.reviews.sender(&self.platform, context)?;
         for save in saves {
             let asset_id = save.asset.id.clone();
-            sender.send(save).map_err(|_| WRITER_STOPPED.to_owned())?;
+            sender
+                .send(save)
+                .map_err(|_| tr("The rating saver stopped unexpectedly.").to_owned())?;
             *self.reviews.pending.entry(asset_id).or_default() += 1;
         }
         Ok(())
@@ -207,9 +213,9 @@ impl LibraryState {
             match receiver.recv_timeout(wait) {
                 Ok(saved) => resort |= self.settle_review_save(saved, &mut failures),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    failures.push(format!(
-                        "Ratings of {} photos were still being saved.",
-                        self.reviews.pending.len()
+                    failures.push(tr_fmt(
+                        "Ratings of {count} photos were still being saved.",
+                        &[("count", &self.reviews.pending.len())],
                     ));
                     break;
                 }

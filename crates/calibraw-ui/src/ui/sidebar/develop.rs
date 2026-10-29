@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 const LENS_CARD_TITLE: &str = "Lens Corrections";
 
@@ -15,7 +16,7 @@ pub(super) struct OpticsChanges {
 fn lens_mode_selector(ui: &mut Ui, manual: &mut bool) {
     ui.horizontal(|ui| {
         let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(1.0);
-        for (label, candidate) in [("Profile", false), ("Manual", true)] {
+        for (label, candidate) in [(tr("Profile"), false), (tr("Manual"), true)] {
             if moduwu_design::segmented_button(ui, label, *manual == candidate, width).clicked() {
                 *manual = candidate;
             }
@@ -29,7 +30,7 @@ impl Sidebar {
         let mut open_adjust_dialog = false;
         let capture = app.develop.original_raw.as_ref().map(|raw| {
             let lens = match (raw.lens_make.trim(), raw.lens_model.trim()) {
-                ("", "") => "Not reported".to_owned(),
+                ("", "") => tr("Not reported").to_owned(),
                 ("", model) => model.to_owned(),
                 (maker, "") => maker.to_owned(),
                 (maker, model) => format!("{maker} {model}"),
@@ -54,7 +55,7 @@ impl Sidebar {
                     || (state.catalog.available && state.selected_lens().is_some());
                 let enabled_response = ui
                     .add_enabled_ui(can_enable && !lens_correction_busy, |ui| {
-                        moduwu_design::toggle_row(ui, &mut state.enabled, "Enabled")
+                        moduwu_design::toggle_row(ui, &mut state.enabled, tr("Enabled"))
                     })
                     .inner;
                 if enabled_response.changed() {
@@ -82,10 +83,10 @@ impl Sidebar {
                     .num_columns(2)
                     .spacing(egui::vec2(10.0, 3.0))
                     .show(ui, |ui| {
-                        ui.label("Camera");
+                        ui.label(tr("Camera"));
                         ui.add(
                             egui::Label::new(if state.catalog.camera_label.is_empty() {
-                                "Not matched"
+                                tr("Not matched")
                             } else {
                                 state.catalog.camera_label.as_str()
                             })
@@ -93,16 +94,16 @@ impl Sidebar {
                         );
                         ui.end_row();
                         if let Some((lens, focal, aperture)) = &capture {
-                            ui.label("RAW lens");
+                            ui.label(tr("RAW lens"));
                             ui.add(egui::Label::new(lens).wrap());
                             ui.end_row();
                             if let Some(focal) = focal {
-                                ui.label("Focal length");
+                                ui.label(tr("Focal length"));
                                 ui.label(focal);
                                 ui.end_row();
                             }
                             if let Some(aperture) = aperture {
-                                ui.label("Aperture");
+                                ui.label(tr("Aperture"));
                                 ui.label(aperture);
                                 ui.end_row();
                             }
@@ -113,7 +114,7 @@ impl Sidebar {
                 if state.manual.is_some() {
                     open_adjust_dialog = ui
                         .add_enabled_ui(!lens_correction_busy, |ui| {
-                            moduwu_design::full_width_button(ui, "Adjust")
+                            moduwu_design::full_width_button(ui, tr("Adjust"))
                         })
                         .inner
                         .clicked();
@@ -122,9 +123,9 @@ impl Sidebar {
                     let previous_maker = state.selected_maker.clone();
                     let selected_maker_text = if state.selected_maker.is_empty() {
                         if state.selected_model.is_empty() {
-                            "Select a brand".to_owned()
+                            tr("Select a brand").to_owned()
                         } else {
-                            "Unknown".to_owned()
+                            tr("Unknown").to_owned()
                         }
                     } else {
                         state.selected_maker.clone()
@@ -134,7 +135,7 @@ impl Sidebar {
                         |ui| {
                             moduwu_design::form_combo(
                                 ui,
-                                "Brand",
+                                tr("Brand"),
                                 "lens-correction-brand",
                                 selected_maker_text,
                                 240.0,
@@ -143,7 +144,11 @@ impl Sidebar {
                                         ui.selectable_value(
                                             &mut state.selected_maker,
                                             maker.clone(),
-                                            if maker.is_empty() { "Unknown" } else { maker },
+                                            if maker.is_empty() {
+                                                tr("Unknown")
+                                            } else {
+                                                maker
+                                            },
                                         );
                                     }
                                 },
@@ -163,7 +168,7 @@ impl Sidebar {
                     let models = state.models_for_maker(&state.selected_maker);
                     let previous_model = state.selected_model.clone();
                     let selected_model_text = if state.selected_model.is_empty() {
-                        "Select a lens".to_owned()
+                        tr("Select a lens").to_owned()
                     } else {
                         state.selected_model.clone()
                     };
@@ -172,7 +177,7 @@ impl Sidebar {
                         |ui| {
                             moduwu_design::form_combo(
                                 ui,
-                                "Lens",
+                                tr("Lens"),
                                 "lens-correction-model",
                                 selected_model_text,
                                 240.0,
@@ -196,14 +201,14 @@ impl Sidebar {
                         moduwu_design::toggle_with_help(
                             ui,
                             &mut state.corrections.geometry,
-                            "Geometry",
-                            "Correct lens distortion and colour fringing (lateral chromatic aberration).",
+                            tr("Geometry"),
+                            tr("Correct lens distortion and colour fringing (lateral chromatic aberration)."),
                         );
                         moduwu_design::toggle_with_help(
                             ui,
                             &mut state.corrections.vignetting,
-                            "Vignetting",
-                            "Brighten the corners the lens darkens.",
+                            tr("Vignetting"),
+                            tr("Brighten the corners the lens darkens."),
                         );
                     });
                     // At least one correction must stay selected.
@@ -215,11 +220,11 @@ impl Sidebar {
                         state.applied = false;
                         if let Some(selection) = state.selected_lens() {
                             state.catalog.status = if state.enabled {
-                                format!("Applying {}…", selection.label())
+                                tr_fmt("Applying {label}…", &[("label", &selection.label())])
                             } else {
-                                format!(
-                                    "Selected {}. Enable correction to apply it.",
-                                    selection.label()
+                                tr_fmt(
+                                    "Selected {label}. Enable correction to apply it.",
+                                    &[("label", &selection.label())],
                                 )
                             };
                         }
@@ -232,11 +237,11 @@ impl Sidebar {
                 moduwu_design::section_separator(ui);
                 moduwu_design::strong_with_help(
                     ui,
-                    "Chromatic aberration",
-                    "Removes colour fringes along high-contrast edges: moves red and blue back onto green, then desaturates the purple, blue and green fringes that remain.",
+                    tr("Chromatic aberration"),
+                    tr("Removes colour fringes along high-contrast edges: moves red and blue back onto green, then desaturates the purple, blue and green fringes that remain."),
                 );
                 changes.exposure |= AdjustmentSlider::new(
-                    "Amount",
+                    tr("Amount"),
                     &mut app.develop.exposure.chromatic_aberration,
                     0.0..=100.0,
                 )
@@ -269,33 +274,34 @@ impl Sidebar {
     pub(super) fn show_basic(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Light", true, foldable, true, |ui| {
-            changed |= AdjustmentSlider::new("Exposure", &mut exposure.exposure, -5.0..=5.0)
+            changed |= AdjustmentSlider::new(tr("Exposure"), &mut exposure.exposure, -5.0..=5.0)
                 .decimals(2)
                 .step(0.05)
                 .gradient(SliderGradient::Brightness)
                 .show(ui);
-            changed |= AdjustmentSlider::new("Contrast", &mut exposure.contrast, -100.0..=100.0)
-                .decimals(0)
-                .step(1.0)
-                .gradient(SliderGradient::Brightness)
-                .show(ui);
             changed |=
-                AdjustmentSlider::new("Highlights", &mut exposure.highlights, -100.0..=100.0)
+                AdjustmentSlider::new(tr("Contrast"), &mut exposure.contrast, -100.0..=100.0)
                     .decimals(0)
                     .step(1.0)
                     .gradient(SliderGradient::Brightness)
                     .show(ui);
-            changed |= AdjustmentSlider::new("Shadows", &mut exposure.shadows, -100.0..=100.0)
+            changed |=
+                AdjustmentSlider::new(tr("Highlights"), &mut exposure.highlights, -100.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .gradient(SliderGradient::Brightness)
+                    .show(ui);
+            changed |= AdjustmentSlider::new(tr("Shadows"), &mut exposure.shadows, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
                 .gradient(SliderGradient::Brightness)
                 .show(ui);
-            changed |= AdjustmentSlider::new("Whites", &mut exposure.whites, -100.0..=100.0)
+            changed |= AdjustmentSlider::new(tr("Whites"), &mut exposure.whites, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
                 .gradient(SliderGradient::Brightness)
                 .show(ui);
-            changed |= AdjustmentSlider::new("Blacks", &mut exposure.blacks, -100.0..=100.0)
+            changed |= AdjustmentSlider::new(tr("Blacks"), &mut exposure.blacks, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
                 .gradient(SliderGradient::Brightness)
@@ -348,14 +354,14 @@ impl Sidebar {
                     (candidate.0 - current.0).abs() < 0.01 && (candidate.1 - current.1).abs() < 0.01
                 };
                 let selection = if *white_balance_picker_active {
-                    "from image area".to_owned()
+                    tr("from image area").to_owned()
                 } else if current.0.abs() < 1e-5 && current.1.abs() < 1e-5 {
-                    "as shot".to_owned()
+                    tr("as shot").to_owned()
                 } else if raw
                     .reference_white_balance_offsets()
                     .is_some_and(&matches_current)
                 {
-                    "camera reference (D65)".to_owned()
+                    tr("camera reference (D65)").to_owned()
                 } else if let Some(preset) = presets.iter().find(|preset| {
                     raw.white_balance_offsets_from_coefficients(preset.coefficients)
                         .is_some_and(&matches_current)
@@ -370,7 +376,7 @@ impl Sidebar {
                 {
                     format!("{temperature:.0}K")
                 } else {
-                    "user modified".to_owned()
+                    tr("user modified").to_owned()
                 };
                 ui.horizontal(|ui| {
                     let picker_width = moduwu_design::TOOLBAR_ICON_EDGE;
@@ -379,21 +385,21 @@ impl Sidebar {
                             .clamp(1.0, 240.0);
                     moduwu_design::combo_box("global-white-balance-preset", selection, combo_width)
                         .show_ui(ui, |ui| {
-                            if ui.selectable_label(false, "as shot").clicked() {
+                            if ui.selectable_label(false, tr("as shot")).clicked() {
                                 exposure.white_balance = WhiteBalance::AsShot;
                                 *white_balance_picker_active = false;
                                 changed = true;
                             }
-                            if ui.selectable_label(false, "from image area").clicked() {
+                            if ui.selectable_label(false, tr("from image area")).clicked() {
                                 *white_balance_picker_active = true;
                             }
                             ui.label(
-                                egui::RichText::new("reference")
+                                egui::RichText::new(tr("reference"))
                                     .strong()
                                     .color(ui.visuals().weak_text_color()),
                             );
                             if ui
-                                .selectable_label(false, "camera reference (D65)")
+                                .selectable_label(false, tr("camera reference (D65)"))
                                 .clicked()
                             {
                                 if let Some(white_balance) = raw
@@ -433,7 +439,7 @@ impl Sidebar {
                             }
                             ui.separator();
                             ui.label(
-                                egui::RichText::new("fixed temperature")
+                                egui::RichText::new(tr("fixed temperature"))
                                     .strong()
                                     .color(ui.visuals().weak_text_color()),
                             );
@@ -457,7 +463,7 @@ impl Sidebar {
                         egui_phosphor::regular::EYEDROPPER,
                         *white_balance_picker_active,
                         egui::vec2(picker_width, moduwu_design::CONTROL_HEIGHT),
-                        "Pick a neutral gray or white area in the image",
+                        tr("Pick a neutral gray or white area in the image"),
                     );
                     if picker.clicked() {
                         *white_balance_picker_active = !*white_balance_picker_active;
@@ -465,7 +471,7 @@ impl Sidebar {
                 });
                 if *white_balance_picker_active {
                     ui.label(
-                        egui::RichText::new("Drag over a neutral area in the image")
+                        egui::RichText::new(tr("Drag over a neutral area in the image"))
                             .size(11.5)
                             .color(ui.visuals().selection.bg_fill),
                     );
@@ -479,7 +485,7 @@ impl Sidebar {
                 let kelvin_changed = ui
                     .push_id(base_kelvin.to_bits(), |ui| {
                         AdjustmentSlider::new(
-                            "Temperature (K)",
+                            tr("Temperature (K)"),
                             &mut kelvin,
                             ranges.temperature.clone(),
                         )
@@ -498,7 +504,7 @@ impl Sidebar {
                 .clamp(0.0, 1.0);
                 let tint_changed = ui
                     .push_id(base_tint.to_bits(), |ui| {
-                        AdjustmentSlider::new("Tint", &mut tint, tint_range)
+                        AdjustmentSlider::new(tr("Tint"), &mut tint, tint_range)
                             .decimals(0)
                             .step(1.0)
                             .gradient(SliderGradient::CameraTint {
@@ -529,23 +535,24 @@ impl Sidebar {
                 }
             } else {
                 *white_balance_picker_active = false;
-                ui.label("White balance");
+                ui.label(tr("White balance"));
                 ui.label(
-                    egui::RichText::new(
+                    egui::RichText::new(tr(
                         "Unavailable: this image has no usable white-balance metadata",
-                    )
+                    ))
                     .size(11.5)
                     .color(ui.visuals().weak_text_color()),
                 );
             }
             changed |= hue_adjustment_slider(ui, &mut exposure.hue);
-            changed |= AdjustmentSlider::new("Vibrance", &mut exposure.vibrance, -100.0..=100.0)
-                .decimals(0)
-                .step(1.0)
-                .gradient(SliderGradient::Colorfulness)
-                .show(ui);
             changed |=
-                AdjustmentSlider::new("Saturation", &mut exposure.saturation, -100.0..=100.0)
+                AdjustmentSlider::new(tr("Vibrance"), &mut exposure.vibrance, -100.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .gradient(SliderGradient::Colorfulness)
+                    .show(ui);
+            changed |=
+                AdjustmentSlider::new(tr("Saturation"), &mut exposure.saturation, -100.0..=100.0)
                     .decimals(0)
                     .step(1.0)
                     .gradient(SliderGradient::Colorfulness)
@@ -593,8 +600,8 @@ impl Sidebar {
             if moduwu_design::toggle_with_help(
                 ui,
                 &mut ai_enabled,
-                "AI Denoise — RawNIND UtNet2",
-                "Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant.",
+                tr("AI Denoise — RawNIND UtNet2"),
+                tr("Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant."),
             )
             .changed()
             {
@@ -602,7 +609,7 @@ impl Sidebar {
             }
             if ai_strength_available && exposure.ai_denoise_enabled {
                 let mut strength_percent = exposure.ai_denoise_amount.clamp(0.0, 1.0) * 100.0;
-                if AdjustmentSlider::new("Strength", &mut strength_percent, 0.0..=100.0)
+                if AdjustmentSlider::new(tr("Strength"), &mut strength_percent, 0.0..=100.0)
                     .decimals(0)
                     .step(1.0)
                     .reset_to(defaults.ai_denoise_amount * 100.0)
@@ -615,12 +622,12 @@ impl Sidebar {
             moduwu_design::section_separator(ui);
             moduwu_design::strong_with_help(
                 ui,
-                "Noise reduction",
-                "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.",
+                tr("Noise reduction"),
+                tr("Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled."),
             );
             ui.add_enabled_ui(!exposure.ai_denoise_enabled, |ui| {
                 changed |= AdjustmentSlider::new(
-                    "Luminance",
+                    tr("Luminance"),
                     &mut exposure.luminance_denoise,
                     0.0..=100.0,
                 )
@@ -629,7 +636,7 @@ impl Sidebar {
                 .reset_to(defaults.luminance_denoise)
                 .show(ui);
                 let mut color_percent = exposure.chroma_denoise.clamp(0.0, 1.0) * 100.0;
-                if AdjustmentSlider::new("Color", &mut color_percent, 0.0..=100.0)
+                if AdjustmentSlider::new(tr("Color"), &mut color_percent, 0.0..=100.0)
                     .decimals(0)
                     .step(1.0)
                     .reset_to(defaults.chroma_denoise.clamp(0.0, 1.0) * 100.0)
@@ -639,7 +646,7 @@ impl Sidebar {
                     changed = true;
                 }
                 changed |= AdjustmentSlider::new(
-                    "Denoise Detail",
+                    tr("Denoise Detail"),
                     &mut exposure.denoise_detail,
                     0.0..=100.0,
                 )
@@ -650,25 +657,25 @@ impl Sidebar {
                 let previous_quality = exposure.denoise_quality;
                 moduwu_design::form_combo(
                     ui,
-                    "Denoise quality",
+                    tr("Denoise quality"),
                     "develop-denoise-quality",
-                    exposure.denoise_quality.label(),
+                    tr(exposure.denoise_quality.label()),
                     150.0,
                     |ui| {
                         ui.selectable_value(
                             &mut exposure.denoise_quality,
                             DenoiseQuality::Fast,
-                            DenoiseQuality::Fast.label(),
+                            tr(DenoiseQuality::Fast.label()),
                         );
                         ui.selectable_value(
                             &mut exposure.denoise_quality,
                             DenoiseQuality::Balanced,
-                            DenoiseQuality::Balanced.label(),
+                            tr(DenoiseQuality::Balanced.label()),
                         );
                         ui.selectable_value(
                             &mut exposure.denoise_quality,
                             DenoiseQuality::High,
-                            DenoiseQuality::High.label(),
+                            tr(DenoiseQuality::High.label()),
                         );
                     },
                 );
@@ -677,29 +684,32 @@ impl Sidebar {
             moduwu_design::section_separator(ui);
             moduwu_design::strong_with_help(
                 ui,
-                "Capture sharpening",
-                "Edge-aware capture sharpening restores fine detail while its radius, detail, and masking controls limit halos and noisy texture.",
+                tr("Capture sharpening"),
+                tr("Edge-aware capture sharpening restores fine detail while its radius, detail, and masking controls limit halos and noisy texture."),
             );
-            changed |= AdjustmentSlider::new("Amount", &mut exposure.sharpen_amount, 0.0..=150.0)
-                .decimals(0)
-                .step(1.0)
-                .reset_to(defaults.sharpen_amount)
-                .show(ui);
-            changed |= AdjustmentSlider::new("Radius", &mut exposure.sharpen_radius, 0.5..=3.0)
+            changed |=
+                AdjustmentSlider::new(tr("Amount"), &mut exposure.sharpen_amount, 0.0..=150.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .reset_to(defaults.sharpen_amount)
+                    .show(ui);
+            changed |= AdjustmentSlider::new(tr("Radius"), &mut exposure.sharpen_radius, 0.5..=3.0)
                 .decimals(2)
                 .step(0.05)
                 .reset_to(defaults.sharpen_radius)
                 .show(ui);
-            changed |= AdjustmentSlider::new("Detail", &mut exposure.sharpen_detail, 0.0..=100.0)
-                .decimals(0)
-                .step(1.0)
-                .reset_to(defaults.sharpen_detail)
-                .show(ui);
-            changed |= AdjustmentSlider::new("Masking", &mut exposure.sharpen_masking, 0.0..=100.0)
-                .decimals(0)
-                .step(1.0)
-                .reset_to(defaults.sharpen_masking)
-                .show(ui);
+            changed |=
+                AdjustmentSlider::new(tr("Detail"), &mut exposure.sharpen_detail, 0.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .reset_to(defaults.sharpen_detail)
+                    .show(ui);
+            changed |=
+                AdjustmentSlider::new(tr("Masking"), &mut exposure.sharpen_masking, 0.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .reset_to(defaults.sharpen_masking)
+                    .show(ui);
         });
         changed |= action.apply_from(exposure, defaults, AdjustmentGroup::Detail);
         if exposure.ai_denoise_enabled != ai_before {
@@ -720,15 +730,15 @@ impl Sidebar {
         let mut changed = false;
         let mut added = None;
         let action = Self::adjustment_card(ui, "Effects", false, foldable, true, |ui| {
-            changed |= AdjustmentSlider::new("Texture", &mut exposure.texture, -100.0..=100.0)
+            changed |= AdjustmentSlider::new(tr("Texture"), &mut exposure.texture, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
                 .show(ui);
-            changed |= AdjustmentSlider::new("Clarity", &mut exposure.clarity, -100.0..=100.0)
+            changed |= AdjustmentSlider::new(tr("Clarity"), &mut exposure.clarity, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
                 .show(ui);
-            changed |= AdjustmentSlider::new("Dehaze", &mut exposure.dehaze, -100.0..=100.0)
+            changed |= AdjustmentSlider::new(tr("Dehaze"), &mut exposure.dehaze, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
                 .show(ui);
@@ -756,8 +766,8 @@ impl Sidebar {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Color Mixer", false, foldable, true, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(point_color_tab, false, "Mixer");
-                ui.selectable_value(point_color_tab, true, "Point Color");
+                ui.selectable_value(point_color_tab, false, tr("Mixer"));
+                ui.selectable_value(point_color_tab, true, tr("Point Color"));
             });
             ui.add_space(moduwu_design::SPACE_XS);
             if *point_color_tab {

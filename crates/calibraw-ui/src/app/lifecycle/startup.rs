@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::tr;
 
 impl CalibRawApp {
     /// A desktop app with default settings and no GPU, for tests.
@@ -52,7 +53,8 @@ impl CalibRawApp {
                         "DCP profiles: auto-detected folder {}",
                         folder.display()
                     ));
-                    camera_profile_folder_label = Some("DCP profiles (auto-detected)".to_owned());
+                    camera_profile_folder_label =
+                        Some(tr("DCP profiles (auto-detected)").to_owned());
                 } else {
                     camera_profile_folder_label = None;
                 }
@@ -108,7 +110,7 @@ impl CalibRawApp {
                 load_receiver: None,
                 loading_label: None,
                 loading_view: None,
-                image_status: "Open a RAW, TIFF, JPEG, PNG or HEIC photo to get started."
+                image_status: tr("Open a RAW, TIFF, JPEG, PNG or HEIC photo to get started.")
                     .to_owned(),
                 current_label: None,
             },
@@ -315,6 +317,7 @@ impl CalibRawApp {
                 hdd_mode: performance.hdd_mode,
                 ui_design: performance.ui_design,
                 preview_backdrop: performance.preview_backdrop,
+                language: performance.language,
                 onboarding_completed: performance.onboarding_completed,
                 subject_mask_quality_chosen: performance.subject_mask_quality_chosen,
                 tips: TipPreferences {
@@ -338,7 +341,7 @@ impl CalibRawApp {
                 active_tab: AppTab::default(),
                 sidebar_tab: SidebarTab::default(),
                 desktop_picker_receiver: None,
-                status: "Open a RAW, TIFF, JPEG, PNG or HEIC photo to get started.".to_owned(),
+                status: tr("Open a RAW, TIFF, JPEG, PNG or HEIC photo to get started.").to_owned(),
                 adaptive_preview_backdrop: crate::ui::theme::CANVAS_BACKDROP,
                 notice: None,
                 error_dialogs: ErrorDialogQueue::default(),
@@ -441,9 +444,9 @@ impl CalibRawApp {
             Err(error) => calibraw_core::diagnostics::record(error),
         }
         calibraw_core::diagnostics::record(if caps.is_mobile() {
-            "CalibRaw Android UI initialized"
+            tr("CalibRaw Android UI initialized")
         } else {
-            "CalibRaw desktop UI initialized"
+            tr("CalibRaw desktop UI initialized")
         });
         let performance_settings_path = platform
             .performance_settings_path()
@@ -464,7 +467,7 @@ impl CalibRawApp {
                     // `migrations`.
                     let retired = path.join("version_1");
                     if retired.is_dir() {
-                        Self::remove_retired_app_data(retired, "Lensfun 0.3.4 database");
+                        Self::remove_retired_app_data(retired, tr("Lensfun 0.3.4 database"));
                     }
                     std::env::set_var("CALIBRAW_LENSFUN_DB", &path);
                     calibraw_core::diagnostics::record(format!(
@@ -518,6 +521,9 @@ impl CalibRawApp {
         app.preview.gpu_prewarm_receiver = gpu_preview_prewarm_receiver;
         app.export.gpu_prewarm = Some(gpu_export_prewarm);
         crate::ui::theme::apply(&cc.egui_ctx, app.preferences.ui_design);
+        if let Err(error) = crate::i18n::set_active(app.preferences.language.resolve()) {
+            app.report_error(ErrorKind::Settings, error.to_string());
+        }
         if let Err(error) = app
             .platform
             .set_light_system_bars(!app.preferences.ui_design.is_dark())

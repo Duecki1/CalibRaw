@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::ErrorKind;
+use crate::i18n::{tr, tr_fmt};
 use crate::ui::background_tasks::{BackgroundTaskId, BackgroundTaskView};
 use anyhow::{Context, Result};
 use calibraw_gpu::pipeline::{merge_hdr_bracket, stack_focus, GpuProgramPrewarm, MergedImage};
@@ -15,8 +16,8 @@ pub(crate) enum MergeKind {
 impl MergeKind {
     pub(crate) fn title(self) -> &'static str {
         match self {
-            Self::Hdr => "HDR merge",
-            Self::FocusStack => "Focus stack",
+            Self::Hdr => tr("HDR merge"),
+            Self::FocusStack => tr("Focus stack"),
         }
     }
 
@@ -74,7 +75,10 @@ pub(super) fn start(
     let Some(render_state) = frame.wgpu_render_state() else {
         app.report_error(
             kind.error_kind(),
-            format!("{} requires GPU rendering.", kind.title()),
+            tr_fmt(
+                "{title} requires GPU rendering.",
+                &[("title", &kind.title())],
+            ),
         );
         return;
     };
@@ -83,7 +87,7 @@ pub(super) fn start(
     let prewarm = app.export.gpu_prewarm.clone();
     let platform = Arc::clone(&app.library.platform);
     let (sender, receiver) = mpsc::channel();
-    let progress = Arc::new(Mutex::new("Preparing…".to_owned()));
+    let progress = Arc::new(Mutex::new(tr("Preparing…").to_owned()));
     let cancelled = Arc::new(AtomicBool::new(false));
     let task = MergeTask {
         kind,
@@ -107,8 +111,11 @@ pub(super) fn start(
             let result = (|| -> Result<String> {
                 for (index, asset) in assets.iter().enumerate() {
                     anyhow::ensure!(
-                        report(format!("Reading photo {}/{}", index + 1, assets.len())),
-                        "Merge cancelled"
+                        report(tr_fmt(
+                            "Reading photo {index}/{count}",
+                            &[("index", &(index + 1)), ("count", &assets.len())]
+                        )),
+                        tr("Merge cancelled")
                     );
                     staged.push(
                         materialize_library_asset(asset, &*platform).map_err(anyhow::Error::msg)?,
@@ -119,8 +126,8 @@ pub(super) fn start(
                     .map(|staged| staged.raw_path.clone())
                     .collect();
                 let merged = kind.run(&device, &queue, &paths, prewarm, report)?;
-                anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "Merge cancelled");
-                report("Saving floating-point TIFF…".to_owned());
+                anyhow::ensure!(!cancelled.load(Ordering::Relaxed), tr("Merge cancelled"));
+                report(tr("Saving floating-point TIFF…").to_owned());
                 save_merged(&merged, &assets[0], &paths[0], kind, &*platform, &cancelled)
             })()
             .map_err(|error| format!("{error:#}"));
@@ -134,7 +141,10 @@ pub(super) fn start(
         Ok(_) => app.library.merge = Some(task),
         Err(error) => app.report_error(
             kind.error_kind(),
-            format!("Could not start {}: {error}", kind.title()),
+            tr_fmt(
+                "Could not start {title}: {error}",
+                &[("title", &kind.title()), ("error", &error)],
+            ),
         ),
     }
 }
@@ -152,14 +162,14 @@ fn save_merged(
 ) -> Result<String> {
     let parent = staged
         .parent()
-        .context("Merge source has no parent folder")?;
+        .context(tr("Merge source has no parent folder"))?;
     let mut temporary = tempfile::Builder::new()
         .prefix(".calibraw-merge-")
         .suffix(".tmp")
         .tempfile_in(parent)?;
     merged.write_tiff(temporary.as_file_mut())?;
     temporary.as_file().sync_all()?;
-    anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "Merge cancelled");
+    anyhow::ensure!(!cancelled.load(Ordering::Relaxed), tr("Merge cancelled"));
     match &source.locator {
         LibraryLocator::Desktop(path) => {
             let saved = save_unique(temporary, path, kind.file_suffix())?;
@@ -172,9 +182,9 @@ fn save_merged(
         LibraryLocator::Android { .. } => {
             let stem = Path::new(&source.display_name)
                 .file_stem()
-                .context("Merge source has no file name")?
+                .context(tr("Merge source has no file name"))?
                 .to_string_lossy();
-            let name = format!("{stem}-{}.tif", kind.file_suffix());
+            let name = format!("{}-{}.tif", stem, kind.file_suffix());
             let imported = platform
                 .import_local_library_document(temporary.path(), &name)
                 .map_err(anyhow::Error::msg)?;
@@ -192,16 +202,16 @@ fn save_unique(
 ) -> Result<PathBuf> {
     let parent = source
         .parent()
-        .context("Merge source has no parent folder")?;
+        .context(tr("Merge source has no parent folder"))?;
     let stem = source
         .file_stem()
-        .context("Merge source has no file name")?;
+        .context(tr("Merge source has no file name"))?;
     for number in 0..10_000 {
         let mut name = stem.to_os_string();
         name.push(if number == 0 {
-            format!("-{suffix}.tif")
+            format!("-{}.tif", suffix)
         } else {
-            format!("-{suffix}-{number}.tif")
+            format!("-{}-{}.tif", suffix, number)
         });
         let path = parent.join(name);
         match temporary.persist_noclobber(&path) {
@@ -209,10 +219,10 @@ fn save_unique(
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
                 temporary = error.file
             }
-            Err(error) => return Err(error.error).context("save merged master"),
+            Err(error) => return Err(error.error).context(tr("save merged master")),
         }
     }
-    anyhow::bail!("Could not find an unused output name")
+    anyhow::bail!(tr("Could not find an unused output name"))
 }
 
 /// How a merge ended.
@@ -237,9 +247,10 @@ impl LibraryState {
             Ok(Ok(name)) => MergeOutcome::Saved(name),
             Ok(Err(_)) if cancelled => MergeOutcome::Cancelled,
             Ok(Err(error)) => MergeOutcome::Failed(error),
-            Err(mpsc::TryRecvError::Disconnected) => {
-                MergeOutcome::Failed(format!("{} stopped unexpectedly.", task.kind.title()))
-            }
+            Err(mpsc::TryRecvError::Disconnected) => MergeOutcome::Failed(tr_fmt(
+                "{title} stopped unexpectedly.",
+                &[("title", &task.kind.title())],
+            )),
             Err(mpsc::TryRecvError::Empty) => return None,
         };
         let kind = task.kind;

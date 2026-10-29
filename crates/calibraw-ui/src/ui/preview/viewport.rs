@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::app::{KeptView, PreviewUvRect, PreviewViewportAction};
+use crate::i18n::tr;
 
 /// The preview area after the backdrop is painted.
 #[derive(Clone, Copy)]
@@ -267,7 +268,7 @@ impl Preview {
                 ui,
                 canvas.available,
                 canvas.backdrop,
-                "Preparing preview…",
+                tr("Preparing preview…"),
                 None,
                 true,
             );
@@ -276,8 +277,8 @@ impl Preview {
                 ui,
                 canvas.available,
                 canvas.backdrop,
-                "No image open",
-                Some("Open a photo from the Library to start developing."),
+                tr("No image open"),
+                Some(tr("Open a photo from the Library to start developing.")),
                 false,
             );
         }
@@ -875,7 +876,7 @@ fn paint_preview_labels(
         painter.text(
             outer_rect.right_top() + egui::vec2(-12.0, 12.0),
             egui::Align2::RIGHT_TOP,
-            "ORIGINAL",
+            tr("ORIGINAL"),
             egui::FontId::proportional(12.0),
             Color32::WHITE,
         );

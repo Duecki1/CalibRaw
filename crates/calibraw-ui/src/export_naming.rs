@@ -1,3 +1,4 @@
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{LoadedRaw, RawDisplayMetadata};
 use std::path::Path;
 use std::time::SystemTime;
@@ -90,32 +91,33 @@ pub(crate) fn render_export_stem(
 ) -> Result<String, String> {
     let template = template.trim();
     if template.is_empty() {
-        return Err("The export name template cannot be empty.".to_owned());
+        return Err(tr("The export name template cannot be empty.").to_owned());
     }
 
     let mut rendered = String::with_capacity(template.len() + context.original_name.len());
     let mut remaining = template;
     while let Some(open) = remaining.find('{') {
         if remaining[..open].contains('}') {
-            return Err("The export name template contains an unmatched `}`.".to_owned());
+            return Err(tr("The export name template contains an unmatched `}`.").to_owned());
         }
         rendered.push_str(&remaining[..open]);
         let token_start = open + 1;
         let Some(close_offset) = remaining[token_start..].find('}') else {
-            return Err("The export name template contains an unmatched `{`.".to_owned());
+            return Err(tr("The export name template contains an unmatched `{`.").to_owned());
         };
         let close = token_start + close_offset;
         let token = &remaining[token_start..close];
         let value = token_value(token, context).ok_or_else(|| {
-            format!(
-                "Unknown export name placeholder `{{{token}}}`. Use one of the placeholders shown below."
+            tr_fmt(
+                "Unknown export name placeholder `{placeholder}`. Use one of the placeholders shown below.",
+                &[("placeholder", &format!("{{{token}}}"))],
             )
         })?;
         rendered.push_str(&value);
         remaining = &remaining[close + 1..];
     }
     if remaining.contains('}') {
-        return Err("The export name template contains an unmatched `}`.".to_owned());
+        return Err(tr("The export name template contains an unmatched `}`.").to_owned());
     }
     rendered.push_str(remaining);
 

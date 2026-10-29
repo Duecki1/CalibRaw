@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::i18n::{tr, tr_fmt};
 
 fn numbered_file_name(
     original: &std::ffi::OsStr,
@@ -47,15 +48,18 @@ pub(in crate::ui::library) fn copy_raw_bundle_to_folder(
     if requested_path.file_name() != Some(requested_name)
         || !crate::pipeline::is_supported_image_path(requested_path)
     {
-        return Err("The photo has an unsafe or unsupported filename.".to_owned());
+        return Err(tr("The photo has an unsafe or unsupported filename.").to_owned());
     }
     if !source_raw.is_file() {
-        return Err(format!("{} is no longer a file.", source_raw.display()));
+        return Err(tr_fmt(
+            "{source_raw} is no longer a file.",
+            &[("source_raw", &source_raw.display())],
+        ));
     }
     if !destination_folder.is_dir() {
-        return Err(format!(
-            "The destination folder {} no longer exists.",
-            destination_folder.display()
+        return Err(tr_fmt(
+            "The destination folder {destination_folder} no longer exists.",
+            &[("destination_folder", &destination_folder.display())],
         ));
     }
 
@@ -76,7 +80,10 @@ pub(in crate::ui::library) fn copy_raw_bundle_to_folder(
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
-                return Err(format!("Could not copy {}: {error}", source_raw.display()));
+                return Err(tr_fmt(
+                    "Could not copy {source_raw}: {error}",
+                    &[("source_raw", &source_raw.display()), ("error", &error)],
+                ));
             }
         }
         for (source, destination) in source_companions.iter().zip(&destination_companions) {
@@ -88,7 +95,10 @@ pub(in crate::ui::library) fn copy_raw_bundle_to_folder(
                 for created in &destination_companions {
                     let _ = fs::remove_file(created);
                 }
-                return Err(format!("Could not copy {}: {error}", source.display()));
+                return Err(tr_fmt(
+                    "Could not copy {source}: {error}",
+                    &[("source", &source.display()), ("error", &error)],
+                ));
             }
         }
         if let Err(error) =
@@ -109,18 +119,20 @@ pub(in crate::ui::library) fn copy_raw_bundle_to_folder(
         }
         return Ok(destination_raw);
     }
-    Err(format!(
-        "Could not find an unused name for {:?} in {}.",
-        requested_name,
-        destination_folder.display()
+    Err(tr_fmt(
+        "Could not find an unused name for {requested_name} in {destination_folder}.",
+        &[
+            ("requested_name", &format!("{:?}", requested_name)),
+            ("destination_folder", &destination_folder.display()),
+        ],
     ))
 }
 
 pub(in crate::ui::library) fn remove_local_raw_bundle(raw_path: &Path) -> Result<(), String> {
     fs::remove_file(raw_path).map_err(|error| {
-        format!(
-            "Could not remove {} after copying it: {error}",
-            raw_path.display()
+        tr_fmt(
+            "Could not remove {raw_path} after copying it: {error}",
+            &[("raw_path", &raw_path.display()), ("error", &error)],
         )
     })?;
     for companion in crate::sidecar::raw_companion_paths(raw_path) {
@@ -146,7 +158,7 @@ pub(in crate::ui::library) fn rename_raw_bundle(
     validate_library_item_name(requested_name, true)?;
     let parent = source_raw
         .parent()
-        .ok_or_else(|| "The RAW has no parent folder.".to_owned())?;
+        .ok_or_else(|| tr("The RAW has no parent folder.").to_owned())?;
     let destination_raw = parent.join(requested_name);
     if destination_raw == source_raw {
         return Ok(destination_raw);
@@ -154,7 +166,10 @@ pub(in crate::ui::library) fn rename_raw_bundle(
     let source_companions = crate::sidecar::raw_companion_paths(source_raw);
     let destination_companions = crate::sidecar::raw_companion_paths(&destination_raw);
     if destination_raw.exists() || destination_companions.iter().any(|path| path.exists()) {
-        return Err(format!("{} already exists.", destination_raw.display()));
+        return Err(tr_fmt(
+            "{destination_raw} already exists.",
+            &[("destination_raw", &destination_raw.display())],
+        ));
     }
     let developed_thumbnail = match crate::sidecar::load_developed_thumbnail_cache(source_raw, 8192)
     {
@@ -168,10 +183,13 @@ pub(in crate::ui::library) fn rename_raw_bundle(
         }
     };
     fs::rename(source_raw, &destination_raw).map_err(|error| {
-        format!(
-            "Could not rename {} to {}: {error}",
-            source_raw.display(),
-            destination_raw.display()
+        tr_fmt(
+            "Could not rename {source_raw} to {destination_raw}: {error}",
+            &[
+                ("source_raw", &source_raw.display()),
+                ("destination_raw", &destination_raw.display()),
+                ("error", &error),
+            ],
         )
     })?;
     let mut renamed = Vec::new();
@@ -185,13 +203,12 @@ pub(in crate::ui::library) fn rename_raw_bundle(
                 .try_for_each(|&(source, destination)| fs::rename(destination, source))
                 .and_then(|()| fs::rename(&destination_raw, source_raw));
             return Err(if rollback.is_ok() {
-                format!("Could not rename {}: {error}", source.display())
-            } else {
-                format!(
-                    "The RAW was renamed to {}, but {} could not be renamed: {error}",
-                    destination_raw.display(),
-                    source.display()
+                tr_fmt(
+                    "Could not rename {source}: {error}",
+                    &[("source", &source.display()), ("error", &error)],
                 )
+            } else {
+                tr_fmt("The RAW was renamed to {destination_raw}, but {source} could not be renamed: {error}", &[("destination_raw", &destination_raw.display()), ("source", &source.display()), ("error", &error)])
             });
         }
         renamed.push((source, destination));
@@ -199,7 +216,8 @@ pub(in crate::ui::library) fn rename_raw_bundle(
     if let Some(thumbnail) = developed_thumbnail {
         let thumbnail_result = crate::sidecar::desktop_sidecar_fingerprint(&destination_raw)
             .and_then(|fingerprint| {
-                fingerprint.ok_or_else(|| "The renamed RAW's edit sidecar disappeared.".to_owned())
+                fingerprint
+                    .ok_or_else(|| tr("The renamed RAW's edit sidecar disappeared.").to_owned())
             })
             .and_then(|fingerprint| {
                 crate::sidecar::save_developed_thumbnail_cache(
@@ -234,10 +252,12 @@ pub(in crate::ui::library) fn import_raw_into_folder(
     source: &Path,
     folder: &Path,
 ) -> Result<RawImportOutcome, String> {
-    let original_name = source
-        .file_name()
-        .map(OsString::from)
-        .ok_or_else(|| format!("{} has no file name", source.display()))?;
+    let original_name = source.file_name().map(OsString::from).ok_or_else(|| {
+        tr_fmt(
+            "{source} has no file name",
+            &[("source", &source.display())],
+        )
+    })?;
     let stem = source
         .file_stem()
         .map(OsString::from)
@@ -268,19 +288,21 @@ pub(in crate::ui::library) fn import_raw_into_folder(
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
-                return Err(format!(
-                    "Could not import {} into {}: {error}",
-                    source.display(),
-                    folder.display()
+                return Err(tr_fmt(
+                    "Could not import {source} into {folder}: {error}",
+                    &[
+                        ("source", &source.display()),
+                        ("folder", &folder.display()),
+                        ("error", &error),
+                    ],
                 ));
             }
         }
     }
 
-    Err(format!(
-        "Could not find an unused name for {} in {}",
-        source.display(),
-        folder.display()
+    Err(tr_fmt(
+        "Could not find an unused name for {source} in {folder}",
+        &[("source", &source.display()), ("folder", &folder.display())],
     ))
 }
 
@@ -296,15 +318,15 @@ pub(in crate::ui::library) fn same_existing_file(left: &Path, right: &Path) -> b
 
 pub(in crate::ui::library) fn validate_folder_name(name: &str) -> Result<OsString, String> {
     if name.is_empty() || name.trim() != name {
-        return Err("Folder names cannot be empty or start/end with whitespace.".to_owned());
+        return Err(tr("Folder names cannot be empty or start/end with whitespace.").to_owned());
     }
     let path = Path::new(name);
     let mut components = path.components();
     let Some(std::path::Component::Normal(component)) = components.next() else {
-        return Err("Enter a single folder name, without a path.".to_owned());
+        return Err(tr("Enter a single folder name, without a path.").to_owned());
     };
     if components.next().is_some() {
-        return Err("Enter a single folder name, without a path.".to_owned());
+        return Err(tr("Enter a single folder name, without a path.").to_owned());
     }
     Ok(component.to_os_string())
 }
@@ -314,24 +336,39 @@ pub(in crate::ui::library) fn canonical_library_directory(
     path: &Path,
     allow_root: bool,
 ) -> Result<PathBuf, String> {
-    let root = fs::canonicalize(root)
-        .map_err(|error| format!("Could not resolve library root {}: {error}", root.display()))?;
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| format!("Could not inspect folder {}: {error}", path.display()))?;
+    let root = fs::canonicalize(root).map_err(|error| {
+        tr_fmt(
+            "Could not resolve library root {root}: {error}",
+            &[("root", &root.display()), ("error", &error)],
+        )
+    })?;
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        tr_fmt(
+            "Could not inspect folder {path}: {error}",
+            &[("path", &path.display()), ("error", &error)],
+        )
+    })?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(format!("{} is not a real folder", path.display()));
+        return Err(tr_fmt(
+            "{path} is not a real folder",
+            &[("path", &path.display())],
+        ));
     }
-    let resolved = fs::canonicalize(path)
-        .map_err(|error| format!("Could not resolve folder {}: {error}", path.display()))?;
+    let resolved = fs::canonicalize(path).map_err(|error| {
+        tr_fmt(
+            "Could not resolve folder {path}: {error}",
+            &[("path", &path.display()), ("error", &error)],
+        )
+    })?;
     if !resolved.starts_with(&root) {
-        return Err(format!(
-            "Refusing to operate outside the library root: {}",
-            path.display()
+        return Err(tr_fmt(
+            "Refusing to operate outside the library root: {path}",
+            &[("path", &path.display())],
         ));
     }
     if !allow_root && resolved == root {
         return Err(
-            "The top-level library folder cannot be moved, renamed, or deleted.".to_owned(),
+            tr("The top-level library folder cannot be moved, renamed, or deleted.").to_owned(),
         );
     }
     Ok(resolved)
@@ -365,9 +402,9 @@ pub(in crate::ui::library) fn unique_folder_destination(
             return Ok(destination);
         }
     }
-    Err(format!(
-        "Could not find an unused folder name in {}",
-        parent.display()
+    Err(tr_fmt(
+        "Could not find an unused folder name in {parent}",
+        &[("parent", &parent.display())],
     ))
 }
 
@@ -375,47 +412,81 @@ pub(in crate::ui::library) fn copy_directory_create_new(
     source: &Path,
     destination: &Path,
 ) -> Result<(), String> {
-    let source_metadata = fs::symlink_metadata(source)
-        .map_err(|error| format!("Could not inspect {}: {error}", source.display()))?;
+    let source_metadata = fs::symlink_metadata(source).map_err(|error| {
+        tr_fmt(
+            "Could not inspect {source}: {error}",
+            &[("source", &source.display()), ("error", &error)],
+        )
+    })?;
     if source_metadata.file_type().is_symlink() || !source_metadata.is_dir() {
-        return Err(format!("{} is not a real folder", source.display()));
+        return Err(tr_fmt(
+            "{source} is not a real folder",
+            &[("source", &source.display())],
+        ));
     }
-    let source_resolved = fs::canonicalize(source)
-        .map_err(|error| format!("Could not resolve {}: {error}", source.display()))?;
-    let destination_parent = destination
-        .parent()
-        .ok_or_else(|| format!("{} has no parent folder", destination.display()))?;
+    let source_resolved = fs::canonicalize(source).map_err(|error| {
+        tr_fmt(
+            "Could not resolve {source}: {error}",
+            &[("source", &source.display()), ("error", &error)],
+        )
+    })?;
+    let destination_parent = destination.parent().ok_or_else(|| {
+        tr_fmt(
+            "{destination} has no parent folder",
+            &[("destination", &destination.display())],
+        )
+    })?;
     let destination_parent_resolved = fs::canonicalize(destination_parent).map_err(|error| {
-        format!(
-            "Could not resolve destination {}: {error}",
-            destination_parent.display()
+        tr_fmt(
+            "Could not resolve destination {destination_parent}: {error}",
+            &[
+                ("destination_parent", &destination_parent.display()),
+                ("error", &error),
+            ],
         )
     })?;
     if destination_parent_resolved.starts_with(&source_resolved) {
-        return Err("A folder cannot be copied into itself or one of its subfolders.".to_owned());
+        return Err(
+            tr("A folder cannot be copied into itself or one of its subfolders.").to_owned(),
+        );
     }
 
     fn copy_contents(source: &Path, destination: &Path) -> Result<(), String> {
-        for entry in fs::read_dir(source)
-            .map_err(|error| format!("Could not read {}: {error}", source.display()))?
-        {
+        for entry in fs::read_dir(source).map_err(|error| {
+            tr_fmt(
+                "Could not read {source}: {error}",
+                &[("source", &source.display()), ("error", &error)],
+            )
+        })? {
             let entry = entry.map_err(|error| {
-                format!("Could not read an entry in {}: {error}", source.display())
+                tr_fmt(
+                    "Could not read an entry in {source}: {error}",
+                    &[("source", &source.display()), ("error", &error)],
+                )
             })?;
             let source_path = entry.path();
             let destination_path = destination.join(entry.file_name());
-            let file_type = entry
-                .file_type()
-                .map_err(|error| format!("Could not inspect {}: {error}", source_path.display()))?;
+            let file_type = entry.file_type().map_err(|error| {
+                tr_fmt(
+                    "Could not inspect {source_path}: {error}",
+                    &[("source_path", &source_path.display()), ("error", &error)],
+                )
+            })?;
             if file_type.is_symlink() {
-                return Err(format!(
-                    "Refusing to follow symbolic link {} while copying a folder",
-                    source_path.display()
+                return Err(tr_fmt(
+                    "Refusing to follow symbolic link {source_path} while copying a folder",
+                    &[("source_path", &source_path.display())],
                 ));
             }
             if file_type.is_dir() {
                 fs::create_dir(&destination_path).map_err(|error| {
-                    format!("Could not create {}: {error}", destination_path.display())
+                    tr_fmt(
+                        "Could not create {destination_path}: {error}",
+                        &[
+                            ("destination_path", &destination_path.display()),
+                            ("error", &error),
+                        ],
+                    )
                 })?;
                 copy_contents(&source_path, &destination_path)?;
                 if let Err(error) =
@@ -428,25 +499,36 @@ pub(in crate::ui::library) fn copy_directory_create_new(
                 }
             } else if file_type.is_file() {
                 copy_file_create_new(&source_path, &destination_path).map_err(|error| {
-                    format!("Could not copy {}: {error}", source_path.display())
+                    tr_fmt(
+                        "Could not copy {source_path}: {error}",
+                        &[("source_path", &source_path.display()), ("error", &error)],
+                    )
                 })?;
             } else {
-                return Err(format!(
-                    "Refusing to copy special filesystem entry {}",
-                    source_path.display()
+                return Err(tr_fmt(
+                    "Refusing to copy special filesystem entry {source_path}",
+                    &[("source_path", &source_path.display())],
                 ));
             }
         }
         Ok(())
     }
 
-    fs::create_dir(destination)
-        .map_err(|error| format!("Could not create {}: {error}", destination.display()))?;
+    fs::create_dir(destination).map_err(|error| {
+        tr_fmt(
+            "Could not create {destination}: {error}",
+            &[("destination", &destination.display()), ("error", &error)],
+        )
+    })?;
     if let Err(error) = copy_contents(source, destination) {
         if let Err(cleanup_error) = fs::remove_dir_all(destination) {
-            return Err(format!(
-                "{error} Cleanup of incomplete folder {} also failed: {cleanup_error}",
-                destination.display()
+            return Err(tr_fmt(
+                "{error} Cleanup of incomplete folder {destination} also failed: {cleanup_error}",
+                &[
+                    ("error", &error),
+                    ("destination", &destination.display()),
+                    ("cleanup_error", &cleanup_error),
+                ],
             ));
         }
         return Err(error);
@@ -465,15 +547,21 @@ pub(in crate::ui::library) fn import_folder_into_library(
     source: &Path,
     folder: &Path,
 ) -> Result<PathBuf, String> {
-    let source_name = source
-        .file_name()
-        .ok_or_else(|| format!("{} has no folder name", source.display()))?;
+    let source_name = source.file_name().ok_or_else(|| {
+        tr_fmt(
+            "{source} has no folder name",
+            &[("source", &source.display())],
+        )
+    })?;
     let destination = unique_folder_destination(folder, source_name)?;
     copy_directory_create_new(source, &destination).map_err(|error| {
-        format!(
-            "Could not import folder {} into {}: {error}",
-            source.display(),
-            folder.display()
+        tr_fmt(
+            "Could not import folder {source} into {folder}: {error}",
+            &[
+                ("source", &source.display()),
+                ("folder", &folder.display()),
+                ("error", &error),
+            ],
         )
     })?;
     Ok(destination)
@@ -483,18 +571,20 @@ pub(in crate::ui::library) fn folder_operation_progress_status(
     operation: &LibraryFolderOperation,
 ) -> String {
     match operation {
-        LibraryFolderOperation::Create { parent, .. } => {
-            format!("Creating a folder in {}…", parent.display())
-        }
+        LibraryFolderOperation::Create { parent, .. } => tr_fmt(
+            "Creating a folder in {parent}…",
+            &[("parent", &parent.display())],
+        ),
         LibraryFolderOperation::Copy { source, .. } => {
-            format!("Copying folder {}…", source.display())
+            tr_fmt("Copying folder {source}…", &[("source", &source.display())])
         }
         LibraryFolderOperation::Move { source, .. } => {
-            format!("Moving folder {}…", source.display())
+            tr_fmt("Moving folder {source}…", &[("source", &source.display())])
         }
-        LibraryFolderOperation::Delete { target, .. } => {
-            format!("Deleting folder {}…", target.display())
-        }
+        LibraryFolderOperation::Delete { target, .. } => tr_fmt(
+            "Deleting folder {target}…",
+            &[("target", &target.display())],
+        ),
     }
 }
 
@@ -508,9 +598,15 @@ pub(in crate::ui::library) fn run_folder_operation(
             let destination = parent.join(name);
             fs::create_dir(&destination).map_err(|error| {
                 if error.kind() == io::ErrorKind::AlreadyExists {
-                    format!("A folder named {} already exists.", destination.display())
+                    tr_fmt(
+                        "A folder named {destination} already exists.",
+                        &[("destination", &destination.display())],
+                    )
                 } else {
-                    format!("Could not create folder {}: {error}", destination.display())
+                    tr_fmt(
+                        "Could not create folder {destination}: {error}",
+                        &[("destination", &destination.display()), ("error", &error)],
+                    )
                 }
             })?;
             if let Err(error) = calibraw_core::file_ops::sync_parent_directory(&parent) {
@@ -525,9 +621,12 @@ pub(in crate::ui::library) fn run_folder_operation(
         } => {
             canonical_library_directory(&root, &source, false)?;
             canonical_library_directory(&root, &destination_parent, true)?;
-            let name = source
-                .file_name()
-                .ok_or_else(|| format!("{} has no folder name", source.display()))?;
+            let name = source.file_name().ok_or_else(|| {
+                tr_fmt(
+                    "{source} has no folder name",
+                    &[("source", &source.display())],
+                )
+            })?;
             let destination = unique_folder_destination(&destination_parent, name)?;
             copy_directory_create_new(&source, &destination)?;
             Ok(LibraryFolderOperationResult::Copied {
@@ -546,31 +645,36 @@ pub(in crate::ui::library) fn run_folder_operation(
                 canonical_library_directory(&root, &destination_parent, true)?;
             if destination_parent_resolved.starts_with(&source_resolved) {
                 return Err(
-                    "A folder cannot be moved into itself or one of its subfolders.".to_owned(),
+                    tr("A folder cannot be moved into itself or one of its subfolders.").to_owned(),
                 );
             }
             let name = match new_name {
                 Some(name) => validate_folder_name(&name)?,
-                None => source
-                    .file_name()
-                    .map(OsString::from)
-                    .ok_or_else(|| format!("{} has no folder name", source.display()))?,
+                None => source.file_name().map(OsString::from).ok_or_else(|| {
+                    tr_fmt(
+                        "{source} has no folder name",
+                        &[("source", &source.display())],
+                    )
+                })?,
             };
             let destination = destination_parent.join(name);
             if destination == source {
-                return Err("The folder is already in that location.".to_owned());
+                return Err(tr("The folder is already in that location.").to_owned());
             }
             if path_entry_exists(&destination) {
-                return Err(format!(
-                    "A folder named {} already exists; nothing was overwritten.",
-                    destination.display()
+                return Err(tr_fmt(
+                    "A folder named {destination} already exists; nothing was overwritten.",
+                    &[("destination", &destination.display())],
                 ));
             }
             fs::rename(&source, &destination).map_err(|error| {
-                format!(
-                    "Could not move {} to {}: {error}",
-                    source.display(),
-                    destination.display()
+                tr_fmt(
+                    "Could not move {source} to {destination}: {error}",
+                    &[
+                        ("source", &source.display()),
+                        ("destination", &destination.display()),
+                        ("error", &error),
+                    ],
                 )
             })?;
             if let Some(parent) = source.parent() {
@@ -593,7 +697,10 @@ pub(in crate::ui::library) fn run_folder_operation(
         LibraryFolderOperation::Delete { root, target } => {
             canonical_library_directory(&root, &target, false)?;
             fs::remove_dir_all(&target).map_err(|error| {
-                format!("Could not delete folder {}: {error}", target.display())
+                tr_fmt(
+                    "Could not delete folder {target}: {error}",
+                    &[("target", &target.display()), ("error", &error)],
+                )
             })?;
             if let Some(parent) = target.parent() {
                 if let Err(error) = calibraw_core::file_ops::sync_parent_directory(parent) {
@@ -611,43 +718,50 @@ pub(in crate::ui::library) fn run_folder_operation(
 pub(in crate::ui::library) fn raw_import_status(result: &RawImportResult) -> String {
     let mut parts = Vec::new();
     if !result.imported.is_empty() {
-        parts.push(format!(
-            "Imported {} {}",
-            result.imported.len(),
-            if result.imported.len() == 1 {
-                "photo"
-            } else {
-                "photos"
-            }
-        ));
+        let count = result.imported.len();
+        parts.push(if count == 1 {
+            tr_fmt("Imported {count} photo", &[("count", &count)])
+        } else {
+            tr_fmt("Imported {count} photos", &[("count", &count)])
+        });
     }
     if !result.imported_folders.is_empty() {
-        parts.push(format!(
-            "Imported {} {}",
-            result.imported_folders.len(),
-            if result.imported_folders.len() == 1 {
-                "folder"
-            } else {
-                "folders"
-            }
-        ));
+        let count = result.imported_folders.len();
+        parts.push(if count == 1 {
+            tr_fmt("Imported {count} folder", &[("count", &count)])
+        } else {
+            tr_fmt("Imported {count} folders", &[("count", &count)])
+        });
     }
     if result.already_present > 0 {
-        parts.push(format!("{} already in this folder", result.already_present));
-    }
-    if result.ignored > 0 {
-        parts.push(format!(
-            "ignored {} unsupported or inaccessible {}",
-            result.ignored,
-            if result.ignored == 1 { "item" } else { "items" }
+        parts.push(tr_fmt(
+            "{already_present} already in this folder",
+            &[("already_present", &result.already_present)],
         ));
     }
+    if result.ignored > 0 {
+        let count = result.ignored;
+        parts.push(if count == 1 {
+            tr_fmt(
+                "ignored {count} unsupported or inaccessible item",
+                &[("count", &count)],
+            )
+        } else {
+            tr_fmt(
+                "ignored {count} unsupported or inaccessible items",
+                &[("count", &count)],
+            )
+        });
+    }
     if !result.failures.is_empty() {
-        parts.push(format!("{} failed", result.failures.len()));
+        parts.push(tr_fmt(
+            "{count} failed",
+            &[("count", &result.failures.len())],
+        ));
         parts.push(result.failures.join(" · "));
     }
     if parts.is_empty() {
-        "No RAW files or folders were imported.".to_owned()
+        tr("No RAW files or folders were imported.").to_owned()
     } else {
         format!("{}.", parts.join("; "))
     }

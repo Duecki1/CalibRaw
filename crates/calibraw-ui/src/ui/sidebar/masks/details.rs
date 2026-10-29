@@ -3,6 +3,7 @@ use super::adjustments::{
 };
 use super::*;
 use crate::app::{apply_mask_property_actions, MaskPropertiesControls};
+use crate::i18n::tr;
 
 fn mask_creation_menu_button<R>(
     ui: &mut Ui,
@@ -45,11 +46,11 @@ impl Sidebar {
                     mask_creation_icon(),
                     size,
                     20.0,
-                    "Create a new mask group",
+                    tr("Create a new mask group"),
                     |ui| {
                         *new_mask = Self::mask_kind_menu(
                             ui,
-                            "This mask type is planned but not implemented yet.",
+                            tr("This mask type is planned but not implemented yet."),
                         );
                     },
                 );
@@ -74,11 +75,11 @@ impl Sidebar {
                     submask_creation_icon(),
                     size,
                     18.0,
-                    "Add, subtract or intersect a sub-mask in the selected group",
+                    tr("Add, subtract or intersect a sub-mask in the selected group"),
                     |ui| {
                         *add_component = Self::submask_creation_menu(
                             ui,
-                            "This sub-mask type is planned but not implemented yet.",
+                            tr("This sub-mask type is planned but not implemented yet."),
                         );
                     },
                 );
@@ -97,7 +98,7 @@ impl Sidebar {
         painter.text(
             rect.center(),
             Align2::CENTER_CENTER,
-            "DROP",
+            tr("DROP"),
             FontId::proportional(9.0),
             red,
         );
@@ -200,13 +201,13 @@ impl Sidebar {
                 egui::vec2(width, moduwu_design::TOOLBAR_HEIGHT),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    moduwu_design::toolbar_title(ui, "Edit");
+                    moduwu_design::toolbar_title(ui, tr("Edit"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if moduwu_design::ghost_icon_button(
                             ui,
                             egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                             moduwu_design::toolbar_icon_size(),
-                            "Reset local adjustments",
+                            tr("Reset local adjustments"),
                         )
                         .clicked()
                         {
@@ -449,10 +450,11 @@ impl Sidebar {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .button(format!(
-                        "{}  Reset local adjustments",
-                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+                        "{}  {}",
+                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                        tr("Reset local adjustments")
                     ))
-                    .on_hover_text("Reset local adjustments")
+                    .on_hover_text(tr("Reset local adjustments"))
                     .clicked()
                 {
                     app.masks.stack.masks[mask_index].adjustments.reset();

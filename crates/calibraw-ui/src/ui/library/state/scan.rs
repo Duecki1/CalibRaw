@@ -1,6 +1,7 @@
 //! Scanning the library folder and applying catalog and thumbnail events.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl LibraryState {
     pub(crate) fn refresh(&mut self, context: &egui::Context) {
@@ -36,17 +37,17 @@ impl LibraryState {
                 self.event_receiver = None;
                 self.request_sender = None;
                 self.scanning = false;
-                self.status = "Open a folder to build your photo library.".to_owned();
+                self.status = tr("Open a folder to build your photo library.").to_owned();
                 return;
             };
             let Some(root_folder) = self.root_folder.clone() else {
                 self.event_receiver = None;
                 self.request_sender = None;
                 self.scanning = false;
-                self.status = "Open a top-level folder to build your photo library.".to_owned();
+                self.status = tr("Open a top-level folder to build your photo library.").to_owned();
                 return;
             };
-            self.status = format!("Scanning {}…", folder.display());
+            self.status = tr_fmt("Scanning {folder}…", &[("folder", &folder.display())]);
             std::thread::Builder::new()
                 .name("calibraw-library".to_owned())
                 .spawn(move || {
@@ -116,7 +117,7 @@ impl LibraryState {
                 })
         } else {
             let platform = Arc::clone(&self.platform);
-            self.status = "Refreshing CalibRaw library…".to_owned();
+            self.status = tr("Refreshing CalibRaw library…").to_owned();
             std::thread::Builder::new()
                 .name("calibraw-library".to_owned())
                 .spawn(move || {
@@ -187,7 +188,10 @@ impl LibraryState {
             self.request_sender = None;
             self.scanning = false;
             self.catalog_ready = true;
-            self.status = format!("Could not start the library scanner: {error}");
+            self.status = tr_fmt(
+                "Could not start the library scanner: {error}",
+                &[("error", &error)],
+            );
         }
     }
 
@@ -206,7 +210,7 @@ impl LibraryState {
             }
             Some(Err(mpsc::TryRecvError::Disconnected)) => {
                 self.raw_import_receiver = None;
-                self.status = "The dropped RAW import stopped unexpectedly.".to_owned();
+                self.status = tr("The dropped RAW import stopped unexpectedly.").to_owned();
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => {}
         }
@@ -231,7 +235,7 @@ impl LibraryState {
             }
             Some(Err(mpsc::TryRecvError::Disconnected)) => {
                 self.asset_transfer_receiver = None;
-                self.status = "The Library asset transfer stopped unexpectedly.".to_owned();
+                self.status = tr("The Library asset transfer stopped unexpectedly.").to_owned();
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => {}
         }
@@ -249,9 +253,9 @@ impl LibraryState {
                     self.folder_operation_receiver = None;
                     if self.root_folder.as_ref() != Some(&completion.root) {
                         self.status = match completion.result {
-                            Ok(_) => format!(
-                                "Folder operation completed in the previous library root {}.",
-                                completion.root.display()
+                            Ok(_) => tr_fmt(
+                                "Folder operation completed in the previous library root {root}.",
+                                &[("root", &completion.root.display())],
                             ),
                             Err(error) => error,
                         };
@@ -267,7 +271,7 @@ impl LibraryState {
                 }
                 Some(Err(mpsc::TryRecvError::Disconnected)) => {
                     self.folder_operation_receiver = None;
-                    self.status = "The folder operation stopped unexpectedly.".to_owned();
+                    self.status = tr("The folder operation stopped unexpectedly.").to_owned();
                 }
                 Some(Err(mpsc::TryRecvError::Empty)) | None => {}
             }
@@ -284,7 +288,7 @@ impl LibraryState {
                     self.request_sender = None;
                     self.scanning = false;
                     if !self.catalog_ready {
-                        self.status = "The library scanner stopped unexpectedly.".to_owned();
+                        self.status = tr("The library scanner stopped unexpectedly.").to_owned();
                     }
                     break;
                 }

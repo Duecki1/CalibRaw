@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 const INTERACTIVE_MASK_INTERVAL: Duration = Duration::from_millis(45);
 const SHARED_REFINEMENT_LAYER: usize = MAX_LOCAL_MASKS;
@@ -128,21 +129,21 @@ impl MaskState {
             [location] => Ok(*location),
             [] => {
                 let message = match stack.masks.get(target.mask_index) {
-                    None => "The target mask was deleted before inference completed.",
+                    None => tr("The target mask was deleted before inference completed."),
                     Some(mask) if mask.components.get(target.component_index).is_none() => {
-                        "The target mask component was deleted before inference completed."
+                        tr("The target mask component was deleted before inference completed.")
                     }
                     Some(mask) if mask.components[target.component_index].kind != target.kind => {
-                        "The target component changed type before inference completed."
+                        tr("The target component changed type before inference completed.")
                     }
-                    Some(_) => "The target component changed before inference completed.",
+                    Some(_) => tr("The target component changed before inference completed."),
                 };
                 Err(message.to_owned())
             }
-            _ => Err(
-                "The target component is ambiguous after editing; the stale result was discarded."
-                    .to_owned(),
-            ),
+            _ => Err(tr(
+                "The target component is ambiguous after editing; the stale result was discarded.",
+            )
+            .to_owned()),
         }
     }
 
@@ -429,16 +430,14 @@ impl CalibRawApp {
             return true;
         }
         let Some((runtime_path, runtime_sha256)) = self.ai.manual_runtime.clone() else {
-            self.report_error(ErrorKind::AiRuntime, "Manual ONNX Runtime mode requires a shared library under Settings. Select one or switch to Automatic."
+            self.report_error(ErrorKind::AiRuntime, tr("Manual ONNX Runtime mode requires a shared library under Settings. Select one or switch to Automatic.")
                     .to_owned(),);
             return false;
         };
         match calibraw_ai::runtime::probe_runtime_subprocess(&runtime_path, &runtime_sha256) {
             Ok(()) => true,
             Err(error) => {
-                self.report_error(ErrorKind::AiRuntime, format!(
-                    "ONNX Runtime validation failed: {error:#}. Select a different onnxruntime.dll in Settings."
-                ));
+                self.report_error(ErrorKind::AiRuntime, tr_fmt("ONNX Runtime validation failed: {error}. Select a different onnxruntime.dll in Settings.", &[("error", &format!("{error:#}"))]));
                 false
             }
         }

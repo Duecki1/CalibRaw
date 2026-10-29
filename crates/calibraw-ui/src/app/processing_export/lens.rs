@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     pub(crate) fn mark_lens_correction_dirty(&mut self) {
@@ -49,7 +50,8 @@ impl CalibRawApp {
             self.develop.lens_correction_dirty = false;
             lens.enabled = false;
             lens.applied = false;
-            lens.catalog.status = "Select a lens profile before enabling correction.".to_owned();
+            lens.catalog.status =
+                tr("Select a lens profile before enabling correction.").to_owned();
             return;
         }
         let selection = lens.requested_correction();
@@ -115,17 +117,20 @@ impl CalibRawApp {
         let status_label = request
             .selection
             .as_ref()
-            .map(LensCorrection::label)
-            .unwrap_or_else(|| "original geometry".to_owned());
+            .map(lens_correction_label)
+            .unwrap_or_else(|| tr("original geometry").to_owned());
         self.develop.lens_correction.catalog.status = if request.selection.is_some() {
-            format!("Applying {status_label}…")
+            tr_fmt(
+                "Applying {status_label}…",
+                &[("status_label", &status_label)],
+            )
         } else {
-            "Disabling lens correction…".to_owned()
+            tr("Disabling lens correction…").to_owned()
         };
         let progress = ForegroundProgress::indeterminate(if request.selection.is_some() {
-            "Applying lens profile…"
+            tr("Applying lens profile…")
         } else {
-            "Restoring original geometry…"
+            tr("Restoring original geometry…")
         });
 
         let repaint = self.egui_ctx.clone();
@@ -138,14 +143,22 @@ impl CalibRawApp {
                     if worker_cancellation.load(Ordering::Acquire) {
                         return Err("foreground operation cancelled".to_owned());
                     }
-                    let applied_label = request.selection.as_ref().map(LensCorrection::label);
+                    let applied_label = request.selection.as_ref().map(lens_correction_label);
                     let (full_raw, preview_raw) = if let Some(cached_raws) = request.cached_raws {
                         cached_raws
                     } else {
                         let original_raw = Arc::clone(&request.original_raw);
                         let full_raw = if let Some(selection) = request.selection.as_ref() {
                             Arc::new(apply_lens_correction(&original_raw, selection).map_err(
-                                |error| format!("Could not apply {}: {error:#}", selection.label()),
+                                |error| {
+                                    tr_fmt(
+                                        "Could not apply {selection}: {error}",
+                                        &[
+                                            ("selection", &selection.label()),
+                                            ("error", &format!("{error:#}")),
+                                        ],
+                                    )
+                                },
                             )?)
                         } else {
                             original_raw
@@ -154,7 +167,7 @@ impl CalibRawApp {
                             return Err("foreground operation cancelled".to_owned());
                         }
                         let _ = sender.send(LensCorrectionEvent::Progress(
-                            "Building preview proxy…".to_owned(),
+                            tr("Building preview proxy…").to_owned(),
                         ));
                         repaint.request_repaint();
                         let preview_spec = ProxySpec {
@@ -198,8 +211,10 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.develop.lens_correction.enabled = self.develop.lens_correction.applied;
-                self.develop.lens_correction.catalog.status =
-                    format!("Could not start lens correction: {error}");
+                self.develop.lens_correction.catalog.status = tr_fmt(
+                    "Could not start lens correction: {error}",
+                    &[("error", &error)],
+                );
                 self.report_error(
                     ErrorKind::LensCorrection,
                     self.develop.lens_correction.catalog.status.clone(),
@@ -239,7 +254,7 @@ impl CalibRawApp {
         }
         if finished.is_none() && disconnected {
             finished = Some(Err(
-                "Lens-correction worker stopped unexpectedly.".to_owned()
+                tr("Lens-correction worker stopped unexpectedly.").to_owned()
             ));
         }
         let Some(result) = finished else {
@@ -259,18 +274,18 @@ impl CalibRawApp {
                     self.develop.lens_correction.catalog.status = error;
                     self.report_error(
                         ErrorKind::LensCorrection,
-                        "Lens correction failed; restored the previous preview.".to_owned(),
+                        tr("Lens correction failed; restored the previous preview.").to_owned(),
                     );
                 }
                 return;
             }
         };
-        operation.progress = ForegroundProgress::indeterminate("Preparing GPU preview…");
+        operation.progress = ForegroundProgress::indeterminate(tr("Preparing GPU preview…"));
 
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
                 ErrorKind::LensCorrection,
-                "eframe is not running with the wgpu backend.".to_owned(),
+                tr("eframe is not running with the wgpu backend.").to_owned(),
             );
             return;
         };
@@ -289,7 +304,7 @@ impl CalibRawApp {
             let Some(pipeline) = self.preview.pipeline() else {
                 self.report_error(
                     ErrorKind::LensCorrection,
-                    "The preview pipeline is unavailable.".to_owned(),
+                    tr("The preview pipeline is unavailable.").to_owned(),
                 );
                 return;
             };
@@ -297,7 +312,10 @@ impl CalibRawApp {
             {
                 self.report_error(
                     ErrorKind::LensCorrection,
-                    format!("Could not update the lens-corrected preview pixels: {error:#}"),
+                    tr_fmt(
+                        "Could not update the lens-corrected preview pixels: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 return;
             }
@@ -325,7 +343,10 @@ impl CalibRawApp {
             ) {
                 self.report_error(
                     ErrorKind::LensCorrection,
-                    format!("Could not apply Remove to lens preview: {error:#}"),
+                    tr_fmt(
+                        "Could not apply Remove to lens preview: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 return;
             }
@@ -362,7 +383,10 @@ impl CalibRawApp {
                 Err(error) => {
                     self.report_error(
                         ErrorKind::LensCorrection,
-                        format!("Could not rebuild the corrected GPU preview: {error:#}"),
+                        tr_fmt(
+                            "Could not rebuild the corrected GPU preview: {error}",
+                            &[("error", &format!("{error:#}"))],
+                        ),
                     );
                     return;
                 }
@@ -393,7 +417,10 @@ impl CalibRawApp {
             ) {
                 self.report_error(
                     ErrorKind::LensCorrection,
-                    format!("Could not apply Remove to corrected preview: {error:#}"),
+                    tr_fmt(
+                        "Could not apply Remove to corrected preview: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 return;
             }
@@ -425,11 +452,20 @@ impl CalibRawApp {
         self.preview.pending_stage = None;
         self.develop.lens_correction.applied = prepared.applied_label.is_some();
         self.develop.lens_correction.catalog.status = prepared.applied_label.map_or_else(
-            || "Lens correction disabled; using the original geometry.".to_owned(),
-            |label| format!("Applied {label}"),
+            || tr("Lens correction disabled; using the original geometry.").to_owned(),
+            |label| tr_fmt("Applied {label}", &[("label", &label)]),
         );
         self.ui.notice = None;
         self.resume_persisted_ai_denoise(frame);
         self.egui_ctx.request_repaint();
+    }
+}
+
+/// The name of a lens correction shown in the status line. A lens profile is
+/// named from its metadata; the manual correction's name is translated here.
+fn lens_correction_label(correction: &LensCorrection) -> String {
+    match correction {
+        LensCorrection::Profile(lens) => lens.label(),
+        LensCorrection::Manual(_) => tr("manual lens correction").to_owned(),
     }
 }

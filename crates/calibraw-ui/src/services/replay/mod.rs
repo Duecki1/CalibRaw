@@ -13,6 +13,7 @@ mod android;
 mod desktop;
 use desktop::ensure_ffmpeg_available;
 
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{
     spawn_tiled_export, ExportBitDepth, ExportEvent, ExportFormat, ExportMetadata,
     ExportResizeMode, ExportSettings, ExportTarget, ExposureParams, GeometryTransform,
@@ -134,7 +135,7 @@ pub(crate) enum ReplayError {
 impl fmt::Display for ReplayError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Cancelled => formatter.write_str("edit replay cancelled"),
+            Self::Cancelled => formatter.write_str(tr("edit replay cancelled")),
             Self::Failed(message) => formatter.write_str(message),
         }
     }
@@ -206,16 +207,26 @@ fn render_still(
             }
             Err(_) => {
                 return Err(ReplayError::Failed(
-                    "replay render worker stopped unexpectedly".to_owned(),
+                    tr("replay render worker stopped unexpectedly").to_owned(),
                 ))
             }
         }
     }
     ensure_not_cancelled(cancellation)?;
     let decoded = image::ImageReader::open(path)
-        .map_err(|error| format!("Could not open rendered replay frame: {error}"))?
+        .map_err(|error| {
+            tr_fmt(
+                "Could not open rendered replay frame: {error}",
+                &[("error", &error)],
+            )
+        })?
         .decode()
-        .map_err(|error| format!("Could not decode rendered replay frame: {error}"))?
+        .map_err(|error| {
+            tr_fmt(
+                "Could not decode rendered replay frame: {error}",
+                &[("error", &error)],
+            )
+        })?
         .to_rgb8();
     Ok(RenderedStill {
         width: decoded.width(),
@@ -303,7 +314,12 @@ pub(crate) fn render_edit_replay(
     let render_dir = tempfile::Builder::new()
         .prefix("calibraw-edit-replay-")
         .tempdir_in(render_cache_parent(&destination))
-        .map_err(|error| format!("Could not create replay render cache: {error}"))?;
+        .map_err(|error| {
+            tr_fmt(
+                "Could not create replay render cache: {error}",
+                &[("error", &error)],
+            )
+        })?;
 
     let original_state = ReplayRenderState::original(request.original_exposure);
     let mut rendered = Vec::with_capacity(render_count);
@@ -322,21 +338,21 @@ pub(crate) fn render_edit_replay(
             };
             progress(ReplayProgress {
                 fraction: RENDER_PROGRESS_WEIGHT * (base + step * tile_fraction),
-                phase: format!("Rendering {label}…"),
+                phase: tr_fmt("Rendering {label}…", &[("label", &label)]),
                 completed_frames: 0,
                 total_frames: 0,
             });
         })?;
         progress(ReplayProgress {
             fraction: RENDER_PROGRESS_WEIGHT * ((index + 1) as f32 / render_count as f32),
-            phase: format!("Rendered {label}"),
+            phase: tr_fmt("Rendered {label}", &[("label", &label)]),
             completed_frames: 0,
             total_frames: 0,
         });
         Ok(still)
     };
 
-    rendered.push(render_endpoint(0, "original", &original_state)?);
+    rendered.push(render_endpoint(0, tr("original"), &original_state)?);
     for (stage_index, stage) in stages.iter().enumerate() {
         rendered.push(render_endpoint(
             stage_index + 1,
@@ -345,7 +361,7 @@ pub(crate) fn render_edit_replay(
         )?);
     }
     let final_state = final_render_state(&request);
-    let final_still = render_endpoint(render_count - 1, "final edit", &final_state)?;
+    let final_still = render_endpoint(render_count - 1, tr("final edit"), &final_state)?;
 
     let (canvas_width, canvas_height) =
         replay_canvas_dimensions(final_still.width, final_still.height);
@@ -370,7 +386,12 @@ pub(crate) fn render_edit_replay(
         .prefix(".calibraw-edit-replay-")
         .suffix(".mp4")
         .tempfile_in(parent)
-        .map_err(|error| format!("Could not create temporary replay output: {error}"))?
+        .map_err(|error| {
+            tr_fmt(
+                "Could not create temporary replay output: {error}",
+                &[("error", &error)],
+            )
+        })?
         .into_temp_path();
     let mut writer = ReplayFrameWriter::start(
         &*request.platform,
@@ -408,7 +429,7 @@ pub(crate) fn render_edit_replay(
         &mut scratch,
     );
     for _ in 0..SPLIT_HOLD_FRAMES {
-        emit(&mut writer, &scratch, "Before / after")?;
+        emit(&mut writer, &scratch, tr("Before / after"))?;
     }
     for frame in 0..SPLIT_SWEEP_FRAMES {
         let t = if SPLIT_SWEEP_FRAMES <= 1 {
@@ -424,10 +445,10 @@ pub(crate) fn render_edit_replay(
             0.5 * (1.0 - smootherstep(t)),
             &mut scratch,
         );
-        emit(&mut writer, &scratch, "Revealing final edit")?;
+        emit(&mut writer, &scratch, tr("Revealing final edit"))?;
     }
     for _ in 0..FULL_FRAME_HOLD_FRAMES {
-        emit(&mut writer, &final_canvas, "Final edit")?;
+        emit(&mut writer, &final_canvas, tr("Final edit"))?;
     }
     for frame in 0..SPLIT_SWEEP_FRAMES {
         let t = if SPLIT_SWEEP_FRAMES <= 1 {
@@ -443,10 +464,10 @@ pub(crate) fn render_edit_replay(
             smootherstep(t),
             &mut scratch,
         );
-        emit(&mut writer, &scratch, "Returning to original")?;
+        emit(&mut writer, &scratch, tr("Returning to original"))?;
     }
     for _ in 0..FULL_FRAME_HOLD_FRAMES {
-        emit(&mut writer, &original_canvas, "Original")?;
+        emit(&mut writer, &original_canvas, tr("Original"))?;
     }
 
     let mut previous = original_canvas;
@@ -454,7 +475,7 @@ pub(crate) fn render_edit_replay(
         let next = stage_canvases
             .get_mut(stage_index)
             .expect("each replay stage has a rendered endpoint");
-        let title_phase = format!("Applying {}", stage.kind.label());
+        let title_phase = tr_fmt("Applying {stage}", &[("stage", &stage.kind.label())]);
         for frame in 0..STAGE_TRANSITION_FRAMES {
             let t = if STAGE_TRANSITION_FRAMES <= 1 {
                 1.0
@@ -493,7 +514,7 @@ pub(crate) fn render_edit_replay(
     // the last frame exact even if a future edit-state field is not yet assigned
     // to one of the replay categories above.
     for _ in 0..FINAL_HOLD_FRAMES {
-        emit(&mut writer, &final_canvas, "Holding final edit")?;
+        emit(&mut writer, &final_canvas, tr("Holding final edit"))?;
     }
 
     for frame in 0..OUTRO_FADE_TO_BLACK_FRAMES {
@@ -503,7 +524,7 @@ pub(crate) fn render_edit_replay(
             frame as f32 / (OUTRO_FADE_TO_BLACK_FRAMES - 1) as f32
         };
         crossfade(&final_canvas, &black_canvas, smootherstep(t), &mut scratch);
-        emit(&mut writer, &scratch, "Ending replay")?;
+        emit(&mut writer, &scratch, tr("Ending replay"))?;
     }
     for frame in 0..OUTRO_BRAND_FADE_FRAMES {
         let t = if OUTRO_BRAND_FADE_FRAMES <= 1 {
@@ -524,16 +545,16 @@ pub(crate) fn render_edit_replay(
     }
     progress(ReplayProgress {
         fraction: 1.0,
-        phase: "Finalizing MP4…".to_owned(),
+        phase: tr("Finalizing MP4…").to_owned(),
         completed_frames: total_frames,
         total_frames,
     });
     writer.finish()?;
     ensure_not_cancelled(cancellation)?;
     calibraw_core::file_ops::replace_file(temporary.as_ref(), &destination).map_err(|error| {
-        format!(
-            "Could not publish replay {}: {error}",
-            destination.display()
+        tr_fmt(
+            "Could not publish replay {destination}: {error}",
+            &[("destination", &destination.display()), ("error", &error)],
         )
     })?;
     if let Some(parent) = destination

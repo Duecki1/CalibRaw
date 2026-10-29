@@ -1,5 +1,6 @@
 use super::hover::BUTTON_HIGHLIGHT_RADIUS;
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::sidecar::{PhotoFlag, PhotoReview};
 use crate::ui::theme;
 
@@ -162,7 +163,7 @@ pub(crate) fn show_review_feedback(ctx: &egui::Context, feedback: &mut Option<Re
                         ui.spacing_mut().item_spacing.x = moduwu_design::SPACE_XS;
                         paint_feedback_change(ui, shown.change);
                         if shown.count > 1 {
-                            ui.label(format!("· {} photos", shown.count));
+                            ui.label(tr_fmt("· {count} photos", &[("count", &shown.count)]));
                         }
                     });
                 });
@@ -183,7 +184,7 @@ fn paint_feedback_change(ui: &mut Ui, change: ReviewChange) {
     };
     match change {
         ReviewChange::Rating(0) => {
-            ui.label("No rating");
+            ui.label(tr("No rating"));
         }
         ReviewChange::Rating(rating) => {
             for _ in 0..rating {
@@ -210,16 +211,16 @@ fn paint_feedback_change(ui: &mut Ui, change: ReviewChange) {
             icon(ui, &|painter, center| {
                 paint_flag(painter, center, ICON, flag_color(PhotoFlag::Picked), true)
             });
-            ui.label("Pick toggled");
+            ui.label(tr("Pick toggled"));
         }
     }
 }
 
 fn flag_label(flag: PhotoFlag) -> &'static str {
     match flag {
-        PhotoFlag::Picked => "Pick",
-        PhotoFlag::Rejected => "Reject",
-        PhotoFlag::Unflagged => "Unflagged",
+        PhotoFlag::Picked => tr("Pick"),
+        PhotoFlag::Rejected => tr("Reject"),
+        PhotoFlag::Unflagged => tr("Unflagged"),
     }
 }
 
@@ -406,9 +407,9 @@ pub(super) fn star_buttons(
     for (index, button) in buttons.into_iter().enumerate() {
         let rating = index as u8 + 1;
         let label = if rating == 1 {
-            "1 star".to_owned()
+            tr("1 star").to_owned()
         } else {
-            format!("{rating} stars")
+            tr_fmt("{rating} stars", &[("rating", &rating)])
         };
         let response = review_button(ui, button, ("photo-review", id_salt, index), surface, false);
         response.widget_info(|| {

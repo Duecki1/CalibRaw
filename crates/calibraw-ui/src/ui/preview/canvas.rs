@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::tr;
 
 /// Show the embedded thumbnail, with its size, while the preview develops.
 pub(super) fn show_loading_thumbnail(
@@ -39,7 +40,7 @@ pub(super) fn show_loading_thumbnail(
         ui.painter().text(
             badge_rect.center(),
             egui::Align2::CENTER_CENTER,
-            "Loading RAW…",
+            tr("Loading RAW…"),
             egui::FontId::proportional(13.0),
             Color32::WHITE,
         );

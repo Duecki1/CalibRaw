@@ -24,6 +24,7 @@
 
 use super::preview_dispatch_gate::Batch;
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 /// The smallest source edge (the fitted proxy, or the zoomed crop's raw) that
 /// gets a reduced graph; half of it must still reach the smallest proxy
@@ -586,7 +587,7 @@ impl CalibRawApp {
                     state.failed_for = Some(reduction.source);
                     self.report_error(
                         ErrorKind::Preview,
-                        "The reduced preview worker stopped unexpectedly.".to_owned(),
+                        tr("The reduced preview worker stopped unexpectedly.").to_owned(),
                     );
                 }
             }
@@ -621,7 +622,10 @@ impl CalibRawApp {
                 self.preview.interactive.failed_for = Some(source);
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not start the reduced preview: {error}"),
+                    tr_fmt(
+                        "Could not start the reduced preview: {error}",
+                        &[("error", &error)],
+                    ),
                 );
             }
         }
@@ -701,7 +705,10 @@ impl CalibRawApp {
                 } else {
                     self.report_error(
                         ErrorKind::Preview,
-                        format!("Could not build the reduced preview: {error:#}"),
+                        tr_fmt(
+                            "Could not build the reduced preview: {error}",
+                            &[("error", &format!("{error:#}"))],
+                        ),
                     );
                 }
             }
@@ -718,7 +725,7 @@ impl CalibRawApp {
             .preview
             .pipeline()
             .map(RawGpuPipeline::program_template)
-            .ok_or_else(|| anyhow::anyhow!("the fitted preview is gone"))?;
+            .ok_or_else(|| anyhow::anyhow!(tr("the fitted preview is gone")))?;
         let masks = self.preview_mask_stack();
         let params = GpuParams::new(&self.develop.target_exposure, &masks, reduced)
             .with_vignette_geometry(self.develop.geometry)
@@ -788,7 +795,10 @@ impl CalibRawApp {
             state.reset();
             self.report_error(
                 ErrorKind::Preview,
-                format!("Could not render the reduced preview: {error:#}"),
+                tr_fmt(
+                    "Could not render the reduced preview: {error}",
+                    &[("error", &format!("{error:#}"))],
+                ),
             );
             return;
         }

@@ -1,6 +1,7 @@
 //! Desktop replay encoding through an FFmpeg child process (H.264, MP4).
 
 use super::REPLAY_FPS;
+use crate::i18n::{tr, tr_fmt};
 use std::ffi::OsString;
 use std::io::Write as _;
 #[cfg(windows)]
@@ -55,15 +56,12 @@ impl ReplayFrameWriter {
         command.creation_flags(0x08000000);
 
         let mut child = command.spawn().map_err(|error| {
-            format!(
-                "Could not start FFmpeg ({:?}). Install FFmpeg with H.264/libx264 support or set CALIBRAW_FFMPEG: {error}",
-                ffmpeg
-            )
+            tr_fmt("Could not start FFmpeg ({ffmpeg}). Install FFmpeg with H.264/libx264 support or set CALIBRAW_FFMPEG: {error}", &[("ffmpeg", &format!("{:?}", ffmpeg)), ("error", &error)])
         })?;
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| "FFmpeg did not provide a video input pipe".to_owned())?;
+            .ok_or_else(|| tr("FFmpeg did not provide a video input pipe").to_owned())?;
         Ok(Self {
             child: Some(child),
             stdin: Some(stdin),
@@ -73,9 +71,14 @@ impl ReplayFrameWriter {
     pub(super) fn write_frame(&mut self, rgb: &[u8]) -> Result<(), String> {
         self.stdin
             .as_mut()
-            .ok_or_else(|| "FFmpeg video input pipe is closed".to_owned())?
+            .ok_or_else(|| tr("FFmpeg video input pipe is closed").to_owned())?
             .write_all(rgb)
-            .map_err(|error| format!("Could not send replay frame to FFmpeg: {error}"))
+            .map_err(|error| {
+                tr_fmt(
+                    "Could not send replay frame to FFmpeg: {error}",
+                    &[("error", &error)],
+                )
+            })
     }
 
     pub(super) fn finish(mut self) -> Result<(), String> {
@@ -83,18 +86,26 @@ impl ReplayFrameWriter {
         let output = self
             .child
             .take()
-            .ok_or_else(|| "FFmpeg encoder is closed".to_owned())?
+            .ok_or_else(|| tr("FFmpeg encoder is closed").to_owned())?
             .wait_with_output()
-            .map_err(|error| format!("Could not finish FFmpeg replay encoding: {error}"))?;
+            .map_err(|error| {
+                tr_fmt(
+                    "Could not finish FFmpeg replay encoding: {error}",
+                    &[("error", &error)],
+                )
+            })?;
         if output.status.success() {
             return Ok(());
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.trim();
         if detail.is_empty() {
-            Err(format!("FFmpeg exited with {}", output.status))
+            Err(tr_fmt(
+                "FFmpeg exited with {status}",
+                &[("status", &output.status)],
+            ))
         } else {
-            Err(format!("FFmpeg failed: {detail}"))
+            Err(tr_fmt("FFmpeg failed: {detail}", &[("detail", &detail)]))
         }
     }
 
@@ -126,21 +137,18 @@ pub(super) fn ensure_ffmpeg_available() -> Result<(), String> {
         .arg("-encoders")
         .output()
         .map_err(|error| {
-            format!(
-                "Could not start FFmpeg ({:?}). Install FFmpeg with H.264/libx264 support or set CALIBRAW_FFMPEG: {error}",
-                ffmpeg
-            )
+            tr_fmt("Could not start FFmpeg ({ffmpeg}). Install FFmpeg with H.264/libx264 support or set CALIBRAW_FFMPEG: {error}", &[("ffmpeg", &format!("{:?}", ffmpeg)), ("error", &error)])
         })?;
     if !output.status.success() {
-        return Err(format!(
-            "FFmpeg encoder probe exited with {}",
-            output.status
+        return Err(tr_fmt(
+            "FFmpeg encoder probe exited with {status}",
+            &[("status", &output.status)],
         ));
     }
     let encoders = String::from_utf8_lossy(&output.stdout);
     if !encoders.contains("libx264") {
         return Err(
-            "FFmpeg is available but does not provide the libx264 H.264 encoder".to_owned(),
+            tr("FFmpeg is available but does not provide the libx264 H.264 encoder").to_owned(),
         );
     }
     Ok(())

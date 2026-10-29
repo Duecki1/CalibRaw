@@ -3,26 +3,27 @@
 
 use super::Settings;
 use crate::app::{CalibRawApp, SettingsDialog};
+use crate::i18n::{tr, tr_fmt};
 use eframe::egui::{self, Ui};
 
 impl Settings {
     pub(super) fn show_luts_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
-            "LUTs",
-            "3D LUTs in the .cube format, for the LUT card in Develop and for batch exports. Imported files are copied into CalibRaw, so the originals can be moved or deleted.",
+            tr("LUTs"),
+            tr("3D LUTs in the .cube format, for the LUT card in Develop and for batch exports. Imported files are copied into CalibRaw, so the originals can be moved or deleted."),
         );
         if let Some(failure) = app.luts.failure() {
             ui.colored_label(ui.visuals().error_fg_color, failure);
         }
         let count = app.luts.entries().len();
         let summary = match count {
-            0 => "No LUTs imported".to_owned(),
-            1 => "1 LUT".to_owned(),
-            count => format!("{count} LUTs"),
+            0 => tr(tr("No LUTs imported")).to_owned(),
+            1 => tr(tr("1 LUT")).to_owned(),
+            count => tr_fmt("{count} LUTs", &[("count", &count)]),
         };
         moduwu_design::property_row(ui, summary, |ui| {
-            if moduwu_design::secondary_button_enabled(ui, app.luts.is_available(), "Manage…")
+            if moduwu_design::secondary_button_enabled(ui, app.luts.is_available(), tr("Manage…"))
                 .clicked()
             {
                 app.ui.settings_dialog = Some(SettingsDialog::Luts);
@@ -41,13 +42,13 @@ impl Settings {
         let mut remove = None;
         let mut import = false;
         let mut close = false;
-        moduwu_design::Dialog::new("lut-library", "LUTs")
+        moduwu_design::Dialog::new("lut-library", tr("LUTs"))
             .size(moduwu_design::DialogSize::Wide)
             .show_with_footer(
                 ctx,
                 |ui| {
                     if app.luts.entries().is_empty() {
-                        ui.small("No LUTs imported.");
+                        ui.small(tr("No LUTs imported."));
                     }
                     for entry in app.luts.entries() {
                         // Right to left: remove sits at the row's end.
@@ -57,7 +58,7 @@ impl Settings {
                                 ui,
                                 egui_phosphor::regular::TRASH,
                                 size,
-                                &format!("Remove {}", entry.name),
+                                &tr_fmt("Remove {name}", &[("name", &entry.name)]),
                             )
                             .clicked()
                             {
@@ -67,7 +68,7 @@ impl Settings {
                                 ui,
                                 egui_phosphor::regular::PENCIL_SIMPLE,
                                 size,
-                                &format!("Rename {}", entry.name),
+                                &tr_fmt("Rename {name}", &[("name", &entry.name)]),
                             )
                             .clicked()
                             {
@@ -78,7 +79,7 @@ impl Settings {
                     }
                 },
                 |ui| {
-                    close = moduwu_design::primary_action_button(ui, "Done").clicked()
+                    close = moduwu_design::primary_action_button(ui, tr("Done")).clicked()
                         || moduwu_design::dialog_keyboard_action(
                             ui,
                             moduwu_design::DialogKeyboard::CLOSE_ONLY,
@@ -87,7 +88,11 @@ impl Settings {
                     import = moduwu_design::secondary_button_enabled(
                         ui,
                         app.luts.is_available(),
-                        format!("{}  Import…", egui_phosphor::regular::DOWNLOAD_SIMPLE),
+                        format!(
+                            "{}  {}",
+                            egui_phosphor::regular::DOWNLOAD_SIMPLE,
+                            tr("Import…")
+                        ),
                     )
                     .clicked();
                 },

@@ -3,6 +3,7 @@
 //! a status notice or, for failures, the shared error dialog.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use crate::ui::background_tasks::{BackgroundTaskId, BackgroundTaskView};
 
 impl CalibRawApp {
@@ -46,12 +47,15 @@ impl CalibRawApp {
         };
         match outcome {
             MergeOutcome::Saved(name) => {
-                let message = format!("{} saved: {name}", kind.title());
+                let message = tr_fmt(
+                    "{kind} saved: {name}",
+                    &[("kind", &kind.title()), ("name", &name)],
+                );
                 self.library.set_status(message.clone());
                 self.ui.notice = Some(message);
             }
             MergeOutcome::Cancelled => {
-                self.ui.notice = Some(format!("{} cancelled.", kind.title()));
+                self.ui.notice = Some(tr_fmt("{kind} cancelled.", &[("kind", &kind.title())]));
             }
             MergeOutcome::Failed(error) => self.report_error(kind.error_kind(), error),
         }
@@ -61,13 +65,15 @@ impl CalibRawApp {
 
 fn export_task_view(task: &ExportTask) -> BackgroundTaskView {
     let title = match task.kind {
-        ExportTaskKind::Replay => "Edit Replay".to_owned(),
-        _ if task.total > 1 => format!(
-            "Exporting {} / {}",
-            task.completed.min(task.total),
-            task.total
+        ExportTaskKind::Replay => tr("Edit Replay").to_owned(),
+        _ if task.total > 1 => tr_fmt(
+            "Exporting {completed} / {total}",
+            &[
+                ("completed", &task.completed.min(task.total)),
+                ("total", &task.total),
+            ],
         ),
-        _ => "Exporting".to_owned(),
+        _ => tr("Exporting").to_owned(),
     };
     // Before the first tile there is nothing to measure.
     let measurable = task.total_tiles > 0 || task.progress > 0.0;

@@ -1,3 +1,4 @@
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
 use crate::ui::components::adjustment_slider::{AdjustmentSlider, SliderGradient};
 use crate::ui::components::color_picker::sidebar_color_picker;
@@ -37,14 +38,20 @@ pub(crate) fn point_color(
                 regular::EYEDROPPER,
                 state.picker_active,
                 moduwu_design::toolbar_icon_size(),
-                "Sample a color from the image",
+                tr("Sample a color from the image"),
             )
             .clicked()
             {
                 state.picker_active = !state.picker_active;
             }
         });
-        ui.weak(format!("{} / {} colors", colors.len(), MAX_POINT_COLORS));
+        ui.weak(tr_fmt(
+            "{count} / {max_point_colors} colors",
+            &[
+                ("count", &colors.len()),
+                ("max_point_colors", &MAX_POINT_COLORS),
+            ],
+        ));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             delete = ui
                 .add_enabled_ui(!colors.is_empty(), |ui| {
@@ -52,7 +59,7 @@ pub(crate) fn point_color(
                         ui,
                         regular::TRASH,
                         moduwu_design::toolbar_icon_size(),
-                        "Delete selected color",
+                        tr("Delete selected color"),
                     )
                 })
                 .inner
@@ -63,7 +70,7 @@ pub(crate) fn point_color(
                         ui,
                         regular::ARROW_COUNTER_CLOCKWISE,
                         moduwu_design::toolbar_icon_size(),
-                        "Reset this color's adjustments and ranges",
+                        tr("Reset this color's adjustments and ranges"),
                     )
                 })
                 .inner
@@ -98,13 +105,13 @@ pub(crate) fn point_color(
                 }
                 moduwu_design::context_menu(&response, |ui| {
                     let reset_item =
-                        MenuItem::new("Reset color").icon(regular::ARROW_COUNTER_CLOCKWISE);
+                        MenuItem::new(tr("Reset color")).icon(regular::ARROW_COUNTER_CLOCKWISE);
                     if ui.add(reset_item).clicked() {
                         state.selected = index;
                         reset = true;
                         ui.close();
                     }
-                    let delete_item = MenuItem::new("Delete color")
+                    let delete_item = MenuItem::new(tr("Delete color"))
                         .icon(regular::TRASH)
                         .destructive();
                     if ui.add(delete_item).clicked() {
@@ -112,7 +119,7 @@ pub(crate) fn point_color(
                         delete = true;
                         ui.close();
                     }
-                    let delete_all_item = MenuItem::new("Delete all colors")
+                    let delete_all_item = MenuItem::new(tr("Delete all colors"))
                         .icon(regular::TRASH)
                         .destructive();
                     if ui.add(delete_all_item).clicked() {
@@ -128,7 +135,7 @@ pub(crate) fn point_color(
                     egui::FontId::proportional(14.0),
                     ui.visuals().weak_text_color(),
                 );
-                if response.on_hover_text("Sample another color").clicked() {
+                if response.on_hover_text(tr("Sample another color")).clicked() {
                     state.picker_active = true;
                 }
             }
@@ -149,12 +156,12 @@ pub(crate) fn point_color(
     }
     ui.add_space(moduwu_design::SPACE_XS);
     if state.picker_active {
-        ui.weak("Click a color in the image. Esc to cancel.");
+        ui.weak(tr("Click a color in the image. Esc to cancel."));
     }
     let Some(point) = colors.get_mut(state.selected) else {
         state.visualize_range = false;
         if !state.picker_active {
-            ui.weak("Use the eyedropper to select a color in your photo.");
+            ui.weak(tr("Use the eyedropper to select a color in your photo."));
         }
         return before != *colors;
     };
@@ -164,53 +171,53 @@ pub(crate) fn point_color(
             ui,
             "target-color",
             &mut target_rgb,
-            "Target color",
-            "Choose which color in the photo is affected",
+            tr("Target color"),
+            tr("Choose which color in the photo is affected"),
         ) {
             set_target_color(point, target_rgb);
         }
         let accent = rgb_color(point.sample_rgb());
         let hue = point.sample_hsl[0] * 360.0;
-        AdjustmentSlider::new("Hue Shift", &mut point.hue_shift, -100.0..=100.0)
+        AdjustmentSlider::new(tr("Hue Shift"), &mut point.hue_shift, -100.0..=100.0)
             .decimals(0)
             .step(1.0)
             .accent(accent)
             .gradient(SliderGradient::HueDegrees { start: hue - 180.0, end: hue + 180.0 })
             .show(ui);
-        AdjustmentSlider::new("Saturation Shift", &mut point.saturation_shift, -100.0..=100.0)
+        AdjustmentSlider::new(tr("Saturation Shift"), &mut point.saturation_shift, -100.0..=100.0)
             .decimals(0)
             .step(1.0)
             .accent(accent)
             .gradient(SliderGradient::Saturation(accent))
             .show(ui);
-        AdjustmentSlider::new("Luminance Shift", &mut point.luminance_shift, -100.0..=100.0)
+        AdjustmentSlider::new(tr("Luminance Shift"), &mut point.luminance_shift, -100.0..=100.0)
             .decimals(0)
             .step(1.0)
             .accent(accent)
             .gradient(SliderGradient::Luminance(accent))
             .show(ui);
         adjusted_color_readout(ui, point);
-        AdjustmentSlider::new("Range", &mut point.range, 0.0..=100.0)
+        AdjustmentSlider::new(tr("Range"), &mut point.range, 0.0..=100.0)
             .decimals(0)
             .step(1.0)
             .reset_to(50.0)
             .show(ui);
         let mut feather = point_color_feather(point);
-        if AdjustmentSlider::new("Feather", &mut feather, 0.0..=100.0)
+        if AdjustmentSlider::new(tr("Feather"), &mut feather, 0.0..=100.0)
             .decimals(0)
             .step(1.0)
             .reset_to(50.0)
             .show(ui) {
             set_point_color_feather(point, feather);
         }
-        egui::CollapsingHeader::new("Refine range").show(ui, |ui| {
-            ui.weak("Solid handles move where the selection reaches full strength; hollow handles move where it starts to fade.");
+        egui::CollapsingHeader::new(tr("Refine range")).show(ui, |ui| {
+            ui.weak(tr("Solid handles move where the selection reaches full strength; hollow handles move where it starts to fade."));
             let sample = point.sample_hsl;
-            range_editor(ui, "Hue range", &mut point.hue_range, sample, 0);
-            range_editor(ui, "Saturation range", &mut point.saturation_range, sample, 1);
-            range_editor(ui, "Luminance range", &mut point.luminance_range, sample, 2);
+            range_editor(ui, tr("Hue range"), &mut point.hue_range, sample, 0);
+            range_editor(ui, tr("Saturation range"), &mut point.saturation_range, sample, 1);
+            range_editor(ui, tr("Luminance range"), &mut point.luminance_range, sample, 2);
         });
-        if moduwu_design::toggle_with_help(ui, &mut state.visualize_range, "Visualize range", "Show the selected range with the same blue translucent overlay used for masks. Feathered pixels use a softer overlay. This preview is never exported.")
+        if moduwu_design::toggle_with_help(ui, &mut state.visualize_range, tr("Visualize range"), tr("Show the selected range with the same blue translucent overlay used for masks. Feathered pixels use a softer overlay. This preview is never exported."))
             .changed()
         {
         }
@@ -245,7 +252,7 @@ fn adjusted_color_readout(ui: &mut Ui, point: &PointColor) {
         point.saturation_shift,
         point.luminance_shift,
     ));
-    moduwu_design::property_row(ui, "Adjusted color", |ui| {
+    moduwu_design::property_row(ui, tr("Adjusted color"), |ui| {
         ui.label(
             egui::RichText::new(format!(
                 "#{:02X}{:02X}{:02X}",
@@ -377,10 +384,10 @@ impl FeatheredRange for RangeTrack {
 
     fn handle_text(&self, handle: RangeHandle) -> String {
         let (name, value) = match handle {
-            RangeHandle::StartFeather => ("Fade in", self.range.min),
-            RangeHandle::Start => ("Full from", self.range.inner_min),
-            RangeHandle::End => ("Full to", self.range.inner_max),
-            RangeHandle::EndFeather => ("Fade out", self.range.max),
+            RangeHandle::StartFeather => (tr("Fade in"), self.range.min),
+            RangeHandle::Start => (tr("Full from"), self.range.inner_min),
+            RangeHandle::End => (tr("Full to"), self.range.inner_max),
+            RangeHandle::EndFeather => (tr("Fade out"), self.range.max),
         };
         format!("{name} {:.1}", value * 100.0)
     }

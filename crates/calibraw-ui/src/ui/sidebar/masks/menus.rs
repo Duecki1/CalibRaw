@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use egui_phosphor::regular;
 use moduwu_design::MenuItem;
 
@@ -21,11 +22,11 @@ impl Sidebar {
             MaskKind::DepthRange,
         ] {
             let label = if !kind.is_available() {
-                format!("{} · soon", kind.label())
+                tr_fmt("{kind} · soon", &[("kind", &tr(kind.label()))])
             } else if kind.is_experimental() {
-                format!("{} · experimental", kind.label())
+                tr_fmt("{kind} · experimental", &[("kind", &tr(kind.label()))])
             } else {
-                kind.label().to_owned()
+                tr(kind.label()).to_owned()
             };
             let response = ui
                 .add_enabled(kind.is_available(), MenuItem::new(label))
@@ -43,13 +44,13 @@ impl Sidebar {
         unavailable_message: &str,
     ) -> Option<(MaskKind, MaskCombineMode)> {
         let mut selected = None;
-        ui.label(egui::RichText::new("Combine as").weak());
+        ui.label(egui::RichText::new(tr("Combine as")).weak());
         for (combine, icon) in [
             (MaskCombineMode::Add, regular::PLUS),
             (MaskCombineMode::Subtract, regular::MINUS),
             (MaskCombineMode::Intersect, regular::INTERSECT),
         ] {
-            moduwu_design::submenu(ui, MenuItem::new(combine.label()).icon(icon), |ui| {
+            moduwu_design::submenu(ui, MenuItem::new(tr(combine.label())).icon(icon), |ui| {
                 if let Some(kind) = Self::mask_kind_menu(ui, unavailable_message) {
                     selected = Some((kind, combine));
                 }
@@ -66,7 +67,7 @@ impl Sidebar {
         requests: &mut MaskStripRequests,
     ) {
         if ui
-            .add(MenuItem::new("Rename…").icon(regular::PENCIL_SIMPLE))
+            .add(MenuItem::new(tr("Rename…")).icon(regular::PENCIL_SIMPLE))
             .clicked()
         {
             Self::open_mask_rename_dialog(
@@ -78,7 +79,7 @@ impl Sidebar {
         }
         ui.separator();
         let mut enabled = mask.enabled;
-        if moduwu_design::menu_checkbox_item(ui, &mut enabled, "Enabled").changed() {
+        if moduwu_design::menu_checkbox_item(ui, &mut enabled, tr("Enabled")).changed() {
             requests.edits.push(MaskStripEdit::SetGroupEnabled {
                 mask_index,
                 enabled,
@@ -87,7 +88,7 @@ impl Sidebar {
         if ui
             .add_enabled(
                 can_add_group,
-                MenuItem::new("Duplicate").icon(regular::COPY_SIMPLE),
+                MenuItem::new(tr("Duplicate")).icon(regular::COPY_SIMPLE),
             )
             .clicked()
         {
@@ -95,7 +96,7 @@ impl Sidebar {
             ui.close();
         }
         let mut invert = mask.invert;
-        if moduwu_design::menu_checkbox_item(ui, &mut invert, "Invert").clicked() {
+        if moduwu_design::menu_checkbox_item(ui, &mut invert, tr("Invert")).clicked() {
             requests
                 .edits
                 .push(MaskStripEdit::ToggleGroupInvert(mask_index));
@@ -104,7 +105,7 @@ impl Sidebar {
         if ui
             .add_enabled(
                 can_add_group,
-                MenuItem::new("Duplicate & Invert").icon(regular::SELECTION_INVERSE),
+                MenuItem::new(tr("Duplicate & Invert")).icon(regular::SELECTION_INVERSE),
             )
             .clicked()
         {
@@ -113,7 +114,7 @@ impl Sidebar {
         }
         ui.separator();
         if ui
-            .add(MenuItem::new("Copy Mask Group").icon(regular::COPY))
+            .add(MenuItem::new(tr("Copy Mask Group")).icon(regular::COPY))
             .clicked()
         {
             ui.ctx().data_mut(|data| {
@@ -125,16 +126,16 @@ impl Sidebar {
         if ui
             .add_enabled(
                 can_paste,
-                MenuItem::new("Paste Mask Group").icon(regular::CLIPBOARD),
+                MenuItem::new(tr("Paste Mask Group")).icon(regular::CLIPBOARD),
             )
-            .on_disabled_hover_text("Copy a mask group first")
+            .on_disabled_hover_text(tr("Copy a mask group first"))
             .clicked()
         {
             requests.paste_mask = Some(mask_index);
             ui.close();
         }
         ui.separator();
-        let delete_item = MenuItem::new("Delete mask group")
+        let delete_item = MenuItem::new(tr("Delete mask group"))
             .icon(regular::TRASH)
             .destructive();
         if ui.add(delete_item).clicked() {
@@ -160,7 +161,7 @@ impl Sidebar {
             can_add_component,
         } = menu;
         if ui
-            .add(MenuItem::new("Rename…").icon(regular::PENCIL_SIMPLE))
+            .add(MenuItem::new(tr("Rename…")).icon(regular::PENCIL_SIMPLE))
             .clicked()
         {
             Self::open_mask_rename_dialog(
@@ -175,7 +176,7 @@ impl Sidebar {
         }
         ui.separator();
         let mut enabled = component.enabled;
-        if moduwu_design::menu_checkbox_item(ui, &mut enabled, "Enabled").changed() {
+        if moduwu_design::menu_checkbox_item(ui, &mut enabled, tr("Enabled")).changed() {
             requests.edits.push(MaskStripEdit::SetComponentEnabled {
                 mask_index,
                 component_index,
@@ -185,7 +186,7 @@ impl Sidebar {
         if ui
             .add_enabled(
                 can_add_component,
-                MenuItem::new("Duplicate").icon(regular::COPY_SIMPLE),
+                MenuItem::new(tr("Duplicate")).icon(regular::COPY_SIMPLE),
             )
             .clicked()
         {
@@ -193,7 +194,7 @@ impl Sidebar {
             ui.close();
         }
         let mut invert = component.invert;
-        if moduwu_design::menu_checkbox_item(ui, &mut invert, "Invert").clicked() {
+        if moduwu_design::menu_checkbox_item(ui, &mut invert, tr("Invert")).clicked() {
             requests.edits.push(MaskStripEdit::ToggleComponentInvert {
                 mask_index,
                 component_index,
@@ -203,7 +204,7 @@ impl Sidebar {
         if ui
             .add_enabled(
                 can_add_component,
-                MenuItem::new("Duplicate & Invert").icon(regular::SELECTION_INVERSE),
+                MenuItem::new(tr("Duplicate & Invert")).icon(regular::SELECTION_INVERSE),
             )
             .clicked()
         {
@@ -212,7 +213,7 @@ impl Sidebar {
         }
         ui.separator();
         if ui
-            .add(MenuItem::new("Copy Component").icon(regular::COPY))
+            .add(MenuItem::new(tr("Copy Component")).icon(regular::COPY))
             .clicked()
         {
             ui.ctx().data_mut(|data| {
@@ -224,9 +225,9 @@ impl Sidebar {
         if ui
             .add_enabled(
                 can_paste,
-                MenuItem::new("Paste Component").icon(regular::CLIPBOARD),
+                MenuItem::new(tr("Paste Component")).icon(regular::CLIPBOARD),
             )
-            .on_disabled_hover_text("Copy a component first")
+            .on_disabled_hover_text(tr("Copy a component first"))
             .clicked()
         {
             requests.paste_component = Some((mask_index, component_index));
@@ -236,11 +237,11 @@ impl Sidebar {
         if ui
             .add_enabled(
                 can_delete,
-                MenuItem::new("Delete sub-mask")
+                MenuItem::new(tr("Delete sub-mask"))
                     .icon(regular::TRASH)
                     .destructive(),
             )
-            .on_disabled_hover_text("A mask group must contain at least one sub-mask")
+            .on_disabled_hover_text(tr("A mask group must contain at least one sub-mask"))
             .clicked()
         {
             Self::open_mask_delete_dialog(
@@ -319,8 +320,8 @@ impl Sidebar {
         };
 
         let title = match &dialog.target {
-            MaskRenameTarget::Group(_) => "Rename mask group",
-            MaskRenameTarget::Component { .. } => "Rename sub-mask",
+            MaskRenameTarget::Group(_) => tr("Rename mask group"),
+            MaskRenameTarget::Component { .. } => tr("Rename sub-mask"),
         };
         let mut save = false;
         let mut cancel = false;
@@ -337,8 +338,8 @@ impl Sidebar {
             },
             |ui| match moduwu_design::dialog_confirmation_actions(
                 ui,
-                "Cancel",
-                "Rename",
+                tr("Cancel"),
+                tr("Rename"),
                 can_rename.get(),
                 false,
                 moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
@@ -389,14 +390,14 @@ impl Sidebar {
 
         let (title, message, confirm_label) = match &dialog.target {
             MaskDeleteTarget::Group(_) => (
-                "Delete mask group?",
-                format!("Delete the mask group “{}”?", dialog.name),
-                "Delete Group",
+                tr("Delete mask group?"),
+                tr_fmt("Delete the mask group “{name}”?", &[("name", &dialog.name)]),
+                tr("Delete Group"),
             ),
             MaskDeleteTarget::Component { .. } => (
-                "Delete sub-mask?",
-                format!("Delete the sub-mask “{}”?", dialog.name),
-                "Delete Sub-mask",
+                tr("Delete sub-mask?"),
+                tr_fmt("Delete the sub-mask “{name}”?", &[("name", &dialog.name)]),
+                tr("Delete Sub-mask"),
             ),
         };
         let mut action = moduwu_design::DialogAction::None;
@@ -408,7 +409,7 @@ impl Sidebar {
             |ui| {
                 action = moduwu_design::dialog_confirmation_actions(
                     ui,
-                    "Cancel",
+                    tr("Cancel"),
                     confirm_label,
                     true,
                     true,

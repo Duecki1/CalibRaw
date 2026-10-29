@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 fn set_develop_sidebar_panel_width(ctx: &egui::Context, panel_id: egui::Id, width: f32) {
     ctx.data_mut(|data| {
@@ -73,7 +74,7 @@ impl CalibRawApp {
             self.stop_ai_after_gpu_failure();
             self.report_error(
                 ErrorKind::GpuAi,
-                "The GPU stopped responding while an AI model ran on it. The job was stopped and AI tools now use the CPU; you can turn GPU acceleration back on in Settings.",
+                tr("The GPU stopped responding while an AI model ran on it. The job was stopped and AI tools now use the CPU; you can turn GPU acceleration back on in Settings."),
             );
         }
         if calibraw_gpu::take_gpu_out_of_memory() {
@@ -92,8 +93,9 @@ impl CalibRawApp {
                 self.stop_ai_after_gpu_failure();
                 self.report_error(
                     ErrorKind::GpuMemory,
-                    format!(
-                        "GPU memory was exhausted while {job} was running. CalibRaw stopped the AI job, switched AI tools to the CPU and released optional preview textures. You can turn GPU acceleration back on in Settings."
+                    tr_fmt(
+                        "GPU memory was exhausted while {job} was running. CalibRaw stopped the AI job, switched AI tools to the CPU and released optional preview textures. You can turn GPU acceleration back on in Settings.",
+                        &[("job", &job)],
                     ),
                 );
             }
@@ -102,7 +104,7 @@ impl CalibRawApp {
                 self.release_optional_gpu_memory();
                 self.report_error(
                     ErrorKind::GpuMemory,
-                    "GPU memory was exhausted. CalibRaw released optional preview textures. Close other GPU-heavy apps or lower Preview Quality before retrying.",
+                    tr("GPU memory was exhausted. CalibRaw released optional preview textures. Close other GPU-heavy apps or lower Preview Quality before retrying."),
                 );
             }
         }
@@ -548,11 +550,11 @@ pub(super) fn show_raw_drop_overlay(ui: &egui::Ui, folder: Option<&std::path::Pa
         egui::StrokeKind::Inside,
     );
     let message = folder.map_or_else(
-        || "Open a library folder before dropping photos".to_owned(),
+        || tr("Open a library folder before dropping photos").to_owned(),
         |folder| {
-            format!(
-                "Drop photos to import them into\n{}\n\nFolders are copied here too",
-                folder.display()
+            tr_fmt(
+                "Drop photos to import them into\n{folder}\n\nFolders are copied here too",
+                &[("folder", &folder.display())],
             )
         },
     );

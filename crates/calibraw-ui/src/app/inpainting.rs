@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use calibraw_ai::models::remove::RemoveProgress;
 use calibraw_ai::AiFeature;
 
@@ -132,13 +133,13 @@ impl CalibRawApp {
         allow_download: bool,
     ) -> bool {
         let Some(raw) = self.develop.loaded_raw.as_ref().cloned() else {
-            self.ui.notice = Some("Open a photo before using Remove.".to_owned());
+            self.ui.notice = Some(tr("Open a photo before using Remove.").to_owned());
             return false;
         };
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
                 ErrorKind::Retouch,
-                "GPU rendering is unavailable for Remove.".to_owned(),
+                tr("GPU rendering is unavailable for Remove.").to_owned(),
             );
             return false;
         };
@@ -160,9 +161,9 @@ impl CalibRawApp {
         };
         self.inpaint.pending_brush = Some(brush);
         self.inpaint.pending_retouch = None;
-        self.inpaint.processing_progress = Some(ForegroundProgress::indeterminate(
+        self.inpaint.processing_progress = Some(ForegroundProgress::indeterminate(tr(
             "Preparing local context…",
-        ));
+        )));
         self.inpaint.cancellation = Some(cancellation);
         self.inpaint.receiver = Some(spawn_remove(request));
         self.egui_ctx
@@ -191,13 +192,13 @@ impl CalibRawApp {
             return;
         }
         let Some(raw) = self.develop.loaded_raw.as_ref().cloned() else {
-            self.ui.notice = Some("Open a photo before using retouch brushes.".to_owned());
+            self.ui.notice = Some(tr("Open a photo before using retouch brushes.").to_owned());
             return;
         };
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
                 ErrorKind::Retouch,
-                "GPU rendering is unavailable for retouch brushes.".to_owned(),
+                tr("GPU rendering is unavailable for retouch brushes.").to_owned(),
             );
             return;
         };
@@ -217,9 +218,9 @@ impl CalibRawApp {
         };
         self.inpaint.pending_brush = Some(brush);
         self.inpaint.pending_retouch = Some(retouch);
-        self.inpaint.processing_progress = Some(ForegroundProgress::indeterminate(format!(
-            "Applying {} locally…",
-            retouch.tool.label()
+        self.inpaint.processing_progress = Some(ForegroundProgress::indeterminate(tr_fmt(
+            "Applying {tool} locally…",
+            &[("tool", &tr(retouch.tool.label()))],
         )));
         self.inpaint.cancellation = Some(cancellation);
         self.inpaint.receiver = Some(spawn_retouch(request));
@@ -237,7 +238,7 @@ impl CalibRawApp {
         if super::foreground::show_processing_dialog(
             ctx,
             "remove-operation-progress",
-            "Applying Remove",
+            tr("Applying Remove"),
             progress,
             false,
         ) {
@@ -254,7 +255,7 @@ impl CalibRawApp {
         let finished = poll_ai_job(
             self.platform.as_ref(),
             receiver,
-            || "The Remove worker stopped unexpectedly.".to_owned(),
+            || tr("The Remove worker stopped unexpectedly.").to_owned(),
             |update| {
                 updated = true;
                 progress = Some(match update {
@@ -264,12 +265,12 @@ impl CalibRawApp {
                         ForegroundProgress::units(
                             completed as u64,
                             total as u64,
-                            Some("areas".to_owned()),
-                            "Applying Big-LaMa",
+                            Some(tr("areas").to_owned()),
+                            tr("Applying Big-LaMa"),
                         )
                     }
                     AiJobUpdate::Progress(RemoveProgress { .. }) => {
-                        ForegroundProgress::indeterminate("Applying Big-LaMa…")
+                        ForegroundProgress::indeterminate(tr("Applying Big-LaMa…"))
                     }
                 });
             },
@@ -292,13 +293,13 @@ impl CalibRawApp {
                 Ok(stroke) => {
                     let applied_tool = stroke
                         .retouch
-                        .map(|retouch| retouch.tool.label())
-                        .unwrap_or("Remove");
+                        .map(|retouch| tr(retouch.tool.label()))
+                        .unwrap_or(tr("Remove"));
                     Arc::make_mut(&mut self.inpaint.edits).strokes.push(stroke);
                     self.inpaint.selected_stroke = None;
                     self.inpaint.hovered_stroke = None;
                     self.note_remove_edit_changed();
-                    self.ui.notice = Some(format!("{applied_tool} applied."));
+                    self.ui.notice = Some(tr_fmt("{tool} applied.", &[("tool", &applied_tool)]));
                 }
                 Err(error) => {
                     if error.contains("consent to its download again") {
@@ -310,14 +311,20 @@ impl CalibRawApp {
                             origin: AiJobOrigin::Requested,
                         });
                         self.ui.notice = Some(
-                            "Big-LaMa needs to be installed or re-verified before Remove can continue."
+                            tr("Big-LaMa needs to be installed or re-verified before Remove can continue.")
                                 .to_owned(),
                         );
                     } else if !error.contains("cancelled") {
                         let tool = pending_retouch
-                            .map(|retouch| retouch.tool.label())
-                            .unwrap_or("Remove");
-                        self.report_error(ErrorKind::Retouch, format!("{tool} failed: {error}"));
+                            .map(|retouch| tr(retouch.tool.label()))
+                            .unwrap_or(tr("Remove"));
+                        self.report_error(
+                            ErrorKind::Retouch,
+                            tr_fmt(
+                                "{tool} failed: {error}",
+                                &[("tool", &tool), ("error", &error)],
+                            ),
+                        );
                         calibraw_core::diagnostics::record(format!("{tool} failed: {error}"));
                         log::error!("{tool} failed: {error}");
                     }

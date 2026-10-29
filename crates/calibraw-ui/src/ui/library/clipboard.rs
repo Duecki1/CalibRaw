@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 pub(super) fn image_paste_summary(
     mode: ImageClipboardMode,
@@ -7,19 +8,67 @@ pub(super) fn image_paste_summary(
     destination: &str,
     errors: Vec<String>,
 ) -> Result<String, String> {
-    let verb = if mode == ImageClipboardMode::Copy {
-        "Copied"
-    } else {
-        "Moved"
-    };
-    let noun = if total == 1 { "photo" } else { "photos" };
+    let copy = mode == ImageClipboardMode::Copy;
+    let one = total == 1;
     if errors.is_empty() {
-        Ok(format!("{verb} {completed} {noun} to {destination}."))
+        Ok(match (copy, one) {
+            (true, true) => tr_fmt(
+                "Copied {completed} photo to {destination}.",
+                &[("completed", &completed), ("destination", &destination)],
+            ),
+            (true, false) => tr_fmt(
+                "Copied {completed} photos to {destination}.",
+                &[("completed", &completed), ("destination", &destination)],
+            ),
+            (false, true) => tr_fmt(
+                "Moved {completed} photo to {destination}.",
+                &[("completed", &completed), ("destination", &destination)],
+            ),
+            (false, false) => tr_fmt(
+                "Moved {completed} photos to {destination}.",
+                &[("completed", &completed), ("destination", &destination)],
+            ),
+        })
     } else {
-        Err(format!(
-            "{verb} {completed} of {total} {noun} to {destination}. {}",
-            errors.join(" · ")
-        ))
+        let details = errors.join(" · ");
+        Err(match (copy, one) {
+            (true, true) => tr_fmt(
+                "Copied {completed} of {total} photo to {destination}. {details}",
+                &[
+                    ("completed", &completed),
+                    ("total", &total),
+                    ("destination", &destination),
+                    ("details", &details),
+                ],
+            ),
+            (true, false) => tr_fmt(
+                "Copied {completed} of {total} photos to {destination}. {details}",
+                &[
+                    ("completed", &completed),
+                    ("total", &total),
+                    ("destination", &destination),
+                    ("details", &details),
+                ],
+            ),
+            (false, true) => tr_fmt(
+                "Moved {completed} of {total} photo to {destination}. {details}",
+                &[
+                    ("completed", &completed),
+                    ("total", &total),
+                    ("destination", &destination),
+                    ("details", &details),
+                ],
+            ),
+            (false, false) => tr_fmt(
+                "Moved {completed} of {total} photos to {destination}. {details}",
+                &[
+                    ("completed", &completed),
+                    ("total", &total),
+                    ("destination", &destination),
+                    ("details", &details),
+                ],
+            ),
+        })
     }
 }
 
@@ -84,7 +133,7 @@ pub(super) fn run_image_paste(
 
     let destination_label = match &destination {
         LibraryTransferDestination::LocalFolder(folder) => folder.display().to_string(),
-        LibraryTransferDestination::LocalLibrary => "the library".to_owned(),
+        LibraryTransferDestination::LocalLibrary => tr("the library").to_owned(),
     };
 
     let result = image_paste_summary(mode, total, completed, &destination_label, errors);
@@ -119,14 +168,24 @@ pub(super) fn run_duplicate_assets(
             Err(error) => errors.push(format!("{}: {error}", asset.display_name)),
         }
     }
-    let noun = if total == 1 { "image" } else { "images" };
-    let result = if errors.is_empty() {
-        Ok(format!("Duplicated {completed} selected {noun}"))
-    } else {
-        Err(format!(
-            "Duplicated {completed} of {total} selected images. {}",
-            errors.join(" · ")
-        ))
+    let one = total == 1;
+    let result = match (errors.is_empty(), one) {
+        (true, true) => Ok(tr_fmt(
+            "Duplicated {completed} selected image",
+            &[("completed", &completed)],
+        )),
+        (true, false) => Ok(tr_fmt(
+            "Duplicated {completed} selected images",
+            &[("completed", &completed)],
+        )),
+        (false, _) => Err(tr_fmt(
+            "Duplicated {completed} of {total} selected images. {details}",
+            &[
+                ("completed", &completed),
+                ("total", &total),
+                ("details", &errors.join(" · ")),
+            ],
+        )),
     };
     AssetTransferCompletion {
         result,
@@ -141,7 +200,7 @@ pub(super) fn start_duplicate_assets(
     context: &egui::Context,
 ) {
     if app.library.local_mutation_in_progress() {
-        app.library.status = "Another Library asset transfer is still running.".to_owned();
+        app.library.status = tr("Another Library asset transfer is still running.").to_owned();
         return;
     }
     if assets.is_empty() {
@@ -152,9 +211,12 @@ pub(super) fn start_duplicate_assets(
     let (sender, receiver) = mpsc::channel();
     app.library.asset_transfer_receiver = Some(receiver);
     app.library.status = if total == 1 {
-        format!("Duplicating {}…", assets[0].display_name)
+        tr_fmt(
+            "Duplicating {display_name}…",
+            &[("display_name", &assets[0].display_name)],
+        )
     } else {
-        format!("Duplicating {total} selected images…")
+        tr_fmt("Duplicating {total} selected images…", &[("total", &total)])
     };
     let repaint = context.clone();
     let platform = Arc::clone(&app.library.platform);
@@ -167,7 +229,10 @@ pub(super) fn start_duplicate_assets(
         });
     if let Err(error) = spawn {
         app.library.asset_transfer_receiver = None;
-        app.library.status = format!("Could not start duplicate operation: {error}");
+        app.library.status = tr_fmt(
+            "Could not start duplicate operation: {error}",
+            &[("error", &error)],
+        );
     }
 }
 
@@ -177,16 +242,19 @@ pub(super) fn start_image_clipboard_paste(
     context: &egui::Context,
 ) {
     if app.library.local_mutation_in_progress() {
-        app.library.status = "Another Library asset transfer is still running.".to_owned();
+        app.library.status = tr("Another Library asset transfer is still running.").to_owned();
         return;
     }
     let Some(clipboard) = app.library.image_clipboard.clone() else {
-        app.library.status = "Copy or cut Library images first.".to_owned();
+        app.library.status = tr("Copy or cut Library images first.").to_owned();
         return;
     };
     let (sender, receiver) = mpsc::channel();
     app.library.asset_transfer_receiver = Some(receiver);
-    app.library.status = format!("Pasting {}…", clipboard.paste_label());
+    app.library.status = tr_fmt(
+        "Pasting {paste_label}…",
+        &[("paste_label", &clipboard.paste_label())],
+    );
     let repaint = context.clone();
     let platform = Arc::clone(&app.library.platform);
     let spawn = std::thread::Builder::new()
@@ -198,6 +266,9 @@ pub(super) fn start_image_clipboard_paste(
         });
     if let Err(error) = spawn {
         app.library.asset_transfer_receiver = None;
-        app.library.status = format!("Could not start Library paste: {error}");
+        app.library.status = tr_fmt(
+            "Could not start Library paste: {error}",
+            &[("error", &error)],
+        );
     }
 }

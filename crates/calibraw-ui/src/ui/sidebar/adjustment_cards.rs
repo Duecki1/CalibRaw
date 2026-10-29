@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 #[derive(Clone, Copy, Default)]
 pub(super) enum CardAction {
@@ -107,13 +108,40 @@ fn visibility_icon(visible: bool) -> &'static str {
     }
 }
 
-fn visibility_label(visible: bool, title: &str) -> String {
-    format!("{} {title}", if visible { "Hide" } else { "Show" })
+/// The name an adjustment card shows. `title` stays the card's key (reveal,
+/// preview visibility and pending actions use it), so only the name is
+/// translated. Names listed here are literals so the catalog extraction
+/// finds them; any other title, such as a mask effect name from
+/// `calibraw-core`, is looked up by its English text.
+pub(super) fn card_title_text(title: &'static str) -> &'static str {
+    match title {
+        "Light" => tr("Light"),
+        "Tone Curve" => tr("Tone Curve"),
+        "Color" => tr("Color"),
+        "Color Grading" => tr("Color Grading"),
+        "Detail" => tr("Detail"),
+        "Effects" => tr("Effects"),
+        "Color Mixer" => tr("Color Mixer"),
+        "Mask Properties" => tr("Mask Properties"),
+        "Subject refinement" => tr("Subject refinement"),
+        "Lens Corrections" => tr("Lens Corrections"),
+        "Film negative" => tr("Film negative"),
+        "LUT" => tr("LUT"),
+        _ => tr(title),
+    }
+}
+
+fn visibility_label(visible: bool, title: &'static str) -> String {
+    if visible {
+        tr_fmt("Hide {title}", &[("title", &card_title_text(title))])
+    } else {
+        tr_fmt("Show {title}", &[("title", &card_title_text(title))])
+    }
 }
 
 impl Sidebar {
-    pub(super) fn adjustment_card_title(ui: &mut Ui, title: &str) {
-        let response = ui.strong(title);
+    pub(super) fn adjustment_card_title(ui: &mut Ui, title: &'static str) {
+        let response = ui.strong(card_title_text(title));
         if let Some(help) = MaskEffect::ALL
             .iter()
             .find(|effect| effect.label() == title)
@@ -157,7 +185,7 @@ impl Sidebar {
 
     fn card_actions(
         ui: &mut Ui,
-        title: &str,
+        title: &'static str,
         visible: bool,
         show_visibility: bool,
         show_mask_overlay_toggle: bool,
@@ -169,7 +197,7 @@ impl Sidebar {
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 size,
-                &format!("Reset {title}"),
+                &tr_fmt("Reset {title}", &[("title", &card_title_text(title))]),
             );
             if reset.clicked() {
                 action = CardAction::Reset;
@@ -184,9 +212,9 @@ impl Sidebar {
                     forced,
                     size,
                     if forced {
-                        "Use automatic mask overlay visibility"
+                        tr("Use automatic mask overlay visibility")
                     } else {
-                        "Always show the selected mask overlay"
+                        tr("Always show the selected mask overlay")
                     },
                 );
                 if response.clicked() {
@@ -350,7 +378,7 @@ impl Sidebar {
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 size,
-                &format!("Reset {}", entry.title),
+                &tr_fmt("Reset {title}", &[("title", &card_title_text(entry.title))]),
             )
             .clicked()
             {
@@ -385,7 +413,10 @@ impl Sidebar {
                     ui,
                     egui_phosphor::regular::TRASH,
                     size,
-                    &format!("Remove {}", entry.title),
+                    &tr_fmt(
+                        "Remove {title}",
+                        &[("title", &card_title_text(entry.title))],
+                    ),
                 )
                 .clicked()
                 {
@@ -432,9 +463,9 @@ impl Sidebar {
                     forced,
                     size,
                     if forced {
-                        "Use automatic mask overlay visibility"
+                        tr("Use automatic mask overlay visibility")
                     } else {
-                        "Always show the selected mask overlay"
+                        tr("Always show the selected mask overlay")
                     },
                 )
                 .clicked()

@@ -1,4 +1,5 @@
 use crate::app::ColorGradeTab;
+use crate::i18n::tr;
 use crate::pipeline::{ColorGradeWheel, ColorGrading};
 use crate::ui::components::adjustment_slider::{AdjustmentSlider, SliderGradient};
 use eframe::egui::{self, Color32, Mesh, Pos2, Sense, Shape, Stroke, Ui};
@@ -8,24 +9,31 @@ const ANGULAR_SEGMENTS: usize = 96;
 const RADIAL_SEGMENTS: usize = 12;
 const ANDROID_TAB_RAIL_WIDTH: f32 = 72.0;
 
-const COLOR_GRADE_TABS: [(ColorGradeTab, &str, &str); 4] = [
-    (
-        ColorGradeTab::Shadows,
-        "Shadows",
-        "Grade the darker tonal range",
-    ),
-    (
-        ColorGradeTab::Midtones,
-        "Mid",
-        "Grade the middle tonal range",
-    ),
-    (
-        ColorGradeTab::Highlights,
-        "High",
-        "Grade the brighter tonal range",
-    ),
-    (ColorGradeTab::Global, "Global", "Grade all tones uniformly"),
-];
+/// The tonal-range tabs with their labels and tooltips.
+fn color_grade_tabs() -> [(ColorGradeTab, &'static str, &'static str); 4] {
+    [
+        (
+            ColorGradeTab::Shadows,
+            tr("Shadows"),
+            tr("Grade the darker tonal range"),
+        ),
+        (
+            ColorGradeTab::Midtones,
+            tr("Mid"),
+            tr("Grade the middle tonal range"),
+        ),
+        (
+            ColorGradeTab::Highlights,
+            tr("High"),
+            tr("Grade the brighter tonal range"),
+        ),
+        (
+            ColorGradeTab::Global,
+            tr("Global"),
+            tr("Grade all tones uniformly"),
+        ),
+    ]
+}
 
 pub(crate) fn color_grading_editor(
     ui: &mut Ui,
@@ -52,13 +60,13 @@ fn color_grading_editor_contents(
     let touch = crate::platform::PlatformCaps::CURRENT.is_mobile();
     if !touch {
         moduwu_design::toolbar_row(ui, |ui| {
-            ui.strong("Four-way color grading");
+            ui.strong(tr("Four-way color grading"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if moduwu_design::ghost_icon_button(
                     ui,
                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                     moduwu_design::toolbar_icon_size(),
-                    "Reset all color grading",
+                    tr("Reset all color grading"),
                 )
                 .clicked()
                 {
@@ -97,12 +105,12 @@ fn color_grading_editor_contents(
     }
 
     ui.separator();
-    changed |= AdjustmentSlider::new("Blending", &mut grading.blending, 0.0..=100.0)
+    changed |= AdjustmentSlider::new(tr("Blending"), &mut grading.blending, 0.0..=100.0)
         .decimals(0)
         .step(1.0)
         .reset_to(ColorGrading::default().blending)
         .show(ui);
-    changed |= AdjustmentSlider::new("Balance", &mut grading.balance, -100.0..=100.0)
+    changed |= AdjustmentSlider::new(tr("Balance"), &mut grading.balance, -100.0..=100.0)
         .decimals(0)
         .step(1.0)
         .show(ui);
@@ -114,7 +122,7 @@ fn color_grade_tab_row(ui: &mut Ui, selected: &mut ColorGradeTab) {
     ui.horizontal(|ui| {
         let segment_width =
             ((ui.available_width() - ui.spacing().item_spacing.x * 3.0).max(4.0)) / 4.0;
-        for (tab, label, tooltip) in COLOR_GRADE_TABS {
+        for (tab, label, tooltip) in color_grade_tabs() {
             if moduwu_design::segmented_button(ui, label, *selected == tab, segment_width)
                 .on_hover_text(tooltip)
                 .clicked()
@@ -129,7 +137,7 @@ fn color_grade_tab_rail(ui: &mut Ui, selected: &mut ColorGradeTab) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y =
             ((WHEEL_MAX_SIZE - moduwu_design::CONTROL_HEIGHT * 4.0) / 3.0).max(0.0);
-        for (tab, label, tooltip) in COLOR_GRADE_TABS {
+        for (tab, label, tooltip) in color_grade_tabs() {
             if moduwu_design::segmented_button(ui, label, *selected == tab, ANDROID_TAB_RAIL_WIDTH)
                 .on_hover_text(tooltip)
                 .clicked()
@@ -163,13 +171,13 @@ fn color_wheel(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
 fn color_wheel_toolbar(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     let mut changed = false;
     moduwu_design::toolbar_row(ui, |ui| {
-        ui.strong("Hue / Saturation");
+        ui.strong(tr("Hue / Saturation"));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 moduwu_design::toolbar_icon_size(),
-                "Reset this color wheel",
+                tr("Reset this color wheel"),
             )
             .clicked()
             {
@@ -259,7 +267,7 @@ fn color_wheel_picker(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
 fn color_wheel_sliders(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     let mut changed = false;
 
-    changed |= AdjustmentSlider::new("Hue", &mut wheel.hue, 0.0..=360.0)
+    changed |= AdjustmentSlider::new(tr("Hue"), &mut wheel.hue, 0.0..=360.0)
         .decimals(0)
         .step(1.0)
         .gradient(SliderGradient::HueDegrees {
@@ -269,14 +277,14 @@ fn color_wheel_sliders(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
         .show(ui);
     wheel.hue = wheel.hue.rem_euclid(360.0);
     let grade_color = hsv_color(wheel.hue / 360.0, 0.86, 0.90);
-    changed |= AdjustmentSlider::new("Saturation", &mut wheel.saturation, 0.0..=100.0)
+    changed |= AdjustmentSlider::new(tr("Saturation"), &mut wheel.saturation, 0.0..=100.0)
         .decimals(0)
         .step(1.0)
         .gradient(SliderGradient::Saturation(grade_color))
         .show(ui);
     wheel.saturation = wheel.saturation.clamp(0.0, 100.0);
 
-    changed |= AdjustmentSlider::new("Luminance", &mut wheel.luminance, -100.0..=100.0)
+    changed |= AdjustmentSlider::new(tr("Luminance"), &mut wheel.luminance, -100.0..=100.0)
         .decimals(0)
         .step(1.0)
         .gradient(SliderGradient::Luminance(grade_color))

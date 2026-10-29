@@ -1,4 +1,5 @@
 use crate::app::ToneCurveTab;
+use crate::i18n::tr;
 use crate::pipeline::{PointCurve, MAX_POINT_CURVE_POINTS};
 use crate::ui::theme::{CHANNEL_BLUE, CHANNEL_GREEN, CHANNEL_RED};
 use eframe::egui::Align;
@@ -308,12 +309,15 @@ pub(crate) struct ToneCurveChannels<'a> {
     pub blue: &'a mut PointCurve,
 }
 
-const TONE_CURVE_TABS: [(ToneCurveTab, &str, Color32); 4] = [
-    (ToneCurveTab::Rgb, "RGB", Color32::WHITE),
-    (ToneCurveTab::Red, "R", CHANNEL_RED),
-    (ToneCurveTab::Green, "G", CHANNEL_GREEN),
-    (ToneCurveTab::Blue, "B", CHANNEL_BLUE),
-];
+/// The channel tabs with their labels and colours.
+fn tone_curve_tabs() -> [(ToneCurveTab, &'static str, Color32); 4] {
+    [
+        (ToneCurveTab::Rgb, tr("RGB"), Color32::WHITE),
+        (ToneCurveTab::Red, "R", CHANNEL_RED),
+        (ToneCurveTab::Green, "G", CHANNEL_GREEN),
+        (ToneCurveTab::Blue, "B", CHANNEL_BLUE),
+    ]
+}
 
 pub(crate) fn tone_curve_channel_editor(
     ui: &mut Ui,
@@ -332,7 +336,7 @@ pub(crate) fn tone_curve_channel_editor(
                 ((ui.available_width() - moduwu_design::TOOLBAR_ICON_EDGE - spacing * 4.0)
                     .max(min_segment_width))
                     / 4.0;
-            for (tab, label, color) in TONE_CURVE_TABS {
+            for (tab, label, color) in tone_curve_tabs() {
                 let text = egui::RichText::new(label).color(color);
                 if moduwu_design::segmented_button(ui, text, *selected_tab == tab, segment_width)
                     .on_hover_text(tone_curve_description(tab))
@@ -346,7 +350,7 @@ pub(crate) fn tone_curve_channel_editor(
                     ui,
                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                     moduwu_design::toolbar_icon_size(),
-                    "Reset the selected tone curve",
+                    tr("Reset the selected tone curve"),
                 )
                 .clicked()
                 {
@@ -367,7 +371,7 @@ pub(crate) fn tone_curve_channel_editor(
                 ui.spacing_mut().item_spacing.y =
                     ((CURVE_HEIGHT - control_height * 5.0) / 4.0).max(0.0);
 
-                for (tab, label, color) in TONE_CURVE_TABS {
+                for (tab, label, color) in tone_curve_tabs() {
                     let text = egui::RichText::new(label).color(color);
                     if moduwu_design::segmented_button(
                         ui,
@@ -386,7 +390,7 @@ pub(crate) fn tone_curve_channel_editor(
                     ui,
                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                     moduwu_design::toolbar_icon_size(),
-                    "Reset the selected tone curve",
+                    tr("Reset the selected tone curve"),
                 )
                 .clicked()
                 {
@@ -404,9 +408,11 @@ pub(crate) fn tone_curve_channel_editor(
     if touch {
         ui.add(
             egui::Label::new(
-                egui::RichText::new("Double-tap to add a point. Long-press a point to remove it.")
-                    .small()
-                    .color(ui.visuals().weak_text_color()),
+                egui::RichText::new(tr(
+                    "Double-tap to add a point. Long-press a point to remove it.",
+                ))
+                .small()
+                .color(ui.visuals().weak_text_color()),
             )
             .wrap(),
         );
@@ -438,9 +444,9 @@ fn reset_selected_tone_curve(curves: &mut ToneCurveChannels<'_>, selected_tab: T
 
 fn tone_curve_description(tab: ToneCurveTab) -> &'static str {
     match tab {
-        ToneCurveTab::Rgb => "Composite luminance curve",
-        ToneCurveTab::Red => "Red channel curve",
-        ToneCurveTab::Green => "Green channel curve",
-        ToneCurveTab::Blue => "Blue channel curve",
+        ToneCurveTab::Rgb => tr("Composite luminance curve"),
+        ToneCurveTab::Red => tr("Red channel curve"),
+        ToneCurveTab::Green => tr("Green channel curve"),
+        ToneCurveTab::Blue => tr("Blue channel curve"),
     }
 }

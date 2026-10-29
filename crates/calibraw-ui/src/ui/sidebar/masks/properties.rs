@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::{MaskPropertiesControls, MaskPropertyAction, PeopleChoices, PersonThumbnail};
+use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::PersonPart;
 use crate::pipeline::DEFAULT_COLOR_TOLERANCE;
 use crate::ui::components::luminance_range_slider::{luminance_range_slider, LuminanceRange};
@@ -391,7 +392,7 @@ impl Sidebar {
     }
 
     fn mask_grow_slider(ui: &mut Ui, grow: &mut f32) -> bool {
-        AdjustmentSlider::new("Grow", grow, -1.0..=1.0)
+        AdjustmentSlider::new(tr("Grow"), grow, -1.0..=1.0)
             .decimals(2)
             .step(0.01)
             .show(ui)
@@ -425,7 +426,7 @@ impl Sidebar {
             controls: *controls,
         };
         let mut opacity = mask.opacity;
-        if AdjustmentSlider::new("Mask opacity", &mut opacity, 0.0..=1.0)
+        if AdjustmentSlider::new(tr("Mask opacity"), &mut opacity, 0.0..=1.0)
             .decimals(2)
             .step(0.01)
             .reset_to(1.0)
@@ -450,7 +451,7 @@ impl Sidebar {
                 MaskGeometry::Radial { feather, .. } => {
                     edits.feather(Self::mask_feather_edit(
                         ui,
-                        "Feather",
+                        tr("Feather"),
                         *feather,
                         0.0..=1.0,
                         0.55,
@@ -459,7 +460,7 @@ impl Sidebar {
                 MaskGeometry::Linear { feather, .. } => {
                     edits.feather(Self::mask_feather_edit(
                         ui,
-                        "Feather",
+                        tr("Feather"),
                         *feather,
                         0.02..=1.0,
                         1.0,
@@ -484,7 +485,7 @@ impl Sidebar {
                     edits.grow(Self::mask_grow_edit(ui, *grow));
                     edits.feather(Self::mask_feather_edit(
                         ui,
-                        "Feather",
+                        tr("Feather"),
                         *feather,
                         0.0..=1.0,
                         0.0,
@@ -524,7 +525,7 @@ impl Sidebar {
                     Self::person_properties(ui, people, *grow, *feather, &mut edits);
                 }
                 MaskGeometry::Placeholder => {
-                    ui.label("This mask has no shape data.");
+                    ui.label(tr("This mask has no shape data."));
                 }
             }
         });
@@ -544,10 +545,10 @@ impl Sidebar {
             let component_name = ui.strong(component.name.as_str());
             if is_fullscreen {
                 component_name
-                    .on_hover_text("Covers the complete image with uniform mask strength.");
+                    .on_hover_text(tr("Covers the complete image with uniform mask strength."));
             }
             let mut invert = component.invert;
-            if moduwu_design::toggle(ui, &mut invert, "Invert").changed() {
+            if moduwu_design::toggle(ui, &mut invert, tr("Invert")).changed() {
                 edits.push(MaskPropertyAction::ToggleInvert);
             }
             if component_index > 0 {
@@ -558,7 +559,7 @@ impl Sidebar {
                 }
                 let mut combine = component.combine;
                 egui::ComboBox::from_id_salt("vertical-mask-combine")
-                    .selected_text(combine.label())
+                    .selected_text(tr(combine.label()))
                     // Flat rows, so their labels do not shift on hover.
                     .popup_style(egui::style::StyleModifier::new(
                         egui::containers::menu::menu_style,
@@ -569,7 +570,7 @@ impl Sidebar {
                             MaskCombineMode::Subtract,
                             MaskCombineMode::Intersect,
                         ] {
-                            ui.selectable_value(&mut combine, mode, mode.label());
+                            ui.selectable_value(&mut combine, mode, tr(mode.label()));
                         }
                     });
                 if combine != component.combine {
@@ -591,9 +592,9 @@ impl Sidebar {
         else {
             return;
         };
-        Self::brush_mode_selector(ui, edits, "Brush", "Eraser");
+        Self::brush_mode_selector(ui, edits, tr("Brush"), tr("Eraser"));
         let mut size = *size;
-        if AdjustmentSlider::new("Size", &mut size, 0.0025..=0.25)
+        if AdjustmentSlider::new(tr("Size"), &mut size, 0.0025..=0.25)
             .decimals(3)
             .step(0.0025)
             .reset_to(0.055)
@@ -601,7 +602,8 @@ impl Sidebar {
         {
             edits.push(MaskPropertyAction::SetBrushSize(size));
         }
-        if let Some(feather) = Self::mask_feather_edit(ui, "Feather", *feather, 0.0..=1.0, 0.55) {
+        if let Some(feather) = Self::mask_feather_edit(ui, tr("Feather"), *feather, 0.0..=1.0, 0.55)
+        {
             edits.push(MaskPropertyAction::SetBrushFeather(feather));
         }
         // Toggling opacity enables the stroke opacity slider in the same frame.
@@ -609,9 +611,8 @@ impl Sidebar {
         if moduwu_design::toggle_with_help(
             ui,
             &mut opacity_enabled,
-            "Opacity",
-            "Use the opacity setting for newly drawn brush and eraser strokes. \
-             Disabled strokes always use 100% opacity.",
+            tr("Opacity"),
+            tr("Use the opacity setting for newly drawn brush and eraser strokes. Disabled strokes always use 100% opacity."),
         )
         .changed()
         {
@@ -621,9 +622,8 @@ impl Sidebar {
         if moduwu_design::toggle_with_help(
             ui,
             &mut overlap,
-            "Overlapping",
-            "Allow separate brush strokes to build opacity where they overlap. \
-             For example, 10% over 10% produces about 19% coverage.",
+            tr("Overlapping"),
+            tr("Allow separate brush strokes to build opacity where they overlap. For example, 10% over 10% produces about 19% coverage."),
         )
         .changed()
         {
@@ -631,7 +631,7 @@ impl Sidebar {
         }
         ui.add_enabled_ui(opacity_enabled, |ui| {
             let mut opacity = *opacity;
-            if AdjustmentSlider::new("Stroke opacity", &mut opacity, 0.0..=1.0)
+            if AdjustmentSlider::new(tr("Stroke opacity"), &mut opacity, 0.0..=1.0)
                 .decimals(2)
                 .step(0.01)
                 .reset_to(1.0)
@@ -644,7 +644,7 @@ impl Sidebar {
             ui,
             egui_phosphor::regular::ERASER,
             moduwu_design::toolbar_icon_size(),
-            "Clear brush strokes",
+            tr("Clear brush strokes"),
         )
         .clicked()
         {
@@ -659,15 +659,11 @@ impl Sidebar {
         feather: f32,
         edits: &mut PropertyEdits,
     ) {
-        ui.label(concat!(
-            "Click to add polygon points. Click-drag while adding a point to create a ",
-            "smooth Bézier point. Drag anchors or handles to edit the path; ",
-            "Alt/Option-drag an anchor to create symmetric handles."
-        ));
+        ui.label(tr("Click to add polygon points. Click-drag while adding a point to create a smooth Bézier point. Drag anchors or handles to edit the path; Alt/Option-drag an anchor to create symmetric handles."));
         edits.grow(Self::mask_grow_edit(ui, grow));
         edits.feather(Self::mask_feather_edit(
             ui,
-            "Feather",
+            tr("Feather"),
             feather,
             0.0..=1.0,
             0.0,
@@ -676,23 +672,23 @@ impl Sidebar {
         let mut point_count = point_count;
         ui.horizontal_wrapped(|ui| {
             if ui
-                .small_button("Straighten")
-                .on_hover_text("Convert all path points to straight corners")
+                .small_button(tr("Straighten"))
+                .on_hover_text(tr("Convert all path points to straight corners"))
                 .clicked()
             {
                 edits.push(MaskPropertyAction::StraightenPath);
             }
             if ui
-                .small_button("Undo point")
-                .on_hover_text("Remove the last path point")
+                .small_button(tr("Undo point"))
+                .on_hover_text(tr("Remove the last path point"))
                 .clicked()
             {
                 edits.push(MaskPropertyAction::RemoveLastPathPoint);
                 point_count = point_count.saturating_sub(1);
             }
             if ui
-                .small_button("Clear")
-                .on_hover_text("Clear path")
+                .small_button(tr("Clear"))
+                .on_hover_text(tr("Clear path"))
                 .clicked()
                 && point_count > 0
             {
@@ -700,7 +696,7 @@ impl Sidebar {
                 point_count = 0;
             }
         });
-        ui.small(format!("{point_count} point(s)"));
+        ui.small(tr_fmt("{count} point(s)", &[("count", &point_count)]));
     }
 
     fn object_properties(ui: &mut Ui, geometry: &MaskGeometry, edits: &mut PropertyEdits) {
@@ -717,13 +713,13 @@ impl Sidebar {
         };
         edits.set_brush_mode(BrushMode::Paint);
         ui.label(if generated_mask.is_some() {
-            "Draw again on the image to replace this object selection from scratch."
+            tr("Draw again on the image to replace this object selection from scratch.")
         } else {
-            "Paint through the middle of the object part you want to select."
+            tr("Paint through the middle of the object part you want to select.")
         });
-        ui.strong("Selection brush");
+        ui.strong(tr("Selection brush"));
         let mut brush_size = *brush_size;
-        if AdjustmentSlider::new("Size", &mut brush_size, 0.0025..=0.25)
+        if AdjustmentSlider::new(tr("Size"), &mut brush_size, 0.0025..=0.25)
             .decimals(3)
             .step(0.0025)
             .reset_to(0.055)
@@ -735,13 +731,13 @@ impl Sidebar {
         edits.grow(Self::mask_grow_edit(ui, *grow));
         edits.feather(Self::mask_feather_edit(
             ui,
-            "Mask feather",
+            tr("Mask feather"),
             *feather,
             0.0..=1.0,
             0.0,
         ));
         let mut edge_refine = *edge_refine;
-        if AdjustmentSlider::new("Edge refine", &mut edge_refine, 0.0..=1.0)
+        if AdjustmentSlider::new(tr("Edge refine"), &mut edge_refine, 0.0..=1.0)
             .decimals(2)
             .step(0.01)
             .reset_to(0.55)
@@ -759,7 +755,7 @@ impl Sidebar {
                 ui,
                 egui_phosphor::regular::ARROW_CLOCKWISE,
                 moduwu_design::toolbar_icon_size(),
-                "Recalculate object selection",
+                tr("Recalculate object selection"),
             )
             .clicked()
             {
@@ -769,7 +765,7 @@ impl Sidebar {
                 ui,
                 egui_phosphor::regular::X,
                 moduwu_design::toolbar_icon_size(),
-                "Clear object selection",
+                tr("Clear object selection"),
             )
             .clicked()
             {
@@ -777,7 +773,10 @@ impl Sidebar {
                 stroke_count = 0;
             }
         });
-        ui.small(format!("{stroke_count} selection stroke(s)"));
+        ui.small(tr_fmt(
+            "{count} selection stroke(s)",
+            &[("count", &stroke_count)],
+        ));
     }
 
     fn luminance_range_properties(
@@ -814,12 +813,12 @@ impl Sidebar {
         edits: &mut PropertyEdits,
     ) {
         ui.label(if sampled {
-            "Drag on the image to choose another color."
+            tr("Drag on the image to choose another color.")
         } else {
-            "Drag on the image to sample a color."
+            tr("Drag on the image to sample a color.")
         });
         let mut tolerance = tolerance;
-        if AdjustmentSlider::new("Tolerance", &mut tolerance, 0.005..=1.0)
+        if AdjustmentSlider::new(tr("Tolerance"), &mut tolerance, 0.005..=1.0)
             .decimals(3)
             .step(0.005)
             .reset_to(DEFAULT_COLOR_TOLERANCE)
@@ -836,16 +835,16 @@ impl Sidebar {
         range: crate::pipeline::DepthRangeSettings,
         edits: &mut PropertyEdits,
     ) {
-        ui.weak("Experimental");
+        ui.weak(tr("Experimental"));
         ui.label(if has_depth {
-            "Select a range of relative depth, from near (0) to far (1)."
+            tr("Select a range of relative depth, from near (0) to far (1).")
         } else {
-            "Generate a depth map to select by distance."
+            tr("Generate a depth map to select by distance.")
         });
         let label = if has_depth {
-            "Regenerate depth map"
+            tr("Regenerate depth map")
         } else {
-            "Generate depth map"
+            tr("Generate depth map")
         };
         if moduwu_design::secondary_button(ui, label).clicked() {
             edits.push(MaskPropertyAction::RequestGeneration);
@@ -870,7 +869,7 @@ impl Sidebar {
             let clicked = ui
                 .with_layout(
                     egui::Layout::top_down_justified(egui::Align::Center),
-                    |ui| moduwu_design::secondary_button(ui, "Find people").clicked(),
+                    |ui| moduwu_design::secondary_button(ui, tr("Find people")).clicked(),
                 )
                 .inner;
             if clicked {
@@ -912,7 +911,7 @@ impl Sidebar {
                     .is_none_or(|shown| shown.contains(&part));
             let changed = ui
                 .add_enabled(shown, |ui: &mut Ui| {
-                    moduwu_design::toggle_row(ui, &mut selected, part.label())
+                    moduwu_design::toggle_row(ui, &mut selected, tr(part.label()))
                 })
                 .changed();
             if changed {
@@ -920,8 +919,8 @@ impl Sidebar {
             }
         }
         if people.parts.len() > 1
-            && moduwu_design::secondary_button(ui, "Separate masks")
-                .on_hover_text("Move each part to a mask group of its own")
+            && moduwu_design::secondary_button(ui, tr("Separate masks"))
+                .on_hover_text(tr("Move each part to a mask group of its own"))
                 .clicked()
         {
             edits.push(MaskPropertyAction::SeparatePersonParts);
@@ -930,7 +929,7 @@ impl Sidebar {
         edits.grow(Self::mask_grow_edit(ui, grow));
         edits.feather(Self::mask_feather_edit(
             ui,
-            "Feather",
+            tr("Feather"),
             feather,
             0.0..=1.0,
             0.0,
@@ -983,9 +982,11 @@ impl Sidebar {
     /// boundary shared by Subject and Background masks.
     fn subject_refinement_controls(ui: &mut Ui, edits: &mut PropertyEdits) {
         let active = edits.controls.refinement_active;
-        let toggle_label = if active { "Done" } else { "Refine" };
+        let toggle_label = if active { tr("Done") } else { tr("Refine") };
         if moduwu_design::toggle_button(ui, toggle_label, active)
-            .on_hover_text("Fine-tune the shared Subject / Background boundary with a brush.")
+            .on_hover_text(tr(
+                "Fine-tune the shared Subject / Background boundary with a brush.",
+            ))
             .clicked()
         {
             edits.controls.refinement_active = !active;
@@ -995,9 +996,9 @@ impl Sidebar {
             return;
         }
         let action = Self::adjustment_card(ui, "Subject refinement", true, false, true, |ui| {
-            Self::brush_mode_selector(ui, edits, "Add subject", "Subtract subject");
+            Self::brush_mode_selector(ui, edits, tr("Add subject"), tr("Subtract subject"));
             let mut size = edits.controls.refinement_size;
-            if AdjustmentSlider::new("Size", &mut size, 0.0025..=0.25)
+            if AdjustmentSlider::new(tr("Size"), &mut size, 0.0025..=0.25)
                 .decimals(3)
                 .step(0.0025)
                 .reset_to(0.035)
@@ -1006,11 +1007,11 @@ impl Sidebar {
                 edits.set_refinement_size(size);
             }
             let mut feather = edits.controls.refinement_feather;
-            if Self::mask_feather_slider(ui, "Feather", &mut feather, 0.0..=1.0, 0.55) {
+            if Self::mask_feather_slider(ui, tr("Feather"), &mut feather, 0.0..=1.0, 0.55) {
                 edits.set_refinement_feather(feather);
             }
             let mut flow = edits.controls.refinement_flow;
-            if AdjustmentSlider::new("Flow / opacity", &mut flow, 0.01..=1.0)
+            if AdjustmentSlider::new(tr("Flow / opacity"), &mut flow, 0.01..=1.0)
                 .decimals(2)
                 .step(0.01)
                 .reset_to(1.0)
@@ -1022,7 +1023,7 @@ impl Sidebar {
                 ui,
                 egui_phosphor::regular::ERASER,
                 moduwu_design::toolbar_icon_size(),
-                "Clear subject refinement",
+                tr("Clear subject refinement"),
             )
             .clicked()
             {
@@ -1040,16 +1041,16 @@ impl Sidebar {
 
     fn generate_mask_row(ui: &mut Ui, is_sky: bool, edits: &mut PropertyEdits) {
         let (label, model) = if is_sky {
-            ("Generate sky mask", "SkySeg U2Net")
+            (tr("Generate sky mask"), "SkySeg U2Net")
         } else {
-            ("Generate subject mask", "BiRefNet General-Lite")
+            (tr("Generate subject mask"), "BiRefNet General-Lite")
         };
         let clicked = ui
             .with_layout(
                 egui::Layout::top_down_justified(egui::Align::Center),
                 |ui| {
                     moduwu_design::secondary_button(ui, label)
-                        .on_hover_text(format!("Runs {model} locally."))
+                        .on_hover_text(tr_fmt("Runs {model} locally.", &[("model", &model)]))
                         .clicked()
                 },
             )
@@ -1135,7 +1136,7 @@ fn person_chip(
             egui::WidgetType::Checkbox,
             ui.is_enabled(),
             selected,
-            format!("Person {}", index + 1),
+            tr_fmt("Person {number}", &[("number", &(index + 1))]),
         )
     });
     response

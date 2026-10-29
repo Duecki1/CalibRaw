@@ -4,6 +4,7 @@
 //! loads and pastes just mark the results stale.
 
 use super::*;
+use crate::i18n::tr;
 use crate::pipeline::ContentDependencies;
 use calibraw_ai::AiFeature;
 
@@ -99,7 +100,7 @@ impl CalibRawApp {
 
     pub(crate) fn request_ai_update(&mut self, frame: &eframe::Frame) {
         if self.ai_update_busy() {
-            self.ui.notice = Some("Wait for the current AI operation to finish.".to_owned());
+            self.ui.notice = Some(tr("Wait for the current AI operation to finish.").to_owned());
             return;
         }
         let dependencies = self.masks.stack.content_dependencies();
@@ -127,7 +128,8 @@ impl CalibRawApp {
 
         if !dependencies.needs_ai() {
             self.save_completed_ai_update();
-            self.ui.notice = Some("AI results were refreshed for the current image.".to_owned());
+            self.ui.notice =
+                Some(tr("AI results were refreshed for the current image.").to_owned());
             self.egui_ctx.request_repaint();
             return;
         }
@@ -239,11 +241,12 @@ impl CalibRawApp {
             self.ai.update_needed = true;
             self.report_error(
                 ErrorKind::AiUpdate,
-                "Some AI results could not be updated. The update stays available.".to_owned(),
+                tr("Some AI results could not be updated. The update stays available.").to_owned(),
             );
         } else {
             self.save_completed_ai_update();
-            self.ui.notice = Some("AI results were refreshed for the current image.".to_owned());
+            self.ui.notice =
+                Some(tr("AI results were refreshed for the current image.").to_owned());
         }
         self.egui_ctx.request_repaint();
     }
@@ -261,7 +264,7 @@ impl CalibRawApp {
         self.ai.object_pending_target = None;
         self.ai.people.pending.clear();
         self.ai.update_needed = true;
-        self.ui.notice = Some("AI update canceled.".to_owned());
+        self.ui.notice = Some(tr("AI update canceled.").to_owned());
         self.egui_ctx.request_repaint();
     }
 

@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl Preview {
     pub(in crate::ui::preview) fn handle_point_color_picker(
@@ -75,7 +76,7 @@ impl Preview {
 
         if app.preview.pending_stage.is_some() {
             app.ui.notice =
-                Some("Preview is updating. Sample the color again when it is ready.".into());
+                Some(tr("Preview is updating. Sample the color again when it is ready.").into());
             return;
         }
         let Some(render_state) = frame.wgpu_render_state() else {
@@ -115,7 +116,10 @@ impl Preview {
             Err(error) => {
                 app.report_error(
                     crate::app::ErrorKind::Sampling,
-                    format!("Could not sample point color: {error:#}"),
+                    tr_fmt(
+                        "Could not sample point color: {error}",
+                        &[("error", &format!("{:#}", error))],
+                    ),
                 );
                 return;
             }
@@ -163,7 +167,7 @@ impl Preview {
         painter.text(
             preview_rect.left_top() + egui::vec2(12.0, 12.0),
             egui::Align2::LEFT_TOP,
-            "Click a color in the image",
+            tr("Click a color in the image"),
             egui::FontId::proportional(13.0),
             Color32::WHITE,
         );

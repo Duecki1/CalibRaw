@@ -1,6 +1,7 @@
 //! Refreshing the library's developed thumbnail after edits are saved.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     pub(in crate::app) fn install_developed_thumbnail_result(
@@ -199,7 +200,12 @@ impl CalibRawApp {
                 let result = (|| {
                     let thumbnail = snapshot
                         .read_thumbnail_blocking(&device, &queue, 512)
-                        .map_err(|error| format!("GPU thumbnail readback failed: {error:#}"))?;
+                        .map_err(|error| {
+                            tr_fmt(
+                                "GPU thumbnail readback failed: {error}",
+                                &[("error", &format!("{error:#}"))],
+                            )
+                        })?;
                     let thumbnail =
                         crate::pipeline::transform_thumbnail_geometry(&thumbnail, geometry);
                     match &worker_target {
@@ -208,7 +214,7 @@ impl CalibRawApp {
                                 raw_path,
                             )?
                             .ok_or_else(|| {
-                                "edit sidecar disappeared before thumbnail capture".to_owned()
+                                tr("edit sidecar disappeared before thumbnail capture").to_owned()
                             })?;
                             crate::sidecar::save_developed_thumbnail_cache(
                                 raw_path,

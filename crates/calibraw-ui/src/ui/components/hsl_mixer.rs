@@ -3,6 +3,7 @@ use crate::pipeline::HSL_HUE_LIMIT;
 use crate::ui::components::adjustment_slider::{AdjustmentSlider, SliderGradient};
 use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Stroke, StrokeKind, Ui};
 
+use crate::i18n::{tr, tr_fmt};
 use crate::ui::theme::HSL_CHANNELS as CHANNELS;
 
 const SELECTOR_GAP: f32 = 4.0;
@@ -21,8 +22,14 @@ pub(crate) fn hsl_mixer(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = selector_gap;
         for (index, (name, accent)) in CHANNELS.iter().enumerate() {
-            if color_selector_button(ui, name, *accent, selected.index() == index, selector_width)
-                .clicked()
+            if color_selector_button(
+                ui,
+                tr(name),
+                *accent,
+                selected.index() == index,
+                selector_width,
+            )
+            .clicked()
             {
                 *selected = HslMixerColor::ALL[index];
             }
@@ -31,17 +38,18 @@ pub(crate) fn hsl_mixer(
 
     let index = selected.index();
     let (name, accent) = CHANNELS[index];
+    let name = tr(name);
     let mut reset_color = false;
 
     ui.add_space(moduwu_design::SPACE_XS);
     moduwu_design::toolbar_row(ui, |ui| {
-        ui.label(RichText::new(format!("{name} adjustments")).strong());
+        ui.label(RichText::new(tr_fmt("{name} adjustments", &[("name", &name)])).strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             reset_color = moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 moduwu_design::toolbar_icon_size(),
-                "Reset Hue, Saturation, and Luminance for this color",
+                tr("Reset Hue, Saturation, and Luminance for this color"),
             )
             .clicked();
         });
@@ -59,23 +67,24 @@ pub(crate) fn hsl_mixer(
     }
 
     ui.push_id(("hsl-color", index), |ui| {
-        changed |= AdjustmentSlider::new("Hue", &mut hue[index], -HSL_HUE_LIMIT..=HSL_HUE_LIMIT)
-            .decimals(0)
-            .step(1.0)
-            .accent(accent)
-            .gradient(SliderGradient::ChannelHue {
-                left: CHANNELS[(index + CHANNELS.len() - 2) % CHANNELS.len()].1,
-                center: accent,
-                right: CHANNELS[(index + 2) % CHANNELS.len()].1,
-            })
-            .show(ui);
-        changed |= AdjustmentSlider::new("Saturation", &mut saturation[index], -100.0..=100.0)
+        changed |=
+            AdjustmentSlider::new(tr("Hue"), &mut hue[index], -HSL_HUE_LIMIT..=HSL_HUE_LIMIT)
+                .decimals(0)
+                .step(1.0)
+                .accent(accent)
+                .gradient(SliderGradient::ChannelHue {
+                    left: CHANNELS[(index + CHANNELS.len() - 2) % CHANNELS.len()].1,
+                    center: accent,
+                    right: CHANNELS[(index + 2) % CHANNELS.len()].1,
+                })
+                .show(ui);
+        changed |= AdjustmentSlider::new(tr("Saturation"), &mut saturation[index], -100.0..=100.0)
             .decimals(0)
             .step(1.0)
             .accent(accent)
             .gradient(SliderGradient::Saturation(accent))
             .show(ui);
-        changed |= AdjustmentSlider::new("Luminance", &mut luminance[index], -100.0..=100.0)
+        changed |= AdjustmentSlider::new(tr("Luminance"), &mut luminance[index], -100.0..=100.0)
             .decimals(0)
             .step(1.0)
             .accent(accent)
@@ -115,5 +124,5 @@ fn color_selector_button(
         radius,
         Stroke::new(1.0, Color32::from_white_alpha(100)),
     );
-    response.on_hover_text(format!("Select the {name} color range"))
+    response.on_hover_text(tr_fmt("Select the {name} color range", &[("name", &name)]))
 }

@@ -2,6 +2,7 @@ use crate::app::{
     CalibRawApp, CropDragState, CropHandle, MaskDragState, MaskOverlayBlink, OverlayRasterKey,
     SidebarTab, StraightenDragState,
 };
+use crate::i18n::tr_fmt;
 use crate::pipeline::{
     BrushMode, GeometryMapping, GeometryTransform, Homography, LensGeometryMap, MaskCombineMode,
     MaskGeometry, MaskKind, RetouchStroke,
@@ -144,7 +145,7 @@ fn paint_rendered_source_pill(
     format: crate::pipeline::RenderedImageFormat,
 ) {
     let text = painter.layout_no_wrap(
-        format!("Editing {}", format.label()),
+        tr_fmt("Editing {label}", &[("label", &format.label())]),
         egui::FontId::proportional(11.5),
         Color32::WHITE,
     );

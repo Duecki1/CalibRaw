@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 const OBJECT_JOB: ForegroundOperationKind =
     ForegroundOperationKind::Ai(calibraw_ai::AiFeature::Object);
@@ -38,12 +39,13 @@ impl CalibRawApp {
             .iter()
             .any(|stroke| stroke.positive && !stroke.points.is_empty())
         {
-            self.ui.notice = Some("Paint inside an object before generating its mask.".to_owned());
+            self.ui.notice =
+                Some(tr("Paint inside an object before generating its mask.").to_owned());
             return;
         }
         if self.masks.source_cache.is_none() {
             self.report_ai_mask_error(
-                "The original image source is not ready for object selection. Re-open the Object mask or create it again."
+                tr("The original image source is not ready for object selection. Re-open the Object mask or create it again.")
                     .to_owned(),
             );
             return;
@@ -54,7 +56,7 @@ impl CalibRawApp {
                 self.cancel_foreground_operation();
             } else {
                 self.ui.notice =
-                    Some("Finish or cancel the current editing operation first.".to_owned());
+                    Some(tr("Finish or cancel the current editing operation first.").to_owned());
             }
             return;
         }
@@ -82,7 +84,7 @@ impl CalibRawApp {
         let Some(source) = self.masks.source_cache.clone() else {
             self.report_error(
                 ErrorKind::AiMask,
-                "The original image source is unavailable for object selection.".to_owned(),
+                tr("The original image source is unavailable for object selection.").to_owned(),
             );
             return;
         };
@@ -137,7 +139,7 @@ impl CalibRawApp {
         let Some(target) = self.masks.capture_ai_target(mask_index, component_index) else {
             self.report_error(
                 ErrorKind::AiMask,
-                "The selected object mask is no longer available.".to_owned(),
+                tr("The selected object mask is no longer available.").to_owned(),
             );
             return;
         };
@@ -153,9 +155,9 @@ impl CalibRawApp {
             cancellation: Arc::clone(&cancellation),
         });
         let progress = ForegroundProgress::indeterminate(if needs_download {
-            "Preparing object-mask models…"
+            tr("Preparing object-mask models…")
         } else {
-            "Encoding the image and generating the object mask…"
+            tr("Encoding the image and generating the object mask…")
         });
         self.begin_foreground_operation(ForegroundOperation {
             kind: OBJECT_JOB,
@@ -185,7 +187,7 @@ impl CalibRawApp {
         let finished = poll_ai_job(
             self.platform.as_ref(),
             receiver,
-            || "The object-mask worker stopped unexpectedly.".to_owned(),
+            || tr("The object-mask worker stopped unexpectedly.").to_owned(),
             |update| match update {
                 AiJobUpdate::Download(progress) => {
                     operation.progress = model_download_progress(progress);
@@ -198,9 +200,9 @@ impl CalibRawApp {
                         *inference_started = true;
                     }
                     operation.progress = ForegroundProgress::indeterminate(if decoder_only {
-                        "Updating the object mask…"
+                        tr("Updating the object mask…")
                     } else {
-                        "Encoding the image and generating the object mask…"
+                        tr("Encoding the image and generating the object mask…")
                     });
                 }
             },
@@ -234,7 +236,7 @@ impl CalibRawApp {
                     match (location, mask) {
                         (_, None) => {
                             error_message = Some(
-                                "Object selection returned malformed dimensions or pixel data."
+                                tr("Object selection returned malformed dimensions or pixel data.")
                                     .to_owned(),
                             );
                         }
@@ -265,7 +267,7 @@ impl CalibRawApp {
                                 succeeded = true;
                             } else {
                                 error_message = Some(
-                                    "The target component changed type before inference completed."
+                                    tr("The target component changed type before inference completed.")
                                         .to_owned(),
                                 );
                             }
@@ -274,7 +276,10 @@ impl CalibRawApp {
                 }
                 (_, Ok(_)) => {}
                 (_, Err(error)) => {
-                    error_message = Some(format!("Object selection failed: {error}"));
+                    error_message = Some(tr_fmt(
+                        "Object selection failed: {error}",
+                        &[("error", &error)],
+                    ));
                 }
             }
         }
@@ -297,9 +302,9 @@ impl CalibRawApp {
         } else if !succeeded {
             let message = error_message.unwrap_or_else(|| {
                 if stale {
-                    "Object selection became stale before inference completed.".to_owned()
+                    tr("Object selection became stale before inference completed.").to_owned()
                 } else {
-                    "Object selection did not produce a mask.".to_owned()
+                    tr("Object selection did not produce a mask.").to_owned()
                 }
             });
             self.report_error(ErrorKind::AiMask, message);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::tr;
 
 impl Sidebar {
     /// Shows user edits, then requests content results those edits newly
@@ -21,12 +22,12 @@ impl Sidebar {
         if !app.ai_update_needed() || app.ai_update_busy() {
             return;
         }
-        moduwu_design::section_card(ui, "AI results need updating", |ui| {
+        moduwu_design::section_card(ui, tr("AI results need updating"), |ui| {
             ui.label(
-                "The image changed since AI masks or scene depth were made. Update them to match it without changing your edits.",
+                tr("The image changed since AI masks or scene depth were made. Update them to match it without changing your edits."),
             );
             ui.add_space(moduwu_design::SPACE_XS);
-            if moduwu_design::secondary_button(ui, "Update AI results").clicked() {
+            if moduwu_design::secondary_button(ui, tr("Update AI results")).clicked() {
                 app.request_ai_update(frame);
             }
         });

@@ -2,6 +2,7 @@ use super::{
     effect_card, effect_color, effect_details, effect_position, float_param_slider, EffectFrame,
     PositionSpace,
 };
+use crate::i18n::tr;
 use crate::pipeline::{effect_params::light_rays, LightRaysEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
@@ -23,7 +24,7 @@ pub(crate) fn show(
             changed |= float_param_slider(ui, &mut settings.length, light_rays::LENGTH);
             changed |= effect_position(
                 ui,
-                "Source position",
+                tr("Source position"),
                 &mut settings.source,
                 [light_rays::SOURCE_X, light_rays::SOURCE_Y],
                 frame,
@@ -35,7 +36,7 @@ pub(crate) fn show(
                 &mut settings.color,
                 light_rays::COLOR,
             );
-            changed |= effect_details(ui, "Ray details", |ui| {
+            changed |= effect_details(ui, tr("Ray details"), |ui| {
                 let mut changed = float_param_slider(ui, &mut settings.spread, light_rays::SPREAD);
                 changed |= float_param_slider(ui, &mut settings.fade, light_rays::FADE);
                 changed |= float_param_slider(ui, &mut settings.softness, light_rays::SOFTNESS);

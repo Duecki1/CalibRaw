@@ -4,6 +4,7 @@
 
 use super::*;
 
+use crate::i18n::{tr, tr_fmt};
 use crate::services::replay::{render_edit_replay, ReplayError, ReplayRequest};
 
 impl CalibRawApp {
@@ -46,7 +47,7 @@ impl CalibRawApp {
             let Some(data_dir) = self.platform.internal_data_dir() else {
                 self.report_error(
                     ErrorKind::EditReplay,
-                    "Android did not provide an app data directory.",
+                    tr("Android did not provide an app data directory."),
                 );
                 return;
             };
@@ -54,7 +55,10 @@ impl CalibRawApp {
             if let Err(error) = std::fs::create_dir_all(&export_dir) {
                 self.report_error(
                     ErrorKind::EditReplay,
-                    format!("Could not prepare replay cache: {error}"),
+                    tr_fmt(
+                        "Could not prepare replay cache: {error}",
+                        &[("error", &error)],
+                    ),
                 );
                 return;
             }
@@ -63,7 +67,7 @@ impl CalibRawApp {
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
                 ErrorKind::EditReplay,
-                "eframe is not running with the wgpu backend.",
+                tr("eframe is not running with the wgpu backend."),
             );
             return;
         };
@@ -120,7 +124,7 @@ impl CalibRawApp {
                     1,
                 ));
                 if let Some(task) = self.export.task.as_mut() {
-                    task.phase = "Preparing edit replay…".to_owned();
+                    task.phase = tr("Preparing edit replay…").to_owned();
                 }
                 if publishes {
                     self.export.share_mime_type = Some("video/mp4");
@@ -131,7 +135,10 @@ impl CalibRawApp {
             Err(error) => {
                 self.report_error(
                     ErrorKind::EditReplay,
-                    format!("Could not start edit replay export: {error}"),
+                    tr_fmt(
+                        "Could not start edit replay export: {error}",
+                        &[("error", &error)],
+                    ),
                 );
             }
         }
@@ -175,36 +182,41 @@ impl CalibRawApp {
                     match result {
                         Ok(path) => {
                             if self.caps().has_folders() {
-                                self.ui.notice =
-                                    Some(format!("Created edit replay {}", path.display()));
+                                self.ui.notice = Some(tr_fmt(
+                                    "Created edit replay {path}",
+                                    &[("path", &path.display())],
+                                ));
                             } else {
                                 let name = path.file_name().unwrap_or_default().to_string_lossy();
                                 match self.platform.publish_image(&path, &name, "video/mp4") {
                                     Ok(()) => {
                                         self.export.publish_pending = true;
                                         self.ui.notice =
-                                            Some("Saving edit replay to gallery…".to_owned());
+                                            Some(tr("Saving edit replay to gallery…").to_owned());
                                     }
                                     Err(error) => {
                                         let _ = std::fs::remove_file(&path);
                                         self.report_error(
                                             ErrorKind::EditReplay,
-                                            format!("Could not save edit replay: {error}"),
+                                            tr_fmt(
+                                                "Could not save edit replay: {error}",
+                                                &[("error", &error)],
+                                            ),
                                         );
                                     }
                                 }
                             }
                         }
                         Err(ReplayError::Cancelled) => {
-                            self.ui.notice = Some("Edit replay cancelled.".to_owned());
+                            self.ui.notice = Some(tr("Edit replay cancelled.").to_owned());
                         }
                         Err(ReplayError::Failed(_)) if was_cancelled => {
-                            self.ui.notice = Some("Edit replay cancelled.".to_owned());
+                            self.ui.notice = Some(tr("Edit replay cancelled.").to_owned());
                         }
                         Err(ReplayError::Failed(error)) => {
                             self.report_error(
                                 ErrorKind::EditReplay,
-                                format!("Edit replay failed: {error}"),
+                                tr_fmt("Edit replay failed: {error}", &[("error", &error)]),
                             );
                         }
                     }
@@ -215,7 +227,7 @@ impl CalibRawApp {
         if disconnected && !finished {
             self.report_error(
                 ErrorKind::EditReplay,
-                "Edit replay worker stopped unexpectedly.",
+                tr("Edit replay worker stopped unexpectedly."),
             );
             self.export.task = None;
         }

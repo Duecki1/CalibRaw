@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     pub(in crate::app) fn advance_preview_detail(&mut self, _frame: &eframe::Frame) {
@@ -106,9 +107,10 @@ impl CalibRawApp {
                         .copied()
                         .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
                         .unwrap_or("unknown panic");
-                    Err(anyhow::anyhow!(
-                        "zoom preview preparation panicked: {message}"
-                    ))
+                    Err(anyhow::anyhow!(tr_fmt(
+                        "zoom preview preparation panicked: {message}",
+                        &[("message", &message)],
+                    )))
                 })
                 .map_err(|error| format!("{error:#}"));
                 let _ = sender.send(match result {
@@ -127,7 +129,10 @@ impl CalibRawApp {
                 self.retry_preview_detail_later();
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not start zoom-preview preparation: {error}"),
+                    tr_fmt(
+                        "Could not start zoom-preview preparation: {error}",
+                        &[("error", &error)],
+                    ),
                 );
             }
         }
@@ -153,7 +158,7 @@ impl CalibRawApp {
                 self.retry_preview_detail_later();
                 self.report_error(
                     ErrorKind::Preview,
-                    "Zoom-preview worker stopped unexpectedly.".to_owned(),
+                    tr("Zoom-preview worker stopped unexpectedly.").to_owned(),
                 );
                 None
             }
@@ -178,7 +183,10 @@ impl CalibRawApp {
                 self.retry_preview_detail_later();
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not prepare the zoomed preview: {error}"),
+                    tr_fmt(
+                        "Could not prepare the zoomed preview: {error}",
+                        &[("error", &error)],
+                    ),
                 );
                 return;
             }
@@ -228,12 +236,14 @@ impl CalibRawApp {
                 "Zoom detail installed in {:.3}s: {}",
                 installed_at.elapsed().as_secs_f64(),
                 self.preview.detail.as_ref().map_or_else(
-                    || "no texture".to_owned(),
-                    |detail| format!(
-                        "texture {}x{} for source crop {:?}",
-                        detail.pipeline.gpu().width,
-                        detail.pipeline.gpu().height,
-                        detail.source_size
+                    || tr("no texture").to_owned(),
+                    |detail| tr_fmt(
+                        "texture {width}x{height} for source crop {source_size}",
+                        &[
+                            ("width", &detail.pipeline.gpu().width),
+                            ("height", &detail.pipeline.gpu().height),
+                            ("source_size", &format!("{:?}", detail.source_size))
+                        ]
                     )
                 )
             ));
@@ -340,7 +350,10 @@ impl CalibRawApp {
             {
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not update the zoomed preview crop: {error:#}"),
+                    tr_fmt(
+                        "Could not update the zoomed preview crop: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 return false;
             }
@@ -371,7 +384,10 @@ impl CalibRawApp {
             ) {
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not apply Remove to zoomed preview: {error:#}"),
+                    tr_fmt(
+                        "Could not apply Remove to zoomed preview: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 return false;
             }
@@ -440,7 +456,10 @@ impl CalibRawApp {
             Err(error) => {
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not render the zoomed preview: {error:#}"),
+                    tr_fmt(
+                        "Could not render the zoomed preview: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 return false;
             }
@@ -472,7 +491,10 @@ impl CalibRawApp {
         ) {
             self.report_error(
                 ErrorKind::Preview,
-                format!("Could not apply Remove to zoomed preview: {error:#}"),
+                tr_fmt(
+                    "Could not apply Remove to zoomed preview: {error}",
+                    &[("error", &format!("{error:#}"))],
+                ),
             );
             return false;
         }

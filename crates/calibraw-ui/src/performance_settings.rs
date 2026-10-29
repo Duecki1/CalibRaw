@@ -47,6 +47,8 @@ pub(crate) struct PerformanceSettings {
     pub export_watermark: SavedWatermark,
     pub ui_design: crate::appearance::UiDesign,
     pub preview_backdrop: crate::appearance::PreviewBackdrop,
+    /// Missing in files written before it existed, which therefore follow the system.
+    pub language: crate::i18n::LanguageChoice,
     pub onboarding_completed: bool,
     /// Missing in files written before the setup step existed, so existing
     /// users are asked once.
@@ -227,6 +229,7 @@ impl Default for PerformanceSettings {
             export_watermark: SavedWatermark::default(),
             ui_design: crate::appearance::UiDesign::default(),
             preview_backdrop: crate::appearance::PreviewBackdrop::default(),
+            language: crate::i18n::LanguageChoice::default(),
             onboarding_completed: false,
             subject_mask_quality_chosen: false,
             tips_enabled: true,

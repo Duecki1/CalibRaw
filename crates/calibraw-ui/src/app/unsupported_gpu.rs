@@ -4,6 +4,7 @@
 //! the GL backend's context-lock timeout and abort the program.
 
 use super::CalibRawApp;
+use crate::i18n::{tr, tr_fmt};
 use crate::platform::Platform;
 use eframe::{egui, wgpu};
 use std::sync::Arc;
@@ -52,7 +53,7 @@ impl eframe::App for UnsupportedGpuApp {
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
         let ctx = ui.ctx().clone();
-        let dialog = moduwu_design::Dialog::new("unsupported-gpu-dialog", TITLE);
+        let dialog = moduwu_design::Dialog::new("unsupported-gpu-dialog", tr(TITLE));
         let body = |ui: &mut egui::Ui| {
             ui.label(&self.message);
         };
@@ -62,7 +63,7 @@ impl eframe::App for UnsupportedGpuApp {
         }
         let mut quit = false;
         dialog.show_with_footer(&ctx, body, |ui| {
-            quit |= moduwu_design::secondary_button(ui, "Quit").clicked();
+            quit |= moduwu_design::secondary_button(ui, tr("Quit")).clicked();
             quit |= moduwu_design::dialog_keyboard_action(
                 ui,
                 moduwu_design::DialogKeyboard::CLOSE_ONLY,
@@ -80,10 +81,13 @@ fn unsupported_driver_message(adapter: &wgpu::AdapterInfo) -> String {
         wgpu::Backend::Gl => "OpenGL",
         other => other.to_str(),
     };
-    let mut message = format!(
-        "CalibRaw needs a {} graphics driver. The only driver found is {offered} on {}, which CalibRaw cannot process photos with.",
-        crate::platform::PROCESSING_GRAPHICS_API,
-        adapter.name
+    let mut message = tr_fmt(
+        "CalibRaw needs a {api} graphics driver. The only driver found is {offered} on {adapter}, which CalibRaw cannot process photos with.",
+        &[
+            ("api", &crate::platform::PROCESSING_GRAPHICS_API),
+            ("offered", &offered),
+            ("adapter", &adapter.name),
+        ],
     );
     if let Some(hint) = crate::platform::PROCESSING_DRIVER_INSTALL_HINT {
         message.push(' ');

@@ -3,6 +3,7 @@
 use super::adjustment_cards::CardAction;
 use super::*;
 use crate::app::LOOK_LUT_CARD_TITLE;
+use crate::i18n::{tr, tr_fmt};
 use crate::luts::{LookLut, LutEntry, LutId};
 use crate::ui::components::preview_list::{preview_list, ListHeight, PreviewListItem};
 
@@ -70,7 +71,7 @@ impl Sidebar {
             response.hovered = list.hovered;
             if let Some(look) = view.look {
                 let mut percent = look.amount * 100.0;
-                if AdjustmentSlider::new("Amount", &mut percent, 0.0..=100.0)
+                if AdjustmentSlider::new(tr("Amount"), &mut percent, 0.0..=100.0)
                     .decimals(0)
                     .step(1.0)
                     .reset_to(LookLut::DEFAULT_AMOUNT * 100.0)
@@ -79,7 +80,7 @@ impl Sidebar {
                     response.action = Some(LookLutAction::Amount(percent / 100.0));
                 }
             }
-            if view.can_import && moduwu_design::full_width_button(ui, "Import…").clicked() {
+            if view.can_import && moduwu_design::full_width_button(ui, tr("Import…")).clicked() {
                 response.action = Some(LookLutAction::Import);
             }
         });
@@ -99,9 +100,9 @@ impl Sidebar {
         let mut query = ui.data_mut(|data| data.get_temp::<String>(id).unwrap_or_default());
         ui.add_sized(
             [ui.available_width(), moduwu_design::CONTROL_HEIGHT],
-            moduwu_design::singleline_text_edit(&mut query).hint_text(format!(
-                "{} Search LUTs…",
-                egui_phosphor::regular::MAGNIFYING_GLASS
+            moduwu_design::singleline_text_edit(&mut query).hint_text(tr_fmt(
+                "{icon} Search LUTs…",
+                &[("icon", &egui_phosphor::regular::MAGNIFYING_GLASS)],
             )),
         );
         let lowercase = query.trim().to_lowercase();
@@ -120,7 +121,11 @@ fn look_lut_items(view: &LookLutView<'_>, query: &str) -> Vec<PreviewListItem<Op
     };
     let mut items = Vec::new();
     if query.is_empty() {
-        items.push(PreviewListItem::choice(None, "None", selected.is_none()));
+        items.push(PreviewListItem::choice(
+            None,
+            tr("None"),
+            selected.is_none(),
+        ));
     }
     if let Some(look) = view
         .look
@@ -128,7 +133,7 @@ fn look_lut_items(view: &LookLutView<'_>, query: &str) -> Vec<PreviewListItem<Op
     {
         items.push(PreviewListItem {
             key: Some(look.id),
-            label: format!("{} (missing)", look.name),
+            label: tr_fmt("{name} (missing)", &[("name", &look.name)]),
             selected: true,
             enabled: false,
         });

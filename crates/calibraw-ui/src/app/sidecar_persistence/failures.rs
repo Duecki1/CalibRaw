@@ -1,6 +1,7 @@
 //! Reporting sidecar save failures and recovering unsupported sidecars.
 
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 impl CalibRawApp {
     pub(crate) fn report_mask_persistence_limit(
@@ -8,8 +9,9 @@ impl CalibRawApp {
         action: &str,
         error: &crate::sidecar::SidecarError,
     ) {
-        let message = format!(
-            "{action} was not applied because the resulting edit could not be saved: {error}"
+        let message = tr_fmt(
+            "{action} was not applied because the resulting edit could not be saved: {error}",
+            &[("action", &action), ("error", &error)],
         );
         calibraw_core::diagnostics::record(&message);
         self.report_error(ErrorKind::EditNotApplied, message);
@@ -25,7 +27,10 @@ impl CalibRawApp {
             self.persistence.sidecar_failed_revision = Some(revision);
         }
 
-        let message = format!("Could not save edits: {}", detail.as_ref());
+        let message = tr_fmt(
+            "Could not save edits: {detail}",
+            &[("detail", &detail.as_ref())],
+        );
         self.ui.notice = Some(message.clone());
         self.persistence.sidecar_save_error_dialog = Some(message.clone());
         self.persistence.sidecar_recovery = None;
@@ -53,22 +58,22 @@ impl CalibRawApp {
             .show_with_footer(
                 ctx,
                 |ui| {
-                    ui.label("CalibRaw was unable to write the edit sidecar.");
+                    ui.label(tr("CalibRaw was unable to write the edit sidecar."));
                     ui.add(
                         egui::Label::new(egui::RichText::new(&message).monospace())
                             .wrap()
                             .selectable(true),
                     );
-                    ui.small("This error was added to the log in Settings → Diagnostics.");
+                    ui.small(tr("This error was added to the log in Settings → Diagnostics."));
                     if has_recovery {
-                        ui.label("This sidecar uses an unsupported format or version. You can back up its exact contents and create a new sidecar with the edits currently in memory. Its previous review rating will not be carried over.");
+                        ui.label(tr("This sidecar uses an unsupported format or version. You can back up its exact contents and create a new sidecar with the edits currently in memory. Its previous review rating will not be carried over."));
                     }
                 },
                 |ui| {
                     action = moduwu_design::dialog_confirmation_actions(
                         ui,
-                        "Close",
-                        "Try again",
+                        tr("Close"),
+                        tr("Try again"),
                         can_retry,
                         false,
                         moduwu_design::DialogKeyboard::CLOSE_ONLY,
@@ -77,7 +82,7 @@ impl CalibRawApp {
                         && moduwu_design::secondary_button_enabled(
                             ui,
                             can_recover,
-                            "Back up sidecar and create new one",
+                            tr("Back up sidecar and create new one"),
                         )
                         .clicked()
                     {
@@ -125,9 +130,9 @@ impl CalibRawApp {
             Ok(backup) => {
                 self.persistence.sidecar_save_error_dialog = None;
                 self.persistence.sidecar_recovery = None;
-                self.ui.notice = Some(format!(
-                    "Sidecar backed up to {}. Edits saved in a new sidecar.",
-                    backup.display()
+                self.ui.notice = Some(tr_fmt(
+                    "Sidecar backed up to {backup}. Edits saved in a new sidecar.",
+                    &[("backup", &backup.display())],
                 ));
                 if current {
                     self.persistence.sidecar_failed_revision = None;
@@ -140,7 +145,10 @@ impl CalibRawApp {
                 }
             }
             Err(error) => {
-                let message = format!("Could not back up and replace sidecar: {error}");
+                let message = tr_fmt(
+                    "Could not back up and replace sidecar: {error}",
+                    &[("error", &error)],
+                );
                 log::error!("{message}");
                 self.persistence.sidecar_save_error_dialog = Some(message.clone());
                 self.ui.notice = Some(message);

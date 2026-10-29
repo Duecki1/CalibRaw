@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::tr_fmt;
 
 impl PreviewState {
     /// The GPU pipeline of the fitted (full-image) preview, if one is shown.
@@ -290,7 +291,10 @@ impl CalibRawApp {
                 &params,
                 RemoveSceneContext::full_frame(&self.inpaint.edits, full_raw, exposure),
             ) {
-                remove_errors.push(format!("Could not apply Remove to preview: {error:#}"));
+                remove_errors.push(tr_fmt(
+                    "Could not apply Remove to preview: {error}",
+                    &[("error", &format!("{error:#}"))],
+                ));
             }
         }
         if let (Some(navigation), Some(full_raw)) =
@@ -316,8 +320,9 @@ impl CalibRawApp {
                 &params,
                 RemoveSceneContext::full_frame(&self.inpaint.edits, full_raw, exposure),
             ) {
-                remove_errors.push(format!(
-                    "Could not apply Remove to navigation preview: {error:#}"
+                remove_errors.push(tr_fmt(
+                    "Could not apply Remove to navigation preview: {error}",
+                    &[("error", &format!("{error:#}"))],
                 ));
             }
         }
@@ -368,8 +373,9 @@ impl CalibRawApp {
                         [detail.source_size[0] as f32, detail.source_size[1] as f32],
                     ),
                 ) {
-                    remove_errors.push(format!(
-                        "Could not apply Remove to zoomed preview: {error:#}"
+                    remove_errors.push(tr_fmt(
+                        "Could not apply Remove to zoomed preview: {error}",
+                        &[("error", &format!("{error:#}"))],
                     ));
                 }
             }

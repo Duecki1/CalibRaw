@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 
 const GITHUB_LATEST_RELEASE_API: &str =
     "https://api.github.com/repos/Duecki1/CalibRaw/releases/latest";
@@ -77,8 +78,12 @@ fn normalized_version(tag: &str) -> Result<semver::Version, String> {
         .strip_prefix('v')
         .or_else(|| trimmed.strip_prefix('V'))
         .unwrap_or(trimmed);
-    semver::Version::parse(version)
-        .map_err(|error| format!("GitHub returned an invalid release version {tag:?}: {error}"))
+    semver::Version::parse(version).map_err(|error| {
+        tr_fmt(
+            "GitHub returned an invalid release version {tag}: {error}",
+            &[("tag", &format!("{tag:?}")), ("error", &error)],
+        )
+    })
 }
 
 const fn should_show_update(requested_manually: bool, auto_check: bool, ignored: bool) -> bool {
@@ -108,7 +113,7 @@ const fn github_version_check_permitted(permission: Option<bool>) -> bool {
 
 fn fetch_latest_release(permission: Option<bool>) -> Result<Option<AvailableUpdate>, String> {
     if !github_version_check_permitted(permission) {
-        return Err("GitHub version-check permission has not been granted.".to_owned());
+        return Err(tr("GitHub version-check permission has not been granted.").to_owned());
     }
 
     let config = ureq::Agent::config_builder()
@@ -128,18 +133,32 @@ fn fetch_latest_release(permission: Option<bool>) -> Result<Option<AvailableUpda
     let mut response = match response {
         Ok(response) => response,
         Err(ureq::Error::StatusCode(404)) => return Ok(None),
-        Err(error) => return Err(format!("GitHub update request failed: {error}")),
+        Err(error) => {
+            return Err(tr_fmt(
+                "GitHub update request failed: {error}",
+                &[("error", &error)],
+            ))
+        }
     };
     let body = response
         .body_mut()
         .with_config()
         .limit(MAX_RELEASE_RESPONSE_BYTES)
         .read_to_string()
-        .map_err(|error| format!("Could not read GitHub's update response: {error}"))?;
-    let release: GithubRelease = serde_json::from_str(&body)
-        .map_err(|error| format!("Could not understand GitHub's update response: {error}"))?;
+        .map_err(|error| {
+            tr_fmt(
+                "Could not read GitHub's update response: {error}",
+                &[("error", &error)],
+            )
+        })?;
+    let release: GithubRelease = serde_json::from_str(&body).map_err(|error| {
+        tr_fmt(
+            "Could not understand GitHub's update response: {error}",
+            &[("error", &error)],
+        )
+    })?;
     if !release.html_url.starts_with(GITHUB_RELEASE_URL_PREFIX) {
-        return Err("GitHub returned an unexpected release URL".to_owned());
+        return Err(tr("GitHub returned an unexpected release URL").to_owned());
     }
     let version = normalized_version(&release.tag_name)?;
     Ok(Some(AvailableUpdate {
@@ -177,8 +196,9 @@ impl CalibRawApp {
                 self.ui.version_check.status = VersionCheckStatus::Checking;
             }
             Err(error) => {
-                self.ui.version_check.status = VersionCheckStatus::Failed(format!(
-                    "Could not start the update checker: {error}"
+                self.ui.version_check.status = VersionCheckStatus::Failed(tr_fmt(
+                    "Could not start the update checker: {error}",
+                    &[("error", &error)],
                 ));
             }
         }
@@ -246,11 +266,11 @@ impl CalibRawApp {
 
     pub(crate) fn version_check_permission_text(&self) -> &'static str {
         match self.preferences.github_update_check_allowed {
-            Some(true) => "Allowed. GitHub version-check connections may be made.",
+            Some(true) => tr("Allowed. GitHub version-check connections may be made."),
             Some(false) => {
-                "Not allowed. GitHub version checks are blocked until you explicitly allow them in Settings."
+                tr("Not allowed. GitHub version checks are blocked until you explicitly allow them in Settings.")
             }
-            None => "Not decided. CalibRaw will ask before contacting GitHub.",
+            None => tr("Not decided. CalibRaw will ask before contacting GitHub."),
         }
     }
 
@@ -265,8 +285,7 @@ impl CalibRawApp {
         if self.persist_performance_settings() {
             true
         } else {
-            self.report_error(ErrorKind::Settings, "Could not save the GitHub version-check preference. The choice will only apply until CalibRaw closes."
-                    .to_owned(),);
+            self.report_error(ErrorKind::Settings, tr("Could not save the GitHub version-check preference. The choice will only apply until CalibRaw closes.").to_owned());
             false
         }
     }
@@ -287,19 +306,23 @@ impl CalibRawApp {
 
     pub(crate) fn version_check_status_text(&self) -> String {
         match &self.ui.version_check.status {
-            VersionCheckStatus::NotChecked => "Not checked during this session.".to_owned(),
-            VersionCheckStatus::Checking => "Checking GitHub…".to_owned(),
+            VersionCheckStatus::NotChecked => tr("Not checked during this session.").to_owned(),
+            VersionCheckStatus::Checking => tr("Checking GitHub…").to_owned(),
             VersionCheckStatus::NoPublishedRelease => {
-                "No published GitHub release is available yet.".to_owned()
+                tr("No published GitHub release is available yet.").to_owned()
             }
-            VersionCheckStatus::UpToDate => {
-                format!("CalibRaw {} is up to date.", env!("CARGO_PKG_VERSION"))
-            }
+            VersionCheckStatus::UpToDate => tr_fmt(
+                "CalibRaw {version} is up to date.",
+                &[("version", &env!("CARGO_PKG_VERSION"))],
+            ),
             VersionCheckStatus::Available { version, ignored } => {
                 if *ignored {
-                    format!("Version {version} is available and ignored.")
+                    tr_fmt(
+                        "Version {version} is available and ignored.",
+                        &[("version", version)],
+                    )
                 } else {
-                    format!("Version {version} is available.")
+                    tr_fmt("Version {version} is available.", &[("version", version)])
                 }
             }
             VersionCheckStatus::Failed(error) => error.clone(),
@@ -325,7 +348,7 @@ impl CalibRawApp {
         let result = match update {
             Some(Ok(result)) => result,
             Some(Err(mpsc::TryRecvError::Disconnected)) => {
-                Err("The GitHub update checker stopped unexpectedly.".to_owned())
+                Err(tr("The GitHub update checker stopped unexpectedly.").to_owned())
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => return,
         };
@@ -339,8 +362,9 @@ impl CalibRawApp {
                 let current = match semver::Version::parse(env!("CARGO_PKG_VERSION")) {
                     Ok(version) => version,
                     Err(error) => {
-                        self.ui.version_check.status = VersionCheckStatus::Failed(format!(
-                            "This build has an invalid version: {error}"
+                        self.ui.version_check.status = VersionCheckStatus::Failed(tr_fmt(
+                            "This build has an invalid version: {error}",
+                            &[("error", &error)],
                         ));
                         return;
                     }
@@ -390,33 +414,33 @@ impl CalibRawApp {
         // Very narrow screens get the short label for the primary action.
         let narrow = ctx.content_rect().width() < 272.0;
         let mut action = None;
-        moduwu_design::Dialog::new("calibraw-github-version-check-consent", "GitHub update checks")
+        moduwu_design::Dialog::new("calibraw-github-version-check-consent", tr("GitHub update checks"))
             .size(moduwu_design::DialogSize::Wide)
             .show_with_footer(
                 ctx,
                 |ui| {
                     let action = match request {
-                        VersionCheckConsentRequest::Manual => "check GitHub for updates now",
-                        VersionCheckConsentRequest::Settings => "check GitHub for updates",
-                        _ => "check GitHub for updates at startup",
+                        VersionCheckConsentRequest::Manual => tr("check GitHub for updates now"),
+                        VersionCheckConsentRequest::Settings => tr("check GitHub for updates"),
+                        _ => tr("check GitHub for updates at startup"),
                     };
-                    ui.label(format!("CalibRaw can {action} if you allow it."));
-                    ui.label("GitHub sees your IP address and app version; no photos or file paths are sent.");
+                    ui.label(tr_fmt("CalibRaw can {action} if you allow it.", &[("action", &action)]));
+                    ui.label(tr("GitHub sees your IP address and app version; no photos or file paths are sent."));
                     ui.horizontal_wrapped(|ui| {
-                        ui.hyperlink_to("GitHub privacy policy", GITHUB_PRIVACY_URL);
+                        ui.hyperlink_to(tr("GitHub privacy policy"), GITHUB_PRIVACY_URL);
                     });
                     egui::CollapsingHeader::new("More about this permission")
                         .id_salt("github-update-consent-details")
                         .show(ui, |ui| {
-                            ui.label(format!(
-                                "CalibRaw requests release metadata with User-Agent CalibRaw/{}; it never downloads or installs updates automatically.",
-                                env!("CARGO_PKG_VERSION")
+                            ui.label(tr_fmt(
+                                "CalibRaw requests release metadata with User-Agent CalibRaw/{version}; it never downloads or installs updates automatically.",
+                                &[("version", &env!("CARGO_PKG_VERSION"))],
                             ));
-                            ui.label("You can change this permission in Settings → Updates. GitHub handles connection data under its privacy policy.");
+                            ui.label(tr("You can change this permission in Settings → Updates. GitHub handles connection data under its privacy policy."));
                             if request == VersionCheckConsentRequest::Settings {
-                                ui.small(format!(
-                                    "Current permission: {}",
-                                    self.version_check_permission_text()
+                                ui.small(tr_fmt(
+                                    "Current permission: {permission}",
+                                    &[("permission", &self.version_check_permission_text())],
                                 ));
                             }
                         });
@@ -424,20 +448,20 @@ impl CalibRawApp {
                 |ui| {
                     let (allow, dismiss) = match request {
                         VersionCheckConsentRequest::Startup => {
-                            (if narrow { "Allow" } else { "Allow automatic checks" }, "Not now")
+                            (if narrow { tr("Allow") } else { tr("Allow automatic checks") }, tr("Not now"))
                         }
                         VersionCheckConsentRequest::EnableAutomatic => {
-                            (if narrow { "Allow" } else { "Allow automatic checks" }, "Cancel")
+                            (if narrow { tr("Allow") } else { tr("Allow automatic checks") }, tr("Cancel"))
                         }
-                        VersionCheckConsentRequest::Manual => ("Allow & check", "Cancel"),
+                        VersionCheckConsentRequest::Manual => (tr("Allow & check"), tr("Cancel")),
                         VersionCheckConsentRequest::Settings => {
-                            (if narrow { "Allow" } else { "Allow & remember" }, "Cancel")
+                            (if narrow { tr("Allow") } else { tr("Allow & remember") }, tr("Cancel"))
                         }
                     };
                     if moduwu_design::primary_action_button(ui, allow).clicked() {
                         action = Some(ConsentAction::Allow);
                     }
-                    if moduwu_design::secondary_button(ui, "Don't allow").clicked() {
+                    if moduwu_design::secondary_button(ui, tr("Don't allow")).clicked() {
                         action = Some(ConsentAction::Deny);
                     }
                     if moduwu_design::secondary_button(ui, dismiss).clicked() {
@@ -496,15 +520,14 @@ impl CalibRawApp {
             Update,
         }
         let mut action = None;
-        moduwu_design::Dialog::new("calibraw-update-available", "CalibRaw update available")
+        moduwu_design::Dialog::new("calibraw-update-available", tr("CalibRaw update available"))
             .size(moduwu_design::DialogSize::Wide)
             .show_with_footer(
                 ctx,
                 |ui| {
-                    ui.label(format!(
-                        "CalibRaw {} is available. You are using version {}.",
-                        release.version,
-                        env!("CARGO_PKG_VERSION")
+                    ui.label(tr_fmt(
+                        "CalibRaw {available} is available. You are using version {current}.",
+                        &[("available", &release.version), ("current", &env!("CARGO_PKG_VERSION"))],
                     ));
                     if let Some(name) = release
                         .name
@@ -514,17 +537,17 @@ impl CalibRawApp {
                         ui.strong(name);
                     }
                     ui.small(
-                        "Close ignores this version permanently. Remind me next time shows it again after the next app start.",
+                        tr("Close ignores this version permanently. Remind me next time shows it again after the next app start."),
                     );
                 },
                 |ui| {
-                    if moduwu_design::primary_action_button(ui, "Update Now").clicked() {
+                    if moduwu_design::primary_action_button(ui, tr("Update Now")).clicked() {
                         action = Some(Action::Update);
                     }
-                    if moduwu_design::secondary_button(ui, "Remind me next time").clicked() {
+                    if moduwu_design::secondary_button(ui, tr("Remind me next time")).clicked() {
                         action = Some(Action::Remind);
                     }
-                    if moduwu_design::secondary_button(ui, "Close").clicked() {
+                    if moduwu_design::secondary_button(ui, tr("Close")).clicked() {
                         action = Some(Action::Ignore);
                     }
                     if action.is_none()

@@ -1,8 +1,9 @@
 use super::*;
+use crate::i18n::{tr, tr_fmt};
 use document_load::{prepare_ahead_of_open, AheadOfOpen};
 use document_load::{
-    run_document_load, CameraProfileSettings, DocumentLoadJob, PreviewProgramSources,
-    SIDECAR_MIGRATED_NOTICE,
+    run_document_load, sidecar_migrated_notice, CameraProfileSettings, DocumentLoadJob,
+    PreviewProgramSources,
 };
 pub(crate) use document_load::{DocumentSource, ProfileReload};
 pub(crate) use prefetch::NeighbourPrefetch;
@@ -87,7 +88,9 @@ pub(super) fn spawn_gpu_preview_prewarm(
     platform: Arc<dyn Platform>,
 ) -> Option<mpsc::Receiver<Result<RawGpuPipeline, String>>> {
     let Some(render_state) = cc.wgpu_render_state.as_ref() else {
-        export_prewarm.publish(Err("eframe is not running with the wgpu backend".to_owned()));
+        export_prewarm.publish(Err(
+            tr("eframe is not running with the wgpu backend").to_owned()
+        ));
         return None;
     };
     let device = render_state.device.clone();
@@ -153,7 +156,12 @@ pub(super) fn spawn_gpu_preview_prewarm(
                 crate::pipeline::CfaKind::Bayer,
                 persistent_cache.clone(),
             )
-            .map_err(|error| format!("GPU preview prewarm failed: {error:#}"));
+            .map_err(|error| {
+                tr_fmt(
+                    "GPU preview prewarm failed: {error}",
+                    &[("error", &format!("{error:#}"))],
+                )
+            });
             match &result {
                 Ok(_) => calibraw_core::diagnostics::record(format!(
                     "GPU preview prewarm finished in {:.3}s",
@@ -175,7 +183,12 @@ pub(super) fn spawn_gpu_preview_prewarm(
                 crate::pipeline::CfaKind::Bayer,
                 persistent_cache,
             )
-            .map_err(|error| format!("GPU export program prewarm failed: {error:#}"));
+            .map_err(|error| {
+                tr_fmt(
+                    "GPU export program prewarm failed: {error}",
+                    &[("error", &format!("{error:#}"))],
+                )
+            });
             match &export_result {
                 Ok(_) => calibraw_core::diagnostics::record(format!(
                     "GPU export program prewarm finished in {:.3}s",
@@ -223,7 +236,10 @@ pub(super) fn spawn_gpu_preview_prewarm(
     match spawn_result {
         Ok(_) => Some(receiver),
         Err(error) => {
-            export_prewarm.publish(Err(format!("GPU prewarm thread could not start: {error}")));
+            export_prewarm.publish(Err(tr_fmt(
+                "GPU prewarm thread could not start: {error}",
+                &[("error", &error)],
+            )));
             calibraw_core::diagnostics::record(format!(
                 "GPU preview prewarm thread could not start: {error}"
             ));

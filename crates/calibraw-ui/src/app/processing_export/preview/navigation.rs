@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::tr_fmt;
 
 impl CalibRawApp {
     pub(in crate::app) fn advance_navigation_preview(&mut self, frame: &eframe::Frame) {
@@ -76,7 +77,10 @@ impl CalibRawApp {
                 Err(error) => {
                     self.report_error(
                         ErrorKind::Preview,
-                        format!("Could not prepare the adjusted navigation preview: {error:#}"),
+                        tr_fmt(
+                            "Could not prepare the adjusted navigation preview: {error}",
+                            &[("error", &format!("{error:#}"))],
+                        ),
                     );
                     self.preview.navigation_pending_stage = None;
                     return;
@@ -101,7 +105,10 @@ impl CalibRawApp {
             ) {
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not apply Remove to navigation preview: {error:#}"),
+                    tr_fmt(
+                        "Could not apply Remove to navigation preview: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 self.preview.navigation_pending_stage = None;
                 return;
@@ -179,7 +186,10 @@ impl CalibRawApp {
             ) {
                 self.report_error(
                     ErrorKind::Preview,
-                    format!("Could not apply Remove to navigation preview: {error:#}"),
+                    tr_fmt(
+                        "Could not apply Remove to navigation preview: {error}",
+                        &[("error", &format!("{error:#}"))],
+                    ),
                 );
                 self.preview.navigation_pending_stage = None;
                 return;
