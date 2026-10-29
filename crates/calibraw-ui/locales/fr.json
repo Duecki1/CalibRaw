@@ -99,6 +99,7 @@
   "An export is already running. Minimize its progress window to keep editing.": "Un export est déjà en cours. Réduisez sa fenêtre de progression pour continuer les retouches.",
   "Android did not provide an app data directory.": "Android n’a pas fourni de dossier de données pour l’application.",
   "Angle": "Angle",
+  "Toggle shadow and highlight clipping": "Afficher ou masquer l’écrêtage des ombres et des hautes lumières",
   "another export is already active": "un autre export est déjà en cours",
   "Another Library asset transfer is still running.": "Un autre transfert d’éléments de la bibliothèque est toujours en cours.",
   "Another library file action is still running.": "Une autre opération sur les fichiers de la bibliothèque est toujours en cours.",

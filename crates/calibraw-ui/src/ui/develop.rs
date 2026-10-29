@@ -39,7 +39,8 @@ fn open_adjacent_photo(app: &mut CalibRawApp, forward: bool, frame: &eframe::Fra
 
 impl Develop {
     /// ← and → open the previous and next photo; rating and flag keys
-    /// change the open photo, and with Shift also open the next one.
+    /// change the open photo, and with Shift also open the next one. J shows
+    /// or hides both clipping indicators.
     pub(crate) fn handle_shortcuts(
         context: &egui::Context,
         app: &mut CalibRawApp,
@@ -56,6 +57,15 @@ impl Develop {
                     open_adjacent_photo(app, true, frame);
                 }
             }
+            return;
+        }
+
+        let clipping = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::J);
+        if context.input_mut(|input| input.consume_shortcut(&clipping)) {
+            let state = &mut app.preview.clipping;
+            let show = !(state.shadows || state.highlights);
+            state.shadows = show;
+            state.highlights = show;
             return;
         }
 
