@@ -31,6 +31,7 @@ impl CalibRawApp {
         if let Err(error) = crate::i18n::set_active(language.resolve()) {
             self.report_error(ErrorKind::Settings, error.to_string());
         }
+        crate::ui::theme::install(&self.egui_ctx);
         self.persist_performance_settings();
         self.egui_ctx.request_repaint();
     }

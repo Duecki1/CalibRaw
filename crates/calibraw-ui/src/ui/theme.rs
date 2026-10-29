@@ -113,8 +113,11 @@ pub(crate) fn text_on_backdrop(color: Color32) -> Color32 {
 pub(crate) fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-    if let Some(font) = platform::chinese_font() {
-        add_fallback_font(&mut fonts, font);
+    if let Some(font) = platform::chinese_font(crate::i18n::active_uses_traditional_chinese()) {
+        add_fallback_font(&mut fonts, font, "system-chinese");
+    }
+    if let Some(font) = platform::hindi_font() {
+        add_fallback_font(&mut fonts, font, "system-hindi");
     }
     ctx.set_fonts(fonts);
     // Ctrl/Cmd +/- zoom the photo preview (`Preview::zoom_with_keyboard`),
@@ -124,11 +127,10 @@ pub(crate) fn install(ctx: &egui::Context) {
 }
 
 /// Adds `font` after every other font of both families, so it only draws
-/// characters they lack (Chinese file and folder names).
-fn add_fallback_font(fonts: &mut egui::FontDefinitions, font: SystemFont) {
-    const NAME: &str = "system-chinese";
+/// characters they lack (Chinese names and Hindi interface text).
+fn add_fallback_font(fonts: &mut egui::FontDefinitions, font: SystemFont, name: &str) {
     fonts.font_data.insert(
-        NAME.to_owned(),
+        name.to_owned(),
         Arc::new(egui::FontData {
             font: Cow::Borrowed(font.bytes),
             index: font.index,
@@ -140,7 +142,7 @@ fn add_fallback_font(fonts: &mut egui::FontDefinitions, font: SystemFont) {
             .families
             .entry(family)
             .or_default()
-            .push(NAME.to_owned());
+            .push(name.to_owned());
     }
 }
 

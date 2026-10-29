@@ -41,6 +41,9 @@ struct UnsupportedGpuApp {
 
 impl UnsupportedGpuApp {
     fn new(cc: &eframe::CreationContext<'_>, can_quit: bool, adapter: &wgpu::AdapterInfo) -> Self {
+        if let Err(error) = crate::i18n::set_active(crate::i18n::LanguageChoice::System.resolve()) {
+            log::warn!("{error}");
+        }
         crate::ui::theme::install(&cc.egui_ctx);
         let message = unsupported_driver_message(adapter);
         log::error!("{TITLE}: {message}");
