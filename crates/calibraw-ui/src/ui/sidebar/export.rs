@@ -55,17 +55,29 @@ fn export_number_row<Num>(
     });
 }
 
-/// The Format, Resize and Metadata cards. Returns whether the format changed.
+/// What the user changed in [`export_settings_controls`].
+pub(crate) struct ExportControlsChange {
+    pub(crate) format_changed: bool,
+    pub(crate) watermark: Option<WatermarkAction>,
+}
+
+/// The Format, Watermark, Resize and Metadata cards, shared by the Export
+/// panel and the library's export dialog.
 pub(crate) fn export_settings_controls(
     ui: &mut Ui,
     format: &mut ExportFormat,
     settings: &mut crate::pipeline::ExportSettings,
-    _fallback_picker_directory: Option<&std::path::Path>,
-) -> bool {
+    watermark: WatermarkView,
+) -> ExportControlsChange {
     let format_changed = export_format_card(ui, format, settings);
     moduwu_design::card_gap(ui);
+    let watermark = super::watermark::watermark_card(ui, watermark);
+    moduwu_design::card_gap(ui);
     export_size_and_metadata_cards(ui, settings);
-    format_changed
+    ExportControlsChange {
+        format_changed,
+        watermark,
+    }
 }
 
 /// The format, its quality and precision. Returns whether the format changed.
@@ -364,16 +376,18 @@ impl Sidebar {
             |ui| {
                 ui.set_min_width(column_width);
                 ui.set_max_width(column_width);
-                if export_format_card(ui, &mut app.export.format, &mut app.export.settings) {
+                let change = export_settings_controls(
+                    ui,
+                    &mut app.export.format,
+                    &mut app.export.settings,
+                    app.export.watermark.view(),
+                );
+                if change.format_changed {
                     app.persist_performance_settings();
                 }
-                moduwu_design::card_gap(ui);
-                if let Some(action) = super::watermark::watermark_card(ui, app.export.watermark.view())
-                {
+                if let Some(action) = change.watermark {
                     app.apply_watermark_action(action);
                 }
-                moduwu_design::card_gap(ui);
-                export_size_and_metadata_cards(ui, &mut app.export.settings);
 
                 if let Some((fraction, phase)) = app.edit_replay_progress_state() {
                     ui.add_space(moduwu_design::SPACE_SM);

@@ -1,6 +1,6 @@
 use crate::app::{
     AdjustmentSection, AppAction, CalibRawApp, ColorGradeTab, DevelopCard, HslMixerColor,
-    InpaintTool, MaskSection, SidebarTab, ToneCurveTab,
+    InpaintTool, MaskSection, SidebarTab, ToneCurveTab, WatermarkAction, WatermarkView,
 };
 use crate::pipeline::{
     AdjustmentGroup, BrushMode, DenoiseQuality, ExportBitDepth, ExportFormat, ExportResizeMode,
@@ -105,5 +105,5 @@ mod navigation;
 mod portrait_fill;
 mod watermark;
 
-pub(crate) use export::export_settings_controls;
+pub(crate) use export::{export_settings_controls, ExportControlsChange};
 pub(crate) use mask_effects::effect_card_open;

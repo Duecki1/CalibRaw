@@ -874,19 +874,15 @@ pub(crate) fn show_library_action_overlays(
     let mut close_export_dialog = false;
     let mut confirm_export = false;
     let mut selected_export_format = None;
+    let mut watermark_action = None;
+    // The watermark is app-wide, so the dialog edits the Export panel's.
+    let watermark = app.export.watermark.view();
     // Folder exports ask where to save; media-library exports are published.
     let publishes = app.caps().has_media_library();
     let presets = app.presets.all();
     let luts = app.luts.entries();
     if let Some(dialog) = app.library.export_dialog.as_mut() {
         let count = dialog.assets.len();
-        let export_picker_directory = dialog
-            .assets
-            .first()
-            .and_then(LibraryAsset::desktop_path)
-            .and_then(Path::parent)
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .map(Path::to_path_buf);
         let title = if count == 1 {
             "Export image".to_owned()
         } else {
@@ -910,15 +906,16 @@ pub(crate) fn show_library_action_overlays(
             .show_with_footer(
                 ui.ctx(),
                 |ui| {
-                    let format_changed = show_library_export_settings_controls(
+                    let change = show_library_export_settings_controls(
                         ui,
                         &mut dialog.format,
                         &mut dialog.settings,
-                        export_picker_directory.as_deref(),
+                        watermark,
                     );
-                    if format_changed {
+                    if change.format_changed {
                         selected_export_format = Some(dialog.format);
                     }
+                    watermark_action = change.watermark;
                     show_export_override_controls(ui, &mut dialog.overrides, presets, luts);
                 },
                 |ui| {
@@ -948,6 +945,9 @@ pub(crate) fn show_library_action_overlays(
     if let Some(format) = selected_export_format {
         app.export.format = format;
         app.persist_performance_settings();
+    }
+    if let Some(action) = watermark_action {
+        app.apply_watermark_action(action);
     }
 
     if confirm_export {
