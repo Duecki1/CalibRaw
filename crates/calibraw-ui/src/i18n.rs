@@ -25,10 +25,17 @@ pub(crate) enum Language {
     German,
     French,
     Japanese,
+    Polish,
 }
 
 impl Language {
-    const ALL: [Self; 4] = [Self::English, Self::German, Self::French, Self::Japanese];
+    const ALL: [Self; 5] = [
+        Self::English,
+        Self::German,
+        Self::French,
+        Self::Japanese,
+        Self::Polish,
+    ];
 
     /// The primary BCP 47 subtag matched against the system's languages.
     const fn code(self) -> &'static str {
@@ -37,6 +44,7 @@ impl Language {
             Self::German => "de",
             Self::French => "fr",
             Self::Japanese => "ja",
+            Self::Polish => "pl",
         }
     }
 
@@ -48,6 +56,7 @@ impl Language {
             Self::German => "Deutsch",
             Self::French => "Français",
             Self::Japanese => "日本語",
+            Self::Polish => "Polski",
         }
     }
 
@@ -57,6 +66,7 @@ impl Language {
         static GERMAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static FRENCH: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static JAPANESE: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
+        static POLISH: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         match self {
             Self::English => Ok(ENGLISH.get_or_init(HashMap::new)),
             Self::German => GERMAN
@@ -69,6 +79,10 @@ impl Language {
                 .map_err(Clone::clone),
             Self::Japanese => JAPANESE
                 .get_or_init(|| parse_catalog(self, include_str!("../locales/ja.json")))
+                .as_ref()
+                .map_err(Clone::clone),
+            Self::Polish => POLISH
+                .get_or_init(|| parse_catalog(self, include_str!("../locales/pl.json")))
                 .as_ref()
                 .map_err(Clone::clone),
         }
@@ -100,15 +114,17 @@ pub(crate) enum LanguageChoice {
     German,
     French,
     Japanese,
+    Polish,
 }
 
 impl LanguageChoice {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::System,
         Self::English,
         Self::German,
         Self::French,
         Self::Japanese,
+        Self::Polish,
     ];
 
     pub(crate) fn resolve(self) -> Language {
@@ -118,6 +134,7 @@ impl LanguageChoice {
             Self::German => Language::German,
             Self::French => Language::French,
             Self::Japanese => Language::Japanese,
+            Self::Polish => Language::Polish,
         }
     }
 
@@ -128,6 +145,7 @@ impl LanguageChoice {
             Self::German => Language::German.native_name(),
             Self::French => Language::French.native_name(),
             Self::Japanese => Language::Japanese.native_name(),
+            Self::Polish => Language::Polish.native_name(),
         }
     }
 }
