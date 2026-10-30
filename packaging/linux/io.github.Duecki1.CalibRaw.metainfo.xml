@@ -66,6 +66,23 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="1.4.0" date="2026-10-30" type="stable">
+      <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.4.0</url>
+      <description>
+        <p>This release adds basic transform, simple negatives support, a reworked library and watermarks on export.</p>
+        <ul>
+          <li>Transform photos with aspect and guided perspective tools</li>
+          <li>Correct basic chromatic aberration and apply LUTs</li>
+          <li>Edit simple film negatives</li>
+          <li>Rework the library with folders, sorting and filtering</li>
+          <li>Add watermarks to exports and batch exports</li>
+          <li>Make crop and object mask edits undoable</li>
+          <li>Select people for masks</li>
+          <li>Add French, German, Hindi, Japanese, Polish and Chinese translations</li>
+          <li>Fix lens matching, dehaze, DNG and TIFF files and the tablet layout</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.3.1" date="2026-10-19" type="stable">
       <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.3.1</url>
       <description>

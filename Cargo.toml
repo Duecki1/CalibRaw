@@ -21,7 +21,7 @@ default-members = [
 [workspace.metadata]
 # F-Droid reads this committed value when checking release tags. Increase it
 # for every release; GitHub APKs keep their existing Git-history version codes.
-fdroid_version_code = 1000711
+fdroid_version_code = 1000712
 android_ndk_version = "28.2.13676358"
 android_build_tools_version = "35.0.0"
 android_compile_sdk = 36
@@ -36,7 +36,7 @@ lensfun_revision = "bc5615d6278cb5fb75dd53e74015367453d5591d"
 android_use_legacy_packaging = false
 
 [workspace.package]
-version = "1.3.1"
+version = "1.4.0"
 edition = "2021"
 rust-version = "1.92.0"
 authors = ["Duecki <dueckis@dueckis.de>"]
@@ -47,12 +47,12 @@ readme = "README.md"
 
 [workspace.dependencies]
 moduwu-design = { version = "4.0.0", git = "https://github.com/Duecki1/Moduwu", rev = "8db4cd66bdd85b30fb96e168c50a6b0bbc1bde09" }
-calibraw-core = { version = "1.1.0", path = "crates/calibraw-core" }
-calibraw-gpu = { version = "1.1.0", path = "crates/calibraw-gpu" }
-calibraw-ai = { version = "1.1.0", path = "crates/calibraw-ai" }
-calibraw-ui = { version = "1.1.0", path = "crates/calibraw-ui" }
-calibraw-ffi = { version = "1.1.0", path = "crates/calibraw-ffi" }
-calibraw-cli = { version = "1.1.0", path = "crates/calibraw-cli" }
+calibraw-core = { version = "1.4.0", path = "crates/calibraw-core" }
+calibraw-gpu = { version = "1.4.0", path = "crates/calibraw-gpu" }
+calibraw-ai = { version = "1.4.0", path = "crates/calibraw-ai" }
+calibraw-ui = { version = "1.4.0", path = "crates/calibraw-ui" }
+calibraw-ffi = { version = "1.4.0", path = "crates/calibraw-ffi" }
+calibraw-cli = { version = "1.4.0", path = "crates/calibraw-cli" }
 
 anyhow = "1.0"
 base64 = "0.22"

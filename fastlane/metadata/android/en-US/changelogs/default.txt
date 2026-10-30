@@ -1,5 +1,6 @@
-Sharpening and noise reduction as effect components.
-HDR merge and focus stack alignment fixes.
-HDR merge and TIFF support on Android.
-Remember the zoom level.
-Fixes for GPU out-of-memory crashes.
+Basic transform with aspect and guided perspective, basic chromatic aberration and LUTs.
+Simple negatives support and a reworked library with folders, sorting and filtering.
+Watermarks on export and batch export, and undoable crop and mask edits.
+People selection for masks.
+Translations in French, German, Hindi, Japanese, Polish and Chinese.
+Fixes for lens matching, dehaze, DNG and TIFF files and the tablet layout.

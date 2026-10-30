@@ -26,11 +26,6 @@
 //!   labels and, on memory-constrained devices, the Preview quality tiers,
 //!   updated when the settings are loaded (`calibraw-ui`,
 //!   `performance_settings.rs`).
-//! - The old AI-denoise result cache, removed on start-up
-//!   (`calibraw-ui`, `app/ai_denoise.rs`).
-//! - The depth model desktop builds used before Depth Anything V2 Small,
-//!   removed from the model folder on start-up (`calibraw-ui`,
-//!   `app/ai/models.rs`).
 //! - The automatic ONNX Runtimes the WebGPU packages replaced (CPU, Linux
 //!   CUDA and Windows DirectML), removed from the model folder on desktop
 //!   start-up (`calibraw-ai`, `runtime/package.rs`, which lists them, and

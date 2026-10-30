@@ -15,11 +15,6 @@ pub const MODEL: ModelInfo = AiModel::Depth.spec().info();
 /// The page listing the depth model's files.
 pub const ARTIFACT_PAGE_URL: &str =
     "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da2";
-/// The depth model desktop builds downloaded before `MODEL`, in the model
-/// cache.
-///
-/// migration: remove in v1.4.0. Listed in `calibraw_core`'s `migrations`.
-pub const RETIRED_DEPTH_MODEL_FILENAME: &str = "da3mono_large_700x700.onnx";
 const INPUT_EDGE: u32 = MODEL.input.edge();
 
 pub fn depth_model_is_verified(path: &Path) -> bool {

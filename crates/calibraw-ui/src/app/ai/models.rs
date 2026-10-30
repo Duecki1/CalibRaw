@@ -276,19 +276,6 @@ impl CalibRawApp {
             .join(calibraw_ai::models::depth::MODEL.cache_filename)
     }
 
-    /// Desktop builds used a larger depth model before Depth Anything V2
-    /// Small; nothing reads it any more. Removes that file and nothing else.
-    ///
-    /// migration: remove in v1.4.0. Listed in `calibraw_core`'s `migrations`.
-    pub(in crate::app) fn remove_retired_depth_model(&self) {
-        let path = self
-            .ai_model_root()
-            .join(calibraw_ai::models::depth::RETIRED_DEPTH_MODEL_FILENAME);
-        if path.is_file() {
-            Self::remove_retired_app_data(path, "retired depth model");
-        }
-    }
-
     /// Automatic runtimes the WebGPU packages replaced: the CPU ones, the
     /// Linux CUDA ones and the Windows DirectML ones. Removes their install
     /// folders and archives in the model cache and nothing else, keeping a

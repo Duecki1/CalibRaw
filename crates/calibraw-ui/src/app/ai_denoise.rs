@@ -82,27 +82,6 @@ impl CalibRawApp {
             .and_then(|target| self.ai_denoise_result_path_for_target(target))
     }
 
-    /// Results used to live in an app-data cache keyed by the RAW's path;
-    /// they now live next to the RAW. Removes that old folder and nothing else.
-    ///
-    /// migration: remove in v1.4.0. Listed in `calibraw_core`'s `migrations`.
-    pub(in crate::app) fn remove_legacy_ai_denoise_cache(&self) {
-        // In the app's private data where the platform assigns one, otherwise
-        // in the cache root that held the models then.
-        let root = if self.caps().has_media_library() {
-            self.platform
-                .internal_data_dir()
-                .map(|data| data.join("ai-denoise-results-v2"))
-        } else {
-            calibraw_core::migrations::desktop_model_folder::legacy_desktop_model_root()
-                .parent()
-                .map(|cache_root| cache_root.join("ai-denoise-results-v2"))
-        };
-        if let Some(root) = root.filter(|root| root.is_dir()) {
-            Self::remove_retired_app_data(root, "legacy AI-denoise cache");
-        }
-    }
-
     pub(crate) fn set_ai_denoise_enabled(&mut self, enabled: bool, frame: &eframe::Frame) {
         if !enabled {
             if self.ai_consent_is_for(AiFeature::Denoise) {

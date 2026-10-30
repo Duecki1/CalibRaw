@@ -1,9 +1,9 @@
 # F-Droid submission and updates
 
 The submission recipe is [de.duecki.calibraw.yml](de.duecki.calibraw.yml).
-It builds the `v1.3.1` release with Android version code `1000711`. The
-recipe's `commit` field must be the full hash of the `v1.3.1` tag's commit
-(`git rev-parse v1.3.1^{commit}`), never an untagged commit: F-Droid's build
+It builds the `v1.4.0` release with Android version code `1000712`. The
+recipe's `commit` field must be the full hash of the `v1.4.0` tag's commit
+(`git rev-parse v1.4.0^{commit}`), never an untagged commit: F-Droid's build
 must contain exactly the code of the GitHub release with the same version.
 This is a source build, not an upload of the GitHub release APK.
 
@@ -57,16 +57,16 @@ earlier). Do not move existing release tags.
 
 For each subsequent release:
 
-1. Bump `[workspace.package].version` in `Cargo.toml`, for example to `1.3.2`,
+1. Bump `[workspace.package].version` in `Cargo.toml`, for example to `1.4.1`,
    and update the workspace package entries in `Cargo.lock` as usual.
 2. Increase `[workspace.metadata].fdroid_version_code`, for example from
-   `1000711` to `1000712`. This must increase even when a patch number resets
+   `1000712` to `1000713`. This must increase even when a patch number resets
    during a minor or major version bump.
 3. Add release notes to
-   `fastlane/metadata/android/en-US/changelogs/1000712.txt` (maximum 500
+   `fastlane/metadata/android/en-US/changelogs/1000713.txt` (maximum 500
    characters), using the F-Droid version code. Continue updating `default.txt`
    for the existing GitHub release workflow.
-4. Commit and push those changes, then tag that commit `v1.3.2` and push the
+4. Commit and push those changes, then tag that commit `v1.4.1` and push the
    tag. The tag version must match the workspace package version. Only tag
    stable versions matching `vMAJOR.MINOR.PATCH` for this update stream.
 

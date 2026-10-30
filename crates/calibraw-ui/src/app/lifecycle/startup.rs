@@ -534,9 +534,7 @@ impl CalibRawApp {
         for failure in moved_ai_file_failures {
             app.report_error(ErrorKind::AiFilesNotMoved, failure);
         }
-        app.remove_legacy_ai_denoise_cache();
         if caps.is_desktop() {
-            app.remove_retired_depth_model();
             app.remove_retired_onnx_runtimes();
         }
         // Where the runtime is built in (Android), GPU providers are always

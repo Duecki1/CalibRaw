@@ -1,0 +1,6 @@
+Basic transform with aspect and guided perspective, basic chromatic aberration and LUTs.
+Simple negatives support and a reworked library with folders, sorting and filtering.
+Watermarks on export and batch export, and undoable crop and mask edits.
+People selection for masks.
+Translations in French, German, Hindi, Japanese, Polish and Chinese.
+Fixes for lens matching, dehaze, DNG and TIFF files and the tablet layout.
