@@ -399,10 +399,9 @@ impl OnboardingStep {
         // earlier setup that had none still has that choice outstanding and is
         // shown the step once again. Where the device offers a single people
         // quality there is nothing left to ask.
-        let mask_choices_outstanding =
-            !app.preferences.subject_mask_quality_chosen
-                || !(app.preferences.people_mask_quality_chosen
-                    || PeopleMaskQuality::available().len() < 2);
+        let mask_choices_outstanding = !app.preferences.subject_mask_quality_chosen
+            || !(app.preferences.people_mask_quality_chosen
+                || PeopleMaskQuality::available().len() < 2);
         Self::pending_with(
             app.preferences.onboarding_completed,
             mask_choices_outstanding,
