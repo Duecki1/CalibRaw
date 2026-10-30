@@ -82,12 +82,19 @@ fn catalog_result(raw: &LoadedRaw) -> Result<LensfunCatalog> {
             }
         });
 
-    let mut lenses = camera
-        .map(|camera| compatible_lenses(&database, camera))
-        .unwrap_or_else(|| all_lenses(&database));
+    // The picker always lists every profile: a camera that is missing or
+    // misidentified must not hide the lens the user needs. Only the automatic
+    // match is limited to profiles that fit the matched camera.
+    let mut lenses = all_lenses(&database);
     sort_and_deduplicate_lenses(&mut lenses);
-
-    let auto_match = find_auto_lens(&database, camera, raw, &lenses);
+    let auto_match = match camera {
+        Some(camera) => {
+            let mut compatible = compatible_lenses(&database, camera);
+            sort_and_deduplicate_lenses(&mut compatible);
+            find_auto_lens(&database, Some(camera), raw, &compatible)
+        }
+        None => find_auto_lens(&database, None, raw, &lenses),
+    };
     let message = if let Some(found) = &auto_match {
         format!("Auto-detected {} from RAW metadata", found.label())
     } else if raw.lens_model.trim().is_empty() {
