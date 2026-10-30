@@ -135,7 +135,7 @@ def stage_release(revision: str) -> None:
         raise SystemExit(f"Not a valid committed revision: {revision}") from None
     required = [
         "Cargo.toml", "Cargo.lock", "packaging/linux/io.github.Duecki1.CalibRaw.metainfo.xml",
-        "packaging/flatpak/generate-licenses.py", "crates/calibraw-ai/src/onnx_runtime_artifact.rs",
+        "packaging/flatpak/generate-licenses.py",
     ]
     for filename in required:
         try:

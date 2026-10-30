@@ -26,8 +26,8 @@ use std::{
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::pipeline::{
-    AiDenoisedImage, CfaKind, CompactPixelMap, ExposureParams, GpuParams, LoadedRaw, MaskStack,
-    PipelineOptions, ProcessingQuality, RawGpuPipeline,
+    reflect_index, AiDenoisedImage, CfaKind, CompactPixelMap, ExposureParams, GpuParams, LoadedRaw,
+    MaskStack, PipelineOptions, ProcessingQuality, RawGpuPipeline,
 };
 
 mod inference;

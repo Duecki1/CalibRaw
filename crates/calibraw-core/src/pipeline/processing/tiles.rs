@@ -303,13 +303,13 @@ pub fn extract_padded_tile(raw: &LoadedRaw, tile: ExportTile) -> LoadedRaw {
         tile.padded_width,
         tile.padded_height,
         Vec::new(),
-        raw.color_indices.subregion_clamped(
+        raw.color_indices.subregion_reflected(
             i64::from(tile.global_origin_x),
             i64::from(tile.global_origin_y),
             tile.padded_width,
             tile.padded_height,
         ),
-        raw.black_levels_per_pixel.subregion_clamped(
+        raw.black_levels_per_pixel.subregion_reflected(
             i64::from(tile.global_origin_x),
             i64::from(tile.global_origin_y),
             tile.padded_width,
@@ -369,13 +369,13 @@ pub fn extract_padded_tile_into(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mu
     }
     tile_raw.width = tile.padded_width;
     tile_raw.height = tile.padded_height;
-    tile_raw.color_indices = raw.color_indices.subregion_clamped(
+    tile_raw.color_indices = raw.color_indices.subregion_reflected(
         i64::from(tile.global_origin_x),
         i64::from(tile.global_origin_y),
         tile.padded_width,
         tile.padded_height,
     );
-    tile_raw.black_levels_per_pixel = raw.black_levels_per_pixel.subregion_clamped(
+    tile_raw.black_levels_per_pixel = raw.black_levels_per_pixel.subregion_reflected(
         i64::from(tile.global_origin_x),
         i64::from(tile.global_origin_y),
         tile.padded_width,
@@ -384,6 +384,11 @@ pub fn extract_padded_tile_into(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mu
     fill_padded_tile(raw, tile, tile_raw);
 }
 
+/// Fills the tile's samples. The halo past the photo mirrors it
+/// ([`reflect_index`]), because repeating an edge sample would leave a halo
+/// of only that edge's CFA colours: demosaiced, it has a false colour, which
+/// the demosaic reads back into the edge pixels and colour denoise spreads
+/// into the photo.
 fn fill_padded_tile(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mut LoadedRaw) {
     if let Ok(mut cached) = tile_raw.ai_denoised.write() {
         *cached = padded_tile_ai_denoised(raw, tile);
@@ -395,16 +400,17 @@ fn fill_padded_tile(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mut LoadedRaw)
     samples.resize(width.saturating_mul(height), 0);
 
     let source_width = raw.width as i64;
-    let max_x = source_width.saturating_sub(1);
-    let max_y = i64::from(raw.height.saturating_sub(1));
 
     for local_y in 0..tile.padded_height {
-        let global_y = (i64::from(tile.global_origin_y) + i64::from(local_y)).clamp(0, max_y);
+        let global_y = reflect_index(
+            i64::from(tile.global_origin_y) + i64::from(local_y),
+            raw.height as usize,
+        );
         let destination_start = local_y as usize * width;
         let destination = &mut samples[destination_start..destination_start + width];
         let origin_x = i64::from(tile.global_origin_x);
         let end_x = origin_x + i64::from(tile.padded_width);
-        let source_row = global_y as usize * raw.width as usize;
+        let source_row = global_y * raw.width as usize;
 
         if origin_x >= 0 && end_x <= source_width {
             let source_start = source_row + origin_x as usize;
@@ -414,19 +420,16 @@ fn fill_padded_tile(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mut LoadedRaw)
 
         let left = (-origin_x).clamp(0, i64::from(tile.padded_width)) as usize;
         let right = (end_x - source_width).clamp(0, i64::from(tile.padded_width)) as usize;
-        if left > 0 {
-            destination[..left].fill(raw.raw_pixels[source_row]);
-        }
-        let middle_start_global = origin_x.max(0);
         let middle_len = width.saturating_sub(left + right);
         if middle_len > 0 {
-            let source_start = source_row + middle_start_global as usize;
+            let source_start = source_row + origin_x.max(0) as usize;
             destination[left..left + middle_len]
                 .copy_from_slice(&raw.raw_pixels[source_start..source_start + middle_len]);
         }
-        if right > 0 {
-            let edge = raw.raw_pixels[source_row + max_x as usize];
-            destination[width - right..].fill(edge);
+        let halo = (0..left).chain(left + middle_len..width);
+        for local_x in halo {
+            let global_x = reflect_index(origin_x + local_x as i64, raw.width as usize);
+            destination[local_x] = raw.raw_pixels[source_row + global_x];
         }
     }
 }

@@ -102,9 +102,9 @@ fn detail_texture_channel(
 }
 
 // Clamps a tap to the full image before the tile. An export tile's halo
-// beyond the image repeats the edge pixels, but a level filtered there differs
-// from the edge pixel's own; clamping in image coordinates reads the edge
-// pixel's level, as the full frame does.
+// beyond the image mirrors it, but a level filtered there differs from the
+// edge pixel's own; clamping in image coordinates reads the edge pixel's
+// level, as the full frame does.
 fn detail_pyramid_tap_pos(pos: vec2<i32>) -> vec2<i32> {
     let origin = Common::tile_origin();
     let image_pos = clamp(pos + origin, vec2<i32>(0), Common::full_image_max()) - origin;

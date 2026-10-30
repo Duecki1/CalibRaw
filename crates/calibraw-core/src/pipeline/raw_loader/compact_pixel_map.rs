@@ -155,7 +155,15 @@ impl<T: Copy + PartialEq> CompactPixelMap<T> {
         Self::dense(width, height, values)
     }
 
-    pub fn subregion_clamped(&self, origin_x: i64, origin_y: i64, width: u32, height: u32) -> Self {
+    /// The `width` by `height` region at the origin. Positions outside the map
+    /// take their [`reflect_index`] mirror, as the samples of a padded tile do.
+    pub fn subregion_reflected(
+        &self,
+        origin_x: i64,
+        origin_y: i64,
+        width: u32,
+        height: u32,
+    ) -> Self {
         let source_width = self.width.max(1) as i64;
         let source_height = self.height.max(1) as i64;
         let fully_inside = origin_x >= 0
@@ -180,13 +188,30 @@ impl<T: Copy + PartialEq> CompactPixelMap<T> {
 
         let mut values = Vec::with_capacity((width as usize).saturating_mul(height as usize));
         for y in 0..height {
-            let source_y = (origin_y + i64::from(y)).clamp(0, source_height - 1) as u32;
+            let source_y = reflect_index(origin_y + i64::from(y), source_height as usize);
             for x in 0..width {
-                let source_x = (origin_x + i64::from(x)).clamp(0, source_width - 1) as u32;
-                values.push(self[(source_y * self.width + source_x) as usize]);
+                let source_x = reflect_index(origin_x + i64::from(x), source_width as usize);
+                values.push(self[source_y * self.width as usize + source_x]);
             }
         }
         Self::dense(width, height, values)
+    }
+}
+
+/// The position inside `0..length` that `index` mirrors to, reflecting about
+/// the first and last positions without repeating them. An even offset from
+/// the edge keeps a Bayer mosaic's colour phase, so a mirrored mosaic stays a
+/// valid one.
+pub fn reflect_index(index: i64, length: usize) -> usize {
+    if length <= 1 {
+        return 0;
+    }
+    let period = (length as i64 - 1) * 2;
+    let folded = index.rem_euclid(period);
+    if folded < length as i64 {
+        folded as usize
+    } else {
+        (period - folded) as usize
     }
 }
 

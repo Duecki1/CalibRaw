@@ -1,5 +1,5 @@
 use super::{
-    CompactPixelMap, DemosaicMode, DenoiseQuality, ExposureParams, FilmSource,
+    reflect_index, CompactPixelMap, DemosaicMode, DenoiseQuality, ExposureParams, FilmSource,
     HighlightReconstructionMethod, LoadedRaw, MaskEffect, MaskStack, WhiteBalance,
 };
 use rayon::prelude::*;

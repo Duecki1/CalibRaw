@@ -118,16 +118,20 @@ pub(super) fn padded_tile_ai_denoised(
             .checked_mul(u64::from(tile.padded_height))
             .and_then(|count| usize::try_from(count).ok())?;
         let mut raw_cfa16 = vec![0u16; elements];
-        let max_x = i64::from(raw.width.saturating_sub(1));
-        let max_y = i64::from(raw.height.saturating_sub(1));
+        // This mosaic shares the tile's CFA, so its halo mirrors as the
+        // tile's samples do (`fill_padded_tile`).
         for local_y in 0..tile.padded_height {
-            let source_y =
-                (i64::from(tile.global_origin_y) + i64::from(local_y)).clamp(0, max_y) as u32;
+            let source_y = reflect_index(
+                i64::from(tile.global_origin_y) + i64::from(local_y),
+                raw.height as usize,
+            );
             for local_x in 0..tile.padded_width {
-                let source_x =
-                    (i64::from(tile.global_origin_x) + i64::from(local_x)).clamp(0, max_x) as u32;
+                let source_x = reflect_index(
+                    i64::from(tile.global_origin_x) + i64::from(local_x),
+                    raw.width as usize,
+                );
                 raw_cfa16[(local_y * tile.padded_width + local_x) as usize] =
-                    source_cfa[(source_y * raw.width + source_x) as usize];
+                    source_cfa[source_y * raw.width as usize + source_x];
             }
         }
         return crate::pipeline::AiDenoisedImage::new_bayer_cfa(

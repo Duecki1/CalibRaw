@@ -63,19 +63,6 @@ pub(super) fn normalized_sensor_site(raw: &LoadedRaw, x: u32, y: u32) -> f32 {
     ((f32::from(raw.raw_pixels[index]) - black) / (white - black)).clamp(0.0, 1.0)
 }
 
-pub(super) fn reflect_index(index: i64, length: usize) -> usize {
-    if length <= 1 {
-        return 0;
-    }
-    let period = (length as i64 - 1) * 2;
-    let folded = index.rem_euclid(period);
-    if folded < length as i64 {
-        folded as usize
-    } else {
-        (period - folded) as usize
-    }
-}
-
 fn seam_ramp(distance: usize, overlap: usize) -> f32 {
     (distance as f32 + 0.5) / (2 * overlap) as f32
 }

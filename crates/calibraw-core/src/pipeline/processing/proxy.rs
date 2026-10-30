@@ -344,10 +344,10 @@ fn crop_mosaic(raw: &LoadedRaw, region: [u32; 4]) -> LoadedRaw {
     }
     let color_indices =
         raw.color_indices
-            .subregion_clamped(i64::from(x), i64::from(y), width, height);
+            .subregion_reflected(i64::from(x), i64::from(y), width, height);
     let black_levels_per_pixel =
         raw.black_levels_per_pixel
-            .subregion_clamped(i64::from(x), i64::from(y), width, height);
+            .subregion_reflected(i64::from(x), i64::from(y), width, height);
 
     LoadedRaw {
         lens_geometry: is_whole_image(raw, region)
