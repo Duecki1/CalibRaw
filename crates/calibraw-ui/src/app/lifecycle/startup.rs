@@ -320,6 +320,7 @@ impl CalibRawApp {
                 language: performance.language,
                 onboarding_completed: performance.onboarding_completed,
                 subject_mask_quality_chosen: performance.subject_mask_quality_chosen,
+                people_mask_quality_chosen: performance.people_mask_quality_chosen,
                 tips: TipPreferences {
                     enabled: performance.tips_enabled,
                     seen: performance.seen_tips.clone(),

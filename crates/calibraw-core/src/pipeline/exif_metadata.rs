@@ -134,6 +134,7 @@ impl ExifSummary {
             iso_speed: self.capture.iso_speed,
             shutter_seconds: self.capture.shutter_seconds,
             focal_length: self.focal_length,
+            taken_seconds: super::raw_loader::taken_seconds(&self.capture.exif_dates),
         }
     }
 

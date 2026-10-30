@@ -237,6 +237,82 @@ pub struct RawDisplayMetadata {
     pub iso_speed: f32,
     pub shutter_seconds: f32,
     pub focal_length: f32,
+    /// When the photo was taken, in seconds since the Unix epoch; 0 when the
+    /// file carries no readable capture date. The newest/oldest library sorts
+    /// order by this, falling back to the file's own date.
+    pub taken_seconds: u64,
+}
+
+/// The date a photo was taken, in seconds since the Unix epoch, out of the
+/// EXIF date tags a payload carries; 0 when none of them can be read. The
+/// original capture date (`0x9003`), the creation date (`0x9004`) and the
+/// file's date/time (`0x0132`) are tried in that order, so a photo whose
+/// camera wrote only one of them still sorts by that moment.
+pub(super) fn taken_seconds(dates: &[(u16, String)]) -> u64 {
+    for tag in [0x9003, 0x9004, 0x0132] {
+        let seconds = dates
+            .iter()
+            .filter(|(candidate, _)| *candidate == tag)
+            .map(|(_, value)| exif_date_seconds(value))
+            .fold(0, |best, seconds| best.max(seconds));
+        if seconds != 0 {
+            return seconds;
+        }
+    }
+    0
+}
+
+/// Seconds since the Unix epoch of an EXIF ASCII date, `YYYY:MM:DD HH:MM:SS`;
+/// the `-` date separators and the `T` time marker some cameras write read at
+/// the same offsets. Subseconds and UTC offsets are ignored: the camera wrote
+/// local wall-clock time, and keeping it as it is means no machine's timezone
+/// moves a photo. That is the convention
+/// `libraw_loader::capture_dates_from_timestamp` writes the same tags with, so
+/// the two round-trip. 0 when the date is missing, unparseable or predates 1970.
+pub(super) fn exif_date_seconds(value: &str) -> u64 {
+    // Year, month, day, hour, minute and second at their fixed offsets.
+    let digits = value.as_bytes();
+    let number = |start: usize, width: usize| -> u32 {
+        let end = start.saturating_add(width);
+        if end > digits.len() {
+            return 0;
+        }
+        let mut field: u32 = 0;
+        for digit in digits[start..end].iter() {
+            if !digit.is_ascii_digit() {
+                return 0;
+            }
+            field = field * 10 + u32::from(digit - b'0');
+        }
+        field
+    };
+    let year = number(0, 4);
+    let month = number(5, 2);
+    let day = number(8, 2);
+    let hour = number(11, 2);
+    let minute = number(14, 2);
+    let second = number(17, 2);
+    if year < 1970
+        || month == 0
+        || month > 12
+        || day == 0
+        || day > 31
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return 0;
+    }
+    // Days since 1970-01-01, Howard Hinnant's `days_from_civil`, whose inverse
+    // `capture_dates_from_timestamp` uses.
+    let shifted_year = year - if month <= 2 { 1 } else { 0 };
+    let era = shifted_year / 400;
+    let year_of_era = shifted_year - era * 400;
+    let shifted_month = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * shifted_month + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    u64::from(days) * 86_400 + u64::from(hour) * 3_600 + u64::from(minute) * 60 + u64::from(second)
 }
 
 #[derive(Clone, Debug)]

@@ -47,12 +47,18 @@ pub(crate) struct PerformanceSettings {
     pub export_watermark: SavedWatermark,
     pub ui_design: crate::appearance::UiDesign,
     pub preview_backdrop: crate::appearance::PreviewBackdrop,
-    /// Missing in files written before it existed, which therefore follow the system.
+    /// Missing in files written before it existed, which therefore follow the
+    /// system; a first open starts in English and asks for another language in
+    /// setup.
     pub language: crate::i18n::LanguageChoice,
     pub onboarding_completed: bool,
     /// Missing in files written before the setup step existed, so existing
     /// users are asked once.
     pub subject_mask_quality_chosen: bool,
+    /// Missing in files written before the setup step offered the people-mask
+    /// quality, so existing users are asked about it once where their device
+    /// offers the choice; the choice itself is never reset by it.
+    pub people_mask_quality_chosen: bool,
     /// Show a feature's tip the first time it is used.
     pub tips_enabled: bool,
     /// `Tip::key`s of the tips already shown, including keys of tips other
@@ -229,9 +235,13 @@ impl Default for PerformanceSettings {
             export_watermark: SavedWatermark::default(),
             ui_design: crate::appearance::UiDesign::default(),
             preview_backdrop: crate::appearance::PreviewBackdrop::default(),
-            language: crate::i18n::LanguageChoice::default(),
+            // A first open shows English; `System` is only the decode default for
+            // files written before the language setting existed, whose users had
+            // no choice to make.
+            language: crate::i18n::LanguageChoice::English,
             onboarding_completed: false,
             subject_mask_quality_chosen: false,
+            people_mask_quality_chosen: false,
             tips_enabled: true,
             seen_tips: BTreeSet::new(),
             auto_check_updates: true,

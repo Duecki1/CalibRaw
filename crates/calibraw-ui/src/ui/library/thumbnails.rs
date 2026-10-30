@@ -319,17 +319,21 @@ pub(super) fn compare_library_entries(
             .cmp(&right.review().flag)
             .then_with(|| right.review().rating.cmp(&left.review().rating))
             .then(name_order),
+        // The date the photo was taken, not the file's: a photo keeps its
+        // capture date when it is copied or edited, while its file date moves.
+        // Capture dates arrive with the metadata the thumbnail workers read,
+        // so photos without one yet fall back to the file's date.
         LibrarySortOrder::NewestFirst => right
             .asset
             .metadata
-            .modified_seconds
-            .cmp(&left.asset.metadata.modified_seconds)
+            .date_order_seconds()
+            .cmp(&left.asset.metadata.date_order_seconds())
             .then(name_order),
         LibrarySortOrder::OldestFirst => left
             .asset
             .metadata
-            .modified_seconds
-            .cmp(&right.asset.metadata.modified_seconds)
+            .date_order_seconds()
+            .cmp(&right.asset.metadata.date_order_seconds())
             .then(name_order),
         LibrarySortOrder::NameAscending => name_order,
         LibrarySortOrder::NameDescending => name_order.reverse(),

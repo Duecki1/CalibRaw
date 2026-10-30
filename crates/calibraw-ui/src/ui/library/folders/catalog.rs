@@ -44,11 +44,14 @@ impl PartialOrd for RankedLibraryAsset {
 
 impl Ord for RankedLibraryAsset {
     fn cmp(&self, other: &Self) -> CmpOrdering {
+        // Which photos a truncated library keeps follows the order the displayed
+        // list is sorted in: the date a photo was taken once its capture date is
+        // known, otherwise the file's own date, which is all a first scan knows.
         other
             .asset
             .metadata
-            .modified_seconds
-            .cmp(&self.asset.metadata.modified_seconds)
+            .date_order_seconds()
+            .cmp(&self.asset.metadata.date_order_seconds())
             .then_with(|| self.lowercase_name.cmp(&other.lowercase_name))
             .then_with(|| self.asset.display_path.cmp(&other.asset.display_path))
             .then_with(|| self.asset.id.cmp(&other.asset.id))
@@ -150,15 +153,20 @@ impl DeferredMetadataState {
     }
 }
 
+/// Folds display metadata into the asset; says whether that moves the asset in
+/// the newest/oldest order, which needs the library list to be sorted again.
 pub(in crate::ui::library) fn apply_display_metadata(
     asset: &mut LibraryAssetMetadata,
     metadata: RawDisplayMetadata,
-) {
+) -> bool {
+    let order_before = asset.date_order_seconds();
     asset.dimensions_hint = Some(metadata.dimensions);
     asset.iso_speed = metadata.iso_speed;
     asset.shutter_seconds = metadata.shutter_seconds;
     asset.focal_length = metadata.focal_length;
     asset.aperture = metadata.aperture;
+    asset.taken_seconds = metadata.taken_seconds;
+    order_before != asset.date_order_seconds()
 }
 
 pub(in crate::ui::library) fn scan_folder_tree(
@@ -330,7 +338,9 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
                 .zip(stamp)
                 .and_then(|(file_name, stamp)| metadata_cache.get(file_name, stamp));
             match cached {
-                Some(metadata) => apply_display_metadata(&mut asset.metadata, metadata),
+                Some(metadata) => {
+                    apply_display_metadata(&mut asset.metadata, metadata);
+                }
                 None => {
                     pending_metadata.insert(path.to_path_buf(), stamp);
                 }

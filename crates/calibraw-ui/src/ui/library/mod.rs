@@ -221,6 +221,25 @@ pub(crate) struct LibraryAssetMetadata {
     pub(crate) focal_length: f32,
     pub(crate) aperture: f32,
     pub(crate) modified_seconds: u64,
+    /// When the photo was taken, in seconds since the Unix epoch: 0 until its
+    /// capture settings have been read, or when the file carries no readable
+    /// date. The newest/oldest library sorts order by this, falling back to
+    /// `modified_seconds`; media-library documents stay on their file date.
+    pub(crate) taken_seconds: u64,
+}
+
+impl LibraryAssetMetadata {
+    /// What the newest/oldest sorts order this photo by: the date it was taken
+    /// when that has been read, otherwise the file's own date. A photo can move
+    /// in those orders once its capture date arrives, since a folder scan only
+    /// knows file dates.
+    pub(crate) fn date_order_seconds(&self) -> u64 {
+        if self.taken_seconds == 0 {
+            self.modified_seconds
+        } else {
+            self.taken_seconds
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -261,6 +280,7 @@ impl LibraryAsset {
                 focal_length: 0.0,
                 aperture: 0.0,
                 modified_seconds,
+                taken_seconds: 0,
             },
         }
     }
@@ -280,6 +300,7 @@ impl LibraryAsset {
                 focal_length: 0.0,
                 aperture: 0.0,
                 modified_seconds: document.modified_seconds,
+                taken_seconds: 0,
             },
         }
     }

@@ -278,6 +278,7 @@ impl LibraryState {
         }
 
         let mut review_sort_changed = false;
+        let mut date_sort_changed = false;
         for _ in 0..MAX_EVENTS_PER_FRAME {
             let received = self.event_receiver.as_ref().map(mpsc::Receiver::try_recv);
             let event = match received {
@@ -371,7 +372,7 @@ impl LibraryState {
                     match result {
                         Ok(loaded) => {
                             if let Some(metadata) = loaded.display_metadata {
-                                apply_display_metadata(
+                                date_sort_changed |= apply_display_metadata(
                                     &mut self.entries[index].asset.metadata,
                                     metadata,
                                 );
@@ -452,7 +453,7 @@ impl LibraryState {
                 _ => {}
             }
         }
-        if review_sort_changed {
+        if review_sort_changed || date_sort_changed {
             self.sort_entries();
         }
     }

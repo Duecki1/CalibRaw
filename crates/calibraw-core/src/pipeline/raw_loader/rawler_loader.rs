@@ -6,9 +6,9 @@
 
 use super::libraw_loader as shared;
 use super::{
-    validate_raw_dimensions, CameraProfileCandidate, CameraProfileMode, CaptureMetadata, CfaKind,
-    CompactPixelMap, LoadedRaw, ProfileColorSource, RawDisplayMetadata, RawThumbnail,
-    SensorSaturation, MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
+    exif_date_seconds, validate_raw_dimensions, CameraProfileCandidate, CameraProfileMode,
+    CaptureMetadata, CfaKind, CompactPixelMap, LoadedRaw, ProfileColorSource, RawDisplayMetadata,
+    RawThumbnail, SensorSaturation, MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
 };
 use crate::pipeline::{color_profile::DcpProfile, noise::NoiseProfile, LateralChromaticAberration};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -1070,6 +1070,20 @@ pub(super) fn load_raw_display_metadata(path: &Path) -> Result<RawDisplayMetadat
                 .or(md.exif.iso_speed_ratings.map(u32::from))
                 .unwrap_or(0) as f32,
             shutter_seconds: positive(md.exif.exposure_time),
+            // Rawler's own fields for the same tags `taken_seconds` prefers: the
+            // original capture date first, then creation, then the file's date.
+            taken_seconds: [
+                md.exif.date_time_original,
+                md.exif.create_date,
+                md.exif.modify_date,
+            ]
+            .iter()
+            .map(|value| match value {
+                Some(date) => exif_date_seconds(date),
+                None => 0,
+            })
+            .find(|seconds| *seconds != 0)
+            .unwrap_or(0),
         })
     })
 }

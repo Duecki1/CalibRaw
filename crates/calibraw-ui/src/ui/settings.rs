@@ -141,6 +141,30 @@ pub(crate) fn subject_mask_quality_control(
     app.set_subject_mask_quality(quality);
 }
 
+/// The interface language, in setup and in the appearance card of Settings.
+/// Chosen first in setup so the rest of setup already speaks it.
+pub(crate) fn language_control(ui: &mut Ui, app: &mut CalibRawApp, id_salt: &'static str) {
+    let mut language = app.preferences.language;
+    moduwu_design::form_combo_with_help(
+        ui,
+        tr("Language"),
+        id_salt,
+        language.label(),
+        220.0,
+        tr(
+            "System default follows the language set in your operating system. Text without a translation is shown in English.",
+        ),
+        |ui| {
+            for option in crate::i18n::LanguageChoice::ALL {
+                ui.selectable_value(&mut language, option, option.label());
+            }
+        },
+    );
+    if language != app.preferences.language {
+        app.set_language(language);
+    }
+}
+
 /// People-mask quality, below the subject-mask quality where the device
 /// offers a choice. Locked while an AI mask is being generated.
 pub(crate) fn people_mask_quality_control(
@@ -406,23 +430,7 @@ impl Settings {
             app.set_preview_backdrop(backdrop);
         }
 
-        let mut language = app.preferences.language;
-        moduwu_design::form_combo_with_help(
-            ui,
-            tr("Language"),
-            "settings-language",
-            language.label(),
-            220.0,
-            tr("System default follows the language set in your operating system. Text without a translation is shown in English."),
-            |ui| {
-                for option in crate::i18n::LanguageChoice::ALL {
-                    ui.selectable_value(&mut language, option, option.label());
-                }
-            },
-        );
-        if language != app.preferences.language {
-            app.set_language(language);
-        }
+        language_control(ui, app, "settings-language");
     }
 
     fn show_interface_card(ui: &mut Ui, app: &mut CalibRawApp) {

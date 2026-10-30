@@ -200,6 +200,7 @@ fn capture_review(root: &Path, output_dir: &Path) {
                 ui_design: design,
                 onboarding_completed: true,
                 subject_mask_quality_chosen: true,
+                people_mask_quality_chosen: true,
                 tips_enabled: false,
                 auto_check_updates: false,
                 github_update_check_allowed: Some(false),

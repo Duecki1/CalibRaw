@@ -18,7 +18,7 @@ use std::time::UNIX_EPOCH;
 
 const CACHE_SUFFIX: &str = ".calibraw-folder-metadata.json";
 /// Bump when display-metadata extraction changes, so stored values are re-read.
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 const MAX_CACHE_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Identifies one version of a file's contents for cache validation.
@@ -60,6 +60,7 @@ struct CachedEntry {
     iso_speed: f32,
     shutter_seconds: f32,
     focal_length: f32,
+    taken_seconds: u64,
 }
 
 impl CachedEntry {
@@ -70,6 +71,7 @@ impl CachedEntry {
             iso_speed,
             shutter_seconds,
             focal_length,
+            taken_seconds,
         } = metadata;
         // JSON has no non-finite numbers; such values are simply not cached.
         [aperture, iso_speed, shutter_seconds, focal_length]
@@ -82,6 +84,7 @@ impl CachedEntry {
                 iso_speed,
                 shutter_seconds,
                 focal_length,
+                taken_seconds,
             })
     }
 
@@ -92,6 +95,7 @@ impl CachedEntry {
             iso_speed: self.iso_speed,
             shutter_seconds: self.shutter_seconds,
             focal_length: self.focal_length,
+            taken_seconds: self.taken_seconds,
         }
     }
 }

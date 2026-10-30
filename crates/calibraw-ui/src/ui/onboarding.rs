@@ -35,6 +35,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
         Some(OnboardingAction::Finish) => {
             app.preferences.onboarding_completed = true;
             app.preferences.subject_mask_quality_chosen = true;
+            app.preferences.people_mask_quality_chosen = true;
             app.ui.onboarding_step = None;
             if !app.persist_performance_settings() {
                 app.report_error(
@@ -80,6 +81,10 @@ fn show_header(ui: &mut egui::Ui, steps: &[OnboardingStep], step: OnboardingStep
 }
 
 fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
+    // Asked first so the remaining setup steps already speak the chosen language.
+    crate::ui::settings::language_control(ui, app, "onboarding-language");
+
+    ui.add_space(moduwu_design::SPACE_SM);
     let mut design = app.preferences.ui_design;
     moduwu_design::form_combo_with_help(
         ui,
@@ -184,6 +189,7 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 
 fn show_subject_masks(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     crate::ui::settings::subject_mask_quality_control(ui, app, "onboarding-subject-mask-quality");
+    crate::ui::settings::people_mask_quality_control(ui, app, "onboarding-people-mask-quality");
     ui.add_space(moduwu_design::SPACE_SM);
     ui.small(crate::ui::settings::subject_mask_quality_descriptions());
 }
@@ -387,28 +393,38 @@ impl OnboardingStep {
 
     /// The steps a user still has to go through, empty when none.
     pub(crate) fn pending(app: &CalibRawApp) -> &'static [Self] {
+        use calibraw_ai::models::people::PeopleMaskQuality;
+        // The subject step asks for every mask quality this device offers,
+        // including the people-mask quality it gained: a user who finished an
+        // earlier setup that had none still has that choice outstanding and is
+        // shown the step once again. Where the device offers a single people
+        // quality there is nothing left to ask.
+        let mask_choices_outstanding =
+            !app.preferences.subject_mask_quality_chosen
+                || !(app.preferences.people_mask_quality_chosen
+                    || PeopleMaskQuality::available().len() < 2);
         Self::pending_with(
             app.preferences.onboarding_completed,
-            app.preferences.subject_mask_quality_chosen,
+            mask_choices_outstanding,
             app.caps().has_folders(),
             crate::platform::discord::presence_supported(),
         )
     }
 
-    /// `subject_masks_chosen`: every choice the subject-mask step offers on
-    /// this device has been made.
+    /// `mask_choices_outstanding`: setup has a mask-quality choice this device
+    /// offers that the user has not made.
     fn pending_with(
         onboarding_completed: bool,
-        subject_masks_chosen: bool,
+        mask_choices_outstanding: bool,
         camera_profile_folders: bool,
         discord_supported: bool,
     ) -> &'static [Self] {
-        match (onboarding_completed, subject_masks_chosen) {
+        match (onboarding_completed, mask_choices_outstanding) {
             (false, _) if !camera_profile_folders => Self::ALL_WITHOUT_CAMERA_PROFILES,
             (false, _) if discord_supported => Self::ALL,
             (false, _) => Self::ALL_WITHOUT_DISCORD,
-            (true, false) => Self::CATCH_UP,
-            (true, true) => &[],
+            (true, true) => Self::CATCH_UP,
+            (true, false) => &[],
         }
     }
 

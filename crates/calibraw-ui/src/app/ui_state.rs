@@ -36,6 +36,7 @@ pub(crate) struct PreferencesState {
     pub(crate) language: crate::i18n::LanguageChoice,
     pub(crate) onboarding_completed: bool,
     pub(crate) subject_mask_quality_chosen: bool,
+    pub(crate) people_mask_quality_chosen: bool,
     pub(crate) tips: TipPreferences,
     pub(crate) auto_check_updates: bool,
     pub(crate) github_update_check_allowed: Option<bool>,

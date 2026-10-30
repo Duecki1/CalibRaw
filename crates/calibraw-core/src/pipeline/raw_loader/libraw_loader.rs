@@ -314,6 +314,11 @@ fn display_metadata_from_context(ctx: &LibRawContext) -> Result<super::RawDispla
         iso_speed: finite_positive_or_zero(other.iso_speed),
         shutter_seconds: finite_positive_or_zero(other.shutter),
         focal_length: finite_positive_or_zero(other.focal_len),
+        // `time_t` is `c_long`, so its width is platform-dependent: 32-bit on
+        // Windows/LLP32 targets, 64-bit on LP64. The cast normalises it to i64
+        // on every platform, as `LoadedRaw.capture_metadata` does.
+        #[allow(clippy::unnecessary_cast)] // Width-normalising cast, not a numeric conversion.
+        taken_seconds: taken_seconds(other.timestamp as i64),
     })
 }
 
@@ -857,10 +862,31 @@ fn check_libraw(err: i32, action: &str) -> Result<()> {
     }
 }
 
+/// A camera wall-clock of 0 means LibRaw did not read one; negatives are
+/// moments before the Unix epoch, which no camera writes.
+const MIN_CAPTURE_TIMESTAMP_SECONDS: i64 = 1;
+/// Latest camera wall-clock worth reporting as a taken date: later values
+/// (around the year 8000 and beyond) are placeholder dates files carry, not
+/// moments a photo can be sorted by.
+const MAX_CAPTURE_TIMESTAMP_SECONDS: i64 = 253_402_300_799;
+
+/// The camera wall-clock moment as seconds since the Unix epoch; 0 when it is
+/// unset or outside the range `capture_dates_from_timestamp` writes date
+/// strings for, so a photo has a taken date in seconds and in EXIF text under
+/// the same condition.
+fn taken_seconds(timestamp: i64) -> u64 {
+    if !(MIN_CAPTURE_TIMESTAMP_SECONDS..=MAX_CAPTURE_TIMESTAMP_SECONDS).contains(&timestamp) {
+        return 0;
+    }
+    // The guard keeps the value in `1..=MAX_CAPTURE_TIMESTAMP_SECONDS`, so it
+    // fits `u64`; `unwrap_or` keeps this total instead of trusting the guard.
+    u64::try_from(timestamp).unwrap_or(0)
+}
+
 /// LibRaw represents camera wall-clock time as seconds from the Unix epoch.
 /// Convert without applying the exporting computer's timezone.
 fn capture_dates_from_timestamp(timestamp: i64) -> Vec<(u16, String)> {
-    if timestamp <= 0 || timestamp > 253_402_300_799 {
+    if !(MIN_CAPTURE_TIMESTAMP_SECONDS..=MAX_CAPTURE_TIMESTAMP_SECONDS).contains(&timestamp) {
         return Vec::new();
     }
     // Gregorian civil date from days since 1970-01-01.
