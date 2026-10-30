@@ -7,6 +7,7 @@ mod chromatic_aberration;
 pub mod color_profile;
 mod display_raster;
 mod exif_metadata;
+pub use exif_metadata::{ExifIfd, PreservedExifField};
 pub mod film_negative;
 pub mod focus_stack;
 pub mod geometry;

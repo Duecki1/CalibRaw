@@ -10,6 +10,7 @@ use super::basicadj::{
 };
 use super::chromatic_aberration::LateralChromaticAberration;
 use super::color_profile::CameraProfile;
+use super::exif_metadata::PreservedExifField;
 use super::geometry::LensGeometryMap;
 use super::lens_shading::LensShadingMap;
 use super::noise::NoiseProfile;
@@ -222,6 +223,9 @@ pub struct CaptureMetadata {
     pub flash: Option<u16>,
     pub description: String,
     pub artist: String,
+    /// EXIF fields the source carries that CalibRaw does not interpret,
+    /// preserved so exports can write them back unchanged.
+    pub preserved_exif: Vec<PreservedExifField>,
 }
 
 /// Lightweight metadata available after identifying a RAW, without unpacking

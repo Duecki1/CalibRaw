@@ -1,6 +1,7 @@
 //! Tiled TIFF writer.
 
 use super::*;
+use calibraw_core::pipeline::ExifIfd;
 
 pub(super) fn export_tiled_tiff(
     context: ExportContext<'_>,
@@ -260,15 +261,6 @@ pub(super) fn write_tiff_header<W: Write>(
                 entries.push(tiff_ascii_entry(*tag, value)?);
             }
         }
-        let dates = metadata::encode_date_ifd(request.metadata, 0);
-        if dates.len() > 6 {
-            entries.push(TiffEntry {
-                tag: 0x8769,
-                field_type: 4,
-                count: 1,
-                data: dates,
-            });
-        }
         if !request.metadata.camera_make.trim().is_empty() {
             entries.push(tiff_ascii_entry(271, request.metadata.camera_make.trim())?);
         }
@@ -277,6 +269,46 @@ pub(super) fn write_tiff_header<W: Write>(
         }
         if !request.metadata.artist.trim().is_empty() {
             entries.push(tiff_ascii_entry(315, request.metadata.artist.trim())?);
+        }
+
+        // Reserve the EXIF and GPS IFDs before the layout pass. Their encoded
+        // lengths do not depend on where they land, only their internal offsets do.
+        let exif_len = metadata::exif_ifd_encoded_len(
+            request.metadata,
+            request.output_width,
+            request.output_height,
+        );
+        entries.push(TiffEntry {
+            tag: 0x8769,
+            field_type: 4,
+            count: 1,
+            data: vec![0; exif_len as usize],
+        });
+        let gps_len = metadata::gps_ifd_encoded_len(request.metadata);
+        if gps_len > 6 {
+            entries.push(TiffEntry {
+                tag: 0x8825,
+                field_type: 4,
+                count: 1,
+                data: vec![0; gps_len as usize],
+            });
+        }
+
+        // Fields CalibRaw does not interpret are copied from the source IFD0
+        // as they are; GPS and the Exif IFD are written by their own builders.
+        for field in &request.metadata.preserved_exif {
+            if field.ifd != ExifIfd::Primary || matches!(field.tag, 0x8769 | 0x8825) {
+                continue;
+            }
+            if entries.iter().any(|entry| entry.tag == field.tag) {
+                continue;
+            }
+            entries.push(TiffEntry {
+                tag: field.tag,
+                field_type: field.field_type,
+                count: field.count,
+                data: field.value.clone(),
+            });
         }
     }
 
@@ -310,13 +342,26 @@ pub(super) fn write_tiff_header<W: Write>(
         }
     }
     for (entry, offset) in entries.iter_mut().zip(&external_offsets) {
-        if entry.tag == 0x8769 {
-            entry.data = metadata::encode_date_ifd(
-                request.metadata,
-                u32::try_from(offset.context("missing TIFF EXIF offset")?)
-                    .context("TIFF EXIF offset overflow")?,
-            );
+        if !matches!(entry.tag, 0x8769 | 0x8825) {
+            continue;
         }
+        let expected_len = entry.data.len();
+        let offset = u32::try_from(offset.context("missing TIFF metadata IFD offset")?)
+            .context("TIFF metadata IFD offset overflow")?;
+        entry.data = if entry.tag == 0x8769 {
+            metadata::encode_exif_ifd(
+                request.metadata,
+                offset,
+                request.output_width,
+                request.output_height,
+            )
+        } else {
+            metadata::encode_gps_ifd(request.metadata, offset)
+        };
+        anyhow::ensure!(
+            entry.data.len() == expected_len,
+            "TIFF metadata IFD changed size after layout"
+        );
     }
     cursor = cursor
         .checked_add(3)

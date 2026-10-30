@@ -439,6 +439,7 @@ pub(super) fn read_exif_capture_metadata(path: &Path) -> Result<super::CaptureMe
     Ok(super::CaptureMetadata {
         exif_dates: capture.exif_dates,
         flash: capture.flash,
+        preserved_exif: capture.preserved_exif,
         ..Default::default()
     })
 }
@@ -447,6 +448,7 @@ pub(super) fn read_exif_capture_metadata(path: &Path) -> Result<super::CaptureMe
 /// take precedence over LibRaw's; an EXIF date replaces LibRaw's for its tag.
 fn merge_exif_capture_metadata(capture: &mut super::CaptureMetadata, exif: super::CaptureMetadata) {
     capture.flash = exif.flash.or(capture.flash);
+    capture.preserved_exif = exif.preserved_exif;
     for (tag, value) in exif.exif_dates {
         capture.exif_dates.retain(|(existing, _)| *existing != tag);
         capture.exif_dates.push((tag, value));
@@ -751,6 +753,7 @@ fn loaded_raw_from_context(
             flash: (color.flash_used.is_finite() && color.flash_used > 0.0).then_some(1),
             description: c_array_to_string(&other.desc),
             artist: c_array_to_string(&other.artist),
+            preserved_exif: Vec::new(),
         },
         cfa_kind,
         raw_pixels: raw_pixels.into(),

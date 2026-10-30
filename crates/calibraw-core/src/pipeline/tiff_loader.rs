@@ -1,3 +1,4 @@
+use super::exif_metadata::ExifSummary;
 use super::raw_loader::{validate_raw_dimensions, LoadedRaw, RawThumbnail};
 use anyhow::{anyhow, Context, Result};
 use image::{ColorType, ImageFormat};
@@ -397,6 +398,7 @@ pub(super) fn load_raster_tiff(path: &Path) -> Result<LoadedRaw> {
     // Floating-point TIFFs hold scene radiance (HDR and focus-stack masters, linear
     // exports); integer TIFFs are developed photos.
     raw.scene_referred_raster = source_is_float;
+    ExifSummary::read_or_default(path).apply_to(&mut raw);
     Ok(raw)
 }
 

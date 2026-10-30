@@ -1,6 +1,7 @@
 //! Export settings, limits, metadata, targets and progress events.
 
 use super::*;
+use calibraw_core::pipeline::PreservedExifField;
 
 impl ExportFormat {
     pub const fn label(self) -> &'static str {
@@ -204,6 +205,8 @@ pub struct ExportMetadata {
     pub artist: String,
     pub source_width: u32,
     pub source_height: u32,
+    /// Source EXIF fields CalibRaw does not interpret, written back unchanged.
+    pub preserved_exif: Vec<PreservedExifField>,
 }
 
 impl ExportMetadata {
@@ -224,6 +227,7 @@ impl ExportMetadata {
             artist: raw.capture_metadata.artist.clone(),
             source_width: raw.width,
             source_height: raw.height,
+            preserved_exif: raw.capture_metadata.preserved_exif.clone(),
         }
     }
 }

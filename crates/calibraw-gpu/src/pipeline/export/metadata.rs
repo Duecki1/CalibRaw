@@ -1,4 +1,5 @@
 use super::*;
+use calibraw_core::pipeline::{ExifIfd, PreservedExifField};
 
 pub(super) fn add_png_text_metadata<W: Write>(
     encoder: &mut png::Encoder<'_, W>,
@@ -122,6 +123,12 @@ enum ExifValue {
     Ascii(Vec<u8>),
     Rational(u32, u32),
     Undefined(Vec<u8>),
+    /// A source field, already in little-endian TIFF encoding.
+    Preserved {
+        field_type: u16,
+        count: u32,
+        value: Vec<u8>,
+    },
 }
 
 #[derive(Clone)]
@@ -178,6 +185,11 @@ fn exif_value_parts(value: &ExifValue) -> (u16, u32, Vec<u8>) {
             (5, 1, bytes)
         }
         ExifValue::Undefined(value) => (7, value.len() as u32, value.clone()),
+        ExifValue::Preserved {
+            field_type,
+            count,
+            value,
+        } => (*field_type, *count, value.clone()),
     }
 }
 
@@ -228,12 +240,47 @@ fn encode_ifd_block(entries: &[ExifEntry], ifd_offset: u32) -> Vec<u8> {
     directory
 }
 
-pub(super) fn build_exif_payload(
+fn is_ifd_pointer(tag: u16) -> bool {
+    matches!(tag, 0x8769 | 0x8825 | 0xa005)
+}
+
+fn preserved_entry(field: &PreservedExifField) -> ExifEntry {
+    ExifEntry {
+        tag: field.tag,
+        value: ExifValue::Preserved {
+            field_type: field.field_type,
+            count: field.count,
+            value: field.value.clone(),
+        },
+    }
+}
+
+/// Adds the source fields for `ifd` unless CalibRaw writes that tag itself.
+fn add_preserved(entries: &mut Vec<ExifEntry>, metadata: &ExportMetadata, ifd: ExifIfd) {
+    for field in &metadata.preserved_exif {
+        if field.ifd != ifd || is_ifd_pointer(field.tag) {
+            continue;
+        }
+        if entries.iter().any(|entry| entry.tag == field.tag) {
+            continue;
+        }
+        entries.push(preserved_entry(field));
+    }
+}
+
+fn set_pointer(entries: &mut [ExifEntry], tag: u16, offset: u32) {
+    if let Some(pointer) = entries.iter_mut().find(|entry| entry.tag == tag) {
+        pointer.value = ExifValue::Long(offset);
+    }
+}
+
+fn ifd0_entries(
     metadata: &ExportMetadata,
     output_width: u32,
     output_height: u32,
-) -> Vec<u8> {
-    let mut ifd0_entries = vec![
+    has_gps: bool,
+) -> Vec<ExifEntry> {
+    let mut entries = vec![
         ExifEntry {
             tag: 0x0100,
             value: ExifValue::Long(output_width),
@@ -252,39 +299,59 @@ pub(super) fn build_exif_payload(
         },
     ];
     if !metadata.description.trim().is_empty() {
-        ifd0_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0x010e,
             value: ExifValue::Ascii(nul_terminated_exif_ascii(metadata.description.trim())),
         });
     }
     for (tag, value) in &metadata.exif_dates {
         if *tag == 0x0132 {
-            ifd0_entries.push(ExifEntry {
+            entries.push(ExifEntry {
                 tag: *tag,
                 value: ExifValue::Ascii(nul_terminated_exif_ascii(value)),
             });
         }
     }
     if !metadata.camera_make.trim().is_empty() {
-        ifd0_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0x010f,
             value: ExifValue::Ascii(nul_terminated_exif_ascii(&metadata.camera_make)),
         });
     }
     if !metadata.camera_model.trim().is_empty() {
-        ifd0_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0x0110,
             value: ExifValue::Ascii(nul_terminated_exif_ascii(&metadata.camera_model)),
         });
     }
     if !metadata.artist.trim().is_empty() {
-        ifd0_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0x013b,
             value: ExifValue::Ascii(nul_terminated_exif_ascii(&metadata.artist)),
         });
     }
+    add_preserved(&mut entries, metadata, ExifIfd::Primary);
+    entries.push(ExifEntry {
+        tag: 0x8769,
+        value: ExifValue::Long(0),
+    });
+    if has_gps {
+        entries.push(ExifEntry {
+            tag: 0x8825,
+            value: ExifValue::Long(0),
+        });
+    }
+    entries.sort_by_key(|entry| entry.tag);
+    entries
+}
 
-    let mut exif_entries = vec![
+fn exif_ifd_entries(
+    metadata: &ExportMetadata,
+    output_width: u32,
+    output_height: u32,
+    has_interop: bool,
+) -> Vec<ExifEntry> {
+    let mut entries = vec![
         ExifEntry {
             tag: 0x9000,
             value: ExifValue::Undefined(b"0232".to_vec()),
@@ -299,14 +366,14 @@ pub(super) fn build_exif_payload(
         },
     ];
     if let Some((numerator, denominator)) = exif_rational(metadata.shutter_seconds) {
-        exif_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0x829a,
             value: ExifValue::Rational(numerator, denominator),
         });
     }
     if metadata.iso_speed.is_finite() && metadata.iso_speed > 0.0 {
         let iso = metadata.iso_speed.round().clamp(1.0, u32::MAX as f32) as u32;
-        exif_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0x8827,
             value: if iso <= u32::from(u16::MAX) {
                 ExifValue::Short(iso as u16)
@@ -316,60 +383,172 @@ pub(super) fn build_exif_payload(
         });
     }
     if let Some((numerator, denominator)) = exif_rational(metadata.aperture) {
-        exif_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0x829d,
             value: ExifValue::Rational(numerator, denominator),
         });
     }
     if let Some((numerator, denominator)) = exif_rational(metadata.focal_length) {
-        exif_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0x920a,
             value: ExifValue::Rational(numerator, denominator),
         });
     }
     if let Some((numerator, denominator)) = exif_rational(metadata.focus_distance) {
-        exif_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0x9206,
             value: ExifValue::Rational(numerator, denominator),
         });
     }
     if !metadata.lens_make.trim().is_empty() {
-        exif_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0xa433,
             value: ExifValue::Ascii(nul_terminated_exif_ascii(&metadata.lens_make)),
         });
     }
     if !metadata.lens_model.trim().is_empty() {
-        exif_entries.push(ExifEntry {
+        entries.push(ExifEntry {
             tag: 0xa434,
             value: ExifValue::Ascii(nul_terminated_exif_ascii(&metadata.lens_model)),
         });
     }
-    exif_entries.extend(date_entries(metadata));
+    entries.extend(date_entries(metadata));
+    add_preserved(&mut entries, metadata, ExifIfd::Exif);
+    if has_interop {
+        entries.push(ExifEntry {
+            tag: 0xa005,
+            value: ExifValue::Long(0),
+        });
+    }
+    entries.sort_by_key(|entry| entry.tag);
+    entries
+}
 
-    ifd0_entries.sort_by_key(|entry| entry.tag);
-    exif_entries.sort_by_key(|entry| entry.tag);
+fn gps_ifd_entries(metadata: &ExportMetadata) -> Vec<ExifEntry> {
+    let mut entries = Vec::new();
+    add_preserved(&mut entries, metadata, ExifIfd::Gps);
+    entries.sort_by_key(|entry| entry.tag);
+    entries
+}
 
-    ifd0_entries.push(ExifEntry {
-        tag: 0x8769,
-        value: ExifValue::Long(0),
-    });
-    ifd0_entries.sort_by_key(|entry| entry.tag);
-    let ifd0_offset = 8u32;
-    let exif_ifd_offset = ifd0_offset.saturating_add(encoded_ifd_block_len(&ifd0_entries));
-    if let Some(pointer) = ifd0_entries.iter_mut().find(|entry| entry.tag == 0x8769) {
-        pointer.value = ExifValue::Long(exif_ifd_offset);
+fn interop_ifd_entries(metadata: &ExportMetadata) -> Vec<ExifEntry> {
+    let mut entries = Vec::new();
+    add_preserved(&mut entries, metadata, ExifIfd::Interop);
+    entries.sort_by_key(|entry| entry.tag);
+    entries
+}
+
+/// The Exif and Interoperability IFDs, laid out back to back.
+struct ExifIfds {
+    exif: Vec<ExifEntry>,
+    interop: Vec<ExifEntry>,
+}
+
+impl ExifIfds {
+    fn from_metadata(metadata: &ExportMetadata, output_width: u32, output_height: u32) -> Self {
+        let interop = interop_ifd_entries(metadata);
+        let exif = exif_ifd_entries(metadata, output_width, output_height, !interop.is_empty());
+        Self { exif, interop }
     }
 
-    let ifd0 = encode_ifd_block(&ifd0_entries, ifd0_offset);
-    let exif_ifd = encode_ifd_block(&exif_entries, exif_ifd_offset);
-    let mut output = Vec::with_capacity(8 + ifd0.len() + exif_ifd.len());
+    fn encoded_len(&self) -> u32 {
+        let interop_len = if self.interop.is_empty() {
+            0
+        } else {
+            encoded_ifd_block_len(&self.interop)
+        };
+        encoded_ifd_block_len(&self.exif).saturating_add(interop_len)
+    }
+
+    fn encode(&self, offset: u32) -> Vec<u8> {
+        let mut exif = self.exif.clone();
+        let exif_len = encoded_ifd_block_len(&exif);
+        if !self.interop.is_empty() {
+            set_pointer(&mut exif, 0xa005, offset.saturating_add(exif_len));
+        }
+        let mut output = encode_ifd_block(&exif, offset);
+        if !self.interop.is_empty() {
+            output.extend_from_slice(&encode_ifd_block(
+                &self.interop,
+                offset.saturating_add(exif_len),
+            ));
+        }
+        output
+    }
+}
+
+pub(super) fn build_exif_payload(
+    metadata: &ExportMetadata,
+    output_width: u32,
+    output_height: u32,
+) -> Vec<u8> {
+    let exif_ifds = ExifIfds::from_metadata(metadata, output_width, output_height);
+    let gps = gps_ifd_entries(metadata);
+    let has_gps = !gps.is_empty();
+    let mut ifd0 = ifd0_entries(metadata, output_width, output_height, has_gps);
+
+    let ifd0_offset = 8u32;
+    let exif_offset = ifd0_offset.saturating_add(encoded_ifd_block_len(&ifd0));
+    let gps_offset = exif_offset.saturating_add(exif_ifds.encoded_len());
+    set_pointer(&mut ifd0, 0x8769, exif_offset);
+    if has_gps {
+        set_pointer(&mut ifd0, 0x8825, gps_offset);
+    }
+
+    let gps_len = if has_gps {
+        encoded_ifd_block_len(&gps)
+    } else {
+        0
+    };
+    let capacity = 8usize
+        .saturating_add(encoded_ifd_block_len(&ifd0) as usize)
+        .saturating_add(exif_ifds.encoded_len() as usize)
+        .saturating_add(gps_len as usize);
+    let mut output = Vec::with_capacity(capacity);
     output.extend_from_slice(b"II");
     output.extend_from_slice(&42u16.to_le_bytes());
     output.extend_from_slice(&ifd0_offset.to_le_bytes());
-    output.extend_from_slice(&ifd0);
-    output.extend_from_slice(&exif_ifd);
+    output.extend_from_slice(&encode_ifd_block(&ifd0, ifd0_offset));
+    output.extend_from_slice(&exif_ifds.encode(exif_offset));
+    if has_gps {
+        output.extend_from_slice(&encode_ifd_block(&gps, gps_offset));
+    }
     output
+}
+
+pub(super) fn exif_ifd_encoded_len(
+    metadata: &ExportMetadata,
+    output_width: u32,
+    output_height: u32,
+) -> u32 {
+    ExifIfds::from_metadata(metadata, output_width, output_height).encoded_len()
+}
+
+pub(super) fn encode_exif_ifd(
+    metadata: &ExportMetadata,
+    offset: u32,
+    output_width: u32,
+    output_height: u32,
+) -> Vec<u8> {
+    ExifIfds::from_metadata(metadata, output_width, output_height).encode(offset)
+}
+
+pub(super) fn gps_ifd_encoded_len(metadata: &ExportMetadata) -> u32 {
+    let entries = gps_ifd_entries(metadata);
+    if entries.is_empty() {
+        0
+    } else {
+        encoded_ifd_block_len(&entries)
+    }
+}
+
+pub(super) fn encode_gps_ifd(metadata: &ExportMetadata, offset: u32) -> Vec<u8> {
+    let entries = gps_ifd_entries(metadata);
+    if entries.is_empty() {
+        Vec::new()
+    } else {
+        encode_ifd_block(&entries, offset)
+    }
 }
 
 fn date_entries(metadata: &ExportMetadata) -> Vec<ExifEntry> {
@@ -382,10 +561,4 @@ fn date_entries(metadata: &ExportMetadata) -> Vec<ExifEntry> {
             value: ExifValue::Ascii(nul_terminated_exif_ascii(value)),
         })
         .collect()
-}
-
-pub(super) fn encode_date_ifd(metadata: &ExportMetadata, offset: u32) -> Vec<u8> {
-    let mut entries = date_entries(metadata);
-    entries.sort_by_key(|entry| entry.tag);
-    encode_ifd_block(&entries, offset)
 }
