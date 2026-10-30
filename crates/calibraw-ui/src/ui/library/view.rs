@@ -129,7 +129,9 @@ impl Library {
                     moduwu_design::toolbar_title(ui, &header_title);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Mobile has no top bar; the library header carries its tasks and Settings.
+                    // Mobile has no top bar; the library header carries its
+                    // Settings, and its tasks where they run in the
+                    // background.
                     if caps.is_mobile() {
                         app.show_background_tasks(ui);
                     }

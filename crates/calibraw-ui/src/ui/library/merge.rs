@@ -235,6 +235,12 @@ pub(crate) enum MergeOutcome {
 }
 
 impl LibraryState {
+    /// Whether an HDR merge or focus stack is running. The caller decides
+    /// what a running merge means; its detail lives in [`Self::merge_task`].
+    pub(crate) fn merge_running(&self) -> bool {
+        self.merge.is_some()
+    }
+
     /// Takes the result of a finished merge. A saved merge also refreshes the
     /// library so the new TIFF appears.
     pub(crate) fn poll_merge(

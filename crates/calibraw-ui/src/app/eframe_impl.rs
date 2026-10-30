@@ -284,6 +284,7 @@ impl CalibRawApp {
         crate::ui::presets::show_dialogs(ctx, self);
         self.show_error_dialog(ctx);
         self.show_foreground_operation_dialog(ctx);
+        self.show_background_task_dialog(ctx);
         self.show_remove_progress_dialog(ctx);
         if self.caps().is_desktop() {
             crate::ui::shortcuts_dialog::show(ctx, self);

@@ -47,8 +47,11 @@ pub(super) fn show_processing_dialog(
     moduwu_design::Dialog::new(id, title).show_with_footer(
         ctx,
         |ui| {
-            let measured =
-                matches!(progress.value, ForegroundProgressValue::Units { total, .. } if total > 0);
+            let measured = match &progress.value {
+                ForegroundProgressValue::Units { total, .. } => *total > 0,
+                ForegroundProgressValue::Fraction { .. } => true,
+                ForegroundProgressValue::Indeterminate => false,
+            };
             ui.horizontal(|ui| {
                 if !measured {
                     ui.add(egui::Spinner::new().size(20.0));
@@ -96,6 +99,32 @@ pub(super) fn show_processing_dialog(
                             .color(ui.visuals().weak_text_color()),
                     );
                 }
+            } else if let ForegroundProgressValue::Fraction { fraction } = progress.value {
+                // The task's units mix as it runs, so only a share of the
+                // whole accompanies the bar.
+                let fraction = fraction.clamp(0.0, 1.0);
+                ui.add_space(moduwu_design::SPACE_MD);
+                ui.add(
+                    egui::ProgressBar::new(fraction)
+                        .desired_height(10.0)
+                        .fill(ui.visuals().selection.bg_fill),
+                );
+                ui.horizontal(|ui| {
+                    if let Some(detail) = &progress.detail {
+                        ui.label(
+                            egui::RichText::new(detail)
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{:.0}%", fraction * 100.0))
+                                .small()
+                                .strong(),
+                        );
+                    });
+                });
             } else if let Some(detail) = &progress.detail {
                 ui.label(
                     egui::RichText::new(detail)
@@ -221,10 +250,15 @@ impl CalibRawApp {
     }
 
     /// A task the person must keep the app open for, where the platform
-    /// stops background work; input waits until it finishes.
+    /// stops background work; input waits until it finishes. On such a
+    /// platform every background process runs in the foreground, so exports,
+    /// merges and foreground operations alike hold the UI.
     pub(crate) fn android_foreground_task_active(&self) -> bool {
         self.caps().tasks_need_foreground
-            && (self.foreground_operation_active() || self.ai.library_mask_refresh.is_some())
+            && (self.foreground_operation_active()
+                || self.ai.library_mask_refresh.is_some()
+                || self.export_task_active()
+                || self.library.merge_running())
     }
 }
 

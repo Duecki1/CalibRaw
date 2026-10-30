@@ -1,6 +1,10 @@
 //! The toolbar indicator for work that runs while the app stays usable, such
 //! as exports, HDR merges and focus stacks: a chip with the first task's progress, and a
 //! dropdown that lists every task with its progress and a cancel button.
+//!
+//! Where the platform requires the app in the foreground while tasks run, the
+//! app shows a blocking progress dialog instead (`app::background_tasks`), so
+//! this indicator stays hidden there.
 
 use eframe::egui::{self, Ui};
 

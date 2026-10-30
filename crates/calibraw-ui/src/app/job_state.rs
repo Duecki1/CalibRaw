@@ -19,6 +19,11 @@ pub(crate) enum ForegroundProgressValue {
         total: u64,
         unit: Option<String>,
     },
+    /// A completed share of a whole task in `0..=1`, for tasks whose units
+    /// mix as they run (images, tile renders) so no count can be shown.
+    Fraction {
+        fraction: f32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -49,6 +54,14 @@ impl ForegroundProgress {
                 total,
                 unit: unit.into(),
             },
+            phase: phase.into(),
+            detail: None,
+        }
+    }
+
+    pub(crate) fn fraction(fraction: f32, phase: impl Into<String>) -> Self {
+        Self {
+            value: ForegroundProgressValue::Fraction { fraction },
             phase: phase.into(),
             detail: None,
         }

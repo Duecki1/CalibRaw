@@ -1,6 +1,8 @@
 //! Work that runs while the app stays usable: exports, Edit Replays, HDR
-//! merges and focus stacks. The toolbar indicator follows and cancels them; results arrive as
-//! a status notice or, for failures, the shared error dialog.
+//! merges and focus stacks. Views follow them through the toolbar indicator
+//! or, where the platform requires the app in the foreground while they run,
+//! through a blocking progress dialog; results arrive as a status notice or,
+//! for failures, the shared error dialog.
 
 use super::*;
 use crate::i18n::{tr, tr_fmt};
@@ -19,11 +21,42 @@ impl CalibRawApp {
         tasks
     }
 
-    /// The toolbar indicator. Shows nothing while no task runs.
+    /// The toolbar indicator. Shows nothing while no task runs, and nothing
+    /// at all where the tasks hold the app in the foreground: there they
+    /// show in [`Self::show_background_task_dialog`] instead.
     pub(crate) fn show_background_tasks(&mut self, ui: &mut egui::Ui) {
+        if self.caps().tasks_need_foreground {
+            return;
+        }
         let tasks = self.background_tasks();
         if let Some(id) = crate::ui::background_tasks::show_indicator(ui, &tasks) {
             self.cancel_background_task(id);
+        }
+    }
+
+    /// Where the platform requires the app in the foreground while exports
+    /// and merges run, their progress shows as a blocking dialog; the input
+    /// blocker of `android_foreground_task_active` covers the rest of the
+    /// app. Returns without a task.
+    pub(crate) fn show_background_task_dialog(&mut self, ctx: &egui::Context) {
+        if !self.caps().tasks_need_foreground {
+            return;
+        }
+        let Some(task) = self.background_tasks().into_iter().next() else {
+            return;
+        };
+        let dialog_id = match task.id {
+            BackgroundTaskId::Export => "background-task-progress-export",
+            BackgroundTaskId::Merge => "background-task-progress-merge",
+        };
+        if super::foreground::show_processing_dialog(
+            ctx,
+            dialog_id,
+            &task.title,
+            &background_task_progress(&task),
+            task.cancelling,
+        ) {
+            self.cancel_background_task(task.id);
         }
     }
 
@@ -83,5 +116,16 @@ fn export_task_view(task: &ExportTask) -> BackgroundTaskView {
         detail: task.phase.clone(),
         progress: measurable.then_some(task.progress.clamp(0.0, 1.0)),
         cancelling: task.cancelling,
+    }
+}
+
+/// The task's progress as the blocking foreground dialog draws it: a share of
+/// the whole task with the running phase beside the bar, since images and
+/// tiles mix while it advances.
+fn background_task_progress(task: &BackgroundTaskView) -> ForegroundProgress {
+    match task.progress {
+        Some(fraction) => ForegroundProgress::fraction(fraction, task.detail.as_str())
+            .with_detail(task.detail.as_str()),
+        None => ForegroundProgress::indeterminate(task.detail.as_str()),
     }
 }
