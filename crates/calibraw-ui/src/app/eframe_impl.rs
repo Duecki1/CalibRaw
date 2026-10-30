@@ -161,11 +161,16 @@ impl CalibRawApp {
             }
         }
         let pixels_per_point = ui.ctx().pixels_per_point();
+        let [left, top, right, bottom] = self.platform.system_bar_insets_points(pixels_per_point);
+        // egui's content rect does not shrink for Android's system bars, so menus and
+        // dialogs measure the bottom bar as covered too. The soft keyboard sits above the
+        // navigation bar, so the larger of the two covers both.
         moduwu_design::set_keyboard_inset(
             ui.ctx(),
-            self.platform.keyboard_inset_points(pixels_per_point),
+            self.platform
+                .keyboard_inset_points(pixels_per_point)
+                .max(bottom),
         );
-        let [left, top, right, bottom] = self.platform.system_bar_insets_points(pixels_per_point);
         if top > 0.0 {
             egui::Panel::top("android_status_bar_safe_area")
                 .resizable(false)
