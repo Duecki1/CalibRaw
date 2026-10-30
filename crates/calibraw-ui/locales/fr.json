@@ -847,6 +847,8 @@
   "Full strength at {full}, {softness_label} {softness}": "Intensité maximale à {full}, {softness_label} {softness}",
   "Full to": "Pleine intensité jusqu’à",
   "Full-resolution preview": "Aperçu en pleine résolution",
+  "Fall back to lower quality when the GPU is too slow": "Passer à une qualité inférieure si le GPU est trop lent",
+  "When the GPU cannot keep up while a control is dragged, the preview follows the pointer at half resolution and renders the full preview when you let go. Turn it off to keep full quality while dragging, even if the preview lags.": "Quand le GPU ne suit pas pendant qu'un curseur est déplacé, l'aperçu suit le pointeur à demi-résolution puis est recalculé en pleine qualité au relâchement. Désactivé, l'aperçu reste en pleine qualité pendant le glissement, même s'il saccade.",
   "full-resolution render panicked: {message}": "le rendu en pleine résolution a provoqué une erreur critique : {message}",
   "Fullscreen": "Plein écran",
   "Fullscreen, linear and radial masks with their adjustments. They are added next to each photo's own masks.": "Masques plein écran, linéaires et radiaux, avec leurs réglages. Ils sont ajoutés à côté des masques propres à chaque photo.",

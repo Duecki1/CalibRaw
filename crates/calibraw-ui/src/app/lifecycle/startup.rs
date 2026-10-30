@@ -300,6 +300,7 @@ impl CalibRawApp {
                     .map(crate::luts::lut_folder_for_settings),
             ),
             preferences: PreferencesState {
+                interactive_preview_fallback: performance.interactive_preview_fallback,
                 image_relative_brush_size: performance.image_relative_brush_size,
                 show_develop_navigation_labels: performance.show_develop_navigation_labels,
                 develop_card_order: performance.develop_card_order.clone(),

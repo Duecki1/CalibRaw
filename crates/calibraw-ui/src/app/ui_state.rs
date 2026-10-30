@@ -21,6 +21,7 @@ pub(crate) enum AppTab {
 }
 
 pub(crate) struct PreferencesState {
+    pub(crate) interactive_preview_fallback: bool,
     pub(crate) image_relative_brush_size: bool,
     pub(crate) show_develop_navigation_labels: bool,
     pub(crate) develop_card_order: DevelopCardOrder,

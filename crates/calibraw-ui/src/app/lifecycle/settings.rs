@@ -354,6 +354,7 @@ impl CalibRawApp {
             library_stack_raw_companions: self.library.stacks_raw_companions(),
             preview_quality: self.preview.quality,
             preview_full_resolution: self.preview.full_resolution.enabled(),
+            interactive_preview_fallback: self.preferences.interactive_preview_fallback,
             image_relative_brush_size: self.preferences.image_relative_brush_size,
             show_develop_navigation_labels: self.preferences.show_develop_navigation_labels,
             develop_card_order: self.preferences.develop_card_order.clone(),

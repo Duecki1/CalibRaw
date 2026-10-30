@@ -535,6 +535,16 @@ impl Settings {
                 app.persist_performance_settings();
             }
         }
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut app.preferences.interactive_preview_fallback,
+            tr("Fall back to lower quality when the GPU is too slow"),
+            tr("When the GPU cannot keep up while a control is dragged, the preview follows the pointer at half resolution and renders the full preview when you let go. Turn it off to keep full quality while dragging, even if the preview lags."),
+        )
+        .changed()
+        {
+            app.persist_performance_settings();
+        }
         // Without a configurable AI runtime there is no AI models card to hold
         // this control.
         if !app.caps().configurable_ai_runtime {

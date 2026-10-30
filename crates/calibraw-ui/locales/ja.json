@@ -789,6 +789,8 @@
   "Full strength at {full}, {softness_label} {softness}": "{full}で最大強度、{softness_label} {softness}",
   "Full to": "全体の終了",
   "Full-resolution preview": "フル解像度プレビュー",
+  "Fall back to lower quality when the GPU is too slow": "GPUが遅すぎる場合は低画質に切り替える",
+  "When the GPU cannot keep up while a control is dragged, the preview follows the pointer at half resolution and renders the full preview when you let go. Turn it off to keep full quality while dragging, even if the preview lags.": "GPU がスライダーのドラッグに追いつかないとき、プレビューを半分の解像度でポインターに追従させ、離したときに全画質で描き直します。オフにすると、遅れてもドラッグ中は全画質のままです。",
   "Fullscreen": "全画面",
   "Fullscreen, linear and radial masks with their adjustments. They are added next to each photo's own masks.": "写真ごとのマスクの隣に追加される、全画面、線形、放射状マスクとその調整。",
   "GPU AI turned off": "GPU AIを無効にしました",

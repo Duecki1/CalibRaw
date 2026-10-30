@@ -37,6 +37,9 @@ pub(crate) struct PerformanceSettings {
     pub preview_quality: crate::app::PreviewQuality,
     /// Render the idle preview from the whole native photo; where the platform offers it.
     pub preview_full_resolution: bool,
+    /// Follow control drags with a half-size preview where the GPU cannot keep
+    /// up with the sharp one. Defaults on where memory is constrained.
+    pub interactive_preview_fallback: bool,
     pub image_relative_brush_size: bool,
     pub show_develop_navigation_labels: bool,
     /// The Develop cards of the sidebar layout, in the order shown.
@@ -227,6 +230,7 @@ impl Default for PerformanceSettings {
             library_stack_raw_companions: true,
             preview_quality: crate::app::PreviewQuality::default(),
             preview_full_resolution: false,
+            interactive_preview_fallback: PlatformCaps::CURRENT.constrained_memory(),
             image_relative_brush_size: false,
             show_develop_navigation_labels: true,
             develop_card_order: crate::app::DevelopCardOrder::default(),

@@ -789,6 +789,8 @@
   "Full strength at {full}, {softness_label} {softness}": "Volle Stärke bei {full}, {softness_label} {softness}",
   "Full to": "Voll bis",
   "Full-resolution preview": "Vorschau in voller Auflösung",
+  "Fall back to lower quality when the GPU is too slow": "Bei zu langsamer GPU auf niedrigere Qualität zurückfallen",
+  "When the GPU cannot keep up while a control is dragged, the preview follows the pointer at half resolution and renders the full preview when you let go. Turn it off to keep full quality while dragging, even if the preview lags.": "Wenn die GPU beim Ziehen eines Reglers nicht mitkommt, folgt die Vorschau dem Zeiger in halber Auflösung und wird beim Loslassen in voller Qualität neu berechnet. Ausgeschaltet bleibt die Vorschau beim Ziehen in voller Qualität, auch wenn sie ruckelt.",
   "Fullscreen": "Vollbild",
   "Fullscreen, linear and radial masks with their adjustments. They are added next to each photo's own masks.": "Vollbild-, lineare und radiale Masken mit ihren Anpassungen. Sie werden neben den eigenen Masken jedes Fotos hinzugefügt.",
   "GPU AI turned off": "GPU-Beschleunigung für KI deaktiviert",

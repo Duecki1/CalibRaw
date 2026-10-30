@@ -221,7 +221,8 @@ Output stage changes, the fitted preview and the navigation proxy wait until
 the pointer lifts (`defer_background_preview_processing`). Where the dispatch
 gate's timings show the GPU takes more than about 45 ms for a batch of the
 preview that is shown (a device with little memory is assumed slow until it
-has timings), the drag is followed by a second, smaller graph at half the edge
+has timings) and the setting `interactive_preview_fallback` is on (on by
+default where memory is constrained, off on desktop), the drag is followed by a second, smaller graph at half the edge
 instead (`interactive_preview.rs`): the whole photo at half the fitted edge,
 or, zoomed in, the sharp crop's part of the photo at half the crop's edge
 (`interactive_crop.rs`), drawn with the crop's coordinates. The sharp preview

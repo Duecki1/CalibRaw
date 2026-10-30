@@ -789,6 +789,8 @@
   "Full strength at {full}, {softness_label} {softness}": "在 {full} 处达到全强度，{softness_label} {softness}",
   "Full to": "完全结束位置",
   "Full-resolution preview": "全分辨率预览",
+  "Fall back to lower quality when the GPU is too slow": "GPU 太慢时降低画质",
+  "When the GPU cannot keep up while a control is dragged, the preview follows the pointer at half resolution and renders the full preview when you let go. Turn it off to keep full quality while dragging, even if the preview lags.": "当 GPU 跟不上拖动控件时，预览以一半分辨率跟随指针，松开后再以完整画质重新渲染。关闭后，即使预览卡顿，拖动时也保持完整画质。",
   "Fullscreen": "全屏",
   "Fullscreen, linear and radial masks with their adjustments. They are added next to each photo's own masks.": "全屏、线性和径向蒙版及其调整项。它们会添加到每张照片自身的蒙版旁边。",
   "GPU AI turned off": "GPU AI 已关闭",

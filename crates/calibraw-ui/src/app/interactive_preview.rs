@@ -61,17 +61,25 @@ enum InteractiveMode {
     Off,
 }
 
-/// `CALIBRAW_INTERACTIVE_PREVIEW=off|auto|always` overrides the choice on the
-/// desktop, to compare the two paths on a fast GPU.
-fn interactive_mode() -> InteractiveMode {
-    static MODE: std::sync::OnceLock<InteractiveMode> = std::sync::OnceLock::new();
-    *MODE.get_or_init(
-        || match std::env::var("CALIBRAW_INTERACTIVE_PREVIEW").as_deref() {
-            Ok("always") => InteractiveMode::Always,
-            Ok("off") => InteractiveMode::Off,
-            _ => InteractiveMode::Auto,
-        },
-    )
+/// The mode from the setting (`fallback_enabled`): `Auto` when it is on, `Off`
+/// when it is not. `CALIBRAW_INTERACTIVE_PREVIEW=off|auto|always` overrides the
+/// setting on the desktop, to compare the two paths on a fast GPU.
+fn interactive_mode(fallback_enabled: bool) -> InteractiveMode {
+    static OVERRIDE: std::sync::OnceLock<Option<InteractiveMode>> = std::sync::OnceLock::new();
+    let forced =
+        *OVERRIDE.get_or_init(
+            || match std::env::var("CALIBRAW_INTERACTIVE_PREVIEW").as_deref() {
+                Ok("always") => Some(InteractiveMode::Always),
+                Ok("off") => Some(InteractiveMode::Off),
+                Ok("auto") => Some(InteractiveMode::Auto),
+                _ => None,
+            },
+        );
+    forced.unwrap_or(if fallback_enabled {
+        InteractiveMode::Auto
+    } else {
+        InteractiveMode::Off
+    })
 }
 
 /// The edge of the reduced graph for a source of `source_edge`, or `None`
@@ -368,7 +376,7 @@ impl CalibRawApp {
     /// the speed of the GPU: a plain photo, nothing rebuilding, and zoomed in
     /// a crop that covers the view.
     fn interactive_usable(&self) -> bool {
-        interactive_mode() != InteractiveMode::Off
+        interactive_mode(self.preferences.interactive_preview_fallback) != InteractiveMode::Off
             && self.preview.gpu_pipeline.is_some()
             && !self.preview.original_requested
             && !self.preview_is_preparing()
@@ -436,7 +444,7 @@ impl CalibRawApp {
         };
         let median = self.preview.dispatch_gate.median_latency_ms(sharp_batch);
         let slow = gpu_is_slow(
-            interactive_mode(),
+            interactive_mode(self.preferences.interactive_preview_fallback),
             median,
             self.preview.interactive.slow,
             self.caps().constrained_memory(),
@@ -514,7 +522,7 @@ impl CalibRawApp {
             if zoomed { " (zoomed in)" } else { "" },
             drag.edits,
             if drag.reduced_used { "used" } else { "not used" },
-            interactive_mode(),
+            interactive_mode(self.preferences.interactive_preview_fallback),
             if state.slow { "slow" } else { "fast" },
             if zoomed { "crop" } else { "fitted" },
             (reduced + sharp) as f64 / seconds.max(0.001),
