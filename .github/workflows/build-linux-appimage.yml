@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             artifact_arch: x86_64
             rustup_arch: x86_64
             linuxdeploy_arch: x86_64
@@ -59,9 +59,9 @@ jobs:
             /tmp/calibraw-libraw
             /tmp/calibraw-lensfun
             /tmp/linuxdeploy-${{ matrix.linuxdeploy_arch }}.AppImage
-          key: calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-830ac96-lensfun-bc5615d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
+          key: calibraw-linux-native-v3-${{ matrix.runner }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-830ac96-lensfun-bc5615d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
           restore-keys: |
-            calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-830ac96-lensfun-bc5615d-
+            calibraw-linux-native-v3-${{ matrix.runner }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-830ac96-lensfun-bc5615d-
 
       - name: Install Linux build dependencies
         shell: bash
