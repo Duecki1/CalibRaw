@@ -90,7 +90,7 @@ jobs:
           mkdir -p release-assets
           while IFS= read -r -d '' file; do
             case "$file" in
-              *.AppImage|*.exe|*.zip|*.apk|*.ipa)
+              *.AppImage|*.deb|*.exe|*.zip|*.apk|*.ipa)
                 cp "$file" "release-assets/$(basename "$file")"
                 ;;
             esac
@@ -100,12 +100,13 @@ jobs:
           find release-assets -maxdepth 1 -type f -printf '  %f\n' | sort
 
           test "$(find release-assets -maxdepth 1 -type f -name '*.AppImage' | wc -l)" -eq 2
+          test "$(find release-assets -maxdepth 1 -type f -name '*.deb' | wc -l)" -eq 2
           test "$(find release-assets -maxdepth 1 -type f -name '*-setup.exe' | wc -l)" -eq 2
           test "$(find release-assets -maxdepth 1 -type f -name 'CalibRaw-windows-*.zip' | wc -l)" -eq 2
           test "$(find release-assets -maxdepth 1 -type f -name 'CalibRaw-macos-*.zip' | wc -l)" -eq 2
           test "$(find release-assets -maxdepth 1 -type f -name '*.apk' | wc -l)" -eq 1
           test "$(find release-assets -maxdepth 1 -type f -name '*.ipa' | wc -l)" -eq 1
-          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 10
+          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 12
 
       - name: Publish release
         env:

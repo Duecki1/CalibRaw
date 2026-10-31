@@ -118,6 +118,26 @@ jobs:
         shell: bash
         run: bash scripts/package_linux_appimage.sh
 
+      - name: Package Debian package
+        shell: bash
+        run: bash scripts/package_linux_deb.sh
+
+      - name: Check Debian package installs
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          for image in debian:13 ubuntu:24.04 ubuntu:26.04; do
+            docker run --rm -v "$PWD/dist:/dist:ro" "$image" sh -euxc '
+              apt-get update
+              apt-get install -y --no-install-recommends /dist/*.deb
+              if ldd /usr/bin/calibraw /usr/lib/calibraw/*.so* | grep "not found"; then
+                exit 1
+              fi
+              test -n "$(find /usr/share/calibraw/lensfun -name "*.xml" -print -quit)"
+            '
+          done
+
       - name: Upload AppImage
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

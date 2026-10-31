@@ -190,6 +190,10 @@ cargo test --locked -p calibraw-core --test formats
 
 For Linux sandbox development and packaging, see the [Flatpak workflow](FLATPAK.md),
 including local snapshots, debug builds, validation, and unpublished release staging.
+`build-linux-appimage.yml` also packages its binary as a `.deb` with
+`scripts/package_linux_deb.sh` and checks that it installs on Debian 13 and Ubuntu
+24.04 and 26.04. The package depends only on what both distributions ship, so add
+any library the binary opens at run time to `RUNTIME_LIBS` there.
 
 The CPU brush-raster baseline is a harness-free benchmark (kept independent
 of the test suite): `cargo bench -p calibraw-core --bench mask_rasterization`.
