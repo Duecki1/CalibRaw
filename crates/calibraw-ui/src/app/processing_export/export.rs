@@ -14,14 +14,14 @@ impl ExportTask {
         kind: ExportTaskKind,
         cancellation: Arc<std::sync::atomic::AtomicBool>,
         receiver: Option<ExportTaskReceiver>,
-        destination: Option<ExportDestination>,
+        output: Option<ExportItemOutput>,
         total: usize,
     ) -> Self {
         Self {
             kind,
             cancellation,
             receiver,
-            destination,
+            output,
             progress: 0.0,
             phase: match kind {
                 ExportTaskKind::LibraryBatch => tr("Preparing batch export…").to_owned(),
@@ -36,13 +36,9 @@ impl ExportTask {
         }
     }
 
-    fn start_item(
-        &mut self,
-        receiver: mpsc::Receiver<ExportItemEvent>,
-        destination: ExportDestination,
-    ) {
+    fn start_item(&mut self, receiver: mpsc::Receiver<ExportItemEvent>, output: ExportItemOutput) {
         self.receiver = Some(ExportTaskReceiver::Tiled(receiver));
-        self.destination = Some(destination);
+        self.output = Some(output);
         self.completed_tiles = 0;
         self.total_tiles = 0;
         self.phase = tr("Preparing tiled export…").to_owned();
@@ -87,7 +83,7 @@ pub(in crate::app) fn spawn_export_item(
         device,
         queue,
         source,
-        destination,
+        output,
         format,
         settings,
     } = request;
@@ -105,7 +101,7 @@ pub(in crate::app) fn spawn_export_item(
     // Rendered photos cannot be AI-denoised and show without it in Develop.
     exposure.ai_denoise_enabled &= !raw.is_pre_demosaiced_raster();
     let metadata = ExportMetadata::from_raw(&raw, source_file_name);
-    let target = destination.target();
+    let files = output.files();
     let (sender, receiver) = mpsc::channel();
     let worker_sender = sender.clone();
     let spawn_result = std::thread::Builder::new()
@@ -143,7 +139,7 @@ pub(in crate::app) fn spawn_export_item(
                     masks,
                     remove,
                     look,
-                    target,
+                    files,
                     tile_spec: TileSpec::default(),
                     settings,
                     metadata,
@@ -237,7 +233,9 @@ impl CalibRawApp {
     /// Exports the open photo: to a file chosen in a save dialog, or into the
     /// platform's shared media store.
     fn export_with_format(&mut self, frame: &eframe::Frame, format: ExportFormat) {
-        if self.caps().has_folders() {
+        if let Some(carousel) = self.export.carousel.active() {
+            self.export_carousel(frame, carousel, format, false);
+        } else if self.caps().has_folders() {
             self.export_desktop(frame, format);
         } else {
             self.export_android(frame, format);
@@ -289,7 +287,11 @@ impl CalibRawApp {
     /// Exports in the selected format, then opens the Android share sheet.
     pub(crate) fn export_and_share(&mut self, frame: &eframe::Frame) {
         let format = self.export.format;
-        self.start_android_export(frame, format, true);
+        if let Some(carousel) = self.export.carousel.active() {
+            self.export_carousel(frame, carousel, format, true);
+        } else {
+            self.start_android_export(frame, format, true);
+        }
     }
 
     pub(in crate::app) fn export_android(&mut self, frame: &eframe::Frame, format: ExportFormat) {
@@ -320,7 +322,7 @@ impl CalibRawApp {
             };
         let cleanup = destination.clone();
         if self
-            .start_export_destination(destination, frame, format)
+            .start_export_output(ExportItemOutput::Single(destination), frame, format)
             .is_none()
         {
             self.cancel_android_export_destination(&cleanup);
@@ -412,7 +414,7 @@ impl CalibRawApp {
     /// exported yet; `Err` for a failure to report.
     pub(in crate::app) fn capture_export_task_request(
         &mut self,
-        destination: ExportDestination,
+        output: ExportItemOutput,
         frame: &eframe::Frame,
         format: ExportFormat,
         export_override: Option<&ExportOverride>,
@@ -486,7 +488,7 @@ impl CalibRawApp {
                 gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),
                 ai_denoise_result: self.ai_denoise_result_path(),
             },
-            destination,
+            output,
             format,
             settings: self.export.watermark.export_settings(&self.export.settings),
         }))
@@ -498,19 +500,23 @@ impl CalibRawApp {
         frame: &eframe::Frame,
         format: ExportFormat,
     ) -> Option<()> {
-        self.start_export_destination(ExportDestination::File(path), frame, format)
+        self.start_export_output(
+            ExportItemOutput::Single(ExportDestination::File(path)),
+            frame,
+            format,
+        )
     }
 
-    fn start_export_destination(
+    pub(super) fn start_export_output(
         &mut self,
-        destination: ExportDestination,
+        output: ExportItemOutput,
         frame: &eframe::Frame,
         format: ExportFormat,
     ) -> Option<()> {
         if !self.can_export() {
             return None;
         }
-        let request = match self.capture_export_task_request(destination, frame, format, None) {
+        let request = match self.capture_export_task_request(output, frame, format, None) {
             Ok(request) => request?,
             Err(error) => {
                 self.report_error(ErrorKind::Export, error);
@@ -549,18 +555,18 @@ impl CalibRawApp {
                 return Err(tr("edit replay uses its dedicated export worker").to_owned());
             }
         };
-        let destination = request.destination.clone();
+        let output = request.output.clone();
         let receiver = spawn_export_item(request, Arc::clone(&cancellation));
         if kind == ExportTaskKind::Single {
             self.export.task = Some(ExportTask::new(
                 kind,
                 cancellation,
                 Some(ExportTaskReceiver::Tiled(receiver)),
-                Some(destination),
+                Some(output),
                 1,
             ));
         } else if let Some(task) = self.export.task.as_mut() {
-            task.start_item(receiver, destination);
+            task.start_item(receiver, output);
         }
         self.ui.notice = None;
         self.egui_ctx.request_repaint();
@@ -700,7 +706,14 @@ impl CalibRawApp {
 
                     match result {
                         Ok(path) => {
-                            if !publishes {
+                            let output = self
+                                .export
+                                .task
+                                .as_ref()
+                                .and_then(|task| task.output.clone());
+                            if let Some(ExportItemOutput::Carousel { slides, .. }) = output {
+                                self.finish_carousel_render(&path, slides);
+                            } else if !publishes {
                                 if !is_batch {
                                     self.ui.notice = Some(tr_fmt(
                                         "Exported {path}",
@@ -709,12 +722,7 @@ impl CalibRawApp {
                                     self.export.task = None;
                                 }
                             } else {
-                                let destination = self
-                                    .export
-                                    .task
-                                    .as_ref()
-                                    .and_then(|task| task.destination.clone());
-                                match destination {
+                                match output.and_then(ExportItemOutput::into_single) {
                                     Some(ExportDestination::AndroidDirect {
                                         path: direct_path,
                                         ..

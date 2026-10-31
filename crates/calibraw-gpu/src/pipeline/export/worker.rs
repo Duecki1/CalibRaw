@@ -85,11 +85,27 @@ fn run_export_worker(
         .then(|| await_export_program_template(job.program_prewarm.as_deref()))
         .flatten();
     let geometry = job.geometry.sanitized();
-    let (geometry_width, geometry_height) =
-        geometry.crop_pixel_dimensions(job.raw.width, job.raw.height);
-    let (output_width, output_height) = job
-        .settings
-        .checked_output_dimensions(geometry_width, geometry_height)?;
+    let (targets, window) = match &job.files {
+        ExportFiles::Single(target) => {
+            let (geometry_width, geometry_height) =
+                geometry.crop_pixel_dimensions(job.raw.width, job.raw.height);
+            let (width, height) = job
+                .settings
+                .checked_output_dimensions(geometry_width, geometry_height)?;
+            (
+                std::slice::from_ref(target),
+                OutputWindow::whole(width, height),
+            )
+        }
+        ExportFiles::Carousel { carousel, slides } => {
+            anyhow::ensure!(
+                slides.len() == usize::from(carousel.slides()),
+                "a carousel needs one target per slide"
+            );
+            let layout = carousel.layout(geometry, job.raw.width, job.raw.height, &job.settings)?;
+            (slides.as_slice(), layout.window())
+        }
+    };
     let tile_spec =
         resolved_export_tile_spec(job.tile_spec, &job.exposure, &job.masks, job.raw.width)?;
 
@@ -110,7 +126,7 @@ fn run_export_worker(
         job.settings.bit_depth
     };
 
-    export_to_destination(&job.target, &job.cancellation, |output| {
+    export_to_destinations(targets, &job.cancellation, |outputs| {
         let context = ExportContext {
             device: &job.device,
             queue: &job.queue,
@@ -124,10 +140,9 @@ fn run_export_worker(
             masks: &job.masks,
             remove: &job.remove,
             look: job.look.as_ref(),
-            output,
+            outputs,
             tile_spec,
-            output_width,
-            output_height,
+            window,
             keep_metadata: job.settings.keep_metadata,
             metadata: &job.metadata,
             geometry,

@@ -1,6 +1,7 @@
 use crate::app::{
-    AdjustmentSection, AppAction, CalibRawApp, ColorGradeTab, DevelopCard, HslMixerColor,
-    InpaintTool, MaskSection, SidebarTab, ToneCurveTab, WatermarkAction, WatermarkView,
+    AdjustmentSection, AppAction, CalibRawApp, CarouselAction, CarouselView, ColorGradeTab,
+    DevelopCard, HslMixerColor, InpaintTool, MaskSection, SidebarTab, ToneCurveTab,
+    WatermarkAction, WatermarkView,
 };
 use crate::pipeline::{
     AdjustmentGroup, BrushMode, DenoiseQuality, ExportBitDepth, ExportFormat, ExportResizeMode,
@@ -93,6 +94,7 @@ impl Sidebar {
 }
 
 mod ai_update;
+mod carousel;
 mod crop;
 mod develop;
 mod export;

@@ -53,6 +53,12 @@ impl FinalSizeOutputSharpen {
         }
     }
 
+    /// Rows are `width` pixels wide: a window of the output whose size [`Self::new`] was given.
+    pub(super) fn with_row_width(mut self, width: u32) -> Self {
+        self.width = width;
+        self
+    }
+
     pub(super) fn with_passthrough(mut self, passthrough: bool) -> Self {
         self.passthrough = passthrough;
         self

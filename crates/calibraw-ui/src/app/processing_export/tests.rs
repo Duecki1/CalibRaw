@@ -1,5 +1,6 @@
 use super::super::{
-    ExportDestination, ExportItemEvent, ExportTask, ExportTaskKind, ExportTaskReceiver,
+    ExportDestination, ExportItemEvent, ExportItemOutput, ExportTask, ExportTaskKind,
+    ExportTaskReceiver,
 };
 use super::batch::batch_export_overall_fraction;
 use std::sync::{
@@ -19,7 +20,9 @@ fn test_export_task() -> ExportTask {
         kind: ExportTaskKind::Single,
         cancellation: Arc::new(AtomicBool::new(false)),
         receiver: Some(ExportTaskReceiver::Tiled(receiver)),
-        destination: Some(ExportDestination::File("photo.png".into())),
+        output: Some(ExportItemOutput::Single(ExportDestination::File(
+            "photo.png".into(),
+        ))),
         progress: 0.42,
         phase: "Rendering tile 4/10".to_owned(),
         completed: 0,

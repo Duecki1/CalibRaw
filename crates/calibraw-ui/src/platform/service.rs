@@ -506,6 +506,10 @@ pub(crate) trait Platform: Send + Sync {
     fn share_export(&self, _uri: &str, _mime_type: &str) -> Result<(), String> {
         Err(unavailable("sharing exports"))
     }
+    /// Opens the share sheet for several published exports, in this order.
+    fn share_exports(&self, _uris: &[String], _mime_type: &str) -> Result<(), String> {
+        Err(unavailable("sharing several exports"))
+    }
     fn start_replay_encoder(
         &self,
         _path: &Path,

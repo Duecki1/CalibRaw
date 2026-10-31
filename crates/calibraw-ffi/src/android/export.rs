@@ -213,6 +213,23 @@ pub fn share_export(app: &AndroidApp, uri: &str, mime_type: &str) -> Result<(), 
     .map_err(|error| format!("could not open the Android share sheet: {error:#}"))
 }
 
+/// Opens the Android share sheet for several published exports, in this order. The sheet opens
+/// asynchronously on the Android UI thread.
+pub fn share_exports(app: &AndroidApp, uris: &[String], mime_type: &str) -> Result<(), String> {
+    with_export_publisher(app, |env, export_publisher| {
+        let uris = env.new_string(uris.join("\n"))?;
+        let mime_type = env.new_string(mime_type)?;
+        env.call_method(
+            export_publisher,
+            jni::jni_str!("shareExports"),
+            jni::jni_sig!((JString, JString) -> void),
+            &[JValue::Object(&uris), JValue::Object(&mime_type)],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("could not open the Android share sheet: {error:#}"))
+}
+
 pub fn publish_image(
     app: &AndroidApp,
     path: &std::path::Path,

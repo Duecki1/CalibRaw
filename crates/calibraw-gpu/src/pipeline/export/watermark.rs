@@ -1,9 +1,9 @@
 //! A watermark image blended over the finished export.
 //!
 //! The watermark is placed in the output frame (after crop, rotation and
-//! resize) and blended into the final linear Rec.2020 rows after output
-//! sharpening and before encoding, so it is never sharpened and every format
-//! and bit depth receives the same pixels.
+//! resize), or on each slide of a carousel, and blended into the final linear
+//! Rec.2020 rows after output sharpening and before encoding, so it is never
+//! sharpened and every format and bit depth receives the same pixels.
 
 use super::*;
 use calibraw_core::color_math::{linear_srgb_to_rec2020, srgb_decode};
@@ -232,11 +232,13 @@ impl PartialEq for ExportWatermark {
     }
 }
 
-/// A watermark resolved for one output size: its pixel rectangle and the
+/// A watermark resolved for one slide size: its pixel rectangle and the
 /// Lanczos weights that resample the image into it. Rows are resampled as
 /// they are blended, so no resampled copy of the image is held.
 pub(super) struct PreparedWatermark {
     image: Arc<WatermarkImage>,
+    /// Values of one slide's part of an output row; a normal export is one slide.
+    slide_row_values: usize,
     /// The watermark's top-left output pixel; it may lie outside the output.
     left: i64,
     top: i64,
@@ -251,7 +253,7 @@ impl PreparedWatermark {
     pub(super) fn for_request(request: &ExportRequest<'_>) -> Result<Option<Self>> {
         request
             .watermark
-            .map(|watermark| Self::new(watermark, request.output_width, request.output_height))
+            .map(|watermark| Self::new(watermark, request.slide_width(), request.window.height))
             .transpose()
     }
 
@@ -269,6 +271,7 @@ impl PreparedWatermark {
         ));
         Ok(Self {
             image: Arc::clone(image),
+            slide_row_values: output_width.max(1) as usize * 3,
             left,
             top,
             columns: build_lanczos_contributions(image.width, width)?,
@@ -277,9 +280,17 @@ impl PreparedWatermark {
         })
     }
 
-    /// Blends the watermark over output row `y`, linear Rec.2020 RGB, with
-    /// premultiplied "over" compositing in linear light.
+    /// Blends the watermark over output row `y` on every slide, each clipped
+    /// to its own slide.
     pub(super) fn blend_row(&self, y: u32, row: &mut [f32]) {
+        for slide_row in row.chunks_exact_mut(self.slide_row_values) {
+            self.blend_slide_row(y, slide_row);
+        }
+    }
+
+    /// Blends the watermark over row `y` of one slide, linear Rec.2020 RGB,
+    /// with premultiplied "over" compositing in linear light.
+    fn blend_slide_row(&self, y: u32, row: &mut [f32]) {
         let Some(weights) = usize::try_from(i64::from(y) - self.top)
             .ok()
             .and_then(|local_y| self.rows.get(local_y))

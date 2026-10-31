@@ -6,19 +6,54 @@ pub(super) fn export_tiled_png(
     context: ExportContext<'_>,
     request: ExportRequest<'_>,
 ) -> Result<()> {
-    validate_export_dimensions(request.output_width, request.output_height)?;
+    validate_export_dimensions(request.window.width, request.window.height)?;
     anyhow::ensure!(
         !request.bit_depth.is_float(),
         "PNG export supports 8-bit or 16-bit integer output; use TIFF for a float/linear master"
     );
-    let file = open_export_destination(request.output)
-        .with_context(|| format!("create export {}", request.output.path.display()))?;
-    let mut info = png::Info::with_size(request.output_width, request.output_height);
+    let row_format = match request.bit_depth {
+        ExportBitDepth::Eight => ExportRowFormat::Rgba8,
+        ExportBitDepth::Sixteen => ExportRowFormat::Rgba16Be,
+        ExportBitDepth::Float32Linear => unreachable!("float PNG rejected above"),
+    };
+    let mut writers = request
+        .outputs
+        .iter()
+        .map(|&output| write_png_header(request, output))
+        .collect::<Result<Vec<_>>>()?;
+    let mut streams = writers
+        .iter_mut()
+        .map(|writer| {
+            writer
+                .stream_writer_with_size(64 * 1024)
+                .context("create streaming PNG writer")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut rows = SlideWriter::new(&mut streams, request.slide_width(), row_format);
+    render_export_output(context, request, &mut rows, row_format)?;
+    for stream in streams {
+        stream.finish().context("finish streaming PNG data")?;
+    }
+    for writer in writers {
+        writer.finish().context("finish PNG file")?;
+    }
+    Ok(())
+}
+
+/// Starts the PNG file of one slide, up to its pixel data.
+fn write_png_header(
+    request: ExportRequest<'_>,
+    output: ExportOutput<'_>,
+) -> Result<png::Writer<BufWriter<fs::File>>> {
+    let (width, height) = (request.slide_width(), request.window.height);
+    let file = open_export_destination(output)
+        .with_context(|| format!("create export {}", output.path.display()))?;
+    let mut info = png::Info::with_size(width, height);
     info.color_type = png::ColorType::Rgba;
     info.bit_depth = match request.bit_depth {
         ExportBitDepth::Eight => png::BitDepth::Eight,
         ExportBitDepth::Sixteen => png::BitDepth::Sixteen,
-        ExportBitDepth::Float32Linear => unreachable!("float PNG rejected above"),
+        ExportBitDepth::Float32Linear => unreachable!("float PNG rejected by the caller"),
     };
     if let Some(profile) = request.color.embedded_icc.as_ref() {
         info.icc_profile = Some(Cow::Owned(profile.clone()));
@@ -26,8 +61,8 @@ pub(super) fn export_tiled_png(
     if request.keep_metadata {
         info.exif_metadata = Some(Cow::Owned(build_exif_payload(
             request.metadata,
-            request.output_width,
-            request.output_height,
+            width,
+            height,
         )));
     }
     let mut encoder =
@@ -39,27 +74,55 @@ pub(super) fn export_tiled_png(
         encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     }
     if request.keep_metadata {
-        add_png_text_metadata(
-            &mut encoder,
-            request.metadata,
-            request.output_width,
-            request.output_height,
-        )?;
+        add_png_text_metadata(&mut encoder, request.metadata, width, height)?;
     }
-    let mut writer = encoder
+    encoder
         .write_header()
-        .with_context(|| format!("write PNG header for {}", request.output.path.display()))?;
-    let mut stream = writer
-        .stream_writer_with_size(64 * 1024)
-        .context("create streaming PNG writer")?;
-    let row_format = match request.bit_depth {
-        ExportBitDepth::Eight => ExportRowFormat::Rgba8,
-        ExportBitDepth::Sixteen => ExportRowFormat::Rgba16Be,
-        ExportBitDepth::Float32Linear => unreachable!("float PNG rejected above"),
-    };
-    render_export_output(context, request, &mut stream, row_format)?;
-    stream.finish().context("finish streaming PNG data")?;
-    writer.finish().context("finish PNG file")?;
+        .with_context(|| format!("write PNG header for {}", output.path.display()))
+}
+
+/// Renders `request` into one staged raster per slide, then hands `encode` each slide's output
+/// and pixels, removing each raster once it is encoded.
+fn render_staged_slides(
+    context: ExportContext<'_>,
+    request: ExportRequest<'_>,
+    row_format: ExportRowFormat,
+    mut encode: impl FnMut(ExportOutput<'_>, &[u8]) -> Result<()>,
+) -> Result<()> {
+    let staged = request
+        .outputs
+        .iter()
+        .map(|&output| StagedFile::for_output(output))
+        .collect::<Result<Vec<_>>>()?;
+    {
+        let mut writers = staged
+            .iter()
+            .map(|raster| {
+                let file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(raster.path())
+                    .with_context(|| {
+                        format!("create staged RGB raster {}", raster.path().display())
+                    })?;
+                Ok(BufWriter::new(file))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut rows = SlideWriter::new(&mut writers, request.slide_width(), row_format);
+        render_export_output(context, request, &mut rows, row_format)?;
+        rows.flush().context("flush staged RGB raster")?;
+    }
+
+    for (raster, &output) in staged.into_iter().zip(request.outputs) {
+        ensure_export_not_cancelled(context.cancellation)?;
+        let file = fs::File::open(raster.path())
+            .with_context(|| format!("open staged RGB raster {}", raster.path().display()))?;
+        // SAFETY: the raster is a private staging file with a unique name, finished above and
+        // not written again; the mapping is dropped before the file is removed.
+        let mapped = unsafe { memmap2::MmapOptions::new().map(&file) }
+            .with_context(|| format!("map staged RGB raster {}", raster.path().display()))?;
+        encode(output, &mapped)?;
+    }
     Ok(())
 }
 
@@ -69,36 +132,17 @@ pub(super) fn export_tiled_jpeg(
     quality: u8,
 ) -> Result<()> {
     let quality = quality.clamp(1, 100);
-    with_staging_file(request.output, |staged_rgb| {
-        {
-            let rgb_file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(staged_rgb)
-                .with_context(|| format!("create staged RGB raster {}", staged_rgb.display()))?;
-            let mut rgb_writer = BufWriter::new(rgb_file);
-            render_export_output(context, request, &mut rgb_writer, ExportRowFormat::Rgb8)?;
-            rgb_writer.flush().context("flush staged RGB raster")?;
-        }
-
-        let rgb_file = fs::File::open(staged_rgb)
-            .with_context(|| format!("open staged RGB raster {}", staged_rgb.display()))?;
-        let mapped = unsafe { memmap2::MmapOptions::new().map(&rgb_file) }
-            .with_context(|| format!("map staged RGB raster {}", staged_rgb.display()))?;
-
+    render_staged_slides(context, request, ExportRowFormat::Rgb8, |output, rgb| {
         encode_jpeg_rgb(JpegEncodeRequest {
-            rgb: &mapped,
-            output: request.output,
-            width: request.output_width,
-            height: request.output_height,
+            rgb,
+            output,
+            width: request.slide_width(),
+            height: request.window.height,
             quality,
             keep_metadata: request.keep_metadata,
             metadata: request.metadata,
             icc_profile: request.color.embedded_icc.as_deref(),
-        })?;
-        drop(mapped);
-        drop(rgb_file);
-        Ok(())
+        })
     })
 }
 
@@ -110,8 +154,9 @@ pub(super) fn export_tiled_jxl(
         !request.bit_depth.is_float(),
         "JPEG XL export supports 8-bit or 16-bit integer output"
     );
+    let (width, height) = (request.slide_width(), request.window.height);
     anyhow::ensure!(
-        request.output_width > 1 && request.output_height > 1,
+        width > 1 && height > 1,
         "JPEG XL encoder requires width and height greater than one pixel"
     );
     let row_format = match request.bit_depth {
@@ -119,27 +164,13 @@ pub(super) fn export_tiled_jxl(
         ExportBitDepth::Sixteen => ExportRowFormat::Rgb16Le,
         ExportBitDepth::Float32Linear => unreachable!(),
     };
-    with_staging_file(request.output, |staged_rgb| {
-        {
-            let file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(staged_rgb)
-                .with_context(|| format!("create staged RGB raster {}", staged_rgb.display()))?;
-            let mut writer = BufWriter::new(file);
-            render_export_output(context, request, &mut writer, row_format)?;
-            writer.flush().context("flush staged JPEG XL RGB raster")?;
-        }
-        let file = fs::File::open(staged_rgb)
-            .with_context(|| format!("open staged RGB raster {}", staged_rgb.display()))?;
-        let mapped = unsafe { memmap2::MmapOptions::new().map(&file) }
-            .with_context(|| format!("map staged RGB raster {}", staged_rgb.display()))?;
+    render_staged_slides(context, request, row_format, |output, mapped| {
         let bytes_per_sample = if request.bit_depth == ExportBitDepth::Eight {
             1
         } else {
             2
         };
-        let expected = checked_rgb_len(request.output_width, request.output_height)?
+        let expected = checked_rgb_len(width, height)?
             .checked_mul(bytes_per_sample)
             .context("JPEG XL raster length overflow")?;
         anyhow::ensure!(
@@ -152,14 +183,14 @@ pub(super) fn export_tiled_jxl(
             zune_core::bit_depth::BitDepth::Sixteen
         };
         let options = zune_core::options::EncoderOptions::new(
-            request.output_width as usize,
-            request.output_height as usize,
+            width as usize,
+            height as usize,
             zune_core::colorspace::ColorSpace::RGB,
             depth,
         );
-        let encoder = zune_jpegxl::JxlSimpleEncoder::new(&mapped, options);
+        let encoder = zune_jpegxl::JxlSimpleEncoder::new(mapped, options);
         if request.keep_metadata {
-            with_staging_file(request.output, |staged_jxl| {
+            with_staging_file(output, |staged_jxl| {
                 let encoded_file = OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -174,24 +205,20 @@ pub(super) fn export_tiled_jxl(
                 let mut encoded_file =
                     fs::File::open(staged_jxl).context("open staged JPEG XL codestream")?;
                 let codestream_len = encoded_file.metadata()?.len();
-                let output_file = open_export_destination(request.output)
-                    .with_context(|| format!("create JPEG XL {}", request.output.path.display()))?;
+                let output_file = open_export_destination(output)
+                    .with_context(|| format!("create JPEG XL {}", output.path.display()))?;
                 let mut writer = BufWriter::new(output_file);
                 write_jxl_container(
                     &mut writer,
                     &mut encoded_file,
                     codestream_len,
-                    &build_exif_payload(
-                        request.metadata,
-                        request.output_width,
-                        request.output_height,
-                    ),
+                    &build_exif_payload(request.metadata, width, height),
                 )?;
                 writer.flush().context("flush JPEG XL container")
             })?;
         } else {
-            let output_file = open_export_destination(request.output)
-                .with_context(|| format!("create JPEG XL {}", request.output.path.display()))?;
+            let output_file = open_export_destination(output)
+                .with_context(|| format!("create JPEG XL {}", output.path.display()))?;
             let mut writer = BufWriter::new(output_file);
             encoder
                 .encode(&mut writer)

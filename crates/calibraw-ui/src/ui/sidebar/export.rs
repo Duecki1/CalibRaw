@@ -59,24 +59,33 @@ fn export_number_row<Num>(
 /// What the user changed in [`export_settings_controls`].
 pub(crate) struct ExportControlsChange {
     pub(crate) format_changed: bool,
+    pub(crate) carousel: Option<CarouselAction>,
     pub(crate) watermark: Option<WatermarkAction>,
 }
 
 /// The Format, Watermark, Resize and Metadata cards, shared by the Export
-/// panel and the library's export dialog.
+/// panel and the library's export dialog. `carousel` adds its card after
+/// Format; the dialog has none, as each photo places its own stencil.
 pub(crate) fn export_settings_controls(
     ui: &mut Ui,
     format: &mut ExportFormat,
     settings: &mut crate::pipeline::ExportSettings,
+    carousel: Option<CarouselView>,
     watermark: WatermarkView,
 ) -> ExportControlsChange {
     let format_changed = export_format_card(ui, format, settings);
     moduwu_design::card_gap(ui);
+    let carousel = carousel.and_then(|view| {
+        let action = super::carousel::carousel_card(ui, view);
+        moduwu_design::card_gap(ui);
+        action
+    });
     let watermark = super::watermark::watermark_card(ui, watermark);
     moduwu_design::card_gap(ui);
     export_size_and_metadata_cards(ui, settings);
     ExportControlsChange {
         format_changed,
+        carousel,
         watermark,
     }
 }
@@ -287,17 +296,30 @@ fn square_icon_action(
 
 impl Sidebar {
     pub(super) fn show_export_action(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
-        let dimensions_valid = app.develop.loaded_raw.as_ref().is_some_and(|raw| {
-            let (width, height) = app
-                .develop
-                .geometry
-                .crop_pixel_dimensions(raw.width, raw.height);
-            app.export
-                .settings
-                .checked_output_dimensions(width, height)
-                .is_ok()
-        });
+        let carousel = app.carousel_view();
+        let dimensions_valid = if carousel.enabled {
+            carousel.layout.is_some()
+        } else {
+            app.develop.loaded_raw.as_ref().is_some_and(|raw| {
+                let (width, height) = app
+                    .develop
+                    .geometry
+                    .crop_pixel_dimensions(raw.width, raw.height);
+                app.export
+                    .settings
+                    .checked_output_dimensions(width, height)
+                    .is_ok()
+            })
+        };
         let export_enabled = app.can_export() && dimensions_valid;
+        let export_label = if carousel.enabled {
+            tr_fmt(
+                "Export {count} slides…",
+                &[("count", &carousel.carousel.slides())],
+            )
+        } else {
+            tr("Export…").to_owned()
+        };
 
         // Android row: square replay and share actions flank a shortened Export.
         // Each control gets an exact rect so the touch button padding cannot
@@ -338,7 +360,7 @@ impl Sidebar {
                 .scope_builder(egui::UiBuilder::new().max_rect(export_rect), |ui| {
                     ui.add_enabled(
                         export_enabled,
-                        egui::Button::new(tr("Export…")).min_size(export_rect.size()),
+                        egui::Button::new(export_label).min_size(export_rect.size()),
                     )
                 })
                 .inner;
@@ -356,7 +378,7 @@ impl Sidebar {
             export
         } else {
             ui.add_enabled_ui(export_enabled, |ui| {
-                moduwu_design::full_width_button(ui, tr("Export…"))
+                moduwu_design::full_width_button(ui, export_label)
             })
             .inner
         };
@@ -380,14 +402,19 @@ impl Sidebar {
             |ui| {
                 ui.set_min_width(column_width);
                 ui.set_max_width(column_width);
+                let carousel = app.carousel_view();
                 let change = export_settings_controls(
                     ui,
                     &mut app.export.format,
                     &mut app.export.settings,
+                    Some(carousel),
                     app.export.watermark.view(),
                 );
                 if change.format_changed {
                     app.persist_performance_settings();
+                }
+                if let Some(action) = change.carousel {
+                    app.apply_carousel_action(action);
                 }
                 if let Some(action) = change.watermark {
                     app.apply_watermark_action(action);

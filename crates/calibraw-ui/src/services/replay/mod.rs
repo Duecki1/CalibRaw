@@ -15,7 +15,7 @@ use desktop::ensure_ffmpeg_available;
 
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{
-    spawn_tiled_export, ExportBitDepth, ExportEvent, ExportFormat, ExportMetadata,
+    spawn_tiled_export, ExportBitDepth, ExportEvent, ExportFiles, ExportFormat, ExportMetadata,
     ExportResizeMode, ExportSettings, ExportTarget, ExposureParams, GeometryTransform,
     GpuProgramPrewarm, LoadedRaw, MaskStack, RemoveEditState, TileSpec, TiledExportJob,
 };
@@ -184,7 +184,7 @@ fn render_still(
             masks: state.masks.clone(),
             remove: state.remove.clone(),
             look: state.look.clone(),
-            target: ExportTarget::File(path.to_path_buf()),
+            files: ExportFiles::Single(ExportTarget::File(path.to_path_buf())),
             tile_spec: TileSpec::default(),
             settings,
             metadata: ExportMetadata::default(),

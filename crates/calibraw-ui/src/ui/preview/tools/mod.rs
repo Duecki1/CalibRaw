@@ -1,4 +1,6 @@
 mod brush;
+mod carousel;
+pub(super) use carousel::carousel_slide_rects;
 mod crop;
 mod effect_handles;
 mod inpaint;

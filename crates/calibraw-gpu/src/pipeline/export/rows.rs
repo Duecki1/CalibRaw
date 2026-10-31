@@ -11,6 +11,62 @@ pub(super) enum ExportRowFormat {
     RgbF32Le,
 }
 
+impl ExportRowFormat {
+    pub(super) const fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Rgb8 => 3,
+            Self::Rgba8 => 4,
+            Self::Rgb16Le => 6,
+            Self::Rgba16Be => 8,
+            Self::RgbF32Le => 12,
+        }
+    }
+}
+
+/// Writes encoded output rows to one writer per slide, cutting each row into equal slides from
+/// left to right. One writer receives the rows unchanged.
+pub(super) struct SlideWriter<'a, W> {
+    slides: &'a mut [W],
+    /// Bytes of one slide's part of a row.
+    slide_row_bytes: usize,
+    /// The slide being written and how much of its row part it already has.
+    current: usize,
+    written: usize,
+}
+
+impl<'a, W> SlideWriter<'a, W> {
+    pub(super) fn new(slides: &'a mut [W], slide_width: u32, row_format: ExportRowFormat) -> Self {
+        Self {
+            slides,
+            slide_row_bytes: slide_width as usize * row_format.bytes_per_pixel(),
+            current: 0,
+            written: 0,
+        }
+    }
+}
+
+impl<W: Write> Write for SlideWriter<'_, W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let slide_count = self.slides.len();
+        let remaining = self.slide_row_bytes - self.written;
+        let slide = self
+            .slides
+            .get_mut(self.current)
+            .ok_or_else(|| std::io::Error::other("an export needs an output"))?;
+        let written = slide.write(&bytes[..bytes.len().min(remaining)])?;
+        self.written += written;
+        if self.written == self.slide_row_bytes {
+            self.written = 0;
+            self.current = (self.current + 1) % slide_count;
+        }
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.slides.iter_mut().try_for_each(Write::flush)
+    }
+}
+
 pub(super) fn validate_linear_rgb_raster(bytes: &[u8], width: u32, height: u32) -> Result<&[f32]> {
     let expected_values = u64::from(width)
         .checked_mul(u64::from(height))
@@ -49,15 +105,8 @@ pub(super) fn encode_output_row(
         "linear RGB row has an invalid length"
     );
     let pixels = row.len() / 3;
-    let bytes_per_pixel = match row_format {
-        ExportRowFormat::Rgb8 => 3,
-        ExportRowFormat::Rgba8 => 4,
-        ExportRowFormat::Rgb16Le => 6,
-        ExportRowFormat::Rgba16Be => 8,
-        ExportRowFormat::RgbF32Le => 12,
-    };
     let bytes = pixels
-        .checked_mul(bytes_per_pixel)
+        .checked_mul(row_format.bytes_per_pixel())
         .context("encoded row overflow")?;
     let mut encoded = Vec::new();
     encoded

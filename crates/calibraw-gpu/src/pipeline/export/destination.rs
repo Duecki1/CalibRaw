@@ -18,75 +18,151 @@ pub(super) struct ExportOutput<'a> {
 /// Name prefix of staged files for descriptor targets, whose paths carry no name.
 const DESCRIPTOR_STAGING_NAME: &str = "calibraw-direct-export";
 
-/// Runs `export` for `target` and returns the path of the finished file.
-pub(super) fn export_to_destination<F>(
-    target: &ExportTarget,
+/// Runs `export` with one output per target and returns the path of the first finished file.
+/// Nothing is moved into place until every file is complete; if a later file then cannot be
+/// moved, the earlier ones are removed again. Descriptors are published by the caller.
+pub(super) fn export_to_destinations<F>(
+    targets: &[ExportTarget],
     cancellation: &AtomicBool,
     export: F,
 ) -> Result<PathBuf>
 where
-    F: FnOnce(ExportOutput<'_>) -> Result<()>,
+    F: FnOnce(&[ExportOutput<'_>]) -> Result<()>,
 {
     ensure_export_not_cancelled(cancellation)?;
-    match target {
-        ExportTarget::Descriptor { path, staging_dir } => {
-            export(ExportOutput {
+    let staged = targets
+        .iter()
+        .map(StagedTarget::new)
+        .collect::<Result<Vec<_>>>()?;
+    let outputs = staged
+        .iter()
+        .map(StagedTarget::output)
+        .collect::<Result<Vec<_>>>()?;
+    export(&outputs)?;
+    ensure_export_not_cancelled(cancellation)?;
+
+    let mut published = Vec::with_capacity(staged.len());
+    for target in &staged {
+        match target.publish() {
+            Ok(path) => published.push(path),
+            Err(error) => {
+                for path in &published {
+                    let _ = fs::remove_file(path);
+                }
+                return Err(error);
+            }
+        }
+    }
+    published
+        .into_iter()
+        .next()
+        .context("an export needs a target")
+}
+
+/// An export target and the staging file its output goes to until it is published.
+enum StagedTarget<'a> {
+    Descriptor {
+        path: &'a Path,
+        staging_dir: &'a Path,
+    },
+    File {
+        staged: StagedFile,
+        destination: &'a Path,
+    },
+    NewFile {
+        staged: StagedFile,
+        directory: &'a Path,
+        stem: &'a str,
+        extension: &'a str,
+    },
+}
+
+impl<'a> StagedTarget<'a> {
+    fn new(target: &'a ExportTarget) -> Result<Self> {
+        Ok(match target {
+            ExportTarget::Descriptor { path, staging_dir } => {
+                Self::Descriptor { path, staging_dir }
+            }
+            ExportTarget::File(destination) => Self::File {
+                staged: StagedFile::new(parent_directory(destination), file_name(destination)?)?,
+                destination,
+            },
+            ExportTarget::NewFile {
+                directory,
+                stem,
+                extension,
+            } => Self::NewFile {
+                staged: StagedFile::new(directory, &format!("{stem}.{extension}"))?,
+                directory,
+                stem,
+                extension,
+            },
+        })
+    }
+
+    fn output(&self) -> Result<ExportOutput<'_>> {
+        match self {
+            Self::Descriptor { path, staging_dir } => Ok(ExportOutput {
                 path,
                 truncate_existing: true,
                 staging_dir,
                 staging_name: DESCRIPTOR_STAGING_NAME,
-            })?;
-            ensure_export_not_cancelled(cancellation)?;
-            Ok(path.clone())
+            }),
+            Self::File { staged, .. } | Self::NewFile { staged, .. } => Ok(ExportOutput {
+                path: staged.path(),
+                truncate_existing: false,
+                staging_dir: parent_directory(staged.path()),
+                staging_name: file_name(staged.path())?,
+            }),
         }
-        ExportTarget::File(destination) => {
-            let staging_dir = parent_directory(destination);
-            let name = file_name(destination)?;
-            export_through_staging_file(staging_dir, name, cancellation, export, |temporary| {
-                publish_completed_export(temporary, destination)?;
-                Ok(destination.clone())
-            })
-        }
-        ExportTarget::NewFile {
-            directory,
-            stem,
-            extension,
-        } => {
-            let name = format!("{stem}.{extension}");
-            export_through_staging_file(directory, &name, cancellation, export, |temporary| {
-                publish_completed_export_to_free_name(temporary, directory, stem, extension)
-            })
+    }
+
+    fn publish(&self) -> Result<PathBuf> {
+        match self {
+            Self::Descriptor { path, .. } => Ok(path.to_path_buf()),
+            Self::File {
+                staged,
+                destination,
+            } => {
+                publish_completed_export(staged.path(), destination)?;
+                Ok(destination.to_path_buf())
+            }
+            Self::NewFile {
+                staged,
+                directory,
+                stem,
+                extension,
+            } => publish_completed_export_to_free_name(staged.path(), directory, stem, extension),
         }
     }
 }
 
-/// Writes the export to a staging file in `staging_dir` and hands the
-/// complete file to `publish`. The staging file is removed afterwards whatever
-/// the outcome.
-fn export_through_staging_file<F, P>(
-    staging_dir: &Path,
-    name: &str,
-    cancellation: &AtomicBool,
-    export: F,
-    publish: P,
-) -> Result<PathBuf>
-where
-    F: FnOnce(ExportOutput<'_>) -> Result<()>,
-    P: FnOnce(&Path) -> Result<PathBuf>,
-{
-    let temporary = temporary_export_path(staging_dir, name)?;
-    let result = (|| {
-        export(ExportOutput {
-            path: &temporary,
-            truncate_existing: false,
-            staging_dir,
-            staging_name: file_name(&temporary)?,
-        })?;
-        ensure_export_not_cancelled(cancellation)?;
-        publish(&temporary)
-    })();
-    let _ = fs::remove_file(&temporary);
-    result
+/// A staging file path, whose file is removed on drop whatever the outcome.
+pub(super) struct StagedFile {
+    path: PathBuf,
+}
+
+impl StagedFile {
+    fn new(directory: &Path, name: &str) -> Result<Self> {
+        Ok(Self {
+            path: temporary_export_path(directory, name)?,
+        })
+    }
+
+    /// A file for an intermediate of `output`.
+    pub(super) fn for_output(output: ExportOutput<'_>) -> Result<Self> {
+        Self::new(output.staging_dir, output.staging_name)
+    }
+
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for StagedFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 pub(super) fn open_export_destination(output: ExportOutput<'_>) -> Result<fs::File> {
@@ -139,10 +215,8 @@ pub(super) fn with_staging_file<T, F>(output: ExportOutput<'_>, action: F) -> Re
 where
     F: FnOnce(&Path) -> Result<T>,
 {
-    let temporary = temporary_export_path(output.staging_dir, output.staging_name)?;
-    let result = action(&temporary);
-    let _ = fs::remove_file(&temporary);
-    result
+    let staged = StagedFile::for_output(output)?;
+    action(staged.path())
 }
 
 fn cleanup_stale_export_parts(parent: &Path, destination_name: &str) {

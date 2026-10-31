@@ -336,14 +336,14 @@ fn prepare_desktop_library_export_item(
             gpu_export_prewarm: None,
             ai_denoise_result: Some(crate::sidecar::ai_denoise_path_for_raw(&job.source)),
         },
-        destination: match &job.destination {
+        output: ExportItemOutput::Single(match &job.destination {
             LibraryExportDestination::Chosen(path) => ExportDestination::File(path.clone()),
             LibraryExportDestination::InFolder { folder, stem } => ExportDestination::NewFile {
                 directory: folder.clone(),
                 stem: stem.clone(),
                 extension: format.extension().to_owned(),
             },
-        },
+        }),
         format,
         settings: settings.clone(),
     })
@@ -586,7 +586,7 @@ impl CalibRawApp {
         let cleanup = destination.clone();
         let mut start_error = None;
         let started = match self.capture_export_task_request(
-            destination,
+            ExportItemOutput::Single(destination),
             frame,
             format,
             Some(&export_override),
@@ -646,7 +646,7 @@ impl CalibRawApp {
         if let Some(task) = self.export.task.as_mut() {
             if task.kind == ExportTaskKind::LibraryBatch {
                 task.receiver = None;
-                task.destination = None;
+                task.output = None;
                 task.completed_tiles = 0;
                 task.total_tiles = 0;
                 task.phase = tr("Preparing next image…").to_owned();
@@ -821,6 +821,9 @@ impl CalibRawApp {
     pub(in crate::app) fn poll_android_export_publish(&mut self) {
         while let Some(result) = self.platform.take_export_publish_result() {
             self.export.publish_pending = false;
+            let Some(result) = self.take_slide_publish_result(result) else {
+                continue;
+            };
             if self.export.batch.is_some() {
                 match result {
                     crate::platform::ExportPublishResult::Published(_) => {

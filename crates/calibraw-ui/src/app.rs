@@ -58,6 +58,7 @@ use worker::{model_download_progress, poll_ai_job, AiJobUpdate};
 mod decoded_raw_cache;
 mod develop_cards;
 pub(crate) use develop_cards::{DevelopCard, DevelopCardOrder};
+mod carousel;
 mod develop_state;
 mod effect_handles;
 mod export_state;
@@ -70,6 +71,7 @@ mod persistence_state;
 mod preview_state;
 mod ui_state;
 mod watermark;
+pub(crate) use carousel::{CarouselAction, CarouselState, CarouselView};
 pub(crate) use decoded_raw_cache::{DecodeKey, DecodeRequest, DecodedRaw, DecodedRawCache};
 pub(crate) use develop_state::*;
 pub(crate) use effect_handles::{

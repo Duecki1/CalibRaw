@@ -22,8 +22,8 @@
 use calibraw_core::sidecar::{self, EditState};
 use calibraw_gpu::pipeline::{
     build_proxy, spawn_tiled_export, CfaKind, CompactPixelMap, ExportBitDepth, ExportEvent,
-    ExportFormat, ExportMetadata, ExportSettings, ExportTarget, LoadedRaw, ProxySpec, TileSpec,
-    TiledExportJob,
+    ExportFiles, ExportFormat, ExportMetadata, ExportSettings, ExportTarget, LoadedRaw, ProxySpec,
+    TileSpec, TiledExportJob,
 };
 use calibraw_gpu::{request_headless_device, wgpu, HeadlessAdapter, HeadlessDeviceRequest};
 use image::{ImageBuffer, Rgb, RgbImage};
@@ -293,7 +293,7 @@ fn render(
             masks: Arc::unwrap_or_clone(edits.masks),
             remove: Arc::unwrap_or_clone(edits.remove),
             look: None,
-            target: ExportTarget::File(path.to_path_buf()),
+            files: ExportFiles::Single(ExportTarget::File(path.to_path_buf())),
             tile_spec: TileSpec::default(),
             settings: ExportSettings {
                 keep_metadata: false,

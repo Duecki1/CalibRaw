@@ -145,6 +145,30 @@ pub(crate) fn free_export_file_name(
     })
 }
 
+/// A stem for which `{stem}-1.{extension}` up to `{stem}-{slides}.{extension}` are all free in
+/// `directory`: `stem` itself, or the first free `{stem}-2`, `{stem}-3`, ….
+pub(crate) fn free_carousel_stem(
+    directory: &Path,
+    stem: &str,
+    extension: &str,
+    slides: usize,
+) -> String {
+    let is_free = |candidate: &str| {
+        (1..=slides).all(|slide| {
+            !directory
+                .join(format!("{candidate}-{slide}.{extension}"))
+                .exists()
+        })
+    };
+    let mut candidate = stem.to_owned();
+    let mut index = 2usize;
+    while !is_free(&candidate) {
+        candidate = format!("{stem}-{index}");
+        index += 1;
+    }
+    candidate
+}
+
 pub(crate) fn edited_time_for_path(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(crate::sidecar::sidecar_path_for_raw(path))
         .and_then(|metadata| metadata.modified())

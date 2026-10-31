@@ -264,6 +264,8 @@ impl CalibRawApp {
                 share_mime_type: None,
                 override_choice: ExportOverrideChoice::default(),
                 watermark: WatermarkState::new(performance.export_watermark),
+                carousel: CarouselState::new(performance.export_carousel),
+                slide_publish: None,
             },
             persistence: PersistenceState {
                 history: edit_history,

@@ -8,7 +8,7 @@ pub(super) fn render_geometry_output<W: Write>(
     output: &mut W,
     row_format: ExportRowFormat,
 ) -> Result<()> {
-    with_staging_file(request.output, |staged_linear| {
+    with_staging_file(request.staging_output()?, |staged_linear| {
         {
             let linear_file = OpenOptions::new()
                 .write(true)
@@ -39,8 +39,7 @@ pub(super) fn render_geometry_output<W: Write>(
             request.raw.height,
             request.geometry,
             request.raw.lens_geometry.as_deref(),
-            request.output_width,
-            request.output_height,
+            request.window,
         )?;
         let (geometry_width, geometry_height) = request
             .geometry
@@ -48,17 +47,18 @@ pub(super) fn render_geometry_output<W: Write>(
         let mut output_sharpen = FinalSizeOutputSharpen::new(
             geometry_width,
             geometry_height,
-            request.output_width,
-            request.output_height,
+            request.window.raster_width,
+            request.window.raster_height,
         )
+        .with_row_width(request.window.width)
         .with_passthrough(row_format == ExportRowFormat::RgbF32Le)
         .with_watermark(PreparedWatermark::for_request(&request)?);
         let output_transform = request.color.transform.as_ref();
         let finalize_started = Instant::now();
-        for first_y in (0..request.output_height).step_by(EXPORT_CPU_ROW_BATCH) {
+        for first_y in (0..request.window.height).step_by(EXPORT_CPU_ROW_BATCH) {
             let end_y = first_y
                 .saturating_add(EXPORT_CPU_ROW_BATCH as u32)
-                .min(request.output_height);
+                .min(request.window.height);
             let rows = resampler.output_rows(first_y..end_y, context.cancellation)?;
             for row in rows {
                 ensure_export_not_cancelled(context.cancellation)?;
@@ -69,8 +69,8 @@ pub(super) fn render_geometry_output<W: Write>(
         calibraw_core::diagnostics::record(format!(
             "Export geometry, final sharpening and output encoding finished in {:.3}s: {}x{}",
             finalize_started.elapsed().as_secs_f64(),
-            request.output_width,
-            request.output_height,
+            request.window.width,
+            request.window.height,
         ));
         Ok(())
     })
@@ -90,8 +90,7 @@ pub(super) struct GeometryResampler<'a> {
     pub(super) source: &'a [f32],
     source_width: u32,
     source_height: u32,
-    output_width: u32,
-    output_height: u32,
+    window: OutputWindow,
     inverse_map: GeometryInverseMap<'a>,
     affine_filter: Option<GeometryFilterAxes>,
 }
@@ -103,10 +102,9 @@ impl<'a> GeometryResampler<'a> {
         source_height: u32,
         geometry: GeometryTransform,
         lens_geometry: Option<&'a LensGeometryMap>,
-        output_width: u32,
-        output_height: u32,
+        window: OutputWindow,
     ) -> Result<Self> {
-        validate_export_dimensions(output_width, output_height)?;
+        validate_export_dimensions(window.raster_width, window.raster_height)?;
         anyhow::ensure!(
             source_width > 0 && source_height > 0,
             "source image is empty"
@@ -120,8 +118,8 @@ impl<'a> GeometryResampler<'a> {
             lens_geometry,
             source_width,
             source_height,
-            output_width,
-            output_height,
+            window.raster_width,
+            window.raster_height,
         );
         let affine_filter = inverse_map
             .is_affine()
@@ -130,8 +128,7 @@ impl<'a> GeometryResampler<'a> {
             source,
             source_width,
             source_height,
-            output_width,
-            output_height,
+            window,
             inverse_map,
             affine_filter,
         })
@@ -155,23 +152,20 @@ impl<'a> GeometryResampler<'a> {
 
     pub(super) fn output_row(&self, output_y: u32) -> Result<Vec<f32>> {
         anyhow::ensure!(
-            output_y < self.output_height,
+            output_y < self.window.height,
             "geometry row is outside the output image"
         );
-        let values = checked_rgb_len(self.output_width, 1)?;
+        let values = checked_rgb_len(self.window.width, 1)?;
         let mut row = Vec::new();
         row.try_reserve_exact(values)
             .context("reserve transformed linear output row")?;
         row.resize(values, 0.0);
-        for output_x in 0..self.output_width {
-            let [source_x, source_y] = self
-                .inverse_map
-                .source_position(output_x as f32, output_y as f32);
+        let raster_y = (self.window.top + output_y) as f32;
+        for output_x in 0..self.window.width {
+            let raster_x = (self.window.left + output_x) as f32;
+            let [source_x, source_y] = self.inverse_map.source_position(raster_x, raster_y);
             let filter = self.affine_filter.unwrap_or_else(|| {
-                geometry_filter_axes(
-                    self.inverse_map
-                        .pixel_jacobian_at(output_x as f32, output_y as f32),
-                )
+                geometry_filter_axes(self.inverse_map.pixel_jacobian_at(raster_x, raster_y))
             });
             let rgb = self.sample(source_x, source_y, filter);
             let start = output_x as usize * 3;

@@ -240,10 +240,22 @@ pub enum ExportEvent {
     },
     /// The next tile has been waiting for the GPU for `waited`, at least
     /// `SLOW_GPU_WAIT`. Sent once a second until the tile arrives.
-    WaitingForGpu {
-        waited: Duration,
-    },
+    WaitingForGpu { waited: Duration },
+    /// The finished file, or a carousel's first slide.
     Finished(Result<PathBuf, String>),
+}
+
+/// What an export writes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ExportFiles {
+    /// The whole output, in one file.
+    Single(ExportTarget),
+    /// The stencil of `carousel`, one file per slide, left to right. All of them are moved into
+    /// place only once every slide is complete.
+    Carousel {
+        carousel: Carousel,
+        slides: Vec<ExportTarget>,
+    },
 }
 
 /// Where an export is written.

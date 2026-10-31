@@ -413,6 +413,7 @@ impl CalibRawApp {
                 self.develop_ui.set_crop_tool(CropTool::Crop);
                 self.develop_ui.perspective_guides.clear();
                 self.develop.geometry_revision = 0;
+                self.export.carousel.reset_for_new_photo();
                 self.masks.stack = loaded.rendered_masks;
                 self.install_remove_edits(Arc::new(loaded.remove));
                 self.ai.update_needed = loaded.ai_masks_need_update;

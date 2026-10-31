@@ -1,4 +1,6 @@
-use crate::pipeline::{CameraProfileMode, ExportFormat, WatermarkAnchor, WatermarkPlacement};
+use crate::pipeline::{
+    CameraProfileMode, Carousel, CarouselRatio, ExportFormat, WatermarkAnchor, WatermarkPlacement,
+};
 use crate::platform::PlatformCaps;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -48,6 +50,7 @@ pub(crate) struct PerformanceSettings {
     #[serde(with = "export_format_serde")]
     pub export_format: ExportFormat,
     pub export_watermark: SavedWatermark,
+    pub export_carousel: SavedCarousel,
     pub ui_design: crate::appearance::UiDesign,
     pub preview_backdrop: crate::appearance::PreviewBackdrop,
     /// Missing in files written before it existed, which therefore follow the
@@ -138,6 +141,56 @@ impl Default for SavedWatermark {
             margin: placement.margin(),
             size: placement.size(),
         }
+    }
+}
+
+/// The export carousel's slide count and shape. Its switch and placement belong to the open photo
+/// (`app::carousel`).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct SavedCarousel {
+    pub slides: u8,
+    /// Stored as `width:height`.
+    #[serde(with = "carousel_ratio_serde")]
+    pub ratio: CarouselRatio,
+}
+
+impl Default for SavedCarousel {
+    fn default() -> Self {
+        let carousel = Carousel::default();
+        Self {
+            slides: carousel.slides(),
+            ratio: carousel.ratio(),
+        }
+    }
+}
+
+mod carousel_ratio_serde {
+    use super::CarouselRatio;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S>(ratio: &CarouselRatio, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let (width, height) = ratio.terms();
+        serializer.serialize_str(&format!("{width}:{height}"))
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<CarouselRatio, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        value
+            .split_once(':')
+            .and_then(|(width, height)| {
+                Some(CarouselRatio::from_terms(
+                    width.parse().ok()?,
+                    height.parse().ok()?,
+                ))
+            })
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown carousel ratio `{value}`")))
     }
 }
 
@@ -237,6 +290,7 @@ impl Default for PerformanceSettings {
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
             export_format: ExportFormat::Jpeg,
             export_watermark: SavedWatermark::default(),
+            export_carousel: SavedCarousel::default(),
             ui_design: crate::appearance::UiDesign::default(),
             preview_backdrop: crate::appearance::PreviewBackdrop::default(),
             // A first open shows English; `System` is only the decode default for

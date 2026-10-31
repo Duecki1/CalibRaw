@@ -20,6 +20,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -279,6 +280,36 @@ final class ExportPublisher {
                 activity.startActivity(chooser);
             } catch (RuntimeException error) {
                 Log.w(LOG_TAG, "Could not open the share sheet for " + uriText, error);
+            }
+        });
+    }
+
+    /** Opens the Android share sheet for published exports' content URIs, one per line. */
+    void shareExports(String uriTexts, String mimeType) {
+        activity.runOnUiThread(() -> {
+            try {
+                ArrayList<Uri> uris = new ArrayList<>();
+                ClipData clip = null;
+                for (String uriText : uriTexts.split("\n")) {
+                    Uri uri = Uri.parse(uriText);
+                    uris.add(uri);
+                    if (clip == null) {
+                        clip = ClipData.newRawUri("", uri);
+                    } else {
+                        clip.addItem(new ClipData.Item(uri));
+                    }
+                }
+                Intent send = new Intent(Intent.ACTION_SEND_MULTIPLE)
+                        .setType(AndroidStorageContract.normalizeExportMimeType(mimeType))
+                        .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                // The chooser and its targets read the grants from ClipData.
+                send.setClipData(clip);
+                Intent chooser = Intent.createChooser(send, null)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                activity.startActivity(chooser);
+            } catch (RuntimeException error) {
+                Log.w(LOG_TAG, "Could not open the share sheet for " + uriTexts, error);
             }
         });
     }

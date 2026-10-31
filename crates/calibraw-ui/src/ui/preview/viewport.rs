@@ -73,6 +73,8 @@ pub(crate) struct PreviewViewportInput {
     pending_view: Option<KeptView>,
     touch_navigation_active: bool,
     space_pan_active: bool,
+    /// The carousel stencil is being dragged, so the primary button does not pan.
+    carousel_grabbed: bool,
 }
 
 impl PreviewViewportInput {
@@ -98,6 +100,8 @@ impl PreviewViewportInput {
             pending_view: app.preview.pending_view,
             touch_navigation_active: app.preview.touch_navigation_active,
             space_pan_active: app.preview.space_pan_active,
+            carousel_grabbed: app.ui.sidebar_tab == SidebarTab::Export
+                && app.export.carousel.grabbed(),
         }
     }
 }
@@ -127,6 +131,7 @@ pub(crate) struct PreviewViewport {
     touch_navigation: bool,
     /// Space-drag navigation owns the primary button; see `space_pan`.
     space_pan: bool,
+    carousel_grabbed: bool,
     fit_gesture: bool,
     moved: bool,
     response: egui::Response,
@@ -396,6 +401,7 @@ impl Preview {
             brush_canvas,
             touch_navigation,
             space_pan,
+            carousel_grabbed: input.carousel_grabbed,
             fit_gesture: false,
             moved: false,
             response,
@@ -609,6 +615,7 @@ impl Preview {
             && !viewport.brush_canvas
             && !viewport.point_color_canvas
             && viewport.sidebar_tab != SidebarTab::Crop
+            && !viewport.carousel_grabbed
             && response.dragged_by(egui::PointerButton::Primary);
         let pan_with_middle =
             !viewport.touch_navigation && response.dragged_by(egui::PointerButton::Middle);
@@ -828,10 +835,27 @@ impl Preview {
             }
         }
 
-        // The export watermark shows only beside the Export panel; it is not
-        // part of the edit.
+        // The export watermark and carousel show only beside the Export panel;
+        // they are not part of the edit.
         if app.ui.sidebar_tab == SidebarTab::Export {
-            Self::paint_watermark(ui, app.export.watermark.view(), layout);
+            let carousel = app.carousel_view();
+            if let Some(stencil) = &carousel.layout {
+                let action =
+                    Self::carousel_tool_action(ui, stencil, carousel.grab, layout, gesture_free);
+                if let Some(action) = action {
+                    app.apply_carousel_action(action);
+                }
+            }
+            let watermark = app.export.watermark.view();
+            match &app.carousel_view().layout {
+                Some(stencil) => {
+                    for slide in tools::carousel_slide_rects(stencil, layout) {
+                        Self::paint_watermark(ui, watermark, slide, layout);
+                    }
+                    Self::paint_carousel(ui, stencil, layout);
+                }
+                None => Self::paint_watermark(ui, watermark, layout.image_rect, layout),
+            }
         }
     }
 }

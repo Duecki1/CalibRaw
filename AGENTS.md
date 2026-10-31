@@ -10,6 +10,7 @@ Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPM
 - Keep each change focused; do not mix broad formatting, file moves, API changes and numerical changes.
 - An extraction must remove duplication, serve a real additional caller, or establish ownership. Say which.
 - Delegate focused implementation and exploration tasks; keep architecture, ambiguous requirements, integration and final verification with the coordinator.
+- iOS is low priority, so most features can skip it. If supporting iOS would take much more code, ask whether it should get an implementation.
 
 ## Rust
 

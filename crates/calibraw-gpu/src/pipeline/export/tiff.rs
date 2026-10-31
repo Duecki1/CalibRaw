@@ -7,16 +7,24 @@ pub(super) fn export_tiled_tiff(
     context: ExportContext<'_>,
     request: ExportRequest<'_>,
 ) -> Result<()> {
-    validate_export_dimensions(request.output_width, request.output_height)?;
+    validate_export_dimensions(request.window.width, request.window.height)?;
 
-    let file = open_export_destination(request.output)
-        .with_context(|| format!("create TIFF {}", request.output.path.display()))?;
-    let mut writer = BufWriter::new(file);
     let row_format = tiff_row_format(request.bit_depth);
     let profile = tiff_embedded_profile(request.color);
-    write_tiff_header(&mut writer, request, row_format, &profile)?;
-    render_export_output(context, request, &mut writer, row_format)?;
-    writer.flush().context("flush TIFF export")?;
+    let mut writers = request
+        .outputs
+        .iter()
+        .map(|&output| {
+            let file = open_export_destination(output)
+                .with_context(|| format!("create TIFF {}", output.path.display()))?;
+            let mut writer = BufWriter::new(file);
+            write_tiff_header(&mut writer, request, row_format, &profile)?;
+            Ok(writer)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut rows = SlideWriter::new(&mut writers, request.slide_width(), row_format);
+    render_export_output(context, request, &mut rows, row_format)?;
+    rows.flush().context("flush TIFF export")?;
     Ok(())
 }
 
@@ -143,8 +151,9 @@ pub(super) fn write_tiff_header<W: Write>(
         1u16
     };
     let bytes_per_pixel = u64::from(bits / 8) * 3;
-    let pixel_bytes = u64::from(request.output_width)
-        .checked_mul(u64::from(request.output_height))
+    let (width, height) = (request.slide_width(), request.window.height);
+    let pixel_bytes = u64::from(width)
+        .checked_mul(u64::from(height))
         .and_then(|pixels| pixels.checked_mul(bytes_per_pixel))
         .context("TIFF pixel byte count overflow")?;
     anyhow::ensure!(
@@ -152,8 +161,7 @@ pub(super) fn write_tiff_header<W: Write>(
         "TIFF pixel data exceeds classic TIFF's 4 GiB limit"
     );
 
-    let (rows_per_strip, strip_byte_counts) =
-        tiff_strip_layout(request.output_width, request.output_height, bits)?;
+    let (rows_per_strip, strip_byte_counts) = tiff_strip_layout(width, height, bits)?;
     let strip_count = u32::try_from(strip_byte_counts.len()).context("too many TIFF strips")?;
     let strip_offsets_placeholder = vec![
         0u8;
@@ -169,13 +177,13 @@ pub(super) fn write_tiff_header<W: Write>(
             tag: 256,
             field_type: 4,
             count: 1,
-            data: tiff_long(request.output_width),
+            data: tiff_long(width),
         },
         TiffEntry {
             tag: 257,
             field_type: 4,
             count: 1,
-            data: tiff_long(request.output_height),
+            data: tiff_long(height),
         },
         TiffEntry {
             tag: 258,
@@ -273,11 +281,7 @@ pub(super) fn write_tiff_header<W: Write>(
 
         // Reserve the EXIF and GPS IFDs before the layout pass. Their encoded
         // lengths do not depend on where they land, only their internal offsets do.
-        let exif_len = metadata::exif_ifd_encoded_len(
-            request.metadata,
-            request.output_width,
-            request.output_height,
-        );
+        let exif_len = metadata::exif_ifd_encoded_len(request.metadata, width, height);
         entries.push(TiffEntry {
             tag: 0x8769,
             field_type: 4,
@@ -349,12 +353,7 @@ pub(super) fn write_tiff_header<W: Write>(
         let offset = u32::try_from(offset.context("missing TIFF metadata IFD offset")?)
             .context("TIFF metadata IFD offset overflow")?;
         entry.data = if entry.tag == 0x8769 {
-            metadata::encode_exif_ifd(
-                request.metadata,
-                offset,
-                request.output_width,
-                request.output_height,
-            )
+            metadata::encode_exif_ifd(request.metadata, offset, width, height)
         } else {
             metadata::encode_gps_ifd(request.metadata, offset)
         };

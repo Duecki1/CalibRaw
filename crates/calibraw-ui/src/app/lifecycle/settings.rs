@@ -361,6 +361,7 @@ impl CalibRawApp {
             export_name_template: self.preferences.export_name_template.clone(),
             export_format: self.export.format,
             export_watermark: self.export.watermark.saved(),
+            export_carousel: self.export.carousel.saved(),
             ui_design: self.preferences.ui_design,
             preview_backdrop: self.preferences.preview_backdrop,
             language: self.preferences.language,

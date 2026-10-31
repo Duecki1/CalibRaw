@@ -22,12 +22,14 @@ use std::sync::{
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod carousel;
 mod crop;
 mod destination;
 mod encoders;
 mod geometry_output;
 mod resize;
 mod tiff;
+pub use carousel::*;
 pub use crop::*;
 use destination::*;
 use encoders::*;
@@ -79,7 +81,7 @@ pub struct TiledExportJob {
     pub remove: RemoveEditState,
     /// The edit's LUT, applied after tone mapping.
     pub look: Option<ResolvedLook>,
-    pub target: ExportTarget,
+    pub files: ExportFiles,
     pub tile_spec: TileSpec,
     pub settings: ExportSettings,
     pub metadata: ExportMetadata,
@@ -138,16 +140,31 @@ struct ExportRequest<'a> {
     masks: &'a MaskStack,
     remove: &'a RemoveEditState,
     look: Option<&'a ResolvedLook>,
-    output: ExportOutput<'a>,
+    /// One file per slide, left to right; a normal export is one slide.
+    outputs: &'a [ExportOutput<'a>],
     tile_spec: TileSpec,
-    output_width: u32,
-    output_height: u32,
+    window: OutputWindow,
     keep_metadata: bool,
     metadata: &'a ExportMetadata,
     geometry: GeometryTransform,
     bit_depth: ExportBitDepth,
     color: &'a ResolvedExportColor,
     watermark: Option<&'a ExportWatermark>,
+}
+
+impl ExportRequest<'_> {
+    /// Width of each output file, in pixels; every file is the window's height.
+    fn slide_width(&self) -> u32 {
+        self.window.width / u32::try_from(self.outputs.len().max(1)).unwrap_or(u32::MAX)
+    }
+
+    /// The output whose directory holds intermediates of the whole render.
+    fn staging_output(&self) -> Result<ExportOutput<'_>> {
+        self.outputs
+            .first()
+            .copied()
+            .context("an export needs an output")
+    }
 }
 
 mod color;

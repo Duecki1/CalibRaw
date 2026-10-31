@@ -8,8 +8,11 @@ pub(super) fn render_export_output<W: Write>(
     output: &mut W,
     row_format: ExportRowFormat,
 ) -> Result<()> {
-    validate_export_dimensions(request.output_width, request.output_height)?;
-    if !request.geometry.is_identity() || request.raw.lens_geometry.is_some() {
+    validate_export_dimensions(request.window.width, request.window.height)?;
+    if !request.window.is_whole()
+        || !request.geometry.is_identity()
+        || request.raw.lens_geometry.is_some()
+    {
         return render_geometry_output(context, request, output, row_format);
     }
 
@@ -17,8 +20,8 @@ pub(super) fn render_export_output<W: Write>(
     let mut resizer = LinearLightResizer::new_with_format(
         request.raw.width,
         request.raw.height,
-        request.output_width,
-        request.output_height,
+        request.window.width,
+        request.window.height,
         row_format,
     )?
     .with_watermark(PreparedWatermark::for_request(&request)?);
@@ -50,10 +53,9 @@ where
         masks,
         remove,
         look,
-        output: _,
+        outputs: _,
         tile_spec,
-        output_width,
-        output_height,
+        window,
         keep_metadata: _,
         metadata: _,
         geometry,
@@ -67,7 +69,7 @@ where
         !exposure.ai_denoise_enabled || raw.ai_denoised_image().is_some(),
         "AI denoise is enabled but its full-resolution RawNIND result is not ready"
     );
-    validate_export_dimensions(output_width, output_height)?;
+    validate_export_dimensions(window.width, window.height)?;
     if exposure.highlight_method == crate::pipeline::HighlightReconstructionMethod::InpaintOpposed
         || (raw.cfa_kind == CfaKind::XTrans
             && exposure.highlight_method == crate::pipeline::HighlightReconstructionMethod::Lch)
@@ -79,8 +81,8 @@ where
         "Tiled export plan: source={}x{} requested_output={}x{} tiles={} core={} halo={} linear_row_stream=f32",
         raw.width,
         raw.height,
-        output_width,
-        output_height,
+        window.width,
+        window.height,
         plan.tile_count(),
         tile_spec.core_edge,
         tile_spec.halo,

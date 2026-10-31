@@ -59,11 +59,17 @@ change that establishes a boundary, not in advance.
 - The Android bridge wakes the UI through a plain callback (`attach_ui`), not
   an `egui::Context`.
 - Export destinations are explicit: `ExportTarget::File` is written beside the
-  path and renamed into place; `ExportTarget::NewFile` (desktop batch export)
-  is moved into place without replacing anything, taking the next free
-  `{stem}-N` name; `ExportTarget::Descriptor` (Android MediaStore)
+  path and renamed into place; `ExportTarget::NewFile` (desktop batch and
+  carousel exports) is moved into place without replacing anything, taking the
+  next free `{stem}-N` name; `ExportTarget::Descriptor` (Android MediaStore)
   is written in place with intermediates in a caller-chosen staging directory.
   The exporter no longer asks the platform bridge which kind a path is.
+- A carousel export (`ExportFiles::Carousel`) renders a window of the output
+  raster once, with the photo's geometry unchanged, and cuts its encoded rows
+  into one file per slide (`SlideWriter`). Sharpening runs on the whole window,
+  so slides continue each other pixel for pixel; a watermark is placed on every
+  slide, each as its own frame. Its switch and placement belong to the open
+  photo and are not saved in the sidecar.
 - A batch export may apply a preset and a LUT to every photo
   (`ExportOverride`). They change only the edit snapshot each item is rendered
   from; sidecars are never written.

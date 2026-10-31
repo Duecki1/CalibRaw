@@ -490,6 +490,10 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::share_export(&self.app, uri, mime_type)
     }
 
+    fn share_exports(&self, uris: &[String], mime_type: &str) -> Result<(), String> {
+        calibraw_ffi::share_exports(&self.app, uris, mime_type)
+    }
+
     fn start_replay_encoder(
         &self,
         path: &Path,

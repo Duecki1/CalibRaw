@@ -8,7 +8,7 @@ pub(super) fn show_library_export_settings_controls(
     settings: &mut ExportSettings,
     watermark: crate::app::WatermarkView,
 ) -> crate::ui::sidebar::ExportControlsChange {
-    crate::ui::sidebar::export_settings_controls(ui, format, settings, watermark)
+    crate::ui::sidebar::export_settings_controls(ui, format, settings, None, watermark)
 }
 
 /// The preset and LUT a batch export applies to every photo.

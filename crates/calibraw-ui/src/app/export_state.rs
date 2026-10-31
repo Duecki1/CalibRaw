@@ -237,6 +237,38 @@ pub(super) enum ReplayExportEvent {
     Finished(Result<PathBuf, crate::services::replay::ReplayError>),
 }
 
+/// What one export writes.
+#[derive(Clone, Debug)]
+pub(super) enum ExportItemOutput {
+    /// The whole output, in one file.
+    Single(ExportDestination),
+    /// The stencil of `carousel`, one destination per slide, left to right.
+    Carousel {
+        carousel: crate::pipeline::Carousel,
+        slides: Vec<ExportDestination>,
+    },
+}
+
+impl ExportItemOutput {
+    pub(super) fn files(&self) -> crate::pipeline::ExportFiles {
+        use crate::pipeline::ExportFiles;
+        match self {
+            Self::Single(destination) => ExportFiles::Single(destination.target()),
+            Self::Carousel { carousel, slides } => ExportFiles::Carousel {
+                carousel: *carousel,
+                slides: slides.iter().map(ExportDestination::target).collect(),
+            },
+        }
+    }
+
+    pub(super) fn into_single(self) -> Option<ExportDestination> {
+        match self {
+            Self::Single(destination) => Some(destination),
+            Self::Carousel { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) enum ExportDestination {
     File(PathBuf),
@@ -287,7 +319,7 @@ pub(crate) struct ExportTask {
     pub(super) kind: ExportTaskKind,
     pub(super) cancellation: Arc<std::sync::atomic::AtomicBool>,
     pub(super) receiver: Option<ExportTaskReceiver>,
-    pub(super) destination: Option<ExportDestination>,
+    pub(super) output: Option<ExportItemOutput>,
     pub(super) progress: f32,
     pub(super) phase: String,
     pub(super) completed: usize,
@@ -315,7 +347,7 @@ pub(super) struct ExportItemRequest {
     pub(super) device: wgpu::Device,
     pub(super) queue: wgpu::Queue,
     pub(super) source: PreparedExportSource,
-    pub(super) destination: ExportDestination,
+    pub(super) output: ExportItemOutput,
     pub(super) format: ExportFormat,
     pub(super) settings: ExportSettings,
 }
@@ -344,4 +376,8 @@ pub(crate) struct ExportState {
     pub(crate) override_choice: ExportOverrideChoice,
     /// Drawn over every export while it is on; see `app::watermark`.
     pub(crate) watermark: WatermarkState,
+    /// Cuts the next export of the open photo into slides while it is on; see `app::carousel`.
+    pub(crate) carousel: CarouselState,
+    /// The finished carousel being published, slide by slide.
+    pub(crate) slide_publish: Option<processing_export::SlidePublish>,
 }
