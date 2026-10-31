@@ -383,6 +383,13 @@ fn prepare_scene_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     var rgb = SceneSource::profiled_scene_at(pos);
     // Dehaze precedes exposure: the haze grid measures this same signal.
     rgb = Haze::apply_dehaze(pos, rgb, dehaze_amount_at(pos));
+    // Stands in for the camera white balance, so it precedes exposure and every
+    // tone and colour edit. Zero, as on other photos, leaves the colour untouched.
+    rgb = BasicAdjustments::apply_temperature_tint_values(
+        rgb,
+        Common::scene_tone_uniforms.raster_temperature.x,
+        0.0,
+    );
     rgb = BasicAdjustments::apply_exposure(rgb);
     rgb = apply_local_exposure_nodes(pos, rgb);
     // The profile's look table follows exposure and precedes every user tone

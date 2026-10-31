@@ -265,6 +265,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 look_lut,
                 look_lut_domain_min,
                 look_lut_domain_scale,
+                raster_temperature,
             }),
         ),
         (

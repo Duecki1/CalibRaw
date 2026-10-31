@@ -215,6 +215,9 @@ pub(super) struct SceneToneUniforms {
     /// The LUT's domain minimum, then the reciprocal of its extent, per channel.
     pub(super) look_lut_domain_min: [f32; 4],
     pub(super) look_lut_domain_scale: [f32; 4],
+    /// [`ExposureParams::raster_temperature`] on a rendered photo, 0 on any
+    /// other, then 0, 0, 0.
+    pub(super) raster_temperature: [f32; 4],
 }
 
 const _: () =
@@ -245,7 +248,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_416);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_432);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

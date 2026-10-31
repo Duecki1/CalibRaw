@@ -149,6 +149,7 @@ impl ExposureParams {
             contrast,
             sigmoid,
             white_balance,
+            raster_temperature,
             hue,
             saturation,
             vibrance,
@@ -207,6 +208,7 @@ impl ExposureParams {
             }
             ExposureSection::Group(AdjustmentGroup::Color) => {
                 self.white_balance = white_balance;
+                self.raster_temperature = raster_temperature;
                 self.hue = hue;
                 self.saturation = saturation;
                 self.vibrance = vibrance;

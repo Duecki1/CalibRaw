@@ -532,7 +532,7 @@ fn bisect_largest(iterations: usize, mut fits: impl FnMut(f64) -> bool) -> f64 {
     low
 }
 
-fn is_zero(value: &f32) -> bool {
+pub(super) fn is_zero(value: &f32) -> bool {
     *value == 0.0
 }
 

@@ -470,6 +470,7 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
             exposure.black_point,
             exposure.exposure,
             exposure.contrast,
+            exposure.raster_temperature,
             exposure.hue,
             exposure.saturation,
             exposure.vibrance,

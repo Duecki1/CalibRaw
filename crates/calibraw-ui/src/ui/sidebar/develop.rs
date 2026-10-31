@@ -1,5 +1,6 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::effect_params;
 
 const LENS_CARD_TITLE: &str = "Lens Corrections";
 
@@ -535,14 +536,23 @@ impl Sidebar {
                 }
             } else {
                 *white_balance_picker_active = false;
-                ui.label(tr("White balance"));
-                ui.label(
-                    egui::RichText::new(tr(
-                        "Unavailable: this image has no usable white-balance metadata",
-                    ))
-                    .size(11.5)
-                    .color(ui.visuals().weak_text_color()),
-                );
+                if raw.is_some_and(LoadedRaw::is_display_referred_raster) {
+                    changed |= gradient_float_param_slider(
+                        ui,
+                        &mut exposure.raster_temperature,
+                        effect_params::adjustment::TEMPERATURE,
+                        SliderGradient::Temperature,
+                    );
+                } else {
+                    ui.label(tr("White balance"));
+                    ui.label(
+                        egui::RichText::new(tr(
+                            "Unavailable: this image has no usable white-balance metadata",
+                        ))
+                        .size(11.5)
+                        .color(ui.visuals().weak_text_color()),
+                    );
+                }
             }
             changed |= hue_adjustment_slider(ui, &mut exposure.hue);
             changed |=

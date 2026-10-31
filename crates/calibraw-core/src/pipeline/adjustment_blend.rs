@@ -51,6 +51,7 @@ impl ExposureParams {
             contrast,
             sigmoid: _,
             white_balance: _,
+            raster_temperature,
             hue,
             saturation,
             vibrance,
@@ -98,6 +99,7 @@ impl ExposureParams {
             sigmoid: target.sigmoid,
             // Needs the photo's as-shot white balance (`faded_from`).
             white_balance: target.white_balance,
+            raster_temperature: raster_temperature.blend(target.raster_temperature, amount),
             hue: hue.blend(target.hue, amount),
             saturation: saturation.blend(target.saturation, amount),
             vibrance: vibrance.blend(target.vibrance, amount),

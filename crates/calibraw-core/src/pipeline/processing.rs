@@ -76,6 +76,7 @@ impl RawStageControls {
             contrast: _,
             sigmoid: _,
             white_balance,
+            raster_temperature: _,
             hue: _,
             saturation: _,
             vibrance: _,

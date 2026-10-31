@@ -155,6 +155,9 @@ struct SceneToneUniforms {
     look_lut: vec4<f32>,
     look_lut_domain_min: vec4<f32>,
     look_lut_domain_scale: vec4<f32>,
+    // The Temperature of a rendered photo, -100 (cool) to +100 (warm), 0 on any
+    // other photo; then 0, 0, 0.
+    raster_temperature: vec4<f32>,
 }
 
 struct PointColor {

@@ -274,6 +274,11 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
     for (destination, point) in point_colors.iter_mut().zip(exposure.point_colors.iter()) {
         *destination = pack_point_color(*point);
     }
+    let raster_temperature = if ctx.raw.is_display_referred_raster() {
+        effect_params::adjustment::TEMPERATURE.clamp(exposure.raster_temperature)
+    } else {
+        0.0
+    };
 
     SceneToneUniforms {
         exposure: exposure.exposure,
@@ -341,6 +346,7 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
         look_lut: [0.0; 4],
         look_lut_domain_min: [0.0; 4],
         look_lut_domain_scale: [0.0; 4],
+        raster_temperature: [raster_temperature, 0.0, 0.0, 0.0],
     }
 }
 

@@ -262,6 +262,14 @@ pub struct ExposureParams {
     pub sigmoid: SigmoidParams,
     #[serde(flatten, with = "crate::migrations::white_balance_offsets")]
     pub white_balance: WhiteBalance,
+    /// Warm (+100) to cool (-100) shift of a rendered photo
+    /// ([`LoadedRaw::is_display_referred_raster`]), which has no camera white
+    /// balance to change. Other photos ignore it. Left out of files while
+    /// zero, which stay as they were.
+    ///
+    /// [`LoadedRaw::is_display_referred_raster`]: super::LoadedRaw::is_display_referred_raster
+    #[serde(default, skip_serializing_if = "super::geometry::is_zero")]
+    pub raster_temperature: f32,
     #[serde(default)]
     pub hue: f32,
     pub saturation: f32,
@@ -376,6 +384,7 @@ impl Default for ExposureParams {
             contrast: 0.0,
             sigmoid: SigmoidParams::default(),
             white_balance: WhiteBalance::AsShot,
+            raster_temperature: 0.0,
             hue: 0.0,
             saturation: 0.0,
             vibrance: 0.0,
