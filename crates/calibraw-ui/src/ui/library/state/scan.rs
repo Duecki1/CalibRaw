@@ -332,9 +332,14 @@ impl LibraryState {
                         .collect::<HashMap<_, _>>();
                     self.entries = assets
                         .into_iter()
-                        .map(|asset| {
+                        .map(|mut asset| {
                             if let Some(mut entry) = previous.remove(&asset.id) {
                                 if same_library_asset_identity(&entry.asset, &asset) {
+                                    // A media-library scan reads no reviews, and a thumbnail
+                                    // already on screen is not loaded again to supply one.
+                                    if asset.android_uri().is_some() {
+                                        asset.metadata.review = entry.asset.metadata.review;
+                                    }
                                     entry.asset = asset;
                                     entry.thumbnail_error = None;
                                     entry.thumbnail_queued = false;
