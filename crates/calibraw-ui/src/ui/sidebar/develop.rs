@@ -585,10 +585,13 @@ impl Sidebar {
     /// double-clicks and the card reset restore. `ai_strength_available` is
     /// whether the photo has an AI result that can be blended with the
     /// original: a Bayer RAW whose denoised mosaic is loaded.
+    /// `ai_denoise_available` is false for rendered photos and raster TIFFs,
+    /// which have no sensor data for RawNIND.
     pub(super) fn show_detail(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         defaults: &ExposureParams,
+        ai_denoise_available: bool,
         ai_strength_available: bool,
         foldable: bool,
     ) -> (bool, Option<bool>) {
@@ -596,30 +599,32 @@ impl Sidebar {
         let mut ai_request = None;
         let ai_before = exposure.ai_denoise_enabled;
         let action = Self::adjustment_card(ui, "Detail", false, foldable, true, |ui| {
-            let mut ai_enabled = exposure.ai_denoise_enabled;
-            if moduwu_design::toggle_with_help(
-                ui,
-                &mut ai_enabled,
-                tr("AI Denoise — RawNIND UtNet2"),
-                tr("Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant."),
-            )
-            .changed()
-            {
-                ai_request = Some(ai_enabled);
-            }
-            if ai_strength_available && exposure.ai_denoise_enabled {
-                let mut strength_percent = exposure.ai_denoise_amount.clamp(0.0, 1.0) * 100.0;
-                if AdjustmentSlider::new(tr("Strength"), &mut strength_percent, 0.0..=100.0)
-                    .decimals(0)
-                    .step(1.0)
-                    .reset_to(defaults.ai_denoise_amount * 100.0)
-                    .show(ui)
+            if ai_denoise_available {
+                let mut ai_enabled = exposure.ai_denoise_enabled;
+                if moduwu_design::toggle_with_help(
+                    ui,
+                    &mut ai_enabled,
+                    tr("AI Denoise — RawNIND UtNet2"),
+                    tr("Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant."),
+                )
+                .changed()
                 {
-                    exposure.ai_denoise_amount = strength_percent / 100.0;
-                    changed = true;
+                    ai_request = Some(ai_enabled);
                 }
+                if ai_strength_available && exposure.ai_denoise_enabled {
+                    let mut strength_percent = exposure.ai_denoise_amount.clamp(0.0, 1.0) * 100.0;
+                    if AdjustmentSlider::new(tr("Strength"), &mut strength_percent, 0.0..=100.0)
+                        .decimals(0)
+                        .step(1.0)
+                        .reset_to(defaults.ai_denoise_amount * 100.0)
+                        .show(ui)
+                    {
+                        exposure.ai_denoise_amount = strength_percent / 100.0;
+                        changed = true;
+                    }
+                }
+                moduwu_design::section_separator(ui);
             }
-            moduwu_design::section_separator(ui);
             moduwu_design::strong_with_help(
                 ui,
                 tr("Noise reduction"),
