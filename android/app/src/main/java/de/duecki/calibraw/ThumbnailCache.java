@@ -9,15 +9,20 @@ import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 final class ThumbnailCache {
     private static final String LOG_TAG = "CalibRaw";
-    private static final int MAX_ENTRIES = 512;
-    private static final long MAX_BYTES = 128L * 1024L * 1024L;
+    private static final long MAX_BYTES = 5L * 1024L * 1024L * 1024L;
+    private static final long MAX_COPY_BYTES = 128L * 1024L * 1024L;
+    private static final int TRIM_INTERVAL = 64;
     private static final int DELETE_ATTEMPTS = 3;
 
     private final Activity storage;
+    private final AtomicInteger maintainCalls = new AtomicInteger();
 
     ThumbnailCache(Activity storage) {
         this.storage = storage;
@@ -78,6 +83,11 @@ final class ThumbnailCache {
     }
 
     void maintain() {
+        // Scanning a large cache is too slow for every saved thumbnail. The first call trims;
+        // what accumulates between trims is negligible against MAX_BYTES.
+        if (maintainCalls.getAndIncrement() % TRIM_INTERVAL != 0) {
+            return;
+        }
         try {
             trim(persistentDirectory());
         } catch (RuntimeException error) {
@@ -181,17 +191,25 @@ final class ThumbnailCache {
         if (thumbnails == null || thumbnails.length == 0) {
             return;
         }
+        long totalBytes = directorySize(directory);
+        if (totalBytes <= MAX_BYTES) {
+            return;
+        }
+
+        // Snapshot the times: touch() runs concurrently, and a sort key that changes mid-sort
+        // can make the sort throw, which would leave the cache untrimmed.
+        Map<File, Long> lastUsed = new HashMap<>(thumbnails.length);
+        for (File thumbnail : thumbnails) {
+            lastUsed.put(thumbnail, thumbnail.lastModified());
+        }
         Arrays.sort(
                 thumbnails,
-                (left, right) -> Long.compare(left.lastModified(), right.lastModified()));
+                (left, right) -> Long.compare(lastUsed.get(left), lastUsed.get(right)));
 
-        int minimumRemovals = Math.max(0, thumbnails.length - MAX_ENTRIES);
-        long totalBytes = directorySize(directory);
-        for (int index = 0; index < thumbnails.length; index++) {
-            if (index >= minimumRemovals && totalBytes <= MAX_BYTES) {
+        for (File thumbnail : thumbnails) {
+            if (totalBytes <= MAX_BYTES) {
                 break;
             }
-            File thumbnail = thumbnails[index];
             File fingerprint = new File(thumbnail.getPath() + ".fingerprint");
             long removedBytes = Math.max(0L, thumbnail.length())
                     + Math.max(0L, fingerprint.length());
@@ -210,8 +228,8 @@ final class ThumbnailCache {
             BoundedStreams.copy(
                     input,
                     output,
-                    MAX_BYTES,
-                    "The document exceeds the " + MAX_BYTES + "-byte import limit");
+                    MAX_COPY_BYTES,
+                    "The document exceeds the " + MAX_COPY_BYTES + "-byte import limit");
             output.getFD().sync();
         }
     }
