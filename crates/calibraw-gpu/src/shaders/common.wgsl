@@ -187,6 +187,10 @@ struct EffectsUniforms {
     capture_scale_sigma: vec4<f32>,
     capture_thresholds: vec4<f32>,
     capture_mask_coherence: vec4<f32>,
+    // Wet Surfaces' ground (weather_analysis.wgsl): the unit vector toward the
+    // horizon in image points (xy), the horizon's position along it (z), and 1
+    // when the photo has ground (w).
+    weather_ground: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> camera_uniforms: CameraUniforms;
@@ -286,6 +290,39 @@ const IMAGE_LIGHT_GRID_LONG: u32 = 160u;
 // Cells of the image-light grid across and down the full image.
 fn image_light_grid() -> vec2<u32> {
     return full_image_grid(IMAGE_LIGHT_GRID_LONG);
+}
+
+// The weather map (weather_analysis.wgsl): a coarse grid over the full image
+// with WEATHER_GRID_LONG cells along its longer edge and a blurred copy with
+// WEATHER_BLUR_GRID_LONG, stored in textures and a buffer sized for a square
+// grid. Match the constants of the same names in Rust.
+const WEATHER_GRID_LONG: u32 = 256u;
+const WEATHER_BLUR_GRID_LONG: u32 = 48u;
+
+fn weather_grid_for(long_cells: u32) -> vec2<u32> {
+    // A cell holds at least one pixel, even for a very small preview.
+    return min(
+        full_image_grid(long_cells),
+        vec2<u32>(max(camera_uniforms.full_width, 1u), max(camera_uniforms.full_height, 1u)),
+    );
+}
+
+// Cells of the weather grid across and down the full image.
+fn weather_grid() -> vec2<u32> {
+    return weather_grid_for(WEATHER_GRID_LONG);
+}
+
+fn weather_blur_grid() -> vec2<u32> {
+    return weather_grid_for(WEATHER_BLUR_GRID_LONG);
+}
+
+// The full image in shorter-edge units, the unit Rain and Wet Surfaces work in.
+fn weather_image_size() -> vec2<f32> {
+    let full = max(
+        vec2<f32>(f32(camera_uniforms.full_width), f32(camera_uniforms.full_height)),
+        vec2<f32>(1.0),
+    );
+    return full / min(full.x, full.y);
 }
 
 fn clamp_pos(pos: vec2<i32>) -> vec2<i32> {

@@ -28,10 +28,11 @@ pub use size_limits::*;
 
 // The newest schema of the "CalibRaw edit sidecar" format. Bump this for every incompatible
 // serialized layout change; pre-release AuRaw sidecars use a different format discriminator.
-// Schemas 2 and 3 share the layout of schema 1. Schema 2 adds the Relight effect and manual lens
-// correction, schema 3 the LUT, perspective correction and aspect stretch; edits are written with
-// the oldest schema that holds them (`migrations::older_readers`).
-pub const SIDECAR_SCHEMA_VERSION: u32 = 3;
+// Schemas 2 to 4 share the layout of schema 1. Schema 2 adds the Relight effect and manual lens
+// correction, schema 3 the LUT, perspective correction and aspect stretch, schema 4 Rain and Wet
+// Surfaces; edits are written with the oldest schema that holds them
+// (`migrations::older_readers`).
+pub const SIDECAR_SCHEMA_VERSION: u32 = 4;
 pub const DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT: u64 = 0x4155_5241_5700_0007;
 pub const SIDECAR_SUFFIX: &str = ".calibraw";
 /// The AI-denoise result saved next to a RAW. It is large derived data, so it
@@ -437,11 +438,12 @@ fn decode_versioned_document(
     schema_version: u32,
 ) -> Result<(SidecarDocument, bool), SidecarError> {
     // Keep each future public schema's decoder and migration in its own match arm so an older
-    // layout can never be deserialized as the current schema by accident. Schemas 1 to 3 share
+    // layout can never be deserialized as the current schema by accident. Schemas 1 to 4 share
     // one layout.
     match schema_version {
         migrations::older_readers::V1_SCHEMA_VERSION
         | migrations::older_readers::V2_SCHEMA_VERSION
+        | migrations::older_readers::V3_SCHEMA_VERSION
         | SIDECAR_SCHEMA_VERSION => {
             serde_json::from_slice::<SidecarDocument>(bytes)
                 .map(|document| (document, false))

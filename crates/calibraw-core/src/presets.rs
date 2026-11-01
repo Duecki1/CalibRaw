@@ -28,11 +28,11 @@ use std::sync::Arc;
 
 pub const PRESET_SUFFIX: &str = ".calibraw-preset";
 /// The newest schema. Bump for every incompatible change to the serialized
-/// layout. Schemas 2 and 3 share the layout of schema 1; schema 2 adds the
-/// Relight effect and schema 3 the LUT, perspective correction and aspect
-/// stretch. Presets are written with the oldest schema that holds them
-/// (`migrations::older_readers`).
-pub const PRESET_SCHEMA_VERSION: u32 = 3;
+/// layout. Schemas 2 to 4 share the layout of schema 1; schema 2 adds the
+/// Relight effect, schema 3 the LUT, perspective correction and aspect stretch
+/// and schema 4 Rain and Wet Surfaces. Presets are written with the oldest
+/// schema that holds them (`migrations::older_readers`).
+pub const PRESET_SCHEMA_VERSION: u32 = 4;
 pub const DEFAULT_PRESET_GROUP: &str = "User Presets";
 pub const MAX_PRESET_NAME_CHARS: usize = 64;
 /// Presets hold no image data, so anything larger is not a preset.
@@ -346,10 +346,11 @@ impl Preset {
         }
         // Keep each future schema's decoder and migration in its own arm so an
         // older layout is never read as the current one by accident. Schemas 1
-        // to 3 share one layout.
+        // to 4 share one layout.
         let mut document = match header.schema_version {
             migrations::older_readers::V1_SCHEMA_VERSION
             | migrations::older_readers::V2_SCHEMA_VERSION
+            | migrations::older_readers::V3_SCHEMA_VERSION
             | PRESET_SCHEMA_VERSION => {
                 serde_json::from_slice::<PresetDocument>(bytes).map_err(|error| {
                     PresetError::Invalid(format!("invalid preset JSON: {error}"))

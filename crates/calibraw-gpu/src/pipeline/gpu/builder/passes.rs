@@ -103,6 +103,17 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// follows as `AssembledPasses::binned_finish_pass`. It runs with the RAW
     /// stage but comes last so that adding it kept earlier positions.
     pub(in crate::pipeline::gpu) binned_highlight_pass_index: usize,
+    /// Accumulation into the weather grid; the passes that resolve it follow.
+    /// Like the image lights they run with the tone stage and come last so that
+    /// adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) weather_map_accumulate_pass_index: usize,
+    pub(in crate::pipeline::gpu) weather_map_resolve_pass_index: usize,
+    pub(in crate::pipeline::gpu) weather_map_end_index: usize,
+    /// Wet Surfaces before the creative pass, and Rain and Wet Surfaces'
+    /// highlights after it. They run with the output stage but come last so that
+    /// adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) wet_surfaces_pass_index: usize,
+    pub(in crate::pipeline::gpu) weather_air_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -157,6 +168,11 @@ impl StageIndices {
         let chromatic_aberration_prepare_pass_index = take(1);
         let chromatic_aberration_fringe_pass_index = take(1);
         let binned_highlight_pass_index = take(1);
+        let weather_map_accumulate_pass_index = take(1);
+        let weather_map_resolve_pass_index = take(WEATHER_MAP_PASSES - 1);
+        let weather_map_end_index = take(0);
+        let wet_surfaces_pass_index = take(1);
+        let weather_air_pass_index = take(1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -197,6 +213,11 @@ impl StageIndices {
             chromatic_aberration_prepare_pass_index,
             chromatic_aberration_fringe_pass_index,
             binned_highlight_pass_index,
+            weather_map_accumulate_pass_index,
+            weather_map_resolve_pass_index,
+            weather_map_end_index,
+            wet_surfaces_pass_index,
+            weather_air_pass_index,
             pass_count,
         }
     }
@@ -213,6 +234,10 @@ impl StageIndices {
             FullImageMap::Haze => FullImageMapPasses {
                 accumulate: self.haze_accumulate_pass_index,
                 resolve: self.haze_resolve_pass_index..self.haze_end_index,
+            },
+            FullImageMap::Weather => FullImageMapPasses {
+                accumulate: self.weather_map_accumulate_pass_index,
+                resolve: self.weather_map_resolve_pass_index..self.weather_map_end_index,
             },
         }
     }
@@ -728,8 +753,59 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         workgroups: image_workgroups,
     };
 
-    // The post-blur variants reuse the programs above with bind groups that
-    // read the mask-blurred scene.
+    let weather_workgroups = [
+        WEATHER_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+        WEATHER_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+        1,
+    ];
+    ensure_planned(
+        &passes,
+        indices.weather_map_accumulate_pass_index,
+        "weather map",
+    )?;
+    let weather_map_programs: [(&str, [u32; 3]); WEATHER_MAP_PASSES] = [
+        ("accumulate_weather", weather_workgroups),
+        ("resolve_weather", weather_workgroups),
+        ("smooth_weather_coefficients", weather_workgroups),
+        (
+            "blur_weather_environment",
+            [
+                WEATHER_BLUR_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+                WEATHER_BLUR_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+                1,
+            ],
+        ),
+        ("build_weather_ground", weather_workgroups),
+    ];
+    for (index, (entry, workgroups)) in weather_map_programs.into_iter().enumerate() {
+        passes.push(assembler.make_pass(
+            shaders.weather_analysis_module.as_ref(),
+            entry,
+            &layouts.bgl_weather_map[index],
+            InputBoundPass::WeatherMap(index),
+            workgroups,
+        ));
+    }
+    ensure_planned(&passes, indices.wet_surfaces_pass_index, "weather")?;
+    passes.extend([
+        assembler.make_pass(
+            shaders.weather_module.as_ref(),
+            "apply_wet_surfaces",
+            &layouts.bgl_weather,
+            InputBoundPass::WeatherFromTex1,
+            image_workgroups,
+        ),
+        assembler.make_pass(
+            shaders.weather_module.as_ref(),
+            "apply_weather_air",
+            &layouts.bgl_weather,
+            InputBoundPass::WeatherFromTex1,
+            image_workgroups,
+        ),
+    ]);
+
+    // These variants reuse the programs above with bind groups that read tex2:
+    // the mask-blurred scene, or whatever else last wrote there.
     let mut post_blur_glow_passes = vec![Pass {
         pipeline: passes[indices.glow_prepare_pass_index].pipeline.clone(),
         bindings: groups.bg_glow_prepare_after_blur.clone().into(),

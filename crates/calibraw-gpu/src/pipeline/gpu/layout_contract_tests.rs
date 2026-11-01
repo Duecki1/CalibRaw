@@ -14,6 +14,7 @@ use super::{
     FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE, HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG,
     IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
     RELIGHT_SHADOW_MAP_CHANNELS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    WEATHER_BLUR_GRID_LONG, WEATHER_CELL_BYTES, WEATHER_GRID_LONG,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::MaskEffect;
@@ -283,6 +284,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 capture_scale_sigma,
                 capture_thresholds,
                 capture_mask_coherence,
+                weather_ground,
             }),
         ),
         (
@@ -459,6 +461,9 @@ fn shared_constants_and_effect_ids_match_rust() {
     assert_eq!(constant("IMAGE_LIGHT_BANDS"), IMAGE_LIGHT_BANDS);
     // So are the haze grid's.
     assert_eq!(constant("HAZE_GRID_LONG"), HAZE_GRID_LONG);
+    // And the weather grid's.
+    assert_eq!(constant("WEATHER_GRID_LONG"), WEATHER_GRID_LONG);
+    assert_eq!(constant("WEATHER_BLUR_GRID_LONG"), WEATHER_BLUR_GRID_LONG);
     for effect in MaskEffect::ALL {
         if effect == MaskEffect::Adjustment {
             assert_eq!(effect.shader_id(), 0, "adjustment masks use shader ID 0");
@@ -515,12 +520,19 @@ fn tone_guide_taps_cover_the_largest_scaled_radius() {
 #[test]
 fn effect_parameter_lanes_match_their_wgsl_names() {
     let modules = production_modules();
+    // The creative effects, and Rain and Wet Surfaces, which import them.
     let (_, creative) = modules
         .iter()
         .find(|(name, _)| name.starts_with(shaders::CREATIVE_EFFECTS_ENTRY.label))
         .expect("creative effects module");
+    let (_, weather) = modules
+        .iter()
+        .find(|(name, _)| name.starts_with(shaders::WEATHER_ENTRY.label))
+        .expect("weather module");
     let constant = |name: &str| {
-        u32_constant(creative, name).unwrap_or_else(|| panic!("WGSL declares {name}")) as usize
+        u32_constant(creative, name)
+            .or_else(|| u32_constant(weather, name))
+            .unwrap_or_else(|| panic!("WGSL declares {name}")) as usize
     };
     let mut expected = BTreeSet::new();
     let mut occupied = BTreeSet::new();
@@ -551,6 +563,7 @@ fn effect_parameter_lanes_match_their_wgsl_names() {
     let declared: BTreeSet<_> = creative
         .constants
         .iter()
+        .chain(weather.constants.iter())
         .filter_map(|(_, constant)| constant.name.as_deref().map(undecorated))
         .filter(|name| name.ends_with("_LANE") || name.ends_with("_OPTION"))
         .map(str::to_owned)
@@ -610,6 +623,24 @@ fn haze_buffers_and_supports_match_their_wgsl_declarations() {
         shared_u32_constant(&modules, "HAZE_GUIDE_MAX_RADIUS"),
         HAZE_GUIDE_SUPPORT
     );
+}
+
+/// The weather grid buffer Rust allocates holds the WGSL cell.
+#[test]
+fn weather_cell_matches_its_wgsl_declaration() {
+    let modules = production_modules();
+    let (_, analysis) = modules
+        .iter()
+        .find(|(name, _)| name.starts_with(shaders::WEATHER_ANALYSIS_ENTRY.label))
+        .expect("weather analysis module");
+    let mut layouter = Layouter::default();
+    layouter.update(analysis.to_ctx()).unwrap();
+    let (handle, _) = analysis
+        .types
+        .iter()
+        .find(|(_, ty)| ty.name.as_deref().map(undecorated) == Some("WeatherCell"))
+        .expect("WeatherCell is declared");
+    assert_eq!(u64::from(layouter[handle].size), WEATHER_CELL_BYTES);
 }
 
 #[test]

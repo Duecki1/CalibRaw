@@ -412,5 +412,6 @@ pub(super) fn pack_effect_params(
         capture_scale_sigma: [0.74, 1.75, 0.58, 1.65],
         capture_thresholds: [0.015, 0.0045, 0.055, 0.28],
         capture_mask_coherence: [0.035, 0.62, 0.055, 0.22],
+        weather_ground: [0.0, -1.0, 0.0, 0.0],
     }
 }

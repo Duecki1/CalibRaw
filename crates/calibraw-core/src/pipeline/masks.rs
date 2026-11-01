@@ -19,8 +19,9 @@ pub use effects::{
     GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, InitialEffectSettings,
     LensBlurEffectSettings, LightRaysEffectSettings, MaskEffect, MaskEffectCategory,
     MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings, PixelateEffectSettings,
-    RadialBlurEffectSettings, RadialBlurMode, RelightEffectSettings, SharpenEffectSettings,
-    SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
+    RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings, RelightEffectSettings,
+    SharpenEffectSettings, SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
+    WetSurfacesEffectSettings,
 };
 
 mod brush;
@@ -356,6 +357,8 @@ impl EffectComponent {
             MaskEffect::Grain => self.settings.grain.is_active(),
             MaskEffect::Halation => self.settings.halation.is_active(),
             MaskEffect::Vignette => self.settings.vignette.is_active(),
+            MaskEffect::Rain => self.settings.rain.is_active(),
+            MaskEffect::WetSurfaces => self.settings.wet_surfaces.is_active(),
         }
     }
 }
@@ -407,10 +410,15 @@ impl MaskStack {
         self.has_fog_effect_matching(|settings| settings.depth_enabled)
     }
 
-    /// An active effect reads scene depth: depth fog or Relight.
+    /// An active effect reads scene depth: depth fog, depth rain, Wet Surfaces
+    /// or Relight.
     pub fn has_scene_depth_effect(&self) -> bool {
         self.has_depth_fog_effect()
-            || self.has_active_effect(|component| component.effect == MaskEffect::Relight)
+            || self.has_active_effect(|component| match component.effect {
+                MaskEffect::Relight | MaskEffect::WetSurfaces => true,
+                MaskEffect::Rain => component.settings.rain.depth_enabled,
+                _ => false,
+            })
     }
 
     fn has_fog_effect_matching(&self, matches: impl Fn(&FogEffectSettings) -> bool) -> bool {

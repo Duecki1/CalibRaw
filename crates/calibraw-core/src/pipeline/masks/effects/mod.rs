@@ -11,11 +11,13 @@ mod neon;
 pub mod params;
 mod pixelate;
 mod radial_blur;
+mod rain;
 mod relight;
 mod sharpen;
 mod smoke;
 mod tilt_shift;
 mod vignette;
+mod wet_surfaces;
 
 pub use blur::BlurEffectSettings;
 pub use edge_glow::EdgeGlowEffectSettings;
@@ -29,11 +31,13 @@ pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
 pub use pixelate::PixelateEffectSettings;
 pub use radial_blur::{RadialBlurEffectSettings, RadialBlurMode};
+pub use rain::RainEffectSettings;
 pub use relight::RelightEffectSettings;
 pub use sharpen::SharpenEffectSettings;
 pub use smoke::SmokeEffectSettings;
 pub use tilt_shift::TiltShiftEffectSettings;
 pub use vignette::VignetteEffectSettings;
+pub use wet_surfaces::WetSurfacesEffectSettings;
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
@@ -60,10 +64,12 @@ pub enum MaskEffect {
     Grain,
     Halation,
     Vignette,
+    Rain,
+    WetSurfaces,
 }
 
 impl MaskEffect {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 20] = [
         Self::Adjustment,
         Self::Blur,
         Self::LensBlur,
@@ -82,6 +88,8 @@ impl MaskEffect {
         Self::Grain,
         Self::Halation,
         Self::Vignette,
+        Self::Rain,
+        Self::WetSurfaces,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -104,6 +112,8 @@ impl MaskEffect {
             Self::Grain => "Grain",
             Self::Halation => "Halation",
             Self::Vignette => "Vignette",
+            Self::Rain => "Rain",
+            Self::WetSurfaces => "Wet Surfaces",
         }
     }
 
@@ -125,7 +135,9 @@ impl MaskEffect {
                 Some(MaskEffectCategory::GlowAndLight)
             }
             Self::EdgeGlow | Self::Pixelate => Some(MaskEffectCategory::Stylize),
-            Self::Fog | Self::Smoke => Some(MaskEffectCategory::Texture),
+            Self::Fog | Self::Smoke | Self::Rain | Self::WetSurfaces => {
+                Some(MaskEffectCategory::Texture)
+            }
             Self::Grain | Self::Halation | Self::Vignette => {
                 Some(MaskEffectCategory::FilmAndFinish)
             }
@@ -156,6 +168,8 @@ impl MaskEffect {
             Self::Vignette => 15,
             Self::Relight => 16,
             Self::Sharpen => 17,
+            Self::Rain => 18,
+            Self::WetSurfaces => 19,
         }
     }
 }
@@ -225,6 +239,10 @@ pub struct MaskEffectSettings {
     pub halation: HalationEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]
     pub vignette: VignetteEffectSettings,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub rain: RainEffectSettings,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub wet_surfaces: WetSurfacesEffectSettings,
 }
 
 impl MaskEffectSettings {
@@ -254,6 +272,8 @@ impl MaskEffectSettings {
             MaskEffect::Grain => settings.grain = InitialEffectSettings::initial(),
             MaskEffect::Halation => settings.halation = InitialEffectSettings::initial(),
             MaskEffect::Vignette => settings.vignette = InitialEffectSettings::initial(),
+            MaskEffect::Rain => settings.rain = InitialEffectSettings::initial(),
+            MaskEffect::WetSurfaces => settings.wet_surfaces = InitialEffectSettings::initial(),
         }
         settings
     }
@@ -284,3 +304,5 @@ impl InitialEffectSettings for PixelateEffectSettings {}
 impl InitialEffectSettings for GrainEffectSettings {}
 impl InitialEffectSettings for HalationEffectSettings {}
 impl InitialEffectSettings for VignetteEffectSettings {}
+impl InitialEffectSettings for RainEffectSettings {}
+impl InitialEffectSettings for WetSurfacesEffectSettings {}

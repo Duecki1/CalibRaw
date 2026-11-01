@@ -35,6 +35,19 @@ pub(super) const HAZE_AIRLIGHT_BYTES: u64 = 2 * 16;
 /// nearly cancels its offset.
 pub(super) const HAZE_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
+/// The weather map (weather_analysis.wgsl): grid cells along the full image's
+/// longer edge of the map and of its blurred environment. Textures and the
+/// cell buffer are sized for a square grid.
+pub(super) const WEATHER_GRID_LONG: u32 = 256;
+pub(super) const WEATHER_BLUR_GRID_LONG: u32 = 48;
+/// Bytes of one weather grid cell (`WeatherCell` in weather_analysis.wgsl): two
+/// RGBA f32 vectors.
+pub(super) const WEATHER_CELL_BYTES: u64 = 2 * 16;
+pub(super) const WEATHER_ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The guided filter's coefficients. They stay f32, as Dehaze's do: a steep
+/// slope times the guide nearly cancels its offset.
+pub(super) const WEATHER_COEFFICIENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+
 /// Per scene-depth texel, the joint-upsampling guide colour and the stored
 /// depth (scene_depth.wgsl).
 pub(super) const SCENE_DEPTH_GUIDE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -45,6 +58,11 @@ pub(super) const RELIGHT_SHADOW_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureF
 /// Bytes of an image-light grid of `edge` × `edge` cells.
 pub(super) const fn image_light_cells_bytes(edge: u32) -> u64 {
     edge as u64 * edge as u64 * IMAGE_LIGHT_CELL_BYTES
+}
+
+/// Bytes of a weather grid of `edge` × `edge` cells.
+pub(super) const fn weather_cells_bytes(edge: u32) -> u64 {
+    edge as u64 * edge as u64 * WEATHER_CELL_BYTES
 }
 
 /// Bytes of a haze grid of `edge` × `edge` cells.
@@ -513,6 +531,42 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         "haze textures",
         GpuResourceResidency::OnDemand,
         2 * texture_allocation_bytes(HAZE_GRID_LONG, HAZE_GRID_LONG, 1, 1, HAZE_MAP_FORMAT)?,
+    );
+    push_entry(
+        &mut entries,
+        "weather grid buffer",
+        GpuResourceResidency::OnDemand,
+        aligned_buffer_bytes(weather_cells_bytes(WEATHER_GRID_LONG))?,
+    );
+    push_entry(
+        &mut entries,
+        "weather textures",
+        GpuResourceResidency::OnDemand,
+        texture_allocation_bytes(
+            WEATHER_GRID_LONG,
+            WEATHER_GRID_LONG,
+            1,
+            1,
+            WEATHER_ENVIRONMENT_FORMAT,
+        )? + texture_allocation_bytes(
+            WEATHER_BLUR_GRID_LONG,
+            WEATHER_BLUR_GRID_LONG,
+            1,
+            1,
+            WEATHER_ENVIRONMENT_FORMAT,
+        )? + texture_allocation_bytes(
+            WEATHER_GRID_LONG,
+            WEATHER_GRID_LONG,
+            1,
+            1,
+            WEATHER_ENVIRONMENT_FORMAT,
+        )? + 2 * texture_allocation_bytes(
+            WEATHER_GRID_LONG,
+            WEATHER_GRID_LONG,
+            1,
+            1,
+            WEATHER_COEFFICIENT_FORMAT,
+        )?,
     );
 
     let rgba8_readback = aligned_copy_buffer_bytes(input.width, input.height, 4)?;

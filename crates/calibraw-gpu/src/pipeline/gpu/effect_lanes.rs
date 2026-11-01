@@ -76,11 +76,34 @@ effect_lanes! {
         SEED = 9,
         LIGHT_GLOW = 10,
     }
+    rain {
+        AMOUNT = 0,
+        LENGTH = 1,
+        FALL_X = 2,
+        FALL_Y = 3,
+        DROP_SIZE = 4,
+        MIST = 5,
+        LIGHT_GLOW = 6,
+        GUSTS = 7,
+        PERSPECTIVE = 8,
+        FOCUS = 9,
+        SEED = 10,
+        DEPTH = 11,
+    }
+    wet_surfaces {
+        WETNESS = 0,
+        PUDDLES = 1,
+        PUDDLE_SIZE = 2,
+        GLOSS = 3,
+        REFLECTIONS = 4,
+        RIPPLES = 5,
+        SEED = 6,
+    }
 }
 
 /// `effect_options` lanes of effect slots.
 pub(super) mod options {
-    /// Fog and Smoke: 1 when Image lights is on.
+    /// Fog, Smoke and Rain: 1 when Image lights is on.
     pub(in crate::pipeline::gpu) const MEDIUM_IMAGE_LIGHTS: usize = 3;
     /// Relight: its shadow-map channel plus one, or 0 to trace shadows per
     /// pixel (`assign_relight_shadow_channels`).

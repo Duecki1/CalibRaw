@@ -40,6 +40,10 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_scene_depth_guide: wgpu::BindGroupLayout,
     /// The haze passes, in pass order (`HAZE_PASSES`).
     pub(in crate::pipeline::gpu) bgl_haze: [wgpu::BindGroupLayout; HAZE_PASSES],
+    /// The weather map passes, in pass order (`WEATHER_MAP_PASSES`).
+    pub(in crate::pipeline::gpu) bgl_weather_map: [wgpu::BindGroupLayout; WEATHER_MAP_PASSES],
+    /// Rain and Wet Surfaces.
+    pub(in crate::pipeline::gpu) bgl_weather: wgpu::BindGroupLayout,
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
@@ -692,6 +696,88 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         })
     });
 
+    let weather_read = |binding| {
+        texture_entry(
+            binding,
+            wgpu::TextureSampleType::Float { filterable: false },
+        )
+    };
+    let environment_write = |binding| {
+        storage_texture_entry(
+            binding,
+            WEATHER_ENVIRONMENT_FORMAT,
+            wgpu::StorageTextureAccess::WriteOnly,
+        )
+    };
+    let coefficient_write = |binding| {
+        storage_texture_entry(
+            binding,
+            WEATHER_COEFFICIENT_FORMAT,
+            wgpu::StorageTextureAccess::WriteOnly,
+        )
+    };
+    let weather_map_entries: [&[wgpu::BindGroupLayoutEntry]; WEATHER_MAP_PASSES] = [
+        &[
+            buffer_entry(0),
+            weather_read(11),
+            storage_buffer_entry(20, true),
+            texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
+            storage_buffer_entry(62, false),
+        ],
+        &[
+            buffer_entry(0),
+            storage_buffer_entry(62, false),
+            environment_write(63),
+            coefficient_write(64),
+        ],
+        &[buffer_entry(0), weather_read(65), coefficient_write(66)],
+        &[buffer_entry(0), weather_read(67), environment_write(68)],
+        &[
+            buffer_entry(0),
+            sampler_entry(28),
+            texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
+            environment_write(72),
+        ],
+    ];
+    let weather_map_labels: [&str; WEATHER_MAP_PASSES] = [
+        "bgl weather accumulation",
+        "bgl weather resolve",
+        "bgl weather coefficient smoothing",
+        "bgl weather environment blur",
+        "bgl weather ground",
+    ];
+    let bgl_weather_map = std::array::from_fn(|index| {
+        reused_layout(plan.weather_map_accumulate_pass_index + index).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                weather_map_labels[index],
+                weather_map_entries[index],
+            )
+        })
+    });
+    let bgl_weather = reused_layout(plan.wet_surfaces_pass_index).unwrap_or_else(|| {
+        create_bind_group_layout(
+            device,
+            "bgl weather",
+            &[
+                buffer_entry(0),
+                weather_read(11),
+                storage_buffer_entry(16, true),
+                weather_read(24),
+                storage_texture_entry(25, work_format, wgpu::StorageTextureAccess::WriteOnly),
+                texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
+                sampler_entry(28),
+                storage_buffer_entry(33, true),
+                texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
+                texture_entry(45, wgpu::TextureSampleType::Float { filterable: true }),
+                texture_entry(69, wgpu::TextureSampleType::Float { filterable: true }),
+                texture_entry(70, wgpu::TextureSampleType::Float { filterable: true }),
+                weather_read(71),
+                weather_read(73),
+            ],
+        )
+    });
+
     BindGroupLayouts {
         bgl_scene_tone,
         bgl_effects,
@@ -729,5 +815,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_relight_shadow_map,
         bgl_scene_depth_guide,
         bgl_haze,
+        bgl_weather_map,
+        bgl_weather,
     }
 }

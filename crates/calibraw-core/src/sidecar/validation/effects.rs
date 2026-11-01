@@ -19,6 +19,8 @@ pub(super) fn validate_effect_settings(
     validate_pixelate_effect(&settings.pixelate)?;
     validate_fog_effect(&settings.fog)?;
     validate_smoke_effect(&settings.smoke)?;
+    validate_rain_effect(&settings.rain)?;
+    validate_wet_surfaces_effect(&settings.wet_surfaces)?;
     validate_grain_effect(&settings.grain)?;
     validate_halation_effect(&settings.halation)?;
     validate_vignette_effect(&settings.vignette)?;
@@ -242,6 +244,45 @@ fn validate_smoke_effect(smoke: &crate::pipeline::SmokeEffectSettings) -> Result
         crate::pipeline::MaskEffect::Smoke,
         smoke::COLOR,
         smoke.color,
+    )
+}
+
+fn validate_rain_effect(rain: &crate::pipeline::RainEffectSettings) -> Result<(), SidecarError> {
+    use crate::pipeline::effect_params::rain as params;
+    validate_effect_params(
+        crate::pipeline::MaskEffect::Rain,
+        &[
+            (params::AMOUNT, rain.amount),
+            (params::LENGTH, rain.length),
+            (params::ANGLE, rain.angle),
+            (params::DROP_SIZE, rain.drop_size),
+            (params::MIST, rain.mist),
+            (params::LIGHT_GLOW, rain.light_glow),
+            (params::GUSTS, rain.gusts),
+            (params::PERSPECTIVE, rain.perspective),
+            (params::FOCUS, rain.focus),
+            (params::SEED, rain.seed),
+        ],
+        &[],
+    )
+}
+
+fn validate_wet_surfaces_effect(
+    wet: &crate::pipeline::WetSurfacesEffectSettings,
+) -> Result<(), SidecarError> {
+    use crate::pipeline::effect_params::wet_surfaces as params;
+    validate_effect_params(
+        crate::pipeline::MaskEffect::WetSurfaces,
+        &[
+            (params::WETNESS, wet.wetness),
+            (params::PUDDLES, wet.puddles),
+            (params::PUDDLE_SIZE, wet.puddle_size),
+            (params::GLOSS, wet.gloss),
+            (params::REFLECTIONS, wet.reflections),
+            (params::RIPPLES, wet.ripples),
+            (params::SEED, wet.seed),
+        ],
+        &[],
     )
 }
 

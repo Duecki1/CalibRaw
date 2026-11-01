@@ -1,5 +1,6 @@
 //! `GpuParams`: edit parameters packed into the uniform layouts the WGSL stages read.
 
+use super::ground_plane::estimate_ground_horizon;
 use super::*;
 
 #[repr(C)]
@@ -244,11 +245,12 @@ pub(super) struct EffectsUniforms {
     pub(super) capture_scale_sigma: [f32; 4],
     pub(super) capture_thresholds: [f32; 4],
     pub(super) capture_mask_coherence: [f32; 4],
+    pub(super) weather_ground: [f32; 4],
 }
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_432);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_448);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -298,6 +300,9 @@ impl MaskData {
         self.is_active() && self.effect_id() == effect.shader_id()
     }
 }
+
+/// Up in the output frame.
+const OUTPUT_UP: [f32; 2] = [0.0, -1.0];
 
 /// Inputs of the relight shadow map besides scene depth
 /// (`GpuParams::relight_shadow_map_key`).
@@ -570,7 +575,7 @@ impl GpuParams {
             },
         };
         let mask_data = pack_mask_params(masks);
-        Self {
+        let mut params = Self {
             camera: pack_camera_params(&context),
             scene_tone: pack_scene_tone_params(&context),
             effects: pack_effect_params(&context, &mask_data),
@@ -578,7 +583,29 @@ impl GpuParams {
             scene_depth: masks.scene_depth_image().cloned(),
             look_lut: None,
             profile_color: Arc::clone(profile_color),
-        }
+        };
+        // Without a geometry yet the output frame is the image.
+        params.set_weather_ground(OUTPUT_UP);
+        params
+    }
+
+    /// Finds the ground for an active Wet Surfaces effect, with `up` in image
+    /// points. Without scene depth, or without ground in it, there is none.
+    fn set_weather_ground(&mut self, up: [f32; 2]) {
+        let horizon = self
+            .mask_slots()
+            .iter()
+            .any(|mask| mask.applies(MaskEffect::WetSurfaces))
+            .then(|| {
+                self.scene_depth
+                    .as_ref()
+                    .and_then(|depth| estimate_ground_horizon(depth, up))
+            })
+            .flatten();
+        self.effects.weather_ground = match horizon {
+            Some(horizon) => [up[0], up[1], horizon, 1.0],
+            None => [up[0], up[1], 0.0, 0.0],
+        };
     }
 
     /// Applies `look`'s LUT at its amount after tone mapping (look_lut.wgsl).
@@ -632,10 +659,24 @@ impl GpuParams {
             GeometryMapping::new(geometry, self.camera.full_width, self.camera.full_height);
         let [output_width, output_height] = mapping.output_size();
         self.effects.vignette_frame = [output_width, output_height, 0.0, 0.0];
-        self.effects.vignette_projection = mapping
-            .output_uv_from_source_uv()
-            .rows()
-            .map(|[x, y, w]| [x, y, w, 0.0]);
+        let projection = mapping.output_uv_from_source_uv().rows();
+        self.effects.vignette_projection = projection.map(|[x, y, w]| [x, y, w, 0.0]);
+        let full = [
+            self.camera.full_width.max(1) as f32,
+            self.camera.full_height.max(1) as f32,
+        ];
+        let short = full[0].min(full[1]);
+        let direction_of = |direction| {
+            source_direction(
+                projection,
+                [output_width, output_height],
+                [full[0] / short, full[1] / short],
+                direction,
+            )
+        };
+        let count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        orient_rain_slots(&mut self.mask_data[..count], direction_of);
+        self.set_weather_ground(direction_of(OUTPUT_UP));
         self
     }
 
@@ -758,6 +799,8 @@ impl GpuParams {
                 || effect_id == MaskEffect::Fog.shader_id()
                 || effect_id == MaskEffect::Smoke.shader_id()
                 || effect_id == MaskEffect::Halation.shader_id()
+                || effect_id == MaskEffect::Rain.shader_id()
+                || effect_id == MaskEffect::WetSurfaces.shader_id()
             {
                 return true;
             }
@@ -797,8 +840,8 @@ impl GpuParams {
         })
     }
 
-    /// Whether an effect samples the image-light map (Image lights on Fog or
-    /// Smoke), so the export tone prepass must build it.
+    /// Whether an effect samples the image-light map (Image lights on Fog,
+    /// Smoke or Rain), so the export tone prepass must build it.
     pub(super) fn needs_image_lights(&self) -> bool {
         self.mask_slots().iter().any(medium_uses_image_lights)
     }
@@ -813,12 +856,31 @@ impl GpuParams {
                 .any(|mask| mask.applies(MaskEffect::Adjustment) && mask.adjust_2[3].abs() > 1e-7)
     }
 
+    /// Whether an active Wet Surfaces effect runs its pass before the creative
+    /// effects.
+    pub(super) fn needs_wet_surfaces_pass(&self) -> bool {
+        self.mask_slots()
+            .iter()
+            .any(|mask| mask.applies(MaskEffect::WetSurfaces))
+    }
+
+    /// Whether Rain or Wet Surfaces run their pass after the creative effects
+    /// and read the weather map.
+    pub(super) fn needs_weather(&self) -> bool {
+        self.needs_wet_surfaces_pass()
+            || self
+                .mask_slots()
+                .iter()
+                .any(|mask| mask.applies(MaskEffect::Rain))
+    }
+
     /// Whether an effect reads `map`, which the tone stage, or the export tone
     /// prepass, must then build.
     pub(super) fn needs_full_image_map(&self, map: FullImageMap) -> bool {
         match map {
             FullImageMap::ImageLights => self.needs_image_lights(),
             FullImageMap::Haze => self.needs_haze(),
+            FullImageMap::Weather => self.needs_weather(),
         }
     }
 
@@ -837,13 +899,13 @@ impl GpuParams {
         })
     }
 
-    /// Whether an active Relight effect in a visible slot reads the
-    /// relighting surface derived from scene depth. Mirrors the slot checks
+    /// Whether an active Relight or Wet Surfaces effect in a visible slot reads
+    /// the relighting surface derived from scene depth. Mirrors the slot checks
     /// of `scene_light_at` in scene_lights.wgsl.
     pub(super) fn needs_relight_surface(&self) -> bool {
         self.mask_slots()
             .iter()
-            .any(|mask| mask.applies(MaskEffect::Relight))
+            .any(|mask| mask.applies(MaskEffect::Relight) || mask.applies(MaskEffect::WetSurfaces))
     }
 
     /// What the relight shadow map depends on besides scene depth: the frame

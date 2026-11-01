@@ -1,0 +1,18 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Rain",
+          "settings": {
+            "rain": {
+              "amount": 70.0,
+              "depth_enabled": false,
+              "mist": 30.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -25,6 +25,9 @@
 //!   aspect stretch and cannot decode a Select People mask. Edits with any of them are written
 //!   with schema 3, which shares the same layout and which those readers
 //!   report as newer.
+//! - Up to v1.4, readers cannot decode a Rain or Wet Surfaces effect. Edits with
+//!   one are written with schema 4, which shares the same layout and which
+//!   those readers report as newer.
 
 use super::effect_sliders::GlobalSliders;
 use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskRgbImage};
@@ -35,6 +38,8 @@ use serde::{Serialize, Serializer};
 pub(crate) const V1_SCHEMA_VERSION: u32 = 1;
 /// The newest sidecar and preset schema that v1.3 reads.
 pub(crate) const V2_SCHEMA_VERSION: u32 = 2;
+/// The newest sidecar and preset schema that v1.4 reads.
+pub(crate) const V3_SCHEMA_VERSION: u32 = 3;
 
 /// Serializes `exposure` with the chromatic-aberration shift and the
 /// Effects-card sliders at rest.
@@ -93,25 +98,31 @@ pub(crate) fn serialize_color_range<S: Serializer>(
 
 /// The schema to write `edits` with: [`V1_SCHEMA_VERSION`] when readers up to
 /// v1.2 can decode them, [`V2_SCHEMA_VERSION`] when readers up to v1.3 can,
-/// otherwise `current`.
+/// [`V3_SCHEMA_VERSION`] when readers up to v1.4 can, otherwise `current`.
 pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     let masks = &edits.masks;
+    let uses_effect = |effects: &[MaskEffect]| {
+        masks
+            .global_effects
+            .iter()
+            .chain(masks.masks.iter().flat_map(|mask| &mask.effect_components))
+            .any(|component| effects.contains(&component.effect))
+            || masks
+                .masks
+                .iter()
+                .any(|mask| effects.contains(&mask.effect))
+    };
+    if uses_effect(&[MaskEffect::Rain, MaskEffect::WetSurfaces]) {
+        return current;
+    }
     if edits.look_lut.is_some()
         || masks.has_people_masks()
         || !edits.geometry.perspective.is_identity()
         || edits.geometry.aspect_stretch != 0.0
     {
-        return current;
+        return V3_SCHEMA_VERSION;
     }
-    let uses_relight = masks
-        .global_effects
-        .iter()
-        .chain(masks.masks.iter().flat_map(|mask| &mask.effect_components))
-        .any(|component| component.effect == MaskEffect::Relight)
-        || masks
-            .masks
-            .iter()
-            .any(|mask| mask.effect == MaskEffect::Relight);
+    let uses_relight = uses_effect(&[MaskEffect::Relight]);
     let custom_aspect = matches!(edits.geometry.aspect_ratio, CropAspectRatio::Custom { .. });
     let removes_chromatic_aberration = edits.exposure.chromatic_aberration != 0.0;
     if uses_relight || edits.lens.manual.is_some() || custom_aspect || removes_chromatic_aberration
@@ -127,10 +138,8 @@ mod tests {
     use super::*;
     use crate::luts::{LookLut, LutId};
     use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet, EffectComponent, MaskKind};
-    use crate::presets::{Preset, PRESET_SCHEMA_VERSION};
-    use crate::sidecar::{
-        decode, default_edit_state, encode, EditSelection, SIDECAR_SCHEMA_VERSION,
-    };
+    use crate::presets::Preset;
+    use crate::sidecar::{decode, default_edit_state, encode, EditSelection};
     use serde_json::Value;
     use std::sync::Arc;
 
@@ -236,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lut_is_written_as_the_newest_schema() {
+    fn a_lut_is_written_as_schema_3() {
         let mut edits = edits(Some(false));
         edits.look_lut = Some(LookLut {
             id: LutId::of_bytes(b"film"),
@@ -244,7 +253,7 @@ mod tests {
             amount: 0.5,
         });
         let bytes = encode(edits.clone()).unwrap();
-        assert_eq!(document(&bytes)["schema_version"], SIDECAR_SCHEMA_VERSION);
+        assert_eq!(document(&bytes)["schema_version"], V3_SCHEMA_VERSION);
         let loaded = decode(&bytes).unwrap();
         assert!(!loaded.migrated);
         assert_eq!(loaded.edits, edits);
@@ -255,7 +264,7 @@ mod tests {
         };
         let preset = Preset::new("Film", "", selection, &edits).unwrap();
         let bytes = preset.encode().unwrap();
-        assert_eq!(document(&bytes)["schema_version"], PRESET_SCHEMA_VERSION);
+        assert_eq!(document(&bytes)["schema_version"], V3_SCHEMA_VERSION);
         assert_eq!(Preset::decode(&bytes).unwrap(), preset);
     }
 

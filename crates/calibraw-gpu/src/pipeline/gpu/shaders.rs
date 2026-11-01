@@ -92,6 +92,8 @@ pub(super) const MASK_ATMOSPHERE: ShaderSource = wgsl!("mask_effects/atmosphere.
 pub(super) const MASK_SCENE_LIGHTS: ShaderSource = wgsl!("mask_effects/scene_lights.wgsl");
 pub(super) const MASK_RELIGHT: ShaderSource = wgsl!("mask_effects/relight.wgsl");
 pub(super) const MASK_FILM_FINISH: ShaderSource = wgsl!("mask_effects/film_finish.wgsl");
+pub(super) const MASK_RAIN: ShaderSource = wgsl!("mask_effects/rain.wgsl");
+pub(super) const MASK_WET_SURFACES: ShaderSource = wgsl!("mask_effects/wet_surfaces.wgsl");
 
 /// Creative effects and every mask effect, compiled as one module because the
 /// effects share private helpers and the creative pass dispatches to them.
@@ -117,6 +119,10 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
     ]
 );
 
+/// Rain and Wet Surfaces, in passes around the creative pass. They import the
+/// scene lights and media of the creative effects.
+pub(super) const WEATHER: ShaderSource = wgsl!("weather.wgsl", &[MASK_RAIN, MASK_WET_SURFACES]);
+
 pub(super) const HIGHLIGHTS: ShaderSource = wgsl!("highlights.wgsl");
 pub(super) const BAYER_RCD_P1: ShaderSource = wgsl!("pass1.wgsl");
 pub(super) const BAYER_RCD_P2: ShaderSource = wgsl!("pass2.wgsl");
@@ -130,6 +136,7 @@ pub(super) const COLOR_DENOISE: ShaderSource = wgsl!("color_denoise.wgsl");
 pub(super) const CHROMATIC_ABERRATION: ShaderSource = wgsl!("chromatic_aberration.wgsl");
 pub(super) const TONE_ANALYSIS: ShaderSource = wgsl!("tone_analysis.wgsl");
 pub(super) const HAZE_ANALYSIS: ShaderSource = wgsl!("haze_analysis.wgsl");
+pub(super) const WEATHER_ANALYSIS: ShaderSource = wgsl!("weather_analysis.wgsl");
 pub(super) const SCENE_ADJUSTMENTS: ShaderSource = wgsl!("scene_adjustments.wgsl");
 pub(super) const VIEW_TRANSFORM: ShaderSource = wgsl!("view_transform.wgsl");
 pub(super) const REMOVE_COMPOSITE: ShaderSource = wgsl!("remove_composite.wgsl");
@@ -290,6 +297,10 @@ pub(super) const TONE_ANALYSIS_ENTRY: EntryShader =
     entry("calibraw tone analysis", TONE_ANALYSIS, false, None);
 pub(super) const HAZE_ANALYSIS_ENTRY: EntryShader =
     entry("calibraw haze analysis", HAZE_ANALYSIS, false, None);
+pub(super) const WEATHER_ANALYSIS_ENTRY: EntryShader =
+    entry("calibraw weather analysis", WEATHER_ANALYSIS, false, None);
+pub(super) const WEATHER_ENTRY: EntryShader =
+    entry("calibraw weather effects", WEATHER, false, None);
 pub(super) const SCENE_ADJUSTMENTS_ENTRY: EntryShader =
     entry("calibraw scene adjustments", SCENE_ADJUSTMENTS, true, None);
 pub(super) const CREATIVE_EFFECTS_ENTRY: EntryShader =
@@ -306,7 +317,7 @@ pub(super) const REMOVE_COMPOSITE_ENTRY: EntryShader = entry(
 
 /// Every entry shader, for validation and layout tests.
 #[cfg(test)]
-pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 17] = [
+pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 19] = [
     HIGHLIGHTS_ENTRY,
     BAYER_RCD_P1_ENTRY,
     BAYER_RCD_P2_ENTRY,
@@ -320,6 +331,8 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 17] = [
     CHROMATIC_ABERRATION_ENTRY,
     TONE_ANALYSIS_ENTRY,
     HAZE_ANALYSIS_ENTRY,
+    WEATHER_ANALYSIS_ENTRY,
+    WEATHER_ENTRY,
     SCENE_ADJUSTMENTS_ENTRY,
     CREATIVE_EFFECTS_ENTRY,
     VIEW_TRANSFORM_ENTRY,

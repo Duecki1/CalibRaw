@@ -1,8 +1,8 @@
 //! GPU inputs that only some effects read, allocated the first time one of
 //! them renders: the joint-upsampling guide of scene depth that Fog, Smoke and
 //! Relight read, Relight's scene-depth surface and shadow map, the image-light
-//! map that Fog and Smoke scatter, the haze map Dehaze applies, and the LUT
-//! the view pass applies.
+//! map that Fog, Smoke and Rain scatter, the haze map Dehaze applies, the
+//! weather map Rain and Wet Surfaces read, and the LUT the view pass applies.
 //!
 //! Until then the passes that read them are bound to placeholders of one
 //! texel, and Fog reads the plain scene-depth texture, so a pipeline whose
@@ -26,6 +26,9 @@ pub(super) const IMAGE_LIGHT_PASSES: usize = 4;
 /// The haze passes (haze_analysis.wgsl): accumulate, airlight, transmission
 /// and the guided filter's two window passes.
 pub(super) const HAZE_PASSES: usize = 5;
+/// The weather map passes (weather_analysis.wgsl): accumulate, resolve,
+/// coefficient smoothing, the environment blur and the ground.
+pub(super) const WEATHER_MAP_PASSES: usize = 5;
 
 /// Coarse maps over the full image that a cropped view or an export tile
 /// cannot build from its own region. Each is built from the whole scene with
@@ -37,10 +40,13 @@ pub(super) enum FullImageMap {
     ImageLights,
     /// The airlight and transmission Dehaze applies (haze_analysis.wgsl).
     Haze,
+    /// The environment and refined depth Rain and Wet Surfaces read
+    /// (weather_analysis.wgsl).
+    Weather,
 }
 
 impl FullImageMap {
-    pub(super) const ALL: [Self; 2] = [Self::ImageLights, Self::Haze];
+    pub(super) const ALL: [Self; 3] = [Self::ImageLights, Self::Haze, Self::Weather];
 }
 
 /// The resources of an allocated [`FullImageMap`].
@@ -70,6 +76,14 @@ pub(super) enum InputBoundPass {
     ImageLights(usize),
     /// One of the haze passes, in pass order.
     Haze(usize),
+    /// One of the weather map passes, in pass order.
+    WeatherMap(usize),
+    /// Rain or Wet Surfaces reading the first work texture and writing the
+    /// second.
+    WeatherFromTex1,
+    /// Rain or Wet Surfaces reading the second work texture and writing the
+    /// first.
+    WeatherFromTex2,
 }
 
 /// Bind groups of every [`InputBoundPass`].
@@ -84,6 +98,9 @@ struct InputBindGroups {
     relight_shadow_map: wgpu::BindGroup,
     image_lights: [wgpu::BindGroup; IMAGE_LIGHT_PASSES],
     haze: [wgpu::BindGroup; HAZE_PASSES],
+    weather_map: [wgpu::BindGroup; WEATHER_MAP_PASSES],
+    weather_from_tex1: wgpu::BindGroup,
+    weather_from_tex2: wgpu::BindGroup,
 }
 
 impl InputBindGroups {
@@ -99,6 +116,9 @@ impl InputBindGroups {
             InputBoundPass::RelightShadowMap => &self.relight_shadow_map,
             InputBoundPass::ImageLights(index) => &self.image_lights[index],
             InputBoundPass::Haze(index) => &self.haze[index],
+            InputBoundPass::WeatherMap(index) => &self.weather_map[index],
+            InputBoundPass::WeatherFromTex1 => &self.weather_from_tex1,
+            InputBoundPass::WeatherFromTex2 => &self.weather_from_tex2,
         }
     }
 }
@@ -113,6 +133,8 @@ pub(super) struct InputBindingSources {
     pub(super) relight_shadow_map_layout: wgpu::BindGroupLayout,
     pub(super) image_light_layouts: [wgpu::BindGroupLayout; IMAGE_LIGHT_PASSES],
     pub(super) haze_layouts: [wgpu::BindGroupLayout; HAZE_PASSES],
+    pub(super) weather_map_layouts: [wgpu::BindGroupLayout; WEATHER_MAP_PASSES],
+    pub(super) weather_layout: wgpu::BindGroupLayout,
     pub(super) camera_uniforms: wgpu::Buffer,
     pub(super) mask_data: wgpu::Buffer,
     pub(super) tone_stats: wgpu::Buffer,
@@ -310,6 +332,86 @@ impl HazeInputs {
     }
 }
 
+/// The weather grid and its maps (weather_analysis.wgsl).
+struct WeatherInputs {
+    cells: wgpu::Buffer,
+    /// The coarse photo, its wide blur, the refined depth's coefficients and
+    /// the ground Rain and Wet Surfaces read; cropped and zoomed views copy them.
+    environment: wgpu::Texture,
+    environment_view: wgpu::TextureView,
+    environment_blur: wgpu::Texture,
+    environment_blur_view: wgpu::TextureView,
+    depth_map: wgpu::Texture,
+    depth_map_view: wgpu::TextureView,
+    ground: wgpu::Texture,
+    ground_view: wgpu::TextureView,
+    _coefficients: wgpu::Texture,
+    /// The guided filter's coefficients of one window, before averaging.
+    coefficients_view: wgpu::TextureView,
+}
+
+impl WeatherInputs {
+    /// Inputs for a grid of `edge` × `edge` cells and a blur of `blur_edge`.
+    fn new(device: &wgpu::Device, edge: u32, blur_edge: u32) -> Self {
+        let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+        let copied = usage | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST;
+        let texture = |edge, format, usage, label| {
+            let texture =
+                create_processing_texture(device, texture_size(edge, edge), format, usage, label);
+            let view = default_texture_view(&texture);
+            (texture, view)
+        };
+        let (environment, environment_view) = texture(
+            edge,
+            WEATHER_ENVIRONMENT_FORMAT,
+            copied,
+            "calibraw full-image weather environment",
+        );
+        let (environment_blur, environment_blur_view) = texture(
+            blur_edge,
+            WEATHER_ENVIRONMENT_FORMAT,
+            copied,
+            "calibraw full-image weather environment blur",
+        );
+        let (depth_map, depth_map_view) = texture(
+            edge,
+            WEATHER_COEFFICIENT_FORMAT,
+            copied,
+            "calibraw full-image weather depth map",
+        );
+        let (ground, ground_view) = texture(
+            edge,
+            WEATHER_ENVIRONMENT_FORMAT,
+            copied,
+            "calibraw full-image weather ground",
+        );
+        let (coefficients, coefficients_view) = texture(
+            edge,
+            WEATHER_COEFFICIENT_FORMAT,
+            usage,
+            "calibraw weather guided-filter coefficients",
+        );
+        Self {
+            cells: create_gpu_buffer(
+                device,
+                "calibraw weather grid",
+                weather_cells_bytes(edge),
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            environment,
+            environment_view,
+            environment_blur,
+            environment_blur_view,
+            depth_map,
+            depth_map_view,
+            ground,
+            ground_view,
+            _coefficients: coefficients,
+            coefficients_view,
+        }
+    }
+}
+
 /// The LUT the view pass applies (look_lut.wgsl): `size`³ texels, red along
 /// x, green along y and blue along z.
 struct LookLutInputs {
@@ -390,6 +492,7 @@ struct BoundInputs<'a> {
     shadow_map: &'a wgpu::TextureView,
     image_lights: &'a ImageLightInputs,
     haze: &'a HazeInputs,
+    weather: &'a WeatherInputs,
     look_lut: &'a wgpu::TextureView,
 }
 
@@ -577,6 +680,88 @@ impl InputBindingSources {
                 ],
             ),
         ];
+        let weather = inputs.weather;
+        let [accumulate, resolve, smooth, blur, ground] = &self.weather_map_layouts;
+        let weather_map = [
+            create_bind_group(
+                device,
+                "bg weather accumulation",
+                accumulate,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(11, &self.scene),
+                    buffer_binding(20, &self.profile),
+                    texture_binding(35, inputs.scene_depth),
+                    buffer_binding(62, &weather.cells),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg weather resolve",
+                resolve,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    buffer_binding(62, &weather.cells),
+                    texture_binding(63, &weather.environment_view),
+                    texture_binding(64, &weather.coefficients_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg weather coefficient smoothing",
+                smooth,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(65, &weather.coefficients_view),
+                    texture_binding(66, &weather.depth_map_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg weather environment blur",
+                blur,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(67, &weather.environment_view),
+                    texture_binding(68, &weather.environment_blur_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg weather ground",
+                ground,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    sampler_binding(28, &self.mask_sampler),
+                    texture_binding(35, inputs.scene_depth),
+                    texture_binding(72, &weather.ground_view),
+                ],
+            ),
+        ];
+        let weather_effects =
+            |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
+                create_bind_group(
+                    device,
+                    label,
+                    &self.weather_layout,
+                    &[
+                        buffer_binding(0, &self.camera_uniforms),
+                        texture_binding(11, &self.scene),
+                        buffer_binding(16, &self.tone_stats),
+                        texture_binding(24, input),
+                        texture_binding(25, output),
+                        texture_binding(27, &self.mask),
+                        sampler_binding(28, &self.mask_sampler),
+                        buffer_binding(33, &self.mask_data),
+                        texture_binding(35, inputs.scene_depth),
+                        texture_binding(45, &inputs.image_lights.map_view),
+                        texture_binding(69, &weather.environment_view),
+                        texture_binding(70, &weather.environment_blur_view),
+                        texture_binding(71, &weather.depth_map_view),
+                        texture_binding(73, &weather.ground_view),
+                    ],
+                )
+            };
         InputBindGroups {
             scene_preparation,
             creative: creative("bg creative glow", &self.tex1, &self.tex2),
@@ -605,6 +790,9 @@ impl InputBindingSources {
             ),
             image_lights,
             haze: haze_groups,
+            weather_map,
+            weather_from_tex1: weather_effects("bg weather from tex1", &self.tex1, &self.tex2),
+            weather_from_tex2: weather_effects("bg weather from tex2", &self.tex2, &self.tex1),
         }
     }
 }
@@ -615,6 +803,7 @@ struct Allocated {
     relight: Option<RelightInputs>,
     image_lights: Option<ImageLightInputs>,
     haze: Option<HazeInputs>,
+    weather: Option<WeatherInputs>,
     look_lut: Option<LookLutInputs>,
     /// The LUT that last failed to upload and why, so it is not retried for
     /// every render.
@@ -631,6 +820,7 @@ pub(super) struct EffectInputs {
     placeholder_shadow_map_view: wgpu::TextureView,
     placeholder_image_lights: ImageLightInputs,
     placeholder_haze: HazeInputs,
+    placeholder_weather: WeatherInputs,
     placeholder_look_lut: LookLutInputs,
     allocated: Mutex<Allocated>,
 }
@@ -643,6 +833,7 @@ impl EffectInputs {
         let (placeholder_shadow_map, placeholder_shadow_map_view) = shadow_map(device, 1);
         let placeholder_image_lights = ImageLightInputs::new(device, 1);
         let placeholder_haze = HazeInputs::new(device, 1);
+        let placeholder_weather = WeatherInputs::new(device, 1, 1);
         // Never read: the view pass skips the LUT unless one was uploaded.
         let placeholder_look_lut = LookLutInputs::new(device, 1, None);
         let bind_groups = sources.bind_groups(
@@ -653,6 +844,7 @@ impl EffectInputs {
                 shadow_map: &placeholder_shadow_map_view,
                 image_lights: &placeholder_image_lights,
                 haze: &placeholder_haze,
+                weather: &placeholder_weather,
                 look_lut: &placeholder_look_lut.view,
             },
         );
@@ -665,12 +857,14 @@ impl EffectInputs {
             placeholder_shadow_map_view,
             placeholder_image_lights,
             placeholder_haze,
+            placeholder_weather,
             placeholder_look_lut,
             allocated: Mutex::new(Allocated {
                 scene_depth_guide: None,
                 relight: None,
                 image_lights: None,
                 haze: None,
+                weather: None,
                 look_lut: None,
                 look_lut_failure: None,
                 bind_groups,
@@ -727,6 +921,16 @@ impl EffectInputs {
                     return;
                 }
                 allocated.haze = Some(HazeInputs::new(&self.device, HAZE_GRID_LONG));
+            }
+            FullImageMap::Weather => {
+                if allocated.weather.is_some() {
+                    return;
+                }
+                allocated.weather = Some(WeatherInputs::new(
+                    &self.device,
+                    WEATHER_GRID_LONG,
+                    WEATHER_BLUR_GRID_LONG,
+                ));
             }
         }
         self.rebind(&mut allocated);
@@ -791,6 +995,10 @@ impl EffectInputs {
                     .as_ref()
                     .unwrap_or(&self.placeholder_image_lights),
                 haze: allocated.haze.as_ref().unwrap_or(&self.placeholder_haze),
+                weather: allocated
+                    .weather
+                    .as_ref()
+                    .unwrap_or(&self.placeholder_weather),
                 look_lut: &allocated
                     .look_lut
                     .as_ref()
@@ -828,6 +1036,21 @@ impl EffectInputs {
                 textures: vec![haze.map.clone()],
                 buffers: vec![haze.airlight.clone()],
             }),
+            FullImageMap::Weather => {
+                allocated
+                    .weather
+                    .as_ref()
+                    .map(|weather| FullImageMapResources {
+                        cells: weather.cells.clone(),
+                        textures: vec![
+                            weather.environment.clone(),
+                            weather.environment_blur.clone(),
+                            weather.depth_map.clone(),
+                            weather.ground.clone(),
+                        ],
+                        buffers: Vec::new(),
+                    })
+            }
         }
     }
 }

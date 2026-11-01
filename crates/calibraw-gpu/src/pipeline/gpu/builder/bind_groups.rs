@@ -657,6 +657,8 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
             layouts.bgl_image_light_blur_vertical.clone(),
         ],
         haze_layouts: layouts.bgl_haze.clone(),
+        weather_map_layouts: layouts.bgl_weather_map.clone(),
+        weather_layout: layouts.bgl_weather.clone(),
         camera_uniforms: buffers.camera_uniforms_buffer.clone(),
         mask_data: buffers.mask_data_buffer.clone(),
         tone_stats: buffers.tone_stats_buffer.clone(),

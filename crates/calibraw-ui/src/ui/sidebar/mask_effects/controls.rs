@@ -19,7 +19,7 @@ pub(super) fn effect_details(ui: &mut Ui, label: &str, body: impl FnOnce(&mut Ui
 /// A random-pattern seed: a Shuffle button and the exact number, so a look
 /// can be reproduced. Neighbouring seeds give unrelated patterns, so a slider
 /// position would mean nothing.
-/// The Image lights switch of an effect that scatters light (Fog, Smoke).
+/// The Image lights switch of an effect that scatters light (Fog, Smoke, Rain).
 pub(super) fn image_lights_toggle(ui: &mut Ui, image_lights: &mut bool) -> bool {
     moduwu_design::toggle_with_help(
         ui,

@@ -13,7 +13,8 @@ pub struct ContentDependencies {
     pub subject: bool,
     /// Sky masks share one sky segmentation.
     pub sky: bool,
-    /// Depth-range masks, depth fog and Relight share one scene depth estimate.
+    /// Depth-range masks, depth fog, depth rain, Wet Surfaces and Relight share
+    /// one scene depth estimate.
     pub scene_depth: bool,
     /// `(mask, component)` of each object mask with a positive stroke; every
     /// object needs its own segmentation.
@@ -80,7 +81,8 @@ impl MaskStack {
         dependencies
     }
 
-    /// Scene depth is required by a depth-range mask, depth fog or Relight but absent.
+    /// Scene depth is required by a depth-range mask or an effect that reads it
+    /// (`has_scene_depth_effect`) but absent.
     pub fn scene_depth_missing(&self) -> bool {
         self.scene_depth_image().is_none() && self.content_dependencies().scene_depth
     }

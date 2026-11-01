@@ -1,5 +1,5 @@
 //! Uploading full-image scene depth and the relighting surface derived from
-//! it (`scene_surface`), shared by Fog, Smoke and Relight.
+//! it (`scene_surface`), shared by Fog, Smoke, Relight, Rain and Wet Surfaces.
 
 use super::scene_surface::{derive_scene_surface, SurfaceLevel};
 use super::*;
@@ -41,6 +41,7 @@ impl RawGpuPipeline {
         let Some(depth) = depth.filter(|depth| valid_scene_depth(depth)) else {
             *uploaded = None;
             self.invalidate_relight_shadow_map();
+            self.invalidate_weather_map();
             return; // The uniform presence flag prevents sampling stale texture data.
         };
         // Upload once per depth result, not per slider movement; cloned stacks
@@ -86,6 +87,7 @@ impl RawGpuPipeline {
             _levels: levels,
         });
         self.invalidate_relight_shadow_map();
+        self.invalidate_weather_map();
     }
 
     /// Scene depth must be uploaded again, to a texture that replaced the
@@ -95,6 +97,12 @@ impl RawGpuPipeline {
             .uploaded_scene_depth
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    /// The weather map's guided filter reads scene depth.
+    fn invalidate_weather_map(&self) {
+        self.full_image_map_current(FullImageMap::Weather)
+            .store(false, Ordering::Release);
     }
 
     /// Shadows are traced through the scene-depth surface.
