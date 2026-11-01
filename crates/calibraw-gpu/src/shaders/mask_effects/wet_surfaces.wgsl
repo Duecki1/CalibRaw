@@ -42,7 +42,7 @@ const WET_INTERNAL_REFLECTION: f32 = 0.475;
 // Share of the ground's darkening that walls and other surfaces take: rain runs
 // off them.
 const WET_OTHER_SURFACES: f32 = 0.72;
-// Distances beyond which nothing is wet: the sky and far scenery.
+// Depths beyond which nothing is wet: the sky and far scenery.
 const WET_FAR_START: f32 = 0.9;
 const WET_FAR_END: f32 = 0.97;
 // Surface roughness (scene_map_cell_roughness) from which a surface starts to lose
@@ -385,11 +385,7 @@ fn wet_reflected_through_lens(pixel: WetPixel, roughness: f32, distortion: vec2<
 fn wet_surface(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
     let wetness = mask_effect_percent(params, WET_SURFACES_WETNESS_LANE);
     let pixel = wet_pixel(pos);
-    let reachable = 1.0 - smoothstep(
-        WET_FAR_START,
-        WET_FAR_END,
-        Common::scene_distance_from_depth(pixel.depth),
-    );
+    let reachable = 1.0 - smoothstep(WET_FAR_START, WET_FAR_END, pixel.depth);
 
     // Darkening, by each channel's albedo estimated against the ambient level,
     // where middle grey is 18% reflectance. Lamps and sky are past albedo 1 and

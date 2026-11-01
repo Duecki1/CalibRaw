@@ -1,8 +1,8 @@
 //! The horizon of the ground in scene depth, for Wet Surfaces
 //! (scene_analysis.wgsl).
 //!
-//! Distance, derived from stored depth, comes nearer toward the bottom of the image
-//! over the ground, and how fast depends on the photo: a nearby object squeezes
+//! Distance, converted from the generated map as for upload, comes nearer toward the
+//! bottom of the image over the ground, and how fast depends on the photo: a nearby object squeezes
 //! the ground's range. So a surface counts as ground by the direction of its
 //! gradient, with some slope at all, which walls (sideways) and surfaces facing
 //! the camera (nearly none) do not have. The same rule marks ground in the scene map; here it tells
@@ -19,9 +19,6 @@ use super::*;
 const GRID_LONG: usize = 96;
 /// Cells on each side between which a gradient is measured.
 const SPAN: usize = 2;
-/// How much of the depth model's inverse-depth range lies beyond the farthest
-/// surface: `SCENE_DISTANCE_INVERSE_SHIFT` in common.wgsl.
-pub(super) const SCENE_DISTANCE_INVERSE_SHIFT: f32 = 0.115;
 /// Distance at and beyond which nothing is ground: the sky and far scenery.
 /// The end of `SCENE_GROUND_FAR` in scene_analysis.wgsl.
 const FAR_DISTANCE: f32 = 0.77;
@@ -59,7 +56,7 @@ pub(super) fn estimate_ground_horizon(depth: &MaskImage, up: [f32; 2]) -> Option
     }
     let distances: Vec<f32> = block_means(depth, block, columns, rows)
         .into_iter()
-        .map(distance_from_depth)
+        .map(scene_depth::distance_from_stored)
         .collect();
     let at = |x: usize, y: usize| distances[y * columns + x];
     // Shorter-edge lengths per cell.
@@ -130,11 +127,6 @@ pub(super) fn estimate_ground_horizon(depth: &MaskImage, up: [f32; 2]) -> Option
     reaches.sort_unstable_by(f32::total_cmp);
     let index = ((reaches.len() - 1) as f32 * REACH_SHARE) as usize;
     Some(reaches[index] + HORIZON_MARGIN)
-}
-
-/// Relative distance of a depth: `scene_distance_from_depth` in common.wgsl.
-fn distance_from_depth(depth: f32) -> f32 {
-    depth * SCENE_DISTANCE_INVERSE_SHIFT / (1.0 - depth + SCENE_DISTANCE_INVERSE_SHIFT)
 }
 
 /// The depth's mean over blocks of `block` × `block` pixels, which also undoes

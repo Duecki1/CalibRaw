@@ -1,5 +1,10 @@
 //! Uploading full-image scene depth and the surface derived from it
 //! (`scene_surface`), the one depth every effect reads.
+//!
+//! The generated map is linear in the depth model's inverse depth i (stored = 1 - i), so
+//! most of a scene lies near 1. Effects read relative distance instead, as fog builds
+//! up, the ground runs and light falls off over distance, converted here alone. Depth
+//! Range masks select on the map itself and are not affected.
 
 use super::scene_surface::{derive_scene_surface, SurfaceLevel};
 use super::*;
@@ -10,6 +15,22 @@ pub(super) fn valid_scene_depth(depth: &MaskImage) -> bool {
     depth.width > 0
         && depth.height > 0
         && (depth.width as usize).checked_mul(depth.height as usize) == Some(depth.pixels.len())
+}
+
+/// How much of the inverse depth's range lies beyond the farthest surface, as distance
+/// goes as 1 / (i + shift). Fitted to a distance-linear depth model's output for the
+/// same photo.
+const INVERSE_DEPTH_SHIFT: f32 = 0.115;
+
+/// Relative distance of a stored depth, both normalized with near 0 and far 1.
+pub(super) fn distance_from_stored(stored: f32) -> f32 {
+    stored * INVERSE_DEPTH_SHIFT / (1.0 - stored + INVERSE_DEPTH_SHIFT)
+}
+
+/// Change of `distance_from_stored` per change of stored depth, to convert a gradient.
+pub(super) fn distance_per_stored(stored: f32) -> f32 {
+    let gap = 1.0 - stored + INVERSE_DEPTH_SHIFT;
+    INVERSE_DEPTH_SHIFT * (1.0 + INVERSE_DEPTH_SHIFT) / (gap * gap)
 }
 
 /// The depth result last uploaded, and whether its surface was.
@@ -134,7 +155,10 @@ fn encoded_scene_depth(depth: &MaskImage, surface: bool) -> Arc<[EncodedLevel]> 
             height: SCENE_DEPTH_EDGE,
             texels: resampled_depth(depth)
                 .iter()
-                .map(|&value| [value, value, 0.0, 0.0])
+                .map(|&stored| {
+                    let distance = distance_from_stored(stored);
+                    [distance, distance, 0.0, 0.0]
+                })
                 .collect(),
         };
         return Arc::from([encode_level(&level)]);

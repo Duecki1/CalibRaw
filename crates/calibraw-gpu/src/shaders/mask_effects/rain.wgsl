@@ -159,8 +159,7 @@ fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) ->
     let uses_depth = wants_depth && scene_depth_present();
     var surface_depth = select(1.0, SCENE_DEPTH_UNKNOWN, wants_depth);
     if uses_depth {
-        // Mist builds up over real distance and the layers lie at fixed distances.
-        surface_depth = scene_distance_at(pos);
+        surface_depth = scene_depth_at(pos);
     }
     let uv = full_image_uv(pos);
     let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);

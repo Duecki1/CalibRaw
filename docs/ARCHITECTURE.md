@@ -250,10 +250,9 @@ scene, so an effect may read any of it whichever pass it runs in:
 - `scene_depth.wgsl` is the one depth (`scene_depth_at`). Fog, Smoke and Wet Surfaces
   read it directly; Relight asks it which part of the surface derived from depth a
   pixel lies on (`scene_surface_taps_at`), since shading needs that surface's own
-  smooth depth and gradient. It is linear in the depth model's inverse depth, so what
-  builds up or is judged over real distance converts it: Rain reads `scene_distance_at`,
-  and the ground analysis finds the ground in distance. Lens blur, Depth Range masks
-  and Relight's frame stay on depth.
+  smooth depth and gradient. It is relative distance, converted from the generated map
+  (linear in inverse depth) on upload (`scene_depth.rs`); Depth Range masks select on
+  the map itself.
 - `scene_environment.wgsl` is the scene's light as effects receive it: its ambient
   level, the photo's coarse colour and the light sources in the photo.
 - `scene_lights.wgsl` turns Relight and Light Rays into lights any effect receives,

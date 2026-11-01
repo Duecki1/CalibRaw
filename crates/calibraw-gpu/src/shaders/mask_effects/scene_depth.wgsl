@@ -1,10 +1,9 @@
 // Scene depth: the one depth every effect reads, and the geometry derived from it.
 //
-// Depth is normalized over the full image, whatever the crop or export tile: near 0,
-// far 1. It is linear in the depth model's inverse depth, not in distance (depth.rs),
-// so most of a scene lies toward 1. Effects read it as it is, unless what they compute
-// builds up over real distance: Rain's mist and the ground's extent read distance
-// (`scene_distance_at`, Common::scene_distance_from_depth).
+// Depth is normalized relative distance (near 0, far 1) over the full image,
+// whatever the crop or export tile, converted from the generated map when it is
+// uploaded (scene_depth.rs). "Stored depth" here is that map before the photo refines
+// it.
 //
 // `scene_depth_at` is depth at a pixel, edge-accurate. Stored depth is reliable on
 // a surface and only there: its depth edges are blocky and misplaced at full size.
@@ -117,11 +116,6 @@ fn scene_depth_from(map: vec4<f32>, pos: vec2<i32>) -> f32 {
 // Depth at a pixel, for scene_depth_present() scenes. Near 0, far 1.
 fn scene_depth_at(pos: vec2<i32>) -> f32 {
     return scene_depth_from(scene_depth_map_at(pos), pos);
-}
-
-// Relative distance at a pixel, for scene_depth_present() scenes.
-fn scene_distance_at(pos: vec2<i32>) -> f32 {
-    return Common::scene_distance_from_depth(scene_depth_at(pos));
 }
 
 // Depth difference at which a coarser map's texel stops contributing to a pixel.
