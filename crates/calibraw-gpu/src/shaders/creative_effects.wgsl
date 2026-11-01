@@ -1,6 +1,7 @@
 #import calibraw::common as Common
 #import calibraw::color as Color
 #import calibraw::basic_adjustments as BasicAdjustments
+#import calibraw::scene_source as SceneSource
 #import calibraw::scene_adjustments as SceneAdjustments
 #import calibraw::detail_scale_space as DetailScaleSpace
 #import calibraw::tone_common as ToneCommon
@@ -67,15 +68,6 @@ fn apply_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     let current_luma = Common::safe_luma(rgb);
     let core_protection = 1.0 - 0.72 * smoothstep(1.0, 3.2, current_luma);
     return rgb + bloom * 2.8 * core_protection;
-}
-
-fn full_image_uv(pos: vec2<i32>) -> vec2<f32> {
-    let dimensions = max(
-        vec2<f32>(f32(Common::camera_uniforms.full_width), f32(Common::camera_uniforms.full_height)),
-        vec2<f32>(1.0),
-    );
-    let global_pos = clamp(pos + Common::tile_origin(), vec2<i32>(0), Common::full_image_max());
-    return (vec2<f32>(global_pos) + vec2<f32>(0.5)) / dimensions;
 }
 
 fn vignette_distance_from_center(pos: vec2<i32>, roundness: f32, center: vec2<f32>) -> f32 {
@@ -184,7 +176,7 @@ fn calibrated_vignette_opacity(
 // in the scene preparation (SceneAdjustments::dehaze_amount_at).
 fn apply_local_scene_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_applies(state, 0u) { continue; }
@@ -204,7 +196,7 @@ fn apply_local_scene_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<
 
 fn apply_local_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_applies(state, MASK_EFFECT_NEON_ID) { continue; }
@@ -223,7 +215,7 @@ fn apply_local_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f
 
 fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_active(state) { continue; }
@@ -361,6 +353,59 @@ fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
     rgb = apply_glow(pos, rgb);
     rgb = apply_mask_glow_cores(pos, rgb);
     rgb = apply_light_rays(pos, rgb);
+    textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
+}
+
+// Rain and Wet Surfaces, in two passes around the creative effects, so that the
+// result does not depend on the order of their cards:
+//   apply_wet_surfaces  before the creative effects: wet ground darkens and
+//                       reflects the photo, then Relight's light lands on it
+//                       and Fog veils it, and Relight's Ambient dims what it
+//                       reflects along with everything else already there.
+//   apply_weather_air   after them: scene lights' highlights on the wet
+//                       ground, then falling rain in front of everything.
+//
+// Both read only full-image coordinates, the scene map, scene depth, global tone
+// statistics and the scene a few pixels around (wet_detail), so export tiles match
+// the preview with a small halo (WET_SURFACES_SUPPORT in tiles.rs).
+@compute @workgroup_size(8, 8, 1)
+fn apply_wet_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
+    let pos = vec2<i32>(i32(gid.x), i32(gid.y));
+    var rgb = SceneAdjustments::local_effects_at(pos);
+    for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
+        if !Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_WET_SURFACES_ID) {
+            continue;
+        }
+        let weight = SceneAdjustments::local_mask_weight(pos, index);
+        if weight <= 1e-5 { continue; }
+        rgb = mix(rgb, wet_surface(pos, rgb, mask_effect_params(index)), weight);
+    }
+    textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn apply_weather_air(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
+    let pos = vec2<i32>(i32(gid.x), i32(gid.y));
+    var rgb = SceneAdjustments::local_effects_at(pos);
+    for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
+        let state = Common::mask_data[index].metadata;
+        if !Common::mask_slot_active(state) { continue; }
+        let effect_id = Common::mask_effect_id(state);
+        if effect_id != MASK_EFFECT_WET_SURFACES_ID { continue; }
+        let weight = SceneAdjustments::local_mask_weight(pos, index);
+        if weight <= 1e-5 { continue; }
+        rgb += wet_glints(pos, mask_effect_params(index)) * weight;
+    }
+    for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
+        if !Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_RAIN_ID) {
+            continue;
+        }
+        let weight = SceneAdjustments::local_mask_weight(pos, index);
+        if weight <= 1e-5 { continue; }
+        rgb = mix(rgb, apply_rain(pos, rgb, mask_effect_params(index)), weight);
+    }
     textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
 }
 

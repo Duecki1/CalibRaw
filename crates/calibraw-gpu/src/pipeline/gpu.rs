@@ -40,8 +40,7 @@ mod wait;
 use builder::*;
 pub use clipping::PreviewClippingGpu;
 use effect_inputs::{
-    EffectInputs, FullImageMap, InputBindingSources, InputBoundPass, HAZE_PASSES,
-    WEATHER_MAP_PASSES,
+    EffectInputs, FullImageMap, InputBindingSources, InputBoundPass, HAZE_PASSES, SCENE_MAP_PASSES,
 };
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 pub use preview_budget::{preview_mask_layer_capacity, MobilePreviewRole, PreviewResourceShape};
@@ -452,8 +451,6 @@ pub struct RawGpuPipeline {
     indices: StageIndices,
     post_blur_glow_passes: Vec<Pass>,
     post_blur_pixelate_blocks_pass: Pass,
-    post_blur_scene_depth_guide_pass: Pass,
-    post_blur_creative_pass: Pass,
     post_blur_render_pass: Pass,
     /// The raster finish program reading a binned source's reconstructed
     /// camera RGB from highlight work A.
@@ -491,7 +488,6 @@ pub struct RawGpuPipeline {
     _tone_guide_b: wgpu::Texture,
     mask_texture: wgpu::Texture,
     light_rays_mask_texture: wgpu::Texture,
-    scene_depth_texture: wgpu::Texture,
     uploaded_scene_depth: Mutex<Option<scene_depth::UploadedSceneDepth>>,
     /// What the Relight shadow map (relight.wgsl) was last built for; `None` after scene depth
     /// changes, so the next output stage rebuilds it.
@@ -565,7 +561,7 @@ impl RawGpuPipeline {
         self.upload_scene_depth(
             queue,
             params.scene_depth.as_ref(),
-            params.needs_relight_surface(),
+            params.needs_scene_surface(),
         );
         let look_lut_uploaded = match self.prepare_look_lut(queue, params.look_lut()) {
             Ok(()) => true,
@@ -596,9 +592,9 @@ impl RawGpuPipeline {
                     );
                     uploaded.scene_tone = scene_tone;
                 }
-                if uploaded.effects.weather_ground != params.effects.weather_ground {
-                    // The weather map holds the ground along this direction.
-                    self.full_image_map_current(FullImageMap::Weather)
+                if uploaded.effects.scene_ground != params.effects.scene_ground {
+                    // The scene map holds the ground along this direction.
+                    self.full_image_map_current(FullImageMap::Scene)
                         .store(false, Ordering::Release);
                 }
                 if bytemuck::bytes_of(&uploaded.effects) != params.effects_bytes() {
@@ -850,13 +846,11 @@ impl RawGpuPipeline {
 
     /// Allocates the effect inputs `params` reads (`effect_inputs`).
     fn prepare_effect_inputs(&self, params: &GpuParams) {
-        if params.needs_scene_depth_guide() {
-            self.effect_inputs.allocate_scene_depth_guide();
+        if params.needs_full_image_map(FullImageMap::Scene) {
+            self.effect_inputs.allocate_scene_depth();
         }
-        if params.needs_relight_surface() && self.effect_inputs.allocate_relight() {
-            // Scene depth now goes to the Relight surface, which replaced the
-            // plain depth texture in every bind group.
-            self.forget_uploaded_scene_depth();
+        if params.relight_shadow_map_key().is_some() {
+            self.effect_inputs.allocate_relight_shadow_map();
         }
         for map in FullImageMap::ALL {
             if params.needs_full_image_map(map) {
@@ -1009,7 +1003,7 @@ impl RawGpuPipeline {
         params: &GpuParams,
         full_frame: &Self,
     ) {
-        // New scene depth outdates the weather map, so it is uploaded before
+        // New scene depth outdates the scene map, so it is uploaded before
         // the map is inherited rather than after.
         self.upload_params(queue, params);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1220,7 +1214,7 @@ impl RawGpuPipeline {
                 image_in_tex2 = true;
             }
             if params.needs_wet_surfaces_pass() {
-                self.encode_weather_pass(
+                self.encode_effects_pass(
                     encoder,
                     self.indices.wet_surfaces_pass_index,
                     &mut image_in_tex2,
@@ -1255,29 +1249,13 @@ impl RawGpuPipeline {
                     self.encode_pass(encoder, self.indices.pixelate_blocks_pass_index);
                 }
             }
-            let depth_guide = params.needs_scene_depth_guide();
-            if image_in_tex2 {
-                if depth_guide {
-                    self.encode_bound_pass(
-                        encoder,
-                        &self.post_blur_scene_depth_guide_pass,
-                        "post-Blur scene-depth guide pass",
-                    );
-                }
-                self.encode_bound_pass(
-                    encoder,
-                    &self.post_blur_creative_pass,
-                    "post-Blur creative pass",
-                );
-            } else {
-                if depth_guide {
-                    self.encode_pass(encoder, self.indices.scene_depth_guide_pass_index);
-                }
-                self.encode_pass(encoder, self.indices.adjustment_creative_pass_index);
-            }
-            image_in_tex2 = !image_in_tex2;
-            if params.needs_weather() {
-                self.encode_weather_pass(
+            self.encode_effects_pass(
+                encoder,
+                self.indices.adjustment_creative_pass_index,
+                &mut image_in_tex2,
+            );
+            if params.needs_weather_air_pass() {
+                self.encode_effects_pass(
                     encoder,
                     self.indices.weather_air_pass_index,
                     &mut image_in_tex2,
@@ -1295,9 +1273,9 @@ impl RawGpuPipeline {
         }
     }
 
-    /// Encodes the Rain or Wet Surfaces pass at `index` from the work texture
-    /// holding the image into the other.
-    fn encode_weather_pass(
+    /// Encodes the pass of effects at `index` from the work texture holding the
+    /// image into the other.
+    fn encode_effects_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         index: usize,
@@ -1305,9 +1283,9 @@ impl RawGpuPipeline {
     ) {
         let pass = &self.passes[index];
         let input = if *image_in_tex2 {
-            InputBoundPass::WeatherFromTex2
+            InputBoundPass::EffectsFromTex2
         } else {
-            InputBoundPass::WeatherFromTex1
+            InputBoundPass::EffectsFromTex1
         };
         dispatch_compute(
             encoder,

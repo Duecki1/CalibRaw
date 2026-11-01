@@ -80,30 +80,6 @@ fn rain_layer_density(layer: u32) -> f32 {
     return densities[layer];
 }
 
-// Distance of a depth in the Relight frame's convention, in units of the
-// nearest surface's distance.
-fn rain_depth_distance(camera: CreativeEffects::SceneCamera, depth: f32) -> f32 {
-    if depth < 0.0 { return 1.0 + 0.9 * depth; }
-    return CreativeEffects::scene_depth_z(camera, depth);
-}
-
-// Four uniform values for a cell of a layer (pcg2d).
-fn rain_cell_random(cell: vec2<i32>, salt: u32) -> vec4<f32> {
-    var v = bitcast<vec2<u32>>(cell) * 1664525u + vec2<u32>(1013904223u, salt);
-    v.x = v.x + v.y * 1664525u;
-    v.y = v.y + v.x * 1664525u;
-    v = v ^ (v >> vec2<u32>(16u));
-    v.x = v.x + v.y * 1664525u;
-    v.y = v.y + v.x * 1664525u;
-    v = v ^ (v >> vec2<u32>(16u));
-    return vec4<f32>(
-        f32(v.x & 0xffffu),
-        f32(v.x >> 16u),
-        f32(v.y & 0xffffu),
-        f32(v.y >> 16u),
-    ) / 65535.0;
-}
-
 // Everything about one Rain effect that is the same for every layer at a pixel.
 struct RainField {
     // The pixel in the warped plane where streaks are straight and parallel:
@@ -129,7 +105,7 @@ fn rain_layer_coverage(field: RainField, layer: u32, distance: f32) -> f32 {
     let density = rain_layer_density(layer);
     let cell_size = vec2<f32>(1.0 / (density * longest * 1.3), length * 1.3);
     let presence = field.amount * length / longest;
-    let pixel = weather_pixel_extent() / field.scale;
+    let pixel = scene_pixel_extent() / field.scale;
     let defocus = abs(size - 1.0 / field.focus) * RAIN_DEFOCUS;
     let sigma = sqrt(0.25 * width * width + defocus * defocus + 0.25 * pixel * pixel);
     let peak = 0.5 * width / sigma;
@@ -143,7 +119,7 @@ fn rain_layer_coverage(field: RainField, layer: u32, distance: f32) -> f32 {
     for (var dy = -1; dy <= 0; dy = dy + 1) {
         for (var dx = -1; dx <= 1; dx = dx + 1) {
             let candidate = cell + vec2<i32>(dx, dy);
-            let random = rain_cell_random(candidate, salt);
+            let random = effect_cell_random(candidate, salt);
             if random.x >= presence { continue; }
             // Larger drops fall faster, so their streaks are longer and wider.
             let drop = 0.55 + 0.9 * random.w;
@@ -165,74 +141,59 @@ fn rain_layer_coverage(field: RainField, layer: u32, distance: f32) -> f32 {
 
 // Light from scene lights and the photograph's light sources that a drop at
 // `depth` refracts toward the camera.
-fn rain_drop_light(pos: vec2<i32>, params: CreativeEffects::MaskEffectParams, depth: f32) -> vec3<f32> {
-    let glow = clamp(CreativeEffects::mask_effect_lane(params, RAIN_LIGHT_GLOW_LANE) / 100.0, 0.0, 1.0);
+fn rain_drop_light(pos: vec2<i32>, params: MaskEffectParams, depth: f32) -> vec3<f32> {
+    let glow = mask_effect_percent(params, RAIN_LIGHT_GLOW_LANE);
     if glow <= 1e-6 { return vec3<f32>(0.0); }
-    let uv = CreativeEffects::full_image_uv(pos);
-    var light_sum = vec3<f32>(0.0);
-    for (var index = 0u; index < CreativeEffects::scene_light_slots(); index = index + 1u) {
-        let light = CreativeEffects::scene_light_at(index);
-        if !light.emits { continue; }
-        let coverage = CreativeEffects::scene_light_coverage(light, pos);
-        if coverage <= 1e-6 { continue; }
-        let position = CreativeEffects::scene_camera_point(
-            light.camera,
-            uv * light.camera.image_size,
-            rain_depth_distance(light.camera, depth),
-        );
-        light_sum += light.intensity * (CreativeEffects::scene_light_falloff(light, position)
-            * CreativeEffects::scene_light_phase_at(light, position, RAIN_LIGHT_ANISOTROPY) * coverage);
-    }
-    var result = light_sum * (glow * RAIN_LIGHT_GAIN * CreativeEffects::scene_ambient_level());
-    if CreativeEffects::medium_image_lights_enabled(params) {
-        result += CreativeEffects::image_light_at(pos) * (glow * RAIN_IMAGE_LIGHT_GAIN);
+    var result = scene_light_received(pos, depth, RAIN_LIGHT_ANISOTROPY)
+        * (glow * RAIN_LIGHT_GAIN * scene_ambient_level());
+    if medium_image_lights_enabled(params) {
+        result += image_light_at(pos) * (glow * RAIN_IMAGE_LIGHT_GAIN);
     }
     return result;
 }
 
-fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: CreativeEffects::MaskEffectParams) -> vec3<f32> {
-    let amount = clamp(CreativeEffects::mask_effect_lane(params, RAIN_AMOUNT_LANE) / 100.0, 0.0, 1.0);
+fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    let amount = mask_effect_percent(params, RAIN_AMOUNT_LANE);
     if amount <= 1e-6 { return input_rgb; }
-    let wants_depth = CreativeEffects::mask_effect_lane(params, RAIN_DEPTH_LANE) > 0.5;
-    let uses_depth = wants_depth && weather_depth_present();
-    // Until depth is generated, the restrained constant distance Fog uses.
-    var surface_depth = select(1.0, 0.35, wants_depth);
+    let wants_depth = mask_effect_lane(params, RAIN_DEPTH_LANE) > 0.5;
+    let uses_depth = wants_depth && scene_depth_present();
+    var surface_depth = select(1.0, SCENE_DEPTH_UNKNOWN, wants_depth);
     if uses_depth {
-        surface_depth = weather_depth_from(weather_map_at(pos), pos);
+        surface_depth = scene_depth_at(pos);
     }
-    let uv = CreativeEffects::full_image_uv(pos);
-    let camera = CreativeEffects::scene_camera(CreativeEffects::SCENE_DEFAULT_RELIEF_CONTROL);
+    let uv = full_image_uv(pos);
+    let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
 
     // The light around the drops. Light reaches them from above as well.
-    let around = 0.6 * weather_environment_blurred_at(uv)
-        + 0.4 * weather_environment_blurred_at(vec2<f32>(uv.x, uv.y * 0.3));
+    let around = 0.6 * scene_environment_blurred_at(uv)
+        + 0.4 * scene_environment_blurred_at(vec2<f32>(uv.x, uv.y * 0.3));
 
-    let seed = u32(clamp(CreativeEffects::mask_effect_lane(params, RAIN_SEED_LANE), 0.0, 1000.0));
+    let seed = u32(clamp(mask_effect_lane(params, RAIN_SEED_LANE), 0.0, 1000.0));
     let seed_offset = vec2<f32>(f32(seed) * 0.071 + 5.3, f32(seed) * -0.113 + 41.7);
-    let image_size = Common::weather_image_size();
+    let image_size = Common::scene_image_size();
     let center = 0.5 * image_size;
     let point = uv * image_size;
-    let fall = CreativeEffects::mask_effect_lane_pair(params, RAIN_FALL_X_LANE);
+    let fall = mask_effect_lane_pair(params, RAIN_FALL_X_LANE);
     let across = vec2<f32>(fall.y, -fall.x);
     let relative = point - center;
     let plane = vec2<f32>(dot(relative, across), dot(relative, fall));
     // A homography: straight lines stay straight, and streaks parallel in the
     // warped plane meet at a vanishing point on the fall axis.
-    let perspective = clamp(CreativeEffects::mask_effect_lane(params, RAIN_PERSPECTIVE_LANE) / 100.0, -1.0, 1.0);
+    let perspective = clamp(mask_effect_lane(params, RAIN_PERSPECTIVE_LANE) / 100.0, -1.0, 1.0);
     let denominator = max(1.0 + perspective * 0.7 * plane.y / max(image_size.x, image_size.y), 0.15);
     var warped = plane / denominator;
 
     // Gusts: the rain gathers into uneven curtains and bends along them.
-    let gusts = clamp(CreativeEffects::mask_effect_lane(params, RAIN_GUSTS_LANE) / 100.0, 0.0, 1.0);
+    let gusts = mask_effect_percent(params, RAIN_GUSTS_LANE);
     let curtain_point = vec2<f32>(warped.x * 2.1, warped.y * 0.55) + seed_offset;
-    let curtain = CreativeEffects::atmosphere_fbm(curtain_point);
+    let curtain = effect_fbm(curtain_point);
     warped.x += gusts * RAIN_GUST_BEND
-        * (CreativeEffects::atmosphere_noise(curtain_point * 0.7 + vec2<f32>(9.2, 3.1)) - 0.5);
+        * (effect_noise(curtain_point * 0.7 + vec2<f32>(9.2, 3.1)) - 0.5);
     let strength = mix(1.0, smoothstep(0.28, 0.72, curtain) * 1.7, gusts);
 
-    let size = clamp(CreativeEffects::mask_effect_lane(params, RAIN_DROP_SIZE_LANE) / 100.0, 0.0, 1.0);
-    let travel = clamp(CreativeEffects::mask_effect_lane(params, RAIN_LENGTH_LANE) / 100.0, 0.0, 1.0);
-    let focus_control = clamp(CreativeEffects::mask_effect_lane(params, RAIN_FOCUS_LANE) / 100.0, 0.0, 1.0);
+    let size = mask_effect_percent(params, RAIN_DROP_SIZE_LANE);
+    let travel = mask_effect_percent(params, RAIN_LENGTH_LANE);
+    let focus_control = mask_effect_percent(params, RAIN_FOCUS_LANE);
     let field = RainField(
         warped,
         denominator,
@@ -247,19 +208,19 @@ fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: CreativeEffects::Mas
     // the rain rate as R^0.67 (Tremblay et al., "Rain Rendering for Evaluating
     // and Improving Robustness to Bad Weather", 2021), and it scatters scene
     // lights as Fog does.
-    let mist = clamp(CreativeEffects::mask_effect_lane(params, RAIN_MIST_LANE) / 100.0, 0.0, 1.0);
+    let mist = mask_effect_percent(params, RAIN_MIST_LANE);
     let extinction = RAIN_MIST_DEPTH * mist * pow(amount, 0.67) * mix(1.0, strength, 0.5);
     let distance = max(surface_depth, 0.0);
     let optical_depth = extinction * (RAIN_MIST_NEAR + distance);
     let transmission = exp(-optical_depth);
     var rgb = input_rgb * transmission + around * RAIN_MIST_GAIN * (1.0 - transmission);
-    let glow = clamp(CreativeEffects::mask_effect_lane(params, RAIN_LIGHT_GLOW_LANE) / 100.0, 0.0, 1.0);
+    let glow = mask_effect_percent(params, RAIN_LIGHT_GLOW_LANE);
     if extinction > 1e-6 && glow > 1e-6 {
-        let ray = vec3<f32>(CreativeEffects::atmosphere_image_point(pos) * 1.25, 1.0);
-        let volume = CreativeEffects::FogVolume(ray, 0.0, 0.1, 1.0, vec3<f32>(0.0), 0.0, 0.5);
-        let scattered = CreativeEffects::fog_light_scattering(pos, volume, distance, extinction);
-        rgb += scattered * (glow * RAIN_MIST_GLOW_GAIN * CreativeEffects::scene_ambient_level());
-        rgb += CreativeEffects::medium_image_light(pos, params, glow, 1.0, 1.0 - transmission);
+        let ray = vec3<f32>(effect_image_point(pos) * 1.25, 1.0);
+        let volume = MediumVolume(ray, 0.0, 0.1, 1.0, vec3<f32>(0.0), 0.0, 0.5);
+        let scattered = medium_light_scattering(pos, volume, distance, extinction);
+        rgb += scattered * (glow * RAIN_MIST_GLOW_GAIN * scene_ambient_level());
+        rgb += medium_image_light(pos, params, glow, 1.0, 1.0 - transmission);
     }
 
     // Streaks, far to near, each layer veiled by the mist in front of it.
@@ -275,7 +236,7 @@ fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: CreativeEffects::Mas
             );
             if visible <= 1e-4 { continue; }
         }
-        let layer_distance = rain_depth_distance(camera, depth);
+        let layer_distance = scene_depth_z(camera, depth);
         let coverage = rain_layer_coverage(field, layer, layer_distance) * visible * min(strength, 1.0);
         if coverage <= 1e-4 { continue; }
         let veil = exp(-extinction * (RAIN_MIST_NEAR + max(depth, 0.0)));

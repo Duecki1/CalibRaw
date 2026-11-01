@@ -92,7 +92,7 @@ fn local_mask_weight_at(pos: vec2<f32>, index: u32) -> f32 {
 
 fn apply_local_exposure_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_applies(state, 0u) { continue; }
@@ -110,7 +110,7 @@ fn apply_local_exposure_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
 // every mask.
 fn dehaze_amount_at(pos: vec2<i32>) -> f32 {
     var amount = BasicAdjustments::perceptual_control(Common::effects_uniforms.presence.z);
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_applies(state, 0u) { continue; }
@@ -305,7 +305,7 @@ fn apply_local_curves_for_mask(mask_index: u32, input_rgb: vec3<f32>) -> vec3<f3
 
 fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_applies(state, 0u) { continue; }
@@ -356,7 +356,7 @@ fn apply_capture_sharpening_at(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32
     var effect_ev = 0.0;
     var halo_ev = 0.0;
     var sharpened = false;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || state.y == 0u

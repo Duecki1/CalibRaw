@@ -17,6 +17,8 @@ const MASK_EFFECT_HALATION_ID: u32 = 14u;
 const MASK_EFFECT_VIGNETTE_ID: u32 = 15u;
 const MASK_EFFECT_RELIGHT_ID: u32 = 16u;
 // MASK_EFFECT_SHARPEN_ID (17) is in detail_capture.wgsl, its only reader.
+const MASK_EFFECT_RAIN_ID: u32 = 18u;
+const MASK_EFFECT_WET_SURFACES_ID: u32 = 19u;
 
 // An effect slot's packed parameters (effect_lanes.rs). Lane n is component
 // n % 4 of `primary`, `secondary` or `tertiary` for n / 4 = 0, 1, 2; effects
@@ -48,6 +50,11 @@ fn mask_effect_lane(params: MaskEffectParams, lane: u32) -> f32 {
     return row[lane % 4u];
 }
 
+// A control of 0 to 100 as 0 to 1.
+fn mask_effect_percent(params: MaskEffectParams, lane: u32) -> f32 {
+    return clamp(mask_effect_lane(params, lane) / 100.0, 0.0, 1.0);
+}
+
 // Two consecutive lanes, such as a position's x and y.
 fn mask_effect_lane_pair(params: MaskEffectParams, lane: u32) -> vec2<f32> {
     return vec2<f32>(mask_effect_lane(params, lane), mask_effect_lane(params, lane + 1u));
@@ -69,6 +76,122 @@ fn mask_effect_hash_unit(seed: u32) -> f32 {
     h = (h ^ (h >> 13u)) * 3266489917u;
     h = h ^ (h >> 16u);
     return f32(h & 0x00ffffffu) / 16777215.0;
+}
+
+// Four uniform values for a cell of a procedural pattern (pcg2d).
+fn effect_cell_random(cell: vec2<i32>, salt: u32) -> vec4<f32> {
+    var v = bitcast<vec2<u32>>(cell) * 1664525u + vec2<u32>(1013904223u, salt);
+    v.x = v.x + v.y * 1664525u;
+    v.y = v.y + v.x * 1664525u;
+    v = v ^ (v >> vec2<u32>(16u));
+    v.x = v.x + v.y * 1664525u;
+    v.y = v.y + v.x * 1664525u;
+    v = v ^ (v >> vec2<u32>(16u));
+    return vec4<f32>(
+        f32(v.x & 0xffffu),
+        f32(v.x >> 16u),
+        f32(v.y & 0xffffu),
+        f32(v.y >> 16u),
+    ) / 65535.0;
+}
+
+fn effect_hash(position: vec2<f32>) -> f32 {
+    let signed_cell = vec2<i32>(position);
+    let cell = bitcast<vec2<u32>>(signed_cell);
+    return mask_effect_hash_unit(cell.x * 1597334677u ^ cell.y * 3812015801u);
+}
+
+// Value noise in [0, 1].
+fn effect_noise(position: vec2<f32>) -> f32 {
+    let cell = floor(position);
+    let fraction = position - cell;
+    let smooth_fraction = fraction * fraction * (vec2<f32>(3.0) - 2.0 * fraction);
+    let bottom = mix(
+        effect_hash(cell),
+        effect_hash(cell + vec2<f32>(1.0, 0.0)),
+        smooth_fraction.x,
+    );
+    let top = mix(
+        effect_hash(cell + vec2<f32>(0.0, 1.0)),
+        effect_hash(cell + vec2<f32>(1.0, 1.0)),
+        smooth_fraction.x,
+    );
+    return mix(bottom, top, smooth_fraction.y);
+}
+
+// Octaves of `effect_noise`, each rotated and finer, weighted by powers of `gain`.
+fn effect_fbm_octaves(position: vec2<f32>, octaves: u32, gain: f32) -> f32 {
+    var point = position;
+    var amplitude = 0.5;
+    var value = 0.0;
+    var normalization = 0.0;
+    for (var octave = 0u; octave < octaves; octave = octave + 1u) {
+        value = value + effect_noise(point) * amplitude;
+        normalization = normalization + amplitude;
+        point = vec2<f32>(
+            point.x * 1.62 + point.y * 1.17,
+            point.x * -1.17 + point.y * 1.62,
+        ) + vec2<f32>(13.7, 9.2);
+        amplitude = amplitude * gain;
+    }
+    return value / max(normalization, 1e-6);
+}
+
+fn effect_fbm(position: vec2<f32>) -> f32 {
+    return effect_fbm_octaves(position, 5u, 0.52);
+}
+
+fn effect_hash3(cell: vec3<i32>) -> f32 {
+    let p = bitcast<vec3<u32>>(cell);
+    return mask_effect_hash_unit(p.x * 1597334677u ^ p.y * 3812015801u ^ p.z * 2798796415u);
+}
+
+// Value noise in [0, 1] over a volume.
+fn effect_noise3(point: vec3<f32>) -> f32 {
+    let cell = vec3<i32>(floor(point));
+    let f = point - vec3<f32>(cell);
+    let u = f * f * f * (f * (f * 6.0 - vec3<f32>(15.0)) + vec3<f32>(10.0));
+    let a = mix(
+        mix(effect_hash3(cell), effect_hash3(cell + vec3<i32>(1, 0, 0)), u.x),
+        mix(effect_hash3(cell + vec3<i32>(0, 1, 0)), effect_hash3(cell + vec3<i32>(1, 1, 0)), u.x), u.y,
+    );
+    let b = mix(
+        mix(effect_hash3(cell + vec3<i32>(0, 0, 1)), effect_hash3(cell + vec3<i32>(1, 0, 1)), u.x),
+        mix(effect_hash3(cell + vec3<i32>(0, 1, 1)), effect_hash3(cell + vec3<i32>(1, 1, 1)), u.x), u.y,
+    );
+    return mix(a, b, u.z);
+}
+
+// A pixel's position over the full image, whatever the crop or export tile.
+fn full_image_uv(pos: vec2<i32>) -> vec2<f32> {
+    let dimensions = max(
+        vec2<f32>(f32(Common::camera_uniforms.full_width), f32(Common::camera_uniforms.full_height)),
+        vec2<f32>(1.0),
+    );
+    let global_pos = clamp(pos + Common::tile_origin(), vec2<i32>(0), Common::full_image_max());
+    return (vec2<f32>(global_pos) + vec2<f32>(0.5)) / dimensions;
+}
+
+// A pixel relative to the image's centre, in units of its height.
+fn effect_image_point(pos: vec2<i32>) -> vec2<f32> {
+    let full_size = max(
+        vec2<f32>(
+            f32(Common::camera_uniforms.full_width),
+            f32(Common::camera_uniforms.full_height),
+        ),
+        vec2<f32>(1.0),
+    );
+    var point = full_image_uv(pos) - vec2<f32>(0.5);
+    point.x = point.x * full_size.x / full_size.y;
+    return point;
+}
+
+// Shorter-edge units per full-image pixel.
+fn scene_pixel_extent() -> f32 {
+    return 1.0 / max(
+        f32(min(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height)),
+        1.0,
+    );
 }
 
 fn mask_effect_srgb_component_to_linear(value: f32) -> f32 {

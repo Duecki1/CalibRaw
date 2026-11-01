@@ -160,6 +160,24 @@ review the new goldens like code. The Remove and X-Trans denoise cases
 render or demosaic on the GPU first, so their goldens hold only on the
 adapter that blessed them. The file header documents the formats.
 
+### Adding an effect
+
+An effect is one row in the `mask_effects!` table
+(`calibraw-core/src/pipeline/masks/effects/mod.rs`) and `MaskEffect::ALL`, its settings
+file beside it with its specs in `effects/params.rs`, its checks in
+`sidecar/validation/effects.rs`, its packing in `calibraw-gpu`'s `mask_params.rs` and
+`effect_lanes.rs`, one WGSL file in `shaders/mask_effects/` added to `CREATIVE_EFFECTS`
+and called from a pass in `creative_effects.wgsl`, and one card in
+`calibraw-ui/src/ui/sidebar/mask_effects/`.
+
+What an effect needs from the scene already exists, so do not sample or upsample it
+again: `scene_depth_at` for distance and `scene_surface_taps_at` for the surface to
+shade (`scene_depth.wgsl`), `scene_environment_at` and `scene_ambient_level` for its
+light (`scene_environment.wgsl`), `scene_light_at` for lights
+(`scene_lights.wgsl`), `medium.wgsl` to scatter them, and `effect_noise` and
+`effect_fbm` for patterns (`shared.wgsl`). An effect that reads depth also
+goes in `GpuParams::needs_scene_map`.
+
 ### Render parity and format fixtures
 
 Both run with the workspace tests, and `CALIBRAW_PARITY_BLESS=1` rewrites

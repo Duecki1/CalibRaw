@@ -79,7 +79,6 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) tone_guide_b: wgpu::Texture,
     pub(in crate::pipeline::gpu) mask_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) light_rays_mask_texture: wgpu::Texture,
-    pub(in crate::pipeline::gpu) scene_depth_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) out_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) display_linear_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) reconstructed_raw_view: wgpu::TextureView,
@@ -98,7 +97,6 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) lens_shading_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) light_rays_mask_view: wgpu::TextureView,
-    pub(in crate::pipeline::gpu) scene_depth_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_sampler: wgpu::Sampler,
     /// Markesteijn's homogeneity map, allocated for X-Trans only.
     pub(in crate::pipeline::gpu) xtrans_homogeneity: Option<wgpu::Texture>,
@@ -224,16 +222,6 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         "calibraw full-image Light Rays emission atlas",
     );
 
-    // Stored depth that Fog and Smoke read. Relight's surface replaces it
-    // once allocated (`effect_inputs`).
-    let scene_depth_texture = create_processing_texture(
-        device,
-        texture_size(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE),
-        SCENE_DEPTH_FORMAT,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        "calibraw full-image scene depth",
-    );
-    let scene_depth_view = default_texture_view(&scene_depth_texture);
     let xtrans_homogeneity = matches!(raw.cfa_kind, CfaKind::XTrans).then(|| {
         create_processing_texture(
             device,
@@ -278,8 +266,8 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         address_mode_w: wgpu::AddressMode::ClampToEdge,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
-        // Single-level mask atlases are unaffected; Relight's scene-depth
-        // surface blends its mip levels for broad light sizes.
+        // Single-level mask atlases are unaffected; the scene-depth surface
+        // blends its mip levels for broad light sizes.
         mipmap_filter: wgpu::MipmapFilterMode::Linear,
         ..Default::default()
     });
@@ -304,7 +292,6 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             tone_guide_b,
             mask_texture,
             light_rays_mask_texture,
-            scene_depth_texture,
             out_view,
             display_linear_view,
             reconstructed_raw_view,
@@ -323,7 +310,6 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             lens_shading_view,
             mask_view,
             light_rays_mask_view,
-            scene_depth_view,
             mask_sampler,
             xtrans_homogeneity,
             xtrans_homogeneity_view,

@@ -1,12 +1,12 @@
 //! The horizon of the ground in scene depth, for Wet Surfaces
-//! (weather_analysis.wgsl).
+//! (scene_analysis.wgsl).
 //!
 //! Stored depth comes nearer toward the bottom of the image over the ground, and
 //! how fast depends on the photo: the model's output is not linear in distance
 //! or in its inverse, and a nearby object squeezes the ground's range. So a
 //! surface counts as ground by the direction of its depth gradient, with some
 //! slope at all, which walls (sideways) and surfaces facing the camera (nearly
-//! none) do not have. The same rule marks ground in the weather map; here it tells
+//! none) do not have. The same rule marks ground in the scene map; here it tells
 //! whether the photo has ground and how far up it reaches: walking from
 //! the near edge of the image along each line toward the horizon until the
 //! ground ends.
@@ -21,13 +21,13 @@ const GRID_LONG: usize = 96;
 /// Cells on each side between which a gradient is measured.
 const SPAN: usize = 2;
 /// Depth at and beyond which nothing is ground: the sky and far scenery.
-/// The end of `WEATHER_GROUND_FAR` in weather_analysis.wgsl.
+/// The end of `SCENE_GROUND_FAR` in scene_analysis.wgsl.
 const FAR_DEPTH: f32 = 0.97;
 /// Slope in depth per shorter edge from which a surface can be ground, the
-/// middle of `WEATHER_GROUND_SLOPE` in weather_analysis.wgsl.
+/// middle of `SCENE_GROUND_SLOPE` in scene_analysis.wgsl.
 const MIN_SLOPE: f32 = 0.12;
 /// Cosine of the angle from up within which a gradient can be ground, about 28
-/// degrees, the middle of `WEATHER_GROUND_ALIGNMENT` in weather_analysis.wgsl.
+/// degrees, the middle of `SCENE_GROUND_ALIGNMENT` in scene_analysis.wgsl.
 const MIN_ALIGNMENT: f32 = 0.89;
 /// Cells a walk toward the horizon may cross off the ground, such as a thin rail.
 const MAX_GAP: usize = 3;

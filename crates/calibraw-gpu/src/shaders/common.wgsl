@@ -43,6 +43,11 @@ fn mask_effect_id(metadata: vec4<u32>) -> u32 {
     return metadata.w >> MASK_EFFECT_ID_SHIFT;
 }
 
+// Mask slots in use, the bound of every loop over `mask_data`.
+fn mask_slot_count() -> u32 {
+    return min(scene_tone_uniforms.mask_counts.x, MAX_RENDER_MASK_SLOTS);
+}
+
 // Whether the slot is enabled and changes the image: an adjustment that is not
 // neutral, or an active effect. Rust: `MaskData::is_active`.
 fn mask_slot_active(metadata: vec4<u32>) -> bool {
@@ -187,10 +192,10 @@ struct EffectsUniforms {
     capture_scale_sigma: vec4<f32>,
     capture_thresholds: vec4<f32>,
     capture_mask_coherence: vec4<f32>,
-    // Wet Surfaces' ground (weather_analysis.wgsl): the unit vector toward the
+    // The ground of an active Wet Surfaces effect (scene_analysis.wgsl): the unit vector toward the
     // horizon in image points (xy), the horizon's position along it (z), and 1
     // when the photo has ground (w).
-    weather_ground: vec4<f32>,
+    scene_ground: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> camera_uniforms: CameraUniforms;
@@ -292,16 +297,16 @@ fn image_light_grid() -> vec2<u32> {
     return full_image_grid(IMAGE_LIGHT_GRID_LONG);
 }
 
-// The weather map (weather_analysis.wgsl): a coarse grid over the full image
-// with WEATHER_GRID_LONG cells along its longer edge and a blurred copy with
-// WEATHER_BLUR_GRID_LONG, stored in textures and a buffer sized for a square
+// The scene map (scene_analysis.wgsl): a coarse grid over the full image
+// with SCENE_MAP_GRID_LONG cells along its longer edge and a blurred copy with
+// SCENE_MAP_BLUR_GRID_LONG, stored in textures and a buffer sized for a square
 // grid. Match the constants of the same names in Rust.
-const WEATHER_GRID_LONG: u32 = 256u;
-const WEATHER_BLUR_GRID_LONG: u32 = 48u;
+const SCENE_MAP_GRID_LONG: u32 = 256u;
+const SCENE_MAP_BLUR_GRID_LONG: u32 = 48u;
 // Depth bins of the lens blur table.
-const WEATHER_FOCUS_BINS: u32 = 32u;
+const SCENE_FOCUS_BINS: u32 = 32u;
 
-fn weather_grid_for(long_cells: u32) -> vec2<u32> {
+fn scene_map_grid_for(long_cells: u32) -> vec2<u32> {
     // A cell holds at least one pixel, even for a very small preview.
     return min(
         full_image_grid(long_cells),
@@ -309,17 +314,17 @@ fn weather_grid_for(long_cells: u32) -> vec2<u32> {
     );
 }
 
-// Cells of the weather grid across and down the full image.
-fn weather_grid() -> vec2<u32> {
-    return weather_grid_for(WEATHER_GRID_LONG);
+// Cells of the scene map across and down the full image.
+fn scene_map_grid() -> vec2<u32> {
+    return scene_map_grid_for(SCENE_MAP_GRID_LONG);
 }
 
-fn weather_blur_grid() -> vec2<u32> {
-    return weather_grid_for(WEATHER_BLUR_GRID_LONG);
+fn scene_map_blur_grid() -> vec2<u32> {
+    return scene_map_grid_for(SCENE_MAP_BLUR_GRID_LONG);
 }
 
-// The full image in shorter-edge units, the unit Rain and Wet Surfaces work in.
-fn weather_image_size() -> vec2<f32> {
+// The full image in shorter-edge units, the unit the scene's image points are in.
+fn scene_image_size() -> vec2<f32> {
     let full = max(
         vec2<f32>(f32(camera_uniforms.full_width), f32(camera_uniforms.full_height)),
         vec2<f32>(1.0),

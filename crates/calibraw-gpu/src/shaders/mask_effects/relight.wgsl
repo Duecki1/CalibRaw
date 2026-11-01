@@ -1,10 +1,11 @@
 // Relight: a virtual point light shading the scene that scene depth describes.
 //
-// Geometry. `scene_depth_tex` (scene_depth.wgsl) covers the full source image.
-// Channel y is dequantized smooth depth and z/w its edge-aware gradient per
-// shorter-edge length; mip levels average them (scene_surface.rs). Positions
-// are in the scene frame (scene_lights.wgsl), where the light is also a scene
-// light other effects receive. Everything depends only on full-image
+// Geometry. `scene_depth_tex` (scene_depth.wgsl) covers the full source image:
+// channel y is dequantized smooth depth and z/w its edge-aware gradient per
+// shorter-edge length; mip levels average them (scene_surface.rs). The shared scene
+// depth says which of that surface a pixel lies on (`scene_surface_taps_at`).
+// Positions are in the scene frame (scene_lights.wgsl), where the light is also a
+// scene light other effects receive. Everything depends only on full-image
 // coordinates, the shared depth texture and global tone statistics, so export
 // tiles match the preview.
 //
@@ -43,9 +44,9 @@ const RELIGHT_GOLDEN_ANGLE: f32 = 2.399963229728653;
 // (`apply_relight`).
 const RELIGHT_REACH_FADE_START: f32 = 0.92;
 const RELIGHT_REACH_LIMIT: f32 = 0.96;
-// A shadow-map texel whose 3×3 neighbourhood lies at least this deep is read
-// only by unlit pixels: its resolve taps are four of those texels, so their
-// weighted mean is beyond the reach limit too. The margin absorbs rounding.
+// A shadow-map texel whose 3×3 neighbourhood lies at least this deep is sky or far
+// scenery, and no light reaches it. A pixel beside it that reads it nonetheless
+// counts as unshadowed, on the fading edge of the light's reach.
 const RELIGHT_UNLIT_TEXEL_DEPTH: f32 = RELIGHT_REACH_LIMIT + 0.001;
 fn relight_surface(uv: vec2<f32>, level: f32) -> vec4<f32> {
     return textureSampleLevel(scene_depth_tex, SceneAdjustments::local_mask_sampler, uv, level);
@@ -281,9 +282,9 @@ fn relight_jitter(uv: vec2<f32>) -> f32 {
 
 // Shadow map. Shadows depend only on scene depth and the light, so they are
 // traced once per level-0 scene-depth texel, for up to four lights (one per
-// channel), instead of per image pixel. Pixels read the map with the joint
-// upsampling taps of the depth itself (scene_depth.wgsl), so shadows
-// keep following image edges. The map covers the full image, is shared by
+// channel), instead of per image pixel. Pixels read the map with the same taps as
+// the surface (`scene_surface_taps_at`), so shadows follow the photo's edges along
+// with depth. The map covers the full image, is shared by
 // export tiles and is rebuilt only when depth or a shadowed light's position,
 // size or relief changes (encode_relight_shadow_map in gpu.rs). Each texel
 // traces from its own smooth depth and dithers with the jitter of the
@@ -291,13 +292,12 @@ fn relight_jitter(uv: vec2<f32>) -> f32 {
 @group(0) @binding(46) var relight_shadow_map: texture_2d<f32>;
 @group(0) @binding(47) var relight_shadow_map_out: texture_storage_2d<rgba16float, write>;
 
-// The shadow map upsampled with the depth's `taps`
-// (`scene_depth_resolve_depth`).
-fn relight_shadow_map_resolve(taps: SceneDepthTaps) -> vec4<f32> {
+// The shadow map upsampled with the surface's `taps`.
+fn relight_shadow_map_resolve(taps: SceneSurfaceTaps) -> vec4<f32> {
     var total = vec4<f32>(0.0);
-    for (var tap = 0u; tap < SCENE_DEPTH_TAPS; tap = tap + 1u) {
-        total += textureLoad(relight_shadow_map, scene_depth_tap_cell(taps, tap), 0)
-            * scene_depth_tap_weight(taps, tap);
+    for (var tap = 0u; tap < SCENE_SURFACE_TAPS; tap = tap + 1u) {
+        total += textureLoad(relight_shadow_map, scene_surface_tap_cell(taps, tap), 0)
+            * scene_surface_tap_weight(taps, tap);
     }
     return total;
 }
@@ -310,10 +310,10 @@ fn relight_shadow_channel(params: MaskEffectParams) -> u32 {
 }
 
 fn relight_size(params: MaskEffectParams) -> f32 {
-    return clamp(mask_effect_lane(params, RELIGHT_SIZE_LANE) / 100.0, 0.0, 1.0);
+    return mask_effect_percent(params, RELIGHT_SIZE_LANE);
 }
 
-// Whether no lit pixel reads the shadow-map texel `cell`: its whole 3×3
+// Whether the shadow-map texel `cell` needs no tracing: its whole 3×3
 // neighbourhood, clamped to the grid as the resolve taps are, lies beyond the
 // reach limit (RELIGHT_UNLIT_TEXEL_DEPTH). Sky is often a large share of a
 // photo, and its shadows would otherwise be traced for nothing.
@@ -342,7 +342,7 @@ fn build_relight_shadow_map(@builtin(global_invocation_id) gid: vec3<u32>) {
     let depth = textureLoad(scene_depth_tex, cell, 0).y;
     let jitter = relight_jitter(uv);
     var visibility = vec4<f32>(1.0);
-    for (var index = 0u; index < scene_light_slots(); index = index + 1u) {
+    for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
         let params = mask_effect_params(index);
         let channel = relight_shadow_channel(params);
         if channel == 0u { continue; }
@@ -357,8 +357,8 @@ fn build_relight_shadow_map(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
-    let amount = clamp(mask_effect_lane(params, RELIGHT_AMOUNT_LANE) / 100.0, 0.0, 1.0);
-    let ambient = clamp(mask_effect_lane(params, RELIGHT_AMBIENT_LANE) / 100.0, 0.0, 1.0);
+    let amount = mask_effect_percent(params, RELIGHT_AMOUNT_LANE);
+    let ambient = mask_effect_percent(params, RELIGHT_AMBIENT_LANE);
     let ambient_rgb = input_rgb * ambient;
     if amount <= 1e-6 { return ambient_rgb; }
 
@@ -370,19 +370,19 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
 
     // Without scene depth (still generating, or failed) the scene is a plane
     // facing the camera: the light keeps its falloff but casts no shadows.
-    let has_depth = Common::scene_tone_uniforms.scene_depth_present != 0u;
-    let shadows = clamp(mask_effect_lane(params, RELIGHT_SHADOWS_LANE) / 100.0, 0.0, 1.0);
+    let has_depth = scene_depth_present();
+    let shadows = mask_effect_percent(params, RELIGHT_SHADOWS_LANE);
     let shadow_channel = relight_shadow_channel(params);
     var depth = 0.0;
     var gradient = vec2<f32>(0.0);
     var mapped_visibility = 1.0;
     if has_depth {
-        // The shadow map shares the depth's grid, so it takes the same taps.
-        let taps = scene_depth_taps_at(pos);
-        let texels = scene_depth_resolve_depth(taps);
-        depth = texels.y;
+        // Shading reads the smooth depth and gradient of the surface the pixel lies
+        // on. The shadow map shares the surface's grid, so it takes the same taps.
+        let taps = scene_surface_taps_at(pos);
+        depth = taps.surface.y;
         gradient = relight_smoothed_gradient(
-            camera, uv, depth, texels.zw, mix(0.004, 0.05, size * size),
+            camera, uv, depth, taps.surface.zw, mix(0.004, 0.05, size * size),
         );
         if shadow_channel != 0u && shadows > 1e-6 {
             mapped_visibility = relight_shadow_map_resolve(taps)[shadow_channel - 1u];

@@ -164,7 +164,7 @@ GPU readbacks wait on one-slot channels.
 | out-of-memory records | `calibraw_ai::placement::out_of_memory` | AI jobs, also under the model runtime slot; Settings when GPU AI is switched | which models ran out of GPU memory and when they may retry; a leaf lock, never held while a session is created or run |
 | AI settings (`RwLock`) | `calibraw_ai::config` | the UI thread writes at startup and on Settings changes; AI jobs read | runtime source and model root; never held across a load or download |
 | `SHARED_SURFACE` | `calibraw_gpu` scene-depth upload | any thread uploading scene depth: preview pipelines on the UI thread, export workers | the relighting surface is derived once per depth result and shared by every pipeline; held while deriving, so a concurrent upload of the same result waits instead of repeating it |
-| effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates the depth guide, Relight surface and shadow map, image-light map, haze map or weather map the first time an effect reads them, and the LUT texture when a LUT is uploaded, and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
+| effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates scene depth, Relight's shadow map, the image-light map, haze map or scene map the first time an effect reads them, and the LUT texture when a LUT is uploaded, and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
 | LUT cache | `calibraw_core::luts::LutStore`, shared by its clones | the UI thread, document loads, batch export and thumbnail workers | the recently parsed LUTs; a leaf lock, never held while a file is read or parsed |
 | `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
 | decoded-RAW cache state and condvar | `DecodedRawCache` | document loads and the prefetch worker | short critical sections; decodes run unlocked, and a second request for a decoding entry waits on the condvar |
@@ -243,15 +243,31 @@ built from the sharp preview's source (the fitted proxy, or the crop's raw);
 it counts against the same GPU budget and is dropped when that source changes,
 when an export starts, or when the GPU is no longer slow.
 The fitted preview graph is built with mask layers for its masks plus spare layers in steps of four (`fitted_pipeline_options`, `preview_mask_layer_capacity`), not every layer the editor allows; one with fewer layers than masks is rebuilt (`fitted_mask_capacity_stale`) and keeps showing its last frame until then. On Android the fitted and zoomed graphs are sized against shares of the RAM-scaled working-set limit that remain after an export tile and the navigation graph (`MobilePreviewRole`, `bounded_mobile_preview_edge`); a Preview graph accounts only for its RGBA8 readback, since RGBA32F readbacks need `ProcessingQuality::High`. Where the platform allows (`PlatformCaps::full_resolution_preview`), an idle editor renders the whole photo from the native RAW on a worker thread with its own graph and shows the scaled result (`app/full_resolution.rs`) in place of the fitted texture while the fitted output is unchanged.
+Every mask effect and the scene it reads compile into one module
+(`creative_effects.wgsl` with `mask_effects/`), and every effect pass binds the same
+scene, so an effect may read any of it whichever pass it runs in:
+
+- `scene_depth.wgsl` is the one depth (`scene_depth_at`). Fog, Smoke, Rain and Wet
+  Surfaces read it directly; Relight asks it which part of the surface derived from
+  depth a pixel lies on (`scene_surface_taps_at`), since shading needs that surface's
+  own smooth depth and gradient.
+- `scene_environment.wgsl` is the scene's light as effects receive it: its ambient
+  level, the photo's coarse colour and the light sources in the photo.
+- `scene_lights.wgsl` turns Relight and Light Rays into lights any effect receives,
+  and `medium.wgsl` is what Fog, Smoke and Rain's mist share to scatter them.
+
+All of it but the lights comes from the scene map (`scene_analysis.wgsl`), a
+`FullImageMap` holding the photo's coarse colour, a guided filter's coefficients that
+refine scene depth against the photo, stored depth's range around each cell, the
+ground with its terrain height, and how much the lens blurs each depth. It depends on
+the scene, scene depth and the direction of up (`GpuParams::with_vignette_geometry`),
+not on the rest of the edit, and is rebuilt when any of them changes.
+
 Rain and Wet Surfaces do not run inside the creative pass: `apply_wet_surfaces`
-runs before it and `apply_weather_air` after it (`weather.wgsl`), so their result
-does not depend on the order of their cards and edits without them run the same
-passes as before. Each pass reads the image from one work texture and writes the
-other, and `encode_output_stage` tracks which one holds it. They read the weather
-map (`weather_analysis.wgsl`), a `FullImageMap` holding the photo's coarse colour,
-a guided filter's coefficients that refine scene depth against the photo, and the
-ground with its terrain height, and how much the lens blurs each depth. It depends on the scene, scene depth and the direction of up
-(`GpuParams::with_vignette_geometry`), and is rebuilt when any of them changes.
+runs before it and `apply_weather_air` after it, so their result does not depend on
+the order of their cards and edits without them run the same passes as before. Each
+pass reads the image from one work texture and writes the other, and
+`encode_output_stage` tracks which one holds it.
 Compiled programs are shared through `RawGpuProgramTemplate` and the persistent
 pipeline cache. Rust/WGSL layout contracts are tested in
 `calibraw-gpu/src/pipeline/gpu/layout_contract_tests.rs` against the modules the

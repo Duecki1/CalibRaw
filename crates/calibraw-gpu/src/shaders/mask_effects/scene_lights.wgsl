@@ -5,18 +5,21 @@
 // Emitters. `scene_light_at` turns an effect slot into a light: Relight's
 // point light, and the Light Rays source as a distant light behind the scene.
 // A new emitter is one more case there. Receivers loop over the effect slots
-// (`scene_light_slots`), skip lights that do not emit and weight each light by
-// `scene_light_coverage`. Fog and Smoke scatter it (atmosphere.wgsl).
+// (`Common::mask_slot_count`), skip lights that do not emit and weight each light by
+// `scene_light_coverage`. Fog, Smoke and Rain's mist scatter it (medium.wgsl), and
+// drops and wet ground reflect it. `scene_light_received` is the loop for a point
+// that scatters what arrives.
 //
 // Scene frame. Lights and receivers share a pinhole camera in relative units:
 // x right and y down as in the image, z forward, the nearest surface at z = 1
 // and the farthest at z = 1 + relief, so normalized scene depth (0 near,
-// 1 far) maps linearly to z. Image points are in shorter-edge units with
-// (0, 0) at the top-left corner. Each light carries the frame it was placed
+// 1 far) maps linearly to z, and negative depths lie in the open air before the
+// nearest surface, down to -1 near the camera. Image points are in shorter-edge
+// units with (0, 0) at the top-left corner. Each light carries the frame it was placed
 // in (its relief), and receivers measure distances to it in that frame.
 //
 // Intensities are scene-linear Rec.2020 relative to the scene's ambient level
-// (`scene_ambient_level`), so a light keeps its strength across exposures.
+// (`scene_ambient_level`, scene_environment.wgsl), so a light keeps its strength across exposures.
 // Everything depends only on full-image coordinates, the effect uniforms and
 // global tone statistics, so export tiles match the preview.
 
@@ -44,12 +47,8 @@ struct SceneCamera {
 
 // The scene frame for a Relief control in [0, 1].
 fn scene_camera(relief_control: f32) -> SceneCamera {
-    let full_size = max(vec2<f32>(
-        f32(Common::camera_uniforms.full_width),
-        f32(Common::camera_uniforms.full_height),
-    ), vec2<f32>(1.0));
     return SceneCamera(
-        full_size / min(full_size.x, full_size.y),
+        Common::scene_image_size(),
         mix(0.25, 6.0, pow(clamp(relief_control, 0.0, 1.0), 1.5)),
     );
 }
@@ -67,15 +66,8 @@ fn scene_image_point(camera: SceneCamera, position: vec3<f32>) -> vec2<f32> {
 }
 
 fn scene_depth_z(camera: SceneCamera, depth: f32) -> f32 {
+    if depth < 0.0 { return 1.0 + 0.9 * depth; }
     return 1.0 + camera.relief * depth;
-}
-
-// The scene's ambient light level: scene-linear middle grey at the exposure
-// of the image's ambient tone. Global tone statistics are shared by export
-// tiles.
-fn scene_ambient_level() -> f32 {
-    let ambient_ev = Tonemap::tone_stats.percentiles_0_field.w + Common::scene_tone_uniforms.exposure;
-    return ToneCommon::SCENE_MIDDLE_GREY * exp2(clamp(ambient_ev, -12.0, 6.0));
 }
 
 struct SceneLight {
@@ -103,15 +95,11 @@ fn relight_scene_light(params: MaskEffectParams) -> SceneLight {
     let camera = scene_camera(mask_effect_lane(params, RELIGHT_RELIEF_LANE) / 100.0);
     // Light depth: -1 at the camera, 0 at the nearest surface, 1 at the farthest.
     let light_depth = clamp(mask_effect_lane(params, RELIGHT_DEPTH_LANE) / 100.0, -1.0, 1.0);
-    let z = select(
-        scene_depth_z(camera, light_depth),
-        1.0 + 0.9 * light_depth,
-        light_depth < 0.0,
-    );
+    let z = scene_depth_z(camera, light_depth);
     // Reach is in shorter-edge widths at the nearest surface.
     let reach = clamp(mask_effect_lane(params, RELIGHT_REACH_LANE) / 100.0, 0.1, 4.0)
         * 2.0 * SCENE_FOCAL_TAN;
-    let amount = clamp(mask_effect_lane(params, RELIGHT_AMOUNT_LANE) / 100.0, 0.0, 1.0);
+    let amount = mask_effect_percent(params, RELIGHT_AMOUNT_LANE);
     let source = mask_effect_lane_pair(params, RELIGHT_SOURCE_X_LANE);
     return SceneLight(
         amount > 1e-6,
@@ -130,7 +118,7 @@ fn relight_scene_light(params: MaskEffectParams) -> SceneLight {
 fn light_rays_scene_light(params: MaskEffectParams) -> SceneLight {
     let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
     let z = scene_depth_z(camera, 1.0);
-    let amount = clamp(mask_effect_lane(params, LIGHT_RAYS_AMOUNT_LANE) / 100.0, 0.0, 1.0);
+    let amount = mask_effect_percent(params, LIGHT_RAYS_AMOUNT_LANE);
     // Length is in shorter-edge widths in the image, measured at the source.
     let rays_length = clamp(mask_effect_lane(params, LIGHT_RAYS_LENGTH_LANE) / 100.0, 0.0, 2.0);
     let source = mask_effect_lane_pair(params, LIGHT_RAYS_SOURCE_X_LANE);
@@ -143,10 +131,6 @@ fn light_rays_scene_light(params: MaskEffectParams) -> SceneLight {
             * (amount * SCENE_LIGHT_GAIN * LIGHT_RAYS_LIGHT_INTENSITY),
         SCENE_LIGHT_UNCONFINED,
     );
-}
-
-fn scene_light_slots() -> u32 {
-    return min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
 }
 
 // The light the effect in slot `index` emits; inactive when it emits none.
@@ -173,7 +157,7 @@ fn scene_light_at(index: u32) -> SceneLight {
 // pixel, so receivers skip their per-pixel setup (depth reads, volume cells)
 // when there is nothing to receive.
 fn scene_lights_present() -> bool {
-    for (var index = 0u; index < scene_light_slots(); index = index + 1u) {
+    for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
         if scene_light_at(index).emits { return true; }
     }
     return false;
@@ -234,4 +218,23 @@ fn scene_light_phase_at(light: SceneLight, position: vec3<f32>, anisotropy: f32)
     let toward_camera = -position;
     let lengths = max(length(travel) * length(toward_camera), 1e-6);
     return scene_light_phase(dot(travel, toward_camera) / lengths, anisotropy);
+}
+
+// Light from every scene light that a point on the view ray of pixel `pos`, at
+// `depth`, scatters toward the camera, relative to the ambient level.
+fn scene_light_received(pos: vec2<i32>, depth: f32, anisotropy: f32) -> vec3<f32> {
+    let uv = full_image_uv(pos);
+    var received = vec3<f32>(0.0);
+    for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
+        let light = scene_light_at(index);
+        if !light.emits { continue; }
+        let coverage = scene_light_coverage(light, pos);
+        if coverage <= 1e-6 { continue; }
+        let position = scene_camera_point(
+            light.camera, uv * light.camera.image_size, scene_depth_z(light.camera, depth),
+        );
+        received += light.intensity * (scene_light_falloff(light, position)
+            * scene_light_phase_at(light, position, anisotropy) * coverage);
+    }
+    return received;
 }

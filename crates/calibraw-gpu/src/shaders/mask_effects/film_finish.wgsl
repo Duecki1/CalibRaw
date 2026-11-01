@@ -98,7 +98,7 @@ fn apply_mask_vignette(pos: vec2<i32>, rgb: vec3<f32>, primary: vec4<f32>, secon
 
 fn apply_film_finish_modules(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     // Finish the light falloff before adding texture, independent of card order.
     for (var stage = 0u; stage < 2u; stage += 1u) {
         let effect_kind = select(MASK_EFFECT_VIGNETTE_ID, MASK_EFFECT_GRAIN_ID, stage == 1u);

@@ -149,7 +149,7 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         f32(Common::camera_uniforms.full_height),
     ), vec2<f32>(1.0));
     let short_edge = min(full_size.x, full_size.y);
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_applies(state, MASK_EFFECT_LIGHT_RAYS_ID) { continue; }
@@ -172,7 +172,7 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         let pattern = light_ray_angular_pattern(radial_pixels, 19u,
             mask_effect_lane(params, LIGHT_RAYS_RAY_COUNT_LANE), variation, softness, spread);
         let image_point = output_uv * full_size / short_edge;
-        let density = mix(1.0, 0.80 + 0.32 * atmosphere_noise(
+        let density = mix(1.0, 0.80 + 0.32 * effect_noise(
             image_point * 7.0 + vec2<f32>(13.1, 7.9),
         ), variation);
         let shaft = light_ray_scattering(distance, reach, 0.006, fade, pattern) * density;
