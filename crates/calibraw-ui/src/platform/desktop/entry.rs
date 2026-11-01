@@ -54,6 +54,15 @@ fn run_desktop() -> eframe::Result {
         calibraw_gpu::stage_timing::request();
     }
     let mut options = crate::native_options(PlatformCaps::DESKTOP);
+    // wgpu initializes every enabled backend before any adapter is chosen, and
+    // WGL initialization ends the process without an error on some drivers (seen
+    // on a Radeon 780M + RTX 4060 laptop). Windows needs no GL adapter to show the
+    // unsupported-driver notice: DX12 always offers WARP for processing.
+    #[cfg(target_os = "windows")]
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
+        setup.instance_descriptor.backends =
+            eframe::wgpu::Backends::from_env().unwrap_or(eframe::wgpu::Backends::PRIMARY);
+    }
     options.viewport = eframe::egui::ViewportBuilder::default()
         .with_app_id(if super::portal::is_flatpak() {
             "io.github.Duecki1.CalibRaw"
