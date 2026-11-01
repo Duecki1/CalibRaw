@@ -43,6 +43,11 @@ fn mask_effect_id(metadata: vec4<u32>) -> u32 {
     return metadata.w >> MASK_EFFECT_ID_SHIFT;
 }
 
+// Mask slots in use, the bound of every loop over `mask_data`.
+fn mask_slot_count() -> u32 {
+    return min(scene_tone_uniforms.mask_counts.x, MAX_RENDER_MASK_SLOTS);
+}
+
 // Whether the slot is enabled and changes the image: an adjustment that is not
 // neutral, or an active effect. Rust: `MaskData::is_active`.
 fn mask_slot_active(metadata: vec4<u32>) -> bool {
@@ -187,6 +192,10 @@ struct EffectsUniforms {
     capture_scale_sigma: vec4<f32>,
     capture_thresholds: vec4<f32>,
     capture_mask_coherence: vec4<f32>,
+    // The ground of an active Wet Surfaces effect (scene_analysis.wgsl): the unit vector toward the
+    // horizon in image points (xy), the horizon's position along it (z), and 1
+    // when the photo has ground (w).
+    scene_ground: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> camera_uniforms: CameraUniforms;
@@ -286,6 +295,41 @@ const IMAGE_LIGHT_GRID_LONG: u32 = 160u;
 // Cells of the image-light grid across and down the full image.
 fn image_light_grid() -> vec2<u32> {
     return full_image_grid(IMAGE_LIGHT_GRID_LONG);
+}
+
+// The scene map (scene_analysis.wgsl): a coarse grid over the full image
+// with SCENE_MAP_GRID_LONG cells along its longer edge and a blurred copy with
+// SCENE_MAP_BLUR_GRID_LONG, stored in textures and a buffer sized for a square
+// grid. Match the constants of the same names in Rust.
+const SCENE_MAP_GRID_LONG: u32 = 256u;
+const SCENE_MAP_BLUR_GRID_LONG: u32 = 48u;
+// Depth bins of the lens blur table.
+const SCENE_FOCUS_BINS: u32 = 32u;
+
+fn scene_map_grid_for(long_cells: u32) -> vec2<u32> {
+    // A cell holds at least one pixel, even for a very small preview.
+    return min(
+        full_image_grid(long_cells),
+        vec2<u32>(max(camera_uniforms.full_width, 1u), max(camera_uniforms.full_height, 1u)),
+    );
+}
+
+// Cells of the scene map across and down the full image.
+fn scene_map_grid() -> vec2<u32> {
+    return scene_map_grid_for(SCENE_MAP_GRID_LONG);
+}
+
+fn scene_map_blur_grid() -> vec2<u32> {
+    return scene_map_grid_for(SCENE_MAP_BLUR_GRID_LONG);
+}
+
+// The full image in shorter-edge units, the unit the scene's image points are in.
+fn scene_image_size() -> vec2<f32> {
+    let full = max(
+        vec2<f32>(f32(camera_uniforms.full_width), f32(camera_uniforms.full_height)),
+        vec2<f32>(1.0),
+    );
+    return full / min(full.x, full.y);
 }
 
 fn clamp_pos(pos: vec2<i32>) -> vec2<i32> {

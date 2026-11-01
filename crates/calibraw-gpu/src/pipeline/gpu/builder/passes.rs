@@ -78,9 +78,6 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) image_light_end_index: usize,
     /// Relight shadows per scene-depth texel, built in the output stage.
     pub(in crate::pipeline::gpu) relight_shadow_map_pass_index: usize,
-    /// The joint-upsampling guide of scene depth, built right before the
-    /// creative pass that reads it.
-    pub(in crate::pipeline::gpu) scene_depth_guide_pass_index: usize,
     /// Pre-demosaiced rasters' replacement for highlight reconstruction and
     /// demosaicing: copies the raster source into the scene with luminance
     /// denoise. It runs with the RAW stage but comes after the output passes
@@ -103,6 +100,17 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// follows as `AssembledPasses::binned_finish_pass`. It runs with the RAW
     /// stage but comes last so that adding it kept earlier positions.
     pub(in crate::pipeline::gpu) binned_highlight_pass_index: usize,
+    /// Accumulation into the scene map; the passes that resolve it follow.
+    /// Like the image lights they run with the tone stage and come last so that
+    /// adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) scene_map_accumulate_pass_index: usize,
+    pub(in crate::pipeline::gpu) scene_map_resolve_pass_index: usize,
+    pub(in crate::pipeline::gpu) scene_map_end_index: usize,
+    /// Wet Surfaces before the creative pass, and Rain and Wet Surfaces'
+    /// highlights after it. They run with the output stage but come last so that
+    /// adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) wet_surfaces_pass_index: usize,
+    pub(in crate::pipeline::gpu) weather_air_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -149,7 +157,6 @@ impl StageIndices {
         let image_light_resolve_pass_index = take(1);
         let image_light_blur_pass_index = take(2);
         let relight_shadow_map_pass_index = take(1);
-        let scene_depth_guide_pass_index = take(1);
         let raster_finish_pass_index = take(1);
         let haze_accumulate_pass_index = take(1);
         let haze_resolve_pass_index = take(HAZE_PASSES - 1);
@@ -157,6 +164,11 @@ impl StageIndices {
         let chromatic_aberration_prepare_pass_index = take(1);
         let chromatic_aberration_fringe_pass_index = take(1);
         let binned_highlight_pass_index = take(1);
+        let scene_map_accumulate_pass_index = take(1);
+        let scene_map_resolve_pass_index = take(SCENE_MAP_PASSES - 1);
+        let scene_map_end_index = take(0);
+        let wet_surfaces_pass_index = take(1);
+        let weather_air_pass_index = take(1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -189,7 +201,6 @@ impl StageIndices {
             image_light_blur_pass_index,
             image_light_end_index: relight_shadow_map_pass_index,
             relight_shadow_map_pass_index,
-            scene_depth_guide_pass_index,
             raster_finish_pass_index,
             haze_accumulate_pass_index,
             haze_resolve_pass_index,
@@ -197,6 +208,11 @@ impl StageIndices {
             chromatic_aberration_prepare_pass_index,
             chromatic_aberration_fringe_pass_index,
             binned_highlight_pass_index,
+            scene_map_accumulate_pass_index,
+            scene_map_resolve_pass_index,
+            scene_map_end_index,
+            wet_surfaces_pass_index,
+            weather_air_pass_index,
             pass_count,
         }
     }
@@ -213,6 +229,10 @@ impl StageIndices {
             FullImageMap::Haze => FullImageMapPasses {
                 accumulate: self.haze_accumulate_pass_index,
                 resolve: self.haze_resolve_pass_index..self.haze_end_index,
+            },
+            FullImageMap::Scene => FullImageMapPasses {
+                accumulate: self.scene_map_accumulate_pass_index,
+                resolve: self.scene_map_resolve_pass_index..self.scene_map_end_index,
             },
         }
     }
@@ -232,8 +252,6 @@ pub(in crate::pipeline::gpu) struct AssembledPasses {
     pub(in crate::pipeline::gpu) passes: Vec<Pass>,
     pub(in crate::pipeline::gpu) post_blur_glow_passes: Vec<Pass>,
     pub(in crate::pipeline::gpu) post_blur_pixelate_blocks_pass: Pass,
-    pub(in crate::pipeline::gpu) post_blur_scene_depth_guide_pass: Pass,
-    pub(in crate::pipeline::gpu) post_blur_creative_pass: Pass,
     pub(in crate::pipeline::gpu) post_blur_render_pass: Pass,
     /// The raster finish program reading a binned source's reconstructed
     /// camera RGB instead of a raster.
@@ -569,7 +587,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             shaders.creative_effects_module.as_ref(),
             "apply_creative_effects",
             &layouts.bgl_adjust_creative,
-            InputBoundPass::Creative,
+            InputBoundPass::EffectsFromTex1,
             image_workgroups,
         ),
         assembler.make_pass(
@@ -636,24 +654,6 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
             1,
         ],
-    ));
-
-    let scene_depth_workgroups = [
-        SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
-        SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
-        1,
-    ];
-    ensure_planned(
-        &passes,
-        indices.scene_depth_guide_pass_index,
-        "scene-depth guide",
-    )?;
-    passes.push(assembler.make_pass(
-        shaders.creative_effects_module.as_ref(),
-        "build_scene_depth_guide",
-        &layouts.bgl_scene_depth_guide,
-        InputBoundPass::SceneDepthGuide,
-        scene_depth_workgroups,
     ));
 
     ensure_planned(&passes, indices.raster_finish_pass_index, "raster finish")?;
@@ -728,8 +728,60 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         workgroups: image_workgroups,
     };
 
-    // The post-blur variants reuse the programs above with bind groups that
-    // read the mask-blurred scene.
+    let scene_map_workgroups = [
+        SCENE_MAP_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+        SCENE_MAP_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+        1,
+    ];
+    ensure_planned(
+        &passes,
+        indices.scene_map_accumulate_pass_index,
+        "scene map",
+    )?;
+    let scene_map_programs: [(&str, [u32; 3]); SCENE_MAP_PASSES] = [
+        ("accumulate_scene_map", scene_map_workgroups),
+        ("resolve_scene_map", scene_map_workgroups),
+        ("smooth_scene_coefficients", scene_map_workgroups),
+        (
+            "blur_scene_environment",
+            [
+                SCENE_MAP_BLUR_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+                SCENE_MAP_BLUR_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+                1,
+            ],
+        ),
+        ("build_scene_ground", scene_map_workgroups),
+        ("build_scene_focus", [1, 1, 1]),
+    ];
+    for (index, (entry, workgroups)) in scene_map_programs.into_iter().enumerate() {
+        passes.push(assembler.make_pass(
+            shaders.scene_analysis_module.as_ref(),
+            entry,
+            &layouts.bgl_scene_map[index],
+            InputBoundPass::SceneMap(index),
+            workgroups,
+        ));
+    }
+    ensure_planned(&passes, indices.wet_surfaces_pass_index, "wet surfaces")?;
+    passes.extend([
+        assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            "apply_wet_surfaces",
+            &layouts.bgl_adjust_creative,
+            InputBoundPass::EffectsFromTex1,
+            image_workgroups,
+        ),
+        assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            "apply_weather_air",
+            &layouts.bgl_adjust_creative,
+            InputBoundPass::EffectsFromTex1,
+            image_workgroups,
+        ),
+    ]);
+
+    // These variants reuse the programs above with bind groups that read tex2:
+    // the mask-blurred scene, or whatever else last wrote there.
     let mut post_blur_glow_passes = vec![Pass {
         pipeline: passes[indices.glow_prepare_pass_index].pipeline.clone(),
         bindings: groups.bg_glow_prepare_after_blur.clone().into(),
@@ -749,20 +801,6 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     let post_blur_pixelate_blocks_pass = Pass {
         pipeline: passes[indices.pixelate_blocks_pass_index].pipeline.clone(),
         bindings: groups.bg_pixelate_blocks_after_blur.clone().into(),
-        workgroups: image_workgroups,
-    };
-    let post_blur_scene_depth_guide_pass = Pass {
-        pipeline: passes[indices.scene_depth_guide_pass_index]
-            .pipeline
-            .clone(),
-        bindings: InputBoundPass::SceneDepthGuideAfterBlur.into(),
-        workgroups: scene_depth_workgroups,
-    };
-    let post_blur_creative_pass = Pass {
-        pipeline: passes[indices.adjustment_creative_pass_index]
-            .pipeline
-            .clone(),
-        bindings: InputBoundPass::CreativeAfterBlur.into(),
         workgroups: image_workgroups,
     };
     let post_blur_render_pass = Pass {
@@ -787,8 +825,6 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         passes,
         post_blur_glow_passes,
         post_blur_pixelate_blocks_pass,
-        post_blur_scene_depth_guide_pass,
-        post_blur_creative_pass,
         post_blur_render_pass,
         binned_finish_pass,
         indices,

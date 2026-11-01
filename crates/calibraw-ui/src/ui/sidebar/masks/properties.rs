@@ -341,6 +341,18 @@ impl Sidebar {
                 &mut component.enabled,
                 remove,
             ),
+            MaskEffect::Rain => mask_effects::rain::show(
+                ui,
+                &mut component.settings.rain,
+                &mut component.enabled,
+                remove,
+            ),
+            MaskEffect::WetSurfaces => mask_effects::wet_surfaces::show(
+                ui,
+                &mut component.settings.wet_surfaces,
+                &mut component.enabled,
+                remove,
+            ),
             MaskEffect::Grain => mask_effects::grain::show(
                 ui,
                 &mut component.settings.grain,

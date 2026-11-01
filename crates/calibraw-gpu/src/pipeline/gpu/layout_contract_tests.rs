@@ -8,18 +8,20 @@
 //! offset and size are therefore compared explicitly.
 
 use super::{
-    effect_lanes, processing_work_format, shader_manager::ShaderManager, shaders,
+    effect_lanes, ground_plane, processing_work_format, shader_manager::ShaderManager, shaders,
     work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
     ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, ViewTransformMode,
     FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE, HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG,
     IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
-    RELIGHT_SHADOW_MAP_CHANNELS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    RELIGHT_SHADOW_MAP_CHANNELS, SCENE_FOCUS_BINS, SCENE_MAP_BLUR_GRID_LONG, SCENE_MAP_CELL_BYTES,
+    SCENE_MAP_GRID_LONG, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::MaskEffect;
 use calibraw_core::pipeline::{
     CA_WINDOW_RADIUS, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT,
-    HAZE_GUIDE_SUPPORT, MAX_LATERAL_SHIFT, MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
+    HAZE_GUIDE_SUPPORT, MAX_LATERAL_SHIFT, MAX_RESOLUTION_SCALE, SCENE_EDGE_SUPPORT,
+    TONE_GUIDE_RADIUS_CELLS, WET_SURFACES_SUPPORT,
 };
 use naga::proc::Layouter;
 use std::collections::BTreeSet;
@@ -283,6 +285,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 capture_scale_sigma,
                 capture_thresholds,
                 capture_mask_coherence,
+                scene_ground,
             }),
         ),
         (
@@ -459,6 +462,33 @@ fn shared_constants_and_effect_ids_match_rust() {
     assert_eq!(constant("IMAGE_LIGHT_BANDS"), IMAGE_LIGHT_BANDS);
     // So are the haze grid's.
     assert_eq!(constant("HAZE_GRID_LONG"), HAZE_GRID_LONG);
+    // And the scene map's.
+    assert_eq!(constant("SCENE_MAP_GRID_LONG"), SCENE_MAP_GRID_LONG);
+    assert_eq!(
+        constant("SCENE_MAP_BLUR_GRID_LONG"),
+        SCENE_MAP_BLUR_GRID_LONG
+    );
+    assert_eq!(constant("SCENE_FOCUS_BINS"), SCENE_FOCUS_BINS);
+    // ground_plane.rs finds the photo's horizon by the scene map's ground rule.
+    let ground_range = |name: &str| {
+        let source = include_str!("../../shaders/scene_analysis.wgsl");
+        let start = format!("const {name}: vec2<f32> = vec2<f32>(");
+        let (_, rest) = source
+            .split_once(&start)
+            .unwrap_or_else(|| panic!("scene_analysis.wgsl has no {name}"));
+        let (values, _) = rest.split_once(')').unwrap();
+        let (low, high) = values.split_once(", ").unwrap();
+        [low, high].map(|value| value.parse::<f32>().unwrap())
+    };
+    let middle = |[low, high]: [f32; 2]| (low + high) * 0.5;
+    assert_eq!(
+        ground_range("SCENE_GROUND_FAR")[1],
+        ground_plane::FAR_DISTANCE
+    );
+    assert!((middle(ground_range("SCENE_GROUND_SLOPE")) - ground_plane::MIN_SLOPE).abs() < 1e-5);
+    assert!(
+        (middle(ground_range("SCENE_GROUND_ALIGNMENT")) - ground_plane::MIN_ALIGNMENT).abs() < 1e-5
+    );
     for effect in MaskEffect::ALL {
         if effect == MaskEffect::Adjustment {
             assert_eq!(effect.shader_id(), 0, "adjustment masks use shader ID 0");
@@ -609,6 +639,32 @@ fn haze_buffers_and_supports_match_their_wgsl_declarations() {
     assert_eq!(
         shared_u32_constant(&modules, "HAZE_GUIDE_MAX_RADIUS"),
         HAZE_GUIDE_SUPPORT
+    );
+}
+
+/// The scene map's grid buffer Rust allocates holds the WGSL cell.
+#[test]
+fn scene_map_cell_matches_its_wgsl_declaration() {
+    let modules = production_modules();
+    let (_, analysis) = modules
+        .iter()
+        .find(|(name, _)| name.starts_with(shaders::SCENE_ANALYSIS_ENTRY.label))
+        .expect("scene analysis module");
+    let mut layouter = Layouter::default();
+    layouter.update(analysis.to_ctx()).unwrap();
+    let (handle, _) = analysis
+        .types
+        .iter()
+        .find(|(_, ty)| ty.name.as_deref().map(undecorated) == Some("SceneMapCell"))
+        .expect("SceneMapCell is declared");
+    assert_eq!(u64::from(layouter[handle].size), SCENE_MAP_CELL_BYTES);
+    assert_eq!(
+        shared_u32_constant(&modules, "WET_DETAIL_REACH"),
+        WET_SURFACES_SUPPORT
+    );
+    assert_eq!(
+        shared_u32_constant(&modules, "SCENE_EDGE_REACH"),
+        SCENE_EDGE_SUPPORT
     );
 }
 

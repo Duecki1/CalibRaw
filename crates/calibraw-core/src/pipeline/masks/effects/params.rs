@@ -969,6 +969,188 @@ pub mod fog {
     );
 }
 
+pub mod rain {
+    use super::*;
+
+    float_param!(
+        AMOUNT,
+        "Amount",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("How hard it rains: more drops and denser mist."),
+    );
+    float_param!(
+        LENGTH,
+        "Streak length",
+        0.0,
+        100.0,
+        35.0,
+        0.5,
+        0,
+        Some("How far drops travel during the exposure. Long streaks are fainter, as with a slow shutter."),
+    );
+    float_param!(
+        ANGLE,
+        "Direction",
+        -180.0,
+        180.0,
+        96.0,
+        1.0,
+        0,
+        Some("The direction the rain falls in the cropped frame. 90 falls straight down."),
+    );
+    float_param!(
+        DROP_SIZE,
+        "Drop size",
+        0.0,
+        100.0,
+        40.0,
+        0.5,
+        0,
+        Some("From fine drizzle to heavy drops."),
+    );
+    float_param!(
+        MIST,
+        "Mist",
+        0.0,
+        100.0,
+        35.0,
+        0.5,
+        0,
+        Some("The veil of unresolved rain that builds with distance."),
+    );
+    float_param!(
+        LIGHT_GLOW,
+        "Light glow",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("Makes drops and mist glow where Relight and Light Rays lights reach them."),
+    );
+    float_param!(
+        GUSTS,
+        "Gusts",
+        0.0,
+        100.0,
+        35.0,
+        0.5,
+        0,
+        Some("Gathers the rain into uneven curtains and bends its direction."),
+    );
+    float_param!(
+        PERSPECTIVE,
+        "Perspective",
+        -100.0,
+        100.0,
+        0.0,
+        1.0,
+        0,
+        Some("Makes streaks converge, as when looking up into the rain or down through it."),
+    );
+    float_param!(
+        FOCUS,
+        "Focus distance",
+        0.0,
+        100.0,
+        45.0,
+        0.5,
+        0,
+        Some("The distance at which drops are sharp. Drops nearer or farther melt into soft streaks."),
+    );
+    float_param!(
+        SEED,
+        "Pattern",
+        0.0,
+        1_000.0,
+        0.0,
+        1.0,
+        0,
+        Some(
+            "Chooses a different arrangement of drops that stays fixed between preview and export."
+        ),
+    );
+}
+
+pub mod wet_surfaces {
+    use super::*;
+
+    float_param!(
+        WETNESS,
+        "Wetness",
+        0.0,
+        100.0,
+        60.0,
+        0.5,
+        0,
+        Some("Darkens and saturates surfaces as water does, and gives the ground a sheen."),
+    );
+    float_param!(
+        PUDDLES,
+        "Puddles",
+        0.0,
+        100.0,
+        30.0,
+        0.5,
+        0,
+        Some("How much of the ground lies under standing water."),
+    );
+    float_param!(
+        PUDDLE_SIZE,
+        "Puddle size",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("From many small pools to a few large ones."),
+    );
+    float_param!(
+        GLOSS,
+        "Gloss",
+        0.0,
+        100.0,
+        55.0,
+        0.5,
+        0,
+        Some("How smooth the wet ground is: rough ground spreads reflections into long streaks."),
+    );
+    float_param!(
+        REFLECTIONS,
+        "Reflections",
+        0.0,
+        100.0,
+        70.0,
+        0.5,
+        0,
+        Some("The strength of what the wet ground and puddles reflect."),
+    );
+    float_param!(
+        RIPPLES,
+        "Ripples",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("How much a Rain effect in this edit disturbs the puddles."),
+    );
+    float_param!(
+        SEED,
+        "Pattern",
+        0.0,
+        1_000.0,
+        0.0,
+        1.0,
+        0,
+        Some("Chooses a different arrangement of puddles that stays fixed between preview and export."),
+    );
+}
+
 pub mod smoke {
     use super::*;
 

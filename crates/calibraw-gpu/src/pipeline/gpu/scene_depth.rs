@@ -1,5 +1,10 @@
-//! Uploading full-image scene depth and the relighting surface derived from
-//! it (`scene_surface`), shared by Fog, Smoke and Relight.
+//! Uploading full-image scene depth and the surface derived from it
+//! (`scene_surface`), the one depth every effect reads.
+//!
+//! The generated map is linear in the depth model's inverse depth i (stored = 1 - i), so
+//! most of a scene lies near 1. Effects read relative distance instead, as fog builds
+//! up, the ground runs and light falls off over distance, converted here alone. Depth
+//! Range masks select on the map itself and are not affected.
 
 use super::scene_surface::{derive_scene_surface, SurfaceLevel};
 use super::*;
@@ -12,7 +17,23 @@ pub(super) fn valid_scene_depth(depth: &MaskImage) -> bool {
         && (depth.width as usize).checked_mul(depth.height as usize) == Some(depth.pixels.len())
 }
 
-/// The depth result last uploaded, and whether its relighting surface was.
+/// How much of the inverse depth's range lies beyond the farthest surface, as distance
+/// goes as 1 / (i + shift). Fitted to a distance-linear depth model's output for the
+/// same photo.
+const INVERSE_DEPTH_SHIFT: f32 = 0.115;
+
+/// Relative distance of a stored depth, both normalized with near 0 and far 1.
+pub(super) fn distance_from_stored(stored: f32) -> f32 {
+    stored * INVERSE_DEPTH_SHIFT / (1.0 - stored + INVERSE_DEPTH_SHIFT)
+}
+
+/// Change of `distance_from_stored` per change of stored depth, to convert a gradient.
+pub(super) fn distance_per_stored(stored: f32) -> f32 {
+    let gap = 1.0 - stored + INVERSE_DEPTH_SHIFT;
+    INVERSE_DEPTH_SHIFT * (1.0 + INVERSE_DEPTH_SHIFT) / (gap * gap)
+}
+
+/// The depth result last uploaded, and whether its surface was.
 pub(super) struct UploadedSceneDepth {
     depth: MaskImage,
     surface: bool,
@@ -22,12 +43,11 @@ pub(super) struct UploadedSceneDepth {
 }
 
 impl RawGpuPipeline {
-    /// Uploads full-image scene depth. Until Relight's inputs are allocated
-    /// it goes to the plain depth texture Fog and Smoke read. Afterwards it
-    /// goes to the Relight surface, whose level 0 channel r holds the same
-    /// stored depth: with `surface` the relighting surface fills the other
-    /// channels and the mip chain (`scene_surface`); without it they are not
-    /// read, and level 0 repeats the depth with flat gradients.
+    /// Uploads full-image scene depth, once an effect allocated its texture.
+    /// Level 0 channel r holds the distance the scene map is built from.
+    /// With `surface` the surface shading reads fills the other channels and the
+    /// mip chain (`scene_surface`); without it they are not read, and level 0
+    /// repeats the depth with flat gradients.
     pub(super) fn upload_scene_depth(
         &self,
         queue: &wgpu::Queue,
@@ -39,9 +59,19 @@ impl RawGpuPipeline {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(depth) = depth.filter(|depth| valid_scene_depth(depth)) else {
-            *uploaded = None;
-            self.invalidate_relight_shadow_map();
+            // Only when depth goes away: the scene map built without depth stays
+            // valid for every later render, and export tiles must keep the one
+            // built from the whole image.
+            if uploaded.take().is_some() {
+                self.invalidate_relight_shadow_map();
+                self.invalidate_scene_map();
+            }
             return; // The uniform presence flag prevents sampling stale texture data.
+        };
+        // No effect reads depth yet: the allocation that first needs it comes
+        // back here.
+        let Some(target) = self.effect_inputs.scene_depth_texture() else {
+            return;
         };
         // Upload once per depth result, not per slider movement; cloned stacks
         // share the immutable pixel allocation.
@@ -54,19 +84,11 @@ impl RawGpuPipeline {
             return;
         }
 
-        let relight_surface = self.effect_inputs.relight_surface();
-        let target = relight_surface
-            .as_ref()
-            .unwrap_or(&self.scene_depth_texture);
-        let levels = match relight_surface {
-            Some(_) => encoded_scene_depth(depth, surface),
-            None => Arc::from([encode_stored_depth(depth)]),
-        };
+        let levels = encoded_scene_depth(depth, surface);
         for (mip_level, level) in levels.iter().enumerate() {
-            let channels = level.texels.len() as u32 / (level.width * level.height);
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture: target,
+                    texture: &target,
                     mip_level: mip_level as u32,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
@@ -74,7 +96,7 @@ impl RawGpuPipeline {
                 bytemuck::cast_slice(&level.texels),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(level.width * channels * 2),
+                    bytes_per_row: Some(level.width * 4 * 2),
                     rows_per_image: Some(level.height),
                 },
                 texture_size(level.width, level.height),
@@ -82,19 +104,17 @@ impl RawGpuPipeline {
         }
         *uploaded = Some(UploadedSceneDepth {
             depth: depth.clone(),
-            surface: surface && relight_surface_allocated(&levels),
+            surface,
             _levels: levels,
         });
         self.invalidate_relight_shadow_map();
+        self.invalidate_scene_map();
     }
 
-    /// Scene depth must be uploaded again, to a texture that replaced the
-    /// one it went to.
-    pub(super) fn forget_uploaded_scene_depth(&self) {
-        *self
-            .uploaded_scene_depth
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    /// The scene map's guided filter reads scene depth.
+    fn invalidate_scene_map(&self) {
+        self.full_image_map_current(FullImageMap::Scene)
+            .store(false, Ordering::Release);
     }
 
     /// Shadows are traced through the scene-depth surface.
@@ -106,20 +126,14 @@ impl RawGpuPipeline {
     }
 }
 
-/// Whether `levels` hold the relighting surface: its mip chain.
-fn relight_surface_allocated(levels: &[EncodedLevel]) -> bool {
-    levels.len() > 1
-}
-
-/// One mip level of a scene-depth texture as half-float bits: one per texel
-/// for the plain depth, four for the Relight surface.
+/// One mip level of the scene-depth texture as half-float bits, four per texel.
 struct EncodedLevel {
     width: u32,
     height: u32,
     texels: Vec<u16>,
 }
 
-/// The relighting surface last derived, shared by every pipeline: the fitted,
+/// The surface last derived, shared by every pipeline: the fitted,
 /// navigation and zoomed previews and export tiles upload the same depth
 /// result, and deriving it takes far longer than uploading it.
 struct SharedSurface {
@@ -135,9 +149,9 @@ struct SharedSurface {
 static SHARED_SURFACE: Mutex<Option<SharedSurface>> = Mutex::new(None);
 
 /// The scene-depth texture's levels for `depth`: with `surface`, the stored
-/// depth and relighting surface with its mip chain, taken from the shared
-/// cache when another pipeline already derived them; without, level 0 alone,
-/// repeating the depth with flat gradients.
+/// depth and surface with its mip chain, taken from the shared cache when
+/// another pipeline already derived them; without, level 0 alone, repeating the
+/// depth with flat gradients.
 fn encoded_scene_depth(depth: &MaskImage, surface: bool) -> Arc<[EncodedLevel]> {
     if !surface {
         let level = SurfaceLevel {
@@ -145,7 +159,10 @@ fn encoded_scene_depth(depth: &MaskImage, surface: bool) -> Arc<[EncodedLevel]> 
             height: SCENE_DEPTH_EDGE,
             texels: resampled_depth(depth)
                 .iter()
-                .map(|&value| [value, value, 0.0, 0.0])
+                .map(|&stored| {
+                    let distance = distance_from_stored(stored);
+                    [distance, distance, 0.0, 0.0]
+                })
                 .collect(),
         };
         return Arc::from([encode_level(&level)]);
@@ -183,18 +200,6 @@ fn encoded_scene_depth(depth: &MaskImage, surface: bool) -> Arc<[EncodedLevel]> 
         levels: Arc::downgrade(&levels),
     });
     levels
-}
-
-/// The plain scene-depth texture's only level: the stored depth.
-fn encode_stored_depth(depth: &MaskImage) -> EncodedLevel {
-    EncodedLevel {
-        width: SCENE_DEPTH_EDGE,
-        height: SCENE_DEPTH_EDGE,
-        texels: resampled_depth(depth)
-            .par_iter()
-            .map(|&value| half::f16::from_f32(value).to_bits())
-            .collect(),
-    }
 }
 
 /// Bilinear resample of `depth` to the `SCENE_DEPTH_EDGE` square, retaining

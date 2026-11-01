@@ -37,9 +37,10 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_image_light_blur_horizontal: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_image_light_blur_vertical: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_relight_shadow_map: wgpu::BindGroupLayout,
-    pub(in crate::pipeline::gpu) bgl_scene_depth_guide: wgpu::BindGroupLayout,
     /// The haze passes, in pass order (`HAZE_PASSES`).
     pub(in crate::pipeline::gpu) bgl_haze: [wgpu::BindGroupLayout; HAZE_PASSES],
+    /// The scene map passes, in pass order (`SCENE_MAP_PASSES`).
+    pub(in crate::pipeline::gpu) bgl_scene_map: [wgpu::BindGroupLayout; SCENE_MAP_PASSES],
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
@@ -493,9 +494,10 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         reused_layout(plan.adjustment_creative_pass_index).unwrap_or_else(|| {
             create_bind_group_layout(
                 device,
-                "bgl creative glow",
+                "bgl scene effects",
                 &[
                     buffer_entry(0),
+                    texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(24, wgpu::TextureSampleType::Float { filterable: false }),
                     storage_texture_entry(25, work_format, wgpu::StorageTextureAccess::WriteOnly),
                     texture_entry(30, wgpu::TextureSampleType::Float { filterable: false }),
@@ -508,7 +510,12 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_entry(36, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(45, wgpu::TextureSampleType::Float { filterable: true }),
                     texture_entry(46, wgpu::TextureSampleType::Float { filterable: false }),
-                    texture_entry(48, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(69, wgpu::TextureSampleType::Float { filterable: true }),
+                    texture_entry(70, wgpu::TextureSampleType::Float { filterable: true }),
+                    texture_entry(71, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(77, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(73, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(75, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });
@@ -620,24 +627,6 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             )
         });
 
-    let bgl_scene_depth_guide =
-        reused_layout(plan.scene_depth_guide_pass_index).unwrap_or_else(|| {
-            create_bind_group_layout(
-                device,
-                "bgl scene-depth guide",
-                &[
-                    buffer_entry(0),
-                    texture_entry(24, wgpu::TextureSampleType::Float { filterable: false }),
-                    texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
-                    storage_texture_entry(
-                        49,
-                        SCENE_DEPTH_GUIDE_FORMAT,
-                        wgpu::StorageTextureAccess::WriteOnly,
-                    ),
-                ],
-            )
-        });
-
     let haze_write = |binding| {
         storage_texture_entry(
             binding,
@@ -692,6 +681,69 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         })
     });
 
+    let scene_map_read = |binding| {
+        texture_entry(
+            binding,
+            wgpu::TextureSampleType::Float { filterable: false },
+        )
+    };
+    let environment_write = |binding| {
+        storage_texture_entry(
+            binding,
+            SCENE_ENVIRONMENT_FORMAT,
+            wgpu::StorageTextureAccess::WriteOnly,
+        )
+    };
+    let coefficient_write = |binding| {
+        storage_texture_entry(
+            binding,
+            SCENE_COEFFICIENT_FORMAT,
+            wgpu::StorageTextureAccess::WriteOnly,
+        )
+    };
+    let scene_map_entries: [&[wgpu::BindGroupLayoutEntry]; SCENE_MAP_PASSES] = [
+        &[
+            buffer_entry(0),
+            scene_map_read(11),
+            storage_buffer_entry(20, true),
+            texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
+            storage_buffer_entry(62, false),
+        ],
+        &[
+            buffer_entry(0),
+            storage_buffer_entry(62, false),
+            environment_write(63),
+            coefficient_write(64),
+            environment_write(76),
+        ],
+        &[buffer_entry(0), scene_map_read(65), coefficient_write(66)],
+        &[buffer_entry(0), scene_map_read(67), environment_write(68)],
+        &[
+            buffer_entry(0),
+            sampler_entry(28),
+            texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
+            scene_map_read(67),
+            environment_write(72),
+        ],
+        &[
+            buffer_entry(0),
+            storage_buffer_entry(62, false),
+            environment_write(74),
+        ],
+    ];
+    let scene_map_labels: [&str; SCENE_MAP_PASSES] = [
+        "bgl scene map accumulation",
+        "bgl scene map resolve",
+        "bgl scene map coefficient smoothing",
+        "bgl scene map environment blur",
+        "bgl scene map ground",
+        "bgl scene map lens blur",
+    ];
+    let bgl_scene_map = std::array::from_fn(|index| {
+        reused_layout(plan.scene_map_accumulate_pass_index + index).unwrap_or_else(|| {
+            create_bind_group_layout(device, scene_map_labels[index], scene_map_entries[index])
+        })
+    });
     BindGroupLayouts {
         bgl_scene_tone,
         bgl_effects,
@@ -727,7 +779,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_image_light_blur_horizontal,
         bgl_image_light_blur_vertical,
         bgl_relight_shadow_map,
-        bgl_scene_depth_guide,
         bgl_haze,
+        bgl_scene_map,
     }
 }

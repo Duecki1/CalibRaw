@@ -66,11 +66,11 @@ pub use masks::{
     LocalMask, MaskCombineMode, MaskCommon, MaskComponent, MaskEffect, MaskEffectCategory,
     MaskEffectSettings, MaskGeometry, MaskImage, MaskKind, MaskRgbImage, MaskStack,
     MotionBlurEffectSettings, NeonEffectSettings, ObjectStroke, PathPoint, PersonPart,
-    PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, RelightEffectSettings,
-    SharpenEffectSettings, SmokeEffectSettings, SubjectRefinement, TiltShiftEffectSettings,
-    VignetteEffectSettings, DEFAULT_COLOR_TOLERANCE, LUMINANCE_FEATHER_MAX,
-    LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
-    MAX_MASK_PEOPLE, MAX_PATH_POINTS,
+    PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings,
+    RelightEffectSettings, SharpenEffectSettings, SmokeEffectSettings, SubjectRefinement,
+    TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings,
+    DEFAULT_COLOR_TOLERANCE, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS,
+    MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_MASK_PEOPLE, MAX_PATH_POINTS,
 };
 pub use noise::{AdaptiveDetailDefaults, DenoiseQuality, NoiseProfile};
 pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
@@ -80,7 +80,8 @@ pub use processing::{
     required_export_tile_halo, ExportTile, ProcessingStage, ProxySpec, TilePlan, TileSpec,
     CA_WINDOW_RADIUS, CHROMATIC_ABERRATION_SUPPORT, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT,
     EXPORT_TILE_HALO, HAZE_BOX_SUPPORT, HAZE_GUIDE_SUPPORT, MAX_RESOLUTION_SCALE,
-    MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE, TONE_GUIDE_RADIUS_CELLS,
+    MIN_EXPORT_TILE_HALO, SCENE_EDGE_SUPPORT, TONE_GUIDE_CELL_SIZE, TONE_GUIDE_RADIUS_CELLS,
+    WET_SURFACES_SUPPORT,
 };
 pub use raw_loader::{
     decodes_as_raster, is_supported_raw_path, is_unsupported_raw_error,

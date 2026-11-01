@@ -1,12 +1,11 @@
 //! GPU inputs that only some effects read, allocated the first time one of
-//! them renders: the joint-upsampling guide of scene depth that Fog, Smoke and
-//! Relight read, Relight's scene-depth surface and shadow map, the image-light
-//! map that Fog and Smoke scatter, the haze map Dehaze applies, and the LUT
-//! the view pass applies.
+//! them renders: scene depth and the scene map that every depth-reading effect
+//! shares, Relight's shadow map, the image-light map that Fog, Smoke and Rain
+//! scatter, the haze map Dehaze applies, and the LUT the view pass applies.
 //!
 //! Until then the passes that read them are bound to placeholders of one
-//! texel, and Fog reads the plain scene-depth texture, so a pipeline whose
-//! edits never use these effects holds none of their memory. The process
+//! texel, so a pipeline whose edits never use these effects holds none of their
+//! memory. The process
 //! budget reserves them with the pipeline (`GpuResourceResidency::OnDemand`),
 //! so allocating them later cannot exceed it. Once allocated they stay until
 //! the pipeline is dropped.
@@ -26,6 +25,9 @@ pub(super) const IMAGE_LIGHT_PASSES: usize = 4;
 /// The haze passes (haze_analysis.wgsl): accumulate, airlight, transmission
 /// and the guided filter's two window passes.
 pub(super) const HAZE_PASSES: usize = 5;
+/// The scene map passes (scene_analysis.wgsl): accumulate, resolve,
+/// coefficient smoothing, the environment blur, the ground and the lens blur.
+pub(super) const SCENE_MAP_PASSES: usize = 6;
 
 /// Coarse maps over the full image that a cropped view or an export tile
 /// cannot build from its own region. Each is built from the whole scene with
@@ -33,14 +35,17 @@ pub(super) const HAZE_PASSES: usize = 5;
 /// prepass, and copied from the full frame by cropped and zoomed views.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FullImageMap {
-    /// The light sources Fog and Smoke scatter (tone_analysis.wgsl).
+    /// The light sources Fog, Smoke and Rain scatter (tone_analysis.wgsl).
     ImageLights,
     /// The airlight and transmission Dehaze applies (haze_analysis.wgsl).
     Haze,
+    /// Edge-accurate depth, the photo's environment, the ground and the lens
+    /// blur that every effect reading the scene shares (scene_analysis.wgsl).
+    Scene,
 }
 
 impl FullImageMap {
-    pub(super) const ALL: [Self; 2] = [Self::ImageLights, Self::Haze];
+    pub(super) const ALL: [Self; 3] = [Self::ImageLights, Self::Haze, Self::Scene];
 }
 
 /// The resources of an allocated [`FullImageMap`].
@@ -58,47 +63,48 @@ pub(super) struct FullImageMapResources {
 pub(super) enum InputBoundPass {
     /// The scene preparation, which applies Dehaze from the haze map.
     ScenePreparation,
-    Creative,
-    CreativeAfterBlur,
+    /// Wet Surfaces, the creative effects or Rain, reading the first work
+    /// texture and writing the second.
+    EffectsFromTex1,
+    /// The same, reading the second work texture and writing the first.
+    EffectsFromTex2,
     /// The view transform and output (`apply_view_node`), which reads the LUT.
     View,
     ViewAfterBlur,
-    SceneDepthGuide,
-    SceneDepthGuideAfterBlur,
     RelightShadowMap,
     /// One of the image-light passes, in pass order.
     ImageLights(usize),
     /// One of the haze passes, in pass order.
     Haze(usize),
+    /// One of the scene map passes, in pass order.
+    SceneMap(usize),
 }
 
 /// Bind groups of every [`InputBoundPass`].
 struct InputBindGroups {
     scene_preparation: wgpu::BindGroup,
-    creative: wgpu::BindGroup,
-    creative_after_blur: wgpu::BindGroup,
+    effects_from_tex1: wgpu::BindGroup,
+    effects_from_tex2: wgpu::BindGroup,
     view: wgpu::BindGroup,
     view_after_blur: wgpu::BindGroup,
-    scene_depth_guide: wgpu::BindGroup,
-    scene_depth_guide_after_blur: wgpu::BindGroup,
     relight_shadow_map: wgpu::BindGroup,
     image_lights: [wgpu::BindGroup; IMAGE_LIGHT_PASSES],
     haze: [wgpu::BindGroup; HAZE_PASSES],
+    scene_map: [wgpu::BindGroup; SCENE_MAP_PASSES],
 }
 
 impl InputBindGroups {
     fn get(&self, pass: InputBoundPass) -> &wgpu::BindGroup {
         match pass {
             InputBoundPass::ScenePreparation => &self.scene_preparation,
-            InputBoundPass::Creative => &self.creative,
-            InputBoundPass::CreativeAfterBlur => &self.creative_after_blur,
+            InputBoundPass::EffectsFromTex1 => &self.effects_from_tex1,
+            InputBoundPass::EffectsFromTex2 => &self.effects_from_tex2,
             InputBoundPass::View => &self.view,
             InputBoundPass::ViewAfterBlur => &self.view_after_blur,
-            InputBoundPass::SceneDepthGuide => &self.scene_depth_guide,
-            InputBoundPass::SceneDepthGuideAfterBlur => &self.scene_depth_guide_after_blur,
             InputBoundPass::RelightShadowMap => &self.relight_shadow_map,
             InputBoundPass::ImageLights(index) => &self.image_lights[index],
             InputBoundPass::Haze(index) => &self.haze[index],
+            InputBoundPass::SceneMap(index) => &self.scene_map[index],
         }
     }
 }
@@ -109,10 +115,10 @@ pub(super) struct InputBindingSources {
     pub(super) scene_preparation_layout: wgpu::BindGroupLayout,
     pub(super) creative_layout: wgpu::BindGroupLayout,
     pub(super) view_layout: wgpu::BindGroupLayout,
-    pub(super) scene_depth_guide_layout: wgpu::BindGroupLayout,
     pub(super) relight_shadow_map_layout: wgpu::BindGroupLayout,
     pub(super) image_light_layouts: [wgpu::BindGroupLayout; IMAGE_LIGHT_PASSES],
     pub(super) haze_layouts: [wgpu::BindGroupLayout; HAZE_PASSES],
+    pub(super) scene_map_layouts: [wgpu::BindGroupLayout; SCENE_MAP_PASSES],
     pub(super) camera_uniforms: wgpu::Buffer,
     pub(super) mask_data: wgpu::Buffer,
     pub(super) tone_stats: wgpu::Buffer,
@@ -131,84 +137,61 @@ pub(super) struct InputBindingSources {
     pub(super) mask_sampler: wgpu::Sampler,
     pub(super) light_rays_mask: wgpu::TextureView,
     pub(super) pixelate_blocks: wgpu::TextureView,
-    /// Stored scene depth alone, which Fog and Smoke read until the Relight
-    /// surface, holding the same depth in its first channel, replaces it.
-    pub(super) scene_depth: wgpu::TextureView,
 }
 
-/// Relight's scene-depth surface with its mip chain (`scene_surface`) and its
-/// shadow map (relight.wgsl).
-struct RelightInputs {
-    surface: wgpu::Texture,
-    surface_view: wgpu::TextureView,
-    _shadow_map: wgpu::Texture,
-    shadow_map_view: wgpu::TextureView,
+/// Scene depth with its mip chain (`scene_surface`), of `edge` × `edge` texels
+/// and `mip_levels` levels.
+struct SceneDepthInputs {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
 }
 
-impl RelightInputs {
-    fn new(device: &wgpu::Device) -> Self {
-        let surface = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("calibraw Relight scene-depth surface"),
-            size: texture_size(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE),
-            mip_level_count: SCENE_DEPTH_MIP_LEVELS,
+impl SceneDepthInputs {
+    fn new(device: &wgpu::Device, edge: u32, mip_levels: u32) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("calibraw full-image scene depth"),
+            size: texture_size(edge, edge),
+            mip_level_count: mip_levels,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: RELIGHT_SURFACE_FORMAT,
+            format: SCENE_DEPTH_FORMAT,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[RELIGHT_SURFACE_FORMAT],
+            view_formats: &[SCENE_DEPTH_FORMAT],
         });
-        let (shadow_map, shadow_map_view) = shadow_map(device, SCENE_DEPTH_EDGE);
         Self {
-            surface_view: default_texture_view(&surface),
-            surface,
-            _shadow_map: shadow_map,
-            shadow_map_view,
+            view: default_texture_view(&texture),
+            texture,
         }
     }
 }
 
-/// A texture on the level-0 scene-depth grid that a pass writes and others
-/// read, with `edge` × `edge` texels.
-fn depth_grid_map(
-    device: &wgpu::Device,
-    edge: u32,
-    format: wgpu::TextureFormat,
-    label: &str,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = create_processing_texture(
-        device,
-        texture_size(edge, edge),
-        format,
-        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-        label,
-    );
-    let view = default_texture_view(&texture);
-    (texture, view)
+/// Relight's shadow map (relight.wgsl), on the level-0 scene-depth grid.
+struct RelightShadowMapInputs {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
 }
 
-fn scene_depth_guide(device: &wgpu::Device, edge: u32) -> (wgpu::Texture, wgpu::TextureView) {
-    depth_grid_map(
-        device,
-        edge,
-        SCENE_DEPTH_GUIDE_FORMAT,
-        "calibraw full-image scene-depth guide",
-    )
-}
-
-fn shadow_map(device: &wgpu::Device, edge: u32) -> (wgpu::Texture, wgpu::TextureView) {
-    depth_grid_map(
-        device,
-        edge,
-        RELIGHT_SHADOW_MAP_FORMAT,
-        "calibraw full-image Relight shadow map",
-    )
+impl RelightShadowMapInputs {
+    fn new(device: &wgpu::Device, edge: u32) -> Self {
+        let texture = create_processing_texture(
+            device,
+            texture_size(edge, edge),
+            RELIGHT_SHADOW_MAP_FORMAT,
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            "calibraw full-image Relight shadow map",
+        );
+        Self {
+            view: default_texture_view(&texture),
+            _texture: texture,
+        }
+    }
 }
 
 /// The image-light grid and its maps (tone_analysis.wgsl).
 struct ImageLightInputs {
     cells: wgpu::Buffer,
-    /// The resolved and finally blurred map Fog and Smoke sample; cropped and
-    /// zoomed views copy it from the full frame.
+    /// The resolved and finally blurred map media sample; cropped and zoomed
+    /// views copy it from the full frame.
     map: wgpu::Texture,
     map_view: wgpu::TextureView,
     _core: wgpu::Texture,
@@ -310,6 +293,108 @@ impl HazeInputs {
     }
 }
 
+/// The scene map's grid and its maps (scene_analysis.wgsl).
+struct SceneMapInputs {
+    cells: wgpu::Buffer,
+    /// The coarse photo, its wide blur, depth's coefficients and range, the ground
+    /// and the lens blur table effects read; cropped and zoomed views copy them.
+    environment: wgpu::Texture,
+    environment_view: wgpu::TextureView,
+    environment_blur: wgpu::Texture,
+    environment_blur_view: wgpu::TextureView,
+    depth_map: wgpu::Texture,
+    depth_map_view: wgpu::TextureView,
+    depth_range: wgpu::Texture,
+    depth_range_view: wgpu::TextureView,
+    ground: wgpu::Texture,
+    ground_view: wgpu::TextureView,
+    focus: wgpu::Texture,
+    focus_view: wgpu::TextureView,
+    _coefficients: wgpu::Texture,
+    /// The guided filter's coefficients of one window, before averaging.
+    coefficients_view: wgpu::TextureView,
+}
+
+impl SceneMapInputs {
+    /// Inputs for a grid of `edge` × `edge` cells and a blur of `blur_edge`.
+    fn new(device: &wgpu::Device, edge: u32, blur_edge: u32) -> Self {
+        let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+        let copied = usage | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST;
+        let texture = |edge, format, usage, label| {
+            let texture =
+                create_processing_texture(device, texture_size(edge, edge), format, usage, label);
+            let view = default_texture_view(&texture);
+            (texture, view)
+        };
+        let (environment, environment_view) = texture(
+            edge,
+            SCENE_ENVIRONMENT_FORMAT,
+            copied,
+            "calibraw full-image scene environment",
+        );
+        let (environment_blur, environment_blur_view) = texture(
+            blur_edge,
+            SCENE_ENVIRONMENT_FORMAT,
+            copied,
+            "calibraw full-image scene environment blur",
+        );
+        let (depth_map, depth_map_view) = texture(
+            edge,
+            SCENE_COEFFICIENT_FORMAT,
+            copied,
+            "calibraw full-image scene depth map",
+        );
+        let (depth_range, depth_range_view) = texture(
+            edge,
+            SCENE_ENVIRONMENT_FORMAT,
+            copied,
+            "calibraw full-image scene depth range",
+        );
+        let (ground, ground_view) = texture(
+            edge,
+            SCENE_ENVIRONMENT_FORMAT,
+            copied,
+            "calibraw full-image scene ground",
+        );
+        let focus = create_processing_texture(
+            device,
+            texture_size(SCENE_FOCUS_BINS, 1),
+            SCENE_ENVIRONMENT_FORMAT,
+            copied,
+            "calibraw full-image scene lens blur",
+        );
+        let focus_view = default_texture_view(&focus);
+        let (coefficients, coefficients_view) = texture(
+            edge,
+            SCENE_COEFFICIENT_FORMAT,
+            usage,
+            "calibraw scene map guided-filter coefficients",
+        );
+        Self {
+            cells: create_gpu_buffer(
+                device,
+                "calibraw scene map grid",
+                scene_map_cells_bytes(edge),
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            environment,
+            environment_view,
+            environment_blur,
+            environment_blur_view,
+            depth_map,
+            depth_map_view,
+            depth_range,
+            depth_range_view,
+            ground,
+            ground_view,
+            focus,
+            focus_view,
+            _coefficients: coefficients,
+            coefficients_view,
+        }
+    }
+}
+
 /// The LUT the view pass applies (look_lut.wgsl): `size`³ texels, red along
 /// x, green along y and blue along z.
 struct LookLutInputs {
@@ -384,18 +469,19 @@ impl LookLutInputs {
 
 /// Views the input-bound passes bind, allocated or placeholder.
 struct BoundInputs<'a> {
-    /// Scene depth: the Relight surface once allocated, else the plain depth.
-    scene_depth: &'a wgpu::TextureView,
-    scene_depth_guide: &'a wgpu::TextureView,
-    shadow_map: &'a wgpu::TextureView,
+    scene_depth: &'a SceneDepthInputs,
+    scene_map: &'a SceneMapInputs,
+    shadow_map: &'a RelightShadowMapInputs,
     image_lights: &'a ImageLightInputs,
     haze: &'a HazeInputs,
-    look_lut: &'a wgpu::TextureView,
+    look_lut: &'a LookLutInputs,
 }
 
 impl InputBindingSources {
     fn bind_groups(&self, device: &wgpu::Device, inputs: &BoundInputs<'_>) -> InputBindGroups {
         let haze = inputs.haze;
+        let scene_depth = &inputs.scene_depth.view;
+        let scene_map = inputs.scene_map;
         let scene_preparation = create_bind_group(
             device,
             "bg adjustment preparation",
@@ -417,13 +503,16 @@ impl InputBindingSources {
                 texture_binding(60, &haze.map_view),
             ],
         );
-        let creative = |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
+        // Every pass of effects binds the same scene, so an effect may read any
+        // of it whichever pass it runs in.
+        let effects = |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
             create_bind_group(
                 device,
                 label,
                 &self.creative_layout,
                 &[
                     buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(11, &self.scene),
                     texture_binding(24, input),
                     texture_binding(25, output),
                     texture_binding(30, &self.display_linear),
@@ -431,12 +520,17 @@ impl InputBindingSources {
                     sampler_binding(28, &self.mask_sampler),
                     buffer_binding(33, &self.mask_data),
                     texture_binding(34, &self.light_rays_mask),
-                    texture_binding(35, inputs.scene_depth),
+                    texture_binding(35, scene_depth),
                     buffer_binding(16, &self.tone_stats),
                     texture_binding(36, &self.pixelate_blocks),
                     texture_binding(45, &inputs.image_lights.map_view),
-                    texture_binding(46, inputs.shadow_map),
-                    texture_binding(48, inputs.scene_depth_guide),
+                    texture_binding(46, &inputs.shadow_map.view),
+                    texture_binding(69, &scene_map.environment_view),
+                    texture_binding(70, &scene_map.environment_blur_view),
+                    texture_binding(71, &scene_map.depth_map_view),
+                    texture_binding(77, &scene_map.depth_range_view),
+                    texture_binding(73, &scene_map.ground_view),
+                    texture_binding(75, &scene_map.focus_view),
                 ],
             )
         };
@@ -455,20 +549,7 @@ impl InputBindingSources {
                     sampler_binding(28, &self.mask_sampler),
                     texture_binding(29, &self.display_linear),
                     buffer_binding(33, &self.mask_data),
-                    texture_binding(61, inputs.look_lut),
-                ],
-            )
-        };
-        let scene_depth_guide = |label: &str, input: &wgpu::TextureView| {
-            create_bind_group(
-                device,
-                label,
-                &self.scene_depth_guide_layout,
-                &[
-                    buffer_binding(0, &self.camera_uniforms),
-                    texture_binding(24, input),
-                    texture_binding(35, inputs.scene_depth),
-                    texture_binding(49, inputs.scene_depth_guide),
+                    texture_binding(61, &inputs.look_lut.view),
                 ],
             )
         };
@@ -577,21 +658,81 @@ impl InputBindingSources {
                 ],
             ),
         ];
+        let [accumulate, resolve, smooth, blur, ground, focus] = &self.scene_map_layouts;
+        let scene_map_groups = [
+            create_bind_group(
+                device,
+                "bg scene map accumulation",
+                accumulate,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(11, &self.scene),
+                    buffer_binding(20, &self.profile),
+                    texture_binding(35, scene_depth),
+                    buffer_binding(62, &scene_map.cells),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg scene map resolve",
+                resolve,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    buffer_binding(62, &scene_map.cells),
+                    texture_binding(63, &scene_map.environment_view),
+                    texture_binding(64, &scene_map.coefficients_view),
+                    texture_binding(76, &scene_map.depth_range_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg scene map coefficient smoothing",
+                smooth,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(65, &scene_map.coefficients_view),
+                    texture_binding(66, &scene_map.depth_map_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg scene map environment blur",
+                blur,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(67, &scene_map.environment_view),
+                    texture_binding(68, &scene_map.environment_blur_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg scene map ground",
+                ground,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    sampler_binding(28, &self.mask_sampler),
+                    texture_binding(35, scene_depth),
+                    texture_binding(67, &scene_map.environment_view),
+                    texture_binding(72, &scene_map.ground_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg scene map lens blur",
+                focus,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    buffer_binding(62, &scene_map.cells),
+                    texture_binding(74, &scene_map.focus_view),
+                ],
+            ),
+        ];
         InputBindGroups {
             scene_preparation,
-            creative: creative("bg creative glow", &self.tex1, &self.tex2),
-            creative_after_blur: creative(
-                "bg creative effects after mask Blur",
-                &self.tex2,
-                &self.tex1,
-            ),
+            effects_from_tex1: effects("bg scene effects from tex1", &self.tex1, &self.tex2),
+            effects_from_tex2: effects("bg scene effects from tex2", &self.tex2, &self.tex1),
             view: view("bg scene look view and output", &self.tex2),
             view_after_blur: view("bg scene look view and output after mask Blur", &self.tex1),
-            scene_depth_guide: scene_depth_guide("bg scene-depth guide", &self.tex1),
-            scene_depth_guide_after_blur: scene_depth_guide(
-                "bg scene-depth guide after mask Blur",
-                &self.tex2,
-            ),
             relight_shadow_map: create_bind_group(
                 device,
                 "bg relight shadow map",
@@ -599,20 +740,21 @@ impl InputBindingSources {
                 &[
                     buffer_binding(0, &self.camera_uniforms),
                     buffer_binding(33, &self.mask_data),
-                    texture_binding(35, inputs.scene_depth),
-                    texture_binding(47, inputs.shadow_map),
+                    texture_binding(35, scene_depth),
+                    texture_binding(47, &inputs.shadow_map.view),
                 ],
             ),
             image_lights,
             haze: haze_groups,
+            scene_map: scene_map_groups,
         }
     }
 }
 
 struct Allocated {
-    /// The scene-depth guide texture and its view.
-    scene_depth_guide: Option<(wgpu::Texture, wgpu::TextureView)>,
-    relight: Option<RelightInputs>,
+    scene_depth: Option<SceneDepthInputs>,
+    scene_map: Option<SceneMapInputs>,
+    relight_shadow_map: Option<RelightShadowMapInputs>,
     image_lights: Option<ImageLightInputs>,
     haze: Option<HazeInputs>,
     look_lut: Option<LookLutInputs>,
@@ -625,10 +767,9 @@ struct Allocated {
 pub(super) struct EffectInputs {
     device: wgpu::Device,
     sources: InputBindingSources,
-    _placeholder_scene_depth_guide: wgpu::Texture,
-    placeholder_scene_depth_guide_view: wgpu::TextureView,
-    _placeholder_shadow_map: wgpu::Texture,
-    placeholder_shadow_map_view: wgpu::TextureView,
+    placeholder_scene_depth: SceneDepthInputs,
+    placeholder_scene_map: SceneMapInputs,
+    placeholder_shadow_map: RelightShadowMapInputs,
     placeholder_image_lights: ImageLightInputs,
     placeholder_haze: HazeInputs,
     placeholder_look_lut: LookLutInputs,
@@ -638,9 +779,9 @@ pub(super) struct EffectInputs {
 impl EffectInputs {
     /// Inputs with nothing allocated yet: passes bind the placeholders.
     pub(super) fn new(device: &wgpu::Device, sources: InputBindingSources) -> Self {
-        let (placeholder_scene_depth_guide, placeholder_scene_depth_guide_view) =
-            scene_depth_guide(device, 1);
-        let (placeholder_shadow_map, placeholder_shadow_map_view) = shadow_map(device, 1);
+        let placeholder_scene_depth = SceneDepthInputs::new(device, 1, 1);
+        let placeholder_scene_map = SceneMapInputs::new(device, 1, 1);
+        let placeholder_shadow_map = RelightShadowMapInputs::new(device, 1);
         let placeholder_image_lights = ImageLightInputs::new(device, 1);
         let placeholder_haze = HazeInputs::new(device, 1);
         // Never read: the view pass skips the LUT unless one was uploaded.
@@ -648,27 +789,27 @@ impl EffectInputs {
         let bind_groups = sources.bind_groups(
             device,
             &BoundInputs {
-                scene_depth: &sources.scene_depth,
-                scene_depth_guide: &placeholder_scene_depth_guide_view,
-                shadow_map: &placeholder_shadow_map_view,
+                scene_depth: &placeholder_scene_depth,
+                scene_map: &placeholder_scene_map,
+                shadow_map: &placeholder_shadow_map,
                 image_lights: &placeholder_image_lights,
                 haze: &placeholder_haze,
-                look_lut: &placeholder_look_lut.view,
+                look_lut: &placeholder_look_lut,
             },
         );
         Self {
             device: device.clone(),
             sources,
-            _placeholder_scene_depth_guide: placeholder_scene_depth_guide,
-            placeholder_scene_depth_guide_view,
-            _placeholder_shadow_map: placeholder_shadow_map,
-            placeholder_shadow_map_view,
+            placeholder_scene_depth,
+            placeholder_scene_map,
+            placeholder_shadow_map,
             placeholder_image_lights,
             placeholder_haze,
             placeholder_look_lut,
             allocated: Mutex::new(Allocated {
-                scene_depth_guide: None,
-                relight: None,
+                scene_depth: None,
+                scene_map: None,
+                relight_shadow_map: None,
                 image_lights: None,
                 haze: None,
                 look_lut: None,
@@ -689,25 +830,29 @@ impl EffectInputs {
         self.lock().bind_groups.get(pass).clone()
     }
 
-    /// Allocates Relight's inputs unless they exist. Returns whether they
-    /// were allocated now: scene depth must then be uploaded to the surface.
-    pub(super) fn allocate_relight(&self) -> bool {
+    /// Allocates scene depth unless it exists. Nothing is uploaded to it before
+    /// that, so `upload_scene_depth` fills it on the first upload after this.
+    pub(super) fn allocate_scene_depth(&self) {
         let mut allocated = self.lock();
-        if allocated.relight.is_some() {
-            return false;
-        }
-        allocated.relight = Some(RelightInputs::new(&self.device));
-        self.rebind(&mut allocated);
-        true
-    }
-
-    /// Allocates the scene-depth guide unless it exists.
-    pub(super) fn allocate_scene_depth_guide(&self) {
-        let mut allocated = self.lock();
-        if allocated.scene_depth_guide.is_some() {
+        if allocated.scene_depth.is_some() {
             return;
         }
-        allocated.scene_depth_guide = Some(scene_depth_guide(&self.device, SCENE_DEPTH_EDGE));
+        allocated.scene_depth = Some(SceneDepthInputs::new(
+            &self.device,
+            SCENE_DEPTH_EDGE,
+            SCENE_DEPTH_MIP_LEVELS,
+        ));
+        self.rebind(&mut allocated);
+    }
+
+    /// Allocates Relight's shadow map unless it exists.
+    pub(super) fn allocate_relight_shadow_map(&self) {
+        let mut allocated = self.lock();
+        if allocated.relight_shadow_map.is_some() {
+            return;
+        }
+        allocated.relight_shadow_map =
+            Some(RelightShadowMapInputs::new(&self.device, SCENE_DEPTH_EDGE));
         self.rebind(&mut allocated);
     }
 
@@ -727,6 +872,16 @@ impl EffectInputs {
                     return;
                 }
                 allocated.haze = Some(HazeInputs::new(&self.device, HAZE_GRID_LONG));
+            }
+            FullImageMap::Scene => {
+                if allocated.scene_map.is_some() {
+                    return;
+                }
+                allocated.scene_map = Some(SceneMapInputs::new(
+                    &self.device,
+                    SCENE_MAP_GRID_LONG,
+                    SCENE_MAP_BLUR_GRID_LONG,
+                ));
             }
         }
         self.rebind(&mut allocated);
@@ -773,40 +928,40 @@ impl EffectInputs {
     }
 
     fn rebind(&self, allocated: &mut Allocated) {
-        let relight = allocated.relight.as_ref();
         allocated.bind_groups = self.sources.bind_groups(
             &self.device,
             &BoundInputs {
-                scene_depth: relight
-                    .map_or(&self.sources.scene_depth, |relight| &relight.surface_view),
-                scene_depth_guide: allocated
-                    .scene_depth_guide
+                scene_depth: allocated
+                    .scene_depth
                     .as_ref()
-                    .map_or(&self.placeholder_scene_depth_guide_view, |(_, view)| view),
-                shadow_map: relight.map_or(&self.placeholder_shadow_map_view, |relight| {
-                    &relight.shadow_map_view
-                }),
+                    .unwrap_or(&self.placeholder_scene_depth),
+                scene_map: allocated
+                    .scene_map
+                    .as_ref()
+                    .unwrap_or(&self.placeholder_scene_map),
+                shadow_map: allocated
+                    .relight_shadow_map
+                    .as_ref()
+                    .unwrap_or(&self.placeholder_shadow_map),
                 image_lights: allocated
                     .image_lights
                     .as_ref()
                     .unwrap_or(&self.placeholder_image_lights),
                 haze: allocated.haze.as_ref().unwrap_or(&self.placeholder_haze),
-                look_lut: &allocated
+                look_lut: allocated
                     .look_lut
                     .as_ref()
-                    .unwrap_or(&self.placeholder_look_lut)
-                    .view,
+                    .unwrap_or(&self.placeholder_look_lut),
             },
         );
     }
 
-    /// The Relight surface, once allocated. Scene depth is uploaded to it
-    /// instead of the plain depth texture from then on.
-    pub(super) fn relight_surface(&self) -> Option<wgpu::Texture> {
+    /// The scene-depth texture, once allocated.
+    pub(super) fn scene_depth_texture(&self) -> Option<wgpu::Texture> {
         self.lock()
-            .relight
+            .scene_depth
             .as_ref()
-            .map(|relight| relight.surface.clone())
+            .map(|inputs| inputs.texture.clone())
     }
 
     /// `map`'s grid and outputs, once allocated.
@@ -828,6 +983,23 @@ impl EffectInputs {
                 textures: vec![haze.map.clone()],
                 buffers: vec![haze.airlight.clone()],
             }),
+            FullImageMap::Scene => {
+                allocated
+                    .scene_map
+                    .as_ref()
+                    .map(|scene_map| FullImageMapResources {
+                        cells: scene_map.cells.clone(),
+                        textures: vec![
+                            scene_map.environment.clone(),
+                            scene_map.environment_blur.clone(),
+                            scene_map.depth_map.clone(),
+                            scene_map.depth_range.clone(),
+                            scene_map.ground.clone(),
+                            scene_map.focus.clone(),
+                        ],
+                        buffers: Vec::new(),
+                    })
+            }
         }
     }
 }

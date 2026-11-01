@@ -17,14 +17,17 @@
 //! nearest smooth depth of its footprint instead, so a shadow ray that passes
 //! in front of every surface near it can skip testing them (relight.wgsl).
 //!
-//! All values are normalized relative depth (near 0, far 1) in the full-image
-//! coordinate frame of the square scene-depth texture. Gradients are depth per
+//! All of that works on the generated map, whose levels are even and whose
+//! thresholds below are in its units. The result is converted to relative distance
+//! (`scene_depth`, near 0, far 1) before the mip chain, in the full-image
+//! coordinate frame of the square scene-depth texture. Gradients are distance per
 //! length of the image's shorter edge, so they are isotropic in the image even
 //! though the texture stretches the image to a square.
 //!
 //! Every step computes each texel from the previous step alone, so rows are
 //! processed in parallel with results identical to a serial pass.
 
+use super::scene_depth::{distance_from_stored, distance_per_stored};
 use rayon::prelude::*;
 
 /// Mip levels of the scene-depth texture; the smallest is 16×16 at 1024.
@@ -62,8 +65,8 @@ const SOFT_EDGE_FLANK: usize = 8;
 /// above the depth model's noise on continuous surfaces.
 const SOFT_EDGE_EXCESS: f32 = 0.012;
 
-/// One mip level: per texel `[stored depth, smooth depth, ∂depth/∂x, ∂depth/∂y]`
-/// on level 0, and `[nearest smooth depth, smooth depth, ∂depth/∂x, ∂depth/∂y]`
+/// One mip level, in distance: per texel `[stored depth, smooth depth, ∂depth/∂x,
+/// ∂depth/∂y]` on level 0, and `[nearest smooth depth, smooth depth, ∂depth/∂x, ∂depth/∂y]`
 /// above it, where the nearest depth is the minimum over the texel's level-0
 /// footprint and the others are means.
 pub(super) struct SurfaceLevel {
@@ -89,7 +92,7 @@ fn texel_extent(edge: u32, aspect: f32) -> [f32; 2] {
 
 /// Derives the relighting surface from `stored`, the `edge`×`edge` bilinear
 /// resample of the stored depth. `aspect` is the image's width / height.
-/// Level 0 keeps `stored` unchanged in its first channel.
+/// Level 0 holds the distance of `stored` in its first channel.
 pub(super) fn derive_scene_surface(stored: &[f32], edge: u32, aspect: f32) -> Vec<SurfaceLevel> {
     let side = edge as usize;
     debug_assert_eq!(stored.len(), side * side);
@@ -112,11 +115,12 @@ pub(super) fn derive_scene_surface(stored: &[f32], edge: u32, aspect: f32) -> Ve
         .for_each(|(y, row)| {
             for (x, texel) in row.iter_mut().enumerate() {
                 let index = y * side + x;
+                let per_stored = distance_per_stored(smooth[index]);
                 *texel = [
-                    stored[index],
-                    smooth[index],
-                    rows[y][x] / extent[0],
-                    columns[x][y] / extent[1],
+                    distance_from_stored(stored[index]),
+                    distance_from_stored(smooth[index]),
+                    rows[y][x] / extent[0] * per_stored,
+                    columns[x][y] / extent[1] * per_stored,
                 ];
             }
         });

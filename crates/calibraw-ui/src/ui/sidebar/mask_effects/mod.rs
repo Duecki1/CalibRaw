@@ -12,11 +12,13 @@ pub(super) mod neon;
 mod picker;
 pub(super) mod pixelate;
 pub(super) mod radial_blur;
+pub(super) mod rain;
 pub(super) mod relight;
 pub(super) mod sharpen;
 pub(super) mod smoke;
 pub(super) mod tilt_shift;
 pub(super) mod vignette;
+pub(super) mod wet_surfaces;
 
 use crate::i18n::{tr, tr_fmt};
 pub(crate) use controls::EffectFrame;
@@ -304,6 +306,12 @@ pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
         ),
         MaskEffect::Smoke => Some(
             tr("Layer drifting plumes through the mask. The pattern stays anchored to the full image as you edit the selection."),
+        ),
+        MaskEffect::Rain => Some(
+            tr("Add falling rain and its mist. Drops pass behind nearer objects, catch Relight, Light Rays and the photo's own lights, and show best against dark areas. The mask controls where it falls."),
+        ),
+        MaskEffect::WetSurfaces => Some(
+            tr("Darken surfaces as water does and let the ground reflect the photo, with standing puddles on smooth ground. The ground is found in scene depth, which is generated automatically; a Rain effect ripples the puddles. The mask controls where it applies."),
         ),
         MaskEffect::Grain => Some(
             tr("Add photographic texture. Grain stays anchored to the image; the mask controls its local strength."),

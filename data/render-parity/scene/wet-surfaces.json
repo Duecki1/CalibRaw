@@ -1,0 +1,27 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "WetSurfaces",
+          "settings": {
+            "wet_surfaces": {
+              "gloss": 65.0,
+              "puddles": 45.0,
+              "reflections": 80.0,
+              "wetness": 70.0
+            }
+          }
+        }
+      ]
+    }
+  },
+  "mask_assets": [
+    {
+      "height": 96,
+      "png": "iVBORw0KGgoAAAANSUhEUgAAAJAAAABgCAAAAADXv6R9AAAAiElEQVR42u3WMQ6AIAxA0Wq4tbNHdlEGT2DCQAqYx+hgX34TcbtjrrMHEBAQEBAQEBAQEBAQ0MhTer/w/Hh+WBkQEBAQEBAQEFCfX9graVDrnPIkgVrnlJoEqsuCrEwhhRTyYbQyhRRSSCFXh5X9o1DMVigUUsjKFFJIIYUUcnVYmUIKKbREoRemW0+8qd9zGwAAAABJRU5ErkJggg==",
+      "width": 144
+    }
+  ],
+  "scene_depth_asset": 0
+}

@@ -72,7 +72,7 @@ fn mask_blur_diffused_at(pos: vec2<i32>, stage: u32, amount: f32, source_rgb: ve
 // diffused neighbourhood, combining every Blur mask that covers it.
 fn mask_blur_stage_amount(pos: vec2<i32>, stage: u32) -> f32 {
     var retained_source = 1.0;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_applies(state, MASK_EFFECT_BLUR_ID) {
@@ -122,7 +122,7 @@ fn apply_mask_blur_stage(
     if stage != 0u {
         return rgb;
     }
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_active(state) { continue; }

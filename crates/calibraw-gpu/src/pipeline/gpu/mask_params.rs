@@ -1,6 +1,6 @@
 //! Packing of local adjustment masks and mask effects into `MaskData` slots.
 
-use super::effect_lanes::{fog, light_rays, options, relight, smoke};
+use super::effect_lanes::{fog, light_rays, options, rain, relight, smoke, wet_surfaces};
 use super::*;
 
 fn effect_mask_data(
@@ -33,9 +33,11 @@ fn set_medium_options(data: &mut MaskData, image_lights: bool) {
     data.effect_options[options::MEDIUM_IMAGE_LIGHTS] = f32::from(u8::from(image_lights));
 }
 
-/// Whether an active Fog or Smoke slot scatters the photograph's own lights.
+/// Whether an active Fog, Smoke or Rain slot scatters the photograph's own lights.
 pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
-    (data.applies(MaskEffect::Fog) || data.applies(MaskEffect::Smoke))
+    (data.applies(MaskEffect::Fog)
+        || data.applies(MaskEffect::Smoke)
+        || data.applies(MaskEffect::Rain))
         && data.effect_options[options::MEDIUM_IMAGE_LIGHTS] > 0.5
 }
 
@@ -65,6 +67,66 @@ fn assign_relight_shadow_channels(packed: &mut [MaskData]) {
         .take(RELIGHT_SHADOW_MAP_CHANNELS);
     for (channel, data) in shadowed.enumerate() {
         data.effect_options[options::RELIGHT_SHADOW_CHANNEL] = (channel + 1) as f32;
+    }
+}
+
+/// The direction in image points that `output_direction`, a unit vector in the
+/// output frame, points in, for a projection from source to output
+/// coordinates. Rain and the ground follow the frame the photo is seen in, so
+/// straightening or flipping it does not tilt them.
+pub(super) fn source_direction(
+    projection: [[f32; 3]; 3],
+    output_size: [f32; 2],
+    image_size: [f32; 2],
+    output_direction: [f32; 2],
+) -> [f32; 2] {
+    let project = |u: f32, v: f32| {
+        let row = |r: [f32; 3]| r[0] * u + r[1] * v + r[2];
+        let w = row(projection[2]);
+        [row(projection[0]) / w, row(projection[1]) / w]
+    };
+    let short = output_size[0].min(output_size[1]).max(1.0);
+    let scale = [output_size[0] / short, output_size[1] / short];
+    const STEP: f32 = 1e-3;
+    let center = project(0.5, 0.5);
+    let along_u = project(0.5 + STEP, 0.5);
+    let along_v = project(0.5, 0.5 + STEP);
+    // Output points per image point along each image axis.
+    let along_x = [
+        (along_u[0] - center[0]) * scale[0] / (STEP * image_size[0]),
+        (along_u[1] - center[1]) * scale[1] / (STEP * image_size[0]),
+    ];
+    let along_y = [
+        (along_v[0] - center[0]) * scale[0] / (STEP * image_size[1]),
+        (along_v[1] - center[1]) * scale[1] / (STEP * image_size[1]),
+    ];
+    let determinant = along_x[0] * along_y[1] - along_y[0] * along_x[1];
+    if determinant.abs() < 1e-6 {
+        return output_direction;
+    }
+    let [fx, fy] = output_direction;
+    let x = (fx * along_y[1] - fy * along_y[0]) / determinant;
+    let y = (fy * along_x[0] - fx * along_x[1]) / determinant;
+    let magnitude = x.hypot(y);
+    if magnitude < 1e-6 {
+        return output_direction;
+    }
+    [x / magnitude, y / magnitude]
+}
+
+/// Points the slots' fall directions, which are in the output frame when this
+/// is called, along `direction_of`, which maps an output-frame direction to
+/// image points.
+pub(super) fn orient_rain_slots(
+    packed: &mut [MaskData],
+    direction_of: impl Fn([f32; 2]) -> [f32; 2],
+) {
+    for data in packed.iter_mut() {
+        if data.effect_id() == MaskEffect::Rain.shader_id() {
+            let fall = direction_of([data.lane(rain::FALL_X), data.lane(rain::FALL_Y)]);
+            data.set_lane(rain::FALL_X, fall[0]);
+            data.set_lane(rain::FALL_Y, fall[1]);
+        }
     }
 }
 
@@ -326,6 +388,52 @@ pub(super) fn pack_effect_mask(
                 params::LIGHT_GLOW.clamp(config.light_glow),
             );
             set_medium_options(&mut data, config.image_lights);
+            data
+        }
+        MaskEffect::Rain => {
+            let config = settings.rain;
+            use effect_params::rain as params;
+            let mut data = effect_slot(effect, enabled && config.is_active());
+            data.set_lane(rain::AMOUNT, params::AMOUNT.clamp(config.amount));
+            data.set_lane(rain::LENGTH, params::LENGTH.clamp(config.length));
+            // In the output frame until `orient_rain_slots`.
+            let angle = params::ANGLE.clamp(config.angle).to_radians();
+            data.set_lane(rain::FALL_X, angle.cos());
+            data.set_lane(rain::FALL_Y, angle.sin());
+            data.set_lane(rain::DROP_SIZE, params::DROP_SIZE.clamp(config.drop_size));
+            data.set_lane(rain::MIST, params::MIST.clamp(config.mist));
+            data.set_lane(
+                rain::LIGHT_GLOW,
+                params::LIGHT_GLOW.clamp(config.light_glow),
+            );
+            data.set_lane(rain::GUSTS, params::GUSTS.clamp(config.gusts));
+            data.set_lane(
+                rain::PERSPECTIVE,
+                params::PERSPECTIVE.clamp(config.perspective),
+            );
+            data.set_lane(rain::FOCUS, params::FOCUS.clamp(config.focus));
+            data.set_lane(rain::SEED, params::SEED.clamp(config.seed));
+            data.set_lane(rain::DEPTH, f32::from(u8::from(config.depth_enabled)));
+            set_medium_options(&mut data, config.image_lights);
+            data
+        }
+        MaskEffect::WetSurfaces => {
+            let config = settings.wet_surfaces;
+            use effect_params::wet_surfaces as params;
+            let mut data = effect_slot(effect, enabled && config.is_active());
+            data.set_lane(wet_surfaces::WETNESS, params::WETNESS.clamp(config.wetness));
+            data.set_lane(wet_surfaces::PUDDLES, params::PUDDLES.clamp(config.puddles));
+            data.set_lane(
+                wet_surfaces::PUDDLE_SIZE,
+                params::PUDDLE_SIZE.clamp(config.puddle_size),
+            );
+            data.set_lane(wet_surfaces::GLOSS, params::GLOSS.clamp(config.gloss));
+            data.set_lane(
+                wet_surfaces::REFLECTIONS,
+                params::REFLECTIONS.clamp(config.reflections),
+            );
+            data.set_lane(wet_surfaces::RIPPLES, params::RIPPLES.clamp(config.ripples));
+            data.set_lane(wet_surfaces::SEED, params::SEED.clamp(config.seed));
             data
         }
         MaskEffect::Grain => {

@@ -19,8 +19,9 @@ pub use effects::{
     GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, InitialEffectSettings,
     LensBlurEffectSettings, LightRaysEffectSettings, MaskEffect, MaskEffectCategory,
     MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings, PixelateEffectSettings,
-    RadialBlurEffectSettings, RadialBlurMode, RelightEffectSettings, SharpenEffectSettings,
-    SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
+    RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings, RelightEffectSettings,
+    SharpenEffectSettings, SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
+    WetSurfacesEffectSettings,
 };
 
 mod brush;
@@ -293,13 +294,7 @@ impl LocalMask {
                 .effect_components
                 .iter()
                 .any(EffectComponent::is_active)
-            || (self.effect != MaskEffect::Adjustment
-                && EffectComponent {
-                    effect: self.effect,
-                    enabled: true,
-                    settings: self.effect_settings,
-                }
-                .is_active())
+            || self.effect_settings.effect_is_active(self.effect)
     }
 
     pub fn has_light_rays_effect(&self) -> bool {
@@ -334,29 +329,7 @@ impl EffectComponent {
     }
 
     pub fn is_active(&self) -> bool {
-        if !self.enabled {
-            return false;
-        }
-        match self.effect {
-            MaskEffect::Adjustment => false,
-            MaskEffect::Blur => self.settings.blur.is_active(),
-            MaskEffect::LensBlur => self.settings.lens_blur.is_active(),
-            MaskEffect::MotionBlur => self.settings.motion_blur.is_active(),
-            MaskEffect::RadialBlur => self.settings.radial_blur.is_active(),
-            MaskEffect::TiltShift => self.settings.tilt_shift.is_active(),
-            MaskEffect::Sharpen => self.settings.sharpen.is_active(),
-            MaskEffect::Glow => self.settings.glow.is_active(),
-            MaskEffect::LightRays => self.settings.light_rays.is_active(),
-            MaskEffect::Relight => self.settings.relight.is_active(),
-            MaskEffect::Neon => self.settings.neon.is_active(),
-            MaskEffect::EdgeGlow => self.settings.edge_glow.is_active(),
-            MaskEffect::Pixelate => self.settings.pixelate.is_active(),
-            MaskEffect::Fog => self.settings.fog.is_active(),
-            MaskEffect::Smoke => self.settings.smoke.is_active(),
-            MaskEffect::Grain => self.settings.grain.is_active(),
-            MaskEffect::Halation => self.settings.halation.is_active(),
-            MaskEffect::Vignette => self.settings.vignette.is_active(),
-        }
+        self.enabled && self.settings.effect_is_active(self.effect)
     }
 }
 
@@ -407,10 +380,15 @@ impl MaskStack {
         self.has_fog_effect_matching(|settings| settings.depth_enabled)
     }
 
-    /// An active effect reads scene depth: depth fog or Relight.
+    /// An active effect reads scene depth: depth fog, depth rain, Wet Surfaces
+    /// or Relight.
     pub fn has_scene_depth_effect(&self) -> bool {
         self.has_depth_fog_effect()
-            || self.has_active_effect(|component| component.effect == MaskEffect::Relight)
+            || self.has_active_effect(|component| match component.effect {
+                MaskEffect::Relight | MaskEffect::WetSurfaces => true,
+                MaskEffect::Rain => component.settings.rain.depth_enabled,
+                _ => false,
+            })
     }
 
     fn has_fog_effect_matching(&self, matches: impl Fn(&FogEffectSettings) -> bool) -> bool {

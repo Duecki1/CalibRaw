@@ -199,10 +199,6 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
             indices.relight_shadow_map_pass_index,
             "build_relight_shadow_map",
         ),
-        (
-            indices.scene_depth_guide_pass_index,
-            "build_scene_depth_guide",
-        ),
         (indices.raster_finish_pass_index, "raster_finish"),
         (indices.haze_accumulate_pass_index, "accumulate_haze"),
         (indices.haze_resolve_pass_index, "resolve_haze_airlight"),

@@ -1,0 +1,45 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Relight",
+          "settings": {
+            "relight": {
+              "amount": 70.0,
+              "color": [
+                1.0,
+                0.75,
+                0.5
+              ],
+              "depth": 12.0,
+              "reach": 120.0,
+              "source": [
+                30.0,
+                55.0
+              ]
+            }
+          }
+        },
+        {
+          "effect": "Fog",
+          "settings": {
+            "fog": {
+              "amount": 55.0,
+              "density": 55.0,
+              "light_glow": 50.0
+            }
+          }
+        }
+      ]
+    }
+  },
+  "mask_assets": [
+    {
+      "height": 96,
+      "png": "iVBORw0KGgoAAAANSUhEUgAAAJAAAABgCAAAAADXv6R9AAAAiElEQVR42u3WMQ6AIAxA0Wq4tbNHdlEGT2DCQAqYx+hgX34TcbtjrrMHEBAQEBAQEBAQEBAQ0MhTer/w/Hh+WBkQEBAQEBAQEFCfX9graVDrnPIkgVrnlJoEqsuCrEwhhRTyYbQyhRRSSCFXh5X9o1DMVigUUsjKFFJIIYUUcnVYmUIKKbREoRemW0+8qd9zGwAAAABJRU5ErkJggg==",
+      "width": 144
+    }
+  ],
+  "scene_depth_asset": 0
+}

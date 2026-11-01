@@ -80,7 +80,7 @@ fn pixelate_is_active(primary: vec4<f32>) -> bool {
 }
 
 fn pixelate_block_size_in_use(block_size: i32) -> bool {
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_applies(state, MASK_EFFECT_PIXELATE_ID) {

@@ -14,6 +14,14 @@ fn source_scene_at(pos: vec2<i32>) -> vec3<f32> {
     return film_positive(textureLoad(scene_tex, Common::clamp_pos(pos), 0).xyz);
 }
 
+// What scene depth's guided filter follows (scene_analysis.wgsl): the square
+// root of luminance, so a depth edge in shadow counts like one in light.
+// It reads the scene before any edit, so the map holds for every edit.
+fn scene_guide_at(pos: vec2<i32>) -> f32 {
+    let rgb = max(source_scene_at(pos), vec3<f32>(0.0));
+    return sqrt(dot(rgb, vec3<f32>(0.3, 0.59, 0.11)));
+}
+
 // CameraUniforms::film_base.w; FILM_MODE_* in params.rs. FILM_MODE_COLOR,
 // any other value, inverts each channel on its own.
 const FILM_MODE_POSITIVE: u32 = 0u;
