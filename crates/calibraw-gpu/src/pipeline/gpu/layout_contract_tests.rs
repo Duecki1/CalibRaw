@@ -646,6 +646,22 @@ fn scene_map_cell_matches_its_wgsl_declaration() {
         shared_u32_constant(&modules, "SCENE_EDGE_REACH"),
         SCENE_EDGE_SUPPORT
     );
+    let inverse_shift = modules
+        .iter()
+        .find_map(|(_, module)| {
+            module.constants.iter().find_map(|(_, constant)| {
+                (constant.name.as_deref().map(undecorated) == Some("SCENE_DISTANCE_INVERSE_SHIFT"))
+                    .then(|| match module.global_expressions[constant.init] {
+                        naga::Expression::Literal(naga::Literal::F32(value)) => value,
+                        ref other => panic!("not an f32 literal: {other:?}"),
+                    })
+            })
+        })
+        .expect("SCENE_DISTANCE_INVERSE_SHIFT is declared");
+    assert_eq!(
+        inverse_shift,
+        super::ground_plane::SCENE_DISTANCE_INVERSE_SHIFT
+    );
 }
 
 #[test]

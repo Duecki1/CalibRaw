@@ -1,12 +1,11 @@
 //! The horizon of the ground in scene depth, for Wet Surfaces
 //! (scene_analysis.wgsl).
 //!
-//! Stored depth comes nearer toward the bottom of the image over the ground, and
-//! how fast depends on the photo: the model's output is not linear in distance
-//! or in its inverse, and a nearby object squeezes the ground's range. So a
-//! surface counts as ground by the direction of its depth gradient, with some
-//! slope at all, which walls (sideways) and surfaces facing the camera (nearly
-//! none) do not have. The same rule marks ground in the scene map; here it tells
+//! Distance, derived from stored depth, comes nearer toward the bottom of the image
+//! over the ground, and how fast depends on the photo: a nearby object squeezes
+//! the ground's range. So a surface counts as ground by the direction of its
+//! gradient, with some slope at all, which walls (sideways) and surfaces facing
+//! the camera (nearly none) do not have. The same rule marks ground in the scene map; here it tells
 //! whether the photo has ground and how far up it reaches: walking from
 //! the near edge of the image along each line toward the horizon until the
 //! ground ends.
@@ -20,10 +19,13 @@ use super::*;
 const GRID_LONG: usize = 96;
 /// Cells on each side between which a gradient is measured.
 const SPAN: usize = 2;
-/// Depth at and beyond which nothing is ground: the sky and far scenery.
+/// How much of the depth model's inverse-depth range lies beyond the farthest
+/// surface: `SCENE_DISTANCE_INVERSE_SHIFT` in common.wgsl.
+pub(super) const SCENE_DISTANCE_INVERSE_SHIFT: f32 = 0.115;
+/// Distance at and beyond which nothing is ground: the sky and far scenery.
 /// The end of `SCENE_GROUND_FAR` in scene_analysis.wgsl.
-const FAR_DEPTH: f32 = 0.97;
-/// Slope in depth per shorter edge from which a surface can be ground, the
+const FAR_DISTANCE: f32 = 0.77;
+/// Slope in distance per shorter edge from which a surface can be ground, the
 /// middle of `SCENE_GROUND_SLOPE` in scene_analysis.wgsl.
 const MIN_SLOPE: f32 = 0.12;
 /// Cosine of the angle from up within which a gradient can be ground, about 28
@@ -55,8 +57,11 @@ pub(super) fn estimate_ground_horizon(depth: &MaskImage, up: [f32; 2]) -> Option
     if columns <= 2 * SPAN || rows <= 2 * SPAN {
         return None;
     }
-    let means = block_means(depth, block, columns, rows);
-    let at = |x: usize, y: usize| means[y * columns + x];
+    let distances: Vec<f32> = block_means(depth, block, columns, rows)
+        .into_iter()
+        .map(distance_from_depth)
+        .collect();
+    let at = |x: usize, y: usize| distances[y * columns + x];
     // Shorter-edge lengths per cell.
     let cell = block as f32 / depth.width.min(depth.height) as f32;
     let span = 2.0 * SPAN as f32 * cell;
@@ -64,7 +69,7 @@ pub(super) fn estimate_ground_horizon(depth: &MaskImage, up: [f32; 2]) -> Option
     let mut count = 0usize;
     for y in SPAN..rows - SPAN {
         for x in SPAN..columns - SPAN {
-            if at(x, y) >= FAR_DEPTH {
+            if at(x, y) >= FAR_DISTANCE {
                 continue;
             }
             let slope = [
@@ -125,6 +130,11 @@ pub(super) fn estimate_ground_horizon(depth: &MaskImage, up: [f32; 2]) -> Option
     reaches.sort_unstable_by(f32::total_cmp);
     let index = ((reaches.len() - 1) as f32 * REACH_SHARE) as usize;
     Some(reaches[index] + HORIZON_MARGIN)
+}
+
+/// Relative distance of a depth: `scene_distance_from_depth` in common.wgsl.
+fn distance_from_depth(depth: f32) -> f32 {
+    depth * SCENE_DISTANCE_INVERSE_SHIFT / (1.0 - depth + SCENE_DISTANCE_INVERSE_SHIFT)
 }
 
 /// The depth's mean over blocks of `block` × `block` pixels, which also undoes

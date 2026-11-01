@@ -306,6 +306,26 @@ const SCENE_MAP_BLUR_GRID_LONG: u32 = 48u;
 // Depth bins of the lens blur table.
 const SCENE_FOCUS_BINS: u32 = 32u;
 
+// Scene depth (near 0, far 1) is linear in the depth model's inverse depth i, as
+// depth = 1 - i, and distance goes as 1 / (i + shift). This is how much of the inverse
+// depth's range lies beyond the farthest surface, fitted to a distance-linear depth
+// model's output for the same photo. Matches SCENE_DISTANCE_INVERSE_SHIFT in
+// ground_plane.rs.
+const SCENE_DISTANCE_INVERSE_SHIFT: f32 = 0.115;
+
+// Relative distance of a depth, linear in distance: near 0, far 1. Most of a scene lies
+// toward depth 1 and near 0 here, and the steep end magnifies depth's small errors, so
+// read depth itself unless something truly builds up or is judged over distance.
+fn scene_distance_from_depth(depth: f32) -> f32 {
+    return depth * SCENE_DISTANCE_INVERSE_SHIFT / (1.0 - depth + SCENE_DISTANCE_INVERSE_SHIFT);
+}
+
+// Change of `scene_distance_from_depth` per change of depth, to convert a gradient.
+fn scene_distance_per_depth(depth: f32) -> f32 {
+    let gap = 1.0 - depth + SCENE_DISTANCE_INVERSE_SHIFT;
+    return SCENE_DISTANCE_INVERSE_SHIFT * (1.0 + SCENE_DISTANCE_INVERSE_SHIFT) / (gap * gap);
+}
+
 fn scene_map_grid_for(long_cells: u32) -> vec2<u32> {
     // A cell holds at least one pixel, even for a very small preview.
     return min(

@@ -34,12 +34,12 @@
 // fringe of the texture beside them. The map depends only on the scene, scene depth
 // and the direction of up, not on the rest of the edit.
 //
-// The ground is found in scene depth: surfaces whose depth rises toward the
-// horizon, which walls (a sideways gradient) and surfaces facing the camera
-// (hardly any) do not have. How fast it rises depends on the photo, as the depth
-// model's output is not linear in distance or its inverse, so only its direction
-// and that it rises at all count (ground_plane.rs finds the horizon by the same
-// rule). Ground also runs on toward the viewer and has more ground beside it, which
+// The ground is found in distance (Common::scene_distance_from_depth): surfaces whose
+// distance rises toward the horizon, which walls (a sideways gradient) and surfaces
+// facing the camera (hardly any) do not have. Depth itself rises evenly up flat ground
+// wherever it lies, which would carry the ground on up to what stands far away. How
+// fast distance rises depends on the photo, so only its direction and that it rises
+// at all count (ground_plane.rs finds the horizon by the same rule). Ground also runs on toward the viewer and has more ground beside it, which
 // a patch of a wall or a pole's top with the same slope does not. Each cell's contact distance averages
 // a few neighbouring rays, so a reflection changes gradually beside a pole rather
 // than along a seam.
@@ -133,13 +133,15 @@ const SCENE_BLUR_STRIDE: i32 = 4;
 // reflection, and interpolating there keeps contact distances continuous.
 const SCENE_GROUND_LEVEL: f32 = 2.0;
 const SCENE_GROUND_RAY_LEVEL: f32 = 3.0;
-// Depth per shorter edge over which a surface's slope comes to count as ground,
+// Distance per shorter edge over which a surface's slope comes to count as ground,
 // and the cosines of the angle from up over which its direction does.
 // ground_plane.rs tests the middle of each.
 const SCENE_GROUND_SLOPE: vec2<f32> = vec2<f32>(0.06, 0.18);
 const SCENE_GROUND_ALIGNMENT: vec2<f32> = vec2<f32>(0.82, 0.96);
-// Depths beyond which nothing is ground: the sky and far scenery.
-const SCENE_GROUND_FAR: vec2<f32> = vec2<f32>(0.9, 0.97);
+// Distances beyond which nothing is ground: the sky and far scenery. Depth's few last
+// levels span most of the distance, so a higher limit would take their noise for ground
+// and let reflection rays run on into the sky.
+const SCENE_GROUND_FAR: vec2<f32> = vec2<f32>(0.48, 0.77);
 // Below the horizon in shorter edges over which ground fades in.
 const SCENE_HORIZON_FADE: f32 = 0.03;
 // Points checked toward the viewer for ground running on from a cell, how far
@@ -187,7 +189,7 @@ const SCENE_TERRAIN_DEPARTURE_RISE: f32 = 0.5;
 // foot, and the road before the foot keeps its water right up to it.
 const SCENE_TERRAIN_EDGE_RISE: f32 = 0.5;
 const SCENE_TERRAIN_EDGE_REACH: i32 = 3;
-// Smallest broad slope to divide by, in depth per shorter edge.
+// Smallest broad slope to divide by, in distance per shorter edge.
 const SCENE_TERRAIN_MIN_SLOPE: f32 = 0.05;
 // Farthest an edge profile reads from a cell's centre, in pixels
 // (SCENE_EDGE_SUPPORT in tiles.rs), and how many samples it has at most on each
@@ -499,7 +501,16 @@ fn blur_scene_environment(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
 }
 
-// How much a surface texel (smooth depth in y, gradient in zw) is ground.
+// A surface texel (smooth depth in y, gradient in zw) with distance in place of depth.
+fn scene_surface_distance(texel: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(
+        texel.x,
+        Common::scene_distance_from_depth(texel.y),
+        texel.zw * Common::scene_distance_per_depth(texel.y),
+    );
+}
+
+// How much a surface texel in distance is ground.
 fn scene_texel_ground(texel: vec4<f32>, up: vec2<f32>) -> f32 {
     let slope = length(texel.zw);
     if slope <= 1e-5 { return 0.0; }
@@ -512,14 +523,15 @@ fn scene_texel_ground(texel: vec4<f32>, up: vec2<f32>) -> f32 {
         * (1.0 - smoothstep(SCENE_GROUND_FAR.x, SCENE_GROUND_FAR.y, texel.y));
 }
 
-// A coarse surface texel, where reflection rays and the walk toward the viewer read.
+// A coarse surface texel in distance, where reflection rays and the walk toward the
+// viewer read.
 fn scene_ray_texel(point: vec2<f32>) -> vec4<f32> {
-    return textureSampleLevel(
+    return scene_surface_distance(textureSampleLevel(
         scene_depth_tex,
         scene_map_sampler,
         point / Common::scene_image_size(),
         SCENE_GROUND_RAY_LEVEL,
-    );
+    ));
 }
 
 // How much a surface of some slope along up can continue ground of slope `reference`.
@@ -607,17 +619,17 @@ fn scene_contact_distance(point: vec2<f32>, below: f32, up: vec2<f32>) -> f32 {
 // How far a ground cell rises above the ground around it, in camera heights, plus
 // what its departure from level adds. A point on flat ground `below` under the
 // horizon moves up the image by `below` times a height in camera heights (Delta b
-// = f h / z, b = f H / z), and depth converts that image distance through the broad
+// = f h / z, b = f H / z), and distance converts that image distance through the broad
 // slope. Each point of the ring predicts the cell's depth along that slope, so a
 // ring cut short by a wall or the frame leaves no bias.
 fn scene_terrain_height(point: vec2<f32>, below: f32, texel: vec4<f32>, up: vec2<f32>) -> f32 {
     let image_size = Common::scene_image_size();
-    let broad = textureSampleLevel(
+    let broad = scene_surface_distance(textureSampleLevel(
         scene_depth_tex,
         scene_map_sampler,
         point / image_size,
         SCENE_TERRAIN_BROAD_LEVEL,
-    ).zw;
+    )).zw;
     let slope = max(dot(broad, up), SCENE_TERRAIN_MIN_SLOPE);
     var predicted = 0.0;
     var support = 0.0;
@@ -660,11 +672,12 @@ fn build_scene_ground(@builtin(global_invocation_id) gid: vec3<u32>) {
     let cell = vec2<i32>(gid.xy);
     let ground = Common::effects_uniforms.scene_ground;
     let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(grid);
-    let texel = textureSampleLevel(scene_depth_tex, scene_map_sampler, uv, SCENE_GROUND_LEVEL);
+    let stored = textureSampleLevel(scene_depth_tex, scene_map_sampler, uv, SCENE_GROUND_LEVEL);
+    let texel = scene_surface_distance(stored);
     let point = uv * Common::scene_image_size();
     let below = ground.z - dot(point, ground.xy);
     if ground.w < 0.5 || below <= 0.0 {
-        textureStore(scene_ground_out, cell, vec4<f32>(0.0, 0.0, texel.y, 1.0));
+        textureStore(scene_ground_out, cell, vec4<f32>(0.0, 0.0, stored.y, 1.0));
         return;
     }
     let score = scene_texel_ground(texel, ground.xy)
@@ -677,7 +690,7 @@ fn build_scene_ground(@builtin(global_invocation_id) gid: vec3<u32>) {
         + scene_contact_distance(point, below, ground.xy)
         + scene_contact_distance(point + across, below, ground.xy)) / 3.0;
     let terrain = scene_terrain_height(point, below, texel, ground.xy);
-    textureStore(scene_ground_out, cell, vec4<f32>(score, contact, texel.y, terrain));
+    textureStore(scene_ground_out, cell, vec4<f32>(score, contact, stored.y, terrain));
 }
 
 // The lens blur at each depth: the mean of the logarithm of the blur of the edges

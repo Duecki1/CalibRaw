@@ -2,8 +2,9 @@
 //
 // Depth is normalized over the full image, whatever the crop or export tile: near 0,
 // far 1. It is linear in the depth model's inverse depth, not in distance (depth.rs),
-// so most of a scene lies toward 1. Fog, Smoke, Relight and Wet Surfaces read it as it
-// is; what accumulates along a path of real length reads `scene_distance_at`.
+// so most of a scene lies toward 1. Effects read it as it is, unless what they compute
+// builds up over real distance: Rain's mist and the ground's extent read distance
+// (`scene_distance_at`, Common::scene_distance_from_depth).
 //
 // `scene_depth_at` is depth at a pixel, edge-accurate. Stored depth is reliable on
 // a surface and only there: its depth edges are blocky and misplaced at full size.
@@ -118,20 +119,9 @@ fn scene_depth_at(pos: vec2<i32>) -> f32 {
     return scene_depth_from(scene_depth_map_at(pos), pos);
 }
 
-// How much of the model's inverse-depth range lies beyond the farthest surface, which
-// sets how far that surface is relative to the nearest. Fitted to a distance-linear
-// depth model's output for the same photo.
-const SCENE_DISTANCE_INVERSE_SHIFT: f32 = 0.115;
-
-// Relative distance of a depth, linear in distance: near 0, far 1, from depth `1 - i`
-// where distance goes as 1 / (i + shift).
-fn scene_distance_from_depth(depth: f32) -> f32 {
-    return depth * SCENE_DISTANCE_INVERSE_SHIFT / (1.0 - depth + SCENE_DISTANCE_INVERSE_SHIFT);
-}
-
 // Relative distance at a pixel, for scene_depth_present() scenes.
 fn scene_distance_at(pos: vec2<i32>) -> f32 {
-    return scene_distance_from_depth(scene_depth_at(pos));
+    return Common::scene_distance_from_depth(scene_depth_at(pos));
 }
 
 // Depth difference at which a coarser map's texel stops contributing to a pixel.
