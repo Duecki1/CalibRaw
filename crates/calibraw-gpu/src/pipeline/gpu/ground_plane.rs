@@ -21,13 +21,13 @@ const GRID_LONG: usize = 96;
 const SPAN: usize = 2;
 /// Distance at and beyond which nothing is ground: the sky and far scenery.
 /// The end of `SCENE_GROUND_FAR` in scene_analysis.wgsl.
-const FAR_DISTANCE: f32 = 0.77;
+pub(super) const FAR_DISTANCE: f32 = 0.77;
 /// Slope in distance per shorter edge from which a surface can be ground, the
 /// middle of `SCENE_GROUND_SLOPE` in scene_analysis.wgsl.
-const MIN_SLOPE: f32 = 0.12;
+pub(super) const MIN_SLOPE: f32 = 0.12;
 /// Cosine of the angle from up within which a gradient can be ground, about 28
 /// degrees, the middle of `SCENE_GROUND_ALIGNMENT` in scene_analysis.wgsl.
-const MIN_ALIGNMENT: f32 = 0.89;
+pub(super) const MIN_ALIGNMENT: f32 = 0.89;
 /// Cells a walk toward the horizon may cross off the ground, such as a thin rail.
 const MAX_GAP: usize = 3;
 /// Which share of the lines' reach, from the lowest, gives the horizon. A line

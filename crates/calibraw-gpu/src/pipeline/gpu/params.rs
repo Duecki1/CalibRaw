@@ -591,17 +591,21 @@ impl GpuParams {
 
     /// Finds the ground for an active Wet Surfaces effect, with `up` in image
     /// points. Without scene depth, or without ground in it, there is none.
+    /// Without the effect nothing reads the ground, and `up` stays fixed so that
+    /// straightening does not rebuild the scene map.
     fn set_scene_ground(&mut self, up: [f32; 2]) {
-        let horizon = self
+        if !self
             .mask_slots()
             .iter()
             .any(|mask| mask.applies(MaskEffect::WetSurfaces))
-            .then(|| {
-                self.scene_depth
-                    .as_ref()
-                    .and_then(|depth| estimate_ground_horizon(depth, up))
-            })
-            .flatten();
+        {
+            self.effects.scene_ground = [OUTPUT_UP[0], OUTPUT_UP[1], 0.0, 0.0];
+            return;
+        }
+        let horizon = self
+            .scene_depth
+            .as_ref()
+            .and_then(|depth| estimate_ground_horizon(depth, up));
         self.effects.scene_ground = match horizon {
             Some(horizon) => [up[0], up[1], horizon, 1.0],
             None => [up[0], up[1], 0.0, 0.0],

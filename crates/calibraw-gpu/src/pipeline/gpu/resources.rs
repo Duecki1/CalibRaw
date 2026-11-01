@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use wgpu::util::DeviceExt;
 
 pub(super) const SCENE_DEPTH_EDGE: u32 = 1024;
-/// Scene depth: stored depth, smooth depth and its two gradients, with a mip
+/// Scene depth: distance, smooth distance and its two gradients, with a mip
 /// chain (`scene_surface`).
 pub(super) const SCENE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 

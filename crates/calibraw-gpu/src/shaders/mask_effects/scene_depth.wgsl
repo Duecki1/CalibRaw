@@ -18,6 +18,15 @@
 // depth has around the pixel: a bright patch beside a dark object lies no farther than
 // what stands there.
 //
+// Simpler versions failed on real photos. The filter alone prints texture into depth
+// and blotches Relight on fur. A hard clamp to one cell's range, or stored depth used
+// directly on surfaces, draws faint contours along the cell grid in smooth sky, where
+// Rain's mist turns a depth step of 0.02 into 5 levels. Gating by one cell's range
+// steps where the range opens, so the edge gate is averaged over 5 x 5 cells and the
+// limit uses the 3 x 3 window. Relight alone mixes stored depth in where brightness
+// does not explain depth (`scene_surface_taps_at`); direct readers must not, as that
+// draws the same contours.
+//
 // All of it reads the scene before any edit, so an edit does not move those edges, and
 // export tiles match the preview.
 //

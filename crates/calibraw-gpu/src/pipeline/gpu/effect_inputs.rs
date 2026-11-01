@@ -26,7 +26,7 @@ pub(super) const IMAGE_LIGHT_PASSES: usize = 4;
 /// and the guided filter's two window passes.
 pub(super) const HAZE_PASSES: usize = 5;
 /// The scene map passes (scene_analysis.wgsl): accumulate, resolve,
-/// coefficient smoothing, the environment blur and the ground.
+/// coefficient smoothing, the environment blur, the ground and the lens blur.
 pub(super) const SCENE_MAP_PASSES: usize = 6;
 
 /// Coarse maps over the full image that a cropped view or an export tile

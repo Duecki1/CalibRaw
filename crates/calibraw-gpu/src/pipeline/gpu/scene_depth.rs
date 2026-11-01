@@ -44,7 +44,7 @@ pub(super) struct UploadedSceneDepth {
 
 impl RawGpuPipeline {
     /// Uploads full-image scene depth, once an effect allocated its texture.
-    /// Level 0 channel r holds the stored depth the scene map is built from.
+    /// Level 0 channel r holds the distance the scene map is built from.
     /// With `surface` the surface shading reads fills the other channels and the
     /// mip chain (`scene_surface`); without it they are not read, and level 0
     /// repeats the depth with flat gradients.
@@ -59,9 +59,13 @@ impl RawGpuPipeline {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(depth) = depth.filter(|depth| valid_scene_depth(depth)) else {
-            *uploaded = None;
-            self.invalidate_relight_shadow_map();
-            self.invalidate_scene_map();
+            // Only when depth goes away: the scene map built without depth stays
+            // valid for every later render, and export tiles must keep the one
+            // built from the whole image.
+            if uploaded.take().is_some() {
+                self.invalidate_relight_shadow_map();
+                self.invalidate_scene_map();
+            }
             return; // The uniform presence flag prevents sampling stale texture data.
         };
         // No effect reads depth yet: the allocation that first needs it comes

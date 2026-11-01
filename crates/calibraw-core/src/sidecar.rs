@@ -33,7 +33,7 @@ pub use size_limits::*;
 // Surfaces; edits are written with the oldest schema that holds them
 // (`migrations::older_readers`).
 pub const SIDECAR_SCHEMA_VERSION: u32 = 4;
-pub const DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT: u64 = 0x4155_5241_5700_0007;
+pub const DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT: u64 = 0x4155_5241_5700_0008;
 pub const SIDECAR_SUFFIX: &str = ".calibraw";
 /// The AI-denoise result saved next to a RAW. It is large derived data, so it
 /// lives outside the sidecar and only while the saved edit uses AI denoise.

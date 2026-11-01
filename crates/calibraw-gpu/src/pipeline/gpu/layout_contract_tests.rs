@@ -8,7 +8,7 @@
 //! offset and size are therefore compared explicitly.
 
 use super::{
-    effect_lanes, processing_work_format, shader_manager::ShaderManager, shaders,
+    effect_lanes, ground_plane, processing_work_format, shader_manager::ShaderManager, shaders,
     work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
     ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, ViewTransformMode,
     FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE, HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG,
@@ -469,6 +469,26 @@ fn shared_constants_and_effect_ids_match_rust() {
         SCENE_MAP_BLUR_GRID_LONG
     );
     assert_eq!(constant("SCENE_FOCUS_BINS"), SCENE_FOCUS_BINS);
+    // ground_plane.rs finds the photo's horizon by the scene map's ground rule.
+    let ground_range = |name: &str| {
+        let source = include_str!("../../shaders/scene_analysis.wgsl");
+        let start = format!("const {name}: vec2<f32> = vec2<f32>(");
+        let (_, rest) = source
+            .split_once(&start)
+            .unwrap_or_else(|| panic!("scene_analysis.wgsl has no {name}"));
+        let (values, _) = rest.split_once(')').unwrap();
+        let (low, high) = values.split_once(", ").unwrap();
+        [low, high].map(|value| value.parse::<f32>().unwrap())
+    };
+    let middle = |[low, high]: [f32; 2]| (low + high) * 0.5;
+    assert_eq!(
+        ground_range("SCENE_GROUND_FAR")[1],
+        ground_plane::FAR_DISTANCE
+    );
+    assert!((middle(ground_range("SCENE_GROUND_SLOPE")) - ground_plane::MIN_SLOPE).abs() < 1e-5);
+    assert!(
+        (middle(ground_range("SCENE_GROUND_ALIGNMENT")) - ground_plane::MIN_ALIGNMENT).abs() < 1e-5
+    );
     for effect in MaskEffect::ALL {
         if effect == MaskEffect::Adjustment {
             assert_eq!(effect.shader_id(), 0, "adjustment masks use shader ID 0");
