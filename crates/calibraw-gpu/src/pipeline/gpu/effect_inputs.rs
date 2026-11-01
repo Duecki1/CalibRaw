@@ -734,6 +734,7 @@ impl InputBindingSources {
                     buffer_binding(0, &self.camera_uniforms),
                     sampler_binding(28, &self.mask_sampler),
                     texture_binding(35, inputs.scene_depth),
+                    texture_binding(67, &weather.environment_view),
                     texture_binding(72, &weather.ground_view),
                 ],
             ),

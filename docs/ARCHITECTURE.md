@@ -250,7 +250,7 @@ passes as before. Each pass reads the image from one work texture and writes the
 other, and `encode_output_stage` tracks which one holds it. They read the weather
 map (`weather_analysis.wgsl`), a `FullImageMap` holding the photo's coarse colour,
 a guided filter's coefficients that refine scene depth against the photo, and the
-ground. It depends on the scene, scene depth and the direction of up
+ground with its terrain height. It depends on the scene, scene depth and the direction of up
 (`GpuParams::with_vignette_geometry`), and is rebuilt when any of them changes.
 Compiled programs are shared through `RawGpuProgramTemplate` and the persistent
 pipeline cache. Rust/WGSL layout contracts are tested in

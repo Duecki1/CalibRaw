@@ -736,6 +736,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             buffer_entry(0),
             sampler_entry(28),
             texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
+            weather_read(67),
             environment_write(72),
         ],
     ];

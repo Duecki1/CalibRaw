@@ -21,6 +21,7 @@ use crate::pipeline::MaskEffect;
 use calibraw_core::pipeline::{
     CA_WINDOW_RADIUS, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT,
     HAZE_GUIDE_SUPPORT, MAX_LATERAL_SHIFT, MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
+    WET_SURFACES_SUPPORT,
 };
 use naga::proc::Layouter;
 use std::collections::BTreeSet;
@@ -641,6 +642,10 @@ fn weather_cell_matches_its_wgsl_declaration() {
         .find(|(_, ty)| ty.name.as_deref().map(undecorated) == Some("WeatherCell"))
         .expect("WeatherCell is declared");
     assert_eq!(u64::from(layouter[handle].size), WEATHER_CELL_BYTES);
+    assert_eq!(
+        shared_u32_constant(&modules, "WET_DETAIL_REACH"),
+        WET_SURFACES_SUPPORT
+    );
 }
 
 #[test]

@@ -14,6 +14,14 @@
 // the same distance above it. Reflections are read from the environment map,
 // which holds the whole photo for every export tile, and spread along the view
 // on rough ground, which elongates them toward the viewer.
+//
+// Standing water has a level surface, so its edge is where that level meets the
+// ground: a contour line. Everything that limits a puddle therefore raises the
+// ground rather than fading the water: the terrain in the weather map, rough
+// surfaces and what is not ground. The photo's own detail is the last height: its
+// lighter grains stand clear of shallow water and its dark joints and pits fill
+// first, so an edge breaks up on the texture that is really there. Ground beside
+// the water has drawn it in, and stays dark past the edge.
 
 // Packed parameter lanes (effect_lanes.rs).
 const WET_SURFACES_WETNESS_LANE: u32 = 0u;
@@ -39,6 +47,27 @@ const WET_FAR_END: f32 = 0.97;
 // Surface roughness (weather_cell_roughness) from which a surface starts to lose
 // its sheen, and at which it holds no standing water: gravel and grass drink it.
 const WET_ROUGHNESS_RANGE: vec2<f32> = vec2<f32>(0.018, 0.04);
+// How far rough surfaces and what is not ground rise above the water, in the units
+// of the puddle field: past its whole range.
+const WET_NOT_GROUND_RISE: f32 = 0.6;
+// Octaves of the puddle field.
+const WET_UNDULATION_OCTAVES: u32 = 3u;
+// Height of the photo's detail at the smallest Puddle size, in units of the puddle
+// field per standard deviation of the local guide, and how many deviations count.
+const WET_DETAIL_RELIEF: f32 = 0.04;
+const WET_DETAIL_LIMIT: f32 = 2.5;
+// Distance of the outer taps of the detail's footprint, in pixels.
+const WET_DETAIL_REACH: i32 = 2;
+// Smallest relative deviation of the guide to divide by: smoother than this is
+// noise, not relief.
+const WET_DETAIL_MIN_DEVIATION: f32 = 0.02;
+// Height below the water's level over which the ground beside it has soaked it up,
+// at the smallest Puddle size.
+const WET_SOAK_REACH: f32 = 0.05;
+// Half the height over which a pixel goes from dry to under water at the smallest
+// Puddle size, in units of the puddle field. A pixel spans many grains, some already under water and some not,
+// so its coverage is partial rather than a hard flip that would read as dither.
+const WET_WATER_EDGE: f32 = 0.035;
 // Taps of a reflection along the view.
 const WET_REFLECTION_TAPS: i32 = 3;
 // How far a rough reflection spreads along the view, relative to its distance
@@ -75,6 +104,11 @@ struct WetPixel {
     up: vec2<f32>,
     // 1 on smooth surfaces, 0 on rough ones.
     smooth_surface: f32,
+    // The ground's height (weather_terrain_height).
+    terrain: f32,
+    // The guide's mean and standard deviation around the pixel.
+    guide_mean: f32,
+    guide_deviation: f32,
 }
 
 // The pixel's ground: the surrounding map cells, each weighted by how near its
@@ -88,7 +122,8 @@ fn wet_pixel(pos: vec2<i32>) -> WetPixel {
     let point = CreativeEffects::full_image_uv(pos) * Common::weather_image_size();
     let below = ground.z - dot(point, ground.xy);
     let smooth_surface = 1.0 - smoothstep(WET_ROUGHNESS_RANGE.x, WET_ROUGHNESS_RANGE.y, map.z);
-    var pixel = WetPixel(depth, 0.0, 0.0, below, point, ground.xy, smooth_surface);
+    let guide_deviation = max(sqrt(max(map.z, 0.0)), WET_DETAIL_MIN_DEVIATION) * max(map.w, 1e-3);
+    var pixel = WetPixel(depth, 0.0, 0.0, below, point, ground.xy, smooth_surface, 0.0, map.w, guide_deviation);
     if ground.w < 0.5 || !weather_depth_present() || below <= 0.0 { return pixel; }
 
     let grid = vec2<i32>(Common::weather_grid());
@@ -97,7 +132,8 @@ fn wet_pixel(pos: vec2<i32>) -> WetPixel {
     var score = 0.0;
     var weights = 0.0;
     var contact = 0.0;
-    var contact_weights = 0.0;
+    var terrain = 0.0;
+    var on_ground_weights = 0.0;
     for (var y = 0; y < 4; y = y + 1) {
         for (var x = 0; x < 4; x = x + 1) {
             let cell = base + vec2<i32>(x, y);
@@ -114,11 +150,13 @@ fn wet_pixel(pos: vec2<i32>) -> WetPixel {
             score += texel.x * weight;
             weights += weight;
             contact += texel.y * texel.x * weight;
-            contact_weights += texel.x * weight;
+            terrain += texel.w * texel.x * weight;
+            on_ground_weights += texel.x * weight;
         }
     }
     pixel.on_ground = score / max(weights, 1e-6);
-    pixel.contact = contact / max(contact_weights, 1e-6);
+    pixel.contact = contact / max(on_ground_weights, 1e-6);
+    pixel.terrain = terrain / max(on_ground_weights, 1e-6);
     return pixel;
 }
 
@@ -135,22 +173,73 @@ fn wet_ground_position(pixel: WetPixel) -> vec3<f32> {
     );
 }
 
-// Share of the ground under standing water at a ground position. Detail too fine
-// to resolve near the horizon fades to its mean, so puddles dissolve into the
-// far sheen instead of aliasing.
-fn wet_puddle(position: vec3<f32>, params: CreativeEffects::MaskEffectParams) -> f32 {
+// Height of the photo's detail at a pixel, in standard deviations of the local guide.
+// It is read over a few pixels: grains span several, and single pixels would add
+// sensor noise that reads as dither along the water's edge. WET_SURFACES_SUPPORT in
+// tiles.rs reserves their reach.
+fn wet_detail(pos: vec2<i32>, pixel: WetPixel) -> f32 {
+    let reach = WET_DETAIL_REACH;
+    let guide = (2.0 * SceneSource::weather_guide_at(pos)
+        + SceneSource::weather_guide_at(pos + vec2<i32>(reach, 0))
+        + SceneSource::weather_guide_at(pos - vec2<i32>(reach, 0))
+        + SceneSource::weather_guide_at(pos + vec2<i32>(0, reach))
+        + SceneSource::weather_guide_at(pos - vec2<i32>(0, reach))) / 6.0;
+    return clamp((guide - pixel.guide_mean) / pixel.guide_deviation, -WET_DETAIL_LIMIT, WET_DETAIL_LIMIT);
+}
+
+// The ground's gentle undulation, 0 to 1: the broad forms that make basins. Finer
+// forms would only draw tendrils; the photo's detail breaks up the edge instead.
+fn wet_undulation(position: vec2<f32>) -> f32 {
+    var point = position;
+    var amplitude = 0.5;
+    var value = 0.0;
+    var normalization = 0.0;
+    for (var octave = 0u; octave < WET_UNDULATION_OCTAVES; octave = octave + 1u) {
+        value += CreativeEffects::atmosphere_noise(point) * amplitude;
+        normalization += amplitude;
+        point = vec2<f32>(point.x * 1.62 + point.y * 1.17, point.x * -1.17 + point.y * 1.62)
+            + vec2<f32>(13.7, 9.2);
+        amplitude *= 0.45;
+    }
+    return value / normalization;
+}
+
+// Water at a pixel: how much of it is under standing water and how much the ground
+// has soaked up beside it. Detail too fine to resolve near the horizon fades to its
+// mean, so puddles dissolve into the far sheen instead of aliasing.
+struct WetWater {
+    standing: f32,
+    soaked: f32,
+}
+
+fn wet_water(pos: vec2<i32>, pixel: WetPixel, position: vec3<f32>, params: CreativeEffects::MaskEffectParams) -> WetWater {
     let amount = clamp(CreativeEffects::mask_effect_lane(params, WET_SURFACES_PUDDLES_LANE) / 100.0, 0.0, 1.0);
-    if amount <= 1e-5 { return 0.0; }
+    if amount <= 1e-5 { return WetWater(0.0, 0.0); }
     let size_control = clamp(CreativeEffects::mask_effect_lane(params, WET_SURFACES_PUDDLE_SIZE_LANE) / 100.0, 0.0, 1.0);
     let frequency = mix(WET_PUDDLE_FREQUENCY.x, WET_PUDDLE_FREQUENCY.y, size_control);
     let seed = clamp(CreativeEffects::mask_effect_lane(params, WET_SURFACES_SEED_LANE), 0.0, 1000.0);
     let offset = vec2<f32>(seed * 0.113 + 3.7, seed * -0.071 + 17.1);
-    let field = CreativeEffects::atmosphere_fbm(position.xy * frequency + offset);
+    let field = wet_undulation(position.xy * frequency + offset);
     let threshold = mix(0.72, 0.36, amount);
-    let edge = 0.012 + position.z * frequency;
+    let rise = pixel.terrain + (1.0 - pixel.on_ground * pixel.smooth_surface) * WET_NOT_GROUND_RISE;
+    // Above zero the ground lies below the water's level.
+    let level = field - threshold - rise;
+    // Broader forms have gentler slopes in the field, so the edge's heights shrink
+    // with them to keep the same width on the ground.
+    let edge_scale = frequency / WET_PUDDLE_FREQUENCY.x;
+    let relief = WET_DETAIL_RELIEF * edge_scale;
+    let edge = WET_WATER_EDGE * edge_scale + position.z * frequency;
     let resolved = 1.0 - smoothstep(0.4, 1.2, position.z * frequency);
-    let mean = smoothstep(0.75, 0.3, threshold) * amount;
-    return mix(mean, smoothstep(threshold - edge, threshold + edge, field), resolved);
+    let mean = (1.0 - smoothstep(0.3, 0.75, threshold)) * amount * (1.0 - smoothstep(0.0, 0.1, rise));
+    // Far from the water's edge the detail changes nothing, and costs reads.
+    var surface = level;
+    if abs(level) < WET_DETAIL_LIMIT * relief + edge {
+        surface -= wet_detail(pos, pixel) * relief;
+    }
+    return WetWater(
+        mix(mean, smoothstep(-edge, edge, surface), resolved),
+        mix(mean, smoothstep(-WET_SOAK_REACH * edge_scale, 0.0, level), resolved),
+    );
 }
 
 // How hard any Rain effect in the edit falls.
@@ -229,13 +318,14 @@ fn wet_surface(pos: vec2<i32>, input_rgb: vec3<f32>, params: CreativeEffects::Ma
     let p = WET_INTERNAL_REFLECTION;
     let darkened = input_rgb * ((1.0 - p) / (vec3<f32>(1.0) - p * albedo));
 
-    var puddle = 0.0;
+    var water = WetWater(0.0, 0.0);
     var position = vec3<f32>(0.0);
     if pixel.on_ground > 1e-4 {
         position = wet_ground_position(pixel);
-        puddle = wet_puddle(position, params) * pixel.on_ground * pixel.smooth_surface;
+        water = wet_water(pos, pixel, position, params);
     }
-    let soaked = max(wetness * mix(WET_OTHER_SURFACES, 1.0, pixel.on_ground), puddle);
+    let puddle = water.standing;
+    let soaked = max(wetness * mix(WET_OTHER_SURFACES, 1.0, pixel.on_ground), max(water.soaked, puddle));
     let rgb = mix(input_rgb, darkened, soaked * reachable);
     if pixel.on_ground <= 1e-4 { return rgb; }
 
@@ -281,7 +371,7 @@ fn wet_glints(pos: vec2<i32>, params: CreativeEffects::MaskEffectParams) -> vec3
     let pixel = wet_pixel(pos);
     if pixel.on_ground <= 1e-4 { return vec3<f32>(0.0); }
     let position = wet_ground_position(pixel);
-    let puddle = wet_puddle(position, params) * pixel.on_ground * pixel.smooth_surface;
+    let puddle = wet_water(pos, pixel, position, params).standing;
     let gloss = clamp(CreativeEffects::mask_effect_lane(params, WET_SURFACES_GLOSS_LANE) / 100.0, 0.0, 1.0);
     let roughness = mix(mix(0.55, 0.16, gloss), 0.05, puddle);
     let alpha = roughness * roughness;

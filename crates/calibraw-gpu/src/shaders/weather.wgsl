@@ -13,10 +13,11 @@
 //                       ground, then falling rain in front of everything.
 //
 // Everything is in scene-linear Rec.2020 and depends only on full-image
-// coordinates, the weather map (weather_analysis.wgsl), scene depth and global
-// tone statistics, and reads no neighbouring pixels, so export tiles match the
-// preview and need no extra halo. Image points are in shorter-edge units with
-// (0, 0) at the top-left corner. Effects keep their own mask weight.
+// coordinates, the weather map (weather_analysis.wgsl), scene depth, global tone
+// statistics and the scene a few pixels around (wet_detail), so export tiles match
+// the preview with a small halo (WET_SURFACES_SUPPORT in tiles.rs). Image points are
+// in shorter-edge units with (0, 0) at the top-left corner. Effects keep their own
+// mask weight.
 
 // These values must match MaskEffect::shader_id on the Rust side.
 const MASK_EFFECT_RAIN_ID: u32 = 18u;
@@ -40,8 +41,8 @@ fn weather_depth_present() -> bool {
 }
 
 // The weather map interpolated to a pixel: the guided filter's slope and offset,
-// and the surface's roughness.
-fn weather_map_at(pos: vec2<i32>) -> vec3<f32> {
+// the surface's roughness and the mean guide around it.
+fn weather_map_at(pos: vec2<i32>) -> vec4<f32> {
     let grid = vec2<i32>(Common::weather_grid());
     let last = grid - vec2<i32>(1);
     let position = clamp(
@@ -53,13 +54,13 @@ fn weather_map_at(pos: vec2<i32>) -> vec3<f32> {
     let next = min(base + vec2<i32>(1), last);
     let f = position - vec2<f32>(base);
     let top = mix(
-        textureLoad(weather_depth_map_tex, base, 0).xyz,
-        textureLoad(weather_depth_map_tex, vec2<i32>(next.x, base.y), 0).xyz,
+        textureLoad(weather_depth_map_tex, base, 0),
+        textureLoad(weather_depth_map_tex, vec2<i32>(next.x, base.y), 0),
         f.x,
     );
     let bottom = mix(
-        textureLoad(weather_depth_map_tex, vec2<i32>(base.x, next.y), 0).xyz,
-        textureLoad(weather_depth_map_tex, next, 0).xyz,
+        textureLoad(weather_depth_map_tex, vec2<i32>(base.x, next.y), 0),
+        textureLoad(weather_depth_map_tex, next, 0),
         f.x,
     );
     return mix(top, bottom, f.y);
@@ -67,7 +68,7 @@ fn weather_map_at(pos: vec2<i32>) -> vec3<f32> {
 
 // Scene depth at a pixel, edge-accurate, from the weather map's values there:
 // its guided filter evaluated against the photo. Near 0, far 1.
-fn weather_depth_from(map: vec3<f32>, pos: vec2<i32>) -> f32 {
+fn weather_depth_from(map: vec4<f32>, pos: vec2<i32>) -> f32 {
     return clamp(map.x * SceneSource::weather_guide_at(pos) + map.y, 0.0, 1.0);
 }
 

@@ -10,16 +10,19 @@
 //                                only their cores, so every tile later reads
 //                                the whole image's map.
 //   resolve_weather              the environment map: each cell's mean colour
-//                                in unexposed scene-linear Rec.2020. Also a
-//                                guided filter's coefficients in one window, and
-//                                how rough the photo's surface is there.
+//                                in unexposed scene-linear Rec.2020 and how much
+//                                of a sharp edge the photo has there. Also a
+//                                guided filter's coefficients in one window, how
+//                                rough the photo's surface is there and its mean
+//                                guide.
 //   smooth_weather_coefficients  those averaged over the windows covering each
 //                                cell.
 //   blur_weather_environment     a wide blur of the environment map, what a
 //                                drop refracting about 165 degrees of its
 //                                surroundings sees.
-//   build_weather_ground         per cell, how much it is ground and how far it
-//                                lies below what stands on it.
+//   build_weather_ground         per cell, how much it is ground, how far it lies
+//                                below what stands on it and how far it rises
+//                                above the ground around it.
 //
 // The guided filter (He, Sun and Tang, "Guided Image Filtering", 2010) is what
 // keeps these effects' depth edges clean. Stored depth has blocky, misplaced
@@ -35,10 +38,18 @@
 // (hardly any) do not have. How fast it rises depends on the photo, as the depth
 // model's output is not linear in distance or its inverse, so only its direction
 // and that it rises at all count (ground_plane.rs finds the horizon by the same
-// rule). Ground also runs on toward the viewer, which a patch of a wall or a
-// pole's top with the same slope does not. Each cell's contact distance averages
+// rule). Ground also runs on toward the viewer and has more ground beside it, which
+// a patch of a wall or a pole's top with the same slope does not. Each cell's contact distance averages
 // a few neighbouring rays, so a reflection changes gradually beside a pole rather
 // than along a seam.
+//
+// Water lies in the ground's low places, so each cell also gets a terrain height.
+// A surface on the broad slope of the ground around it is level. A kerb's face and
+// top are not: their depth rises at another rate and stands out from the plane
+// the ground around them predicts. The depth model blurs a kerb and misplaces it by
+// about its own height, so depth only tells that the ground is uneven nearby; the
+// photo's sharp edges there are where it steps. A shadow's edge on level ground,
+// with no unevenness near it, stops no water.
 
 struct WeatherCell {
     // Summed colour (xyz) and pixels counted (w).
@@ -50,17 +61,19 @@ struct WeatherCell {
 @group(0) @binding(35) var scene_depth_tex: texture_2d<f32>;
 @group(0) @binding(62) var<storage, read_write> weather_cells: array<WeatherCell>;
 @group(0) @binding(63) var weather_environment_out: texture_storage_2d<rgba16float, write>;
-// Per cell: the guided filter's slope (x) and offset (y) in one window, and the
-// surface's roughness (z, weather_cell_roughness).
+// Per cell: the guided filter's slope (x) and offset (y) in one window, the
+// surface's roughness (z, weather_cell_roughness) and the window's mean guide (w).
 @group(0) @binding(64) var weather_coefficients_out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(65) var weather_coefficients_tex: texture_2d<f32>;
-// The window-averaged slope, offset and roughness that weather.wgsl reads.
+// The window-averaged slope, offset, roughness and mean guide that weather.wgsl
+// reads.
 @group(0) @binding(66) var weather_depth_map_out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(67) var weather_environment_tex: texture_2d<f32>;
 @group(0) @binding(68) var weather_environment_blur_out: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(28) var weather_sampler: sampler;
 // Per cell: how much it is ground (x), the distance from it along the ground to
-// what stands on it (y) and its smooth scene depth (z).
+// what stands on it (y), its smooth scene depth (z) and its terrain height (w,
+// weather_terrain_height).
 @group(0) @binding(72) var weather_ground_out: texture_storage_2d<rgba16float, write>;
 
 // Radius in cells of the guided filter's windows: 3 x 3 cells, about 1.2% of
@@ -75,6 +88,9 @@ const WEATHER_GUIDE_EPSILON: f32 = 1e-3;
 // may make. A full depth step between two guide values of nearly the same
 // brightness would otherwise amplify their noise.
 const WEATHER_GUIDE_MAX_RELATIVE_SLOPE: f32 = 3.0;
+// How far a window's relative guide variance must exceed that of the smoothest cell
+// in it for an edge to start and to be complete. Texture raises both alike.
+const WEATHER_EDGE_EXCESS: vec2<f32> = vec2<f32>(0.004, 0.02);
 // The environment blur's standard deviation as a fraction of the longer edge,
 // and its stride in environment cells.
 const WEATHER_BLUR_SIGMA: f32 = 0.08;
@@ -110,6 +126,37 @@ const WEATHER_CONTACT_STEPS: u32 = 14u;
 const WEATHER_CONTACT_REFINEMENTS: u32 = 5u;
 // Offsets of the averaged rays across the view, in cells.
 const WEATHER_CONTACT_RAY_OFFSET: f32 = 0.75;
+// The surface mip level that gives the broad slope of the ground around a cell,
+// 32 x 32 texels.
+const WEATHER_TERRAIN_BROAD_LEVEL: f32 = 5.0;
+// Radius of the ring of points predicting a cell's depth, in shorter edges: about
+// the width of a kerb, and how many points it has.
+const WEATHER_TERRAIN_RING: f32 = 0.035;
+const WEATHER_TERRAIN_RING_POINTS: u32 = 12u;
+// How far beside a point ground is looked for, per shorter edge below the horizon
+// (a fixed width on the ground), and its score from none to enough.
+const WEATHER_GROUND_BESIDE_REACH: f32 = 0.12;
+const WEATHER_GROUND_BESIDE_RANGE: vec2<f32> = vec2<f32>(0.2, 0.6);
+// Share of the slope of the ground it runs on from over which a surface stops being
+// ground. Ground's slope changes gradually in depth; a wall with a little of the
+// same slope stands on far steeper ground.
+const WEATHER_GROUND_SLOPE_SHARE: vec2<f32> = vec2<f32>(0.14, 0.24);
+// Share of the ring that must be ground for its prediction to count.
+const WEATHER_TERRAIN_MIN_SUPPORT: f32 = 0.25;
+// Height in camera heights from which relief counts no further, either way.
+const WEATHER_TERRAIN_RELIEF_LIMIT: vec2<f32> = vec2<f32>(-0.06, 0.2);
+// Departure of a surface's slope from the broad slope, relative to the broad slope,
+// over which it stops being level, and the height that adds. Past it no water
+// stands there at any Puddles setting.
+const WEATHER_TERRAIN_DEPARTURE: vec2<f32> = vec2<f32>(0.14, 0.34);
+const WEATHER_TERRAIN_DEPARTURE_RISE: f32 = 0.5;
+// The same for a photo edge in the uneven ground near a cell, and how far toward the
+// viewer from the cell an edge counts, in cells. A kerb's face and top lie beyond its
+// foot, and the road before the foot keeps its water right up to it.
+const WEATHER_TERRAIN_EDGE_RISE: f32 = 0.5;
+const WEATHER_TERRAIN_EDGE_REACH: i32 = 3;
+// Smallest broad slope to divide by, in depth per shorter edge.
+const WEATHER_TERRAIN_MIN_SLOPE: f32 = 0.05;
 
 fn weather_cell_index(cell: vec2<i32>) -> u32 {
     return u32(cell.y) * Common::WEATHER_GRID_LONG + u32(cell.x);
@@ -171,12 +218,6 @@ fn resolve_weather(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid = vec2<i32>(Common::weather_grid());
     let cell = vec2<i32>(gid.xy);
     if any(cell >= grid) { return; }
-    let own = weather_cells[weather_cell_index(cell)].color;
-    textureStore(
-        weather_environment_out,
-        cell,
-        vec4<f32>(own.xyz / max(own.w, 1.0), 1.0),
-    );
 
     var sums = vec4<f32>(0.0);
     var count = 0.0;
@@ -197,6 +238,8 @@ fn resolve_weather(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     var coefficients = vec2<f32>(0.0);
+    var mean_guide = 0.0;
+    var edge = 0.0;
     if count > 0.0 {
         let means = sums / count;
         let squared_mean = max(means.x * means.x, 1e-6);
@@ -210,8 +253,16 @@ fn resolve_weather(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
         // The offset keeps the window's mean depth at its mean guide.
         coefficients = vec2<f32>(slope, means.z - slope * means.x);
+        mean_guide = means.x;
+        edge = smoothstep(
+            WEATHER_EDGE_EXCESS.x,
+            WEATHER_EDGE_EXCESS.y,
+            variance / squared_mean - roughness,
+        );
     }
-    textureStore(weather_coefficients_out, cell, vec4<f32>(coefficients, roughness, 1.0));
+    let own = weather_cells[weather_cell_index(cell)].color;
+    textureStore(weather_environment_out, cell, vec4<f32>(own.xyz / max(own.w, 1.0), edge));
+    textureStore(weather_coefficients_out, cell, vec4<f32>(coefficients, roughness, mean_guide));
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -219,17 +270,17 @@ fn smooth_weather_coefficients(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid = vec2<i32>(Common::weather_grid());
     let cell = vec2<i32>(gid.xy);
     if any(cell >= grid) { return; }
-    var sum = vec3<f32>(0.0);
+    var sum = vec4<f32>(0.0);
     var count = 0.0;
     for (var dy = -WEATHER_GUIDE_RADIUS; dy <= WEATHER_GUIDE_RADIUS; dy = dy + 1) {
         for (var dx = -WEATHER_GUIDE_RADIUS; dx <= WEATHER_GUIDE_RADIUS; dx = dx + 1) {
             let neighbour = cell + vec2<i32>(dx, dy);
             if any(neighbour < vec2<i32>(0)) || any(neighbour >= grid) { continue; }
-            sum += textureLoad(weather_coefficients_tex, neighbour, 0).xyz;
+            sum += textureLoad(weather_coefficients_tex, neighbour, 0);
             count += 1.0;
         }
     }
-    textureStore(weather_depth_map_out, cell, vec4<f32>(sum / count, 1.0));
+    textureStore(weather_depth_map_out, cell, sum / count);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -273,48 +324,81 @@ fn weather_texel_ground(texel: vec4<f32>, up: vec2<f32>) -> f32 {
         * (1.0 - smoothstep(WEATHER_GROUND_FAR.x, WEATHER_GROUND_FAR.y, texel.y));
 }
 
-fn weather_ray_ground(point: vec2<f32>, up: vec2<f32>) -> f32 {
-    let texel = textureSampleLevel(
+// A coarse surface texel, where reflection rays and the walk toward the viewer read.
+fn weather_ray_texel(point: vec2<f32>) -> vec4<f32> {
+    return textureSampleLevel(
         scene_depth_tex,
         weather_sampler,
         point / Common::weather_image_size(),
         WEATHER_GROUND_RAY_LEVEL,
     );
-    return weather_texel_ground(texel, up);
 }
 
-// How much of the ground runs on from a point toward the viewer. Past the frame
-// counts as ground.
-fn weather_ground_support(point: vec2<f32>, up: vec2<f32>) -> f32 {
+// How much a surface of some slope along up can continue ground of slope `reference`.
+fn weather_slope_share(slope: f32, reference: f32) -> f32 {
+    let limit = max(reference, 1e-3);
+    return smoothstep(WEATHER_GROUND_SLOPE_SHARE.x * limit, WEATHER_GROUND_SLOPE_SHARE.y * limit, slope);
+}
+
+// Whether there is ground beside a point `below` under the horizon. Past the frame
+// does not count, so a strip of wall along the frame's edge is not ground.
+fn weather_ground_beside(point: vec2<f32>, below: f32, up: vec2<f32>) -> f32 {
+    let image_size = Common::weather_image_size();
+    let across = vec2<f32>(-up.y, up.x) * WEATHER_GROUND_BESIDE_REACH * below;
+    var beside = 0.0;
+    for (var side = -1.0; side <= 1.0; side = side + 2.0) {
+        let at = point + across * side;
+        if any(at < vec2<f32>(0.0)) || any(at > image_size) { continue; }
+        beside = max(beside, weather_texel_ground(weather_ray_texel(at), up));
+    }
+    return smoothstep(WEATHER_GROUND_BESIDE_RANGE.x, WEATHER_GROUND_BESIDE_RANGE.y, beside);
+}
+
+fn weather_ray_ground(point: vec2<f32>, below: f32, up: vec2<f32>, start_slope: f32) -> f32 {
+    let texel = weather_ray_texel(point);
+    return weather_texel_ground(texel, up)
+        * weather_slope_share(dot(texel.zw, up), start_slope)
+        * weather_ground_beside(point, below, up);
+}
+
+// How much of the ground runs on from a point toward the viewer, at a slope like
+// the point's own. Past the frame counts as ground.
+fn weather_ground_support(point: vec2<f32>, up: vec2<f32>, slope: f32) -> f32 {
     let image_size = Common::weather_image_size();
     var sum = 0.0;
+    var steepest = 0.0;
     for (var step = 1u; step <= WEATHER_SUPPORT_STEPS; step = step + 1u) {
         let travel = WEATHER_SUPPORT_REACH * f32(step) / f32(WEATHER_SUPPORT_STEPS);
         let at = point - up * travel;
         if any(at < vec2<f32>(0.0)) || any(at > image_size) {
             sum += 1.0;
-        } else {
-            sum += weather_ray_ground(at, up);
+            continue;
         }
+        let texel = weather_ray_texel(at);
+        let ground = weather_texel_ground(texel, up);
+        sum += ground;
+        steepest = max(steepest, dot(texel.zw, up) * ground);
     }
     return smoothstep(
-        WEATHER_SUPPORT_RANGE.x,
-        WEATHER_SUPPORT_RANGE.y,
-        sum / f32(WEATHER_SUPPORT_STEPS),
-    );
+            WEATHER_SUPPORT_RANGE.x,
+            WEATHER_SUPPORT_RANGE.y,
+            sum / f32(WEATHER_SUPPORT_STEPS),
+        )
+        * weather_slope_share(slope, steepest);
 }
 
 // Distance along the ground from a point `below` under the horizon to what
 // stands on it, or to the horizon.
 fn weather_contact_distance(point: vec2<f32>, below: f32, up: vec2<f32>) -> f32 {
+    let start_slope = dot(weather_ray_texel(point).zw, up);
     var near = 0.0;
     var far = below;
     for (var step = 1u; step <= WEATHER_CONTACT_STEPS; step = step + 1u) {
         // Denser near the point, where a contact moves its reflection most.
         let fraction = f32(step) / f32(WEATHER_CONTACT_STEPS);
         let travel = below * fraction * fraction;
-        if weather_ray_ground(point + up * travel, up) < WEATHER_CONTACT_SCORE
-            && weather_ray_ground(point + up * (travel + WEATHER_THIN_OBJECT), up) < WEATHER_CONTACT_SCORE {
+        if weather_ray_ground(point + up * travel, below - travel, up, start_slope) < WEATHER_CONTACT_SCORE
+            && weather_ray_ground(point + up * (travel + WEATHER_THIN_OBJECT), below - travel - WEATHER_THIN_OBJECT, up, start_slope) < WEATHER_CONTACT_SCORE {
             far = travel;
             break;
         }
@@ -323,13 +407,62 @@ fn weather_contact_distance(point: vec2<f32>, below: f32, up: vec2<f32>) -> f32 
     if far >= below { return below; }
     for (var step = 0u; step < WEATHER_CONTACT_REFINEMENTS; step = step + 1u) {
         let middle = 0.5 * (near + far);
-        if weather_ray_ground(point + up * middle, up) < WEATHER_CONTACT_SCORE {
+        if weather_ray_ground(point + up * middle, below - middle, up, start_slope) < WEATHER_CONTACT_SCORE {
             far = middle;
         } else {
             near = middle;
         }
     }
     return 0.5 * (near + far);
+}
+
+// How far a ground cell rises above the ground around it, in camera heights, plus
+// what its departure from level adds. A point on flat ground `below` under the
+// horizon moves up the image by `below` times a height in camera heights (Delta b
+// = f h / z, b = f H / z), and depth converts that image distance through the broad
+// slope. Each point of the ring predicts the cell's depth along that slope, so a
+// ring cut short by a wall or the frame leaves no bias.
+fn weather_terrain_height(point: vec2<f32>, below: f32, texel: vec4<f32>, up: vec2<f32>) -> f32 {
+    let image_size = Common::weather_image_size();
+    let broad = textureSampleLevel(
+        scene_depth_tex,
+        weather_sampler,
+        point / image_size,
+        WEATHER_TERRAIN_BROAD_LEVEL,
+    ).zw;
+    let slope = max(dot(broad, up), WEATHER_TERRAIN_MIN_SLOPE);
+    var predicted = 0.0;
+    var support = 0.0;
+    var departure = length(texel.zw - broad);
+    var nearby = departure;
+    for (var index = 0u; index < WEATHER_TERRAIN_RING_POINTS; index = index + 1u) {
+        let angle = 6.2831853 * f32(index) / f32(WEATHER_TERRAIN_RING_POINTS);
+        let offset = vec2<f32>(cos(angle), sin(angle)) * WEATHER_TERRAIN_RING;
+        let at = point + offset;
+        if any(at < vec2<f32>(0.0)) || any(at > image_size) { continue; }
+        let around = weather_ray_texel(at);
+        let weight = weather_texel_ground(around, up);
+        predicted += (around.y - dot(broad, offset)) * weight;
+        support += weight;
+        nearby = max(nearby, length(around.zw - broad));
+    }
+    var relief = 0.0;
+    if support >= WEATHER_TERRAIN_MIN_SUPPORT * f32(WEATHER_TERRAIN_RING_POINTS) {
+        relief = (predicted / support - texel.y) / slope / max(below, WEATHER_HORIZON_FADE);
+    }
+    let grid = vec2<f32>(Common::weather_grid());
+    let cell_size = image_size / grid;
+    var edge = 0.0;
+    for (var step = 0; step <= WEATHER_TERRAIN_EDGE_REACH; step = step + 1) {
+        let at = (point - up * f32(step) * cell_size) / cell_size;
+        let cell = clamp(vec2<i32>(at), vec2<i32>(0), vec2<i32>(grid) - vec2<i32>(1));
+        edge = max(edge, textureLoad(weather_environment_tex, cell, 0).w);
+    }
+    return clamp(relief, WEATHER_TERRAIN_RELIEF_LIMIT.x, WEATHER_TERRAIN_RELIEF_LIMIT.y)
+        + smoothstep(WEATHER_TERRAIN_DEPARTURE.x, WEATHER_TERRAIN_DEPARTURE.y, departure / slope)
+        * WEATHER_TERRAIN_DEPARTURE_RISE
+        + edge * smoothstep(WEATHER_TERRAIN_DEPARTURE.x, WEATHER_TERRAIN_DEPARTURE.y, nearby / slope)
+        * WEATHER_TERRAIN_EDGE_RISE;
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -348,11 +481,13 @@ fn build_weather_ground(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let score = weather_texel_ground(texel, ground.xy)
         * smoothstep(0.0, WEATHER_HORIZON_FADE, below)
-        * weather_ground_support(point, ground.xy);
+        * weather_ground_support(point, ground.xy, dot(texel.zw, ground.xy))
+        * weather_ground_beside(point, below, ground.xy);
     let across = vec2<f32>(-ground.y, ground.x) * WEATHER_CONTACT_RAY_OFFSET
         * Common::weather_image_size().x / f32(grid.x);
     let contact = (weather_contact_distance(point - across, below, ground.xy)
         + weather_contact_distance(point, below, ground.xy)
         + weather_contact_distance(point + across, below, ground.xy)) / 3.0;
-    textureStore(weather_ground_out, cell, vec4<f32>(score, contact, texel.y, 1.0));
+    let terrain = weather_terrain_height(point, below, texel, ground.xy);
+    textureStore(weather_ground_out, cell, vec4<f32>(score, contact, texel.y, terrain));
 }
