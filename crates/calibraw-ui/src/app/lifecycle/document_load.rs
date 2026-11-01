@@ -524,8 +524,8 @@ impl CameraProfileRequest {
             .is_some_and(|(selected, root)| selected == root)
     }
 
-    /// The profile the decoder actually used, or `None` when it fell back to
-    /// automatic selection.
+    /// The profile the decoder actually used for the request, or `None` when it fell
+    /// back to automatic selection.
     fn applied_profile(
         &self,
         settings: &CameraProfileSettings,
@@ -534,9 +534,16 @@ impl CameraProfileRequest {
         if self.selects_embedded_matrix(settings) {
             return settings.folder.clone();
         }
-        self.path
-            .clone()
-            .filter(|requested| raw.profile_color.camera_profile_source.as_ref() == Some(requested))
+        let requested = self.path.as_ref()?;
+        let used = raw.profile_color.camera_profile_source.as_ref()?;
+        // The decoder substitutes the same-named profile of this camera for one saved
+        // with another camera (`position_of_same_style`).
+        (used == requested
+            || settings
+                .folder
+                .as_deref()
+                .is_some_and(|root| crate::pipeline::profiles_share_style(root, requested, used)))
+        .then(|| used.clone())
     }
 }
 

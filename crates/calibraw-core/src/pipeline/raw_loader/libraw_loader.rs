@@ -105,7 +105,7 @@ pub(super) fn resolve_camera_profiles(
 }
 
 /// The DCP `mode` applies to a camera: `selected_profile` when it matches the
-/// camera, otherwise the best match in DCP mode, and none for the photo's own
+/// camera, else the camera's profile of the same name, otherwise the best match in DCP mode, and none for the photo's own
 /// colour data. Matching DCPs take `raw_camera_signature`.
 pub(super) fn select_camera_profiles(
     mode: CameraProfileMode,
@@ -136,10 +136,14 @@ pub(super) fn select_camera_profiles(
         })
         .collect::<Vec<_>>();
     let explicitly_selected = selected_profile.and_then(|requested| {
-        matches
+        let position = matches
             .iter()
             .position(|candidate| candidate.path == requested)
-            .map(|index| matches.remove(index))
+            .or_else(|| {
+                profile_folder
+                    .and_then(|folder| position_of_same_style(folder, requested, &matches))
+            });
+        position.map(|index| matches.remove(index))
     });
     let external_profile = if mode == CameraProfileMode::MatrixOnly {
         None

@@ -94,7 +94,8 @@ pub use raw_loader::{
     SensorSaturation, WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
 };
 pub use raw_loader::{
-    invalidate_dcp_profile_index, prewarm_dcp_profile_index, take_dcp_profile_limit_notice,
+    invalidate_dcp_profile_index, prewarm_dcp_profile_index, profiles_share_style,
+    take_dcp_profile_limit_notice,
 };
 pub use remove::{
     adaptive_remove_dilation, canonical_remove_scene_to_pipeline_scene,

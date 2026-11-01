@@ -1073,6 +1073,19 @@ pub fn take_dcp_profile_limit_notice(_folder: &Path) -> Option<usize> {
     None
 }
 
+/// Whether the DCPs `first` and `second` of `folder` are the same style, such as two
+/// cameras' "Camera Muted". A decode selects a requested profile of another camera by
+/// this.
+#[cfg(libraw_available)]
+pub fn profiles_share_style(folder: &Path, first: &Path, second: &Path) -> bool {
+    libraw_loader::profiles_share_style(folder, first, second)
+}
+
+#[cfg(not(libraw_available))]
+pub fn profiles_share_style(_folder: &Path, _first: &Path, _second: &Path) -> bool {
+    false
+}
+
 #[cfg(libraw_available)]
 pub fn prewarm_dcp_profile_index(folder: &Path) {
     libraw_loader::prewarm_dcp_profile_index(folder);

@@ -33,6 +33,9 @@ const BONUS_MAKE_MATCH: i32 = 25;
 const BONUS_CAMERA_STANDARD: i32 = 20;
 /// Any other "standard" profile.
 const BONUS_STANDARD: i32 = 15;
+/// Profiles named "Natural" or "Neutral", the closest style to Standard on cameras
+/// whose profiles have no Standard (Olympus ships Natural, Muted, Vivid, ...).
+const BONUS_NATURAL: i32 = 10;
 /// Monochrome profiles, which would drop the colour of a colour camera's photo.
 const PENALTY_MONOCHROME: i32 = 30;
 
@@ -315,6 +318,46 @@ pub(super) fn find_matching_dcp_profiles(
     Ok(matches)
 }
 
+/// The style of the profile at `path`: its declared name ("Camera Muted"), lower-cased,
+/// which is shared by the profiles of one maker across cameras. `None` when the folder
+/// holds no such profile or it declares no name.
+fn profile_style(index: &[IndexedDcpProfile], path: &Path) -> Option<String> {
+    let name = index
+        .iter()
+        .find(|indexed| indexed.path == path)?
+        .profile_name
+        .as_deref()?
+        .trim();
+    (!name.is_empty()).then(|| name.to_lowercase())
+}
+
+/// Whether the DCPs `first` and `second` of `folder` declare the same profile name.
+pub(in crate::pipeline::raw_loader) fn profiles_share_style(
+    folder: &Path,
+    first: &Path,
+    second: &Path,
+) -> bool {
+    let Ok(index) = indexed_dcp_profiles(folder) else {
+        return false;
+    };
+    profile_style(&index, first).is_some_and(|style| profile_style(&index, second) == Some(style))
+}
+
+/// The position in `matches` of the profile that carries the style of `requested`, a
+/// profile of another camera. This lets a preset or sidecar saved with one camera's
+/// "Camera Muted" select the "Camera Muted" of every other camera.
+pub(super) fn position_of_same_style(
+    folder: &Path,
+    requested: &Path,
+    matches: &[MatchedDcpProfile],
+) -> Option<usize> {
+    let index = indexed_dcp_profiles(folder).ok()?;
+    let style = profile_style(&index, requested)?;
+    matches
+        .iter()
+        .position(|candidate| profile_style(&index, &candidate.path).as_deref() == Some(&style))
+}
+
 pub(super) fn dcp_profile_display_name(profile_name: Option<&str>, path: &Path) -> String {
     profile_name
         .map(str::trim)
@@ -381,15 +424,23 @@ fn dcp_match_score(
         score += BONUS_CAMERA_STANDARD;
     } else if profile_name.contains("standard") || filename.contains("standard") {
         score += BONUS_STANDARD;
-    }
-    if profile_name.contains("monochrome")
-        || filename.contains("monochrome")
-        || profile_name.ends_with("camerabw")
-        || filename.ends_with("camerabw")
+    } else if profile_name.contains("natural")
+        || filename.contains("natural")
+        || profile_name.contains("neutral")
+        || filename.contains("neutral")
     {
+        score += BONUS_NATURAL;
+    }
+    if is_monochrome_style(&profile_name) || is_monochrome_style(&filename) {
         score -= PENALTY_MONOCHROME;
     }
     score
+}
+
+/// Whether a normalised profile or file name is a black-and-white style: "Monochrome",
+/// "Monotone", "B&W", "Black & White" and Adobe's "Camera BW".
+fn is_monochrome_style(key: &str) -> bool {
+    key.contains("mono") || key.contains("blackwhite") || key.ends_with("bw")
 }
 
 /// Whether `declared` is `model_key` behind a prefix that abbreviates or extends `make_key`.
