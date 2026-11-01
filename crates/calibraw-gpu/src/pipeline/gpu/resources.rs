@@ -40,9 +40,11 @@ pub(super) const HAZE_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgb
 /// cell buffer are sized for a square grid.
 pub(super) const WEATHER_GRID_LONG: u32 = 256;
 pub(super) const WEATHER_BLUR_GRID_LONG: u32 = 48;
-/// Bytes of one weather grid cell (`WeatherCell` in weather_analysis.wgsl): two
+/// Depth bins of the weather map's lens blur table (weather_analysis.wgsl).
+pub(super) const WEATHER_FOCUS_BINS: u32 = 32;
+/// Bytes of one weather grid cell (`WeatherCell` in weather_analysis.wgsl): three
 /// RGBA f32 vectors.
-pub(super) const WEATHER_CELL_BYTES: u64 = 2 * 16;
+pub(super) const WEATHER_CELL_BYTES: u64 = 3 * 16;
 pub(super) const WEATHER_ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The guided filter's coefficients. They stay f32, as Dehaze's do: a steep
 /// slope times the guide nearly cancels its offset.
@@ -554,19 +556,21 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             1,
             1,
             WEATHER_ENVIRONMENT_FORMAT,
-        )? + texture_allocation_bytes(
-            WEATHER_GRID_LONG,
-            WEATHER_GRID_LONG,
-            1,
-            1,
-            WEATHER_ENVIRONMENT_FORMAT,
-        )? + 2 * texture_allocation_bytes(
-            WEATHER_GRID_LONG,
-            WEATHER_GRID_LONG,
-            1,
-            1,
-            WEATHER_COEFFICIENT_FORMAT,
-        )?,
+        )? + texture_allocation_bytes(WEATHER_FOCUS_BINS, 1, 1, 1, WEATHER_ENVIRONMENT_FORMAT)?
+            + texture_allocation_bytes(
+                WEATHER_GRID_LONG,
+                WEATHER_GRID_LONG,
+                1,
+                1,
+                WEATHER_ENVIRONMENT_FORMAT,
+            )?
+            + 2 * texture_allocation_bytes(
+                WEATHER_GRID_LONG,
+                WEATHER_GRID_LONG,
+                1,
+                1,
+                WEATHER_COEFFICIENT_FORMAT,
+            )?,
     );
 
     let rgba8_readback = aligned_copy_buffer_bytes(input.width, input.height, 4)?;

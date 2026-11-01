@@ -22,6 +22,10 @@
 // lighter grains stand clear of shallow water and its dark joints and pits fill
 // first, so an edge breaks up on the texture that is really there. Ground beside
 // the water has drawn it in, and stays dark past the edge.
+//
+// Water is photographed through the same lens as the ground it lies on. Out of focus
+// its edge and ripples blur as much as the ground does (weather_focus_blur), and the
+// photo there has no grain left for the edge to break up on.
 
 // Packed parameter lanes (effect_lanes.rs).
 const WET_SURFACES_WETNESS_LANE: u32 = 0u;
@@ -52,15 +56,21 @@ const WET_ROUGHNESS_RANGE: vec2<f32> = vec2<f32>(0.018, 0.04);
 const WET_NOT_GROUND_RISE: f32 = 0.6;
 // Octaves of the puddle field.
 const WET_UNDULATION_OCTAVES: u32 = 3u;
-// Height of the photo's detail at the smallest Puddle size, in units of the puddle
-// field per standard deviation of the local guide, and how many deviations count.
+// Height of the photo's grain at the smallest Puddle size, in units of the puddle
+// field per WET_DETAIL_CONTRAST of it, and how many of those count.
 const WET_DETAIL_RELIEF: f32 = 0.04;
 const WET_DETAIL_LIMIT: f32 = 2.5;
-// Distance of the outer taps of the detail's footprint, in pixels.
-const WET_DETAIL_REACH: i32 = 2;
-// Smallest relative deviation of the guide to divide by: smoother than this is
-// noise, not relief.
-const WET_DETAIL_MIN_DEVIATION: f32 = 0.02;
+// Relative difference of the guide that makes one unit of grain: well above noise.
+const WET_DETAIL_CONTRAST: f32 = 0.08;
+// Distances in pixels of the outer taps of the grain's core and of the ring around it.
+const WET_DETAIL_CORE: i32 = 2;
+const WET_DETAIL_REACH: i32 = 6;
+// Radius of the lens blur's footprint relative to the measured deviation: past a
+// Gaussian's 10 to 90 percent rise (1.3), as noise makes the photo's edges measure
+// narrower than they look beside the water.
+const WET_EDGE_PER_DEVIATION: f32 = 2.2;
+// Pixels of ground a ripple's ring blurs over per pixel of the lens blur's deviation.
+const WET_RIPPLE_FOCUS: f32 = 2.0;
 // Height below the water's level over which the ground beside it has soaked it up,
 // at the smallest Puddle size.
 const WET_SOAK_REACH: f32 = 0.05;
@@ -106,9 +116,10 @@ struct WetPixel {
     smooth_surface: f32,
     // The ground's height (weather_terrain_height).
     terrain: f32,
-    // The guide's mean and standard deviation around the pixel.
+    // The guide's mean around the pixel.
     guide_mean: f32,
-    guide_deviation: f32,
+    // The lens blur here in shorter edges.
+    blur: f32,
 }
 
 // The pixel's ground: the surrounding map cells, each weighted by how near its
@@ -122,8 +133,8 @@ fn wet_pixel(pos: vec2<i32>) -> WetPixel {
     let point = CreativeEffects::full_image_uv(pos) * Common::weather_image_size();
     let below = ground.z - dot(point, ground.xy);
     let smooth_surface = 1.0 - smoothstep(WET_ROUGHNESS_RANGE.x, WET_ROUGHNESS_RANGE.y, map.z);
-    let guide_deviation = max(sqrt(max(map.z, 0.0)), WET_DETAIL_MIN_DEVIATION) * max(map.w, 1e-3);
-    var pixel = WetPixel(depth, 0.0, 0.0, below, point, ground.xy, smooth_surface, 0.0, map.w, guide_deviation);
+    let blur = select(0.0, weather_focus_blur(depth), weather_depth_present());
+    var pixel = WetPixel(depth, 0.0, 0.0, below, point, ground.xy, smooth_surface, 0.0, map.w, blur);
     if ground.w < 0.5 || !weather_depth_present() || below <= 0.0 { return pixel; }
 
     let grid = vec2<i32>(Common::weather_grid());
@@ -160,12 +171,13 @@ fn wet_pixel(pos: vec2<i32>) -> WetPixel {
     return pixel;
 }
 
-// Position on the ground in camera heights (x across the view, y along it), and
-// in its z the ground distance one pixel covers here.
-fn wet_ground_position(pixel: WetPixel) -> vec3<f32> {
-    let right = vec2<f32>(-pixel.up.y, pixel.up.x);
-    let lateral = dot(pixel.point - 0.5 * Common::weather_image_size(), right);
-    let clamped = max(pixel.below, 0.01);
+// Position on the ground of an image point in camera heights (x across the view, y
+// along it), and in its z the ground distance one pixel covers there.
+fn wet_ground_position(point: vec2<f32>) -> vec3<f32> {
+    let ground = Common::effects_uniforms.weather_ground;
+    let right = vec2<f32>(-ground.y, ground.x);
+    let lateral = dot(point - 0.5 * Common::weather_image_size(), right);
+    let clamped = max(ground.z - dot(point, ground.xy), 0.01);
     return vec3<f32>(
         lateral * WET_GROUND_SCALE / clamped,
         WET_GROUND_SCALE / clamped,
@@ -173,18 +185,26 @@ fn wet_ground_position(pixel: WetPixel) -> vec3<f32> {
     );
 }
 
-// Height of the photo's detail at a pixel, in standard deviations of the local guide.
-// It is read over a few pixels: grains span several, and single pixels would add
-// sensor noise that reads as dither along the water's edge. WET_SURFACES_SUPPORT in
-// tiles.rs reserves their reach.
+// Height of the photo's grain at a pixel: how far the guide of a few pixels lies from
+// the ring around them, relative to the mean guide. Only grain counts: painted lines
+// and tile patterns are not relief. Out of focus the photo has no grain left, so the
+// water's edge there follows nothing but the blurred field. WET_SURFACES_SUPPORT in
+// tiles.rs reserves the ring's reach.
 fn wet_detail(pos: vec2<i32>, pixel: WetPixel) -> f32 {
-    let reach = WET_DETAIL_REACH;
-    let guide = (2.0 * SceneSource::weather_guide_at(pos)
-        + SceneSource::weather_guide_at(pos + vec2<i32>(reach, 0))
-        + SceneSource::weather_guide_at(pos - vec2<i32>(reach, 0))
-        + SceneSource::weather_guide_at(pos + vec2<i32>(0, reach))
-        + SceneSource::weather_guide_at(pos - vec2<i32>(0, reach))) / 6.0;
-    return clamp((guide - pixel.guide_mean) / pixel.guide_deviation, -WET_DETAIL_LIMIT, WET_DETAIL_LIMIT);
+    let core = (2.0 * SceneSource::weather_guide_at(pos)
+        + SceneSource::weather_guide_at(pos + vec2<i32>(WET_DETAIL_CORE, 0))
+        + SceneSource::weather_guide_at(pos - vec2<i32>(WET_DETAIL_CORE, 0))
+        + SceneSource::weather_guide_at(pos + vec2<i32>(0, WET_DETAIL_CORE))
+        + SceneSource::weather_guide_at(pos - vec2<i32>(0, WET_DETAIL_CORE))) / 6.0;
+    let ring = (SceneSource::weather_guide_at(pos + vec2<i32>(WET_DETAIL_REACH, 0))
+        + SceneSource::weather_guide_at(pos - vec2<i32>(WET_DETAIL_REACH, 0))
+        + SceneSource::weather_guide_at(pos + vec2<i32>(0, WET_DETAIL_REACH))
+        + SceneSource::weather_guide_at(pos - vec2<i32>(0, WET_DETAIL_REACH))) / 4.0;
+    return clamp(
+        (core - ring) / (WET_DETAIL_CONTRAST * max(pixel.guide_mean, 1e-3)),
+        -WET_DETAIL_LIMIT,
+        WET_DETAIL_LIMIT,
+    );
 }
 
 // The ground's gentle undulation, 0 to 1: the broad forms that make basins. Finer
@@ -212,34 +232,86 @@ struct WetWater {
     soaked: f32,
 }
 
+// What sets where puddles lie: their field, seed and how high the water stands in it.
+struct WetBasins {
+    frequency: f32,
+    offset: vec2<f32>,
+    threshold: f32,
+}
+
+// How far the ground rises from a surface's terrain and whether it can hold water.
+fn wet_rise(terrain: f32, on_ground: f32, smooth_surface: f32) -> f32 {
+    return terrain + (1.0 - on_ground * smooth_surface) * WET_NOT_GROUND_RISE;
+}
+
+fn wet_field(point: vec2<f32>, basins: WetBasins) -> f32 {
+    return wet_undulation(wet_ground_position(point).xy * basins.frequency + basins.offset);
+}
+
+// How far the water's level lies above the ground at an image point near a pixel:
+// from the interpolated maps, without the pixel's edge-accurate depth.
+fn wet_level_near(point: vec2<f32>, basins: WetBasins) -> f32 {
+    let uv = point / Common::weather_image_size();
+    let ground = weather_ground_near(uv);
+    let roughness = weather_map_near(uv).z;
+    let smooth_surface = 1.0 - smoothstep(WET_ROUGHNESS_RANGE.x, WET_ROUGHNESS_RANGE.y, roughness);
+    return wet_field(point, basins) - basins.threshold - wet_rise(ground.w, ground.x, smooth_surface);
+}
+
 fn wet_water(pos: vec2<i32>, pixel: WetPixel, position: vec3<f32>, params: CreativeEffects::MaskEffectParams) -> WetWater {
     let amount = clamp(CreativeEffects::mask_effect_lane(params, WET_SURFACES_PUDDLES_LANE) / 100.0, 0.0, 1.0);
     if amount <= 1e-5 { return WetWater(0.0, 0.0); }
     let size_control = clamp(CreativeEffects::mask_effect_lane(params, WET_SURFACES_PUDDLE_SIZE_LANE) / 100.0, 0.0, 1.0);
     let frequency = mix(WET_PUDDLE_FREQUENCY.x, WET_PUDDLE_FREQUENCY.y, size_control);
     let seed = clamp(CreativeEffects::mask_effect_lane(params, WET_SURFACES_SEED_LANE), 0.0, 1000.0);
-    let offset = vec2<f32>(seed * 0.113 + 3.7, seed * -0.071 + 17.1);
-    let field = wet_undulation(position.xy * frequency + offset);
-    let threshold = mix(0.72, 0.36, amount);
-    let rise = pixel.terrain + (1.0 - pixel.on_ground * pixel.smooth_surface) * WET_NOT_GROUND_RISE;
+    let basins = WetBasins(
+        frequency,
+        vec2<f32>(seed * 0.113 + 3.7, seed * -0.071 + 17.1),
+        mix(0.72, 0.36, amount),
+    );
+    let rise = wet_rise(pixel.terrain, pixel.on_ground, pixel.smooth_surface);
     // Above zero the ground lies below the water's level.
-    let level = field - threshold - rise;
+    let level = wet_field(pixel.point, basins) - basins.threshold - rise;
     // Broader forms have gentler slopes in the field, so the edge's heights shrink
     // with them to keep the same width on the ground.
     let edge_scale = frequency / WET_PUDDLE_FREQUENCY.x;
     let relief = WET_DETAIL_RELIEF * edge_scale;
-    let edge = WET_WATER_EDGE * edge_scale + position.z * frequency;
     let resolved = 1.0 - smoothstep(0.4, 1.2, position.z * frequency);
-    let mean = (1.0 - smoothstep(0.3, 0.75, threshold)) * amount * (1.0 - smoothstep(0.0, 0.1, rise));
-    // Far from the water's edge the detail changes nothing, and costs reads.
-    var surface = level;
-    if abs(level) < WET_DETAIL_LIMIT * relief + edge {
-        surface -= wet_detail(pos, pixel) * relief;
+    let mean = (1.0 - smoothstep(0.3, 0.75, basins.threshold)) * amount * (1.0 - smoothstep(0.0, 0.1, rise));
+    let edge = WET_WATER_EDGE * edge_scale + position.z * frequency;
+
+    // Through the lens the water's edge spreads as far as the ground's does. Each
+    // point of the blur's footprint adds its own coverage, its ramp as wide as the
+    // level changes across the footprint, so even a steep edge leaves no steps.
+    let reach = pixel.blur * WET_EDGE_PER_DEVIATION;
+    var ramp = edge;
+    var around = vec4<f32>(level);
+    if reach > weather_pixel_extent() {
+        let along = pixel.up * reach;
+        let across = vec2<f32>(-along.y, along.x);
+        around = vec4<f32>(
+            wet_level_near(pixel.point + along, basins),
+            wet_level_near(pixel.point - along, basins),
+            wet_level_near(pixel.point + across, basins),
+            wet_level_near(pixel.point - across, basins),
+        );
+        ramp = max(edge, 0.5 * length(around.xz - around.yw));
     }
-    return WetWater(
-        mix(mean, smoothstep(-edge, edge, surface), resolved),
-        mix(mean, smoothstep(-WET_SOAK_REACH * edge_scale, 0.0, level), resolved),
-    );
+    // Far from the water's edge the grain changes nothing, and costs reads.
+    var grain = 0.0;
+    let highest = max(level, max(max(around.x, around.y), max(around.z, around.w)));
+    let lowest = min(level, min(min(around.x, around.y), min(around.z, around.w)));
+    if lowest < WET_DETAIL_LIMIT * relief + ramp && highest > -WET_DETAIL_LIMIT * relief - ramp {
+        grain = wet_detail(pos, pixel) * relief;
+    }
+    let standing = (smoothstep(-ramp, ramp, level - grain)
+        + smoothstep(-ramp, ramp, around.x - grain)
+        + smoothstep(-ramp, ramp, around.y - grain)
+        + smoothstep(-ramp, ramp, around.z - grain)
+        + smoothstep(-ramp, ramp, around.w - grain)) / 5.0;
+    let mean_level = (level + around.x + around.y + around.z + around.w) / 5.0;
+    let soaked = smoothstep(-WET_SOAK_REACH * edge_scale - ramp, ramp, mean_level);
+    return WetWater(mix(mean, standing, resolved), mix(mean, soaked, resolved));
 }
 
 // How hard any Rain effect in the edit falls.
@@ -257,10 +329,11 @@ fn wet_rain_strength() -> f32 {
 
 // The tilt of the water surface from rain's ripples, in ground units: expanding
 // rings around random points, fading as they spread. It fades where a ring would
-// be smaller than a pixel.
-fn wet_ripples(position: vec3<f32>, seed: u32) -> vec2<f32> {
+// be smaller than a pixel or the lens blur.
+fn wet_ripples(position: vec3<f32>, blur: f32, seed: u32) -> vec2<f32> {
     let frequency = WET_RIPPLE_FREQUENCY;
-    let resolved = 1.0 - smoothstep(0.08, 0.3, position.z * frequency);
+    let footprint = position.z * (1.0 + WET_RIPPLE_FOCUS * blur / weather_pixel_extent());
+    let resolved = 1.0 - smoothstep(0.08, 0.3, footprint * frequency);
     if resolved <= 1e-4 { return vec2<f32>(0.0); }
     let point = position.xy * frequency;
     let cell = vec2<i32>(floor(point));
@@ -282,17 +355,18 @@ fn wet_ripples(position: vec3<f32>, seed: u32) -> vec2<f32> {
     return tilt * resolved;
 }
 
-// What the ground reflects at a pixel, spread along the view by `roughness`.
-fn wet_reflected(pixel: WetPixel, roughness: f32, distortion: vec2<f32>) -> vec3<f32> {
+// What the ground reflects at an image point that lies `contact` below what stands
+// on it, spread along the view by `roughness`.
+fn wet_reflected(point: vec2<f32>, contact: f32, up: vec2<f32>, roughness: f32, distortion: vec2<f32>) -> vec3<f32> {
     let image_size = Common::weather_image_size();
-    let mirrored = pixel.point + pixel.up * (2.0 * pixel.contact) + distortion;
-    let spread = roughness * WET_REFLECTION_SPREAD * (pixel.contact + 0.02);
+    let mirrored = point + up * (2.0 * contact) + distortion;
+    let spread = roughness * WET_REFLECTION_SPREAD * (contact + 0.02);
     var sum = vec3<f32>(0.0);
     var weights = 0.0;
     for (var tap = -WET_REFLECTION_TAPS; tap <= WET_REFLECTION_TAPS; tap = tap + 1) {
         let offset = f32(tap) / f32(WET_REFLECTION_TAPS);
         let weight = exp(-2.0 * offset * offset);
-        let at = mirrored + pixel.up * (offset * spread);
+        let at = mirrored + up * (offset * spread);
         sum += weather_environment_at(at / image_size) * weight;
         weights += weight;
     }
@@ -302,6 +376,25 @@ fn wet_reflected(pixel: WetPixel, roughness: f32, distortion: vec2<f32>) -> vec3
         weather_environment_blurred_at(mirrored / image_size),
         smoothstep(0.35, 0.9, roughness) * 0.5,
     );
+}
+
+// The same seen through the lens: over the footprint of its blur. Where the contact
+// changes quickly the mirror squeezes a light into a thin line, sharper than anything
+// around it unless it blurs with the rest.
+fn wet_reflected_through_lens(pixel: WetPixel, roughness: f32, distortion: vec2<f32>) -> vec3<f32> {
+    var sum = wet_reflected(pixel.point, pixel.contact, pixel.up, roughness, distortion);
+    let reach = pixel.blur * WET_EDGE_PER_DEVIATION;
+    if reach <= weather_pixel_extent() { return sum; }
+    let along = pixel.up * reach;
+    let across = vec2<f32>(-along.y, along.x);
+    let image_size = Common::weather_image_size();
+    for (var index = 0; index < 4; index = index + 1) {
+        let sign_of = f32(1 - (index & 2));
+        let point = pixel.point + select(across, along, index < 2) * sign_of;
+        let contact = weather_ground_near(point / image_size).y;
+        sum += wet_reflected(point, contact, pixel.up, roughness, distortion);
+    }
+    return sum / 5.0;
 }
 
 fn wet_surface(pos: vec2<i32>, input_rgb: vec3<f32>, params: CreativeEffects::MaskEffectParams) -> vec3<f32> {
@@ -321,7 +414,7 @@ fn wet_surface(pos: vec2<i32>, input_rgb: vec3<f32>, params: CreativeEffects::Ma
     var water = WetWater(0.0, 0.0);
     var position = vec3<f32>(0.0);
     if pixel.on_ground > 1e-4 {
-        position = wet_ground_position(pixel);
+        position = wet_ground_position(pixel.point);
         water = wet_water(pos, pixel, position, params);
     }
     let puddle = water.standing;
@@ -350,13 +443,13 @@ fn wet_surface(pos: vec2<i32>, input_rgb: vec3<f32>, params: CreativeEffects::Ma
         * wet_rain_strength() * puddle;
     if ripples > 1e-4 {
         let seed = u32(clamp(CreativeEffects::mask_effect_lane(params, WET_SURFACES_SEED_LANE), 0.0, 1000.0));
-        let tilt = wet_ripples(position, seed) * ripples;
+        let tilt = wet_ripples(position, pixel.blur, seed) * ripples;
         let right = vec2<f32>(-pixel.up.y, pixel.up.x);
         distortion = (right * tilt.x + pixel.up * tilt.y) * WET_RIPPLE_DISTORTION * (pixel.contact + 0.05);
         ripple_light = length(tilt);
     }
     let shimmer = min(reflectance * (1.0 + ripple_light), 1.0);
-    return rgb * (1.0 - shimmer) + wet_reflected(pixel, roughness, distortion) * shimmer;
+    return rgb * (1.0 - shimmer) + wet_reflected_through_lens(pixel, roughness, distortion) * shimmer;
 }
 
 // Highlights of scene lights on the wet ground, added after the creative
@@ -370,7 +463,7 @@ fn wet_glints(pos: vec2<i32>, params: CreativeEffects::MaskEffectParams) -> vec3
     }
     let pixel = wet_pixel(pos);
     if pixel.on_ground <= 1e-4 { return vec3<f32>(0.0); }
-    let position = wet_ground_position(pixel);
+    let position = wet_ground_position(pixel.point);
     let puddle = wet_water(pos, pixel, position, params).standing;
     let gloss = clamp(CreativeEffects::mask_effect_lane(params, WET_SURFACES_GLOSS_LANE) / 100.0, 0.0, 1.0);
     let roughness = mix(mix(0.55, 0.16, gloss), 0.05, puddle);

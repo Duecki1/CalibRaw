@@ -23,6 +23,7 @@
 //   build_weather_ground         per cell, how much it is ground, how far it lies
 //                                below what stands on it and how far it rises
 //                                above the ground around it.
+//   build_weather_focus          the lens blur at each depth.
 //
 // The guided filter (He, Sun and Tang, "Guided Image Filtering", 2010) is what
 // keeps these effects' depth edges clean. Stored depth has blocky, misplaced
@@ -50,12 +51,24 @@
 // about its own height, so depth only tells that the ground is uneven nearby; the
 // photo's sharp edges there are where it steps. A shadow's edge on level ground,
 // with no unevenness near it, stops no water.
+//
+// What is drawn on a surface must be as soft as the photo of that surface, so the
+// map also holds how blurred the lens made each depth. The width of the photo's own
+// strong edges tells: across a step blurred by a Gaussian of deviation s, half of
+// the rise lies within 0.674 s of its centre on each side, and that holds up against
+// noise where fine detail statistics do not. A cell's edge may be soft for another
+// reason, and most surfaces have no edge at all, so cells pool by depth: the lens
+// blurs by distance alone, and a featureless surface takes the blur of what lies at
+// its depth.
 
 struct WeatherCell {
     // Summed colour (xyz) and pixels counted (w).
     color: vec4<f32>,
     // Summed guide g, g * g, scene depth d and g * d.
     guide: vec4<f32>,
+    // A strong edge's blur in pixels (x) and contrast (y) measured at the cell's
+    // centre, or nothing.
+    edge: vec4<f32>,
 }
 
 @group(0) @binding(35) var scene_depth_tex: texture_2d<f32>;
@@ -75,6 +88,8 @@ struct WeatherCell {
 // what stands on it (y), its smooth scene depth (z) and its terrain height (w,
 // weather_terrain_height).
 @group(0) @binding(72) var weather_ground_out: texture_storage_2d<rgba16float, write>;
+// Per depth bin: the lens blur (x) in shorter edges.
+@group(0) @binding(74) var weather_focus_out: texture_storage_2d<rgba16float, write>;
 
 // Radius in cells of the guided filter's windows: 3 x 3 cells, about 1.2% of
 // the longer edge. It must be wider than the stored depth's staircases.
@@ -157,6 +172,27 @@ const WEATHER_TERRAIN_EDGE_RISE: f32 = 0.5;
 const WEATHER_TERRAIN_EDGE_REACH: i32 = 3;
 // Smallest broad slope to divide by, in depth per shorter edge.
 const WEATHER_TERRAIN_MIN_SLOPE: f32 = 0.05;
+// Farthest an edge profile reads from a cell's centre, in pixels
+// (WEATHER_EDGE_SUPPORT in tiles.rs), and how many samples it has at most on each
+// side. Samples lie further apart in larger images, so the profile covers the same
+// share of a photo at every size until the reach limits it.
+const WEATHER_EDGE_REACH: i32 = 64;
+const WEATHER_EDGE_SAMPLES: i32 = 32;
+const WEATHER_EDGE_LONG_PER_STEP: f32 = 3500.0;
+// Fewest samples on each side of an edge's centre to measure it.
+const WEATHER_EDGE_MIN_SAMPLES: i32 = 4;
+// Pixels beside a profile averaged into it, against noise.
+const WEATHER_EDGE_LINES: i32 = 1;
+// Rise in the guide from which an edge counts: far above noise.
+const WEATHER_EDGE_MIN_CONTRAST: f32 = 0.06;
+// Share of its largest rise an edge must keep at the profile's end. Otherwise the
+// edge goes on past it or is a thin line, and its width says nothing.
+const WEATHER_EDGE_LEVELS_OFF: f32 = 0.8;
+// A step blurred by a Gaussian rises by half within this many deviations of its
+// centre on each side.
+const WEATHER_EDGE_HALF_RISE: f32 = 0.674;
+// Bins that smooth the table together on each side.
+const WEATHER_FOCUS_SMOOTHING: i32 = 1;
 
 fn weather_cell_index(cell: vec2<i32>) -> u32 {
     return u32(cell.y) * Common::WEATHER_GRID_LONG + u32(cell.x);
@@ -203,6 +239,99 @@ fn accumulate_weather(@builtin(global_invocation_id) gid: vec3<u32>) {
     let index = weather_cell_index(vec2<i32>(gid.xy));
     weather_cells[index].color += color;
     weather_cells[index].guide += guide;
+    // The tile that holds the cell's centre measures its edge, reading no farther
+    // than the tile's halo.
+    let center = vec2<i32>(span_x.x + span_x.y, span_y.x + span_y.y) / 2;
+    if all(center >= lo) && all(center < hi) {
+        weather_cells[index].edge = weather_edge_at(center, origin);
+    }
+}
+
+// The guide `offset` pixels along a line through `center` in the direction `axis`,
+// averaged over the pixels beside it.
+fn weather_edge_sample(center: vec2<i32>, axis: vec2<i32>, offset: i32) -> f32 {
+    let beside = vec2<i32>(axis.y, axis.x);
+    var sum = 0.0;
+    for (var line = -WEATHER_EDGE_LINES; line <= WEATHER_EDGE_LINES; line = line + 1) {
+        sum += SceneSource::weather_guide_at(center + axis * offset + beside * line);
+    }
+    return sum / f32(2 * WEATHER_EDGE_LINES + 1);
+}
+
+// The strong edge nearest a full-image point, if any: its blur in pixels (x) and
+// contrast (y).
+fn weather_edge_at(point: vec2<i32>, origin: vec2<i32>) -> vec4<f32> {
+    let full = vec2<i32>(
+        i32(Common::camera_uniforms.full_width),
+        i32(Common::camera_uniforms.full_height),
+    );
+    let long = f32(max(full.x, full.y));
+    let step = clamp(i32(round(long / WEATHER_EDGE_LONG_PER_STEP)), 1, WEATHER_EDGE_REACH / WEATHER_EDGE_MIN_SAMPLES);
+    let samples = min(WEATHER_EDGE_SAMPLES, WEATHER_EDGE_REACH / step);
+    let reach = samples * step;
+    if any(point < vec2<i32>(reach + WEATHER_EDGE_LINES)) || any(point >= full - vec2<i32>(reach + WEATHER_EDGE_LINES)) {
+        return vec4<f32>(0.0);
+    }
+    let center = point - origin;
+
+    // The direction the guide changes most in, at three distances: most cells have
+    // no strong edge and cost only this.
+    var axis = vec2<i32>(1, 0);
+    var strongest = 0.0;
+    for (var index = 0; index < 2; index = index + 1) {
+        let candidate = vec2<i32>(1 - index, index);
+        for (var distance = reach; distance >= reach / 4; distance = distance / 2) {
+            let rise = abs(
+                SceneSource::weather_guide_at(center + candidate * distance)
+                    - SceneSource::weather_guide_at(center - candidate * distance),
+            );
+            if rise > strongest {
+                strongest = rise;
+                axis = candidate;
+            }
+        }
+    }
+    if strongest < WEATHER_EDGE_MIN_CONTRAST { return vec4<f32>(0.0); }
+
+    var profile: array<f32, 2 * WEATHER_EDGE_SAMPLES + 1>;
+    for (var index = 0; index <= 2 * samples; index = index + 1) {
+        profile[index] = weather_edge_sample(center, axis, (index - samples) * step);
+    }
+    // The edge's centre: where the guide rises most over two steps.
+    var middle = samples;
+    var steepest = 0.0;
+    for (var index = 1; index < 2 * samples; index = index + 1) {
+        let rise = abs(profile[index + 1] - profile[index - 1]);
+        if rise > steepest {
+            steepest = rise;
+            middle = index;
+        }
+    }
+    let span = min(middle, 2 * samples - middle);
+    if span < WEATHER_EDGE_MIN_SAMPLES { return vec4<f32>(0.0); }
+    let sign_of_rise = sign(profile[middle + 1] - profile[middle - 1]);
+    var contrast = 0.0;
+    for (var distance = 1; distance <= span; distance = distance + 1) {
+        contrast = max(contrast, sign_of_rise * (profile[middle + distance] - profile[middle - distance]));
+    }
+    let end_rise = sign_of_rise * (profile[middle + span] - profile[middle - span]);
+    if contrast < WEATHER_EDGE_MIN_CONTRAST || end_rise < WEATHER_EDGE_LEVELS_OFF * contrast {
+        return vec4<f32>(0.0);
+    }
+    var previous = 0.0;
+    var half_rise = f32(span);
+    for (var distance = 1; distance <= span; distance = distance + 1) {
+        let rise = sign_of_rise * (profile[middle + distance] - profile[middle - distance]);
+        if rise >= 0.5 * contrast {
+            half_rise = f32(distance - 1) + (0.5 * contrast - previous) / max(rise - previous, 1e-6);
+            break;
+        }
+        previous = rise;
+    }
+    // The samples' spacing itself reads as about one step of blur.
+    let deviation = half_rise * f32(step) / WEATHER_EDGE_HALF_RISE;
+    let blur = sqrt(max(deviation * deviation - f32(step * step), 0.25));
+    return vec4<f32>(blur, contrast, 0.0, 0.0);
 }
 
 // How rough the photo's surface is in a cell: its guide's variance relative to
@@ -490,4 +619,48 @@ fn build_weather_ground(@builtin(global_invocation_id) gid: vec3<u32>) {
         + weather_contact_distance(point + across, below, ground.xy)) / 3.0;
     let terrain = weather_terrain_height(point, below, texel, ground.xy);
     textureStore(weather_ground_out, cell, vec4<f32>(score, contact, texel.y, terrain));
+}
+
+// The lens blur at each depth: the mean of the logarithm of the blur of the edges
+// there, by contrast. Depths without edges take the nearest that has them.
+@compute @workgroup_size(1, 1, 1)
+fn build_weather_focus() {
+    let grid = vec2<i32>(Common::weather_grid());
+    let bins = i32(Common::WEATHER_FOCUS_BINS);
+    var sums: array<f32, Common::WEATHER_FOCUS_BINS>;
+    var weights: array<f32, Common::WEATHER_FOCUS_BINS>;
+    for (var y = 0; y < grid.y; y = y + 1) {
+        for (var x = 0; x < grid.x; x = x + 1) {
+            let data = weather_cells[weather_cell_index(vec2<i32>(x, y))];
+            if data.edge.y <= 0.0 || data.color.w <= 0.0 { continue; }
+            let bin = clamp(i32(data.guide.z / data.color.w * f32(bins)), 0, bins - 1);
+            sums[bin] += log2(data.edge.x) * data.edge.y;
+            weights[bin] += data.edge.y;
+        }
+    }
+    var logs: array<f32, Common::WEATHER_FOCUS_BINS>;
+    var measured = false;
+    for (var bin = 0; bin < bins; bin = bin + 1) {
+        for (var distance = 0; distance < bins; distance = distance + 1) {
+            let below = max(bin - distance, 0);
+            let above = min(bin + distance, bins - 1);
+            let nearest = select(above, below, weights[below] > 0.0);
+            if weights[nearest] > 0.0 {
+                logs[bin] = sums[nearest] / weights[nearest];
+                measured = true;
+                break;
+            }
+        }
+    }
+    let short_edge = f32(max(min(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height), 1u));
+    for (var bin = 0; bin < bins; bin = bin + 1) {
+        var sum = 0.0;
+        var count = 0.0;
+        for (var other = max(bin - WEATHER_FOCUS_SMOOTHING, 0); other <= min(bin + WEATHER_FOCUS_SMOOTHING, bins - 1); other = other + 1) {
+            sum += logs[other];
+            count += 1.0;
+        }
+        let blur = select(0.0, exp2(sum / count) / short_edge, measured);
+        textureStore(weather_focus_out, vec2<i32>(bin, 0), vec4<f32>(blur, 0.0, 0.0, 1.0));
+    }
 }

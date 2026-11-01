@@ -28,7 +28,7 @@ pub(super) const IMAGE_LIGHT_PASSES: usize = 4;
 pub(super) const HAZE_PASSES: usize = 5;
 /// The weather map passes (weather_analysis.wgsl): accumulate, resolve,
 /// coefficient smoothing, the environment blur and the ground.
-pub(super) const WEATHER_MAP_PASSES: usize = 5;
+pub(super) const WEATHER_MAP_PASSES: usize = 6;
 
 /// Coarse maps over the full image that a cropped view or an export tile
 /// cannot build from its own region. Each is built from the whole scene with
@@ -335,8 +335,9 @@ impl HazeInputs {
 /// The weather grid and its maps (weather_analysis.wgsl).
 struct WeatherInputs {
     cells: wgpu::Buffer,
-    /// The coarse photo, its wide blur, the refined depth's coefficients and
-    /// the ground Rain and Wet Surfaces read; cropped and zoomed views copy them.
+    /// The coarse photo, its wide blur, the refined depth's coefficients, the
+    /// ground and the lens blur table Rain and Wet Surfaces read; cropped and
+    /// zoomed views copy them.
     environment: wgpu::Texture,
     environment_view: wgpu::TextureView,
     environment_blur: wgpu::Texture,
@@ -345,6 +346,8 @@ struct WeatherInputs {
     depth_map_view: wgpu::TextureView,
     ground: wgpu::Texture,
     ground_view: wgpu::TextureView,
+    focus: wgpu::Texture,
+    focus_view: wgpu::TextureView,
     _coefficients: wgpu::Texture,
     /// The guided filter's coefficients of one window, before averaging.
     coefficients_view: wgpu::TextureView,
@@ -385,6 +388,14 @@ impl WeatherInputs {
             copied,
             "calibraw full-image weather ground",
         );
+        let focus = create_processing_texture(
+            device,
+            texture_size(WEATHER_FOCUS_BINS, 1),
+            WEATHER_ENVIRONMENT_FORMAT,
+            copied,
+            "calibraw full-image weather lens blur",
+        );
+        let focus_view = default_texture_view(&focus);
         let (coefficients, coefficients_view) = texture(
             edge,
             WEATHER_COEFFICIENT_FORMAT,
@@ -406,6 +417,8 @@ impl WeatherInputs {
             depth_map_view,
             ground,
             ground_view,
+            focus,
+            focus_view,
             _coefficients: coefficients,
             coefficients_view,
         }
@@ -681,7 +694,7 @@ impl InputBindingSources {
             ),
         ];
         let weather = inputs.weather;
-        let [accumulate, resolve, smooth, blur, ground] = &self.weather_map_layouts;
+        let [accumulate, resolve, smooth, blur, ground, focus] = &self.weather_map_layouts;
         let weather_map = [
             create_bind_group(
                 device,
@@ -738,6 +751,16 @@ impl InputBindingSources {
                     texture_binding(72, &weather.ground_view),
                 ],
             ),
+            create_bind_group(
+                device,
+                "bg weather lens blur",
+                focus,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    buffer_binding(62, &weather.cells),
+                    texture_binding(74, &weather.focus_view),
+                ],
+            ),
         ];
         let weather_effects =
             |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
@@ -760,6 +783,7 @@ impl InputBindingSources {
                         texture_binding(70, &weather.environment_blur_view),
                         texture_binding(71, &weather.depth_map_view),
                         texture_binding(73, &weather.ground_view),
+                        texture_binding(75, &weather.focus_view),
                     ],
                 )
             };
@@ -1048,6 +1072,7 @@ impl EffectInputs {
                             weather.environment_blur.clone(),
                             weather.depth_map.clone(),
                             weather.ground.clone(),
+                            weather.focus.clone(),
                         ],
                         buffers: Vec::new(),
                     })

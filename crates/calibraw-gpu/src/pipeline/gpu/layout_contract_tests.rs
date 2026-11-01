@@ -14,14 +14,14 @@ use super::{
     FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE, HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG,
     IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
     RELIGHT_SHADOW_MAP_CHANNELS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
-    WEATHER_BLUR_GRID_LONG, WEATHER_CELL_BYTES, WEATHER_GRID_LONG,
+    WEATHER_BLUR_GRID_LONG, WEATHER_CELL_BYTES, WEATHER_FOCUS_BINS, WEATHER_GRID_LONG,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::MaskEffect;
 use calibraw_core::pipeline::{
     CA_WINDOW_RADIUS, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT,
     HAZE_GUIDE_SUPPORT, MAX_LATERAL_SHIFT, MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
-    WET_SURFACES_SUPPORT,
+    WEATHER_EDGE_SUPPORT, WET_SURFACES_SUPPORT,
 };
 use naga::proc::Layouter;
 use std::collections::BTreeSet;
@@ -465,6 +465,7 @@ fn shared_constants_and_effect_ids_match_rust() {
     // And the weather grid's.
     assert_eq!(constant("WEATHER_GRID_LONG"), WEATHER_GRID_LONG);
     assert_eq!(constant("WEATHER_BLUR_GRID_LONG"), WEATHER_BLUR_GRID_LONG);
+    assert_eq!(constant("WEATHER_FOCUS_BINS"), WEATHER_FOCUS_BINS);
     for effect in MaskEffect::ALL {
         if effect == MaskEffect::Adjustment {
             assert_eq!(effect.shader_id(), 0, "adjustment masks use shader ID 0");
@@ -645,6 +646,10 @@ fn weather_cell_matches_its_wgsl_declaration() {
     assert_eq!(
         shared_u32_constant(&modules, "WET_DETAIL_REACH"),
         WET_SURFACES_SUPPORT
+    );
+    assert_eq!(
+        shared_u32_constant(&modules, "WEATHER_EDGE_REACH"),
+        WEATHER_EDGE_SUPPORT
     );
 }
 

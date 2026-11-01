@@ -46,11 +46,16 @@ pub const HAZE_GUIDE_SUPPORT: u32 = 2;
 // tone guide, so the guide's halo covers both.
 const _: () = assert!(HAZE_BOX_SUPPORT <= TONE_GUIDE_SUPPORT);
 const _: () = assert!(HAZE_GUIDE_SUPPORT <= TONE_GUIDE_SUPPORT);
-/// Pixels around each pixel over which Wet Surfaces reads the scene's detail
+/// Pixels around each pixel over which Wet Surfaces reads the scene's grain
 /// (`WET_DETAIL_REACH` in wet_surfaces.wgsl). It reads the scene the tone guide
 /// reads, so the guide's halo covers it too.
-pub const WET_SURFACES_SUPPORT: u32 = 2;
+pub const WET_SURFACES_SUPPORT: u32 = 6;
 const _: () = assert!(WET_SURFACES_SUPPORT <= TONE_GUIDE_SUPPORT);
+/// Pixels past a tile core that the weather map's edge profiles read in the
+/// export tone prepass (`WEATHER_EDGE_REACH` in weather_analysis.wgsl), in the
+/// scene the tone guide reads.
+pub const WEATHER_EDGE_SUPPORT: u32 = 64;
+const _: () = assert!(WEATHER_EDGE_SUPPORT <= TONE_GUIDE_SUPPORT);
 /// Footprint of the Texture and Clarity cascade (detail_scale_space.wgsl):
 /// 2 taps each side at steps 1, 2, 4, …, 2^(levels - 1), so 2 × (2^levels - 1).
 /// Texture alone builds 5 levels, Clarity all 7; `layout_contract_tests`

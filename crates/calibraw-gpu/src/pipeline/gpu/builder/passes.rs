@@ -776,6 +776,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             ],
         ),
         ("build_weather_ground", weather_workgroups),
+        ("build_weather_focus", [1, 1, 1]),
     ];
     for (index, (entry, workgroups)) in weather_map_programs.into_iter().enumerate() {
         passes.push(assembler.make_pass(

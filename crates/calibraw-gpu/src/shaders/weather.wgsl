@@ -27,6 +27,7 @@ const MASK_EFFECT_WET_SURFACES_ID: u32 = 19u;
 @group(0) @binding(70) var weather_environment_blur_tex: texture_2d<f32>;
 @group(0) @binding(71) var weather_depth_map_tex: texture_2d<f32>;
 @group(0) @binding(73) var weather_ground_tex: texture_2d<f32>;
+@group(0) @binding(75) var weather_focus_tex: texture_2d<f32>;
 
 // Shorter-edge units per full-image pixel.
 fn weather_pixel_extent() -> f32 {
@@ -40,36 +41,78 @@ fn weather_depth_present() -> bool {
     return Common::scene_tone_uniforms.scene_depth_present != 0u;
 }
 
-// The weather map interpolated to a pixel: the guided filter's slope and offset,
-// the surface's roughness and the mean guide around it.
-fn weather_map_at(pos: vec2<i32>) -> vec4<f32> {
+// The four weather grid cells around full-image `uv` and how far it lies between them.
+struct WeatherCells {
+    base: vec2<i32>,
+    next: vec2<i32>,
+    between: vec2<f32>,
+}
+
+fn weather_cells_at(uv: vec2<f32>) -> WeatherCells {
     let grid = vec2<i32>(Common::weather_grid());
     let last = grid - vec2<i32>(1);
-    let position = clamp(
-        CreativeEffects::full_image_uv(pos) * vec2<f32>(grid) - vec2<f32>(0.5),
-        vec2<f32>(0.0),
-        vec2<f32>(last),
-    );
+    let position = clamp(uv * vec2<f32>(grid) - vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(last));
     let base = vec2<i32>(floor(position));
-    let next = min(base + vec2<i32>(1), last);
-    let f = position - vec2<f32>(base);
-    let top = mix(
-        textureLoad(weather_depth_map_tex, base, 0),
-        textureLoad(weather_depth_map_tex, vec2<i32>(next.x, base.y), 0),
-        f.x,
+    return WeatherCells(base, min(base + vec2<i32>(1), last), position - vec2<f32>(base));
+}
+
+// The weather map at full-image `uv`: the guided filter's slope and offset, the
+// surface's roughness and the mean guide around it.
+fn weather_map_near(uv: vec2<f32>) -> vec4<f32> {
+    let cells = weather_cells_at(uv);
+    return mix(
+        mix(
+            textureLoad(weather_depth_map_tex, cells.base, 0),
+            textureLoad(weather_depth_map_tex, vec2<i32>(cells.next.x, cells.base.y), 0),
+            cells.between.x,
+        ),
+        mix(
+            textureLoad(weather_depth_map_tex, vec2<i32>(cells.base.x, cells.next.y), 0),
+            textureLoad(weather_depth_map_tex, cells.next, 0),
+            cells.between.x,
+        ),
+        cells.between.y,
     );
-    let bottom = mix(
-        textureLoad(weather_depth_map_tex, vec2<i32>(base.x, next.y), 0),
-        textureLoad(weather_depth_map_tex, next, 0),
-        f.x,
+}
+
+// The ground at full-image `uv`, without regard to edge-accurate depth.
+fn weather_ground_near(uv: vec2<f32>) -> vec4<f32> {
+    let cells = weather_cells_at(uv);
+    return mix(
+        mix(
+            textureLoad(weather_ground_tex, cells.base, 0),
+            textureLoad(weather_ground_tex, vec2<i32>(cells.next.x, cells.base.y), 0),
+            cells.between.x,
+        ),
+        mix(
+            textureLoad(weather_ground_tex, vec2<i32>(cells.base.x, cells.next.y), 0),
+            textureLoad(weather_ground_tex, cells.next, 0),
+            cells.between.x,
+        ),
+        cells.between.y,
     );
-    return mix(top, bottom, f.y);
+}
+
+fn weather_map_at(pos: vec2<i32>) -> vec4<f32> {
+    return weather_map_near(CreativeEffects::full_image_uv(pos));
 }
 
 // Scene depth at a pixel, edge-accurate, from the weather map's values there:
 // its guided filter evaluated against the photo. Near 0, far 1.
 fn weather_depth_from(map: vec4<f32>, pos: vec2<i32>) -> f32 {
     return clamp(map.x * SceneSource::weather_guide_at(pos) + map.y, 0.0, 1.0);
+}
+
+// The lens blur at a scene depth, as a Gaussian's deviation in shorter edges.
+fn weather_focus_blur(depth: f32) -> f32 {
+    let last = i32(Common::WEATHER_FOCUS_BINS) - 1;
+    let position = clamp(depth * f32(Common::WEATHER_FOCUS_BINS) - 0.5, 0.0, f32(last));
+    let base = i32(position);
+    return mix(
+        textureLoad(weather_focus_tex, vec2<i32>(base, 0), 0).x,
+        textureLoad(weather_focus_tex, vec2<i32>(min(base + 1, last), 0), 0).x,
+        position - f32(base),
+    );
 }
 
 // The photo's light at full-image `uv` at the current exposure: its coarse

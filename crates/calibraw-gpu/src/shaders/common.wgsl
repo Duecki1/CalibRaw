@@ -298,6 +298,8 @@ fn image_light_grid() -> vec2<u32> {
 // grid. Match the constants of the same names in Rust.
 const WEATHER_GRID_LONG: u32 = 256u;
 const WEATHER_BLUR_GRID_LONG: u32 = 48u;
+// Depth bins of the lens blur table.
+const WEATHER_FOCUS_BINS: u32 = 32u;
 
 fn weather_grid_for(long_cells: u32) -> vec2<u32> {
     // A cell holds at least one pixel, even for a very small preview.

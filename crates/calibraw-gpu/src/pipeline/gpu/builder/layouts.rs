@@ -739,6 +739,11 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             weather_read(67),
             environment_write(72),
         ],
+        &[
+            buffer_entry(0),
+            storage_buffer_entry(62, false),
+            environment_write(74),
+        ],
     ];
     let weather_map_labels: [&str; WEATHER_MAP_PASSES] = [
         "bgl weather accumulation",
@@ -746,6 +751,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         "bgl weather coefficient smoothing",
         "bgl weather environment blur",
         "bgl weather ground",
+        "bgl weather lens blur",
     ];
     let bgl_weather_map = std::array::from_fn(|index| {
         reused_layout(plan.weather_map_accumulate_pass_index + index).unwrap_or_else(|| {
@@ -775,6 +781,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                 texture_entry(70, wgpu::TextureSampleType::Float { filterable: true }),
                 weather_read(71),
                 weather_read(73),
+                weather_read(75),
             ],
         )
     });
