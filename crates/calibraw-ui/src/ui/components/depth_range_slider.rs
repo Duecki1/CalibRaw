@@ -9,8 +9,8 @@ const DECIMALS: i32 = 3;
 impl FeatheredRange for DepthRangeSettings {
     /// `near` and `far` are ramp centres and the feathers ramp widths. A
     /// fade may run off the track; it is drawn at the track end. (An end at
-    /// exactly 0 or 1 has no ramp at all; its stored feather is kept for when
-    /// the end moves inwards again.)
+    /// exactly 0 or 1 has no ramp at all; its stored feather comes back
+    /// gradually as the end moves inwards again.)
     fn points(&self) -> RangePoints {
         let near_half = self.near_feather.clamp(0.0, 1.0) * 0.5;
         let far_half = self.far_feather.clamp(0.0, 1.0) * 0.5;

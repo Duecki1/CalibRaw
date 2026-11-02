@@ -2,6 +2,7 @@
 //! pixel scans or distance transforms run
 //! with a cache mutex held, and callers retain prepared data through eviction.
 
+use super::edge_room::EdgeRoom;
 use super::{chamfer_distance, LensGeometryMap, MaskImage};
 use std::collections::{hash_map::DefaultHasher, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -212,94 +213,40 @@ pub(super) fn corrected_uv(
         .get(extent, region, full_size, lens, prepare)
 }
 
-pub(super) struct SourceFrontier {
+/// The edge room of a generated mask, for as long as its pixels live.
+pub(super) struct SourceEdgeRoom {
     width: u32,
     height: u32,
     pixels: Weak<[u8]>,
     pixel_bytes: usize,
-    pairs: Vec<(u32, u32)>,
+    pub(super) room: EdgeRoom,
 }
 
-impl SourceFrontier {
+impl SourceEdgeRoom {
     fn prepare(source: &MaskImage) -> Self {
-        let width = source.width as usize;
-        let height = source.height as usize;
-        let mut horizontal_runs = vec![0u32; source.pixels.len()];
-        for y in 0..height {
-            let mut x = 0;
-            while x < width {
-                let start = x;
-                while x < width && source.pixels[y * width + x] >= 128 {
-                    x += 1;
-                }
-                let length = (x - start) as u32;
-                horizontal_runs[y * width + start..y * width + x].fill(length);
-                x += usize::from(length == 0);
-            }
-        }
-
-        // Every selected vertical segment has one vertical length. For that
-        // segment, max(min(h * sx, v * sy)) only needs its largest horizontal
-        // run. Collapse equal vertical lengths before computing the frontier;
-        // even a checkerboard needs only O(height) temporary pairs.
-        let mut horizontal_by_vertical = vec![0u32; height + 1];
-        for x in 0..width {
-            let mut y = 0;
-            while y < height {
-                let start = y;
-                let mut horizontal = 0;
-                while y < height && source.pixels[y * width + x] >= 128 {
-                    horizontal = horizontal.max(horizontal_runs[y * width + x]);
-                    y += 1;
-                }
-                let vertical = y - start;
-                horizontal_by_vertical[vertical] = horizontal_by_vertical[vertical].max(horizontal);
-                y += usize::from(vertical == 0);
-            }
-        }
-        let mut pairs = Vec::new();
-        let mut largest_horizontal = 0;
-        for vertical in (1..=height).rev() {
-            let horizontal = horizontal_by_vertical[vertical];
-            if horizontal > largest_horizontal {
-                pairs.push((horizontal, vertical as u32));
-                largest_horizontal = horizontal;
-            }
-        }
         Self {
             width: source.width,
             height: source.height,
             pixels: Arc::downgrade(&source.pixels),
             pixel_bytes: source.pixels.len(),
-            pairs,
+            room: EdgeRoom::measure(source),
         }
-    }
-
-    pub(super) fn core_radius(&self, scale_x: f32, scale_y: f32) -> Option<f32> {
-        let thickest = self
-            .pairs
-            .iter()
-            .map(|&(horizontal, vertical)| {
-                (horizontal as f32 * scale_x).min(vertical as f32 * scale_y)
-            })
-            .fold(0.0f32, f32::max);
-        (thickest > 0.0).then_some(thickest * 0.45)
     }
 
     fn byte_len(&self) -> usize {
         // A weak Arc keeps its allocation reserved after the last image drops.
         // Account for that storage too, until the next lookup prunes the entry.
-        size_of::<Self>() + self.pairs.capacity() * size_of::<(u32, u32)>() + self.pixel_bytes
+        size_of::<Self>() + self.room.byte_len() + self.pixel_bytes
     }
 }
 
-struct SourceCache(BoundedCache<SourceFrontier>);
+struct SourceCache(BoundedCache<SourceEdgeRoom>);
 
 impl SourceCache {
-    fn get(&self, source: &MaskImage) -> Arc<SourceFrontier> {
+    fn get(&self, source: &MaskImage) -> Arc<SourceEdgeRoom> {
         self.0.remove_if(|entry| entry.pixels.strong_count() == 0);
         let pixels = Arc::downgrade(&source.pixels);
-        let matches_key = |entry: &SourceFrontier| {
+        let matches_key = |entry: &SourceEdgeRoom| {
             entry.width == source.width
                 && entry.height == source.height
                 && Weak::ptr_eq(&entry.pixels, &pixels)
@@ -307,13 +254,13 @@ impl SourceCache {
         if let Some(found) = self.0.find(matches_key, |_| true) {
             return found;
         }
-        let prepared = Arc::new(SourceFrontier::prepare(source));
+        let prepared = Arc::new(SourceEdgeRoom::prepare(source));
         let bytes = prepared.byte_len();
         self.0.insert(prepared, bytes, matches_key, |_| true)
     }
 }
 
-pub(super) fn source_frontier(source: &MaskImage) -> Arc<SourceFrontier> {
+pub(super) fn source_edge_room(source: &MaskImage) -> Arc<SourceEdgeRoom> {
     static CACHE: OnceLock<SourceCache> = OnceLock::new();
     CACHE
         .get_or_init(|| SourceCache(BoundedCache::new(SOURCE_BYTES, MAX_ENTRIES)))

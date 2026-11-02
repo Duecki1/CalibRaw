@@ -10,6 +10,7 @@
 //! pixel; region rasters carry enough margin ([`range_filter_reach`]) that
 //! tile seams never see it.
 
+use super::box_filter::box_mean;
 use rayon::prelude::*;
 
 /// Radius of the chroma smoothing before colour classification, applied
@@ -123,75 +124,4 @@ pub(super) fn refine_coverage(
         .for_each(|(index, (coverage, guide))| {
             *coverage = (mean_slope[index] * guide + mean_offset[index]).clamp(0.0, 1.0);
         });
-}
-
-/// Mean over the (2·radius+1)² window around each pixel.
-pub(super) fn box_mean(values: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
-    let rows = box_mean_rows(values, width, radius);
-    box_mean_columns(&rows, width, height, radius)
-}
-
-/// Mean over the 2·radius+1 pixels around each pixel of every row.
-fn box_mean_rows(values: &[f32], width: usize, radius: usize) -> Vec<f32> {
-    let mut out = vec![0.0; values.len()];
-    if width == 0 {
-        return out;
-    }
-    let last = width - 1;
-    let scale = 1.0 / (2 * radius + 1) as f64;
-    out.par_chunks_mut(width)
-        .zip(values.par_chunks(width))
-        .for_each(|(out, row)| {
-            let at = |index: isize| row[index.clamp(0, last as isize) as usize] as f64;
-            let radius = radius as isize;
-            let mut sum: f64 = (-radius..=radius).map(at).sum();
-            for (x, value) in out.iter_mut().enumerate() {
-                *value = (sum * scale) as f32;
-                let x = x as isize;
-                sum += at(x + radius + 1) - at(x - radius);
-            }
-        });
-    out
-}
-
-/// Mean over the 2·radius+1 pixels around each pixel of every column. Bands
-/// of rows run in parallel, each sliding a row of column sums downwards.
-fn box_mean_columns(values: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
-    const BAND_ROWS: usize = 32;
-    let mut out = vec![0.0; values.len()];
-    if width == 0 || height == 0 {
-        return out;
-    }
-    let last = height as isize - 1;
-    let row = |y: isize| {
-        let y = y.clamp(0, last) as usize;
-        &values[y * width..][..width]
-    };
-    let scale = 1.0 / (2 * radius + 1) as f64;
-    let radius = radius as isize;
-    out.par_chunks_mut(width * BAND_ROWS)
-        .enumerate()
-        .for_each(|(band, out)| {
-            let first = (band * BAND_ROWS) as isize;
-            let mut sums = vec![0.0f64; width];
-            for y in first - radius..=first + radius {
-                for (sum, value) in sums.iter_mut().zip(row(y)) {
-                    *sum += *value as f64;
-                }
-            }
-            for (offset, out) in out.chunks_mut(width).enumerate() {
-                let y = first + offset as isize;
-                for (value, sum) in out.iter_mut().zip(&sums) {
-                    *value = (sum * scale) as f32;
-                }
-                for ((sum, entering), leaving) in sums
-                    .iter_mut()
-                    .zip(row(y + radius + 1))
-                    .zip(row(y - radius))
-                {
-                    *sum += *entering as f64 - *leaving as f64;
-                }
-            }
-        });
-    out
 }

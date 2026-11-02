@@ -309,7 +309,7 @@ fn detail_mask_update_region(
     let required = if interactive {
         // Reserve the entire grow/feather slider range once. Changing the crop
         // every tick invalidates distance caches and reuploads every mask layer.
-        let slider_margin = (full_size[0].min(full_size[1]) as f32 * 0.095 + 2.0).ceil() as u32;
+        let slider_margin = MaskStack::shape_slider_margin_pixels(full_size[0], full_size[1]);
         let margin = masks
             .raster_margin_pixels(full_size[0], full_size[1])
             .max(slider_margin);

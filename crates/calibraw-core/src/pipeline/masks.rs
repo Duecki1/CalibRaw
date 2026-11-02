@@ -24,9 +24,12 @@ pub use effects::{
     WetSurfacesEffectSettings,
 };
 
+mod box_filter;
 mod brush;
+mod edge_room;
 mod editing;
 mod layers;
+mod morphology;
 mod probability;
 mod range_filters;
 mod raster;

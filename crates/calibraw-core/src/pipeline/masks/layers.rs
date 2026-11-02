@@ -150,6 +150,13 @@ impl MaskStack {
             .ceil() as u32
     }
 
+    /// The margin of a mask at the far end of the Grow and Feather sliders, so
+    /// a region reserved with it survives any drag of them.
+    pub fn shape_slider_margin_pixels(image_width: u32, image_height: u32) -> u32 {
+        let edge = image_width.min(image_height).max(1) as f32;
+        soft_shape_margin_pixels(edge, 1.0, 1.0).ceil() as u32
+    }
+
     pub fn raster_margin_pixels(&self, image_width: u32, image_height: u32) -> u32 {
         self.masks
             .iter()

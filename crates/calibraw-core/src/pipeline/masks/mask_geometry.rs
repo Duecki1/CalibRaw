@@ -131,7 +131,10 @@ impl Default for DepthRangeSettings {
 }
 
 impl DepthRangeSettings {
-    /// The UI curve and mask rasterizer use the same depth response.
+    /// The UI curve and mask rasterizer use the same depth response. An end at
+    /// 0 or 1 selects to the end of the track, and its fade comes in as the end
+    /// moves inwards, reaching full strength once all of it is on the track, so
+    /// moving an end off the track changes nothing suddenly.
     pub fn weight(&self, depth: f32) -> f32 {
         let near = self.near.clamp(0.0, 1.0);
         let far = self.far.clamp(near, 1.0);
@@ -141,13 +144,15 @@ impl DepthRangeSettings {
         };
         let near_width = self.near_feather.clamp(0.0, 1.0);
         let far_width = self.far_feather.clamp(0.0, 1.0);
-        let lower = if near_width > 0.0 && near > 0.0 {
-            smooth((depth - near) / near_width + 0.5)
+        let lower = if near_width > 0.0 {
+            let strength = (near / (near_width * 0.5)).min(1.0);
+            smooth((depth - near) / near_width + 0.5) * strength + (1.0 - strength)
         } else {
             f32::from(depth >= near)
         };
-        let upper = if far_width > 0.0 && far < 1.0 {
-            1.0 - smooth((depth - far) / far_width + 0.5)
+        let upper = if far_width > 0.0 {
+            let strength = ((1.0 - far) / (far_width * 0.5)).min(1.0);
+            (1.0 - smooth((depth - far) / far_width + 0.5)) * strength + (1.0 - strength)
         } else {
             f32::from(depth <= far)
         };

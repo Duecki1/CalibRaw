@@ -175,8 +175,8 @@ fn measure_shape_sweeps(
         "{label} at {edge}x{edge}, first raster: {:.1} ms",
         started.elapsed().as_secs_f64() * 1000.0,
     );
-    // Each step changes the slider value while preserving the binary contour.
-    // The first raster prepares that contour; timed sweeps measure reuse.
+    // The first raster prepares what later ones reuse: the mask's contour and, for
+    // a generated mask, its edge room. Each step then changes only the slider value.
     for sweep_grow in [true, false] {
         let started = Instant::now();
         let mut checksum = 0_u64;

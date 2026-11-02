@@ -240,7 +240,7 @@ fn rasterize_component_internal(
             } else {
                 *grow
             };
-            shape_probability_mask_from_source(&mut coverage, width, height, grow, *feather, mask);
+            shape_generated_coverage(&mut coverage, width, height, grow, *feather, mask);
             if component.kind == MaskKind::Background {
                 coverage
                     .par_iter_mut()
@@ -261,7 +261,7 @@ fn rasterize_component_internal(
             ..
         } => {
             let mut coverage = rasterize_mask_image(width, height, mask);
-            shape_probability_mask_from_source(&mut coverage, width, height, *grow, *feather, mask);
+            shape_generated_coverage(&mut coverage, width, height, *grow, *feather, mask);
             coverage
         }
         MaskGeometry::Object {
@@ -289,9 +289,7 @@ fn rasterize_component_internal(
                 *high,
                 [*feather, high_feather.unwrap_or(*feather)],
             );
-            if grow.abs() > 1e-5 {
-                shape_probability_mask(&mut coverage, width, height, *grow, 0.0);
-            }
+            grow_soft_coverage(&mut coverage, width, height, *grow);
             coverage
         }
         MaskGeometry::ColorRange {
@@ -302,9 +300,7 @@ fn rasterize_component_internal(
             sampled: true,
         } => {
             let mut coverage = rasterize_color_range(width, height, source, *sample, *tolerance);
-            if grow.abs() > 1e-5 {
-                shape_probability_mask(&mut coverage, width, height, *grow, 0.0);
-            }
+            grow_soft_coverage(&mut coverage, width, height, *grow);
             coverage
         }
         MaskGeometry::DepthRange {
@@ -360,17 +356,20 @@ pub(super) fn rasterize_mask_image(width: u32, height: u32, mask: &MaskImage) ->
 }
 
 pub(super) fn component_shape_margin_pixels(component: &MaskComponent, image_edge: f32) -> f32 {
-    let shape_margin = |grow: f32, feather: f32| {
-        grow.abs() * image_edge * 0.05 + mask_feather_radius(image_edge, feather) + 2.0
-    };
     match &component.geometry {
         MaskGeometry::Ai { grow, feather, .. }
         | MaskGeometry::Object { grow, feather, .. }
-        | MaskGeometry::Person { grow, feather, .. } => shape_margin(*grow, *feather),
-        MaskGeometry::LuminanceRange { grow, .. } | MaskGeometry::ColorRange { grow, .. } => {
-            shape_margin(*grow, 0.0) + range_filter_reach() * image_edge
+        | MaskGeometry::Person { grow, feather, .. } => {
+            soft_shape_margin_pixels(image_edge, *grow, *feather)
         }
-        MaskGeometry::Path { grow, feather, .. } => shape_margin(*grow, *feather),
+        MaskGeometry::LuminanceRange { grow, .. } | MaskGeometry::ColorRange { grow, .. } => {
+            soft_shape_margin_pixels(image_edge, *grow, 0.0) + range_filter_reach() * image_edge
+        }
+        MaskGeometry::Path { grow, feather, .. } => {
+            mask_grow_radius(image_edge, grow.abs())
+                + mask_feather_radius(image_edge, *feather)
+                + 2.0
+        }
         _ => 2.0,
     }
 }

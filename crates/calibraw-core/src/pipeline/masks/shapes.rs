@@ -126,7 +126,7 @@ pub(super) fn rasterize_path(
         });
 
     if grow.abs() > 1e-5 || feather > 1e-5 {
-        shape_distance_mask(&mut out, width, height, grow, feather, true, None);
+        shape_path_coverage(&mut out, width, height, grow, feather);
     }
     out
 }
