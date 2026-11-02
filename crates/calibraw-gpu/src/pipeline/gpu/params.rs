@@ -574,7 +574,7 @@ impl GpuParams {
                 full_height,
             },
         };
-        let mask_data = pack_mask_params(masks);
+        let mask_data = pack_mask_params(masks, raw.capture_metadata.shutter_seconds);
         let mut params = Self {
             camera: pack_camera_params(&context),
             scene_tone: pack_scene_tone_params(&context),
@@ -589,15 +589,15 @@ impl GpuParams {
         params
     }
 
-    /// Finds the ground for an active Wet Surfaces effect, with `up` in image
-    /// points. Without scene depth, or without ground in it, there is none.
-    /// Without the effect nothing reads the ground, and `up` stays fixed so that
+    /// Finds the ground for an active Wet Surfaces effect or Rain's splashes, with
+    /// `up` in image points. Without scene depth, or without ground in it, there
+    /// is none. Without them nothing reads the ground, and `up` stays fixed so that
     /// straightening does not rebuild the scene map.
     fn set_scene_ground(&mut self, up: [f32; 2]) {
         if !self
             .mask_slots()
             .iter()
-            .any(|mask| mask.applies(MaskEffect::WetSurfaces))
+            .any(|mask| mask.applies(MaskEffect::WetSurfaces) || rain_reads_ground(mask))
         {
             self.effects.scene_ground = [OUTPUT_UP[0], OUTPUT_UP[1], 0.0, 0.0];
             return;

@@ -33,11 +33,17 @@ pub(crate) fn show(
             changed |= float_param_slider(ui, &mut settings.light_glow, rain::LIGHT_GLOW);
             changed |= image_lights_toggle(ui, &mut settings.image_lights);
             changed |= effect_details(ui, tr("Rain details"), |ui| {
-                float_param_slider(ui, &mut settings.drop_size, rain::DROP_SIZE)
-                    | float_param_slider(ui, &mut settings.gusts, rain::GUSTS)
-                    | float_param_slider(ui, &mut settings.perspective, rain::PERSPECTIVE)
-                    | float_param_slider(ui, &mut settings.focus, rain::FOCUS)
-                    | pattern_seed(ui, &mut settings.seed, rain::SEED)
+                let mut changed = float_param_slider(ui, &mut settings.drop_size, rain::DROP_SIZE);
+                // Splashes need the ground in scene depth, and with scene depth the
+                // photo itself says how much the lens blurs each distance.
+                changed |= if settings.depth_enabled {
+                    float_param_slider(ui, &mut settings.splashes, rain::SPLASHES)
+                } else {
+                    float_param_slider(ui, &mut settings.focus, rain::FOCUS)
+                };
+                changed |= float_param_slider(ui, &mut settings.gusts, rain::GUSTS);
+                changed |= float_param_slider(ui, &mut settings.perspective, rain::PERSPECTIVE);
+                changed | pattern_seed(ui, &mut settings.seed, rain::SEED)
             });
             changed
         },

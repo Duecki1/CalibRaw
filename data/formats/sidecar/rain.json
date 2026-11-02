@@ -419,6 +419,7 @@
           "effect": "Rain",
           "settings": {
             "rain": {
+              "splashes": 25.0,
               "amount": 65.0,
               "depth_enabled": false,
               "image_lights": false,

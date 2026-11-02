@@ -33,6 +33,14 @@ fn set_medium_options(data: &mut MaskData, image_lights: bool) {
     data.effect_options[options::MEDIUM_IMAGE_LIGHTS] = f32::from(u8::from(image_lights));
 }
 
+/// Whether an active Rain slot throws splashes on the ground, which it finds in
+/// scene depth.
+pub(super) fn rain_reads_ground(data: &MaskData) -> bool {
+    data.applies(MaskEffect::Rain)
+        && data.effect_options[options::RAIN_DEPTH] > 0.5
+        && data.lane(rain::SPLASHES) > 0.0
+}
+
 /// Whether an active Fog, Smoke or Rain slot scatters the photograph's own lights.
 pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
     (data.applies(MaskEffect::Fog)
@@ -134,6 +142,7 @@ pub(super) fn pack_effect_mask(
     effect: MaskEffect,
     settings: &crate::pipeline::MaskEffectSettings,
     enabled: bool,
+    shutter_seconds: f32,
 ) -> Option<MaskData> {
     let zero = [0.0; 4];
     let data = match effect {
@@ -395,7 +404,7 @@ pub(super) fn pack_effect_mask(
             use effect_params::rain as params;
             let mut data = effect_slot(effect, enabled && config.is_active());
             data.set_lane(rain::AMOUNT, params::AMOUNT.clamp(config.amount));
-            data.set_lane(rain::LENGTH, params::LENGTH.clamp(config.length));
+            data.set_lane(rain::LENGTH, config.streak_length(shutter_seconds));
             // In the output frame until `orient_rain_slots`.
             let angle = params::ANGLE.clamp(config.angle).to_radians();
             data.set_lane(rain::FALL_X, angle.cos());
@@ -411,9 +420,10 @@ pub(super) fn pack_effect_mask(
                 rain::PERSPECTIVE,
                 params::PERSPECTIVE.clamp(config.perspective),
             );
+            data.set_lane(rain::SPLASHES, params::SPLASHES.clamp(config.splashes));
             data.set_lane(rain::FOCUS, params::FOCUS.clamp(config.focus));
             data.set_lane(rain::SEED, params::SEED.clamp(config.seed));
-            data.set_lane(rain::DEPTH, f32::from(u8::from(config.depth_enabled)));
+            data.effect_options[options::RAIN_DEPTH] = f32::from(u8::from(config.depth_enabled));
             set_medium_options(&mut data, config.image_lights);
             data
         }
@@ -587,7 +597,7 @@ pub(super) fn render_mask_slot_count(masks: &MaskStack) -> usize {
         + masks.global_effects.len()
 }
 
-pub(super) fn pack_mask_params(masks: &MaskStack) -> Box<[MaskData]> {
+pub(super) fn pack_mask_params(masks: &MaskStack, shutter_seconds: f32) -> Box<[MaskData]> {
     let mut packed = vec![MaskData::zeroed(); MAX_RENDER_MASK_SLOTS].into_boxed_slice();
     let mut slot = 0;
     for (layer, mask) in masks.masks.iter().enumerate() {
@@ -595,9 +605,12 @@ pub(super) fn pack_mask_params(masks: &MaskStack) -> Box<[MaskData]> {
             packed[slot] = pack_adjustment_mask(mask);
             packed[slot].point_color_meta[2] = layer as u32;
             slot += 1;
-        } else if let Some(mut data) =
-            pack_effect_mask(mask.effect, &mask.effect_settings, mask.enabled)
-        {
+        } else if let Some(mut data) = pack_effect_mask(
+            mask.effect,
+            &mask.effect_settings,
+            mask.enabled,
+            shutter_seconds,
+        ) {
             data.point_color_meta[2] = layer as u32;
             packed[slot] = data;
             slot += 1;
@@ -607,6 +620,7 @@ pub(super) fn pack_mask_params(masks: &MaskStack) -> Box<[MaskData]> {
                 component.effect,
                 &component.settings,
                 mask.enabled && component.enabled,
+                shutter_seconds,
             ) {
                 data.point_color_meta[2] = layer as u32;
                 packed[slot] = data;
@@ -615,9 +629,12 @@ pub(super) fn pack_mask_params(masks: &MaskStack) -> Box<[MaskData]> {
         }
     }
     for component in &masks.global_effects {
-        if let Some(mut data) =
-            pack_effect_mask(component.effect, &component.settings, component.enabled)
-        {
+        if let Some(mut data) = pack_effect_mask(
+            component.effect,
+            &component.settings,
+            component.enabled,
+            shutter_seconds,
+        ) {
             data.point_color_meta[2] = u32::MAX;
             packed[slot] = data;
             slot += 1;

@@ -137,11 +137,12 @@
                 "focus": 45.0,
                 "gusts": 35.0,
                 "image_lights": false,
-                "length": 35.0,
+                "length": 0.0,
                 "light_glow": 50.0,
                 "mist": 35.0,
                 "perspective": -20.0,
-                "seed": 7.0
+                "seed": 7.0,
+                "splashes": 25.0
               }
             }
           },

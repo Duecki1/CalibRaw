@@ -260,6 +260,7 @@ fn validate_rain_effect(rain: &crate::pipeline::RainEffectSettings) -> Result<()
             (params::LIGHT_GLOW, rain.light_glow),
             (params::GUSTS, rain.gusts),
             (params::PERSPECTIVE, rain.perspective),
+            (params::SPLASHES, rain.splashes),
             (params::FOCUS, rain.focus),
             (params::SEED, rain.seed),
         ],

@@ -88,7 +88,7 @@ effect_lanes! {
         PERSPECTIVE = 8,
         FOCUS = 9,
         SEED = 10,
-        DEPTH = 11,
+        SPLASHES = 11,
     }
     wet_surfaces {
         WETNESS = 0,
@@ -103,6 +103,8 @@ effect_lanes! {
 
 /// `effect_options` lanes of effect slots.
 pub(super) mod options {
+    /// Rain: 1 when streaks and mist follow scene depth.
+    pub(in crate::pipeline::gpu) const RAIN_DEPTH: usize = 1;
     /// Fog, Smoke and Rain: 1 when Image lights is on.
     pub(in crate::pipeline::gpu) const MEDIUM_IMAGE_LIGHTS: usize = 3;
     /// Relight: its shadow-map channel plus one, or 0 to trace shadows per
@@ -113,6 +115,7 @@ pub(super) mod options {
     #[cfg(test)]
     pub(in crate::pipeline::gpu) fn named_options() -> Vec<(&'static str, usize)> {
         vec![
+            ("RAIN_DEPTH", RAIN_DEPTH),
             ("MEDIUM_IMAGE_LIGHTS", MEDIUM_IMAGE_LIGHTS),
             ("RELIGHT_SHADOW_CHANNEL", RELIGHT_SHADOW_CHANNEL),
         ]

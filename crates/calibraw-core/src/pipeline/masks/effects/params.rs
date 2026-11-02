@@ -985,12 +985,12 @@ pub mod rain {
     float_param!(
         LENGTH,
         "Streak length",
-        0.0,
+        -100.0,
         100.0,
-        35.0,
-        0.5,
+        0.0,
+        1.0,
         0,
-        Some("How far drops travel during the exposure. Long streaks are fainter, as with a slow shutter."),
+        Some("How far drops travel during the exposure. 0 follows the photo's shutter speed. Long streaks are fainter, as with a slow shutter."),
     );
     float_param!(
         ANGLE,
@@ -1053,6 +1053,16 @@ pub mod rain {
         Some("Makes streaks converge, as when looking up into the rain or down through it."),
     );
     float_param!(
+        SPLASHES,
+        "Splashes",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("Crowns of water where drops land on the ground."),
+    );
+    float_param!(
         FOCUS,
         "Focus distance",
         0.0,
@@ -1060,7 +1070,7 @@ pub mod rain {
         45.0,
         0.5,
         0,
-        Some("The distance at which drops are sharp. Drops nearer or farther melt into soft streaks."),
+        Some("The distance at which drops are sharp without scene depth. Drops nearer or farther melt into soft streaks."),
     );
     float_param!(
         SEED,
