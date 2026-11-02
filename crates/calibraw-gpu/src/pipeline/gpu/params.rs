@@ -2,6 +2,8 @@
 
 use super::ground_plane::estimate_ground_horizon;
 use super::*;
+use crate::pipeline::effect_lanes::{glow, pixelate, relight};
+use crate::pipeline::{EffectOption, EffectPass, Lane, SceneMapUse};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -259,7 +261,7 @@ pub(super) struct MaskData {
     pub(super) adjust_0: [f32; 4],
     pub(super) adjust_1: [f32; 4],
     pub(super) adjust_2: [f32; 4],
-    // Per-slot switches of effect slots (`effect_lanes::options`).
+    // Per-slot switches of effect slots (`effect_lanes::options` in calibraw-core).
     pub(super) effect_options: [f32; 4],
     pub(super) curves: [[f32; 4]; LOCAL_POINT_CURVE_BLOCKS],
     pub(super) grade_shadows: [f32; 4],
@@ -298,6 +300,48 @@ impl MaskData {
     /// (`Common::mask_slot_applies`).
     pub(super) fn applies(&self, effect: MaskEffect) -> bool {
         self.is_active() && self.effect_id() == effect.shader_id()
+    }
+
+    /// The effect of an active slot.
+    fn active_effect(&self) -> Option<MaskEffect> {
+        self.is_active()
+            .then(|| MaskEffect::from_shader_id(self.effect_id()))
+            .flatten()
+    }
+
+    /// Whether the slot is active and its effect runs in `pass`.
+    pub(super) fn runs_in(&self, pass: EffectPass) -> bool {
+        self.active_effect()
+            .is_some_and(|effect| effect.runs_in(pass))
+    }
+
+    /// An effect slot's lane: component `n % 4` of `adjust_{n / 4}`
+    /// ([`EffectLanes::rows`]).
+    pub(super) fn lane(&self, lane: Lane) -> f32 {
+        let row = match lane.index() / 4 {
+            0 => &self.adjust_0,
+            1 => &self.adjust_1,
+            _ => &self.adjust_2,
+        };
+        row[lane.index() % 4]
+    }
+
+    pub(super) fn set_lane(&mut self, lane: Lane, value: f32) {
+        // `Lane::new` keeps every lane below 12.
+        let row = match lane.index() / 4 {
+            0 => &mut self.adjust_0,
+            1 => &mut self.adjust_1,
+            _ => &mut self.adjust_2,
+        };
+        row[lane.index() % 4] = value;
+    }
+
+    pub(super) fn option(&self, option: EffectOption) -> f32 {
+        self.effect_options[option.index()]
+    }
+
+    pub(super) fn set_option(&mut self, option: EffectOption, value: f32) {
+        self.effect_options[option.index()] = value;
     }
 }
 
@@ -360,7 +404,7 @@ impl GpuParams {
 /// An enabled Glow slot that emits into the shared Glow diffusion. Mirrors
 /// `mask_glow_self_illuminating` in `mask_effects/glow.wgsl`.
 pub(super) fn is_self_illuminating_glow(mask: &MaskData) -> bool {
-    mask.applies(MaskEffect::Glow) && mask.adjust_0[3] > 0.5
+    mask.applies(MaskEffect::Glow) && mask.lane(glow::SELF_ILLUMINATING) > 0.5
 }
 
 pub(super) fn split_eight(values: [f32; 8]) -> ([f32; 4], [f32; 4]) {
@@ -785,33 +829,14 @@ impl GpuParams {
             || global_texture.abs() > 1e-6
             || global_clarity.abs() > 1e-6;
         let local_effects = self.mask_slots().iter().any(|local| {
-            if !local.is_active() {
+            let Some(effect) = local.active_effect() else {
                 return false;
-            }
-            let effect_id = local.effect_id();
-            if effect_id == MaskEffect::Neon.shader_id()
-                || effect_id == MaskEffect::Glow.shader_id()
-                || effect_id == MaskEffect::LightRays.shader_id()
-                || effect_id == MaskEffect::Relight.shader_id()
-                || effect_id == MaskEffect::Blur.shader_id()
-                || effect_id == MaskEffect::LensBlur.shader_id()
-                || effect_id == MaskEffect::MotionBlur.shader_id()
-                || effect_id == MaskEffect::RadialBlur.shader_id()
-                || effect_id == MaskEffect::TiltShift.shader_id()
-                || effect_id == MaskEffect::EdgeGlow.shader_id()
-                || effect_id == MaskEffect::Pixelate.shader_id()
-                || effect_id == MaskEffect::Fog.shader_id()
-                || effect_id == MaskEffect::Smoke.shader_id()
-                || effect_id == MaskEffect::Halation.shader_id()
-                || effect_id == MaskEffect::Rain.shader_id()
-                || effect_id == MaskEffect::WetSurfaces.shader_id()
-            {
-                return true;
-            }
-            // Grain and vignette operate after the display transform and need no
-            // scene neighborhood passes. Their packed controls are not adjustments.
-            if effect_id != MaskEffect::Adjustment.shader_id() {
-                return false;
+            };
+            // Effects after the display transform (Grain, Vignette) or in the
+            // scene tone pass (Sharpen) need none of these passes. Their
+            // packed controls are not adjustments.
+            if effect != MaskEffect::Adjustment {
+                return effect.passes().iter().any(|pass| pass.is_intermediate());
             }
 
             let tone = local.adjust_0[1..].iter().any(|value| value.abs() > 1e-6);
@@ -837,10 +862,9 @@ impl GpuParams {
     /// cached still run the pass, which then writes nothing.
     pub(super) fn needs_pixelate_block_pass(&self) -> bool {
         self.mask_slots().iter().any(|mask| {
-            let [amount, block_size, ..] = mask.adjust_0;
             mask.applies(MaskEffect::Pixelate)
-                && (amount / 100.0).clamp(0.0, 1.0) > 1e-6
-                && block_size > 1.0
+                && (mask.lane(pixelate::AMOUNT) / 100.0).clamp(0.0, 1.0) > 1e-6
+                && mask.lane(pixelate::BLOCK_SIZE) > 1.0
         })
     }
 
@@ -860,34 +884,34 @@ impl GpuParams {
                 .any(|mask| mask.applies(MaskEffect::Adjustment) && mask.adjust_2[3].abs() > 1e-7)
     }
 
-    /// Whether an active Wet Surfaces effect runs its pass before the creative
-    /// effects.
+    /// Whether an effect runs a pass before the creative effects (Wet
+    /// Surfaces).
     pub(super) fn needs_wet_surfaces_pass(&self) -> bool {
         self.mask_slots()
             .iter()
-            .any(|mask| mask.applies(MaskEffect::WetSurfaces))
+            .any(|mask| mask.runs_in(EffectPass::BeforeCreative))
     }
 
-    /// Whether Rain or Wet Surfaces run their pass after the creative effects.
+    /// Whether an effect runs a pass after the creative effects (Rain, Wet
+    /// Surfaces).
     pub(super) fn needs_weather_air_pass(&self) -> bool {
         self.mask_slots()
             .iter()
-            .any(|mask| mask.applies(MaskEffect::Rain) || mask.applies(MaskEffect::WetSurfaces))
+            .any(|mask| mask.runs_in(EffectPass::AfterCreative))
     }
 
-    /// Whether an effect reads the scene map, and so scene depth: active Fog, Smoke
-    /// or Relight while scene depth is present, and Rain and Wet Surfaces, which
-    /// fall back on the map's environment without it.
+    /// Whether an effect reads the scene map ([`MaskEffect::scene_map`]): Fog,
+    /// Smoke and Relight while scene depth is present, and Rain and Wet
+    /// Surfaces, which fall back on the map's environment without it.
     fn needs_scene_map(&self) -> bool {
-        self.needs_weather_air_pass() || self.reads_present_scene_depth()
-    }
-
-    fn reads_present_scene_depth(&self) -> bool {
-        self.scene_tone.scene_depth_present != 0
-            && self.mask_slots().iter().any(|mask| {
-                [MaskEffect::Fog, MaskEffect::Smoke, MaskEffect::Relight]
-                    .into_iter()
-                    .any(|effect| mask.applies(effect))
+        let depth_present = self.scene_tone.scene_depth_present != 0;
+        self.mask_slots()
+            .iter()
+            .filter_map(MaskData::active_effect)
+            .any(|effect| match effect.scene_map() {
+                SceneMapUse::Never => false,
+                SceneMapUse::WithDepth => depth_present,
+                SceneMapUse::Always => true,
             })
     }
 
@@ -921,7 +945,6 @@ impl GpuParams {
         let mut lights = [None; RELIGHT_SHADOW_MAP_CHANNELS];
         for mask in self.mask_slots() {
             if let Some(channel) = relight_shadow_channel(mask) {
-                use super::effect_lanes::relight;
                 lights[channel] = Some(
                     [
                         relight::SOURCE_X,
@@ -944,17 +967,9 @@ impl GpuParams {
     }
 
     pub(super) fn needs_blur_passes(&self) -> bool {
-        self.mask_slots().iter().any(|mask| {
-            [
-                MaskEffect::Blur,
-                MaskEffect::LensBlur,
-                MaskEffect::MotionBlur,
-                MaskEffect::RadialBlur,
-                MaskEffect::TiltShift,
-            ]
-            .into_iter()
-            .any(|effect| mask.applies(effect))
-        })
+        self.mask_slots()
+            .iter()
+            .any(|mask| mask.runs_in(EffectPass::Blur))
     }
 
     pub(super) fn needs_progressive_blur_passes(&self) -> bool {

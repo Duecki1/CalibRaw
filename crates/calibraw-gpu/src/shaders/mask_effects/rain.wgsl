@@ -29,20 +29,8 @@
 // same streaks. A sum of n blurred streaks varies by sqrt(n) of one of them, which is
 // what the one drawn carries. The rest of their light is the even veil Mist shows.
 
-// Packed parameter lanes (effect_lanes.rs).
-const RAIN_AMOUNT_LANE: u32 = 0u;
-const RAIN_LENGTH_LANE: u32 = 1u;
-const RAIN_FALL_X_LANE: u32 = 2u;
-const RAIN_FALL_Y_LANE: u32 = 3u;
-const RAIN_DROP_SIZE_LANE: u32 = 4u;
-const RAIN_MIST_LANE: u32 = 5u;
-const RAIN_LIGHT_GLOW_LANE: u32 = 6u;
-const RAIN_GUSTS_LANE: u32 = 7u;
-const RAIN_PERSPECTIVE_LANE: u32 = 8u;
-const RAIN_FOCUS_LANE: u32 = 9u;
-const RAIN_SEED_LANE: u32 = 10u;
-const RAIN_SPLASHES_LANE: u32 = 11u;
-const RAIN_DEPTH_OPTION: u32 = 1u;
+// Packed parameter lanes and options: `RAIN_<NAME>_LANE`, `RAIN_DEPTH_OPTION`
+// (generated from the effect registry, effect_wgsl.rs).
 
 const RAIN_SLABS: u32 = 6u;
 // The sides of the slabs, far to near, as Relight's light depth: 0 at the nearest

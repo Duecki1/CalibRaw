@@ -24,9 +24,10 @@ fn luminous_edge_energy(pos: vec2<f32>, radius: f32) -> f32 {
     return length(gradient);
 }
 
-fn luminous_edge_profile(pos: vec2<i32>, primary: vec4<f32>) -> vec2<f32> {
-    let width = mask_focus_blur_radius(clamp(primary.y, 0.5, 8.0), 24.0);
-    let detail = clamp(primary.z / 100.0, 0.0, 1.0);
+fn luminous_edge_profile(pos: vec2<i32>, params: MaskEffectParams) -> vec2<f32> {
+    let edge_width = clamp(mask_effect_lane(params, EDGE_GLOW_EDGE_WIDTH_LANE), 0.5, 8.0);
+    let width = mask_focus_blur_radius(edge_width, 24.0);
+    let detail = mask_effect_percent(params, EDGE_GLOW_DETAIL_LANE);
     let threshold = mix(0.16, 0.012, detail);
     let p = vec2<f32>(pos);
     let energy = luminous_edge_energy(p, width);
@@ -46,17 +47,12 @@ fn luminous_edge_profile(pos: vec2<i32>, primary: vec4<f32>) -> vec2<f32> {
     return vec2<f32>(core, halo);
 }
 
-fn apply_edge_glow(
-    pos: vec2<i32>,
-    source_rgb: vec3<f32>,
-    primary: vec4<f32>,
-    secondary: vec4<f32>,
-) -> vec3<f32> {
-    let amount = clamp(primary.x / 100.0, 0.0, 1.0);
+fn apply_edge_glow(pos: vec2<i32>, source_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    let amount = mask_effect_percent(params, EDGE_GLOW_AMOUNT_LANE);
     if amount <= 1e-6 { return source_rgb; }
-    let profile = luminous_edge_profile(pos, primary);
-    let glow = clamp(primary.w / 100.0, 0.0, 1.0);
-    let color = mask_effect_picker_color_to_working(secondary.xyz);
+    let profile = luminous_edge_profile(pos, params);
+    let glow = mask_effect_percent(params, EDGE_GLOW_GLOW_LANE);
+    let color = mask_effect_picker_color_to_working(mask_effect_color(params, EDGE_GLOW_COLOR_LANE));
     let emission = profile.x * 0.36 + profile.y * glow * 0.22;
     // Scene-linear addition retains detail without a whole-image exposure lift.
     return source_rgb + color * emission * amount;

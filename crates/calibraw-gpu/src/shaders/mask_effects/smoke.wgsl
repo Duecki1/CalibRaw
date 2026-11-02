@@ -1,15 +1,5 @@
 // Smoke: drifting sheets anchored to the full image, not to the scene's depth.
-
-// Packed parameter lanes (effect_lanes.rs).
-const SMOKE_AMOUNT_LANE: u32 = 0u;
-const SMOKE_DENSITY_LANE: u32 = 1u;
-const SMOKE_SCALE_LANE: u32 = 2u;
-const SMOKE_TURBULENCE_LANE: u32 = 3u;
-const SMOKE_COLOR_LANE: u32 = 4u;
-const SMOKE_ANGLE_LANE: u32 = 7u;
-const SMOKE_SOFTNESS_LANE: u32 = 8u;
-const SMOKE_SEED_LANE: u32 = 9u;
-const SMOKE_LIGHT_GLOW_LANE: u32 = 10u;
+// It reads the scene only through the effect API (effect_api.wgsl, medium.wgsl).
 
 // Smoke particles scatter less strongly forward than fog droplets.
 const SMOKE_LIGHT_ANISOTROPY: f32 = 0.4;
@@ -22,12 +12,12 @@ const SMOKE_LIGHT_GLOW_GAIN: f32 = 4.0;
 // so it is lit where it lies over them: at the pixel's scene depth, or at the
 // nearest surface without depth.
 fn smoke_light_scattering(pos: vec2<i32>) -> vec3<f32> {
-    if !scene_lights_present() { return vec3<f32>(0.0); }
+    if !effect_scene_lights_present() { return vec3<f32>(0.0); }
     var depth = 0.0;
-    if scene_depth_present() {
-        depth = scene_depth_at(pos);
+    if effect_scene_depth_present() {
+        depth = effect_scene_depth(pos);
     }
-    return scene_light_received(pos, depth, SMOKE_LIGHT_ANISOTROPY);
+    return effect_scene_light(pos, depth, SMOKE_LIGHT_ANISOTROPY);
 }
 
 fn apply_smoke(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
@@ -80,7 +70,7 @@ fn apply_smoke(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -
     let transmission = exp(-optical_depth * density * density * amount * 2.8);
     // Match smoke illumination to scene ambience, just as fog does; bright
     // picker colors therefore do not turn dark photographs into white paint.
-    let ambient = scene_ambient_level();
+    let ambient = effect_ambient();
     let albedo = mask_effect_picker_color_to_working(mask_effect_color(params, SMOKE_COLOR_LANE));
     let color = albedo * ambient;
     let smoked = input_rgb * transmission + color * (1.0 - transmission);
@@ -89,7 +79,7 @@ fn apply_smoke(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -
     let glow = mask_effect_percent(params, SMOKE_LIGHT_GLOW_LANE);
     if glow <= 1e-6 { return smoked; }
     let strength = glow * SMOKE_LIGHT_GLOW_GAIN;
-    let brightness = Common::safe_luma(albedo);
+    let brightness = effect_luma(albedo);
     let scattering = 1.0 - transmission;
     let lit = smoke_light_scattering(pos);
     return smoked + lit * (strength * ambient * brightness * scattering)

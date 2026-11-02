@@ -163,20 +163,34 @@ adapter that blessed them. The file header documents the formats.
 ### Adding an effect
 
 An effect is one row in the `mask_effects!` table
-(`calibraw-core/src/pipeline/masks/effects/mod.rs`) and `MaskEffect::ALL`, its settings
-file beside it with its specs in `effects/params.rs`, its checks in
-`sidecar/validation/effects.rs`, its packing in `calibraw-gpu`'s `mask_params.rs` and
-`effect_lanes.rs`, one WGSL file in `shaders/mask_effects/` added to `CREATIVE_EFFECTS`
-and called from a pass in `creative_effects.wgsl`, and one card in
-`calibraw-ui/src/ui/sidebar/mask_effects/`.
+(`calibraw-core/src/pipeline/masks/effects/mod.rs`), its place in `MaskEffect::ALL`,
+and a settings module beside it that implements `EffectSettings`: its starting point,
+when it is active, its controls (specs in `effects/params.rs`), its lanes
+(`effect_lanes!`) and how it packs them. The row says where it runs (`EffectPass`), how
+far around a pixel it reads (`EffectReach`, the export-tile halo) and when it reads the
+scene map (`SceneMapUse`). Sidecar validation, scene depth generation, the GPU's
+passes and maps, the shader constants and the card follow from the row and the
+settings.
 
-What an effect needs from the scene already exists, so do not sample or upsample it
-again: `scene_depth_at` for distance and `scene_surface_taps_at` for the surface to
-shade (`scene_depth.wgsl`), `scene_environment_at` and `scene_ambient_level` for its
-light (`scene_environment.wgsl`), `scene_light_at` for lights
-(`scene_lights.wgsl`), `medium.wgsl` to scatter them, and `effect_noise` and
-`effect_fbm` for patterns (`shared.wgsl`). An effect that reads depth also
-goes in `GpuParams::needs_scene_map`.
+Its shader is one WGSL file in `shaders/mask_effects/`, added to `CREATIVE_EFFECTS`. A
+per-pixel effect runs in `EffectPass::Creative` and defines `apply_<name>(pos, rgb,
+params)`, which the creative pass calls; `<name>` is its settings field, and it reads
+its controls as `<NAME>_<LANE>_LANE`, generated from its lanes (`effect_wgsl.rs`). It
+reads the photo and the scene through `effect_api.wgsl` and `medium.wgsl`. What an
+effect needs already exists in the scene (`scene_*.wgsl`), so do not sample or upsample
+it again: when the API lacks it, add a function to `effect_api.wgsl` that reads it. An
+effect that shades the scene's surfaces or needs its camera or ground, as Relight, Rain
+and Wet Surfaces do, reads `scene_surface_taps_at` and the rest of `scene_depth.wgsl`,
+`scene_environment.wgsl` and `scene_lights.wgsl` directly. Effects with passes of their
+own (the blurs, Glow, Light Rays, Rain, Wet Surfaces, Relight's shadow map) also need
+those passes and their `GpuParams::needs_*` checks, and read their slots by lane name
+too (`mask_effect_params`).
+
+Its card is drawn from its controls. An effect with a position pad, a range track or a
+control that shows only sometimes draws its own card in
+`calibraw-ui/src/ui/sidebar/mask_effects/`, chosen in `show_effect_component_settings`.
+Its icon goes in the picker's `effect_icon`, and its label, description, control labels
+and details title in the locale catalogs.
 
 ### Render parity and format fixtures
 

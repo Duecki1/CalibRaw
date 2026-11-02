@@ -58,7 +58,7 @@ mod layout_contract_tests;
 #[cfg(test)]
 mod tests;
 
-mod effect_lanes;
+mod effect_wgsl;
 mod mask_params;
 mod params;
 mod remove_scene;

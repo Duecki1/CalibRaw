@@ -13,20 +13,15 @@ fn mask_focus_blur_radius(reference_pixels: f32, maximum: f32) -> f32 {
     );
 }
 
-fn mask_lens_blur_at(
-    pos: vec2<i32>,
-    primary: vec4<f32>,
-    secondary: vec4<f32>,
-    mask: MaskBlurCoverage,
-) -> vec3<f32> {
-    let radius = mask_focus_blur_radius(primary.y, 144.0);
+fn mask_lens_blur_at(pos: vec2<i32>, params: MaskEffectParams, mask: MaskBlurCoverage) -> vec3<f32> {
+    let radius = mask_focus_blur_radius(mask_effect_lane(params, LENS_BLUR_RADIUS_LANE), 144.0);
     let center = SceneAdjustments::local_effects_at(pos);
     if radius <= 1e-6 { return center; }
-    let blades = clamp(round(primary.z), 3.0, 12.0);
-    let rotation = radians(primary.w);
+    let blades = clamp(round(mask_effect_lane(params, LENS_BLUR_BLADES_LANE)), 3.0, 12.0);
+    let rotation = radians(mask_effect_lane(params, LENS_BLUR_ROTATION_LANE));
     let sector = 2.0 * MASK_LENS_BLUR_PI / blades;
     let apothem = cos(MASK_LENS_BLUR_PI / blades);
-    let highlight_boost = clamp(secondary.x / 100.0, 0.0, 1.0);
+    let highlight_boost = mask_effect_percent(params, LENS_BLUR_HIGHLIGHTS_LANE);
     // Concentric equal-area strata replace the sparse 28-64 point spiral.
     // Antipodal pairs preserve the centroid and cancel first-order sampling bias.
     // Count changes add rings, rather than redistributing all samples abruptly.

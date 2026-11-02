@@ -37,6 +37,19 @@ impl ColorParamSpec {
     }
 }
 
+/// A switch on an effect's card, with the help its tooltip shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ToggleSpec {
+    pub label: &'static str,
+    pub help: &'static str,
+}
+
+/// Image lights of an effect that scatters light (Fog, Smoke, Rain).
+pub const IMAGE_LIGHTS: ToggleSpec = ToggleSpec {
+    label: "Image lights",
+    help: "Let light sources in the photo, such as lamps, lit windows and signs, glow in it in their own colours. Light glow sets their strength.",
+};
+
 macro_rules! float_param {
     (
         $name:ident,
@@ -440,6 +453,10 @@ pub mod glow {
         [0.1, 0.65, 1.0],
         "Choose the color emitted by the Glow effect.",
     );
+    pub const SELF_ILLUMINATING: ToggleSpec = ToggleSpec {
+        label: "Self-illuminating",
+        help: "The mask emits the glow color itself, so it also shows on dark surfaces. Turn off to let only bright areas inside the mask glow.",
+    };
 }
 
 pub mod light_rays {
@@ -614,6 +631,10 @@ pub mod relight {
         [1.0, 0.93, 0.84],
         "Choose the color of the new light.",
     );
+    pub const CAST_SHADOWS: ToggleSpec = ToggleSpec {
+        label: "Cast shadows",
+        help: "Let nearer objects block the light. Turn off for light without shadows; the Shadows strength is preserved.",
+    };
 }
 
 pub mod neon {
@@ -869,6 +890,11 @@ pub mod vignette {
 pub mod fog {
     use super::*;
 
+    pub const SCENE_DEPTH: ToggleSpec = ToggleSpec {
+        label: "Scene depth",
+        help: "Generate and use shared scene depth so distant areas collect more fog. Turn off to use a flat veil; depth settings are preserved.",
+    };
+
     float_param!(
         START,
         "Fog start",
@@ -971,6 +997,11 @@ pub mod fog {
 
 pub mod rain {
     use super::*;
+
+    pub const SCENE_DEPTH: ToggleSpec = ToggleSpec {
+        label: "Scene depth",
+        help: "Generate and use shared scene depth so rain falls behind nearer objects and mist builds with distance. Turn off for rain in front of the whole photo.",
+    };
 
     float_param!(
         AMOUNT,

@@ -243,6 +243,16 @@ built from the sharp preview's source (the fitted proxy, or the crop's raw);
 it counts against the same GPU budget and is dropped when that source changes,
 when an export starts, or when the GPU is no longer slow.
 The fitted preview graph is built with mask layers for its masks plus spare layers in steps of four (`fitted_pipeline_options`, `preview_mask_layer_capacity`), not every layer the editor allows; one with fewer layers than masks is rebuilt (`fitted_mask_capacity_stale`) and keeps showing its last frame until then. On Android the fitted and zoomed graphs are sized against shares of the RAM-scaled working-set limit that remain after an export tile and the navigation graph (`MobilePreviewRole`, `bounded_mobile_preview_edge`); a Preview graph accounts only for its RGBA8 readback, since RGBA32F readbacks need `ProcessingQuality::High`. Where the platform allows (`PlatformCaps::full_resolution_preview`), an idle editor renders the whole photo from the native RAW on a worker thread with its own graph and shows the scaled result (`app/full_resolution.rs`) in place of the fitted texture while the fitted output is unchanged.
+Each mask effect is described once, in the effect registry of `calibraw-core`
+(`pipeline/masks/effects/`): its shader ID, the lanes its settings pack, the passes it
+runs in, how far it reads and which scene inputs it needs. Validation, export-tile
+halos and scene depth generation read it there; `calibraw-gpu` writes the IDs, lanes
+and the creative pass's per-slot dispatch into the creative module (`effect_wgsl.rs`)
+and decides from it which passes and maps to prepare. Fog, Smoke, Grain and Vignette
+read the photo and the scene through `mask_effects/effect_api.wgsl` and `medium.wgsl`;
+Relight, Rain and Wet Surfaces shade the scene's surfaces, use its camera or find its
+ground, and read the scene files below directly.
+
 Every mask effect and the scene it reads compile into one module
 (`creative_effects.wgsl` with `mask_effects/`), and every effect pass binds the same
 scene, so an effect may read any of it whichever pass it runs in:

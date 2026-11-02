@@ -1,18 +1,31 @@
+//! The mask effects, registered once in [`mask_effects!`].
+//!
+//! Each effect is a row of that table and a settings type in its own module,
+//! which implements [`EffectSettings`]: its starting point, when it is active,
+//! its controls (sidecar validation and the generated card), its lanes and
+//! how it packs them. Everything else follows from the row: the shader ID and
+//! lane constants calibraw-gpu writes into the shaders, the creative pass's
+//! dispatch, which passes and maps the GPU prepares, export-tile halos and
+//! whether scene depth is generated.
+
 mod blur;
 mod edge_glow;
 mod fog;
 mod glow;
 mod grain;
 mod halation;
+mod lanes;
 mod lens_blur;
 mod light_rays;
 mod motion_blur;
 mod neon;
 pub mod params;
+mod passes;
 mod pixelate;
 mod radial_blur;
 mod rain;
 mod relight;
+mod settings;
 mod sharpen;
 mod smoke;
 mod tilt_shift;
@@ -25,35 +38,64 @@ pub use fog::FogEffectSettings;
 pub use glow::GlowEffectSettings;
 pub use grain::GrainEffectSettings;
 pub use halation::HalationEffectSettings;
+pub use lanes::{ColorLane, EffectLanes, EffectOption, Lane, LaneName, PackContext, OPTION_COUNT};
 pub use lens_blur::LensBlurEffectSettings;
 pub use light_rays::LightRaysEffectSettings;
 pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
+pub use passes::{EffectPass, EffectReach, ReachGroup, SceneMapUse};
 pub use pixelate::PixelateEffectSettings;
 pub use radial_blur::{RadialBlurEffectSettings, RadialBlurMode};
 pub use rain::RainEffectSettings;
 pub use relight::RelightEffectSettings;
+pub use settings::{EffectControl, EffectControls, EffectDetails, EffectSettings};
 pub use sharpen::SharpenEffectSettings;
 pub use smoke::SmokeEffectSettings;
 pub use tilt_shift::TiltShiftEffectSettings;
 pub use vignette::VignetteEffectSettings;
 pub use wet_surfaces::WetSurfacesEffectSettings;
 
+use crate::pipeline::processing::{
+    CAPTURE_SHARPEN_SUPPORT, EDGE_GLOW_SUPPORT, FOCUS_BLUR_SUPPORT, GLOW_SUPPORT,
+    MASK_BLUR_SUPPORT, NEON_SUPPORT, PIXELATE_SUPPORT, SCENE_DEPTH_GUIDE_SUPPORT,
+};
+
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
 }
 
-/// Registers the effects: each row names an effect's serialized variant, label,
-/// id in the shaders (`MASK_EFFECT_*_ID` in mask_effects/shared.wgsl), place in the
-/// picker and its settings' field. Rows are in the order the settings serialize,
-/// which sidecars and presets keep.
+/// Something done with the settings of one effect, whichever it is
+/// ([`MaskEffectSettings::visit_mut`]).
+pub trait EffectSettingsVisitor {
+    type Output;
+
+    fn visit<S: EffectSettings>(self, effect: MaskEffect, settings: &mut S) -> Self::Output;
+}
+
+/// Registers the effects. Each row names an effect's serialized variant and:
+///
+/// - `label`, and `description` for the tooltip of its card's title;
+/// - `shader_id`, its ID in the shaders (`MASK_EFFECT_<VARIANT>_ID`);
+/// - `category`, its place in the picker;
+/// - `settings`, the field of [`MaskEffectSettings`] and its type;
+/// - `passes`, where it runs ([`EffectPass`]); a `Creative` effect defines
+///   `apply_<field>` in its shader, which the creative pass calls;
+/// - `reach`, how far around a pixel it reads ([`EffectReach`]);
+/// - `scene_map`, when it reads the scene map ([`SceneMapUse`]).
+///
+/// Rows are in the order the settings serialize, which sidecars and presets
+/// keep.
 macro_rules! mask_effects {
     ($(
         $variant:ident {
             label: $label:literal,
+            description: $description:literal,
             shader_id: $id:literal,
             category: $category:ident,
-            settings: $field:ident: $settings:ty $(,)?
+            settings: $field:ident: $settings:ty,
+            passes: [$($pass:ident),+],
+            reach: $reach:ident $(($pixels:expr))?,
+            scene_map: $scene_map:ident $(,)?
         }
     )+) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -73,6 +115,14 @@ macro_rules! mask_effects {
                 }
             }
 
+            /// What the effect does, for the tooltip of its card's title.
+            pub const fn description(self) -> Option<&'static str> {
+                match self {
+                    Self::Adjustment => None,
+                    $(Self::$variant => Some($description),)+
+                }
+            }
+
             pub const fn category(self) -> Option<MaskEffectCategory> {
                 match self {
                     Self::Adjustment => None,
@@ -84,6 +134,59 @@ macro_rules! mask_effects {
                 match self {
                     Self::Adjustment => 0,
                     $(Self::$variant => $id,)+
+                }
+            }
+
+            /// The name the shaders know the effect by: its settings field,
+            /// as in `apply_<name>` and, in upper case,
+            /// `MASK_EFFECT_<NAME>_ID` and `<NAME>_<LANE>_LANE`.
+            pub const fn shader_name(self) -> &'static str {
+                match self {
+                    Self::Adjustment => "adjustment",
+                    $(Self::$variant => stringify!($field),)+
+                }
+            }
+
+            /// The effect with [`Self::shader_id`] `id`.
+            pub const fn from_shader_id(id: u32) -> Option<Self> {
+                match id {
+                    0 => Some(Self::Adjustment),
+                    $($id => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+
+            /// The passes the effect runs in; none for an adjustment.
+            pub const fn passes(self) -> &'static [EffectPass] {
+                match self {
+                    Self::Adjustment => &[],
+                    $(Self::$variant => &[$(EffectPass::$pass),+],)+
+                }
+            }
+
+            pub fn runs_in(self, pass: EffectPass) -> bool {
+                self.passes().contains(&pass)
+            }
+
+            pub const fn reach(self) -> EffectReach {
+                match self {
+                    Self::Adjustment => EffectReach::Pixel,
+                    $(Self::$variant => EffectReach::$reach $(($pixels))?,)+
+                }
+            }
+
+            pub const fn scene_map(self) -> SceneMapUse {
+                match self {
+                    Self::Adjustment => SceneMapUse::Never,
+                    $(Self::$variant => SceneMapUse::$scene_map,)+
+                }
+            }
+
+            /// The lanes the effect's settings pack; none for an adjustment.
+            pub const fn lanes(self) -> &'static [LaneName] {
+                match self {
+                    Self::Adjustment => &[],
+                    $(Self::$variant => <$settings as EffectSettings>::LANES,)+
                 }
             }
         }
@@ -102,7 +205,7 @@ macro_rules! mask_effects {
                 let mut settings = Self::default();
                 match effect {
                     MaskEffect::Adjustment => {}
-                    $(MaskEffect::$variant => settings.$field = InitialEffectSettings::initial(),)+
+                    $(MaskEffect::$variant => settings.$field = <$settings as EffectSettings>::initial(),)+
                 }
                 settings
             }
@@ -114,30 +217,243 @@ macro_rules! mask_effects {
                     $(MaskEffect::$variant => self.$field.is_active(),)+
                 }
             }
+
+            /// Whether `effect`, when active, asks for scene depth.
+            pub fn wants_scene_depth(&self, effect: MaskEffect) -> bool {
+                match effect {
+                    MaskEffect::Adjustment => false,
+                    $(MaskEffect::$variant => self.$field.wants_scene_depth(),)+
+                }
+            }
+
+            /// What `effect`'s shader reads; `None` for an adjustment.
+            pub fn pack(&self, effect: MaskEffect, context: &PackContext) -> Option<EffectLanes> {
+                let mut slot = EffectLanes::default();
+                match effect {
+                    MaskEffect::Adjustment => return None,
+                    $(MaskEffect::$variant => self.$field.pack(&mut slot, context),)+
+                }
+                Some(slot)
+            }
+
+            /// Runs `visitor` on the settings of `effect`; `None` for an
+            /// adjustment.
+            pub fn visit_mut<V: EffectSettingsVisitor>(
+                &mut self,
+                effect: MaskEffect,
+                visitor: V,
+            ) -> Option<V::Output> {
+                match effect {
+                    MaskEffect::Adjustment => None,
+                    $(MaskEffect::$variant => Some(visitor.visit(effect, &mut self.$field)),)+
+                }
+            }
+
+            /// Every effect's controls, in serialized order.
+            pub fn all_controls(&mut self) -> impl Iterator<Item = (MaskEffect, EffectControls<'_>)> {
+                [$((MaskEffect::$variant, self.$field.controls()),)+].into_iter()
+            }
+        }
+
+        /// Each effect's lanes, by its settings field.
+        pub mod effect_lanes {
+            pub use super::lanes::options;
+            $(pub use super::$field::lanes as $field;)+
         }
     };
 }
 
 mask_effects! {
-    Blur { label: "Blur", shader_id: 4, category: BlurAndFocus, settings: blur: BlurEffectSettings }
-    LensBlur { label: "Lens Blur", shader_id: 7, category: BlurAndFocus, settings: lens_blur: LensBlurEffectSettings }
-    MotionBlur { label: "Motion Blur", shader_id: 8, category: BlurAndFocus, settings: motion_blur: MotionBlurEffectSettings }
-    RadialBlur { label: "Radial Blur", shader_id: 9, category: BlurAndFocus, settings: radial_blur: RadialBlurEffectSettings }
-    TiltShift { label: "Tilt-Shift", shader_id: 10, category: BlurAndFocus, settings: tilt_shift: TiltShiftEffectSettings }
-    Sharpen { label: "Sharpen", shader_id: 17, category: BlurAndFocus, settings: sharpen: SharpenEffectSettings }
-    EdgeGlow { label: "Edge Glow", shader_id: 5, category: Stylize, settings: edge_glow: EdgeGlowEffectSettings }
-    Glow { label: "Glow", shader_id: 2, category: GlowAndLight, settings: glow: GlowEffectSettings }
-    LightRays { label: "Light Rays", shader_id: 3, category: GlowAndLight, settings: light_rays: LightRaysEffectSettings }
-    Relight { label: "Relight", shader_id: 16, category: GlowAndLight, settings: relight: RelightEffectSettings }
-    Neon { label: "Neon", shader_id: 1, category: GlowAndLight, settings: neon: NeonEffectSettings }
-    Pixelate { label: "Pixelate", shader_id: 6, category: Stylize, settings: pixelate: PixelateEffectSettings }
-    Fog { label: "Fog", shader_id: 11, category: Texture, settings: fog: FogEffectSettings }
-    Smoke { label: "Smoke", shader_id: 12, category: Texture, settings: smoke: SmokeEffectSettings }
-    Grain { label: "Grain", shader_id: 13, category: FilmAndFinish, settings: grain: GrainEffectSettings }
-    Halation { label: "Halation", shader_id: 14, category: FilmAndFinish, settings: halation: HalationEffectSettings }
-    Vignette { label: "Vignette", shader_id: 15, category: FilmAndFinish, settings: vignette: VignetteEffectSettings }
-    Rain { label: "Rain", shader_id: 18, category: Texture, settings: rain: RainEffectSettings }
-    WetSurfaces { label: "Wet Surfaces", shader_id: 19, category: Texture, settings: wet_surfaces: WetSurfacesEffectSettings }
+    Blur {
+        label: "Blur",
+        description: "Soften distracting detail. The mask controls where the blurred image is blended in.",
+        shader_id: 4,
+        category: BlurAndFocus,
+        settings: blur: BlurEffectSettings,
+        passes: [Blur],
+        reach: MaskBlur(MASK_BLUR_SUPPORT),
+        scene_map: Never,
+    }
+    LensBlur {
+        label: "Lens Blur",
+        description: "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.",
+        shader_id: 7,
+        category: BlurAndFocus,
+        settings: lens_blur: LensBlurEffectSettings,
+        passes: [Blur],
+        reach: FocusBlur(FOCUS_BLUR_SUPPORT),
+        scene_map: Never,
+    }
+    MotionBlur {
+        label: "Motion Blur",
+        description: "Add directional movement. Distance sets the trail length; the mask controls where the blur appears.",
+        shader_id: 8,
+        category: BlurAndFocus,
+        settings: motion_blur: MotionBlurEffectSettings,
+        passes: [Blur],
+        reach: FocusBlur(FOCUS_BLUR_SUPPORT),
+        scene_map: Never,
+    }
+    RadialBlur {
+        label: "Radial Blur",
+        description: "Zoom toward a center or spin around it. Position is relative to the full image; the mask controls the blend.",
+        shader_id: 9,
+        category: BlurAndFocus,
+        settings: radial_blur: RadialBlurEffectSettings,
+        passes: [Blur],
+        reach: FocusBlur(FOCUS_BLUR_SUPPORT),
+        scene_map: Never,
+    }
+    TiltShift {
+        label: "Tilt-Shift",
+        description: "Keep a band in focus and soften its surroundings. Position is relative to the full image. Use a Fullscreen mask for an uninterrupted focus transition.",
+        shader_id: 10,
+        category: BlurAndFocus,
+        settings: tilt_shift: TiltShiftEffectSettings,
+        passes: [Blur],
+        reach: FocusBlur(FOCUS_BLUR_SUPPORT),
+        scene_map: Never,
+    }
+    Sharpen {
+        label: "Sharpen",
+        description: "Sharpen fine detail inside the mask with its own radius, detail and masking. It adds to the Detail card's sharpening.",
+        shader_id: 17,
+        category: BlurAndFocus,
+        settings: sharpen: SharpenEffectSettings,
+        passes: [CaptureSharpening],
+        reach: CaptureSharpening(CAPTURE_SHARPEN_SUPPORT),
+        scene_map: Never,
+    }
+    EdgeGlow {
+        label: "Edge Glow",
+        description: "Light up image contours with a soft halo. Both the outlines and their glow stay inside the mask.",
+        shader_id: 5,
+        category: Stylize,
+        settings: edge_glow: EdgeGlowEffectSettings,
+        passes: [Creative],
+        reach: Creative(EDGE_GLOW_SUPPORT),
+        scene_map: Never,
+    }
+    Glow {
+        label: "Glow",
+        description: "Spread colored light from bright pixels. The mask selects the highlights that emit light; their glow can extend beyond the selection.",
+        shader_id: 2,
+        category: GlowAndLight,
+        settings: glow: GlowEffectSettings,
+        passes: [CreativeLight],
+        reach: Glow(GLOW_SUPPORT),
+        scene_map: Never,
+    }
+    LightRays {
+        label: "Light Rays",
+        description: "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.",
+        shader_id: 3,
+        category: GlowAndLight,
+        settings: light_rays: LightRaysEffectSettings,
+        passes: [CreativeLight],
+        reach: Pixel,
+        scene_map: Never,
+    }
+    Relight {
+        label: "Relight",
+        description: "Add a light that shapes the scene in depth. Position it like Light Rays; scene depth is generated automatically. Turn on Shadows to let nearer objects block the light. The sky and anything the depth map places at its far limit stay unlit. The mask controls where the light falls.",
+        shader_id: 16,
+        category: GlowAndLight,
+        settings: relight: RelightEffectSettings,
+        passes: [Creative],
+        reach: Creative(SCENE_DEPTH_GUIDE_SUPPORT),
+        scene_map: WithDepth,
+    }
+    Neon {
+        label: "Neon",
+        description: "Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask.",
+        shader_id: 1,
+        category: GlowAndLight,
+        settings: neon: NeonEffectSettings,
+        passes: [SceneEffects],
+        reach: SceneEffects(NEON_SUPPORT),
+        scene_map: Never,
+    }
+    Pixelate {
+        label: "Pixelate",
+        description: "Create a graphic mosaic. Block size sets the tile scale; the mask controls where the result appears.",
+        shader_id: 6,
+        category: Stylize,
+        settings: pixelate: PixelateEffectSettings,
+        passes: [Creative],
+        reach: Creative(PIXELATE_SUPPORT),
+        scene_map: Never,
+    }
+    Fog {
+        label: "Fog",
+        description: "Add atmospheric haze through the mask. Scene depth builds fog with distance; turn it off for an even-distance veil.",
+        shader_id: 11,
+        category: Texture,
+        settings: fog: FogEffectSettings,
+        passes: [Creative],
+        reach: Creative(SCENE_DEPTH_GUIDE_SUPPORT),
+        scene_map: WithDepth,
+    }
+    Smoke {
+        label: "Smoke",
+        description: "Layer drifting plumes through the mask. The pattern stays anchored to the full image as you edit the selection.",
+        shader_id: 12,
+        category: Texture,
+        settings: smoke: SmokeEffectSettings,
+        passes: [Creative],
+        reach: Creative(SCENE_DEPTH_GUIDE_SUPPORT),
+        scene_map: WithDepth,
+    }
+    Grain {
+        label: "Grain",
+        description: "Add photographic texture. Grain stays anchored to the image; the mask controls its local strength.",
+        shader_id: 13,
+        category: FilmAndFinish,
+        settings: grain: GrainEffectSettings,
+        passes: [DisplayFinish],
+        reach: Pixel,
+        scene_map: Never,
+    }
+    Halation {
+        label: "Halation",
+        description: "Give bright highlights a warm film halo inside the mask. Nearby highlights outside the selection can cast a halo into it. Use Fullscreen for a whole-image finish.",
+        shader_id: 14,
+        category: FilmAndFinish,
+        settings: halation: HalationEffectSettings,
+        passes: [Creative],
+        reach: Glow(GLOW_SUPPORT),
+        scene_map: Never,
+    }
+    Vignette {
+        label: "Vignette",
+        description: "Darken edges with negative amounts or brighten them with positive amounts. The center follows the cropped, rotated frame; the mask controls the blend.",
+        shader_id: 15,
+        category: FilmAndFinish,
+        settings: vignette: VignetteEffectSettings,
+        passes: [DisplayFinish],
+        reach: Pixel,
+        scene_map: Never,
+    }
+    Rain {
+        label: "Rain",
+        description: "Add falling rain and its mist. Drops pass behind nearer objects, catch Relight, Light Rays and the photo's own lights, and show best against dark areas. The mask controls where it falls.",
+        shader_id: 18,
+        category: Texture,
+        settings: rain: RainEffectSettings,
+        passes: [AfterCreative],
+        reach: Pixel,
+        scene_map: Always,
+    }
+    WetSurfaces {
+        label: "Wet Surfaces",
+        description: "Darken surfaces as water does and let the ground reflect the photo, with standing puddles on smooth ground. The ground is found in scene depth, which is generated automatically; a Rain effect ripples the puddles. The mask controls where it applies.",
+        shader_id: 19,
+        category: Texture,
+        settings: wet_surfaces: WetSurfacesEffectSettings,
+        passes: [BeforeCreative, AfterCreative],
+        reach: Pixel,
+        scene_map: Always,
+    }
 }
 
 impl MaskEffect {
@@ -209,31 +525,3 @@ impl MaskEffectSettings {
         *self == Self::default()
     }
 }
-
-/// The settings an effect starts with when it is added or its card is reset.
-///
-/// `Default` is the serialized baseline: omitted fields and omitted settings
-/// decode to it, so changing it would change saved edits. An effect whose
-/// starting point differs from that baseline overrides [`Self::initial`].
-pub trait InitialEffectSettings: Default {
-    fn initial() -> Self {
-        Self::default()
-    }
-}
-
-impl InitialEffectSettings for BlurEffectSettings {}
-impl InitialEffectSettings for LensBlurEffectSettings {}
-impl InitialEffectSettings for MotionBlurEffectSettings {}
-impl InitialEffectSettings for RadialBlurEffectSettings {}
-impl InitialEffectSettings for TiltShiftEffectSettings {}
-impl InitialEffectSettings for SharpenEffectSettings {}
-impl InitialEffectSettings for LightRaysEffectSettings {}
-impl InitialEffectSettings for NeonEffectSettings {}
-impl InitialEffectSettings for RelightEffectSettings {}
-impl InitialEffectSettings for EdgeGlowEffectSettings {}
-impl InitialEffectSettings for PixelateEffectSettings {}
-impl InitialEffectSettings for GrainEffectSettings {}
-impl InitialEffectSettings for HalationEffectSettings {}
-impl InitialEffectSettings for VignetteEffectSettings {}
-impl InitialEffectSettings for RainEffectSettings {}
-impl InitialEffectSettings for WetSurfacesEffectSettings {}

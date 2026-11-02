@@ -15,9 +15,9 @@
 //! a neutral highlight Glow; its threshold has no component equivalent.
 
 use crate::pipeline::{
-    effect_params, EffectComponent, GlowEffectSettings, GrainEffectSettings,
-    HalationEffectSettings, InitialEffectSettings, MaskEffect, MaskEffectSettings,
-    VignetteEffectSettings, MAX_EFFECT_COMPONENTS,
+    effect_params, EffectComponent, EffectSettings, GlowEffectSettings, GrainEffectSettings,
+    HalationEffectSettings, MaskEffect, MaskEffectSettings, VignetteEffectSettings,
+    MAX_EFFECT_COMPONENTS,
 };
 use crate::sidecar::EditState;
 use serde::{Deserialize, Serialize};

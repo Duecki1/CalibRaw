@@ -1,16 +1,5 @@
 // Fog: a medium that builds with distance from the camera to the visible surface.
-
-// Packed parameter lanes (effect_lanes.rs).
-const FOG_AMOUNT_LANE: u32 = 0u;
-const FOG_DENSITY_LANE: u32 = 1u;
-const FOG_SCALE_LANE: u32 = 2u;
-const FOG_SOFTNESS_LANE: u32 = 3u;
-const FOG_COLOR_LANE: u32 = 4u;
-const FOG_VARIATION_LANE: u32 = 7u;
-const FOG_SEED_LANE: u32 = 8u;
-const FOG_START_LANE: u32 = 9u;
-const FOG_DEPTH_INFLUENCE_LANE: u32 = 10u;
-const FOG_LIGHT_GLOW_LANE: u32 = 11u;
+// It reads the scene only through the effect API (effect_api.wgsl, medium.wgsl).
 
 // Scattered scene light at Light glow 100, relative to the single-scattering
 // estimate: lights in photographs read brighter in haze than their surfaces.
@@ -23,9 +12,9 @@ fn apply_fog(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> 
         return input_rgb;
     }
     let influence = mask_effect_percent(params, FOG_DEPTH_INFLUENCE_LANE);
-    var distance = SCENE_DEPTH_UNKNOWN;
-    if scene_depth_present() && influence > 1e-6 {
-        distance = scene_depth_at(pos);
+    var distance = EFFECT_SCENE_DEPTH_UNKNOWN;
+    if effect_scene_depth_present() && influence > 1e-6 {
+        distance = effect_scene_depth(pos);
     }
     distance = mix(1.0, distance, influence);
     let start = clamp(mask_effect_lane(params, FOG_START_LANE) / 100.0, 0.0, 0.95);
@@ -68,7 +57,7 @@ fn apply_fog(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> 
     let transmission = exp(-optical_depth);
     // Match airlight to scene illumination, avoiding white self-luminous fog
     // in dark photographs.
-    let ambient = scene_ambient_level() * 1.15;
+    let ambient = effect_ambient() * 1.15;
     let color = mask_effect_picker_color_to_working(mask_effect_color(params, FOG_COLOR_LANE));
     let airlight = color * ambient;
     let fogged = input_rgb * transmission + airlight * (1.0 - transmission);
@@ -77,7 +66,7 @@ fn apply_fog(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> 
     // so the glow keeps the light's colour.
     let glow = mask_effect_percent(params, FOG_LIGHT_GLOW_LANE);
     if glow <= 1e-6 { return fogged; }
-    let albedo = Common::safe_luma(color);
+    let albedo = effect_luma(color);
     let extinction = 6.0 * density * density * amount * length(ray);
     let scattered = medium_light_scattering(pos, volume, distance, extinction);
     return fogged + scattered * (glow * FOG_LIGHT_GLOW_GAIN * ambient * albedo)

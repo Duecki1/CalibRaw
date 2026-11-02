@@ -1,9 +1,10 @@
 
-fn mask_motion_blur_at(pos: vec2<i32>, primary: vec4<f32>, mask: MaskBlurCoverage) -> vec3<f32> {
-    let distance = mask_focus_blur_radius(primary.y, 288.0);
+fn mask_motion_blur_at(pos: vec2<i32>, params: MaskEffectParams, mask: MaskBlurCoverage) -> vec3<f32> {
+    let distance = mask_focus_blur_radius(mask_effect_lane(params, MOTION_BLUR_DISTANCE_LANE), 288.0);
     let center = SceneAdjustments::local_effects_at(pos);
     if distance <= 1e-6 { return center; }
-    let direction = vec2<f32>(cos(radians(primary.z)), sin(radians(primary.z)));
+    let angle = radians(mask_effect_lane(params, MOTION_BLUR_ANGLE_LANE));
+    let direction = vec2<f32>(cos(angle), sin(angle));
     // At most one pixel between midpoint taps, even at maximum shutter length.
     // A normalized, gently tapered shutter avoids periodic gaps and hard ends.
     let sample_count = u32(clamp(ceil(distance * 1.5), 4.0, 432.0));

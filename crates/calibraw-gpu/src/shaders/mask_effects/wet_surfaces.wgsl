@@ -27,14 +27,8 @@
 // its edge and ripples blur as much as the ground does (scene_focus_blur), and the
 // photo there has no grain left for the edge to break up on.
 
-// Packed parameter lanes (effect_lanes.rs).
-const WET_SURFACES_WETNESS_LANE: u32 = 0u;
-const WET_SURFACES_PUDDLES_LANE: u32 = 1u;
-const WET_SURFACES_PUDDLE_SIZE_LANE: u32 = 2u;
-const WET_SURFACES_GLOSS_LANE: u32 = 3u;
-const WET_SURFACES_REFLECTIONS_LANE: u32 = 4u;
-const WET_SURFACES_RIPPLES_LANE: u32 = 5u;
-const WET_SURFACES_SEED_LANE: u32 = 6u;
+// Packed parameter lanes: `WET_SURFACES_<NAME>_LANE` (generated from the effect
+// registry, effect_wgsl.rs).
 
 // Share of light the water film reflects back to the surface (p above, for a
 // refractive index of 4/3: Lekner and Dorf's equation 9).

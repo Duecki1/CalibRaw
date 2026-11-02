@@ -1,35 +1,25 @@
-pub(super) mod blur;
 mod controls;
-pub(super) mod edge_glow;
 pub(super) mod fog;
-pub(super) mod glow;
-pub(super) mod grain;
-pub(super) mod halation;
-pub(super) mod lens_blur;
+mod generated;
 pub(super) mod light_rays;
-pub(super) mod motion_blur;
-pub(super) mod neon;
 mod picker;
-pub(super) mod pixelate;
 pub(super) mod radial_blur;
 pub(super) mod rain;
 pub(super) mod relight;
-pub(super) mod sharpen;
-pub(super) mod smoke;
 pub(super) mod tilt_shift;
 pub(super) mod vignette;
-pub(super) mod wet_surfaces;
 
 use crate::i18n::{tr, tr_fmt};
 pub(crate) use controls::EffectFrame;
-use controls::{effect_details, effect_position, image_lights_toggle, pattern_seed, PositionSpace};
+use controls::{effect_details, effect_position, pattern_seed, PositionSpace};
+pub(super) use generated::generated_card;
 pub(super) use picker::{
     add_effect_button, add_effect_controls, effect_picker_popup, EffectPick, FilmNegativeTile,
 };
 
 use super::{egui, MaskEffect, Ui};
-use crate::pipeline::effect_params::ColorParamSpec;
-use crate::pipeline::{EffectComponent, InitialEffectSettings, MAX_EFFECT_COMPONENTS};
+use crate::pipeline::effect_params::{ColorParamSpec, ToggleSpec};
+use crate::pipeline::{EffectComponent, EffectSettings, MAX_EFFECT_COMPONENTS};
 
 pub(super) use crate::ui::components::adjustment_slider::{float_param_angle, float_param_slider};
 
@@ -42,7 +32,7 @@ fn effect_card<Settings>(
     body: impl FnOnce(&mut Ui, &mut Settings) -> bool,
 ) -> bool
 where
-    Settings: InitialEffectSettings,
+    Settings: EffectSettings,
 {
     let body = |ui: &mut Ui, settings: &mut Settings| {
         if effect.is_experimental() {
@@ -188,7 +178,7 @@ fn apply_card_action<Settings>(
     settings: &mut Settings,
 ) -> bool
 where
-    Settings: InitialEffectSettings,
+    Settings: EffectSettings,
 {
     use super::adjustment_cards::CardAction;
 
@@ -264,71 +254,12 @@ fn add_effect_buttons(
 
 /// Tooltip for an effect card's title.
 pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
-    match effect {
-        MaskEffect::Blur => Some(
-            tr("Soften distracting detail. The mask controls where the blurred image is blended in."),
-        ),
-        MaskEffect::LensBlur => Some(
-            tr("Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition."),
-        ),
-        MaskEffect::MotionBlur => Some(
-            tr("Add directional movement. Distance sets the trail length; the mask controls where the blur appears."),
-        ),
-        MaskEffect::RadialBlur => Some(
-            tr("Zoom toward a center or spin around it. Position is relative to the full image; the mask controls the blend."),
-        ),
-        MaskEffect::TiltShift => Some(
-            tr("Keep a band in focus and soften its surroundings. Position is relative to the full image. Use a Fullscreen mask for an uninterrupted focus transition."),
-        ),
-        MaskEffect::Sharpen => Some(
-            tr("Sharpen fine detail inside the mask with its own radius, detail and masking. It adds to the Detail card's sharpening."),
-        ),
-        MaskEffect::EdgeGlow => Some(
-            tr("Light up image contours with a soft halo. Both the outlines and their glow stay inside the mask."),
-        ),
-        MaskEffect::Glow => Some(
-            tr("Spread colored light from bright pixels. The mask selects the highlights that emit light; their glow can extend beyond the selection."),
-        ),
-        MaskEffect::LightRays => Some(
-            tr("Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them."),
-        ),
-        MaskEffect::Relight => Some(
-            tr("Add a light that shapes the scene in depth. Position it like Light Rays; scene depth is generated automatically. Turn on Shadows to let nearer objects block the light. The sky and anything the depth map places at its far limit stay unlit. The mask controls where the light falls."),
-        ),
-        MaskEffect::Neon => Some(
-            tr("Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask."),
-        ),
-        MaskEffect::Pixelate => Some(
-            tr("Create a graphic mosaic. Block size sets the tile scale; the mask controls where the result appears."),
-        ),
-        MaskEffect::Fog => Some(
-            tr("Add atmospheric haze through the mask. Scene depth builds fog with distance; turn it off for an even-distance veil."),
-        ),
-        MaskEffect::Smoke => Some(
-            tr("Layer drifting plumes through the mask. The pattern stays anchored to the full image as you edit the selection."),
-        ),
-        MaskEffect::Rain => Some(
-            tr("Add falling rain and its mist. Drops pass behind nearer objects, catch Relight, Light Rays and the photo's own lights, and show best against dark areas. The mask controls where it falls."),
-        ),
-        MaskEffect::WetSurfaces => Some(
-            tr("Darken surfaces as water does and let the ground reflect the photo, with standing puddles on smooth ground. The ground is found in scene depth, which is generated automatically; a Rain effect ripples the puddles. The mask controls where it applies."),
-        ),
-        MaskEffect::Grain => Some(
-            tr("Add photographic texture. Grain stays anchored to the image; the mask controls its local strength."),
-        ),
-        MaskEffect::Halation => Some(
-            tr("Give bright highlights a warm film halo inside the mask. Nearby highlights outside the selection can cast a halo into it. Use Fullscreen for a whole-image finish."),
-        ),
-        MaskEffect::Vignette => Some(
-            tr("Darken edges with negative amounts or brighten them with positive amounts. The center follows the cropped, rotated frame; the mask controls the blend."),
-        ),
-        MaskEffect::Adjustment => None,
-    }
+    effect.description().map(tr)
 }
 
 fn effect_color(
     ui: &mut Ui,
-    id_salt: &'static str,
+    id_salt: impl egui::AsIdSalt,
     color: &mut [f32; 3],
     spec: ColorParamSpec,
 ) -> bool {
@@ -339,4 +270,9 @@ fn effect_color(
         tr(spec.label),
         tr(spec.tooltip),
     )
+}
+
+/// A switch with its help as the tooltip.
+fn effect_toggle(ui: &mut Ui, value: &mut bool, spec: ToggleSpec) -> bool {
+    moduwu_design::toggle_with_help(ui, value, tr(spec.label), tr(spec.help)).changed()
 }

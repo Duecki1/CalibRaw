@@ -75,8 +75,9 @@ fn pixelate_cell_average(cell_min: vec2<i32>, block_size: i32) -> vec3<f32> {
     return sum / f32(size.y);
 }
 
-fn pixelate_is_active(primary: vec4<f32>) -> bool {
-    return clamp(primary.x / 100.0, 0.0, 1.0) > 1e-6 && primary.y > 1.0;
+fn pixelate_is_active(params: MaskEffectParams) -> bool {
+    return mask_effect_percent(params, PIXELATE_AMOUNT_LANE) > 1e-6
+        && mask_effect_lane(params, PIXELATE_BLOCK_SIZE_LANE) > 1.0;
 }
 
 fn pixelate_block_size_in_use(block_size: i32) -> bool {
@@ -86,8 +87,9 @@ fn pixelate_block_size_in_use(block_size: i32) -> bool {
         if !Common::mask_slot_applies(state, MASK_EFFECT_PIXELATE_ID) {
             continue;
         }
-        let primary = Common::mask_data[index].adjust_0_field;
-        if pixelate_is_active(primary) && pixelate_block_size(primary.y) == block_size {
+        let params = mask_effect_params(index);
+        let block = pixelate_block_size(mask_effect_lane(params, PIXELATE_BLOCK_SIZE_LANE));
+        if pixelate_is_active(params) && block == block_size {
             return true;
         }
     }
@@ -131,12 +133,9 @@ fn mask_pixelated_source_at(pos: vec2<i32>, reference_block_size: f32) -> vec3<f
     return textureLoad(SceneAdjustments::pixelate_blocks_tex, pixelate_cache_texel(index), 0).xyz;
 }
 
-fn apply_pixelate(
-    pos: vec2<i32>,
-    source_rgb: vec3<f32>,
-    primary: vec4<f32>,
-) -> vec3<f32> {
-    if !pixelate_is_active(primary) { return source_rgb; }
-    let amount = clamp(primary.x / 100.0, 0.0, 1.0);
-    return mix(source_rgb, mask_pixelated_source_at(pos, primary.y), amount);
+fn apply_pixelate(pos: vec2<i32>, source_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    if !pixelate_is_active(params) { return source_rgb; }
+    let amount = mask_effect_percent(params, PIXELATE_AMOUNT_LANE);
+    let block_size = mask_effect_lane(params, PIXELATE_BLOCK_SIZE_LANE);
+    return mix(source_rgb, mask_pixelated_source_at(pos, block_size), amount);
 }

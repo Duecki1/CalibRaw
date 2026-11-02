@@ -1,6 +1,7 @@
 //! Packing of camera, scene-tone and effects uniforms for one render stage.
 
 use super::*;
+use crate::pipeline::effect_lanes::glow;
 
 pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
     let exposure = ctx.exposure;
@@ -383,7 +384,7 @@ pub(super) fn pack_effect_params(
     let glow_diffusion_radius = mask_data
         .iter()
         .filter(|mask| is_self_illuminating_glow(mask))
-        .map(|mask| mask.adjust_0[1])
+        .map(|mask| mask.lane(glow::RADIUS))
         .fold(0.0_f32, f32::max);
     EffectsUniforms {
         presence: [exposure.texture, exposure.clarity, exposure.dehaze, 0.0],

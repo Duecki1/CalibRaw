@@ -15,13 +15,15 @@ mod raster_cache;
 pub use content_dependencies::ContentDependencies;
 
 pub use effects::{
-    params as effect_params, BlurEffectSettings, EdgeGlowEffectSettings, FogEffectSettings,
-    GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, InitialEffectSettings,
-    LensBlurEffectSettings, LightRaysEffectSettings, MaskEffect, MaskEffectCategory,
-    MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings, PixelateEffectSettings,
-    RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings, RelightEffectSettings,
-    SharpenEffectSettings, SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
-    WetSurfacesEffectSettings,
+    effect_lanes, params as effect_params, BlurEffectSettings, ColorLane, EdgeGlowEffectSettings,
+    EffectControl, EffectControls, EffectDetails, EffectLanes, EffectOption, EffectPass,
+    EffectReach, EffectSettings, EffectSettingsVisitor, FogEffectSettings, GlowEffectSettings,
+    GrainEffectSettings, HalationEffectSettings, Lane, LaneName, LensBlurEffectSettings,
+    LightRaysEffectSettings, MaskEffect, MaskEffectCategory, MaskEffectSettings,
+    MotionBlurEffectSettings, NeonEffectSettings, PackContext, PixelateEffectSettings,
+    RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings, ReachGroup,
+    RelightEffectSettings, SceneMapUse, SharpenEffectSettings, SmokeEffectSettings,
+    TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings, OPTION_COUNT,
 };
 
 mod box_filter;
@@ -379,25 +381,10 @@ impl MaskStack {
             .any(|component| component.kind == MaskKind::Person)
     }
 
-    pub fn has_depth_fog_effect(&self) -> bool {
-        self.has_fog_effect_matching(|settings| settings.depth_enabled)
-    }
-
-    /// An active effect reads scene depth: depth fog, depth rain, Wet Surfaces
-    /// or Relight.
+    /// An active effect asks for scene depth
+    /// ([`EffectSettings::wants_scene_depth`]).
     pub fn has_scene_depth_effect(&self) -> bool {
-        self.has_depth_fog_effect()
-            || self.has_active_effect(|component| match component.effect {
-                MaskEffect::Relight | MaskEffect::WetSurfaces => true,
-                MaskEffect::Rain => component.settings.rain.depth_enabled,
-                _ => false,
-            })
-    }
-
-    fn has_fog_effect_matching(&self, matches: impl Fn(&FogEffectSettings) -> bool) -> bool {
-        self.has_active_effect(|component| {
-            component.effect == MaskEffect::Fog && matches(&component.settings.fog)
-        })
+        self.has_active_effect(|component| component.settings.wants_scene_depth(component.effect))
     }
 
     /// An active global effect, or an active effect of an enabled, visible mask,

@@ -643,22 +643,6 @@ fn validate_local_adjustments(
     validate_grading(&adjustments.color_grading, "local color grading")
 }
 
-fn validate_neon_effect(neon: &crate::pipeline::NeonEffectSettings) -> Result<(), SidecarError> {
-    use crate::pipeline::effect_params::neon;
-    validate_effect_params(
-        crate::pipeline::MaskEffect::Neon,
-        &[
-            (neon::AMOUNT, neon.amount),
-            (neon::EDGE_WIDTH, neon.edge_width),
-            (neon::DETAIL, neon.detail),
-            (neon::GLOW, neon.glow),
-            (neon::BACKGROUND, neon.background),
-        ],
-        &neon.color,
-    )?;
-    validate_effect_color(crate::pipeline::MaskEffect::Neon, neon::COLOR, neon.color)
-}
-
 fn validate_effect_components(
     components: &[crate::pipeline::EffectComponent],
 ) -> Result<(), SidecarError> {

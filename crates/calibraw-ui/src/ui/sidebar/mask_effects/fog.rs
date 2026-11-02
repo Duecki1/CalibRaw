@@ -1,9 +1,9 @@
 use super::{
-    effect_card, effect_color, effect_details, float_param_slider, image_lights_toggle,
-    pattern_seed,
+    effect_card, effect_color, effect_details, effect_toggle, float_param_slider, pattern_seed,
 };
 use crate::i18n::{tr, tr_fmt};
-use crate::pipeline::{effect_params::fog, FogEffectSettings, MaskEffect};
+use crate::pipeline::effect_params::{fog, IMAGE_LIGHTS};
+use crate::pipeline::{FogEffectSettings, MaskEffect};
 use crate::ui::components::feathered_range::{
     self, EndEdit, FeatheredRange, RangeEdit, RangeHandle, RangePoints,
 };
@@ -177,17 +177,13 @@ pub(crate) fn show(
         |ui, settings| {
             let mut changed = float_param_slider(ui, &mut settings.amount, fog::AMOUNT);
             changed |= float_param_slider(ui, &mut settings.density, fog::DENSITY);
-            if moduwu_design::toggle_with_help(ui, &mut settings.depth_enabled, tr("Scene depth"), tr("Generate and use shared scene depth so distant areas collect more fog. Turn off to use a flat veil; depth settings are preserved."))
-                .changed()
-            {
-                changed = true;
-            }
+            changed |= effect_toggle(ui, &mut settings.depth_enabled, fog::SCENE_DEPTH);
             if settings.depth_enabled {
                 changed |= fog_onset(ui, settings);
             }
             changed |= effect_color(ui, "fog-color-picker", &mut settings.color, fog::COLOR);
             changed |= float_param_slider(ui, &mut settings.light_glow, fog::LIGHT_GLOW);
-            changed |= image_lights_toggle(ui, &mut settings.image_lights);
+            changed |= effect_toggle(ui, &mut settings.image_lights, IMAGE_LIGHTS);
             changed |= effect_details(ui, tr("Atmosphere details"), |ui| {
                 let mut changed = false;
                 if settings.depth_enabled {

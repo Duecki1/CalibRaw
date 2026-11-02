@@ -1,3 +1,37 @@
+// The mask a blur is confined to: its slot and its coverage at the pixel being
+// blurred, which is above zero.
+struct MaskBlurCoverage {
+    index: u32,
+    coverage: f32,
+}
+
+// How much a blur tap at `pos` (tile pixels, as for
+// `mask_effect_source_linear_at`) may contribute: fully where the mask covers
+// it at least as much as the blurred pixel, in proportion where it covers it
+// less. A masked blur then gathers only what it blurs itself (normalized
+// convolution), so blurring a background around a masked-out subject leaves
+// no halo of the subject's colours, while a feathered edge still blends.
+// Without a mask layer, or where the mask is full, every tap weighs exactly 1.
+fn mask_blur_tap_weight(mask: MaskBlurCoverage, pos: vec2<f32>) -> f32 {
+    let tap = SceneAdjustments::local_mask_weight_at(pos, mask.index);
+    return min(tap / mask.coverage, 1.0);
+}
+
+// Mean of coverage-weighted taps: `weight` sums the weights including
+// coverage and `kernel_weight` without it. Where hardly any tap is covered (a
+// mask much thinner than the blur), the result fades back to `center`.
+fn mask_blur_masked_mean(
+    sum: vec3<f32>,
+    weight: f32,
+    kernel_weight: f32,
+    center: vec3<f32>,
+) -> vec3<f32> {
+    let mean = sum / max(weight, 1e-6);
+    let covered = weight / max(kernel_weight, 1e-6);
+    if covered >= 0.01 { return mean; }
+    return mix(center, mean, covered / 0.01);
+}
+
 
 const MASK_BLUR_STAGE_COUNT: u32 = 5u;
 
@@ -79,14 +113,15 @@ fn mask_blur_stage_amount(pos: vec2<i32>, stage: u32) -> f32 {
             continue;
         }
 
-        let primary = Common::mask_data[index].adjust_0_field;
-        let stage_mix = mask_blur_stage_mix(primary.y, stage);
+        let params = mask_effect_params(index);
+        let radius = mask_effect_lane(params, BLUR_RADIUS_LANE);
+        let stage_mix = mask_blur_stage_mix(radius, stage);
         if stage_mix <= 1e-6 { continue; }
         let coverage = SceneAdjustments::local_mask_weight(pos, index);
-        let amount = clamp(primary.x / 100.0, 0.0, 1.0) * coverage;
+        let amount = mask_effect_percent(params, BLUR_AMOUNT_LANE) * coverage;
         if amount <= 1e-6 { continue; }
 
-        let mix_sum = mask_blur_stage_mix_sum(primary.y);
+        let mix_sum = mask_blur_stage_mix_sum(radius);
         // Keep the first stage's radius ramp: normalizing by a tiny sum would
         // turn any positive radius into a full one-pixel diffusion.
         let stage_share = stage_mix / max(mix_sum, 1.0);
@@ -95,6 +130,46 @@ fn mask_blur_stage_amount(pos: vec2<i32>, stage: u32) -> f32 {
         retained_source = retained_source * (1.0 - stage_amount);
     }
     return 1.0 - retained_source;
+}
+
+// What the focus-blur loop reads of a slot before it blurs: the effect's Amount,
+// 0 to 1, and how far it blurs in reference pixels (Lens Blur's and Tilt-Shift's
+// Radius, Motion Blur's Distance, Radial Blur's Strength). Zero for any other effect.
+struct MaskFocusBlur {
+    amount: f32,
+    size: f32,
+}
+
+fn mask_focus_blur(effect_id: u32, params: MaskEffectParams) -> MaskFocusBlur {
+    switch effect_id {
+        case MASK_EFFECT_LENS_BLUR_ID: {
+            return MaskFocusBlur(
+                mask_effect_percent(params, LENS_BLUR_AMOUNT_LANE),
+                mask_effect_lane(params, LENS_BLUR_RADIUS_LANE),
+            );
+        }
+        case MASK_EFFECT_MOTION_BLUR_ID: {
+            return MaskFocusBlur(
+                mask_effect_percent(params, MOTION_BLUR_AMOUNT_LANE),
+                mask_effect_lane(params, MOTION_BLUR_DISTANCE_LANE),
+            );
+        }
+        case MASK_EFFECT_RADIAL_BLUR_ID: {
+            return MaskFocusBlur(
+                mask_effect_percent(params, RADIAL_BLUR_AMOUNT_LANE),
+                mask_effect_lane(params, RADIAL_BLUR_STRENGTH_LANE),
+            );
+        }
+        case MASK_EFFECT_TILT_SHIFT_ID: {
+            return MaskFocusBlur(
+                mask_effect_percent(params, TILT_SHIFT_AMOUNT_LANE),
+                mask_effect_lane(params, TILT_SHIFT_RADIUS_LANE),
+            );
+        }
+        default: {
+            return MaskFocusBlur(0.0, 0.0);
+        }
+    }
 }
 
 // `stored_amount` is the amount the previous stage stored at `pos` (unused
@@ -127,34 +202,25 @@ fn apply_mask_blur_stage(
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_active(state) { continue; }
         let effect_id = Common::mask_effect_id(state);
-        if effect_id != MASK_EFFECT_LENS_BLUR_ID
-            && effect_id != MASK_EFFECT_MOTION_BLUR_ID
-            && effect_id != MASK_EFFECT_RADIAL_BLUR_ID
-            && effect_id != MASK_EFFECT_TILT_SHIFT_ID {
-            continue;
-        }
-
-        let primary = Common::mask_data[index].adjust_0_field;
-        let secondary = Common::mask_data[index].adjust_1_field;
-        if primary.y <= 1e-6 { continue; }
+        let params = mask_effect_params(index);
+        let blur = mask_focus_blur(effect_id, params);
+        if blur.size <= 1e-6 { continue; }
         let coverage = SceneAdjustments::local_mask_weight(pos, index);
-        let amount = clamp(primary.x / 100.0, 0.0, 1.0) * coverage;
+        let amount = blur.amount * coverage;
         if amount <= 1e-6 { continue; }
         let mask = MaskBlurCoverage(index, coverage);
 
         var adjusted = source_rgb;
         if effect_id == MASK_EFFECT_LENS_BLUR_ID {
-            adjusted = mask_lens_blur_at(pos, primary, secondary, mask);
+            adjusted = mask_lens_blur_at(pos, params, mask);
         } else if effect_id == MASK_EFFECT_MOTION_BLUR_ID {
-            adjusted = mask_motion_blur_at(pos, primary, mask);
+            adjusted = mask_motion_blur_at(pos, params, mask);
         } else if effect_id == MASK_EFFECT_RADIAL_BLUR_ID {
-            adjusted = mask_radial_blur_at(pos, primary, secondary, mask);
+            adjusted = mask_radial_blur_at(pos, params, mask);
         } else if effect_id == MASK_EFFECT_TILT_SHIFT_ID {
-            let defocus = mask_tilt_shift_weight(pos, primary, secondary);
+            let defocus = mask_tilt_shift_weight(pos, params);
             if defocus <= 1e-6 { continue; }
-            adjusted = mask_tilt_shift_at(pos, vec4<f32>(
-                primary.x, primary.y * defocus, primary.zw,
-            ), mask);
+            adjusted = mask_tilt_shift_at(pos, blur.size * defocus, mask);
         }
         rgb = mix(rgb, adjusted, amount);
     }

@@ -70,108 +70,6 @@ fn apply_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     return rgb + bloom * 2.8 * core_protection;
 }
 
-fn vignette_distance_from_center(pos: vec2<i32>, roundness: f32, center: vec2<f32>) -> f32 {
-    let dimensions = max(Common::effects_uniforms.vignette_frame.xy, vec2<f32>(1.0));
-    // The output position of this source position. The divisor is positive across the source,
-    // whose perspective correction keeps its vanishing line outside the frame.
-    let source = vec3<f32>(full_image_uv(pos), 1.0);
-    let projection = Common::effects_uniforms.vignette_projection;
-    let frame_uv = vec2<f32>(dot(projection[0].xyz, source), dot(projection[1].xyz, source))
-        / dot(projection[2].xyz, source);
-    let p = abs((frame_uv - center) * 2.0);
-    let frame_ellipse = length(p);
-    let frame_rectangle = pow(pow(p.x, 8.0) + pow(p.y, 8.0), 1.0 / 8.0);
-    let short_dimension = max(min(dimensions.x, dimensions.y), 1.0);
-    let image_circle = length(vec2<f32>(
-        p.x * dimensions.x / short_dimension,
-        p.y * dimensions.y / short_dimension,
-    ));
-
-    if abs(roundness) < 1e-6 {
-        return frame_ellipse;
-    }
-    if roundness < 0.0 {
-        return mix(frame_ellipse, frame_rectangle, -roundness);
-    }
-    return mix(frame_ellipse, image_circle, roundness);
-}
-
-fn calibrated_vignette_anchor(
-    distance: f32,
-    start: f32,
-    end: f32,
-    power: f32,
-    edge_opacity: f32,
-) -> f32 {
-    return edge_opacity * pow(smoothstep(start, end, distance), power);
-}
-
-fn calibrated_vignette_opacity(
-    distance: f32,
-    amount: f32,
-    midpoint: f32,
-    feather: f32,
-) -> f32 {
-    let magnitude = clamp(abs(amount), 0.0, 1.0);
-    let dark_half_fit = Common::effects_uniforms.vignette_dark_half_fit;
-    let dark_full_fit = Common::effects_uniforms.vignette_dark_full_fit;
-    let light_half_fit = Common::effects_uniforms.vignette_light_half_fit;
-    let light_full_fit = Common::effects_uniforms.vignette_light_full_fit;
-    var shaped_distance = distance;
-    if abs(midpoint - 0.5) >= 1e-6 {
-        let midpoint_power = exp2((midpoint - 0.5) * 1.4);
-        let corner_distance = sqrt(2.0);
-        shaped_distance = corner_distance
-            * pow(max(distance / corner_distance, 0.0), midpoint_power);
-    }
-    var half_amount = 0.0;
-    var full_amount = 0.0;
-
-    if amount < 0.0 {
-        half_amount = calibrated_vignette_anchor(
-            shaped_distance,
-            dark_half_fit.x,
-            dark_half_fit.y,
-            dark_half_fit.z,
-            dark_half_fit.w
-        );
-        full_amount = calibrated_vignette_anchor(
-            shaped_distance,
-            dark_full_fit.x,
-            dark_full_fit.y,
-            dark_full_fit.z,
-            dark_full_fit.w
-        );
-    } else {
-        half_amount = calibrated_vignette_anchor(
-            shaped_distance,
-            light_half_fit.x,
-            light_half_fit.y,
-            light_half_fit.z,
-            light_half_fit.w
-        );
-        full_amount = calibrated_vignette_anchor(
-            shaped_distance,
-            light_full_fit.x,
-            light_full_fit.y,
-            light_full_fit.z,
-            light_full_fit.w
-        );
-    }
-
-    var opacity = 0.0;
-    if magnitude <= 0.5 {
-        opacity = half_amount * (magnitude * 2.0);
-    } else {
-        opacity = mix(half_amount, full_amount, (magnitude - 0.5) * 2.0);
-    }
-    if abs(feather - 0.5) < 1e-6 {
-        return opacity;
-    }
-    let feather_power = exp2((0.5 - feather) * 1.3);
-    return pow(clamp(opacity, 0.0, 1.0), feather_power);
-}
-
 // Mask Saturation, Texture and Clarity. Mask Dehaze runs with the global one
 // in the scene preparation (SceneAdjustments::dehaze_amount_at).
 fn apply_local_scene_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
@@ -202,17 +100,14 @@ fn apply_local_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f
         if !Common::mask_slot_applies(state, MASK_EFFECT_NEON_ID) { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
-        let adjusted = apply_neon(
-            pos,
-            rgb,
-            Common::mask_data[index].adjust_0_field,
-            Common::mask_data[index].adjust_1_field,
-        );
+        let adjusted = apply_neon(pos, rgb, mask_effect_params(index));
         rgb = mix(rgb, adjusted, weight);
     }
     return rgb;
 }
 
+// The creative pass's per-slot effects, in card order (`EffectPass::Creative`); the
+// registry generates their dispatch (effect_wgsl.rs).
 fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
@@ -220,33 +115,10 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_active(state) { continue; }
         let effect_id = Common::mask_effect_id(state);
-        if effect_id != MASK_EFFECT_EDGE_GLOW_ID
-            && effect_id != MASK_EFFECT_PIXELATE_ID
-            && effect_id != MASK_EFFECT_FOG_ID
-            && effect_id != MASK_EFFECT_SMOKE_ID
-            && effect_id != MASK_EFFECT_HALATION_ID
-            && effect_id != MASK_EFFECT_RELIGHT_ID {
-            continue;
-        }
+        if !is_creative_slot_effect(effect_id) { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
-
-        let primary = Common::mask_data[index].adjust_0_field;
-        let secondary = Common::mask_data[index].adjust_1_field;
-        var adjusted = rgb;
-        if effect_id == MASK_EFFECT_EDGE_GLOW_ID {
-            adjusted = apply_edge_glow(pos, rgb, primary, secondary);
-        } else if effect_id == MASK_EFFECT_PIXELATE_ID {
-            adjusted = apply_pixelate(pos, rgb, primary);
-        } else if effect_id == MASK_EFFECT_FOG_ID {
-            adjusted = apply_fog(pos, rgb, mask_effect_params(index));
-        } else if effect_id == MASK_EFFECT_SMOKE_ID {
-            adjusted = apply_smoke(pos, rgb, mask_effect_params(index));
-        } else if effect_id == MASK_EFFECT_HALATION_ID {
-            adjusted = apply_mask_halation(pos, rgb, primary);
-        } else if effect_id == MASK_EFFECT_RELIGHT_ID {
-            adjusted = apply_relight(pos, rgb, mask_effect_params(index));
-        }
+        let adjusted = apply_creative_slot_effect(effect_id, pos, rgb, mask_effect_params(index));
         rgb = mix(rgb, adjusted, weight);
     }
     return rgb;
@@ -407,35 +279,4 @@ fn apply_weather_air(@builtin(global_invocation_id) gid: vec3<u32>) {
         rgb = mix(rgb, apply_rain(pos, rgb, mask_effect_params(index)), weight);
     }
     textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
-}
-
-// Film-like grain uses correlated, zero-mean noise in perceptual lightness.
-// Design reference (multiscale noise / midtone response):
-// https://github.com/darktable-org/darktable/blob/master/src/iop/grain.c
-// This implementation uses an integer hash, with no frame/time-dependent seed.
-fn grain_hash(value: u32) -> u32 {
-    var hash = value;
-    hash = (hash ^ (hash >> 16u)) * 0x7feb352du;
-    hash = (hash ^ (hash >> 15u)) * 0x846ca68bu;
-    return hash ^ (hash >> 16u);
-}
-
-fn grain_noise_at(cell: vec2<i32>) -> f32 {
-    let seed = grain_hash(bitcast<u32>(cell.x) ^ grain_hash(bitcast<u32>(cell.y) + 0x9e3779b9u));
-    let first = grain_hash(seed);
-    let second = grain_hash(seed + 0x68bc21ebu);
-    let u = (f32(first & 0xffffu) + 0.5) / 65536.0;
-    let v = (f32(second & 0xffffu) + 0.5) / 65536.0;
-    return sqrt(-2.0 * log(u)) * cos(6.28318530718 * v);
-}
-
-fn grain_field(point: vec2<f32>) -> f32 {
-    let cell = vec2<i32>(floor(point));
-    let f = point - vec2<f32>(cell);
-    let blend = f * f * (vec2<f32>(3.0) - 2.0 * f);
-    let top = mix(grain_noise_at(cell), grain_noise_at(cell + vec2<i32>(1, 0)), blend.x);
-    let bottom = mix(grain_noise_at(cell + vec2<i32>(0, 1)), grain_noise_at(cell + vec2<i32>(1, 1)), blend.x);
-    // Normalize variance so grid intersections don't appear as heavier grain.
-    let variance = (blend * blend + (1.0 - blend) * (1.0 - blend));
-    return mix(top, bottom, blend.y) * inverseSqrt(variance.x * variance.y);
 }

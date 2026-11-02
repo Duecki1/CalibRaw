@@ -7,6 +7,7 @@
 //! textures with the `CALIBRAW_WORK_FORMAT` marker and are specialized to the
 //! processing quality's work format before use.
 
+use super::effect_wgsl;
 use crate::pipeline::CfaKind;
 use std::borrow::Cow;
 
@@ -19,18 +20,25 @@ pub(super) struct ShaderSource {
     pub(super) text: &'static str,
     /// Files appended to this one to form a single module.
     appended: &'static [ShaderSource],
+    /// WGSL generated from Rust declarations, appended last.
+    generated: Option<fn() -> String>,
 }
 
 impl ShaderSource {
-    /// The complete module: this file followed by its appended files.
+    /// The complete module: this file followed by its appended files and its
+    /// generated WGSL.
     pub(super) fn module_text(&self) -> Cow<'static, str> {
-        if self.appended.is_empty() {
+        if self.appended.is_empty() && self.generated.is_none() {
             return Cow::Borrowed(self.text);
         }
         let mut text = String::from(self.text);
         for part in self.appended {
             text.push('\n');
             text.push_str(part.text);
+        }
+        if let Some(generate) = self.generated {
+            text.push('\n');
+            text.push_str(&generate());
         }
         Cow::Owned(text)
     }
@@ -49,10 +57,14 @@ macro_rules! wgsl {
         wgsl!($file, &[])
     };
     ($file:literal, $appended:expr) => {
+        wgsl!($file, $appended, None)
+    };
+    ($file:literal, $appended:expr, $generated:expr) => {
         ShaderSource {
             file_name: $file,
             text: include_str!(concat!("../../shaders/", $file)),
             appended: $appended,
+            generated: $generated,
         }
     };
 }
@@ -76,7 +88,7 @@ pub(super) const DETAIL_SCALE_SPACE: ShaderSource = wgsl!("detail_scale_space.wg
 pub(super) const CFA_LINEAR: ShaderSource = wgsl!("cfa_linear.wgsl");
 pub(super) const XTRANS_MARKESTEIJN: ShaderSource = wgsl!("xtrans/markesteijn.wgsl");
 
-pub(super) const MASK_EFFECTS_SHARED: ShaderSource = wgsl!("mask_effects/shared.wgsl");
+pub(super) const MASK_EFFECT_API: ShaderSource = wgsl!("mask_effects/effect_api.wgsl");
 pub(super) const MASK_LENS_BLUR: ShaderSource = wgsl!("mask_effects/lens_blur.wgsl");
 pub(super) const MASK_MOTION_BLUR: ShaderSource = wgsl!("mask_effects/motion_blur.wgsl");
 pub(super) const MASK_RADIAL_BLUR: ShaderSource = wgsl!("mask_effects/radial_blur.wgsl");
@@ -101,11 +113,12 @@ pub(super) const MASK_WET_SURFACES: ShaderSource = wgsl!("mask_effects/wet_surfa
 
 /// Every mask effect and the scene they read (`MASK_SCENE_*`), compiled as one
 /// module because the effects share its helpers and the effect passes dispatch
-/// to them.
+/// to them. The effect registry adds its IDs, lanes and the creative pass's
+/// dispatch (effect_wgsl.rs).
 pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
     "creative_effects.wgsl",
     &[
-        MASK_EFFECTS_SHARED,
+        MASK_EFFECT_API,
         MASK_LENS_BLUR,
         MASK_MOTION_BLUR,
         MASK_RADIAL_BLUR,
@@ -126,7 +139,8 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         MASK_RAIN,
         MASK_WET_SURFACES,
         MASK_FILM_FINISH,
-    ]
+    ],
+    Some(effect_wgsl::registry_wgsl)
 );
 
 pub(super) const HIGHLIGHTS: ShaderSource = wgsl!("highlights.wgsl");

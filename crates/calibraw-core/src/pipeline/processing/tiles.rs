@@ -1,6 +1,7 @@
 //! Export tiling: halos required by each stage, tile plans and padded tile extraction.
 
 use super::*;
+use crate::pipeline::ReachGroup;
 
 pub(super) const DEMOSAIC_CHAIN_SUPPORT: u32 = 32;
 const COLOR_DENOISE_SUPPORT_FAST: u32 = 2;
@@ -33,7 +34,7 @@ pub(super) const TONE_GUIDE_SUPPORT: u32 =
     (TONE_GUIDE_RADIUS_CELLS * MAX_RESOLUTION_SCALE + 1) * TONE_GUIDE_CELL_SIZE;
 // Capture sharpening (detail_capture.wgsl): a 5×5 blur at a step of at most 3,
 // in the scene tone pass before the scene effects.
-pub(super) const CAPTURE_SHARPEN_SUPPORT: u32 = 6;
+pub(crate) const CAPTURE_SHARPEN_SUPPORT: u32 = 6;
 /// Pixels past a tile core that the haze grid's box means read in the export
 /// tone prepass (`HAZE_BOX_MAX` - 1 in haze_analysis.wgsl).
 pub const HAZE_BOX_SUPPORT: u32 = 1;
@@ -66,22 +67,23 @@ pub const DETAIL_CLARITY_SUPPORT: u32 = 254;
 // footprints overlap rather than add up; sharpening's adds to them.
 const _: () = assert!(DETAIL_TEXTURE_SUPPORT <= DETAIL_CLARITY_SUPPORT);
 pub(super) const LOCAL_EFFECTS_SUPPORT: u32 = CAPTURE_SHARPEN_SUPPORT + DETAIL_CLARITY_SUPPORT;
-pub(super) const NEON_SUPPORT: u32 = 48;
-pub(super) const MASK_BLUR_SUPPORT: u32 = 72;
-pub(super) const FOCUS_BLUR_SUPPORT: u32 = 144;
-pub(super) const EDGE_GLOW_SUPPORT: u32 = 48;
-pub(super) const PIXELATE_SUPPORT: u32 = 96;
+// Effect reaches, which the effect registry assigns (`EffectReach`).
+pub(crate) const NEON_SUPPORT: u32 = 48;
+pub(crate) const MASK_BLUR_SUPPORT: u32 = 72;
+pub(crate) const FOCUS_BLUR_SUPPORT: u32 = 144;
+pub(crate) const EDGE_GLOW_SUPPORT: u32 = 48;
+pub(crate) const PIXELATE_SUPPORT: u32 = 96;
 // Depth-guided effects (Fog, Smoke, Relight) upsample scene depth with image
 // colours up to 3.5 depth texels away (fog_depth_at in atmosphere.wgsl). The
 // depth texture is 1024 texels across, so this covers images up to about
 // 13,500 pixels wide.
-pub(super) const SCENE_DEPTH_GUIDE_SUPPORT: u32 = 48;
+pub(crate) const SCENE_DEPTH_GUIDE_SUPPORT: u32 = 48;
 // EXPORT_CUMULATIVE_SUPPORT reserves Pixelate's support for the whole
 // post-blur creative pass.
 const _: () = assert!(SCENE_DEPTH_GUIDE_SUPPORT <= PIXELATE_SUPPORT);
 // Maximum footprint of Glow diffusion and independent Glow/Halation modules.
 // These sample the same local_effects input, so their support is not cumulative.
-pub(super) const GLOW_SUPPORT: u32 = 96;
+pub(crate) const GLOW_SUPPORT: u32 = 96;
 pub(super) const COLOR_MIXER_SUPPORT: u32 = 4;
 const EXPORT_CUMULATIVE_SUPPORT: u32 = HIGHLIGHT_RECONSTRUCTION_SUPPORT
     + DEMOSAIC_CHAIN_SUPPORT
@@ -141,10 +143,25 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
         };
     }
 
-    // Sharpen components run in the capture-sharpening pass of the Detail card.
-    if exposure.sharpen_amount.abs() > 1e-6 || effect_active(MaskEffect::Sharpen) {
-        support += CAPTURE_SHARPEN_SUPPORT;
+    // Each group of effect reaches reserves its widest active reach once.
+    let mut reaches = [0; ReachGroup::ALL.len()];
+    for effect in MaskEffect::ALL {
+        if let Some((group, pixels)) = effect.reach().group() {
+            if effect_active(effect) {
+                let reach = &mut reaches[group as usize];
+                *reach = (*reach).max(pixels);
+            }
+        }
     }
+    let reach = |group: ReachGroup| reaches[group as usize];
+
+    // Sharpen components run in the capture-sharpening pass of the Detail card.
+    let detail_sharpening = if exposure.sharpen_amount.abs() > 1e-6 {
+        CAPTURE_SHARPEN_SUPPORT
+    } else {
+        0
+    };
+    support += detail_sharpening.max(reach(ReachGroup::CaptureSharpening));
     let local_adjustment_active = |value: fn(&crate::pipeline::LocalAdjustments) -> f32| {
         masks.masks.iter().any(|mask| {
             mask.enabled
@@ -171,48 +188,21 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
     .unwrap_or(0);
     support += scene_effects_support;
 
-    if effect_active(MaskEffect::Neon) {
-        support += NEON_SUPPORT;
-    }
-
-    if effect_active(MaskEffect::Blur) {
-        support += MASK_BLUR_SUPPORT;
-    }
-
-    let focus_blur_active = [
-        MaskEffect::LensBlur,
-        MaskEffect::MotionBlur,
-        MaskEffect::RadialBlur,
-        MaskEffect::TiltShift,
+    // The scene effects pass, the blur passes, the creative pass and the Glow
+    // reads chain, so their reaches add up. Self-illuminating Glow shares the
+    // Glow diffusion passes; highlight Glow and Halation sample the same
+    // local_effects input with their own radius, so the group reserves the
+    // widest once, not the sum of their footprints.
+    support += [
+        ReachGroup::SceneEffects,
+        ReachGroup::MaskBlur,
+        ReachGroup::FocusBlur,
+        ReachGroup::Creative,
+        ReachGroup::Glow,
     ]
     .into_iter()
-    .any(effect_active);
-    if focus_blur_active {
-        support += FOCUS_BLUR_SUPPORT;
-    }
-
-    let post_blur_creative_support = [
-        (MaskEffect::EdgeGlow, EDGE_GLOW_SUPPORT),
-        (MaskEffect::Pixelate, PIXELATE_SUPPORT),
-        (MaskEffect::Fog, SCENE_DEPTH_GUIDE_SUPPORT),
-        (MaskEffect::Smoke, SCENE_DEPTH_GUIDE_SUPPORT),
-        (MaskEffect::Relight, SCENE_DEPTH_GUIDE_SUPPORT),
-    ]
-    .into_iter()
-    .filter(|(effect, _)| effect_active(*effect))
-    .map(|(_, support)| support)
-    .max()
-    .unwrap_or(0);
-    support += post_blur_creative_support;
-
-    // Self-illuminating Glow shares the Glow diffusion passes. Highlight Glow
-    // and Halation sample the scene neighborhood with their own radius. All read
-    // the same local_effects input with at most GLOW_SUPPORT pixels of support,
-    // so reserve the maximum once, not the sum of their footprints or the number
-    // of active components.
-    if effect_active(MaskEffect::Glow) || effect_active(MaskEffect::Halation) {
-        support += GLOW_SUPPORT;
-    }
+    .map(reach)
+    .sum::<u32>();
 
     support.div_ceil(8) * 8
 }

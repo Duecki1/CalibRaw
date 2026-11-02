@@ -1,4 +1,6 @@
+use super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
 use super::params::radial_blur::*;
+use super::settings::{EffectControl, EffectControls, EffectSettings};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum RadialBlurMode {
@@ -45,8 +47,34 @@ impl Default for RadialBlurEffectSettings {
     }
 }
 
-impl RadialBlurEffectSettings {
-    pub fn is_active(&self) -> bool {
+effect_lanes! {
+    AMOUNT = 0,
+    STRENGTH = 1,
+    CENTER_X = 2,
+    CENTER_Y = 3,
+    MODE = 4,
+}
+
+impl EffectSettings for RadialBlurEffectSettings {
+    const LANES: &'static [LaneName] = lanes::ALL;
+
+    fn is_active(&self) -> bool {
         self.amount.abs() > 1e-6 && self.strength > 1e-6
+    }
+
+    fn controls(&mut self) -> EffectControls<'_> {
+        EffectControls::new(vec![
+            EffectControl::Slider(&mut self.amount, AMOUNT),
+            EffectControl::Slider(&mut self.strength, STRENGTH),
+            EffectControl::Position(&mut self.center, [CENTER_X, CENTER_Y]),
+        ])
+    }
+
+    fn pack(&self, slot: &mut EffectLanes, _: &PackContext) {
+        slot.set(lanes::AMOUNT, AMOUNT.clamp(self.amount));
+        slot.set(lanes::STRENGTH, STRENGTH.clamp(self.strength));
+        slot.set(lanes::CENTER_X, CENTER_X.clamp(self.center[0]));
+        slot.set(lanes::CENTER_Y, CENTER_Y.clamp(self.center[1]));
+        slot.set(lanes::MODE, self.mode.shader_value());
     }
 }

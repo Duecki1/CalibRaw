@@ -8,7 +8,7 @@
 //! offset and size are therefore compared explicitly.
 
 use super::{
-    effect_lanes, ground_plane, processing_work_format, shader_manager::ShaderManager, shaders,
+    ground_plane, processing_work_format, shader_manager::ShaderManager, shaders,
     work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
     ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, ViewTransformMode,
     FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE, HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG,
@@ -17,7 +17,7 @@ use super::{
     SCENE_MAP_GRID_LONG, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
-use crate::pipeline::MaskEffect;
+use crate::pipeline::{effect_lanes::options, MaskEffect, OPTION_COUNT};
 use calibraw_core::pipeline::{
     CA_WINDOW_RADIUS, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT,
     HAZE_GUIDE_SUPPORT, MAX_LATERAL_SHIFT, MAX_RESOLUTION_SCALE, SCENE_EDGE_SUPPORT,
@@ -542,8 +542,10 @@ fn tone_guide_taps_cover_the_largest_scaled_radius() {
     assert!(TONE_GUIDE_RADIUS_CELLS * MAX_RESOLUTION_SCALE <= taps);
 }
 
+/// The registry's lanes and options reach the shaders as constants
+/// (effect_wgsl.rs), and no shader declares lanes of its own.
 #[test]
-fn effect_parameter_lanes_match_their_wgsl_names() {
+fn effect_lanes_and_options_reach_the_shaders() {
     let modules = production_modules();
     let (_, creative) = modules
         .iter()
@@ -553,31 +555,25 @@ fn effect_parameter_lanes_match_their_wgsl_names() {
         u32_constant(creative, name).unwrap_or_else(|| panic!("WGSL declares {name}")) as usize
     };
     let mut expected = BTreeSet::new();
-    let mut occupied = BTreeSet::new();
-    for (effect, name, lane) in effect_lanes::named_lanes() {
-        let wgsl_name = format!("{}_{name}_LANE", effect.to_uppercase());
-        assert_eq!(constant(&wgsl_name), lane, "{wgsl_name}");
-        for lane in lane..lane + effect_lanes::lane_width(name) {
-            assert!(lane < 12, "{wgsl_name} reaches past adjust_2");
-            assert!(
-                occupied.insert((effect, lane)),
-                "{wgsl_name} overlaps lane {lane}"
-            );
+    for effect in MaskEffect::ALL {
+        let prefix = effect.shader_name().to_uppercase();
+        for lane in effect.lanes() {
+            let wgsl_name = format!("{prefix}_{}_LANE", lane.name);
+            assert_eq!(constant(&wgsl_name), lane.index, "{wgsl_name}");
+            expected.insert(wgsl_name);
         }
-        expected.insert(wgsl_name);
     }
-    for (name, lane) in effect_lanes::options::named_options() {
+    for (name, index) in options::ALL {
         let wgsl_name = format!("{name}_OPTION");
-        assert_eq!(constant(&wgsl_name), lane, "{wgsl_name}");
+        assert_eq!(constant(&wgsl_name), index, "{wgsl_name}");
         // Lane 0 is local Halation in every slot.
-        assert!((1..4).contains(&lane), "{wgsl_name}");
+        assert!((1..OPTION_COUNT).contains(&index), "{wgsl_name}");
         expected.insert(wgsl_name);
     }
     assert_eq!(
         constant("RELIGHT_SHADOW_MAP_CHANNELS"),
         RELIGHT_SHADOW_MAP_CHANNELS
     );
-    // Every lane the shaders name is packed by name in Rust too.
     let declared: BTreeSet<_> = creative
         .constants
         .iter()

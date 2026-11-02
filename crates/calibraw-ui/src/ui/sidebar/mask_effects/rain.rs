@@ -1,9 +1,9 @@
 use super::{
-    effect_card, effect_details, float_param_angle, float_param_slider, image_lights_toggle,
-    pattern_seed,
+    effect_card, effect_details, effect_toggle, float_param_angle, float_param_slider, pattern_seed,
 };
 use crate::i18n::tr;
-use crate::pipeline::{effect_params::rain, MaskEffect, RainEffectSettings};
+use crate::pipeline::effect_params::{rain, IMAGE_LIGHTS};
+use crate::pipeline::{MaskEffect, RainEffectSettings};
 use eframe::egui::Ui;
 
 pub(crate) fn show(
@@ -23,15 +23,9 @@ pub(crate) fn show(
             changed |= float_param_slider(ui, &mut settings.length, rain::LENGTH);
             changed |= float_param_angle(ui, &mut settings.angle, rain::ANGLE);
             changed |= float_param_slider(ui, &mut settings.mist, rain::MIST);
-            changed |= moduwu_design::toggle_with_help(
-                ui,
-                &mut settings.depth_enabled,
-                tr("Scene depth"),
-                tr("Generate and use shared scene depth so rain falls behind nearer objects and mist builds with distance. Turn off for rain in front of the whole photo."),
-            )
-            .changed();
+            changed |= effect_toggle(ui, &mut settings.depth_enabled, rain::SCENE_DEPTH);
             changed |= float_param_slider(ui, &mut settings.light_glow, rain::LIGHT_GLOW);
-            changed |= image_lights_toggle(ui, &mut settings.image_lights);
+            changed |= effect_toggle(ui, &mut settings.image_lights, IMAGE_LIGHTS);
             changed |= effect_details(ui, tr("Rain details"), |ui| {
                 let mut changed = float_param_slider(ui, &mut settings.drop_size, rain::DROP_SIZE);
                 // Splashes need the ground in scene depth, and with scene depth the

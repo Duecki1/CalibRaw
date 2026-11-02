@@ -251,25 +251,10 @@ impl Sidebar {
         is_fullscreen_mask: bool,
         frame: &mask_effects::EffectFrame,
     ) -> bool {
+        // Effects with a position pad, a range track or a conditional
+        // control draw their own card; every other effect's card is drawn
+        // from its controls.
         match component.effect {
-            MaskEffect::Blur => mask_effects::blur::show(
-                ui,
-                &mut component.settings.blur,
-                &mut component.enabled,
-                remove,
-            ),
-            MaskEffect::LensBlur => mask_effects::lens_blur::show(
-                ui,
-                &mut component.settings.lens_blur,
-                &mut component.enabled,
-                remove,
-            ),
-            MaskEffect::MotionBlur => mask_effects::motion_blur::show(
-                ui,
-                &mut component.settings.motion_blur,
-                &mut component.enabled,
-                remove,
-            ),
             MaskEffect::RadialBlur => mask_effects::radial_blur::show(
                 ui,
                 &mut component.settings.radial_blur,
@@ -285,24 +270,6 @@ impl Sidebar {
                 frame,
                 is_fullscreen_mask,
             ),
-            MaskEffect::Sharpen => mask_effects::sharpen::show(
-                ui,
-                &mut component.settings.sharpen,
-                &mut component.enabled,
-                remove,
-            ),
-            MaskEffect::EdgeGlow => mask_effects::edge_glow::show(
-                ui,
-                &mut component.settings.edge_glow,
-                &mut component.enabled,
-                remove,
-            ),
-            MaskEffect::Glow => mask_effects::glow::show(
-                ui,
-                &mut component.settings.glow,
-                &mut component.enabled,
-                remove,
-            ),
             MaskEffect::LightRays => mask_effects::light_rays::show(
                 ui,
                 &mut component.settings.light_rays,
@@ -317,51 +284,15 @@ impl Sidebar {
                 remove,
                 frame,
             ),
-            MaskEffect::Neon => mask_effects::neon::show(
-                ui,
-                &mut component.settings.neon,
-                &mut component.enabled,
-                remove,
-            ),
-            MaskEffect::Pixelate => mask_effects::pixelate::show(
-                ui,
-                &mut component.settings.pixelate,
-                &mut component.enabled,
-                remove,
-            ),
             MaskEffect::Fog => mask_effects::fog::show(
                 ui,
                 &mut component.settings.fog,
                 &mut component.enabled,
                 remove,
             ),
-            MaskEffect::Smoke => mask_effects::smoke::show(
-                ui,
-                &mut component.settings.smoke,
-                &mut component.enabled,
-                remove,
-            ),
             MaskEffect::Rain => mask_effects::rain::show(
                 ui,
                 &mut component.settings.rain,
-                &mut component.enabled,
-                remove,
-            ),
-            MaskEffect::WetSurfaces => mask_effects::wet_surfaces::show(
-                ui,
-                &mut component.settings.wet_surfaces,
-                &mut component.enabled,
-                remove,
-            ),
-            MaskEffect::Grain => mask_effects::grain::show(
-                ui,
-                &mut component.settings.grain,
-                &mut component.enabled,
-                remove,
-            ),
-            MaskEffect::Halation => mask_effects::halation::show(
-                ui,
-                &mut component.settings.halation,
                 &mut component.enabled,
                 remove,
             ),
@@ -372,7 +303,13 @@ impl Sidebar {
                 remove,
                 frame,
             ),
-            MaskEffect::Adjustment => false,
+            effect => mask_effects::generated_card(
+                ui,
+                effect,
+                &mut component.settings,
+                &mut component.enabled,
+                remove,
+            ),
         }
     }
 

@@ -32,9 +32,10 @@ fn neon_edge_energy(pos: vec2<f32>, radius: f32) -> f32 {
     return length(gradient);
 }
 
-fn neon_edge_profile(pos: vec2<i32>, primary: vec4<f32>) -> vec2<f32> {
-    let width = mask_focus_blur_radius(clamp(primary.y, 0.5, 8.0), 24.0);
-    let detail = clamp(primary.z / 100.0, 0.0, 1.0);
+fn neon_edge_profile(pos: vec2<i32>, params: MaskEffectParams) -> vec2<f32> {
+    let edge_width = clamp(mask_effect_lane(params, NEON_EDGE_WIDTH_LANE), 0.5, 8.0);
+    let width = mask_focus_blur_radius(edge_width, 24.0);
+    let detail = mask_effect_percent(params, NEON_DETAIL_LANE);
     let threshold = mix(0.16, 0.012, detail);
     let p = vec2<f32>(pos);
     let energy = neon_edge_energy(p, width);
@@ -55,18 +56,13 @@ fn neon_edge_profile(pos: vec2<i32>, primary: vec4<f32>) -> vec2<f32> {
 }
 
 
-fn apply_neon(
-    pos: vec2<i32>,
-    source_rgb: vec3<f32>,
-    primary: vec4<f32>,
-    secondary: vec4<f32>,
-) -> vec3<f32> {
-    let amount = clamp(primary.x / 100.0, 0.0, 1.0);
+fn apply_neon(pos: vec2<i32>, source_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    let amount = mask_effect_percent(params, NEON_AMOUNT_LANE);
     if amount <= 1e-6 { return source_rgb; }
-    let glow = clamp(primary.w / 100.0, 0.0, 1.0);
-    let background = clamp(secondary.w / 100.0, 0.0, 1.0);
-    let profile = neon_edge_profile(pos, primary);
-    let color = mask_effect_picker_color_to_working(secondary.xyz);
+    let glow = mask_effect_percent(params, NEON_GLOW_LANE);
+    let background = mask_effect_percent(params, NEON_BACKGROUND_LANE);
+    let profile = neon_edge_profile(pos, params);
+    let color = mask_effect_picker_color_to_working(mask_effect_color(params, NEON_COLOR_LANE));
     // Saturated diffuse emission surrounds a subtly whiter hot tube. Both are
     // derived from the same DC-rejecting contour, not competing edge detectors.
     let hot_color = mix(color, vec3<f32>(1.0), 0.22 * profile.x);

@@ -1,0 +1,103 @@
+//! Where in the processing chain an effect runs, how far around a pixel it
+//! reads and which scene inputs it needs.
+
+/// A stage of the processing chain that applies effects, in processing order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EffectPass {
+    /// Capture sharpening, before the scene effects (detail_capture.wgsl).
+    CaptureSharpening,
+    /// The scene effects pass, with Texture and Clarity
+    /// (`apply_scene_effects_node` in creative_effects.wgsl).
+    SceneEffects,
+    /// The blur passes (blur.wgsl and its family).
+    Blur,
+    /// Its own pass before the creative pass (`apply_wet_surfaces`).
+    BeforeCreative,
+    /// The creative pass, slot by slot in card order: the shader calls the
+    /// effect's `apply_<effect>(pos, rgb, params)` (effect_api.wgsl).
+    Creative,
+    /// The creative pass, after every slot, from passes of the effect's own
+    /// (Glow's diffusion, Light Rays' masks).
+    CreativeLight,
+    /// Its own pass after the creative pass (`apply_weather_air`).
+    AfterCreative,
+    /// After the display transform (film_finish.wgsl).
+    DisplayFinish,
+}
+
+impl EffectPass {
+    /// Whether the pass runs among the scene-referred passes after the scene
+    /// tone pass, which then must run (`needs_intermediate_adjustment_passes`).
+    pub const fn is_intermediate(self) -> bool {
+        !matches!(self, Self::CaptureSharpening | Self::DisplayFinish)
+    }
+}
+
+/// How far around a pixel an effect reads, which export tiles must cover
+/// with their halo (`required_export_tile_halo`).
+///
+/// Effects of one group read the same input, so the group reserves its
+/// widest reach once; the groups chain, so their reaches add up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EffectReach {
+    /// Only the pixel itself and full-image maps.
+    Pixel,
+    CaptureSharpening(u32),
+    SceneEffects(u32),
+    MaskBlur(u32),
+    FocusBlur(u32),
+    /// The creative pass's per-slot effects.
+    Creative(u32),
+    /// Glow's diffusion and the reads of highlight Glow and Halation, which
+    /// all sample the creative pass's input.
+    Glow(u32),
+}
+
+/// A group of [`EffectReach`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReachGroup {
+    CaptureSharpening,
+    SceneEffects,
+    MaskBlur,
+    FocusBlur,
+    Creative,
+    Glow,
+}
+
+impl ReachGroup {
+    pub const ALL: [Self; 6] = [
+        Self::CaptureSharpening,
+        Self::SceneEffects,
+        Self::MaskBlur,
+        Self::FocusBlur,
+        Self::Creative,
+        Self::Glow,
+    ];
+}
+
+impl EffectReach {
+    /// Its group and pixels, or `None` for [`Self::Pixel`].
+    pub const fn group(self) -> Option<(ReachGroup, u32)> {
+        match self {
+            Self::Pixel => None,
+            Self::CaptureSharpening(pixels) => Some((ReachGroup::CaptureSharpening, pixels)),
+            Self::SceneEffects(pixels) => Some((ReachGroup::SceneEffects, pixels)),
+            Self::MaskBlur(pixels) => Some((ReachGroup::MaskBlur, pixels)),
+            Self::FocusBlur(pixels) => Some((ReachGroup::FocusBlur, pixels)),
+            Self::Creative(pixels) => Some((ReachGroup::Creative, pixels)),
+            Self::Glow(pixels) => Some((ReachGroup::Glow, pixels)),
+        }
+    }
+}
+
+/// When an effect reads the scene map: scene depth refined against the photo,
+/// the photo's coarse colour, the ground and the lens blur per depth
+/// (scene_analysis.wgsl).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneMapUse {
+    Never,
+    /// Only while scene depth is present.
+    WithDepth,
+    /// Also without scene depth, for the photo's environment.
+    Always,
+}

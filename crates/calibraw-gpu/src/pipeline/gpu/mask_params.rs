@@ -1,15 +1,12 @@
 //! Packing of local adjustment masks and mask effects into `MaskData` slots.
 
-use super::effect_lanes::{fog, light_rays, options, rain, relight, smoke, wet_surfaces};
 use super::*;
+use crate::pipeline::effect_lanes::{options, rain, relight};
+use crate::pipeline::{EffectLanes, PackContext};
 
-fn effect_mask_data(
-    effect: MaskEffect,
-    active: bool,
-    adjust_0: [f32; 4],
-    adjust_1: [f32; 4],
-    adjust_2: [f32; 4],
-) -> MaskData {
+/// An effect slot holding `lanes`.
+fn effect_mask_data(effect: MaskEffect, active: bool, lanes: &EffectLanes) -> MaskData {
+    let [adjust_0, adjust_1, adjust_2] = lanes.rows();
     MaskData {
         metadata: [
             u32::from(active),
@@ -20,24 +17,16 @@ fn effect_mask_data(
         adjust_0,
         adjust_1,
         adjust_2,
+        effect_options: lanes.options(),
         ..MaskData::zeroed()
     }
-}
-
-/// An effect slot with every parameter lane zero, for packing by name.
-fn effect_slot(effect: MaskEffect, active: bool) -> MaskData {
-    effect_mask_data(effect, active, [0.0; 4], [0.0; 4], [0.0; 4])
-}
-
-fn set_medium_options(data: &mut MaskData, image_lights: bool) {
-    data.effect_options[options::MEDIUM_IMAGE_LIGHTS] = f32::from(u8::from(image_lights));
 }
 
 /// Whether an active Rain slot throws splashes on the ground, which it finds in
 /// scene depth.
 pub(super) fn rain_reads_ground(data: &MaskData) -> bool {
     data.applies(MaskEffect::Rain)
-        && data.effect_options[options::RAIN_DEPTH] > 0.5
+        && data.option(options::RAIN_DEPTH) > 0.5
         && data.lane(rain::SPLASHES) > 0.0
 }
 
@@ -46,7 +35,7 @@ pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
     (data.applies(MaskEffect::Fog)
         || data.applies(MaskEffect::Smoke)
         || data.applies(MaskEffect::Rain))
-        && data.effect_options[options::MEDIUM_IMAGE_LIGHTS] > 0.5
+        && data.option(options::MEDIUM_IMAGE_LIGHTS) > 0.5
 }
 
 /// Lights whose shadows the shadow map holds, one per RGBA channel.
@@ -62,7 +51,7 @@ pub(super) fn relight_casts_shadows(data: &MaskData) -> bool {
 
 /// The shadow-map channel of a Relight slot, if it has one.
 pub(super) fn relight_shadow_channel(data: &MaskData) -> Option<usize> {
-    let lane = data.effect_options[options::RELIGHT_SHADOW_CHANNEL];
+    let lane = data.option(options::RELIGHT_SHADOW_CHANNEL);
     (lane > 0.5).then(|| lane.round() as usize - 1)
 }
 
@@ -74,7 +63,7 @@ fn assign_relight_shadow_channels(packed: &mut [MaskData]) {
         .filter(|data| relight_casts_shadows(data))
         .take(RELIGHT_SHADOW_MAP_CHANNELS);
     for (channel, data) in shadowed.enumerate() {
-        data.effect_options[options::RELIGHT_SHADOW_CHANNEL] = (channel + 1) as f32;
+        data.set_option(options::RELIGHT_SHADOW_CHANNEL, (channel + 1) as f32);
     }
 }
 
@@ -138,386 +127,17 @@ pub(super) fn orient_rain_slots(
     }
 }
 
+/// The slot of an effect: its settings as its shader reads them, active when
+/// `enabled` and the settings change the image. `None` for an adjustment.
 pub(super) fn pack_effect_mask(
     effect: MaskEffect,
     settings: &crate::pipeline::MaskEffectSettings,
     enabled: bool,
     shutter_seconds: f32,
 ) -> Option<MaskData> {
-    let zero = [0.0; 4];
-    let data = match effect {
-        MaskEffect::Blur => {
-            let config = settings.blur;
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::blur::AMOUNT.clamp(config.amount),
-                    effect_params::blur::RADIUS.clamp(config.radius),
-                    0.0,
-                    0.0,
-                ],
-                zero,
-                zero,
-            )
-        }
-        MaskEffect::LensBlur => {
-            let config = settings.lens_blur;
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::lens_blur::AMOUNT.clamp(config.amount),
-                    effect_params::lens_blur::RADIUS.clamp(config.radius),
-                    effect_params::lens_blur::BLADES
-                        .clamp(config.blades)
-                        .round(),
-                    effect_params::lens_blur::ROTATION.clamp(config.rotation),
-                ],
-                [
-                    effect_params::lens_blur::HIGHLIGHTS.clamp(config.highlight_boost),
-                    0.0,
-                    0.0,
-                    0.0,
-                ],
-                zero,
-            )
-        }
-        MaskEffect::MotionBlur => {
-            let config = settings.motion_blur;
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::motion_blur::AMOUNT.clamp(config.amount),
-                    effect_params::motion_blur::DISTANCE.clamp(config.distance),
-                    effect_params::motion_blur::ANGLE.clamp(config.angle),
-                    0.0,
-                ],
-                zero,
-                zero,
-            )
-        }
-        MaskEffect::RadialBlur => {
-            let config = settings.radial_blur;
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::radial_blur::AMOUNT.clamp(config.amount),
-                    effect_params::radial_blur::STRENGTH.clamp(config.strength),
-                    effect_params::radial_blur::CENTER_X.clamp(config.center[0]),
-                    effect_params::radial_blur::CENTER_Y.clamp(config.center[1]),
-                ],
-                [config.mode.shader_value(), 0.0, 0.0, 0.0],
-                zero,
-            )
-        }
-        MaskEffect::TiltShift => {
-            let config = settings.tilt_shift;
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::tilt_shift::AMOUNT.clamp(config.amount),
-                    effect_params::tilt_shift::RADIUS.clamp(config.radius),
-                    effect_params::tilt_shift::CENTER_X.clamp(config.center[0]),
-                    effect_params::tilt_shift::CENTER_Y.clamp(config.center[1]),
-                ],
-                [
-                    effect_params::tilt_shift::ANGLE.clamp(config.angle),
-                    effect_params::tilt_shift::FOCUS_WIDTH.clamp(config.focus_width),
-                    effect_params::tilt_shift::FEATHER.clamp(config.feather),
-                    0.0,
-                ],
-                zero,
-            )
-        }
-        MaskEffect::EdgeGlow => {
-            let config = settings.edge_glow;
-            let color = effect_params::edge_glow::COLOR.clamp(config.color);
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::edge_glow::AMOUNT.clamp(config.amount),
-                    effect_params::edge_glow::EDGE_WIDTH.clamp(config.edge_width),
-                    effect_params::edge_glow::DETAIL.clamp(config.detail),
-                    effect_params::edge_glow::GLOW.clamp(config.glow),
-                ],
-                [color[0], color[1], color[2], 0.0],
-                zero,
-            )
-        }
-        MaskEffect::Glow => {
-            let config = settings.glow;
-            let color = effect_params::glow::COLOR.clamp(config.color);
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::glow::AMOUNT.clamp(config.amount),
-                    effect_params::glow::RADIUS.clamp(config.radius),
-                    effect_params::glow::CORE.clamp(config.core),
-                    if config.self_illuminating { 1.0 } else { 0.0 },
-                ],
-                [color[0], color[1], color[2], 0.0],
-                zero,
-            )
-        }
-        MaskEffect::Neon => {
-            let config = settings.neon;
-            let color = effect_params::neon::COLOR.clamp(config.color);
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::neon::AMOUNT.clamp(config.amount),
-                    effect_params::neon::EDGE_WIDTH.clamp(config.edge_width),
-                    effect_params::neon::DETAIL.clamp(config.detail),
-                    effect_params::neon::GLOW.clamp(config.glow),
-                ],
-                [
-                    color[0],
-                    color[1],
-                    color[2],
-                    effect_params::neon::BACKGROUND.clamp(config.background),
-                ],
-                zero,
-            )
-        }
-        MaskEffect::LightRays => {
-            let config = settings.light_rays;
-            use effect_params::light_rays as params;
-            let mut data = effect_slot(effect, enabled && config.is_active());
-            data.set_lane(light_rays::AMOUNT, params::AMOUNT.clamp(config.amount));
-            data.set_lane(light_rays::LENGTH, params::LENGTH.clamp(config.length));
-            data.set_lane(
-                light_rays::SOURCE_X,
-                params::SOURCE_X.clamp(config.source[0]),
-            );
-            data.set_lane(
-                light_rays::SOURCE_Y,
-                params::SOURCE_Y.clamp(config.source[1]),
-            );
-            data.set_color_lanes(light_rays::COLOR, params::COLOR.clamp(config.color));
-            data.set_lane(light_rays::FADE, params::FADE.clamp(config.fade));
-            data.set_lane(light_rays::SPREAD, params::SPREAD.clamp(config.spread));
-            data.set_lane(
-                light_rays::RAY_COUNT,
-                params::RAY_COUNT.clamp(config.ray_count),
-            );
-            data.set_lane(
-                light_rays::VARIATION,
-                params::VARIATION.clamp(config.variation),
-            );
-            data.set_lane(
-                light_rays::SOFTNESS,
-                params::SOFTNESS.clamp(config.softness),
-            );
-            data
-        }
-        MaskEffect::Relight => {
-            let config = settings.relight;
-            use effect_params::relight as params;
-            let mut data = effect_slot(effect, enabled && config.is_active());
-            data.set_lane(relight::AMOUNT, params::AMOUNT.clamp(config.amount));
-            data.set_lane(relight::REACH, params::REACH.clamp(config.reach));
-            data.set_lane(relight::SOURCE_X, params::SOURCE_X.clamp(config.source[0]));
-            data.set_lane(relight::SOURCE_Y, params::SOURCE_Y.clamp(config.source[1]));
-            data.set_color_lanes(relight::COLOR, params::COLOR.clamp(config.color));
-            data.set_lane(relight::DEPTH, params::DEPTH.clamp(config.depth));
-            data.set_lane(relight::SIZE, params::SIZE.clamp(config.size));
-            // Switched-off shadows keep their strength in the settings only.
-            let shadows = if config.shadows_enabled {
-                params::SHADOWS.clamp(config.shadows)
-            } else {
-                0.0
-            };
-            data.set_lane(relight::SHADOWS, shadows);
-            data.set_lane(relight::RELIEF, params::RELIEF.clamp(config.relief));
-            data.set_lane(relight::AMBIENT, params::AMBIENT.clamp(config.ambient));
-            data
-        }
-        MaskEffect::Pixelate => {
-            let config = settings.pixelate;
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::pixelate::AMOUNT.clamp(config.amount),
-                    effect_params::pixelate::BLOCK_SIZE.clamp(config.block_size),
-                    0.0,
-                    0.0,
-                ],
-                zero,
-                zero,
-            )
-        }
-        MaskEffect::Fog => {
-            let config = settings.fog;
-            use effect_params::fog as params;
-            let mut data = effect_slot(effect, enabled && config.is_active());
-            data.set_lane(fog::AMOUNT, params::AMOUNT.clamp(config.amount));
-            data.set_lane(fog::DENSITY, params::DENSITY.clamp(config.density));
-            data.set_lane(fog::SCALE, params::SCALE.clamp(config.scale));
-            data.set_lane(fog::SOFTNESS, params::SOFTNESS.clamp(config.softness));
-            data.set_color_lanes(fog::COLOR, params::COLOR.clamp(config.color));
-            data.set_lane(fog::VARIATION, params::VARIATION.clamp(config.variation));
-            data.set_lane(fog::SEED, params::SEED.clamp(config.seed));
-            // Without scene depth the fog is an even veil from the camera on.
-            if config.depth_enabled {
-                data.set_lane(fog::START, params::START.clamp(config.start));
-                data.set_lane(
-                    fog::DEPTH_INFLUENCE,
-                    params::DEPTH_INFLUENCE.clamp(config.depth_influence),
-                );
-            }
-            data.set_lane(fog::LIGHT_GLOW, params::LIGHT_GLOW.clamp(config.light_glow));
-            set_medium_options(&mut data, config.image_lights);
-            data
-        }
-        MaskEffect::Smoke => {
-            let config = settings.smoke;
-            use effect_params::smoke as params;
-            let mut data = effect_slot(effect, enabled && config.is_active());
-            data.set_lane(smoke::AMOUNT, params::AMOUNT.clamp(config.amount));
-            data.set_lane(smoke::DENSITY, params::DENSITY.clamp(config.density));
-            data.set_lane(smoke::SCALE, params::SCALE.clamp(config.scale));
-            data.set_lane(
-                smoke::TURBULENCE,
-                params::TURBULENCE.clamp(config.turbulence),
-            );
-            data.set_color_lanes(smoke::COLOR, params::COLOR.clamp(config.color));
-            data.set_lane(smoke::ANGLE, params::ANGLE.clamp(config.angle));
-            data.set_lane(smoke::SOFTNESS, params::SOFTNESS.clamp(config.softness));
-            data.set_lane(smoke::SEED, params::SEED.clamp(config.seed));
-            data.set_lane(
-                smoke::LIGHT_GLOW,
-                params::LIGHT_GLOW.clamp(config.light_glow),
-            );
-            set_medium_options(&mut data, config.image_lights);
-            data
-        }
-        MaskEffect::Rain => {
-            let config = settings.rain;
-            use effect_params::rain as params;
-            let mut data = effect_slot(effect, enabled && config.is_active());
-            data.set_lane(rain::AMOUNT, params::AMOUNT.clamp(config.amount));
-            data.set_lane(rain::LENGTH, config.streak_length(shutter_seconds));
-            // In the output frame until `orient_rain_slots`.
-            let angle = params::ANGLE.clamp(config.angle).to_radians();
-            data.set_lane(rain::FALL_X, angle.cos());
-            data.set_lane(rain::FALL_Y, angle.sin());
-            data.set_lane(rain::DROP_SIZE, params::DROP_SIZE.clamp(config.drop_size));
-            data.set_lane(rain::MIST, params::MIST.clamp(config.mist));
-            data.set_lane(
-                rain::LIGHT_GLOW,
-                params::LIGHT_GLOW.clamp(config.light_glow),
-            );
-            data.set_lane(rain::GUSTS, params::GUSTS.clamp(config.gusts));
-            data.set_lane(
-                rain::PERSPECTIVE,
-                params::PERSPECTIVE.clamp(config.perspective),
-            );
-            data.set_lane(rain::SPLASHES, params::SPLASHES.clamp(config.splashes));
-            data.set_lane(rain::FOCUS, params::FOCUS.clamp(config.focus));
-            data.set_lane(rain::SEED, params::SEED.clamp(config.seed));
-            data.effect_options[options::RAIN_DEPTH] = f32::from(u8::from(config.depth_enabled));
-            set_medium_options(&mut data, config.image_lights);
-            data
-        }
-        MaskEffect::WetSurfaces => {
-            let config = settings.wet_surfaces;
-            use effect_params::wet_surfaces as params;
-            let mut data = effect_slot(effect, enabled && config.is_active());
-            data.set_lane(wet_surfaces::WETNESS, params::WETNESS.clamp(config.wetness));
-            data.set_lane(wet_surfaces::PUDDLES, params::PUDDLES.clamp(config.puddles));
-            data.set_lane(
-                wet_surfaces::PUDDLE_SIZE,
-                params::PUDDLE_SIZE.clamp(config.puddle_size),
-            );
-            data.set_lane(wet_surfaces::GLOSS, params::GLOSS.clamp(config.gloss));
-            data.set_lane(
-                wet_surfaces::REFLECTIONS,
-                params::REFLECTIONS.clamp(config.reflections),
-            );
-            data.set_lane(wet_surfaces::RIPPLES, params::RIPPLES.clamp(config.ripples));
-            data.set_lane(wet_surfaces::SEED, params::SEED.clamp(config.seed));
-            data
-        }
-        MaskEffect::Grain => {
-            let config = settings.grain;
-            use effect_params::grain as params;
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    params::AMOUNT.clamp(config.amount),
-                    params::SIZE.clamp(config.size),
-                    params::ROUGHNESS.clamp(config.roughness),
-                    params::COLOR.clamp(config.color),
-                ],
-                [params::SEED.clamp(config.seed).round(), 0.0, 0.0, 0.0],
-                zero,
-            )
-        }
-        MaskEffect::Halation => {
-            let config = settings.halation;
-            use effect_params::halation as params;
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    params::AMOUNT.clamp(config.amount),
-                    params::RADIUS.clamp(config.radius),
-                    params::THRESHOLD.clamp(config.threshold),
-                    params::WARMTH.clamp(config.warmth),
-                ],
-                zero,
-                zero,
-            )
-        }
-        MaskEffect::Sharpen => {
-            let config = settings.sharpen;
-            use effect_params::sharpen as params;
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    params::AMOUNT.clamp(config.amount),
-                    params::RADIUS.clamp(config.radius),
-                    params::DETAIL.clamp(config.detail),
-                    params::MASKING.clamp(config.masking),
-                ],
-                zero,
-                zero,
-            )
-        }
-        MaskEffect::Vignette => {
-            let config = settings.vignette;
-            use effect_params::vignette as params;
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    params::AMOUNT.clamp(config.amount),
-                    params::MIDPOINT.clamp(config.midpoint),
-                    params::ROUNDNESS.clamp(config.roundness),
-                    params::FEATHER.clamp(config.feather),
-                ],
-                [
-                    params::HIGHLIGHTS.clamp(config.highlights),
-                    params::CENTER_X.clamp(config.center[0]),
-                    params::CENTER_Y.clamp(config.center[1]),
-                    0.0,
-                ],
-                zero,
-            )
-        }
-        MaskEffect::Adjustment => return None,
-    };
-    Some(data)
+    let lanes = settings.pack(effect, &PackContext { shutter_seconds })?;
+    let active = enabled && settings.effect_is_active(effect);
+    Some(effect_mask_data(effect, active, &lanes))
 }
 
 pub(super) fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {

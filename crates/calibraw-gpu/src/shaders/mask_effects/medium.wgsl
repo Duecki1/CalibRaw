@@ -99,9 +99,7 @@ fn medium_light_scattering(
 // Image light a medium scatters at Light glow 100, relative to the halo's mean
 // light: a lamp's halo outshines its share of the spread light.
 const IMAGE_LIGHT_SCATTER_GAIN: f32 = 4.0;
-// The Image lights switch of Fog, Smoke and Rain (effect_lanes.rs).
-const MEDIUM_IMAGE_LIGHTS_OPTION: u32 = 3u;
-
+// The Image lights switch of Fog, Smoke and Rain is `MEDIUM_IMAGE_LIGHTS_OPTION`.
 fn medium_image_lights_enabled(params: MaskEffectParams) -> bool {
     return params.options[MEDIUM_IMAGE_LIGHTS_OPTION] > 0.5;
 }

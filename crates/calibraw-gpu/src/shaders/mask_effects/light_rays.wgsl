@@ -1,16 +1,7 @@
 const LIGHT_RAY_PI: f32 = 3.141592653589793;
 
-// Packed parameter lanes (effect_lanes.rs).
-const LIGHT_RAYS_AMOUNT_LANE: u32 = 0u;
-const LIGHT_RAYS_LENGTH_LANE: u32 = 1u;
-const LIGHT_RAYS_SOURCE_X_LANE: u32 = 2u;
-const LIGHT_RAYS_SOURCE_Y_LANE: u32 = 3u;
-const LIGHT_RAYS_COLOR_LANE: u32 = 4u;
-const LIGHT_RAYS_FADE_LANE: u32 = 7u;
-const LIGHT_RAYS_SPREAD_LANE: u32 = 8u;
-const LIGHT_RAYS_RAY_COUNT_LANE: u32 = 9u;
-const LIGHT_RAYS_VARIATION_LANE: u32 = 10u;
-const LIGHT_RAYS_SOFTNESS_LANE: u32 = 11u;
+// Packed parameter lanes: `LIGHT_RAYS_<NAME>_LANE` (generated from the effect
+// registry, effect_wgsl.rs).
 
 fn light_ray_emission_at(uv: vec2<f32>, mask_index: u32) -> f32 {
     let layer = Common::mask_data[mask_index].point_color_meta.z;

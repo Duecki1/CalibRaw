@@ -57,20 +57,22 @@ pub use lensfun::{
 };
 pub use mask_region::{mask_region_texture_extent, mask_source_region_uv};
 pub use masks::{
-    effect_params, ellipse_outline_points, export_mask_atlas_edge, export_mask_atlas_edge_limit,
-    lightness_to_luminance, luminance_range_weight, luminance_to_lightness, mask_atlas_edge,
-    path_outline_points, rasterize_brush_dabs, BlurEffectSettings, BrushDab, BrushMode,
-    ContentDependencies, DepthRangeSettings, EdgeGlowEffectSettings, EffectComponent,
-    FogEffectSettings, GlowEffectSettings, GrainEffectSettings, HalationEffectSettings,
-    InitialEffectSettings, LensBlurEffectSettings, LightRaysEffectSettings, LocalAdjustments,
-    LocalMask, MaskCombineMode, MaskCommon, MaskComponent, MaskEffect, MaskEffectCategory,
-    MaskEffectSettings, MaskGeometry, MaskImage, MaskKind, MaskRgbImage, MaskStack,
-    MotionBlurEffectSettings, NeonEffectSettings, ObjectStroke, PathPoint, PersonPart,
-    PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings,
-    RelightEffectSettings, SharpenEffectSettings, SmokeEffectSettings, SubjectRefinement,
-    TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings,
+    effect_lanes, effect_params, ellipse_outline_points, export_mask_atlas_edge,
+    export_mask_atlas_edge_limit, lightness_to_luminance, luminance_range_weight,
+    luminance_to_lightness, mask_atlas_edge, path_outline_points, rasterize_brush_dabs,
+    BlurEffectSettings, BrushDab, BrushMode, ColorLane, ContentDependencies, DepthRangeSettings,
+    EdgeGlowEffectSettings, EffectComponent, EffectControl, EffectControls, EffectDetails,
+    EffectLanes, EffectOption, EffectPass, EffectReach, EffectSettings, EffectSettingsVisitor,
+    FogEffectSettings, GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, Lane,
+    LaneName, LensBlurEffectSettings, LightRaysEffectSettings, LocalAdjustments, LocalMask,
+    MaskCombineMode, MaskCommon, MaskComponent, MaskEffect, MaskEffectCategory, MaskEffectSettings,
+    MaskGeometry, MaskImage, MaskKind, MaskRgbImage, MaskStack, MotionBlurEffectSettings,
+    NeonEffectSettings, ObjectStroke, PackContext, PathPoint, PersonPart, PixelateEffectSettings,
+    RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings, ReachGroup,
+    RelightEffectSettings, SceneMapUse, SharpenEffectSettings, SmokeEffectSettings,
+    SubjectRefinement, TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings,
     DEFAULT_COLOR_TOLERANCE, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS,
-    MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_MASK_PEOPLE, MAX_PATH_POINTS,
+    MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_MASK_PEOPLE, MAX_PATH_POINTS, OPTION_COUNT,
 };
 pub use noise::{AdaptiveDetailDefaults, DenoiseQuality, NoiseProfile};
 pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};

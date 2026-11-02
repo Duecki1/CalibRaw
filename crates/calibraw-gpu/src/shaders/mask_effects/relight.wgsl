@@ -14,18 +14,8 @@
 // its existing shading divided out), so lit shadows recover their texture and
 // colour instead of receiving a flat wash.
 
-// Packed parameter lanes and options (effect_lanes.rs).
-const RELIGHT_AMOUNT_LANE: u32 = 0u;
-const RELIGHT_REACH_LANE: u32 = 1u;
-const RELIGHT_SOURCE_X_LANE: u32 = 2u;
-const RELIGHT_SOURCE_Y_LANE: u32 = 3u;
-const RELIGHT_COLOR_LANE: u32 = 4u;
-const RELIGHT_DEPTH_LANE: u32 = 7u;
-const RELIGHT_SIZE_LANE: u32 = 8u;
-const RELIGHT_SHADOWS_LANE: u32 = 9u;
-const RELIGHT_RELIEF_LANE: u32 = 10u;
-const RELIGHT_AMBIENT_LANE: u32 = 11u;
-const RELIGHT_SHADOW_CHANNEL_OPTION: u32 = 2u;
+// Packed parameter lanes and options: `RELIGHT_<NAME>_LANE`,
+// `RELIGHT_SHADOW_CHANNEL_OPTION` (generated from the effect registry, effect_wgsl.rs).
 // Lights the shadow map holds, one per channel (RELIGHT_SHADOW_MAP_CHANNELS).
 const RELIGHT_SHADOW_MAP_CHANNELS: u32 = 4u;
 

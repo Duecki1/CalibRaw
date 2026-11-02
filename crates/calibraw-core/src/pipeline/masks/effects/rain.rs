@@ -1,4 +1,7 @@
+use super::lanes::{effect_lanes, options, EffectLanes, LaneName, PackContext};
 use super::params::rain::*;
+use super::params::IMAGE_LIGHTS;
+use super::settings::{EffectControl, EffectControls, EffectSettings};
 
 /// A typical drop's streak at the nearest surface, in shorter edges, for an
 /// exposure of [`REFERENCE_SHUTTER_SECONDS`].
@@ -64,11 +67,78 @@ impl Default for RainEffectSettings {
     }
 }
 
-impl RainEffectSettings {
-    pub fn is_active(&self) -> bool {
+effect_lanes! {
+    AMOUNT = 0,
+    /// The streak length in shorter edges (`streak_length`).
+    LENGTH = 1,
+    /// The direction rain falls in, a unit vector: in the output frame after
+    /// packing, until calibraw-gpu turns it into image points.
+    FALL_X = 2,
+    FALL_Y = 3,
+    DROP_SIZE = 4,
+    MIST = 5,
+    LIGHT_GLOW = 6,
+    GUSTS = 7,
+    PERSPECTIVE = 8,
+    FOCUS = 9,
+    SEED = 10,
+    SPLASHES = 11,
+}
+
+impl EffectSettings for RainEffectSettings {
+    const LANES: &'static [LaneName] = lanes::ALL;
+
+    fn is_active(&self) -> bool {
         self.amount > 1e-6
     }
 
+    fn controls(&mut self) -> EffectControls<'_> {
+        EffectControls::new(vec![
+            EffectControl::Slider(&mut self.amount, AMOUNT),
+            EffectControl::Slider(&mut self.length, LENGTH),
+            EffectControl::Angle(&mut self.angle, ANGLE),
+            EffectControl::Slider(&mut self.mist, MIST),
+            EffectControl::Toggle(&mut self.depth_enabled, SCENE_DEPTH),
+            EffectControl::Slider(&mut self.light_glow, LIGHT_GLOW),
+            EffectControl::Toggle(&mut self.image_lights, IMAGE_LIGHTS),
+        ])
+        .details(
+            "Rain details",
+            vec![
+                EffectControl::Slider(&mut self.drop_size, DROP_SIZE),
+                EffectControl::Slider(&mut self.splashes, SPLASHES),
+                EffectControl::Slider(&mut self.focus, FOCUS),
+                EffectControl::Slider(&mut self.gusts, GUSTS),
+                EffectControl::Slider(&mut self.perspective, PERSPECTIVE),
+                EffectControl::Seed(&mut self.seed, SEED),
+            ],
+        )
+    }
+
+    fn wants_scene_depth(&self) -> bool {
+        self.depth_enabled
+    }
+
+    fn pack(&self, slot: &mut EffectLanes, context: &PackContext) {
+        slot.set(lanes::AMOUNT, AMOUNT.clamp(self.amount));
+        slot.set(lanes::LENGTH, self.streak_length(context.shutter_seconds));
+        let angle = ANGLE.clamp(self.angle).to_radians();
+        slot.set(lanes::FALL_X, angle.cos());
+        slot.set(lanes::FALL_Y, angle.sin());
+        slot.set(lanes::DROP_SIZE, DROP_SIZE.clamp(self.drop_size));
+        slot.set(lanes::MIST, MIST.clamp(self.mist));
+        slot.set(lanes::LIGHT_GLOW, LIGHT_GLOW.clamp(self.light_glow));
+        slot.set(lanes::GUSTS, GUSTS.clamp(self.gusts));
+        slot.set(lanes::PERSPECTIVE, PERSPECTIVE.clamp(self.perspective));
+        slot.set(lanes::SPLASHES, SPLASHES.clamp(self.splashes));
+        slot.set(lanes::FOCUS, FOCUS.clamp(self.focus));
+        slot.set(lanes::SEED, SEED.clamp(self.seed));
+        slot.set_switch(options::RAIN_DEPTH, self.depth_enabled);
+        slot.set_switch(options::MEDIUM_IMAGE_LIGHTS, self.image_lights);
+    }
+}
+
+impl RainEffectSettings {
     /// A typical drop's streak during an exposure of `shutter_seconds`, at the
     /// nearest surface, in shorter edges. A shutter speed of 0 means the photo
     /// records none.
