@@ -1,0 +1,20 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "LightRays",
+          "settings": {
+            "light_rays": {
+              "amount": 70.0,
+              "source": [
+                70.0,
+                20.0
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

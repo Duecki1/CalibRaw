@@ -1,0 +1,17 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Sharpen",
+          "settings": {
+            "sharpen": {
+              "amount": 150.0,
+              "radius": 1.5
+            }
+          }
+        }
+      ]
+    }
+  }
+}

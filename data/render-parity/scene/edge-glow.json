@@ -1,0 +1,16 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "EdgeGlow",
+          "settings": {
+            "edge_glow": {
+              "amount": 80.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

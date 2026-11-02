@@ -1,0 +1,18 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Halation",
+          "settings": {
+            "halation": {
+              "amount": 100.0,
+              "radius": 16.0,
+              "threshold": 40.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

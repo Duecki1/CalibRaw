@@ -1,0 +1,17 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "MotionBlur",
+          "settings": {
+            "motion_blur": {
+              "amount": 100.0,
+              "angle": 20.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}
