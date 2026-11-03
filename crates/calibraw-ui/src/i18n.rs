@@ -35,10 +35,11 @@ pub(crate) enum Language {
     Italian,
     Russian,
     Ukrainian,
+    Romanian,
 }
 
 impl Language {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 15] = [
         Self::English,
         Self::German,
         Self::Danish,
@@ -53,6 +54,7 @@ impl Language {
         Self::Italian,
         Self::Russian,
         Self::Ukrainian,
+        Self::Romanian,
     ];
 
     /// Locale identifier; Posh English is manual-only, not an OS language.
@@ -71,6 +73,7 @@ impl Language {
             Self::Italian => "it",
             Self::Russian => "ru",
             Self::Ukrainian => "uk",
+            Self::Romanian => "ro",
         }
     }
 
@@ -92,6 +95,7 @@ impl Language {
             Self::Italian => "Italiano",
             Self::Russian => "Русский",
             Self::Ukrainian => "Українська",
+            Self::Romanian => "Română",
         }
     }
 
@@ -114,6 +118,7 @@ impl Language {
         static ITALIAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static RUSSIAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static UKRAINIAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
+        static ROMANIAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         match self {
             Self::English => Ok(ENGLISH.get_or_init(HashMap::new)),
             Self::German => GERMAN
@@ -166,6 +171,10 @@ impl Language {
                 .map_err(Clone::clone),
             Self::Ukrainian => UKRAINIAN
                 .get_or_init(|| parse_catalog(self, include_str!("../locales/uk.json")))
+                .as_ref()
+                .map_err(Clone::clone),
+            Self::Romanian => ROMANIAN
+                .get_or_init(|| parse_catalog(self, include_str!("../locales/ro.json")))
                 .as_ref()
                 .map_err(Clone::clone),
         }
@@ -242,10 +251,11 @@ pub(crate) enum LanguageChoice {
     Italian,
     Russian,
     Ukrainian,
+    Romanian,
 }
 
 impl LanguageChoice {
-    pub(crate) const ALL: [Self; 15] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::System,
         Self::English,
         Self::German,
@@ -261,6 +271,7 @@ impl LanguageChoice {
         Self::Italian,
         Self::Russian,
         Self::Ukrainian,
+        Self::Romanian,
     ];
 
     pub(crate) fn resolve(self) -> Language {
@@ -280,6 +291,7 @@ impl LanguageChoice {
             Self::Italian => Language::Italian,
             Self::Russian => Language::Russian,
             Self::Ukrainian => Language::Ukrainian,
+            Self::Romanian => Language::Romanian,
         }
     }
 
@@ -300,6 +312,7 @@ impl LanguageChoice {
             Self::Italian => Language::Italian.native_name(),
             Self::Russian => Language::Russian.native_name(),
             Self::Ukrainian => Language::Ukrainian.native_name(),
+            Self::Romanian => Language::Romanian.native_name(),
         }
     }
 }
