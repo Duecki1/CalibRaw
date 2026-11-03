@@ -7,9 +7,9 @@ use crate::pipeline::{
     ExposureParams, FilmSource, FilmStock, GeometryMapping, GeometryTransform,
     HighlightReconstructionMethod, LateralChannel, LensGeometryMap, LoadedRaw, LocalMask,
     MaskEffect, MaskImage, MaskStack, PixelLayout, PointColor, PointCurve, ProcessingStage,
-    ProfileColor, RawThumbnail, RemoveEditState, RemovePatch, SensorSaturation, SigmoidParams,
-    GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS,
-    MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
+    ProfileColor, RawThumbnail, RemoveEditState, RemovePatch, SceneNormals, SensorSaturation,
+    SigmoidParams, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS,
+    MAX_LOCAL_MASKS, MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -40,7 +40,8 @@ mod wait;
 use builder::*;
 pub use clipping::PreviewClippingGpu;
 use effect_inputs::{
-    EffectInputs, FullImageMap, InputBindingSources, InputBoundPass, HAZE_PASSES, SCENE_MAP_PASSES,
+    EffectInputs, FullImageMap, InputBindingSources, InputBoundPass, HAZE_PASSES,
+    SCENE_EMISSION_PASSES, SCENE_MAP_PASSES,
 };
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 pub use preview_budget::{preview_mask_layer_capacity, MobilePreviewRole, PreviewResourceShape};
@@ -70,7 +71,7 @@ use stage_params::*;
 
 const GPU_PARAMS_ABI_VERSION: u32 = 16;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
-pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
+pub(super) const FULL_IMAGE_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
 } else {
     512
@@ -438,7 +439,7 @@ pub struct RawGpuPipeline {
     profile_capacity_words: usize,
     /// The camera profile whose tables `profile_buffer` holds.
     uploaded_profile: Mutex<Arc<ProfileColor>>,
-    /// Relight's surface and shadow map and the full-image maps, allocated
+    /// Relight's surface, the scene shadow map and the full-image maps, allocated
     /// when an effect first reads them. Cropped and zoomed views copy the
     /// full-image maps from the full frame like the tone statistics.
     effect_inputs: EffectInputs,
@@ -487,11 +488,11 @@ pub struct RawGpuPipeline {
     _tone_guide_a: wgpu::Texture,
     _tone_guide_b: wgpu::Texture,
     mask_texture: wgpu::Texture,
-    light_rays_mask_texture: wgpu::Texture,
+    full_image_mask_texture: wgpu::Texture,
     uploaded_scene_depth: Mutex<Option<scene_depth::UploadedSceneDepth>>,
-    /// What the Relight shadow map (relight.wgsl) was last built for; `None` after scene depth
+    /// What the scene shadow map (scene_shadows.wgsl) was last built for; `None` after scene depth
     /// changes, so the next output stage rebuilds it.
-    relight_shadow_map_key: Mutex<Option<RelightShadowMapKey>>,
+    scene_shadow_map_key: Mutex<Option<SceneShadowMapKey>>,
     mask_layer_capacity: usize,
     mask_atlas_edge: u32,
     out_texture: wgpu::Texture,
@@ -561,6 +562,7 @@ impl RawGpuPipeline {
         self.upload_scene_depth(
             queue,
             params.scene_depth.as_ref(),
+            params.scene_normals.as_ref(),
             params.needs_scene_surface(),
         );
         let look_lut_uploaded = match self.prepare_look_lut(queue, params.look_lut()) {
@@ -849,8 +851,11 @@ impl RawGpuPipeline {
         if params.needs_full_image_map(FullImageMap::Scene) {
             self.effect_inputs.allocate_scene_depth();
         }
-        if params.relight_shadow_map_key().is_some() {
-            self.effect_inputs.allocate_relight_shadow_map();
+        if params.scene_shadow_map_key().is_some() {
+            self.effect_inputs.allocate_scene_shadow_map();
+        }
+        if params.needs_scene_emission() {
+            self.effect_inputs.allocate_scene_emission();
         }
         for map in FullImageMap::ALL {
             if params.needs_full_image_map(map) {
@@ -1186,7 +1191,13 @@ impl RawGpuPipeline {
                 self.ensure_full_image_map(encoder, map);
             }
         }
-        self.encode_relight_shadow_map(encoder, params);
+        self.encode_scene_shadow_map(encoder, params);
+        if params.needs_scene_emission() {
+            // Rebuilt for every render: it follows the emitters' settings and
+            // masks, which change without a new tone result.
+            let start = self.indices.scene_emission_pass_index;
+            self.encode_pass_range(encoder, start, start + SCENE_EMISSION_PASSES);
+        }
         self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);
         self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
         // Which of the two work textures holds the image. Each pass below that
@@ -1301,21 +1312,21 @@ impl RawGpuPipeline {
         *image_in_tex2 = !*image_in_tex2;
     }
 
-    /// Rebuilds the relight shadow map when a shadowed light or the scene
+    /// Rebuilds the scene shadow map when a light it holds or the scene
     /// depth changed since it was last built. Edits that leave both alone,
     /// such as tone or colour changes, reuse it.
-    fn encode_relight_shadow_map(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
-        let Some(key) = params.relight_shadow_map_key() else {
+    fn encode_scene_shadow_map(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+        let Some(key) = params.scene_shadow_map_key() else {
             return;
         };
         let mut built = self
-            .relight_shadow_map_key
+            .scene_shadow_map_key
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if *built == Some(key) {
             return;
         }
-        self.encode_pass(encoder, self.indices.relight_shadow_map_pass_index);
+        self.encode_pass(encoder, self.indices.scene_shadow_map_pass_index);
         *built = Some(key);
     }
 

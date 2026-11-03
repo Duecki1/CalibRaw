@@ -4,8 +4,8 @@ use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
     lensfun_catalog, ExposureParams, GeometryTransform, LensCorrection, LensfunCorrections,
     LensfunLens, LoadedRaw, ManualLensCorrection, MaskGeometry, MaskImage, MaskKind, MaskStack,
-    RemoveEditState, SubjectRefinement, WhiteBalance, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
-    MAX_PATH_POINTS, REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
+    RemoveEditState, SceneNormals, SubjectRefinement, WhiteBalance, MAX_LOCAL_MASKS,
+    MAX_MASK_COMPONENTS, MAX_PATH_POINTS, REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -258,6 +258,9 @@ struct SidecarDocument {
     mask_asset_refs: Vec<SidecarMaskAssetRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scene_depth_asset: Option<usize>,
+    /// The x and y components of the scene normals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scene_normal_assets: Option<[usize; 2]>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     remove_assets: Vec<SidecarRemoveAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -296,6 +299,7 @@ struct MaskAssets {
     assets: Vec<SidecarMaskAsset>,
     references: Vec<SidecarMaskAssetRef>,
     scene_depth_asset: Option<usize>,
+    scene_normal_assets: Option<[usize; 2]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -419,6 +423,7 @@ pub fn encode_with_review_and_editing_time(
         mask_assets: mask_assets.assets,
         mask_asset_refs: mask_assets.references,
         scene_depth_asset: mask_assets.scene_depth_asset,
+        scene_normal_assets: mask_assets.scene_normal_assets,
         remove_assets,
         remove_asset_refs,
     };
@@ -478,6 +483,7 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
         &document.mask_assets,
         &document.mask_asset_refs,
         document.scene_depth_asset,
+        document.scene_normal_assets,
     )?;
     restore_remove_assets(
         &mut document.edits,
@@ -511,6 +517,11 @@ use validation::{invalid, validate_image};
 fn validate_scene_depth(masks: &MaskStack) -> Result<(), SidecarError> {
     if let Some(image) = &masks.scene_depth {
         validate_image(image.width, image.height, image.pixels.len(), 1)?;
+    }
+    if let Some(normals) = &masks.scene_normals {
+        for image in [normals.x(), normals.y()] {
+            validate_image(image.width, image.height, image.pixels.len(), 1)?;
+        }
     }
     Ok(())
 }

@@ -50,21 +50,21 @@ impl RawGpuPipeline {
         )
     }
 
-    pub(crate) fn update_light_rays_mask_layer(
+    pub(crate) fn update_full_image_mask_layer(
         &self,
         queue: &wgpu::Queue,
         layer: usize,
         values: &[u16],
     ) -> Result<()> {
-        self.check_mask_layer(layer, "Light Rays mask")?;
-        let edge = LIGHT_RAYS_MASK_ATLAS_EDGE;
+        self.check_mask_layer(layer, "full-image mask")?;
+        let edge = FULL_IMAGE_MASK_ATLAS_EDGE;
         write_r16_mask_layer(
             queue,
-            &self.light_rays_mask_texture,
+            &self.full_image_mask_texture,
             layer,
             [edge, edge],
             values,
-            "Light Rays mask layer",
+            "full-image mask layer",
         )
     }
 
@@ -80,7 +80,7 @@ impl RawGpuPipeline {
         Ok(())
     }
 
-    pub fn update_light_rays_mask_layers(
+    pub fn update_full_image_mask_layers(
         &self,
         queue: &wgpu::Queue,
         masks: &MaskStack,
@@ -88,7 +88,7 @@ impl RawGpuPipeline {
         image_height: u32,
         lens_geometry: Option<&LensGeometryMap>,
     ) -> Result<()> {
-        self.update_dirty_light_rays_mask_layers(
+        self.update_dirty_full_image_mask_layers(
             queue,
             masks,
             image_width,
@@ -98,9 +98,9 @@ impl RawGpuPipeline {
         )
     }
 
-    /// Refresh emission masks only for changed layers. Full uploads (including
+    /// Refresh full-image masks only for changed layers. Full uploads (including
     /// newly built pipelines and exports) pass `None` to initialize every layer.
-    pub fn update_dirty_light_rays_mask_layers(
+    pub fn update_dirty_full_image_mask_layers(
         &self,
         queue: &wgpu::Queue,
         masks: &MaskStack,
@@ -109,14 +109,14 @@ impl RawGpuPipeline {
         lens_geometry: Option<&LensGeometryMap>,
         dirty_layers: Option<&[bool; MAX_LOCAL_MASKS]>,
     ) -> Result<()> {
-        let edge = LIGHT_RAYS_MASK_ATLAS_EDGE;
+        let edge = FULL_IMAGE_MASK_ATLAS_EDGE;
         for (layer, mask) in masks
             .masks
             .iter()
             .take(self.mask_layer_capacity)
             .enumerate()
         {
-            if dirty_layers.is_some_and(|dirty| !dirty[layer]) || !mask.has_light_rays_effect() {
+            if dirty_layers.is_some_and(|dirty| !dirty[layer]) || !mask.reads_full_image_mask() {
                 continue;
             }
             let values = masks.rasterize_layer_region_f16(
@@ -126,7 +126,7 @@ impl RawGpuPipeline {
                 [image_width, image_height],
                 lens_geometry,
             );
-            self.update_light_rays_mask_layer(queue, layer, &values)?;
+            self.update_full_image_mask_layer(queue, layer, &values)?;
         }
         Ok(())
     }

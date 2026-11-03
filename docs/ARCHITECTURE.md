@@ -164,7 +164,7 @@ GPU readbacks wait on one-slot channels.
 | out-of-memory records | `calibraw_ai::placement::out_of_memory` | AI jobs, also under the model runtime slot; Settings when GPU AI is switched | which models ran out of GPU memory and when they may retry; a leaf lock, never held while a session is created or run |
 | AI settings (`RwLock`) | `calibraw_ai::config` | the UI thread writes at startup and on Settings changes; AI jobs read | runtime source and model root; never held across a load or download |
 | `SHARED_SURFACE` | `calibraw_gpu` scene-depth upload | any thread uploading scene depth: preview pipelines on the UI thread, export workers | the relighting surface is derived once per depth result and shared by every pipeline; held while deriving, so a concurrent upload of the same result waits instead of repeating it |
-| effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates scene depth, Relight's shadow map, the image-light map, haze map or scene map the first time an effect reads them, and the LUT texture when a LUT is uploaded, and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
+| effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates scene depth, Relight's shadow map, the image-light map, haze map, scene map, contour grid or scene emission textures the first time an effect reads them, and the LUT texture when a LUT is uploaded, and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
 | LUT cache | `calibraw_core::luts::LutStore`, shared by its clones | the UI thread, document loads, batch export and thumbnail workers | the recently parsed LUTs; a leaf lock, never held while a file is read or parsed |
 | `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
 | decoded-RAW cache state and condvar | `DecodedRawCache` | document loads and the prefetch worker | short critical sections; decodes run unlocked, and a second request for a decoding entry waits on the condvar |
@@ -267,6 +267,23 @@ scene, so an effect may read any of it whichever pass it runs in:
   level, the photo's coarse colour and the light sources in the photo.
 - `scene_lights.wgsl` turns Relight and Light Rays into lights any effect receives,
   and `medium.wgsl` is what Fog, Smoke and Rain's mist share to scatter them.
+- `scene_shadows.wgsl` says how much of each of those lights reaches a point past the
+  surfaces depth describes: one full-image map, traced in the output stage only when
+  depth or a light's placement changes (`GpuParams::scene_shadow_map_key`), holds the
+  surface and slices of the air for up to four lights. Every receiver reads it
+  (`scene_shadow_air_at`, `scene_shadow_surface_at`), so a light behind a subject
+  lights nothing in front of it; Relight's own shading applies it with its Shadows
+  strength.
+- `scene_emission.wgsl` makes effects that emit over an area (a self-illuminating
+  Glow, Neon's lines) lights too. Each emitter gives its radiance at a full-image
+  point from full-image inputs only (its parameters, its mask in the full-image mask
+  atlas, the contour grid of the tone stage), so every export tile and zoomed view
+  builds the same coarse emitter grid at the start of its output stage. Two passes
+  then spread that grid with inverse-square falloff over the scene's surfaces and
+  along view rays through the media's depth cells, and receivers read only those
+  maps, whatever the number of emitters. A new emitter is one case in
+  `scene_emission_slot_at` and `scene_emission_present`, and one in
+  `MaskEffect::reads_full_image_mask`.
 
 All of it but the lights comes from the scene map (`scene_analysis.wgsl`), a
 `FullImageMap` holding the photo's coarse colour, a guided filter's coefficients that

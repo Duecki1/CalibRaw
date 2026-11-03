@@ -253,7 +253,7 @@ impl Sidebar {
                 }
                 if let Some(mask_index) = app.masks.stack.selected_mask {
                     let mask = &mut app.masks.stack.masks[mask_index];
-                    let light_rays_before = mask.has_light_rays_effect();
+                    let full_image_mask_before = mask.reads_full_image_mask();
                     let selected_before = app.develop_ui.mask_effect_component;
                     let added = Self::show_mobile_effect_tabs(
                         ui,
@@ -270,7 +270,7 @@ impl Sidebar {
                     if added {
                         app.develop_ui.mask_section = MaskSection::Effects;
                         let mask = &app.masks.stack.masks[mask_index];
-                        if light_rays_before != mask.has_light_rays_effect() {
+                        if full_image_mask_before != mask.reads_full_image_mask() {
                             app.mark_mask_geometry_dirty(mask_index);
                         } else {
                             app.mark_mask_adjustments_dirty();

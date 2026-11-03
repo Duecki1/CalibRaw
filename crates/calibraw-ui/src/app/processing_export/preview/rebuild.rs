@@ -209,7 +209,7 @@ impl CalibRawApp {
             ));
         }
         pipeline
-            .update_light_rays_mask_layers(
+            .update_full_image_mask_layers(
                 queue,
                 masks,
                 raw.width,
@@ -218,7 +218,7 @@ impl CalibRawApp {
             )
             .map_err(|error| {
                 tr_fmt(
-                    "Could not update Light Rays mask: {error}",
+                    "Could not update the effect mask: {error}",
                     &[("error", &format!("{error:#}"))],
                 )
             })?;
@@ -255,7 +255,7 @@ impl CalibRawApp {
                 })?;
         }
         pipeline
-            .update_dirty_light_rays_mask_layers(
+            .update_dirty_full_image_mask_layers(
                 queue,
                 masks,
                 full_raw.width,
@@ -265,7 +265,7 @@ impl CalibRawApp {
             )
             .map_err(|error| {
                 tr_fmt(
-                    "Could not update zoomed Light Rays mask: {error}",
+                    "Could not update the zoomed effect mask: {error}",
                     &[("error", &format!("{error:#}"))],
                 )
             })?;
@@ -302,7 +302,7 @@ impl CalibRawApp {
                 })?;
         }
         pipeline
-            .update_dirty_light_rays_mask_layers(
+            .update_dirty_full_image_mask_layers(
                 queue,
                 masks,
                 raw.width,
@@ -312,7 +312,7 @@ impl CalibRawApp {
             )
             .map_err(|error| {
                 tr_fmt(
-                    "Could not update Light Rays mask: {error}",
+                    "Could not update the effect mask: {error}",
                     &[("error", &format!("{error:#}"))],
                 )
             })?;

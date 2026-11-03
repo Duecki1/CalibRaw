@@ -3,21 +3,6 @@ const LIGHT_RAY_PI: f32 = 3.141592653589793;
 // Packed parameter lanes: `LIGHT_RAYS_<NAME>_LANE` (generated from the effect
 // registry, effect_wgsl.rs).
 
-fn light_ray_emission_at(uv: vec2<f32>, mask_index: u32) -> f32 {
-    let layer = Common::mask_data[mask_index].point_color_meta.z;
-    if layer == 0xffffffffu { return 1.0; }
-    // Extending boundary coverage keeps an off-frame manual source continuous.
-    let atlas_size = vec2<f32>(textureDimensions(SceneAdjustments::light_rays_mask_tex));
-    let half_texel = vec2<f32>(0.5) / atlas_size;
-    return textureSampleLevel(
-        SceneAdjustments::light_rays_mask_tex,
-        SceneAdjustments::local_mask_sampler,
-        clamp(uv, half_texel, vec2<f32>(1.0) - half_texel),
-        i32(layer),
-        0.0,
-    ).x;
-}
-
 fn light_ray_hash(cell: u32, seed: u32) -> f32 {
     return mask_effect_hash_unit(cell * 1597334677u ^ seed * 3812015801u);
 }
@@ -89,7 +74,7 @@ fn light_ray_path_energy(
     if visible_end <= 1e-6 { return 0.0; }
     let perpendicular = vec2<f32>(-radial_pixels.y, radial_pixels.x) / max(radial_length, 1.0);
     let cone_slope = tan(radians(spread * 0.5));
-    let atlas_size = vec2<f32>(textureDimensions(SceneAdjustments::light_rays_mask_tex));
+    let atlas_size = vec2<f32>(textureDimensions(SceneAdjustments::full_image_mask_tex));
     let path_texels = length(path * visible_end * atlas_size);
     let tap_count = u32(clamp(ceil(path_texels), 32.0, 192.0));
     var energy = 0.0;
@@ -103,9 +88,9 @@ fn light_ray_path_energy(
         let base_uv = mix(output_uv, source_uv, progress);
         let side = perpendicular * radial_length * (1.0 - progress)
             * cone_slope * sin(LIGHT_RAY_PI * t) * 0.25 / full_size;
-        let center = light_ray_emission_at(base_uv, mask_index);
-        let sides = 0.5 * (light_ray_emission_at(base_uv - side, mask_index)
-            + light_ray_emission_at(base_uv + side, mask_index));
+        let center = SceneAdjustments::full_image_mask_weight(base_uv, mask_index);
+        let sides = 0.5 * (SceneAdjustments::full_image_mask_weight(base_uv - side, mask_index)
+            + SceneAdjustments::full_image_mask_weight(base_uv + side, mask_index));
         let weight = 0.35 + t * t * 1.65;
         energy += mix(center, sides, softness * 0.55) * weight;
         weights += weight;

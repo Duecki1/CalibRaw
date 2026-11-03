@@ -7,7 +7,7 @@ Reference outputs of `crates/calibraw-ai/tests/parity.rs`, from CPU sessions.
 | Files | Content |
 |---|---|
 | `subject-*.png`, `sky.png`, `object*.png`, `people-*.png` | Probability masks, 8-bit grayscale |
-| `depth.png` | Relative depth, 8-bit grayscale |
+| `depth-low*.png`, `depth-medium*.png` | Relative depth with the sky farthest, 8-bit grayscale, and the x and y of the normals predicted with it (MoGe-2 ViT-S for Low, ViT-L for Medium), 8-bit grayscale stored as `round(127 n) + 128` |
 | `denoise-bayer.png` | Denoised RAW sensor codes, 16-bit grayscale |
 | `denoise-xtrans.png` | Camera RGB; 16-bit samples are IEEE float16 bit patterns |
 | `remove.png`, `remove-alpha.png`, `remove-origin.txt` | The Remove patch as float16 RGB, its alpha, and its position in the crop |

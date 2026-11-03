@@ -41,17 +41,20 @@ const FOG_LIGHT_ANISOTROPY: f32 = 0.6;
 // Light from scene lights that the medium scatters toward the camera, relative to
 // the ambient level, before its albedo and Light glow. Single scattering: each cell
 // scatters what its extinction removes from the light, attenuated by the medium
-// between it and the camera. Light reaching the medium is not shadowed.
+// between it and the camera. With `shadowed`, surfaces between a cell and a light
+// shadow it at the cell's middle (scene_shadows.wgsl).
 fn medium_light_scattering(
     pos: vec2<i32>,
     volume: MediumVolume,
     distance: f32,
     extinction: f32,
+    shadowed: bool,
 ) -> vec3<f32> {
     if !scene_lights_present() { return vec3<f32>(0.0); }
     // Per cell: near and far depth, extinction per unit depth, and the
     // transmission from the camera to the cell's middle.
     var cells: array<vec4<f32>, MEDIUM_CELLS>;
+    var shadows: array<vec4<f32>, MEDIUM_CELLS>;
     var through = 0.0;
     let step = 1.0 / f32(MEDIUM_CELLS);
     for (var i = 0u; i < MEDIUM_CELLS; i = i + 1u) {
@@ -71,6 +74,10 @@ fn medium_light_scattering(
         let optical_depth = extinction * segment * bank_density;
         cells[i] = vec4<f32>(lo, hi, optical_depth / (hi - lo), exp(-(through + 0.5 * optical_depth)));
         through += optical_depth;
+        shadows[i] = vec4<f32>(1.0);
+        if shadowed {
+            shadows[i] = scene_shadow_air_at(pos, 0.5 * (lo + hi));
+        }
     }
 
     let uv = full_image_uv(pos);
@@ -89,9 +96,17 @@ fn medium_light_scattering(
                 light.camera, point, scene_depth_z(light.camera, 0.5 * (cell.x + cell.y)),
             );
             received += cell.z * cell.w * scene_light_phase_at(light, middle, FOG_LIGHT_ANISOTROPY)
-                * scene_light_falloff_along(light, point, cell.x, cell.y);
+                * scene_light_falloff_along(light, point, cell.x, cell.y)
+                * scene_shadow_of(shadows[i], light);
         }
         scattered += light.intensity * (received * coverage);
+    }
+    if scene_emission_present() {
+        for (var i = 0u; i < MEDIUM_CELLS; i = i + 1u) {
+            let cell = cells[i];
+            if cell.z <= 0.0 { continue; }
+            scattered += scene_emission_medium(uv, i, cell.x, cell.y) * (cell.z * cell.w);
+        }
     }
     return scattered;
 }

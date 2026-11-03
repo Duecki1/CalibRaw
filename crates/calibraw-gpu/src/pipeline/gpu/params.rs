@@ -2,7 +2,7 @@
 
 use super::ground_plane::estimate_ground_horizon;
 use super::*;
-use crate::pipeline::effect_lanes::{glow, pixelate, relight};
+use crate::pipeline::effect_lanes::{glow, light_rays, neon, pixelate, relight};
 use crate::pipeline::{EffectOption, EffectPass, Lane, SceneMapUse};
 
 #[repr(C)]
@@ -348,12 +348,13 @@ impl MaskData {
 /// Up in the output frame.
 const OUTPUT_UP: [f32; 2] = [0.0, -1.0];
 
-/// Inputs of the relight shadow map besides scene depth
-/// (`GpuParams::relight_shadow_map_key`).
+/// Inputs of the scene shadow map besides scene depth
+/// (`GpuParams::scene_shadow_map_key`).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct RelightShadowMapKey {
+pub(super) struct SceneShadowMapKey {
     full_size: [u32; 2],
-    lights: [Option<[f32; 5]>; RELIGHT_SHADOW_MAP_CHANNELS],
+    /// Per channel: the light's effect and the lanes that place it.
+    lights: [Option<(MaskEffect, [f32; 5])>; SCENE_SHADOW_MAP_CHANNELS],
 }
 
 #[derive(Clone, Debug)]
@@ -363,6 +364,9 @@ pub struct GpuParams {
     pub(super) effects: EffectsUniforms,
     mask_data: Box<[MaskData]>,
     pub(super) scene_depth: Option<MaskImage>,
+    /// The normals predicted with `scene_depth`, when it is the stack's own
+    /// scene depth rather than a Depth Range mask's.
+    pub(super) scene_normals: Option<SceneNormals>,
     /// The LUT `scene_tone.look_lut` describes, uploaded with the parameters.
     look_lut: Option<Arc<CubeLut>>,
     /// The camera profile `camera` describes, whose tables the pipeline
@@ -405,6 +409,22 @@ impl GpuParams {
 /// `mask_glow_self_illuminating` in `mask_effects/glow.wgsl`.
 pub(super) fn is_self_illuminating_glow(mask: &MaskData) -> bool {
     mask.applies(MaskEffect::Glow) && mask.lane(glow::SELF_ILLUMINATING) > 0.5
+}
+
+/// A Glow slot that lights the scene. Mirrors `mask_glow_lights_scene` in
+/// `mask_effects/glow.wgsl`.
+fn glow_lights_scene(mask: &MaskData) -> bool {
+    is_self_illuminating_glow(mask)
+        && (mask.lane(glow::AMOUNT) / 100.0).clamp(0.0, 1.0) > 1e-6
+        && (mask.lane(glow::SCENE_LIGHT) / 100.0).clamp(0.0, 1.0) > 1e-6
+}
+
+/// A Neon slot that lights the scene. Mirrors `neon_lights_scene` in
+/// `mask_effects/neon.wgsl`.
+fn neon_lights_scene(mask: &MaskData) -> bool {
+    mask.applies(MaskEffect::Neon)
+        && (mask.lane(neon::AMOUNT) / 100.0).clamp(0.0, 1.0) > 1e-6
+        && (mask.lane(neon::SCENE_LIGHT) / 100.0).clamp(0.0, 1.0) > 1e-6
 }
 
 pub(super) fn split_eight(values: [f32; 8]) -> ([f32; 4], [f32; 4]) {
@@ -625,6 +645,7 @@ impl GpuParams {
             effects: pack_effect_params(&context, &mask_data),
             mask_data,
             scene_depth: masks.scene_depth_image().cloned(),
+            scene_normals: masks.scene_depth.as_ref().and(masks.scene_normals.clone()),
             look_lut: None,
             profile_color: Arc::clone(profile_color),
         };
@@ -902,17 +923,33 @@ impl GpuParams {
 
     /// Whether an effect reads the scene map ([`MaskEffect::scene_map`]): Fog,
     /// Smoke and Relight while scene depth is present, and Rain and Wet
-    /// Surfaces, which fall back on the map's environment without it.
+    /// Surfaces, which fall back on the map's environment without it. Light
+    /// that Glow and Neon emit reads it on surfaces while depth is present.
     fn needs_scene_map(&self) -> bool {
         let depth_present = self.scene_tone.scene_depth_present != 0;
+        (depth_present && self.needs_scene_emission())
+            || self
+                .mask_slots()
+                .iter()
+                .filter_map(MaskData::active_effect)
+                .any(|effect| match effect.scene_map() {
+                    SceneMapUse::Never => false,
+                    SceneMapUse::WithDepth => depth_present,
+                    SceneMapUse::Always => true,
+                })
+    }
+
+    /// Whether an effect lights the scene by emission (scene_emission.wgsl),
+    /// so the output stage builds its light. Mirrors `scene_emission_present`.
+    pub(super) fn needs_scene_emission(&self) -> bool {
         self.mask_slots()
             .iter()
-            .filter_map(MaskData::active_effect)
-            .any(|effect| match effect.scene_map() {
-                SceneMapUse::Never => false,
-                SceneMapUse::WithDepth => depth_present,
-                SceneMapUse::Always => true,
-            })
+            .any(|mask| glow_lights_scene(mask) || neon_lights_scene(mask))
+    }
+
+    /// Whether a Neon slot lights the scene, which reads the contour grid.
+    fn needs_contours(&self) -> bool {
+        self.mask_slots().iter().any(neon_lights_scene)
     }
 
     /// Whether an effect reads `map`, which the tone stage, or the export tone
@@ -922,45 +959,62 @@ impl GpuParams {
             FullImageMap::ImageLights => self.needs_image_lights(),
             FullImageMap::Haze => self.needs_haze(),
             FullImageMap::Scene => self.needs_scene_map(),
+            FullImageMap::Contours => self.needs_contours(),
         }
     }
 
-    /// Whether an active Relight or Wet Surfaces effect in a visible slot reads
-    /// the surface derived from scene depth. Mirrors the slot checks of
-    /// `scene_light_at` in scene_lights.wgsl.
+    /// Whether an active Relight or Wet Surfaces effect in a visible slot, or
+    /// light that Glow and Neon emit, reads the surface derived from scene
+    /// depth. Mirrors the slot checks of `scene_light_at` in scene_lights.wgsl
+    /// and `scene_emission_present` in scene_emission.wgsl.
     pub(super) fn needs_scene_surface(&self) -> bool {
-        self.mask_slots()
-            .iter()
-            .any(|mask| mask.applies(MaskEffect::Relight) || mask.applies(MaskEffect::WetSurfaces))
+        self.needs_scene_emission()
+            || self.mask_slots().iter().any(|mask| {
+                mask.applies(MaskEffect::Relight) || mask.applies(MaskEffect::WetSurfaces)
+            })
     }
 
-    /// What the relight shadow map depends on besides scene depth: the frame
-    /// and, per channel, the light's position, depth, size and relief. `None`
-    /// when no light uses the map. Amount, reach, colour, ambient and shadow
-    /// strength are applied per pixel and leave the map valid.
-    pub(super) fn relight_shadow_map_key(&self) -> Option<RelightShadowMapKey> {
+    /// What the scene shadow map depends on besides scene depth: the frame
+    /// and, per channel, the light's position and, for Relight, its depth,
+    /// size and relief. `None` when nothing reads the map: no light, or
+    /// neither a receiver of scene light nor a Relight casting shadows.
+    /// Amount, reach, colour, ambient and shadow strength are applied per pixel
+    /// and leave the map valid.
+    pub(super) fn scene_shadow_map_key(&self) -> Option<SceneShadowMapKey> {
         if self.scene_tone.scene_depth_present == 0 {
             return None;
         }
-        let mut lights = [None; RELIGHT_SHADOW_MAP_CHANNELS];
-        for mask in self.mask_slots() {
-            if let Some(channel) = relight_shadow_channel(mask) {
-                lights[channel] = Some(
-                    [
-                        relight::SOURCE_X,
-                        relight::SOURCE_Y,
-                        relight::DEPTH,
-                        relight::SIZE,
-                        relight::RELIEF,
-                    ]
-                    .map(|lane| mask.lane(lane)),
-                );
-            }
+        let slots = self.mask_slots();
+        let read = slots
+            .iter()
+            .any(|mask| receives_scene_light(mask) || relight_casts_shadows(mask));
+        if !read {
+            return None;
+        }
+        let mut lights = [None; SCENE_SHADOW_MAP_CHANNELS];
+        for mask in slots {
+            let Some(channel) = scene_light_channel(mask) else {
+                continue;
+            };
+            lights[channel] = if mask.applies(MaskEffect::Relight) {
+                let lanes = [
+                    relight::SOURCE_X,
+                    relight::SOURCE_Y,
+                    relight::DEPTH,
+                    relight::SIZE,
+                    relight::RELIEF,
+                ];
+                Some((MaskEffect::Relight, lanes.map(|lane| mask.lane(lane))))
+            } else {
+                let source =
+                    [light_rays::SOURCE_X, light_rays::SOURCE_Y].map(|lane| mask.lane(lane));
+                Some((MaskEffect::LightRays, [source[0], source[1], 0.0, 0.0, 0.0]))
+            };
         }
         lights
             .iter()
             .any(Option::is_some)
-            .then_some(RelightShadowMapKey {
+            .then_some(SceneShadowMapKey {
                 full_size: [self.camera.full_width, self.camera.full_height],
                 lights,
             })

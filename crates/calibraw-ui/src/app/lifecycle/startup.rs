@@ -219,6 +219,7 @@ impl CalibRawApp {
             ai: AiState {
                 subject_mask_quality: performance.subject_mask_quality,
                 people_mask_quality: performance.people_mask_quality,
+                scene_depth_quality: performance.scene_depth_quality,
                 gpu_acceleration: performance.ai_gpu_acceleration,
                 update_needed: false,
                 update: None,
@@ -405,7 +406,7 @@ impl CalibRawApp {
     /// Removes a file or folder an older version left in app data and nothing
     /// reads any more, on a background thread so start-up does not wait.
     ///
-    /// migration: remove in v1.5.0, with the last of its callers. Listed in
+    /// migration: remove in v1.7.0, with the last of its callers. Listed in
     /// `calibraw_core`'s `migrations`.
     pub(in crate::app) fn remove_retired_app_data(path: PathBuf, description: &'static str) {
         let spawned = std::thread::Builder::new()
@@ -540,6 +541,7 @@ impl CalibRawApp {
         if caps.is_desktop() {
             app.remove_retired_onnx_runtimes();
         }
+        app.remove_retired_depth_model();
         // Where the runtime is built in (Android), GPU providers are always
         // allowed and no GPU job record is kept.
         let interrupted_gpu_ai = calibraw_ai::configure(calibraw_ai::AiConfig {

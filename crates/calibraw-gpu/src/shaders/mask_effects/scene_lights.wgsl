@@ -4,11 +4,14 @@
 //
 // Emitters. `scene_light_at` turns an effect slot into a light: Relight's
 // point light, and the Light Rays source as a distant light behind the scene.
-// A new emitter is one more case there. Receivers loop over the effect slots
+// A new emitter is one more case there. Effects that emit over an area of the
+// image (a self-illuminating Glow, Neon) are lights of scene_emission.wgsl,
+// which receivers add through the same functions. Receivers loop over the effect slots
 // (`Common::mask_slot_count`), skip lights that do not emit and weight each light by
 // `scene_light_coverage`. Fog, Smoke and Rain's mist scatter it (medium.wgsl), and
 // drops and wet ground reflect it. `scene_light_received` is the loop for a point
-// that scatters what arrives.
+// that scatters what arrives. Surfaces between a receiver and a light shadow it
+// (scene_shadows.wgsl).
 //
 // Scene frame. Lights and receivers share a pinhole camera in relative units:
 // x right and y down as in the image, z forward, the nearest surface at z = 1
@@ -81,12 +84,15 @@ struct SceneLight {
     intensity: vec3<f32>,
     // The effect slot whose mask confines the light, or SCENE_LIGHT_UNCONFINED.
     confined_to: u32,
+    // Its channel of the scene shadow map plus one, or 0 when the map does not
+    // hold it (`scene_shadow_channel`).
+    channel: u32,
 }
 
 fn scene_light_inactive() -> SceneLight {
     return SceneLight(
         false, SceneCamera(vec2<f32>(1.0), 1.0), vec3<f32>(0.0), 1.0, vec3<f32>(0.0),
-        SCENE_LIGHT_UNCONFINED,
+        SCENE_LIGHT_UNCONFINED, 0u,
     );
 }
 
@@ -109,6 +115,7 @@ fn relight_scene_light(params: MaskEffectParams) -> SceneLight {
         mask_effect_picker_color_to_working(mask_effect_color(params, RELIGHT_COLOR_LANE))
             * (amount * SCENE_LIGHT_GAIN),
         SCENE_LIGHT_UNCONFINED,
+        scene_shadow_channel(params),
     );
 }
 
@@ -130,6 +137,7 @@ fn light_rays_scene_light(params: MaskEffectParams) -> SceneLight {
         mask_effect_picker_color_to_working(mask_effect_color(params, LIGHT_RAYS_COLOR_LANE))
             * (amount * SCENE_LIGHT_GAIN * LIGHT_RAYS_LIGHT_INTENSITY),
         SCENE_LIGHT_UNCONFINED,
+        scene_shadow_channel(params),
     );
 }
 
@@ -153,14 +161,15 @@ fn scene_light_at(index: u32) -> SceneLight {
     return scene_light_inactive();
 }
 
-// Whether any effect slot emits a scene light. It is the same for every
-// pixel, so receivers skip their per-pixel setup (depth reads, volume cells)
-// when there is nothing to receive.
+// Whether any effect slot emits a scene light or emits light over an area
+// (scene_emission.wgsl). It is the same for every pixel, so receivers skip
+// their per-pixel setup (depth reads, volume cells) when there is nothing to
+// receive.
 fn scene_lights_present() -> bool {
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
         if scene_light_at(index).emits { return true; }
     }
-    return false;
+    return scene_emission_present();
 }
 
 // How much of a light acts at an image pixel: its mask's coverage when the
@@ -221,8 +230,15 @@ fn scene_light_phase_at(light: SceneLight, position: vec3<f32>, anisotropy: f32)
 }
 
 // Light from every scene light that a point on the view ray of pixel `pos`, at
-// `depth`, scatters toward the camera, relative to the ambient level.
-fn scene_light_received(pos: vec2<i32>, depth: f32, anisotropy: f32) -> vec3<f32> {
+// `depth`, scatters toward the camera, relative to the ambient level. `shadows`
+// says how much of each light reaches the point (scene_shadows.wgsl), or is 1
+// where surfaces do not count.
+fn scene_light_received(
+    pos: vec2<i32>,
+    depth: f32,
+    anisotropy: f32,
+    shadows: vec4<f32>,
+) -> vec3<f32> {
     let uv = full_image_uv(pos);
     var received = vec3<f32>(0.0);
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
@@ -234,7 +250,11 @@ fn scene_light_received(pos: vec2<i32>, depth: f32, anisotropy: f32) -> vec3<f32
             light.camera, uv * light.camera.image_size, scene_depth_z(light.camera, depth),
         );
         received += light.intensity * (scene_light_falloff(light, position)
-            * scene_light_phase_at(light, position, anisotropy) * coverage);
+            * scene_light_phase_at(light, position, anisotropy) * coverage
+            * scene_shadow_of(shadows, light));
+    }
+    if scene_emission_present() {
+        received += scene_emission_received(pos, depth, anisotropy);
     }
     return received;
 }

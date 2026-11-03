@@ -10,6 +10,7 @@ pub mod masks;
 pub mod object;
 pub mod people;
 pub mod remove;
+pub mod scene_geometry;
 pub mod sky;
 pub mod subject;
 
@@ -50,6 +51,18 @@ pub(crate) fn normalized_rgb_input(resized: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> 
         }
     }
     Ok(input)
+}
+
+/// The input size, width and height, of a model that sees a `width` ×
+/// `height` photo scaled to `edge` pixels on its longer side, the aspect
+/// ratio kept, each side rounded up to a multiple of `multiple`.
+pub(crate) fn fitted_input_size(edge: u32, multiple: u32, width: u32, height: u32) -> (u32, u32) {
+    let scale = f64::from(edge) / f64::from(width.max(height));
+    let side = |extent: u32| {
+        let patches = (f64::from(extent) * scale / f64::from(multiple)).ceil() as u32;
+        patches.clamp(1, edge / multiple) * multiple
+    };
+    (side(width), side(height))
 }
 
 /// The probability a logit stands for, without overflow for large ones.

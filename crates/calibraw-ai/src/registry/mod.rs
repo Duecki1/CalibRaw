@@ -22,6 +22,8 @@ pub(crate) enum AiModel {
     BiRefNetLowFp16,
     SkySeg,
     Depth,
+    SceneGeometryLow,
+    SceneGeometryMedium,
     SamEncoder,
     SamDecoder,
     BigLama,
@@ -40,6 +42,8 @@ impl AiModel {
             Self::BiRefNetLowFp16 => &BIREFNET_LOW_FP16,
             Self::SkySeg => &SKYSEG,
             Self::Depth => &DEPTH,
+            Self::SceneGeometryLow => &SCENE_GEOMETRY_LOW,
+            Self::SceneGeometryMedium => &SCENE_GEOMETRY_MEDIUM,
             Self::SamEncoder => &SAM_ENCODER,
             Self::SamDecoder => &SAM_DECODER,
             Self::BigLama => &BIG_LAMA,
@@ -132,6 +136,9 @@ pub enum InputShape {
     /// The photo or crop scaled to `width` x `height` pixels, whatever its
     /// aspect ratio.
     Stretched { width: u32, height: u32 },
+    /// The photo or crop scaled to `edge` pixels on its longer side, keeping
+    /// its aspect ratio, with each side rounded to a multiple of `multiple`.
+    Fitted { edge: u32, multiple: u32 },
 }
 
 impl InputShape {
@@ -139,7 +146,7 @@ impl InputShape {
     /// or the frame prompts are placed in.
     pub const fn edge(self) -> u32 {
         match self {
-            Self::Square { edge } | Self::Prompted { edge, .. } => edge,
+            Self::Square { edge } | Self::Prompted { edge, .. } | Self::Fitted { edge, .. } => edge,
             Self::Tiled { tile, .. } => tile,
             Self::Stretched { width, height } => {
                 if width > height {
@@ -347,25 +354,88 @@ const SKYSEG: ModelSpec = ModelSpec {
     retention: ModelRetention::WhileWarm,
 };
 
-/// Depth Anything V2 Small on every platform. It predicts inverse depth
-/// (high values near) from an NCHW image and returns `[1, height, width]`.
+/// Distill-Any-Depth Small (Depth Anything V2 Small architecture) on every
+/// platform, exported by `packaging/models/distill_any_depth_export.py`. It
+/// predicts inverse depth (high values near) from an NCHW image of any size
+/// whose sides are multiples of its 14-pixel patches and returns
+/// `[1, height, width]`.
 const DEPTH: ModelSpec = ModelSpec {
     id: AiModel::Depth,
     feature: AiFeature::SceneDepth,
     artifact: ModelArtifact {
-        name: "Depth Anything V2 Small",
-        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/da2/depth_anything_v2_small_fp32.onnx"),
-        sha256: "afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c",
-        bytes: 99_060_839,
-        cache_filename: "depth_anything_v2_small_fp32.onnx",
+        name: "Distill-Any-Depth Small",
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/distill/distill_any_depth_small_fp32.onnx"),
+        sha256: "ecc33ae26a7899e37dd4edd846d6e553ecafe335b2b97cf129930c840d139093",
+        bytes: 99_487_619,
+        cache_filename: "distill_any_depth_small_fp32.onnx",
     },
     source: ModelSource::Download {
         options: MASK_MODEL_DOWNLOAD,
-        progress_label: "Depth Anything V2 Small",
+        progress_label: "Distill-Any-Depth Small",
     },
-    input: InputShape::Square { edge: 518 },
-    // Measured 530 MiB.
-    session: SessionOptions::new("Depth Anything V2 Small").with_gpu_memory(measured_peak(600)),
+    input: InputShape::Fitted {
+        edge: 1540,
+        multiple: 14,
+    },
+    // Measured at 1540 × 1036: 6.3 GiB on the GPU, as the device's used memory
+    // above idle, since WebGPU keeps every attention head's score matrix the
+    // export computes one at a time; 1.86 GiB resident on the CPU provider.
+    session: SessionOptions::new("Distill-Any-Depth Small").with_gpu_memory(measured_peak(6300)),
+    retention: ModelRetention::WhileWarm,
+};
+
+/// MoGe-2 ViT-S with normals, the authors' ONNX export, for the Low scene-depth
+/// quality. Inputs `image` (NCHW RGB in [0, 1], any size) and `num_tokens`,
+/// the patch count the model resizes the image to; among its outputs, `normal`
+/// is `[1, height, width, 3]` and `mask` `[1, height, width]`, the
+/// probability that a pixel has geometry rather than being sky.
+const SCENE_GEOMETRY_LOW: ModelSpec = ModelSpec {
+    id: AiModel::SceneGeometryLow,
+    feature: AiFeature::SceneDepth,
+    artifact: ModelArtifact {
+        name: "MoGe-2 ViT-S",
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/moge/moge-2-vits-normal.onnx"),
+        sha256: "24eacb5dc7a2c54c7bc98f7de085ffbed79ad006ea5b664c2c2cdc02ff3a52f0",
+        bytes: 140_852_051,
+        cache_filename: "moge-2-vits-normal.onnx",
+    },
+    source: ModelSource::Download {
+        options: MASK_MODEL_DOWNLOAD,
+        progress_label: "MoGe-2 ViT-S",
+    },
+    input: InputShape::Fitted {
+        edge: 1036,
+        multiple: 14,
+    },
+    // Measured at 700 × 1036 with 2400 tokens: 1.5 GiB on the GPU, as the
+    // device's used memory above idle.
+    session: SessionOptions::new("MoGe-2 ViT-S").with_gpu_memory(measured_peak(1500)),
+    retention: ModelRetention::WhileWarm,
+};
+
+/// MoGe-2 ViT-L with normals, the authors' ONNX export, for the Medium
+/// scene-depth quality; the same interface as `SCENE_GEOMETRY_LOW`.
+const SCENE_GEOMETRY_MEDIUM: ModelSpec = ModelSpec {
+    id: AiModel::SceneGeometryMedium,
+    feature: AiFeature::SceneDepth,
+    artifact: ModelArtifact {
+        name: "MoGe-2 ViT-L",
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/moge/moge-2-vitl-normal.onnx"),
+        sha256: "afbc4ccc3450298f3afb35b90f015f4c4f552dea21dc6470d5f7b78b77e2d751",
+        bytes: 1_324_265_014,
+        cache_filename: "moge-2-vitl-normal.onnx",
+    },
+    source: ModelSource::Download {
+        options: MASK_MODEL_DOWNLOAD,
+        progress_label: "MoGe-2 ViT-L",
+    },
+    input: InputShape::Fitted {
+        edge: 1036,
+        multiple: 14,
+    },
+    // Measured at 700 × 1036 with 3600 tokens: 4.8 GiB on the GPU, as the
+    // device's used memory above idle.
+    session: SessionOptions::new("MoGe-2 ViT-L").with_gpu_memory(measured_peak(4800)),
     retention: ModelRetention::WhileWarm,
 };
 

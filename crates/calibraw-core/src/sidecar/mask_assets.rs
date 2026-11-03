@@ -90,6 +90,15 @@ pub(super) fn extract_mask_assets(edits: &mut EditState) -> Result<MaskAssets, S
 
     let masks = Arc::make_mut(&mut edits.masks);
     let scene_depth_asset = masks.scene_depth.take().map(&mut add_image).transpose()?;
+    // Normals belong to the scene depth and are only stored beside it.
+    let scene_normals = masks.scene_normals.take();
+    let scene_normal_assets = match scene_normals {
+        Some(normals) if scene_depth_asset.is_some() => Some([
+            add_image(normals.x().clone())?,
+            add_image(normals.y().clone())?,
+        ]),
+        _ => None,
+    };
     for (mask_index, mask) in masks.masks.iter_mut().enumerate() {
         for (component_index, component) in mask.components.iter_mut().enumerate() {
             let Some(image) = generated_mask_mut(&mut component.geometry).and_then(Option::take)
@@ -112,6 +121,7 @@ pub(super) fn extract_mask_assets(edits: &mut EditState) -> Result<MaskAssets, S
         assets,
         references,
         scene_depth_asset,
+        scene_normal_assets,
     })
 }
 
@@ -169,6 +179,7 @@ pub(super) fn restore_mask_assets(
     assets: &[SidecarMaskAsset],
     references: &[SidecarMaskAssetRef],
     scene_depth_asset: Option<usize>,
+    scene_normal_assets: Option<[usize; 2]>,
 ) -> Result<(), SidecarError> {
     if assets.len() > MAX_MASK_ASSETS || references.len() > MAX_MASK_ASSET_REFS {
         return invalid("sidecar contains too many generated mask assets");
@@ -226,6 +237,17 @@ pub(super) fn restore_mask_assets(
         };
         *referenced = true;
     }
+    if let Some(indices) = scene_normal_assets {
+        if scene_depth_asset.is_none() {
+            return invalid("scene normals are stored without scene depth");
+        }
+        for index in indices {
+            let Some(referenced) = referenced_assets.get_mut(index) else {
+                return invalid("scene normal reference uses an invalid asset index");
+            };
+            *referenced = true;
+        }
+    }
     for reference in references {
         let Some(asset_referenced) = referenced_assets.get_mut(reference.asset_index) else {
             return invalid("generated mask reference uses an invalid asset index");
@@ -260,6 +282,13 @@ pub(super) fn restore_mask_assets(
     let stack = Arc::make_mut(&mut edits.masks);
     if let Some(index) = scene_depth_asset {
         stack.scene_depth = Some(decoded[index].clone());
+    }
+    if let Some([x, y]) = scene_normal_assets {
+        stack.scene_normals = Some(
+            SceneNormals::new(decoded[x].clone(), decoded[y].clone()).ok_or_else(|| {
+                SidecarError::Invalid("scene normal components differ in size".to_owned())
+            })?,
+        );
     }
     let masks = &mut stack.masks;
     for reference in references {

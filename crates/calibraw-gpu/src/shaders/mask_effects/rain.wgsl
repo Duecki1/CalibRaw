@@ -426,11 +426,16 @@ fn rain_splashes(field: RainField, pixel: WetPixel, control: f32) -> f32 {
 }
 
 // Light from scene lights and the photograph's light sources that a drop at
-// `depth` refracts toward the camera.
-fn rain_drop_light(pos: vec2<i32>, params: MaskEffectParams, depth: f32) -> vec3<f32> {
+// `depth` refracts toward the camera, past `shadows` (scene_shadows.wgsl).
+fn rain_drop_light(
+    pos: vec2<i32>,
+    params: MaskEffectParams,
+    depth: f32,
+    shadows: vec4<f32>,
+) -> vec3<f32> {
     let glow = mask_effect_percent(params, RAIN_LIGHT_GLOW_LANE);
     if glow <= 1e-6 { return vec3<f32>(0.0); }
-    var result = scene_light_received(pos, depth, RAIN_LIGHT_ANISOTROPY)
+    var result = scene_light_received(pos, depth, RAIN_LIGHT_ANISOTROPY, shadows)
         * (glow * RAIN_LIGHT_GAIN * scene_ambient_level());
     if medium_image_lights_enabled(params) {
         result += image_light_at(pos) * (glow * RAIN_IMAGE_LIGHT_GAIN);
@@ -516,7 +521,11 @@ fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) ->
         // Only what is surely ground: the map also rates some walls near the horizon.
         let on_ground = smoothstep(0.4, 0.9, pixel.on_ground);
         if on_ground > 1e-4 {
-            let drop = around_drop + rain_drop_light(pos, params, pixel.depth);
+            var shadows = vec4<f32>(1.0);
+            if mask_effect_percent(params, RAIN_LIGHT_GLOW_LANE) > 1e-6 {
+                shadows = scene_shadow_surface_at(pos);
+            }
+            let drop = around_drop + rain_drop_light(pos, params, pixel.depth, shadows);
             ground_rgb = mix(ground_rgb, drop, rain_splashes(field, pixel, splashes) * on_ground);
         }
     }
@@ -535,7 +544,7 @@ fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) ->
     if extinction > 1e-6 && glow > 1e-6 {
         let ray = vec3<f32>(effect_image_point(pos) * 1.25, 1.0);
         let volume = MediumVolume(ray, 0.0, 0.1, 1.0, vec3<f32>(0.0), 0.0, 0.5);
-        let scattered = medium_light_scattering(pos, volume, distance, extinction);
+        let scattered = medium_light_scattering(pos, volume, distance, extinction, uses_depth);
         rgb += scattered * (glow * RAIN_MIST_GLOW_GAIN * scene_ambient_level());
         rgb += medium_image_light(pos, params, glow, 1.0, 1.0 - transmission);
     }
@@ -553,7 +562,13 @@ fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) ->
         if coverage <= 1e-4 { continue; }
         let depth = 0.5 * (near_depth + sides[layer]);
         let veil = exp(-extinction * (RAIN_MIST_NEAR + max(depth, 0.0)));
-        let drop = around_drop + rain_drop_light(pos, params, depth);
+        // Drops scatter forward, so a light straight behind them shows most:
+        // surfaces between them hide it, unless the rain ignores them.
+        var shadows = vec4<f32>(1.0);
+        if uses_depth && glow > 1e-6 {
+            shadows = scene_shadow_air_at(pos, depth);
+        }
+        let drop = around_drop + rain_drop_light(pos, params, depth, shadows);
         rgb = mix(rgb, drop, coverage * veil);
     }
     return rgb;

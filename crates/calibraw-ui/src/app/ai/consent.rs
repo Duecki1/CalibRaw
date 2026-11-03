@@ -73,26 +73,37 @@ impl CalibRawApp {
             },
             AiFeature::SceneDepth => {
                 let depth_model = calibraw_ai::models::depth::MODEL;
+                let normal_model = self.ai.scene_depth_quality.model();
                 AiJobDescription {
                     label: tr("scene depth"),
                     model: tr_fmt(
-                        "{name} (~{size} MB)",
+                        "{name} and {normals} (~{size} MB)",
                         &[
                             ("name", &depth_model.name),
-                            ("size", &format!("{:.0}", megabytes(depth_model.download_bytes))),
+                            ("normals", &normal_model.name),
+                            (
+                                "size",
+                                &format!(
+                                    "{:.0}",
+                                    megabytes(
+                                        depth_model.download_bytes + normal_model.download_bytes
+                                    )
+                                ),
+                            ),
                         ],
                     ),
                     purpose: tr("estimate scene depth for depth masks and effects"),
                     details_id: "depth-download-details",
-                    artifact: (
-                        tr("Depth model artifact"),
-                        calibraw_ai::models::depth::ARTIFACT_PAGE_URL.to_owned(),
-                    ),
+                    artifact: (tr("Depth model artifacts"), ARTIFACTS_URL.to_owned()),
                     details: format!(
-                        "{name} runs locally on a {edge} × {edge} letterboxed image and \
-                         produces relative depth. License: Apache-2.0.",
+                        "{name} runs locally on the image scaled to {edge} pixels on its \
+                         longer side and produces relative depth (License: Apache-2.0). \
+                         {normals} runs on the image scaled to {normal_edge} pixels and adds \
+                         surface normals and the sky (License: MIT).",
                         name = depth_model.name,
                         edge = depth_model.input.edge(),
+                        normals = normal_model.name,
+                        normal_edge = normal_model.input.edge(),
                     ),
                     terms: None,
                     restore: None,

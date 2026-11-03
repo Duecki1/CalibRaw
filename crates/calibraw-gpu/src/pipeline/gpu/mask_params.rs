@@ -1,7 +1,7 @@
 //! Packing of local adjustment masks and mask effects into `MaskData` slots.
 
 use super::*;
-use crate::pipeline::effect_lanes::{options, rain, relight};
+use crate::pipeline::effect_lanes::{light_rays, options, rain, relight};
 use crate::pipeline::{EffectLanes, PackContext};
 
 /// An effect slot holding `lanes`.
@@ -38,32 +38,57 @@ pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
         && data.option(options::MEDIUM_IMAGE_LIGHTS) > 0.5
 }
 
-/// Lights whose shadows the shadow map holds, one per RGBA channel.
-pub(super) const RELIGHT_SHADOW_MAP_CHANNELS: usize = 4;
+/// Lights whose shadows the scene shadow map holds, one per RGBA channel.
+pub(super) const SCENE_SHADOW_MAP_CHANNELS: usize = 4;
 
-/// Whether an active Relight slot casts shadows. Mirrors the amount and
-/// shadow-strength checks of `apply_relight`.
+/// Whether an active Relight slot casts shadows on its own shading. Mirrors
+/// the amount and shadow-strength checks of `apply_relight`.
 pub(super) fn relight_casts_shadows(data: &MaskData) -> bool {
-    data.applies(MaskEffect::Relight)
-        && (data.lane(relight::AMOUNT) / 100.0).clamp(0.0, 1.0) > 1e-6
+    emits_scene_light(data)
+        && data.applies(MaskEffect::Relight)
         && (data.lane(relight::SHADOWS) / 100.0).clamp(0.0, 1.0) > 1e-6
 }
 
-/// The shadow-map channel of a Relight slot, if it has one.
-pub(super) fn relight_shadow_channel(data: &MaskData) -> Option<usize> {
-    let lane = data.option(options::RELIGHT_SHADOW_CHANNEL);
+/// Whether an active slot places a light in the scene. Mirrors `emits` of
+/// `scene_light_at` in scene_lights.wgsl.
+fn emits_scene_light(data: &MaskData) -> bool {
+    let percent = |lane| (data.lane(lane) / 100.0).clamp(0.0, 1.0);
+    if data.applies(MaskEffect::Relight) {
+        return percent(relight::AMOUNT) > 1e-6;
+    }
+    data.applies(MaskEffect::LightRays)
+        && percent(light_rays::AMOUNT) > 1e-6
+        && (data.lane(light_rays::LENGTH) / 100.0).clamp(0.0, 2.0) > 1e-6
+}
+
+/// Whether an active slot receives scene lights, shadowed by the scene shadow
+/// map (scene_shadows.wgsl).
+pub(super) fn receives_scene_light(data: &MaskData) -> bool {
+    [
+        MaskEffect::Fog,
+        MaskEffect::Smoke,
+        MaskEffect::Rain,
+        MaskEffect::WetSurfaces,
+    ]
+    .into_iter()
+    .any(|effect| data.applies(effect))
+}
+
+/// The scene shadow map's channel of a slot's light, if it has one.
+pub(super) fn scene_light_channel(data: &MaskData) -> Option<usize> {
+    let lane = data.option(options::SCENE_LIGHT_CHANNEL);
     (lane > 0.5).then(|| lane.round() as usize - 1)
 }
 
-/// Gives the first shadow-casting Relight slots, in slot order, a channel of
-/// the shadow map each.
-fn assign_relight_shadow_channels(packed: &mut [MaskData]) {
-    let shadowed = packed
+/// Gives the first slots that place a light in the scene, in slot order, a
+/// channel of the scene shadow map each.
+fn assign_scene_light_channels(packed: &mut [MaskData]) {
+    let lights = packed
         .iter_mut()
-        .filter(|data| relight_casts_shadows(data))
-        .take(RELIGHT_SHADOW_MAP_CHANNELS);
-    for (channel, data) in shadowed.enumerate() {
-        data.set_option(options::RELIGHT_SHADOW_CHANNEL, (channel + 1) as f32);
+        .filter(|data| emits_scene_light(data))
+        .take(SCENE_SHADOW_MAP_CHANNELS);
+    for (channel, data) in lights.enumerate() {
+        data.set_option(options::SCENE_LIGHT_CHANNEL, (channel + 1) as f32);
     }
 }
 
@@ -260,6 +285,6 @@ pub(super) fn pack_mask_params(masks: &MaskStack, shutter_seconds: f32) -> Box<[
             slot += 1;
         }
     }
-    assign_relight_shadow_channels(&mut packed[..slot]);
+    assign_scene_light_channels(&mut packed[..slot]);
     packed
 }

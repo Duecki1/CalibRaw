@@ -426,3 +426,92 @@ fn blur_image_lights_vertical(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(image_light_out, pos,
         vec4<f32>(mix(core, tail, IMAGE_LIGHT_TAIL_SHARE), 1.0));
 }
+
+// Contours (Common::ContourCell): every export tile adds the samples of its core
+// to the shared grid during the tone prepass, as the image lights do, so emitters
+// tracing the photo's contours light the scene from the whole image. Samples lie
+// on a lattice anchored at each cell's first pixel, so every tile and the preview
+// take the same ones. Contrast is measured in unexposed luminance; Neon's soft
+// black floor depends on exposure, which the reader applies per bin.
+@group(0) @binding(78) var<storage, read_write> contour_cells: array<Common::ContourCell>;
+
+fn contour_luminance_at(pos: vec2<i32>) -> f32 {
+    let rgb = max(tone_unexposed_working_at(Common::clamp_pos(pos)), vec3<f32>(0.0));
+    return Common::safe_luma(rgb);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn accumulate_contours(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let grid = Common::contour_grid();
+    if gid.x >= grid.x || gid.y >= grid.y { return; }
+    let span_x = Common::full_image_grid_pixel_span(
+        gid.x,
+        grid.x,
+        Common::camera_uniforms.full_width,
+    );
+    let span_y = Common::full_image_grid_pixel_span(
+        gid.y,
+        grid.y,
+        Common::camera_uniforms.full_height,
+    );
+    // Only this tile's core counts, so overlapping tile halos add nothing twice.
+    let bounds = vec4<i32>(Common::camera_uniforms.tone_histogram_bounds);
+    let origin = Common::tile_origin();
+    let tile_end = origin + vec2<i32>(
+        i32(Common::camera_uniforms.width),
+        i32(Common::camera_uniforms.height),
+    );
+    let lo = max(max(vec2<i32>(span_x.x, span_y.x), bounds.xy), origin);
+    let hi = min(min(vec2<i32>(span_x.y, span_y.y), bounds.zw), tile_end);
+    if any(hi <= lo) { return; }
+    let cell_start = vec2<i32>(span_x.x, span_y.x);
+    let step = vec2<i32>(
+        Common::contour_sample_step(span_x.y - span_x.x),
+        Common::contour_sample_step(span_y.y - span_y.x),
+    );
+    // The first lattice sample at or after `lo`.
+    let first = cell_start + (lo - cell_start + step - vec2<i32>(1)) / step * step;
+    let r = Common::contour_radius();
+
+    var counts: array<f32, Common::CONTOUR_BINS>;
+    var total = 0.0;
+    for (var y = first.y; y < hi.y; y = y + step.y) {
+        for (var x = first.x; x < hi.x; x = x + step.x) {
+            let p = vec2<i32>(x, y) - origin;
+            let tl = contour_luminance_at(p + vec2<i32>(-r, -r));
+            let tc = contour_luminance_at(p + vec2<i32>(0, -r));
+            let tr = contour_luminance_at(p + vec2<i32>(r, -r));
+            let ml = contour_luminance_at(p + vec2<i32>(-r, 0));
+            let mc = contour_luminance_at(p);
+            let mr = contour_luminance_at(p + vec2<i32>(r, 0));
+            let bl = contour_luminance_at(p + vec2<i32>(-r, r));
+            let bc = contour_luminance_at(p + vec2<i32>(0, r));
+            let br = contour_luminance_at(p + vec2<i32>(r, r));
+            // Neon's Sobel (neon_edge_energy) on log2 luminance.
+            let gradient = vec2<f32>(
+                (log2(tr) - log2(tl)) + 2.0 * (log2(mr) - log2(ml)) + (log2(br) - log2(bl)),
+                (log2(bl) - log2(tl)) + 2.0 * (log2(bc) - log2(tc)) + (log2(br) - log2(tr)),
+            ) * 0.125;
+            total += 1.0;
+            let contrast_bin = Common::contour_contrast_bin(length(gradient));
+            if contrast_bin < 0 { continue; }
+            let brighter = max(
+                max(max(tl, tc), max(tr, ml)),
+                max(max(mc, mr), max(max(bl, bc), br)),
+            );
+            let bin = u32(contrast_bin) * Common::CONTOUR_BRIGHTNESS_BINS
+                + Common::contour_brightness_bin(brighter);
+            counts[bin] += 1.0;
+        }
+    }
+    // Tiles are dispatched one after another, so each cell has one writer.
+    let index = gid.y * Common::CONTOUR_GRID_LONG + gid.x;
+    for (var bin = 0u; bin < Common::CONTOUR_BINS; bin = bin + 1u) {
+        contour_cells[index].bins[bin / 4u][bin % 4u] += counts[bin];
+    }
+    contour_cells[index].bins[Common::CONTOUR_CELL_VECTORS - 1u].x += total;
+    // The tap spacing in reference pixels, the same for every tile, so a reader
+    // at another resolution scales the lines' width correctly.
+    contour_cells[index].bins[Common::CONTOUR_CELL_VECTORS - 1u].y =
+        f32(r) / Common::resolution_scale(0.55, 3.0);
+}

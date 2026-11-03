@@ -1,9 +1,9 @@
 //! Aligns scene-depth edges with the photograph's edges.
 //!
-//! The depth model predicts a few hundred pixels across. Enlarged to the
-//! photo, its silhouettes are blocky and often a few photo pixels off the
-//! photo's own edges, and effects that change steeply across depth (fog and
-//! its light glow, relighting) trace them. A guided filter over about one and
+//! The depth model predicts at 1540 pixels on the photo's longer side, below
+//! the photo's own size. Enlarged to the photo, its silhouettes are blocky and
+//! often a few photo pixels off the photo's own edges, and effects that change
+//! steeply across depth (fog and its light glow, relighting) trace them. A guided filter over about one and
 //! a half model pixels, guided by the photo the depth was predicted from,
 //! moves each depth edge onto the photo's edge where the colours on either
 //! side differ, and otherwise softens the blocks into a smooth transition.

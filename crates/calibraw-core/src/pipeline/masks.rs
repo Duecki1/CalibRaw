@@ -302,12 +302,15 @@ impl LocalMask {
             || self.effect_settings.effect_is_active(self.effect)
     }
 
-    pub fn has_light_rays_effect(&self) -> bool {
-        self.effect == MaskEffect::LightRays
+    /// Whether an effect of this mask reads it beyond a tile or zoomed view
+    /// ([`MaskEffect::reads_full_image_mask`]), so the full-image mask atlas
+    /// holds it.
+    pub fn reads_full_image_mask(&self) -> bool {
+        self.effect.reads_full_image_mask()
             || self
                 .effect_components
                 .iter()
-                .any(|component| component.enabled && component.effect == MaskEffect::LightRays)
+                .any(|component| component.enabled && component.effect.reads_full_image_mask())
     }
 }
 
@@ -346,6 +349,11 @@ pub struct MaskStack {
     /// Scene depth in full-image coordinates, including when this stack is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene_depth: Option<MaskImage>,
+    /// Surface normals predicted with `scene_depth` by the same job, and only
+    /// beside it: set, moved and cleared with it. Stored only as sidecar
+    /// assets.
+    #[serde(skip)]
+    pub scene_normals: Option<SceneNormals>,
     pub selected_mask: Option<usize>,
     pub selected_component: Option<usize>,
     #[serde(skip, default)]

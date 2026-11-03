@@ -336,7 +336,7 @@ mask_effects! {
     }
     Glow {
         label: "Glow",
-        description: "Spread colored light from bright pixels. The mask selects the highlights that emit light; their glow can extend beyond the selection.",
+        description: "Spread colored light from bright pixels. The mask selects the highlights that emit light; their glow can extend beyond the selection. A self-illuminating Glow also lights the scene around it; Scene light sets how much.",
         shader_id: 2,
         category: GlowAndLight,
         settings: glow: GlowEffectSettings,
@@ -366,7 +366,7 @@ mask_effects! {
     }
     Neon {
         label: "Neon",
-        description: "Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask.",
+        description: "Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask. Scene light lets the lines light their surroundings.",
         shader_id: 1,
         category: GlowAndLight,
         settings: neon: NeonEffectSettings,
@@ -436,7 +436,7 @@ mask_effects! {
     }
     Rain {
         label: "Rain",
-        description: "Add falling rain and its mist. Drops pass behind nearer objects, catch Relight, Light Rays and the photo's own lights, and show best against dark areas. The mask controls where it falls.",
+        description: "Add falling rain and its mist. Drops pass behind nearer objects, catch Relight, Light Rays, Glow, Neon and the photo's own lights, and show best against dark areas. The mask controls where it falls.",
         shader_id: 18,
         category: Texture,
         settings: rain: RainEffectSettings,
@@ -488,6 +488,16 @@ impl MaskEffect {
 
     pub const fn uses_adjustments(self) -> bool {
         matches!(self, Self::Adjustment)
+    }
+
+    /// Whether the effect reads its mask beyond an export tile or zoomed
+    /// view, from the full-image mask atlas: Light Rays shapes rays from
+    /// openings anywhere in the frame, and Glow and Neon light the scene from
+    /// wherever they emit (scene_emission.wgsl). Their masks
+    /// are kept there whatever their settings, so changing one needs no new
+    /// mask upload.
+    pub const fn reads_full_image_mask(self) -> bool {
+        matches!(self, Self::LightRays | Self::Glow | Self::Neon)
     }
 }
 

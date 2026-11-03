@@ -68,7 +68,7 @@ fn apply_fog(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> 
     if glow <= 1e-6 { return fogged; }
     let albedo = effect_luma(color);
     let extinction = 6.0 * density * density * amount * length(ray);
-    let scattered = medium_light_scattering(pos, volume, distance, extinction);
+    let scattered = medium_light_scattering(pos, volume, distance, extinction, true);
     return fogged + scattered * (glow * FOG_LIGHT_GLOW_GAIN * ambient * albedo)
         + medium_image_light(pos, params, glow, albedo, 1.0 - transmission);
 }

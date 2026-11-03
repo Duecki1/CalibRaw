@@ -32,6 +32,9 @@
 //!   `calibraw-ui`, `app/ai/models.rs`).
 //! - The Lensfun 0.3.4 database Android copied into app data, removed on
 //!   start-up (`calibraw-ui`, `app/lifecycle/startup.rs`).
+//! - Depth Anything V2 Small, the depth model before Distill-Any-Depth
+//!   Small, removed from the model folder on start-up (`calibraw-ui`,
+//!   `app/ai/models.rs`).
 //!
 //! The start-up removals run through `remove_retired_app_data`
 //! (`calibraw-ui`, `app/lifecycle/startup.rs`). The desktop model folder and

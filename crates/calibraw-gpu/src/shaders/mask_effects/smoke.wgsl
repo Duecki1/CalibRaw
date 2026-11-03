@@ -17,7 +17,7 @@ fn smoke_light_scattering(pos: vec2<i32>) -> vec3<f32> {
     if effect_scene_depth_present() {
         depth = effect_scene_depth(pos);
     }
-    return effect_scene_light(pos, depth, SMOKE_LIGHT_ANISOTROPY);
+    return effect_surface_scene_light(pos, depth, SMOKE_LIGHT_ANISOTROPY);
 }
 
 fn apply_smoke(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {

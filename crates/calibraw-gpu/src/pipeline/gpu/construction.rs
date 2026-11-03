@@ -368,9 +368,9 @@ impl RawGpuPipeline {
             _tone_guide_a: surfaces.tone_guide_a,
             _tone_guide_b: surfaces.tone_guide_b,
             mask_texture: surfaces.mask_texture,
-            light_rays_mask_texture: surfaces.light_rays_mask_texture,
+            full_image_mask_texture: surfaces.full_image_mask_texture,
             uploaded_scene_depth: Mutex::new(None),
-            relight_shadow_map_key: Mutex::new(None),
+            scene_shadow_map_key: Mutex::new(None),
             full_image_maps_current: Default::default(),
             mask_layer_capacity: geometry.mask_layer_capacity,
             mask_atlas_edge: geometry.mask_atlas_edge,
@@ -401,7 +401,7 @@ impl RawGpuPipeline {
             current.store(false, Ordering::Release);
         }
         *pipeline
-            .relight_shadow_map_key
+            .scene_shadow_map_key
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         gpu_error_scopes.finish("create RAW GPU pipeline")?;

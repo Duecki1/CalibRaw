@@ -8,13 +8,16 @@
 //! offset and size are therefore compared explicitly.
 
 use super::{
-    ground_plane, processing_work_format, shader_manager::ShaderManager, shaders,
-    work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
-    ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, ViewTransformMode,
-    FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE, HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG,
-    IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
-    RELIGHT_SHADOW_MAP_CHANNELS, SCENE_FOCUS_BINS, SCENE_MAP_BLUR_GRID_LONG, SCENE_MAP_CELL_BYTES,
-    SCENE_MAP_GRID_LONG, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    ground_plane, processing_work_format, scene_emission_light_rows, scene_surface,
+    shader_manager::ShaderManager, shaders, work_shader_source, CameraUniforms, CfaKind,
+    EffectsUniforms, MaskData, PackedPointColor, ProcessingQuality, RemoveCompositeParams,
+    SceneToneUniforms, ViewTransformMode, CONTOUR_BRIGHTNESS_BINS, CONTOUR_CELL_BYTES,
+    CONTOUR_CONTRAST_BINS, CONTOUR_GRID_LONG, FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE,
+    HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG, IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG,
+    MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS, MEDIUM_CELLS, SCENE_EMISSION_GRID_LONG,
+    SCENE_EMISSION_SURFACE_GRID_LONG, SCENE_FOCUS_BINS, SCENE_MAP_BLUR_GRID_LONG,
+    SCENE_MAP_CELL_BYTES, SCENE_MAP_GRID_LONG, SCENE_SHADOW_MAP_CHANNELS, SCENE_SHADOW_SLICES,
+    SCENE_SHADOW_TILES, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::{effect_lanes::options, MaskEffect, OPTION_COUNT};
@@ -469,6 +472,31 @@ fn shared_constants_and_effect_ids_match_rust() {
         SCENE_MAP_BLUR_GRID_LONG
     );
     assert_eq!(constant("SCENE_FOCUS_BINS"), SCENE_FOCUS_BINS);
+    // The contour grid buffer and the scene emission textures are sized from these.
+    assert_eq!(constant("CONTOUR_GRID_LONG"), CONTOUR_GRID_LONG);
+    assert_eq!(constant("CONTOUR_CONTRAST_BINS"), CONTOUR_CONTRAST_BINS);
+    assert_eq!(constant("CONTOUR_BRIGHTNESS_BINS"), CONTOUR_BRIGHTNESS_BINS);
+    assert_eq!(
+        constant("CONTOUR_BINS"),
+        CONTOUR_CONTRAST_BINS * CONTOUR_BRIGHTNESS_BINS
+    );
+    assert_eq!(
+        constant("SCENE_EMISSION_GRID_LONG"),
+        SCENE_EMISSION_GRID_LONG
+    );
+    assert_eq!(
+        constant("SCENE_EMISSION_SURFACE_GRID_LONG"),
+        SCENE_EMISSION_SURFACE_GRID_LONG
+    );
+    assert_eq!(constant("MEDIUM_CELLS"), MEDIUM_CELLS);
+    assert_eq!(
+        constant("SCENE_EMISSION_LIGHT_ROWS"),
+        scene_emission_light_rows(
+            SCENE_EMISSION_GRID_LONG,
+            SCENE_EMISSION_SURFACE_GRID_LONG,
+            MEDIUM_CELLS
+        )
+    );
     // ground_plane.rs finds the photo's horizon by the scene map's ground rule.
     let ground_range = |name: &str| {
         let source = include_str!("../../shaders/scene_analysis.wgsl");
@@ -489,6 +517,22 @@ fn shared_constants_and_effect_ids_match_rust() {
     assert!(
         (middle(ground_range("SCENE_GROUND_ALIGNMENT")) - ground_plane::MIN_ALIGNMENT).abs() < 1e-5
     );
+    // scene_surface.rs turns model normals into gradients in the scene camera.
+    let lights_constant = |name: &str| {
+        let source = include_str!("../../shaders/mask_effects/scene_lights.wgsl");
+        let start = format!("const {name}: f32 = ");
+        let (_, rest) = source
+            .split_once(&start)
+            .unwrap_or_else(|| panic!("scene_lights.wgsl has no {name}"));
+        rest.split_once(';').unwrap().0.parse::<f32>().unwrap()
+    };
+    assert_eq!(
+        lights_constant("SCENE_FOCAL_TAN"),
+        scene_surface::SCENE_FOCAL_TAN
+    );
+    let default_relief =
+        0.25 + (6.0 - 0.25) * lights_constant("SCENE_DEFAULT_RELIEF_CONTROL").powf(1.5);
+    assert!((default_relief - scene_surface::DEFAULT_RELIEF).abs() < 1e-3);
     for effect in MaskEffect::ALL {
         if effect == MaskEffect::Adjustment {
             assert_eq!(effect.shader_id(), 0, "adjustment masks use shader ID 0");
@@ -571,9 +615,16 @@ fn effect_lanes_and_options_reach_the_shaders() {
         expected.insert(wgsl_name);
     }
     assert_eq!(
-        constant("RELIGHT_SHADOW_MAP_CHANNELS"),
-        RELIGHT_SHADOW_MAP_CHANNELS
+        constant("SCENE_SHADOW_MAP_CHANNELS"),
+        SCENE_SHADOW_MAP_CHANNELS
     );
+    // The map's height (scene_shadow_map_height) holds the air slices as the
+    // shader tiles them.
+    assert_eq!(
+        constant("SCENE_SHADOW_SLICES"),
+        SCENE_SHADOW_SLICES as usize
+    );
+    assert_eq!(constant("SCENE_SHADOW_TILES"), SCENE_SHADOW_TILES as usize);
     let declared: BTreeSet<_> = creative
         .constants
         .iter()
@@ -662,6 +713,24 @@ fn scene_map_cell_matches_its_wgsl_declaration() {
         shared_u32_constant(&modules, "SCENE_EDGE_REACH"),
         SCENE_EDGE_SUPPORT
     );
+}
+
+/// The contour grid buffer Rust allocates holds the WGSL cell.
+#[test]
+fn contour_cell_matches_its_wgsl_declaration() {
+    let modules = production_modules();
+    let (_, tone_analysis) = modules
+        .iter()
+        .find(|(name, _)| name.starts_with(shaders::TONE_ANALYSIS_ENTRY.label))
+        .expect("tone analysis module");
+    let mut layouter = Layouter::default();
+    layouter.update(tone_analysis.to_ctx()).unwrap();
+    let (handle, _) = tone_analysis
+        .types
+        .iter()
+        .find(|(_, ty)| ty.name.as_deref().map(undecorated) == Some("ContourCell"))
+        .expect("ContourCell is declared");
+    assert_eq!(u64::from(layouter[handle].size), CONTOUR_CELL_BYTES);
 }
 
 #[test]

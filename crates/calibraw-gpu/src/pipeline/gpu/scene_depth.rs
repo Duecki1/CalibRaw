@@ -33,9 +33,11 @@ pub(super) fn distance_per_stored(stored: f32) -> f32 {
     INVERSE_DEPTH_SHIFT * (1.0 + INVERSE_DEPTH_SHIFT) / (gap * gap)
 }
 
-/// The depth result last uploaded, and whether its surface was.
+/// The depth result last uploaded, the normals predicted with it, and whether
+/// its surface was.
 pub(super) struct UploadedSceneDepth {
     depth: MaskImage,
+    normals: Option<SceneNormals>,
     surface: bool,
     /// Keeps the shared surface levels (`SHARED_SURFACE`) alive while this
     /// pipeline shows them, so other pipelines reuse them.
@@ -46,12 +48,14 @@ impl RawGpuPipeline {
     /// Uploads full-image scene depth, once an effect allocated its texture.
     /// Level 0 channel r holds the distance the scene map is built from.
     /// With `surface` the surface shading reads fills the other channels and the
-    /// mip chain (`scene_surface`); without it they are not read, and level 0
-    /// repeats the depth with flat gradients.
+    /// mip chain (`scene_surface`), its gradients from `normals` where the depth
+    /// has them; without it they are not read, and level 0 repeats the depth
+    /// with flat gradients.
     pub(super) fn upload_scene_depth(
         &self,
         queue: &wgpu::Queue,
         depth: Option<&MaskImage>,
+        normals: Option<&SceneNormals>,
         surface: bool,
     ) {
         let mut uploaded = self
@@ -63,7 +67,7 @@ impl RawGpuPipeline {
             // valid for every later render, and export tiles must keep the one
             // built from the whole image.
             if uploaded.take().is_some() {
-                self.invalidate_relight_shadow_map();
+                self.invalidate_scene_shadow_map();
                 self.invalidate_scene_map();
             }
             return; // The uniform presence flag prevents sampling stale texture data.
@@ -79,12 +83,13 @@ impl RawGpuPipeline {
             previous.depth.width == depth.width
                 && previous.depth.height == depth.height
                 && Arc::ptr_eq(&previous.depth.pixels, &depth.pixels)
+                && same_normals(previous.normals.as_ref(), normals)
                 && (previous.surface || !surface)
         }) {
             return;
         }
 
-        let levels = encoded_scene_depth(depth, surface);
+        let levels = encoded_scene_depth(depth, normals, surface);
         for (mip_level, level) in levels.iter().enumerate() {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -104,10 +109,11 @@ impl RawGpuPipeline {
         }
         *uploaded = Some(UploadedSceneDepth {
             depth: depth.clone(),
+            normals: normals.cloned(),
             surface,
             _levels: levels,
         });
-        self.invalidate_relight_shadow_map();
+        self.invalidate_scene_shadow_map();
         self.invalidate_scene_map();
     }
 
@@ -118,9 +124,9 @@ impl RawGpuPipeline {
     }
 
     /// Shadows are traced through the scene-depth surface.
-    fn invalidate_relight_shadow_map(&self) {
+    fn invalidate_scene_shadow_map(&self) {
         *self
-            .relight_shadow_map_key
+            .scene_shadow_map_key
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
@@ -133,12 +139,25 @@ struct EncodedLevel {
     texels: Vec<u16>,
 }
 
+/// Whether two uploads carry the same normals: the same result or none.
+fn same_normals(a: Option<&SceneNormals>, b: Option<&SceneNormals>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => {
+            Arc::ptr_eq(&a.x().pixels, &b.x().pixels) && Arc::ptr_eq(&a.y().pixels, &b.y().pixels)
+        }
+        _ => false,
+    }
+}
+
 /// The surface last derived, shared by every pipeline: the fitted,
 /// navigation and zoomed previews and export tiles upload the same depth
 /// result, and deriving it takes far longer than uploading it.
 struct SharedSurface {
     /// Identifies the depth result without keeping it alive.
     pixels: Weak<[u8]>,
+    /// Identifies the normals' x and y the same way, if there were normals.
+    normals: Option<[Weak<[u8]>; 2]>,
     width: u32,
     height: u32,
     /// Alive while a pipeline shows them (`UploadedSceneDepth`), so closing
@@ -149,15 +168,19 @@ struct SharedSurface {
 static SHARED_SURFACE: Mutex<Option<SharedSurface>> = Mutex::new(None);
 
 /// The scene-depth texture's levels for `depth`: with `surface`, the stored
-/// depth and surface with its mip chain, taken from the shared cache when
-/// another pipeline already derived them; without, level 0 alone, repeating the
-/// depth with flat gradients.
-fn encoded_scene_depth(depth: &MaskImage, surface: bool) -> Arc<[EncodedLevel]> {
+/// depth and surface with its mip chain, from `normals` where given, taken
+/// from the shared cache when another pipeline already derived them; without,
+/// level 0 alone, repeating the depth with flat gradients.
+fn encoded_scene_depth(
+    depth: &MaskImage,
+    normals: Option<&SceneNormals>,
+    surface: bool,
+) -> Arc<[EncodedLevel]> {
     if !surface {
         let level = SurfaceLevel {
             width: SCENE_DEPTH_EDGE,
             height: SCENE_DEPTH_EDGE,
-            texels: resampled_depth(depth)
+            texels: resampled(depth, |stored| f32::from(stored) / 255.0)
                 .iter()
                 .map(|&stored| {
                     let distance = distance_from_stored(stored);
@@ -179,14 +202,33 @@ fn encoded_scene_depth(depth: &MaskImage, surface: bool) -> Arc<[EncodedLevel]> 
                 .pixels
                 .upgrade()
                 .is_some_and(|pixels| Arc::ptr_eq(&pixels, &depth.pixels))
+            && match (&cached.normals, normals) {
+                (None, None) => true,
+                (Some([x, y]), Some(normals)) => {
+                    x.upgrade()
+                        .is_some_and(|x| Arc::ptr_eq(&x, &normals.x().pixels))
+                        && y.upgrade()
+                            .is_some_and(|y| Arc::ptr_eq(&y, &normals.y().pixels))
+                }
+                _ => false,
+            }
     });
     if let Some(levels) = cached.and_then(|cached| cached.levels.upgrade()) {
         return levels;
     }
     // Derived once per depth result; the derivation is linear in the texel
     // count and has no per-edit inputs.
+    let normals_resampled = normals.map(|normals| {
+        let x = resampled(normals.x(), SceneNormals::decode);
+        let y = resampled(normals.y(), SceneNormals::decode);
+        x.into_iter()
+            .zip(y)
+            .map(|(x, y)| [x, y])
+            .collect::<Vec<_>>()
+    });
     let levels: Arc<[EncodedLevel]> = derive_scene_surface(
-        &resampled_depth(depth),
+        &resampled(depth, |stored| f32::from(stored) / 255.0),
+        normals_resampled.as_deref(),
         SCENE_DEPTH_EDGE,
         depth.width as f32 / depth.height as f32,
     )
@@ -195,6 +237,12 @@ fn encoded_scene_depth(depth: &MaskImage, surface: bool) -> Arc<[EncodedLevel]> 
     .collect();
     *shared = Some(SharedSurface {
         pixels: Arc::downgrade(&depth.pixels),
+        normals: normals.map(|normals| {
+            [
+                Arc::downgrade(&normals.x().pixels),
+                Arc::downgrade(&normals.y().pixels),
+            ]
+        }),
         width: depth.width,
         height: depth.height,
         levels: Arc::downgrade(&levels),
@@ -202,11 +250,12 @@ fn encoded_scene_depth(depth: &MaskImage, surface: bool) -> Arc<[EncodedLevel]> 
     levels
 }
 
-/// Bilinear resample of `depth` to the `SCENE_DEPTH_EDGE` square, retaining
-/// the full-image coordinate frame even for export tiles. Converted to float
-/// before filtering so smooth depth ramps do not acquire another 8-bit
-/// quantization step.
-fn resampled_depth(depth: &MaskImage) -> Vec<f32> {
+/// Bilinear resample of `image` to the `SCENE_DEPTH_EDGE` square, retaining
+/// the full-image coordinate frame even for export tiles. Each value is
+/// `decode`d to float before filtering so smooth depth ramps do not acquire
+/// another 8-bit quantization step.
+fn resampled(image: &MaskImage, decode: impl Fn(u8) -> f32 + Sync) -> Vec<f32> {
+    let depth = image;
     let axis = |extent: u32| {
         (0..SCENE_DEPTH_EDGE)
             .map(|i| {
@@ -226,7 +275,7 @@ fn resampled_depth(depth: &MaskImage) -> Vec<f32> {
         .zip(&ys)
         .for_each(|(row, &(y0, y1, fy))| {
             for (value, &(x0, x1, fx)) in row.iter_mut().zip(&xs) {
-                let at = |x, y| depth.pixels[y * depth.width as usize + x] as f32 / 255.0;
+                let at = |x, y| decode(depth.pixels[y * depth.width as usize + x]);
                 let top = at(x0, y0) * (1.0 - fx) + at(x1, y0) * fx;
                 let bottom = at(x0, y1) * (1.0 - fx) + at(x1, y1) * fx;
                 *value = top * (1.0 - fy) + bottom * fy;

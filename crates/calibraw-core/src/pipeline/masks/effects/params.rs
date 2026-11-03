@@ -453,6 +453,16 @@ pub mod glow {
         [0.1, 0.65, 1.0],
         "Choose the color emitted by the Glow effect.",
     );
+    float_param!(
+        SCENE_LIGHT,
+        "Scene light",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("How much the glow lights its surroundings, Fog, Smoke, Rain and wet ground. Only a self-illuminating Glow lights the scene."),
+    );
     pub const SELF_ILLUMINATING: ToggleSpec = ToggleSpec {
         label: "Self-illuminating",
         help: "The mask emits the glow color itself, so it also shows on dark surfaces. Turn off to let only bright areas inside the mask glow.",
@@ -689,6 +699,16 @@ pub mod neon {
         0.5,
         0,
         Some("Retains the original image behind the Neon effect."),
+    );
+    float_param!(
+        SCENE_LIGHT,
+        "Scene light",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("How much the neon lines light their surroundings, Fog, Smoke, Rain and wet ground."),
     );
     color_param!(
         COLOR,
@@ -984,7 +1004,7 @@ pub mod fog {
         50.0,
         0.5,
         0,
-        Some("Makes the fog glow around Relight and Light Rays lights, brightest when looking toward a light through the fog."),
+        Some("Makes the fog glow around Relight, Light Rays, Glow and Neon lights, brightest when looking toward a light through the fog."),
     );
     color_param!(
         COLOR,
@@ -1061,7 +1081,9 @@ pub mod rain {
         50.0,
         0.5,
         0,
-        Some("Makes drops and mist glow where Relight and Light Rays lights reach them."),
+        Some(
+            "Makes drops and mist glow where Relight, Light Rays, Glow and Neon lights reach them."
+        ),
     );
     float_param!(
         GUSTS,
@@ -1273,7 +1295,7 @@ pub mod smoke {
         50.0,
         0.5,
         0,
-        Some("Makes the smoke glow where Relight and Light Rays lights reach it."),
+        Some("Makes the smoke glow where Relight, Light Rays, Glow and Neon lights reach it."),
     );
     color_param!(
         COLOR,

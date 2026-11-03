@@ -648,7 +648,7 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
         scene_preparation_layout: layouts.bgl_adjust_prepare.clone(),
         creative_layout: layouts.bgl_adjust_creative.clone(),
         view_layout: layouts.bgl_adjust_render.clone(),
-        relight_shadow_map_layout: layouts.bgl_relight_shadow_map.clone(),
+        scene_shadow_map_layout: layouts.bgl_scene_shadow_map.clone(),
         image_light_layouts: [
             layouts.bgl_image_light_accumulate.clone(),
             layouts.bgl_image_light_resolve.clone(),
@@ -657,6 +657,8 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
         ],
         haze_layouts: layouts.bgl_haze.clone(),
         scene_map_layouts: layouts.bgl_scene_map.clone(),
+        contour_layout: layouts.bgl_contour_accumulate.clone(),
+        scene_emission_layouts: layouts.bgl_scene_emission.clone(),
         camera_uniforms: buffers.camera_uniforms_buffer.clone(),
         mask_data: buffers.mask_data_buffer.clone(),
         tone_stats: buffers.tone_stats_buffer.clone(),
@@ -672,7 +674,7 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
         out: surfaces.out_view.clone(),
         mask: surfaces.mask_view.clone(),
         mask_sampler: surfaces.mask_sampler.clone(),
-        light_rays_mask: surfaces.light_rays_mask_view.clone(),
+        full_image_mask: surfaces.full_image_mask_view.clone(),
         // Pixelate block averages reuse the highlight work texture.
         pixelate_blocks: surfaces.highlight_work_a_view.clone(),
     }

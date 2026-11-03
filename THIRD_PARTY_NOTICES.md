@@ -132,7 +132,8 @@ from CalibRaw's GPL license; users must comply with the model terms for their us
 | Subject selection | [BiRefNet ONNX checkpoint](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/briefnet) | MIT |
 | Sky selection | [SkySeg U2Net FP32 ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/skyseg) | MIT; training image provenance is not published |
 | Object selection | [SAM 2.1 Hiera Tiny ONNX encoder and decoder](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/sam2) | Apache-2.0 |
-| Depth masks, fog and Relight | [Depth Anything V2 Small FP32 ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da2) | Apache-2.0 |
+| Depth masks, fog and Relight | [Distill-Any-Depth Small FP32 ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/distill) | Apache-2.0 (weights); MIT (code) |
+| Depth effects: surface normals and sky | [MoGe-2 ViT-S and ViT-L ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/moge), the authors' exports | MIT (Microsoft) |
 | RAW denoise | [RawNIND package](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/rawnind) | GPL-3.0 |
 | People selection: finding people | [RF-DETR-Seg Medium ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/rfdetr) | Apache-2.0 |
 | People selection: body parts | [Sapiens2 0.4B body-part segmentation ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/sapiens2) | [Sapiens2 License](https://github.com/facebookresearch/sapiens2/blob/main/LICENSE.md) |

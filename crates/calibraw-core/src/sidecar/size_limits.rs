@@ -77,7 +77,16 @@ pub(super) fn estimate_sidecar_bytes(masks: &MaskStack) -> Result<u64, SidecarEr
     )?;
     let mut unique_images = Vec::<&MaskImage>::new();
     let mut image_buckets = HashMap::<u64, Vec<usize>>::new();
-    if let Some(image) = &masks.scene_depth {
+    let scene_normals = masks
+        .scene_normals
+        .as_ref()
+        .filter(|_| masks.scene_depth.is_some());
+    let scene_images = masks.scene_depth.iter().chain(
+        scene_normals
+            .into_iter()
+            .flat_map(|normals| [normals.x(), normals.y()]),
+    );
+    for image in scene_images {
         add_unique_mask_asset_bound(
             &mut estimated,
             image,
@@ -158,7 +167,16 @@ pub(super) fn measure_sidecar_dynamic_bytes(masks: &MaskStack) -> Result<u64, Si
     )?;
     let mut unique_images = Vec::<&MaskImage>::new();
     let mut image_buckets = HashMap::<u64, Vec<usize>>::new();
-    if let Some(image) = &masks.scene_depth {
+    let scene_normals = masks
+        .scene_normals
+        .as_ref()
+        .filter(|_| masks.scene_depth.is_some());
+    let scene_images = masks.scene_depth.iter().chain(
+        scene_normals
+            .into_iter()
+            .flat_map(|normals| [normals.x(), normals.y()]),
+    );
+    for image in scene_images {
         add_unique_mask_asset_measured(
             &mut measured,
             image,
