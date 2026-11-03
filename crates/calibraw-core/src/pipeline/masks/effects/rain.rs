@@ -31,7 +31,7 @@ pub struct RainEffectSettings {
     pub angle: f32,
     pub drop_size: f32,
     pub mist: f32,
-    /// How strongly scene lights (Relight, Light Rays) light the drops and the
+    /// How strongly scene lights (Relight, Light Rays, Glow, Neon) light the drops and the
     /// mist.
     pub light_glow: f32,
     /// Whether light sources in the photograph also light the drops and the

@@ -43,13 +43,19 @@ pub const PACKAGE_BYTES: u64 = RAWNIND_PACKAGE.artifact.bytes;
 const MODEL_DIR: &str = "rawdenoise-nind-1.0";
 const TILE_EDGE: usize = match AiModel::RawNindBayer.spec().input {
     InputShape::Tiled { tile, .. } => tile as usize,
-    InputShape::Square { .. } | InputShape::Prompted { .. } | InputShape::Stretched { .. } => {
+    InputShape::Square { .. }
+    | InputShape::Prompted { .. }
+    | InputShape::Stretched { .. }
+    | InputShape::Fitted { .. } => {
         panic!("RawNIND runs on tiles")
     }
 };
 const OVERLAP: usize = match AiModel::RawNindBayer.spec().input {
     InputShape::Tiled { overlap, .. } => overlap as usize,
-    InputShape::Square { .. } | InputShape::Prompted { .. } | InputShape::Stretched { .. } => {
+    InputShape::Square { .. }
+    | InputShape::Prompted { .. }
+    | InputShape::Stretched { .. }
+    | InputShape::Fitted { .. } => {
         panic!("RawNIND runs on tiles")
     }
 };

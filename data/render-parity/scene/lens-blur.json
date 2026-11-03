@@ -1,0 +1,17 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "LensBlur",
+          "settings": {
+            "lens_blur": {
+              "amount": 100.0,
+              "highlight_boost": 60.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

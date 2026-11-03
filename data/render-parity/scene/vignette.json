@@ -1,0 +1,17 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Vignette",
+          "settings": {
+            "vignette": {
+              "amount": -60.0,
+              "midpoint": 40.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

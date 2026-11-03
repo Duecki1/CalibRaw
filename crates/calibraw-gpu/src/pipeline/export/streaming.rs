@@ -179,14 +179,14 @@ where
         .prepare_look_lut(queue, first_params.look_lut())
         .context("upload the LUT")?;
     tile_pipeline
-        .update_light_rays_mask_layers(
+        .update_full_image_mask_layers(
             queue,
             masks,
             raw.width,
             raw.height,
             raw.lens_geometry.as_deref(),
         )
-        .context("upload full-image Light Rays emission masks")?;
+        .context("upload full-image masks")?;
 
     let tone_analysis_started = Instant::now();
     let mut tile_scratch = first_raw;

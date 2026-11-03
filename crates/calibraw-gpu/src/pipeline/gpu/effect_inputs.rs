@@ -1,7 +1,8 @@
 //! GPU inputs that only some effects read, allocated the first time one of
 //! them renders: scene depth and the scene map that every depth-reading effect
-//! shares, Relight's shadow map, the image-light map that Fog, Smoke and Rain
-//! scatter, the haze map Dehaze applies, and the LUT the view pass applies.
+//! shares, the scene shadow map, the image-light map that Fog, Smoke and Rain
+//! scatter, the contours and the light that Glow and Neon emit into the scene,
+//! the haze map Dehaze applies, and the LUT the view pass applies.
 //!
 //! Until then the passes that read them are bound to placeholders of one
 //! texel, so a pipeline whose edits never use these effects holds none of their
@@ -28,6 +29,9 @@ pub(super) const HAZE_PASSES: usize = 5;
 /// The scene map passes (scene_analysis.wgsl): accumulate, resolve,
 /// coefficient smoothing, the environment blur, the ground and the lens blur.
 pub(super) const SCENE_MAP_PASSES: usize = 6;
+/// The scene emission passes (scene_emission.wgsl): the emitter grid, then the
+/// light on surfaces and in the volume.
+pub(super) const SCENE_EMISSION_PASSES: usize = 3;
 
 /// Coarse maps over the full image that a cropped view or an export tile
 /// cannot build from its own region. Each is built from the whole scene with
@@ -42,10 +46,13 @@ pub(super) enum FullImageMap {
     /// Edge-accurate depth, the photo's environment, the ground and the lens
     /// blur that every effect reading the scene shares (scene_analysis.wgsl).
     Scene,
+    /// How much of the photo lies on its contours, for Neon's scene light
+    /// (tone_analysis.wgsl). Views copy the grid itself; it has no resolve.
+    Contours,
 }
 
 impl FullImageMap {
-    pub(super) const ALL: [Self; 3] = [Self::ImageLights, Self::Haze, Self::Scene];
+    pub(super) const ALL: [Self; 4] = [Self::ImageLights, Self::Haze, Self::Scene, Self::Contours];
 }
 
 /// The resources of an allocated [`FullImageMap`].
@@ -71,13 +78,17 @@ pub(super) enum InputBoundPass {
     /// The view transform and output (`apply_view_node`), which reads the LUT.
     View,
     ViewAfterBlur,
-    RelightShadowMap,
+    SceneShadowMap,
     /// One of the image-light passes, in pass order.
     ImageLights(usize),
     /// One of the haze passes, in pass order.
     Haze(usize),
     /// One of the scene map passes, in pass order.
     SceneMap(usize),
+    /// Accumulation into the contour grid.
+    Contours,
+    /// One of the scene emission passes, in pass order.
+    SceneEmission(usize),
 }
 
 /// Bind groups of every [`InputBoundPass`].
@@ -87,10 +98,12 @@ struct InputBindGroups {
     effects_from_tex2: wgpu::BindGroup,
     view: wgpu::BindGroup,
     view_after_blur: wgpu::BindGroup,
-    relight_shadow_map: wgpu::BindGroup,
+    scene_shadow_map: wgpu::BindGroup,
     image_lights: [wgpu::BindGroup; IMAGE_LIGHT_PASSES],
     haze: [wgpu::BindGroup; HAZE_PASSES],
     scene_map: [wgpu::BindGroup; SCENE_MAP_PASSES],
+    contours: wgpu::BindGroup,
+    scene_emission: [wgpu::BindGroup; SCENE_EMISSION_PASSES],
 }
 
 impl InputBindGroups {
@@ -101,10 +114,12 @@ impl InputBindGroups {
             InputBoundPass::EffectsFromTex2 => &self.effects_from_tex2,
             InputBoundPass::View => &self.view,
             InputBoundPass::ViewAfterBlur => &self.view_after_blur,
-            InputBoundPass::RelightShadowMap => &self.relight_shadow_map,
+            InputBoundPass::SceneShadowMap => &self.scene_shadow_map,
             InputBoundPass::ImageLights(index) => &self.image_lights[index],
             InputBoundPass::Haze(index) => &self.haze[index],
             InputBoundPass::SceneMap(index) => &self.scene_map[index],
+            InputBoundPass::Contours => &self.contours,
+            InputBoundPass::SceneEmission(index) => &self.scene_emission[index],
         }
     }
 }
@@ -115,10 +130,12 @@ pub(super) struct InputBindingSources {
     pub(super) scene_preparation_layout: wgpu::BindGroupLayout,
     pub(super) creative_layout: wgpu::BindGroupLayout,
     pub(super) view_layout: wgpu::BindGroupLayout,
-    pub(super) relight_shadow_map_layout: wgpu::BindGroupLayout,
+    pub(super) scene_shadow_map_layout: wgpu::BindGroupLayout,
     pub(super) image_light_layouts: [wgpu::BindGroupLayout; IMAGE_LIGHT_PASSES],
     pub(super) haze_layouts: [wgpu::BindGroupLayout; HAZE_PASSES],
     pub(super) scene_map_layouts: [wgpu::BindGroupLayout; SCENE_MAP_PASSES],
+    pub(super) contour_layout: wgpu::BindGroupLayout,
+    pub(super) scene_emission_layouts: [wgpu::BindGroupLayout; SCENE_EMISSION_PASSES],
     pub(super) camera_uniforms: wgpu::Buffer,
     pub(super) mask_data: wgpu::Buffer,
     pub(super) tone_stats: wgpu::Buffer,
@@ -135,7 +152,7 @@ pub(super) struct InputBindingSources {
     pub(super) out: wgpu::TextureView,
     pub(super) mask: wgpu::TextureView,
     pub(super) mask_sampler: wgpu::Sampler,
-    pub(super) light_rays_mask: wgpu::TextureView,
+    pub(super) full_image_mask: wgpu::TextureView,
     pub(super) pixelate_blocks: wgpu::TextureView,
 }
 
@@ -165,20 +182,22 @@ impl SceneDepthInputs {
     }
 }
 
-/// Relight's shadow map (relight.wgsl), on the level-0 scene-depth grid.
-struct RelightShadowMapInputs {
+/// The scene shadow map (scene_shadows.wgsl): the surface on the level-0
+/// scene-depth grid of `edge` × `edge` texels, and below it the air slices
+/// (`scene_shadow_map_height`).
+struct SceneShadowMapInputs {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
 }
 
-impl RelightShadowMapInputs {
+impl SceneShadowMapInputs {
     fn new(device: &wgpu::Device, edge: u32) -> Self {
         let texture = create_processing_texture(
             device,
-            texture_size(edge, edge),
-            RELIGHT_SHADOW_MAP_FORMAT,
+            texture_size(edge, scene_shadow_map_height(edge)),
+            SCENE_SHADOW_MAP_FORMAT,
             wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            "calibraw full-image Relight shadow map",
+            "calibraw full-image scene shadow map",
         );
         Self {
             view: default_texture_view(&texture),
@@ -229,6 +248,70 @@ impl ImageLightInputs {
             core_view,
             _tail: tail,
             tail_view,
+        }
+    }
+}
+
+/// The contour grid (tone_analysis.wgsl), which the emitter pass reads as it is
+/// and cropped and zoomed views copy from the full frame.
+struct ContourInputs {
+    cells: wgpu::Buffer,
+}
+
+impl ContourInputs {
+    /// A grid of `edge` × `edge` cells.
+    fn new(device: &wgpu::Device, edge: u32) -> Self {
+        Self {
+            cells: create_gpu_buffer(
+                device,
+                "calibraw contour grid",
+                contour_cells_bytes(edge),
+                wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            ),
+        }
+    }
+}
+
+/// The light Glow and Neon emit into the scene (scene_emission.wgsl): the
+/// emitter grid, and the light on surfaces and in the volume media read, which
+/// share one texture. Every pipeline builds them from its own parameters in its
+/// output stage.
+struct SceneEmissionInputs {
+    _emitters: wgpu::Texture,
+    emitters_view: wgpu::TextureView,
+    _light: wgpu::Texture,
+    light_view: wgpu::TextureView,
+}
+
+impl SceneEmissionInputs {
+    /// Textures for grids of `edge` and `surface_edge` cells along the longer
+    /// edge; a texel or two for the placeholders.
+    fn new(device: &wgpu::Device, edge: u32, surface_edge: u32, medium_cells: u32) -> Self {
+        let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+        let texture = |width, height, label| {
+            let texture = create_processing_texture(
+                device,
+                texture_size(width, height),
+                SCENE_EMISSION_FORMAT,
+                usage,
+                label,
+            );
+            let view = default_texture_view(&texture);
+            (texture, view)
+        };
+        let (emitters, emitters_view) = texture(edge, 2 * edge, "calibraw scene emission emitters");
+        let (light, light_view) = texture(
+            surface_edge.max(edge),
+            scene_emission_light_rows(edge, surface_edge, medium_cells),
+            "calibraw scene emission light",
+        );
+        Self {
+            _emitters: emitters,
+            emitters_view,
+            _light: light,
+            light_view,
         }
     }
 }
@@ -471,9 +554,11 @@ impl LookLutInputs {
 struct BoundInputs<'a> {
     scene_depth: &'a SceneDepthInputs,
     scene_map: &'a SceneMapInputs,
-    shadow_map: &'a RelightShadowMapInputs,
+    shadow_map: &'a SceneShadowMapInputs,
     image_lights: &'a ImageLightInputs,
     haze: &'a HazeInputs,
+    contours: &'a ContourInputs,
+    scene_emission: &'a SceneEmissionInputs,
     look_lut: &'a LookLutInputs,
 }
 
@@ -519,7 +604,7 @@ impl InputBindingSources {
                     texture_binding(27, &self.mask),
                     sampler_binding(28, &self.mask_sampler),
                     buffer_binding(33, &self.mask_data),
-                    texture_binding(34, &self.light_rays_mask),
+                    texture_binding(34, &self.full_image_mask),
                     texture_binding(35, scene_depth),
                     buffer_binding(16, &self.tone_stats),
                     texture_binding(36, &self.pixelate_blocks),
@@ -531,6 +616,7 @@ impl InputBindingSources {
                     texture_binding(77, &scene_map.depth_range_view),
                     texture_binding(73, &scene_map.ground_view),
                     texture_binding(75, &scene_map.focus_view),
+                    texture_binding(83, &inputs.scene_emission.light_view),
                 ],
             )
         };
@@ -727,16 +813,69 @@ impl InputBindingSources {
                 ],
             ),
         ];
+        let contours = create_bind_group(
+            device,
+            "bg contour accumulation",
+            &self.contour_layout,
+            &[
+                buffer_binding(0, &self.camera_uniforms),
+                texture_binding(11, &self.scene),
+                buffer_binding(20, &self.profile),
+                buffer_binding(78, &inputs.contours.cells),
+            ],
+        );
+        let emission = inputs.scene_emission;
+        let [emitters, surfaces, volume] = &self.scene_emission_layouts;
+        let scene_emission = [
+            create_bind_group(
+                device,
+                "bg scene emission emitters",
+                emitters,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    sampler_binding(28, &self.mask_sampler),
+                    buffer_binding(33, &self.mask_data),
+                    texture_binding(34, &self.full_image_mask),
+                    texture_binding(35, scene_depth),
+                    buffer_binding(78, &inputs.contours.cells),
+                    texture_binding(79, &emission.emitters_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg scene emission on surfaces",
+                surfaces,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    buffer_binding(16, &self.tone_stats),
+                    sampler_binding(28, &self.mask_sampler),
+                    texture_binding(35, scene_depth),
+                    texture_binding(80, &emission.emitters_view),
+                    texture_binding(81, &emission.light_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg scene emission volume",
+                volume,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    buffer_binding(16, &self.tone_stats),
+                    texture_binding(80, &emission.emitters_view),
+                    texture_binding(81, &emission.light_view),
+                ],
+            ),
+        ];
         InputBindGroups {
             scene_preparation,
             effects_from_tex1: effects("bg scene effects from tex1", &self.tex1, &self.tex2),
             effects_from_tex2: effects("bg scene effects from tex2", &self.tex2, &self.tex1),
             view: view("bg scene look view and output", &self.tex2),
             view_after_blur: view("bg scene look view and output after mask Blur", &self.tex1),
-            relight_shadow_map: create_bind_group(
+            scene_shadow_map: create_bind_group(
                 device,
-                "bg relight shadow map",
-                &self.relight_shadow_map_layout,
+                "bg scene shadow map",
+                &self.scene_shadow_map_layout,
                 &[
                     buffer_binding(0, &self.camera_uniforms),
                     buffer_binding(33, &self.mask_data),
@@ -747,6 +886,8 @@ impl InputBindingSources {
             image_lights,
             haze: haze_groups,
             scene_map: scene_map_groups,
+            contours,
+            scene_emission,
         }
     }
 }
@@ -754,9 +895,11 @@ impl InputBindingSources {
 struct Allocated {
     scene_depth: Option<SceneDepthInputs>,
     scene_map: Option<SceneMapInputs>,
-    relight_shadow_map: Option<RelightShadowMapInputs>,
+    scene_shadow_map: Option<SceneShadowMapInputs>,
     image_lights: Option<ImageLightInputs>,
     haze: Option<HazeInputs>,
+    contours: Option<ContourInputs>,
+    scene_emission: Option<SceneEmissionInputs>,
     look_lut: Option<LookLutInputs>,
     /// The LUT that last failed to upload and why, so it is not retried for
     /// every render.
@@ -769,9 +912,11 @@ pub(super) struct EffectInputs {
     sources: InputBindingSources,
     placeholder_scene_depth: SceneDepthInputs,
     placeholder_scene_map: SceneMapInputs,
-    placeholder_shadow_map: RelightShadowMapInputs,
+    placeholder_shadow_map: SceneShadowMapInputs,
     placeholder_image_lights: ImageLightInputs,
     placeholder_haze: HazeInputs,
+    placeholder_contours: ContourInputs,
+    placeholder_scene_emission: SceneEmissionInputs,
     placeholder_look_lut: LookLutInputs,
     allocated: Mutex<Allocated>,
 }
@@ -781,9 +926,12 @@ impl EffectInputs {
     pub(super) fn new(device: &wgpu::Device, sources: InputBindingSources) -> Self {
         let placeholder_scene_depth = SceneDepthInputs::new(device, 1, 1);
         let placeholder_scene_map = SceneMapInputs::new(device, 1, 1);
-        let placeholder_shadow_map = RelightShadowMapInputs::new(device, 1);
+        let placeholder_shadow_map = SceneShadowMapInputs::new(device, 1);
         let placeholder_image_lights = ImageLightInputs::new(device, 1);
         let placeholder_haze = HazeInputs::new(device, 1);
+        let placeholder_contours = ContourInputs::new(device, 1);
+        // Never read: receivers skip the light unless an effect emits it.
+        let placeholder_scene_emission = SceneEmissionInputs::new(device, 1, 1, 1);
         // Never read: the view pass skips the LUT unless one was uploaded.
         let placeholder_look_lut = LookLutInputs::new(device, 1, None);
         let bind_groups = sources.bind_groups(
@@ -794,6 +942,8 @@ impl EffectInputs {
                 shadow_map: &placeholder_shadow_map,
                 image_lights: &placeholder_image_lights,
                 haze: &placeholder_haze,
+                contours: &placeholder_contours,
+                scene_emission: &placeholder_scene_emission,
                 look_lut: &placeholder_look_lut,
             },
         );
@@ -805,13 +955,17 @@ impl EffectInputs {
             placeholder_shadow_map,
             placeholder_image_lights,
             placeholder_haze,
+            placeholder_contours,
+            placeholder_scene_emission,
             placeholder_look_lut,
             allocated: Mutex::new(Allocated {
                 scene_depth: None,
                 scene_map: None,
-                relight_shadow_map: None,
+                scene_shadow_map: None,
                 image_lights: None,
                 haze: None,
+                contours: None,
+                scene_emission: None,
                 look_lut: None,
                 look_lut_failure: None,
                 bind_groups,
@@ -845,14 +999,29 @@ impl EffectInputs {
         self.rebind(&mut allocated);
     }
 
-    /// Allocates Relight's shadow map unless it exists.
-    pub(super) fn allocate_relight_shadow_map(&self) {
+    /// Allocates the scene shadow map unless it exists.
+    pub(super) fn allocate_scene_shadow_map(&self) {
         let mut allocated = self.lock();
-        if allocated.relight_shadow_map.is_some() {
+        if allocated.scene_shadow_map.is_some() {
             return;
         }
-        allocated.relight_shadow_map =
-            Some(RelightShadowMapInputs::new(&self.device, SCENE_DEPTH_EDGE));
+        allocated.scene_shadow_map =
+            Some(SceneShadowMapInputs::new(&self.device, SCENE_DEPTH_EDGE));
+        self.rebind(&mut allocated);
+    }
+
+    /// Allocates the scene emission textures unless they exist.
+    pub(super) fn allocate_scene_emission(&self) {
+        let mut allocated = self.lock();
+        if allocated.scene_emission.is_some() {
+            return;
+        }
+        allocated.scene_emission = Some(SceneEmissionInputs::new(
+            &self.device,
+            SCENE_EMISSION_GRID_LONG,
+            SCENE_EMISSION_SURFACE_GRID_LONG,
+            MEDIUM_CELLS,
+        ));
         self.rebind(&mut allocated);
     }
 
@@ -882,6 +1051,12 @@ impl EffectInputs {
                     SCENE_MAP_GRID_LONG,
                     SCENE_MAP_BLUR_GRID_LONG,
                 ));
+            }
+            FullImageMap::Contours => {
+                if allocated.contours.is_some() {
+                    return;
+                }
+                allocated.contours = Some(ContourInputs::new(&self.device, CONTOUR_GRID_LONG));
             }
         }
         self.rebind(&mut allocated);
@@ -940,7 +1115,7 @@ impl EffectInputs {
                     .as_ref()
                     .unwrap_or(&self.placeholder_scene_map),
                 shadow_map: allocated
-                    .relight_shadow_map
+                    .scene_shadow_map
                     .as_ref()
                     .unwrap_or(&self.placeholder_shadow_map),
                 image_lights: allocated
@@ -948,6 +1123,14 @@ impl EffectInputs {
                     .as_ref()
                     .unwrap_or(&self.placeholder_image_lights),
                 haze: allocated.haze.as_ref().unwrap_or(&self.placeholder_haze),
+                contours: allocated
+                    .contours
+                    .as_ref()
+                    .unwrap_or(&self.placeholder_contours),
+                scene_emission: allocated
+                    .scene_emission
+                    .as_ref()
+                    .unwrap_or(&self.placeholder_scene_emission),
                 look_lut: allocated
                     .look_lut
                     .as_ref()
@@ -998,6 +1181,16 @@ impl EffectInputs {
                             scene_map.focus.clone(),
                         ],
                         buffers: Vec::new(),
+                    })
+            }
+            FullImageMap::Contours => {
+                allocated
+                    .contours
+                    .as_ref()
+                    .map(|contours| FullImageMapResources {
+                        cells: contours.cells.clone(),
+                        textures: Vec::new(),
+                        buffers: vec![contours.cells.clone()],
                     })
             }
         }

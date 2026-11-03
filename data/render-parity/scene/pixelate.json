@@ -1,0 +1,17 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Pixelate",
+          "settings": {
+            "pixelate": {
+              "amount": 100.0,
+              "block_size": 12.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

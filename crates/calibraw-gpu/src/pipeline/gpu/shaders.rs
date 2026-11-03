@@ -103,6 +103,8 @@ pub(super) const MASK_SCENE_DEPTH: ShaderSource = wgsl!("mask_effects/scene_dept
 pub(super) const MASK_SCENE_ENVIRONMENT: ShaderSource =
     wgsl!("mask_effects/scene_environment.wgsl");
 pub(super) const MASK_SCENE_LIGHTS: ShaderSource = wgsl!("mask_effects/scene_lights.wgsl");
+pub(super) const MASK_SCENE_EMISSION: ShaderSource = wgsl!("mask_effects/scene_emission.wgsl");
+pub(super) const MASK_SCENE_SHADOWS: ShaderSource = wgsl!("mask_effects/scene_shadows.wgsl");
 pub(super) const MASK_MEDIUM: ShaderSource = wgsl!("mask_effects/medium.wgsl");
 pub(super) const MASK_FOG: ShaderSource = wgsl!("mask_effects/fog.wgsl");
 pub(super) const MASK_SMOKE: ShaderSource = wgsl!("mask_effects/smoke.wgsl");
@@ -132,6 +134,8 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         MASK_SCENE_DEPTH,
         MASK_SCENE_ENVIRONMENT,
         MASK_SCENE_LIGHTS,
+        MASK_SCENE_EMISSION,
+        MASK_SCENE_SHADOWS,
         MASK_MEDIUM,
         MASK_FOG,
         MASK_SMOKE,

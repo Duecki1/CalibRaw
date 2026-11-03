@@ -1,0 +1,18 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Grain",
+          "settings": {
+            "grain": {
+              "amount": 100.0,
+              "color": 50.0,
+              "size": 2.5
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -297,6 +297,82 @@ fn image_light_grid() -> vec2<u32> {
     return full_image_grid(IMAGE_LIGHT_GRID_LONG);
 }
 
+// Contours (tone_analysis.wgsl `accumulate_contours`): how much of each cell of a
+// coarse full-image grid lies on the photo's contours, for effects that emit light
+// along them (Neon, scene_emission.wgsl). A cell counts its sampled pixels by the
+// contrast across them and the brightness of their brighter side, so the reader
+// applies its own threshold, line width and exposure. CONTOUR_GRID_LONG cells along
+// the longer edge, in a buffer sized for a square grid. Match the constants of the
+// same names in Rust.
+const CONTOUR_GRID_LONG: u32 = 64u;
+const CONTOUR_CONTRAST_BINS: u32 = 12u;
+const CONTOUR_BRIGHTNESS_BINS: u32 = 8u;
+// CONTOUR_CONTRAST_BINS × CONTOUR_BRIGHTNESS_BINS.
+const CONTOUR_BINS: u32 = 96u;
+// The bin counts, four per vector, then the cell's sample count in the last
+// vector's x and the tap spacing in reference pixels in its y.
+const CONTOUR_CELL_VECTORS: u32 = 25u;
+
+struct ContourCell {
+    // Bin `contrast * CONTOUR_BRIGHTNESS_BINS + brightness` is component
+    // `bin % 4` of vector `bin / 4`.
+    bins: array<vec4<f32>, CONTOUR_CELL_VECTORS>,
+}
+
+// Contrast is Neon's measure (neon.wgsl): the Sobel response of log2 luminance,
+// half a stop's difference per stop across a step. Bins start at
+// CONTOUR_CONTRAST_MIN and widen by 2^(2/3) each; lower contrast is not binned.
+const CONTOUR_CONTRAST_MIN: f32 = 0.01;
+const CONTOUR_CONTRAST_STOPS_PER_BIN: f32 = 0.6666667;
+// Brightness of the brighter side in unexposed scene-linear luminance: two stops
+// per bin, from 12 stops below middle grey.
+const CONTOUR_BRIGHTNESS_LOWEST_EV: f32 = -12.0;
+const CONTOUR_BRIGHTNESS_STOPS_PER_BIN: f32 = 2.0;
+const CONTOUR_MIDDLE_GREY: f32 = 0.18;
+// Samples per cell edge at most; larger cells sample a lattice.
+const CONTOUR_SAMPLES_PER_CELL_EDGE: i32 = 16;
+
+// Cells of the contour grid across and down the full image.
+fn contour_grid() -> vec2<u32> {
+    return full_image_grid(CONTOUR_GRID_LONG);
+}
+
+// The bin of `contrast`, or -1 below the lowest.
+fn contour_contrast_bin(contrast: f32) -> i32 {
+    if contrast < CONTOUR_CONTRAST_MIN { return -1; }
+    let bin = floor(log2(contrast / CONTOUR_CONTRAST_MIN) / CONTOUR_CONTRAST_STOPS_PER_BIN);
+    return i32(min(bin, f32(CONTOUR_CONTRAST_BINS - 1u)));
+}
+
+// The geometric centre of contrast bin `bin`.
+fn contour_contrast_at(bin: u32) -> f32 {
+    return CONTOUR_CONTRAST_MIN * exp2((f32(bin) + 0.5) * CONTOUR_CONTRAST_STOPS_PER_BIN);
+}
+
+fn contour_brightness_bin(luminance: f32) -> u32 {
+    let ev = log2(max(luminance, 1e-12) / CONTOUR_MIDDLE_GREY);
+    let bin = floor((ev - CONTOUR_BRIGHTNESS_LOWEST_EV) / CONTOUR_BRIGHTNESS_STOPS_PER_BIN);
+    return u32(clamp(bin, 0.0, f32(CONTOUR_BRIGHTNESS_BINS - 1u)));
+}
+
+// The luminance at the centre of brightness bin `bin`, two stops wide.
+fn contour_brightness_at(bin: u32) -> f32 {
+    let ev = CONTOUR_BRIGHTNESS_LOWEST_EV + (f32(bin) + 0.5) * CONTOUR_BRIGHTNESS_STOPS_PER_BIN;
+    return CONTOUR_MIDDLE_GREY * exp2(ev);
+}
+
+// The Sobel spacing contrast is measured at, in whole pixels: Neon's at an
+// Edge width of 1 (`mask_focus_blur_radius`). Readers scale the share of a
+// cell on a line by their own spacing over this one.
+fn contour_radius() -> i32 {
+    return max(i32(round(resolution_scale(0.55, 3.0))), 1);
+}
+
+// Pixels between samples along a cell edge `span` pixels long.
+fn contour_sample_step(span: i32) -> i32 {
+    return max(span / CONTOUR_SAMPLES_PER_CELL_EDGE, 1);
+}
+
 // The scene map (scene_analysis.wgsl): a coarse grid over the full image
 // with SCENE_MAP_GRID_LONG cells along its longer edge and a blurred copy with
 // SCENE_MAP_BLUR_GRID_LONG, stored in textures and a buffer sized for a square

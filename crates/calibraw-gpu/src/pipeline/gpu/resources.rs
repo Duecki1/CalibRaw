@@ -19,6 +19,36 @@ pub(super) const IMAGE_LIGHT_BANDS: u32 = 16;
 pub(super) const IMAGE_LIGHT_CELL_BYTES: u64 = IMAGE_LIGHT_BANDS as u64 * 16;
 pub(super) const IMAGE_LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
+/// Contours (tone_analysis.wgsl, `ContourCell` in common.wgsl): grid cells
+/// along the full image's longer edge and the bins each cell counts. The cell
+/// buffer is sized for a square grid.
+pub(super) const CONTOUR_GRID_LONG: u32 = 64;
+pub(super) const CONTOUR_CONTRAST_BINS: u32 = 12;
+pub(super) const CONTOUR_BRIGHTNESS_BINS: u32 = 8;
+/// Bytes of one contour cell: the bin counts four to an RGBA f32 vector, then
+/// one vector with the sample count and tap spacing.
+pub(super) const CONTOUR_CELL_BYTES: u64 =
+    ((CONTOUR_CONTRAST_BINS * CONTOUR_BRIGHTNESS_BINS) as u64).div_ceil(4) * 16 + 16;
+
+/// Scene emission (scene_emission.wgsl): cells along the full image's longer
+/// edge of the emitter grid and volume, and of the surface grid. Textures stack
+/// square blocks of a grid: two for the emitters; two for the surfaces, then
+/// two per medium depth cell for the volume, in one texture.
+pub(super) const SCENE_EMISSION_GRID_LONG: u32 = 32;
+pub(super) const SCENE_EMISSION_SURFACE_GRID_LONG: u32 = 64;
+/// Depth cells of a medium (`MEDIUM_CELLS` in medium.wgsl).
+pub(super) const MEDIUM_CELLS: u32 = 12;
+pub(super) const SCENE_EMISSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// Rows of the surface and volume texture (`SCENE_EMISSION_LIGHT_ROWS`).
+pub(super) const fn scene_emission_light_rows(
+    edge: u32,
+    surface_edge: u32,
+    medium_cells: u32,
+) -> u32 {
+    2 * surface_edge + 2 * medium_cells * edge
+}
+
 /// Dehaze (haze.wgsl): grid cells along the full image's longer edge. The
 /// cell buffer and textures are sized for a square grid.
 pub(super) const HAZE_GRID_LONG: u32 = 160;
@@ -48,12 +78,29 @@ pub(super) const SCENE_ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFo
 /// slope times the guide nearly cancels its offset.
 pub(super) const SCENE_COEFFICIENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
-/// Relight shadows of up to four lights per scene-depth texel (relight.wgsl).
-pub(super) const RELIGHT_SHADOW_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Shadows of up to four scene lights on the surface and in the air
+/// (scene_shadows.wgsl).
+pub(super) const SCENE_SHADOW_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Air slices of the scene shadow map, and the slices in each of its rows of
+/// tiles (`SCENE_SHADOW_SLICES`, `SCENE_SHADOW_TILES` in scene_shadows.wgsl).
+pub(super) const SCENE_SHADOW_SLICES: u32 = 16;
+pub(super) const SCENE_SHADOW_TILES: u32 = 8;
+
+/// Rows of the scene shadow map over a scene-depth grid of `edge` × `edge`
+/// texels: the surface, then the air slices in tiles of `edge /
+/// SCENE_SHADOW_TILES` texels.
+pub(super) const fn scene_shadow_map_height(edge: u32) -> u32 {
+    edge + edge / SCENE_SHADOW_TILES * (SCENE_SHADOW_SLICES / SCENE_SHADOW_TILES)
+}
 
 /// Bytes of an image-light grid of `edge` × `edge` cells.
 pub(super) const fn image_light_cells_bytes(edge: u32) -> u64 {
     edge as u64 * edge as u64 * IMAGE_LIGHT_CELL_BYTES
+}
+
+/// Bytes of a contour grid of `edge` × `edge` cells.
+pub(super) const fn contour_cells_bytes(edge: u32) -> u64 {
+    edge as u64 * edge as u64 * CONTOUR_CELL_BYTES
 }
 
 /// Bytes of a scene map of `edge` × `edge` cells.
@@ -422,11 +469,11 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
     );
     push_entry(
         &mut entries,
-        "Light Rays emission atlas",
+        "full-image mask atlas",
         GpuResourceResidency::Persistent,
         texture_allocation_bytes(
-            LIGHT_RAYS_MASK_ATLAS_EDGE,
-            LIGHT_RAYS_MASK_ATLAS_EDGE,
+            FULL_IMAGE_MASK_ATLAS_EDGE,
+            FULL_IMAGE_MASK_ATLAS_EDGE,
             input.mask_layers,
             1,
             wgpu::TextureFormat::R16Float,
@@ -468,14 +515,14 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
     );
     push_entry(
         &mut entries,
-        "Relight shadow map",
+        "scene shadow map",
         GpuResourceResidency::OnDemand,
         texture_allocation_bytes(
             SCENE_DEPTH_EDGE,
-            SCENE_DEPTH_EDGE,
+            scene_shadow_map_height(SCENE_DEPTH_EDGE),
             1,
             1,
-            RELIGHT_SHADOW_MAP_FORMAT,
+            SCENE_SHADOW_MAP_FORMAT,
         )?,
     );
     push_entry(
@@ -494,6 +541,34 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             1,
             1,
             IMAGE_LIGHT_FORMAT,
+        )?,
+    );
+    push_entry(
+        &mut entries,
+        "contour grid buffer",
+        GpuResourceResidency::OnDemand,
+        aligned_buffer_bytes(contour_cells_bytes(CONTOUR_GRID_LONG))?,
+    );
+    push_entry(
+        &mut entries,
+        "scene emission textures",
+        GpuResourceResidency::OnDemand,
+        texture_allocation_bytes(
+            SCENE_EMISSION_GRID_LONG,
+            2 * SCENE_EMISSION_GRID_LONG,
+            1,
+            1,
+            SCENE_EMISSION_FORMAT,
+        )? + texture_allocation_bytes(
+            SCENE_EMISSION_SURFACE_GRID_LONG.max(SCENE_EMISSION_GRID_LONG),
+            scene_emission_light_rows(
+                SCENE_EMISSION_GRID_LONG,
+                SCENE_EMISSION_SURFACE_GRID_LONG,
+                MEDIUM_CELLS,
+            ),
+            1,
+            1,
+            SCENE_EMISSION_FORMAT,
         )?,
     );
     push_entry(

@@ -1,0 +1,17 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Smoke",
+          "settings": {
+            "smoke": {
+              "amount": 70.0,
+              "density": 70.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

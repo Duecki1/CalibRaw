@@ -196,8 +196,8 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
             "blur_image_lights_horizontal",
         ),
         (
-            indices.relight_shadow_map_pass_index,
-            "build_relight_shadow_map",
+            indices.scene_shadow_map_pass_index,
+            "build_scene_shadow_map",
         ),
         (indices.raster_finish_pass_index, "raster_finish"),
         (indices.haze_accumulate_pass_index, "accumulate_haze"),

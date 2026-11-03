@@ -11,8 +11,12 @@ pub struct NeonEffectSettings {
     pub glow: f32,
     pub background: f32,
     pub color: [f32; 3],
+    /// How much the lines light the scene around them (scene_emission.wgsl).
+    pub scene_light: f32,
 }
 
+/// The serialized baseline. Edits saved before Scene light omit it and light
+/// nothing, as they did.
 impl Default for NeonEffectSettings {
     fn default() -> Self {
         Self {
@@ -22,6 +26,7 @@ impl Default for NeonEffectSettings {
             glow: GLOW.default,
             background: BACKGROUND.default,
             color: COLOR.default,
+            scene_light: 0.0,
         }
     }
 }
@@ -33,10 +38,19 @@ effect_lanes! {
     GLOW = 3,
     COLOR = 4 (color),
     BACKGROUND = 7,
+    SCENE_LIGHT = 8,
 }
 
 impl EffectSettings for NeonEffectSettings {
     const LANES: &'static [LaneName] = lanes::ALL;
+
+    /// New Neon lights the scene.
+    fn initial() -> Self {
+        Self {
+            scene_light: SCENE_LIGHT.default,
+            ..Self::default()
+        }
+    }
 
     fn is_active(&self) -> bool {
         self.amount.abs() > 1e-6
@@ -47,6 +61,7 @@ impl EffectSettings for NeonEffectSettings {
             EffectControl::Slider(&mut self.amount, AMOUNT),
             EffectControl::Slider(&mut self.edge_width, EDGE_WIDTH),
             EffectControl::Color(&mut self.color, COLOR),
+            EffectControl::Slider(&mut self.scene_light, SCENE_LIGHT),
         ])
         .details(
             "Neon details",
@@ -65,5 +80,6 @@ impl EffectSettings for NeonEffectSettings {
         slot.set(lanes::GLOW, GLOW.clamp(self.glow));
         slot.set_color(lanes::COLOR, COLOR.clamp(self.color));
         slot.set(lanes::BACKGROUND, BACKGROUND.clamp(self.background));
+        slot.set(lanes::SCENE_LIGHT, SCENE_LIGHT.clamp(self.scene_light));
     }
 }

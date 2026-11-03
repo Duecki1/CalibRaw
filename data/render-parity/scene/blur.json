@@ -1,0 +1,16 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Blur",
+          "settings": {
+            "blur": {
+              "amount": 100.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

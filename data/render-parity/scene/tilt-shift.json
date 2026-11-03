@@ -1,0 +1,17 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "TiltShift",
+          "settings": {
+            "tilt_shift": {
+              "amount": 100.0,
+              "angle": 15.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

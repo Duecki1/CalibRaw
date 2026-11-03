@@ -200,11 +200,12 @@ fn effect_scene_lights_present() -> bool {
     return scene_lights_present();
 }
 
-// Light from every scene light that a point on the view ray of `pos`, at `depth`,
-// scatters toward the camera, relative to the ambient level; `anisotropy` > 0
-// scatters forward (scene_lights.wgsl).
-fn effect_scene_light(pos: vec2<i32>, depth: f32, anisotropy: f32) -> vec3<f32> {
-    return scene_light_received(pos, depth, anisotropy);
+// Light from every scene light that a point on the surface `pos` shows, at
+// `depth`, scatters toward the camera, relative to the ambient level;
+// `anisotropy` > 0 scatters forward (scene_lights.wgsl). Surfaces between the
+// point and a light shadow it (scene_shadows.wgsl).
+fn effect_surface_scene_light(pos: vec2<i32>, depth: f32, anisotropy: f32) -> vec3<f32> {
+    return scene_light_received(pos, depth, anisotropy, scene_shadow_surface_at(pos));
 }
 
 // --- Noise ---

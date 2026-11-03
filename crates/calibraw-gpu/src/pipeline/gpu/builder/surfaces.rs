@@ -78,7 +78,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) tone_guide_a: wgpu::Texture,
     pub(in crate::pipeline::gpu) tone_guide_b: wgpu::Texture,
     pub(in crate::pipeline::gpu) mask_texture: wgpu::Texture,
-    pub(in crate::pipeline::gpu) light_rays_mask_texture: wgpu::Texture,
+    pub(in crate::pipeline::gpu) full_image_mask_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) out_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) display_linear_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) reconstructed_raw_view: wgpu::TextureView,
@@ -96,7 +96,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) black_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) lens_shading_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_view: wgpu::TextureView,
-    pub(in crate::pipeline::gpu) light_rays_mask_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) full_image_mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_sampler: wgpu::Sampler,
     /// Markesteijn's homogeneity map, allocated for X-Trans only.
     pub(in crate::pipeline::gpu) xtrans_homogeneity: Option<wgpu::Texture>,
@@ -212,14 +212,14 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         "calibraw normalized local-mask atlas",
     );
-    let light_rays_mask_texture = create_processing_texture_array(
+    let full_image_mask_texture = create_processing_texture_array(
         device,
-        LIGHT_RAYS_MASK_ATLAS_EDGE,
-        LIGHT_RAYS_MASK_ATLAS_EDGE,
+        FULL_IMAGE_MASK_ATLAS_EDGE,
+        FULL_IMAGE_MASK_ATLAS_EDGE,
         mask_layer_capacity as u32,
         wgpu::TextureFormat::R16Float,
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        "calibraw full-image Light Rays emission atlas",
+        "calibraw full-image mask atlas",
     );
 
     let xtrans_homogeneity = matches!(raw.cfa_kind, CfaKind::XTrans).then(|| {
@@ -254,8 +254,8 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
     });
-    let light_rays_mask_view = light_rays_mask_texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some("calibraw full-image Light Rays mask array view"),
+    let full_image_mask_view = full_image_mask_texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("calibraw full-image mask array view"),
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
     });
@@ -291,7 +291,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             tone_guide_a,
             tone_guide_b,
             mask_texture,
-            light_rays_mask_texture,
+            full_image_mask_texture,
             out_view,
             display_linear_view,
             reconstructed_raw_view,
@@ -309,7 +309,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             black_view,
             lens_shading_view,
             mask_view,
-            light_rays_mask_view,
+            full_image_mask_view,
             mask_sampler,
             xtrans_homogeneity,
             xtrans_homogeneity_view,

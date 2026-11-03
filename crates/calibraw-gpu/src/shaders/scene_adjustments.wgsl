@@ -19,7 +19,8 @@
 @group(0) @binding(29) var display_linear_out: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 @group(0) @binding(30) var glow_work_tex: texture_2d<f32>;
 @group(0) @binding(31) var glow_work_out: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
-@group(0) @binding(34) var light_rays_mask_tex: texture_2d_array<f32>;
+// Masks over the full image (`full_image_mask_weight`).
+@group(0) @binding(34) var full_image_mask_tex: texture_2d_array<f32>;
 // Pixelate block cache (layout in mask_effects/pixelate.wgsl).
 @group(0) @binding(36) var pixelate_blocks_tex: texture_2d<f32>;
 @group(0) @binding(37) var pixelate_blocks_out: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
@@ -66,6 +67,24 @@ fn local_mask_texture_uv(region_uv: vec2<f32>) -> vec2<f32> {
     let half_texel = vec2<f32>(0.5) / valid_size;
     let safe_region_uv = clamp(region_uv, half_texel, vec2<f32>(1.0) - half_texel);
     return safe_region_uv * valid_size / atlas_size;
+}
+
+// Mask coverage at full-image `uv` from the full-image mask atlas, which holds
+// the masks of effects that act beyond a tile or zoomed view
+// (`MaskEffect::reads_full_image_mask`). Coverage at the frame's edge extends
+// beyond it. Effects without a mask layer cover every position fully.
+fn full_image_mask_weight(uv: vec2<f32>, index: u32) -> f32 {
+    let layer = Common::mask_data[index].point_color_meta.z;
+    if layer == 0xffffffffu { return 1.0; }
+    let atlas_size = vec2<f32>(textureDimensions(full_image_mask_tex));
+    let half_texel = vec2<f32>(0.5) / atlas_size;
+    return textureSampleLevel(
+        full_image_mask_tex,
+        local_mask_sampler,
+        clamp(uv, half_texel, vec2<f32>(1.0) - half_texel),
+        i32(layer),
+        0.0,
+    ).x;
 }
 
 fn local_mask_weight(pos: vec2<i32>, index: u32) -> f32 {

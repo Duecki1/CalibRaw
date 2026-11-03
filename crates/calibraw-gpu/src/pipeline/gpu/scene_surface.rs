@@ -26,9 +26,46 @@
 //!
 //! Every step computes each texel from the previous step alone, so rows are
 //! processed in parallel with results identical to a serial pass.
+//!
+//! Depth predicted with surface normals (`SceneNormals`) takes its level-0
+//! gradients from them instead (`model_gradients`): from 8-bit relative depth,
+//! slopes come out tilted wherever the depth model's distances are, which
+//! turns the ground toward the camera, while the normal model orients them
+//! directly. The normals give each surface's direction; the scale that turns
+//! them into gradients is fitted to the depth's own slopes, so gradients stay
+//! consistent with the depth every reader compares them with.
 
 use super::scene_depth::{distance_from_stored, distance_per_stored};
 use rayon::prelude::*;
+
+/// Half the scene camera's field of view as a tangent per shorter-edge length
+/// (scene_lights.wgsl).
+pub(super) const SCENE_FOCAL_TAN: f32 = 0.4;
+/// The depth range, in units of the nearest surface's distance, of the scene
+/// camera with the default Relief (`scene_camera` in scene_lights.wgsl, at
+/// `SCENE_DEFAULT_RELIEF_CONTROL` 0.5): model gradients use its inverse when
+/// too little of the depth is sloped to fit their scale.
+pub(super) const DEFAULT_RELIEF: f32 = 2.283;
+/// Bounds of the fitted scale of model gradients, the inverse of a depth
+/// range: the Relief control's range (0.25 to 6) and somewhat beyond.
+const MODEL_SCALE_RANGE: (f32, f32) = (0.1, 4.0);
+/// The smallest cosine between a normal and the direction to the camera that
+/// model gradients follow: steeper surfaces are seen edge-on, where a gradient
+/// grows without bound.
+const MIN_VIEW_COSINE: f32 = 0.2;
+/// Texels whose model slope is at least this (squared, per shorter-edge
+/// length) are sloped enough to fit the scale on.
+const MIN_FIT_SLOPE_SQUARED: f32 = 0.05 * 0.05;
+/// Texels nearer than this distance fit the scale; the far scenery and sky
+/// have little slope left in 8-bit depth.
+const MAX_FIT_DISTANCE: f32 = 0.9;
+/// A distance change per texel above this marks a depth edge, whose texels do
+/// not fit the scale.
+const FIT_EDGE_STEP: f32 = 0.02;
+/// Every this many texels along each axis is a fitting sample.
+const FIT_STRIDE: usize = 4;
+/// Fewer fitting samples than this keep the default scale.
+const MIN_FIT_SAMPLES: usize = 1000;
 
 /// Mip levels of the scene-depth texture; the smallest is 16×16 at 1024.
 pub(super) const SCENE_DEPTH_MIP_LEVELS: u32 = 7;
@@ -91,9 +128,16 @@ fn texel_extent(edge: u32, aspect: f32) -> [f32; 2] {
 }
 
 /// Derives the relighting surface from `stored`, the `edge`×`edge` bilinear
-/// resample of the stored depth. `aspect` is the image's width / height.
-/// Level 0 holds the distance of `stored` in its first channel.
-pub(super) fn derive_scene_surface(stored: &[f32], edge: u32, aspect: f32) -> Vec<SurfaceLevel> {
+/// resample of the stored depth, and `normals`, the same resample of the
+/// x and y of the normals predicted with it (`SceneNormals`). `aspect` is the
+/// image's width / height. Level 0 holds the distance of `stored` in its first
+/// channel.
+pub(super) fn derive_scene_surface(
+    stored: &[f32],
+    normals: Option<&[[f32; 2]]>,
+    edge: u32,
+    aspect: f32,
+) -> Vec<SurfaceLevel> {
     let side = edge as usize;
     debug_assert_eq!(stored.len(), side * side);
     let extent = texel_extent(edge, aspect);
@@ -124,6 +168,10 @@ pub(super) fn derive_scene_surface(stored: &[f32], edge: u32, aspect: f32) -> Ve
                 ];
             }
         });
+    if let Some(normals) = normals {
+        debug_assert_eq!(normals.len(), side * side);
+        model_gradients(&mut texels, normals, side, extent);
+    }
 
     let mut levels = vec![SurfaceLevel {
         width: edge,
@@ -142,6 +190,82 @@ pub(super) fn derive_scene_surface(stored: &[f32], edge: u32, aspect: f32) -> Ve
         levels.push(next);
     }
     levels
+}
+
+/// Replaces the gradients of level-0 `texels` (`side`×`side`, each `extent`
+/// across) with those of the surfaces `normals` describe.
+///
+/// A surface with normal n in the scene camera (scene_lights.wgsl), whose
+/// image point p lies on the ray L = (2 tan (p - centre), 1), has the depth
+/// gradient (`relight_normal` inverted) g = q (k + d), with
+/// q = -2 tan n.xy / (n · L), d the smooth distance and k the inverse of the
+/// depth range the camera spans. q depends on the normal alone; k is fitted
+/// as the weighted median that best turns q into the depth's own gradients,
+/// on texels away from depth edges, the sky and far scenery.
+fn model_gradients(texels: &mut [[f32; 4]], normals: &[[f32; 2]], side: usize, extent: [f32; 2]) {
+    let image = [extent[0] * side as f32, extent[1] * side as f32];
+    let slopes: Vec<[f32; 2]> = normals
+        .par_iter()
+        .enumerate()
+        .map(|(index, normal)| {
+            let point = [
+                ((index % side) as f32 + 0.5) * extent[0],
+                ((index / side) as f32 + 0.5) * extent[1],
+            ];
+            let ray = [
+                2.0 * SCENE_FOCAL_TAN * (point[0] - 0.5 * image[0]),
+                2.0 * SCENE_FOCAL_TAN * (point[1] - 0.5 * image[1]),
+                1.0,
+            ];
+            let lateral = normal[0] * normal[0] + normal[1] * normal[1];
+            let normal = if lateral > 1.0 {
+                let length = lateral.sqrt();
+                [normal[0] / length, normal[1] / length, 0.0]
+            } else {
+                [normal[0], normal[1], -(1.0 - lateral).sqrt()]
+            };
+            let ray_length = (ray[0] * ray[0] + ray[1] * ray[1] + 1.0).sqrt();
+            let facing = -(normal[0] * ray[0] + normal[1] * ray[1] + normal[2]) / ray_length;
+            let scale = 2.0 * SCENE_FOCAL_TAN / (ray_length * facing.max(MIN_VIEW_COSINE));
+            [normal[0] * scale, normal[1] * scale]
+        })
+        .collect();
+
+    let mut samples: Vec<(f32, f32)> = (0..side)
+        .step_by(FIT_STRIDE)
+        .flat_map(|y| (0..side).step_by(FIT_STRIDE).map(move |x| y * side + x))
+        .filter_map(|index| {
+            let [_, distance, gx, gy] = texels[index];
+            let [qx, qy] = slopes[index];
+            let weight = qx * qx + qy * qy;
+            let edge = (gx * extent[0]).hypot(gy * extent[1]) > FIT_EDGE_STEP;
+            (weight >= MIN_FIT_SLOPE_SQUARED && distance < MAX_FIT_DISTANCE && !edge)
+                .then(|| ((gx * qx + gy * qy) / weight - distance, weight))
+        })
+        .collect();
+    let scale = if samples.len() < MIN_FIT_SAMPLES {
+        1.0 / DEFAULT_RELIEF
+    } else {
+        samples.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let half = samples.iter().map(|sample| sample.1).sum::<f32>() * 0.5;
+        let mut below = 0.0;
+        samples
+            .iter()
+            .find(|sample| {
+                below += sample.1;
+                below >= half
+            })
+            .map_or(1.0 / DEFAULT_RELIEF, |sample| sample.0)
+    }
+    .clamp(MODEL_SCALE_RANGE.0, MODEL_SCALE_RANGE.1);
+    texels
+        .par_iter_mut()
+        .zip(&slopes)
+        .for_each(|(texel, slope)| {
+            let reach = scale + texel[SMOOTH_DEPTH];
+            texel[2] = slope[0] * reach;
+            texel[3] = slope[1] * reach;
+        });
 }
 
 /// Channel of the stored depth on level 0 and of the nearest depth above it.

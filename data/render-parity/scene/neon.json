@@ -1,0 +1,17 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Neon",
+          "settings": {
+            "neon": {
+              "amount": 80.0,
+              "background": 30.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

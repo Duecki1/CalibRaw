@@ -221,6 +221,9 @@ fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
+    // Light that Glow and Neon cast on the surfaces lands first, so every
+    // creative effect sees the lit scene whatever the order of the cards.
+    rgb = apply_scene_emission_light(pos, rgb);
     rgb = apply_local_creative_mask_effect_nodes(pos, rgb);
     rgb = apply_glow(pos, rgb);
     rgb = apply_mask_glow_cores(pos, rgb);

@@ -69,16 +69,17 @@ pub mod options {
 
     /// Rain: 1 when streaks and mist follow scene depth.
     pub const RAIN_DEPTH: EffectOption = EffectOption::new(1);
-    /// Relight: its shadow-map channel plus one, or 0 to trace shadows per
-    /// pixel. calibraw-gpu assigns it after packing.
-    pub const RELIGHT_SHADOW_CHANNEL: EffectOption = EffectOption::new(2);
+    /// Relight and Light Rays: the scene shadow map's channel of the light
+    /// plus one, or 0 when the map does not hold it. calibraw-gpu assigns it
+    /// after packing.
+    pub const SCENE_LIGHT_CHANNEL: EffectOption = EffectOption::new(2);
     /// Fog, Smoke and Rain: 1 when Image lights is on.
     pub const MEDIUM_IMAGE_LIGHTS: EffectOption = EffectOption::new(3);
 
     /// Every option as (name, index), for the shaders.
     pub const ALL: [(&str, usize); 3] = [
         ("RAIN_DEPTH", RAIN_DEPTH.index()),
-        ("RELIGHT_SHADOW_CHANNEL", RELIGHT_SHADOW_CHANNEL.index()),
+        ("SCENE_LIGHT_CHANNEL", SCENE_LIGHT_CHANNEL.index()),
         ("MEDIUM_IMAGE_LIGHTS", MEDIUM_IMAGE_LIGHTS.index()),
     ];
 }

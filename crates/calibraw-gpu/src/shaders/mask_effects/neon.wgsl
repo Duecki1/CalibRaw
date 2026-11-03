@@ -69,3 +69,36 @@ fn apply_neon(pos: vec2<i32>, source_rgb: vec3<f32>, params: MaskEffectParams) -
     let emitted = hot_color * (0.58 * profile.x) + color * (0.32 * glow * profile.y);
     return mix(source_rgb, source_rgb * background + emitted, amount);
 }
+
+// Scene light: Neon's lines are an area light (scene_emission.wgsl). The grid of
+// emitters is built from full-image inputs only, so the lines are not traced
+// there: the contour statistics give the share of the area on a line
+// (`scene_contour_line_share`) with Neon's threshold, ramp and soft black floor
+// (`neon_edge_sample`, `neon_edge_profile`). A line emits its mean light: the
+// tube's 0.58 with about half of its 0.22 toward white, and the glow's 0.32,
+// whose halo averages to the line's own share (its weights sum to one).
+const NEON_BLACK_FLOOR: f32 = 0.08;
+const NEON_EDGE_RAMP: f32 = 0.32;
+
+fn neon_lights_scene(params: MaskEffectParams) -> bool {
+    return mask_effect_percent(params, NEON_AMOUNT_LANE) > 1e-6
+        && mask_effect_percent(params, NEON_SCENE_LIGHT_LANE) > 1e-6;
+}
+
+// The radiance a Neon slot emits into the scene around full-image `uv` where its
+// mask is full.
+fn neon_scene_emission(params: MaskEffectParams, uv: vec2<f32>) -> vec3<f32> {
+    if !neon_lights_scene(params) { return vec3<f32>(0.0); }
+    let edge_width = clamp(mask_effect_lane(params, NEON_EDGE_WIDTH_LANE), 0.5, 8.0);
+    let width = mask_focus_blur_radius(edge_width, 24.0);
+    let detail = mask_effect_percent(params, NEON_DETAIL_LANE);
+    let threshold = mix(0.16, 0.012, detail);
+    let share = scene_contour_line_share(uv, threshold, NEON_EDGE_RAMP, NEON_BLACK_FLOOR, width);
+    if share <= 0.0 { return vec3<f32>(0.0); }
+    let glow = mask_effect_percent(params, NEON_GLOW_LANE);
+    let color = mask_effect_picker_color_to_working(mask_effect_color(params, NEON_COLOR_LANE));
+    let tube = mix(color, vec3<f32>(1.0), 0.11);
+    return (tube * 0.58 + color * (0.32 * glow)) * share
+        * (mask_effect_percent(params, NEON_AMOUNT_LANE)
+            * mask_effect_percent(params, NEON_SCENE_LIGHT_LANE));
+}

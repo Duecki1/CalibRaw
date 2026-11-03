@@ -292,6 +292,30 @@ impl CalibRawApp {
         }
     }
 
+    /// Depth Anything V2 Small, the depth model before Distill-Any-Depth
+    /// Small; nothing reads it any more. Removes that file and nothing else.
+    ///
+    /// migration: remove in v1.7.0. Listed in `calibraw_core`'s `migrations`.
+    pub(in crate::app) fn remove_retired_depth_model(&self) {
+        let path = self
+            .ai_model_root()
+            .join("depth_anything_v2_small_fp32.onnx");
+        if path.is_file() {
+            Self::remove_retired_app_data(path, "retired depth model");
+        }
+    }
+
+    /// The normal model depth estimated now runs with.
+    pub(in crate::app) fn scene_geometry_model(
+        &self,
+    ) -> calibraw_ai::models::scene_geometry::SceneGeometryModel {
+        let quality = self.ai.scene_depth_quality;
+        calibraw_ai::models::scene_geometry::SceneGeometryModel {
+            path: self.ai_model_root().join(quality.model().cache_filename),
+            quality,
+        }
+    }
+
     pub(in crate::app) fn big_lama_model_path(&self) -> PathBuf {
         self.ai_model_root()
             .join(calibraw_ai::models::remove::MODEL.cache_filename)

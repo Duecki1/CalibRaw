@@ -181,8 +181,14 @@ effect needs already exists in the scene (`scene_*.wgsl`), so do not sample or u
 it again: when the API lacks it, add a function to `effect_api.wgsl` that reads it. An
 effect that shades the scene's surfaces or needs its camera or ground, as Relight, Rain
 and Wet Surfaces do, reads `scene_surface_taps_at` and the rest of `scene_depth.wgsl`,
-`scene_environment.wgsl` and `scene_lights.wgsl` directly. Effects with passes of their
-own (the blurs, Glow, Light Rays, Rain, Wet Surfaces, Relight's shadow map) also need
+`scene_environment.wgsl` and `scene_lights.wgsl` directly. An effect that lights the
+scene from an area of the image (particles, glowing props) writes into the scene
+emission grid instead: it gives its radiance at a full-image point from full-image
+inputs only, adds its case to `scene_emission_slot_at` and `scene_emission_present`
+(`scene_emission.wgsl`) and to `GpuParams::needs_scene_emission`, and keeps its mask in
+the full-image atlas (`MaskEffect::reads_full_image_mask`); Fog, Smoke, Rain, Wet Surfaces and the
+surfaces then receive its light. Effects with passes of their
+own (the blurs, Glow, Light Rays, Rain, Wet Surfaces, the scene shadow map) also need
 those passes and their `GpuParams::needs_*` checks, and read their slots by lane name
 too (`mask_effect_params`).
 
@@ -561,10 +567,18 @@ Gradle builds pinned LibRaw and Lensfun dependencies and packages the APK at
 `android/app/build/outputs/apk/debug/app-debug.apk`. To build one ABI through
 the compatibility helper, use `cargo xtask build-android arm64-v8a release`.
 
-Depth masks, fog, rain, Wet Surfaces and Relight on every platform share a pinned Depth Anything
-V2 Small FP32 model (~99 MB), run at 518 × 518. Android runs it on CPU with two
-inference threads and weight prepacking disabled. Its inverse-depth
-predictions are converted to the shared near=0, far=255 convention.
+Depth masks, fog, rain, Wet Surfaces and Relight on every platform share a pinned
+Distill-Any-Depth Small FP32 model (~99 MB, Depth Anything V2 Small architecture),
+run on the photo scaled to 1540 pixels on its longer side (1540 × 1036 for 3:2),
+exported by `packaging/models/distill_any_depth_export.py`. Android runs it on
+CPU with two inference threads and weight prepacking disabled. Its inverse-depth
+predictions are converted to the shared near=0, far=255 convention. Beside it,
+MoGe-2 (the authors' ONNX exports, run on the photo scaled to 1036 pixels on its
+longer side) predicts surface normals, stored with the depth, and the sky, which
+moves to 255 where the depth model also finds it far: ViT-S at 2400 patches for
+the Low scene-depth quality (~141 MB, 1.5 GiB on the GPU) and ViT-L at 3600 for
+Medium (~1.3 GB, 4.8 GiB, desktop only). Depth from before keeps deriving its
+normals from the depth until it is estimated again.
 
 The app supports 16 KB pages. Verify a built APK with:
 

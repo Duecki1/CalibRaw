@@ -88,6 +88,9 @@ const WET_RIPPLE_DISTORTION: f32 = 0.25;
 // Scene-light highlight strength relative to the ambient level.
 const WET_GLINT_GAIN: f32 = 2.5;
 const WET_GLINT_LIMIT: f32 = 24.0;
+// GGX alpha of the highlight of emitted light that arrives evenly from all
+// around (scene_emission.wgsl); light from one direction keeps the ground's.
+const WET_EMISSION_SPREAD_ALPHA: f32 = 0.6;
 
 // Everything about the ground at one pixel.
 struct WetPixel {
@@ -433,7 +436,8 @@ fn wet_surface(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -
 
 // Highlights of scene lights on the wet ground, added after the creative
 // effects, so Relight's Ambient does not dim them. A GGX lobe stretches into a
-// long streak toward the viewer at grazing angles by itself.
+// long streak toward the viewer at grazing angles by itself. Surfaces between
+// the ground and a light shadow it (scene_shadows.wgsl).
 fn wet_glints(pos: vec2<i32>, params: MaskEffectParams) -> vec3<f32> {
     let reflections = mask_effect_percent(params, WET_SURFACES_REFLECTIONS_LANE);
     let wetness = mask_effect_percent(params, WET_SURFACES_WETNESS_LANE);
@@ -460,6 +464,7 @@ fn wet_glints(pos: vec2<i32>, params: MaskEffectParams) -> vec3<f32> {
     ));
 
     let uv = full_image_uv(pos);
+    let shadows = scene_shadow_surface_at(pos);
     var glint = vec3<f32>(0.0);
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
         let light = scene_light_at(index);
@@ -471,20 +476,48 @@ fn wet_glints(pos: vec2<i32>, params: MaskEffectParams) -> vec3<f32> {
             uv * light.camera.image_size,
             scene_depth_z(light.camera, pixel.depth),
         );
-        let to_light = normalize(light.position - surface);
-        let to_camera = normalize(-surface);
-        let halfway = normalize(to_light + to_camera);
-        let n_l = dot(normal, to_light);
-        let n_v = dot(normal, to_camera);
-        if n_l <= 0.0 || n_v <= 0.0 { continue; }
-        let n_h = max(dot(normal, halfway), 0.0);
-        let denominator = n_h * n_h * (alpha * alpha - 1.0) + 1.0;
-        let distribution = alpha * alpha / (3.14159265 * denominator * denominator);
-        let v_h = max(dot(to_camera, halfway), 0.0);
-        let fresnel = WET_F0 + (1.0 - WET_F0) * pow(1.0 - v_h, 5.0);
-        let specular = min(distribution * fresnel * n_l / max(4.0 * v_h * v_h, 0.1), WET_GLINT_LIMIT);
+        let specular = wet_glint_specular(
+            normal, normalize(light.position - surface), normalize(-surface), alpha,
+        );
+        if specular <= 0.0 { continue; }
         glint += light.intensity
-            * (specular * scene_light_falloff(light, surface) * coverage);
+            * (specular * scene_light_falloff(light, surface) * coverage * scene_shadow_of(shadows, light));
+    }
+    if scene_emission_present() {
+        let arrival = scene_emission_surface_at(uv, pixel.depth);
+        let spread = length(arrival.direction);
+        if spread > 1e-4 {
+            let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
+            let surface = scene_camera_point(
+                camera, uv * camera.image_size, scene_depth_z(camera, pixel.depth),
+            );
+            // Light from many directions spreads the highlight as a rougher
+            // surface would.
+            let broadened = mix(WET_EMISSION_SPREAD_ALPHA, alpha, spread);
+            glint += arrival.light * wet_glint_specular(
+                normal, arrival.direction / spread, normalize(-surface), broadened,
+            );
+        }
     }
     return glint * (WET_GLINT_GAIN * scene_ambient_level() * reflections * strength);
+}
+
+// The GGX highlight toward the camera of light arriving along `to_light` on
+// ground with `normal` and GGX `alpha`; zero from behind or below.
+fn wet_glint_specular(
+    normal: vec3<f32>,
+    to_light: vec3<f32>,
+    to_camera: vec3<f32>,
+    alpha: f32,
+) -> f32 {
+    let halfway = normalize(to_light + to_camera);
+    let n_l = dot(normal, to_light);
+    let n_v = dot(normal, to_camera);
+    if n_l <= 0.0 || n_v <= 0.0 { return 0.0; }
+    let n_h = max(dot(normal, halfway), 0.0);
+    let denominator = n_h * n_h * (alpha * alpha - 1.0) + 1.0;
+    let distribution = alpha * alpha / (3.14159265 * denominator * denominator);
+    let v_h = max(dot(to_camera, halfway), 0.0);
+    let fresnel = WET_F0 + (1.0 - WET_F0) * pow(1.0 - v_h, 5.0);
+    return min(distribution * fresnel * n_l / max(4.0 * v_h * v_h, 0.1), WET_GLINT_LIMIT);
 }

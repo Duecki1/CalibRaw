@@ -201,7 +201,7 @@ fn scene_surface_tap_weight(taps: SceneSurfaceTaps, tap: u32) -> f32 {
 // around the pixel, at an edge between two surfaces of one brightness or one the photo
 // does not show, the filter gives a depth between them that nothing has, so stored
 // depth says instead. Readers of other maps on this grid repeat the loop of
-// `relight_shadow_map_resolve` over their own texture: a texture passed to a function
+// `scene_shadow_surface_resolve` over their own texture: a texture passed to a function
 // crashes the Mali-G710 shader compiler (`no_handle_arguments` test).
 fn scene_surface_taps_at(pos: vec2<i32>) -> SceneSurfaceTaps {
     let size = vec2<i32>(textureDimensions(scene_depth_tex));

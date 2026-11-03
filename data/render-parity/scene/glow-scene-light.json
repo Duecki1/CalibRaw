@@ -1,0 +1,442 @@
+{
+  "edits": {
+    "masks": {
+      "masks": [
+        {
+          "adjustments": {
+            "blacks": 0.0,
+            "clarity": 0.0,
+            "color_grading": {
+              "balance": 0.0,
+              "blending": 50.0,
+              "global": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "highlights": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "midtones": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "shadows": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              }
+            },
+            "contrast": 0.0,
+            "dehaze": 0.0,
+            "exposure": 0.0,
+            "highlights": 0.0,
+            "hsl_hue": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "hsl_luminance": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "hsl_saturation": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "hue": 0.0,
+            "point_colors": [],
+            "saturation": 40.0,
+            "shadows": 0.0,
+            "temperature": 0.0,
+            "texture": 0.0,
+            "tint": 0.0,
+            "tone_curve": {
+              "len": 2,
+              "points": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ]
+              ]
+            },
+            "tone_curve_blue": {
+              "len": 2,
+              "points": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ]
+              ]
+            },
+            "tone_curve_green": {
+              "len": 2,
+              "points": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ]
+              ]
+            },
+            "tone_curve_red": {
+              "len": 2,
+              "points": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ],
+                [
+                  1.0,
+                  1.0
+                ]
+              ]
+            },
+            "whites": 0.0
+          },
+          "name": "Radial Gradient",
+          "enabled": true,
+          "invert": false,
+          "opacity": 1.0,
+          "adjustments_enabled": false,
+          "components": [
+            {
+              "combine": "Add",
+              "enabled": true,
+              "geometry": {
+                "Radial": {
+                  "center": [
+                    0.3,
+                    0.3
+                  ],
+                  "feather": 0.3,
+                  "initialized": true,
+                  "radius": [
+                    0.08,
+                    0.06
+                  ],
+                  "rotation": 0.0
+                }
+              },
+              "invert": false,
+              "kind": "Radial",
+              "name": "Radial Gradient"
+            }
+          ],
+          "effect_components": [
+            {
+              "effect": "Glow",
+              "settings": {
+                "glow": {
+                  "self_illuminating": true,
+                  "amount": 80.0,
+                  "radius": 40.0,
+                  "color": [
+                    1.0,
+                    0.55,
+                    0.2
+                  ],
+                  "scene_light": 100.0
+                }
+              }
+            }
+          ],
+          "effect": "Adjustment"
+        }
+      ],
+      "global_effects": [
+        {
+          "effect": "Fog",
+          "settings": {
+            "fog": {
+              "amount": 50.0,
+              "density": 45.0,
+              "light_glow": 80.0
+            }
+          }
+        },
+        {
+          "effect": "Rain",
+          "settings": {
+            "rain": {
+              "amount": 70.0,
+              "light_glow": 80.0
+            }
+          }
+        },
+        {
+          "effect": "WetSurfaces",
+          "settings": {
+            "wet_surfaces": {
+              "wetness": 70.0,
+              "reflections": 80.0
+            }
+          }
+        }
+      ]
+    }
+  },
+  "mask_assets": [
+    {
+      "height": 96,
+      "png": "iVBORw0KGgoAAAANSUhEUgAAAJAAAABgCAAAAADXv6R9AAAAiElEQVR42u3WMQ6AIAxA0Wq4tbNHdlEGT2DCQAqYx+hgX34TcbtjrrMHEBAQEBAQEBAQEBAQ0MhTer/w/Hh+WBkQEBAQEBAQEFCfX9graVDrnPIkgVrnlJoEqsuCrEwhhRTyYbQyhRRSSCFXh5X9o1DMVigUUsjKFFJIIYUUcnVYmUIKKbREoRemW0+8qd9zGwAAAABJRU5ErkJggg==",
+      "width": 144
+    }
+  ],
+  "scene_depth_asset": 0
+}

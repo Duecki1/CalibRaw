@@ -25,9 +25,10 @@
 //!   aspect stretch and cannot decode a Select People mask. Edits with any of them are written
 //!   with schema 3, which shares the same layout and which those readers
 //!   report as newer.
-//! - Up to v1.4, readers cannot decode a Rain or Wet Surfaces effect. Edits with
-//!   one are written with schema 4, which shares the same layout and which
-//!   those readers report as newer.
+//! - Up to v1.4, readers cannot decode a Rain or Wet Surfaces effect, and
+//!   reject the scene normals' assets as unreferenced. Edits with either are
+//!   written with schema 4, which shares the same layout and which those
+//!   readers report as newer.
 
 use super::effect_sliders::GlobalSliders;
 use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskRgbImage};
@@ -112,7 +113,8 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
                 .iter()
                 .any(|mask| effects.contains(&mask.effect))
     };
-    if uses_effect(&[MaskEffect::Rain, MaskEffect::WetSurfaces]) {
+    let stores_scene_normals = masks.scene_depth.is_some() && masks.scene_normals.is_some();
+    if uses_effect(&[MaskEffect::Rain, MaskEffect::WetSurfaces]) || stores_scene_normals {
         return current;
     }
     if edits.look_lut.is_some()

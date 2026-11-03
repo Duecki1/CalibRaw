@@ -307,6 +307,7 @@ impl EditHistory {
             self.current.masks.masks == masks.masks
                 && self.current.masks.global_effects == masks.global_effects
                 && self.current.masks.scene_depth == masks.scene_depth
+                && self.current.masks.scene_normals == masks.scene_normals
         } else {
             true
         };

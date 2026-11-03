@@ -69,7 +69,7 @@ pub use masks::{
     MaskGeometry, MaskImage, MaskKind, MaskRgbImage, MaskStack, MotionBlurEffectSettings,
     NeonEffectSettings, ObjectStroke, PackContext, PathPoint, PersonPart, PixelateEffectSettings,
     RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings, ReachGroup,
-    RelightEffectSettings, SceneMapUse, SharpenEffectSettings, SmokeEffectSettings,
+    RelightEffectSettings, SceneMapUse, SceneNormals, SharpenEffectSettings, SmokeEffectSettings,
     SubjectRefinement, TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings,
     DEFAULT_COLOR_TOLERANCE, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS,
     MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_MASK_PEOPLE, MAX_PATH_POINTS, OPTION_COUNT,

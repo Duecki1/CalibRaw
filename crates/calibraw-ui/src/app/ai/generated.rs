@@ -14,6 +14,20 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    /// Depth estimated from now on uses `quality`'s normal model; existing
+    /// depth keeps its normals.
+    pub(crate) fn set_scene_depth_quality(
+        &mut self,
+        quality: calibraw_ai::models::scene_geometry::SceneDepthQuality,
+    ) {
+        if self.ai.scene_depth_quality == quality {
+            return;
+        }
+        self.ai.scene_depth_quality = quality;
+        self.masks.depth_cache = None;
+        self.persist_performance_settings();
+    }
+
     pub(crate) fn ai_mask_generation_idle(&self) -> bool {
         self.foreground_operation_kind()
             .and_then(ForegroundOperationKind::ai_feature)
@@ -45,7 +59,7 @@ impl CalibRawApp {
             return false;
         }
         if let Some(mask) = self.masks.generated_cache_mut(model).clone() {
-            self.apply_generated_mask(model, mask);
+            self.apply_generated_mask(model, mask, None);
             return true;
         }
         if !self.ai_runtime_ready() {
@@ -86,7 +100,10 @@ impl CalibRawApp {
                 path,
             ),
             AiMaskModel::Sky => calibraw_ai::models::sky::skyseg_model_is_verified(path),
-            AiMaskModel::Depth => calibraw_ai::models::depth::depth_model_is_verified(path),
+            AiMaskModel::Depth => {
+                calibraw_ai::models::depth::depth_model_is_verified(path)
+                    && self.scene_geometry_model().is_verified()
+            }
         }
     }
 
@@ -103,12 +120,18 @@ impl CalibRawApp {
             (AiMaskModel::Sky, true) => tr("Running SkySeg U2Net locally…").to_owned(),
             (AiMaskModel::Sky, false) => tr("Preparing SkySeg U2Net download…").to_owned(),
             (AiMaskModel::Depth, true) => tr_fmt(
-                "Running {name} locally…",
-                &[("name", &calibraw_ai::models::depth::MODEL.name)],
+                "Running {name} and {normals} locally…",
+                &[
+                    ("name", &calibraw_ai::models::depth::MODEL.name),
+                    ("normals", &self.ai.scene_depth_quality.model().name),
+                ],
             ),
             (AiMaskModel::Depth, false) => tr_fmt(
-                "Preparing {name} download…",
-                &[("name", &calibraw_ai::models::depth::MODEL.name)],
+                "Preparing {name} and {normals} download…",
+                &[
+                    ("name", &calibraw_ai::models::depth::MODEL.name),
+                    ("normals", &self.ai.scene_depth_quality.model().name),
+                ],
             ),
         }
     }
@@ -136,6 +159,7 @@ impl CalibRawApp {
                 model,
                 subject_quality: self.ai.subject_mask_quality,
                 subject_precision,
+                scene_geometry: (model == AiMaskModel::Depth).then(|| self.scene_geometry_model()),
                 model_path,
                 allow_download,
                 width: source.width,
@@ -157,10 +181,25 @@ impl CalibRawApp {
         });
     }
 
-    pub(super) fn apply_generated_mask(&mut self, model: AiMaskModel, mask: MaskImage) {
+    /// Applies a `model` mask. For depth, `normals` are those predicted with
+    /// it; without them, depth the edit already holds keeps its own.
+    pub(super) fn apply_generated_mask(
+        &mut self,
+        model: AiMaskModel,
+        mask: MaskImage,
+        normals: Option<calibraw_ai::pipeline::SceneNormals>,
+    ) {
         *self.masks.generated_cache_mut(model) = Some(mask.clone());
         if model == AiMaskModel::Depth {
-            self.masks.stack.scene_depth = Some(mask.clone());
+            let stack = &mut self.masks.stack;
+            let same_depth = stack
+                .scene_depth
+                .as_ref()
+                .is_some_and(|depth| Arc::ptr_eq(&depth.pixels, &mask.pixels));
+            if normals.is_some() || !same_depth {
+                stack.scene_normals = normals;
+            }
+            stack.scene_depth = Some(mask.clone());
         }
         for component in self
             .masks
@@ -228,7 +267,8 @@ impl CalibRawApp {
         let mut error_message = None;
         if !cancelled && !stale {
             match result {
-                Ok(result) => {
+                Ok(mut result) => {
+                    let normals = result.normals.take();
                     // Hardened subject alpha is exactly 0 wherever BiRefNet
                     // found nothing, so an all-zero mask means no subject.
                     if model == AiMaskModel::Subject && result.mask.iter().all(|&alpha| alpha == 0)
@@ -237,7 +277,7 @@ impl CalibRawApp {
                             tr("Subject selection found no subject in this photo.").to_owned(),
                         );
                     } else if let Some(mask) = result.into_probability_mask() {
-                        self.apply_generated_mask(model, mask);
+                        self.apply_generated_mask(model, mask, normals);
                         succeeded = true;
                     } else {
                         error_message = Some(tr_fmt(
@@ -310,6 +350,7 @@ mod tests {
                             width: 2,
                             height: 2,
                             mask: pixels.clone(),
+                            normals: None,
                         },
                     )))
                     .unwrap();

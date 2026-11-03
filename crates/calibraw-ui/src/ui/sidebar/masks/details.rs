@@ -275,7 +275,7 @@ impl Sidebar {
 
         let mut geometry_changed = false;
         let mut adjustments_changed = false;
-        let light_rays_changed;
+        let full_image_mask_changed;
         let mut edit_header_rect = None;
         let selected_is_subject = app.masks.stack.masks[mask_index]
             .components
@@ -313,7 +313,7 @@ impl Sidebar {
         let effect_frame = mask_effects::EffectFrame::of(app);
         {
             let mask = &mut app.masks.stack.masks[mask_index];
-            let light_rays_before = mask.has_light_rays_effect();
+            let full_image_mask_before = mask.reads_full_image_mask();
             if mask.effect != MaskEffect::Adjustment {
                 mask.migrate_legacy_effect();
                 adjustments_changed |= mask.effect == MaskEffect::Adjustment;
@@ -441,7 +441,7 @@ impl Sidebar {
                     }
                 }
             }
-            light_rays_changed = light_rays_before != mask.has_light_rays_effect();
+            full_image_mask_changed = full_image_mask_before != mask.reads_full_image_mask();
         }
 
         if moduwu_design::is_compact_portrait(ui)
@@ -510,7 +510,7 @@ impl Sidebar {
             app.request_people_masks(vec![(mask_index, component_index)], frame);
         }
         Self::apply_mask_geometry_change(ui, app, mask_index, geometry_changed);
-        if light_rays_changed {
+        if full_image_mask_changed {
             app.mark_mask_geometry_dirty(mask_index);
         } else if adjustments_changed {
             app.mark_mask_adjustments_dirty();

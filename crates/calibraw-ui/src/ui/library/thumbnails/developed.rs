@@ -230,7 +230,7 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
             })?;
     }
     pipeline
-        .update_light_rays_mask_layers(
+        .update_full_image_mask_layers(
             &gpu.queue,
             &masks,
             preview_raw.width,
@@ -239,7 +239,7 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
         )
         .map_err(|error| {
             tr_fmt(
-                "could not apply thumbnail Light Rays mask: {error}",
+                "could not apply thumbnail effect mask: {error}",
                 &[("error", &format!("{:#}", error))],
             )
         })?;

@@ -16,7 +16,10 @@ use std::collections::BTreeSet;
 
 const INPUT_SIZE: (u32, u32) = match AiModel::BodyParts.spec().input {
     InputShape::Stretched { width, height } => (width, height),
-    InputShape::Square { .. } | InputShape::Tiled { .. } | InputShape::Prompted { .. } => {
+    InputShape::Square { .. }
+    | InputShape::Tiled { .. }
+    | InputShape::Prompted { .. }
+    | InputShape::Fitted { .. } => {
         panic!("Sapiens2 takes a 3:4 input")
     }
 };

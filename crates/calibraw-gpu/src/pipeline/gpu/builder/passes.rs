@@ -76,8 +76,9 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// The horizontal image-light blur; the vertical one follows.
     pub(in crate::pipeline::gpu) image_light_blur_pass_index: usize,
     pub(in crate::pipeline::gpu) image_light_end_index: usize,
-    /// Relight shadows per scene-depth texel, built in the output stage.
-    pub(in crate::pipeline::gpu) relight_shadow_map_pass_index: usize,
+    /// Shadows of scene lights on the surface and in the air, built in the
+    /// output stage.
+    pub(in crate::pipeline::gpu) scene_shadow_map_pass_index: usize,
     /// Pre-demosaiced rasters' replacement for highlight reconstruction and
     /// demosaicing: copies the raster source into the scene with luminance
     /// denoise. It runs with the RAW stage but comes after the output passes
@@ -111,6 +112,11 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// adding them kept earlier positions.
     pub(in crate::pipeline::gpu) wet_surfaces_pass_index: usize,
     pub(in crate::pipeline::gpu) weather_air_pass_index: usize,
+    /// Accumulation into the contour grid, which runs with the tone stage, and
+    /// the scene emission passes, which run first in the output stage. They
+    /// come last so that adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) contour_accumulate_pass_index: usize,
+    pub(in crate::pipeline::gpu) scene_emission_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -156,7 +162,7 @@ impl StageIndices {
         let image_light_accumulate_pass_index = take(1);
         let image_light_resolve_pass_index = take(1);
         let image_light_blur_pass_index = take(2);
-        let relight_shadow_map_pass_index = take(1);
+        let scene_shadow_map_pass_index = take(1);
         let raster_finish_pass_index = take(1);
         let haze_accumulate_pass_index = take(1);
         let haze_resolve_pass_index = take(HAZE_PASSES - 1);
@@ -169,6 +175,8 @@ impl StageIndices {
         let scene_map_end_index = take(0);
         let wet_surfaces_pass_index = take(1);
         let weather_air_pass_index = take(1);
+        let contour_accumulate_pass_index = take(1);
+        let scene_emission_pass_index = take(SCENE_EMISSION_PASSES);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -199,8 +207,8 @@ impl StageIndices {
             image_light_accumulate_pass_index,
             image_light_resolve_pass_index,
             image_light_blur_pass_index,
-            image_light_end_index: relight_shadow_map_pass_index,
-            relight_shadow_map_pass_index,
+            image_light_end_index: scene_shadow_map_pass_index,
+            scene_shadow_map_pass_index,
             raster_finish_pass_index,
             haze_accumulate_pass_index,
             haze_resolve_pass_index,
@@ -213,6 +221,8 @@ impl StageIndices {
             scene_map_end_index,
             wet_surfaces_pass_index,
             weather_air_pass_index,
+            contour_accumulate_pass_index,
+            scene_emission_pass_index,
             pass_count,
         }
     }
@@ -233,6 +243,10 @@ impl StageIndices {
             FullImageMap::Scene => FullImageMapPasses {
                 accumulate: self.scene_map_accumulate_pass_index,
                 resolve: self.scene_map_resolve_pass_index..self.scene_map_end_index,
+            },
+            FullImageMap::Contours => FullImageMapPasses {
+                accumulate: self.contour_accumulate_pass_index,
+                resolve: self.scene_emission_pass_index..self.scene_emission_pass_index,
             },
         }
     }
@@ -641,17 +655,17 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     ]);
     ensure_planned(
         &passes,
-        indices.relight_shadow_map_pass_index,
-        "relight shadow map",
+        indices.scene_shadow_map_pass_index,
+        "scene shadow map",
     )?;
     passes.push(assembler.make_pass(
         shaders.creative_effects_module.as_ref(),
-        "build_relight_shadow_map",
-        &layouts.bgl_relight_shadow_map,
-        InputBoundPass::RelightShadowMap,
+        "build_scene_shadow_map",
+        &layouts.bgl_scene_shadow_map,
+        InputBoundPass::SceneShadowMap,
         [
             SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
-            SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
+            scene_shadow_map_height(SCENE_DEPTH_EDGE).div_ceil(WORKGROUP_EDGE),
             1,
         ],
     ));
@@ -779,6 +793,50 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             image_workgroups,
         ),
     ]);
+
+    ensure_planned(&passes, indices.contour_accumulate_pass_index, "contours")?;
+    passes.push(assembler.make_pass(
+        shaders.tone_analysis_module.as_ref(),
+        "accumulate_contours",
+        &layouts.bgl_contour_accumulate,
+        InputBoundPass::Contours,
+        [
+            CONTOUR_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+            CONTOUR_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+            1,
+        ],
+    ));
+    ensure_planned(&passes, indices.scene_emission_pass_index, "scene emission")?;
+    let emission_workgroups = |edge: u32| {
+        [
+            edge.div_ceil(WORKGROUP_EDGE),
+            edge.div_ceil(WORKGROUP_EDGE),
+            1,
+        ]
+    };
+    let scene_emission_programs: [(&str, [u32; 3]); SCENE_EMISSION_PASSES] = [
+        (
+            "build_scene_emission",
+            emission_workgroups(SCENE_EMISSION_GRID_LONG),
+        ),
+        (
+            "build_scene_emission_surfaces",
+            emission_workgroups(SCENE_EMISSION_SURFACE_GRID_LONG),
+        ),
+        (
+            "build_scene_emission_volume",
+            emission_workgroups(SCENE_EMISSION_GRID_LONG),
+        ),
+    ];
+    for (index, (entry, workgroups)) in scene_emission_programs.into_iter().enumerate() {
+        passes.push(assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            entry,
+            &layouts.bgl_scene_emission[index],
+            InputBoundPass::SceneEmission(index),
+            workgroups,
+        ));
+    }
 
     // These variants reuse the programs above with bind groups that read tex2:
     // the mask-blurred scene, or whatever else last wrote there.

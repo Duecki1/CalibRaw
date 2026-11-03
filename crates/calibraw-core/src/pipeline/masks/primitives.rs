@@ -229,6 +229,56 @@ impl MaskImage {
     }
 }
 
+/// Surface normals predicted together with the scene depth
+/// (`MaskStack::scene_normals`), in full-image coordinates at the model's
+/// resolution, which may differ from the depth's.
+///
+/// Camera frame: x to the right, y down the image, z away from the camera.
+/// Visible surfaces face the camera, so x and y define a normal, its z taken
+/// as -sqrt(1 - x² - y²); one seen nearly edge-on that points slightly away
+/// keeps its x and y and reads as edge-on. Each is stored as
+/// `round(127 n) + 128`, which keeps 0 exact. Sky faces the camera straight on
+/// (both 128).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneNormals {
+    x: MaskImage,
+    y: MaskImage,
+}
+
+impl SceneNormals {
+    /// The stored value of a normal component `n` in [-1, 1].
+    pub fn encode(n: f32) -> u8 {
+        (128.0 + (n.clamp(-1.0, 1.0) * 127.0).round()) as u8
+    }
+
+    /// The normal component a stored `value` holds; 0 decodes below -1.
+    pub fn decode(value: u8) -> f32 {
+        (f32::from(value) - 128.0) / 127.0
+    }
+
+    /// Normals from their x and y components, which must cover the same
+    /// pixels.
+    pub fn new(x: MaskImage, y: MaskImage) -> Option<Self> {
+        (x.width == y.width && x.height == y.height).then_some(Self { x, y })
+    }
+
+    pub fn x(&self) -> &MaskImage {
+        &self.x
+    }
+
+    pub fn y(&self) -> &MaskImage {
+        &self.y
+    }
+
+    pub fn width(&self) -> u32 {
+        self.x.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.x.height
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MaskRgbImage {
     pub width: u32,

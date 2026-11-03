@@ -16,7 +16,7 @@ pub struct FogEffectSettings {
     pub start: f32,
     pub depth_influence: f32,
     pub color: [f32; 3],
-    /// How strongly scene lights (Relight, Light Rays) glow in it. The
+    /// How strongly scene lights (Relight, Light Rays, Glow, Neon) glow in it. The
     /// serialized baseline is 0, so edits saved before it existed, including
     /// untouched ones that omit their settings, render as before; new effects
     /// start at the parameter default (`EffectSettings::initial`).

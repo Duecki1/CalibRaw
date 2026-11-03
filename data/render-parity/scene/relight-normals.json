@@ -1,0 +1,44 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Relight",
+          "settings": {
+            "relight": {
+              "ambient": 60.0,
+              "amount": 70.0,
+              "shadows_enabled": true,
+              "source": [
+                70.0,
+                40.0
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "mask_assets": [
+    {
+      "height": 96,
+      "png": "iVBORw0KGgoAAAANSUhEUgAAAJAAAABgCAAAAADXv6R9AAAAiElEQVR42u3WMQ6AIAxA0Wq4tbNHdlEGT2DCQAqYx+hgX34TcbtjrrMHEBAQEBAQEBAQEBAQ0MhTer/w/Hh+WBkQEBAQEBAQEFCfX9graVDrnPIkgVrnlJoEqsuCrEwhhRTyYbQyhRRSSCFXh5X9o1DMVigUUsjKFFJIIYUUcnVYmUIKKbREoRemW0+8qd9zGwAAAABJRU5ErkJggg==",
+      "width": 144
+    },
+    {
+      "height": 96,
+      "png": "iVBORw0KGgoAAAANSUhEUgAAAJAAAABgCAAAAADXv6R9AAABZklEQVR4nO2ZIW7DMBSG3yy/E/QOO0FJyUjBSElJwUhJSUnPsDOUjIyMDJSMjISOhPYGvUNpyTRNnaqp3e+sdvxk/x+y4pfo12cnSl5uHsUWTozhxBhOjOHEGE6M4cQYPspV9l5V1e9NBNp9hfkeDlT9Lm+g7U+YI7eq22yBWj17+lDbPJv64+LMXQ5Djf+1WKeMfdO3oXcwP+k50BusmPYaaBNQMyvjSe3+ddZrUNVDb4FeAuvmtS7Zc3Dlok5DTx1qlzUaWneqXlVoKDEMhKAhBA0haAhBQxUYWiV8NyjDkL1Ay0Svu+UYkkWCD6brDM0jf+EWt2QS2EYIa0nEMTSL1EOKt2TTCD22uHtocmUPMv6mvv9ztsnQOB9L272Dnfa2H1043mb71zE8GR8OEoNCHowJYSAEDSFoCEFDCBpC0BCChhA0hKAhBA0haAhBQwgaQtAQgoYQNISgIQQNIWgIQUMC+AQBnCGnc330vQAAAABJRU5ErkJggg==",
+      "width": 144
+    },
+    {
+      "height": 96,
+      "png": "iVBORw0KGgoAAAANSUhEUgAAAJAAAABgCAAAAADXv6R9AAABvUlEQVR4nO3ZTytEURzG8e883bP1GpSdneyUZCklSUlJycLGxjvwDmxsLKSkpDRJyUZNUhZKNrJTk5dhw0L5F+bewzn3acZnY3J+5/Rtxtx7S2MdL8KMMCPMCDPCjDBT/MkpGy8/1iyCNoHw9nK13qCt15h3v1mpLWj76+3bLNcTtBu+XVmsIWj/84f1cXE+d9Bh6LA+mzfoqOPGo+mcQSehxMxkxqBAKnFBrVJBrfFcQRcld12MZgoKpBMTdF066Ho4S1AgoYiguwp77gYzBAVSqh7UrhTU7k8eFEiqC4KKJB3d9A4FkuqCoKLa+JPbO/RY8fjeC6rq/zrUAx/Zw0CV6fsMd6ai+pbeekDjdqj87E1PPuRzNVJ28jLTX+jlWLm5c3J9ZQLJxAWdTZSZOo05OvKicjrVeeY46uTYq9zxTKeJZtzB0Zfd5tzP6weR58bfBw4Wflrdiz32FzemPZa+W9qp6b9BO8XXftFDow8vwowwI8wIM8KMMCPMCDPCjDAjzAgzwowwI8wIM8KMMCPMCDPCjDAjzAgzwowwI8wIM8KMMCPMCDPCjDAjzAgzwowwI8wIM8KM6g747Bn6uS9lzpOi9wAAAABJRU5ErkJggg==",
+      "width": 144
+    }
+  ],
+  "scene_depth_asset": 0,
+  "scene_normal_assets": [
+    1,
+    2
+  ]
+}
