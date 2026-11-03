@@ -3,13 +3,13 @@ use super::gpu_cache::PersistentGpuPipelineCache;
 use super::sigmoid::{coefficients as sigmoid_coefficients, SigmoidCoefficients};
 use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
-    mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, BinnedSensor, CfaKind,
-    ExposureParams, FilmSource, FilmStock, GeometryMapping, GeometryTransform,
-    HighlightReconstructionMethod, LateralChannel, LensGeometryMap, LoadedRaw, LocalMask,
-    MaskEffect, MaskImage, MaskStack, PixelLayout, PointColor, PointCurve, ProcessingStage,
-    ProfileColor, RawThumbnail, RemoveEditState, RemovePatch, SceneNormals, SensorSaturation,
-    SigmoidParams, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS,
-    MAX_LOCAL_MASKS, MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
+    mask_atlas_edge, AiDenoisedImage, BinnedSensor, CfaKind, ExposureParams, FilmSource, FilmStock,
+    GeometryMapping, GeometryTransform, HighlightReconstructionMethod, LateralChannel,
+    LensGeometryMap, LoadedRaw, LocalMask, MaskEffect, MaskImage, MaskStack, PixelLayout,
+    PointColor, PointCurve, ProcessingStage, ProfileColor, RawThumbnail, RemoveEditState,
+    RemovePatch, SceneNormals, SensorSaturation, SigmoidParams, GLOBAL_TEMPERATURE_LIMIT,
+    GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS,
+    MAX_POINT_CURVE_POINTS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};

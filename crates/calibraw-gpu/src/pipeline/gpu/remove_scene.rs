@@ -151,13 +151,11 @@ impl RawGpuPipeline {
                         return [0.0; 4];
                     }
                     let canonical = sample_remove_patch_scene(patch, local_x, local_y);
-                    let source_scene =
+                    // The scene texture holds the pipeline scene for every layout,
+                    // including a LinearRaw DNG's unbalanced camera RGB; the camera
+                    // transform and white balance are applied after this stage.
+                    let scene =
                         canonical_remove_scene_to_pipeline_scene(source_raw, exposure, canonical);
-                    let scene = if self.layout == PixelLayout::Raster {
-                        pipeline_scene_to_working_rec2020(source_raw, source_scene)
-                    } else {
-                        source_scene
-                    };
                     [scene[0], scene[1], scene[2], opacity]
                 };
                 let upload_origin = wgpu::Origin3d {
