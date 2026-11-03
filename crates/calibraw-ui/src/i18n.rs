@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) enum Language {
     English,
     German,
+    Danish,
     French,
     Spanish,
     Japanese,
@@ -35,9 +36,10 @@ pub(crate) enum Language {
 }
 
 impl Language {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::English,
         Self::German,
+        Self::Danish,
         Self::French,
         Self::Spanish,
         Self::Japanese,
@@ -54,6 +56,7 @@ impl Language {
         match self {
             Self::English => "en",
             Self::German => "de",
+            Self::Danish => "da",
             Self::French => "fr",
             Self::Spanish => "es",
             Self::Japanese => "ja",
@@ -71,6 +74,7 @@ impl Language {
         match self {
             Self::English => "English",
             Self::German => "Deutsch",
+            Self::Danish => "Dansk",
             Self::French => "Français",
             Self::Spanish => "Español",
             Self::Japanese => "日本語",
@@ -87,6 +91,7 @@ impl Language {
     fn catalog(self) -> Result<&'static HashMap<String, String>, CatalogError> {
         static ENGLISH: OnceLock<HashMap<String, String>> = OnceLock::new();
         static GERMAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
+        static DANISH: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static FRENCH: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static SPANISH: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static JAPANESE: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
@@ -103,6 +108,10 @@ impl Language {
             Self::English => Ok(ENGLISH.get_or_init(HashMap::new)),
             Self::German => GERMAN
                 .get_or_init(|| parse_catalog(self, include_str!("../locales/de.json")))
+                .as_ref()
+                .map_err(Clone::clone),
+            Self::Danish => DANISH
+                .get_or_init(|| parse_catalog(self, include_str!("../locales/da.json")))
                 .as_ref()
                 .map_err(Clone::clone),
             Self::French => FRENCH
@@ -203,6 +212,7 @@ pub(crate) enum LanguageChoice {
     System,
     English,
     German,
+    Danish,
     French,
     Spanish,
     Japanese,
@@ -215,10 +225,11 @@ pub(crate) enum LanguageChoice {
 }
 
 impl LanguageChoice {
-    pub(crate) const ALL: [Self; 12] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::System,
         Self::English,
         Self::German,
+        Self::Danish,
         Self::French,
         Self::Spanish,
         Self::Japanese,
@@ -235,6 +246,7 @@ impl LanguageChoice {
             Self::System => Language::from_system(),
             Self::English => Language::English,
             Self::German => Language::German,
+            Self::Danish => Language::Danish,
             Self::French => Language::French,
             Self::Spanish => Language::Spanish,
             Self::Japanese => Language::Japanese,
@@ -252,6 +264,7 @@ impl LanguageChoice {
             Self::System => tr("System default"),
             Self::English => Language::English.native_name(),
             Self::German => Language::German.native_name(),
+            Self::Danish => Language::Danish.native_name(),
             Self::French => Language::French.native_name(),
             Self::Spanish => Language::Spanish.native_name(),
             Self::Japanese => Language::Japanese.native_name(),
