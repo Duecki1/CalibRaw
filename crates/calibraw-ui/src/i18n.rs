@@ -31,10 +31,11 @@ pub(crate) enum Language {
     SimplifiedChinese,
     TraditionalChinese,
     PoshEnglish,
+    Italian,
 }
 
 impl Language {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::English,
         Self::German,
         Self::French,
@@ -45,6 +46,7 @@ impl Language {
         Self::SimplifiedChinese,
         Self::TraditionalChinese,
         Self::PoshEnglish,
+        Self::Italian,
     ];
 
     /// Locale identifier; Posh English is manual-only, not an OS language.
@@ -59,6 +61,7 @@ impl Language {
             Self::Hindi => "hi",
             Self::SimplifiedChinese | Self::TraditionalChinese => "zh",
             Self::PoshEnglish => "en-posh",
+            Self::Italian => "it",
         }
     }
 
@@ -76,6 +79,7 @@ impl Language {
             Self::SimplifiedChinese => "简体中文",
             Self::TraditionalChinese => "繁體中文",
             Self::PoshEnglish => "Posh English",
+            Self::Italian => "Italiano",
         }
     }
 
@@ -94,6 +98,7 @@ impl Language {
             OnceLock::new();
         static POSH_ENGLISH: OnceLock<Result<HashMap<String, String>, CatalogError>> =
             OnceLock::new();
+        static ITALIAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         match self {
             Self::English => Ok(ENGLISH.get_or_init(HashMap::new)),
             Self::German => GERMAN
@@ -130,6 +135,10 @@ impl Language {
                 .map_err(Clone::clone),
             Self::PoshEnglish => POSH_ENGLISH
                 .get_or_init(|| parse_catalog(self, include_str!("../locales/en-posh.json")))
+                .as_ref()
+                .map_err(Clone::clone),
+            Self::Italian => ITALIAN
+                .get_or_init(|| parse_catalog(self, include_str!("../locales/it.json")))
                 .as_ref()
                 .map_err(Clone::clone),
         }
@@ -202,10 +211,11 @@ pub(crate) enum LanguageChoice {
     SimplifiedChinese,
     TraditionalChinese,
     PoshEnglish,
+    Italian,
 }
 
 impl LanguageChoice {
-    pub(crate) const ALL: [Self; 11] = [
+    pub(crate) const ALL: [Self; 12] = [
         Self::System,
         Self::English,
         Self::German,
@@ -217,6 +227,7 @@ impl LanguageChoice {
         Self::SimplifiedChinese,
         Self::TraditionalChinese,
         Self::PoshEnglish,
+        Self::Italian,
     ];
 
     pub(crate) fn resolve(self) -> Language {
@@ -232,6 +243,7 @@ impl LanguageChoice {
             Self::SimplifiedChinese => Language::SimplifiedChinese,
             Self::TraditionalChinese => Language::TraditionalChinese,
             Self::PoshEnglish => Language::PoshEnglish,
+            Self::Italian => Language::Italian,
         }
     }
 
@@ -248,6 +260,7 @@ impl LanguageChoice {
             Self::SimplifiedChinese => Language::SimplifiedChinese.native_name(),
             Self::TraditionalChinese => Language::TraditionalChinese.native_name(),
             Self::PoshEnglish => Language::PoshEnglish.native_name(),
+            Self::Italian => Language::Italian.native_name(),
         }
     }
 }
