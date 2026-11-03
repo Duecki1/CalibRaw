@@ -308,9 +308,9 @@ impl CalibRawApp {
     /// The normal model depth estimated now runs with.
     pub(in crate::app) fn scene_geometry_model(
         &self,
-    ) -> calibraw_ai::models::depth::SceneGeometryModel {
+    ) -> calibraw_ai::models::scene_geometry::SceneGeometryModel {
         let quality = self.ai.scene_depth_quality;
-        calibraw_ai::models::depth::SceneGeometryModel {
+        calibraw_ai::models::scene_geometry::SceneGeometryModel {
             path: self.ai_model_root().join(quality.model().cache_filename),
             quality,
         }

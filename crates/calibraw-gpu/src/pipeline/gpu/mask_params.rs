@@ -46,18 +46,17 @@ pub(super) const SCENE_SHADOW_MAP_CHANNELS: usize = 4;
 pub(super) fn relight_casts_shadows(data: &MaskData) -> bool {
     emits_scene_light(data)
         && data.applies(MaskEffect::Relight)
-        && (data.lane(relight::SHADOWS) / 100.0).clamp(0.0, 1.0) > 1e-6
+        && data.percent(relight::SHADOWS) > 1e-6
 }
 
 /// Whether an active slot places a light in the scene. Mirrors `emits` of
 /// `scene_light_at` in scene_lights.wgsl.
 fn emits_scene_light(data: &MaskData) -> bool {
-    let percent = |lane| (data.lane(lane) / 100.0).clamp(0.0, 1.0);
     if data.applies(MaskEffect::Relight) {
-        return percent(relight::AMOUNT) > 1e-6;
+        return data.percent(relight::AMOUNT) > 1e-6;
     }
     data.applies(MaskEffect::LightRays)
-        && percent(light_rays::AMOUNT) > 1e-6
+        && data.percent(light_rays::AMOUNT) > 1e-6
         && (data.lane(light_rays::LENGTH) / 100.0).clamp(0.0, 2.0) > 1e-6
 }
 

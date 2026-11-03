@@ -209,6 +209,12 @@ fn build_scene_emission(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
 }
 
+// The centroid of emitter grid cell `cell` in full-image uv, as
+// `build_scene_emission` stores it.
+fn scene_emission_center(cell: vec2<i32>) -> vec2<f32> {
+    return textureLoad(scene_emission_tex, cell + vec2<i32>(0, i32(SCENE_EMISSION_GRID_LONG)), 0).xy;
+}
+
 // A grid cell's light as a scene light in `camera`'s frame: `light` and `depth`
 // as `build_scene_emission` stores them, `center` its centroid and `extent` the
 // width of the cell in shorter-edge units. Its intensity is relative to
@@ -272,11 +278,7 @@ fn build_scene_emission_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) 
             let cell = vec2<i32>(i32(x), i32(y));
             let light = textureLoad(scene_emission_tex, cell, 0);
             if dot(light.xyz, Common::LUMA) <= 0.0 { continue; }
-            let center = textureLoad(
-                scene_emission_tex,
-                cell + vec2<i32>(0, i32(SCENE_EMISSION_GRID_LONG)),
-                0,
-            ).xy;
+            let center = scene_emission_center(cell);
             let emitter = scene_emitter(camera, light.xyz, light.w, center, extent, ambient);
             let arriving = emitter.intensity * scene_light_falloff(emitter, surface);
             received += arriving;
@@ -322,11 +324,7 @@ fn build_scene_emission_volume(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let texel = textureLoad(scene_emission_tex, cell, 0);
                     let weight = dot(texel.xyz, Common::LUMA);
                     if weight <= 0.0 { continue; }
-                    let center = textureLoad(
-                        scene_emission_tex,
-                        cell + vec2<i32>(0, i32(SCENE_EMISSION_GRID_LONG)),
-                        0,
-                    ).xy;
+                    let center = scene_emission_center(cell);
                     light += texel.xyz;
                     weights += weight;
                     weighted_depth += weight * texel.w;
@@ -450,8 +448,9 @@ fn scene_emission_surface_at(uv: vec2<f32>, depth: f32) -> SceneEmissionArrival 
 // their reflectance as Relight's (`apply_relight`). It is added before the
 // creative effects (creative_effects.wgsl), so Relight's Ambient dims it with
 // everything else and Fog veils it, and the sky and far scenery stay unlit as
-// Relight leaves them. Normals are Relight's, from scene depth; without depth the
-// scene is a plane facing the camera.
+// Relight leaves them. Normals are Relight's, from the scene surface (scene_surface.rs,
+// which takes them from the predicted normals where the depth has them); without
+// depth the scene is a plane facing the camera.
 fn apply_scene_emission_light(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     if !scene_emission_present() { return input_rgb; }
     let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);

@@ -3,7 +3,7 @@
 //! photo's edges.
 
 use super::masks::mask_model_retention;
-use super::scene_geometry::{self, SceneDepthQuality, SceneGeometry};
+use super::scene_geometry::{self, SceneGeometry, SceneGeometryModel};
 use super::{depth_refine, fitted_input_size, normalized_rgb_input};
 use crate::config::{MemoryClass, CAPABILITIES};
 use crate::placement::SessionOptions;
@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use calibraw_core::pipeline::{MaskImage, SceneNormals};
 use image::{imageops::FilterType, ImageBuffer, Luma, Rgba};
 use ort::value::Tensor;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const MODEL: ModelInfo = AiModel::Depth.spec().info();
 const INPUT_FIT: (u32, u32) = match MODEL.input {
@@ -33,19 +33,6 @@ const INPUT_MULTIPLE: u32 = INPUT_FIT.1;
 const SKY_FAR: (f32, f32) = (0.85, 0.92);
 /// Sky probability over which a pixel turns into sky.
 const SKY_PROBABILITY: (f32, f32) = (0.4, 0.6);
-
-/// The normal model that runs beside the depth model, and where it is.
-#[derive(Clone, Debug)]
-pub struct SceneGeometryModel {
-    pub path: PathBuf,
-    pub quality: SceneDepthQuality,
-}
-
-impl SceneGeometryModel {
-    pub fn is_verified(&self) -> bool {
-        scene_geometry::scene_geometry_model_is_verified(self.quality, &self.path)
-    }
-}
 
 /// Scene depth (8 bits, near 0, far and sky 255) at the photo's size, and the
 /// normals predicted with it at the normal model's size.
@@ -122,9 +109,9 @@ pub(super) fn depth_mask(
         started.elapsed().as_secs_f64()
     ));
     let mut restored = restore_depth(&raw, output_width, output_height, width, height)?;
-    let geometry =
-        scene_geometry::scene_geometry(&geometry_model.path, geometry_model.quality, image)?;
-    restored.make_sky_farthest(&geometry, width, height)?;
+    let geometry = scene_geometry::scene_geometry(geometry_model, image)?;
+    let normals = encode_normals(&geometry)?;
+    restored.make_sky_farthest(geometry, width, height)?;
     let started = std::time::Instant::now();
     restored.align_edges(image)?;
     calibraw_core::diagnostics::record(format!(
@@ -133,7 +120,7 @@ pub(super) fn depth_mask(
     ));
     Ok(SceneDepth {
         depth: quantize_depth(&restored.depth),
-        normals: encode_normals(&geometry)?,
+        normals,
     })
 }
 
@@ -214,7 +201,7 @@ fn normalize_depth(pixels: &[f32]) -> Result<Vec<f32>> {
 }
 
 /// Normalized depth (near 0, far 1) enlarged to the photo from a prediction
-/// `model_width` pixels across, without the letterbox.
+/// `model_width` pixels across.
 struct RestoredDepth {
     model_width: u32,
     depth: Vec<f32>,
@@ -226,16 +213,13 @@ impl RestoredDepth {
     /// `align_edges`, which then moves the sky's outline onto the photo's.
     fn make_sky_farthest(
         &mut self,
-        geometry: &SceneGeometry,
+        geometry: SceneGeometry,
         width: u32,
         height: u32,
     ) -> Result<()> {
-        let sky = ImageBuffer::<Luma<f32>, _>::from_raw(
-            geometry.width,
-            geometry.height,
-            geometry.sky.clone(),
-        )
-        .context("invalid sky mask")?;
+        let sky =
+            ImageBuffer::<Luma<f32>, _>::from_raw(geometry.width, geometry.height, geometry.sky)
+                .context("invalid sky mask")?;
         let sky = image::imageops::resize(&sky, width, height, FilterType::Triangle).into_raw();
         anyhow::ensure!(sky.len() == self.depth.len(), "sky mask size mismatch");
         for (depth, sky) in self.depth.iter_mut().zip(sky) {

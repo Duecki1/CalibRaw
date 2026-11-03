@@ -336,6 +336,11 @@ impl MaskData {
         row[lane.index() % 4] = value;
     }
 
+    /// A percentage lane as a fraction in [0, 1] (`mask_effect_percent`).
+    pub(super) fn percent(&self, lane: Lane) -> f32 {
+        (self.lane(lane) / 100.0).clamp(0.0, 1.0)
+    }
+
     pub(super) fn option(&self, option: EffectOption) -> f32 {
         self.effect_options[option.index()]
     }
@@ -415,16 +420,16 @@ pub(super) fn is_self_illuminating_glow(mask: &MaskData) -> bool {
 /// `mask_effects/glow.wgsl`.
 fn glow_lights_scene(mask: &MaskData) -> bool {
     is_self_illuminating_glow(mask)
-        && (mask.lane(glow::AMOUNT) / 100.0).clamp(0.0, 1.0) > 1e-6
-        && (mask.lane(glow::SCENE_LIGHT) / 100.0).clamp(0.0, 1.0) > 1e-6
+        && mask.percent(glow::AMOUNT) > 1e-6
+        && mask.percent(glow::SCENE_LIGHT) > 1e-6
 }
 
 /// A Neon slot that lights the scene. Mirrors `neon_lights_scene` in
 /// `mask_effects/neon.wgsl`.
 fn neon_lights_scene(mask: &MaskData) -> bool {
     mask.applies(MaskEffect::Neon)
-        && (mask.lane(neon::AMOUNT) / 100.0).clamp(0.0, 1.0) > 1e-6
-        && (mask.lane(neon::SCENE_LIGHT) / 100.0).clamp(0.0, 1.0) > 1e-6
+        && mask.percent(neon::AMOUNT) > 1e-6
+        && mask.percent(neon::SCENE_LIGHT) > 1e-6
 }
 
 pub(super) fn split_eight(values: [f32; 8]) -> ([f32; 4], [f32; 4]) {
@@ -884,7 +889,7 @@ impl GpuParams {
     pub(super) fn needs_pixelate_block_pass(&self) -> bool {
         self.mask_slots().iter().any(|mask| {
             mask.applies(MaskEffect::Pixelate)
-                && (mask.lane(pixelate::AMOUNT) / 100.0).clamp(0.0, 1.0) > 1e-6
+                && mask.percent(pixelate::AMOUNT) > 1e-6
                 && mask.lane(pixelate::BLOCK_SIZE) > 1.0
         })
     }

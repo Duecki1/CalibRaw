@@ -52,6 +52,10 @@ const SCENE_SHADOW_AIR_PENUMBRA: f32 = 0.1;
 // are, they would be shadowed by the surface itself, and depth noise along it
 // would shadow alternate voxels.
 const SCENE_SHADOW_SURFACE_MARGIN: f32 = 0.02;
+// A surface texel whose 3×3 neighbourhood lies at least this deep is sky or far
+// scenery, and no light reaches it. A pixel beside it that reads it nonetheless
+// counts as unshadowed, on the fading edge of the light's reach.
+const SCENE_SHADOW_UNLIT_TEXEL_DEPTH: f32 = RELIGHT_REACH_LIMIT + 0.001;
 
 // The shadow-map channel of a scene light's slot plus one, or zero when the map
 // holds no channel for it (`assign_scene_light_channels`).
@@ -115,13 +119,13 @@ fn scene_shadow_march(light: SceneLight, position: vec3<f32>, on_surface: bool, 
 
 // Whether the surface texel `cell` needs no tracing: its whole 3×3
 // neighbourhood, clamped to the grid as the resolve taps are, lies beyond the
-// reach limit (RELIGHT_UNLIT_TEXEL_DEPTH). Sky is often a large share of a
+// reach limit (SCENE_SHADOW_UNLIT_TEXEL_DEPTH). Sky is often a large share of a
 // photo, and its shadows would otherwise be traced for nothing.
 fn scene_shadow_texel_unlit(cell: vec2<i32>, size: vec2<i32>) -> bool {
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
             let neighbour = clamp(cell + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
-            if textureLoad(scene_depth_tex, neighbour, 0).y < RELIGHT_UNLIT_TEXEL_DEPTH {
+            if textureLoad(scene_depth_tex, neighbour, 0).y < SCENE_SHADOW_UNLIT_TEXEL_DEPTH {
                 return false;
             }
         }

@@ -167,6 +167,13 @@ struct SharedSurface {
 
 static SHARED_SURFACE: Mutex<Option<SharedSurface>> = Mutex::new(None);
 
+/// Whether `cached` identifies the allocation `pixels`.
+fn still_holds(cached: &Weak<[u8]>, pixels: &Arc<[u8]>) -> bool {
+    cached
+        .upgrade()
+        .is_some_and(|cached| Arc::ptr_eq(&cached, pixels))
+}
+
 /// The scene-depth texture's levels for `depth`: with `surface`, the stored
 /// depth and surface with its mip chain, from `normals` where given, taken
 /// from the shared cache when another pipeline already derived them; without,
@@ -198,17 +205,11 @@ fn encoded_scene_depth(
     let cached = shared.as_ref().filter(|cached| {
         cached.width == depth.width
             && cached.height == depth.height
-            && cached
-                .pixels
-                .upgrade()
-                .is_some_and(|pixels| Arc::ptr_eq(&pixels, &depth.pixels))
+            && still_holds(&cached.pixels, &depth.pixels)
             && match (&cached.normals, normals) {
                 (None, None) => true,
                 (Some([x, y]), Some(normals)) => {
-                    x.upgrade()
-                        .is_some_and(|x| Arc::ptr_eq(&x, &normals.x().pixels))
-                        && y.upgrade()
-                            .is_some_and(|y| Arc::ptr_eq(&y, &normals.y().pixels))
+                    still_holds(x, &normals.x().pixels) && still_holds(y, &normals.y().pixels)
                 }
                 _ => false,
             }
@@ -255,7 +256,6 @@ fn encoded_scene_depth(
 /// `decode`d to float before filtering so smooth depth ramps do not acquire
 /// another 8-bit quantization step.
 fn resampled(image: &MaskImage, decode: impl Fn(u8) -> f32 + Sync) -> Vec<f32> {
-    let depth = image;
     let axis = |extent: u32| {
         (0..SCENE_DEPTH_EDGE)
             .map(|i| {
@@ -266,8 +266,8 @@ fn resampled(image: &MaskImage, decode: impl Fn(u8) -> f32 + Sync) -> Vec<f32> {
             })
             .collect::<Vec<_>>()
     };
-    let xs = axis(depth.width);
-    let ys = axis(depth.height);
+    let xs = axis(image.width);
+    let ys = axis(image.height);
     let edge = SCENE_DEPTH_EDGE as usize;
     let mut stored = vec![0.0; edge * edge];
     stored
@@ -275,7 +275,7 @@ fn resampled(image: &MaskImage, decode: impl Fn(u8) -> f32 + Sync) -> Vec<f32> {
         .zip(&ys)
         .for_each(|(row, &(y0, y1, fy))| {
             for (value, &(x0, x1, fx)) in row.iter_mut().zip(&xs) {
-                let at = |x, y| decode(depth.pixels[y * depth.width as usize + x]);
+                let at = |x, y| decode(image.pixels[y * image.width as usize + x]);
                 let top = at(x0, y0) * (1.0 - fx) + at(x1, y0) * fx;
                 let bottom = at(x0, y1) * (1.0 - fx) + at(x1, y1) * fx;
                 *value = top * (1.0 - fy) + bottom * fy;

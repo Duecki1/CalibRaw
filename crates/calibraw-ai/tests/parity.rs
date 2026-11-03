@@ -38,7 +38,6 @@
 //! round-trips exactly. `SHA256SUMS` pins every golden in `sha256sum` format.
 
 use calibraw_ai::models::denoise::{spawn_rawnind_denoise, RawNindJob};
-use calibraw_ai::models::depth::SceneGeometryModel;
 use calibraw_ai::models::masks::{spawn_ai_mask, AiMaskModel, AiMaskWorkerRequest};
 use calibraw_ai::models::object::{
     spawn_object_mask, ObjectInferenceCache, ObjectMaskRequest, ObjectMaskWorkerRequest,
@@ -50,7 +49,7 @@ use calibraw_ai::models::people::{
     PeopleTarget,
 };
 use calibraw_ai::models::remove::{spawn_remove, RemoveRequest};
-use calibraw_ai::models::scene_geometry::SceneDepthQuality;
+use calibraw_ai::models::scene_geometry::{SceneDepthQuality, SceneGeometryModel};
 use calibraw_ai::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
 use calibraw_ai::models::{depth, remove, sky};
 use calibraw_ai::pipeline::{

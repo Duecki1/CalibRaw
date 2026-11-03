@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use image::{imageops::FilterType, ImageBuffer, Rgba};
 use ort::value::Tensor;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::PathBuf;
 
 /// Which MoGe-2 model estimates normals and sky for scene depth. Serialized in
 /// the performance settings; keep the names stable.
@@ -79,8 +79,17 @@ impl SceneDepthQuality {
     }
 }
 
-pub fn scene_geometry_model_is_verified(quality: SceneDepthQuality, path: &Path) -> bool {
-    quality.ai_model().spec().is_installed(path)
+/// The normal model that runs beside the depth model, and where it is.
+#[derive(Clone, Debug)]
+pub struct SceneGeometryModel {
+    pub path: PathBuf,
+    pub quality: SceneDepthQuality,
+}
+
+impl SceneGeometryModel {
+    pub fn is_verified(&self) -> bool {
+        self.quality.ai_model().spec().is_installed(&self.path)
+    }
 }
 
 /// The model's normals and sky at its input size, the photo scaled to the
@@ -95,12 +104,12 @@ pub(super) struct SceneGeometry {
     pub(super) sky: Vec<f32>,
 }
 
-/// Runs the `quality` model at `model_path` over `image`.
+/// Runs `geometry_model` over `image`.
 pub(super) fn scene_geometry(
-    model_path: &Path,
-    quality: SceneDepthQuality,
+    geometry_model: &SceneGeometryModel,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
 ) -> Result<SceneGeometry> {
+    let quality = geometry_model.quality;
     let (width, height) = image.dimensions();
     anyhow::ensure!(width > 0 && height > 0, "empty normal-model input");
     let model = quality.ai_model();
@@ -126,7 +135,7 @@ pub(super) fn scene_geometry(
     let started = std::time::Instant::now();
     let (normal_shape, normals, mask_shape, mask) = with_model_session(
         model,
-        model_path,
+        &geometry_model.path,
         quality.session_options(CAPABILITIES.memory),
         mask_model_retention(true),
         |session| {

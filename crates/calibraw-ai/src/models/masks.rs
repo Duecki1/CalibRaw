@@ -1,6 +1,6 @@
 //! The job behind generated masks: subject, sky and scene depth.
 
-use super::depth::SceneGeometryModel;
+use super::scene_geometry::SceneGeometryModel;
 use super::{depth, sky, subject};
 use crate::config::CAPABILITIES;
 use crate::jobs::{spawn_job, AiJobEvent, JobKind};

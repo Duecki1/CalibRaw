@@ -26,17 +26,14 @@ const RELIGHT_MIN_SHADOW_STEPS: f32 = 24.0;
 const RELIGHT_MAX_SHADOW_STEPS: f32 = 96.0;
 const RELIGHT_TEXELS_PER_SHADOW_STEP: f32 = 4.0;
 // Narrowest shadow-sample footprint in level-0 texels: about one pixel of the
-// depth model (roughly 700 across the image), whose silhouettes are blocky.
+// depth model, whose silhouettes were blocky, when it predicted roughly 700
+// pixels across the image. Not retuned for today's 1540.
 const RELIGHT_MIN_SHADOW_FOOTPRINT: f32 = 4.0;
 const RELIGHT_GOLDEN_ANGLE: f32 = 2.399963229728653;
 // Normalized depths where the light fades out and beyond which nothing is lit
 // (`apply_relight`).
 const RELIGHT_REACH_FADE_START: f32 = 0.92;
 const RELIGHT_REACH_LIMIT: f32 = 0.96;
-// A scene-shadow-map texel whose 3×3 neighbourhood lies at least this deep is sky or far
-// scenery, and no light reaches it. A pixel beside it that reads it nonetheless
-// counts as unshadowed, on the fading edge of the light's reach.
-const RELIGHT_UNLIT_TEXEL_DEPTH: f32 = RELIGHT_REACH_LIMIT + 0.001;
 fn relight_surface(uv: vec2<f32>, level: f32) -> vec4<f32> {
     return textureSampleLevel(scene_depth_tex, SceneAdjustments::local_mask_sampler, uv, level);
 }
