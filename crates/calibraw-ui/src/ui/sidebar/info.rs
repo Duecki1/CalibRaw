@@ -1,5 +1,8 @@
 use super::*;
 use crate::pipeline::CfaKind;
+use crate::ui::capture_format::{
+    format_aperture, format_focal_length, format_iso, format_shutter_speed,
+};
 
 impl Sidebar {
     pub(super) fn show_info(ui: &mut Ui, app: &CalibRawApp) {
@@ -217,43 +220,6 @@ fn format_flash(value: u16) -> String {
         details.push("red-eye reduction");
     }
     details.join(", ")
-}
-
-fn format_iso(value: f32) -> Option<String> {
-    finite_positive(value).map(|value| {
-        if (value - value.round()).abs() < 0.05 {
-            format!("ISO {:.0}", value)
-        } else {
-            format!("ISO {value:.1}")
-        }
-    })
-}
-
-fn format_shutter_speed(seconds: f32) -> Option<String> {
-    finite_positive(seconds).map(|seconds| {
-        if seconds < 0.5 {
-            let denominator = (1.0 / seconds).round().max(1.0);
-            format!("1/{denominator:.0} s")
-        } else if (seconds - seconds.round()).abs() < 0.05 {
-            format!("{seconds:.0} s")
-        } else {
-            format!("{seconds:.1} s")
-        }
-    })
-}
-
-fn format_aperture(value: f32) -> Option<String> {
-    finite_positive(value).map(|value| format!("f/{value:.1}"))
-}
-
-fn format_focal_length(value: f32) -> Option<String> {
-    finite_positive(value).map(|value| {
-        if (value - value.round()).abs() < 0.05 {
-            format!("{value:.0} mm")
-        } else {
-            format!("{value:.1} mm")
-        }
-    })
 }
 
 fn format_focus_distance(value: f32) -> Option<String> {

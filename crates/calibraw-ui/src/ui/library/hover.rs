@@ -24,6 +24,7 @@ use super::review::{
 use super::{LibraryAction, LibraryEntry};
 use crate::i18n::tr;
 use crate::pipeline::RenderedImageFormat;
+use crate::ui::capture_format::FIELD_SEPARATOR;
 
 const ANIMATION_SECONDS: f32 = 0.18;
 /// Share of the tile height the card may cover.
@@ -49,7 +50,6 @@ const ROW_GAP: f32 = SPACE_XXS;
 const MIN_NAME_STEM: usize = 4;
 /// Longest suffix, dot included, a shortened name keeps whole as its extension.
 const MAX_EXTENSION_LEN: usize = 6;
-const FIELD_SEPARATOR: &str = " · ";
 
 /// The hover card of the thumbnail at `rect`. The review badges fade into
 /// the card, and the card stays while the pointer moves from the photo onto

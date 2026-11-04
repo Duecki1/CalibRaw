@@ -1,7 +1,11 @@
 use crate::app::{AppAction, AppTab, CalibRawApp};
 use crate::i18n::{tr, tr_fmt};
+use crate::ui::capture_format::{
+    format_aperture, format_focal_length, format_iso, format_shutter_speed, FIELD_SEPARATOR,
+};
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
-use eframe::egui::{self, Ui};
+use eframe::egui::text::{LayoutJob, TextFormat};
+use eframe::egui::{self, Color32, Ui};
 
 pub(crate) struct TopBar;
 
@@ -275,6 +279,7 @@ impl TopBar {
                     app.activate_tab(AppTab::Library);
                 }
                 Self::show_history_controls(ui, app, false);
+                Self::show_capture_summary(ui, app, None);
             });
         });
     }
@@ -323,6 +328,75 @@ impl TopBar {
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
+    }
+
+    /// How the open photo was taken, at the right end of what is left of a
+    /// left-to-right toolbar row: the exposure settings, then the lens and
+    /// camera dimmed. A narrow row drops fields from the end, down to the focal
+    /// length alone where only one field fits, and a photo that records none
+    /// shows nothing. The text stays right of `left_limit`, which keeps it
+    /// clear of a brand painted over the row.
+    fn show_capture_summary(ui: &mut Ui, app: &CalibRawApp, left_limit: Option<f32>) {
+        let Some(raw) = app
+            .develop
+            .original_raw
+            .as_deref()
+            .or(app.develop.loaded_raw.as_deref())
+        else {
+            return;
+        };
+        let text_color = ui.visuals().text_color();
+        let dimmed_color = ui.visuals().weak_text_color();
+        let focal_length = format_focal_length(raw.focal_length);
+        let exposure = [
+            format_aperture(raw.aperture),
+            format_shutter_speed(raw.capture_metadata.shutter_seconds),
+            format_iso(raw.capture_metadata.iso_speed),
+            focal_length.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|field| (field, text_color));
+        let equipment = [&raw.lens_model, &raw.camera_model]
+            .into_iter()
+            .map(|name| name.trim())
+            .filter(|name| !name.is_empty())
+            .map(|name| (name.to_owned(), dimmed_color));
+        let fields: Vec<(String, Color32)> = exposure.chain(equipment).collect();
+        let single_field = focal_length
+            .map(|field| (field, text_color))
+            .or_else(|| fields.first().cloned());
+
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let summary = |fields: &[(String, Color32)]| {
+            let mut job = LayoutJob::default();
+            for (index, (field, color)) in fields.iter().enumerate() {
+                if index > 0 {
+                    let format = TextFormat::simple(font.clone(), dimmed_color);
+                    job.append(FIELD_SEPARATOR, 0.0, format);
+                }
+                job.append(field, 0.0, TextFormat::simple(font.clone(), *color));
+            }
+            job
+        };
+        let available = ui.available_rect_before_wrap();
+        let left = left_limit.map_or(available.left(), |limit| limit.max(available.left()));
+        let room = available.right() - left;
+        let fitting = (2..=fields.len())
+            .rev()
+            .map(|count| summary(&fields[..count]))
+            .chain(
+                single_field
+                    .as_ref()
+                    .map(|field| summary(std::slice::from_ref(field))),
+            )
+            .map(|job| ui.painter().layout_job(job))
+            .find(|galley| galley.size().x <= room);
+        if let Some(galley) = fitting {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(egui::Label::new(galley).selectable(false));
+            });
+        }
     }
 
     fn show_develop_zoom_control(ui: &mut Ui, app: &mut CalibRawApp) {
@@ -514,6 +588,7 @@ impl TopBar {
                 ui.separator();
                 Self::show_history_controls(ui, app, false);
                 Self::show_save_control(ui, app, false);
+                Self::show_capture_summary(ui, app, None);
             });
         });
     }
@@ -524,6 +599,9 @@ impl TopBar {
         let compact = toolbar_width < TOOLBAR_COMPACT_WIDTH;
         let compact_review = toolbar_width < TOOLBAR_COMPACT_REVIEW_WIDTH;
         let center_brand = Self::toolbar_brand_can_be_centered(app.ui.active_tab, toolbar_width);
+        let centered_brand_clearance = center_brand.then(|| {
+            ui.max_rect().center().x + Self::toolbar_brand_size().x * 0.5 + moduwu_design::SPACE_LG
+        });
         // Tab widths keep the Library sidebar edge aligned with the toolbar while
         // giving each tab a wide hit target.
         let tab_width = if compact { 88.0 } else { 98.0 };
@@ -665,6 +743,7 @@ impl TopBar {
                     {
                         app.toggle_original_preview();
                     }
+                    Self::show_capture_summary(ui, app, centered_brand_clearance);
                 }
             });
         });

@@ -1,5 +1,8 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::ui::capture_format::{
+    format_aperture, format_focal_length, format_iso, format_shutter_speed,
+};
 
 /// Rows with enough images shrink to fit the viewport. Sparse rows retain the
 /// selected thumbnail height rather than enlarging their images to fill space.
@@ -470,56 +473,14 @@ pub(super) fn thumbnail_file_fields(
 pub(super) fn thumbnail_capture_fields(asset: &LibraryAsset) -> Vec<String> {
     let metadata = &asset.metadata;
     [
-        format_thumbnail_aperture(metadata.aperture),
-        format_thumbnail_shutter(metadata.shutter_seconds),
-        format_thumbnail_iso(metadata.iso_speed),
-        format_thumbnail_focal_length(metadata.focal_length),
+        format_aperture(metadata.aperture),
+        format_shutter_speed(metadata.shutter_seconds),
+        format_iso(metadata.iso_speed),
+        format_focal_length(metadata.focal_length),
     ]
     .into_iter()
     .flatten()
     .collect()
-}
-
-/// Metadata values are zero or non-finite when the file does not record them.
-fn known(value: f32) -> Option<f32> {
-    (value.is_finite() && value > 0.0).then_some(value)
-}
-
-fn format_thumbnail_aperture(value: f32) -> Option<String> {
-    known(value).map(|value| format!("f/{value:.1}"))
-}
-
-fn format_thumbnail_iso(value: f32) -> Option<String> {
-    known(value).map(|value| {
-        if (value - value.round()).abs() < 0.05 {
-            format!("ISO {value:.0}")
-        } else {
-            format!("ISO {value:.1}")
-        }
-    })
-}
-
-fn format_thumbnail_shutter(seconds: f32) -> Option<String> {
-    known(seconds).map(|seconds| {
-        if seconds < 0.5 {
-            let denominator = (1.0 / seconds).round().max(1.0);
-            format!("1/{denominator:.0} s")
-        } else if (seconds - seconds.round()).abs() < 0.05 {
-            format!("{seconds:.0} s")
-        } else {
-            format!("{seconds:.1} s")
-        }
-    })
-}
-
-fn format_thumbnail_focal_length(value: f32) -> Option<String> {
-    known(value).map(|value| {
-        if (value - value.round()).abs() < 0.05 {
-            format!("{value:.0} mm")
-        } else {
-            format!("{value:.1} mm")
-        }
-    })
 }
 
 // The select check in a thumbnail's top-left corner, in points.

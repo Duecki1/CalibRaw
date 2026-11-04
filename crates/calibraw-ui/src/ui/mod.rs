@@ -1,4 +1,5 @@
 pub(crate) mod background_tasks;
+pub(crate) mod capture_format;
 pub(crate) mod components;
 pub(crate) mod develop;
 pub(crate) mod develop_viewport;
