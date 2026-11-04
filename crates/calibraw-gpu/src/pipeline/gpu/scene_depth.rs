@@ -187,7 +187,7 @@ fn encoded_scene_depth(
         let level = SurfaceLevel {
             width: SCENE_DEPTH_EDGE,
             height: SCENE_DEPTH_EDGE,
-            texels: resampled(depth, |stored| f32::from(stored) / 255.0)
+            texels: resampled_depth(depth)
                 .iter()
                 .map(|&stored| {
                     let distance = distance_from_stored(stored);
@@ -228,7 +228,7 @@ fn encoded_scene_depth(
             .collect::<Vec<_>>()
     });
     let levels: Arc<[EncodedLevel]> = derive_scene_surface(
-        &resampled(depth, |stored| f32::from(stored) / 255.0),
+        &resampled_depth(depth),
         normals_resampled.as_deref(),
         SCENE_DEPTH_EDGE,
         depth.width as f32 / depth.height as f32,
@@ -251,11 +251,84 @@ fn encoded_scene_depth(
     levels
 }
 
+/// Stored depth of the sky, and of what lies beyond the depth model's far
+/// limit. It converts to distance 1, which no nearer stored depth reaches
+/// (254 converts to 0.963), and is resampled apart from nearer depth
+/// (`resampled_depth`), so the shaders find it by value (`scene_sky_at` in
+/// scene_depth.wgsl) and depth there never lies between the sky and what
+/// stands in front of it.
+const SKY_STORED: u8 = 255;
+
+/// [`resampled`] for stored depth, with sky kept apart: a texel at least half
+/// covered by sky is sky, at exactly 1; any other texel takes the depth of its
+/// nearer samples alone. Texels without sky resample as `resampled` does.
+fn resampled_depth(depth: &MaskImage) -> Vec<f32> {
+    let decode = |stored: u8| f32::from(stored) / 255.0;
+    resampled_with(depth, |taps| {
+        let weights = taps.weights();
+        let sky: f32 = taps
+            .samples
+            .iter()
+            .zip(weights)
+            .filter(|(stored, _)| **stored == SKY_STORED)
+            .map(|(_, weight)| weight)
+            .sum();
+        if sky == 0.0 {
+            return taps.bilinear(decode);
+        }
+        if sky >= 0.5 {
+            return 1.0;
+        }
+        let (sum, total) = taps
+            .samples
+            .iter()
+            .zip(weights)
+            .filter(|(stored, _)| **stored != SKY_STORED)
+            .fold((0.0, 0.0), |(sum, total), (&stored, weight)| {
+                (sum + decode(stored) * weight, total + weight)
+            });
+        sum / total
+    })
+}
+
 /// Bilinear resample of `image` to the `SCENE_DEPTH_EDGE` square, retaining
 /// the full-image coordinate frame even for export tiles. Each value is
 /// `decode`d to float before filtering so smooth depth ramps do not acquire
 /// another 8-bit quantization step.
 fn resampled(image: &MaskImage, decode: impl Fn(u8) -> f32 + Sync) -> Vec<f32> {
+    resampled_with(image, |taps| taps.bilinear(&decode))
+}
+
+/// The four samples around a texel, top left, top right, bottom left and
+/// bottom right, and how far the texel lies between them.
+struct Taps {
+    samples: [u8; 4],
+    fx: f32,
+    fy: f32,
+}
+
+impl Taps {
+    fn weights(&self) -> [f32; 4] {
+        let (fx, fy) = (self.fx, self.fy);
+        [
+            (1.0 - fx) * (1.0 - fy),
+            fx * (1.0 - fy),
+            (1.0 - fx) * fy,
+            fx * fy,
+        ]
+    }
+
+    fn bilinear(&self, decode: impl Fn(u8) -> f32) -> f32 {
+        let [a, b, c, d] = self.samples.map(decode);
+        let top = a * (1.0 - self.fx) + b * self.fx;
+        let bottom = c * (1.0 - self.fx) + d * self.fx;
+        top * (1.0 - self.fy) + bottom * self.fy
+    }
+}
+
+/// Resamples `image` to the `SCENE_DEPTH_EDGE` square, each texel `combine`d
+/// from its four [`Taps`].
+fn resampled_with(image: &MaskImage, combine: impl Fn(&Taps) -> f32 + Sync) -> Vec<f32> {
     let axis = |extent: u32| {
         (0..SCENE_DEPTH_EDGE)
             .map(|i| {
@@ -275,10 +348,12 @@ fn resampled(image: &MaskImage, decode: impl Fn(u8) -> f32 + Sync) -> Vec<f32> {
         .zip(&ys)
         .for_each(|(row, &(y0, y1, fy))| {
             for (value, &(x0, x1, fx)) in row.iter_mut().zip(&xs) {
-                let at = |x, y| decode(image.pixels[y * image.width as usize + x]);
-                let top = at(x0, y0) * (1.0 - fx) + at(x1, y0) * fx;
-                let bottom = at(x0, y1) * (1.0 - fx) + at(x1, y1) * fx;
-                *value = top * (1.0 - fy) + bottom * fy;
+                let at = |x, y| image.pixels[y * image.width as usize + x];
+                *value = combine(&Taps {
+                    samples: [at(x0, y0), at(x1, y0), at(x0, y1), at(x1, y1)],
+                    fx,
+                    fy,
+                });
             }
         });
     stored

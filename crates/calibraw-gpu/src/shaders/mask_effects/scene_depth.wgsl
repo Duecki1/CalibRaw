@@ -111,15 +111,46 @@ fn scene_depth_map_at(pos: vec2<i32>) -> vec4<f32> {
     return scene_depth_map_near(full_image_uv(pos));
 }
 
+// Level-0 distance (channel x) above which a texel is sky: stored depth 255, the
+// sky or what lies beyond the depth model's far limit. Sky texels hold exactly 1
+// and are never resampled together with nearer depth, which converts to at most
+// 0.963 (`resampled_depth` in scene_depth.rs).
+const SCENE_SKY_DISTANCE: f32 = 0.98;
+
+// How much of the pixel at full-image `uv` is sky: the sky texels around it,
+// filtered bilinearly. The map's filters blend depth across the sky's outline,
+// so readers set sky to the farthest depth afterwards; light and shadow then
+// never reach it, and nothing lies between the sky and what stands before it.
+fn scene_sky_at(uv: vec2<f32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(scene_depth_tex));
+    let p = uv * vec2<f32>(size) - vec2<f32>(0.5);
+    let base = vec2<i32>(floor(p));
+    let f = p - vec2<f32>(base);
+    var sky = 0.0;
+    for (var y = 0; y < 2; y = y + 1) {
+        for (var x = 0; x < 2; x = x + 1) {
+            let cell = clamp(base + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
+            if textureLoad(scene_depth_tex, cell, 0).x >= SCENE_SKY_DISTANCE {
+                sky += select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
+            }
+        }
+    }
+    return sky;
+}
+
 // Depth at a pixel from the depth map's values there. A reader that also wants
 // the map's roughness or mean guide reads the map once and passes it here.
 fn scene_depth_from(map: vec4<f32>, pos: vec2<i32>) -> f32 {
-    let range = scene_depth_range_near(full_image_uv(pos));
+    let uv = full_image_uv(pos);
+    let range = scene_depth_range_near(uv);
     var guide = map.w;
     if range.w > 0.0 {
         guide = mix(map.w, SceneSource::scene_guide_at(pos), range.w);
     }
-    return clamp(map.x * guide + map.y, range.x, range.y);
+    let depth = clamp(map.x * guide + map.y, range.x, range.y);
+    let sky = scene_sky_at(uv);
+    if sky <= 0.0 { return depth; }
+    return mix(depth, 1.0, sky);
 }
 
 // Depth at a pixel, for scene_depth_present() scenes. Near 0, far 1.
@@ -213,22 +244,36 @@ fn scene_surface_taps_at(pos: vec2<i32>) -> SceneSurfaceTaps {
     var weights = array<vec4<f32>, 4>();
     var surface = vec4<f32>(0.0);
     var total = 0.0;
+    // Sky texels count for the sky's share of the pixel and the others for the
+    // rest, so a surface beside the sky takes nothing of it (`scene_sky_at`).
+    let sky = scene_sky_at(uv);
     for (var tap = 0u; tap < SCENE_SURFACE_TAPS; tap = tap + 1u) {
         let texel = taps.base + vec2<i32>(i32(tap % 4u), i32(tap / 4u));
         let offset = abs(vec2<f32>(texel) - p);
         let tent = max(1.0 - offset.x * 0.5, 0.0) * max(1.0 - offset.y * 0.5, 0.0);
         let value = textureLoad(scene_depth_tex, scene_surface_tap_cell(taps, tap), 0);
-        let weight = tent * scene_depth_closeness(value.y, depth);
+        let share = select(1.0 - sky, sky, value.x >= SCENE_SKY_DISTANCE);
+        let weight = tent * scene_depth_closeness(value.y, depth) * share;
         weights[tap / 4u][tap % 4u] = weight;
         surface += value * weight;
         total += weight;
     }
-    // The tent is positive on at least the four nearest texels, and every
-    // closeness is at least 1e-4, so `total` is positive.
+    // The tent is positive on at least the four nearest texels, every
+    // closeness is at least 1e-4, and the share of a texel among those four
+    // is positive for the sky or the rest, whichever they hold, so `total` is
+    // positive.
     for (var row = 0u; row < 4u; row = row + 1u) {
         weights[row] /= total;
     }
     taps.weights = weights;
     taps.surface = surface / total;
+    // Sky is the farthest depth and flat.
+    if sky > 0.0 {
+        taps.surface = vec4<f32>(
+            taps.surface.x,
+            mix(taps.surface.y, 1.0, sky),
+            mix(taps.surface.zw, vec2<f32>(0.0), sky),
+        );
+    }
     return taps;
 }
