@@ -621,6 +621,7 @@ impl Sidebar {
                 {
                     ai_request = Some(ai_enabled);
                 }
+                ui.weak(tr("Experimental"));
                 if ai_strength_available && exposure.ai_denoise_enabled {
                     let mut strength_percent = exposure.ai_denoise_amount.clamp(0.0, 1.0) * 100.0;
                     if AdjustmentSlider::new(tr("Strength"), &mut strength_percent, 0.0..=100.0)
