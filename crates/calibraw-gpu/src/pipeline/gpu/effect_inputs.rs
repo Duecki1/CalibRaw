@@ -379,8 +379,9 @@ impl HazeInputs {
 /// The scene map's grid and its maps (scene_analysis.wgsl).
 struct SceneMapInputs {
     cells: wgpu::Buffer,
-    /// The coarse photo, its wide blur, depth's coefficients and range, the ground
-    /// and the lens blur table effects read; cropped and zoomed views copy them.
+    /// The coarse photo, its wide blur, depth's coefficients with the sky's
+    /// luminance, depth's range, the ground and the lens blur table effects
+    /// read; cropped and zoomed views copy them.
     environment: wgpu::Texture,
     environment_view: wgpu::TextureView,
     environment_blur: wgpu::Texture,
@@ -403,12 +404,18 @@ impl SceneMapInputs {
     fn new(device: &wgpu::Device, edge: u32, blur_edge: u32) -> Self {
         let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
         let copied = usage | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST;
-        let texture = |edge, format, usage, label| {
-            let texture =
-                create_processing_texture(device, texture_size(edge, edge), format, usage, label);
+        let blocks = |edge, blocks, format, usage, label| {
+            let texture = create_processing_texture(
+                device,
+                texture_size(edge, edge * blocks),
+                format,
+                usage,
+                label,
+            );
             let view = default_texture_view(&texture);
             (texture, view)
         };
+        let texture = |edge, format, usage, label| blocks(edge, 1, format, usage, label);
         let (environment, environment_view) = texture(
             edge,
             SCENE_ENVIRONMENT_FORMAT,
@@ -421,8 +428,9 @@ impl SceneMapInputs {
             copied,
             "calibraw full-image scene environment blur",
         );
-        let (depth_map, depth_map_view) = texture(
+        let (depth_map, depth_map_view) = blocks(
             edge,
+            SCENE_MAP_COEFFICIENT_BLOCKS,
             SCENE_COEFFICIENT_FORMAT,
             copied,
             "calibraw full-image scene depth map",
@@ -447,8 +455,9 @@ impl SceneMapInputs {
             "calibraw full-image scene lens blur",
         );
         let focus_view = default_texture_view(&focus);
-        let (coefficients, coefficients_view) = texture(
+        let (coefficients, coefficients_view) = blocks(
             edge,
+            SCENE_MAP_COEFFICIENT_BLOCKS,
             SCENE_COEFFICIENT_FORMAT,
             usage,
             "calibraw scene map guided-filter coefficients",

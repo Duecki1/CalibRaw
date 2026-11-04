@@ -29,11 +29,15 @@ const RELIGHT_TEXELS_PER_SHADOW_STEP: f32 = 4.0;
 // depth model, whose silhouettes were blocky, when it predicted roughly 700
 // pixels across the image. Not retuned for today's 1540.
 const RELIGHT_MIN_SHADOW_FOOTPRINT: f32 = 4.0;
-const RELIGHT_GOLDEN_ANGLE: f32 = 2.399963229728653;
 // Normalized depths where the light fades out and beyond which nothing is lit
 // (`apply_relight`).
 const RELIGHT_REACH_FADE_START: f32 = 0.92;
 const RELIGHT_REACH_LIMIT: f32 = 0.96;
+// Radius of the disc `relight_reach` averages over, in deviations of the lens
+// blur, and its samples. A blurred step runs over two deviations on either side
+// of it.
+const RELIGHT_REACH_BLUR_RADIUS: f32 = 4.0;
+const RELIGHT_REACH_TAPS: u32 = 8u;
 fn relight_surface(uv: vec2<f32>, level: f32) -> vec4<f32> {
     return textureSampleLevel(scene_depth_tex, SceneAdjustments::local_mask_sampler, uv, level);
 }
@@ -71,7 +75,7 @@ fn relight_smoothed_gradient(
     var weights = 1.0;
     for (var tap = 0u; tap < RELIGHT_NORMAL_TAPS; tap = tap + 1u) {
         let distance = radius * sqrt((f32(tap) + 0.5) / f32(RELIGHT_NORMAL_TAPS));
-        let angle = f32(tap) * RELIGHT_GOLDEN_ANGLE;
+        let angle = f32(tap) * SCENE_GOLDEN_ANGLE;
         let offset = distance * vec2<f32>(cos(angle), sin(angle));
         let tap_surface = relight_surface(uv + offset / camera.image_size, level);
         let residual = (tap_surface.y - depth - dot(gradient, offset)) / tolerance;
@@ -80,6 +84,33 @@ fn relight_smoothed_gradient(
         weights += weight;
     }
     return sum / weights;
+}
+
+// How much of a light a surface at `depth` can receive at all: none beyond the
+// far end of reach (`relight_contribution`). Where the lens blurred that depth,
+// the reach is averaged over a disc as wide as the blur, as the photo's own
+// light is, and the pixel keeps the lesser of that and its own: the light fades
+// on toward a blurred outline, while a sharp nearer object beside far scenery
+// lends it no reach. Its own reach still ends the light at the far cutoff, where
+// the disc's mean is about a half.
+fn relight_reach(uv: vec2<f32>, depth: f32) -> f32 {
+    let own = 1.0 - smoothstep(RELIGHT_REACH_FADE_START, RELIGHT_REACH_LIMIT, depth);
+    let image = Common::scene_image_size();
+    let texel = max(image.x, image.y) / f32(textureDimensions(scene_depth_tex).x);
+    let radius = RELIGHT_REACH_BLUR_RADIUS * scene_focus_blur(depth);
+    if own <= 0.0 || radius <= texel { return own; }
+    // Each sample reads depth averaged over about its share of the disc.
+    let spacing = radius / sqrt(f32(RELIGHT_REACH_TAPS));
+    let level = clamp(log2(spacing / texel), 0.0, f32(textureNumLevels(scene_depth_tex)) - 1.0);
+    var sum = own;
+    for (var tap = 0u; tap < RELIGHT_REACH_TAPS; tap = tap + 1u) {
+        let distance = radius * sqrt((f32(tap) + 0.5) / f32(RELIGHT_REACH_TAPS));
+        let angle = f32(tap) * SCENE_GOLDEN_ANGLE;
+        let offset = distance * vec2<f32>(cos(angle), sin(angle));
+        let sample_depth = relight_surface(uv + offset / image, level).y;
+        sum += 1.0 - smoothstep(RELIGHT_REACH_FADE_START, RELIGHT_REACH_LIMIT, sample_depth);
+    }
+    return min(own, sum / f32(RELIGHT_REACH_TAPS + 1u));
 }
 
 // Surface normal from the depth gradient (depth per shorter-edge length),
@@ -290,6 +321,7 @@ fn relight_contribution(
     uv: vec2<f32>,
     has_depth: bool,
     depth: f32,
+    reachable: f32,
     taps: SceneSurfaceTaps,
     mapped: vec4<f32>,
 ) -> RelightContribution {
@@ -323,10 +355,6 @@ fn relight_contribution(
     let distance = max(length(to_light), 1e-5);
     // Wrapped Lambert: a larger source reaches further around a form.
     let wrap = 0.5 * size;
-    // The far end of normalized depth is where the depth model clips the sky
-    // and distant scenery (typically 245–255 of 255, often with a gap below):
-    // beyond any local light, it receives neither light nor shadows.
-    let reachable = 1.0 - smoothstep(RELIGHT_REACH_FADE_START, RELIGHT_REACH_LIMIT, depth);
     let diffuse = clamp((dot(normal, to_light / distance) + wrap) / (1.0 + wrap), 0.0, 1.0)
         * reachable;
     if diffuse <= 1e-6 { return none; }
@@ -375,11 +403,20 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
     let uv = full_image_uv(pos);
     let has_depth = scene_depth_present();
     var depth = 0.0;
+    // The far end of normalized depth is where the depth model clips the sky
+    // and distant scenery (typically 245–255 of 255, often with a gap below):
+    // beyond any local light, it receives neither light nor shadows.
+    var reachable = 1.0;
     var taps: SceneSurfaceTaps;
     var mapped = vec4<f32>(1.0);
+    var sky = SceneSky(0.0, 1.0);
     if has_depth {
         taps = scene_surface_taps_at(pos);
+        sky = taps.sky;
+        // The sky is beyond any light.
+        if sky.share >= 1.0 { return ambient_rgb; }
         depth = taps.surface.y;
+        reachable = relight_reach(uv, depth);
         if relight_reads_shadow_map(params) {
             mapped = scene_shadow_surface_resolve(taps);
         }
@@ -387,10 +424,15 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
 
     // Divide out part of the existing shading relative to the scene's ambient
     // level (shared by export tiles), so the estimate approaches reflectance.
+    // Where the sky covers part of the pixel, the estimate is of what stands
+    // before it, no brighter than it may be, and the light it receives covers its
+    // part alone (`scene_sky_at`).
     let ambient_level = scene_ambient_level();
     let positive = Color::gamut_project_nonnegative_rec2020(input_rgb);
-    let relative = clamp(Common::safe_luma(positive) / ambient_level, 0.02, 64.0);
-    let reflectance = positive * pow(relative, -0.3);
+    let coverage = 1.0 - sky.share;
+    let solid = positive * sky.solid;
+    let relative = clamp(Common::safe_luma(solid) / ambient_level, 0.02, 64.0);
+    let reflectance = solid * pow(relative, -0.3) * coverage;
 
     // The first lit light is shaded in the expression a single light always
     // was, so one light renders exactly as before; the others add to it.
@@ -399,7 +441,7 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
     var others = vec3<f32>(0.0);
     for (var instance = 0u; instance < mask_effect_instance_count(params); instance = instance + 1u) {
         let contribution = relight_contribution(
-            mask_effect_instance_params(params, instance), uv, has_depth, depth, taps, mapped,
+            mask_effect_instance_params(params, instance), uv, has_depth, depth, reachable, taps, mapped,
         );
         if !contribution.lit { continue; }
         if lit == 0u {

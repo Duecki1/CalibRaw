@@ -71,12 +71,16 @@ pub(super) const SCENE_MAP_BLUR_GRID_LONG: u32 = 48;
 /// Depth bins of the scene map's lens blur table (scene_analysis.wgsl).
 pub(super) const SCENE_FOCUS_BINS: u32 = 32;
 /// Bytes of one scene map cell (`SceneMapCell` in scene_analysis.wgsl): four
-/// RGBA f32 vectors, the last holding one value.
+/// RGBA f32 vectors, the last holding three values.
 pub(super) const SCENE_MAP_CELL_BYTES: u64 = 4 * 16;
 pub(super) const SCENE_ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The guided filter's coefficients. They stay f32, as Dehaze's do: a steep
 /// slope times the guide nearly cancels its offset.
 pub(super) const SCENE_COEFFICIENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+/// Square blocks of the grid stacked downward in the scene map's coefficient
+/// textures: depth's guided filter, then the sky's luminance
+/// (`SCENE_MAP_SKY_ROW` in common.wgsl, one grid edge down).
+pub(super) const SCENE_MAP_COEFFICIENT_BLOCKS: u32 = 2;
 
 /// Shadows of up to four scene lights on the surface and in the air
 /// (scene_shadows.wgsl).
@@ -624,7 +628,7 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             )?
             + 2 * texture_allocation_bytes(
                 SCENE_MAP_GRID_LONG,
-                SCENE_MAP_GRID_LONG,
+                SCENE_MAP_GRID_LONG * SCENE_MAP_COEFFICIENT_BLOCKS,
                 1,
                 1,
                 SCENE_COEFFICIENT_FORMAT,

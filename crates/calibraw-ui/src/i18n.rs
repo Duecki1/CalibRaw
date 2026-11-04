@@ -36,10 +36,12 @@ pub(crate) enum Language {
     Russian,
     Ukrainian,
     Romanian,
+    Turkish,
+    Korean,
 }
 
 impl Language {
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 17] = [
         Self::English,
         Self::German,
         Self::Danish,
@@ -55,6 +57,8 @@ impl Language {
         Self::Russian,
         Self::Ukrainian,
         Self::Romanian,
+        Self::Turkish,
+        Self::Korean,
     ];
 
     /// Locale identifier; Posh English is manual-only, not an OS language.
@@ -74,6 +78,8 @@ impl Language {
             Self::Russian => "ru",
             Self::Ukrainian => "uk",
             Self::Romanian => "ro",
+            Self::Turkish => "tr",
+            Self::Korean => "ko",
         }
     }
 
@@ -96,6 +102,8 @@ impl Language {
             Self::Russian => "Русский",
             Self::Ukrainian => "Українська",
             Self::Romanian => "Română",
+            Self::Turkish => "Türkçe",
+            Self::Korean => "한국어",
         }
     }
 
@@ -119,6 +127,8 @@ impl Language {
         static RUSSIAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static UKRAINIAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         static ROMANIAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
+        static TURKISH: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
+        static KOREAN: OnceLock<Result<HashMap<String, String>, CatalogError>> = OnceLock::new();
         match self {
             Self::English => Ok(ENGLISH.get_or_init(HashMap::new)),
             Self::German => GERMAN
@@ -175,6 +185,14 @@ impl Language {
                 .map_err(Clone::clone),
             Self::Romanian => ROMANIAN
                 .get_or_init(|| parse_catalog(self, include_str!("../locales/ro.json")))
+                .as_ref()
+                .map_err(Clone::clone),
+            Self::Turkish => TURKISH
+                .get_or_init(|| parse_catalog(self, include_str!("../locales/tr.json")))
+                .as_ref()
+                .map_err(Clone::clone),
+            Self::Korean => KOREAN
+                .get_or_init(|| parse_catalog(self, include_str!("../locales/ko.json")))
                 .as_ref()
                 .map_err(Clone::clone),
         }
@@ -252,10 +270,12 @@ pub(crate) enum LanguageChoice {
     Russian,
     Ukrainian,
     Romanian,
+    Turkish,
+    Korean,
 }
 
 impl LanguageChoice {
-    pub(crate) const ALL: [Self; 16] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::System,
         Self::English,
         Self::German,
@@ -272,6 +292,8 @@ impl LanguageChoice {
         Self::Russian,
         Self::Ukrainian,
         Self::Romanian,
+        Self::Turkish,
+        Self::Korean,
     ];
 
     pub(crate) fn resolve(self) -> Language {
@@ -292,6 +314,8 @@ impl LanguageChoice {
             Self::Russian => Language::Russian,
             Self::Ukrainian => Language::Ukrainian,
             Self::Romanian => Language::Romanian,
+            Self::Turkish => Language::Turkish,
+            Self::Korean => Language::Korean,
         }
     }
 
@@ -313,6 +337,8 @@ impl LanguageChoice {
             Self::Russian => Language::Russian.native_name(),
             Self::Ukrainian => Language::Ukrainian.native_name(),
             Self::Romanian => Language::Romanian.native_name(),
+            Self::Turkish => Language::Turkish.native_name(),
+            Self::Korean => Language::Korean.native_name(),
         }
     }
 }

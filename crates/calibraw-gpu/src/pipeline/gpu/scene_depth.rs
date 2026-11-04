@@ -254,9 +254,9 @@ fn encoded_scene_depth(
 /// Stored depth of the sky, and of what lies beyond the depth model's far
 /// limit. It converts to distance 1, which no nearer stored depth reaches
 /// (254 converts to 0.963), and is resampled apart from nearer depth
-/// (`resampled_depth`), so the shaders find it by value (`scene_sky_at` in
-/// scene_depth.wgsl) and depth there never lies between the sky and what
-/// stands in front of it.
+/// (`resampled_depth`), so the shaders find it by value
+/// (`SCENE_SKY_DISTANCE` in common.wgsl) and depth there never lies between
+/// the sky and what stands in front of it.
 const SKY_STORED: u8 = 255;
 
 /// [`resampled`] for stored depth, with sky kept apart: a texel at least half

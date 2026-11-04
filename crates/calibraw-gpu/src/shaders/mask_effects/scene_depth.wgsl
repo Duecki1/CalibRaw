@@ -36,7 +36,10 @@
 // its texels stretch to the image's aspect.
 @group(0) @binding(35) var scene_depth_tex: texture_2d<f32>;
 // Per scene map cell: the guided filter's slope and offset, the surface's roughness
-// and the mean guide around it.
+// and the mean guide around it. From row Common::SCENE_MAP_SKY_ROW, the sky block:
+// the brightest luminance what stands before a brighter sky around the cell may
+// have (x) times y, which is 1 where it was measured, and the share of sky pixels
+// around the cell (w; scene_analysis.wgsl `scene_sky_window`).
 @group(0) @binding(71) var scene_depth_map_tex: texture_2d<f32>;
 // Per scene map cell, around it: the nearest (x) and farthest (y) stored depth, how
 // well the guide explains depth (z) and how much of a depth edge there is (w).
@@ -70,22 +73,30 @@ fn scene_map_cells_at(uv: vec2<f32>) -> SceneMapCells {
     return SceneMapCells(base, min(base + vec2<i32>(1), last), position - vec2<f32>(base));
 }
 
-// The depth map at full-image `uv`, interpolated: see `scene_depth_map_tex`.
-fn scene_depth_map_near(uv: vec2<f32>) -> vec4<f32> {
+// A block of the depth map, starting at `row`, at full-image `uv`, interpolated:
+// see `scene_depth_map_tex`.
+fn scene_depth_map_block_near(uv: vec2<f32>, row: i32) -> vec4<f32> {
     let cells = scene_map_cells_at(uv);
+    let base = cells.base + vec2<i32>(0, row);
+    let next = cells.next + vec2<i32>(0, row);
     return mix(
         mix(
-            textureLoad(scene_depth_map_tex, cells.base, 0),
-            textureLoad(scene_depth_map_tex, vec2<i32>(cells.next.x, cells.base.y), 0),
+            textureLoad(scene_depth_map_tex, base, 0),
+            textureLoad(scene_depth_map_tex, vec2<i32>(next.x, base.y), 0),
             cells.between.x,
         ),
         mix(
-            textureLoad(scene_depth_map_tex, vec2<i32>(cells.base.x, cells.next.y), 0),
-            textureLoad(scene_depth_map_tex, cells.next, 0),
+            textureLoad(scene_depth_map_tex, vec2<i32>(base.x, next.y), 0),
+            textureLoad(scene_depth_map_tex, next, 0),
             cells.between.x,
         ),
         cells.between.y,
     );
+}
+
+// The depth map at full-image `uv`, interpolated.
+fn scene_depth_map_near(uv: vec2<f32>) -> vec4<f32> {
+    return scene_depth_map_block_near(uv, 0);
 }
 
 // The stored depth's range at full-image `uv`, interpolated: see
@@ -111,44 +122,167 @@ fn scene_depth_map_at(pos: vec2<i32>) -> vec4<f32> {
     return scene_depth_map_near(full_image_uv(pos));
 }
 
-// Level-0 distance (channel x) above which a texel is sky: stored depth 255, the
-// sky or what lies beyond the depth model's far limit. Sky texels hold exactly 1
-// and are never resampled together with nearer depth, which converts to at most
-// 0.963 (`resampled_depth` in scene_depth.rs).
-const SCENE_SKY_DISTANCE: f32 = 0.98;
+// The stored sky at full-image `uv`: the sky texels around it (level-0 distance
+// of at least Common::SCENE_SKY_DISTANCE), filtered bilinearly.
+fn scene_stored_sky_at(uv: vec2<f32>) -> f32 {
+    let size = vec2<f32>(textureDimensions(scene_depth_tex));
+    let p = uv * size - vec2<f32>(0.5);
+    let base = floor(p);
+    let f = p - base;
+    // Gathered at the middle of the four texels, so that the sampler's coarser
+    // rounding of `uv` cannot pick other texels than `f` weighs. In the order (left,
+    // lower), (right, lower), (right, upper), (left, upper), lower being the larger
+    // row.
+    let texels = textureGather(
+        0,
+        scene_depth_tex,
+        SceneAdjustments::local_mask_sampler,
+        (base + vec2<f32>(1.0)) / size,
+    );
+    let sky = select(vec4<f32>(0.0), vec4<f32>(1.0), texels >= vec4<f32>(Common::SCENE_SKY_DISTANCE));
+    let weights = vec4<f32>((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
+    return dot(sky, weights);
+}
 
-// How much of the pixel at full-image `uv` is sky: the sky texels around it,
-// filtered bilinearly. The map's filters blend depth across the sky's outline,
-// so readers set sky to the farthest depth afterwards; light and shadow then
-// never reach it, and nothing lies between the sky and what stands before it.
-fn scene_sky_at(uv: vec2<f32>) -> f32 {
-    let size = vec2<i32>(textureDimensions(scene_depth_tex));
-    let p = uv * vec2<f32>(size) - vec2<f32>(0.5);
-    let base = vec2<i32>(floor(p));
-    let f = p - vec2<f32>(base);
-    var sky = 0.0;
-    for (var y = 0; y < 2; y = y + 1) {
-        for (var x = 0; x < 2; x = x + 1) {
-            let cell = clamp(base + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
-            if textureLoad(scene_depth_tex, cell, 0).x >= SCENE_SKY_DISTANCE {
-                sky += select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
-            }
-        }
+// Lens blur of what stands before the sky, in depth texels, over which its
+// outline comes to fade (`scene_sky_at`). Below it the photo's outline is as
+// sharp as stored depth's.
+const SCENE_SKY_SOFT_EDGE: vec2<f32> = vec2<f32>(1.0, 3.0);
+// Width of the fade in lens blurs: a blurred outline mixes over two deviations
+// on either side of the photo's edge, and stored sky starts at its far side. At
+// most the sky windows' reach in scene map cells. The samples of the disc the fade
+// averages stored sky over (`scene_stored_sky_around`).
+const SCENE_SKY_FADE_BLURS: f32 = 4.0;
+const SCENE_SKY_FADE_CELLS: f32 = f32(Common::SCENE_SKY_RADIUS);
+const SCENE_SKY_FADE_TAPS: u32 = 12u;
+// Angle between successive samples spiralling over a disc (golden angle).
+const SCENE_GOLDEN_ANGLE: f32 = 2.399963229728653;
+// Offset in depth texels, along both axes, of the points `scene_stored_sky_near`
+// reads: about the texels stored depth may misplace a sharp outline by.
+const SCENE_SKY_NEAR_OFFSET: f32 = 1.5;
+
+// How close stored sky is to full-image `uv`, 0 to 1: the stored sky at four
+// diagonal points around it, summed and halved, so that it is whole up to about
+// a texel beyond the outline and fades over the next.
+fn scene_stored_sky_near(uv: vec2<f32>) -> f32 {
+    let offset = SCENE_SKY_NEAR_OFFSET / vec2<f32>(textureDimensions(scene_depth_tex));
+    let sky = scene_stored_sky_at(uv + offset)
+        + scene_stored_sky_at(uv - offset)
+        + scene_stored_sky_at(uv + vec2<f32>(offset.x, -offset.y))
+        + scene_stored_sky_at(uv + vec2<f32>(-offset.x, offset.y));
+    return min(0.5 * sky, 1.0);
+}
+
+// Stored sky averaged over a disc of `radius` (shorter edges) around full-image
+// `uv`: a half at stored depth's outline, falling to none `radius` beyond it,
+// whatever the outline's shape.
+fn scene_stored_sky_around(uv: vec2<f32>, radius: f32) -> f32 {
+    let image = Common::scene_image_size();
+    var sum = scene_stored_sky_at(uv);
+    for (var tap = 0u; tap < SCENE_SKY_FADE_TAPS; tap = tap + 1u) {
+        let distance = radius * sqrt((f32(tap) + 0.5) / f32(SCENE_SKY_FADE_TAPS));
+        let angle = f32(tap) * SCENE_GOLDEN_ANGLE;
+        sum += scene_stored_sky_at(uv + distance * vec2<f32>(cos(angle), sin(angle)) / image);
+    }
+    return sum / f32(SCENE_SKY_FADE_TAPS + 1u);
+}
+
+// The sky's part of a pixel: how much of the pixel it covers (`share`, 0 to 1),
+// and how bright what stands before it is relative to the whole pixel (`solid`,
+// 0 to 1), as an estimate of its colour.
+struct SceneSky {
+    share: f32,
+    solid: f32,
+}
+
+// How the lens softens the sky's outline at a pixel: the sky's share of it, and how
+// far the brightness cap holds there on account of the fade (`scene_sky_at`).
+struct SceneSkyFade {
+    share: f32,
+    near: f32,
+}
+
+// The fade at full-image `uv` for a pixel whose depth before the sky is `depth`,
+// given the share of sky around it (`scene_depth_map_tex`). Stored depth's sky
+// outline is sharp. Where the lens blurred the edge, the photo mixes sky and what
+// stands before it over tens of pixels, and stored sky starts where the mix is nearly
+// all sky, so a sharp outline drew a line there (Relight lit those pixels by their
+// sky colour up to it). Where the lens blurred the depth, the sky's share therefore
+// fades out from stored depth's outline over the blur's width
+// (SCENE_SKY_FADE_BLURS), smooth by construction: twice the stored sky averaged
+// over a disc that wide, whole up to the outline.
+fn scene_sky_fade(uv: vec2<f32>, depth: f32, covered: f32) -> SceneSkyFade {
+    let stored = SceneSkyFade(scene_stored_sky_at(uv), 0.0);
+    if covered <= 0.0 { return stored; }
+    let image = Common::scene_image_size();
+    let long = max(image.x, image.y);
+    let blur = scene_focus_blur(depth);
+    let soft = smoothstep(
+        SCENE_SKY_SOFT_EDGE.x,
+        SCENE_SKY_SOFT_EDGE.y,
+        blur * f32(textureDimensions(scene_depth_tex).x) / long,
+    );
+    if soft <= 0.0 { return stored; }
+    let cell = long / f32(Common::SCENE_MAP_GRID_LONG);
+    let around = scene_stored_sky_around(
+        uv,
+        min(SCENE_SKY_FADE_BLURS * blur, SCENE_SKY_FADE_CELLS * cell),
+    );
+    return SceneSkyFade(
+        max(stored.share, soft * min(2.0 * around, 1.0)),
+        // Fully over the fade's inner half.
+        soft * min(4.0 * around, 1.0),
+    );
+}
+
+// The sky at a pixel whose depth before the sky is `depth`. The map's filters
+// blend depth across the sky's outline, so readers set the sky's part to the
+// farthest depth afterwards; light and shadow then never reach it, and nothing
+// lies between the sky and what stands before it.
+//
+// Within the fade (`scene_sky_fade`) a pixel counts as no brighter than what
+// stands before a brighter sky nearby (`scene_sky_window` in scene_analysis.wgsl),
+// so a mostly sky-coloured mix lends no brightness to the light it receives. Where
+// the lens kept the depth sharp, stored depth's outline is as sharp as the photo's
+// but may lie a texel off it, so the cap holds within a texel or two of the outline
+// alone.
+fn scene_sky_at(pos: vec2<i32>, depth: f32) -> SceneSky {
+    let uv = full_image_uv(pos);
+    let block = scene_depth_map_block_near(uv, Common::SCENE_MAP_SKY_ROW);
+    let fade = scene_sky_fade(uv, depth, block.w);
+    var sky = SceneSky(fade.share, 1.0);
+    if block.w <= 0.0 || block.y <= 0.0 { return sky; }
+    var near = fade.near;
+    if near < 1.0 {
+        near = max(near, scene_stored_sky_near(uv));
+    }
+    if near > 0.0 {
+        let cap = block.x / block.y;
+        let guide = SceneSource::scene_guide_at(pos);
+        sky.solid = mix(1.0, min(1.0, cap / max(guide * guide, 1e-12)), near);
     }
     return sky;
 }
 
-// Depth at a pixel from the depth map's values there. A reader that also wants
-// the map's roughness or mean guide reads the map once and passes it here.
-fn scene_depth_from(map: vec4<f32>, pos: vec2<i32>) -> f32 {
+// Depth at a pixel from the depth map's values there, of what stands before the
+// sky where the sky covers part of the pixel (`scene_sky_fade`).
+fn scene_solid_depth_from(map: vec4<f32>, pos: vec2<i32>) -> f32 {
     let uv = full_image_uv(pos);
     let range = scene_depth_range_near(uv);
     var guide = map.w;
     if range.w > 0.0 {
         guide = mix(map.w, SceneSource::scene_guide_at(pos), range.w);
     }
-    let depth = clamp(map.x * guide + map.y, range.x, range.y);
-    let sky = scene_sky_at(uv);
+    return clamp(map.x * guide + map.y, range.x, range.y);
+}
+
+// Depth at a pixel from the depth map's values there. A reader that also wants
+// the map's roughness or mean guide reads the map once and passes it here.
+fn scene_depth_from(map: vec4<f32>, pos: vec2<i32>) -> f32 {
+    let depth = scene_solid_depth_from(map, pos);
+    let uv = full_image_uv(pos);
+    let covered = scene_depth_map_block_near(uv, Common::SCENE_MAP_SKY_ROW).w;
+    let sky = scene_sky_fade(uv, depth, covered).share;
     if sky <= 0.0 { return depth; }
     return mix(depth, 1.0, sky);
 }
@@ -211,10 +345,15 @@ const SCENE_SURFACE_TAPS: u32 = 16u;
 
 struct SceneSurfaceTaps {
     base: vec2<i32>,
-    // Row y holds the weights of the texels at `base + (0..3, y)`.
+    // Row y holds the weights of the texels at `base + (0..3, y)`: sky texels
+    // count for the sky's share of the pixel and the others for the rest.
     weights: array<vec4<f32>, 4>,
-    // The surface channels at the pixel (scene_surface.rs).
+    // The surface channels at the pixel (scene_surface.rs), of what stands before
+    // the sky where the sky covers part of the pixel; where it covers all, the sky:
+    // farthest and flat.
     surface: vec4<f32>,
+    // The sky's part of the pixel. Light on the surface covers the rest.
+    sky: SceneSky,
 }
 
 fn scene_surface_tap_cell(taps: SceneSurfaceTaps, tap: u32) -> vec2<i32> {
@@ -239,41 +378,54 @@ fn scene_surface_taps_at(pos: vec2<i32>) -> SceneSurfaceTaps {
     let uv = full_image_uv(pos);
     let p = uv * vec2<f32>(size) - vec2<f32>(0.5);
     let stored = textureSampleLevel(scene_depth_tex, SceneAdjustments::local_mask_sampler, uv, 0.0).x;
-    let depth = mix(stored, scene_depth_at(pos), scene_depth_range_near(uv).z);
-    var taps = SceneSurfaceTaps(vec2<i32>(floor(p)) - vec2<i32>(1), array<vec4<f32>, 4>(), vec4<f32>(0.0));
+    let depth = mix(
+        stored,
+        scene_solid_depth_from(scene_depth_map_at(pos), pos),
+        scene_depth_range_near(uv).z,
+    );
+    let sky = scene_sky_at(pos, depth);
+    var taps = SceneSurfaceTaps(
+        vec2<i32>(floor(p)) - vec2<i32>(1),
+        array<vec4<f32>, 4>(),
+        vec4<f32>(0.0),
+        sky,
+    );
     var weights = array<vec4<f32>, 4>();
     var surface = vec4<f32>(0.0);
     var total = 0.0;
-    // Sky texels count for the sky's share of the pixel and the others for the
-    // rest, so a surface beside the sky takes nothing of it (`scene_sky_at`).
-    let sky = scene_sky_at(uv);
+    var solid = vec4<f32>(0.0);
+    var solid_total = 0.0;
     for (var tap = 0u; tap < SCENE_SURFACE_TAPS; tap = tap + 1u) {
         let texel = taps.base + vec2<i32>(i32(tap % 4u), i32(tap / 4u));
         let offset = abs(vec2<f32>(texel) - p);
         let tent = max(1.0 - offset.x * 0.5, 0.0) * max(1.0 - offset.y * 0.5, 0.0);
         let value = textureLoad(scene_depth_tex, scene_surface_tap_cell(taps, tap), 0);
-        let share = select(1.0 - sky, sky, value.x >= SCENE_SKY_DISTANCE);
-        let weight = tent * scene_depth_closeness(value.y, depth) * share;
+        let is_sky = value.x >= Common::SCENE_SKY_DISTANCE;
+        let near = tent * scene_depth_closeness(value.y, depth);
+        // Never zero, so that `total` stays positive where the fade gives the
+        // pixel wholly to the sky but none of the sixteen texels is sky.
+        let share = max(select(1.0 - sky.share, sky.share, is_sky), 1e-6);
+        let weight = near * share;
         weights[tap / 4u][tap % 4u] = weight;
         surface += value * weight;
         total += weight;
+        if !is_sky {
+            solid += value * near;
+            solid_total += near;
+        }
     }
-    // The tent is positive on at least the four nearest texels, every
-    // closeness is at least 1e-4, and the share of a texel among those four
-    // is positive for the sky or the rest, whichever they hold, so `total` is
-    // positive.
     for (var row = 0u; row < 4u; row = row + 1u) {
         weights[row] /= total;
     }
     taps.weights = weights;
-    taps.surface = surface / total;
-    // Sky is the farthest depth and flat.
-    if sky > 0.0 {
-        taps.surface = vec4<f32>(
-            taps.surface.x,
-            mix(taps.surface.y, 1.0, sky),
-            mix(taps.surface.zw, vec2<f32>(0.0), sky),
-        );
+    if sky.share >= 1.0 {
+        // Sky is the farthest depth and flat.
+        taps.surface = vec4<f32>(surface.x / total, 1.0, 0.0, 0.0);
+    } else {
+        // The sky's share is at least the stored sky's, so below a whole share
+        // one of the four nearest texels is not sky; the tent is positive there
+        // and every closeness is at least 1e-4, so `solid_total` is positive.
+        taps.surface = solid / solid_total;
     }
     return taps;
 }

@@ -16,9 +16,11 @@
 //                              coefficients in one window, how rough the photo's
 //                              surface is there and its mean guide, and around the
 //                              cell stored depth's range, how well the guide explains
-//                              depth and how much of a depth edge there is.
-//   smooth_scene_coefficients  the coefficients averaged over the windows covering
-//                              each cell.
+//                              depth and how much of a depth edge there is. And how
+//                              much sky lies around it, which tells how far its
+//                              outline is, and how bright what stands before it is.
+//   smooth_scene_coefficients  the coefficients and the sky block averaged over the
+//                              windows covering each cell.
 //   blur_scene_environment     a wide blur of the environment map, what a drop
 //                              refracting about 165 degrees of its surroundings sees.
 //   build_scene_ground         per cell, how much it is ground, how far it lies below
@@ -72,6 +74,9 @@ struct SceneMapCell {
     depth_range: vec2<f32>,
     // Summed d * d.
     depth_square: f32,
+    // Pixels whose nearest depth texel is sky, and their summed luminance g * g.
+    sky_count: f32,
+    sky_luminance: f32,
 }
 
 @group(0) @binding(35) var scene_depth_tex: texture_2d<f32>;
@@ -81,8 +86,13 @@ struct SceneMapCell {
 // surface's roughness (z, scene_map_cell_roughness) and the window's mean guide (w).
 @group(0) @binding(64) var scene_coefficients_out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(65) var scene_coefficients_tex: texture_2d<f32>;
+// From row Common::SCENE_MAP_SKY_ROW of both, per cell, the sky block of the
+// window around it (`scene_sky_window`): the brightest luminance g * g what stands
+// before a brighter sky may have (x) times y, which is 1 where it was measured,
+// and the window's share of sky pixels (w).
+//
 // The window-averaged slope, offset, roughness and mean guide that scene_depth.wgsl
-// reads.
+// reads, and the sky block averaged the same way.
 @group(0) @binding(66) var scene_depth_map_out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(67) var scene_environment_tex: texture_2d<f32>;
 @group(0) @binding(68) var scene_environment_blur_out: texture_storage_2d<rgba16float, write>;
@@ -118,6 +128,9 @@ const SCENE_GUIDE_FIT: vec2<f32> = vec2<f32>(0.15, 0.5);
 // is so close to the filter's at either end that only an abrupt change would show.
 const SCENE_DEPTH_EDGE_RADIUS: i32 = 2;
 const SCENE_DEPTH_EDGE_WIDTH: vec2<f32> = vec2<f32>(0.015, 0.05);
+// How much brighter than the darkest cell without sky around a window what
+// stands before the sky may be: its own texture (`scene_sky_window`).
+const SCENE_SKY_REST_SPREAD: f32 = 2.0;
 // How far a window's relative guide variance must exceed that of the smoothest cell
 // in it for an edge to start and to be complete. Texture raises both alike.
 const SCENE_EDGE_EXCESS: vec2<f32> = vec2<f32>(0.004, 0.02);
@@ -241,6 +254,7 @@ fn accumulate_scene_map(@builtin(global_invocation_id) gid: vec3<u32>) {
     var guide = vec4<f32>(0.0);
     var depth_range = vec2<f32>(0.0);
     var depth_square = 0.0;
+    var sky = vec2<f32>(0.0);
     for (var y = lo.y; y < hi.y; y = y + 1) {
         for (var x = lo.x; x < hi.x; x = x + 1) {
             let pos = vec2<i32>(x, y) - origin;
@@ -254,6 +268,9 @@ fn accumulate_scene_map(@builtin(global_invocation_id) gid: vec3<u32>) {
             guide += vec4<f32>(g, g * g, depth, g * depth);
             depth_range = max(depth_range, vec2<f32>(1.0 - depth, depth));
             depth_square += depth * depth;
+            if depth >= Common::SCENE_SKY_DISTANCE {
+                sky += vec2<f32>(1.0, g * g);
+            }
         }
     }
     // Tiles are dispatched one after another, so each cell has one writer.
@@ -262,6 +279,8 @@ fn accumulate_scene_map(@builtin(global_invocation_id) gid: vec3<u32>) {
     scene_map_cells[index].guide += guide;
     scene_map_cells[index].depth_range = max(scene_map_cells[index].depth_range, depth_range);
     scene_map_cells[index].depth_square += depth_square;
+    scene_map_cells[index].sky_count += sky.x;
+    scene_map_cells[index].sky_luminance += sky.y;
     // The tile that holds the cell's centre measures its edge, reading no farther
     // than the tile's halo.
     let center = vec2<i32>(span_x.x + span_x.y, span_y.x + span_y.y) / 2;
@@ -426,6 +445,11 @@ fn resolve_scene_map(@builtin(global_invocation_id) gid: vec3<u32>) {
     let own = scene_map_cells[scene_map_cell_index(cell)].color;
     textureStore(scene_environment_out, cell, vec4<f32>(own.xyz / max(own.w, 1.0), edge));
     textureStore(scene_coefficients_out, cell, vec4<f32>(coefficients, roughness, mean_guide));
+    textureStore(
+        scene_coefficients_out,
+        cell + vec2<i32>(0, Common::SCENE_MAP_SKY_ROW),
+        scene_sky_window(cell, grid),
+    );
     // A window without pixels limits nothing.
     let nearest = select(0.0, 1.0 - depth_range.x, count > 0.0);
     let farthest = select(1.0, depth_range.y, count > 0.0);
@@ -434,6 +458,37 @@ fn resolve_scene_map(@builtin(global_invocation_id) gid: vec3<u32>) {
         cell,
         vec4<f32>(nearest, farthest, fit, scene_depth_edge(cell, grid)),
     );
+}
+
+// The sky block of the window around a cell (`scene_coefficients_out`): its share
+// of sky pixels, and how bright what stands before the sky may be. Cells along a
+// blurred outline mix both, so the latter is measured on the darkest cell
+// without sky and widened by SCENE_SKY_REST_SPREAD for texture, and only where
+// the sky is the brighter: a dark sky mixes nothing bright in.
+fn scene_sky_window(cell: vec2<i32>, grid: vec2<i32>) -> vec4<f32> {
+    var sky = vec2<f32>(0.0);
+    var rest = vec2<f32>(0.0);
+    var count = 0.0;
+    var darkest = 3.4e38;
+    for (var dy = -Common::SCENE_SKY_RADIUS; dy <= Common::SCENE_SKY_RADIUS; dy = dy + 1) {
+        for (var dx = -Common::SCENE_SKY_RADIUS; dx <= Common::SCENE_SKY_RADIUS; dx = dx + 1) {
+            let neighbour = cell + vec2<i32>(dx, dy);
+            if any(neighbour < vec2<i32>(0)) || any(neighbour >= grid) { continue; }
+            let data = scene_map_cells[scene_map_cell_index(neighbour)];
+            if data.color.w <= 0.0 { continue; }
+            count += data.color.w;
+            sky += vec2<f32>(data.sky_count, data.sky_luminance);
+            if data.sky_count <= 0.0 {
+                darkest = min(darkest, data.guide.y / data.color.w);
+                rest += vec2<f32>(data.color.w, data.guide.y);
+            }
+        }
+    }
+    let covered = sky.x / max(count, 1.0);
+    if sky.x <= 0.0 || rest.x <= 0.0 || sky.y / sky.x <= rest.y / rest.x {
+        return vec4<f32>(0.0, 0.0, 0.0, covered);
+    }
+    return vec4<f32>(darkest * SCENE_SKY_REST_SPREAD, 1.0, 0.0, covered);
 }
 
 // How much of a depth edge there is around a cell.
@@ -458,17 +513,21 @@ fn smooth_scene_coefficients(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid = vec2<i32>(Common::scene_map_grid());
     let cell = vec2<i32>(gid.xy);
     if any(cell >= grid) { return; }
+    let sky_row = vec2<i32>(0, Common::SCENE_MAP_SKY_ROW);
     var sum = vec4<f32>(0.0);
+    var sky = vec4<f32>(0.0);
     var count = 0.0;
     for (var dy = -SCENE_GUIDE_RADIUS; dy <= SCENE_GUIDE_RADIUS; dy = dy + 1) {
         for (var dx = -SCENE_GUIDE_RADIUS; dx <= SCENE_GUIDE_RADIUS; dx = dx + 1) {
             let neighbour = cell + vec2<i32>(dx, dy);
             if any(neighbour < vec2<i32>(0)) || any(neighbour >= grid) { continue; }
             sum += textureLoad(scene_coefficients_tex, neighbour, 0);
+            sky += textureLoad(scene_coefficients_tex, neighbour + sky_row, 0);
             count += 1.0;
         }
     }
     textureStore(scene_depth_map_out, cell, sum / count);
+    textureStore(scene_depth_map_out, cell + sky_row, sky / count);
 }
 
 @compute @workgroup_size(8, 8, 1)

@@ -288,8 +288,10 @@ scene, so an effect may read any of it whichever pass it runs in:
 
 All of it but the lights comes from the scene map (`scene_analysis.wgsl`), a
 `FullImageMap` holding the photo's coarse colour, a guided filter's coefficients that
-refine scene depth against the photo, stored depth's range around each cell, the
-ground with its terrain height, and how much the lens blurs each depth. It depends on
+refine scene depth against the photo, how much sky lies around each cell and how
+bright what stands before it is (so that light fades out toward a soft sky outline,
+`scene_sky_at`), stored depth's range around each cell, the ground with its terrain
+height, and how much the lens blurs each depth. It depends on
 the scene, scene depth and the direction of up (`GpuParams::with_vignette_geometry`),
 not on the rest of the edit, and is rebuilt when any of them changes.
 

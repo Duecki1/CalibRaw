@@ -459,13 +459,16 @@ fn apply_scene_emission_light(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
     var depth = 0.0;
     var gradient = vec2<f32>(0.0);
     var reachable = 1.0;
+    var sky = SceneSky(0.0, 1.0);
     if scene_depth_present() {
         let taps = scene_surface_taps_at(pos);
+        sky = taps.sky;
+        if sky.share >= 1.0 { return input_rgb; }
         depth = taps.surface.y;
         gradient = relight_smoothed_gradient(
             camera, uv, depth, taps.surface.zw, SCENE_EMISSION_NORMAL_RADIUS,
         );
-        reachable = 1.0 - smoothstep(RELIGHT_REACH_FADE_START, RELIGHT_REACH_LIMIT, depth);
+        reachable = relight_reach(uv, depth);
     }
     if reachable <= 0.0 { return input_rgb; }
     let normal = relight_normal(camera, point, scene_depth_z(camera, depth), gradient);
@@ -475,8 +478,11 @@ fn apply_scene_emission_light(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
         0.0,
         1.0,
     );
+    // Of what stands before the sky where it covers part of the pixel, as Relight's.
     let positive = Color::gamut_project_nonnegative_rec2020(input_rgb);
-    let relative = clamp(Common::safe_luma(positive) / scene_ambient_level(), 0.02, 64.0);
-    let reflectance = positive * pow(relative, -0.3);
+    let coverage = 1.0 - sky.share;
+    let solid = positive * sky.solid;
+    let relative = clamp(Common::safe_luma(solid) / scene_ambient_level(), 0.02, 64.0);
+    let reflectance = solid * pow(relative, -0.3) * coverage;
     return input_rgb + reflectance * arrival.light * (facing * reachable);
 }

@@ -381,6 +381,18 @@ const SCENE_MAP_GRID_LONG: u32 = 256u;
 const SCENE_MAP_BLUR_GRID_LONG: u32 = 48u;
 // Depth bins of the lens blur table.
 const SCENE_FOCUS_BINS: u32 = 32u;
+// Row at which the scene map's sky block starts in the coefficient textures,
+// below the depth's guided filter (SCENE_MAP_COEFFICIENT_BLOCKS in Rust).
+const SCENE_MAP_SKY_ROW: i32 = i32(SCENE_MAP_GRID_LONG);
+// Level-0 scene-depth distance (channel x) above which a texel is sky: stored
+// depth 255, the sky or what lies beyond the depth model's far limit. Sky
+// texels hold exactly 1 and are never resampled together with nearer depth,
+// which converts to at most 0.963 (`resampled_depth` in scene_depth.rs).
+const SCENE_SKY_DISTANCE: f32 = 0.98;
+// Radius in cells of the scene map's sky windows (`scene_sky_window` in
+// scene_analysis.wgsl), 9 x 9 cells: wider than a blurred outline, so that a
+// window beside the sky reaches past the blur.
+const SCENE_SKY_RADIUS: i32 = 4;
 
 fn scene_map_grid_for(long_cells: u32) -> vec2<u32> {
     // A cell holds at least one pixel, even for a very small preview.
