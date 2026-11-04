@@ -24,13 +24,13 @@ Checked items are done. Order within a section is not a priority.
 - [ ]  Auto tone, auto geometry, auto perspective
 - [ ]  Depth lens blur
 - [X]  LUT support
-- [ ]  Watermark
+- [x]  Watermark
 - [ ]  Retouch tab: blemish removal, skin smoothing, eye enhancement (maybe)
 - [ ]  Straight brush lines, rectangle and circle brushes
-- [ ]  Preset opacity, replace/merge apply mode
+- [x]  Preset opacity
 - [ ]  Copy tone curve
 - [ ]  Lens profile saving for unrecognized lenses
-- [ ]  Rotate in crop tab
+- [x]  Rotate in crop tab
 
 ## Masks
 
@@ -45,10 +45,10 @@ Checked items are done. Order within a section is not a priority.
 - [X]  Subject mask: error when nothing is selected, faster on Android
 - [X]  Per-element visibility toggle
 - [ ]  Compound masks
-- [ ]  Better mask and sky edges
+- [x]  Better mask and sky edges
 - [ ]  Light rays subtract/intersect fix
 - [X]  Undo/redo for object mask and crop
-- [ ]  Cancelable object mask
+- [x]  Cancelable object mask
 
 ## Library
 
@@ -60,12 +60,12 @@ Checked items are done. Order within a section is not a priority.
 - [X]  Warning instead of hard limit for large images
 - [ ]  Virtual copies
 - [ ]  Culling tools
-- [ ]  Lightroom collections
-- [ ]  Tiff thumbnails
+- [ ]  Collections
+- [x]  Tiff thumbnails
 - [ ]  Stale thumbnail re-rendering
 - [ ]  Faster initial indexing on HDDs, automatic HDD mode
-- [ ]  Duplicate-file export naming (`_1`, `_2`, …)
-- [ ]  Keep zoom when switching color profiles
+- [x]  Duplicate-file export naming (`_1`, `_2`, …)
+- [x]  Keep zoom when switching color profiles
 - [ ]  Better drag and drop
 - [ ]  Edit history
 - [ ]  Export progress in export button
@@ -81,8 +81,8 @@ Checked items are done. Order within a section is not a priority.
 - [X]  AuRaw → CalibRaw conversion script
 - [ ]  Panorama and focus alignment
 - [X]  Lower preview memory use: RAM-scaled limit, on-demand mask layers
-- [ ]  Lower preview memory use: on-demand effect buffers, shared mask atlas
-- [ ]  Android notifications, new tablet UI
+- [x]  Lower preview memory use: on-demand effect buffers, shared mask atlas
+- [x]  Android notifications, new tablet UI
 - [ ]  AppImage built on oldest Ubuntu LTS
 - [ ]  Play Store, Winget
 - [ ]  Crash log file
@@ -96,8 +96,8 @@ Checked items are done. Order within a section is not a priority.
 - [X]  Double-click slider reset fixes
 - [X]  Grey theme
 - [X]  Issue and PR templates
-- [ ]  Simpler right-click menu and detail card
+- [x]  Simpler right-click menu and detail card
 - [ ]  New app icon
-- [ ]  Tutorial pop-ups with images/GIFs, smaller GIFs
+- [x]  Tutorial pop-ups with images/GIFs, smaller GIFs
 - [ ]  Keyboard shortcuts changeable
 - [ ]  Preset repository
