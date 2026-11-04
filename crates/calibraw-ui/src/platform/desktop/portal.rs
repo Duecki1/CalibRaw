@@ -37,3 +37,31 @@ pub(in crate::platform) fn trash_file(path: &std::path::Path) -> anyhow::Result<
     anyhow::ensure!(result == 1, "Trash portal failed (result {result})");
     Ok(())
 }
+
+/// Asks the host file manager to show `path` selected. The portal itself falls
+/// back to opening the folder when the host cannot select the file.
+#[cfg(target_os = "linux")]
+pub(in crate::platform) fn open_directory(path: &std::path::Path) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use std::os::fd::AsFd;
+
+    // Keep the file alive through the call so the borrowed descriptor remains valid.
+    let file = std::fs::File::open(path).context("Could not open file for the OpenURI portal")?;
+    let connection = zbus::blocking::Connection::session()
+        .context("Could not connect to the desktop portal session bus")?;
+    let proxy = zbus::blocking::Proxy::new(
+        &connection,
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.OpenURI",
+    )
+    .context("Could not access the OpenURI portal")?;
+    let options = std::collections::HashMap::<&str, zbus::zvariant::Value>::new();
+    let _request: zbus::zvariant::OwnedObjectPath = proxy
+        .call(
+            "OpenDirectory",
+            &("", zbus::zvariant::Fd::from(file.as_fd()), options),
+        )
+        .context("OpenURI portal call failed")?;
+    Ok(())
+}

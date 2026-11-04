@@ -112,6 +112,7 @@
   "Export failed after {done} of {total} slides: {error}": "슬라이드 {total}개 중 {done}개를 내보낸 후 실패했습니다: {error}",
   "Export {count} slides…": "슬라이드 {count}개 내보내는 중…",
   "Exported {count} slides to {location}": "슬라이드 {count}개를 {location}에 내보냈습니다.",
+  "File manager did not open": "파일 관리자를 열지 못했습니다",
   "Generate and use shared scene depth so rain falls behind nearer objects and mist builds with distance. Turn off for rain in front of the whole photo.": "공유 장면 깊이를 생성하고 사용해 비가 앞쪽 물체 뒤로 내리고 안개가 거리에 따라 짙어지게 합니다. 사진 전체 앞에 비를 내리려면 끄세요.",
   "Gloss": "광택",
   "Gusts": "돌풍",

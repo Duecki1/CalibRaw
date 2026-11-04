@@ -112,6 +112,7 @@
   "Export failed after {done} of {total} slides: {error}": "Eksporten mislykkedes efter {done} af {total} dias: {error}",
   "Export {count} slides…": "Eksportér {count} dias…",
   "Exported {count} slides to {location}": "{count} dias blev eksporteret til {location}",
+  "File manager did not open": "Filhåndtering blev ikke åbnet",
   "Generate and use shared scene depth so rain falls behind nearer objects and mist builds with distance. Turn off for rain in front of the whole photo.": "Generér og brug en fælles scenedybde, så regnen falder bag objekter tættere på, og disen tiltager med afstanden. Slå det fra for at lade regnen falde foran hele fotoet.",
   "Gloss": "Glans",
   "Gusts": "Vindstød",

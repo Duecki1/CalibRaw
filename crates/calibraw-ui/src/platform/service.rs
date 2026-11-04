@@ -295,7 +295,8 @@ pub(crate) trait Platform: Send + Sync {
     fn open_camera_profile_folder(&self) -> Result<(), String> {
         Err(unavailable("the camera profile folder picker"))
     }
-    /// Reveals a local file in the system file manager.
+    /// Shows a local file in the system file manager, selected where the
+    /// platform allows. The error is the system's own text, for an error dialog.
     fn reveal_file(&self, _path: &Path) -> Result<(), String> {
         Err(unavailable("the system file manager"))
     }

@@ -50,6 +50,7 @@ pub(crate) enum ErrorKind {
     EditNotApplied,
     LibraryAdjustments,
     PhotoReview,
+    RevealFile,
 }
 
 impl ErrorKind {
@@ -91,6 +92,7 @@ impl ErrorKind {
             Self::EditNotApplied => tr("Edit not applied"),
             Self::LibraryAdjustments => tr("Library adjustment failed"),
             Self::PhotoReview => tr("Rating not saved"),
+            Self::RevealFile => tr("File manager did not open"),
         }
     }
 }

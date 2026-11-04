@@ -112,6 +112,7 @@
   "Export failed after {done} of {total} slides: {error}": "Esportazione non riuscita dopo {done} di {total} diapositive: {error}",
   "Export {count} slides…": "Esporta {count} diapositive…",
   "Exported {count} slides to {location}": "Esportate {count} diapositive in {location}",
+  "File manager did not open": "Il gestore file non si è aperto",
   "Generate and use shared scene depth so rain falls behind nearer objects and mist builds with distance. Turn off for rain in front of the whole photo.": "Genera e usa una mappa condivisa della profondità della scena, così la pioggia passa dietro agli oggetti più vicini e la foschia aumenta con la distanza. Disattiva per far cadere la pioggia davanti all'intera foto.",
   "Gloss": "Lucentezza",
   "Gusts": "Raffiche",

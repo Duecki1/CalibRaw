@@ -383,7 +383,7 @@ pub(crate) fn apply_library_action(
         LibraryAction::RevealFile(asset) => {
             if let Some(path) = asset.desktop_path() {
                 if let Err(error) = app.platform.reveal_file(path) {
-                    app.library.status = error;
+                    app.report_error(crate::app::ErrorKind::RevealFile, error);
                 }
             }
         }
