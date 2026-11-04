@@ -525,6 +525,9 @@ pub(crate) struct DevelopUiState {
     pub(crate) effect_component: Option<crate::pipeline::MaskEffect>,
     pub(crate) mask_effect_component: Option<crate::pipeline::MaskEffect>,
     pub(crate) mask_effect_mask: Option<usize>,
+    /// The light or ray source each effect card with several shows, and
+    /// whose canvas handle is active.
+    pub(crate) effect_instances: crate::app::SelectedInstances,
     pub(crate) tone_curve_tab: ToneCurveTab,
     pub(crate) color_grade_tab: ColorGradeTab,
     pub(crate) hsl_mixer_color: HslMixerColor,

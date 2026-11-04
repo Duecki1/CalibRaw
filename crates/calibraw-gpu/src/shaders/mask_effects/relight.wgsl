@@ -1,4 +1,4 @@
-// Relight: a virtual point light shading the scene that scene depth describes.
+// Relight: virtual point lights shading the scene that scene depth describes.
 //
 // Geometry. `scene_depth_tex` (scene_depth.wgsl) covers the full source image:
 // channel y is dequantized smooth depth and z/w its edge-aware gradient per
@@ -270,36 +270,49 @@ fn relight_size(params: MaskEffectParams) -> f32 {
     return mask_effect_percent(params, RELIGHT_SIZE_LANE);
 }
 
-fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+// The light one of Relight's lights casts on the pixel's surface, as colour
+// times irradiance relative to the ambient level; `lit` is false when it adds
+// none there. `depth` and `taps` describe the surface (`scene_surface_taps_at`)
+// when `has_depth`; without scene depth (still generating, or failed) the scene
+// is a plane facing the camera: the light keeps its falloff but casts no
+// shadows. `mapped` is the scene shadow map's visibility of every channel at
+// the surface, read when a light holds a channel.
+struct RelightContribution {
+    lit: bool,
+    // Colour and strength of the light times its irradiance.
+    light: vec3<f32>,
+    // Irradiance alone: diffuse term, falloff and visibility.
+    irradiance: f32,
+}
+
+fn relight_contribution(
+    params: MaskEffectParams,
+    uv: vec2<f32>,
+    has_depth: bool,
+    depth: f32,
+    taps: SceneSurfaceTaps,
+    mapped: vec4<f32>,
+) -> RelightContribution {
+    let none = RelightContribution(false, vec3<f32>(0.0), 0.0);
     let amount = mask_effect_percent(params, RELIGHT_AMOUNT_LANE);
-    let ambient = mask_effect_percent(params, RELIGHT_AMBIENT_LANE);
-    let ambient_rgb = input_rgb * ambient;
-    if amount <= 1e-6 { return ambient_rgb; }
+    if amount <= 1e-6 { return none; }
 
     let light = relight_scene_light(params);
     let camera = light.camera;
     let size = relight_size(params);
-    let uv = full_image_uv(pos);
     let point = uv * camera.image_size;
-
-    // Without scene depth (still generating, or failed) the scene is a plane
-    // facing the camera: the light keeps its falloff but casts no shadows.
-    let has_depth = scene_depth_present();
     let shadows = mask_effect_percent(params, RELIGHT_SHADOWS_LANE);
     let shadow_channel = scene_shadow_channel(params);
-    var depth = 0.0;
     var gradient = vec2<f32>(0.0);
     var mapped_visibility = 1.0;
     if has_depth {
         // Shading reads the smooth depth and gradient of the surface the pixel lies
         // on. The shadow map shares the surface's grid, so it takes the same taps.
-        let taps = scene_surface_taps_at(pos);
-        depth = taps.surface.y;
         gradient = relight_smoothed_gradient(
             camera, uv, depth, taps.surface.zw, mix(0.004, 0.05, size * size),
         );
         if shadow_channel != 0u && shadows > 1e-6 {
-            mapped_visibility = scene_shadow_surface_resolve(taps)[shadow_channel - 1u];
+            mapped_visibility = mapped[shadow_channel - 1u];
         }
     }
     let z = scene_depth_z(camera, depth);
@@ -316,7 +329,7 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
     let reachable = 1.0 - smoothstep(RELIGHT_REACH_FADE_START, RELIGHT_REACH_LIMIT, depth);
     let diffuse = clamp((dot(normal, to_light / distance) + wrap) / (1.0 + wrap), 0.0, 1.0)
         * reachable;
-    if diffuse <= 1e-6 { return ambient_rgb; }
+    if diffuse <= 1e-6 { return none; }
     // Inverse-square falloff with a finite core (scene_light_falloff).
     let falloff = 1.0 / (1.0 + distance * distance / (light.reach * light.reach));
     var visibility = 1.0;
@@ -328,7 +341,49 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
         }
         visibility = mix(1.0, traced, shadows);
     }
-    let irradiance = diffuse * falloff * visibility;
+    return RelightContribution(true, light.intensity, diffuse * falloff * visibility);
+}
+
+// Whether any of the card's lights holds a channel of the scene shadow map
+// and casts shadows, so the map is read at the surface.
+fn relight_reads_shadow_map(params: MaskEffectParams) -> bool {
+    for (var instance = 0u; instance < mask_effect_instance_count(params); instance = instance + 1u) {
+        let light = mask_effect_instance_params(params, instance);
+        if scene_shadow_channel(light) != 0u
+            && mask_effect_percent(light, RELIGHT_SHADOWS_LANE) > 1e-6 {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Relight shades the pixel once with all its card's lights, in the slot of the
+// first light (instances.rs in calibraw-core): the existing light dims to the
+// shared Ambient level once, and the lights add up on one estimate of the
+// surface's reflectance. Slots of the other lights leave the image alone.
+fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    if mask_effect_instance(params) != 0u { return input_rgb; }
+    let ambient = mask_effect_percent(params, RELIGHT_AMBIENT_LANE);
+    let ambient_rgb = input_rgb * ambient;
+    var any_light = false;
+    for (var instance = 0u; instance < mask_effect_instance_count(params); instance = instance + 1u) {
+        let light = mask_effect_instance_params(params, instance);
+        any_light = any_light || mask_effect_percent(light, RELIGHT_AMOUNT_LANE) > 1e-6;
+    }
+    if !any_light { return ambient_rgb; }
+
+    let uv = full_image_uv(pos);
+    let has_depth = scene_depth_present();
+    var depth = 0.0;
+    var taps: SceneSurfaceTaps;
+    var mapped = vec4<f32>(1.0);
+    if has_depth {
+        taps = scene_surface_taps_at(pos);
+        depth = taps.surface.y;
+        if relight_reads_shadow_map(params) {
+            mapped = scene_shadow_surface_resolve(taps);
+        }
+    }
 
     // Divide out part of the existing shading relative to the scene's ambient
     // level (shared by export tiles), so the estimate approaches reflectance.
@@ -336,5 +391,26 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
     let positive = Color::gamut_project_nonnegative_rec2020(input_rgb);
     let relative = clamp(Common::safe_luma(positive) / ambient_level, 0.02, 64.0);
     let reflectance = positive * pow(relative, -0.3);
-    return ambient_rgb + reflectance * light.intensity * irradiance;
+
+    // The first lit light is shaded in the expression a single light always
+    // was, so one light renders exactly as before; the others add to it.
+    var lit = 0u;
+    var first = RelightContribution(false, vec3<f32>(0.0), 0.0);
+    var others = vec3<f32>(0.0);
+    for (var instance = 0u; instance < mask_effect_instance_count(params); instance = instance + 1u) {
+        let contribution = relight_contribution(
+            mask_effect_instance_params(params, instance), uv, has_depth, depth, taps, mapped,
+        );
+        if !contribution.lit { continue; }
+        if lit == 0u {
+            first = contribution;
+        } else {
+            others += reflectance * contribution.light * contribution.irradiance;
+        }
+        lit = lit + 1u;
+    }
+    if lit == 0u { return ambient_rgb; }
+    let shaded = ambient_rgb + reflectance * first.light * first.irradiance;
+    if lit == 1u { return shaded; }
+    return shaded + others;
 }

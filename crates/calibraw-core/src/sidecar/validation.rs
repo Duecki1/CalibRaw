@@ -166,6 +166,11 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
         }
         validate_local_adjustments(&mask.adjustments)?;
         validate_effect_settings(&mask.effect_settings)?;
+        // A mask's legacy effect predates effects with several instances and
+        // has one render slot of its own.
+        if mask.effect_settings.instance_count(mask.effect) > 1 {
+            return invalid("a mask's legacy effect has several instances");
+        }
         validate_effect_components(&mask.effect_components)?;
         if mask.name.len() > MAX_EDIT_NAME_BYTES {
             return invalid("mask name is unreasonably long");
@@ -646,7 +651,7 @@ fn validate_local_adjustments(
 fn validate_effect_components(
     components: &[crate::pipeline::EffectComponent],
 ) -> Result<(), SidecarError> {
-    if components.len() > crate::pipeline::MAX_EFFECT_COMPONENTS {
+    if crate::pipeline::effect_places(components) > crate::pipeline::MAX_EFFECT_COMPONENTS {
         return invalid("too many effect components");
     }
     for component in components {

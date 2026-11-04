@@ -4,7 +4,9 @@
 use super::{add_effect_buttons, effect_description, egui, MaskEffect, Ui};
 use crate::app::FILM_NEGATIVE_CARD_TITLE;
 use crate::i18n::{tr, tr_fmt};
-use crate::pipeline::{EffectComponent, FilmSource, MaskEffectCategory, MAX_EFFECT_COMPONENTS};
+use crate::pipeline::{
+    effect_places, EffectComponent, FilmSource, MaskEffectCategory, MAX_EFFECT_COMPONENTS,
+};
 
 const TILES_PER_ROW: usize = 3;
 /// Scales with the platform's control height, so tiles stay touch-sized.
@@ -76,7 +78,7 @@ pub(in crate::ui::sidebar) fn add_effect_button(
     components: &[EffectComponent],
     film_negative: FilmNegativeTile,
 ) -> Option<EffectPick> {
-    let full = components.len() >= MAX_EFFECT_COMPONENTS;
+    let full = effect_places(components) >= MAX_EFFECT_COMPONENTS;
     let response = ui
         .add_enabled_ui(!full, |ui| {
             moduwu_design::full_width_button(
@@ -148,7 +150,7 @@ fn effect_picker(
     film_negative: FilmNegativeTile,
     size: egui::Vec2,
 ) -> Option<EffectPick> {
-    let full = components.len() >= MAX_EFFECT_COMPONENTS;
+    let full = effect_places(components) >= MAX_EFFECT_COMPONENTS;
     // The popup frame's margin and border lie outside the contents.
     let size = size
         - ui.spacing().menu_margin.sum()

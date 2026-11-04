@@ -265,8 +265,9 @@ scene, so an effect may read any of it whichever pass it runs in:
   the map itself.
 - `scene_environment.wgsl` is the scene's light as effects receive it: its ambient
   level, the photo's coarse colour and the light sources in the photo.
-- `scene_lights.wgsl` turns Relight and Light Rays into lights any effect receives,
-  and `medium.wgsl` is what Fog, Smoke and Rain's mist share to scatter them.
+- `scene_lights.wgsl` turns each of Relight's lights and Light Rays' sources into a
+  light any effect receives, and `medium.wgsl` is what Fog, Smoke and Rain's mist
+  share to scatter them.
 - `scene_shadows.wgsl` says how much of each of those lights reaches a point past the
   surfaces depth describes: one full-image map, traced in the output stage only when
   depth or a light's placement changes (`GpuParams::scene_shadow_map_key`), holds the

@@ -231,7 +231,7 @@ pub(super) fn show(
         if part != Part::Center && !reachable.contains(screen) {
             continue;
         }
-        let id = handle_id(ui, handle.target, part.id_part());
+        let id = handle_id(ui, handle.target, 0, part.id_part());
         let response = grab(ui, id, screen, part.name(), part.value(&original));
         if let Some(edit) = edit_for(ui, &response, id, part, screen, &layout, frames, &settings) {
             apply(&mut settings, edit);
@@ -339,7 +339,7 @@ fn apply(settings: &mut TiltShiftEffectSettings, edit: EffectHandleEdit) {
         EffectHandleEdit::Angle(angle) => settings.angle = angle,
         EffectHandleEdit::FocusWidth(width) => settings.focus_width = width,
         EffectHandleEdit::Feather(width) => settings.feather = width,
-        EffectHandleEdit::Depth(_) => {}
+        EffectHandleEdit::Depth(_) | EffectHandleEdit::Select => {}
     }
 }
 

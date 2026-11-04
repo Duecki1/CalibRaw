@@ -1,33 +1,67 @@
+use super::instances::{mirrored_position, EffectInstances};
 use super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
 use super::params::light_rays::*;
 use super::settings::{EffectControl, EffectControls, EffectSettings};
 
+/// Light shafts from one or more sources through the openings the mask
+/// paints. The sources share the look of their rays.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct LightRaysEffectSettings {
-    pub amount: f32,
-    pub length: f32,
-    pub source: [f32; 2],
     pub spread: f32,
     pub fade: f32,
     pub ray_count: f32,
     pub variation: f32,
     pub softness: f32,
+    #[serde(flatten)]
+    pub sources: EffectInstances<LightRaySource>,
+}
+
+/// One source of a Light Rays effect.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct LightRaySource {
+    pub amount: f32,
+    pub length: f32,
+    /// Percentages of the full, uncropped image.
+    pub source: [f32; 2],
     pub color: [f32; 3],
 }
 
 impl Default for LightRaysEffectSettings {
     fn default() -> Self {
         Self {
-            amount: AMOUNT.default,
-            length: LENGTH.default,
-            source: [SOURCE_X.default, SOURCE_Y.default],
             spread: SPREAD.default,
             fade: FADE.default,
             ray_count: RAY_COUNT.default,
             variation: VARIATION.default,
             softness: SOFTNESS.default,
+            sources: EffectInstances::default(),
+        }
+    }
+}
+
+impl Default for LightRaySource {
+    fn default() -> Self {
+        Self {
+            amount: AMOUNT.default,
+            length: LENGTH.default,
+            source: [SOURCE_X.default, SOURCE_Y.default],
             color: COLOR.default,
+        }
+    }
+}
+
+impl LightRaySource {
+    fn is_active(&self) -> bool {
+        self.amount.abs() > 1e-6 && self.length > 1e-6
+    }
+
+    /// A copy of this source placed across the frame from it.
+    pub fn mirrored(&self) -> Self {
+        Self {
+            source: mirrored_position(self.source, [SOURCE_X, SOURCE_Y]),
+            ..*self
         }
     }
 }
@@ -49,17 +83,27 @@ impl EffectSettings for LightRaysEffectSettings {
     const LANES: &'static [LaneName] = lanes::ALL;
 
     fn is_active(&self) -> bool {
-        self.amount.abs() > 1e-6 && self.length > 1e-6
+        self.sources
+            .as_slice()
+            .iter()
+            .any(LightRaySource::is_active)
+    }
+
+    fn instance_count(&self) -> usize {
+        self.sources.count()
     }
 
     fn controls(&mut self) -> EffectControls<'_> {
-        EffectControls::new(vec![
-            EffectControl::Slider(&mut self.amount, AMOUNT),
-            EffectControl::Slider(&mut self.length, LENGTH),
-            EffectControl::Position(&mut self.source, [SOURCE_X, SOURCE_Y]),
-            EffectControl::Color(&mut self.color, COLOR),
-        ])
-        .details(
+        let mut shown = Vec::new();
+        for source in self.sources.as_mut_slice() {
+            shown.extend([
+                EffectControl::Slider(&mut source.amount, AMOUNT),
+                EffectControl::Slider(&mut source.length, LENGTH),
+                EffectControl::Position(&mut source.source, [SOURCE_X, SOURCE_Y]),
+                EffectControl::Color(&mut source.color, COLOR),
+            ]);
+        }
+        EffectControls::new(shown).details(
             "Ray details",
             vec![
                 EffectControl::Slider(&mut self.spread, SPREAD),
@@ -71,12 +115,16 @@ impl EffectSettings for LightRaysEffectSettings {
         )
     }
 
-    fn pack(&self, slot: &mut EffectLanes, _: &PackContext) {
-        slot.set(lanes::AMOUNT, AMOUNT.clamp(self.amount));
-        slot.set(lanes::LENGTH, LENGTH.clamp(self.length));
-        slot.set(lanes::SOURCE_X, SOURCE_X.clamp(self.source[0]));
-        slot.set(lanes::SOURCE_Y, SOURCE_Y.clamp(self.source[1]));
-        slot.set_color(lanes::COLOR, COLOR.clamp(self.color));
+    /// Each source's slot also holds the shared look of the rays.
+    fn pack(&self, slot: &mut EffectLanes, context: &PackContext) {
+        let Some(source) = self.sources.get(context.instance) else {
+            return;
+        };
+        slot.set(lanes::AMOUNT, AMOUNT.clamp(source.amount));
+        slot.set(lanes::LENGTH, LENGTH.clamp(source.length));
+        slot.set(lanes::SOURCE_X, SOURCE_X.clamp(source.source[0]));
+        slot.set(lanes::SOURCE_Y, SOURCE_Y.clamp(source.source[1]));
+        slot.set_color(lanes::COLOR, COLOR.clamp(source.color));
         slot.set(lanes::FADE, FADE.clamp(self.fade));
         slot.set(lanes::SPREAD, SPREAD.clamp(self.spread));
         slot.set(lanes::RAY_COUNT, RAY_COUNT.clamp(self.ray_count));

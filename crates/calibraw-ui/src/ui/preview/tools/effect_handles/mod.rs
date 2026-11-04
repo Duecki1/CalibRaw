@@ -106,20 +106,29 @@ impl Preview {
         let mut actions = Vec::new();
         for handle in &input.handles {
             let edits = match handle.effect {
-                MaskEffect::TiltShift => band::show(ui, &painter, frames, handle),
+                MaskEffect::TiltShift => band::show(ui, &painter, frames, handle)
+                    .into_iter()
+                    .map(|edit| (0, edit))
+                    .collect(),
                 _ => point::show(ui, &painter, frames, handle),
             };
-            actions.extend(edits.into_iter().map(|edit| EffectHandleAction {
-                target: handle.target,
-                edit,
-            }));
+            actions.extend(
+                edits
+                    .into_iter()
+                    .map(|(instance, edit)| EffectHandleAction {
+                        target: handle.target,
+                        instance,
+                        edit,
+                    }),
+            );
         }
         actions
     }
 }
 
-fn handle_id(ui: &Ui, target: EffectComponentRef, part: &'static str) -> egui::Id {
-    ui.id().with(("effect-handle", target, part))
+/// The widget ID of one part of the handle of `instance` of `target`.
+fn handle_id(ui: &Ui, target: EffectComponentRef, instance: usize, part: &'static str) -> egui::Id {
+    ui.id().with(("effect-handle", target, instance, part))
 }
 
 /// Keyboard steps of a handle: one step per arrow press, a fifth of a step

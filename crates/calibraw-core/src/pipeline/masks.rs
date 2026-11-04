@@ -16,14 +16,15 @@ pub use content_dependencies::ContentDependencies;
 
 pub use effects::{
     effect_lanes, params as effect_params, BlurEffectSettings, ColorLane, EdgeGlowEffectSettings,
-    EffectControl, EffectControls, EffectDetails, EffectLanes, EffectOption, EffectPass,
-    EffectReach, EffectSettings, EffectSettingsVisitor, FogEffectSettings, GlowEffectSettings,
-    GrainEffectSettings, HalationEffectSettings, Lane, LaneName, LensBlurEffectSettings,
-    LightRaysEffectSettings, MaskEffect, MaskEffectCategory, MaskEffectSettings,
-    MotionBlurEffectSettings, NeonEffectSettings, PackContext, PixelateEffectSettings,
-    RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings, ReachGroup,
-    RelightEffectSettings, SceneMapUse, SharpenEffectSettings, SmokeEffectSettings,
-    TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings, OPTION_COUNT,
+    EffectControl, EffectControls, EffectDetails, EffectInstances, EffectLanes, EffectOption,
+    EffectPass, EffectReach, EffectSettings, EffectSettingsVisitor, FogEffectSettings,
+    GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, Lane, LaneName,
+    LensBlurEffectSettings, LightRaySource, LightRaysEffectSettings, MaskEffect,
+    MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings,
+    PackContext, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode,
+    RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneMapUse,
+    SharpenEffectSettings, SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
+    WetSurfacesEffectSettings, MAX_EFFECT_INSTANCES, OPTION_COUNT,
 };
 
 mod box_filter;
@@ -54,6 +55,9 @@ pub use mask_geometry::*;
 pub use primitives::*;
 
 pub const MAX_LOCAL_MASKS: usize = 32;
+/// Places for effects on a mask or the Effects card. Each effect component
+/// takes one per instance ([`EffectComponent::places`]), so the render slots
+/// they fill stay within a fixed budget.
 pub const MAX_EFFECT_COMPONENTS: usize = 12;
 pub const MAX_MASK_COMPONENTS: usize = 64;
 pub const MAX_PATH_POINTS: usize = 256;
@@ -276,7 +280,7 @@ impl LocalMask {
 
     pub fn migrate_legacy_effect(&mut self) {
         if self.effect != MaskEffect::Adjustment {
-            if self.effect_components.len() >= MAX_EFFECT_COMPONENTS {
+            if effect_places(&self.effect_components) >= MAX_EFFECT_COMPONENTS {
                 return;
             }
             self.effect_components.push(EffectComponent {
@@ -339,6 +343,17 @@ impl EffectComponent {
     pub fn is_active(&self) -> bool {
         self.enabled && self.settings.effect_is_active(self.effect)
     }
+
+    /// The places of [`MAX_EFFECT_COMPONENTS`] the component takes: one per
+    /// instance, such as each of Relight's lights.
+    pub fn places(&self) -> usize {
+        self.settings.instance_count(self.effect).max(1)
+    }
+}
+
+/// The places of [`MAX_EFFECT_COMPONENTS`] that `components` take together.
+pub fn effect_places(components: &[EffectComponent]) -> usize {
+    components.iter().map(EffectComponent::places).sum()
 }
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]

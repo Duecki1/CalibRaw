@@ -25,12 +25,16 @@
 
 // An effect slot's packed parameters. Lane n is component n % 4 of `primary`,
 // `secondary` or `tertiary` for n / 4 = 0, 1, 2; a colour takes three lanes.
-// `options` holds per-slot switches (`<NAME>_OPTION`).
+// `options` holds per-slot switches (`<NAME>_OPTION`). `slot` is the slot's index
+// and `instances` its instance and its card's instance count
+// (`mask_effect_instance`).
 struct MaskEffectParams {
     primary: vec4<f32>,
     secondary: vec4<f32>,
     tertiary: vec4<f32>,
     options: vec4<f32>,
+    slot: u32,
+    instances: u32,
 }
 
 fn mask_effect_params(index: u32) -> MaskEffectParams {
@@ -39,7 +43,33 @@ fn mask_effect_params(index: u32) -> MaskEffectParams {
         Common::mask_data[index].adjust_1_field,
         Common::mask_data[index].adjust_2_field,
         Common::mask_data[index].effect_options,
+        index,
+        Common::mask_data[index].metadata.z,
     );
+}
+
+// Instances. An effect with several instances in one card (Relight's lights,
+// Light Rays' sources) fills one slot per instance, consecutively and with the
+// same mask (instances.rs in calibraw-core). A shader that loops over slots
+// sees each instance as one more slot of the effect; an effect that combines
+// its instances reads them all in the slot of the first and leaves the others
+// alone. `metadata.z` of an effect slot holds the instance in its low eight
+// bits and the count minus one above them (`effect_mask_data` in
+// mask_params.rs), so it is 0 for an effect with one instance.
+
+// The instance a slot holds: 0 for the first, and for an effect with one.
+fn mask_effect_instance(params: MaskEffectParams) -> u32 {
+    return params.instances & 0xffu;
+}
+
+// The instances of the slot's card.
+fn mask_effect_instance_count(params: MaskEffectParams) -> u32 {
+    return (params.instances >> 8u) + 1u;
+}
+
+// The parameters of instance `instance` of the slot's card.
+fn mask_effect_instance_params(params: MaskEffectParams, instance: u32) -> MaskEffectParams {
+    return mask_effect_params(params.slot - mask_effect_instance(params) + instance);
 }
 
 fn mask_effect_lane(params: MaskEffectParams, lane: u32) -> f32 {

@@ -1,6 +1,7 @@
 mod controls;
 pub(super) mod fog;
 mod generated;
+mod instances;
 pub(super) mod light_rays;
 mod picker;
 pub(super) mod radial_blur;
@@ -13,13 +14,14 @@ use crate::i18n::{tr, tr_fmt};
 pub(crate) use controls::EffectFrame;
 use controls::{effect_details, effect_position, pattern_seed, PositionSpace};
 pub(super) use generated::generated_card;
+pub(crate) use instances::InstanceSelection;
 pub(super) use picker::{
     add_effect_button, add_effect_controls, effect_picker_popup, EffectPick, FilmNegativeTile,
 };
 
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::{ColorParamSpec, ToggleSpec};
-use crate::pipeline::{EffectComponent, EffectSettings, MAX_EFFECT_COMPONENTS};
+use crate::pipeline::{effect_places, EffectComponent, EffectSettings, MAX_EFFECT_COMPONENTS};
 
 pub(super) use crate::ui::components::adjustment_slider::{float_param_angle, float_param_slider};
 
@@ -210,7 +212,7 @@ fn add_effect_buttons(
     components: &[EffectComponent],
 ) -> Option<MaskEffect> {
     const COLUMNS: usize = 2;
-    let full = components.len() >= MAX_EFFECT_COMPONENTS;
+    let full = effect_places(components) >= MAX_EFFECT_COMPONENTS;
     let mut added = None;
     ui.columns(effects.len().clamp(1, COLUMNS), |columns| {
         let column_count = columns.len();

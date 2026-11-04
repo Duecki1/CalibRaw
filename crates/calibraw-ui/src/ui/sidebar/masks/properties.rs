@@ -163,15 +163,19 @@ impl Sidebar {
     /// from the Effects card ([`mask_effects::add_effect_controls`]) join them
     /// there. Returns whether a setting changed and whether the button's
     /// `film_negative` tile was picked.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::ui::sidebar) fn show_effect_components(
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,
+        list: crate::app::EffectList,
+        instances: &mut crate::app::SelectedInstances,
         is_fullscreen_mask: bool,
         film_negative: mask_effects::FilmNegativeTile,
         frame: &mask_effects::EffectFrame,
     ) -> (bool, bool) {
         let mut changed = false;
         let mut remove = None;
+        let room = Self::effect_list_has_room(components);
         for (index, component) in components.iter_mut().enumerate() {
             ui.push_id(index, |ui| {
                 let mut remove_component = false;
@@ -181,6 +185,10 @@ impl Sidebar {
                     &mut remove_component,
                     is_fullscreen_mask,
                     frame,
+                    mask_effects::InstanceSelection {
+                        selected: instances.entry(list, component.effect),
+                        room,
+                    },
                 );
                 if remove_component {
                     remove = Some(index);
@@ -208,9 +216,12 @@ impl Sidebar {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn show_selected_effect_component(
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,
+        list: crate::app::EffectList,
+        instances: &mut crate::app::SelectedInstances,
         selection: &mut Option<MaskEffect>,
         is_fullscreen_mask: bool,
         frame: &mask_effects::EffectFrame,
@@ -226,6 +237,7 @@ impl Sidebar {
             return false;
         };
         let mut remove = false;
+        let room = Self::effect_list_has_room(components);
         let changed = ui
             .push_id(index, |ui| {
                 Self::show_effect_component_settings(
@@ -234,6 +246,10 @@ impl Sidebar {
                     &mut remove,
                     is_fullscreen_mask,
                     frame,
+                    mask_effects::InstanceSelection {
+                        selected: instances.entry(list, effect),
+                        room,
+                    },
                 )
             })
             .inner;
@@ -244,12 +260,21 @@ impl Sidebar {
         changed || remove
     }
 
+    /// Whether an effect list has a place for one more effect or instance
+    /// ([`crate::pipeline::effect_places`]).
+    fn effect_list_has_room(components: &[crate::pipeline::EffectComponent]) -> bool {
+        crate::pipeline::effect_places(components) < crate::pipeline::MAX_EFFECT_COMPONENTS
+    }
+
+    /// `instances` is the light or source the card shows, for effects with
+    /// several.
     pub(super) fn show_effect_component_settings(
         ui: &mut Ui,
         component: &mut crate::pipeline::EffectComponent,
         remove: &mut bool,
         is_fullscreen_mask: bool,
         frame: &mask_effects::EffectFrame,
+        instances: mask_effects::InstanceSelection<'_>,
     ) -> bool {
         // Effects with a position pad, a range track or a conditional
         // control draw their own card; every other effect's card is drawn
@@ -276,6 +301,7 @@ impl Sidebar {
                 &mut component.enabled,
                 remove,
                 frame,
+                instances,
             ),
             MaskEffect::Relight => mask_effects::relight::show(
                 ui,
@@ -283,6 +309,7 @@ impl Sidebar {
                 &mut component.enabled,
                 remove,
                 frame,
+                instances,
             ),
             MaskEffect::Fog => mask_effects::fog::show(
                 ui,

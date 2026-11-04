@@ -198,4 +198,7 @@ impl EffectLanes {
 pub struct PackContext {
     /// The photo's exposure time, or 0 when it records none.
     pub shutter_seconds: f32,
+    /// The instance the slot holds, below `EffectSettings::instance_count`;
+    /// 0 for an effect with one.
+    pub instance: usize,
 }

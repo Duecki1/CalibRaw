@@ -4,14 +4,28 @@ use super::*;
 use crate::pipeline::effect_lanes::{light_rays, options, rain, relight};
 use crate::pipeline::{EffectLanes, PackContext};
 
-/// An effect slot holding `lanes`.
-fn effect_mask_data(effect: MaskEffect, active: bool, lanes: &EffectLanes) -> MaskData {
+/// Bits of `metadata[2]` of an effect slot that hold its instance; the bits
+/// above hold its card's instance count minus one. Zero for an effect with
+/// one instance. `mask_effect_instance` in mask_effects/effect_api.wgsl reads
+/// them.
+const INSTANCE_BITS: u32 = 8;
+
+/// The slot of one instance of an effect, holding `lanes`.
+fn effect_mask_data(
+    effect: MaskEffect,
+    active: bool,
+    lanes: &EffectLanes,
+    instance: usize,
+    instance_count: usize,
+) -> MaskData {
     let [adjust_0, adjust_1, adjust_2] = lanes.rows();
+    // Both fit in INSTANCE_BITS: an effect has at most MAX_EFFECT_INSTANCES.
+    let instances = instance as u32 | ((instance_count as u32 - 1) << INSTANCE_BITS);
     MaskData {
         metadata: [
             u32::from(active),
             u32::from(active),
-            0,
+            instances,
             effect.shader_id() << MASK_EFFECT_ID_SHIFT,
         ],
         adjust_0,
@@ -151,17 +165,26 @@ pub(super) fn orient_rain_slots(
     }
 }
 
-/// The slot of an effect: its settings as its shader reads them, active when
-/// `enabled` and the settings change the image. `None` for an adjustment.
-pub(super) fn pack_effect_mask(
+/// The slots of an effect, one per instance in order, with its settings as
+/// its shader reads them. They are active when `enabled` and the settings
+/// change the image; each instance's own values say whether it adds anything.
+/// Empty for an adjustment.
+pub(super) fn pack_effect_slots(
     effect: MaskEffect,
     settings: &crate::pipeline::MaskEffectSettings,
     enabled: bool,
     shutter_seconds: f32,
-) -> Option<MaskData> {
-    let lanes = settings.pack(effect, &PackContext { shutter_seconds })?;
+) -> impl Iterator<Item = MaskData> + '_ {
+    let count = settings.instance_count(effect);
     let active = enabled && settings.effect_is_active(effect);
-    Some(effect_mask_data(effect, active, &lanes))
+    (0..count).filter_map(move |instance| {
+        let context = PackContext {
+            shutter_seconds,
+            instance,
+        };
+        let lanes = settings.pack(effect, &context)?;
+        Some(effect_mask_data(effect, active, &lanes, instance, count))
+    })
 }
 
 pub(super) fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
@@ -236,54 +259,60 @@ pub(super) fn render_mask_slot_count(masks: &MaskStack) -> usize {
     masks
         .masks
         .iter()
-        .map(|mask| 1 + mask.effect_components.len())
+        .map(|mask| 1 + crate::pipeline::effect_places(&mask.effect_components))
         .sum::<usize>()
-        + masks.global_effects.len()
+        + crate::pipeline::effect_places(&masks.global_effects)
 }
 
 pub(super) fn pack_mask_params(masks: &MaskStack, shutter_seconds: f32) -> Box<[MaskData]> {
     let mut packed = vec![MaskData::zeroed(); MAX_RENDER_MASK_SLOTS].into_boxed_slice();
     let mut slot = 0;
-    for (layer, mask) in masks.masks.iter().enumerate() {
-        if mask.effect == MaskEffect::Adjustment {
-            packed[slot] = pack_adjustment_mask(mask);
-            packed[slot].point_color_meta[2] = layer as u32;
-            slot += 1;
-        } else if let Some(mut data) = pack_effect_mask(
-            mask.effect,
-            &mask.effect_settings,
-            mask.enabled,
-            shutter_seconds,
-        ) {
-            data.point_color_meta[2] = layer as u32;
-            packed[slot] = data;
+    // Validation keeps every list within its places (MAX_EFFECT_COMPONENTS),
+    // which MAX_RENDER_MASK_SLOTS covers; slots past it are left out rather
+    // than written out of bounds.
+    let mut place = |data: MaskData, layer: u32| {
+        if let Some(destination) = packed.get_mut(slot) {
+            *destination = data;
+            destination.point_color_meta[2] = layer;
             slot += 1;
         }
+    };
+    for (layer, mask) in masks.masks.iter().enumerate() {
+        let layer = layer as u32;
+        if mask.effect == MaskEffect::Adjustment {
+            place(pack_adjustment_mask(mask), layer);
+        } else {
+            for data in pack_effect_slots(
+                mask.effect,
+                &mask.effect_settings,
+                mask.enabled,
+                shutter_seconds,
+            ) {
+                place(data, layer);
+            }
+        }
         for component in &mask.effect_components {
-            if let Some(mut data) = pack_effect_mask(
+            for data in pack_effect_slots(
                 component.effect,
                 &component.settings,
                 mask.enabled && component.enabled,
                 shutter_seconds,
             ) {
-                data.point_color_meta[2] = layer as u32;
-                packed[slot] = data;
-                slot += 1;
+                place(data, layer);
             }
         }
     }
     for component in &masks.global_effects {
-        if let Some(mut data) = pack_effect_mask(
+        for data in pack_effect_slots(
             component.effect,
             &component.settings,
             component.enabled,
             shutter_seconds,
         ) {
-            data.point_color_meta[2] = u32::MAX;
-            packed[slot] = data;
-            slot += 1;
+            place(data, u32::MAX);
         }
     }
-    assign_scene_light_channels(&mut packed[..slot]);
+    let used = slot;
+    assign_scene_light_channels(&mut packed[..used]);
     packed
 }

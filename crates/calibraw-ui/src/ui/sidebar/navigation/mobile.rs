@@ -325,7 +325,7 @@ impl Sidebar {
             *selection = Some(effect);
         }
 
-        if components.len() >= crate::pipeline::MAX_EFFECT_COMPONENTS {
+        if crate::pipeline::effect_places(components) >= crate::pipeline::MAX_EFFECT_COMPONENTS {
             return None;
         }
         let response = ui

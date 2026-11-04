@@ -1,11 +1,24 @@
+use super::instances::{mirrored_position, EffectInstances};
 use super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
 use super::params::relight::*;
 use super::settings::{EffectControl, EffectControls, EffectSettings};
 
-/// A virtual point light that shades the scene reconstructed from scene depth.
+/// Virtual point lights that shade the scene reconstructed from scene depth.
+/// The lights share the scene's Relief and one Ambient level, and add up on
+/// the surface they light (relight.wgsl).
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct RelightEffectSettings {
+    pub relief: f32,
+    pub ambient: f32,
+    #[serde(flatten)]
+    pub lights: EffectInstances<RelightLight>,
+}
+
+/// One light of a Relight effect.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct RelightLight {
     pub amount: f32,
     /// Percentages of the full, uncropped image, as for Light Rays.
     pub source: [f32; 2],
@@ -18,12 +31,20 @@ pub struct RelightEffectSettings {
     /// New lights start without shadows.
     pub shadows_enabled: bool,
     pub shadows: f32,
-    pub relief: f32,
-    pub ambient: f32,
     pub color: [f32; 3],
 }
 
 impl Default for RelightEffectSettings {
+    fn default() -> Self {
+        Self {
+            relief: RELIEF.default,
+            ambient: AMBIENT.default,
+            lights: EffectInstances::default(),
+        }
+    }
+}
+
+impl Default for RelightLight {
     fn default() -> Self {
         Self {
             amount: AMOUNT.default,
@@ -33,9 +54,18 @@ impl Default for RelightEffectSettings {
             size: SIZE.default,
             shadows_enabled: false,
             shadows: SHADOWS.default,
-            relief: RELIEF.default,
-            ambient: AMBIENT.default,
             color: COLOR.default,
+        }
+    }
+}
+
+impl RelightLight {
+    /// A copy of this light placed across the frame from it, where a second
+    /// light usually goes and where its handle does not hide this one's.
+    pub fn mirrored(&self) -> Self {
+        Self {
+            source: mirrored_position(self.source, [SOURCE_X, SOURCE_Y]),
+            ..*self
         }
     }
 }
@@ -56,46 +86,61 @@ effect_lanes! {
 impl EffectSettings for RelightEffectSettings {
     const LANES: &'static [LaneName] = lanes::ALL;
 
-    /// Active when it adds light or dims the existing light.
+    /// Active when a light adds light or the existing light is dimmed.
     fn is_active(&self) -> bool {
-        self.amount.abs() > 1e-6 || self.ambient < AMBIENT.max - 1e-6
+        self.lights
+            .as_slice()
+            .iter()
+            .any(|light| light.amount.abs() > 1e-6)
+            || self.ambient < AMBIENT.max - 1e-6
+    }
+
+    fn instance_count(&self) -> usize {
+        self.lights.count()
     }
 
     fn controls(&mut self) -> EffectControls<'_> {
-        EffectControls::new(vec![
-            EffectControl::Slider(&mut self.amount, AMOUNT),
-            EffectControl::Position(&mut self.source, [SOURCE_X, SOURCE_Y]),
-            EffectControl::Slider(&mut self.depth, DEPTH),
-            EffectControl::Slider(&mut self.ambient, AMBIENT),
-            EffectControl::Color(&mut self.color, COLOR),
-            EffectControl::Toggle(&mut self.shadows_enabled, CAST_SHADOWS),
-        ])
-        .details(
-            "Light details",
-            vec![
-                EffectControl::Slider(&mut self.reach, REACH),
-                EffectControl::Slider(&mut self.size, SIZE),
-                EffectControl::Slider(&mut self.shadows, SHADOWS),
-                EffectControl::Slider(&mut self.relief, RELIEF),
-            ],
-        )
+        let mut shown = Vec::new();
+        let mut details = Vec::new();
+        for light in self.lights.as_mut_slice() {
+            shown.extend([
+                EffectControl::Slider(&mut light.amount, AMOUNT),
+                EffectControl::Position(&mut light.source, [SOURCE_X, SOURCE_Y]),
+                EffectControl::Slider(&mut light.depth, DEPTH),
+                EffectControl::Color(&mut light.color, COLOR),
+                EffectControl::Toggle(&mut light.shadows_enabled, CAST_SHADOWS),
+            ]);
+            details.extend([
+                EffectControl::Slider(&mut light.reach, REACH),
+                EffectControl::Slider(&mut light.size, SIZE),
+                EffectControl::Slider(&mut light.shadows, SHADOWS),
+            ]);
+        }
+        shown.push(EffectControl::Slider(&mut self.ambient, AMBIENT));
+        details.push(EffectControl::Slider(&mut self.relief, RELIEF));
+        EffectControls::new(shown).details("Light details", details)
     }
 
     fn wants_scene_depth(&self) -> bool {
         true
     }
 
-    fn pack(&self, slot: &mut EffectLanes, _: &PackContext) {
-        slot.set(lanes::AMOUNT, AMOUNT.clamp(self.amount));
-        slot.set(lanes::REACH, REACH.clamp(self.reach));
-        slot.set(lanes::SOURCE_X, SOURCE_X.clamp(self.source[0]));
-        slot.set(lanes::SOURCE_Y, SOURCE_Y.clamp(self.source[1]));
-        slot.set_color(lanes::COLOR, COLOR.clamp(self.color));
-        slot.set(lanes::DEPTH, DEPTH.clamp(self.depth));
-        slot.set(lanes::SIZE, SIZE.clamp(self.size));
+    /// Each light's slot also holds the shared Relief and Ambient: a light
+    /// is placed in its slot's scene frame (`relight_scene_light`).
+    fn pack(&self, slot: &mut EffectLanes, context: &PackContext) {
+        let Some(light) = self.lights.get(context.instance) else {
+            return;
+        };
+        slot.set(lanes::AMOUNT, AMOUNT.clamp(light.amount));
+        slot.set(lanes::REACH, REACH.clamp(light.reach));
+        slot.set(lanes::SOURCE_X, SOURCE_X.clamp(light.source[0]));
+        slot.set(lanes::SOURCE_Y, SOURCE_Y.clamp(light.source[1]));
+        slot.set_color(lanes::COLOR, COLOR.clamp(light.color));
+        slot.set(lanes::DEPTH, DEPTH.clamp(light.depth));
+        slot.set(lanes::SIZE, SIZE.clamp(light.size));
         // Switched-off shadows keep their strength in the settings only.
-        let shadows = if self.shadows_enabled {
-            SHADOWS.clamp(self.shadows)
+        let shadows = if light.shadows_enabled {
+            SHADOWS.clamp(light.shadows)
         } else {
             0.0
         };

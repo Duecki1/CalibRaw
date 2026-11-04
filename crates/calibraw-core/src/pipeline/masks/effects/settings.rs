@@ -35,7 +35,15 @@ pub trait EffectSettings: Copy + Default + PartialEq {
         false
     }
 
-    /// Writes the values the shader reads into [`Self::LANES`].
+    /// How many slots the settings fill: one per instance of an effect with
+    /// several in one card (Relight's lights, Light Rays' sources; see
+    /// `instances.rs`), else one.
+    fn instance_count(&self) -> usize {
+        1
+    }
+
+    /// Writes the values the shader reads into [`Self::LANES`], for the slot
+    /// of instance `context.instance`.
     fn pack(&self, lanes: &mut EffectLanes, context: &PackContext);
 }
 

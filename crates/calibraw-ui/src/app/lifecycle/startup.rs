@@ -180,6 +180,7 @@ impl CalibRawApp {
                 effect_component: None,
                 mask_effect_component: None,
                 mask_effect_mask: None,
+                effect_instances: Default::default(),
                 tone_curve_tab: ToneCurveTab::default(),
                 color_grade_tab: ColorGradeTab::default(),
                 hsl_mixer_color: HslMixerColor::default(),

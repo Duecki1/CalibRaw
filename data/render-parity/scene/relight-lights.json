@@ -1,0 +1,55 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Relight",
+          "settings": {
+            "relight": {
+              "ambient": 50.0,
+              "amount": 70.0,
+              "shadows_enabled": true,
+              "source": [
+                70.0,
+                40.0
+              ],
+              "additional": [
+                {
+                  "amount": 60.0,
+                  "source": [
+                    25.0,
+                    55.0
+                  ],
+                  "depth": 20.0,
+                  "color": [
+                    0.6,
+                    0.75,
+                    1.0
+                  ]
+                },
+                {
+                  "amount": 40.0,
+                  "source": [
+                    50.0,
+                    15.0
+                  ],
+                  "depth": -60.0,
+                  "size": 60.0,
+                  "shadows_enabled": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "mask_assets": [
+    {
+      "height": 96,
+      "png": "iVBORw0KGgoAAAANSUhEUgAAAJAAAABgCAAAAADXv6R9AAAAiElEQVR42u3WMQ6AIAxA0Wq4tbNHdlEGT2DCQAqYx+hgX34TcbtjrrMHEBAQEBAQEBAQEBAQ0MhTer/w/Hh+WBkQEBAQEBAQEFCfX9graVDrnPIkgVrnlJoEqsuCrEwhhRTyYbQyhRRSSCFXh5X9o1DMVigUUsjKFFJIIYUUcnVYmUIKKbREoRemW0+8qd9zGwAAAABJRU5ErkJggg==",
+      "width": 144
+    }
+  ],
+  "scene_depth_asset": 0
+}

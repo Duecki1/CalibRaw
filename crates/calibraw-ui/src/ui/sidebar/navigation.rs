@@ -577,6 +577,8 @@ impl Sidebar {
             Self::show_selected_effect_component(
                 ui,
                 &mut app.masks.stack.global_effects,
+                crate::app::EffectList::Global,
+                &mut app.develop_ui.effect_instances,
                 &mut app.develop_ui.effect_component,
                 true,
                 &effect_frame,
@@ -585,6 +587,8 @@ impl Sidebar {
             let (changed, film_picked) = Self::show_effect_components(
                 ui,
                 &mut app.masks.stack.global_effects,
+                crate::app::EffectList::Global,
+                &mut app.develop_ui.effect_instances,
                 true,
                 mask_effects::FilmNegativeTile::for_film(&app.develop.exposure.film),
                 &effect_frame,

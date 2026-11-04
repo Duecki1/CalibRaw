@@ -373,6 +373,8 @@ impl Sidebar {
                     adjustments_changed |= Self::show_effect_components(
                         ui,
                         &mut mask.effect_components,
+                        crate::app::EffectList::Mask(mask_index),
+                        &mut app.develop_ui.effect_instances,
                         fullscreen,
                         mask_effects::FilmNegativeTile::Hidden,
                         &effect_frame,
@@ -416,6 +418,8 @@ impl Sidebar {
                             adjustments_changed |= Self::show_selected_effect_component(
                                 ui,
                                 &mut mask.effect_components,
+                                crate::app::EffectList::Mask(mask_index),
+                                &mut app.develop_ui.effect_instances,
                                 &mut app.develop_ui.mask_effect_component,
                                 fullscreen,
                                 &effect_frame,

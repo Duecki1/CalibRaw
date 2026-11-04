@@ -75,7 +75,8 @@ pub(crate) use carousel::{CarouselAction, CarouselState, CarouselView};
 pub(crate) use decoded_raw_cache::{DecodeKey, DecodeRequest, DecodedRaw, DecodedRawCache};
 pub(crate) use develop_state::*;
 pub(crate) use effect_handles::{
-    EffectComponentRef, EffectHandle, EffectHandleAction, EffectHandleEdit,
+    EffectComponentRef, EffectHandle, EffectHandleAction, EffectHandleEdit, EffectList,
+    SelectedInstances,
 };
 pub(crate) use export_state::*;
 pub(crate) use job_state::*;

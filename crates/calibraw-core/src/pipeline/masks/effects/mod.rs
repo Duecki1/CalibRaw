@@ -14,6 +14,7 @@ mod fog;
 mod glow;
 mod grain;
 mod halation;
+mod instances;
 mod lanes;
 mod lens_blur;
 mod light_rays;
@@ -38,16 +39,17 @@ pub use fog::FogEffectSettings;
 pub use glow::GlowEffectSettings;
 pub use grain::GrainEffectSettings;
 pub use halation::HalationEffectSettings;
+pub use instances::{EffectInstances, MAX_EFFECT_INSTANCES};
 pub use lanes::{ColorLane, EffectLanes, EffectOption, Lane, LaneName, PackContext, OPTION_COUNT};
 pub use lens_blur::LensBlurEffectSettings;
-pub use light_rays::LightRaysEffectSettings;
+pub use light_rays::{LightRaySource, LightRaysEffectSettings};
 pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
 pub use passes::{EffectPass, EffectReach, ReachGroup, SceneMapUse};
 pub use pixelate::PixelateEffectSettings;
 pub use radial_blur::{RadialBlurEffectSettings, RadialBlurMode};
 pub use rain::RainEffectSettings;
-pub use relight::RelightEffectSettings;
+pub use relight::{RelightEffectSettings, RelightLight};
 pub use settings::{EffectControl, EffectControls, EffectDetails, EffectSettings};
 pub use sharpen::SharpenEffectSettings;
 pub use smoke::SmokeEffectSettings;
@@ -98,7 +100,7 @@ macro_rules! mask_effects {
             scene_map: $scene_map:ident $(,)?
         }
     )+) => {
-        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
         pub enum MaskEffect {
             #[default]
             Adjustment,
@@ -226,7 +228,17 @@ macro_rules! mask_effects {
                 }
             }
 
-            /// What `effect`'s shader reads; `None` for an adjustment.
+            /// How many slots `effect` fills: one per instance
+            /// ([`EffectSettings::instance_count`]); none for an adjustment.
+            pub fn instance_count(&self, effect: MaskEffect) -> usize {
+                match effect {
+                    MaskEffect::Adjustment => 0,
+                    $(MaskEffect::$variant => self.$field.instance_count(),)+
+                }
+            }
+
+            /// What `effect`'s shader reads in the slot of instance
+            /// `context.instance`; `None` for an adjustment.
             pub fn pack(&self, effect: MaskEffect, context: &PackContext) -> Option<EffectLanes> {
                 let mut slot = EffectLanes::default();
                 match effect {

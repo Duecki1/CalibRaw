@@ -192,6 +192,16 @@ own (the blurs, Glow, Light Rays, Rain, Wet Surfaces, the scene shadow map) also
 those passes and their `GpuParams::needs_*` checks, and read their slots by lane name
 too (`mask_effect_params`).
 
+An effect that places several of the same thing in one card (Relight's lights, Light
+Rays' sources) keeps them in an `EffectInstances` list beside the values they share and
+reports its length as `EffectSettings::instance_count`; `pack` fills the slot of
+`PackContext::instance` (`effects/instances.rs`). The GPU packs one slot per instance, so
+loops over slots, scene lights and shadow-map channels see each one; a shader that must
+combine them works in the slot of the first (`mask_effect_instance` in
+`effect_api.wgsl`). Each instance after the first takes one of the list's
+`MAX_EFFECT_COMPONENTS` places. The card shows them with the shared instance row
+(`sidebar/mask_effects/instances.rs`) and the canvas draws a handle for each.
+
 Its card is drawn from its controls. An effect with a position pad, a range track or a
 control that shows only sometimes draws its own card in
 `calibraw-ui/src/ui/sidebar/mask_effects/`, chosen in `show_effect_component_settings`.
