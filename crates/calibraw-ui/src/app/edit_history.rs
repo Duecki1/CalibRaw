@@ -306,6 +306,9 @@ impl EditHistory {
         } else if mask_change_pending {
             self.current.masks.masks == masks.masks
                 && self.current.masks.global_effects == masks.global_effects
+                && self.current.masks.subject_refinement.dabs == masks.subject_refinement.dabs
+                && self.current.masks.subject_refinement.stroke_starts
+                    == masks.subject_refinement.stroke_starts
                 && self.current.masks.scene_depth == masks.scene_depth
                 && self.current.masks.scene_normals == masks.scene_normals
         } else {
@@ -595,7 +598,14 @@ impl CalibRawApp {
         self.develop.exposure = snapshot.exposure;
         self.develop.exposure.sanitize_tone_curves();
         if masks_changed {
+            // Undo steps back one refinement stroke; the brush settings stay
+            // as the user last set them.
+            let refinement = std::mem::take(&mut self.masks.stack.subject_refinement);
             self.masks.stack = snapshot.materialize_masks();
+            let restored = &mut self.masks.stack.subject_refinement;
+            restored.size = refinement.size;
+            restored.feather = refinement.feather;
+            restored.flow = refinement.flow;
         } else {
             snapshot.mask_selection.apply_to(&mut self.masks.stack);
         }
