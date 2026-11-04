@@ -278,6 +278,14 @@ impl LocalMask {
         set_if_changed(&mut self.opacity, opacity)
     }
 
+    /// The first submask is the base the others combine into, so it always
+    /// adds. Call after any edit that can change which submask comes first.
+    pub(super) fn restore_base_combine(&mut self) {
+        if let Some(base) = self.components.first_mut() {
+            base.combine = MaskCombineMode::Add;
+        }
+    }
+
     pub fn migrate_legacy_effect(&mut self) {
         if self.effect != MaskEffect::Adjustment {
             if effect_places(&self.effect_components) >= MAX_EFFECT_COMPONENTS {

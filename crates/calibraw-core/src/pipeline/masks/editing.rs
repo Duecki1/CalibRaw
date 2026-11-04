@@ -158,6 +158,7 @@ impl MaskStack {
             return false;
         }
         mask.components.remove(component_index);
+        mask.restore_base_combine();
         self.selected_mask = Some(mask_index);
         self.selected_component = Some(component_index.min(mask.components.len() - 1));
         true
@@ -264,6 +265,8 @@ impl MaskStack {
         self.masks[target_mask]
             .components
             .insert(insert_at, component);
+        self.masks[source_mask].restore_base_combine();
+        self.masks[target_mask].restore_base_combine();
         self.selected_mask = Some(target_mask);
         self.selected_component = Some(insert_at);
         Some((target_mask, insert_at))
