@@ -105,6 +105,7 @@ mod look_lut;
 mod masks;
 mod navigation;
 mod portrait_fill;
+mod single_open_cards;
 mod watermark;
 
 pub(crate) use export::{export_settings_controls, ExportControlsChange};

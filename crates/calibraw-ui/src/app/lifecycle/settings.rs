@@ -357,6 +357,7 @@ impl CalibRawApp {
             interactive_preview_fallback: self.preferences.interactive_preview_fallback,
             image_relative_brush_size: self.preferences.image_relative_brush_size,
             show_develop_navigation_labels: self.preferences.show_develop_navigation_labels,
+            close_other_cards: self.preferences.close_other_cards,
             develop_card_order: self.preferences.develop_card_order.clone(),
             export_name_template: self.preferences.export_name_template.clone(),
             export_format: self.export.format,

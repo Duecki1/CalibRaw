@@ -487,6 +487,17 @@ impl Settings {
             app.persist_performance_settings();
         }
 
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut app.preferences.close_other_cards,
+            tr("Close other cards when opening a card"),
+            tr("Opening an Edit card in the sidebar closes the others. Mask Properties stays as it is."),
+        )
+        .changed()
+        {
+            app.persist_performance_settings();
+        }
+
         Self::show_develop_card_order(ui, app);
 
         let mut tips_enabled = app.preferences.tips.enabled;

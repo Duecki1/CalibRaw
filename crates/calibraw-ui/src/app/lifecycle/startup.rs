@@ -307,6 +307,7 @@ impl CalibRawApp {
                 interactive_preview_fallback: performance.interactive_preview_fallback,
                 image_relative_brush_size: performance.image_relative_brush_size,
                 show_develop_navigation_labels: performance.show_develop_navigation_labels,
+                close_other_cards: performance.close_other_cards,
                 develop_card_order: performance.develop_card_order.clone(),
                 automatic_lens_correction: AutomaticLensCorrection {
                     enabled: performance.automatic_lens_correction,

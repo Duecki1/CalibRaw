@@ -52,6 +52,8 @@ pub(super) enum EffectCardAction {
 struct CardHeaderControls {
     show_visibility: bool,
     show_mask_overlay_toggle: bool,
+    /// Takes part in closing other cards when one opens ([`single_open_cards`]).
+    single_open: bool,
 }
 
 impl CardAction {
@@ -518,6 +520,7 @@ impl Sidebar {
             CardHeaderControls {
                 show_visibility: true,
                 show_mask_overlay_toggle: false,
+                single_open: true,
             },
             contents,
         )
@@ -541,6 +544,7 @@ impl Sidebar {
             CardHeaderControls {
                 show_visibility: false,
                 show_mask_overlay_toggle: false,
+                single_open: true,
             },
             contents,
         )
@@ -562,6 +566,7 @@ impl Sidebar {
             CardHeaderControls {
                 show_visibility: false,
                 show_mask_overlay_toggle: true,
+                single_open: false,
             },
             contents,
         )
@@ -582,6 +587,7 @@ impl Sidebar {
         let CardHeaderControls {
             show_visibility,
             show_mask_overlay_toggle,
+            single_open,
         } = header_controls;
         let visible = !show_visibility
             || crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
@@ -614,12 +620,14 @@ impl Sidebar {
                     action = Self::take_pending_vertical_card_action(ui.ctx(), title);
                 } else if foldable {
                     let mut header_clicked = false;
+                    let ctx = ui.ctx().clone();
                     let mut header =
                         egui::collapsing_header::CollapsingState::load_with_default_open(
                             ui.ctx(),
                             ui.make_persistent_id("expanded"),
                             default_open,
                         );
+                    let was_open = header.is_open();
                     if reveal {
                         header.set_open(true);
                     }
@@ -642,6 +650,16 @@ impl Sidebar {
                     if header_clicked {
                         header.toggle();
                     }
+                    if single_open {
+                        let open = single_open_cards::stays_open(
+                            &ctx,
+                            card_reveal_id(title),
+                            was_open,
+                            reveal,
+                            header.is_open(),
+                        );
+                        header.set_open(open);
+                    }
                     header.body_unindented(body);
                 } else {
                     ui.horizontal(|ui| {
@@ -659,6 +677,7 @@ impl Sidebar {
                 }
             });
         });
+        single_open_cards::keep_in_view(ui, card_reveal_id(title), card.response.rect);
         moduwu_design::scroll_into_view_on_draw(ui, card_reveal_id(title), card.response.rect);
         moduwu_design::card_gap(ui);
         match action {

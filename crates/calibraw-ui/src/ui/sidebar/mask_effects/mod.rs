@@ -44,6 +44,10 @@ where
     };
     let mut changed = false;
     let mut reset = false;
+    let revealed = ui
+        .ctx()
+        .data_mut(|data| data.remove_temp::<bool>(effect_card_reveal_id(effect)))
+        .unwrap_or(false);
     let card = moduwu_design::content_card(ui, |ui| {
         ui.push_id(effect.label(), |ui| {
             ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(26.0);
@@ -65,12 +69,13 @@ where
             } else {
                 let mut header_clicked = false;
                 let ctx = ui.ctx().clone();
-                let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
+                let header = egui::collapsing_header::CollapsingState::load_with_default_open(
                     ui.ctx(),
                     ui.make_persistent_id("expanded"),
                     true,
-                )
-                .show_header(ui, |ui| {
+                );
+                let was_open = header.is_open();
+                let mut header = header.show_header(ui, |ui| {
                     let available = ui.available_rect_before_wrap();
                     super::Sidebar::adjustment_card_title(ui, effect.label());
                     let buttons = ui
@@ -123,7 +128,15 @@ where
                 if header_clicked {
                     header.toggle();
                 }
-                if header.is_open() {
+                let open = super::single_open_cards::stays_open(
+                    &ctx,
+                    effect_card_scroll_target(effect),
+                    was_open,
+                    revealed,
+                    header.is_open(),
+                );
+                header.set_open(open);
+                if open {
                     note_open_effect_card(&ctx, effect);
                 }
                 header.body_unindented(|ui| {
@@ -132,6 +145,11 @@ where
             }
         });
     });
+    super::single_open_cards::keep_in_view(
+        ui,
+        effect_card_scroll_target(effect),
+        card.response.rect,
+    );
     moduwu_design::scroll_into_view_on_draw(
         ui,
         effect_card_scroll_target(effect),
@@ -152,8 +170,20 @@ where
 /// The scroll-into-view target of `effect`'s card
 /// ([`moduwu_design::scroll_into_view_on_draw`]). Each effect has at most one
 /// card in the effect list the sidebar shows.
-pub(super) fn effect_card_scroll_target(effect: MaskEffect) -> egui::Id {
+fn effect_card_scroll_target(effect: MaskEffect) -> egui::Id {
     egui::Id::new("calibraw-effect-card-scroll").with(effect.shader_id())
+}
+
+fn effect_card_reveal_id(effect: MaskEffect) -> egui::Id {
+    egui::Id::new("calibraw-reveal-effect-card").with(effect.shader_id())
+}
+
+/// Scrolls to the card of the just added `effect`. It also counts as opening
+/// the card, so the others close if the preference asks for it
+/// ([`super::single_open_cards`]).
+pub(super) fn reveal_effect_card(ctx: &egui::Context, effect: MaskEffect) {
+    ctx.data_mut(|data| data.insert_temp(effect_card_reveal_id(effect), true));
+    moduwu_design::request_scroll_into_view(ctx, effect_card_scroll_target(effect), None);
 }
 
 fn open_effect_card_id(effect: MaskEffect) -> egui::Id {

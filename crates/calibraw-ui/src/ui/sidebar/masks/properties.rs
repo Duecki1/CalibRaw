@@ -202,11 +202,7 @@ impl Sidebar {
         let picked = mask_effects::add_effect_button(ui, components, film_negative);
         if let Some(effect) = picked.and_then(mask_effects::EffectPick::effect) {
             components.push(crate::pipeline::EffectComponent::new(effect));
-            moduwu_design::request_scroll_into_view(
-                ui.ctx(),
-                mask_effects::effect_card_scroll_target(effect),
-                None,
-            );
+            mask_effects::reveal_effect_card(ui.ctx(), effect);
             changed = true;
         }
         moduwu_design::card_gap(ui);

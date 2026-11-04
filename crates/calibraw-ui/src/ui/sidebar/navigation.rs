@@ -50,6 +50,7 @@ impl Sidebar {
         frame: &eframe::Frame,
     ) {
         ui.take_available_width();
+        single_open_cards::set_enabled(ui.ctx(), app.preferences.close_other_cards);
         let vertical_spacing = if moduwu_design::is_compact_portrait(ui) {
             moduwu_design::SPACE_XS
         } else {
@@ -204,6 +205,7 @@ impl Sidebar {
             let mut mask_edit_header_rect = None;
             let scroll_output = egui::ScrollArea::vertical()
                 .id_salt("develop-sidebar-content")
+                .animated(!single_open_cards::settling(ui.ctx()))
                 .scroll_source(sidebar_scroll_source)
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                 .auto_shrink([false, false])
@@ -562,11 +564,7 @@ impl Sidebar {
     ) {
         if let Some(effect) = added {
             if app.add_global_effect(effect, layout) {
-                moduwu_design::request_scroll_into_view(
-                    ui.ctx(),
-                    mask_effects::effect_card_scroll_target(effect),
-                    None,
-                );
+                mask_effects::reveal_effect_card(ui.ctx(), effect);
             }
         }
         if app.masks.stack.has_scene_depth_effect() {

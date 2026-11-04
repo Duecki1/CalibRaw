@@ -44,6 +44,9 @@ pub(crate) struct PerformanceSettings {
     pub interactive_preview_fallback: bool,
     pub image_relative_brush_size: bool,
     pub show_develop_navigation_labels: bool,
+    /// Opening a sidebar card closes the other open ones, except Mask Properties.
+    /// Missing in files written before it existed, which therefore turn it on.
+    pub close_other_cards: bool,
     /// The Develop cards of the sidebar layout, in the order shown.
     pub develop_card_order: crate::app::DevelopCardOrder,
     pub export_name_template: String,
@@ -288,6 +291,7 @@ impl Default for PerformanceSettings {
             interactive_preview_fallback: PlatformCaps::CURRENT.constrained_memory(),
             image_relative_brush_size: false,
             show_develop_navigation_labels: true,
+            close_other_cards: true,
             develop_card_order: crate::app::DevelopCardOrder::default(),
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
             export_format: ExportFormat::Jpeg,
