@@ -321,6 +321,14 @@ impl CalibRawApp {
         }
     }
 
+    /// Shows the top of a linked folder, or of the media library for an empty
+    /// key.
+    pub(crate) fn select_android_library_root(&mut self, key: String) {
+        if self.library.select_android_root(key, &self.egui_ctx) {
+            self.persist_performance_settings();
+        }
+    }
+
     pub(crate) fn set_develop_filmstrip_open(&mut self, open: bool) {
         if self.develop_ui.filmstrip_open == open {
             return;
@@ -401,6 +409,7 @@ impl CalibRawApp {
             new_photo_preset: self.preferences.new_photo_preset.clone(),
             adjustment_copy_settings: self.preferences.adjustment_copy_settings,
             last_android_library_folder: self.library.android_folder().to_owned(),
+            last_android_library_root: self.library.android_root().to_owned(),
             last_library_folder: self
                 .library
                 .root_folder()

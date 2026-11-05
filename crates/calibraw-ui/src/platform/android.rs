@@ -2,12 +2,12 @@
 
 use super::service::{
     CameraProfileFolderResult, ExportPublishResult, ImportProgress, ImportedLibraryDocument,
-    LibraryDocument, LibraryFolder, PickedDocument, PickerResult, Platform, PublishedExport,
-    ReplayVideoEncoder, StagedFilesResult, TaskNotification,
+    LibraryDocument, LibraryFolder, LinkFolderResult, LinkedFolder, PickedDocument, PickerResult,
+    Platform, PublishedExport, ReplayVideoEncoder, StagedFilesResult, TaskNotification,
 };
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
-use crate::sidecar::{EditState, LoadedSidecar, PhotoReview, SidecarError};
+use crate::sidecar::{EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SidecarError};
 use calibraw_ffi::AndroidApp;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -275,6 +275,42 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::select_library_folder(&self.app, relative_path)
     }
 
+    fn open_link_folder_picker(&self) -> Result<(), String> {
+        calibraw_ffi::open_link_folder_picker(&self.app)
+    }
+
+    fn take_link_folder_result(&self) -> Option<LinkFolderResult> {
+        calibraw_ffi::take_link_folder_result().map(|result| match result {
+            calibraw_ffi::LinkFolderResult::Linked { key } => LinkFolderResult::Linked { key },
+            calibraw_ffi::LinkFolderResult::Cancelled => LinkFolderResult::Cancelled,
+            calibraw_ffi::LinkFolderResult::Failed(error) => LinkFolderResult::Failed(error),
+        })
+    }
+
+    fn list_linked_folders(&self) -> Result<Vec<LinkedFolder>, String> {
+        calibraw_ffi::list_linked_folders(&self.app).map(|folders| {
+            folders
+                .into_iter()
+                .map(|folder| LinkedFolder {
+                    key: folder.key,
+                    label: folder.label,
+                })
+                .collect()
+        })
+    }
+
+    fn unlink_folder(&self, key: &str) -> Result<(), String> {
+        calibraw_ffi::unlink_folder(&self.app, key)
+    }
+
+    fn select_library_root(&self, key: &str) -> Result<(), String> {
+        calibraw_ffi::select_library_root(&self.app, key)
+    }
+
+    fn take_library_changed(&self) -> bool {
+        calibraw_ffi::take_library_changed()
+    }
+
     fn create_library_folder(&self, parent_path: &str, name: &str) -> Result<String, String> {
         calibraw_ffi::create_library_folder(&self.app, parent_path, name)
     }
@@ -399,6 +435,33 @@ impl Platform for AndroidPlatform {
 
     fn people_analysis_path(&self, raw_uri: &str, display_name: &str) -> Result<PathBuf, String> {
         calibraw_ffi::people_analysis_path(&self.app, raw_uri, display_name)
+    }
+
+    fn fetch_photo_companion(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        companion: PhotoCompanion,
+    ) -> Result<(), String> {
+        calibraw_ffi::fetch_photo_companion(&self.app, raw_uri, display_name, companion)
+    }
+
+    fn publish_photo_companion(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        companion: PhotoCompanion,
+    ) -> Result<(), String> {
+        calibraw_ffi::publish_photo_companion(&self.app, raw_uri, display_name, companion)
+    }
+
+    fn photo_companion_exists(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        companion: PhotoCompanion,
+    ) -> Result<bool, String> {
+        calibraw_ffi::photo_companion_exists(&self.app, raw_uri, display_name, companion)
     }
 
     fn load_library_thumbnail(

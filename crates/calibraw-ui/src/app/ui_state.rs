@@ -112,6 +112,11 @@ pub(crate) struct UiState {
 /// library reloads and imports. Idle where storage is folders.
 pub(crate) struct AndroidState {
     pub(crate) picker_pending: bool,
+    /// AI results being copied into the linked folder of their photo.
+    pub(crate) companion_publishes: Vec<(
+        crate::sidecar::PhotoCompanion,
+        std::sync::mpsc::Receiver<Result<(), String>>,
+    )>,
     pub(crate) pending_android_library_reset_reload: bool,
     pub(crate) camera_profile_folder_importing_label: Option<String>,
     pub(crate) pending_android_profile_reload: Option<ProfileReload>,

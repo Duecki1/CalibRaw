@@ -105,6 +105,7 @@ impl Library {
         let mut selected_filter = app.library.review_filter;
         let mut stack_raw_companions = app.library.stacks_raw_companions();
         let header_title = library_header_title(app);
+        let in_linked_folder = app.library.linked_folder_label().is_some();
         let thumbnail_progress = app.library.thumbnail_background_progress();
         let show_header = |ui: &mut Ui| {
             moduwu_design::toolbar_row(ui, |ui| {
@@ -123,7 +124,21 @@ impl Library {
                     app.set_library_folder_sidebar_open(true);
                 }
 
-                if compact_header {
+                // Work in a linked folder changes the originals, so it is named
+                // even where the header has little room.
+                if compact_header && in_linked_folder {
+                    ui.scope(|ui| {
+                        ui.set_max_width(ui.available_width() * COMPACT_LINKED_TITLE_SHARE);
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&header_title)
+                                    .strong()
+                                    .size(moduwu_design::PANEL_TITLE_TEXT_SIZE),
+                            )
+                            .truncate(),
+                        );
+                    });
+                } else if compact_header {
                     moduwu_design::toolbar_title(ui, tr("Library"));
                 } else {
                     moduwu_design::toolbar_title(ui, &header_title);
@@ -283,16 +298,7 @@ impl Library {
         } else if app.library.scanning && !app.library.catalog_ready {
             show_library_loading_state(ui);
         } else if app.library.catalog_ready && app.library.entries.is_empty() {
-            show_library_empty_state(
-                ui,
-                tr("No photos here yet"),
-                if caps.has_folders() {
-                    tr("Choose another folder in the sidebar or add RAW, JPEG, PNG or HEIC photos to this folder.")
-                } else {
-                    tr("Tap + to import RAW, JPEG, PNG or HEIC photos.")
-                },
-                None,
-            );
+            show_folder_without_photos(ui, app);
         } else if visible.is_empty() {
             if show_library_empty_state(
                 ui,
@@ -323,10 +329,34 @@ impl Library {
                 ui,
                 rect,
                 egui_phosphor::regular::PLUS,
-                tr("Import RAW files"),
+                if in_linked_folder {
+                    tr("Copy photos here")
+                } else {
+                    tr("Import RAW files")
+                },
             );
             if response.clicked() {
                 import_raw = true;
+            }
+            if caps.linked_folders {
+                let edge = rect.width() * LINK_BUTTON_SCALE;
+                let link_rect = egui::Rect::from_center_size(
+                    rect.center()
+                        - egui::vec2(
+                            rect.width() * 0.5 + moduwu_design::SPACE_SM + edge * 0.5,
+                            0.0,
+                        ),
+                    egui::Vec2::splat(edge),
+                );
+                let link = moduwu_design::floating_action_button(
+                    ui,
+                    link_rect,
+                    egui_phosphor::regular::FOLDER_OPEN,
+                    tr("Link a folder"),
+                );
+                if link.clicked() {
+                    app.library.media.link_dialog = true;
+                }
             }
         }
 
@@ -348,15 +378,88 @@ impl Library {
     }
 }
 
+/// How much of the import button's size the link button beside it has.
+const LINK_BUTTON_SCALE: f32 = 0.8;
+/// How much of a narrow library header a linked folder's name may take, which
+/// leaves room for the header's buttons.
+const COMPACT_LINKED_TITLE_SHARE: f32 = 0.45;
+
 fn library_header_title(app: &CalibRawApp) -> String {
-    selected_library_folder_name(app).unwrap_or_else(|| tr("Library").to_owned())
+    let name = selected_library_folder_name(app).unwrap_or_else(|| tr("Library").to_owned());
+    if app.library.linked_folder_label().is_some() {
+        format!("{} {name}", egui_phosphor::regular::LINK)
+    } else {
+        name
+    }
+}
+
+/// What the library shows for a folder with no photos, or one it could not
+/// read.
+fn show_folder_without_photos(ui: &mut Ui, app: &mut CalibRawApp) {
+    let caps = app.caps();
+    if app.library.linked_folder_label().is_none() {
+        let clicked = show_library_empty_state(
+            ui,
+            tr("No photos here yet"),
+            if caps.has_folders() {
+                tr("Choose another folder in the sidebar or add RAW, JPEG, PNG or HEIC photos to this folder.")
+            } else {
+                tr("Tap + to import RAW, JPEG, PNG or HEIC photos.")
+            },
+            caps.linked_folders.then(|| tr("Link a folder…")),
+        );
+        if clicked {
+            app.library.media.link_dialog = true;
+        }
+        return;
+    }
+    let media = &app.library.media;
+    if media.unavailable_roots.contains(&media.root) {
+        if show_library_empty_state(
+            ui,
+            tr("This folder is not available"),
+            tr("Reconnect its storage, then try again."),
+            Some(tr("Try again")),
+        ) {
+            app.library.refresh(ui.ctx());
+        }
+        return;
+    }
+    let folder = media.folder.as_str();
+    let has_subfolders = media
+        .folders
+        .iter()
+        .any(|child| android_folder_parent(&child.path) == folder);
+    if !has_subfolders {
+        show_library_empty_state(
+            ui,
+            tr("No photos here yet"),
+            tr("Photos added to this folder appear here."),
+            None,
+        );
+        return;
+    }
+    // Linking a parent of the photo folders looks like a failure otherwise.
+    if show_library_empty_state(
+        ui,
+        tr("No photos in this folder"),
+        tr("Open a subfolder to see its photos."),
+        Some(tr("Show folders")),
+    ) {
+        let folder = folder.to_owned();
+        app.library.media.expanded_folders.insert(folder);
+        app.set_library_folder_sidebar_open(true);
+    }
 }
 
 fn selected_library_folder_name(app: &CalibRawApp) -> Option<String> {
     if app.caps().has_media_library() {
         let folder = app.library.media.folder.as_str();
         return Some(if folder.is_empty() {
-            tr("All photos").to_owned()
+            app.library
+                .linked_folder_label()
+                .unwrap_or(tr("All photos"))
+                .to_owned()
         } else {
             folder.rsplit('/').next().unwrap_or(folder).to_owned()
         });
@@ -498,9 +601,10 @@ fn show_thumbnail_grid(
                 if drag_selecting && pointer.is_some_and(|pointer| item_rect.contains(pointer)) {
                     drag_target = Some(asset_id.clone());
                 }
+                // Only where the tile shows: the sidebar can cover part of the grid.
                 let long_pressed = touch_hold
                     .long_press_at
-                    .is_some_and(|origin| item_rect.contains(origin));
+                    .is_some_and(|origin| item_rect.intersect(ui.clip_rect()).contains(origin));
                 // Lifting a finger after a long press is no tap: the long
                 // press already selected.
                 let tapped = !touch_hold.suppress_tap;

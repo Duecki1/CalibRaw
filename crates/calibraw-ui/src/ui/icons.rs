@@ -39,15 +39,31 @@ pub(crate) fn folder_tree_row(
     selected: bool,
     sense: Sense,
 ) -> moduwu_design::TreeRowResponse {
+    let icon = if expanded == Some(true) {
+        regular::FOLDER_OPEN
+    } else {
+        regular::FOLDER
+    };
+    folder_tree_row_with_icon(ui, id_salt, name, depth, expanded, selected, sense, icon)
+}
+
+/// A folder tree row that says more with its icon than that it is a folder.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn folder_tree_row_with_icon(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    name: &str,
+    depth: usize,
+    expanded: Option<bool>,
+    selected: bool,
+    sense: Sense,
+    icon: &str,
+) -> moduwu_design::TreeRowResponse {
     let open = expanded == Some(true);
     let mut response = moduwu_design::TreeRow::new(id_salt, name)
         .depth(depth)
         .expanded(expanded)
-        .icon(if open {
-            regular::FOLDER_OPEN
-        } else {
-            regular::FOLDER
-        })
+        .icon(icon)
         .selected(selected)
         .sense(sense)
         .show(ui);

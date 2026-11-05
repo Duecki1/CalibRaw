@@ -852,7 +852,14 @@ pub(crate) fn show_library_action_overlays(
         .library
         .delete_originals_confirmation
         .as_ref()
-        .and_then(|assets| show_delete_originals_confirmation(ui, assets, app.caps()));
+        .and_then(|assets| {
+            show_delete_originals_confirmation(
+                ui,
+                assets,
+                app.caps(),
+                app.library.linked_folder_label(),
+            )
+        });
     if let Some(confirmed) = delete_choice {
         if let Some(assets) = app.library.delete_originals_confirmation.take() {
             if confirmed {

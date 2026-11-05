@@ -294,6 +294,31 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             && lens_correction.catalog.available
             && lens_correction.catalog.auto_match.is_none()
             && !original_raw.is_display_referred_raster();
+        if let crate::sidecar::SidecarTarget::Android {
+            raw_uri,
+            display_name,
+        } = &sidecar_target
+        {
+            use crate::sidecar::PhotoCompanion;
+            for (companion, needed) in [
+                (PhotoCompanion::AiDenoise, exposure.ai_denoise_enabled),
+                (PhotoCompanion::PeopleAnalysis, masks.has_people_masks()),
+            ] {
+                if !needed {
+                    continue;
+                }
+                if let Err(error) = platform.fetch_photo_companion(raw_uri, display_name, companion)
+                {
+                    append_notice(
+                        &mut sidecar_warning,
+                        &tr_fmt(
+                            "A saved AI result could not be read from the photo's folder ({error}). It will be made again if needed.",
+                            &[("error", &error)],
+                        ),
+                    );
+                }
+            }
+        }
         restore_ai_denoise_result(&full_raw, &exposure, ai_denoise_result_path.as_deref())?;
         let people_analysis =
             load_people_analysis(people_analysis_path.as_deref(), &masks, &full_raw, &remove);

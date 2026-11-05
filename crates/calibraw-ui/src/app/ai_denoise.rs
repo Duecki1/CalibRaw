@@ -50,21 +50,25 @@ impl CalibRawApp {
         &self,
         asset: &crate::ui::library::LibraryAsset,
     ) -> bool {
-        let target = match &asset.locator {
-            crate::ui::library::LibraryLocator::Desktop(path) => {
-                crate::sidecar::SidecarTarget::Desktop {
+        match &asset.locator {
+            crate::ui::library::LibraryLocator::Desktop(path) => self
+                .ai_denoise_result_path_for_target(&crate::sidecar::SidecarTarget::Desktop {
                     raw_path: path.clone(),
-                }
-            }
-            crate::ui::library::LibraryLocator::Android { uri } => {
-                crate::sidecar::SidecarTarget::Android {
-                    raw_uri: uri.clone(),
-                    display_name: asset.display_name.clone(),
-                }
-            }
-        };
-        self.ai_denoise_result_path_for_target(&target)
-            .is_some_and(|path| !path.is_file())
+                })
+                .is_some_and(|path| !path.is_file()),
+            crate::ui::library::LibraryLocator::Android { uri } => self
+                .platform
+                .photo_companion_exists(
+                    uri,
+                    &asset.display_name,
+                    crate::sidecar::PhotoCompanion::AiDenoise,
+                )
+                .map(|exists| !exists)
+                .unwrap_or_else(|error| {
+                    log::warn!("{error}");
+                    false
+                }),
+        }
     }
 
     /// AI denoise is on for the open photo but its result is not installed.
@@ -344,23 +348,21 @@ impl CalibRawApp {
                     .ok_or_else(|| anyhow::anyhow!(tr("the RAW was closed")))
                     .and_then(|raw| raw.set_ai_denoised_image(image));
                 match install {
-                    Ok(()) => {
-                        match save_error {
-                            Some(error) => self.report_error(
-                                ErrorKind::AiDenoiseNotSaved,
-                                tr_fmt(
-                                    "AI denoise applied, but its result could not be saved next to the photo ({error}). It will need to run again the next time the photo is opened.",
-                                    &[("error", &error)],
-                                ),
-                            ),
-                            None => {
-                                self.ui.notice = Some(
+                    Ok(()) => match save_error {
+                        Some(error) => self.report_error(
+                            ErrorKind::AiDenoiseNotSaved,
+                            super::photo_companions::ai_denoise_not_saved_message(&error),
+                        ),
+                        None => {
+                            self.ui.notice = Some(
                                     tr("AI denoise applied locally. Standard denoise values were preserved.")
                                         .to_owned(),
                                 );
-                            }
+                            self.publish_open_photo_companion(
+                                crate::sidecar::PhotoCompanion::AiDenoise,
+                            );
                         }
-                    }
+                    },
                     Err(error) => {
                         let changed = self.develop.exposure.ai_denoise_enabled;
                         self.develop.exposure.ai_denoise_enabled = false;
@@ -368,7 +370,13 @@ impl CalibRawApp {
                         if changed {
                             self.note_edit_changed();
                         }
-                        self.report_error(ErrorKind::AiDenoise, tr_fmt("Could not install AI denoise: {error}", &[("error", &format!("{error:#}"))]));
+                        self.report_error(
+                            ErrorKind::AiDenoise,
+                            tr_fmt(
+                                "Could not install AI denoise: {error}",
+                                &[("error", &format!("{error:#}"))],
+                            ),
+                        );
                     }
                 }
             }

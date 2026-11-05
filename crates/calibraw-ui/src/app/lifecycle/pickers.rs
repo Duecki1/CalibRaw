@@ -91,6 +91,53 @@ impl CalibRawApp {
         }
     }
 
+    /// Asks for a folder to link through the platform's folder picker.
+    pub(crate) fn open_link_folder_picker(&mut self) {
+        if self.android_foreground_task_active() {
+            self.ui.notice = Some(
+                tr("Wait for the current foreground operation to finish before linking a folder.")
+                    .to_owned(),
+            );
+            self.egui_ctx.request_repaint();
+            return;
+        }
+        if self.android.picker_pending {
+            return;
+        }
+        match self.platform.open_link_folder_picker() {
+            Ok(()) => self.android.picker_pending = true,
+            Err(error) => self.report_error(
+                ErrorKind::LinkedFolder,
+                tr_fmt("Could not link the folder: {error}", &[("error", &error)]),
+            ),
+        }
+    }
+
+    fn poll_linked_folders(&mut self) {
+        while let Some(result) = self.platform.take_link_folder_result() {
+            self.android.picker_pending = false;
+            match result {
+                crate::platform::LinkFolderResult::Linked { key } => {
+                    self.library.reload_linked_folders();
+                    self.select_android_library_root(key);
+                    self.set_library_folder_sidebar_open(false);
+                }
+                crate::platform::LinkFolderResult::Cancelled => {}
+                crate::platform::LinkFolderResult::Failed(error) => self.report_error(
+                    ErrorKind::LinkedFolder,
+                    tr_fmt("Could not link the folder: {error}", &[("error", &error)]),
+                ),
+            }
+        }
+        if self.platform.take_library_changed() && !self.library.is_scanning() {
+            self.library.refresh(&self.egui_ctx);
+        }
+        if let Some(error) = self.library.take_linked_folder_error() {
+            self.report_error(ErrorKind::LinkedFolder, error);
+        }
+        self.poll_photo_companion_publishes();
+    }
+
     pub(crate) fn poll_desktop_picker(&mut self, frame: &eframe::Frame) {
         let result = self
             .ui
@@ -142,6 +189,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_android_picker(&mut self, frame: &eframe::Frame) {
+        self.poll_linked_folders();
         // Before the results: a batch's progress always precedes its `BatchImported`.
         if let Some(progress) = self.platform.take_import_progress() {
             self.android.photo_import = Some(PhotoImportStatus::Copying(progress));

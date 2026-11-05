@@ -138,6 +138,8 @@ job records the value it started with.
 | Sidecar save | `VecDeque` of requests, one write in flight | none; writes are short | requests carry `generation` and `revision`; stale completions are ignored | failure keeps a recovery request and shows a dialog |
 | Heap purge (Android, Linux glibc) | one `calibraw-heap-purge` thread in `calibraw_core::system_memory`; requests made while a purge is queued or running are served by one more | none; a purge takes up to a few hundred milliseconds | none; it only returns pages the allocator already freed | a thread that cannot start leaves memory with the allocator; an Android without `M_PURGE` changes nothing |
 | Library ratings and flags | one `calibraw-review-writer` thread per library, started by the first change; saves run in the order they were made | none; a later change to a photo queues behind the earlier one, and the grid shows a saved review only once its photo has no save waiting | the open photo changes through its document: on Android its review is saved with the edits, on desktop with its editing time | each save reports the review its sidecar then holds; failures show the error dialog; library photo actions, opening a photo and exit wait up to two seconds for queued saves, as a media-library save rewrites the whole sidecar |
+| Linked folder tree | one `calibraw-library-folders` thread per scan of a linked folder, beside its photo scan | none; bounded by the folder limits | its folders carry the scan's generation; older ones are ignored | logged; the photo scan reaches the same folder and shows the error dialog |
+| Linked folder AI results | one thread per finished AI job, polled through `AndroidState::companion_publishes` | none | copies to the photo the job finished for | error dialog; the result stays usable until the photo closes |
 | Library thumbnails | shared work queue for a worker pool | `AtomicU64` generation; workers exit when it changes | generation bump on folder change | each item's result, success or error, is sent with its generation; older generations are ignored |
 
 Job channels are unbounded `std::sync::mpsc` channels: each job sends a
@@ -314,7 +316,7 @@ production `ShaderManager` composes.
   else compiles on every target and branches at run time:
   - `PlatformCaps` (`form_factor`, `storage`, `memory`,
     `tasks_need_foreground`, `configurable_ai_runtime`, `video_encoder`,
-    `can_restart`) is what views and handlers read. Views take it, or
+    `can_restart`, `linked_folders`) is what views and handlers read. Views take it, or
     `app.caps()`, and return actions; leaf widgets without the app use
     `PlatformCaps::CURRENT`. Data that already names its kind is matched
     instead: `LibraryLocator`, `SidecarTarget` and `ExportDestination`.
@@ -338,5 +340,17 @@ production `ShaderManager` composes.
 - Library storage lives in `ui/library/folders/` (folders on disk) and
   `ui/library/media_library/` (the Android library); `ui/library/sources.rs`
   dispatches on `PlatformCaps::storage`.
+- The Android library has one `LibraryStore` per place photos live:
+  `FileLibraryStore` (`.library`, by path) and one `TreeLibraryStore` per linked
+  folder (the Storage Access Framework, no manifest permission).
+  `StorageManager` picks the store from the photo's URI, so Rust keeps treating
+  URIs as opaque. Linked photos are `calibraw-tree://{key}/{path}/{name}`, as a
+  document URI gives no parent and can change on rename. Android's persisted
+  grants are the list of linked folders. `TreeLibraryStore` replaces a file by
+  writing beside it and renaming, as SAF has no atomic replace, and the next read
+  restores a sidecar a crash left moved aside. Native code reads and writes AI
+  companions by path, so a linked photo's live in the cache and are copied with
+  `fetch_photo_companion` (document load) and `publish_photo_companion` (after the
+  job).
 - Edit replay picks FFmpeg or the platform encoder from
   `PlatformCaps::video_encoder` (`services/replay/`).

@@ -86,6 +86,62 @@ pub fn list_library_folders(app: &AndroidApp) -> Result<Vec<LibraryFolder>, Stri
         .collect()
 }
 
+pub fn list_linked_folders(app: &AndroidApp) -> Result<Vec<LinkedFolder>, String> {
+    let encoded = with_storage_manager(app, |env, storage_manager| {
+        let value = env.call_method(
+            storage_manager,
+            jni::jni_str!("listLinkedFolders"),
+            jni::jni_sig!(() -> JString),
+            &[],
+        )?;
+        java_string(env, value)
+    })
+    .map_err(|error| format!("could not list linked folders: {error:#}"))?;
+    encoded
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let mut fields = line.split('\t');
+            let key = decode_uri_component(fields.next().unwrap_or_default())?;
+            let label = decode_uri_component(fields.next().unwrap_or_default())?;
+            if fields.next().is_some() || key.is_empty() || label.is_empty() {
+                return Err("malformed linked folder record".to_owned());
+            }
+            Ok(LinkedFolder { key, label })
+        })
+        .collect()
+}
+
+pub fn unlink_folder(app: &AndroidApp, key: &str) -> Result<(), String> {
+    with_storage_manager(app, |env, storage_manager| {
+        let key = env.new_string(key)?;
+        env.call_method(
+            storage_manager,
+            jni::jni_str!("unlinkFolder"),
+            jni::jni_sig!((JString) -> void),
+            &[JValue::Object(&key)],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("{error:#}"))
+}
+
+/// Lists from the top of a linked folder, or of the app's library for an
+/// empty key.
+pub fn select_library_root(app: &AndroidApp, key: &str) -> Result<(), String> {
+    with_storage_manager(app, |env, storage_manager| {
+        let key = env.new_string(key)?;
+        env.call_method(
+            storage_manager,
+            jni::jni_str!("selectRawLibraryRoot"),
+            jni::jni_sig!((JString) -> void),
+            &[JValue::Object(&key)],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("{error:#}"))
+}
+
 pub fn select_library_folder(app: &AndroidApp, relative_path: &str) -> Result<(), String> {
     with_storage_manager(app, |env, storage_manager| {
         let relative_path = env.new_string(relative_path)?;

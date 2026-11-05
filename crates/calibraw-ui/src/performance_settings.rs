@@ -113,6 +113,8 @@ pub(crate) struct PerformanceSettings {
     pub adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings,
     /// The media-library folder open last; media-library storage only.
     pub(crate) last_android_library_folder: String,
+    /// The linked folder that folder is in; empty for the media library.
+    pub(crate) last_android_library_root: String,
     /// The folder library's root and selected folder; folder storage only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_library_folder: Option<PathBuf>,
@@ -332,6 +334,7 @@ impl Default for PerformanceSettings {
             new_photo_preset: None,
             adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings::default(),
             last_android_library_folder: String::new(),
+            last_android_library_root: String::new(),
             last_library_folder: None,
             last_library_selected_folder: None,
             library_folder_sidebar_open: true,

@@ -3,6 +3,31 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
 
+/// Walks a linked folder beside its photo scan. A failure is only logged: the
+/// photo scan reaches the same folder and reports it.
+fn spawn_linked_folder_walk(
+    platform: Arc<dyn Platform>,
+    event_sender: mpsc::SyncSender<ScanEvent>,
+    generation: u64,
+    repaint: egui::Context,
+) {
+    let walk = std::thread::Builder::new()
+        .name("calibraw-library-folders".to_owned())
+        .spawn(move || match platform.list_library_folders() {
+            Ok(folders) => {
+                let _ = event_sender.send(ScanEvent::AndroidFolders {
+                    generation,
+                    folders,
+                });
+                repaint.request_repaint();
+            }
+            Err(error) => log::warn!("{error}"),
+        });
+    if let Err(error) = walk {
+        log::warn!("could not walk the linked folder: {error}");
+    }
+}
+
 impl LibraryState {
     pub(crate) fn refresh(&mut self, context: &egui::Context) {
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
@@ -117,25 +142,37 @@ impl LibraryState {
                 })
         } else {
             let platform = Arc::clone(&self.platform);
+            // A linked folder may be slow to walk or to open photo by photo,
+            // so its photos do not wait for its folders or their dimensions.
+            let linked = !self.media.root.is_empty();
             self.status = tr("Refreshing CalibRaw library…").to_owned();
             std::thread::Builder::new()
                 .name("calibraw-library".to_owned())
                 .spawn(move || {
-                    let folders = match platform.list_library_folders() {
-                        Ok(folders) => folders,
-                        Err(error) => {
-                            send_scan_failure(&event_sender, generation, error, &repaint);
+                    if linked {
+                        spawn_linked_folder_walk(
+                            Arc::clone(&platform),
+                            event_sender.clone(),
+                            generation,
+                            repaint.clone(),
+                        );
+                    } else {
+                        let folders = match platform.list_library_folders() {
+                            Ok(folders) => folders,
+                            Err(error) => {
+                                send_scan_failure(&event_sender, generation, error, &repaint);
+                                return;
+                            }
+                        };
+                        if event_sender
+                            .send(ScanEvent::AndroidFolders {
+                                generation,
+                                folders,
+                            })
+                            .is_err()
+                        {
                             return;
                         }
-                    };
-                    if event_sender
-                        .send(ScanEvent::AndroidFolders {
-                            generation,
-                            folders,
-                        })
-                        .is_err()
-                    {
-                        return;
                     }
                     let documents = match platform.list_library_documents() {
                         Ok(documents) => documents,
@@ -150,10 +187,12 @@ impl LibraryState {
                         .take(MAX_LIBRARY_FILES)
                         .map(LibraryAsset::from_android_document)
                         .collect::<Vec<_>>();
-                    for asset in &mut assets {
-                        if let Some(uri) = asset.android_uri() {
-                            asset.metadata.dimensions_hint =
-                                platform.load_library_display_dimensions(uri).ok();
+                    if !linked {
+                        for asset in &mut assets {
+                            if let Some(uri) = asset.android_uri() {
+                                asset.metadata.dimensions_hint =
+                                    platform.load_library_display_dimensions(uri).ok();
+                            }
                         }
                     }
                     let thumbnail_platform = Arc::clone(&platform);
@@ -326,6 +365,9 @@ impl LibraryState {
                     warning_count,
                     truncated,
                 } if generation == self.generation.load(Ordering::Acquire) => {
+                    self.media
+                        .unavailable_roots
+                        .remove(self.media.root.as_str());
                     let mut previous = std::mem::take(&mut self.entries)
                         .into_iter()
                         .map(|entry| (entry.asset.id.clone(), entry))
@@ -452,6 +494,14 @@ impl LibraryState {
                     self.catalog_ready = true;
                     self.event_receiver = None;
                     self.request_sender = None;
+                    if let Some(folder) = self.linked_folder_label().map(str::to_owned) {
+                        self.media.pending_error = Some(tr_fmt(
+                            "{folder} is not available. Reconnect its storage or link it again. ({error})",
+                            &[("folder", &folder), ("error", &error)],
+                        ));
+                        let root = self.media.root.clone();
+                        self.media.unavailable_roots.insert(root);
+                    }
                     self.status = error;
                     break;
                 }

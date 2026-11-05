@@ -48,21 +48,108 @@ pub fn people_analysis_path(
     .map_err(|error| format!("could not locate the Android people analysis: {error:#}"))
 }
 
-/// Deletes a file kept next to the RAW at `path` once the saved edit no
-/// longer uses it. A failure only leaves a stale file behind, so it is
-/// logged.
-fn remove_unused_companion(path: Result<PathBuf, String>) {
-    let path = match path {
-        Ok(path) => path,
-        Err(error) => {
-            log::warn!("{error}");
-            return;
-        }
-    };
-    match fs::remove_file(&path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => log::warn!("could not remove {}: {error}", path.display()),
+fn call_companion_method(
+    app: &AndroidApp,
+    method: impl AsRef<jni::strings::JNIStr>,
+    raw_uri: &str,
+    display_name: &str,
+    companion: calibraw_core::sidecar::PhotoCompanion,
+) -> jni::errors::Result<()> {
+    with_storage_manager(app, |env, storage_manager| {
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
+        let suffix = env.new_string(companion.suffix())?;
+        env.call_method(
+            storage_manager,
+            method,
+            jni::jni_sig!((JString, JString, JString) -> void),
+            &[
+                JValue::Object(&raw_uri),
+                JValue::Object(&display_name),
+                JValue::Object(&suffix),
+            ],
+        )?;
+        Ok(())
+    })
+}
+
+/// Makes the companion's local path hold what the photo's folder has. May
+/// copy a large file, so it is called off the UI thread.
+pub fn fetch_photo_companion(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    companion: calibraw_core::sidecar::PhotoCompanion,
+) -> Result<(), String> {
+    call_companion_method(
+        app,
+        jni::jni_str!("fetchPhotoCompanion"),
+        raw_uri,
+        display_name,
+        companion,
+    )
+    .map_err(|error| format!("{error:#}"))
+}
+
+/// Stores what was written at the companion's local path in the photo's
+/// folder. May copy a large file, so it is called off the UI thread.
+pub fn publish_photo_companion(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    companion: calibraw_core::sidecar::PhotoCompanion,
+) -> Result<(), String> {
+    call_companion_method(
+        app,
+        jni::jni_str!("publishPhotoCompanion"),
+        raw_uri,
+        display_name,
+        companion,
+    )
+    .map_err(|error| format!("{error:#}"))
+}
+
+pub fn photo_companion_exists(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    companion: calibraw_core::sidecar::PhotoCompanion,
+) -> Result<bool, String> {
+    with_storage_manager(app, |env, storage_manager| {
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
+        let suffix = env.new_string(companion.suffix())?;
+        env.call_method(
+            storage_manager,
+            jni::jni_str!("hasPhotoCompanion"),
+            jni::jni_sig!((JString, JString, JString) -> bool),
+            &[
+                JValue::Object(&raw_uri),
+                JValue::Object(&display_name),
+                JValue::Object(&suffix),
+            ],
+        )?
+        .z()
+    })
+    .map_err(|error| format!("{error:#}"))
+}
+
+/// Deletes a file kept next to the RAW once the saved edit no longer uses it.
+/// A failure only leaves a stale file behind, so it is logged.
+fn remove_unused_companion(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    companion: calibraw_core::sidecar::PhotoCompanion,
+) {
+    if let Err(error) = call_companion_method(
+        app,
+        jni::jni_str!("removePhotoCompanion"),
+        raw_uri,
+        display_name,
+        companion,
+    ) {
+        log::warn!("could not remove {}: {error:#}", companion.suffix());
     }
 }
 
@@ -278,10 +365,20 @@ pub fn save_android_with_review_and_editing_time(
         );
     }
     if result.is_ok() && !uses_ai_denoise {
-        remove_unused_companion(ai_denoise_result_path(app, raw_uri, display_name));
+        remove_unused_companion(
+            app,
+            raw_uri,
+            display_name,
+            calibraw_core::sidecar::PhotoCompanion::AiDenoise,
+        );
     }
     if result.is_ok() && !uses_people {
-        remove_unused_companion(people_analysis_path(app, raw_uri, display_name));
+        remove_unused_companion(
+            app,
+            raw_uri,
+            display_name,
+            calibraw_core::sidecar::PhotoCompanion::PeopleAnalysis,
+        );
     }
     result
 }

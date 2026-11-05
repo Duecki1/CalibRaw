@@ -1,6 +1,6 @@
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
-use crate::sidecar::{EditState, LoadedSidecar, PhotoReview, SidecarError};
+use crate::sidecar::{EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SidecarError};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -34,6 +34,25 @@ pub(crate) struct LibraryDocument {
 pub(crate) struct LibraryFolder {
     pub(crate) path: String,
     pub(crate) name: String,
+}
+
+/// A folder of the person's own, opened where it is; `key` names it in the
+/// platform and in settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LinkedFolder {
+    pub(crate) key: String,
+    pub(crate) label: String,
+}
+
+#[cfg_attr(
+    not(target_os = "android"),
+    allow(dead_code, reason = "constructed only by the Android backend")
+)]
+#[derive(Debug)]
+pub(crate) enum LinkFolderResult {
+    Linked { key: String },
+    Cancelled,
+    Failed(String),
 }
 
 #[cfg_attr(
@@ -324,6 +343,34 @@ pub(crate) trait Platform: Send + Sync {
     fn select_library_folder(&self, _relative_path: &str) -> Result<(), String> {
         Err(unavailable("the media library"))
     }
+    /// Asks for a folder to link; the result arrives through
+    /// [`Self::take_link_folder_result`].
+    fn open_link_folder_picker(&self) -> Result<(), String> {
+        Err(unavailable("linked folders"))
+    }
+    fn take_link_folder_result(&self) -> Option<LinkFolderResult> {
+        None
+    }
+    fn list_linked_folders(&self) -> Result<Vec<LinkedFolder>, String> {
+        Ok(Vec::new())
+    }
+    /// Stops showing a linked folder; its files stay where they are.
+    fn unlink_folder(&self, _key: &str) -> Result<(), String> {
+        Err(unavailable("linked folders"))
+    }
+    /// Lists from the top of a linked folder, or of the media library for an
+    /// empty key.
+    fn select_library_root(&self, key: &str) -> Result<(), String> {
+        if key.is_empty() {
+            Ok(())
+        } else {
+            Err(unavailable("linked folders"))
+        }
+    }
+    /// Whether sync changed the selected linked folder since the last call.
+    fn take_library_changed(&self) -> bool {
+        false
+    }
     /// Creates `name` under `parent_path` and returns the new folder's path.
     fn create_library_folder(&self, _parent_path: &str, _name: &str) -> Result<String, String> {
         Err(unavailable("the media library"))
@@ -429,6 +476,39 @@ pub(crate) trait Platform: Send + Sync {
     }
     fn people_analysis_path(&self, _raw_uri: &str, _display_name: &str) -> Result<PathBuf, String> {
         Err(unavailable("media-library people analyses"))
+    }
+    /// Makes the companion's local path hold what the photo's folder has,
+    /// where that path is not the folder itself. May copy a large file.
+    fn fetch_photo_companion(
+        &self,
+        _raw_uri: &str,
+        _display_name: &str,
+        _companion: PhotoCompanion,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    /// Stores what was written at the companion's local path in the photo's
+    /// folder. May copy a large file.
+    fn publish_photo_companion(
+        &self,
+        _raw_uri: &str,
+        _display_name: &str,
+        _companion: PhotoCompanion,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    /// Whether the photo's folder holds this companion.
+    fn photo_companion_exists(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        companion: PhotoCompanion,
+    ) -> Result<bool, String> {
+        let path = match companion {
+            PhotoCompanion::AiDenoise => self.ai_denoise_result_path(raw_uri, display_name),
+            PhotoCompanion::PeopleAnalysis => self.people_analysis_path(raw_uri, display_name),
+        }?;
+        Ok(path.is_file())
     }
     fn load_library_thumbnail(
         &self,

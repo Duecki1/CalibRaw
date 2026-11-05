@@ -675,17 +675,17 @@ impl CalibRawApp {
                 }
             }
         }
+        let kept = not_kept.is_none();
         if let Some(reason) = not_kept.filter(|_| !stale) {
             self.report_error(
                 ErrorKind::PeopleNotSaved,
-                tr_fmt(
-                    "The people in this photo could not be saved next to it ({reason}). They \
-                     will be found again the next time the photo is opened.",
-                    &[("reason", &reason)],
-                ),
+                crate::app::photo_companions::people_not_saved_message(&reason),
             );
         }
         let succeeded = !cancelled && !stale && error_message.is_none();
+        if succeeded && kept {
+            self.publish_open_photo_companion(crate::sidecar::PhotoCompanion::PeopleAnalysis);
+        }
         if self.ai.update.is_some() {
             self.advance_ai_update(succeeded, cancelled || stale, error_message);
         } else if let Some(message) = error_message {

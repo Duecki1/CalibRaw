@@ -45,6 +45,7 @@ mod actions;
 pub(crate) use actions::AppAction;
 mod ai_denoise;
 mod discord_presence;
+mod photo_companions;
 use discord_presence::DiscordPresence;
 mod edit_history;
 use edit_history::EditHistory;

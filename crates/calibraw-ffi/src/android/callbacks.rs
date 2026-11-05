@@ -177,6 +177,44 @@ pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnExternal
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnFolderLinked<'local>(
+    mut unowned_env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    key: JString<'local>,
+    error: JString<'local>,
+) {
+    unowned_env
+        .with_env(|_env| -> jni::errors::Result<()> {
+            let key = key.to_string();
+            let error = error.to_string();
+            let result = if !error.is_empty() {
+                LinkFolderResult::Failed(error)
+            } else if key.is_empty() {
+                LinkFolderResult::Cancelled
+            } else {
+                LinkFolderResult::Linked { key }
+            };
+            if let Ok(mut queue) = link_folder_results().lock() {
+                queue.push_back(result);
+            }
+            request_repaint();
+            Ok(())
+        })
+        .resolve_with::<LogContextErrorAndDefault, _>(|| {
+            "CalibRawActivity.nativeOnFolderLinked".to_owned()
+        });
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnLibraryChanged<'local>(
+    _unowned_env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+) {
+    LIBRARY_CHANGED.store(true, Ordering::Release);
+    request_repaint();
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnCameraProfileFolderImportStarted<
     'local,
 >(
