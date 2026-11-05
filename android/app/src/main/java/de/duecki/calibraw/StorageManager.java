@@ -551,14 +551,16 @@ final class StorageManager {
             }
             throw new IllegalStateException("Android storage could not rename the RAW sidecar");
         }
-        File sourcePeople = new File(
-                parent, AndroidStorageContract.peopleAnalysisDisplayName(displayName));
-        // The people are found again without it, so a failed move only costs that.
-        if (sourcePeople.isFile()
-                && !sourcePeople.renameTo(new File(
-                        parent, AndroidStorageContract.peopleAnalysisDisplayName(requestedName)))) {
-            Log.w(LOG_TAG, "Renamed RAW but could not keep its people analysis");
-        }
+        keepRegeneratedCompanion(
+                parent,
+                AndroidStorageContract.aiDenoiseDisplayName(displayName),
+                AndroidStorageContract.aiDenoiseDisplayName(requestedName),
+                "AI-denoise result");
+        keepRegeneratedCompanion(
+                parent,
+                AndroidStorageContract.peopleAnalysisDisplayName(displayName),
+                AndroidStorageContract.peopleAnalysisDisplayName(requestedName),
+                "people analysis");
         String destinationUri = Uri.fromFile(destinationRaw).toString();
         try {
             thumbnailCache.copyDeveloped(rawUriText, destinationUri);
@@ -568,6 +570,15 @@ final class StorageManager {
         }
         thumbnailCache.clearDeveloped(rawUriText);
         return destinationUri;
+    }
+
+    /** The app can produce this file again, so a failed move only costs running that again. */
+    private static void keepRegeneratedCompanion(
+            File parent, String sourceName, String destinationName, String description) {
+        File source = new File(parent, sourceName);
+        if (source.isFile() && !source.renameTo(new File(parent, destinationName))) {
+            Log.w(LOG_TAG, "Renamed RAW but could not keep its " + description);
+        }
     }
 
     void deleteRawLibraryDocument(String rawUriText, String displayName) throws Exception {
