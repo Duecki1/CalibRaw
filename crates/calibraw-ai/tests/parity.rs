@@ -32,13 +32,15 @@
 //! X-Trans denoise cases render or demosaic on the GPU before inference, so
 //! their goldens are specific to the adapter that blessed them.
 //!
-//! Golden formats: masks, depth and alpha are 8-bit grayscale PNGs; Bayer
-//! denoise output is a 16-bit grayscale PNG of sensor codes; linear RGB is a
-//! 16-bit RGB PNG whose samples are IEEE float16 bit patterns, so it
-//! round-trips exactly. `SHA256SUMS` pins every golden in `sha256sum` format.
+//! Golden formats: masks, sky, normals and alpha are 8-bit grayscale PNGs;
+//! scene disparity and Bayer denoise output are 16-bit grayscale PNGs of
+//! stored values and sensor codes; a scene camera is a text file of its
+//! values; linear RGB is a 16-bit RGB PNG whose samples are IEEE float16 bit
+//! patterns, so it round-trips exactly. `SHA256SUMS` pins every golden in
+//! `sha256sum` format.
 
 use calibraw_ai::models::denoise::{spawn_rawnind_denoise, RawNindJob};
-use calibraw_ai::models::masks::{spawn_ai_mask, AiMaskModel, AiMaskWorkerRequest};
+use calibraw_ai::models::masks::{spawn_ai_mask, AiMaskModel, AiMaskResult, AiMaskWorkerRequest};
 use calibraw_ai::models::object::{
     spawn_object_mask, ObjectInferenceCache, ObjectMaskRequest, ObjectMaskWorkerRequest,
     DECODER_MODEL, ENCODER_MODEL,
@@ -55,7 +57,7 @@ use calibraw_ai::models::{depth, remove, sky};
 use calibraw_ai::pipeline::{
     crop_raw, load_raw_file, CfaKind, ExposureParams, GeometryTransform, LoadedRaw, MaskImage,
     MaskStack, ObjectStroke, PersonPart, RemoveBrushPoint, RemoveBrushStroke, RemoveEditState,
-    SceneNormals,
+    SceneCamera, SceneDepth,
 };
 use calibraw_ai::{
     AiConfigChange, AiJobEvent, AiSessionStatus, CpuReason, Placement, RuntimeSource, Sha256,
@@ -176,8 +178,8 @@ fn sky() {
     harness.check("sky", Tolerance::MaskIou(0.995), &output);
 }
 
-/// Distill-Any-Depth with MoGe-2 ViT-S: depth with the sky farthest, and
-/// normals.
+/// Distill-Any-Depth with MoGe-2 ViT-S: disparity, sky, normals and the
+/// camera fitted to MoGe-2's points.
 #[test]
 #[ignore = "needs CALIBRAW_PARITY_PHOTOS, the depth and normal models and ONNX Runtime"]
 fn depth_low() {
@@ -194,7 +196,16 @@ fn depth_medium() {
 fn depth_case(name: &str, quality: SceneDepthQuality) {
     let harness = Harness::lock();
     let output = harness.depth_job(quality);
-    harness.check(name, Tolerance::Levels { mean: 1.0, max: 24 }, &output);
+    harness.check(
+        name,
+        Tolerance::SceneDepth {
+            // One 8-bit level of mean and 24 of maximum.
+            disparity: (257.0, 24 * 257),
+            levels: (1.0, 24),
+            camera: 0.02,
+        },
+        &output,
+    );
 }
 
 /// SAM 2.1 encoder and decoder: one positive stroke along the ship's hull,
@@ -509,36 +520,31 @@ impl Harness {
         model_path: PathBuf,
         (subject_quality, subject_precision): (SubjectMaskQuality, SubjectModelPrecision),
     ) -> Output {
-        let (output, _) = self.ai_mask(model, model_path, subject_quality, subject_precision, None);
-        output
+        let AiMaskResult::Probability(mask) =
+            self.ai_mask(model, model_path, subject_quality, subject_precision, None)
+        else {
+            panic!("a {} job returns a probability mask", model.noun());
+        };
+        Output::Mask(plane(&mask))
     }
 
-    /// The depth job with `quality`'s normal model: depth and normals.
+    /// The depth job with `quality`'s normal model, without a focal length,
+    /// so the field of view comes from the normal model too.
     fn depth_job(&self, quality: SceneDepthQuality) -> Output {
         let geometry = SceneGeometryModel {
             path: self.models.join(quality.model().cache_filename),
             quality,
         };
-        let (Output::Mask(depth), normals) = self.ai_mask(
+        let AiMaskResult::SceneDepth(depth) = self.ai_mask(
             AiMaskModel::Depth,
             self.models.join(depth::MODEL.cache_filename),
             Default::default(),
             Default::default(),
             Some(geometry),
         ) else {
-            unreachable!("mask jobs return masks");
+            panic!("the depth job returns scene depth");
         };
-        let normals = normals.expect("the depth job returns normals");
-        let plane = |image: &MaskImage| Plane {
-            width: image.width,
-            height: image.height,
-            values: image.pixels.to_vec(),
-        };
-        Output::SceneDepth {
-            depth,
-            normal_x: plane(normals.x()),
-            normal_y: plane(normals.y()),
-        }
+        Output::scene_depth(&depth)
     }
 
     fn ai_mask(
@@ -548,7 +554,7 @@ impl Harness {
         subject_quality: SubjectMaskQuality,
         subject_precision: SubjectModelPrecision,
         scene_geometry: Option<SceneGeometryModel>,
-    ) -> (Output, Option<SceneNormals>) {
+    ) -> AiMaskResult {
         let scene = self.scene();
         let events = spawn_ai_mask(
             AiMaskWorkerRequest {
@@ -556,6 +562,7 @@ impl Harness {
                 subject_quality,
                 subject_precision,
                 scene_geometry,
+                focal_length_35mm: None,
                 model_path,
                 allow_download: self.download,
                 width: scene.width(),
@@ -564,18 +571,10 @@ impl Harness {
             },
             Arc::new(AtomicBool::new(false)),
         );
-        let result = finish(events, |event| match event {
+        finish(events, |event| match event {
             AiJobEvent::Finished(result) => Some(result),
             _ => None,
-        });
-        (
-            Output::Mask(Plane {
-                width: result.width,
-                height: result.height,
-                values: result.mask,
-            }),
-            result.normals,
-        )
+        })
     }
 
     fn object_job(
@@ -839,12 +838,14 @@ impl LinearRgb {
 enum Output {
     /// Probability mask, 0–255.
     Mask(Plane),
-    /// Relative depth, 0–255, and the x and y of the normals predicted with
-    /// it (`SceneNormals`).
+    /// A depth result: stored disparity, sky probability, the x and y of the
+    /// normals (`SceneNormals`), and the camera.
     SceneDepth {
-        depth: Plane,
+        disparity: Codes,
+        sky: Plane,
         normal_x: Plane,
         normal_y: Plane,
+        camera: SceneCamera,
     },
     Cfa(Codes),
     Linear(LinearRgb),
@@ -857,18 +858,49 @@ enum Output {
 }
 
 impl Output {
+    fn scene_depth(depth: &SceneDepth) -> Self {
+        let disparity = depth.disparity();
+        Self::SceneDepth {
+            disparity: Codes {
+                width: disparity.width(),
+                height: disparity.height(),
+                values: disparity.values().to_vec(),
+            },
+            sky: plane(depth.sky()),
+            normal_x: plane(depth.normals().x()),
+            normal_y: plane(depth.normals().y()),
+            camera: *depth.camera(),
+        }
+    }
+
     /// Golden file names and contents.
     fn files(&self, name: &str) -> Vec<(String, Vec<u8>)> {
         match self {
             Self::Mask(plane) => vec![(format!("{name}.png"), png_l8(plane))],
             Self::SceneDepth {
-                depth,
+                disparity,
+                sky,
                 normal_x,
                 normal_y,
+                camera,
             } => vec![
-                (format!("{name}.png"), png_l8(depth)),
+                (format!("{name}.png"), png_l16(disparity)),
+                (format!("{name}-sky.png"), png_l8(sky)),
                 (format!("{name}-normal-x.png"), png_l8(normal_x)),
                 (format!("{name}-normal-y.png"), png_l8(normal_y)),
+                (
+                    format!("{name}-camera.txt"),
+                    format!(
+                        "{} {} {} {} {} {}\n",
+                        camera.focal_tan,
+                        camera.fit[0],
+                        camera.fit[1],
+                        camera.anchors[0],
+                        camera.anchors[1],
+                        camera.frame_relief
+                    )
+                    .into_bytes(),
+                ),
             ],
             Self::Cfa(codes) => vec![(format!("{name}.png"), png_l16(codes))],
             Self::Linear(rgb) => vec![(format!("{name}.png"), png_f16(rgb))],
@@ -888,11 +920,24 @@ impl Output {
         let file = |suffix: &str| &files[&format!("{name}{suffix}")];
         match like {
             Self::Mask(_) => Self::Mask(decode_l8(file(".png"))),
-            Self::SceneDepth { .. } => Self::SceneDepth {
-                depth: decode_l8(file(".png")),
-                normal_x: decode_l8(file("-normal-x.png")),
-                normal_y: decode_l8(file("-normal-y.png")),
-            },
+            Self::SceneDepth { .. } => {
+                let camera = String::from_utf8_lossy(file("-camera.txt"))
+                    .split_whitespace()
+                    .map(|value| value.parse().expect("golden camera"))
+                    .collect::<Vec<f32>>();
+                Self::SceneDepth {
+                    disparity: decode_l16(file(".png")),
+                    sky: decode_l8(file("-sky.png")),
+                    normal_x: decode_l8(file("-normal-x.png")),
+                    normal_y: decode_l8(file("-normal-y.png")),
+                    camera: SceneCamera {
+                        focal_tan: camera[0],
+                        fit: [camera[1], camera[2]],
+                        anchors: [camera[3], camera[4]],
+                        frame_relief: camera[5],
+                    },
+                }
+            }
             Self::Cfa(_) => Self::Cfa(decode_l16(file(".png"))),
             Self::Linear(_) => Self::Linear(decode_f16(file(".png"))),
             Self::Inpaint { .. } => {
@@ -907,6 +952,14 @@ impl Output {
                 }
             }
         }
+    }
+}
+
+fn plane(image: &MaskImage) -> Plane {
+    Plane {
+        width: image.width,
+        height: image.height,
+        values: image.pixels.to_vec(),
     }
 }
 
@@ -984,15 +1037,49 @@ fn decode_f16(bytes: &[u8]) -> LinearRgb {
 enum Tolerance {
     /// Minimum intersection over union of the masks thresholded at 50%.
     MaskIou(f64),
-    /// Largest mean and maximum absolute difference in 8-bit levels.
-    Levels { mean: f64, max: u8 },
     /// Largest mean and maximum absolute difference in RAW sensor codes.
     Codes { mean: f64, max: u16 },
+    /// Scene depth: the mean and maximum absolute difference of the disparity
+    /// in stored values and of the sky and normals in 8-bit levels, and the
+    /// largest relative difference of a camera value.
+    SceneDepth {
+        disparity: (f64, u16),
+        levels: (f64, u8),
+        camera: f32,
+    },
     /// Largest mean and maximum absolute difference in linear units.
     Linear { mean: f32, max: f32 },
     /// Minimum PSNR of the RGB in dB, with peak 1.0 (scene-linear white).
     /// Alpha comes from the brush, not the model, and must match exactly.
     Psnr(f64),
+}
+
+/// Compares two planes of 16-bit codes like [`compare_levels`].
+fn compare_codes(
+    mean: f64,
+    max: u16,
+    golden: &Codes,
+    actual: &Codes,
+) -> Result<Result<String, String>, String> {
+    same_size(golden.width, golden.height, actual.width, actual.height)?;
+    if golden.values == actual.values {
+        return Ok(Ok("bit-identical".to_owned()));
+    }
+    let mut sum = 0u64;
+    let mut actual_max = 0u16;
+    for (&golden, &actual) in golden.values.iter().zip(&actual.values) {
+        let difference = golden.abs_diff(actual);
+        sum += u64::from(difference);
+        actual_max = actual_max.max(difference);
+    }
+    let actual_mean = sum as f64 / golden.values.len().max(1) as f64;
+    let report =
+        format!("mean {actual_mean:.3} (limit {mean}), max {actual_max} (limit {max}) codes");
+    Ok(if actual_mean <= mean && actual_max <= max {
+        Ok(report)
+    } else {
+        Err(report)
+    })
 }
 
 /// Compares two 8-bit planes: `Err` when their sizes differ, otherwise a
@@ -1045,22 +1132,35 @@ fn compare(tolerance: Tolerance, golden: &Output, actual: &Output) -> Result<Str
             }
         }
         (
-            Tolerance::Levels { mean, max },
-            Output::SceneDepth {
-                depth,
-                normal_x,
-                normal_y,
+            Tolerance::SceneDepth {
+                disparity: (disparity_mean, disparity_max),
+                levels: (mean, max),
+                camera: camera_tolerance,
             },
             Output::SceneDepth {
-                depth: actual_depth,
+                disparity,
+                sky,
+                normal_x,
+                normal_y,
+                camera,
+            },
+            Output::SceneDepth {
+                disparity: actual_disparity,
+                sky: actual_sky,
                 normal_x: actual_x,
                 normal_y: actual_y,
+                camera: actual_camera,
             },
         ) => {
             let mut reports = Vec::new();
-            let mut within = true;
+            let report = compare_codes(disparity_mean, disparity_max, disparity, actual_disparity)?;
+            let mut within = report.is_ok();
+            reports.push(format!(
+                "disparity: {}",
+                report.unwrap_or_else(|error| error)
+            ));
             for (part, golden, actual) in [
-                ("depth", depth, actual_depth),
+                ("sky", sky, actual_sky),
                 ("normal x", normal_x, actual_x),
                 ("normal y", normal_y, actual_y),
             ] {
@@ -1068,6 +1168,25 @@ fn compare(tolerance: Tolerance, golden: &Output, actual: &Output) -> Result<Str
                 within &= report.is_ok();
                 reports.push(format!("{part}: {}", report.unwrap_or_else(|error| error)));
             }
+            let values = |camera: &SceneCamera| {
+                [
+                    camera.focal_tan,
+                    camera.fit[0],
+                    camera.fit[1],
+                    camera.anchors[0],
+                    camera.anchors[1],
+                    camera.frame_relief,
+                ]
+            };
+            let camera_difference = values(camera)
+                .into_iter()
+                .zip(values(actual_camera))
+                .map(|(golden, actual)| (golden - actual).abs() / golden.abs().max(1e-6))
+                .fold(0.0f32, f32::max);
+            within &= camera_difference <= camera_tolerance;
+            reports.push(format!(
+                "camera: relative {camera_difference:.4} (limit {camera_tolerance})"
+            ));
             let report = reports.join("; ");
             if within {
                 Ok(report)
@@ -1076,26 +1195,7 @@ fn compare(tolerance: Tolerance, golden: &Output, actual: &Output) -> Result<Str
             }
         }
         (Tolerance::Codes { mean, max }, Output::Cfa(golden), Output::Cfa(actual)) => {
-            same_size(golden.width, golden.height, actual.width, actual.height)?;
-            if golden.values == actual.values {
-                return Ok("bit-identical".to_owned());
-            }
-            let mut sum = 0u64;
-            let mut actual_max = 0u16;
-            for (&golden, &actual) in golden.values.iter().zip(&actual.values) {
-                let difference = golden.abs_diff(actual);
-                sum += u64::from(difference);
-                actual_max = actual_max.max(difference);
-            }
-            let actual_mean = sum as f64 / golden.values.len().max(1) as f64;
-            let report = format!(
-                "mean {actual_mean:.3} (limit {mean}), max {actual_max} (limit {max}) codes"
-            );
-            if actual_mean <= mean && actual_max <= max {
-                Ok(report)
-            } else {
-                Err(report)
-            }
+            compare_codes(mean, max, golden, actual)?
         }
         (Tolerance::Linear { mean, max }, Output::Linear(golden), Output::Linear(actual)) => {
             same_size(golden.width, golden.height, actual.width, actual.height)?;

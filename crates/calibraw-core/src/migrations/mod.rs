@@ -12,8 +12,6 @@
 //! there with the same marker and is listed here:
 //! - `LocalMask::effect` and `effect_settings`: masks with one legacy effect,
 //!   converted when the mask is opened (`pipeline/masks.rs`).
-//! - Inline scene-depth pixels of depth-range components, moved into the
-//!   asset table on the next save (`sidecar/mask_assets.rs`).
 //! - Presets that carry global effects in the masks category
 //!   (`presets.rs`).
 //! - White balance stored as offsets (`WhiteBalance::LegacyOffset` and
@@ -52,9 +50,11 @@ mod effect_sliders;
 pub(crate) mod older_readers;
 pub mod onnx_runtime_selection;
 pub(crate) mod point_curve_slots;
+mod scene_depth_layout;
 pub(crate) mod white_balance_offsets;
 
 pub(crate) use effect_sliders::LegacyEffectSliders;
+pub(crate) use scene_depth_layout::LegacySceneDepth;
 
 use crate::sidecar::EditState;
 

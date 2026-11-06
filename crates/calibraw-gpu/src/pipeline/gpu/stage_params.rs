@@ -285,7 +285,13 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
         exposure: exposure.exposure,
         saturation: exposure.saturation,
         vibrance: exposure.vibrance,
-        scene_depth_present: u32::from(masks.scene_depth_image().is_some_and(valid_scene_depth)),
+        // depth-rework-bridge: delete in P7.
+        scene_depth_present: u32::from(
+            masks
+                .scene_depth
+                .as_ref()
+                .is_some_and(|depth| valid_scene_depth(depth.selection_map())),
+        ),
         basic_tone: [
             exposure.highlights,
             exposure.shadows,

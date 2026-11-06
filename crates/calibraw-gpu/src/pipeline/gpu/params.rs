@@ -368,9 +368,11 @@ pub struct GpuParams {
     pub(super) scene_tone: SceneToneUniforms,
     pub(super) effects: EffectsUniforms,
     mask_data: Box<[MaskData]>,
+    // depth-rework-bridge: delete in P7. Today's effects read a depth
+    // result as the 8-bit map they were written for (near 0, sky 255): its
+    // selection map, which is a migrated result's stored map exactly.
     pub(super) scene_depth: Option<MaskImage>,
-    /// The normals predicted with `scene_depth`, when it is the stack's own
-    /// scene depth rather than a Depth Range mask's.
+    /// The normals predicted with `scene_depth`.
     pub(super) scene_normals: Option<SceneNormals>,
     /// The LUT `scene_tone.look_lut` describes, uploaded with the parameters.
     look_lut: Option<Arc<CubeLut>>,
@@ -649,8 +651,15 @@ impl GpuParams {
             scene_tone: pack_scene_tone_params(&context),
             effects: pack_effect_params(&context, &mask_data),
             mask_data,
-            scene_depth: masks.scene_depth_image().cloned(),
-            scene_normals: masks.scene_depth.as_ref().and(masks.scene_normals.clone()),
+            // depth-rework-bridge: delete in P7.
+            scene_depth: masks
+                .scene_depth
+                .as_ref()
+                .map(|depth| depth.selection_map().clone()),
+            scene_normals: masks
+                .scene_depth
+                .as_ref()
+                .map(|depth| depth.normals().clone()),
             look_lut: None,
             profile_color: Arc::clone(profile_color),
         };

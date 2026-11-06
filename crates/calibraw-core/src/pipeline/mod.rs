@@ -23,6 +23,8 @@ pub mod processing;
 pub mod raw_loader;
 pub mod remove;
 mod rendered_loader;
+mod scene_depth;
+pub use scene_depth::{DisparityMap, SceneCamera, SceneDepth};
 pub mod sigmoid;
 pub mod source_format;
 mod tiff_loader;

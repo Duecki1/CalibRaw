@@ -77,23 +77,24 @@ pub(super) fn estimate_sidecar_bytes(masks: &MaskStack) -> Result<u64, SidecarEr
     )?;
     let mut unique_images = Vec::<&MaskImage>::new();
     let mut image_buckets = HashMap::<u64, Vec<usize>>::new();
-    let scene_normals = masks
-        .scene_normals
-        .as_ref()
-        .filter(|_| masks.scene_depth.is_some());
-    let scene_images = masks.scene_depth.iter().chain(
-        scene_normals
-            .into_iter()
-            .flat_map(|normals| [normals.x(), normals.y()]),
-    );
-    for image in scene_images {
-        add_unique_mask_asset_bound(
+    if let Some(depth) = &masks.scene_depth {
+        let disparity_bytes = u64::try_from(depth.disparity().values().len())
+            .map_err(|_| SidecarError::TooLarge(u64::MAX))?
+            .checked_mul(2)
+            .ok_or(SidecarError::TooLarge(u64::MAX))?;
+        checked_add(
             &mut estimated,
-            image,
-            &mut unique_images,
-            &mut image_buckets,
-            MASK_PNG_FIXED_HEADROOM,
+            base64_json_string_bytes(png_size_bound(disparity_bytes, MASK_PNG_FIXED_HEADROOM)?)?,
         )?;
+        for image in scene_depth_images(depth) {
+            add_unique_mask_asset_bound(
+                &mut estimated,
+                image,
+                &mut unique_images,
+                &mut image_buckets,
+                MASK_PNG_FIXED_HEADROOM,
+            )?;
+        }
     }
     for mask in &masks.masks {
         checked_add(&mut estimated, MASK_HEADROOM)?;
@@ -113,9 +114,6 @@ pub(super) fn estimate_sidecar_bytes(masks: &MaskStack) -> Result<u64, SidecarEr
                 }
                 | MaskGeometry::Person {
                     mask: Some(image), ..
-                }
-                | MaskGeometry::DepthRange {
-                    depth: Some(image), ..
                 } => add_unique_mask_asset_bound(
                     &mut estimated,
                     image,
@@ -167,22 +165,17 @@ pub(super) fn measure_sidecar_dynamic_bytes(masks: &MaskStack) -> Result<u64, Si
     )?;
     let mut unique_images = Vec::<&MaskImage>::new();
     let mut image_buckets = HashMap::<u64, Vec<usize>>::new();
-    let scene_normals = masks
-        .scene_normals
-        .as_ref()
-        .filter(|_| masks.scene_depth.is_some());
-    let scene_images = masks.scene_depth.iter().chain(
-        scene_normals
-            .into_iter()
-            .flat_map(|normals| [normals.x(), normals.y()]),
-    );
-    for image in scene_images {
-        add_unique_mask_asset_measured(
-            &mut measured,
-            image,
-            &mut unique_images,
-            &mut image_buckets,
-        )?;
+    if let Some(depth) = &masks.scene_depth {
+        let png = encode_disparity_png(depth.disparity())?;
+        checked_add(&mut measured, base64_json_string_bytes(png.len())?)?;
+        for image in scene_depth_images(depth) {
+            add_unique_mask_asset_measured(
+                &mut measured,
+                image,
+                &mut unique_images,
+                &mut image_buckets,
+            )?;
+        }
     }
     for mask in &masks.masks {
         checked_add(&mut measured, MASK_HEADROOM)?;
@@ -202,9 +195,6 @@ pub(super) fn measure_sidecar_dynamic_bytes(masks: &MaskStack) -> Result<u64, Si
                 }
                 | MaskGeometry::Person {
                     mask: Some(image), ..
-                }
-                | MaskGeometry::DepthRange {
-                    depth: Some(image), ..
                 } => add_unique_mask_asset_measured(
                     &mut measured,
                     image,
@@ -280,12 +270,20 @@ fn add_unique_mask_asset_bound<'a>(
     buckets.entry(fingerprint).or_default().push(index);
     let raw_bytes =
         u64::try_from(image.pixels.len()).map_err(|_| SidecarError::TooLarge(u64::MAX))?;
-    let png_bound = raw_bytes
+    checked_add(
+        estimated,
+        base64_json_string_bytes(png_size_bound(raw_bytes, fixed_headroom)?)?,
+    )
+}
+
+/// The most bytes a PNG of `raw_bytes` of samples takes: stored blocks add
+/// at most one byte in 64, plus `fixed_headroom` for headers and filters.
+fn png_size_bound(raw_bytes: u64, fixed_headroom: u64) -> Result<usize, SidecarError> {
+    let bound = raw_bytes
         .checked_add(raw_bytes.div_ceil(64))
         .and_then(|bytes| bytes.checked_add(fixed_headroom))
         .ok_or(SidecarError::TooLarge(u64::MAX))?;
-    let png_bound = usize::try_from(png_bound).map_err(|_| SidecarError::TooLarge(png_bound))?;
-    checked_add(estimated, base64_json_string_bytes(png_bound)?)
+    usize::try_from(bound).map_err(|_| SidecarError::TooLarge(bound))
 }
 
 pub(super) fn checked_add(total: &mut u64, value: u64) -> Result<(), SidecarError> {

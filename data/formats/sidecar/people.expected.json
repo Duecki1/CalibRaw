@@ -257,7 +257,10 @@
     "mask_assets": [
       {
         "height": 3,
-        "png": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAAAAACRn/EaAAAAF0lEQVR4nGNicGj4z8LwwIOBkYFBIAAAHfcDTzM2Sh4AAAAASUVORK5CYII=",
+        "png": {
+          "bit_depth": 8,
+          "rows": [[0,64,128,255],[0,32,200,255],[0,0,16,96]]
+        },
         "width": 4
       }
     ],

@@ -1,10 +1,10 @@
-//! Surface normals and sky from MoGe-2, predicted beside the scene depth
-//! (`depth`).
+//! Surface normals, sky and camera-space points from MoGe-2, predicted beside
+//! the scene depth (`depth`).
 //!
 //! The depth model's silhouettes and thin structures are sharper, so it keeps
 //! the depth; MoGe-2 adds what depth cannot give well: normals, which taken
-//! from 8-bit relative depth tilt the ground and stripe slopes, and a sky
-//! mask, so the sky lies at the farthest distance.
+//! from relative depth tilt the ground and stripe slopes, a sky mask, and
+//! points in its camera, which measure distance and the field of view.
 
 use super::fitted_input_size;
 use super::masks::mask_model_retention;
@@ -92,8 +92,8 @@ impl SceneGeometryModel {
     }
 }
 
-/// The model's normals and sky at its input size, the photo scaled to the
-/// model's `InputShape::Fitted` edge on its longer side.
+/// The model's normals, sky and points at its input size, the photo scaled to
+/// the model's `InputShape::Fitted` edge on its longer side.
 pub(super) struct SceneGeometry {
     pub(super) width: u32,
     pub(super) height: u32,
@@ -102,6 +102,10 @@ pub(super) struct SceneGeometry {
     pub(super) normals: Vec<[f32; 3]>,
     /// Probability that a pixel is sky, per pixel by row.
     pub(super) sky: Vec<f32>,
+    /// The point each pixel sees, by row, in MoGe-2's pinhole camera with
+    /// square pixels: x right, y down, z along the optical axis, in a unit of
+    /// its own. Not finite where the model has none, such as in the sky.
+    pub(super) points: Vec<[f32; 3]>,
 }
 
 /// Runs `geometry_model` over `image`.
@@ -133,7 +137,7 @@ pub(super) fn scene_geometry(
     let tokens = Tensor::from_array(((), vec![quality.tokens()]))
         .context("create normal-model token count")?;
     let started = std::time::Instant::now();
-    let (normal_shape, normals, mask_shape, mask) = with_model_session(
+    let (normal_shape, normals, mask_shape, mask, point_shape, points) = with_model_session(
         model,
         &geometry_model.path,
         quality.session_options(CAPABILITIES.memory),
@@ -153,11 +157,18 @@ pub(super) fn scene_geometry(
                     .context("normal model returned no sky mask")?
                     .try_extract_tensor::<f32>()
                     .context("read sky-mask tensor")?;
+                let (point_shape, points) = outputs
+                    .get("points")
+                    .context("normal model returned no points")?
+                    .try_extract_tensor::<f32>()
+                    .context("read point tensor")?;
                 Ok((
                     normal_shape.as_ref().to_vec(),
                     normals.to_vec(),
                     mask_shape.as_ref().to_vec(),
                     mask.to_vec(),
+                    point_shape.as_ref().to_vec(),
+                    points.to_vec(),
                 ))
             })
         },
@@ -165,9 +176,11 @@ pub(super) fn scene_geometry(
     let expected_normals = [1, i64::from(input_height), i64::from(input_width), 3];
     let expected_mask = [1, i64::from(input_height), i64::from(input_width)];
     anyhow::ensure!(
-        normal_shape == expected_normals && mask_shape == expected_mask,
-        "normal-model outputs {normal_shape:?} and {mask_shape:?} do not match the \
-         {input_width}x{input_height} input"
+        normal_shape == expected_normals
+            && point_shape == expected_normals
+            && mask_shape == expected_mask,
+        "normal-model outputs {normal_shape:?}, {point_shape:?} and {mask_shape:?} do not \
+         match the {input_width}x{input_height} input"
     );
     calibraw_core::diagnostics::record(format!(
         "AI {}: {width}x{height} source, {input_width}x{input_height} normals in {:.3}s",
@@ -189,11 +202,16 @@ pub(super) fn scene_geometry(
         .zip(&sky)
         .map(|(normal, &sky)| camera_facing_normal([normal[0], normal[1], normal[2]], sky))
         .collect();
+    let points = points
+        .chunks_exact(3)
+        .map(|point| [point[0], point[1], point[2]])
+        .collect();
     Ok(SceneGeometry {
         width: input_width,
         height: input_height,
         normals,
         sky,
+        points,
     })
 }
 

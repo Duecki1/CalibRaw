@@ -67,10 +67,15 @@ impl PerspectiveCorrection {
     /// The 35 mm-equivalent focal length of a photo taken at `focal_length_mm` on a sensor with
     /// `crop_factor`, or the generic one when either is unknown.
     pub fn focal_length_35mm_for(focal_length_mm: f32, crop_factor: Option<f32>) -> f32 {
+        Self::known_focal_length_35mm(focal_length_mm, crop_factor)
+            .unwrap_or(Self::GENERIC_FOCAL_LENGTH_35MM)
+    }
+
+    /// [`Self::focal_length_35mm_for`], `None` where it would be the generic one.
+    pub fn known_focal_length_35mm(focal_length_mm: f32, crop_factor: Option<f32>) -> Option<f32> {
         crop_factor
             .map(|crop_factor| focal_length_mm * crop_factor)
             .filter(|focal| focal.is_finite() && Self::FOCAL_LENGTH_RANGE.contains(focal))
-            .unwrap_or(Self::GENERIC_FOCAL_LENGTH_35MM)
     }
 
     pub fn is_identity(&self) -> bool {

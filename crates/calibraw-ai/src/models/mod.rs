@@ -4,7 +4,6 @@
 
 pub mod denoise;
 pub mod depth;
-mod depth_refine;
 mod mask_refine;
 pub mod masks;
 pub mod object;
