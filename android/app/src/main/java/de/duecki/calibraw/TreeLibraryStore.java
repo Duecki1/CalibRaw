@@ -20,7 +20,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.TreeMap;
 
 /**
  * A folder the user linked through the Storage Access Framework. Photos are worked on where they
@@ -77,6 +76,13 @@ final class TreeLibraryStore implements LibraryStore {
         boolean supportsRename() {
             return (flags & DocumentsContract.Document.FLAG_SUPPORTS_RENAME) != 0;
         }
+
+        /** Whether a later listing shows the same file, as far as size and time tell. */
+        boolean looksUnchangedAs(Entry later) {
+            return directory == later.directory
+                    && size == later.size
+                    && modifiedMillis == later.modifiedMillis;
+        }
     }
 
     /** A photo's place in the tree, from its verified URI. */
@@ -98,7 +104,13 @@ final class TreeLibraryStore implements LibraryStore {
     private final Object sidecarWrites = new Object();
     // Guarded by this. Holding this also keeps a sidecar read out of a replace's two renames.
     private final Map<String, Map<String, Entry>> index = new HashMap<>();
-    private final Map<String, Long> listedSignatures = new HashMap<>();
+    /**
+     * What each folder held when the library last showed it, by name and without temporary
+     * files. The write primitives ({@link #createExact}, {@link #renameExact}, {@link #write},
+     * {@link #deleteIfPresent}) record CalibRaw's own changes here, so a difference from a new
+     * listing is a change someone else made, such as sync.
+     */
+    private final Map<String, Map<String, Entry>> shown = new HashMap<>();
     private long writes;
 
     TreeLibraryStore(Activity storage, String key, Uri treeUri, String label) {
@@ -167,9 +179,9 @@ final class TreeLibraryStore implements LibraryStore {
         String normalized = normalizeFolder(folder);
         Map<String, Entry> entries = refresh(normalized);
         synchronized (this) {
-            listedSignatures.put(normalized, signature(entries));
+            shown.put(normalized, withoutTemporaryFiles(entries));
         }
-        deleteStaleTemporaryFiles(entries);
+        deleteStaleTemporaryFiles(normalized, entries);
 
         List<Entry> photos = new ArrayList<>();
         for (Entry entry : entries.values()) {
@@ -184,46 +196,96 @@ final class TreeLibraryStore implements LibraryStore {
                 Long.compare(right.modifiedMillis, left.modifiedMillis));
         ArrayList<Document> result = new ArrayList<>();
         for (Entry photo : photos.subList(0, Math.min(limit, photos.size()))) {
+            Entry sidecar = sidecarOf(entries, photo.displayName);
             result.add(new Document(
                     photoUri(normalized, photo.displayName).toString(),
                     photo.displayName,
                     displayPath(normalized, photo.displayName),
                     Math.max(0, photo.size),
-                    Math.max(0, photo.modifiedMillis / 1000)));
+                    Math.max(0, photo.modifiedMillis / 1000),
+                    sidecar != null ? Math.max(0, sidecar.size) : NO_SIDECAR,
+                    sidecar != null ? sidecar.modifiedMillis : NO_SIDECAR));
         }
         return result;
     }
 
-    /** Whether {@code folder} changed since it was last listed. False if it never was. */
+    /** The sidecar of the photo called {@code photoName} in {@code entries}, or null. */
+    private static Entry sidecarOf(Map<String, Entry> entries, String photoName) {
+        try {
+            Entry sidecar = entries.get(AndroidStorageContract.sidecarDisplayName(photoName));
+            return sidecar != null && !sidecar.directory ? sidecar : null;
+        } catch (IllegalArgumentException noSidecarName) {
+            return null;
+        }
+    }
+
+    /**
+     * Whether someone other than CalibRaw changed {@code folder} since the library showed it.
+     * False if it never showed it.
+     */
     boolean changedSinceListing(String folder) throws Exception {
         String normalized = normalizeFolder(folder);
-        Long listed;
+        Map<String, Entry> before;
         synchronized (this) {
-            listed = listedSignatures.get(normalized);
+            Map<String, Entry> known = shown.get(normalized);
+            if (known == null) {
+                return false;
+            }
+            before = new HashMap<>(known);
         }
-        return listed != null
-                && listed != signature(query(folderDocumentId(normalized)));
+        Map<String, Entry> now = withoutTemporaryFiles(query(folderDocumentId(normalized)));
+        if (now.size() != before.size()) {
+            return true;
+        }
+        for (Entry entry : now.values()) {
+            Entry earlier = before.get(entry.displayName);
+            if (earlier == null || !earlier.looksUnchangedAs(entry)) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    private static long signature(Map<String, Entry> entries) {
-        long signature = 17L;
-        // Sorted, so the signature does not depend on the provider's order.
-        for (Entry entry : new TreeMap<>(entries).values()) {
-            signature = signature * 31L + entry.displayName.hashCode();
-            signature = signature * 31L + entry.size;
-            signature = signature * 31L + entry.modifiedMillis;
+    /**
+     * Records that CalibRaw itself left {@code name} in {@code folder} as {@code entry}, or
+     * removed it for null, so {@link #changedSinceListing} does not report it.
+     */
+    private synchronized void noteOwnChange(String folder, String name, Entry entry) {
+        Map<String, Entry> known = shown.get(folder);
+        if (known == null || isTemporaryFileName(name)) {
+            return;
         }
-        return signature;
+        if (entry == null) {
+            known.remove(name);
+        } else {
+            known.put(name, entry);
+        }
     }
 
-    private void deleteStaleTemporaryFiles(Map<String, Entry> entries) {
+    /** A copy without the files a write leaves only while it runs, or after a crash. */
+    private static Map<String, Entry> withoutTemporaryFiles(Map<String, Entry> entries) {
+        Map<String, Entry> lasting = new HashMap<>();
+        for (Entry entry : entries.values()) {
+            if (!isTemporaryFileName(entry.displayName)) {
+                lasting.put(entry.displayName, entry);
+            }
+        }
+        return lasting;
+    }
+
+    private static boolean isTemporaryFileName(String name) {
+        return AndroidStorageContract.isLibraryTemporaryFileName(name)
+                || AndroidStorageContract.isLinkedSwapName(name);
+    }
+
+    private void deleteStaleTemporaryFiles(String folder, Map<String, Entry> entries) {
         long now = System.currentTimeMillis();
         for (Entry entry : entries.values()) {
             boolean stale = entry.modifiedMillis > 0L
                     && now >= entry.modifiedMillis
                     && now - entry.modifiedMillis >= StorageManager.STALE_TEMP_FILE_AGE_MS;
             if (stale && AndroidStorageContract.isLibraryTemporaryFileName(entry.displayName)) {
-                deleteQuietly(documentUri(entry.documentId));
+                deleteQuietly(folder, entry);
             }
         }
     }
@@ -250,12 +312,7 @@ final class TreeLibraryStore implements LibraryStore {
         if (refresh(normalizedParent).containsKey(name)) {
             throw new IllegalStateException(name + " already exists");
         }
-        Uri created = DocumentsContract.createDocument(
-                resolver(),
-                documentUri(folderDocumentId(normalizedParent)),
-                DocumentsContract.Document.MIME_TYPE_DIR,
-                name);
-        requireName(created, name);
+        createExact(normalizedParent, name, DocumentsContract.Document.MIME_TYPE_DIR);
         noteWrite(normalizedParent);
         return normalizedParent.isEmpty() ? name : normalizedParent + "/" + name;
     }
@@ -333,33 +390,25 @@ final class TreeLibraryStore implements LibraryStore {
         String normalized = normalizeFolder(folder);
         Map<String, Entry> entries = refresh(normalized);
         String name = uniqueName(entries, AndroidStorageContract.safeRawName(requestedName));
-        Uri parent = documentUri(folderDocumentId(normalized));
 
-        Uri target = createExact(parent, AndroidStorageContract.importPartialName(name));
-        boolean renameToFinish = queryEntry(target).supportsRename();
+        Entry target = createExact(
+                normalized, AndroidStorageContract.importPartialName(name), MIME_UNKNOWN);
+        boolean renameToFinish = target.supportsRename();
         if (!renameToFinish) {
-            deleteQuietly(target);
-            target = createExact(parent, name);
+            deleteQuietly(normalized, target);
+            target = createExact(normalized, name, MIME_UNKNOWN);
         }
         boolean completed = false;
         try {
-            try (ParcelFileDescriptor descriptor = resolver().openFileDescriptor(target, "w");
-                    FileOutputStream output = new FileOutputStream(descriptor.getFileDescriptor())) {
-                BoundedStreams.copy(
-                        input,
-                        output,
-                        StorageManager.MAX_RAW_IMPORT_BYTES,
-                        StorageManager.storageLimitMessage(StorageManager.MAX_RAW_IMPORT_BYTES));
-                syncIfSupported(output);
-            }
+            target = write(normalized, target, "w", input, StorageManager.MAX_RAW_IMPORT_BYTES);
             if (renameToFinish) {
-                target = renameExact(target, name);
+                target = renameExact(normalized, target, name);
             }
             completed = true;
             return new Stored(photoUri(normalized, name), name);
         } finally {
             if (!completed) {
-                deleteQuietly(target);
+                deleteQuietly(normalized, target);
             }
             noteWrite(normalized);
         }
@@ -395,13 +444,13 @@ final class TreeLibraryStore implements LibraryStore {
                 throw new FileNotFoundException(displayName + " is no longer in " + label);
             }
             synchronized (this) {
-                Uri renamed = renameExact(documentUri(photo.documentId), requestedName);
+                Entry renamed = renameExact(place.folder, photo, requestedName);
                 Entry sidecarEntry = entries.get(sidecar);
                 if (sidecarEntry != null) {
                     try {
-                        renameExact(documentUri(sidecarEntry.documentId), destinationSidecar);
+                        renameExact(place.folder, sidecarEntry, destinationSidecar);
                     } catch (Exception error) {
-                        renameExact(renamed, displayName);
+                        renameExact(place.folder, renamed, displayName);
                         throw error;
                     }
                 }
@@ -416,7 +465,8 @@ final class TreeLibraryStore implements LibraryStore {
                     // The app can produce this file again, so a failed move only costs that.
                     try {
                         renameExact(
-                                documentUri(companion.documentId),
+                                place.folder,
+                                companion,
                                 AndroidStorageContract.companionDisplayName(requestedName, suffix));
                     } catch (Exception error) {
                         Log.w(LOG_TAG, "Renamed photo but could not keep " + suffix, error);
@@ -434,14 +484,9 @@ final class TreeLibraryStore implements LibraryStore {
         synchronized (sidecarWrites) {
             Map<String, Entry> entries = refresh(place.folder);
             synchronized (this) {
-                Entry photo = entries.get(displayName);
-                if (photo != null
-                        && !DocumentsContract.deleteDocument(
-                                resolver(), documentUri(photo.documentId))) {
-                    throw new IllegalStateException("Could not delete the photo");
-                }
+                deleteIfPresent(place.folder, entries.get(displayName));
                 try {
-                    deleteEditsFrom(raw, entries, displayName);
+                    deleteEditsFrom(raw, place.folder, entries, displayName);
                 } catch (Exception error) {
                     Log.w(LOG_TAG, "Deleted photo but could not clean up its edits", error);
                 }
@@ -456,26 +501,22 @@ final class TreeLibraryStore implements LibraryStore {
         synchronized (sidecarWrites) {
             Map<String, Entry> entries = refresh(place.folder);
             synchronized (this) {
-                deleteEditsFrom(raw, entries, displayName);
+                deleteEditsFrom(raw, place.folder, entries, displayName);
                 noteWrite(place.folder);
             }
         }
     }
 
-    private void deleteEditsFrom(Uri raw, Map<String, Entry> entries, String displayName)
+    private void deleteEditsFrom(
+            Uri raw, String folder, Map<String, Entry> entries, String displayName)
             throws Exception {
-        deleteIfPresent(entries.get(AndroidStorageContract.sidecarDisplayName(displayName)));
+        deleteIfPresent(
+                folder, entries.get(AndroidStorageContract.sidecarDisplayName(displayName)));
         for (String suffix : AndroidStorageContract.REGENERATED_COMPANION_SUFFIXES) {
             deleteIfPresent(
+                    folder,
                     entries.get(AndroidStorageContract.companionDisplayName(displayName, suffix)));
             deleteMirror(raw, suffix);
-        }
-    }
-
-    private void deleteIfPresent(Entry entry) throws Exception {
-        if (entry != null
-                && !DocumentsContract.deleteDocument(resolver(), documentUri(entry.documentId))) {
-            throw new IllegalStateException("Could not delete " + entry.displayName);
         }
     }
 
@@ -500,12 +541,8 @@ final class TreeLibraryStore implements LibraryStore {
             if (interrupted == null) {
                 return null;
             }
-            renameExact(documentUri(interrupted.documentId), name);
+            sidecar = renameExact(place.folder, interrupted, name);
             noteWrite(place.folder);
-            sidecar = refresh(place.folder).get(name);
-            if (sidecar == null) {
-                return null;
-            }
         }
         return resolver().openInputStream(documentUri(sidecar.documentId));
     }
@@ -587,12 +624,9 @@ final class TreeLibraryStore implements LibraryStore {
                 && stored.modifiedMillis == mirror.lastModified()) {
             return;
         }
-        replaceDocument(place.folder, name, mirror);
-        Entry published = entries(place.folder).get(name);
-        if (published != null) {
-            //noinspection ResultOfMethodCallIgnored -- a mismatch only copies it again next time
-            mirror.setLastModified(published.modifiedMillis);
-        }
+        Entry published = replaceDocument(place.folder, name, mirror);
+        //noinspection ResultOfMethodCallIgnored -- a mismatch only copies it again next time
+        mirror.setLastModified(published.modifiedMillis);
     }
 
     @Override
@@ -603,7 +637,7 @@ final class TreeLibraryStore implements LibraryStore {
                 AndroidStorageContract.companionDisplayName(displayName, suffix));
         if (stored != null) {
             synchronized (this) {
-                deleteIfPresent(stored);
+                deleteIfPresent(place.folder, stored);
                 noteWrite(place.folder);
             }
         }
@@ -639,87 +673,97 @@ final class TreeLibraryStore implements LibraryStore {
         }
     }
 
-    /** Replaces {@code name} in {@code folder} with the contents of {@code local}. */
-    private void replaceDocument(String folder, String name, File local) throws Exception {
+    /**
+     * Replaces {@code name} in {@code folder} with the contents of {@code local} and returns
+     * what the folder then holds under that name.
+     */
+    private Entry replaceDocument(String folder, String name, File local) throws Exception {
         // Fresh, because a provider numbers a name that is already taken instead of refusing it,
         // and sync may have added the file since the folder was last listed.
         Map<String, Entry> entries = refresh(folder);
-        Uri parent = documentUri(folderDocumentId(folder));
         String partName = AndroidStorageContract.linkedSwapPartName(name);
         String oldName = AndroidStorageContract.linkedSwapOldName(name);
         Entry existing = entries.get(name);
         Entry interrupted = entries.get(oldName);
 
-        Entry leftover = entries.get(partName);
-        if (leftover != null) {
-            deleteIfPresent(leftover);
-        }
-        Uri part = createExact(parent, partName);
+        deleteIfPresent(folder, entries.get(partName));
+        Entry part = createExact(folder, partName, MIME_UNKNOWN);
         boolean published = false;
         try {
-            if (!queryEntry(part).supportsRename()) {
-                deleteQuietly(part);
-                overwrite(parent, name, existing, local);
+            if (!part.supportsRename()) {
+                deleteQuietly(folder, part);
+                Entry written = overwrite(folder, name, existing, local);
                 published = true;
-                return;
+                return written;
             }
-            writeLocal(local, part, "w");
+            part = writeLocal(folder, local, part, "w");
             synchronized (this) {
-                Uri moved = null;
+                Entry moved = null;
                 if (existing != null) {
-                    if (interrupted != null) {
-                        deleteIfPresent(interrupted);
-                    }
-                    moved = renameExact(documentUri(existing.documentId), oldName);
+                    deleteIfPresent(folder, interrupted);
+                    moved = renameExact(folder, existing, oldName);
                 }
+                Entry replacement;
                 try {
-                    renameExact(part, name);
+                    replacement = renameExact(folder, part, name);
                     published = true;
                 } catch (Exception error) {
                     if (moved != null) {
-                        renameExact(moved, name);
+                        renameExact(folder, moved, name);
                     }
                     throw error;
                 }
-                if (moved != null) {
-                    deleteQuietly(moved);
-                } else if (interrupted != null) {
-                    deleteQuietly(documentUri(interrupted.documentId));
-                }
+                deleteQuietly(folder, moved != null ? moved : interrupted);
+                return replacement;
             }
         } finally {
             if (!published) {
-                deleteQuietly(part);
+                deleteQuietly(folder, part);
             }
             noteWrite(folder);
         }
     }
 
     /** For providers without rename: this cannot keep the old file through a failed write. */
-    private void overwrite(Uri parent, String name, Entry existing, File local) throws Exception {
-        Uri target = existing != null
-                ? documentUri(existing.documentId)
-                : createExact(parent, name);
-        writeLocal(local, target, existing != null ? "rwt" : "w");
-        long written = queryEntry(target).size;
-        if (written >= 0 && written != local.length()) {
+    private Entry overwrite(String folder, String name, Entry existing, File local)
+            throws Exception {
+        Entry target = existing != null ? existing : createExact(folder, name, MIME_UNKNOWN);
+        Entry written = writeLocal(folder, local, target, existing != null ? "rwt" : "w");
+        if (written.size >= 0 && written.size != local.length()) {
             throw new IllegalStateException(
-                    "Android storage kept " + written + " of " + local.length() + " bytes of "
-                            + name);
+                    "Android storage kept " + written.size + " of " + local.length()
+                            + " bytes of " + name);
+        }
+        return written;
+    }
+
+    // Every change CalibRaw makes in the tree goes through the methods below, which keep
+    // `shown` current, so returning to the app reports only what someone else changed.
+
+    private Entry writeLocal(String folder, File local, Entry target, String mode)
+            throws Exception {
+        try (FileInputStream input = new FileInputStream(local)) {
+            return write(folder, target, mode, input, MAX_COMPANION_BYTES);
         }
     }
 
-    private void writeLocal(File local, Uri target, String mode) throws Exception {
-        try (ParcelFileDescriptor descriptor = resolver().openFileDescriptor(target, mode);
-                FileInputStream input = new FileInputStream(local);
+    /** Copies {@code input} into {@code target} and returns what the provider then reports. */
+    private Entry write(
+            String folder,
+            Entry target,
+            String mode,
+            InputStream input,
+            long maximumBytes) throws Exception {
+        Uri document = documentUri(target.documentId);
+        try (ParcelFileDescriptor descriptor = resolver().openFileDescriptor(document, mode);
                 FileOutputStream output = new FileOutputStream(descriptor.getFileDescriptor())) {
             BoundedStreams.copy(
-                    input,
-                    output,
-                    MAX_COMPANION_BYTES,
-                    StorageManager.storageLimitMessage(MAX_COMPANION_BYTES));
+                    input, output, maximumBytes, StorageManager.storageLimitMessage(maximumBytes));
             syncIfSupported(output);
         }
+        Entry written = queryEntry(document);
+        noteOwnChange(folder, written.displayName, written);
+        return written;
     }
 
     /** A provider's pipe cannot sync; closing it reports whether the provider stored the data. */
@@ -732,43 +776,53 @@ final class TreeLibraryStore implements LibraryStore {
     }
 
     /** Creates {@code name}; a provider that would store it under another name is refused. */
-    private Uri createExact(Uri parent, String name) throws Exception {
-        Uri created = DocumentsContract.createDocument(resolver(), parent, MIME_UNKNOWN, name);
+    private Entry createExact(String folder, String name, String mimeType) throws Exception {
+        Uri created = DocumentsContract.createDocument(
+                resolver(), documentUri(folderDocumentId(folder)), mimeType, name);
         if (created == null) {
             throw new IllegalStateException("Android storage could not create " + name);
         }
-        try {
-            requireName(created, name);
-        } catch (Exception error) {
-            deleteQuietly(created);
-            throw error;
+        Entry entry = queryEntry(created);
+        if (!name.equals(entry.displayName)) {
+            deleteQuietly(folder, entry);
+            throw misnamed(name, entry);
         }
-        return created;
+        noteOwnChange(folder, name, entry);
+        return entry;
     }
 
-    private Uri renameExact(Uri document, String name) throws Exception {
-        Uri renamed = DocumentsContract.renameDocument(resolver(), document, name);
+    private Entry renameExact(String folder, Entry document, String name) throws Exception {
+        Uri current = documentUri(document.documentId);
+        Uri renamed = DocumentsContract.renameDocument(resolver(), current, name);
         // A provider that keeps the document's ID may report no new URI.
-        Uri current = renamed != null ? renamed : document;
-        requireName(current, name);
-        return current;
+        Entry entry = queryEntry(renamed != null ? renamed : current);
+        noteOwnChange(folder, document.displayName, null);
+        noteOwnChange(folder, entry.displayName, entry);
+        if (!name.equals(entry.displayName)) {
+            throw misnamed(name, entry);
+        }
+        return entry;
     }
 
-    private void requireName(Uri document, String name) throws Exception {
-        if (document == null) {
-            throw new IllegalStateException("Android storage could not create " + name);
-        }
-        String actual = queryEntry(document).displayName;
-        if (!name.equals(actual)) {
-            throw new IllegalStateException(
-                    "Android storage saved " + name + " as " + actual
-                            + ", which CalibRaw would not find again");
-        }
+    private static IllegalStateException misnamed(String name, Entry actual) {
+        return new IllegalStateException(
+                "Android storage saved " + name + " as " + actual.displayName
+                        + ", which CalibRaw would not find again");
     }
 
-    private void deleteQuietly(Uri document) {
+    private void deleteIfPresent(String folder, Entry entry) throws Exception {
+        if (entry == null) {
+            return;
+        }
+        if (!DocumentsContract.deleteDocument(resolver(), documentUri(entry.documentId))) {
+            throw new IllegalStateException("Could not delete " + entry.displayName);
+        }
+        noteOwnChange(folder, entry.displayName, null);
+    }
+
+    private void deleteQuietly(String folder, Entry entry) {
         try {
-            DocumentsContract.deleteDocument(resolver(), document);
+            deleteIfPresent(folder, entry);
         } catch (Exception error) {
             Log.w(LOG_TAG, "Could not delete a temporary file in " + label, error);
         }

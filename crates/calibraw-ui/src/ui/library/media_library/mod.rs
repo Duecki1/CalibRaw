@@ -6,6 +6,7 @@ use crate::i18n::{tr, tr_fmt};
 use egui_phosphor::regular;
 use moduwu_design::MenuItem;
 
+pub(super) mod catalog;
 mod local;
 
 pub(in crate::ui::library) fn default_thumbnail_worker_count() -> usize {

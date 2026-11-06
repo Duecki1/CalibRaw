@@ -118,14 +118,29 @@ final class FileLibraryStore implements LibraryStore {
         PriorityQueue<RawLibraryCandidate> retained = selectRawLibraryCandidates(files, limit);
         for (RawLibraryCandidate candidate : retained) {
             File file = candidate.file;
+            File sidecar = sidecarOf(file);
             result.add(new Document(
                     Uri.fromFile(file).toString(),
                     file.getName(),
                     file.getAbsolutePath(),
                     Math.max(0, file.length()),
-                    Math.max(0, candidate.modifiedMillis / 1000)));
+                    Math.max(0, candidate.modifiedMillis / 1000),
+                    sidecar != null ? sidecar.length() : NO_SIDECAR,
+                    sidecar != null ? sidecar.lastModified() : NO_SIDECAR));
         }
         return result;
+    }
+
+    /** The sidecar beside {@code photo}, or null when it has none. */
+    private static File sidecarOf(File photo) {
+        try {
+            File sidecar = new File(
+                    photo.getParentFile(),
+                    AndroidStorageContract.sidecarDisplayName(photo.getName()));
+            return sidecar.isFile() ? sidecar : null;
+        } catch (IllegalArgumentException noSidecarName) {
+            return null;
+        }
     }
 
     private static PriorityQueue<RawLibraryCandidate> selectRawLibraryCandidates(

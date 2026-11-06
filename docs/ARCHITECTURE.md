@@ -160,6 +160,7 @@ GPU readbacks wait on one-slot channels.
 | `DEVELOPED_THUMBNAIL_GPU` | `ui::library::thumbnails::developed` | thumbnail workers | one headless device for developed thumbnails, used by one render at a time |
 | thumbnail work queue and request receiver | `ThumbnailWorkerContext` | thumbnail workers | short critical sections; never held while decoding |
 | rendered-thumbnail permits (counting semaphore) | `calibraw_core::thumbnail_cache` | thumbnail workers rendering a full RAW (no embedded preview, or edited) | at most four such renders, fewer with fewer workers, bounding indexing memory |
+| `ExtractionPermits` (counting semaphore) | one per media-library scan | its thumbnail workers while reading a photo (preview or display metadata) | at most the thumbnail-worker setting of photo reads at once; the scan has more workers, which serve cached previews without a permit |
 | model runtime slot | `calibraw_ai::slot` | the running AI job | one ONNX session at a time; evicted models unload once released |
 | `RUNTIME_INIT_LOCK`, runtime probe cache, runtime install lock | `calibraw_ai::runtime` | AI jobs, the Settings runtime picker | serialize ONNX Runtime initialization, probes and automatic runtime installs |
 | provider statuses | `calibraw_ai::placement` | AI jobs, Settings | the provider each model's latest session uses |
@@ -178,8 +179,8 @@ GPU readbacks wait on one-slot channels.
 
 Apart from the serialized-read gate, only these nestings exist, each in a fixed
 order: the reference-preview serial lock is taken before the decode gate; a
-thumbnail worker takes `DEVELOPED_THUMBNAIL_GPU` while holding the decode gate
-for reading; and a decode that owns a decoded-RAW cache entry takes the decode
+thumbnail worker takes `DEVELOPED_THUMBNAIL_GPU` or an `ExtractionPermits`
+permit while holding the decode gate for reading; and a decode that owns a decoded-RAW cache entry takes the decode
 gate without holding the cache lock, so waiting for an entry never holds the
 gate. No code takes the decode gate while holding any other lock in this
 table. The serialized-read gate may be taken while holding any of them, but none
@@ -352,5 +353,14 @@ production `ShaderManager` composes.
   companions by path, so a linked photo's live in the cache and are copied with
   `fetch_photo_companion` (document load) and `publish_photo_companion` (after the
   job).
+- Media-library previews: Java owns the cache directory (`ThumbnailCache`:
+  trimming, size, clearing); `calibraw-ffi` names, reads and writes the files in
+  it, so a cached preview needs no JNI call. The listing reports each photo's
+  sidecar size and time. The folder cache (`calibraw_core::display_metadata_cache`,
+  one file per folder in the same directory) keeps each photo's dimensions and a
+  summary of its sidecar, so a scan shows final tile shapes and ratings at once
+  and reads a sidecar once per change (`ui/library/media_library/catalog.rs`,
+  `ui/library/deferred_metadata.rs`). A scan runs `MEDIA_LIBRARY_PREVIEW_WORKERS`
+  workers; `ExtractionPermits` keeps photo reads within the worker setting.
 - Edit replay picks FFmpeg or the platform encoder from
   `PlatformCaps::video_encoder` (`services/replay/`).

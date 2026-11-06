@@ -4,20 +4,14 @@ import android.app.Activity;
 import android.util.Log;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 final class ThumbnailCache {
     private static final String LOG_TAG = "CalibRaw";
     private static final long MAX_BYTES = 5L * 1024L * 1024L * 1024L;
-    private static final long MAX_COPY_BYTES = 128L * 1024L * 1024L;
     private static final int TRIM_INTERVAL = 64;
     private static final int DELETE_ATTEMPTS = 3;
 
@@ -28,46 +22,14 @@ final class ThumbnailCache {
         this.storage = storage;
     }
 
-    String rawPath(String uriText, long bytes, long modifiedSeconds, int maximumEdge)
-            throws Exception {
-        // v2 invalidates previews from before TIFF color/tone handling stabilized.
-        return path(
-                "raw-v2\n" + uriText + "\n" + bytes + "\n" + modifiedSeconds
-                        + "\n" + maximumEdge,
-                ".raw.jpg").getAbsolutePath();
-    }
-
-    String developedPath(String uriText) throws Exception {
-        return path("developed\n" + uriText, ".developed.jpg").getAbsolutePath();
-    }
-
-    void copyDeveloped(String sourceUri, String destinationUri) throws Exception {
-        File source = new File(developedPath(sourceUri));
-        File sourceFingerprint = new File(source.getPath() + ".fingerprint");
-        if (!source.isFile() || !sourceFingerprint.isFile()) {
-            return;
-        }
-        File destination = new File(developedPath(destinationUri));
-        File destinationFingerprint = new File(destination.getPath() + ".fingerprint");
-        try {
-            copyFile(source, destination);
-            copyFile(sourceFingerprint, destinationFingerprint);
-        } catch (Exception error) {
-            deleteFile(destination);
-            deleteFile(destinationFingerprint);
-            throw error;
-        }
-        maintain();
-    }
-
-    void clearDeveloped(String uriText) {
-        try {
-            File thumbnail = new File(developedPath(uriText));
-            deleteFile(thumbnail);
-            deleteFile(new File(thumbnail.getPath() + ".fingerprint"));
-        } catch (Exception error) {
-            Log.w(LOG_TAG, "Could not clear developed thumbnail cache for " + uriText, error);
-        }
+    /**
+     * The cache directory. Native code names, reads and writes the files in it
+     * (calibraw-ffi {@code android/thumbnail_cache.rs}): a ".jpg" with an optional
+     * ".fingerprint" beside it, and per-folder metadata. Trimming here takes a file's
+     * modification time as its last use, which native code updates on every read.
+     */
+    File directory() {
+        return persistentDirectory();
     }
 
     void clear() {
@@ -93,22 +55,6 @@ final class ThumbnailCache {
         } catch (RuntimeException error) {
             Log.w(LOG_TAG, "Could not maintain thumbnail cache", error);
         }
-    }
-
-    private File path(String identity, String suffix) throws Exception {
-        return pathInDirectory(persistentDirectory(), identity, suffix);
-    }
-
-    static File pathInDirectory(File directory, String identity, String suffix) throws Exception {
-        byte[] digest = MessageDigest.getInstance("SHA-256").digest(
-                identity.getBytes(StandardCharsets.UTF_8));
-        StringBuilder name = new StringBuilder();
-        for (byte value : digest) {
-            name.append(String.format(Locale.ROOT, "%02x", value & 0xff));
-        }
-        File cached = new File(directory, name.append(suffix).toString());
-        touch(cached);
-        return cached;
     }
 
     // Bounded no-backup storage survives cache eviction but is removed on uninstall.
@@ -152,18 +98,6 @@ final class ThumbnailCache {
             total = total > Long.MAX_VALUE - bytes ? Long.MAX_VALUE : total + bytes;
         }
         return total;
-    }
-
-    private static void touch(File cached) {
-        if (!cached.isFile()) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        cached.setLastModified(now);
-        File fingerprint = new File(cached.getPath() + ".fingerprint");
-        if (fingerprint.isFile()) {
-            fingerprint.setLastModified(now);
-        }
     }
 
     static void trim(File directory) {
@@ -219,18 +153,6 @@ final class ThumbnailCache {
             } else {
                 totalBytes = directorySize(directory);
             }
-        }
-    }
-
-    private static void copyFile(File source, File destination) throws Exception {
-        try (FileInputStream input = new FileInputStream(source);
-             FileOutputStream output = new FileOutputStream(destination)) {
-            BoundedStreams.copy(
-                    input,
-                    output,
-                    MAX_COPY_BYTES,
-                    "The document exceeds the " + MAX_COPY_BYTES + "-byte import limit");
-            output.getFD().sync();
         }
     }
 

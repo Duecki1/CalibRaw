@@ -169,6 +169,13 @@ final class AndroidStorageContract {
         return ".calibraw-sidecar-" + name + ".old";
     }
 
+    /** A name {@link #linkedSwapPartName} or {@link #linkedSwapOldName} made. */
+    static boolean isLinkedSwapName(String name) {
+        return name != null
+                && name.startsWith(".calibraw-sidecar-")
+                && (name.endsWith(".part") || name.endsWith(".old"));
+    }
+
     static String sha256Hex(String text) throws Exception {
         byte[] digest = MessageDigest.getInstance("SHA-256")
                 .digest(text.getBytes(StandardCharsets.UTF_8));

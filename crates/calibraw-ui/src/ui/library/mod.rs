@@ -27,6 +27,7 @@ mod adjustments;
 mod catalog;
 mod clipboard;
 mod companions;
+mod deferred_metadata;
 mod dialogs;
 mod export;
 mod filter;
@@ -55,12 +56,14 @@ use adjustments::*;
 use catalog::*;
 use clipboard::*;
 use companions::*;
+use deferred_metadata::*;
 use dialogs::*;
 use export::*;
 use filter::*;
 use folders::catalog::*;
 use folders::files::*;
 use keys::*;
+use media_library::catalog::*;
 use media_library::{
     android_folder_ancestors, android_folder_parent, android_library_location_label,
 };
@@ -95,6 +98,10 @@ const DEVELOPED_THUMBNAIL_PROXY_EDGE: u32 = 1024;
 pub(crate) const MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT: usize = 8;
 pub(crate) const MAX_DESKTOP_THUMBNAIL_WORKER_LIMIT: usize = 64;
 pub(crate) const MAX_ANDROID_THUMBNAIL_WORKERS: usize = 2;
+/// Workers of a media-library scan. At most the thumbnail-worker setting of
+/// them read previews out of photos at once ([`ExtractionPermits`]); the rest
+/// serve cached previews, so a screenful of them arrives together.
+const MEDIA_LIBRARY_PREVIEW_WORKERS: usize = 4;
 /// Concurrent full RAW renders for thumbnails (files without an embedded
 /// preview, and edited thumbnails), whatever the worker count. Each one holds
 /// an unpacked sensor image, so this bounds the indexing memory peak.

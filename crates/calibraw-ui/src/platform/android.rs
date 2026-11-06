@@ -2,12 +2,16 @@
 
 use super::service::{
     CameraProfileFolderResult, ExportPublishResult, ImportProgress, ImportedLibraryDocument,
-    LibraryDocument, LibraryFolder, LinkFolderResult, LinkedFolder, PickedDocument, PickerResult,
-    Platform, PublishedExport, ReplayVideoEncoder, StagedFilesResult, TaskNotification,
+    LibraryDocument, LibraryFolder, LinkFolderResult, LinkedFolder, ListedSidecar, PickedDocument,
+    PickerResult, Platform, PublishedExport, ReplayVideoEncoder, StagedFilesResult,
+    TaskNotification,
 };
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
-use crate::sidecar::{EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SidecarError};
+use crate::sidecar::{
+    EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SidecarError, SidecarSummary,
+};
+use calibraw_core::pipeline::RawDisplayMetadata;
 use calibraw_ffi::AndroidApp;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -254,6 +258,9 @@ impl Platform for AndroidPlatform {
                     display_path: document.display_path,
                     bytes: document.bytes,
                     modified_seconds: document.modified_seconds,
+                    sidecar: document
+                        .sidecar
+                        .map_or(ListedSidecar::Absent, ListedSidecar::Present),
                 })
                 .collect()
         })
@@ -464,26 +471,84 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::photo_companion_exists(&self.app, raw_uri, display_name, companion)
     }
 
-    fn load_library_thumbnail(
+    fn library_folder_cache_path(&self, linked_folder: &str, folder: &str) -> Option<PathBuf> {
+        calibraw_ffi::library_folder_cache_path(&self.app, linked_folder, folder)
+            .map_err(|error| log::warn!("{error}"))
+            .ok()
+    }
+
+    fn load_cached_library_preview(
         &self,
         uri: &str,
-        display_name: &str,
         bytes: u64,
         modified_seconds: u64,
         maximum_edge: u32,
-    ) -> Result<RawThumbnail, String> {
-        calibraw_ffi::load_library_thumbnail(
+    ) -> Result<Option<RawThumbnail>, String> {
+        calibraw_ffi::load_cached_library_preview(
             &self.app,
             uri,
-            display_name,
             bytes,
             modified_seconds,
             maximum_edge,
         )
     }
 
-    fn load_library_display_dimensions(&self, uri: &str) -> Result<[u32; 2], String> {
-        calibraw_ffi::load_library_display_dimensions(&self.app, uri)
+    fn extract_library_preview(
+        &self,
+        uri: &str,
+        display_name: &str,
+        bytes: u64,
+        modified_seconds: u64,
+        maximum_edge: u32,
+        read_display_metadata: bool,
+    ) -> Result<(RawThumbnail, Option<RawDisplayMetadata>), String> {
+        calibraw_ffi::extract_library_preview(
+            &self.app,
+            uri,
+            display_name,
+            bytes,
+            modified_seconds,
+            maximum_edge,
+            read_display_metadata,
+        )
+    }
+
+    fn load_library_display_metadata(
+        &self,
+        uri: &str,
+        display_name: &str,
+    ) -> Result<RawDisplayMetadata, String> {
+        calibraw_ffi::load_library_display_metadata(&self.app, uri, display_name)
+    }
+
+    fn sidecar_write_count(&self) -> u64 {
+        calibraw_ffi::sidecar_write_count()
+    }
+
+    fn sidecar_written_since(&self, raw_uri: &str, count: u64) -> bool {
+        calibraw_ffi::sidecar_written_since(raw_uri, count)
+    }
+
+    fn load_sidecar_summary(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+    ) -> Result<Option<SidecarSummary>, SidecarError> {
+        calibraw_ffi::load_android_sidecar_summary(&self.app, raw_uri, display_name)
+    }
+
+    fn load_current_developed_thumbnail(
+        &self,
+        raw_uri: &str,
+        render_fingerprint: u64,
+        maximum_edge: u32,
+    ) -> Result<Option<RawThumbnail>, String> {
+        calibraw_ffi::load_current_developed_thumbnail(
+            &self.app,
+            raw_uri,
+            render_fingerprint,
+            maximum_edge,
+        )
     }
 
     fn load_developed_thumbnail_cache(

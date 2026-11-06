@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::i18n::tr;
+use std::sync::Condvar;
 
 pub(in crate::ui::library) fn run_thumbnail_workers(
     worker: ThumbnailWorker,
@@ -39,7 +40,7 @@ pub(in crate::ui::library) fn run_thumbnail_workers(
 
     let assets = Arc::new(assets);
     let request_receiver = Arc::new(Mutex::new(request_receiver));
-    let worker_count = worker_count.clamp(1, maximum_thumbnail_worker_count());
+    let worker_count = worker_count.max(1);
     let mut handles = Vec::with_capacity(worker_count);
     for worker_index in 0..worker_count {
         let cancellation = Arc::clone(&cancellation);
@@ -215,5 +216,58 @@ fn run_one_thumbnail_worker(context: ThumbnailWorkerContext) {
                 .schedule_developed_preview(generation, request.asset_id.clone());
         }
         repaint.request_repaint();
+    }
+}
+
+/// Bounds how many workers read previews out of photos at once. Media-library
+/// pools have more workers than this, so cached previews, which take only a
+/// small JPEG decode, keep arriving while photos are read; a photo read holds
+/// its decoded embedded preview, which is what the bound keeps in memory.
+pub(in crate::ui::library) struct ExtractionPermits {
+    active: Mutex<usize>,
+    released: Condvar,
+    limit: usize,
+}
+
+/// Held while a worker reads a photo; dropping it lets the next one start.
+pub(in crate::ui::library) struct ExtractionPermit<'a> {
+    permits: &'a ExtractionPermits,
+}
+
+impl ExtractionPermits {
+    pub(in crate::ui::library) fn new(limit: usize) -> Self {
+        Self {
+            active: Mutex::new(0),
+            released: Condvar::new(),
+            limit: limit.max(1),
+        }
+    }
+
+    pub(in crate::ui::library) fn acquire(&self) -> ExtractionPermit<'_> {
+        // The count is consistent after every update, so a poisoned lock is usable.
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while *active >= self.limit {
+            active = self
+                .released
+                .wait(active)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        *active += 1;
+        ExtractionPermit { permits: self }
+    }
+}
+
+impl Drop for ExtractionPermit<'_> {
+    fn drop(&mut self) {
+        let mut active = self
+            .permits
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *active -= 1;
+        self.permits.released.notify_one();
     }
 }

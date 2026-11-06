@@ -25,20 +25,29 @@ interface LibraryStore {
         final String displayPath;
         final long bytes;
         final long modifiedSeconds;
+        /** The sidecar's size, or {@link #NO_SIDECAR} when the photo has none. */
+        final long sidecarBytes;
+        final long sidecarModifiedMillis;
 
         Document(
                 String uri,
                 String displayName,
                 String displayPath,
                 long bytes,
-                long modifiedSeconds) {
+                long modifiedSeconds,
+                long sidecarBytes,
+                long sidecarModifiedMillis) {
             this.uri = uri;
             this.displayName = displayName;
             this.displayPath = displayPath;
             this.bytes = bytes;
             this.modifiedSeconds = modifiedSeconds;
+            this.sidecarBytes = sidecarBytes;
+            this.sidecarModifiedMillis = sidecarModifiedMillis;
         }
     }
+
+    long NO_SIDECAR = -1L;
 
     final class Stored {
         final Uri uri;
@@ -56,7 +65,11 @@ interface LibraryStore {
     /** All folders below the top as "{encoded path}\t{encoded name}\n" lines, parents first. */
     String listFolders() throws Exception;
 
-    /** The newest {@code limit} photos directly in {@code folder}, in no particular order. */
+    /**
+     * The newest {@code limit} photos directly in {@code folder}, in no particular order, with
+     * the size and modification time of each one's sidecar, so the library can tell which changed
+     * without reading them.
+     */
     ArrayList<Document> listDocuments(String folder, int limit) throws Exception;
 
     /** The canonical form of {@code folder}; rejects a path that leaves the store. */

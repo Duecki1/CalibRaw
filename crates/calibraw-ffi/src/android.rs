@@ -49,6 +49,8 @@ pub struct LibraryDocument {
     pub display_path: String,
     pub bytes: u64,
     pub modified_seconds: u64,
+    /// The photo's sidecar; `None` when it has none.
+    pub sidecar: Option<calibraw_core::display_metadata_cache::FileStamp>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -433,21 +433,9 @@ final class StorageManager {
                 descriptor, "The RAW library returned no file descriptor");
     }
 
-    String rawThumbnailCachePath(
-            String uriText,
-            long bytes,
-            long modifiedSeconds,
-            int maximumEdge) throws Exception {
-        return thumbnailCache.rawPath(uriText, bytes, modifiedSeconds, maximumEdge);
-    }
-
-    String developedThumbnailCachePath(String uriText) throws Exception {
-        return thumbnailCache.developedPath(uriText);
-    }
-
-    void copyRawLibraryDevelopedThumbnail(String sourceUri, String destinationUri)
-            throws Exception {
-        thumbnailCache.copyDeveloped(sourceUri, destinationUri);
+    /** Where library previews are cached; native code names and reads the files in it. */
+    String thumbnailCacheDirectory() {
+        return thumbnailCache.directory().getAbsolutePath();
     }
 
     void clearThumbnailCache() {
@@ -613,23 +601,16 @@ final class StorageManager {
         if (displayName.equals(requestedName)) {
             return rawUri.toString();
         }
-        String destinationUri = store.rename(rawUri, displayName, requestedName).toString();
-        try {
-            thumbnailCache.copyDeveloped(rawUriText, destinationUri);
-        } catch (Exception error) {
-            Log.w(LOG_TAG, "Renamed RAW but could not preserve its developed thumbnail cache", error);
-            thumbnailCache.clearDeveloped(destinationUri);
-        }
-        thumbnailCache.clearDeveloped(rawUriText);
-        return destinationUri;
+        // Native code moves the developed thumbnail cached under the old URI.
+        return store.rename(rawUri, displayName, requestedName).toString();
     }
 
     void deleteRawLibraryDocument(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
         LibraryStore store = storeOf(rawUri);
         store.verify(rawUri, displayName);
+        // Native code clears the developed thumbnail cached under this URI.
         store.delete(rawUri, displayName);
-        thumbnailCache.clearDeveloped(rawUriText);
     }
 
     String materializeRawSidecar(String rawUriText, String displayName) throws Exception {
@@ -760,29 +741,28 @@ final class StorageManager {
 
         StringBuilder result = new StringBuilder();
         for (LibraryStore.Document record : records) {
-            appendLibraryRecord(
-                    result,
-                    record.uri,
-                    record.displayName,
-                    record.displayPath,
-                    record.bytes,
-                    record.modifiedSeconds);
+            appendLibraryRecord(result, record);
         }
         return result.toString();
     }
 
-    private static void appendLibraryRecord(
-            StringBuilder result,
-            String uri,
-            String displayName,
-            String displayPath,
-            long bytes,
-            long modifiedSeconds) {
-        result.append(Uri.encode(uri)).append('\t')
-                .append(Uri.encode(displayName)).append('\t')
-                .append(Uri.encode(displayPath)).append('\t')
-                .append(bytes).append('\t')
-                .append(modifiedSeconds).append('\n');
+    /**
+     * One tab-separated line: the encoded URI, name and path, the byte size, the modification
+     * time in seconds, then the sidecar's byte size and modification time in milliseconds, both
+     * "-" when the photo has none. Read by {@code parse_library_record} in calibraw-ffi.
+     */
+    private static void appendLibraryRecord(StringBuilder result, LibraryStore.Document record) {
+        result.append(Uri.encode(record.uri)).append('\t')
+                .append(Uri.encode(record.displayName)).append('\t')
+                .append(Uri.encode(record.displayPath)).append('\t')
+                .append(record.bytes).append('\t')
+                .append(record.modifiedSeconds).append('\t');
+        if (record.sidecarBytes == LibraryStore.NO_SIDECAR) {
+            result.append("-\t-");
+        } else {
+            result.append(record.sidecarBytes).append('\t').append(record.sidecarModifiedMillis);
+        }
+        result.append('\n');
     }
 
     private void deleteStoredRaw(Uri uri, String displayName) {

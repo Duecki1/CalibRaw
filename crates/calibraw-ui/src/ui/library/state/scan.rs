@@ -34,7 +34,10 @@ impl LibraryState {
         let cancellation = Arc::clone(&self.generation);
         let decoding_paused = Arc::clone(&self.decoding_paused);
         let decode_gate = Arc::clone(&self.decode_gate);
-        let thumbnail_workers = self.active_thumbnail_worker_count();
+        // Also the limit on photos read at once in a media-library scan.
+        let thumbnail_workers = self
+            .active_thumbnail_worker_count()
+            .clamp(1, maximum_thumbnail_worker_count());
         let render_edited_thumbnails_during_indexing =
             self.render_edited_thumbnails_during_indexing;
         let repaint = context.clone();
@@ -142,21 +145,15 @@ impl LibraryState {
                 })
         } else {
             let platform = Arc::clone(&self.platform);
-            // A linked folder may be slow to walk or to open photo by photo,
-            // so its photos do not wait for its folders or their dimensions.
-            let linked = !self.media.root.is_empty();
+            // A linked folder may be slow to walk, so its photos do not wait
+            // for its folders.
+            let linked_folder = self.media.root.clone();
+            let folder = self.media.folder.clone();
             self.status = tr("Refreshing CalibRaw library…").to_owned();
             std::thread::Builder::new()
                 .name("calibraw-library".to_owned())
                 .spawn(move || {
-                    if linked {
-                        spawn_linked_folder_walk(
-                            Arc::clone(&platform),
-                            event_sender.clone(),
-                            generation,
-                            repaint.clone(),
-                        );
-                    } else {
+                    if linked_folder.is_empty() {
                         let folders = match platform.list_library_folders() {
                             Ok(folders) => folders,
                             Err(error) => {
@@ -173,7 +170,15 @@ impl LibraryState {
                         {
                             return;
                         }
+                    } else {
+                        spawn_linked_folder_walk(
+                            Arc::clone(&platform),
+                            event_sender.clone(),
+                            generation,
+                            repaint.clone(),
+                        );
                     }
+                    let sidecar_writes = platform.sidecar_write_count();
                     let documents = match platform.list_library_documents() {
                         Ok(documents) => documents,
                         Err(error) => {
@@ -181,21 +186,20 @@ impl LibraryState {
                             return;
                         }
                     };
-                    let truncated = documents.len() > MAX_LIBRARY_FILES;
-                    let mut assets = documents
-                        .into_iter()
-                        .take(MAX_LIBRARY_FILES)
-                        .map(LibraryAsset::from_android_document)
-                        .collect::<Vec<_>>();
-                    if !linked {
-                        for asset in &mut assets {
-                            if let Some(uri) = asset.android_uri() {
-                                asset.metadata.dimensions_hint =
-                                    platform.load_library_display_dimensions(uri).ok();
-                            }
-                        }
-                    }
-                    let thumbnail_platform = Arc::clone(&platform);
+                    let MediaFolderScan {
+                        assets,
+                        truncated,
+                        deferred_metadata,
+                    } = catalog_media_folder(
+                        &*platform,
+                        &linked_folder,
+                        &folder,
+                        documents,
+                        sidecar_writes,
+                    );
+                    let deferred_metadata = Arc::new(deferred_metadata);
+                    let worker_metadata = Arc::clone(&deferred_metadata);
+                    let extraction = ExtractionPermits::new(thumbnail_workers);
                     run_thumbnail_workers(
                         ThumbnailWorker {
                             assets,
@@ -209,16 +213,19 @@ impl LibraryState {
                             request_receiver,
                             repaint,
                         },
-                        thumbnail_workers,
-                        Arc::new(move |asset, stage| {
-                            load_android_library_thumbnail(
-                                &*thumbnail_platform,
+                        MEDIA_LIBRARY_PREVIEW_WORKERS.max(thumbnail_workers),
+                        Arc::new(move |asset, _stage| {
+                            load_media_library_thumbnail(
+                                &*platform,
+                                &worker_metadata,
+                                &extraction,
                                 asset,
-                                stage,
-                                render_edited_thumbnails_during_indexing,
                             )
                         }),
                     );
+                    // Keeps what was read since the last periodic save when the
+                    // workers stop before every photo was read.
+                    deferred_metadata.save();
                 })
         };
 
@@ -377,8 +384,10 @@ impl LibraryState {
                         .map(|mut asset| {
                             if let Some(mut entry) = previous.remove(&asset.id) {
                                 if same_library_asset_identity(&entry.asset, &asset) {
-                                    // A media-library scan reads no reviews, and a thumbnail
-                                    // already on screen is not loaded again to supply one.
+                                    // A media-library scan reads no sidecars, so the review on
+                                    // screen stays: it may hold a rating not saved yet, and a
+                                    // thumbnail already on screen is not loaded again to
+                                    // supply one.
                                     if asset.android_uri().is_some() {
                                         asset.metadata.review = entry.asset.metadata.review;
                                     }
