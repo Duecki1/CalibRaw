@@ -153,10 +153,10 @@ final class TreeLibraryStore implements LibraryStore {
         }
     }
 
+    /** A folder {@link #normalizeFolder} accepts; "Trip " would be listed but never open. */
     private static boolean isUsableFolderName(String name) {
         try {
-            AndroidStorageContract.safeFolderName(name);
-            return true;
+            return AndroidStorageContract.safeFolderName(name).equals(name);
         } catch (IllegalArgumentException unusable) {
             return false;
         }
@@ -406,6 +406,8 @@ final class TreeLibraryStore implements LibraryStore {
                     }
                 }
                 for (String suffix : AndroidStorageContract.REGENERATED_COMPANION_SUFFIXES) {
+                    // The local copy is named after the old URI, which no longer reaches it.
+                    deleteMirror(raw, suffix);
                     Entry companion = entries.get(
                             AndroidStorageContract.companionDisplayName(displayName, suffix));
                     if (companion == null) {
@@ -419,7 +421,6 @@ final class TreeLibraryStore implements LibraryStore {
                     } catch (Exception error) {
                         Log.w(LOG_TAG, "Renamed photo but could not keep " + suffix, error);
                     }
-                    deleteMirror(raw, suffix);
                 }
                 noteWrite(place.folder);
             }
@@ -482,7 +483,17 @@ final class TreeLibraryStore implements LibraryStore {
     public synchronized InputStream openSidecar(Uri raw, String displayName) throws Exception {
         Place place = place(raw, displayName);
         String name = AndroidStorageContract.sidecarDisplayName(displayName);
-        Map<String, Entry> entries = entries(place.folder);
+        Entry cached = entries(place.folder).get(name);
+        if (cached != null) {
+            try {
+                return resolver().openInputStream(documentUri(cached.documentId));
+            } catch (FileNotFoundException staleId) {
+                // Sync replaced or removed it since the folder was listed.
+            }
+        }
+        // The index may predate a sidecar sync brought since. Opening the photo without it
+        // would let the next save overwrite the edits made on another device.
+        Map<String, Entry> entries = refresh(place.folder);
         Entry sidecar = entries.get(name);
         if (sidecar == null) {
             Entry interrupted = entries.get(AndroidStorageContract.linkedSwapOldName(name));
@@ -491,7 +502,7 @@ final class TreeLibraryStore implements LibraryStore {
             }
             renameExact(documentUri(interrupted.documentId), name);
             noteWrite(place.folder);
-            sidecar = entries(place.folder).get(name);
+            sidecar = refresh(place.folder).get(name);
             if (sidecar == null) {
                 return null;
             }
@@ -519,7 +530,9 @@ final class TreeLibraryStore implements LibraryStore {
     public void fetchCompanion(Uri raw, String displayName, String suffix) throws Exception {
         Place place = place(raw, displayName);
         File mirror = mirror(raw, suffix);
-        Entry stored = entries(place.folder).get(
+        // Fresh: sync may have brought or replaced the result since the folder was listed, and
+        // its size and time decide whether the local copy is still it.
+        Entry stored = refresh(place.folder).get(
                 AndroidStorageContract.companionDisplayName(displayName, suffix));
         if (stored == null) {
             deleteLocal(mirror);

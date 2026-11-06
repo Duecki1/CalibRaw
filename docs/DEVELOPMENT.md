@@ -711,8 +711,8 @@ A linked folder is worked on where it is: photos, `.calibraw` sidecars and AI
 results stay in the folder the person picked, so syncing it with another device
 behaves as on desktop. Linking takes no manifest permission. The system picker
 refuses the top level of storage, `Download` and `Android`. Unlinking only
-releases the grant. Photos other apps send always go to `.library`, and exports
-still go to `Pictures/CalibRaw`.
+releases the grant. Photos other apps send always go to `.library`, and the
+library switches to it to show them; exports still go to `Pictures/CalibRaw`.
 
 
 Long-running operations require the app to remain open. Android 13 and newer

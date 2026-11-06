@@ -44,6 +44,8 @@ impl CalibRawApp {
         if open_photo_is_there {
             self.detach_current_sidecar_target_for_library_action();
         }
+        // Queued ratings of its photos still need to reach their sidecars.
+        self.settle_library_review_saves();
         if let Err(error) = self.platform.unlink_folder(key) {
             self.report_error(
                 ErrorKind::LinkedFolder,

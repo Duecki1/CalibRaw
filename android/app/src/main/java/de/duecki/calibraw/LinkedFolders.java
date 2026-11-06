@@ -49,41 +49,58 @@ final class LinkedFolders {
 
     /** Keeps access to the picked tree and returns its key. Reaches storage. */
     String link(Uri treeUri) throws Exception {
+        String key = keyOf(treeUri);
+        boolean wasLinked = isGranted(key);
         storage.getContentResolver().takePersistableUriPermission(treeUri, ACCESS);
-        Uri document = DocumentsContract.buildDocumentUriUsingTree(
-                treeUri, DocumentsContract.getTreeDocumentId(treeUri));
-        String label = fallbackLabel(treeUri);
-        int flags = 0;
-        try (Cursor cursor = storage.getContentResolver().query(
-                document,
-                new String[]{
-                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                        DocumentsContract.Document.COLUMN_FLAGS
-                },
-                null,
-                null,
-                null)) {
-            if (cursor != null && cursor.moveToFirst()) {
-                String name = cursor.getString(0);
-                if (name != null && !name.isEmpty()) {
-                    label = name;
+        boolean linked = false;
+        try {
+            Uri document = DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri, DocumentsContract.getTreeDocumentId(treeUri));
+            String label = fallbackLabel(treeUri);
+            int flags = 0;
+            try (Cursor cursor = storage.getContentResolver().query(
+                    document,
+                    new String[]{
+                            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                            DocumentsContract.Document.COLUMN_FLAGS
+                    },
+                    null,
+                    null,
+                    null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    String name = cursor.getString(0);
+                    if (name != null && !name.isEmpty()) {
+                        label = name;
+                    }
+                    flags = cursor.getInt(1);
                 }
-                flags = cursor.getInt(1);
+            }
+            // Edits are saved beside the photos, so a folder that takes no new files cannot work.
+            if ((flags & DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE) == 0) {
+                throw new IllegalArgumentException(
+                        "CalibRaw cannot save edits in this folder. Choose one it can write to.");
+            }
+            labels().edit().putString(key, label).apply();
+            // The picker opens where a document is, so it is given the folder, not the tree.
+            pickerLocations.writeContentUri(PICKER_URI_KEY, document);
+            linked = true;
+            return key;
+        } finally {
+            // The grant is the list of linked folders, so one that failed must not stay. A
+            // folder linked before keeps its grant; its store, and the locks it holds, stay too.
+            if (!linked && !wasLinked) {
+                storage.getContentResolver().releasePersistableUriPermission(treeUri, ACCESS);
             }
         }
-        // Edits are saved beside the photos, so a folder that takes no new files cannot work.
-        if ((flags & DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE) == 0) {
-            storage.getContentResolver().releasePersistableUriPermission(treeUri, ACCESS);
-            throw new IllegalArgumentException(
-                    "CalibRaw cannot save edits in this folder. Choose one it can write to.");
+    }
+
+    private boolean isGranted(String key) {
+        for (Uri tree : grantedTrees()) {
+            if (key.equals(keyOf(tree))) {
+                return true;
+            }
         }
-        String key = keyOf(treeUri);
-        labels().edit().putString(key, label).apply();
-        pickerLocations.writeContentUri(PICKER_URI_KEY, treeUri);
-        synchronized (this) {
-            stores.remove(key);
-        }
-        return key;
+        return false;
     }
 
     void unlink(String key) {
@@ -167,10 +184,11 @@ final class LinkedFolders {
         }
     }
 
-    /** "primary:Pictures/Sync" becomes "Sync". */
+    /** "primary:Pictures/Sync" and "1A2B-3C4D:Sync" become "Sync". */
     private static String fallbackLabel(Uri tree) {
         String path = distinctLabel(tree);
-        return path.substring(path.lastIndexOf('/') + 1);
+        String name = path.substring(Math.max(path.lastIndexOf('/'), path.indexOf(':')) + 1);
+        return name.isEmpty() ? path : name;
     }
 
     /** "primary:Pictures/Sync" becomes "Pictures/Sync"; another volume keeps its name. */

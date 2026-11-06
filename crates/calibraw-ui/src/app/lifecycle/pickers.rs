@@ -320,6 +320,17 @@ impl CalibRawApp {
             return;
         }
         if let Some(result) = self.platform.take_external_open_result() {
+            // Photos other apps send are kept in the media library, never in
+            // a linked folder, so the library shows where they went.
+            let imported = match &result {
+                crate::platform::PickerResult::Picked(_) => true,
+                crate::platform::PickerResult::BatchImported { imported, .. } => *imported > 0,
+                crate::platform::PickerResult::Cancelled
+                | crate::platform::PickerResult::Failed(_) => false,
+            };
+            if imported && !self.library.android_root().is_empty() {
+                self.select_android_library_root(String::new());
+            }
             self.handle_android_picker_result(result, frame);
         }
         if self.platform.has_external_open_result() {
