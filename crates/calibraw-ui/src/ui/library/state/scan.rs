@@ -4,12 +4,25 @@ use super::*;
 use crate::i18n::{tr, tr_fmt};
 
 impl LibraryState {
+    /// Scans the shown folder again; a linked folder's tree is walked again too.
     pub(crate) fn refresh(&mut self, context: &egui::Context) {
+        if !self.media.root.is_empty() {
+            self.media.tree_walk_due = true;
+        }
+        self.rescan(context);
+    }
+
+    /// Scans the shown folder again and keeps a linked folder's tree, which
+    /// selecting another of its folders does not change.
+    pub(in crate::ui::library) fn rescan(&mut self, context: &egui::Context) {
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         let cancellation = Arc::clone(&self.generation);
         let decoding_paused = Arc::clone(&self.decoding_paused);
         let decode_gate = Arc::clone(&self.decode_gate);
-        let thumbnail_workers = self.active_thumbnail_worker_count();
+        // Also the limit on photos read at once in a media-library scan.
+        let thumbnail_workers = self
+            .active_thumbnail_worker_count()
+            .clamp(1, maximum_thumbnail_worker_count());
         let render_edited_thumbnails_during_indexing =
             self.render_edited_thumbnails_during_indexing;
         let repaint = context.clone();
@@ -116,27 +129,35 @@ impl LibraryState {
                     deferred_metadata.save();
                 })
         } else {
+            // A linked folder may be slow to walk, so its photos do not wait
+            // for its folders.
+            self.start_linked_tree_walk(context);
             let platform = Arc::clone(&self.platform);
+            let linked_folder = self.media.root.clone();
+            let folder = self.media.folder.clone();
             self.status = tr("Refreshing CalibRaw library…").to_owned();
             std::thread::Builder::new()
                 .name("calibraw-library".to_owned())
                 .spawn(move || {
-                    let folders = match platform.list_library_folders() {
-                        Ok(folders) => folders,
-                        Err(error) => {
-                            send_scan_failure(&event_sender, generation, error, &repaint);
+                    if linked_folder.is_empty() {
+                        let folders = match platform.list_library_folders() {
+                            Ok(folders) => folders,
+                            Err(error) => {
+                                send_scan_failure(&event_sender, generation, error, &repaint);
+                                return;
+                            }
+                        };
+                        if event_sender
+                            .send(ScanEvent::AndroidFolders {
+                                generation,
+                                folders,
+                            })
+                            .is_err()
+                        {
                             return;
                         }
-                    };
-                    if event_sender
-                        .send(ScanEvent::AndroidFolders {
-                            generation,
-                            folders,
-                        })
-                        .is_err()
-                    {
-                        return;
                     }
+                    let sidecar_writes = platform.sidecar_write_count();
                     let documents = match platform.list_library_documents() {
                         Ok(documents) => documents,
                         Err(error) => {
@@ -144,19 +165,20 @@ impl LibraryState {
                             return;
                         }
                     };
-                    let truncated = documents.len() > MAX_LIBRARY_FILES;
-                    let mut assets = documents
-                        .into_iter()
-                        .take(MAX_LIBRARY_FILES)
-                        .map(LibraryAsset::from_android_document)
-                        .collect::<Vec<_>>();
-                    for asset in &mut assets {
-                        if let Some(uri) = asset.android_uri() {
-                            asset.metadata.dimensions_hint =
-                                platform.load_library_display_dimensions(uri).ok();
-                        }
-                    }
-                    let thumbnail_platform = Arc::clone(&platform);
+                    let MediaFolderScan {
+                        assets,
+                        truncated,
+                        deferred_metadata,
+                    } = catalog_media_folder(
+                        &*platform,
+                        &linked_folder,
+                        &folder,
+                        documents,
+                        sidecar_writes,
+                    );
+                    let deferred_metadata = Arc::new(deferred_metadata);
+                    let worker_metadata = Arc::clone(&deferred_metadata);
+                    let extraction = ExtractionPermits::new(thumbnail_workers);
                     run_thumbnail_workers(
                         ThumbnailWorker {
                             assets,
@@ -170,16 +192,19 @@ impl LibraryState {
                             request_receiver,
                             repaint,
                         },
-                        thumbnail_workers,
-                        Arc::new(move |asset, stage| {
-                            load_android_library_thumbnail(
-                                &*thumbnail_platform,
+                        MEDIA_LIBRARY_PREVIEW_WORKERS.max(thumbnail_workers),
+                        Arc::new(move |asset, _stage| {
+                            load_media_library_thumbnail(
+                                &*platform,
+                                &worker_metadata,
+                                &extraction,
                                 asset,
-                                stage,
-                                render_edited_thumbnails_during_indexing,
                             )
                         }),
                     );
+                    // Keeps what was read since the last periodic save when the
+                    // workers stop before every photo was read.
+                    deferred_metadata.save();
                 })
         };
 
@@ -193,6 +218,74 @@ impl LibraryState {
                 &[("error", &error)],
             );
         }
+    }
+
+    /// Walks the shown linked folder's tree when a refresh asked for it and no
+    /// walk runs. A failure is only logged: the photo scan reaches the same
+    /// folder and reports it.
+    fn start_linked_tree_walk(&mut self, context: &egui::Context) {
+        if self.media.root.is_empty() || !self.media.tree_walk_due || self.media.tree_walk.is_some()
+        {
+            return;
+        }
+        self.media.tree_walk_due = false;
+        let root = self.media.root.clone();
+        let platform = Arc::clone(&self.platform);
+        let repaint = context.clone();
+        let (sender, result) = mpsc::channel();
+        let walked_root = root.clone();
+        let walk = std::thread::Builder::new()
+            .name("calibraw-library-folders".to_owned())
+            .spawn(move || {
+                // The library may have stopped waiting for this walk.
+                let _ = sender.send(platform.list_linked_folder_tree(&walked_root));
+                repaint.request_repaint();
+            });
+        match walk {
+            Ok(_) => self.media.tree_walk = Some(LinkedTreeWalk { root, result }),
+            Err(error) => log::warn!("could not walk the linked folder: {error}"),
+        }
+    }
+
+    fn poll_linked_tree_walk(&mut self, context: &egui::Context) {
+        let Some(walk) = self.media.tree_walk.as_ref() else {
+            return;
+        };
+        let result = match walk.result.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err("the linked folder walk stopped unexpectedly".to_owned())
+            }
+        };
+        let shown = walk.root == self.media.root;
+        self.media.tree_walk = None;
+        match result {
+            Ok(folders) if shown => self.show_android_folders(folders),
+            Ok(_) => {}
+            Err(error) => log::warn!("{error}"),
+        }
+        // A refresh while it ran, such as a folder created meanwhile.
+        self.start_linked_tree_walk(context);
+    }
+
+    /// Shows the folders of the media library or of a linked folder, keeping
+    /// the selected folder's ancestors open.
+    fn show_android_folders(&mut self, folders: Vec<crate::platform::LibraryFolder>) {
+        self.media.folders = folders;
+        let folder_paths = self
+            .media
+            .folders
+            .iter()
+            .map(|folder| folder.path.as_str())
+            .collect::<HashSet<_>>();
+        self.media
+            .expanded_folders
+            .retain(|path| path.is_empty() || folder_paths.contains(path.as_str()));
+        let selected_folder = self.media.folder.clone();
+        self.media
+            .expanded_folders
+            .extend(android_folder_ancestors(&selected_folder));
     }
 
     pub(crate) fn poll_dropped_raw_import(&mut self, context: &egui::Context) {
@@ -217,6 +310,7 @@ impl LibraryState {
     }
 
     pub(crate) fn poll(&mut self, context: &egui::Context) {
+        self.poll_linked_tree_walk(context);
         let pasted = self
             .asset_transfer_receiver
             .as_ref()
@@ -305,20 +399,7 @@ impl LibraryState {
                     generation,
                     folders,
                 } if generation == self.generation.load(Ordering::Acquire) => {
-                    self.media.folders = folders;
-                    let folder_paths = self
-                        .media
-                        .folders
-                        .iter()
-                        .map(|folder| folder.path.as_str())
-                        .collect::<HashSet<_>>();
-                    self.media
-                        .expanded_folders
-                        .retain(|path| path.is_empty() || folder_paths.contains(path.as_str()));
-                    let selected_folder = self.media.folder.clone();
-                    self.media
-                        .expanded_folders
-                        .extend(android_folder_ancestors(&selected_folder));
+                    self.show_android_folders(folders);
                 }
                 ScanEvent::Catalog {
                     generation,
@@ -326,6 +407,9 @@ impl LibraryState {
                     warning_count,
                     truncated,
                 } if generation == self.generation.load(Ordering::Acquire) => {
+                    self.media
+                        .unavailable_roots
+                        .remove(self.media.root.as_str());
                     let mut previous = std::mem::take(&mut self.entries)
                         .into_iter()
                         .map(|entry| (entry.asset.id.clone(), entry))
@@ -335,8 +419,10 @@ impl LibraryState {
                         .map(|mut asset| {
                             if let Some(mut entry) = previous.remove(&asset.id) {
                                 if same_library_asset_identity(&entry.asset, &asset) {
-                                    // A media-library scan reads no reviews, and a thumbnail
-                                    // already on screen is not loaded again to supply one.
+                                    // A media-library scan reads no sidecars, so the review on
+                                    // screen stays: it may hold a rating not saved yet, and a
+                                    // thumbnail already on screen is not loaded again to
+                                    // supply one.
                                     if asset.android_uri().is_some() {
                                         asset.metadata.review = entry.asset.metadata.review;
                                     }
@@ -452,6 +538,14 @@ impl LibraryState {
                     self.catalog_ready = true;
                     self.event_receiver = None;
                     self.request_sender = None;
+                    if let Some(folder) = self.linked_folder_label().map(str::to_owned) {
+                        self.media.pending_error = Some(tr_fmt(
+                            "{folder} is not available. Reconnect its storage or link it again. ({error})",
+                            &[("folder", &folder), ("error", &error)],
+                        ));
+                        let root = self.media.root.clone();
+                        self.media.unavailable_roots.insert(root);
+                    }
                     self.status = error;
                     break;
                 }

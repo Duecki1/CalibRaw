@@ -1,14 +1,8 @@
 use super::super::*;
 use crate::i18n::tr_fmt;
 use calibraw_core::display_metadata_cache::{FileStamp, FolderDisplayMetadataCache};
-use calibraw_core::pipeline::RawDisplayMetadata;
 use std::collections::BinaryHeap;
-use std::sync::{MutexGuard, PoisonError};
 use std::time::UNIX_EPOCH;
-
-/// Photos whose metadata was read since the folder cache was last written;
-/// bounds the work lost when the app closes during indexing.
-const DEFERRED_METADATA_SAVE_INTERVAL: usize = 32;
 
 pub(in crate::ui::library) struct RankedLibraryAsset {
     asset: LibraryAsset,
@@ -62,111 +56,7 @@ pub(in crate::ui::library) struct FolderScan {
     pub(in crate::ui::library) assets: Vec<LibraryAsset>,
     pub(in crate::ui::library) warning_count: usize,
     pub(in crate::ui::library) truncated: bool,
-    pub(in crate::ui::library) deferred_metadata: DeferredDisplayMetadata,
-}
-
-/// Display metadata the folder scan did not find in the folder cache.
-///
-/// The scan does not open photos, so the catalog appears after one directory
-/// listing. Thumbnail workers read the metadata instead, from the same open as
-/// the embedded preview when the preview is not cached, and record it here.
-pub(in crate::ui::library) struct DeferredDisplayMetadata {
-    state: Mutex<DeferredMetadataState>,
-}
-
-struct DeferredMetadataState {
-    cache: FolderDisplayMetadataCache,
-    /// Photos whose metadata is unread, with the stamp that validates a cache
-    /// entry; photos without a stamp are read but never cached.
-    pending: HashMap<PathBuf, Option<FileStamp>>,
-    unsaved: usize,
-}
-
-impl DeferredDisplayMetadata {
-    pub(in crate::ui::library) fn new(
-        cache: FolderDisplayMetadataCache,
-        pending: HashMap<PathBuf, Option<FileStamp>>,
-    ) -> Self {
-        Self {
-            state: Mutex::new(DeferredMetadataState {
-                cache,
-                pending,
-                unsaved: 0,
-            }),
-        }
-    }
-
-    fn lock(&self) -> MutexGuard<'_, DeferredMetadataState> {
-        // Every update leaves the state consistent, so a poisoned lock is usable.
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    pub(in crate::ui::library) fn is_pending(&self, path: &Path) -> bool {
-        self.lock().pending.contains_key(path)
-    }
-
-    /// Records metadata read for a pending photo and returns it for delivery
-    /// with the thumbnail. A failed read is not cached and retried next scan.
-    pub(in crate::ui::library) fn complete(
-        &self,
-        path: &Path,
-        metadata: Option<RawDisplayMetadata>,
-    ) -> Option<RawDisplayMetadata> {
-        let mut state = self.lock();
-        let Some(stamp) = state.pending.remove(path) else {
-            return metadata;
-        };
-        if let (Some(file_name), Some(stamp), Some(metadata)) = (path.file_name(), stamp, metadata)
-        {
-            state.cache.insert(file_name, stamp, metadata);
-            state.unsaved += 1;
-        }
-        if state.pending.is_empty() || state.unsaved >= DEFERRED_METADATA_SAVE_INTERVAL {
-            state.save();
-        }
-        metadata
-    }
-
-    /// Reads a pending photo's metadata on its own, for thumbnails served from
-    /// a cache. Returns `None` when the photo is not pending.
-    pub(in crate::ui::library) fn read_pending(&self, path: &Path) -> Option<RawDisplayMetadata> {
-        // The read runs unlocked so other workers are not held up by its I/O.
-        if !self.is_pending(path) {
-            return None;
-        }
-        let metadata =
-            calibraw_core::serialized_reads::run(|| load_raw_display_metadata(path)).ok();
-        self.complete(path, metadata)
-    }
-
-    pub(in crate::ui::library) fn save(&self) {
-        self.lock().save();
-    }
-}
-
-impl DeferredMetadataState {
-    fn save(&mut self) {
-        if let Err(error) = self.cache.save() {
-            log::warn!("{error}");
-        }
-        self.unsaved = 0;
-    }
-}
-
-/// Folds display metadata into the asset; says whether that moves the asset in
-/// the newest/oldest order, which needs the library list to be sorted again.
-pub(in crate::ui::library) fn apply_display_metadata(
-    asset: &mut LibraryAssetMetadata,
-    metadata: RawDisplayMetadata,
-) -> bool {
-    let order_before = asset.date_order_seconds();
-    asset.dimensions_hint = Some(metadata.dimensions);
-    asset.iso_speed = metadata.iso_speed;
-    asset.shutter_seconds = metadata.shutter_seconds;
-    asset.focal_length = metadata.focal_length;
-    asset.aperture = metadata.aperture;
-    asset.taken_seconds = metadata.taken_seconds;
-    order_before != asset.date_order_seconds()
+    pub(in crate::ui::library) deferred_metadata: DeferredFolderMetadata,
 }
 
 pub(in crate::ui::library) fn scan_folder_tree(
@@ -342,7 +232,9 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
                     apply_display_metadata(&mut asset.metadata, metadata);
                 }
                 None => {
-                    pending_metadata.insert(path.to_path_buf(), stamp);
+                    if let Some(file_name) = path.file_name() {
+                        pending_metadata.insert(file_name.to_owned(), stamp);
+                    }
                 }
             }
         }
@@ -357,6 +249,6 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
         assets,
         warning_count,
         truncated,
-        deferred_metadata: DeferredDisplayMetadata::new(metadata_cache, pending_metadata),
+        deferred_metadata: DeferredFolderMetadata::new(metadata_cache, pending_metadata),
     }))
 }

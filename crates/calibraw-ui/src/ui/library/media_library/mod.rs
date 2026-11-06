@@ -6,6 +6,7 @@ use crate::i18n::{tr, tr_fmt};
 use egui_phosphor::regular;
 use moduwu_design::MenuItem;
 
+pub(super) mod catalog;
 mod local;
 
 pub(in crate::ui::library) fn default_thumbnail_worker_count() -> usize {
@@ -31,6 +32,8 @@ pub(super) fn show_android_library_folder_node(
     action_in_progress: bool,
     expanded_folders: &mut HashSet<String>,
     requested_action: &mut Option<AndroidLibraryFolderUiAction>,
+    // Set on the top row of the linked folder being shown.
+    linked: Option<(&crate::platform::LinkedFolder, bool)>,
 ) {
     let children = children_by_parent
         .get(path)
@@ -40,7 +43,7 @@ pub(super) fn show_android_library_folder_node(
     let expanded = has_children && expanded_folders.contains(path);
     let row = ui
         .add_enabled_ui(!action_in_progress, |ui| {
-            crate::ui::icons::folder_tree_row(
+            crate::ui::icons::folder_tree_row_with_icon(
                 ui,
                 path,
                 name,
@@ -48,6 +51,11 @@ pub(super) fn show_android_library_folder_node(
                 has_children.then_some(expanded),
                 selected_folder == path,
                 Sense::click(),
+                match linked {
+                    Some(_) => linked_folder_icon(linked.is_some_and(|(_, available)| !available)),
+                    None if expanded => regular::FOLDER_OPEN,
+                    None => regular::FOLDER,
+                },
             )
         })
         .inner;
@@ -72,6 +80,13 @@ pub(super) fn show_android_library_folder_node(
             *requested_action = Some(AndroidLibraryFolderUiAction::Refresh);
             ui.close();
         }
+        if let Some((folder, _)) = linked {
+            let unlink_item = MenuItem::new(tr("Unlink folder")).icon(regular::LINK_BREAK);
+            if ui.add(unlink_item).clicked() {
+                *requested_action = Some(AndroidLibraryFolderUiAction::Unlink(folder.clone()));
+                ui.close();
+            }
+        }
     });
 
     if expanded {
@@ -86,8 +101,58 @@ pub(super) fn show_android_library_folder_node(
                 action_in_progress,
                 expanded_folders,
                 requested_action,
+                None,
             );
         }
+    }
+}
+
+/// The link shows a folder is the person's own; the warning, that it could
+/// not be reached.
+fn linked_folder_icon(unavailable: bool) -> &'static str {
+    if unavailable {
+        regular::WARNING
+    } else {
+        regular::LINK
+    }
+}
+
+/// The top row of a folder that is not shown. Its subfolders are only known
+/// once it is.
+fn show_other_root_row(
+    ui: &mut Ui,
+    name: &str,
+    action_in_progress: bool,
+    key: &str,
+    icon: &str,
+    linked: Option<&crate::platform::LinkedFolder>,
+    requested_action: &mut Option<AndroidLibraryFolderUiAction>,
+) {
+    let row = ui
+        .add_enabled_ui(!action_in_progress, |ui| {
+            crate::ui::icons::folder_tree_row_with_icon(
+                ui,
+                ("library-root", key),
+                name,
+                0,
+                None,
+                false,
+                Sense::click(),
+                icon,
+            )
+        })
+        .inner;
+    if row.row.clicked() {
+        *requested_action = Some(AndroidLibraryFolderUiAction::SelectRoot(key.to_owned()));
+    }
+    if let Some(folder) = linked {
+        moduwu_design::context_menu(&row.row, |ui| {
+            let unlink_item = MenuItem::new(tr("Unlink folder")).icon(regular::LINK_BREAK);
+            if ui.add(unlink_item).clicked() {
+                *requested_action = Some(AndroidLibraryFolderUiAction::Unlink(folder.clone()));
+                ui.close();
+            }
+        });
     }
 }
 
@@ -100,6 +165,14 @@ pub(super) fn apply_android_library_folder_ui_action(
         AndroidLibraryFolderUiAction::Select(folder) => {
             app.select_android_library_folder(folder);
             app.set_library_folder_sidebar_open(false);
+        }
+        AndroidLibraryFolderUiAction::SelectRoot(key) => {
+            app.select_android_library_root(key);
+            app.set_library_folder_sidebar_open(false);
+        }
+        AndroidLibraryFolderUiAction::Link => app.library.media.link_dialog = true,
+        AndroidLibraryFolderUiAction::Unlink(folder) => {
+            app.library.media.unlink_dialog = Some(folder);
         }
         AndroidLibraryFolderUiAction::New(parent) => {
             app.library.media.folder_name_dialog = Some(AndroidLibraryFolderNameDialog {
@@ -171,10 +244,14 @@ pub(in crate::ui::library) fn show_local_folder_tree(
     app: &mut CalibRawApp,
     action_in_progress: bool,
 ) {
+    let can_link = app.caps().linked_folders;
     let MediaLibraryState {
         folder: selected_folder,
         folders,
         expanded_folders,
+        root,
+        linked_folders,
+        unavailable_roots,
         ..
     } = &mut app.library.media;
     let mut children_by_parent = HashMap::<&str, Vec<&crate::platform::LibraryFolder>>::new();
@@ -187,18 +264,82 @@ pub(in crate::ui::library) fn show_local_folder_tree(
     let mut requested_action = None;
 
     moduwu_design::tree(ui, |ui| {
-        show_android_library_folder_node(
-            ui,
-            "",
-            tr("Library"),
-            0,
-            &children_by_parent,
-            selected_folder.as_str(),
-            action_in_progress,
-            expanded_folders,
-            &mut requested_action,
-        );
+        if root.is_empty() {
+            show_android_library_folder_node(
+                ui,
+                "",
+                tr("Library"),
+                0,
+                &children_by_parent,
+                selected_folder.as_str(),
+                action_in_progress,
+                expanded_folders,
+                &mut requested_action,
+                None,
+            );
+        } else {
+            show_other_root_row(
+                ui,
+                tr("Library"),
+                action_in_progress,
+                "",
+                regular::FOLDER,
+                None,
+                &mut requested_action,
+            );
+        }
     });
+
+    if can_link {
+        ui.add_space(moduwu_design::SPACE_SM);
+        ui.weak(tr("Linked folders"));
+        moduwu_design::tree(ui, |ui| {
+            for folder in linked_folders.iter() {
+                let unavailable = unavailable_roots.contains(&folder.key);
+                if *root == folder.key {
+                    show_android_library_folder_node(
+                        ui,
+                        "",
+                        &folder.label,
+                        0,
+                        &children_by_parent,
+                        selected_folder.as_str(),
+                        action_in_progress,
+                        expanded_folders,
+                        &mut requested_action,
+                        Some((folder, !unavailable)),
+                    );
+                } else {
+                    show_other_root_row(
+                        ui,
+                        &folder.label,
+                        action_in_progress,
+                        &folder.key,
+                        linked_folder_icon(unavailable),
+                        Some(folder),
+                        &mut requested_action,
+                    );
+                }
+            }
+            let row = ui
+                .add_enabled_ui(!action_in_progress, |ui| {
+                    crate::ui::icons::folder_tree_row_with_icon(
+                        ui,
+                        "library-link-a-folder",
+                        tr("Link a folder…"),
+                        0,
+                        None,
+                        false,
+                        Sense::click(),
+                        regular::PLUS,
+                    )
+                })
+                .inner;
+            if row.row.clicked() {
+                requested_action = Some(AndroidLibraryFolderUiAction::Link);
+            }
+        });
+    }
 
     if let Some(action) = requested_action {
         apply_android_library_folder_ui_action(app, action, ui.ctx());
@@ -209,6 +350,8 @@ pub(in crate::ui::library) fn show_sidebar_dialogs(_ui: &mut Ui, _app: &mut Cali
 
 pub(in crate::ui::library) fn show_page_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
     show_android_library_folder_dialog(ui, app);
+    show_link_folder_dialog(ui, app);
+    show_unlink_folder_dialog(ui, app);
     if let Some(status) = app.android.photo_import {
         show_photo_import_progress(ui, status);
     }

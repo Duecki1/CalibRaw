@@ -20,3 +20,4 @@ calibraw-core.workspace = true
 android-activity.workspace = true
 jni.workspace = true
 log.workspace = true
+ring.workspace = true

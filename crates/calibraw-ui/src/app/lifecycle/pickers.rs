@@ -91,6 +91,55 @@ impl CalibRawApp {
         }
     }
 
+    /// Asks for a folder to link through the platform's folder picker.
+    pub(crate) fn open_link_folder_picker(&mut self) {
+        if self.android_foreground_task_active() {
+            self.ui.notice = Some(
+                tr("Wait for the current foreground operation to finish before linking a folder.")
+                    .to_owned(),
+            );
+            self.egui_ctx.request_repaint();
+            return;
+        }
+        if self.android.picker_pending {
+            return;
+        }
+        match self.platform.open_link_folder_picker() {
+            Ok(()) => self.android.picker_pending = true,
+            Err(error) => self.report_error(
+                ErrorKind::LinkedFolder,
+                tr_fmt("Could not link the folder: {error}", &[("error", &error)]),
+            ),
+        }
+    }
+
+    fn poll_linked_folders(&mut self) {
+        while let Some(result) = self.platform.take_link_folder_result() {
+            self.android.picker_pending = false;
+            match result {
+                crate::platform::LinkFolderResult::Linked { key } => {
+                    self.library.reload_linked_folders();
+                    self.select_android_library_root(key);
+                    self.set_library_folder_sidebar_open(false);
+                }
+                crate::platform::LinkFolderResult::Cancelled => {}
+                crate::platform::LinkFolderResult::Failed(error) => self.report_error(
+                    ErrorKind::LinkedFolder,
+                    tr_fmt("Could not link the folder: {error}", &[("error", &error)]),
+                ),
+            }
+        }
+        // A change seen during a scan waits for it: the scan may have listed
+        // the folder before the change.
+        if !self.library.is_scanning() && self.platform.take_library_changed() {
+            self.library.refresh(&self.egui_ctx);
+        }
+        if let Some(error) = self.library.take_linked_folder_error() {
+            self.report_error(ErrorKind::LinkedFolder, error);
+        }
+        self.poll_photo_companion_publishes();
+    }
+
     pub(crate) fn poll_desktop_picker(&mut self, frame: &eframe::Frame) {
         let result = self
             .ui
@@ -142,6 +191,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_android_picker(&mut self, frame: &eframe::Frame) {
+        self.poll_linked_folders();
         // Before the results: a batch's progress always precedes its `BatchImported`.
         if let Some(progress) = self.platform.take_import_progress() {
             self.android.photo_import = Some(PhotoImportStatus::Copying(progress));
@@ -272,6 +322,17 @@ impl CalibRawApp {
             return;
         }
         if let Some(result) = self.platform.take_external_open_result() {
+            // Photos other apps send are kept in the media library, never in
+            // a linked folder, so the library shows where they went.
+            let imported = match &result {
+                crate::platform::PickerResult::Picked(_) => true,
+                crate::platform::PickerResult::BatchImported { imported, .. } => *imported > 0,
+                crate::platform::PickerResult::Cancelled
+                | crate::platform::PickerResult::Failed(_) => false,
+            };
+            if imported && !self.library.android_root().is_empty() {
+                self.select_android_library_root(String::new());
+            }
             self.handle_android_picker_result(result, frame);
         }
         if self.platform.has_external_open_result() {

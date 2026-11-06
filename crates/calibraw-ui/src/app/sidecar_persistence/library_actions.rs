@@ -31,6 +31,34 @@ impl CalibRawApp {
         self.detach_current_sidecar_target_for_library_action()
     }
 
+    /// Stops showing a linked folder; its files stay where they are. An open
+    /// photo from it saves first, while CalibRaw can still write there.
+    pub(crate) fn unlink_android_library_folder(&mut self, key: &str) {
+        // How the Android bridge names a linked folder's photos.
+        let photo_prefix = format!("calibraw-tree://{key}/");
+        let open_photo_is_there = matches!(
+            self.persistence.sidecar_target.as_ref(),
+            Some(crate::sidecar::SidecarTarget::Android { raw_uri, .. })
+                if raw_uri.starts_with(&photo_prefix)
+        );
+        if open_photo_is_there {
+            self.detach_current_sidecar_target_for_library_action();
+        }
+        // Queued ratings of its photos still need to reach their sidecars.
+        self.settle_library_review_saves();
+        if let Err(error) = self.platform.unlink_folder(key) {
+            self.report_error(
+                ErrorKind::LinkedFolder,
+                crate::i18n::tr_fmt("Could not unlink the folder: {error}", &[("error", &error)]),
+            );
+            return;
+        }
+        self.library.reload_linked_folders();
+        if self.library.android_root() == key {
+            self.select_android_library_root(String::new());
+        }
+    }
+
     pub(crate) fn reset_android_library_adjustments(
         &mut self,
         raw_uri: &str,

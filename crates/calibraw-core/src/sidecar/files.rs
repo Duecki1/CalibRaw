@@ -349,6 +349,32 @@ pub fn render_fingerprint(bytes: &[u8]) -> Result<u64, String> {
     Ok(fingerprint)
 }
 
+/// What the library grid needs from a sidecar. A library whose sidecars are
+/// slow to reach remembers it per sidecar version instead of reading it again.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct SidecarSummary {
+    pub review: PhotoReview,
+    /// Whether the edits change the rendered photo.
+    pub has_edits: bool,
+    /// Crop and rotation, applied to the camera's embedded preview.
+    pub geometry: GeometryTransform,
+    /// The sidecar's [`render_fingerprint`]; a developed thumbnail is current
+    /// while the fingerprint it was saved with matches.
+    pub render_fingerprint: u64,
+}
+
+impl SidecarSummary {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SidecarError> {
+        let sidecar = decode(bytes)?;
+        Ok(Self {
+            review: sidecar.review,
+            has_edits: edit_state_has_adjustments(&sidecar.edits),
+            geometry: sidecar.edits.geometry,
+            render_fingerprint: render_fingerprint(bytes).map_err(SidecarError::Invalid)?,
+        })
+    }
+}
+
 #[cfg(target_os = "android")]
 pub fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), SidecarError> {
     if bytes.len() as u64 > MAX_SIDECAR_BYTES {

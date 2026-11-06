@@ -29,33 +29,47 @@ pub fn list_library_documents(app: &AndroidApp) -> Result<Vec<LibraryDocument>, 
     encoded
         .lines()
         .filter(|line| !line.is_empty())
-        .map(|line| {
-            let mut fields = line.split('\t');
-            let uri = decode_uri_component(fields.next().unwrap_or_default())?;
-            let display_name = decode_uri_component(fields.next().unwrap_or_default())?;
-            let display_path = decode_uri_component(fields.next().unwrap_or_default())?;
-            let bytes = fields
-                .next()
-                .ok_or_else(|| "Android library record has no byte size".to_owned())?
-                .parse::<u64>()
-                .map_err(|error| format!("invalid Android library byte size: {error}"))?;
-            let modified_seconds = fields
-                .next()
-                .ok_or_else(|| "Android library record has no modification time".to_owned())?
-                .parse::<u64>()
-                .map_err(|error| format!("invalid Android library modification time: {error}"))?;
-            if fields.next().is_some() || uri.is_empty() || display_name.is_empty() {
-                return Err("malformed Android library record".to_owned());
-            }
-            Ok(LibraryDocument {
-                uri,
-                display_name,
-                display_path,
-                bytes,
-                modified_seconds,
-            })
-        })
+        .map(parse_library_record)
         .collect()
+}
+
+/// One `listRawLibrary` line: the encoded URI, name and path, the byte size,
+/// the modification time in seconds, then the sidecar's byte size and
+/// modification time in milliseconds, both `-` when the photo has none.
+fn parse_library_record(line: &str) -> Result<LibraryDocument, String> {
+    fn number(field: Option<&str>, what: &str) -> Result<u64, String> {
+        field
+            .ok_or_else(|| format!("Android library record has no {what}"))?
+            .parse::<u64>()
+            .map_err(|error| format!("invalid Android library {what}: {error}"))
+    }
+    let mut fields = line.split('\t');
+    let uri = decode_uri_component(fields.next().unwrap_or_default())?;
+    let display_name = decode_uri_component(fields.next().unwrap_or_default())?;
+    let display_path = decode_uri_component(fields.next().unwrap_or_default())?;
+    let bytes = number(fields.next(), "byte size")?;
+    let modified_seconds = number(fields.next(), "modification time")?;
+    let sidecar = match (fields.next(), fields.next()) {
+        (Some("-"), Some("-")) => None,
+        (sidecar_bytes, sidecar_modified_millis) => {
+            Some(calibraw_core::display_metadata_cache::FileStamp::new(
+                number(sidecar_bytes, "sidecar byte size")?,
+                number(sidecar_modified_millis, "sidecar modification time")?
+                    .saturating_mul(1_000_000),
+            ))
+        }
+    };
+    if fields.next().is_some() || uri.is_empty() || display_name.is_empty() {
+        return Err("malformed Android library record".to_owned());
+    }
+    Ok(LibraryDocument {
+        uri,
+        display_name,
+        display_path,
+        bytes,
+        modified_seconds,
+        sidecar,
+    })
 }
 
 pub fn list_library_folders(app: &AndroidApp) -> Result<Vec<LibraryFolder>, String> {
@@ -71,6 +85,27 @@ pub fn list_library_folders(app: &AndroidApp) -> Result<Vec<LibraryFolder>, Stri
         Ok(env.cast_local::<JString>(object)?.to_string())
     })
     .map_err(|error| format!("could not list Android RAW library folders: {error:#}"))?;
+    parse_library_folders(&encoded)
+}
+
+/// The folders of the linked folder `key`, whichever folder is selected.
+pub fn list_linked_folder_tree(app: &AndroidApp, key: &str) -> Result<Vec<LibraryFolder>, String> {
+    let encoded = with_storage_manager(app, |env, storage_manager| {
+        let key = env.new_string(key)?;
+        let value = env.call_method(
+            storage_manager,
+            jni::jni_str!("listLinkedFolderTree"),
+            jni::jni_sig!((JString) -> JString),
+            &[JValue::Object(&key)],
+        )?;
+        java_string(env, value)
+    })
+    .map_err(|error| format!("could not list the linked folder's folders: {error:#}"))?;
+    parse_library_folders(&encoded)
+}
+
+/// `{encoded path}\t{encoded name}` lines, parents first.
+fn parse_library_folders(encoded: &str) -> Result<Vec<LibraryFolder>, String> {
     encoded
         .lines()
         .filter(|line| !line.is_empty())
@@ -84,6 +119,62 @@ pub fn list_library_folders(app: &AndroidApp) -> Result<Vec<LibraryFolder>, Stri
             Ok(LibraryFolder { path, name })
         })
         .collect()
+}
+
+pub fn list_linked_folders(app: &AndroidApp) -> Result<Vec<LinkedFolder>, String> {
+    let encoded = with_storage_manager(app, |env, storage_manager| {
+        let value = env.call_method(
+            storage_manager,
+            jni::jni_str!("listLinkedFolders"),
+            jni::jni_sig!(() -> JString),
+            &[],
+        )?;
+        java_string(env, value)
+    })
+    .map_err(|error| format!("could not list linked folders: {error:#}"))?;
+    encoded
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let mut fields = line.split('\t');
+            let key = decode_uri_component(fields.next().unwrap_or_default())?;
+            let label = decode_uri_component(fields.next().unwrap_or_default())?;
+            if fields.next().is_some() || key.is_empty() || label.is_empty() {
+                return Err("malformed linked folder record".to_owned());
+            }
+            Ok(LinkedFolder { key, label })
+        })
+        .collect()
+}
+
+pub fn unlink_folder(app: &AndroidApp, key: &str) -> Result<(), String> {
+    with_storage_manager(app, |env, storage_manager| {
+        let key = env.new_string(key)?;
+        env.call_method(
+            storage_manager,
+            jni::jni_str!("unlinkFolder"),
+            jni::jni_sig!((JString) -> void),
+            &[JValue::Object(&key)],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("{error:#}"))
+}
+
+/// Lists from the top of a linked folder, or of the app's library for an
+/// empty key.
+pub fn select_library_root(app: &AndroidApp, key: &str) -> Result<(), String> {
+    with_storage_manager(app, |env, storage_manager| {
+        let key = env.new_string(key)?;
+        env.call_method(
+            storage_manager,
+            jni::jni_str!("selectRawLibraryRoot"),
+            jni::jni_sig!((JString) -> void),
+            &[JValue::Object(&key)],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("{error:#}"))
 }
 
 pub fn select_library_folder(app: &AndroidApp, relative_path: &str) -> Result<(), String> {
@@ -251,7 +342,9 @@ pub fn delete_imported_library_document(
         )?;
         Ok(())
     })
-    .map_err(|error| format!("could not roll back imported Android RAW: {error:#}"))
+    .map_err(|error| format!("could not roll back imported Android RAW: {error:#}"))?;
+    clear_developed_thumbnail_cache(app, raw_uri);
+    Ok(())
 }
 
 pub fn rename_library_document(
@@ -260,7 +353,7 @@ pub fn rename_library_document(
     display_name: &str,
     requested_name: &str,
 ) -> Result<String, String> {
-    with_storage_manager(app, |env, storage_manager| {
+    let destination_uri = with_storage_manager(app, |env, storage_manager| {
         let raw_uri = env.new_string(raw_uri)?;
         let display_name = env.new_string(display_name)?;
         let requested_name = env.new_string(requested_name)?;
@@ -276,7 +369,16 @@ pub fn rename_library_document(
         )?;
         java_string(env, value)
     })
-    .map_err(|error| format!("could not rename Android RAW library item: {error:#}"))
+    .map_err(|error| format!("could not rename Android RAW library item: {error:#}"))?;
+    if destination_uri != raw_uri {
+        // Cached by URI, so the developed thumbnail follows the photo to its new one.
+        if let Err(error) = copy_library_developed_thumbnail_cache(app, raw_uri, &destination_uri) {
+            log::warn!("Renamed RAW but could not preserve its developed thumbnail: {error}");
+            clear_developed_thumbnail_cache(app, &destination_uri);
+        }
+        clear_developed_thumbnail_cache(app, raw_uri);
+    }
+    Ok(destination_uri)
 }
 
 pub fn delete_library_document(
@@ -305,7 +407,7 @@ pub fn remove_raw_sidecar(
     raw_uri: &str,
     display_name: &str,
 ) -> Result<(), String> {
-    with_storage_manager(app, |env, storage_manager| {
+    let removed = with_storage_manager(app, |env, storage_manager| {
         let raw_uri = env.new_string(raw_uri)?;
         let display_name = env.new_string(display_name)?;
         env.call_method(
@@ -316,8 +418,9 @@ pub fn remove_raw_sidecar(
         )?;
         Ok(())
     })
-    .map_err(|error| format!("could not reset Android RAW adjustments: {error:#}"))?;
-
+    .map_err(|error| format!("could not reset Android RAW adjustments: {error:#}"));
+    note_sidecar_written(raw_uri);
+    removed?;
     clear_developed_thumbnail_cache(app, raw_uri);
     Ok(())
 }

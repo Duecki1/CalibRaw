@@ -2,12 +2,16 @@
 
 use super::service::{
     CameraProfileFolderResult, ExportPublishResult, ImportProgress, ImportedLibraryDocument,
-    LibraryDocument, LibraryFolder, PickedDocument, PickerResult, Platform, PublishedExport,
-    ReplayVideoEncoder, StagedFilesResult, TaskNotification,
+    LibraryDocument, LibraryFolder, LinkFolderResult, LinkedFolder, ListedSidecar, PickedDocument,
+    PickerResult, Platform, PublishedExport, ReplayVideoEncoder, StagedFilesResult,
+    TaskNotification,
 };
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
-use crate::sidecar::{EditState, LoadedSidecar, PhotoReview, SidecarError};
+use crate::sidecar::{
+    EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SidecarError, SidecarSummary,
+};
+use calibraw_core::pipeline::RawDisplayMetadata;
 use calibraw_ffi::AndroidApp;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -254,25 +258,60 @@ impl Platform for AndroidPlatform {
                     display_path: document.display_path,
                     bytes: document.bytes,
                     modified_seconds: document.modified_seconds,
+                    sidecar: document
+                        .sidecar
+                        .map_or(ListedSidecar::Absent, ListedSidecar::Present),
                 })
                 .collect()
         })
     }
 
     fn list_library_folders(&self) -> Result<Vec<LibraryFolder>, String> {
-        calibraw_ffi::list_library_folders(&self.app).map(|folders| {
+        calibraw_ffi::list_library_folders(&self.app).map(library_folders)
+    }
+
+    fn list_linked_folder_tree(&self, key: &str) -> Result<Vec<LibraryFolder>, String> {
+        calibraw_ffi::list_linked_folder_tree(&self.app, key).map(library_folders)
+    }
+
+    fn select_library_folder(&self, relative_path: &str) -> Result<(), String> {
+        calibraw_ffi::select_library_folder(&self.app, relative_path)
+    }
+
+    fn open_link_folder_picker(&self) -> Result<(), String> {
+        calibraw_ffi::open_link_folder_picker(&self.app)
+    }
+
+    fn take_link_folder_result(&self) -> Option<LinkFolderResult> {
+        calibraw_ffi::take_link_folder_result().map(|result| match result {
+            calibraw_ffi::LinkFolderResult::Linked { key } => LinkFolderResult::Linked { key },
+            calibraw_ffi::LinkFolderResult::Cancelled => LinkFolderResult::Cancelled,
+            calibraw_ffi::LinkFolderResult::Failed(error) => LinkFolderResult::Failed(error),
+        })
+    }
+
+    fn list_linked_folders(&self) -> Result<Vec<LinkedFolder>, String> {
+        calibraw_ffi::list_linked_folders(&self.app).map(|folders| {
             folders
                 .into_iter()
-                .map(|folder| LibraryFolder {
-                    path: folder.path,
-                    name: folder.name,
+                .map(|folder| LinkedFolder {
+                    key: folder.key,
+                    label: folder.label,
                 })
                 .collect()
         })
     }
 
-    fn select_library_folder(&self, relative_path: &str) -> Result<(), String> {
-        calibraw_ffi::select_library_folder(&self.app, relative_path)
+    fn unlink_folder(&self, key: &str) -> Result<(), String> {
+        calibraw_ffi::unlink_folder(&self.app, key)
+    }
+
+    fn select_library_root(&self, key: &str) -> Result<(), String> {
+        calibraw_ffi::select_library_root(&self.app, key)
+    }
+
+    fn take_library_changed(&self) -> bool {
+        calibraw_ffi::take_library_changed()
     }
 
     fn create_library_folder(&self, parent_path: &str, name: &str) -> Result<String, String> {
@@ -401,26 +440,111 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::people_analysis_path(&self.app, raw_uri, display_name)
     }
 
-    fn load_library_thumbnail(
+    fn fetch_photo_companion(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        companion: PhotoCompanion,
+    ) -> Result<(), String> {
+        calibraw_ffi::fetch_photo_companion(&self.app, raw_uri, display_name, companion)
+    }
+
+    fn publish_photo_companion(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        companion: PhotoCompanion,
+    ) -> Result<(), String> {
+        calibraw_ffi::publish_photo_companion(&self.app, raw_uri, display_name, companion)
+    }
+
+    fn photo_companion_exists(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        companion: PhotoCompanion,
+    ) -> Result<bool, String> {
+        calibraw_ffi::photo_companion_exists(&self.app, raw_uri, display_name, companion)
+    }
+
+    fn library_folder_cache_path(&self, linked_folder: &str, folder: &str) -> Option<PathBuf> {
+        calibraw_ffi::library_folder_cache_path(&self.app, linked_folder, folder)
+            .map_err(|error| log::warn!("{error}"))
+            .ok()
+    }
+
+    fn load_cached_library_preview(
         &self,
         uri: &str,
-        display_name: &str,
         bytes: u64,
         modified_seconds: u64,
         maximum_edge: u32,
-    ) -> Result<RawThumbnail, String> {
-        calibraw_ffi::load_library_thumbnail(
+    ) -> Result<Option<RawThumbnail>, String> {
+        calibraw_ffi::load_cached_library_preview(
             &self.app,
             uri,
-            display_name,
             bytes,
             modified_seconds,
             maximum_edge,
         )
     }
 
-    fn load_library_display_dimensions(&self, uri: &str) -> Result<[u32; 2], String> {
-        calibraw_ffi::load_library_display_dimensions(&self.app, uri)
+    fn extract_library_preview(
+        &self,
+        uri: &str,
+        display_name: &str,
+        bytes: u64,
+        modified_seconds: u64,
+        maximum_edge: u32,
+        read_display_metadata: bool,
+    ) -> Result<(RawThumbnail, Option<RawDisplayMetadata>), String> {
+        calibraw_ffi::extract_library_preview(
+            &self.app,
+            uri,
+            display_name,
+            bytes,
+            modified_seconds,
+            maximum_edge,
+            read_display_metadata,
+        )
+    }
+
+    fn load_library_display_metadata(
+        &self,
+        uri: &str,
+        display_name: &str,
+    ) -> Result<RawDisplayMetadata, String> {
+        calibraw_ffi::load_library_display_metadata(&self.app, uri, display_name)
+    }
+
+    fn sidecar_write_count(&self) -> u64 {
+        calibraw_ffi::sidecar_write_count()
+    }
+
+    fn sidecar_written_since(&self, raw_uri: &str, count: u64) -> bool {
+        calibraw_ffi::sidecar_written_since(raw_uri, count)
+    }
+
+    fn load_sidecar_summary(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+    ) -> Result<Option<SidecarSummary>, SidecarError> {
+        calibraw_ffi::load_android_sidecar_summary(&self.app, raw_uri, display_name)
+    }
+
+    fn load_current_developed_thumbnail(
+        &self,
+        raw_uri: &str,
+        render_fingerprint: u64,
+        maximum_edge: u32,
+    ) -> Result<Option<RawThumbnail>, String> {
+        calibraw_ffi::load_current_developed_thumbnail(
+            &self.app,
+            raw_uri,
+            render_fingerprint,
+            maximum_edge,
+        )
     }
 
     fn load_developed_thumbnail_cache(
@@ -516,6 +640,16 @@ impl ReplayVideoEncoder for MediaCodecEncoder {
     fn finish(self: Box<Self>) -> Result<(), String> {
         self.0.finish()
     }
+}
+
+fn library_folders(folders: Vec<calibraw_ffi::LibraryFolder>) -> Vec<LibraryFolder> {
+    folders
+        .into_iter()
+        .map(|folder| LibraryFolder {
+            path: folder.path,
+            name: folder.name,
+        })
+        .collect()
 }
 
 fn staged_files_result(result: calibraw_ffi::StagedFilesResult) -> StagedFilesResult {

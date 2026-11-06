@@ -9,6 +9,9 @@ import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
 import android.util.Log;
 
 import java.io.File;
@@ -16,20 +19,15 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
-import java.util.Locale;
-import java.util.PriorityQueue;
 
 final class StorageManager {
     private static final String LOG_TAG = "CalibRaw";
-    private static final long MAX_RAW_IMPORT_BYTES = 2_000_000_000L;
-    private static final long MAX_SIDECAR_BYTES = 32L * 1024L * 1024L;
+    static final long MAX_RAW_IMPORT_BYTES = 2_000_000_000L;
+    private static final long MAX_SIDECAR_BYTES = LibraryStore.MAX_SIDECAR_BYTES;
     private static final int MAX_RAW_LIBRARY_FILES = 20_000;
-    private static final int MAX_RAW_LIBRARY_FOLDERS = 10_000;
-    private static final int MAX_RAW_LIBRARY_FOLDER_DEPTH = 64;
-    private static final long STALE_TEMP_FILE_AGE_MS = 24L * 60L * 60L * 1000L;
+    static final long STALE_TEMP_FILE_AGE_MS = 24L * 60L * 60L * 1000L;
     private static final String RAW_PICKER_URI_KEY = "raw-document-uri";
 
     /** Receives the outcome of copying documents into the library. */
@@ -49,6 +47,23 @@ final class StorageManager {
                 String libraryUri,
                 String error,
                 boolean temporary);
+
+        /** An empty key and error mean the folder picker was cancelled. */
+        void onFolderLinked(String key, String error);
+
+        /** The selected linked folder changed while the app was in the background. */
+        void onLibraryChanged();
+    }
+
+    /** The store and folder that are listed and imported into; replaced as one. */
+    private static final class Selection {
+        final LibraryStore store;
+        final String folder;
+
+        Selection(LibraryStore store, String folder) {
+            this.store = store;
+            this.folder = folder;
+        }
     }
 
     private final Activity storage;
@@ -56,7 +71,9 @@ final class StorageManager {
     private final ImportCallbacks externalCallbacks;
     private final ThumbnailCache thumbnailCache;
     private final PickerLocationStore pickerLocations;
-    private volatile String selectedRawLibraryFolder = "";
+    private final FileLibraryStore fileStore;
+    private final LinkedFolders linkedFolders;
+    private volatile Selection selection;
 
     /**
      * @param externalCallbacks receives photos other apps sent through "Open with" or Share.
@@ -69,6 +86,85 @@ final class StorageManager {
         this.externalCallbacks = externalCallbacks;
         this.thumbnailCache = new ThumbnailCache(storage);
         this.pickerLocations = new PickerLocationStore(storage);
+        this.fileStore = new FileLibraryStore(storage);
+        this.linkedFolders = new LinkedFolders(storage);
+        this.selection = new Selection(fileStore, "");
+    }
+
+    /** The store that listed {@code uri}. */
+    private LibraryStore storeOf(Uri uri) {
+        if (!TreeLibraryStore.SCHEME.equals(uri.getScheme())) {
+            return fileStore;
+        }
+        TreeLibraryStore store = linkedFolders.store(uri.getAuthority());
+        if (store == null) {
+            throw new IllegalStateException("This photo's folder is no longer linked");
+        }
+        return store;
+    }
+
+    Intent createLinkFolderPickerIntent() {
+        return linkedFolders.createPickerIntent();
+    }
+
+    void handleLinkFolderResult(int resultCode, Intent data) {
+        if (resultCode != CalibRawActivity.RESULT_OK || data == null || data.getData() == null) {
+            callbacks.onFolderLinked("", "");
+            return;
+        }
+        Uri treeUri = data.getData();
+        new Thread(() -> {
+            try {
+                callbacks.onFolderLinked(linkedFolders.link(treeUri), "");
+            } catch (Exception error) {
+                Log.w(LOG_TAG, "Could not link a folder", error);
+                callbacks.onFolderLinked("", String.valueOf(error.getMessage()));
+            }
+        }, "CalibRaw link folder").start();
+    }
+
+    String listLinkedFolders() {
+        return linkedFolders.encodedList();
+    }
+
+    void unlinkFolder(String key) {
+        TreeLibraryStore unlinked = linkedFolders.store(key);
+        linkedFolders.unlink(key);
+        if (unlinked != null && selection.store == unlinked) {
+            selection = new Selection(fileStore, "");
+        }
+    }
+
+    /** Lists from the top of a linked folder, or of CalibRaw's library for an empty key. */
+    void selectRawLibraryRoot(String key) {
+        if (key.isEmpty()) {
+            selection = new Selection(fileStore, "");
+            return;
+        }
+        TreeLibraryStore store = linkedFolders.store(key);
+        if (store == null) {
+            throw new IllegalArgumentException("This folder is no longer linked");
+        }
+        selection = new Selection(store, "");
+    }
+
+    /** Reports a change sync made to the selected linked folder while the app was away. */
+    void checkLinkedFolderForChanges() {
+        Selection current = selection;
+        if (!(current.store instanceof TreeLibraryStore)) {
+            return;
+        }
+        new Thread(() -> {
+            try {
+                if (((TreeLibraryStore) current.store).changedSinceListing(current.folder)) {
+                    callbacks.onLibraryChanged();
+                }
+            } catch (Exception error) {
+                // Only a folder path the store rejects reaches here; one it cannot read is
+                // reported as changed, so the listing shows the error.
+                Log.w(LOG_TAG, "Could not check the linked folder for changes", error);
+            }
+        }, "CalibRaw linked folder check").start();
     }
 
     Intent createRawDocumentPickerIntent() {
@@ -160,12 +256,15 @@ final class StorageManager {
             return;
         }
 
-        File library = rawLibraryDirectory();
-        try {
-            deleteStaleLibraryTemporaryFiles(library, library.getCanonicalFile(), now, 0);
-        } catch (Exception error) {
-            Log.w(LOG_TAG, "Could not scavenge stale RAW library temporary files", error);
+        // Copies of a linked folder's AI results, dated by their last use; the next open copies
+        // what it needs again.
+        deleteStaleFiles(
+                new File(storage.getCacheDir(), "linked-companions").listFiles(), now);
+        if (Thread.currentThread().isInterrupted()) {
+            return;
         }
+
+        fileStore.scavengeTemporaryFiles();
     }
 
     private static void deleteStaleFiles(File[] files, long now) {
@@ -180,37 +279,7 @@ final class StorageManager {
         }
     }
 
-    private static void deleteStaleLibraryTemporaryFiles(
-            File directory,
-            File canonicalLibrary,
-            long now,
-            int depth) throws Exception {
-        if (Thread.currentThread().isInterrupted()
-                || depth > MAX_RAW_LIBRARY_FOLDER_DEPTH
-                || !directory.isDirectory()) {
-            return;
-        }
-        File canonicalDirectory = directory.getCanonicalFile();
-        if (!canonicalDirectory.toPath().startsWith(canonicalLibrary.toPath())) {
-            return;
-        }
-        File[] entries = directory.listFiles();
-        if (entries == null) {
-            return;
-        }
-        for (File entry : entries) {
-            if (Thread.currentThread().isInterrupted()) {
-                return;
-            }
-            if (entry.isDirectory()) {
-                deleteStaleLibraryTemporaryFiles(entry, canonicalLibrary, now, depth + 1);
-            } else if (AndroidStorageContract.isLibraryTemporaryFileName(entry.getName())) {
-                deleteStaleFile(entry, now);
-            }
-        }
-    }
-
-    private static void deleteStaleFile(File file, long now) {
+    static void deleteStaleFile(File file, long now) {
         try {
             long modified = file.lastModified();
             boolean isStale = modified > 0L
@@ -260,16 +329,16 @@ final class StorageManager {
         for (Uri uri : uris) {
             target.onImportProgress(imported + failed, uris.size());
             String displayName = queryDisplayName(uri);
-            StoredRaw stored = null;
+            LibraryStore.Stored stored = null;
             try {
-                stored = importDocumentIntoLibrary(uri, displayName);
+                stored = importDocumentIntoLibrary(uri, displayName, target);
                 if (imported == 0 && rememberPickerLocation) {
                     pickerLocations.writeContentUri(RAW_PICKER_URI_KEY, uri);
                 }
                 imported++;
             } catch (Exception error) {
                 if (stored != null) {
-                    deleteStoredRaw(stored.uri);
+                    deleteStoredRaw(stored.uri, stored.displayName);
                 }
                 failed++;
                 if (errors.size() < 4) {
@@ -288,22 +357,23 @@ final class StorageManager {
             String displayName,
             ImportCallbacks target,
             boolean rememberPickerLocation) {
-        StoredRaw stored = null;
+        LibraryStore.Stored stored = null;
         try {
-            stored = importDocumentIntoLibrary(uri, displayName);
+            stored = importDocumentIntoLibrary(uri, displayName, target);
             if (rememberPickerLocation) {
                 pickerLocations.writeContentUri(RAW_PICKER_URI_KEY, uri);
             }
             deliverLibraryRawFd(stored.uri, stored.displayName, target);
         } catch (Exception error) {
             if (stored != null) {
-                deleteStoredRaw(stored.uri);
+                deleteStoredRaw(stored.uri, stored.displayName);
             }
             target.onFilePickedFd(-1, displayName, "", error.toString());
         }
     }
 
-    private StoredRaw importDocumentIntoLibrary(Uri uri, String displayName) throws Exception {
+    private LibraryStore.Stored importDocumentIntoLibrary(
+            Uri uri, String displayName, ImportCallbacks target) throws Exception {
         if (!AndroidStorageContract.isSupportedImageName(displayName)) {
             throw new IllegalArgumentException(
                     "Choose a supported photo (for example DNG, CR3, NEF, ARW, JPEG, PNG, or HEIC)");
@@ -315,11 +385,22 @@ final class StorageManager {
                             + " bytes; the Android import limit is "
                             + MAX_RAW_IMPORT_BYTES);
         }
-        return storeRawFile(uri, displayName);
+        return storeRawFile(uri, displayName, importSelection(target));
+    }
+
+    /**
+     * Photos another app sent are not written into a folder the user syncs: they go to CalibRaw's
+     * library. Imports the user asked for go to the folder on screen.
+     */
+    private Selection importSelection(ImportCallbacks target) {
+        Selection current = selection;
+        return target == externalCallbacks && current.store != fileStore
+                ? new Selection(fileStore, "")
+                : current;
     }
 
     String rawLibraryLocation() {
-        return rawLibraryDirectory().getAbsolutePath();
+        return selection.store.location();
     }
 
     String listRawLibrary() {
@@ -332,69 +413,48 @@ final class StorageManager {
 
     String listRawLibraryFolders() {
         try {
-            File root = rawLibraryDirectory();
-            StringBuilder result = new StringBuilder();
-            appendRawLibraryFolders(root, root, result, 0, new int[]{0});
-            return result.toString();
+            return selection.store.listFolders();
         } catch (Exception error) {
             throw new IllegalStateException("Could not list RAW library folders", error);
         }
     }
 
-    void selectRawLibraryFolder(String relativePath) throws Exception {
-        File folder = AndroidStorageContract.libraryFolder(rawLibraryDirectory(), relativePath);
-        if (!folder.isDirectory()) {
-            throw new IllegalArgumentException("The selected RAW library folder does not exist");
+    /**
+     * The folders of the linked folder {@code key}, as {@link #listRawLibraryFolders} lists them.
+     * Named rather than taken from the selection, as walking a large tree outlasts selecting
+     * another of its folders.
+     */
+    String listLinkedFolderTree(String key) {
+        TreeLibraryStore store = linkedFolders.store(key);
+        if (store == null) {
+            throw new IllegalArgumentException("This folder is no longer linked");
         }
-        selectedRawLibraryFolder = AndroidStorageContract.relativeLibraryFolder(
-                rawLibraryDirectory(), folder);
+        try {
+            return store.listFolders();
+        } catch (Exception error) {
+            throw new IllegalStateException("Could not list the linked folder's folders", error);
+        }
+    }
+
+    void selectRawLibraryFolder(String relativePath) throws Exception {
+        LibraryStore store = selection.store;
+        selection = new Selection(store, store.normalizeFolder(relativePath));
     }
 
     String createRawLibraryFolder(String parentPath, String requestedName) throws Exception {
-        File root = rawLibraryDirectory();
-        File parent = AndroidStorageContract.libraryFolder(root, parentPath);
-        if (!parent.isDirectory()) {
-            throw new IllegalArgumentException("The parent RAW library folder does not exist");
-        }
-        String name = AndroidStorageContract.safeFolderName(requestedName);
-        File folder = new File(parent, name);
-        if (folder.exists()) {
-            throw new IllegalStateException(name + " already exists");
-        }
-        if (!folder.mkdir()) {
-            throw new IllegalStateException("Android storage could not create folder " + name);
-        }
-        return AndroidStorageContract.relativeLibraryFolder(root, folder);
+        return selection.store.createFolder(parentPath, requestedName);
     }
 
     int openRawLibraryFd(String uriText) throws Exception {
         Uri uri = Uri.parse(uriText);
-        ParcelFileDescriptor descriptor;
-        if (ContentResolver.SCHEME_FILE.equals(uri.getScheme())) {
-            descriptor = ParcelFileDescriptor.open(
-                    new File(uri.getPath()), ParcelFileDescriptor.MODE_READ_ONLY);
-        } else {
-            descriptor = storage.getContentResolver().openFileDescriptor(uri, "r");
-        }
+        ParcelFileDescriptor descriptor = storeOf(uri).openDescriptor(uri);
         return NativeFileDescriptors.detach(
                 descriptor, "The RAW library returned no file descriptor");
     }
 
-    String rawThumbnailCachePath(
-            String uriText,
-            long bytes,
-            long modifiedSeconds,
-            int maximumEdge) throws Exception {
-        return thumbnailCache.rawPath(uriText, bytes, modifiedSeconds, maximumEdge);
-    }
-
-    String developedThumbnailCachePath(String uriText) throws Exception {
-        return thumbnailCache.developedPath(uriText);
-    }
-
-    void copyRawLibraryDevelopedThumbnail(String sourceUri, String destinationUri)
-            throws Exception {
-        thumbnailCache.copyDeveloped(sourceUri, destinationUri);
+    /** Where library previews are cached; native code names and reads the files in it. */
+    String thumbnailCacheDirectory() {
+        return thumbnailCache.directory().getAbsolutePath();
     }
 
     void clearThumbnailCache() {
@@ -411,14 +471,14 @@ final class StorageManager {
 
     String materializeRawLibraryDocument(String uriText, String displayName) throws Exception {
         Uri uri = Uri.parse(uriText);
-        verifyFileRawLibraryIdentity(uri, displayName);
+        storeOf(uri).verify(uri, displayName);
         String safeName = AndroidStorageContract.safeRawName(displayName);
         int dot = safeName.lastIndexOf('.');
         String suffix = dot >= 0 ? safeName.substring(dot) : ".raw";
         File cached = File.createTempFile("calibraw-library-", suffix, storage.getCacheDir());
         boolean completed = false;
         try {
-            try (InputStream input = openLibraryInput(uri);
+            try (InputStream input = storeOf(uri).openInput(uri);
                  FileOutputStream output = new FileOutputStream(cached)) {
                 if (input == null) {
                     throw new IllegalStateException("Android storage returned no RAW stream");
@@ -457,36 +517,62 @@ final class StorageManager {
 
     void removeRawSidecar(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyFileRawLibraryIdentity(rawUri, displayName);
-        File directory = new File(rawUri.getPath()).getParentFile();
-        AndroidStorageContract.deleteSidecar(directory, displayName);
-        AndroidStorageContract.deleteAiDenoiseResult(directory, displayName);
-        AndroidStorageContract.deletePeopleAnalysis(directory, displayName);
+        LibraryStore store = storeOf(rawUri);
+        store.verify(rawUri, displayName);
+        store.deleteEdits(rawUri, displayName);
     }
 
     /**
-     * Returns where the RAW's AI-denoise result lives. Native code reads and
-     * writes it directly: it is too large to stage through the cache directory
-     * like the sidecar.
+     * Returns the local file for the RAW's AI-denoise result, which native code reads and writes
+     * directly: it is too large to stage through the cache directory like the sidecar.
      */
     String aiDenoiseResultPath(String rawUriText, String displayName) throws Exception {
-        Uri rawUri = Uri.parse(rawUriText);
-        verifyFileRawLibraryIdentity(rawUri, displayName);
-        return new File(
-                new File(rawUri.getPath()).getParentFile(),
-                AndroidStorageContract.aiDenoiseDisplayName(displayName)).getAbsolutePath();
+        return companionPath(rawUriText, displayName, AndroidStorageContract.AI_DENOISE_SUFFIX);
     }
 
     /**
-     * Returns where the RAW's people analysis lives. Native code reads and
-     * writes it directly, as it does the AI-denoise result.
+     * Returns the local file for the RAW's people analysis, which native code reads and writes
+     * directly, as it does the AI-denoise result.
      */
     String peopleAnalysisPath(String rawUriText, String displayName) throws Exception {
+        return companionPath(
+                rawUriText, displayName, AndroidStorageContract.PEOPLE_ANALYSIS_SUFFIX);
+    }
+
+    private String companionPath(String rawUriText, String displayName, String suffix)
+            throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyFileRawLibraryIdentity(rawUri, displayName);
-        return new File(
-                new File(rawUri.getPath()).getParentFile(),
-                AndroidStorageContract.peopleAnalysisDisplayName(displayName)).getAbsolutePath();
+        LibraryStore store = storeOf(rawUri);
+        store.verify(rawUri, displayName);
+        return store.companionPath(rawUri, displayName, suffix);
+    }
+
+    void fetchPhotoCompanion(String rawUriText, String displayName, String suffix)
+            throws Exception {
+        Uri rawUri = Uri.parse(rawUriText);
+        storeOf(rawUri).fetchCompanion(rawUri, displayName, suffix);
+    }
+
+    void publishPhotoCompanion(String rawUriText, String displayName, String suffix)
+            throws Exception {
+        Uri rawUri = Uri.parse(rawUriText);
+        storeOf(rawUri).publishCompanion(rawUri, displayName, suffix);
+    }
+
+    void removePhotoCompanion(String rawUriText, String displayName, String suffix)
+            throws Exception {
+        Uri rawUri = Uri.parse(rawUriText);
+        LibraryStore store = storeOf(rawUri);
+        store.verify(rawUri, displayName);
+        store.removeCompanion(rawUri, displayName, suffix);
+    }
+
+    boolean hasPhotoCompanion(String rawUriText, String displayName, String suffix)
+            throws Exception {
+        Uri rawUri = Uri.parse(rawUriText);
+        LibraryStore store = storeOf(rawUri);
+        store.verify(rawUri, displayName);
+        return store.hasCompanion(rawUri, displayName, suffix);
     }
 
     String importLocalRawLibraryDocument(String rawPath, String displayName) throws Exception {
@@ -494,9 +580,9 @@ final class StorageManager {
         if (!sourceRaw.isFile() || !AndroidStorageContract.isSupportedImageName(displayName)) {
             throw new IllegalArgumentException("The local photo is missing or unsupported");
         }
-        StoredRaw imported = null;
+        LibraryStore.Stored imported = null;
         try {
-            imported = storeRawFile(Uri.fromFile(sourceRaw), displayName);
+            imported = storeRawFile(Uri.fromFile(sourceRaw), displayName, selection);
             File sourceSidecar = new File(rawPath + ".calibraw");
             if (sourceSidecar.isFile()) {
                 publishRawSidecar(
@@ -525,91 +611,41 @@ final class StorageManager {
             String displayName,
             String requestedName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyFileRawLibraryIdentity(rawUri, displayName);
+        LibraryStore store = storeOf(rawUri);
+        store.verify(rawUri, displayName);
         String safeName = AndroidStorageContract.safeRawName(requestedName);
         if (!safeName.equals(requestedName) || !AndroidStorageContract.isSupportedImageName(requestedName)) {
             throw new IllegalArgumentException("Enter a safe supported photo filename");
         }
-        File sourceRaw = new File(rawUri.getPath());
         if (displayName.equals(requestedName)) {
             return rawUri.toString();
         }
-        File parent = sourceRaw.getParentFile();
-        File destinationRaw = new File(parent, requestedName);
-        File sourceSidecar = new File(parent, AndroidStorageContract.sidecarDisplayName(displayName));
-        File destinationSidecar = new File(parent, AndroidStorageContract.sidecarDisplayName(requestedName));
-        if (destinationRaw.exists() || destinationSidecar.exists()) {
-            throw new IllegalStateException(requestedName + " already exists");
-        }
-        if (!sourceRaw.renameTo(destinationRaw)) {
-            throw new IllegalStateException("Android storage could not rename the RAW file");
-        }
-        if (sourceSidecar.isFile() && !sourceSidecar.renameTo(destinationSidecar)) {
-            if (!destinationRaw.renameTo(sourceRaw)) {
-                throw new IllegalStateException(
-                        "The RAW was renamed, but its sidecar and RAW rollback both failed");
-            }
-            throw new IllegalStateException("Android storage could not rename the RAW sidecar");
-        }
-        File sourcePeople = new File(
-                parent, AndroidStorageContract.peopleAnalysisDisplayName(displayName));
-        // The people are found again without it, so a failed move only costs that.
-        if (sourcePeople.isFile()
-                && !sourcePeople.renameTo(new File(
-                        parent, AndroidStorageContract.peopleAnalysisDisplayName(requestedName)))) {
-            Log.w(LOG_TAG, "Renamed RAW but could not keep its people analysis");
-        }
-        String destinationUri = Uri.fromFile(destinationRaw).toString();
-        try {
-            thumbnailCache.copyDeveloped(rawUriText, destinationUri);
-        } catch (Exception error) {
-            Log.w(LOG_TAG, "Renamed RAW but could not preserve its developed thumbnail cache", error);
-            thumbnailCache.clearDeveloped(destinationUri);
-        }
-        thumbnailCache.clearDeveloped(rawUriText);
-        return destinationUri;
+        // Native code moves the developed thumbnail cached under the old URI.
+        return store.rename(rawUri, displayName, requestedName).toString();
     }
 
     void deleteRawLibraryDocument(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyFileRawLibraryIdentity(rawUri, displayName);
-        File raw = new File(rawUri.getPath());
-        if (raw.exists() && !raw.delete()) {
-            throw new IllegalStateException("Could not delete the RAW file");
-        }
-
-        try {
-            AndroidStorageContract.deleteSidecar(raw.getParentFile(), displayName);
-        } catch (Exception error) {
-            Log.w(LOG_TAG, "Deleted RAW but could not clean up its sidecar", error);
-        }
-        try {
-            AndroidStorageContract.deleteAiDenoiseResult(raw.getParentFile(), displayName);
-        } catch (Exception error) {
-            Log.w(LOG_TAG, "Deleted RAW but could not clean up its AI-denoise result", error);
-        }
-        try {
-            AndroidStorageContract.deletePeopleAnalysis(raw.getParentFile(), displayName);
-        } catch (Exception error) {
-            Log.w(LOG_TAG, "Deleted RAW but could not clean up its people analysis", error);
-        }
-        thumbnailCache.clearDeveloped(rawUriText);
+        LibraryStore store = storeOf(rawUri);
+        store.verify(rawUri, displayName);
+        // Native code clears the developed thumbnail cached under this URI.
+        store.delete(rawUri, displayName);
     }
 
     String materializeRawSidecar(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyFileRawLibraryIdentity(rawUri, displayName);
-        File sidecar = new File(
-                new File(rawUri.getPath()).getParentFile(), AndroidStorageContract.sidecarDisplayName(displayName));
-        if (!sidecar.isFile()) {
-            return "";
+        LibraryStore store = storeOf(rawUri);
+        store.verify(rawUri, displayName);
+        try (InputStream sidecar = store.openSidecar(rawUri, displayName)) {
+            return sidecar == null ? "" : copySidecarToCache(sidecar);
         }
+    }
 
+    private String copySidecarToCache(InputStream input) throws Exception {
         File cached = File.createTempFile("calibraw-sidecar-", ".calibraw", storage.getCacheDir());
         boolean completed = false;
         try {
-            try (FileInputStream input = new FileInputStream(sidecar);
-                 FileOutputStream output = new FileOutputStream(cached)) {
+            try (FileOutputStream output = new FileOutputStream(cached)) {
                 BoundedStreams.copy(
                         input,
                         output,
@@ -639,61 +675,30 @@ final class StorageManager {
             throw new IllegalStateException("CalibRaw sidecar staging file is missing or too large");
         }
         Uri rawUri = Uri.parse(rawUriText);
-        verifyFileRawLibraryIdentity(rawUri, displayName);
-        return AndroidStorageContract.publishSidecarAtomically(
-                cached, new File(rawUri.getPath()).getParentFile(), displayName, MAX_SIDECAR_BYTES);
+        LibraryStore store = storeOf(rawUri);
+        store.verify(rawUri, displayName);
+        return store.publishSidecar(cached, rawUri, displayName);
     }
 
-    private void verifyFileRawLibraryIdentity(
-            Uri rawUri,
-            String expectedDisplayName) throws Exception {
-        if (rawUri.getPath() == null || expectedDisplayName == null) {
-            throw new IllegalArgumentException("The RAW library URI is invalid");
-        }
-        File raw = new File(rawUri.getPath());
-        if (!AndroidStorageContract.isAllowedRawFile(
-                raw, expectedDisplayName, rawLibraryDirectory())) {
-            throw new IllegalArgumentException("The RAW is outside CalibRaw's library");
+    private LibraryStore.Stored storeRawFile(Uri source, String requestedName, Selection into)
+            throws Exception {
+        try (InputStream input = openSourceInput(source)) {
+            if (input == null) {
+                throw new IllegalStateException("The document provider returned no input stream");
+            }
+            return into.store.store(input, requestedName, into.folder);
         }
     }
 
-    private StoredRaw storeRawFile(Uri source, String requestedName) throws Exception {
-        File directory = selectedRawLibraryDirectory();
-        if (!directory.isDirectory() && !directory.mkdirs()) {
-            throw new IllegalStateException("Could not create " + directory);
+    /** A document being imported: another app's URI, or a local file. */
+    private InputStream openSourceInput(Uri uri) throws Exception {
+        if (ContentResolver.SCHEME_FILE.equals(uri.getScheme())) {
+            return new FileInputStream(new File(uri.getPath()));
         }
-        File destination = AndroidStorageContract.uniqueFile(
-                directory, AndroidStorageContract.safeRawName(requestedName));
-        File partial = AndroidStorageContract.uniqueFile(
-                directory,
-                AndroidStorageContract.importPartialName(destination.getName()));
-        boolean completed = false;
-        try {
-            try (InputStream input = openLibraryInput(source);
-                 FileOutputStream output = new FileOutputStream(partial)) {
-                if (input == null) {
-                    throw new IllegalStateException("The document provider returned no input stream");
-                }
-                BoundedStreams.copy(
-                        input,
-                        output,
-                        MAX_RAW_IMPORT_BYTES,
-                        storageLimitMessage(MAX_RAW_IMPORT_BYTES));
-                output.getFD().sync();
-            }
-            if (!partial.renameTo(destination)) {
-                throw new IllegalStateException("Could not publish the imported RAW in " + directory);
-            }
-            completed = true;
-            return new StoredRaw(Uri.fromFile(destination), destination.getName());
-        } finally {
-            if (!completed) {
-                deleteRawTemporaryFile(partial, "incomplete RAW import");
-            }
-        }
+        return storage.getContentResolver().openInputStream(uri);
     }
 
-    private static void deleteRawTemporaryFile(File file, String description) {
+    static void deleteRawTemporaryFile(File file, String description) {
         try {
             if (!file.delete() && file.exists()) {
                 Log.w(
@@ -712,8 +717,14 @@ final class StorageManager {
 
     private void deliverLibraryRawFd(Uri source, String displayName, ImportCallbacks target)
             throws Exception {
-        verifyFileRawLibraryIdentity(source, displayName);
+        storeOf(source).verify(source, displayName);
         int fd = openRawLibraryFd(source.toString());
+        if (!decodersCanRead(fd) && target instanceof Callbacks) {
+            NativeFileDescriptors.closeTransferred(fd);
+            String cached = materializeRawLibraryDocument(source.toString(), displayName);
+            ((Callbacks) target).onFilePicked(cached, displayName, source.toString(), "", true);
+            return;
+        }
         boolean handedOff = false;
         try {
             target.onFilePickedFd(fd, displayName, source.toString(), "");
@@ -725,237 +736,68 @@ final class StorageManager {
         }
     }
 
-    private InputStream openLibraryInput(Uri uri) throws Exception {
-        if (ContentResolver.SCHEME_FILE.equals(uri.getScheme())) {
-            return new FileInputStream(new File(uri.getPath()));
+    /**
+     * The decoders open a document as /proc/self/fd/N and seek in it. A provider may stream through
+     * a pipe, which cannot seek. Reopening a file another app owns is refused even though this
+     * descriptor can read it, because shared storage checks permission again on open.
+     */
+    private static boolean decodersCanRead(int fd) {
+        try (ParcelFileDescriptor borrowed = ParcelFileDescriptor.fromFd(fd)) {
+            Os.lseek(borrowed.getFileDescriptor(), 0L, OsConstants.SEEK_CUR);
+            Os.close(Os.open("/proc/self/fd/" + fd, OsConstants.O_RDONLY, 0));
+            return true;
+        } catch (ErrnoException | java.io.IOException unreadable) {
+            return false;
         }
-        return storage.getContentResolver().openInputStream(uri);
     }
 
-    private String encodeRawLibrary() {
-        ArrayList<RawLibraryRecord> records = listFileRawLibrary(selectedRawLibraryDirectory());
+    private String encodeRawLibrary() throws Exception {
+        Selection current = selection;
+        // Preserve one sentinel beyond the UI limit.
+        ArrayList<LibraryStore.Document> records =
+                current.store.listDocuments(current.folder, MAX_RAW_LIBRARY_FILES + 1);
         records.sort(RAW_LIBRARY_OUTPUT_ORDER);
 
         StringBuilder result = new StringBuilder();
-        for (RawLibraryRecord record : records) {
-            appendLibraryRecord(
-                    result,
-                    record.uri,
-                    record.displayName,
-                    record.displayPath,
-                    record.bytes,
-                    record.modifiedSeconds);
+        for (LibraryStore.Document record : records) {
+            appendLibraryRecord(result, record);
         }
         return result.toString();
     }
 
-    private void appendRawLibraryFolders(
-            File root,
-            File directory,
-            StringBuilder result,
-            int depth,
-            int[] count) throws Exception {
-        if (depth >= MAX_RAW_LIBRARY_FOLDER_DEPTH || count[0] >= MAX_RAW_LIBRARY_FOLDERS) {
-            return;
+    /**
+     * One tab-separated line: the encoded URI, name and path, the byte size, the modification
+     * time in seconds, then the sidecar's byte size and modification time in milliseconds, both
+     * "-" when the photo has none. Read by {@code parse_library_record} in calibraw-ffi.
+     */
+    private static void appendLibraryRecord(StringBuilder result, LibraryStore.Document record) {
+        result.append(Uri.encode(record.uri)).append('\t')
+                .append(Uri.encode(record.displayName)).append('\t')
+                .append(Uri.encode(record.displayPath)).append('\t')
+                .append(record.bytes).append('\t')
+                .append(record.modifiedSeconds).append('\t');
+        if (record.sidecarBytes == LibraryStore.NO_SIDECAR) {
+            result.append("-\t-");
+        } else {
+            result.append(record.sidecarBytes).append('\t').append(record.sidecarModifiedMillis);
         }
-        File[] children = directory.listFiles(file ->
-                file.isDirectory() && !file.getName().startsWith("."));
-        if (children == null) {
-            return;
-        }
-        Arrays.sort(children, (left, right) ->
-                left.getName().compareToIgnoreCase(right.getName()));
-        for (File child : children) {
-            if (count[0] >= MAX_RAW_LIBRARY_FOLDERS) {
-                return;
-            }
-            String relative = AndroidStorageContract.relativeLibraryFolder(root, child);
-            result.append(Uri.encode(relative)).append('\t')
-                    .append(Uri.encode(child.getName())).append('\n');
-            count[0]++;
-            appendRawLibraryFolders(root, child, result, depth + 1, count);
-        }
+        result.append('\n');
     }
 
-    private ArrayList<RawLibraryRecord> listFileRawLibrary(File directory) {
-        ArrayList<RawLibraryRecord> result = new ArrayList<>();
-        File[] files = directory.listFiles();
-        if (files == null) {
-            return result;
-        }
-
-        // Preserve one sentinel beyond the UI limit.
-        int retainedLimit = MAX_RAW_LIBRARY_FILES + 1;
-        PriorityQueue<RawLibraryCandidate> retained =
-                selectRawLibraryCandidates(files, retainedLimit);
-        for (RawLibraryCandidate candidate : retained) {
-            File file = candidate.file;
-            result.add(new RawLibraryRecord(
-                    Uri.fromFile(file).toString(),
-                    file.getName(),
-                    file.getAbsolutePath(),
-                    Math.max(0, file.length()),
-                    Math.max(0, candidate.modifiedMillis / 1000)));
-        }
-        return result;
-    }
-
-    static PriorityQueue<RawLibraryCandidate> selectRawLibraryCandidates(
-            File[] files, int retainedLimit) {
-        PriorityQueue<RawLibraryCandidate> retained = new PriorityQueue<>(
-                retainedLimit, RAW_LIBRARY_CUTOFF_WORST_FIRST);
-        for (int index = 0; index < files.length; index++) {
-            File file = files[index];
-            long modifiedMillis = file.lastModified();
-            if (!file.isFile() || !AndroidStorageContract.isSupportedImageName(file.getName())) {
-                continue;
-            }
-            retainRawLibraryCandidate(
-                    retained,
-                    new RawLibraryCandidate(file, modifiedMillis, index),
-                    retainedLimit);
-        }
-        return retained;
-    }
-
-    private static void retainRawLibraryCandidate(
-            PriorityQueue<RawLibraryCandidate> retained,
-            RawLibraryCandidate candidate,
-            int retainedLimit) {
-        if (retained.size() < retainedLimit) {
-            retained.add(candidate);
-            return;
-        }
-        RawLibraryCandidate cutoff = retained.peek();
-        if (cutoff != null && RAW_LIBRARY_CUTOFF_WORST_FIRST.compare(candidate, cutoff) > 0) {
-            retained.poll();
-            retained.add(candidate);
-        }
-    }
-
-    private static void appendLibraryRecord(
-            StringBuilder result,
-            String uri,
-            String displayName,
-            String displayPath,
-            long bytes,
-            long modifiedSeconds) {
-        result.append(Uri.encode(uri)).append('\t')
-                .append(Uri.encode(displayName)).append('\t')
-                .append(Uri.encode(displayPath)).append('\t')
-                .append(bytes).append('\t')
-                .append(modifiedSeconds).append('\n');
-    }
-
-    private File externalMediaRootDirectory() {
-        File[] mediaDirectories = storage.getExternalMediaDirs();
-        if (mediaDirectories != null) {
-            for (File directory : mediaDirectories) {
-                if (directory != null) {
-                    return directory;
-                }
-            }
-        }
-        throw new IllegalStateException("Android shared media storage is unavailable");
-    }
-
-    private File rawLibraryDirectory() {
-        File directory = AndroidStorageContract.rawLibraryDirectory(externalMediaRootDirectory());
-        if (!directory.isDirectory() && !directory.mkdirs()) {
-            throw new IllegalStateException("Could not create " + directory);
-        }
-        File noMedia = AndroidStorageContract.noMediaMarker(directory);
+    private void deleteStoredRaw(Uri uri, String displayName) {
         try {
-            if (!noMedia.exists() && !noMedia.createNewFile()) {
-                Log.w(LOG_TAG, "Could not create .nomedia marker in " + directory);
-            }
-        } catch (Exception error) {
-            Log.w(LOG_TAG, "Could not create .nomedia marker in " + directory, error);
-        }
-        return directory;
-    }
-
-    private File selectedRawLibraryDirectory() {
-        try {
-            File directory = AndroidStorageContract.libraryFolder(
-                    rawLibraryDirectory(), selectedRawLibraryFolder);
-            if (!directory.isDirectory()) {
-                throw new IllegalStateException("The selected RAW library folder no longer exists");
-            }
-            return directory;
-        } catch (RuntimeException error) {
-            throw error;
-        } catch (Exception error) {
-            throw new IllegalStateException("The selected RAW library folder is invalid", error);
-        }
-    }
-
-    private void deleteStoredRaw(Uri uri) {
-        try {
-            new File(uri.getPath()).delete();
+            storeOf(uri).delete(uri, displayName);
         } catch (Exception ignored) {
         }
     }
 
-    // The heap head is the record the old stable millisecond sort would drop first:
-    // oldest mtime, then latest position in the original listFiles() result.
-    static final Comparator<RawLibraryCandidate> RAW_LIBRARY_CUTOFF_WORST_FIRST =
+    private static final Comparator<LibraryStore.Document> RAW_LIBRARY_OUTPUT_ORDER =
             (left, right) -> {
-                int modifiedOrder = Long.compare(left.modifiedMillis, right.modifiedMillis);
-                return modifiedOrder != 0
-                        ? modifiedOrder
-                        : Integer.compare(right.enumerationOrder, left.enumerationOrder);
+                int modifiedOrder = Long.compare(right.modifiedSeconds, left.modifiedSeconds);
+                return modifiedOrder != 0 ? modifiedOrder : left.uri.compareTo(right.uri);
             };
 
-    static final Comparator<RawLibraryRecord> RAW_LIBRARY_OUTPUT_ORDER = (left, right) -> {
-        int modifiedOrder = Long.compare(right.modifiedSeconds, left.modifiedSeconds);
-        return modifiedOrder != 0 ? modifiedOrder : left.uri.compareTo(right.uri);
-    };
-
-    static final class RawLibraryCandidate {
-        final File file;
-        final long modifiedMillis;
-        final int enumerationOrder;
-
-        RawLibraryCandidate(File file, long modifiedMillis, int enumerationOrder) {
-            this.file = file;
-            this.modifiedMillis = modifiedMillis;
-            this.enumerationOrder = enumerationOrder;
-        }
-    }
-
-    static final class RawLibraryRecord {
-        final String uri;
-        final String displayName;
-        final String displayPath;
-        final long bytes;
-        final long modifiedSeconds;
-
-        RawLibraryRecord(
-                String uri,
-                String displayName,
-                String displayPath,
-                long bytes,
-                long modifiedSeconds) {
-            this.uri = uri;
-            this.displayName = displayName;
-            this.displayPath = displayPath;
-            this.bytes = bytes;
-            this.modifiedSeconds = modifiedSeconds;
-        }
-    }
-
-    private static final class StoredRaw {
-        final Uri uri;
-        final String displayName;
-
-        StoredRaw(Uri uri, String displayName) {
-            this.uri = uri;
-            this.displayName = displayName;
-        }
-    }
-
-    private static String storageLimitMessage(long maximumBytes) {
+    static String storageLimitMessage(long maximumBytes) {
         return "The document exceeds the " + maximumBytes + "-byte import limit";
     }
 

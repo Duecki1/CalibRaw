@@ -369,6 +369,7 @@ impl CalibRawApp {
                     Arc::clone(&platform),
                     ctx,
                     library_preferences,
+                    performance.last_android_library_root,
                     performance.last_android_library_folder,
                 )
             } else {
@@ -386,6 +387,7 @@ impl CalibRawApp {
             foreground_operation: None,
             android: AndroidState {
                 picker_pending: false,
+                companion_publishes: Vec::new(),
                 pending_android_library_reset_reload: false,
                 camera_profile_folder_importing_label: None,
                 pending_android_profile_reload: None,

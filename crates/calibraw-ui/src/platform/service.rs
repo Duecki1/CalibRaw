@@ -1,6 +1,10 @@
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
-use crate::sidecar::{EditState, LoadedSidecar, PhotoReview, SidecarError};
+use crate::sidecar::{
+    EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SidecarError, SidecarSummary,
+};
+use calibraw_core::display_metadata_cache::FileStamp;
+use calibraw_core::pipeline::RawDisplayMetadata;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -27,6 +31,21 @@ pub(crate) struct LibraryDocument {
     pub(crate) display_path: String,
     pub(crate) bytes: u64,
     pub(crate) modified_seconds: u64,
+    pub(crate) sidecar: ListedSidecar,
+}
+
+/// What a media-library listing says about a photo's sidecar.
+#[cfg_attr(
+    not(target_os = "android"),
+    allow(dead_code, reason = "listed only by the Android backend")
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ListedSidecar {
+    /// The platform does not list sidecars; the photo's is read to find out.
+    Unlisted,
+    Absent,
+    /// The sidecar's size and modification time, which tell its versions apart.
+    Present(FileStamp),
 }
 
 /// A media-library folder; `path` is relative to the library root, `/`-separated.
@@ -34,6 +53,25 @@ pub(crate) struct LibraryDocument {
 pub(crate) struct LibraryFolder {
     pub(crate) path: String,
     pub(crate) name: String,
+}
+
+/// A folder of the person's own, opened where it is; `key` names it in the
+/// platform and in settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LinkedFolder {
+    pub(crate) key: String,
+    pub(crate) label: String,
+}
+
+#[cfg_attr(
+    not(target_os = "android"),
+    allow(dead_code, reason = "constructed only by the Android backend")
+)]
+#[derive(Debug)]
+pub(crate) enum LinkFolderResult {
+    Linked { key: String },
+    Cancelled,
+    Failed(String),
 }
 
 #[cfg_attr(
@@ -324,6 +362,39 @@ pub(crate) trait Platform: Send + Sync {
     fn select_library_folder(&self, _relative_path: &str) -> Result<(), String> {
         Err(unavailable("the media library"))
     }
+    /// Asks for a folder to link; the result arrives through
+    /// [`Self::take_link_folder_result`].
+    fn open_link_folder_picker(&self) -> Result<(), String> {
+        Err(unavailable("linked folders"))
+    }
+    fn take_link_folder_result(&self) -> Option<LinkFolderResult> {
+        None
+    }
+    fn list_linked_folders(&self) -> Result<Vec<LinkedFolder>, String> {
+        Ok(Vec::new())
+    }
+    /// Stops showing a linked folder; its files stay where they are.
+    fn unlink_folder(&self, _key: &str) -> Result<(), String> {
+        Err(unavailable("linked folders"))
+    }
+    /// The folders of the linked folder `key`, as [`Self::list_library_folders`]
+    /// lists them, whichever folder is selected.
+    fn list_linked_folder_tree(&self, _key: &str) -> Result<Vec<LibraryFolder>, String> {
+        Err(unavailable("linked folders"))
+    }
+    /// Lists from the top of a linked folder, or of the media library for an
+    /// empty key.
+    fn select_library_root(&self, key: &str) -> Result<(), String> {
+        if key.is_empty() {
+            Ok(())
+        } else {
+            Err(unavailable("linked folders"))
+        }
+    }
+    /// Whether sync changed the selected linked folder since the last call.
+    fn take_library_changed(&self) -> bool {
+        false
+    }
     /// Creates `name` under `parent_path` and returns the new folder's path.
     fn create_library_folder(&self, _parent_path: &str, _name: &str) -> Result<String, String> {
         Err(unavailable("the media library"))
@@ -430,6 +501,95 @@ pub(crate) trait Platform: Send + Sync {
     fn people_analysis_path(&self, _raw_uri: &str, _display_name: &str) -> Result<PathBuf, String> {
         Err(unavailable("media-library people analyses"))
     }
+    /// Makes the companion's local path hold what the photo's folder has,
+    /// where that path is not the folder itself. May copy a large file.
+    fn fetch_photo_companion(
+        &self,
+        _raw_uri: &str,
+        _display_name: &str,
+        _companion: PhotoCompanion,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    /// Stores what was written at the companion's local path in the photo's
+    /// folder. May copy a large file.
+    fn publish_photo_companion(
+        &self,
+        _raw_uri: &str,
+        _display_name: &str,
+        _companion: PhotoCompanion,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    /// Whether the photo's folder holds this companion.
+    fn photo_companion_exists(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        companion: PhotoCompanion,
+    ) -> Result<bool, String> {
+        let path = match companion {
+            PhotoCompanion::AiDenoise => self.ai_denoise_result_path(raw_uri, display_name),
+            PhotoCompanion::PeopleAnalysis => self.people_analysis_path(raw_uri, display_name),
+        }?;
+        Ok(path.is_file())
+    }
+    /// Where the folder cache of a media-library folder (dimensions and
+    /// sidecar summaries) is kept: `folder` within the linked folder
+    /// `linked_folder`, or within the library for an empty one. `None` keeps
+    /// it for one scan only.
+    fn library_folder_cache_path(&self, _linked_folder: &str, _folder: &str) -> Option<PathBuf> {
+        None
+    }
+    /// The stored preview of a media-library photo, or `None` when it has to
+    /// be extracted with [`Self::extract_library_preview`].
+    fn load_cached_library_preview(
+        &self,
+        _uri: &str,
+        _bytes: u64,
+        _modified_seconds: u64,
+        _maximum_edge: u32,
+    ) -> Result<Option<RawThumbnail>, String> {
+        Ok(None)
+    }
+    /// Reads a media-library photo's preview, and with
+    /// `read_display_metadata` its display metadata from the same read, and
+    /// stores the preview. A failed metadata read is `None`; the preview is
+    /// still returned.
+    fn extract_library_preview(
+        &self,
+        uri: &str,
+        display_name: &str,
+        bytes: u64,
+        modified_seconds: u64,
+        maximum_edge: u32,
+        read_display_metadata: bool,
+    ) -> Result<(RawThumbnail, Option<RawDisplayMetadata>), String> {
+        let thumbnail =
+            self.load_library_thumbnail(uri, display_name, bytes, modified_seconds, maximum_edge)?;
+        let display_metadata = if read_display_metadata {
+            self.load_library_display_metadata(uri, display_name)
+                .map_err(|error| log::warn!("{error}"))
+                .ok()
+        } else {
+            None
+        };
+        Ok((thumbnail, display_metadata))
+    }
+    /// A media-library photo's display metadata, read on its own.
+    fn load_library_display_metadata(
+        &self,
+        uri: &str,
+        _display_name: &str,
+    ) -> Result<RawDisplayMetadata, String> {
+        self.load_library_display_dimensions(uri)
+            .map(|dimensions| RawDisplayMetadata {
+                dimensions,
+                ..RawDisplayMetadata::default()
+            })
+    }
+    /// The preview half of the default [`Self::extract_library_preview`], for
+    /// platforms that cache previews themselves.
     fn load_library_thumbnail(
         &self,
         _uri: &str,
@@ -440,7 +600,40 @@ pub(crate) trait Platform: Send + Sync {
     ) -> Result<RawThumbnail, String> {
         Err(unavailable("media-library thumbnails"))
     }
+    /// The dimensions half of the default
+    /// [`Self::load_library_display_metadata`].
     fn load_library_display_dimensions(&self, _uri: &str) -> Result<[u32; 2], String> {
+        Err(unavailable("media-library thumbnails"))
+    }
+    /// How many sidecar writes the app has made, taken before listing a
+    /// folder for [`Self::sidecar_written_since`].
+    fn sidecar_write_count(&self) -> u64 {
+        0
+    }
+    /// Whether the app wrote the photo's sidecar after `count` was taken, so a
+    /// listing taken before does not show it.
+    fn sidecar_written_since(&self, _raw_uri: &str, _count: u64) -> bool {
+        false
+    }
+    /// What the library grid needs from a media-library photo's sidecar;
+    /// `None` when it has none. Asked only of platforms whose listing reports
+    /// sidecars ([`ListedSidecar::Present`]).
+    fn load_sidecar_summary(
+        &self,
+        _raw_uri: &str,
+        _display_name: &str,
+    ) -> Result<Option<SidecarSummary>, SidecarError> {
+        Err(SidecarError::Platform(unavailable("sidecar summaries")))
+    }
+    /// The developed thumbnail saved for the photo while its sidecar had
+    /// `render_fingerprint`; `None` when there is none or it is out of date.
+    /// Asked only of platforms whose listing reports sidecars.
+    fn load_current_developed_thumbnail(
+        &self,
+        _raw_uri: &str,
+        _render_fingerprint: u64,
+        _maximum_edge: u32,
+    ) -> Result<Option<RawThumbnail>, String> {
         Err(unavailable("media-library thumbnails"))
     }
     fn load_developed_thumbnail_cache(

@@ -49,12 +49,28 @@ pub struct LibraryDocument {
     pub display_path: String,
     pub bytes: u64,
     pub modified_seconds: u64,
+    /// The photo's sidecar; `None` when it has none.
+    pub sidecar: Option<calibraw_core::display_metadata_cache::FileStamp>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LibraryFolder {
     pub path: String,
     pub name: String,
+}
+
+/// A folder the user linked; `key` names it in the bridge and in settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkedFolder {
+    pub key: String,
+    pub label: String,
+}
+
+#[derive(Debug)]
+pub enum LinkFolderResult {
+    Linked { key: String },
+    Cancelled,
+    Failed(String),
 }
 
 #[derive(Debug)]
@@ -125,6 +141,9 @@ static CAMERA_PROFILE_FOLDER_RESULTS: OnceLock<Mutex<VecDeque<CameraProfileFolde
 static LUT_FILES_RESULTS: OnceLock<Mutex<VecDeque<StagedFilesResult>>> = OnceLock::new();
 static WATERMARK_IMAGE_RESULTS: OnceLock<Mutex<VecDeque<StagedFilesResult>>> = OnceLock::new();
 static EXPORT_RESULTS: OnceLock<Mutex<VecDeque<ExportPublishResult>>> = OnceLock::new();
+static LINK_FOLDER_RESULTS: OnceLock<Mutex<VecDeque<LinkFolderResult>>> = OnceLock::new();
+/// Set when sync changed the selected linked folder while the app was away.
+static LIBRARY_CHANGED: AtomicBool = AtomicBool::new(false);
 /// Only the newest progress matters, so this is a slot rather than a queue.
 static IMPORT_PROGRESS: Mutex<Option<ImportProgress>> = Mutex::new(None);
 static DIRECT_EXPORTS: OnceLock<Mutex<HashMap<PathBuf, DirectExportTarget>>> = OnceLock::new();
@@ -163,6 +182,10 @@ fn watermark_image_results() -> &'static Mutex<VecDeque<StagedFilesResult>> {
 
 fn export_results() -> &'static Mutex<VecDeque<ExportPublishResult>> {
     EXPORT_RESULTS.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn link_folder_results() -> &'static Mutex<VecDeque<LinkFolderResult>> {
+    LINK_FOLDER_RESULTS.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
 fn direct_exports() -> &'static Mutex<HashMap<PathBuf, DirectExportTarget>> {
@@ -268,6 +291,14 @@ pub fn take_export_publish_result() -> Option<ExportPublishResult> {
     take_queued(export_results())
 }
 
+pub fn take_link_folder_result() -> Option<LinkFolderResult> {
+    take_queued(link_folder_results())
+}
+
+pub fn take_library_changed() -> bool {
+    LIBRARY_CHANGED.swap(false, Ordering::AcqRel)
+}
+
 /// Switches the soft keyboard between its number and text layouts. winit
 /// still decides whether the keyboard is shown.
 pub fn set_numeric_keyboard(app: &AndroidApp, numeric: bool) -> Result<(), String> {
@@ -294,6 +325,19 @@ pub fn set_light_system_bars(app: &AndroidApp, light: bool) -> Result<(), String
         Ok(())
     })
     .map_err(|error| format!("could not update Android system-bar appearance: {error:#}"))
+}
+
+pub fn open_link_folder_picker(app: &AndroidApp) -> Result<(), String> {
+    with_activity(app, |env, activity| {
+        env.call_method(
+            activity,
+            jni::jni_str!("openLinkFolderPicker"),
+            jni::jni_sig!(() -> void),
+            &[],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("could not open Android's folder picker: {error:#}"))
 }
 
 pub fn open_camera_profile_folder(app: &AndroidApp) -> Result<(), String> {

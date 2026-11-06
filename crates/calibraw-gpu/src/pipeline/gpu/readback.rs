@@ -587,11 +587,8 @@ impl RawGpuPipeline {
         let render = |label| {
             let mut encoder = device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-            if params.needs_blur_passes() {
-                self.encode_bound_pass(&mut encoder, &self.post_blur_render_pass, label);
-            } else {
-                self.encode_pass(&mut encoder, self.indices.adjustment_render_pass_index);
-            }
+            let image_in_tex2 = self.output_image_in_tex2.load(Ordering::Acquire);
+            self.encode_render_pass(&mut encoder, image_in_tex2);
             queue.submit(Some(encoder.finish()));
         };
         render("calibraw point color sample");

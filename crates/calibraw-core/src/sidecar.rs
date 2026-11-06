@@ -42,6 +42,24 @@ pub const AI_DENOISE_SUFFIX: &str = ".calibraw-denoise";
 /// and parts without running a model. Derived data like the AI-denoise
 /// result, kept while the saved edit has a people mask.
 pub const PEOPLE_ANALYSIS_SUFFIX: &str = ".calibraw-people";
+
+/// A file kept beside a photo that native code reads and writes by path, and
+/// that the app can make again when it is lost.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PhotoCompanion {
+    AiDenoise,
+    PeopleAnalysis,
+}
+
+impl PhotoCompanion {
+    /// What is added to the photo's file name, on every platform.
+    pub const fn suffix(self) -> &'static str {
+        match self {
+            Self::AiDenoise => AI_DENOISE_SUFFIX,
+            Self::PeopleAnalysis => PEOPLE_ANALYSIS_SUFFIX,
+        }
+    }
+}
 pub const DEVELOPED_THUMBNAIL_SUFFIX: &str = ".calibraw-thumb.jpg";
 const DEVELOPED_THUMBNAIL_FINGERPRINT_SUFFIX: &str = ".calibraw-thumb.fingerprint";
 pub const MAX_SIDECAR_BYTES: u64 = if cfg!(target_os = "android") {

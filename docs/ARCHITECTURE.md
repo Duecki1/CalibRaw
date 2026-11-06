@@ -138,6 +138,8 @@ job records the value it started with.
 | Sidecar save | `VecDeque` of requests, one write in flight | none; writes are short | requests carry `generation` and `revision`; stale completions are ignored | failure keeps a recovery request and shows a dialog |
 | Heap purge (Android, Linux glibc) | one `calibraw-heap-purge` thread in `calibraw_core::system_memory`; requests made while a purge is queued or running are served by one more | none; a purge takes up to a few hundred milliseconds | none; it only returns pages the allocator already freed | a thread that cannot start leaves memory with the allocator; an Android without `M_PURGE` changes nothing |
 | Library ratings and flags | one `calibraw-review-writer` thread per library, started by the first change; saves run in the order they were made | none; a later change to a photo queues behind the earlier one, and the grid shows a saved review only once its photo has no save waiting | the open photo changes through its document: on Android its review is saved with the edits, on desktop with its editing time | each save reports the review its sidecar then holds; failures show the error dialog; library photo actions, opening a photo and exit wait up to two seconds for queued saves, as a media-library save rewrites the whole sidecar |
+| Linked folder tree | one `calibraw-library-folders` thread at a time, beside the photo scan; started by a refresh, not by selecting a folder within the tree; a refresh during a walk walks again after it | none; bounded by the folder limits | its folders carry the linked folder walked and are shown only while it is; switching linked folders abandons the walk | logged; the photo scan reaches the same folder and shows the error dialog |
+| Linked folder AI results | one thread per finished AI job, polled through `AndroidState::companion_publishes` | none | copies to the photo the job finished for | error dialog; the result stays usable until the photo closes |
 | Library thumbnails | shared work queue for a worker pool | `AtomicU64` generation; workers exit when it changes | generation bump on folder change | each item's result, success or error, is sent with its generation; older generations are ignored |
 
 Job channels are unbounded `std::sync::mpsc` channels: each job sends a
@@ -158,6 +160,7 @@ GPU readbacks wait on one-slot channels.
 | `DEVELOPED_THUMBNAIL_GPU` | `ui::library::thumbnails::developed` | thumbnail workers | one headless device for developed thumbnails, used by one render at a time |
 | thumbnail work queue and request receiver | `ThumbnailWorkerContext` | thumbnail workers | short critical sections; never held while decoding |
 | rendered-thumbnail permits (counting semaphore) | `calibraw_core::thumbnail_cache` | thumbnail workers rendering a full RAW (no embedded preview, or edited) | at most four such renders, fewer with fewer workers, bounding indexing memory |
+| `ExtractionPermits` (counting semaphore) | one per media-library scan | its thumbnail workers while reading a photo (preview or display metadata) | at most the thumbnail-worker setting of photo reads at once; the scan has more workers, which serve cached previews without a permit |
 | model runtime slot | `calibraw_ai::slot` | the running AI job | one ONNX session at a time; evicted models unload once released |
 | `RUNTIME_INIT_LOCK`, runtime probe cache, runtime install lock | `calibraw_ai::runtime` | AI jobs, the Settings runtime picker | serialize ONNX Runtime initialization, probes and automatic runtime installs |
 | provider statuses | `calibraw_ai::placement` | AI jobs, Settings | the provider each model's latest session uses |
@@ -176,8 +179,8 @@ GPU readbacks wait on one-slot channels.
 
 Apart from the serialized-read gate, only these nestings exist, each in a fixed
 order: the reference-preview serial lock is taken before the decode gate; a
-thumbnail worker takes `DEVELOPED_THUMBNAIL_GPU` while holding the decode gate
-for reading; and a decode that owns a decoded-RAW cache entry takes the decode
+thumbnail worker takes `DEVELOPED_THUMBNAIL_GPU` or an `ExtractionPermits`
+permit while holding the decode gate for reading; and a decode that owns a decoded-RAW cache entry takes the decode
 gate without holding the cache lock, so waiting for an entry never holds the
 gate. No code takes the decode gate while holding any other lock in this
 table. The serialized-read gate may be taken while holding any of them, but none
@@ -314,7 +317,7 @@ production `ShaderManager` composes.
   else compiles on every target and branches at run time:
   - `PlatformCaps` (`form_factor`, `storage`, `memory`,
     `tasks_need_foreground`, `configurable_ai_runtime`, `video_encoder`,
-    `can_restart`) is what views and handlers read. Views take it, or
+    `can_restart`, `linked_folders`) is what views and handlers read. Views take it, or
     `app.caps()`, and return actions; leaf widgets without the app use
     `PlatformCaps::CURRENT`. Data that already names its kind is matched
     instead: `LibraryLocator`, `SidecarTarget` and `ExportDestination`.
@@ -338,5 +341,26 @@ production `ShaderManager` composes.
 - Library storage lives in `ui/library/folders/` (folders on disk) and
   `ui/library/media_library/` (the Android library); `ui/library/sources.rs`
   dispatches on `PlatformCaps::storage`.
+- The Android library has one `LibraryStore` per place photos live:
+  `FileLibraryStore` (`.library`, by path) and one `TreeLibraryStore` per linked
+  folder (the Storage Access Framework, no manifest permission).
+  `StorageManager` picks the store from the photo's URI, so Rust keeps treating
+  URIs as opaque. Linked photos are `calibraw-tree://{key}/{path}/{name}`, as a
+  document URI gives no parent and can change on rename. Android's persisted
+  grants are the list of linked folders. `TreeLibraryStore` replaces a file by
+  writing beside it and renaming, as SAF has no atomic replace, and the next read
+  restores a sidecar a crash left moved aside. Native code reads and writes AI
+  companions by path, so a linked photo's live in the cache and are copied with
+  `fetch_photo_companion` (document load) and `publish_photo_companion` (after the
+  job).
+- Media-library previews: Java owns the cache directory (`ThumbnailCache`:
+  trimming, size, clearing); `calibraw-ffi` names, reads and writes the files in
+  it, so a cached preview needs no JNI call. The listing reports each photo's
+  sidecar size and time. The folder cache (`calibraw_core::display_metadata_cache`,
+  one file per folder in the same directory) keeps each photo's dimensions and a
+  summary of its sidecar, so a scan shows final tile shapes and ratings at once
+  and reads a sidecar once per change (`ui/library/media_library/catalog.rs`,
+  `ui/library/deferred_metadata.rs`). A scan runs `MEDIA_LIBRARY_PREVIEW_WORKERS`
+  workers; `ExtractionPermits` keeps photo reads within the worker setting.
 - Edit replay picks FFmpeg or the platform encoder from
   `PlatformCaps::video_encoder` (`services/replay/`).

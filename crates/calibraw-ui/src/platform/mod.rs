@@ -44,8 +44,8 @@ pub(crate) use graphics::{PROCESSING_DRIVER_INSTALL_HINT, PROCESSING_GRAPHICS_AP
 pub(crate) use locale::preferred_languages;
 pub(crate) use service::{
     CameraProfileFolderResult, ExportPublishResult, ImportProgress, ImportedLibraryDocument,
-    LibraryDocument, LibraryFolder, PickerResult, Platform, PublishedExport, ReplayVideoEncoder,
-    StagedFilesResult, TaskNotification,
+    LibraryDocument, LibraryFolder, LinkFolderResult, LinkedFolder, ListedSidecar, PickerResult,
+    Platform, PublishedExport, ReplayVideoEncoder, StagedFilesResult, TaskNotification,
 };
 
 #[cfg(target_os = "android")]

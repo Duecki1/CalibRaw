@@ -5,6 +5,58 @@ impl LibraryState {
         &self.media.folder
     }
 
+    /// The linked folder shown; empty for the media library itself.
+    pub(crate) fn android_root(&self) -> &str {
+        &self.media.root
+    }
+
+    /// The name of the linked folder shown; `None` in the media library.
+    pub(crate) fn linked_folder_label(&self) -> Option<&str> {
+        self.media
+            .linked_folders
+            .iter()
+            .find(|folder| folder.key == self.media.root)
+            .map(|folder| folder.label.as_str())
+    }
+
+    pub(crate) fn reload_linked_folders(&mut self) {
+        match self.platform.list_linked_folders() {
+            Ok(folders) => self.media.linked_folders = folders,
+            Err(error) => self.media.pending_error = Some(error),
+        }
+    }
+
+    pub(crate) fn take_linked_folder_error(&mut self) -> Option<String> {
+        self.media.pending_error.take()
+    }
+
+    /// Shows the top of a linked folder, or of the media library for an empty
+    /// key. Returns whether another folder is now shown.
+    pub(crate) fn select_android_root(&mut self, key: String, context: &egui::Context) -> bool {
+        if self.media.root == key && self.media.folder.is_empty() {
+            self.refresh(context);
+            return false;
+        }
+        if let Err(error) = self.platform.select_library_root(&key) {
+            self.media.pending_error = Some(error);
+            return false;
+        }
+        self.media.root = key;
+        self.media.folder = String::new();
+        self.media.folders.clear();
+        // The other folder's walk is left to finish unseen.
+        self.media.tree_walk = None;
+        self.media.expanded_folders = android_folder_ancestors("");
+        self.media.root_location = self.platform.library_location().unwrap_or_else(|error| {
+            log::warn!("{error}");
+            String::new()
+        });
+        self.location = Some(self.media.root_location.clone());
+        self.reset_folder_contents();
+        self.refresh(context);
+        true
+    }
+
     pub(crate) fn select_android_folder(
         &mut self,
         folder: String,
@@ -25,7 +77,7 @@ impl LibraryState {
         let location = android_library_location_label(&self.media.root_location, &selected_folder);
         self.location = Some(location);
         self.reset_folder_contents();
-        self.refresh(context);
+        self.rescan(context);
         true
     }
 

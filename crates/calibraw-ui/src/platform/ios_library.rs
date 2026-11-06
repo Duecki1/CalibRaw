@@ -1,7 +1,7 @@
 //! Local iOS photo storage, independent of main-thread picker integration.
 
 use super::service::PickedDocument;
-use super::{ImportedLibraryDocument, LibraryDocument, LibraryFolder};
+use super::{ImportedLibraryDocument, LibraryDocument, LibraryFolder, ListedSidecar};
 use calibraw_core::pipeline::{
     is_supported_image_path, load_raw_display_dimensions, load_raw_thumbnail, RawThumbnail,
 };
@@ -173,6 +173,7 @@ impl IosLibrary {
                     .ok()
                     .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                     .map_or(0, |time| time.as_secs()),
+                sidecar: ListedSidecar::Unlisted,
             });
         }
         documents.sort_by(|left, right| left.uri.cmp(&right.uri));

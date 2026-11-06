@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Locale;
@@ -20,6 +21,12 @@ final class AndroidStorageContract {
     static final String RAW_LIBRARY_DIRECTORY_NAME = ".library";
     static final int MAX_RAW_NAME_BYTES = 220;
     static final int MAX_EXPORT_NAME_BYTES = 240;
+    static final String AI_DENOISE_SUFFIX = ".calibraw-denoise";
+    static final String PEOPLE_ANALYSIS_SUFFIX = ".calibraw-people";
+    /** Kept beside a photo, and made again by the app when one is lost. */
+    static final String[] REGENERATED_COMPANION_SUFFIXES = {
+            AI_DENOISE_SUFFIX, PEOPLE_ANALYSIS_SUFFIX
+    };
 
     // Keep in sync with SUPPORTED_RAW_EXTENSIONS and SUPPORTED_RENDERED_EXTENSIONS
     // in calibraw-core.
@@ -131,15 +138,15 @@ final class AndroidStorageContract {
 
     /** The AI-denoise result kept next to a RAW while its edit uses AI denoise. */
     static String aiDenoiseDisplayName(String rawDisplayName) {
-        return companionDisplayName(rawDisplayName, ".calibraw-denoise");
+        return companionDisplayName(rawDisplayName, AI_DENOISE_SUFFIX);
     }
 
     /** The people analysis kept next to a RAW while its edit has a people mask. */
     static String peopleAnalysisDisplayName(String rawDisplayName) {
-        return companionDisplayName(rawDisplayName, ".calibraw-people");
+        return companionDisplayName(rawDisplayName, PEOPLE_ANALYSIS_SUFFIX);
     }
 
-    private static String companionDisplayName(String rawDisplayName, String suffix) {
+    static String companionDisplayName(String rawDisplayName, String suffix) {
         String name = sanitizeRawName(rawDisplayName);
         if (!name.equals(rawDisplayName)
                 || name.getBytes(StandardCharsets.UTF_8).length > 240) {
@@ -150,6 +157,33 @@ final class AndroidStorageContract {
 
     static String importPartialName(String destinationName) {
         return ".calibraw-import-" + destinationName + ".part";
+    }
+
+    /** Where a linked folder's replacement for {@code name} is written. */
+    static String linkedSwapPartName(String name) {
+        return ".calibraw-sidecar-" + name + ".part";
+    }
+
+    /** Where {@code name} waits while its replacement takes its name. */
+    static String linkedSwapOldName(String name) {
+        return ".calibraw-sidecar-" + name + ".old";
+    }
+
+    /** A name {@link #linkedSwapPartName} or {@link #linkedSwapOldName} made. */
+    static boolean isLinkedSwapName(String name) {
+        return name != null
+                && name.startsWith(".calibraw-sidecar-")
+                && (name.endsWith(".part") || name.endsWith(".old"));
+    }
+
+    static String sha256Hex(String text) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest(text.getBytes(StandardCharsets.UTF_8));
+        StringBuilder hex = new StringBuilder(digest.length * 2);
+        for (byte value : digest) {
+            hex.append(String.format(Locale.ROOT, "%02x", value));
+        }
+        return hex.toString();
     }
 
     /** Returns the requested file name, adding a numeric suffix when needed. */

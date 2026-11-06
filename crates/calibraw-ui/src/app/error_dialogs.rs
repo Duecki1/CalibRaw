@@ -51,6 +51,7 @@ pub(crate) enum ErrorKind {
     LibraryAdjustments,
     PhotoReview,
     RevealFile,
+    LinkedFolder,
 }
 
 impl ErrorKind {
@@ -65,6 +66,7 @@ impl ErrorKind {
             Self::Sampling => tr("Sampling failed"),
             Self::LensCorrection => tr("Lens correction failed"),
             Self::OpenPhoto => tr("Could not open photo"),
+            Self::LinkedFolder => tr("Linked folder problem"),
             Self::Import => tr("Import failed"),
             Self::PhotoOpenedWithProblems => tr("Photo opened with problems"),
             Self::CameraProfile => tr("Camera profile failed"),

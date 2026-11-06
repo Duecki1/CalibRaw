@@ -693,6 +693,7 @@ dependencies = [
  "calibraw-core",
  "jni",
  "log",
+ "ring",
 ]
 
 [[package]]

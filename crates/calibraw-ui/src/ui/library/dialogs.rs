@@ -15,6 +15,8 @@ pub(super) fn show_delete_originals_confirmation(
     ui: &mut Ui,
     assets: &[LibraryAsset],
     caps: PlatformCaps,
+    // The linked folder the photos are in, whose deletions reach other devices.
+    linked_folder: Option<&str>,
 ) -> Option<bool> {
     if assets.is_empty() {
         return Some(false);
@@ -39,6 +41,19 @@ pub(super) fn show_delete_originals_confirmation(
     moduwu_design::Dialog::new("library-delete-originals-confirmation", title).show_with_footer(
         ui.ctx(),
         |ui| {
+            if let Some(folder) = linked_folder {
+                if count == 1 {
+                    ui.label(tr_fmt("Delete {display_name} from {folder}?", &[("display_name", &assets[0].display_name), ("folder", &folder)]));
+                } else {
+                    ui.label(tr_fmt("Delete the {count} selected originals from {folder}?", &[("count", &count), ("folder", &folder)]));
+                }
+                ui.label(
+                    egui::RichText::new(tr("The originals and their edits are deleted from this folder, and from other devices when it syncs. This cannot be undone."))
+                        .strong()
+                        .color(ui.visuals().warn_fg_color),
+                );
+                return;
+            }
             if count == 1 {
                 ui.label(tr_fmt("Remove {display_name} from the Library?", &[("display_name", &assets[0].display_name)]));
             } else {
@@ -270,6 +285,78 @@ pub(super) fn show_ai_mask_refresh_progress(
         },
     );
     cancel
+}
+
+/// Says what linking does before the system picker, which greys out the
+/// folders Android refuses without saying why.
+pub(super) fn show_link_folder_dialog(ui: &mut Ui, app: &mut CalibRawApp) {
+    if !app.library.media.link_dialog {
+        return;
+    }
+    let mut action = moduwu_design::DialogAction::None;
+    moduwu_design::Dialog::new("library-link-folder-dialog", tr("Link a folder")).show_with_footer(
+        ui.ctx(),
+        |ui| {
+            ui.label(tr("CalibRaw opens the photos in this folder where they are. Edits and ratings are saved next to them, so devices that sync the folder stay the same."));
+            ui.add_space(moduwu_design::SPACE_SM);
+            ui.label(tr("Android doesn't allow the top level of storage, Download or Android. Choose another folder or a subfolder."));
+        },
+        |ui| {
+            action = moduwu_design::dialog_confirmation_actions(
+                ui,
+                tr("Cancel"),
+                tr("Choose folder"),
+                true,
+                false,
+                moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
+            );
+        },
+    );
+    match action {
+        moduwu_design::DialogAction::Cancel => app.library.media.link_dialog = false,
+        moduwu_design::DialogAction::Confirm => {
+            app.library.media.link_dialog = false;
+            app.open_link_folder_picker();
+        }
+        moduwu_design::DialogAction::None => {}
+    }
+}
+
+pub(super) fn show_unlink_folder_dialog(ui: &mut Ui, app: &mut CalibRawApp) {
+    let Some(folder) = app.library.media.unlink_dialog.clone() else {
+        return;
+    };
+    let mut action = moduwu_design::DialogAction::None;
+    moduwu_design::Dialog::new(
+        "library-unlink-folder-dialog",
+        tr_fmt("Unlink {folder}?", &[("folder", &folder.label)]),
+    )
+    .show_with_footer(
+        ui.ctx(),
+        |ui| {
+            ui.label(tr(
+                "Photos and edits stay in the folder. CalibRaw stops showing them.",
+            ));
+        },
+        |ui| {
+            action = moduwu_design::dialog_confirmation_actions(
+                ui,
+                tr("Cancel"),
+                tr("Unlink"),
+                true,
+                false,
+                moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
+            );
+        },
+    );
+    match action {
+        moduwu_design::DialogAction::Cancel => app.library.media.unlink_dialog = None,
+        moduwu_design::DialogAction::Confirm => {
+            app.library.media.unlink_dialog = None;
+            app.unlink_android_library_folder(&folder.key);
+        }
+        moduwu_design::DialogAction::None => {}
+    }
 }
 
 pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRawApp) {

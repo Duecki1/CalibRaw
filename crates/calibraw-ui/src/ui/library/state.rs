@@ -72,8 +72,27 @@ impl LibraryState {
         platform: Arc<dyn Platform>,
         context: &egui::Context,
         preferences: LibraryPreferences,
+        selected_root: String,
         selected_folder: String,
     ) -> Self {
+        let mut pending_error = None;
+        let linked_folders = platform.list_linked_folders().unwrap_or_else(|error| {
+            pending_error = Some(error);
+            Vec::new()
+        });
+        let (root, selected_folder) = match platform.select_library_root(&selected_root) {
+            Ok(()) => (selected_root, selected_folder),
+            Err(error) => {
+                pending_error = Some(tr_fmt(
+                    "The linked folder used last is no longer available, so the Library is shown instead. ({error})",
+                    &[("error", &error)],
+                ));
+                if let Err(root_error) = platform.select_library_root("") {
+                    log::warn!("{root_error}");
+                }
+                (String::new(), String::new())
+            }
+        };
         let root_location = platform.library_location().unwrap_or_else(|error| {
             log::warn!("{error}");
             "Android/media/de.duecki.calibraw/.library".to_owned()
@@ -101,6 +120,14 @@ impl LibraryState {
                 folders: Vec::new(),
                 expanded_folders: android_folder_ancestors(&selected_folder),
                 folder_name_dialog: None,
+                root,
+                linked_folders,
+                unavailable_roots: HashSet::new(),
+                link_dialog: false,
+                unlink_dialog: None,
+                pending_error,
+                tree_walk: None,
+                tree_walk_due: false,
             },
         );
         state.refresh(context);
@@ -204,6 +231,8 @@ impl LibraryState {
             || self.folder_name_dialog.is_some()
             || self.folder_delete_confirmation.is_some()
             || self.media.folder_name_dialog.is_some()
+            || self.media.link_dialog
+            || self.media.unlink_dialog.is_some()
     }
 
     pub(crate) fn local_mutation_in_progress(&self) -> bool {
