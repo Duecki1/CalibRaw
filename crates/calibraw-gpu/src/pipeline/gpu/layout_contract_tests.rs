@@ -760,3 +760,65 @@ fn screaming_snake_case(camel: &str) -> String {
     }
     output
 }
+
+/// The scene bake's uniforms, lens blur buffer and pyramid match the WGSL the
+/// bake compiles (scene/, shaders/scene/).
+#[test]
+fn scene_bake_uniforms_and_buffers_match_their_wgsl_declarations() {
+    use super::scene::camera::SceneCameraUniform;
+    use super::scene::{
+        SCENE_FOCUS_BLUR_BINS, SCENE_FOCUS_BYTES, SCENE_FOCUS_DEPTH_BINS, SCENE_LAYER_LEVELS,
+    };
+    use super::SceneBakeUniforms;
+    let modules = production_modules();
+    let contracts: [(&str, RustLayout); 2] = [
+        (
+            "SceneBakeUniforms",
+            rust_layout!(SceneBakeUniforms {
+                size,
+                input_size,
+                camera,
+                ground_plane,
+                ground_horizon
+            }),
+        ),
+        (
+            "SceneCamera",
+            rust_layout!(SceneCameraUniform { lens, anchors }),
+        ),
+    ];
+    // The old depth path declares a `SceneCamera` of its own until P7 of
+    // docs/rework/DEPTH_EFFECTS_PLAN.md; only the bake's modules are checked.
+    let bake_modules: Vec<_> = modules
+        .iter()
+        .filter(|(context, _)| {
+            context.starts_with("scene bake") || context.starts_with("calibraw scene bake")
+        })
+        .collect();
+    for (wgsl_name, rust) in &contracts {
+        let found = bake_modules
+            .iter()
+            .filter(|(context, module)| check_struct_layout(module, wgsl_name, rust, context))
+            .count();
+        assert!(found > 0, "{wgsl_name} is declared in the bake's modules");
+    }
+    let constant = |name: &str| shared_u32_constant(&modules, name);
+    assert_eq!(constant("SCENE_FOCUS_DEPTH_BINS"), SCENE_FOCUS_DEPTH_BINS);
+    assert_eq!(constant("SCENE_FOCUS_BLUR_BINS"), SCENE_FOCUS_BLUR_BINS);
+    assert_eq!(constant("SCENE_LAYER_LEVELS"), SCENE_LAYER_LEVELS);
+    for (context, module) in &bake_modules {
+        let mut layouter = Layouter::default();
+        layouter.update(module.to_ctx()).unwrap();
+        if let Some((handle, _)) = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref().map(undecorated) == Some("SceneFocus"))
+        {
+            assert_eq!(
+                u64::from(layouter[handle].size),
+                SCENE_FOCUS_BYTES,
+                "{context}"
+            );
+        }
+    }
+}

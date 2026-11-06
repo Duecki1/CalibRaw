@@ -44,6 +44,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_contour_accumulate: wgpu::BindGroupLayout,
     /// The scene emission passes, in pass order (`SCENE_EMISSION_PASSES`).
     pub(in crate::pipeline::gpu) bgl_scene_emission: [wgpu::BindGroupLayout; SCENE_EMISSION_PASSES],
+    pub(in crate::pipeline::gpu) bgl_scene_bake_accumulation: wgpu::BindGroupLayout,
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
@@ -814,6 +815,20 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             )
         })
     });
+    let bgl_scene_bake_accumulation = reused_layout(plan.scene_bake_accumulation_pass_index)
+        .unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl scene bake accumulation",
+                &[
+                    buffer_entry(0),
+                    texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
+                    storage_buffer_entry(20, true),
+                    storage_buffer_entry(84, false),
+                    buffer_entry(85),
+                ],
+            )
+        });
     BindGroupLayouts {
         bgl_scene_tone,
         bgl_effects,
@@ -853,5 +868,6 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_scene_map,
         bgl_contour_accumulate,
         bgl_scene_emission,
+        bgl_scene_bake_accumulation,
     }
 }

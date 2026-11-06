@@ -374,6 +374,8 @@ pub struct GpuParams {
     pub(super) scene_depth: Option<MaskImage>,
     /// The normals predicted with `scene_depth`.
     pub(super) scene_normals: Option<SceneNormals>,
+    /// The depth result the scene bake is made from (`scene`).
+    pub(super) depth_result: Option<SceneDepth>,
     /// The LUT `scene_tone.look_lut` describes, uploaded with the parameters.
     look_lut: Option<Arc<CubeLut>>,
     /// The camera profile `camera` describes, whose tables the pipeline
@@ -660,6 +662,7 @@ impl GpuParams {
                 .scene_depth
                 .as_ref()
                 .map(|depth| depth.normals().clone()),
+            depth_result: masks.scene_depth.clone(),
             look_lut: None,
             profile_color: Arc::clone(profile_color),
         };
@@ -964,6 +967,17 @@ impl GpuParams {
                     SceneMapUse::WithDepth => depth_present,
                     SceneMapUse::Always => true,
                 })
+    }
+
+    /// Whether an active effect reads the scene bake's geometry
+    /// ([`MaskEffect::scene_needs`]), which needs a depth result.
+    pub(super) fn needs_scene_bake(&self) -> bool {
+        self.depth_result.is_some()
+            && self
+                .mask_slots()
+                .iter()
+                .filter_map(MaskData::active_effect)
+                .any(|effect| effect.scene_needs().geometry)
     }
 
     /// Whether an effect lights the scene by emission (scene_emission.wgsl),

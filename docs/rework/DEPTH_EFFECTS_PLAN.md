@@ -1,7 +1,8 @@
 # Depth and normals effects: rebuild plan
 
-Status: P1 done, awaiting the user's review (2026-11-06). P0 partly done (§11). Written
-2026-11-06 against `fb9e74df`, reviewed and corrected the same day (§12). Work through it
+Status: P1 done; P2 built, awaiting the user's review (2026-11-06). P0 partly done (§11). Written
+2026-11-06 against `fb9e74df`, reviewed and corrected the same day (§12); the user
+decided the texture limit and the air light the same day (§12, items 3 and 6). Work through it
 phase by phase (§6). After each phase, fill in its row in §11 (Progress and
 measurements) and stop for the user's review before starting the next phase.
 
@@ -79,6 +80,7 @@ them.
 | S2 | Face in profile against a black background. A stair-stepped skin-coloured band along the nose and lips, faint glow in the black area beside the face | Relight (rim) | Light follows the 1024×1024 square depth texture (~6×4 photo px per texel) and the guided filter on 256-long cells (3×3 window, then averaged over 3×3 more: 70–120 px). Where brightness "does not explain" depth, stored depth is mixed back in, which gives the steps. The wide windows carry the face's depth and light into the background (80–100 px measured on 2026-11-02) |
 | S3 | Person in front of a wall. The cast shadow on the wall is a large black rounded blob with a smoky edge that does not follow the head and ears | Relight shadows | Marched through mip levels of the 1024² heightfield with a minimum footprint of 4 texels (~24 px). Every occluder is "solid for 15% of its distance", and the depth range is set by Relief, not measured |
 | S4 | `k you ve.CR3`: stone cairn, sunset sky, defocused tree line. A pale line along the tree tops | Relight | Fixed ~72 px sky fade against a 70–190 px photo edge. A separate far-reach cutoff contour at 0.92–0.96. A sky mask that runs ~100 px below the horizon (measured 2026-11-04) |
+| S5 | `Demo2.5/DSC09938 (1).ARW` (reported after P1): plush toy on a road, Relight behind it (light depth 100), Fog. A thinner-fog band and a lit fringe along the head and ears; with both effects, the head's shadow in the fog is drawn in steps | Fog, Relight, air shadows | Depth itself is clean (the map's edge lies within 10–20 px of the ears). The 1024² square texture (7×5 photo px per texel) and the brightness-only guided filter on 27 px cells (3×3-cell window) cannot separate a light-grey toy from a light-grey background, so the background beside the head gets an in-between depth. The air shadows are 16 slices of 128² over the frame: 55×37 px per texel at 7028 px; the shadowed band beside the head measures ~110 px. Identical with the pre-P1 depth of the same raw (`DSC09938.ARW`) |
 
 Root causes shared by all of them:
 
@@ -238,7 +240,7 @@ It is rebuilt on the same triggers as today's scene map, and on a new depth resu
 | B3 Coverage | guided-filter coefficients `a.rgb, b` (rgba16float) | colour guided feathering (He, Sun, Tang 2010, §4.3) of the near mask (`z < sqrt(z_near·z_far)`; for sky, `1 − sky`) against the working image. Radius follows the lens blur at the near depth (B7): compute 2–3 fixed radii (e.g. 2, 5, 12 px) and blend per pixel, so a defocused edge feathers over its real blur width and a sharp one stays sharp. Where the photo shows no edge, regularization gives a smooth ramp: this is the "100% feather where the edge cannot be seen" the user asked for |
 | B4 Layer colours | `F`, `B` (2 × rg11b10ufloat) | push-pull fill inside the band from pixels with coverage ≈ 1 (F) and ≈ 0 (B) |
 | B5 Layer normals | near and far normals, octahedral (rgba8snorm) | MoGe normals upsampled, then push-pull per side inside the band, as B4 |
-| B6 Hi-Z | min/max `z` mip chain of the visible surface (rg16float, from level 1) | visible = near where coverage ≥ 0.5, else far; for Wet Surfaces' trace |
+| B6 Hi-Z | min `z` of the visible surface, in the working image's alpha, min-reduced down its mip chain | visible = near where coverage ≥ 0.5, else far; for Wet Surfaces' trace, which takes thickness from the bake's near/far `z` (§4.6 texture count) |
 | B7 Lens blur | `c`, `z_f`, `σ0` of `σ(z) = c·|1/z − 1/z_f| + σ0` (uniform written by a one-workgroup pass, no readback) | from widths of strong edges measured on the working image (a 35 px blur at 6000 px is ~9 px here), robust fit; replaces the per-cell table |
 | B8 Ground (CPU) | plane normal, offset, camera height, horizon, has-ground (uniform) | RANSAC on a ~192×128 point sample whose normals face up, computed on the CPU when depth is uploaded (< 2 ms) |
 
@@ -280,17 +282,43 @@ bakes its own set from its tile accumulation.
   layer per group of four. All 8 lights get shadows, and the per-pixel trace for
   lights 5–8 disappears.
 
-**L3 Air light volume.**
-- Froxels over the full image, about working/8 × 32 slices. Slices are even in `c`,
-  plus slices before the nearest surface.
-- Each froxel holds per-light visibility, from 4 jittered cube lookups inside it.
-- Media and drops read it trilinearly. Falloff and phase function stay per pixel and
-  analytic.
+**L3 Air light: a march per pixel, in two quality tiers.** (Decided 2026-11-06,
+§12 item 6. A froxel volume at working/8 was planned first; at ~37 photo px per froxel
+it would draw S5's shafts in steps again.)
+- A compute pass marches each pixel's view ray from the camera to its surface through
+  the light's shadow cube (L1). It runs at a fraction of the pipeline's own output
+  size, in the full-image frame, so a zoomed crop gets sharper shafts and the fitted
+  preview stays cheap.
+- Steps are even in `c`, plus steps before the nearest surface, with a per-pixel
+  jitter hashed from the full-image pixel position (deterministic; no time or frame
+  dependence).
+- Per light it stores the **shadowed share** of the in-scattered light along the ray:
+  `∑ visibility · w / ∑ w`, with `w` the light's falloff along the ray. It does not
+  depend on density, phase, colour or any media slider, so moving a media slider
+  rebuilds nothing; the media multiply their analytic, unshadowed in-scattering by it.
+  Band pixels get the share at the near surface and at the far surface (one march,
+  read at both depths).
+- An edge-aware upsample (joint bilateral against full-resolution `z` and coverage)
+  brings it to output size, so shafts stop on the photo's silhouettes. Its small
+  support also smooths the jitter. Export tiles march their core plus that support,
+  so results do not depend on the tile size.
+- **Tiers:**
+
+  | Tier | When | March size | Steps | Cube taps |
+  |---|---|---|---|---|
+  | Draft | while a control, a light handle or the view is dragged (the UI's drag phase, `interactive_preview.rs`); always in the reduced drag preview | ¼ of the output edge | 16 | 1 |
+  | Final | when the preview is idle, and every export | ½ of the output edge | 48 | 4 (PCF) |
+
+  The preview renders Draft while dragging and Final once the drag ends (the same
+  "sharp after release" refine the reduced preview does today). The L1 cube follows
+  the same tiers: half mesh and 256² faces in Draft, full in Final (desktop).
+- Drops in the air need visibility at a point, not along a ray: they read the cube
+  directly (`scene_point_visibility`).
 
 **Keys:**
-- L1: the geometry, each light's position, and the relief scale.
+- L1: the geometry, each light's position, the relief scale and the tier.
 - L2: also Size.
-- L3: as L1.
+- L3: as L1, plus the pipeline's output region and size.
 - Changing Amount, Colour, Ambient or any media slider rebuilds nothing.
 
 ### 4.5 Per-pixel API (`shaders/scene/geometry.wgsl`; signatures are suggestions)
@@ -302,7 +330,8 @@ struct ScenePixel   { coverage: f32, near: SceneSurface, far: SceneSurface, in_b
 
 fn scene_pixel(pos: vec2<i32>, rgb: vec3<f32>, relief_scale: f32) -> ScenePixel
 fn scene_visibility(surface: SceneSurface, uv: vec2<f32>, light: SceneLight) -> f32
-fn scene_air_visibility(uv: vec2<f32>, c: f32, light: SceneLight) -> f32
+fn scene_air_light(pos: vec2<i32>, surface: SceneSurface, light: SceneLight) -> f32  // L3 shadowed share
+fn scene_point_visibility(position: vec3<f32>, light: SceneLight) -> f32         // drops
 fn scene_focus_blur(z: f32) -> f32          // Gaussian deviation, shorter edges
 fn scene_ground() -> SceneGround            // plane, horizon, camera height
 fn scene_trace(origin: SceneSurface, dir: vec3<f32>, roughness: f32) -> SceneTraceHit
@@ -320,9 +349,23 @@ Every depth effect is written as `shade(surface, ...) -> vec3` plus the shared b
   latest), so count both while they coexist. If they don't fit, stop and report.
   - Counted 2026-11-06: `bgl_adjust_creative` binds exactly 16 sampled textures, and
     the Wet Surfaces and weather-air passes use the same layout. Eight of them belong
-    to the old depth path (35, 46, 69, 70, 71, 73, 75, 77). As P4–P6 are ordered, P4
-    needs new bindings while every old one still has a reader, so it cannot fit. This
-    needs a decision before P4 (§12, item 3).
+    to the old depth path: 35 depth/surface, 46 shadow map, 69/70 environment grid and
+    its blur, 71 guided-filter coefficients, 73 ground, 75 focus, 77 depth range.
+  - **Decided (§12 item 3, option a):** the bake is one `rgba16float` 2D array
+    (geometry, coverage, layer normals, `F`, `B`). Every effect reads 35 and
+    71/73/75/77 through the shared `scene_depth_at` until P7, so the count must hold
+    in every phase:
+
+    | Phase | Change | Sampled textures |
+    |---|---|---|
+    | today | | 16 |
+    | P4 | under the bridge tag, merge 71/73/75/77 into one array (padded to the largest): −3; add the bake array and L2's visibility array: +2 | 15 |
+    | P5 | add the L3 air-light texture, the L1 cube array (drops) and the working image: +3. Rain stops reading the environment grid; under the bridge tag, its last reader (Wet Surfaces, until P6) samples the working image's mips instead, and 69/70 are deleted: −2 | 16 |
+    | P6 | Hi-Z (B6) lives in the working image's alpha channel (its own min-reduced mip chain; thickness comes from the bake's near/far `z`), so Wet Surfaces adds nothing | 16 |
+    | P7 | delete 35, 46 and the merged array | ≤ 13 |
+
+    Re-count at the start of P4, P5 and P6 and record the count in §11. The P5 bridge
+    change alters Wet Surfaces' reflections slightly until P6; re-bless and say so.
 - **No texture as a function argument.** It crashes the Mali-G710 shader compiler
   (`no_handle_arguments` test). Read textures through the global bindings inside
   helpers.
@@ -351,7 +394,7 @@ Every depth effect is written as `shade(surface, ...) -> vec3` plus the shared b
   - `camera.rs`;
   - `bake.rs`;
   - `ground.rs`;
-  - `lights.rs`: cubes, visibility, air volume.
+  - `lights.rs`: cubes, visibility, air light and its quality tier.
 - `calibraw-gpu/src/shaders/scene/`:
   - `camera.wgsl`, `geometry.wgsl`;
   - `bake_*.wgsl`;
@@ -361,7 +404,7 @@ Every depth effect is written as `shade(surface, ...) -> vec3` plus the shared b
   - geometry;
   - working image (also without depth, for Rain and Wet Surfaces' environment);
   - light bake;
-  - air volume.
+  - air light.
 
 ---
 
@@ -396,8 +439,10 @@ Every depth effect is written as `shade(surface, ...) -> vec3` plus the shared b
 - **New behaviour:**
   - Optical length to each surface's own `d`; the sky counts as `d = 1`.
   - Band pixels fog each surface and blend, so silhouettes and tree lines get no rim.
-  - In-scattered scene light uses L3 visibility × analytic falloff × Henyey–Greenstein
-    phase; there are no wisps or voxel blocks.
+  - In-scattered scene light is the analytic, unshadowed integral (falloff ×
+    Henyey–Greenstein phase) times L3's shadowed share for the pixel's surface; there
+    are no wisps or voxel blocks, and shafts follow silhouettes at the output's
+    resolution.
   - Fog Start is in `c`.
 - **Keep:**
   - Fog's whole look model: onset integral, bank-density noise, Beer–Lambert
@@ -415,7 +460,7 @@ Every depth effect is written as `shade(surface, ...) -> vec3` plus the shared b
   - Defocus comes from B7.
   - Slabs are spaced in `c`.
   - Splashes land on the B8 plane.
-  - Drop light uses L3, and the refracted surroundings come from `scene_image` with a
+  - Drop light uses `scene_point_visibility`, mist uses L3, and the refracted surroundings come from `scene_image` with a
     wide footprint.
 - **Keep:** streak length from the shutter (square root), drop and splash shapes,
   opacity, gusts, perspective, `RAIN_MOST_CELLS`, and the constants the 2026-11-02
@@ -538,8 +583,9 @@ Each phase ends with:
 
 ### P3 Light bake
 1. Build the shadow cube render pipeline with skirts, face culling and decimation
-   while dragging. Add L2 and L3, their keys and invalidation, and layout contract
-   entries.
+   while dragging. Add L2 and L3 (the per-pixel air-light march, its edge-aware
+   upsample and the Draft/Final tiers of §4.4, driven by the UI's drag phase), their
+   keys and invalidation, and layout contract entries.
 2. **Acceptance:**
    - A synthetic case (box and sphere in front of a wall) casts shadows matching the
      silhouettes as seen from the light.
@@ -547,6 +593,10 @@ Each phase ends with:
    - No light leaks at silhouettes with a grazing light.
    - No acne on curved surfaces (DSC05314 toy).
    - Rebuild while dragging within §10 on the Tab M11.
+   - L3 within §10 in both tiers on desktop and the Tab M11; a drag shows Draft and
+     the preview refines to Final after release without a visible jump in brightness
+     (both tiers estimate the same share).
+   - L3 does not depend on the tile size (render at default and 64-px tiles).
    - If a missing cache invalidation causes a bug, a Rust test is allowed
      (AGENTS.md).
 
@@ -587,6 +637,9 @@ Each phase ends with:
      100, Relight 100 at (58.5, 50.4), light depth 85. Note that light depth is
      migrated by M2.
    - Pillar light shafts on DSC05155 come only from real occluders.
+   - S5 (`DSC09938 (1).ARW`, its sidecar's Relight with Fog enabled): no thinner-fog
+     band or lit fringe at the head and ears, and the head's shadow in the fog follows
+     its outline at 100% with no steps.
    - Then: user review.
 
 ### P6 Wet Surfaces
@@ -618,7 +671,7 @@ Each phase ends with:
 
 ### P8 Performance pass
 Compare with P0 and §10 on desktop and the Tab M11. Tune working size, face size,
-PCSS taps and froxel counts. Record the results in §11.
+PCSS taps, and L3's march size and steps per tier. Record the results in §11.
 
 ### P9 Optional, only if the user asks: edge-accurate Depth Range masks
 Rasterize Depth Range masks per surface with the coverage. This changes mask output,
@@ -730,6 +783,7 @@ All under `/run/media/duecki/Shutter_Chan/Demo/` (find their subfolders) unless 
 | DSC05314 | fur and the pole (blotches), building edge (fit blotches) |
 | DSC08714 | flat objects (transformer), dense wires, houses (fit blotches) |
 | DSC09938 | floor reflections (sky tendrils), background buildings |
+| `Demo2.5/DSC09938 (1).ARW` | S5, the user's own test for silhouettes with a light behind the subject (Relight, Fog, light in the fog); same raw as DSC09938, with fresh depth |
 | DSC08062 | fog edges |
 | DSC05168 | lit mist (setup in P5) |
 | `Demo2/DSC04230`, `Demo2.5/DSC07940` | kerb, grass puddles |
@@ -770,7 +824,9 @@ These are proposed targets; P0 records today's numbers and P8 tunes against them
 | Work | When it runs | Desktop | Tab M11 |
 |---|---|---|---|
 | Scene bake (B1–B8) | new depth or scene-map triggers | < 5 ms | < 120 ms, once per photo |
-| Light bake (L1–L3) | light moved or resized | < 2 ms per light | < 25 ms per light while dragging (half mesh, 256² faces); full quality on release |
+| Light bake (L1, L2) | light moved or resized | < 2 ms per light | < 25 ms per light while dragging (half mesh, 256² faces); full quality on release |
+| Air light (L3), Draft | every frame while dragging, fitted preview | < 1 ms per light | < 8 ms per light |
+| Air light (L3), Final | once after the drag ends; export | < 4 ms per light (fitted preview) | < 40 ms per light (fitted preview) |
 | Per pixel | every edit | ≤ today | ≤ today; band pixels shade twice |
 
 Reads per pixel:
@@ -791,7 +847,7 @@ Memory at 1540×1036, one shared set, estimates:
 | **Bake total** | **≈ 64 MB** |
 | Per light: cube | 6 MB desktop, 1.6 MB constrained |
 | Per four lights: visibility | 13 MB |
-| Air volume | ≈ 3 MB |
+| Air light, per pipeline and four lights | `rgba16float` at the march size: ≈ 3.4 MB for a 1600 px preview in Final |
 
 Today each preview pipeline holds about 25 MB of scene inputs on its own. If the Tab
 M11 exceeds its budget, drop the working size to 1152 on constrained devices first.
@@ -807,7 +863,7 @@ from the old path that seemed needed (§1.1).
 |---|---|---|
 | P0 | partly done | **Done:** `data/render-parity` and `data/ai-parity` copied outside the repo (session scratchpad, `backup/render-parity-94256c9c`, volatile: the goldens are reproducible by blessing `94256c9c` in a `git archive` copy); format fixtures and render parity green on `94256c9c`. **Open:** S1–S3 photo files (ask the user), the reference renders (can be made from `94256c9c` at any time, before P4), timings on the Tab M11 (not connected on 2026-11-06). |
 | P1 | done, awaiting review | **Built:** `calibraw-core` `pipeline/scene_depth.rs` (`SceneDepth`, `DisparityMap`, `SceneCamera`; `selection_map` is what Depth Range selects on, in 255 levels as before); `MaskStack::scene_depth: Option<SceneDepth>` and `set_scene_depth` (Depth Range components hold the selection map, never stored); sidecar schema 5 (`scene_depth` object: 16-bit disparity, sky and normal assets, camera); M1 (`migrations/scene_depth_layout.rs`, v1.1 inline pixels included) and M4 (`older_readers`: schema 5 when depth is stored, schema 4 for Rain/Wet/instances). `calibraw-ai`: Distill min/max disparity at 1540×1036, MoGe points, Huber IRLS fit with a range fit as fallback, anchors at the 0.5/99.5 % of surface disparity, `R = Q − 1`, `focal_tan` from the 35 mm focal length (EXIF × lensfun crop factor) else MoGe's points; `depth_refine.rs`, `make_sky_farthest`, the clip and `quantize_depth` deleted. T1 bridge in `GpuParams::new` and `stage_params.rs` (3 tags). Fixtures `scene-depth-dev` (schema 4, normals, Depth Range, two Relights, Fog) and `scene-depth-v1.4` (schema 3, no normals). **Checks:** all of AGENTS.md pass. AI parity `depth-low`/`depth-medium` re-blessed: ViT-S camera tan 0.361, Q 18.4; ViT-L tan 0.460, Q 15.0 (DSC01000). **Acceptance:** M1 round trip exact (every migrated disparity rounds back to the stored map; fixture rows show it). Depth Range parity case (`mask-shaping`) unchanged. Render parity does **not** pass unblessed, by design of M1: the 8 depth cases without stored normals now get M1's derived normals, which today's shaders turn into gradients with a scale fitted to MoGe's camera (Wet Surfaces loses its ground there, Relight shades differently). With normals withheld from the bridge every case matched its old golden exactly, so the stored depth is reproduced exactly; the 8 goldens were re-blessed (`depth-effects`, `glow-scene-light`, `neon-scene-light`, `rain-wet-relight`, `relight`, `relight-lights`, `relight-sky`, `wet-surfaces`), all others byte-identical. Fresh depth (embedded previews, ViT-S, ~10 s CPU each): DSC08405 (1) wires continuous, far trees not marked sky. Fitted `D` vs MoGe's distance: median \|ln D/z\| 0.06–0.12, 95th percentile 0.33–0.91; Fog previews from `D` show **no blotches** on DSC05155 top, DSC08714 houses or DSC05314 building edge (smoother than MoGe's own distance), but the fit puts mid/far scenery farther than MoGe where Distill is not affine in inverse depth (DSC08714: train and houses fog more). A look question for P5, not a P1 blocker. Format test: mask assets now compared by decoded samples, since PNG bytes depend on the deflate backend of the build (`-p` vs workspace). |
-| P2 | not started | |
+| P2 | built, awaiting review | **Built** (module `calibraw-gpu/src/pipeline/gpu/scene/`: `mod.rs` resources, state and pipeline hooks, `bake.rs` programs and pass order, `camera.rs`, `ground.rs`; shaders `shaders/scene/camera.wgsl`, `bake_common.wgsl`, `bake_accumulate.wgsl`, `bake_depth.wgsl`, `bake_focus.wgsl`, `bake_coverage.wgsl`, `bake_layers.wgsl`, `bake_mips.wgsl`). Only the working-image accumulation is a pass of the processing pipeline; the bake's 14 passes have their own layouts, compile once per device and size their dispatches from the working size. Working size `min(1540, depth's, source's long edge)` at the image's aspect, 1152 below a 1 GiB GPU budget. Bake array `rgba16float`, 5 layers (geometry `(d, sky, d_near, d_far)`, coverage `(a.rgb, b)`, normals octahedral near/far, near colour + edge flag, far colour + edge flag); working image with mips (alpha from level 1: least visible `d`, B6); one scratch buffer reused by the accumulation, B2, B3 and the push-pull pyramid; lens blur buffer (B7); uniform with camera and ground (B8). The whole image's pipeline accumulates and bakes (preview in the output stage after a new tone result; export in the tone pre-pass and its finish); crops share the whole image's bake (`inherit_scene_bake`). Registry: `SceneNeeds { geometry }` (`scene: [Geometry]` in `mask_effects!`); no effect declares it, so the bake runs nowhere in the app or in render parity until P4. Contract test `scene_bake_uniforms_and_buffers_match_their_wgsl_declarations`. **Changed from the design while measuring:** (1) B3 decides edges per texel by two-means on log depth over the band radius (groups ≥ 10 % apart and explaining ≥ 85 % of the variance) instead of the min/max split, which cut the ground behind the subject by its texture (DSC09938 (1)); off edges coverage is a constant 0 or 1 (the side of the neighbouring edge's split) and both layers are the texel's own, so interpolation never blends in the other surface; the guided filter uses one window per texel, not the averaged second stage. (2) B7 measures the blur by the ratio of the gradient after two known blurs (1 and 3 texels, after Zhuo and Sim 2011) at gradient peaks within one surface, sky excluded, and fits the thin-lens form to each depth's 20 % quantile with capped weights; a profile-fit and the unblurred ratio both read wide blur as sharp. (3) Half floats in the pyramid are packed by hand (`pack2x16float` needs a capability). **Measurements** (desktop RTX 4070 Ti, headless, temporary dump since deleted): DSC09938 (1), fresh depth: edges on 6.5 % of texels; at full resolution the 50 % coverage contour lies a median 1.0 px from the photo's strongest edge, 66 % within 1.5 px, 90th percentile 6 px (outliers on fuzzy fur, the low-contrast crown and the hair clip, where the strongest edge is ambiguous; by eye the contour follows the silhouette everywhere); lens blur in focus at z 1.96 (the plush), near road σ 7 px, far buildings 6.5 px at full size; ground found (camera 0.30 above it, horizon just above centre). DSC08405 (1), migrated depth: edges follow wires and catenary, the far layer removes them. `k you ve.CR3`, migrated depth: the tree line's own edges read σ ≈ 8 px (≈ 21 px 10–90 %), but the fit gives 4.8 px there, as the migrated frame (R = 2.28) compresses distance; no ground found (grass slope, derived normals). Bake time without accumulation 2.6–2.9 ms at 1540×1027 (within §10). Memory ≈ 113 MiB at 1540 (layers 63, working image 17, scratch 25, inputs ~8), above §10's 64 MB estimate; ≈ 63 MiB at 1152. **Open:** S2's photo (not given), DSC05314 not run, Tab M11 time and memory (not connected), the thin-lens criterion on fresh depth of `k you ve.CR3`, the 1.5 px criterion holds for 66 % of contour samples by the automatic measure. |
 | P3 | not started | |
 | P4 | not started | |
 | P5 | not started | |
@@ -832,14 +888,17 @@ and corrected:
 2. **M1 contradicted its own acceptance.** Old maps are stored at up to 4096 px.
    Resampling them to 1540 would have changed Depth Range masks and the bridge's
    values. M1 now keeps the map's size and holds smoothing within half a level.
-3. **Open, decide before P4: the texture limit.** See §4.6. Options: (a) pack the
-   bake into one `rgba16float` texture array (geometry, coverage, normals, F, B) and,
-   under the bridge tag, merge the old scene-map textures 71/73/75/77 into one array
-   so P4–P6 fit; (b) port every creative-pass depth reader (Relight, Fog, Smoke,
-   scene emission, Light Rays' light) in one phase, so old and new never coexist in
-   that pass. (a) keeps per-effect reviews and is the recommendation.
+3. **Decided 2026-11-06 by the user: the texture limit, option (a).** Pack the bake
+   into one `rgba16float` texture array and, under the bridge tag, merge old textures
+   so P4–P6 fit; the per-phase count is in §4.6. (Rejected: (b), porting every
+   creative-pass depth reader in one phase.)
 4. **Measure the shadow cubes early.** The full working-size mesh is ~3.2 M triangles
    per cube face; on the Mali-G52 that may exceed §10's 25 ms per light. Time L1 on the
    Tab M11 at the start of P3, before P4 depends on it; a coarser shadow mesh is the
    fallback.
 5. **P1's render-parity criterion cannot hold for files without normals** (§11 P1).
+6. **Decided 2026-11-06 by the user: the air light is marched per pixel (§4.4 L3).**
+   After P1 the user reported S5. The planned froxel volume (working/8, ~37 photo px)
+   would have drawn the head's shadow in the fog in steps again. The user asked that
+   it stay quick while moving and be high quality after moving and on output: Draft
+   tier while dragging, Final when idle and on export.

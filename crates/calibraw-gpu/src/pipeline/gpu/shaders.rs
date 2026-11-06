@@ -87,6 +87,8 @@ pub(super) const DETAIL_CAPTURE: ShaderSource = wgsl!("detail_capture.wgsl");
 pub(super) const DETAIL_SCALE_SPACE: ShaderSource = wgsl!("detail_scale_space.wgsl");
 pub(super) const CFA_LINEAR: ShaderSource = wgsl!("cfa_linear.wgsl");
 pub(super) const XTRANS_MARKESTEIJN: ShaderSource = wgsl!("xtrans/markesteijn.wgsl");
+pub(super) const SCENE_CAMERA: ShaderSource = wgsl!("scene/camera.wgsl");
+pub(super) const SCENE_BAKE_COMMON: ShaderSource = wgsl!("scene/bake_common.wgsl");
 
 pub(super) const MASK_EFFECT_API: ShaderSource = wgsl!("mask_effects/effect_api.wgsl");
 pub(super) const MASK_LENS_BLUR: ShaderSource = wgsl!("mask_effects/lens_blur.wgsl");
@@ -164,6 +166,14 @@ pub(super) const SCENE_ANALYSIS: ShaderSource = wgsl!("scene_analysis.wgsl");
 pub(super) const SCENE_ADJUSTMENTS: ShaderSource = wgsl!("scene_adjustments.wgsl");
 pub(super) const VIEW_TRANSFORM: ShaderSource = wgsl!("view_transform.wgsl");
 pub(super) const REMOVE_COMPOSITE: ShaderSource = wgsl!("remove_composite.wgsl");
+/// The scene bake's accumulation, a pass of the processing pipeline, and its
+/// own passes (pipeline/gpu/scene/).
+pub(super) const SCENE_BAKE_ACCUMULATE: ShaderSource = wgsl!("scene/bake_accumulate.wgsl");
+pub(super) const SCENE_BAKE_DEPTH: ShaderSource = wgsl!("scene/bake_depth.wgsl");
+pub(super) const SCENE_BAKE_FOCUS: ShaderSource = wgsl!("scene/bake_focus.wgsl");
+pub(super) const SCENE_BAKE_COVERAGE: ShaderSource = wgsl!("scene/bake_coverage.wgsl");
+pub(super) const SCENE_BAKE_LAYERS: ShaderSource = wgsl!("scene/bake_layers.wgsl");
+pub(super) const SCENE_BAKE_MIPS: ShaderSource = wgsl!("scene/bake_mips.wgsl");
 
 /// A module other shaders import.
 pub(super) struct ComposableModule {
@@ -192,7 +202,7 @@ const fn xtrans_module(source: ShaderSource) -> ComposableModule {
 
 /// Composable modules in registration order: a module may only import
 /// modules listed before it.
-pub(super) const COMPOSABLE_MODULES: [ComposableModule; 20] = [
+pub(super) const COMPOSABLE_MODULES: [ComposableModule; 22] = [
     module(COMMON),
     module(COLOR),
     module(NOISE),
@@ -200,6 +210,8 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 20] = [
     module(CFA_LINEAR),
     xtrans_module(XTRANS_MARKESTEIJN),
     module(PROFILE),
+    module(SCENE_CAMERA),
+    module(SCENE_BAKE_COMMON),
     module(LOOK_LUT),
     module(BASIC_ADJUSTMENTS),
     module(SCENE_SOURCE),
@@ -337,9 +349,18 @@ pub(super) const REMOVE_COMPOSITE_ENTRY: EntryShader = entry(
     None,
 );
 
-/// Every entry shader, for validation and layout tests.
+pub(super) const SCENE_BAKE_ACCUMULATE_ENTRY: EntryShader = entry(
+    "calibraw scene bake accumulation",
+    SCENE_BAKE_ACCUMULATE,
+    false,
+    None,
+);
+
+/// Every entry shader, for validation and layout tests. The scene bake's own
+/// passes compile outside the processing pipeline (scene/bake.rs) but are
+/// validated with the rest.
 #[cfg(test)]
-pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 18] = [
+pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 24] = [
     HIGHLIGHTS_ENTRY,
     BAYER_RCD_P1_ENTRY,
     BAYER_RCD_P2_ENTRY,
@@ -358,4 +379,10 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 18] = [
     CREATIVE_EFFECTS_ENTRY,
     VIEW_TRANSFORM_ENTRY,
     REMOVE_COMPOSITE_ENTRY,
+    SCENE_BAKE_ACCUMULATE_ENTRY,
+    entry("scene bake depth", SCENE_BAKE_DEPTH, false, None),
+    entry("scene bake lens blur", SCENE_BAKE_FOCUS, false, None),
+    entry("scene bake coverage", SCENE_BAKE_COVERAGE, false, None),
+    entry("scene bake layers", SCENE_BAKE_LAYERS, false, None),
+    entry("scene bake mips", SCENE_BAKE_MIPS, false, None),
 ];

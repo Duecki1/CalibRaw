@@ -117,6 +117,10 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// come last so that adding them kept earlier positions.
     pub(in crate::pipeline::gpu) contour_accumulate_pass_index: usize,
     pub(in crate::pipeline::gpu) scene_emission_pass_index: usize,
+    /// Accumulation into the scene bake's working image (`scene`), which runs
+    /// with the tone stage, or the export tone prepass. It comes last so that
+    /// adding it kept earlier positions.
+    pub(in crate::pipeline::gpu) scene_bake_accumulation_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -177,6 +181,7 @@ impl StageIndices {
         let weather_air_pass_index = take(1);
         let contour_accumulate_pass_index = take(1);
         let scene_emission_pass_index = take(SCENE_EMISSION_PASSES);
+        let scene_bake_accumulation_pass_index = take(1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -223,6 +228,7 @@ impl StageIndices {
             weather_air_pass_index,
             contour_accumulate_pass_index,
             scene_emission_pass_index,
+            scene_bake_accumulation_pass_index,
             pass_count,
         }
     }
@@ -837,6 +843,20 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             workgroups,
         ));
     }
+    ensure_planned(
+        &passes,
+        indices.scene_bake_accumulation_pass_index,
+        "scene bake accumulation",
+    )?;
+    // Every working size fits the largest square; texels past it return.
+    let working_workgroups = SCENE_WORKING_LONG_EDGE_MAX.div_ceil(WORKGROUP_EDGE);
+    passes.push(assembler.make_pass(
+        shaders.scene_bake_accumulate_module.as_ref(),
+        "accumulate_scene_working_image",
+        &layouts.bgl_scene_bake_accumulation,
+        InputBoundPass::SceneBakeAccumulation,
+        [working_workgroups, working_workgroups, 1],
+    ));
 
     // These variants reuse the programs above with bind groups that read tex2:
     // the mask-blurred scene, or whatever else last wrote there.

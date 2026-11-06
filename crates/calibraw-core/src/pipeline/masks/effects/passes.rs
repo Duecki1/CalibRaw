@@ -90,6 +90,33 @@ impl EffectReach {
     }
 }
 
+/// What an effect reads of the scene bake (calibraw-gpu `scene`): the scene's
+/// geometry with two surfaces per pixel. Depth effects move here from
+/// [`SceneMapUse`] as they are rebuilt (docs/rework/DEPTH_EFFECTS_PLAN.md).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SceneNeeds {
+    /// Depth, coverage, and each surface's normal and colour; read only while
+    /// scene depth is present.
+    pub geometry: bool,
+}
+
+/// One part of [`SceneNeeds`], as the effect registry names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneNeed {
+    Geometry,
+}
+
+impl SceneNeeds {
+    pub const NONE: Self = Self { geometry: false };
+
+    /// These needs and `need`.
+    pub const fn with(self, need: SceneNeed) -> Self {
+        match need {
+            SceneNeed::Geometry => Self { geometry: true },
+        }
+    }
+}
+
 /// When an effect reads the scene map: scene depth refined against the photo,
 /// the photo's coarse colour, the ground and the lens blur per depth
 /// (scene_analysis.wgsl).

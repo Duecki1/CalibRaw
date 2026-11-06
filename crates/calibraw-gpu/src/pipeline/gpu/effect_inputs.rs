@@ -2,7 +2,8 @@
 //! them renders: scene depth and the scene map that every depth-reading effect
 //! shares, the scene shadow map, the image-light map that Fog, Smoke and Rain
 //! scatter, the contours and the light that Glow and Neon emit into the scene,
-//! the haze map Dehaze applies, and the LUT the view pass applies.
+//! the haze map Dehaze applies, the LUT the view pass applies, and the scene
+//! bake (`scene`), whose working image a pass of this pipeline accumulates.
 //!
 //! Until then the passes that read them are bound to placeholders of one
 //! texel, so a pipeline whose edits never use these effects holds none of their
@@ -89,6 +90,8 @@ pub(super) enum InputBoundPass {
     Contours,
     /// One of the scene emission passes, in pass order.
     SceneEmission(usize),
+    /// Accumulation into the scene bake's working image.
+    SceneBakeAccumulation,
 }
 
 /// Bind groups of every [`InputBoundPass`].
@@ -104,6 +107,7 @@ struct InputBindGroups {
     scene_map: [wgpu::BindGroup; SCENE_MAP_PASSES],
     contours: wgpu::BindGroup,
     scene_emission: [wgpu::BindGroup; SCENE_EMISSION_PASSES],
+    scene_bake_accumulation: wgpu::BindGroup,
 }
 
 impl InputBindGroups {
@@ -120,6 +124,7 @@ impl InputBindGroups {
             InputBoundPass::SceneMap(index) => &self.scene_map[index],
             InputBoundPass::Contours => &self.contours,
             InputBoundPass::SceneEmission(index) => &self.scene_emission[index],
+            InputBoundPass::SceneBakeAccumulation => &self.scene_bake_accumulation,
         }
     }
 }
@@ -136,6 +141,7 @@ pub(super) struct InputBindingSources {
     pub(super) scene_map_layouts: [wgpu::BindGroupLayout; SCENE_MAP_PASSES],
     pub(super) contour_layout: wgpu::BindGroupLayout,
     pub(super) scene_emission_layouts: [wgpu::BindGroupLayout; SCENE_EMISSION_PASSES],
+    pub(super) scene_bake_accumulation_layout: wgpu::BindGroupLayout,
     pub(super) camera_uniforms: wgpu::Buffer,
     pub(super) mask_data: wgpu::Buffer,
     pub(super) tone_stats: wgpu::Buffer,
@@ -569,6 +575,8 @@ struct BoundInputs<'a> {
     contours: &'a ContourInputs,
     scene_emission: &'a SceneEmissionInputs,
     look_lut: &'a LookLutInputs,
+    /// The scene bake's scratch buffer and uniforms (`SceneBake::accumulation_bindings`).
+    scene_bake: (&'a wgpu::Buffer, &'a wgpu::Buffer),
 }
 
 impl InputBindingSources {
@@ -897,6 +905,18 @@ impl InputBindingSources {
             scene_map: scene_map_groups,
             contours,
             scene_emission,
+            scene_bake_accumulation: create_bind_group(
+                device,
+                "bg scene bake accumulation",
+                &self.scene_bake_accumulation_layout,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(11, &self.scene),
+                    buffer_binding(20, &self.profile),
+                    buffer_binding(84, inputs.scene_bake.0),
+                    buffer_binding(85, inputs.scene_bake.1),
+                ],
+            ),
         }
     }
 }
@@ -913,6 +933,9 @@ struct Allocated {
     /// The LUT that last failed to upload and why, so it is not retried for
     /// every render.
     look_lut_failure: Option<(LutId, String)>,
+    /// This pipeline's scene bake, or the whole image's that a view of part
+    /// of it shares.
+    scene_bake: Option<Arc<SceneBake>>,
     bind_groups: InputBindGroups,
 }
 
@@ -927,6 +950,9 @@ pub(super) struct EffectInputs {
     placeholder_contours: ContourInputs,
     placeholder_scene_emission: SceneEmissionInputs,
     placeholder_look_lut: LookLutInputs,
+    /// Bound for the scene bake's scratch buffer and uniforms until it exists;
+    /// never read, as the accumulation runs only for an allocated bake.
+    placeholder_scene_bake: (wgpu::Buffer, wgpu::Buffer),
     allocated: Mutex<Allocated>,
 }
 
@@ -943,6 +969,20 @@ impl EffectInputs {
         let placeholder_scene_emission = SceneEmissionInputs::new(device, 1, 1, 1);
         // Never read: the view pass skips the LUT unless one was uploaded.
         let placeholder_look_lut = LookLutInputs::new(device, 1, None);
+        let placeholder_scene_bake = (
+            create_gpu_buffer(
+                device,
+                "calibraw scene bake scratch placeholder",
+                16,
+                wgpu::BufferUsages::STORAGE,
+            ),
+            create_gpu_buffer(
+                device,
+                "calibraw scene bake uniforms placeholder",
+                std::mem::size_of::<SceneBakeUniforms>() as u64,
+                wgpu::BufferUsages::UNIFORM,
+            ),
+        );
         let bind_groups = sources.bind_groups(
             device,
             &BoundInputs {
@@ -954,6 +994,7 @@ impl EffectInputs {
                 contours: &placeholder_contours,
                 scene_emission: &placeholder_scene_emission,
                 look_lut: &placeholder_look_lut,
+                scene_bake: (&placeholder_scene_bake.0, &placeholder_scene_bake.1),
             },
         );
         Self {
@@ -967,6 +1008,7 @@ impl EffectInputs {
             placeholder_contours,
             placeholder_scene_emission,
             placeholder_look_lut,
+            placeholder_scene_bake,
             allocated: Mutex::new(Allocated {
                 scene_depth: None,
                 scene_map: None,
@@ -977,6 +1019,7 @@ impl EffectInputs {
                 scene_emission: None,
                 look_lut: None,
                 look_lut_failure: None,
+                scene_bake: None,
                 bind_groups,
             }),
         }
@@ -1144,8 +1187,58 @@ impl EffectInputs {
                     .look_lut
                     .as_ref()
                     .unwrap_or(&self.placeholder_look_lut),
+                scene_bake: allocated.scene_bake.as_ref().map_or(
+                    (
+                        &self.placeholder_scene_bake.0,
+                        &self.placeholder_scene_bake.1,
+                    ),
+                    |bake| bake.accumulation_bindings(),
+                ),
             },
         );
+    }
+
+    /// The scene bake of `size`, allocated unless one of that size exists.
+    /// `None` when it does not fit the GPU budget.
+    pub(super) fn allocate_scene_bake(&self, size: [u32; 2]) -> Result<Arc<SceneBake>> {
+        let mut allocated = self.lock();
+        if let Some(bake) = allocated
+            .scene_bake
+            .as_ref()
+            .filter(|bake| bake.size() == size)
+        {
+            return Ok(Arc::clone(bake));
+        }
+        // Release the previous bake's reservation before taking one for the
+        // new size.
+        allocated.scene_bake = None;
+        let bake = SceneBake::new(&self.device, size).map(Arc::new);
+        allocated.scene_bake = bake.as_ref().ok().cloned();
+        self.rebind(&mut allocated);
+        bake
+    }
+
+    /// Shares `bake`, the whole image's, with this view of part of it.
+    pub(super) fn share_scene_bake(&self, bake: &Arc<SceneBake>) {
+        let mut allocated = self.lock();
+        if allocated
+            .scene_bake
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, bake))
+        {
+            return;
+        }
+        allocated.scene_bake = Some(Arc::clone(bake));
+        self.rebind(&mut allocated);
+    }
+
+    pub(super) fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    /// The scene bake, once allocated or shared.
+    pub(super) fn scene_bake(&self) -> Option<Arc<SceneBake>> {
+        self.lock().scene_bake.clone()
     }
 
     /// The scene-depth texture, once allocated.

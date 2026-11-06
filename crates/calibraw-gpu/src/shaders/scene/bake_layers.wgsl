@@ -1,0 +1,287 @@
+#import calibraw::scene::bake_common as Bake
+
+// B4 and B5: each surface's colour, depth and normal in the band
+// (bake_common.wgsl, layers GEOMETRY.zw, NORMALS, NEAR and FAR).
+//
+// A band texel whose coverage is nearly 1 shows only the near surface, and
+// one nearly 0 only the far one (SCENE_PURE_COVERAGE): its own colour, depth
+// and normal are that surface's. Texels between them get each surface's
+// values filled in from those samples by push-pull (Gortler et al., "The
+// Lumigraph", 1996): a pyramid of weighted means is pushed down from the
+// samples and pulled back up where a level has none. Texels outside the band
+// show their own surface on both layers.
+//
+// The pyramid lives in the scratch buffer, levels 1 to SCENE_LAYER_LEVELS,
+// each ceil(size / 2^k) texels, two vec4<u32> per texel (near, then far),
+// each packing a surface's colour, depth, normal and weight as half floats.
+// Its coarsest level is the working size / 32: farther than that from any
+// sample, a texel keeps its own values.
+
+const SCENE_LAYER_LEVELS: u32 = 5u;
+
+// The pyramid level a push or pull pass works on (x).
+@group(0) @binding(103) var<uniform> scene_layer_level: vec4<u32>;
+
+struct SceneSurfaceSample {
+    color: vec3<f32>,
+    depth: f32,
+    normal: vec3<f32>,
+    weight: f32,
+}
+
+fn scene_level_size(level: u32) -> vec2<i32> {
+    let size = Bake::scene_bake.size.xy;
+    let scale = (1u << level) - 1u;
+    return vec2<i32>((size + vec2<u32>(scale)) >> vec2<u32>(level));
+}
+
+// The index of a level's first texel, in vec4 units of the scratch buffer.
+fn scene_level_offset(level: u32) -> u32 {
+    var offset = 0u;
+    for (var k = 1u; k < level; k = k + 1u) {
+        let size = scene_level_size(k);
+        offset += 2u * u32(size.x * size.y);
+    }
+    return offset;
+}
+
+// A half float's bits from an f32, rounded to nearest. Values too small for a
+// normal half become 0 and values too large the largest half: the pyramid
+// holds colours, depths in [0, 1], unit normals and weights in [0, 1].
+// (pack2x16float needs a shader capability not every device has.)
+fn scene_half(value: f32) -> u32 {
+    let bits = bitcast<u32>(value);
+    let sign = (bits >> 16u) & 0x8000u;
+    // Rounding may carry into the exponent, which is then right.
+    let rounded = (bits & 0x7fffffffu) + 0x1000u;
+    let exponent = i32(rounded >> 23u) - 112;
+    if exponent <= 0 {
+        return sign;
+    }
+    if exponent >= 31 {
+        return sign | 0x7bffu;
+    }
+    return sign | (u32(exponent) << 10u) | ((rounded >> 13u) & 0x3ffu);
+}
+
+fn scene_from_half(half: u32) -> f32 {
+    let sign = (half & 0x8000u) << 16u;
+    let exponent = (half >> 10u) & 0x1fu;
+    if exponent == 0u {
+        return bitcast<f32>(sign);
+    }
+    return bitcast<f32>(sign | ((exponent + 112u) << 23u) | ((half & 0x3ffu) << 13u));
+}
+
+fn scene_pack_halves(values: vec2<f32>) -> u32 {
+    return scene_half(values.x) | (scene_half(values.y) << 16u);
+}
+
+fn scene_unpack_halves(packed: u32) -> vec2<f32> {
+    return vec2<f32>(scene_from_half(packed & 0xffffu), scene_from_half(packed >> 16u));
+}
+
+fn scene_pack(sample: SceneSurfaceSample) -> vec4<u32> {
+    return vec4<u32>(
+        scene_pack_halves(sample.color.rg),
+        scene_pack_halves(vec2<f32>(sample.color.b, sample.depth)),
+        scene_pack_halves(sample.normal.xy),
+        scene_pack_halves(vec2<f32>(sample.normal.z, sample.weight)),
+    );
+}
+
+fn scene_unpack(packed: vec4<u32>) -> SceneSurfaceSample {
+    let rg = scene_unpack_halves(packed.x);
+    let b_depth = scene_unpack_halves(packed.y);
+    let normal_xy = scene_unpack_halves(packed.z);
+    let normal_z_weight = scene_unpack_halves(packed.w);
+    return SceneSurfaceSample(
+        vec3<f32>(rg, b_depth.x),
+        b_depth.y,
+        vec3<f32>(normal_xy, normal_z_weight.x),
+        normal_z_weight.y,
+    );
+}
+
+// Surface `side` (0 near, 1 far) of a level's texel.
+fn scene_level_load(level: u32, texel: vec2<i32>, side: u32) -> SceneSurfaceSample {
+    let size = scene_level_size(level);
+    let clamped = clamp(texel, vec2<i32>(0), size - vec2<i32>(1));
+    let index = scene_level_offset(level) + 2u * u32(clamped.y * size.x + clamped.x) + side;
+    return scene_unpack(Bake::scene_bake_scratch[index]);
+}
+
+fn scene_level_store(level: u32, texel: vec2<i32>, side: u32, sample: SceneSurfaceSample) {
+    let size = scene_level_size(level);
+    let index = scene_level_offset(level) + 2u * u32(texel.y * size.x + texel.x) + side;
+    Bake::scene_bake_scratch[index] = scene_pack(sample);
+}
+
+fn scene_weighted(sample: SceneSurfaceSample, weight: f32) -> SceneSurfaceSample {
+    return SceneSurfaceSample(sample.color * weight, sample.depth * weight, sample.normal * weight, weight);
+}
+
+fn scene_add(a: SceneSurfaceSample, b: SceneSurfaceSample) -> SceneSurfaceSample {
+    return SceneSurfaceSample(a.color + b.color, a.depth + b.depth, a.normal + b.normal, a.weight + b.weight);
+}
+
+// A weighted sum as a mean, its weight capped at 1.
+fn scene_mean(sum: SceneSurfaceSample) -> SceneSurfaceSample {
+    if sum.weight <= 0.0 {
+        return SceneSurfaceSample(vec3<f32>(0.0), 0.0, vec3<f32>(0.0), 0.0);
+    }
+    return SceneSurfaceSample(
+        sum.color / sum.weight,
+        sum.depth / sum.weight,
+        sum.normal / sum.weight,
+        min(sum.weight, 1.0),
+    );
+}
+
+// A working texel's own values, how purely each surface shows there ((near,
+// far) sample weights) and whether it lies at an edge. Texels at no edge are
+// no samples: an edge's surfaces are filled from the edge's own texels.
+struct SceneTexelSurface {
+    own: SceneSurfaceSample,
+    weights: vec2<f32>,
+    edge: bool,
+}
+
+fn scene_texel_surface(texel: vec2<i32>, depth: f32) -> SceneTexelSurface {
+    let rgb = textureLoad(Bake::scene_working_tex, texel, 0).rgb;
+    let own = SceneSurfaceSample(rgb, depth, Bake::scene_input_normal_at(Bake::scene_bake_uv(texel)), 1.0);
+    let coefficients = textureLoad(Bake::scene_coverage_tex, texel, 0);
+    if Bake::scene_coverage_constant(coefficients) {
+        return SceneTexelSurface(own, vec2<f32>(0.0), false);
+    }
+    let coverage = Bake::scene_coverage_of(coefficients, Bake::scene_bake_guide(rgb));
+    let weights = vec2<f32>(
+        select(0.0, 1.0, coverage > Bake::SCENE_PURE_COVERAGE.y),
+        select(0.0, 1.0, coverage < Bake::SCENE_PURE_COVERAGE.x),
+    );
+    return SceneTexelSurface(own, weights, true);
+}
+
+// Push, level 0 to 1: the edges' pure texels, from the bake layers.
+@compute @workgroup_size(8, 8, 1)
+fn bake_scene_layers_push_first(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let texel = vec2<i32>(gid.xy);
+    if any(texel >= scene_level_size(1u)) { return; }
+    var near = SceneSurfaceSample(vec3<f32>(0.0), 0.0, vec3<f32>(0.0), 0.0);
+    var far = near;
+    for (var child = 0; child < 4; child = child + 1) {
+        let source = Bake::scene_bake_clamp(2 * texel + vec2<i32>(child % 2, child / 2));
+        let depth = textureLoad(Bake::scene_geometry_tex, source, 0).x;
+        let surface = scene_texel_surface(source, depth);
+        near = scene_add(near, scene_weighted(surface.own, surface.weights.x));
+        far = scene_add(far, scene_weighted(surface.own, surface.weights.y));
+    }
+    scene_level_store(1u, texel, 0u, scene_mean(near));
+    scene_level_store(1u, texel, 1u, scene_mean(far));
+}
+
+// Push, level k - 1 to k (scene_layer_level.x = k).
+@compute @workgroup_size(8, 8, 1)
+fn bake_scene_layers_push(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let level = scene_layer_level.x;
+    let texel = vec2<i32>(gid.xy);
+    if any(texel >= scene_level_size(level)) { return; }
+    for (var side = 0u; side < 2u; side = side + 1u) {
+        var sum = SceneSurfaceSample(vec3<f32>(0.0), 0.0, vec3<f32>(0.0), 0.0);
+        for (var child = 0; child < 4; child = child + 1) {
+            let sample = scene_level_load(level - 1u, 2 * texel + vec2<i32>(child % 2, child / 2), side);
+            sum = scene_add(sum, scene_weighted(sample, sample.weight));
+        }
+        scene_level_store(level, texel, side, scene_mean(sum));
+    }
+}
+
+// Level `level`'s values at a finer texel's position, interpolated.
+fn scene_level_up(level: u32, finer: vec2<i32>, side: u32) -> SceneSurfaceSample {
+    let position = (vec2<f32>(finer) + vec2<f32>(0.5)) * 0.5 - vec2<f32>(0.5);
+    let base = vec2<i32>(floor(position));
+    let t = position - vec2<f32>(base);
+    var sum = SceneSurfaceSample(vec3<f32>(0.0), 0.0, vec3<f32>(0.0), 0.0);
+    for (var corner = 0; corner < 4; corner = corner + 1) {
+        let offset = vec2<i32>(corner % 2, corner / 2);
+        let bilinear = select(1.0 - t.x, t.x, offset.x == 1) * select(1.0 - t.y, t.y, offset.y == 1);
+        let sample = scene_level_load(level, base + offset, side);
+        // Weighted by the coarse texel's own weight, so empty ones add nothing.
+        sum = scene_add(sum, scene_weighted(sample, bilinear * sample.weight));
+    }
+    return scene_mean(sum);
+}
+
+// Pull, level k + 1 into k (scene_layer_level.x = k): where k has less than
+// full weight, the coarser mean fills the rest.
+@compute @workgroup_size(8, 8, 1)
+fn bake_scene_layers_pull(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let level = scene_layer_level.x;
+    let texel = vec2<i32>(gid.xy);
+    if any(texel >= scene_level_size(level)) { return; }
+    for (var side = 0u; side < 2u; side = side + 1u) {
+        let own = scene_level_load(level, texel, side);
+        let coarse = scene_level_up(level + 1u, texel, side);
+        let keep = own.weight;
+        let filled = SceneSurfaceSample(
+            own.color * keep + coarse.color * (1.0 - keep),
+            own.depth * keep + coarse.depth * (1.0 - keep),
+            own.normal * keep + coarse.normal * (1.0 - keep),
+            keep + coarse.weight * (1.0 - keep),
+        );
+        scene_level_store(level, texel, side, filled);
+    }
+}
+
+// A surface's values at a band texel: its own where it shows purely, else
+// filled from the pyramid's level 1, else its own.
+fn scene_layer_value(surface: SceneTexelSurface, texel: vec2<i32>, side: u32) -> SceneSurfaceSample {
+    let pure = select(surface.weights.x, surface.weights.y, side == 1u);
+    if pure > 0.0 {
+        return surface.own;
+    }
+    let filled = scene_level_up(1u, texel, side);
+    if filled.weight <= 0.0 {
+        return surface.own;
+    }
+    return filled;
+}
+
+// The near surface's colour and both normals: layers NEAR and NORMALS.
+@compute @workgroup_size(8, 8, 1)
+fn bake_scene_layers_near(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let texel = vec2<i32>(gid.xy);
+    if any(texel >= Bake::scene_bake_size()) { return; }
+    let depth = textureLoad(Bake::scene_geometry_tex, texel, 0).x;
+    let surface = scene_texel_surface(texel, depth);
+    var near = surface.own;
+    var far = surface.own;
+    if surface.edge {
+        near = scene_layer_value(surface, texel, 0u);
+        far = scene_layer_value(surface, texel, 1u);
+    }
+    textureStore(Bake::scene_normals_layer_out, texel, vec4<f32>(
+        Bake::scene_octahedral(normalize(near.normal)),
+        Bake::scene_octahedral(normalize(far.normal)),
+    ));
+    textureStore(Bake::scene_near_out, texel, vec4<f32>(near.color, select(0.0, 1.0, surface.edge)));
+}
+
+// The far surface's colour and both surfaces' depths: layers FAR and
+// GEOMETRY. The texel's own depth and sky come from the depth result again,
+// as this pass writes the layer that held them.
+@compute @workgroup_size(8, 8, 1)
+fn bake_scene_layers_far(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let texel = vec2<i32>(gid.xy);
+    if any(texel >= Bake::scene_bake_size()) { return; }
+    let depth = Bake::scene_texel_depth(texel);
+    let surface = scene_texel_surface(texel, depth.x);
+    var near = surface.own;
+    var far = surface.own;
+    if surface.edge {
+        near = scene_layer_value(surface, texel, 0u);
+        far = scene_layer_value(surface, texel, 1u);
+    }
+    textureStore(Bake::scene_geometry_out, texel, vec4<f32>(depth, near.depth, far.depth));
+    textureStore(Bake::scene_far_out, texel, vec4<f32>(far.color, select(0.0, 1.0, surface.edge)));
+}

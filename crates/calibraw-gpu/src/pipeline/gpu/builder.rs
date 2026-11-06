@@ -38,6 +38,7 @@ pub(super) struct ShaderSet {
     pub(super) scene_adjustments_module: Option<wgpu::ShaderModule>,
     pub(super) creative_effects_module: Option<wgpu::ShaderModule>,
     pub(super) view_transform_module: Option<wgpu::ShaderModule>,
+    pub(super) scene_bake_accumulate_module: Option<wgpu::ShaderModule>,
 }
 
 pub(super) fn load_shader_set(
@@ -87,5 +88,6 @@ pub(super) fn load_shader_set(
         scene_adjustments_module: load_shader(shaders::SCENE_ADJUSTMENTS_ENTRY)?,
         creative_effects_module: load_shader(shaders::CREATIVE_EFFECTS_ENTRY)?,
         view_transform_module: load_shader(shaders::VIEW_TRANSFORM_ENTRY)?,
+        scene_bake_accumulate_module: load_shader(shaders::SCENE_BAKE_ACCUMULATE_ENTRY)?,
     })
 }

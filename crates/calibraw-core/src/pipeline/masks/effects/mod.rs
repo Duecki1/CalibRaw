@@ -45,7 +45,7 @@ pub use lens_blur::LensBlurEffectSettings;
 pub use light_rays::{LightRaySource, LightRaysEffectSettings};
 pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
-pub use passes::{EffectPass, EffectReach, ReachGroup, SceneMapUse};
+pub use passes::{EffectPass, EffectReach, ReachGroup, SceneMapUse, SceneNeed, SceneNeeds};
 pub use pixelate::PixelateEffectSettings;
 pub use radial_blur::{RadialBlurEffectSettings, RadialBlurMode};
 pub use rain::RainEffectSettings;
@@ -83,7 +83,8 @@ pub trait EffectSettingsVisitor {
 /// - `passes`, where it runs ([`EffectPass`]); a `Creative` effect defines
 ///   `apply_<field>` in its shader, which the creative pass calls;
 /// - `reach`, how far around a pixel it reads ([`EffectReach`]);
-/// - `scene_map`, when it reads the scene map ([`SceneMapUse`]).
+/// - `scene_map`, when it reads the scene map ([`SceneMapUse`]);
+/// - optionally `scene`, what it reads of the scene bake ([`SceneNeed`]s).
 ///
 /// Rows are in the order the settings serialize, which sidecars and presets
 /// keep.
@@ -97,7 +98,8 @@ macro_rules! mask_effects {
             settings: $field:ident: $settings:ty,
             passes: [$($pass:ident),+],
             reach: $reach:ident $(($pixels:expr))?,
-            scene_map: $scene_map:ident $(,)?
+            scene_map: $scene_map:ident
+            $(, scene: [$($need:ident),* $(,)?])? $(,)?
         }
     )+) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
@@ -181,6 +183,13 @@ macro_rules! mask_effects {
                 match self {
                     Self::Adjustment => SceneMapUse::Never,
                     $(Self::$variant => SceneMapUse::$scene_map,)+
+                }
+            }
+
+            pub const fn scene_needs(self) -> SceneNeeds {
+                match self {
+                    Self::Adjustment => SceneNeeds::NONE,
+                    $(Self::$variant => SceneNeeds::NONE $($(.with(SceneNeed::$need))*)?,)+
                 }
             }
 

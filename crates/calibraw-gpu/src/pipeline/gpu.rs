@@ -7,9 +7,9 @@ use crate::pipeline::{
     GeometryMapping, GeometryTransform, HighlightReconstructionMethod, LateralChannel,
     LensGeometryMap, LoadedRaw, LocalMask, MaskEffect, MaskImage, MaskStack, PixelLayout,
     PointColor, PointCurve, ProcessingStage, ProfileColor, RawThumbnail, RemoveEditState,
-    RemovePatch, SceneNormals, SensorSaturation, SigmoidParams, GLOBAL_TEMPERATURE_LIMIT,
-    GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS,
-    MAX_POINT_CURVE_POINTS,
+    RemovePatch, SceneDepth, SceneNormals, SensorSaturation, SigmoidParams,
+    GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS,
+    MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -31,6 +31,8 @@ mod mask_layers;
 mod preview_budget;
 mod readback;
 mod resources;
+mod scene;
+use scene::{SceneBake, SceneBakeUniforms, SCENE_WORKING_LONG_EDGE_MAX};
 mod scene_depth;
 mod scene_surface;
 mod shader_manager;
@@ -619,6 +621,9 @@ impl RawGpuPipeline {
             }
         }
         queue.write_buffer(&self.mask_data_buffer, 0, params.mask_data_bytes());
+        // After the camera uniforms, which tell whether this pipeline renders
+        // the whole image.
+        self.upload_scene_bake_depth(queue, params);
     }
 
     pub fn tone_guide_supports_origin(&self, origin_x: i32, origin_y: i32) -> bool {
@@ -799,6 +804,9 @@ impl RawGpuPipeline {
                 encoder.clear_buffer(&resources.cells, 0, None);
             }
         }
+        if let Some(bake) = self.effect_inputs.scene_bake() {
+            bake.outdate_scene();
+        }
         queue.submit(Some(encoder.finish()));
         for map in FullImageMap::ALL {
             self.full_image_map_current(map)
@@ -890,6 +898,7 @@ impl RawGpuPipeline {
     /// them, otherwise left for `ensure_full_image_map`, which most edits
     /// never need.
     fn encode_tone_full_image_maps(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+        self.outdate_scene_bake();
         for map in FullImageMap::ALL {
             if params.needs_full_image_map(map) {
                 self.encode_full_image_map(encoder, map);
@@ -943,6 +952,7 @@ impl RawGpuPipeline {
             self.full_image_map_current(map)
                 .store(true, Ordering::Release);
         }
+        self.inherit_scene_bake(encoder, full_frame, params);
     }
 
     pub fn dispatch_stage_with_remove(
@@ -1053,6 +1063,11 @@ impl RawGpuPipeline {
                 );
             }
         }
+        if params.needs_scene_bake() {
+            if let Some(bake) = self.own_scene_bake(queue, params) {
+                self.accumulate_scene_working_image(&mut encoder, &bake);
+            }
+        }
         queue.submit(Some(encoder.finish()));
         Ok(())
     }
@@ -1071,6 +1086,11 @@ impl RawGpuPipeline {
                 let resolve = self.indices.full_image_map_passes(map).resolve;
                 self.encode_pass_range(&mut encoder, resolve.start, resolve.end);
             }
+        }
+        // Tiles accumulated the bake's working image only if an effect reads
+        // the bake, which allocated it.
+        if let Some(bake) = self.effect_inputs.scene_bake() {
+            self.encode_scene_bake(&mut encoder, &bake);
         }
         queue.submit(Some(encoder.finish()));
         // Resolved from every tile's accumulation; tiles must not rebuild them
@@ -1195,6 +1215,7 @@ impl RawGpuPipeline {
                 self.ensure_full_image_map(encoder, map);
             }
         }
+        self.ensure_scene_bake(encoder, params);
         self.encode_scene_shadow_map(encoder, params);
         if params.needs_scene_emission() {
             // Rebuilt for every render: it follows the emitters' settings and

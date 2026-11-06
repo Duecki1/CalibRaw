@@ -22,9 +22,9 @@ pub use effects::{
     LensBlurEffectSettings, LightRaySource, LightRaysEffectSettings, MaskEffect,
     MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings,
     PackContext, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode,
-    RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneMapUse,
-    SharpenEffectSettings, SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
-    WetSurfacesEffectSettings, MAX_EFFECT_INSTANCES, OPTION_COUNT,
+    RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneMapUse, SceneNeed,
+    SceneNeeds, SharpenEffectSettings, SmokeEffectSettings, TiltShiftEffectSettings,
+    VignetteEffectSettings, WetSurfacesEffectSettings, MAX_EFFECT_INSTANCES, OPTION_COUNT,
 };
 
 mod box_filter;
