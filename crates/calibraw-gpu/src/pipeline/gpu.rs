@@ -453,6 +453,10 @@ pub struct RawGpuPipeline {
     post_blur_glow_passes: Vec<Pass>,
     post_blur_pixelate_blocks_pass: Pass,
     post_blur_render_pass: Pass,
+    /// Whether the last output stage left the image in the second work
+    /// texture, which the render pass then read; otherwise it read the first
+    /// (`post_blur_render_pass`). Point colour samples render from the same one.
+    output_image_in_tex2: AtomicBool,
     /// The raster finish program reading a binned source's reconstructed
     /// camera RGB from highlight work A.
     binned_finish_pass: Pass,
@@ -1260,11 +1264,13 @@ impl RawGpuPipeline {
                     self.encode_pass(encoder, self.indices.pixelate_blocks_pass_index);
                 }
             }
-            self.encode_effects_pass(
-                encoder,
-                self.indices.adjustment_creative_pass_index,
-                &mut image_in_tex2,
-            );
+            if params.needs_creative_pass() {
+                self.encode_effects_pass(
+                    encoder,
+                    self.indices.adjustment_creative_pass_index,
+                    &mut image_in_tex2,
+                );
+            }
             if params.needs_weather_air_pass() {
                 self.encode_effects_pass(
                     encoder,
@@ -1273,6 +1279,13 @@ impl RawGpuPipeline {
                 );
             }
         }
+        self.output_image_in_tex2
+            .store(image_in_tex2, Ordering::Release);
+        self.encode_render_pass(encoder, image_in_tex2);
+    }
+
+    /// Encodes the display transform from the work texture holding the image.
+    fn encode_render_pass(&self, encoder: &mut wgpu::CommandEncoder, image_in_tex2: bool) {
         if image_in_tex2 {
             self.encode_pass(encoder, self.indices.adjustment_render_pass_index);
         } else {

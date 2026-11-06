@@ -879,6 +879,19 @@ impl GpuParams {
         global_effects || local_effects
     }
 
+    /// Whether the creative pass (`apply_creative_effects`) changes the image:
+    /// a slot effect that runs in it, Glow or Light Rays, or light that Glow and
+    /// Neon cast on the scene. Without any it copies its input unchanged, and the
+    /// output stage skips it: it is the largest program of the chain, and on
+    /// some mobile GPUs (Adreno) even that copy costs as much as all other
+    /// passes together.
+    pub(super) fn needs_creative_pass(&self) -> bool {
+        self.needs_scene_emission()
+            || self.mask_slots().iter().any(|mask| {
+                mask.runs_in(EffectPass::Creative) || mask.runs_in(EffectPass::CreativeLight)
+            })
+    }
+
     pub(super) fn needs_glow_passes(&self) -> bool {
         self.mask_slots().iter().any(is_self_illuminating_glow)
     }

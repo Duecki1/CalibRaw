@@ -344,6 +344,7 @@ impl RawGpuPipeline {
             post_blur_glow_passes,
             post_blur_pixelate_blocks_pass,
             post_blur_render_pass,
+            output_image_in_tex2: AtomicBool::new(true),
             binned_finish_pass,
             passes,
             raw_texture: surfaces.raw_texture,
