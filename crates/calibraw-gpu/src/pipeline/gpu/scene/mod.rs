@@ -20,17 +20,20 @@
 mod bake;
 pub(super) mod camera;
 mod ground;
+pub(super) mod lights;
 
 use super::{
     create_gpu_buffer, create_initialized_buffer, create_processing_texture_array,
     gpu_working_set_limit_bytes, texture_size, GpuBudgetReservation,
 };
 use anyhow::Result;
-use calibraw_core::pipeline::{DisparityMap, MaskImage, SceneDepth};
+use calibraw_core::pipeline::{DisparityMap, MaskImage, SceneCamera, SceneDepth};
 use camera::SceneCameraUniform;
 use std::sync::{Arc, Mutex};
 
 pub(super) use bake::SceneBakePrograms;
+pub use lights::SceneLightQuality;
+pub(super) use lights::{SceneLightSet, SceneShadowLight, SCENE_SHADOW_LIGHTS};
 
 /// The largest working size's longer edge, which the accumulation pass's
 /// dispatch covers.
@@ -50,7 +53,7 @@ fn working_long_edge() -> u32 {
 const FULL_BAKE_BUDGET: u64 = 1 << 30;
 
 /// Layers of the bake array (`SCENE_LAYER_*` in bake_common.wgsl).
-const SCENE_BAKE_LAYERS: u32 = 5;
+pub(super) const SCENE_BAKE_LAYERS: u32 = 5;
 const SCENE_BAKE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The lens blur buffer (`SceneFocus` in bake_common.wgsl): the fit, then
 /// `SCENE_FOCUS_DEPTH_BINS × SCENE_FOCUS_BLUR_BINS` u32 counts.
@@ -107,6 +110,8 @@ fn working_mip_levels([width, height]: [u32; 2]) -> u32 {
 pub(super) struct SceneBake {
     size: [u32; 2],
     layers: wgpu::Texture,
+    /// All layers, as effects read them (geometry.wgsl).
+    layers_view: wgpu::TextureView,
     working: wgpu::Texture,
     scratch: wgpu::Buffer,
     uniforms: wgpu::Buffer,
@@ -117,6 +122,11 @@ pub(super) struct SceneBake {
     /// level's size (`scene_mip_level`).
     mip_uniforms: Vec<wgpu::Buffer>,
     state: Mutex<SceneBakeState>,
+    /// The light bake (`lights.rs`), allocated once a light casts shadows.
+    lights: Mutex<Option<lights::SceneLightBake>>,
+    /// Counts the light bake's allocations, so the pipelines that bind its
+    /// visibility bind the current one.
+    lights_revision: std::sync::atomic::AtomicU64,
     _reservation: GpuBudgetReservation,
 }
 
@@ -126,6 +136,9 @@ struct SceneBakeState {
     inputs: Option<SceneBakeInputs>,
     /// The layers are baked from the current working image and `inputs`.
     baked: bool,
+    /// Counts the bakes, so what is built from the layers knows when they
+    /// changed.
+    generation: u64,
 }
 
 /// What the working image holds.
@@ -220,9 +233,15 @@ impl SceneBake {
                 level_uniform([level, (width >> finer).max(1), (height >> finer).max(1), 0])
             })
             .collect();
+        let layers_view = layers.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("calibraw scene bake layers"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
         Ok(Self {
             size,
             layers,
+            layers_view,
             working,
             scratch,
             uniforms,
@@ -233,7 +252,10 @@ impl SceneBake {
                 scene: WorkingScene::Outdated,
                 inputs: None,
                 baked: false,
+                generation: 0,
             }),
+            lights: Mutex::new(None),
+            lights_revision: std::sync::atomic::AtomicU64::new(1),
             _reservation: reservation,
         })
     }
@@ -242,10 +264,23 @@ impl SceneBake {
         self.size
     }
 
-    /// The scratch buffer and the uniforms, which the working-image
-    /// accumulation binds (84 and 85 in bake_common.wgsl).
-    pub(super) fn accumulation_bindings(&self) -> (&wgpu::Buffer, &wgpu::Buffer) {
-        (&self.scratch, &self.uniforms)
+    /// What passes bind of the bake, with the light bake's `visibility`.
+    pub(super) fn bindings<'a>(
+        &'a self,
+        visibility: &'a wgpu::TextureView,
+    ) -> super::effect_inputs::SceneBakeBindings<'a> {
+        super::effect_inputs::SceneBakeBindings {
+            scratch: &self.scratch,
+            uniforms: &self.uniforms,
+            layers: &self.layers_view,
+            visibility,
+        }
+    }
+
+    /// Changes whenever the light bake's visibility texture is allocated.
+    pub(super) fn lights_revision(&self) -> u64 {
+        self.lights_revision
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, SceneBakeState> {
@@ -308,6 +343,20 @@ impl SceneBake {
         self.lock().scene == WorkingScene::Current
     }
 
+    /// The uploaded depth result's camera.
+    fn camera(&self) -> Option<SceneCamera> {
+        self.lock()
+            .inputs
+            .as_ref()
+            .map(|inputs| *inputs.depth.camera())
+    }
+
+    /// The current bake's generation, once the layers are baked.
+    fn baked_generation(&self) -> Option<u64> {
+        let state = self.lock();
+        state.baked.then_some(state.generation)
+    }
+
     /// Prepares the scratch buffer for an accumulation pass encoded after
     /// this: the first one since the scene changed clears it, later ones (the
     /// next export tiles) add to it.
@@ -342,6 +391,7 @@ impl SceneBake {
         programs.encode(device, encoder, self, inputs, accumulated);
         state.scene = WorkingScene::Current;
         state.baked = true;
+        state.generation += 1;
     }
 }
 
@@ -566,18 +616,25 @@ impl super::RawGpuPipeline {
         if !params.needs_scene_bake() {
             return;
         }
-        if self.renders_whole_image() {
-            self.own_scene_bake(queue, params);
-            return;
-        }
-        let (Some(bake), Some(depth)) = (
-            self.effect_inputs.scene_bake(),
-            params.depth_result.as_ref(),
-        ) else {
-            return;
+        let device = self.effect_inputs.device();
+        let bake = if self.renders_whole_image() {
+            self.own_scene_bake(queue, params)
+        } else {
+            let (Some(bake), Some(depth)) = (
+                self.effect_inputs.scene_bake(),
+                params.depth_result.as_ref(),
+            ) else {
+                return;
+            };
+            if let Err(error) = bake.upload_depth(device, queue, depth) {
+                log::error!("scene depth not uploaded: {error:#}");
+            }
+            Some(bake)
         };
-        if let Err(error) = bake.upload_depth(self.effect_inputs.device(), queue, depth) {
-            log::error!("scene depth not uploaded: {error:#}");
+        if let Some(bake) = bake {
+            if params.needs_light_bake() {
+                bake.prepare_lights(device, queue, &params.scene_light_set());
+            }
         }
     }
 
@@ -608,6 +665,13 @@ impl super::RawGpuPipeline {
             self.accumulate_scene_working_image(encoder, &bake);
         }
         self.encode_scene_bake(encoder, &bake);
+        if params.needs_light_bake() {
+            let device = self.effect_inputs.device();
+            match SceneBakePrograms::shared(device) {
+                Ok(programs) => bake.encode_lights(device, encoder, programs.lights()),
+                Err(error) => log::error!("scene bake programs did not compile: {error:#}"),
+            }
+        }
     }
 
     /// Adds this pipeline's tile core (or whole image) to the bake's working

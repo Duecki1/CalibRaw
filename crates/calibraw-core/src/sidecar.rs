@@ -21,7 +21,7 @@ mod files;
 mod mask_assets;
 mod remove_assets;
 mod size_limits;
-use crate::migrations::{self, LegacyEffectSliders};
+use crate::migrations::{self, LegacyEdits};
 pub use files::*;
 pub(crate) use mask_assets::decode_mask_png;
 use mask_assets::*;
@@ -297,7 +297,7 @@ struct SidecarHeader {
     schema_version: u32,
     /// Collected in the same pass that reads the header.
     #[serde(default)]
-    edits: LegacyEffectSliders,
+    edits: LegacyEdits,
 }
 
 /// A grayscale PNG: 8-bit for masks, 16-bit for the scene disparity.

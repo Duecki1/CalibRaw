@@ -14,10 +14,11 @@ use super::{
     SceneToneUniforms, ViewTransformMode, CONTOUR_BRIGHTNESS_BINS, CONTOUR_CELL_BYTES,
     CONTOUR_CONTRAST_BINS, CONTOUR_GRID_LONG, FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE,
     HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG, IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG,
-    MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS, MEDIUM_CELLS, SCENE_EMISSION_GRID_LONG,
-    SCENE_EMISSION_SURFACE_GRID_LONG, SCENE_FOCUS_BINS, SCENE_MAP_BLUR_GRID_LONG,
-    SCENE_MAP_CELL_BYTES, SCENE_MAP_GRID_LONG, SCENE_SHADOW_MAP_CHANNELS, SCENE_SHADOW_SLICES,
-    SCENE_SHADOW_TILES, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    MASK_EFFECT_ID_SHIFT, MASK_SCENE_BAKE_LIGHT_BITS, MAX_RENDER_MASK_SLOTS, MEDIUM_CELLS,
+    SCENE_EMISSION_GRID_LONG, SCENE_EMISSION_SURFACE_GRID_LONG, SCENE_FOCUS_BINS,
+    SCENE_MAP_BLUR_GRID_LONG, SCENE_MAP_CELL_BYTES, SCENE_MAP_GRID_LONG, SCENE_SHADOW_LIGHTS,
+    SCENE_SHADOW_MAP_CHANNELS, SCENE_SHADOW_SLICES, SCENE_SHADOW_TILES, TONE_HISTOGRAM_BIN_COUNT,
+    TONE_STATS_SIZE_BYTES,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::{effect_lanes::options, MaskEffect, OPTION_COUNT};
@@ -441,6 +442,14 @@ fn shared_constants_and_effect_ids_match_rust() {
         MAX_RENDER_MASK_SLOTS
     );
     assert_eq!(constant("MASK_EFFECT_ID_SHIFT"), MASK_EFFECT_ID_SHIFT);
+    assert_eq!(
+        constant("MASK_SCENE_BAKE_LIGHT_BITS"),
+        MASK_SCENE_BAKE_LIGHT_BITS
+    );
+    const {
+        assert!(MASK_SCENE_BAKE_LIGHT_BITS as usize >= SCENE_SHADOW_LIGHTS);
+        assert!(MASK_SCENE_BAKE_LIGHT_BITS < 1 << MASK_EFFECT_ID_SHIFT);
+    }
     for (name, mode) in [
         ("VIEW_TRANSFORM_PASSTHROUGH", ViewTransformMode::Passthrough),
         (
@@ -761,17 +770,18 @@ fn screaming_snake_case(camel: &str) -> String {
     output
 }
 
-/// The scene bake's uniforms, lens blur buffer and pyramid match the WGSL the
-/// bake compiles (scene/, shaders/scene/).
+/// The scene bake's and the light bake's uniforms, the lens blur buffer and
+/// the pyramid match the WGSL the bakes compile (scene/, shaders/scene/).
 #[test]
 fn scene_bake_uniforms_and_buffers_match_their_wgsl_declarations() {
     use super::scene::camera::SceneCameraUniform;
+    use super::scene::lights::{SceneShadowLightUniform, SceneShadowLightsUniform};
     use super::scene::{
         SCENE_FOCUS_BLUR_BINS, SCENE_FOCUS_BYTES, SCENE_FOCUS_DEPTH_BINS, SCENE_LAYER_LEVELS,
     };
     use super::SceneBakeUniforms;
     let modules = production_modules();
-    let contracts: [(&str, RustLayout); 2] = [
+    let contracts: [(&str, RustLayout); 4] = [
         (
             "SceneBakeUniforms",
             rust_layout!(SceneBakeUniforms {
@@ -786,13 +796,28 @@ fn scene_bake_uniforms_and_buffers_match_their_wgsl_declarations() {
             "SceneCamera",
             rust_layout!(SceneCameraUniform { lens, anchors }),
         ),
+        (
+            "SceneShadowLight",
+            rust_layout!(SceneShadowLightUniform { position, shape }),
+        ),
+        (
+            "SceneShadowLights",
+            rust_layout!(SceneShadowLightsUniform { lights, taps }),
+        ),
     ];
     // The old depth path declares a `SceneCamera` of its own until P7 of
-    // docs/rework/DEPTH_EFFECTS_PLAN.md; only the bake's modules are checked.
+    // docs/rework/DEPTH_EFFECTS_PLAN.md; only the bakes' modules are checked.
     let bake_modules: Vec<_> = modules
         .iter()
         .filter(|(context, _)| {
-            context.starts_with("scene bake") || context.starts_with("calibraw scene bake")
+            [
+                "scene bake",
+                "calibraw scene bake",
+                "scene shadow",
+                "scene visibility",
+            ]
+            .iter()
+            .any(|prefix| context.starts_with(prefix))
         })
         .collect();
     for (wgsl_name, rust) in &contracts {
@@ -806,6 +831,14 @@ fn scene_bake_uniforms_and_buffers_match_their_wgsl_declarations() {
     assert_eq!(constant("SCENE_FOCUS_DEPTH_BINS"), SCENE_FOCUS_DEPTH_BINS);
     assert_eq!(constant("SCENE_FOCUS_BLUR_BINS"), SCENE_FOCUS_BLUR_BINS);
     assert_eq!(constant("SCENE_LAYER_LEVELS"), SCENE_LAYER_LEVELS);
+    assert_eq!(
+        constant("SCENE_SHADOW_LIGHTS") as usize,
+        SCENE_SHADOW_LIGHTS
+    );
+    assert_eq!(
+        constant("SCENE_VERTICES_PER_TRIANGLE"),
+        super::scene::lights::VERTICES_PER_TRIANGLE
+    );
     for (context, module) in &bake_modules {
         let mut layouter = Layouter::default();
         layouter.update(module.to_ctx()).unwrap();

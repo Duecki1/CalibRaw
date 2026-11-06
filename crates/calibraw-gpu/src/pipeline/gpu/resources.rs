@@ -81,6 +81,9 @@ pub(super) const SCENE_COEFFICIENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFo
 /// textures: depth's guided filter, then the sky's luminance
 /// (`SCENE_MAP_SKY_ROW` in common.wgsl, one grid edge down).
 pub(super) const SCENE_MAP_COEFFICIENT_BLOCKS: u32 = 2;
+/// depth-rework-bridge: delete in P7. Layers of the scene map array:
+/// `SCENE_MAP_*_LAYER` in scene_depth.wgsl.
+pub(super) const SCENE_MAP_LAYERS: u32 = 4;
 
 /// Shadows of up to four scene lights on the surface and in the air
 /// (scene_shadows.wgsl).

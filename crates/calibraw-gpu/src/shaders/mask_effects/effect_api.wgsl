@@ -62,6 +62,12 @@ fn mask_effect_instance(params: MaskEffectParams) -> u32 {
     return params.instances & 0xffu;
 }
 
+// The light bake's channel of the slot's light plus one, or 0 when the bake
+// holds none for it (common.wgsl, MASK_SCENE_BAKE_LIGHT_BITS).
+fn mask_effect_scene_bake_light(params: MaskEffectParams) -> u32 {
+    return Common::mask_data[params.slot].metadata.w & Common::MASK_SCENE_BAKE_LIGHT_BITS;
+}
+
 // The instances of the slot's card.
 fn mask_effect_instance_count(params: MaskEffectParams) -> u32 {
     return (params.instances >> 8u) + 1u;

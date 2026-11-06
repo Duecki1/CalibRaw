@@ -16,8 +16,12 @@
 // and highlights about as the eye does.
 //
 // The bake array (rgba16float, one layer per SCENE_LAYER_*):
-//   GEOMETRY  linear depth d of the texel (x) and its sky probability (y);
-//             the depth d of the near (z) and the far (w) surface
+//   GEOMETRY  linear depth d of the texel (x); the far surface's sky
+//             probability (y), at no edge the texel's own; the depth d of
+//             the near (z) and the far (w) surface. The near surface of an
+//             edge is never sky: the sky lies behind everything. (Until the
+//             layers are made, B2 to B7 hold the texel's own d, sky and its
+//             band's least and greatest d here.)
 //   COVERAGE  the near surface's coverage at a pixel is
 //             clamp(dot(xyz, guide) + w, 0, 1) for the pixel's own guide
 //   NORMALS   the near (xy) and far (zw) surface's normal, octahedral

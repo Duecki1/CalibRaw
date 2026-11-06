@@ -35,20 +35,30 @@
 // and the mip levels hold the surface (scene_surface.rs). The texture is square, so
 // its texels stretch to the image's aspect.
 @group(0) @binding(35) var scene_depth_tex: texture_2d<f32>;
+// depth-rework-bridge: delete in P7. The scene map's four maps are the layers
+// of one rgba32float array, padded to the largest, so that the creative pass
+// keeps to its sampled textures while it also binds the scene bake
+// (docs/rework/DEPTH_EFFECTS_PLAN.md §4.6). Read them with
+// `scene_map_layer_load`.
+@group(0) @binding(71) var scene_map_layers_tex: texture_2d_array<f32>;
 // Per scene map cell: the guided filter's slope and offset, the surface's roughness
 // and the mean guide around it. From row Common::SCENE_MAP_SKY_ROW, the sky block:
 // the brightest luminance what stands before a brighter sky around the cell may
 // have (x) times y, which is 1 where it was measured, and the share of sky pixels
 // around the cell (w; scene_analysis.wgsl `scene_sky_window`).
-@group(0) @binding(71) var scene_depth_map_tex: texture_2d<f32>;
+const SCENE_MAP_DEPTH_LAYER: i32 = 0;
 // Per scene map cell, around it: the nearest (x) and farthest (y) stored depth, how
 // well the guide explains depth (z) and how much of a depth edge there is (w).
-@group(0) @binding(77) var scene_depth_range_tex: texture_2d<f32>;
+const SCENE_MAP_RANGE_LAYER: i32 = 1;
 // Per scene map cell: how much it is ground, the distance along the ground to what
 // stands on it, its smooth depth and its terrain height.
-@group(0) @binding(73) var scene_ground_tex: texture_2d<f32>;
-// Per depth bin: the lens blur in shorter edges.
-@group(0) @binding(75) var scene_focus_tex: texture_2d<f32>;
+const SCENE_MAP_GROUND_LAYER: i32 = 2;
+// Per depth bin, along row 0: the lens blur in shorter edges.
+const SCENE_MAP_FOCUS_LAYER: i32 = 3;
+
+fn scene_map_layer_load(layer: i32, texel: vec2<i32>, level: i32) -> vec4<f32> {
+    return textureLoad(scene_map_layers_tex, texel, layer, level);
+}
 
 // The distance an effect assumes until depth is generated: a restrained constant,
 // as no screen-height or luminance heuristic can know the scene's geometry.
@@ -74,20 +84,20 @@ fn scene_map_cells_at(uv: vec2<f32>) -> SceneMapCells {
 }
 
 // A block of the depth map, starting at `row`, at full-image `uv`, interpolated:
-// see `scene_depth_map_tex`.
+// see `SCENE_MAP_DEPTH_LAYER`.
 fn scene_depth_map_block_near(uv: vec2<f32>, row: i32) -> vec4<f32> {
     let cells = scene_map_cells_at(uv);
     let base = cells.base + vec2<i32>(0, row);
     let next = cells.next + vec2<i32>(0, row);
     return mix(
         mix(
-            textureLoad(scene_depth_map_tex, base, 0),
-            textureLoad(scene_depth_map_tex, vec2<i32>(next.x, base.y), 0),
+            scene_map_layer_load(SCENE_MAP_DEPTH_LAYER, base, 0),
+            scene_map_layer_load(SCENE_MAP_DEPTH_LAYER, vec2<i32>(next.x, base.y), 0),
             cells.between.x,
         ),
         mix(
-            textureLoad(scene_depth_map_tex, vec2<i32>(base.x, next.y), 0),
-            textureLoad(scene_depth_map_tex, next, 0),
+            scene_map_layer_load(SCENE_MAP_DEPTH_LAYER, vec2<i32>(base.x, next.y), 0),
+            scene_map_layer_load(SCENE_MAP_DEPTH_LAYER, next, 0),
             cells.between.x,
         ),
         cells.between.y,
@@ -100,18 +110,18 @@ fn scene_depth_map_near(uv: vec2<f32>) -> vec4<f32> {
 }
 
 // The stored depth's range at full-image `uv`, interpolated: see
-// `scene_depth_range_tex`.
+// `SCENE_MAP_RANGE_LAYER`.
 fn scene_depth_range_near(uv: vec2<f32>) -> vec4<f32> {
     let cells = scene_map_cells_at(uv);
     return mix(
         mix(
-            textureLoad(scene_depth_range_tex, cells.base, 0),
-            textureLoad(scene_depth_range_tex, vec2<i32>(cells.next.x, cells.base.y), 0),
+            scene_map_layer_load(SCENE_MAP_RANGE_LAYER, cells.base, 0),
+            scene_map_layer_load(SCENE_MAP_RANGE_LAYER, vec2<i32>(cells.next.x, cells.base.y), 0),
             cells.between.x,
         ),
         mix(
-            textureLoad(scene_depth_range_tex, vec2<i32>(cells.base.x, cells.next.y), 0),
-            textureLoad(scene_depth_range_tex, cells.next, 0),
+            scene_map_layer_load(SCENE_MAP_RANGE_LAYER, vec2<i32>(cells.base.x, cells.next.y), 0),
+            scene_map_layer_load(SCENE_MAP_RANGE_LAYER, cells.next, 0),
             cells.between.x,
         ),
         cells.between.y,
@@ -203,7 +213,7 @@ struct SceneSkyFade {
 }
 
 // The fade at full-image `uv` for a pixel whose depth before the sky is `depth`,
-// given the share of sky around it (`scene_depth_map_tex`). Stored depth's sky
+// given the share of sky around it (`SCENE_MAP_DEPTH_LAYER`). Stored depth's sky
 // outline is sharp. Where the lens blurred the edge, the photo mixes sky and what
 // stands before it over tens of pixels, and stored sky starts where the mix is nearly
 // all sky, so a sharp outline drew a line there (Relight lit those pixels by their
@@ -309,13 +319,13 @@ fn scene_ground_near(uv: vec2<f32>) -> vec4<f32> {
     let cells = scene_map_cells_at(uv);
     return mix(
         mix(
-            textureLoad(scene_ground_tex, cells.base, 0),
-            textureLoad(scene_ground_tex, vec2<i32>(cells.next.x, cells.base.y), 0),
+            scene_map_layer_load(SCENE_MAP_GROUND_LAYER, cells.base, 0),
+            scene_map_layer_load(SCENE_MAP_GROUND_LAYER, vec2<i32>(cells.next.x, cells.base.y), 0),
             cells.between.x,
         ),
         mix(
-            textureLoad(scene_ground_tex, vec2<i32>(cells.base.x, cells.next.y), 0),
-            textureLoad(scene_ground_tex, cells.next, 0),
+            scene_map_layer_load(SCENE_MAP_GROUND_LAYER, vec2<i32>(cells.base.x, cells.next.y), 0),
+            scene_map_layer_load(SCENE_MAP_GROUND_LAYER, cells.next, 0),
             cells.between.x,
         ),
         cells.between.y,
@@ -328,8 +338,8 @@ fn scene_focus_blur(depth: f32) -> f32 {
     let position = clamp(depth * f32(Common::SCENE_FOCUS_BINS) - 0.5, 0.0, f32(last));
     let base = i32(position);
     return mix(
-        textureLoad(scene_focus_tex, vec2<i32>(base, 0), 0).x,
-        textureLoad(scene_focus_tex, vec2<i32>(min(base + 1, last), 0), 0).x,
+        scene_map_layer_load(SCENE_MAP_FOCUS_LAYER, vec2<i32>(base, 0), 0).x,
+        scene_map_layer_load(SCENE_MAP_FOCUS_LAYER, vec2<i32>(min(base + 1, last), 0), 0).x,
         position - f32(base),
     );
 }

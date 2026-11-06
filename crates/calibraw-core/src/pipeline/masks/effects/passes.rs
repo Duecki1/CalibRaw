@@ -98,21 +98,47 @@ pub struct SceneNeeds {
     /// Depth, coverage, and each surface's normal and colour; read only while
     /// scene depth is present.
     pub geometry: bool,
+    /// The light bake's shadow cubes and each surface's visibility of the
+    /// lights that cast shadows (calibraw-gpu `scene::lights`); with the
+    /// geometry.
+    pub light_bake: bool,
+    /// The shadowed share of each light along every view ray (the air
+    /// light); with the light bake.
+    pub air_light: bool,
 }
 
 /// One part of [`SceneNeeds`], as the effect registry names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SceneNeed {
     Geometry,
+    LightBake,
+    AirLight,
 }
 
 impl SceneNeeds {
-    pub const NONE: Self = Self { geometry: false };
+    pub const NONE: Self = Self {
+        geometry: false,
+        light_bake: false,
+        air_light: false,
+    };
 
-    /// These needs and `need`.
+    /// These needs and `need`, with what it is built from.
     pub const fn with(self, need: SceneNeed) -> Self {
         match need {
-            SceneNeed::Geometry => Self { geometry: true },
+            SceneNeed::Geometry => Self {
+                geometry: true,
+                ..self
+            },
+            SceneNeed::LightBake => Self {
+                geometry: true,
+                light_bake: true,
+                ..self
+            },
+            SceneNeed::AirLight => Self {
+                geometry: true,
+                light_bake: true,
+                air_light: true,
+            },
         }
     }
 }

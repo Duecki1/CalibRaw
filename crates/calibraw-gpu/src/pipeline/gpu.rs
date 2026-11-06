@@ -32,7 +32,11 @@ mod preview_budget;
 mod readback;
 mod resources;
 mod scene;
-use scene::{SceneBake, SceneBakeUniforms, SCENE_WORKING_LONG_EDGE_MAX};
+pub use scene::SceneLightQuality;
+use scene::{
+    SceneBake, SceneBakeUniforms, SceneLightSet, SceneShadowLight, SCENE_BAKE_LAYERS,
+    SCENE_SHADOW_LIGHTS, SCENE_WORKING_LONG_EDGE_MAX,
+};
 mod scene_depth;
 mod scene_surface;
 mod shader_manager;
@@ -73,6 +77,9 @@ use stage_params::*;
 
 const GPU_PARAMS_ABI_VERSION: u32 = 16;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
+/// The flag bits of an effect slot's `metadata[3]` that hold its light bake
+/// channel plus one (`assign_scene_bake_lights`).
+const MASK_SCENE_BAKE_LIGHT_BITS: u32 = 0xf;
 pub(super) const FULL_IMAGE_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
 } else {

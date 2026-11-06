@@ -318,6 +318,7 @@ impl CalibRawApp {
             mask_region,
             mask_extent,
         };
+        let light_quality = self.sharp_scene_light_quality();
         let params = placement
             .params(
                 &self.develop.target_exposure,
@@ -326,7 +327,9 @@ impl CalibRawApp {
                 &detail_raw,
                 self.preview_profile_color(&detail_raw),
             )
-            .with_look_lut(self.develop.target_look.as_ref());
+            .with_look_lut(self.develop.target_look.as_ref())
+            .with_scene_light_quality(light_quality);
+        self.note_sharp_scene_lights(&params, light_quality);
         let full_frame_tone_pipeline = full_frame_tone_pipeline(
             self.preview.gpu_pipeline.as_ref(),
             self.preview.navigation.as_ref(),

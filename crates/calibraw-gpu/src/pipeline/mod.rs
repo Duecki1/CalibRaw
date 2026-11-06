@@ -22,6 +22,6 @@ pub use gpu::{
     preview_mask_layer_capacity, GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, GpuWait,
     MobilePreviewRole, PipelineOptions, PreviewClippingGpu, PreviewHistogram, PreviewHistogramGpu,
     PreviewResourceShape, ProcessingQuality, RawGpuPipeline, RawGpuProgramTemplate,
-    RemoveSceneContext, PREVIEWED_PROFILE_BYTES,
+    RemoveSceneContext, SceneLightQuality, PREVIEWED_PROFILE_BYTES,
 };
 pub use gpu_cache::PersistentGpuPipelineCache;

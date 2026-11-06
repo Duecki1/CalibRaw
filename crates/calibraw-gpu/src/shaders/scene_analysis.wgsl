@@ -92,20 +92,22 @@ struct SceneMapCell {
 // and the window's share of sky pixels (w).
 //
 // The window-averaged slope, offset, roughness and mean guide that scene_depth.wgsl
-// reads, and the sky block averaged the same way.
+// reads, and the sky block averaged the same way. This and the depth range, the
+// ground and the lens blur below are written to layers of one rgba32float array
+// (depth-rework-bridge: delete in P7; scene_depth.wgsl `scene_map_layers_tex`).
 @group(0) @binding(66) var scene_depth_map_out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(67) var scene_environment_tex: texture_2d<f32>;
 @group(0) @binding(68) var scene_environment_blur_out: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(28) var scene_map_sampler: sampler;
 // Per cell, around it: the nearest (x) and farthest (y) stored depth, how well the
 // guide explains depth (z) and how much of a depth edge there is (w).
-@group(0) @binding(76) var scene_depth_range_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(76) var scene_depth_range_out: texture_storage_2d<rgba32float, write>;
 // Per cell: how much it is ground (x), the distance from it along the ground to
 // what stands on it (y), its smooth scene depth (z) and its terrain height (w,
 // scene_terrain_height).
-@group(0) @binding(72) var scene_ground_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(72) var scene_ground_out: texture_storage_2d<rgba32float, write>;
 // Per depth bin: the lens blur (x) in shorter edges.
-@group(0) @binding(74) var scene_focus_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(74) var scene_focus_out: texture_storage_2d<rgba32float, write>;
 
 // Radius in cells of the guided filter's windows: 3 x 3 cells, about 1.2% of
 // the longer edge. It must be wider than the stored depth's staircases.

@@ -145,8 +145,8 @@ fn wet_pixel(pos: vec2<i32>) -> WetPixel {
             let offset = abs(vec2<f32>(cell) - position);
             let tent = max(1.0 - 0.5 * offset.x, 0.0) * max(1.0 - 0.5 * offset.y, 0.0);
             if tent <= 0.0 { continue; }
-            let texel = textureLoad(
-                scene_ground_tex,
+            let texel = scene_map_layer_load(
+                SCENE_MAP_GROUND_LAYER,
                 clamp(cell, vec2<i32>(0), grid - vec2<i32>(1)),
                 0,
             );

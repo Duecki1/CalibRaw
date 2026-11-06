@@ -6,6 +6,9 @@
 #import calibraw::detail_scale_space as DetailScaleSpace
 #import calibraw::tone_common as ToneCommon
 #import calibraw::tonemap as Tonemap
+#import calibraw::scene::camera as Camera
+#import calibraw::scene::bake_common as Bake
+#import calibraw::scene::geometry as Geometry
 
 fn glow_work_at(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0).xyz;

@@ -98,11 +98,25 @@ fn scene_light_inactive() -> SceneLight {
     );
 }
 
+// depth-rework-bridge: delete in P7. Relight places its light by control
+// depth and a Relief scale (shaders/scene/camera.wgsl); receivers on this
+// path take it into their own frame: the default Relief's, scaled, with the
+// light at the linear depth whose control depth it has in the range of the
+// old distance. On depth migrated from an 8-bit map that is where the light
+// was placed before.
+const SCENE_BRIDGE_RANGE_RATIO: f32 = 9.695652;
+
 // Relight's light from its packed parameters.
 fn relight_scene_light(params: MaskEffectParams) -> SceneLight {
-    let camera = scene_camera(mask_effect_lane(params, RELIGHT_RELIEF_LANE) / 100.0);
+    let relief_scale = clamp(mask_effect_lane(params, RELIGHT_RELIEF_SCALE_LANE) / 100.0, 0.1, 3.0);
+    let default_frame = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
+    let camera = SceneCamera(default_frame.image_size, default_frame.relief * relief_scale);
     // Light depth: -1 at the camera, 0 at the nearest surface, 1 at the farthest.
-    let light_depth = clamp(mask_effect_lane(params, RELIGHT_DEPTH_LANE) / 100.0, -1.0, 1.0);
+    let control = clamp(mask_effect_lane(params, RELIGHT_LIGHT_DEPTH_LANE) / 100.0, -1.0, 1.0);
+    var light_depth = control;
+    if control > 0.0 {
+        light_depth = (pow(SCENE_BRIDGE_RANGE_RATIO, control) - 1.0) / (SCENE_BRIDGE_RANGE_RATIO - 1.0);
+    }
     let z = scene_depth_z(camera, light_depth);
     // Reach is in shorter-edge widths at the nearest surface.
     let reach = clamp(mask_effect_lane(params, RELIGHT_REACH_LANE) / 100.0, 0.1, 4.0)

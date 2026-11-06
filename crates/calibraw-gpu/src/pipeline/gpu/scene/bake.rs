@@ -14,6 +14,7 @@ use super::super::{
     dispatch_compute, sampler_entry, shaders, storage_buffer_entry, storage_texture_entry,
     texture_entry, WORKGROUP_EDGE,
 };
+use super::lights::SceneLightPrograms;
 use super::{SceneBake, SceneBakeInputs, SCENE_BAKE_FORMAT, SCENE_LAYER_LEVELS};
 use anyhow::{Context, Result};
 use std::sync::{Arc, Mutex, Weak};
@@ -82,10 +83,10 @@ impl Binding {
 }
 
 // Layers (`SCENE_LAYER_*`).
-const GEOMETRY: u32 = 0;
-const COVERAGE: u32 = 1;
-const NORMALS: u32 = 2;
-const NEAR: u32 = 3;
+pub(super) const GEOMETRY: u32 = 0;
+pub(super) const COVERAGE: u32 = 1;
+pub(super) const NORMALS: u32 = 2;
+pub(super) const NEAR: u32 = 3;
 const FAR: u32 = 4;
 
 use Binding::{
@@ -241,12 +242,13 @@ struct Program {
     label: &'static str,
 }
 
-/// The bake's compiled passes on one device.
+/// The bake's compiled passes on one device, and the light bake's.
 pub(in crate::pipeline::gpu) struct SceneBakePrograms {
     device: wgpu::Device,
     programs: Vec<Program>,
     /// Linear filtering, clamped at the edges (89).
     sampler: wgpu::Sampler,
+    lights: SceneLightPrograms,
 }
 
 /// Programs alive on some device, found again by device.
@@ -273,9 +275,12 @@ impl SceneBakePrograms {
     }
 
     fn compile(device: &wgpu::Device) -> Result<Self> {
-        let mut manager =
-            ShaderManager::with_modules(&[shaders::SCENE_CAMERA, shaders::SCENE_BAKE_COMMON])
-                .context("initialize the scene bake's WGSL composer")?;
+        let mut manager = ShaderManager::with_modules(&[
+            shaders::SCENE_CAMERA,
+            shaders::SCENE_BAKE_COMMON,
+            shaders::SCENE_LIGHTS_COMMON,
+        ])
+        .context("initialize the scene bake's WGSL composer")?;
         let mut modules: Vec<(&'static str, wgpu::ShaderModule)> = Vec::new();
         let mut programs = Vec::with_capacity(PASSES.len());
         for (source, entry, bindings) in PASSES {
@@ -321,11 +326,17 @@ impl SceneBakePrograms {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let lights = SceneLightPrograms::compile(device, &mut manager)?;
         Ok(Self {
             device: device.clone(),
             programs,
             sampler,
+            lights,
         })
+    }
+
+    pub(super) fn lights(&self) -> &SceneLightPrograms {
+        &self.lights
     }
 
     /// Encodes the bake of `bake` from `inputs`: with `accumulated`, first the

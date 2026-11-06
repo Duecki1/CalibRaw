@@ -376,6 +376,8 @@ pub struct GpuParams {
     pub(super) scene_normals: Option<SceneNormals>,
     /// The depth result the scene bake is made from (`scene`).
     pub(super) depth_result: Option<SceneDepth>,
+    /// How carefully the light bake is built for this render.
+    scene_light_quality: SceneLightQuality,
     /// The LUT `scene_tone.look_lut` describes, uploaded with the parameters.
     look_lut: Option<Arc<CubeLut>>,
     /// The camera profile `camera` describes, whose tables the pipeline
@@ -663,6 +665,7 @@ impl GpuParams {
                 .as_ref()
                 .map(|depth| depth.normals().clone()),
             depth_result: masks.scene_depth.clone(),
+            scene_light_quality: SceneLightQuality::default(),
             look_lut: None,
             profile_color: Arc::clone(profile_color),
         };
@@ -736,6 +739,21 @@ impl GpuParams {
             scene_tone.look_lut = [0.0; 4];
         }
         scene_tone
+    }
+
+    /// Renders the light bake at `quality`: Draft while the user drags a
+    /// control, a light or the view, Final otherwise (the default, and what
+    /// exports use).
+    pub fn with_scene_light_quality(mut self, quality: SceneLightQuality) -> Self {
+        self.scene_light_quality = quality;
+        self
+    }
+
+    /// Whether the render builds a light bake, whose tier
+    /// `with_scene_light_quality` sets: a Draft render of these parameters
+    /// needs a Final one once the drag ends.
+    pub fn uses_scene_light_quality(&self) -> bool {
+        self.needs_light_bake()
     }
 
     /// Places Vignette effects in the output frame of `geometry`: the shaders map each source
@@ -980,6 +998,42 @@ impl GpuParams {
                 .any(|effect| effect.scene_needs().geometry)
     }
 
+    /// Whether an active effect reads the light bake and a light casts
+    /// shadows into it.
+    pub(super) fn needs_light_bake(&self) -> bool {
+        self.needs_scene_bake()
+            && self
+                .mask_slots()
+                .iter()
+                .filter_map(MaskData::active_effect)
+                .any(|effect| effect.scene_needs().light_bake)
+            && self
+                .mask_slots()
+                .iter()
+                .any(|mask| scene_bake_light_channel(mask).is_some())
+    }
+
+    /// The lights of the light bake in their channels
+    /// (`assign_scene_bake_lights`), and the tier to build them in.
+    pub(super) fn scene_light_set(&self) -> SceneLightSet {
+        let mut lights = [None; SCENE_SHADOW_LIGHTS];
+        for mask in self.mask_slots() {
+            let Some(channel) = scene_bake_light_channel(mask) else {
+                continue;
+            };
+            lights[channel] = Some(SceneShadowLight {
+                source: [mask.lane(relight::SOURCE_X), mask.lane(relight::SOURCE_Y)],
+                light_depth: mask.lane(relight::LIGHT_DEPTH),
+                relief_scale: mask.lane(relight::RELIEF_SCALE) / 100.0,
+                size: mask.percent(relight::SIZE),
+            });
+        }
+        SceneLightSet {
+            lights,
+            quality: self.scene_light_quality,
+        }
+    }
+
     /// Whether an effect lights the scene by emission (scene_emission.wgsl),
     /// so the output stage builds its light. Mirrors `scene_emission_present`.
     pub(super) fn needs_scene_emission(&self) -> bool {
@@ -1004,21 +1058,26 @@ impl GpuParams {
         }
     }
 
-    /// Whether an active Relight or Wet Surfaces effect in a visible slot, or
-    /// light that Glow and Neon emit, reads the surface derived from scene
-    /// depth. Mirrors the slot checks of `scene_light_at` in scene_lights.wgsl
-    /// and `scene_emission_present` in scene_emission.wgsl.
+    /// Whether an active Wet Surfaces effect in a visible slot, or light that
+    /// Glow and Neon emit, reads the surface derived from scene depth. Mirrors
+    /// `scene_emission_present` in scene_emission.wgsl. Relight reads the
+    /// scene bake instead (`needs_scene_bake`).
     pub(super) fn needs_scene_surface(&self) -> bool {
         self.needs_scene_emission()
-            || self.mask_slots().iter().any(|mask| {
-                mask.applies(MaskEffect::Relight) || mask.applies(MaskEffect::WetSurfaces)
-            })
+            // depth-rework-bridge: delete in P7. The scene shadow map marches
+            // through the surface, which Relight used to request for it.
+            || self.scene_shadow_map_key().is_some()
+            || self
+                .mask_slots()
+                .iter()
+                .any(|mask| mask.applies(MaskEffect::WetSurfaces))
     }
 
     /// What the scene shadow map depends on besides scene depth: the frame
     /// and, per channel, the light's position and, for Relight, its depth,
-    /// size and relief. `None` when nothing reads the map: no light, or
-    /// neither a receiver of scene light nor a Relight casting shadows.
+    /// size and relief. `None` when nothing reads the map: no light, or no
+    /// receiver of scene light (Relight's own shadows come from the light
+    /// bake).
     /// Amount, reach, colour, ambient and shadow strength are applied per pixel
     /// and leave the map valid.
     pub(super) fn scene_shadow_map_key(&self) -> Option<SceneShadowMapKey> {
@@ -1026,9 +1085,7 @@ impl GpuParams {
             return None;
         }
         let slots = self.mask_slots();
-        let read = slots
-            .iter()
-            .any(|mask| receives_scene_light(mask) || relight_casts_shadows(mask));
+        let read = slots.iter().any(receives_scene_light);
         if !read {
             return None;
         }
@@ -1041,9 +1098,9 @@ impl GpuParams {
                 let lanes = [
                     relight::SOURCE_X,
                     relight::SOURCE_Y,
-                    relight::DEPTH,
+                    relight::LIGHT_DEPTH,
                     relight::SIZE,
-                    relight::RELIEF,
+                    relight::RELIEF_SCALE,
                 ];
                 Some((MaskEffect::Relight, lanes.map(|lane| mask.lane(lane))))
             } else {

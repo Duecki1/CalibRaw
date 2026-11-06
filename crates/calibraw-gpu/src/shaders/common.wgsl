@@ -36,8 +36,11 @@ const VIEW_TRANSFORM_SCENE_SIGMOID: u32 = 1u;
 // A developed raster is retoned from the reference sigmoid to the edit's sigmoid.
 const VIEW_TRANSFORM_DISPLAY_RETONE: u32 = 2u;
 
-// `metadata.w` packs the mask effect's shader ID above eight flag bits.
+// `metadata.w` packs the mask effect's shader ID above eight flag bits. Of
+// these, an effect slot's lowest four hold its light's channel of the light
+// bake plus one, or 0 (`assign_scene_bake_lights` in mask_params.rs).
 const MASK_EFFECT_ID_SHIFT: u32 = 8u;
+const MASK_SCENE_BAKE_LIGHT_BITS: u32 = 0xfu;
 
 fn mask_effect_id(metadata: vec4<u32>) -> u32 {
     return metadata.w >> MASK_EFFECT_ID_SHIFT;

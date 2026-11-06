@@ -314,5 +314,26 @@ pub(super) fn pack_mask_params(masks: &MaskStack, shutter_seconds: f32) -> Box<[
     }
     let used = slot;
     assign_scene_light_channels(&mut packed[..used]);
+    assign_scene_bake_lights(&mut packed[..used]);
     packed
+}
+
+/// Gives the first Relight slots that light the scene and cast shadows, in
+/// slot order, a channel of the light bake each (`scene::lights`), as its
+/// number plus one in the flag bits of `metadata[3]` below the effect's ID
+/// (`mask_effect_scene_bake_light` in effect_api.wgsl). Later ones cast none.
+fn assign_scene_bake_lights(packed: &mut [MaskData]) {
+    let lights = packed
+        .iter_mut()
+        .filter(|data| relight_casts_shadows(data))
+        .take(SCENE_SHADOW_LIGHTS);
+    for (channel, data) in lights.enumerate() {
+        data.metadata[3] |= channel as u32 + 1;
+    }
+}
+
+/// The light bake's channel of a slot's light, if it has one.
+pub(super) fn scene_bake_light_channel(data: &MaskData) -> Option<usize> {
+    let bits = data.metadata[3] & MASK_SCENE_BAKE_LIGHT_BITS;
+    (bits != 0).then(|| bits as usize - 1)
 }

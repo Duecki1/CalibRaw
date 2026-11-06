@@ -34,6 +34,11 @@
 //! - Readers of schema 4, development builds after v1.4, read scene depth as
 //!   one 8-bit map. Edits holding scene depth are written with schema 5, its
 //!   layout as `SceneDepth`, which those readers report as newer.
+//! - Every reader before schema 5 reads Relight's `relief` and `depth`,
+//!   which edits now hold as `relief_scale` and `light_depth`
+//!   (`scene_depth_controls`): they would show a Relight at its defaults and
+//!   save it so. Edits with a Relight are written with schema 5 too, and
+//!   presets with their schema 5.
 
 use super::effect_sliders::GlobalSliders;
 use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskRgbImage};
@@ -108,7 +113,8 @@ pub(crate) fn serialize_color_range<S: Serializer>(
 /// The schema to write `edits` with: [`V1_SCHEMA_VERSION`] when readers up to
 /// v1.2 can decode them, [`V2_SCHEMA_VERSION`] when readers up to v1.3 can,
 /// [`V3_SCHEMA_VERSION`] when readers up to v1.4 can, [`V4_SCHEMA_VERSION`]
-/// when readers of the 8-bit depth map can, otherwise `current`.
+/// when readers of the 8-bit depth map can, otherwise `current`: for scene
+/// depth and for Relight's scene controls.
 pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     let masks = &edits.masks;
     let uses_effect = |effects: &[MaskEffect]| {
@@ -122,7 +128,7 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
                 .iter()
                 .any(|mask| effects.contains(&mask.effect))
     };
-    if masks.scene_depth.is_some() {
+    if masks.scene_depth.is_some() || uses_effect(&[MaskEffect::Relight]) {
         return current;
     }
     let has_instances = masks
@@ -140,11 +146,9 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     {
         return V3_SCHEMA_VERSION;
     }
-    let uses_relight = uses_effect(&[MaskEffect::Relight]);
     let custom_aspect = matches!(edits.geometry.aspect_ratio, CropAspectRatio::Custom { .. });
     let removes_chromatic_aberration = edits.exposure.chromatic_aberration != 0.0;
-    if uses_relight || edits.lens.manual.is_some() || custom_aspect || removes_chromatic_aberration
-    {
+    if edits.lens.manual.is_some() || custom_aspect || removes_chromatic_aberration {
         V2_SCHEMA_VERSION
     } else {
         V1_SCHEMA_VERSION
@@ -213,11 +217,14 @@ mod tests {
     }
 
     #[test]
-    fn relight_anywhere_is_written_as_schema_2() {
+    fn relight_anywhere_is_written_with_the_current_schema() {
         for in_mask in [false, true] {
             let edits = edits(Some(in_mask));
             let bytes = encode(edits.clone()).unwrap();
-            assert_eq!(document(&bytes)["schema_version"], V2_SCHEMA_VERSION);
+            assert_eq!(
+                document(&bytes)["schema_version"],
+                crate::sidecar::SIDECAR_SCHEMA_VERSION
+            );
             let loaded = decode(&bytes).unwrap();
             assert!(!loaded.migrated);
             assert_eq!(loaded.edits, edits, "in_mask={in_mask}");
@@ -264,7 +271,7 @@ mod tests {
 
     #[test]
     fn a_lut_is_written_as_schema_3() {
-        let mut edits = edits(Some(false));
+        let mut edits = edits(None);
         edits.look_lut = Some(LookLut {
             id: LutId::of_bytes(b"film"),
             name: "Film".to_owned(),
@@ -293,7 +300,10 @@ mod tests {
             masks: true,
             ..EditSelection::default()
         };
-        for (relight, expected) in [(None, V1_SCHEMA_VERSION), (Some(false), V2_SCHEMA_VERSION)] {
+        for (relight, expected) in [
+            (None, V1_SCHEMA_VERSION),
+            (Some(false), crate::presets::PRESET_SCHEMA_VERSION),
+        ] {
             let preset = Preset::new("Light", "", selection, &edits(relight)).unwrap();
             let bytes = preset.encode().unwrap();
             assert_eq!(document(&bytes)["schema_version"], expected);

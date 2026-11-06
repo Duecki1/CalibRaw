@@ -89,6 +89,9 @@ pub(super) const CFA_LINEAR: ShaderSource = wgsl!("cfa_linear.wgsl");
 pub(super) const XTRANS_MARKESTEIJN: ShaderSource = wgsl!("xtrans/markesteijn.wgsl");
 pub(super) const SCENE_CAMERA: ShaderSource = wgsl!("scene/camera.wgsl");
 pub(super) const SCENE_BAKE_COMMON: ShaderSource = wgsl!("scene/bake_common.wgsl");
+pub(super) const SCENE_LIGHTS_COMMON: ShaderSource = wgsl!("scene/lights_common.wgsl");
+/// The scene's geometry per pixel, which depth effects read (scene/geometry.wgsl).
+pub(super) const SCENE_GEOMETRY: ShaderSource = wgsl!("scene/geometry.wgsl");
 
 pub(super) const MASK_EFFECT_API: ShaderSource = wgsl!("mask_effects/effect_api.wgsl");
 pub(super) const MASK_LENS_BLUR: ShaderSource = wgsl!("mask_effects/lens_blur.wgsl");
@@ -174,6 +177,9 @@ pub(super) const SCENE_BAKE_FOCUS: ShaderSource = wgsl!("scene/bake_focus.wgsl")
 pub(super) const SCENE_BAKE_COVERAGE: ShaderSource = wgsl!("scene/bake_coverage.wgsl");
 pub(super) const SCENE_BAKE_LAYERS: ShaderSource = wgsl!("scene/bake_layers.wgsl");
 pub(super) const SCENE_BAKE_MIPS: ShaderSource = wgsl!("scene/bake_mips.wgsl");
+/// The light bake's passes (pipeline/gpu/scene/lights.rs).
+pub(super) const SCENE_SHADOW_RASTER: ShaderSource = wgsl!("scene/shadow_raster.wgsl");
+pub(super) const SCENE_VISIBILITY: ShaderSource = wgsl!("scene/visibility.wgsl");
 
 /// A module other shaders import.
 pub(super) struct ComposableModule {
@@ -202,7 +208,7 @@ const fn xtrans_module(source: ShaderSource) -> ComposableModule {
 
 /// Composable modules in registration order: a module may only import
 /// modules listed before it.
-pub(super) const COMPOSABLE_MODULES: [ComposableModule; 22] = [
+pub(super) const COMPOSABLE_MODULES: [ComposableModule; 24] = [
     module(COMMON),
     module(COLOR),
     module(NOISE),
@@ -212,9 +218,11 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 22] = [
     module(PROFILE),
     module(SCENE_CAMERA),
     module(SCENE_BAKE_COMMON),
+    module(SCENE_LIGHTS_COMMON),
     module(LOOK_LUT),
     module(BASIC_ADJUSTMENTS),
     module(SCENE_SOURCE),
+    module(SCENE_GEOMETRY),
     module(HAZE),
     module(TONE_COMMON),
     module(TONEMAP),
@@ -360,7 +368,7 @@ pub(super) const SCENE_BAKE_ACCUMULATE_ENTRY: EntryShader = entry(
 /// passes compile outside the processing pipeline (scene/bake.rs) but are
 /// validated with the rest.
 #[cfg(test)]
-pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 24] = [
+pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 26] = [
     HIGHLIGHTS_ENTRY,
     BAYER_RCD_P1_ENTRY,
     BAYER_RCD_P2_ENTRY,
@@ -385,4 +393,6 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 24] = [
     entry("scene bake coverage", SCENE_BAKE_COVERAGE, false, None),
     entry("scene bake layers", SCENE_BAKE_LAYERS, false, None),
     entry("scene bake mips", SCENE_BAKE_MIPS, false, None),
+    entry("scene shadow raster", SCENE_SHADOW_RASTER, false, None),
+    entry("scene visibility", SCENE_VISIBILITY, false, None),
 ];

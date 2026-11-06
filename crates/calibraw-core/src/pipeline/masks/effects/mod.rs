@@ -382,8 +382,9 @@ mask_effects! {
         category: GlowAndLight,
         settings: relight: RelightEffectSettings,
         passes: [Creative],
-        reach: Creative(SCENE_DEPTH_GUIDE_SUPPORT),
-        scene_map: WithDepth,
+        reach: Pixel,
+        scene_map: Never,
+        scene: [LightBake],
     }
     Neon {
         label: "Neon",

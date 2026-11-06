@@ -516,11 +516,16 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_entry(46, wgpu::TextureSampleType::Float { filterable: true }),
                     texture_entry(69, wgpu::TextureSampleType::Float { filterable: true }),
                     texture_entry(70, wgpu::TextureSampleType::Float { filterable: true }),
-                    texture_entry(71, wgpu::TextureSampleType::Float { filterable: false }),
-                    texture_entry(77, wgpu::TextureSampleType::Float { filterable: false }),
-                    texture_entry(73, wgpu::TextureSampleType::Float { filterable: false }),
-                    texture_entry(75, wgpu::TextureSampleType::Float { filterable: false }),
+                    // depth-rework-bridge: delete in P7. The scene map's
+                    // depth, range, ground and lens blur, one array.
+                    texture_array_entry(71, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(83, wgpu::TextureSampleType::Float { filterable: true }),
+                    // The scene bake and the light bake (scene/geometry.wgsl),
+                    // and the camera profile its coverage guide is read with.
+                    buffer_entry(85),
+                    texture_array_entry(112, wgpu::TextureSampleType::Float { filterable: true }),
+                    texture_array_entry(113, wgpu::TextureSampleType::Float { filterable: true }),
+                    storage_buffer_entry(20, true),
                 ],
             )
         });
@@ -719,7 +724,9 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             storage_buffer_entry(62, false),
             environment_write(63),
             coefficient_write(64),
-            environment_write(76),
+            // depth-rework-bridge: delete in P7. The depth range, ground and
+            // lens blur are layers of the scene map array (scene_depth.wgsl).
+            coefficient_write(76),
         ],
         &[buffer_entry(0), scene_map_read(65), coefficient_write(66)],
         &[buffer_entry(0), scene_map_read(67), environment_write(68)],
@@ -728,12 +735,12 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             sampler_entry(28),
             texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
             scene_map_read(67),
-            environment_write(72),
+            coefficient_write(72),
         ],
         &[
             buffer_entry(0),
             storage_buffer_entry(62, false),
-            environment_write(74),
+            coefficient_write(74),
         ],
     ];
     let scene_map_labels: [&str; SCENE_MAP_PASSES] = [

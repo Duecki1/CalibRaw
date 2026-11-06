@@ -280,7 +280,7 @@ fn apply_edit(
         }
         (MaskEffect::Relight, Depth(depth)) => {
             if let Some(light) = settings.relight.lights.get_mut(instance) {
-                light.depth = relight::DEPTH.clamp(depth);
+                light.light_depth = relight::LIGHT_DEPTH.clamp(depth);
             }
         }
         (MaskEffect::LightRays, Position(position)) => {
