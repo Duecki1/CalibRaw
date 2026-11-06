@@ -377,6 +377,11 @@ pub(crate) trait Platform: Send + Sync {
     fn unlink_folder(&self, _key: &str) -> Result<(), String> {
         Err(unavailable("linked folders"))
     }
+    /// The folders of the linked folder `key`, as [`Self::list_library_folders`]
+    /// lists them, whichever folder is selected.
+    fn list_linked_folder_tree(&self, _key: &str) -> Result<Vec<LibraryFolder>, String> {
+        Err(unavailable("linked folders"))
+    }
     /// Lists from the top of a linked folder, or of the media library for an
     /// empty key.
     fn select_library_root(&self, key: &str) -> Result<(), String> {

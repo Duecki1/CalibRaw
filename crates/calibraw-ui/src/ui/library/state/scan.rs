@@ -3,33 +3,18 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
 
-/// Walks a linked folder beside its photo scan. A failure is only logged: the
-/// photo scan reaches the same folder and reports it.
-fn spawn_linked_folder_walk(
-    platform: Arc<dyn Platform>,
-    event_sender: mpsc::SyncSender<ScanEvent>,
-    generation: u64,
-    repaint: egui::Context,
-) {
-    let walk = std::thread::Builder::new()
-        .name("calibraw-library-folders".to_owned())
-        .spawn(move || match platform.list_library_folders() {
-            Ok(folders) => {
-                let _ = event_sender.send(ScanEvent::AndroidFolders {
-                    generation,
-                    folders,
-                });
-                repaint.request_repaint();
-            }
-            Err(error) => log::warn!("{error}"),
-        });
-    if let Err(error) = walk {
-        log::warn!("could not walk the linked folder: {error}");
-    }
-}
-
 impl LibraryState {
+    /// Scans the shown folder again; a linked folder's tree is walked again too.
     pub(crate) fn refresh(&mut self, context: &egui::Context) {
+        if !self.media.root.is_empty() {
+            self.media.tree_walk_due = true;
+        }
+        self.rescan(context);
+    }
+
+    /// Scans the shown folder again and keeps a linked folder's tree, which
+    /// selecting another of its folders does not change.
+    pub(in crate::ui::library) fn rescan(&mut self, context: &egui::Context) {
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         let cancellation = Arc::clone(&self.generation);
         let decoding_paused = Arc::clone(&self.decoding_paused);
@@ -144,9 +129,10 @@ impl LibraryState {
                     deferred_metadata.save();
                 })
         } else {
-            let platform = Arc::clone(&self.platform);
             // A linked folder may be slow to walk, so its photos do not wait
             // for its folders.
+            self.start_linked_tree_walk(context);
+            let platform = Arc::clone(&self.platform);
             let linked_folder = self.media.root.clone();
             let folder = self.media.folder.clone();
             self.status = tr("Refreshing CalibRaw library…").to_owned();
@@ -170,13 +156,6 @@ impl LibraryState {
                         {
                             return;
                         }
-                    } else {
-                        spawn_linked_folder_walk(
-                            Arc::clone(&platform),
-                            event_sender.clone(),
-                            generation,
-                            repaint.clone(),
-                        );
                     }
                     let sidecar_writes = platform.sidecar_write_count();
                     let documents = match platform.list_library_documents() {
@@ -241,6 +220,74 @@ impl LibraryState {
         }
     }
 
+    /// Walks the shown linked folder's tree when a refresh asked for it and no
+    /// walk runs. A failure is only logged: the photo scan reaches the same
+    /// folder and reports it.
+    fn start_linked_tree_walk(&mut self, context: &egui::Context) {
+        if self.media.root.is_empty() || !self.media.tree_walk_due || self.media.tree_walk.is_some()
+        {
+            return;
+        }
+        self.media.tree_walk_due = false;
+        let root = self.media.root.clone();
+        let platform = Arc::clone(&self.platform);
+        let repaint = context.clone();
+        let (sender, result) = mpsc::channel();
+        let walked_root = root.clone();
+        let walk = std::thread::Builder::new()
+            .name("calibraw-library-folders".to_owned())
+            .spawn(move || {
+                // The library may have stopped waiting for this walk.
+                let _ = sender.send(platform.list_linked_folder_tree(&walked_root));
+                repaint.request_repaint();
+            });
+        match walk {
+            Ok(_) => self.media.tree_walk = Some(LinkedTreeWalk { root, result }),
+            Err(error) => log::warn!("could not walk the linked folder: {error}"),
+        }
+    }
+
+    fn poll_linked_tree_walk(&mut self, context: &egui::Context) {
+        let Some(walk) = self.media.tree_walk.as_ref() else {
+            return;
+        };
+        let result = match walk.result.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err("the linked folder walk stopped unexpectedly".to_owned())
+            }
+        };
+        let shown = walk.root == self.media.root;
+        self.media.tree_walk = None;
+        match result {
+            Ok(folders) if shown => self.show_android_folders(folders),
+            Ok(_) => {}
+            Err(error) => log::warn!("{error}"),
+        }
+        // A refresh while it ran, such as a folder created meanwhile.
+        self.start_linked_tree_walk(context);
+    }
+
+    /// Shows the folders of the media library or of a linked folder, keeping
+    /// the selected folder's ancestors open.
+    fn show_android_folders(&mut self, folders: Vec<crate::platform::LibraryFolder>) {
+        self.media.folders = folders;
+        let folder_paths = self
+            .media
+            .folders
+            .iter()
+            .map(|folder| folder.path.as_str())
+            .collect::<HashSet<_>>();
+        self.media
+            .expanded_folders
+            .retain(|path| path.is_empty() || folder_paths.contains(path.as_str()));
+        let selected_folder = self.media.folder.clone();
+        self.media
+            .expanded_folders
+            .extend(android_folder_ancestors(&selected_folder));
+    }
+
     pub(crate) fn poll_dropped_raw_import(&mut self, context: &egui::Context) {
         let imported = self
             .raw_import_receiver
@@ -263,6 +310,7 @@ impl LibraryState {
     }
 
     pub(crate) fn poll(&mut self, context: &egui::Context) {
+        self.poll_linked_tree_walk(context);
         let pasted = self
             .asset_transfer_receiver
             .as_ref()
@@ -351,20 +399,7 @@ impl LibraryState {
                     generation,
                     folders,
                 } if generation == self.generation.load(Ordering::Acquire) => {
-                    self.media.folders = folders;
-                    let folder_paths = self
-                        .media
-                        .folders
-                        .iter()
-                        .map(|folder| folder.path.as_str())
-                        .collect::<HashSet<_>>();
-                    self.media
-                        .expanded_folders
-                        .retain(|path| path.is_empty() || folder_paths.contains(path.as_str()));
-                    let selected_folder = self.media.folder.clone();
-                    self.media
-                        .expanded_folders
-                        .extend(android_folder_ancestors(&selected_folder));
+                    self.show_android_folders(folders);
                 }
                 ScanEvent::Catalog {
                     generation,

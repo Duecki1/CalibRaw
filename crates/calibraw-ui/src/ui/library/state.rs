@@ -126,6 +126,8 @@ impl LibraryState {
                 link_dialog: false,
                 unlink_dialog: None,
                 pending_error,
+                tree_walk: None,
+                tree_walk_due: false,
             },
         );
         state.refresh(context);

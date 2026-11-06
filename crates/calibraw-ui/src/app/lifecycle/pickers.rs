@@ -129,7 +129,9 @@ impl CalibRawApp {
                 ),
             }
         }
-        if self.platform.take_library_changed() && !self.library.is_scanning() {
+        // A change seen during a scan waits for it: the scan may have listed
+        // the folder before the change.
+        if !self.library.is_scanning() && self.platform.take_library_changed() {
             self.library.refresh(&self.egui_ctx);
         }
         if let Some(error) = self.library.take_linked_folder_error() {

@@ -267,15 +267,11 @@ impl Platform for AndroidPlatform {
     }
 
     fn list_library_folders(&self) -> Result<Vec<LibraryFolder>, String> {
-        calibraw_ffi::list_library_folders(&self.app).map(|folders| {
-            folders
-                .into_iter()
-                .map(|folder| LibraryFolder {
-                    path: folder.path,
-                    name: folder.name,
-                })
-                .collect()
-        })
+        calibraw_ffi::list_library_folders(&self.app).map(library_folders)
+    }
+
+    fn list_linked_folder_tree(&self, key: &str) -> Result<Vec<LibraryFolder>, String> {
+        calibraw_ffi::list_linked_folder_tree(&self.app, key).map(library_folders)
     }
 
     fn select_library_folder(&self, relative_path: &str) -> Result<(), String> {
@@ -644,6 +640,16 @@ impl ReplayVideoEncoder for MediaCodecEncoder {
     fn finish(self: Box<Self>) -> Result<(), String> {
         self.0.finish()
     }
+}
+
+fn library_folders(folders: Vec<calibraw_ffi::LibraryFolder>) -> Vec<LibraryFolder> {
+    folders
+        .into_iter()
+        .map(|folder| LibraryFolder {
+            path: folder.path,
+            name: folder.name,
+        })
+        .collect()
 }
 
 fn staged_files_result(result: calibraw_ffi::StagedFilesResult) -> StagedFilesResult {

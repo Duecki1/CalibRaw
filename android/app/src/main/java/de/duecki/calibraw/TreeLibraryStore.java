@@ -14,6 +14,8 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.SyncFailedException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -221,7 +223,8 @@ final class TreeLibraryStore implements LibraryStore {
 
     /**
      * Whether someone other than CalibRaw changed {@code folder} since the library showed it.
-     * False if it never showed it.
+     * False if it never showed it. A folder that cannot be read, because sync removed it or its
+     * storage is gone, has changed: listing it again shows the error.
      */
     boolean changedSinceListing(String folder) throws Exception {
         String normalized = normalizeFolder(folder);
@@ -233,7 +236,17 @@ final class TreeLibraryStore implements LibraryStore {
             }
             before = new HashMap<>(known);
         }
-        Map<String, Entry> now = withoutTemporaryFiles(query(folderDocumentId(normalized)));
+        Map<String, Entry> now;
+        try {
+            now = withoutTemporaryFiles(query(folderDocumentId(normalized)));
+        } catch (Exception unreadable) {
+            Log.w(LOG_TAG, "Could not check " + label + " for changes", unreadable);
+            // Reported once: until it lists again, later returns to the app find nothing shown.
+            synchronized (this) {
+                shown.remove(normalized);
+            }
+            return true;
+        }
         if (now.size() != before.size()) {
             return true;
         }
@@ -309,7 +322,7 @@ final class TreeLibraryStore implements LibraryStore {
     public String createFolder(String parent, String requestedName) throws Exception {
         String normalizedParent = normalizeFolder(parent);
         String name = AndroidStorageContract.safeFolderName(requestedName);
-        if (refresh(normalizedParent).containsKey(name)) {
+        if (holdsName(refresh(normalizedParent), name)) {
             throw new IllegalStateException(name + " already exists");
         }
         createExact(normalizedParent, name, DocumentsContract.Document.MIME_TYPE_DIR);
@@ -415,7 +428,7 @@ final class TreeLibraryStore implements LibraryStore {
     }
 
     private static String uniqueName(Map<String, Entry> entries, String name) {
-        if (!entries.containsKey(name)) {
+        if (!holdsName(entries, name)) {
             return name;
         }
         int dot = name.lastIndexOf('.');
@@ -423,20 +436,54 @@ final class TreeLibraryStore implements LibraryStore {
         String extension = dot > 0 ? name.substring(dot) : "";
         for (int suffix = 1; ; suffix++) {
             String candidate = stem + "-" + suffix + extension;
-            if (!entries.containsKey(candidate)) {
+            if (!holdsName(entries, candidate)) {
                 return candidate;
             }
         }
     }
 
+    /**
+     * Whether {@code name} is taken. Shared storage ignores case, and a provider numbers a
+     * name taken in another case instead of refusing it.
+     */
+    private static boolean holdsName(Map<String, Entry> entries, String name) {
+        for (String existing : entries.keySet()) {
+            if (existing.equalsIgnoreCase(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the provider stores {@code name} as it is. Android's file providers replace the
+     * characters FAT cannot hold with "_" ({@code FileUtils.buildValidFatFilename}).
+     */
+    private static boolean providerKeepsName(String name) {
+        for (int index = 0; index < name.length(); index++) {
+            char character = name.charAt(index);
+            if (character < 0x20 || character == 0x7f || "\"*/:<>?\\|".indexOf(character) >= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     public Uri rename(Uri raw, String displayName, String requestedName) throws Exception {
         Place place = place(raw, displayName);
+        if (!providerKeepsName(requestedName)) {
+            throw new IllegalArgumentException(
+                    "A name in a linked folder cannot contain \\ / : * ? \" < > | "
+                            + "or control characters");
+        }
         synchronized (sidecarWrites) {
             Map<String, Entry> entries = refresh(place.folder);
             String sidecar = AndroidStorageContract.sidecarDisplayName(displayName);
             String destinationSidecar = AndroidStorageContract.sidecarDisplayName(requestedName);
-            if (entries.containsKey(requestedName) || entries.containsKey(destinationSidecar)) {
+            // This also refuses changing only the case, which shared storage cannot tell apart,
+            // as CalibRaw's own library does.
+            if (holdsName(entries, requestedName) || holdsName(entries, destinationSidecar)) {
                 throw new IllegalStateException(requestedName + " already exists");
             }
             Entry photo = entries.get(displayName);
@@ -572,12 +619,14 @@ final class TreeLibraryStore implements LibraryStore {
         Entry stored = refresh(place.folder).get(
                 AndroidStorageContract.companionDisplayName(displayName, suffix));
         if (stored == null) {
-            deleteLocal(mirror);
+            deleteMirrorFiles(mirror);
             return;
         }
-        if (mirror.isFile()
-                && mirror.length() == stored.size
-                && mirror.lastModified() == stored.modifiedMillis) {
+        if (mirrorHolds(mirror, stored)) {
+            // In use: the cache scavenger removes copies unused for a day.
+            //noinspection ResultOfMethodCallIgnored -- the record keeps whatever time it has
+            mirror.setLastModified(System.currentTimeMillis());
+            recordMirrorSource(mirror, stored);
             return;
         }
         File partial = new File(mirror.getPath() + ".part");
@@ -600,8 +649,7 @@ final class TreeLibraryStore implements LibraryStore {
                 throw new IllegalStateException("Could not place " + mirror);
             }
             completed = true;
-            //noinspection ResultOfMethodCallIgnored -- a mismatch only copies it again next time
-            mirror.setLastModified(stored.modifiedMillis);
+            recordMirrorSource(mirror, stored);
         } finally {
             if (!completed) {
                 deleteLocal(partial);
@@ -618,15 +666,12 @@ final class TreeLibraryStore implements LibraryStore {
         }
         String name = AndroidStorageContract.companionDisplayName(displayName, suffix);
         Entry stored = entries(place.folder).get(name);
-        // What was just restored from the folder needs no copying back.
-        if (stored != null
-                && stored.size == mirror.length()
-                && stored.modifiedMillis == mirror.lastModified()) {
+        // What was restored from the folder, and not written since, needs no copying back.
+        if (stored != null && mirrorHolds(mirror, stored)) {
             return;
         }
         Entry published = replaceDocument(place.folder, name, mirror);
-        //noinspection ResultOfMethodCallIgnored -- a mismatch only copies it again next time
-        mirror.setLastModified(published.modifiedMillis);
+        recordMirrorSource(mirror, published);
     }
 
     @Override
@@ -661,9 +706,49 @@ final class TreeLibraryStore implements LibraryStore {
 
     private void deleteMirror(Uri raw, String suffix) {
         try {
-            deleteLocal(mirror(raw, suffix));
+            deleteMirrorFiles(mirror(raw, suffix));
         } catch (Exception error) {
             Log.w(LOG_TAG, "Could not remove a local companion copy", error);
+        }
+    }
+
+    private static void deleteMirrorFiles(File mirror) {
+        deleteLocal(mirror);
+        deleteLocal(mirrorSource(mirror));
+    }
+
+    /**
+     * Records which stored companion {@code mirror} holds, and the mirror's own size and time
+     * then, so a later write by native code shows. Kept apart from the mirror's time, which is
+     * its last use for the cache scavenger.
+     */
+    private static File mirrorSource(File mirror) {
+        return new File(mirror.getPath() + ".source");
+    }
+
+    private static void recordMirrorSource(File mirror, Entry stored) {
+        String record = stored.size + " " + stored.modifiedMillis + " "
+                + mirror.length() + " " + mirror.lastModified();
+        try (FileOutputStream output = new FileOutputStream(mirrorSource(mirror))) {
+            output.write(record.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception error) {
+            // Without the record the next open copies the companion again.
+            Log.w(LOG_TAG, "Could not record the source of " + mirror, error);
+        }
+    }
+
+    /** Whether {@code mirror} holds {@code stored}, unchanged since it was copied or saved. */
+    private static boolean mirrorHolds(File mirror, Entry stored) {
+        if (!mirror.isFile()) {
+            return false;
+        }
+        String expected = stored.size + " " + stored.modifiedMillis + " "
+                + mirror.length() + " " + mirror.lastModified();
+        try {
+            return expected.equals(new String(
+                    Files.readAllBytes(mirrorSource(mirror).toPath()), StandardCharsets.UTF_8));
+        } catch (Exception noRecord) {
+            return false;
         }
     }
 
@@ -791,22 +876,41 @@ final class TreeLibraryStore implements LibraryStore {
         return entry;
     }
 
+    /**
+     * Renames {@code document}; a provider that would store it under another name is refused.
+     * The provider renames before it says which name it chose, so a refused rename is undone:
+     * the document keeps the name its sidecar and the caller's cleanup expect.
+     */
     private Entry renameExact(String folder, Entry document, String name) throws Exception {
+        Entry entry = renameTo(folder, document, name);
+        if (!name.equals(entry.displayName)) {
+            try {
+                Entry restored = renameTo(folder, entry, document.displayName);
+                if (!document.displayName.equals(restored.displayName)) {
+                    Log.w(LOG_TAG, "Could not give " + document.displayName
+                            + " its name back; it is now " + restored.displayName);
+                }
+            } catch (Exception error) {
+                Log.w(LOG_TAG, "Could not give " + document.displayName + " its name back", error);
+            }
+            throw misnamed(name, entry);
+        }
+        return entry;
+    }
+
+    private Entry renameTo(String folder, Entry document, String name) throws Exception {
         Uri current = documentUri(document.documentId);
         Uri renamed = DocumentsContract.renameDocument(resolver(), current, name);
         // A provider that keeps the document's ID may report no new URI.
         Entry entry = queryEntry(renamed != null ? renamed : current);
         noteOwnChange(folder, document.displayName, null);
         noteOwnChange(folder, entry.displayName, entry);
-        if (!name.equals(entry.displayName)) {
-            throw misnamed(name, entry);
-        }
         return entry;
     }
 
     private static IllegalStateException misnamed(String name, Entry actual) {
         return new IllegalStateException(
-                "Android storage saved " + name + " as " + actual.displayName
+                "Android storage would store " + name + " as " + actual.displayName
                         + ", which CalibRaw would not find again");
     }
 

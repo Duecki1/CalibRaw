@@ -706,6 +706,19 @@ struct MediaLibraryState {
     unlink_dialog: Option<crate::platform::LinkedFolder>,
     /// A failure the app shows in its error dialog on the next frame.
     pending_error: Option<String>,
+    /// The walk of the shown linked folder's tree. It lists every file of
+    /// every folder through the Storage Access Framework, so one runs at a
+    /// time and selecting a folder within the tree does not start one.
+    tree_walk: Option<LinkedTreeWalk>,
+    /// A refresh asked for the linked folder's tree again; walked once no
+    /// walk runs.
+    tree_walk_due: bool,
+}
+
+struct LinkedTreeWalk {
+    /// The linked folder walked; its folders are shown only while it is.
+    root: String,
+    result: mpsc::Receiver<Result<Vec<crate::platform::LibraryFolder>, String>>,
 }
 
 enum AndroidLibraryFolderUiAction {

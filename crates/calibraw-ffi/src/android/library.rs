@@ -85,6 +85,27 @@ pub fn list_library_folders(app: &AndroidApp) -> Result<Vec<LibraryFolder>, Stri
         Ok(env.cast_local::<JString>(object)?.to_string())
     })
     .map_err(|error| format!("could not list Android RAW library folders: {error:#}"))?;
+    parse_library_folders(&encoded)
+}
+
+/// The folders of the linked folder `key`, whichever folder is selected.
+pub fn list_linked_folder_tree(app: &AndroidApp, key: &str) -> Result<Vec<LibraryFolder>, String> {
+    let encoded = with_storage_manager(app, |env, storage_manager| {
+        let key = env.new_string(key)?;
+        let value = env.call_method(
+            storage_manager,
+            jni::jni_str!("listLinkedFolderTree"),
+            jni::jni_sig!((JString) -> JString),
+            &[JValue::Object(&key)],
+        )?;
+        java_string(env, value)
+    })
+    .map_err(|error| format!("could not list the linked folder's folders: {error:#}"))?;
+    parse_library_folders(&encoded)
+}
+
+/// `{encoded path}\t{encoded name}` lines, parents first.
+fn parse_library_folders(encoded: &str) -> Result<Vec<LibraryFolder>, String> {
     encoded
         .lines()
         .filter(|line| !line.is_empty())

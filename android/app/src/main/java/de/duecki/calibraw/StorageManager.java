@@ -160,7 +160,8 @@ final class StorageManager {
                     callbacks.onLibraryChanged();
                 }
             } catch (Exception error) {
-                // The next listing reports a folder that is gone, in a dialog.
+                // Only a folder path the store rejects reaches here; one it cannot read is
+                // reported as changed, so the listing shows the error.
                 Log.w(LOG_TAG, "Could not check the linked folder for changes", error);
             }
         }, "CalibRaw linked folder check").start();
@@ -255,7 +256,8 @@ final class StorageManager {
             return;
         }
 
-        // Copies of a linked folder's AI results; the next open copies what it needs again.
+        // Copies of a linked folder's AI results, dated by their last use; the next open copies
+        // what it needs again.
         deleteStaleFiles(
                 new File(storage.getCacheDir(), "linked-companions").listFiles(), now);
         if (Thread.currentThread().isInterrupted()) {
@@ -414,6 +416,23 @@ final class StorageManager {
             return selection.store.listFolders();
         } catch (Exception error) {
             throw new IllegalStateException("Could not list RAW library folders", error);
+        }
+    }
+
+    /**
+     * The folders of the linked folder {@code key}, as {@link #listRawLibraryFolders} lists them.
+     * Named rather than taken from the selection, as walking a large tree outlasts selecting
+     * another of its folders.
+     */
+    String listLinkedFolderTree(String key) {
+        TreeLibraryStore store = linkedFolders.store(key);
+        if (store == null) {
+            throw new IllegalArgumentException("This folder is no longer linked");
+        }
+        try {
+            return store.listFolders();
+        } catch (Exception error) {
+            throw new IllegalStateException("Could not list the linked folder's folders", error);
         }
     }
 

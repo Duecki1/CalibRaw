@@ -44,6 +44,8 @@ impl LibraryState {
         self.media.root = key;
         self.media.folder = String::new();
         self.media.folders.clear();
+        // The other folder's walk is left to finish unseen.
+        self.media.tree_walk = None;
         self.media.expanded_folders = android_folder_ancestors("");
         self.media.root_location = self.platform.library_location().unwrap_or_else(|error| {
             log::warn!("{error}");
@@ -75,7 +77,7 @@ impl LibraryState {
         let location = android_library_location_label(&self.media.root_location, &selected_folder);
         self.location = Some(location);
         self.reset_folder_contents();
-        self.refresh(context);
+        self.rescan(context);
         true
     }
 
