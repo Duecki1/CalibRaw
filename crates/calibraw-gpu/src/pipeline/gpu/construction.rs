@@ -255,6 +255,7 @@ impl RawGpuPipeline {
 
         let gpu_error_scopes = GpuErrorScopes::push(device);
 
+        let resources_started = Instant::now();
         let (surfaces, has_ai_scene) =
             create_pipeline_surfaces(device, queue, raw, ai_cfa, ai_binned, &geometry)?;
 
@@ -273,6 +274,9 @@ impl RawGpuPipeline {
         let effect_inputs =
             EffectInputs::new(device, input_binding_sources(&layouts, &buffers, &surfaces));
 
+        let resources = resources_started.elapsed();
+
+        let shaders_started = Instant::now();
         let shaders = load_shader_set(
             device,
             program_template.is_some(),
@@ -280,7 +284,9 @@ impl RawGpuPipeline {
             geometry.demosaic_format,
             geometry.work_format,
         )?;
+        let shader_modules = shaders_started.elapsed();
 
+        let programs_started = Instant::now();
         let assembled = assemble_passes(
             device,
             program_template,
@@ -376,6 +382,7 @@ impl RawGpuPipeline {
             out_texture: surfaces.out_texture,
             out_view: surfaces.out_view,
             pipeline_cache,
+            setup_times: PipelineSetupTimes::default(),
             _gpu_budget_reservation: gpu_budget_reservation,
         };
         // Inputs these edits read are allocated now, within the constructor's
@@ -400,6 +407,12 @@ impl RawGpuPipeline {
             current.store(false, Ordering::Release);
         }
         gpu_error_scopes.finish("create RAW GPU pipeline")?;
+        let mut pipeline = pipeline;
+        pipeline.setup_times = PipelineSetupTimes {
+            resources,
+            shader_modules,
+            programs: programs_started.elapsed(),
+        };
         Ok(pipeline)
     }
 }

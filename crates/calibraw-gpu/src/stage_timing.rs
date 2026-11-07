@@ -15,15 +15,24 @@
 //! dispatches (Mali notably), so a pass may start before the previous one
 //! ends.
 //!
+//! An export on that device ([`begin_export`]) sums its stages per phase
+//! instead, and records one line per phase when it finishes, with the passes
+//! slowest first:
+//!
+//! ```text
+//! GPU export final tiles: 1834.10 ms in 70 stages (apply_scene_tone_node 610.32, ...)
+//! ```
+//!
 //! Off, a pass costs one atomic load. Passes encoded on other devices
-//! (exports, developed thumbnails) or outside a stage entry point are never
-//! timed.
+//! (headless exports, developed thumbnails) or outside a stage entry point are
+//! never timed.
 
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// Passes timed per stage; later ones run untimed and are counted.
 const MAX_TIMED_PASSES: u32 = 256;
@@ -40,6 +49,15 @@ struct Timer {
 thread_local! {
     /// The stage being encoded on this thread, between `begin` and `submit`.
     static ACTIVE: RefCell<Option<ActiveStage>> = const { RefCell::new(None) };
+    /// The export this thread's stages are summed into, between
+    /// [`begin_export`] and [`ExportTiming::finish`].
+    static EXPORT: RefCell<Option<ExportPhase>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone)]
+struct ExportPhase {
+    totals: Arc<ExportTotals>,
+    phase: &'static str,
 }
 
 struct ActiveStage {
@@ -193,12 +211,17 @@ impl StageTiming {
         });
         encoder.resolve_query_set(&stage.query_set, 0..queries, &resolve, 0);
         encoder.copy_buffer_to_buffer(&resolve, 0, &readback, 0, size);
+        let export = EXPORT.with(|export| export.borrow().clone());
+        if let Some(export) = &export {
+            export.totals.add_pending();
+        }
         Some(PendingStageTiming {
             name: std::mem::take(&mut self.name),
             passes: stage.passes,
             untimed: stage.untimed,
             readback,
             period_ns: timer.period_ns,
+            export,
         })
     }
 }
@@ -215,6 +238,8 @@ struct PendingStageTiming {
     untimed: u32,
     readback: wgpu::Buffer,
     period_ns: f32,
+    /// The export phase the times are summed into, instead of a line.
+    export: Option<ExportPhase>,
 }
 
 impl PendingStageTiming {
@@ -225,36 +250,57 @@ impl PendingStageTiming {
         self.readback
             .slice(..)
             .map_async(wgpu::MapMode::Read, move |result| {
-                if result.is_err() {
-                    return;
+                let ticks: Option<Vec<u64>> = result.is_ok().then(|| {
+                    let ticks = buffer
+                        .slice(..)
+                        .get_mapped_range()
+                        .chunks_exact(8)
+                        .filter_map(|bytes| bytes.try_into().ok().map(u64::from_le_bytes))
+                        .collect();
+                    buffer.unmap();
+                    ticks
+                });
+                match (&self.export, ticks) {
+                    (Some(export), ticks) => export.totals.settle(
+                        export.phase,
+                        ticks.as_deref().map(|ticks| StageTicks {
+                            passes: &self.passes,
+                            untimed: self.untimed,
+                            ticks,
+                            period_ns: self.period_ns,
+                        }),
+                    ),
+                    (None, Some(ticks)) => calibraw_core::diagnostics::record(summary(
+                        &self.name,
+                        &self.passes,
+                        self.untimed,
+                        &ticks,
+                        self.period_ns,
+                    )),
+                    (None, None) => {}
                 }
-                let ticks: Vec<u64> = buffer
-                    .slice(..)
-                    .get_mapped_range()
-                    .chunks_exact(8)
-                    .filter_map(|bytes| bytes.try_into().ok().map(u64::from_le_bytes))
-                    .collect();
-                buffer.unmap();
-                calibraw_core::diagnostics::record(summary(
-                    &self.name,
-                    &self.passes,
-                    self.untimed,
-                    &ticks,
-                    self.period_ns,
-                ));
             });
+    }
+}
+
+/// Milliseconds between two timestamps of `period_ns` nanoseconds per tick.
+fn milliseconds(start: u64, end: u64, period_ns: f32) -> f64 {
+    end.saturating_sub(start) as f64 * f64::from(period_ns) / 1e6
+}
+
+/// Milliseconds from the earliest pass start to the latest pass end.
+fn stage_span(ticks: &[u64], period_ns: f32) -> f64 {
+    match (ticks.iter().min(), ticks.iter().max()) {
+        (Some(&start), Some(&end)) => milliseconds(start, end, period_ns),
+        _ => 0.0,
     }
 }
 
 /// The diagnostics line for a stage whose pass `i` started at `ticks[2i]` and
 /// ended at `ticks[2i + 1]`.
 fn summary(name: &str, passes: &[String], untimed: u32, ticks: &[u64], period_ns: f32) -> String {
-    let milliseconds =
-        |start: u64, end: u64| end.saturating_sub(start) as f64 * f64::from(period_ns) / 1e6;
-    let total = match (ticks.iter().min(), ticks.iter().max()) {
-        (Some(&start), Some(&end)) => milliseconds(start, end),
-        _ => 0.0,
-    };
+    let milliseconds = |start: u64, end: u64| milliseconds(start, end, period_ns);
+    let total = stage_span(ticks, period_ns);
     let noun = if passes.len() == 1 { "pass" } else { "passes" };
     let mut line = format!("GPU stage {name}: {total:.2} ms in {} {noun}", passes.len());
     if untimed > 0 {
@@ -269,4 +315,197 @@ fn summary(name: &str, passes: &[String], untimed: u32, ticks: &[u64], period_ns
     }
     line.push(')');
     line
+}
+
+/// How long [`ExportTiming::finish`] waits for the last stages' times.
+const EXPORT_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Sums the times of the stages this thread encodes on `device` until
+/// [`ExportTiming::finish`], when timing is on for `device`. Each stage counts
+/// toward the phase last set with [`ExportTiming::phase`].
+pub(crate) fn begin_export(device: &wgpu::Device) -> Option<ExportTiming> {
+    let timer = TIMER.get()?;
+    if timer.device != *device {
+        return None;
+    }
+    let totals = Arc::new(ExportTotals::default());
+    EXPORT.with(|export| {
+        *export.borrow_mut() = Some(ExportPhase {
+            totals: Arc::clone(&totals),
+            phase: "",
+        });
+    });
+    Some(ExportTiming {
+        totals,
+        device: device.clone(),
+        _same_thread: PhantomData,
+    })
+}
+
+/// An export whose stages this thread sums; dropping it stops summing.
+pub(crate) struct ExportTiming {
+    totals: Arc<ExportTotals>,
+    device: wgpu::Device,
+    /// The stages are collected per thread, so this must not move to another.
+    _same_thread: PhantomData<*const ()>,
+}
+
+impl ExportTiming {
+    /// Counts the stages encoded from now on toward `phase`.
+    pub(crate) fn phase(&self, phase: &'static str) {
+        EXPORT.with(|export| {
+            if let Some(export) = export.borrow_mut().as_mut() {
+                export.phase = phase;
+            }
+        });
+    }
+
+    /// Waits for the times of every submitted stage, then records one line per
+    /// phase.
+    pub(crate) fn finish(self) {
+        let deadline = Instant::now() + EXPORT_SETTLE_TIMEOUT;
+        let mut state = self.totals.lock();
+        while state.pending > 0 && Instant::now() < deadline {
+            drop(state);
+            // Map callbacks run in polls; another thread's poll may run them too.
+            let _ = self.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(Duration::from_millis(100)),
+            });
+            state = self.totals.lock();
+            if state.pending > 0 {
+                state = match self
+                    .totals
+                    .settled
+                    .wait_timeout(state, Duration::from_millis(10))
+                {
+                    Ok((state, _)) => state,
+                    Err(poisoned) => poisoned.into_inner().0,
+                };
+            }
+        }
+        for phase in &state.phases {
+            calibraw_core::diagnostics::record(phase.summary());
+        }
+        if state.pending > 0 {
+            calibraw_core::diagnostics::record(format!(
+                "GPU export timing incomplete: {} stages reported no times",
+                state.pending
+            ));
+        }
+    }
+}
+
+impl Drop for ExportTiming {
+    fn drop(&mut self) {
+        EXPORT.with(|export| export.borrow_mut().take());
+    }
+}
+
+/// The times of one stage: pass `i` started at `ticks[2i]` and ended at
+/// `ticks[2i + 1]`.
+struct StageTicks<'a> {
+    passes: &'a [String],
+    untimed: u32,
+    ticks: &'a [u64],
+    period_ns: f32,
+}
+
+#[derive(Default)]
+struct ExportTotals {
+    state: Mutex<ExportTotalsState>,
+    settled: Condvar,
+}
+
+#[derive(Default)]
+struct ExportTotalsState {
+    /// Submitted stages whose times have not arrived.
+    pending: usize,
+    /// In the order the phases first submitted a stage.
+    phases: Vec<PhaseTotals>,
+}
+
+struct PhaseTotals {
+    phase: &'static str,
+    stages: u32,
+    /// Sum of the stages' spans (`stage_span`).
+    milliseconds: f64,
+    untimed: u32,
+    /// Summed milliseconds per pass label, in the order first seen.
+    passes: Vec<(String, f64)>,
+}
+
+impl ExportTotals {
+    fn lock(&self) -> std::sync::MutexGuard<'_, ExportTotalsState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn add_pending(&self) {
+        self.lock().pending += 1;
+    }
+
+    /// Adds a stage's times to `phase`, or only settles it when they could not
+    /// be read.
+    fn settle(&self, phase: &'static str, stage: Option<StageTicks<'_>>) {
+        let mut state = self.lock();
+        state.pending = state.pending.saturating_sub(1);
+        if let Some(stage) = stage {
+            let index = match state.phases.iter().position(|totals| totals.phase == phase) {
+                Some(index) => index,
+                None => {
+                    state.phases.push(PhaseTotals {
+                        phase,
+                        stages: 0,
+                        milliseconds: 0.0,
+                        untimed: 0,
+                        passes: Vec::new(),
+                    });
+                    state.phases.len() - 1
+                }
+            };
+            state.phases[index].add(&stage);
+        }
+        drop(state);
+        self.settled.notify_all();
+    }
+}
+
+impl PhaseTotals {
+    fn add(&mut self, stage: &StageTicks<'_>) {
+        self.stages += 1;
+        self.milliseconds += stage_span(stage.ticks, stage.period_ns);
+        self.untimed += stage.untimed;
+        for (label, pass) in stage.passes.iter().zip(stage.ticks.chunks_exact(2)) {
+            let time = milliseconds(pass[0], pass[1], stage.period_ns);
+            match self.passes.iter_mut().find(|(known, _)| known == label) {
+                Some((_, total)) => *total += time,
+                None => self.passes.push((label.clone(), time)),
+            }
+        }
+    }
+
+    /// The phase's line, passes slowest first.
+    fn summary(&self) -> String {
+        let mut passes: Vec<&(String, f64)> = self.passes.iter().collect();
+        passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let noun = if self.stages == 1 { "stage" } else { "stages" };
+        let mut line = format!(
+            "GPU export {}: {:.2} ms in {} {noun}",
+            self.phase, self.milliseconds, self.stages
+        );
+        if self.untimed > 0 {
+            let _ = write!(line, " and {} untimed passes", self.untimed);
+        }
+        line.push_str(" (");
+        for (index, (label, time)) in passes.into_iter().enumerate() {
+            if index > 0 {
+                line.push_str(", ");
+            }
+            let _ = write!(line, "{label} {time:.2}");
+        }
+        line.push(')');
+        line
+    }
 }

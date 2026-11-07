@@ -25,7 +25,9 @@ impl IntermediateMemory {
         }
     }
 
-    fn reserve(&self, bytes: u64) -> Option<MemoryReservation<'_>> {
+    /// Takes `bytes` of the allowance until the reservation drops, if it has
+    /// that much left.
+    pub(super) fn reserve(&self, bytes: u64) -> Option<MemoryReservation<'_>> {
         self.available
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |available| {
                 available.checked_sub(bytes)
@@ -39,7 +41,7 @@ impl IntermediateMemory {
 }
 
 /// Part of an [`IntermediateMemory`], returned on drop.
-struct MemoryReservation<'a> {
+pub(super) struct MemoryReservation<'a> {
     memory: &'a IntermediateMemory,
     bytes: u64,
 }

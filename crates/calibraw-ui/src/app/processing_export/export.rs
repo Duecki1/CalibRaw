@@ -494,6 +494,71 @@ impl CalibRawApp {
         }))
     }
 
+    /// While the Export tab is open, compiles the programs exporting the open photo with its
+    /// current edit uses, in the background, so the export does not wait for them. Each
+    /// photo and edit revision compiles once; the programs go to the persistent cache.
+    pub(in crate::app) fn compile_export_programs_ahead(&mut self, frame: &eframe::Frame) {
+        if self.ui.sidebar_tab != crate::app::develop_state::SidebarTab::Export {
+            return;
+        }
+        let (Some(raw), Some(prewarm), Some(render_state)) = (
+            self.develop.loaded_raw.as_ref(),
+            self.export.gpu_prewarm.as_ref(),
+            frame.wgpu_render_state(),
+        ) else {
+            return;
+        };
+        // The export reuses the prewarmed programs only for Bayer photos (`run_export_worker`).
+        if raw.cfa_kind != crate::pipeline::CfaKind::Bayer {
+            return;
+        }
+        let key = (Arc::as_ptr(raw) as usize, self.edit_commit_revision());
+        if self.export.programs_compiled_for == Some(key) {
+            return;
+        }
+        self.export.programs_compiled_for = Some(key);
+        let raw = Arc::clone(raw);
+        let prewarm = Arc::clone(prewarm);
+        let device = render_state.device.clone();
+        let queue = render_state.queue.clone();
+        let exposure = self.develop.exposure;
+        let geometry = self.develop.geometry;
+        let masks = self.masks.stack.clone();
+        let look = self.look_for_export().ok().flatten();
+        let spawned = std::thread::Builder::new()
+            .name("calibraw-export-program-compile".to_owned())
+            .spawn(move || {
+                let Ok(template) = prewarm.wait() else {
+                    return;
+                };
+                let started = std::time::Instant::now();
+                let result = crate::pipeline::compile_export_programs(
+                    &device,
+                    &queue,
+                    &template,
+                    &raw,
+                    crate::pipeline::ExportProgramEdits {
+                        exposure: &exposure,
+                        masks: &masks,
+                        geometry,
+                        look: look.as_ref(),
+                    },
+                );
+                calibraw_core::diagnostics::record(match result {
+                    Ok(()) => format!(
+                        "Export programs of the open edit compiled ahead in {:.3}s",
+                        started.elapsed().as_secs_f64()
+                    ),
+                    Err(error) => format!("Export programs could not be compiled ahead: {error:#}"),
+                });
+            });
+        if let Err(error) = spawned {
+            calibraw_core::diagnostics::record(format!(
+                "Export program compile thread could not start: {error}"
+            ));
+        }
+    }
+
     pub(in crate::app) fn start_export(
         &mut self,
         path: PathBuf,

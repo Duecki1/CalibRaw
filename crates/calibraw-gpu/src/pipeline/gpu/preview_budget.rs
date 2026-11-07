@@ -6,11 +6,12 @@
 //! of any size reserves before building one.
 
 use super::resources::{
-    build_gpu_resource_plan, interactive_mask_atlas_edge, mobile_preview_limit_bytes,
-    tone_analysis_scale, GpuResourcePlan, GpuResourcePlanInput,
+    build_gpu_resource_plan, gpu_working_set_limit_bytes, interactive_mask_atlas_edge,
+    mobile_preview_limit_bytes, tone_analysis_scale, GpuResourcePlan, GpuResourcePlanInput,
 };
 use super::{
-    ProcessingQuality, RawGpuPipeline, GPU_STAGE_UNIFORM_ALLOCATION_BYTES, MASK_DATA_SIZE_BYTES,
+    ProcessingQuality, RawGpuPipeline, ANDROID_GPU_WORKING_SET_LIMIT_BYTES,
+    GPU_STAGE_UNIFORM_ALLOCATION_BYTES, MASK_DATA_SIZE_BYTES,
 };
 use crate::pipeline::{CfaKind, PixelLayout, MAX_LOCAL_MASKS};
 use anyhow::Result;
@@ -56,7 +57,9 @@ pub fn preview_mask_layer_capacity(mask_count: usize) -> usize {
 /// surfaces.
 const PREVIEW_PROFILE_BUFFER_BYTES: u64 = 4 * 1024 * 1024;
 /// Resident bytes of an export tile that must still fit beside the previews
-/// (a 752 px tile, see `android_budget_scales_with_device_ram_within_bounds`).
+/// at the 384 MiB floor of the working-set limit: a 768 px core with a
+/// typical halo. Larger limits give the tile the same share
+/// ([`mobile_export_tile_bytes`]).
 const MOBILE_EXPORT_HEADROOM_BYTES: u64 = 168 * 1024 * 1024;
 /// Resident bytes of the small navigation graph.
 const MOBILE_NAVIGATION_RESERVE_BYTES: u64 = 40 * 1024 * 1024;
@@ -76,7 +79,7 @@ const MOBILE_FITTED_SHARE_PERCENT: u64 = 55;
 /// at the fitted view it only needs the screen's pixels.
 fn mobile_preview_share_bytes(limit: u64, role: MobilePreviewRole, fitted_resident: u64) -> u64 {
     let pool = limit
-        .saturating_sub(MOBILE_EXPORT_HEADROOM_BYTES)
+        .saturating_sub(mobile_export_tile_bytes(limit))
         .saturating_sub(MOBILE_NAVIGATION_RESERVE_BYTES);
     let fitted_share = (pool * MOBILE_FITTED_SHARE_PERCENT / 100).max(MOBILE_FITTED_FLOOR_BYTES);
     match role {
@@ -92,7 +95,100 @@ fn mobile_preview_share_bytes(limit: u64, role: MobilePreviewRole, fitted_reside
     }
 }
 
+/// Resident GPU bytes one export tile may reserve beside the previews when
+/// the process may reserve `limit`: [`MOBILE_EXPORT_HEADROOM_BYTES`] at the
+/// 384 MiB floor and the same share (7/16) of a larger limit, so the tile
+/// grows with the limit while the previews keep the rest.
+fn mobile_export_tile_bytes(limit: u64) -> u64 {
+    scale_from_working_set_floor(MOBILE_EXPORT_HEADROOM_BYTES, limit)
+}
+
+/// `bytes`, sized for the 384 MiB floor, scaled with `limit`.
+fn scale_from_working_set_floor(bytes: u64, limit: u64) -> u64 {
+    let scaled =
+        u128::from(bytes) * u128::from(limit) / u128::from(ANDROID_GPU_WORKING_SET_LIMIT_BYTES);
+    u64::try_from(scaled).unwrap_or(u64::MAX)
+}
+
+/// Whether this process has a GPU working-set limit: a phone or tablet, whose
+/// GPU shares system memory.
+pub(crate) fn gpu_working_set_is_limited() -> bool {
+    gpu_working_set_limit_bytes() != u64::MAX
+}
+
+/// `bytes`, sized for an export at the 384 MiB floor of the GPU working-set
+/// limit, scaled with this process's limit like the export tile's share. A
+/// process without a limit (a computer) keeps `bytes`.
+pub(crate) fn scale_with_mobile_export_tile(bytes: u64) -> u64 {
+    match gpu_working_set_limit_bytes() {
+        u64::MAX => bytes,
+        limit => scale_from_working_set_floor(bytes, limit).max(bytes),
+    }
+}
+
+/// What a full-quality export tile's graph holds besides its pixels, for
+/// [`RawGpuPipeline::mobile_export_padded_edge`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExportTileShape {
+    pub(crate) cfa_kind: CfaKind,
+    pub(crate) layout: PixelLayout,
+    /// Whether the RAW stage blends in AI-denoised sensor samples.
+    pub(crate) ai_cfa: bool,
+    /// The graph's mask layers.
+    pub(crate) mask_layers: usize,
+    /// The bytes of the camera profile's tables.
+    pub(crate) profile_bytes: u64,
+}
+
 impl RawGpuPipeline {
+    /// The longest padded export tile edge, up to `maximum`, whose
+    /// full-quality graph fits the share of the GPU working-set limit that
+    /// mobile previews leave for an export tile, with the same accounting
+    /// that admits it. `mask_atlas_edge` gives the tile's mask atlas edge for
+    /// a padded edge. `None` when the process has no working-set limit (a
+    /// computer) or not even a 64 px tile fits.
+    pub(crate) fn mobile_export_padded_edge(
+        maximum: u32,
+        shape: ExportTileShape,
+        mask_atlas_edge: impl Fn(u32) -> u32,
+    ) -> Option<u32> {
+        let limit = gpu_working_set_limit_bytes();
+        if limit == u64::MAX {
+            return None;
+        }
+        let budget = mobile_export_tile_bytes(limit);
+        let fits = |edge: u32| {
+            build_gpu_resource_plan(GpuResourcePlanInput {
+                width: edge,
+                height: edge,
+                quality: ProcessingQuality::High,
+                tone_scale: tone_analysis_scale(),
+                mask_atlas_edge: mask_atlas_edge(edge),
+                mask_layers: shape.mask_layers.clamp(1, MAX_LOCAL_MASKS) as u32,
+                profile_buffer_bytes: shape.profile_bytes,
+                stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
+                mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
+                layout: shape.layout,
+                ai_cfa: shape.ai_cfa,
+                cfa_kind: shape.cfa_kind,
+            })
+            .is_ok_and(|plan| plan.admitted_gpu_bytes <= budget)
+        };
+        let (mut low, mut high) = (64, maximum);
+        if high < low || !fits(low) {
+            return None;
+        }
+        while low < high {
+            let edge = low + (high - low).div_ceil(2);
+            if fits(edge) {
+                low = edge;
+            } else {
+                high = edge - 1;
+            }
+        }
+        Some(low)
+    }
+
     /// Bound a mobile preview of `role` using the same resource accounting as
     /// allocation, so the graph that is built fits its share of the
     /// RAM-scaled budget. `shape` is what the graph reserves besides pixels.

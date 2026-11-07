@@ -122,6 +122,9 @@ pub fn request_headless_device(
     required_limits.max_texture_dimension_2d = request.texture_dimension;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some(request.label),
+        // Timestamp queries when stage timing was requested, so a headless
+        // export installed with `stage_timing::install` can be timed.
+        required_features: crate::stage_timing::device_features(&adapter),
         required_limits,
         ..Default::default()
     }))

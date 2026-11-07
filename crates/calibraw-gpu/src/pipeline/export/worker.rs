@@ -106,8 +106,7 @@ fn run_export_worker(
             (slides.as_slice(), layout.window())
         }
     };
-    let tile_spec =
-        resolved_export_tile_spec(job.tile_spec, &job.exposure, &job.masks, job.raw.width)?;
+    let tile_spec = resolved_export_tile_spec(job.tile_spec, &job.exposure, &job.masks, &job.raw)?;
 
     let color_settings = match format {
         ExportFormat::Jpeg => {
@@ -165,7 +164,7 @@ pub(super) fn resolved_export_tile_spec(
     mut tile_spec: TileSpec,
     exposure: &ExposureParams,
     masks: &MaskStack,
-    source_width: u32,
+    raw: &LoadedRaw,
 ) -> Result<TileSpec> {
     let required_halo = required_export_tile_halo(exposure, masks);
     tile_spec.halo = if tile_spec.halo == EXPORT_TILE_HALO {
@@ -173,7 +172,68 @@ pub(super) fn resolved_export_tile_spec(
     } else {
         tile_spec.halo.max(required_halo)
     };
-    bounded_tile_spec(tile_spec, source_width)
+    if tile_spec.core_edge == TileSpec::default().core_edge {
+        tile_spec.core_edge = device_export_core_edge(tile_spec, exposure, masks, raw)?;
+    }
+    bounded_tile_spec(tile_spec, raw.width)
+}
+
+/// The core of an export tile of the default size, `spec.core_edge`. A phone
+/// or tablet, whose GPU working set is limited, takes the largest core whose
+/// graph fits the share of the limit previews leave for an export tile
+/// (`mobile_export_padded_edge`), never less than the default, and then the
+/// smallest core that covers the photo in as many tiles. A computer keeps the
+/// default.
+fn device_export_core_edge(
+    spec: TileSpec,
+    exposure: &ExposureParams,
+    masks: &MaskStack,
+    raw: &LoadedRaw,
+) -> Result<u32> {
+    let default_core = spec.core_edge;
+    let halo_edges = spec.halo.saturating_mul(2);
+    // A larger tile must not shrink its mask region into the atlas, which
+    // would rasterize the masks coarser than the default tile does.
+    let mut maximum_padded = MAX_PADDED_TILE_EDGE;
+    if !masks.masks.is_empty() {
+        let margin = masks.raster_margin_pixels(raw.width, raw.height);
+        maximum_padded = maximum_padded
+            .min(export_mask_atlas_edge_limit().saturating_sub(margin.saturating_mul(2)));
+    }
+    let shape = ExportTileShape {
+        cfa_kind: raw.cfa_kind,
+        layout: raw.pixel_layout(),
+        ai_cfa: exposure.ai_denoise_enabled,
+        mask_layers: masks.masks.len(),
+        profile_bytes: PREVIEWED_PROFILE_BYTES,
+    };
+    let Some(padded) = RawGpuPipeline::mobile_export_padded_edge(maximum_padded, shape, |edge| {
+        export_tile_mask_atlas_edge(masks, [raw.width, raw.height], [edge, edge])
+    }) else {
+        return Ok(default_core);
+    };
+    let fitted = padded.saturating_sub(halo_edges);
+    let fitted = (fitted - fitted % TONE_GUIDE_CELL_SIZE)
+        .min(max_export_band_rows(raw.width)?)
+        .min(MAX_PADDED_TILE_EDGE.saturating_sub(halo_edges));
+    if fitted <= default_core {
+        return Ok(default_core);
+    }
+    // Tiles are square and the last ones overhang the photo, so the fewest
+    // tiles of `fitted` are as well covered by a smaller core.
+    let columns = raw.width.div_ceil(fitted).max(1);
+    let rows = raw.height.div_ceil(fitted).max(1);
+    let covering = raw
+        .width
+        .div_ceil(columns)
+        .max(raw.height.div_ceil(rows))
+        .next_multiple_of(TONE_GUIDE_CELL_SIZE)
+        .clamp(64, fitted);
+    calibraw_core::diagnostics::record(format!(
+        "Export tile core {covering} px sized for the GPU working set (largest fitting {fitted} px, halo {})",
+        spec.halo
+    ));
+    Ok(covering)
 }
 
 pub(super) fn ensure_export_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
@@ -201,4 +261,64 @@ fn await_export_program_template(
             None
         }
     }
+}
+
+/// The edits an export renders, for [`compile_export_programs`].
+pub struct ExportProgramEdits<'a> {
+    pub exposure: &'a ExposureParams,
+    pub masks: &'a MaskStack,
+    pub geometry: GeometryTransform,
+    pub look: Option<&'a ResolvedLook>,
+}
+
+/// Compiles into `template` the programs exporting `raw` with `edits` uses (its effects,
+/// colour denoise and demosaic variant), so the export reusing the template does not wait for
+/// them, and saves them to the template's persistent pipeline cache. It renders nothing: it
+/// builds a 64 px tile's graph from the template, whose construction compiles what the edits
+/// select. Blocks for as long as compiling takes; call it off the UI thread.
+pub fn compile_export_programs(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    template: &RawGpuProgramTemplate,
+    raw: &LoadedRaw,
+    edits: ExportProgramEdits<'_>,
+) -> Result<()> {
+    let ExportProgramEdits {
+        exposure,
+        masks,
+        geometry,
+        look,
+    } = edits;
+    let spec = TileSpec {
+        core_edge: 64,
+        halo: required_export_tile_halo(exposure, masks),
+    };
+    let tile = *TilePlan::new(raw.width, raw.height, spec)
+        .tiles
+        .first()
+        .context("cannot compile the programs of an empty RAW image")?;
+    let tile_raw = extract_padded_tile(raw, tile);
+    let params = GpuParams::new_for_tile(
+        exposure,
+        masks,
+        &tile_raw,
+        tile.global_origin_x,
+        tile.global_origin_y,
+        raw.width,
+        raw.height,
+    )
+    .with_vignette_geometry(geometry)
+    .with_look_lut(look);
+    RawGpuPipeline::new(
+        device,
+        queue,
+        &tile_raw,
+        &params,
+        PipelineOptions::new(ProcessingQuality::High)
+            .mask_atlas_edge(64)
+            .programs(template),
+    )
+    .context("compile the export programs")?;
+    template.persist_pipeline_cache()?;
+    Ok(())
 }

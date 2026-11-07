@@ -8,7 +8,10 @@ use super::{
     RemoveSceneContext, SrgbOutputTransform, TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
     MIN_EXPORT_TILE_HALO, SLOW_GPU_WAIT, TONE_GUIDE_CELL_SIZE,
 };
-use super::{resample_geometry, GeometryResampleJob};
+use super::{
+    export_mask_atlas_edge_limit, resample_geometry, ExportTileShape, GeometryResampleJob,
+    PREVIEWED_PROFILE_BYTES,
+};
 use anyhow::{Context, Result};
 use calibraw_core::file_ops::{move_file_to_free_name, replace_file, sync_parent_directory};
 use calibraw_core::luts::ResolvedLook;
@@ -29,6 +32,7 @@ mod destination;
 mod encoders;
 mod geometry_output;
 mod intermediate;
+mod raw_stage_store;
 mod resize;
 mod tiff;
 pub use carousel::*;
@@ -37,6 +41,7 @@ use destination::*;
 use encoders::*;
 use geometry_output::*;
 use intermediate::*;
+use raw_stage_store::*;
 use resize::*;
 use tiff::*;
 

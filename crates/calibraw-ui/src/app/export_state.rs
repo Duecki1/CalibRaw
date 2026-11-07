@@ -363,6 +363,9 @@ pub(super) struct LensCorrectionTaskRequest {
 pub(crate) struct ExportState {
     pub(crate) format: ExportFormat,
     pub(crate) gpu_prewarm: Option<Arc<GpuProgramPrewarm>>,
+    /// The photo and edit revision whose export programs were last compiled
+    /// ahead (`compile_export_programs_ahead`).
+    pub(crate) programs_compiled_for: Option<(usize, u64)>,
     pub(crate) settings: ExportSettings,
     pub(crate) task: Option<ExportTask>,
     pub(crate) batch: Option<LibraryBatchExportState>,

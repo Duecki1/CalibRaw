@@ -46,7 +46,7 @@ where
         events,
         cancellation,
         program_template,
-        memory: _,
+        memory,
     } = context;
     let ExportRequest {
         raw,
@@ -119,15 +119,11 @@ where
     ))
     .with_look_lut(look);
     let pipeline_started = Instant::now();
-    let export_mask_edge = if masks.masks.is_empty() {
-        mask_atlas_edge()
-    } else {
-        let margin = masks.raster_margin_pixels(raw.width, raw.height);
-        export_mask_atlas_edge(
-            first.padded_width.saturating_add(margin.saturating_mul(2)),
-            first.padded_height.saturating_add(margin.saturating_mul(2)),
-        )
-    };
+    let export_mask_edge = export_tile_mask_atlas_edge(
+        masks,
+        [raw.width, raw.height],
+        [first.padded_width, first.padded_height],
+    );
     let tile_pipeline = if let Some(template) = program_template {
         match RawGpuPipeline::new(
             device,
@@ -168,14 +164,19 @@ where
         )
         .context("create reusable full-quality export pipeline")?
     };
+    let setup = tile_pipeline.setup_times();
     calibraw_core::diagnostics::record(format!(
-        "Full-quality export pipeline prepared in {:.3}s; padded_tile={}x{} viewport-local mask_atlas={}x{} R16F",
+        "Full-quality export pipeline prepared in {:.3}s (resources {:.3}s, shader modules {:.3}s, program compilation {:.3}s); padded_tile={}x{} viewport-local mask_atlas={}x{} R16F",
         pipeline_started.elapsed().as_secs_f64(),
+        setup.resources.as_secs_f64(),
+        setup.shader_modules.as_secs_f64(),
+        setup.programs.as_secs_f64(),
         first_raw.width,
         first_raw.height,
         export_mask_edge,
         export_mask_edge
     ));
+    let gpu_timing = crate::stage_timing::begin_export(device);
     tile_pipeline
         .prepare_look_lut(queue, first_params.look_lut())
         .context("upload the LUT")?;
@@ -190,6 +191,27 @@ where
         .context("upload full-image masks")?;
 
     let tone_analysis_started = Instant::now();
+    if let Some(timing) = &gpu_timing {
+        timing.phase("tone prepass");
+    }
+    let mut watch_gpu = export_gpu_watcher(events, cancellation);
+    // The prepass runs the RAW stage of every tile; kept, the final pass need not run it again.
+    // Copying the scene costs the CPU more than the RAW stage costs a computer's GPU, so only
+    // a device with a limited GPU working set (a phone or tablet), whose GPU bounds the
+    // export, keeps it.
+    let mut raw_stage_store = crate::pipeline::gpu_working_set_is_limited()
+        .then(|| RawStageStore::new(&plan, tile_pipeline.scene_texel_bytes(), memory))
+        .flatten();
+    match &raw_stage_store {
+        Some(store) => calibraw_core::diagnostics::record(format!(
+            "Export RAW-stage scene ({:.1} MiB) kept from the tone prepass",
+            store.bytes() as f64 / (1024.0 * 1024.0)
+        )),
+        None => calibraw_core::diagnostics::record(
+            "Export RAW-stage scene not kept (unlimited GPU working set or not enough memory); the final pass runs the RAW stage again",
+        ),
+    }
+    let mut pending_scene = None;
     let mut tile_scratch = first_raw;
     tile_pipeline.begin_export_tone_analysis(queue, device);
     for (index, tile) in plan.tiles.iter().copied().enumerate() {
@@ -231,6 +253,30 @@ where
                 ),
             )
             .with_context(|| format!("apply Remove to tone-analysis tile {}", index + 1))?;
+        if let Some(store) = &mut raw_stage_store {
+            let region = store.owned_region(tile);
+            let readback = tile_pipeline
+                .begin_scene_region_readback(device, queue, region.origin, region.extent)
+                .with_context(|| format!("queue RAW-stage readback of tile {}", index + 1))?;
+            // The previous tile's texels are read while this tile renders.
+            if let Some((previous, previous_index, readback)) =
+                pending_scene.replace((tile, index, readback))
+            {
+                store_raw_stage_tile(
+                    store,
+                    device,
+                    &mut watch_gpu,
+                    previous,
+                    previous_index,
+                    readback,
+                )?;
+            }
+        }
+    }
+    if let (Some(store), Some((tile, index, readback))) =
+        (&mut raw_stage_store, pending_scene.take())
+    {
+        store_raw_stage_tile(store, device, &mut watch_gpu, tile, index, readback)?;
     }
     tile_pipeline.finish_export_tone_analysis(queue, device);
     calibraw_core::diagnostics::record(format!(
@@ -239,7 +285,9 @@ where
         plan.tile_count()
     ));
 
-    let mut watch_gpu = export_gpu_watcher(events, cancellation);
+    if let Some(timing) = &gpu_timing {
+        timing.phase("final tiles");
+    }
     let total_tiles = plan.tile_count();
     let mut completed_tiles = 0usize;
     let mut first_progress_logged = false;
@@ -307,20 +355,30 @@ where
                 mask_extent,
             )
             .with_look_lut(look);
-            tile_pipeline
-                .dispatch_export_tile_with_remove(
-                    queue,
-                    device,
-                    &params,
-                    RemoveSceneContext::new(
-                        remove,
-                        raw,
-                        exposure,
-                        [tile.global_origin_x as f32, tile.global_origin_y as f32],
-                        [tile.padded_width as f32, tile.padded_height as f32],
-                    ),
-                )
-                .with_context(|| format!("apply Remove to export tile {}", global_index + 1))?;
+            match &raw_stage_store {
+                Some(store) => {
+                    store
+                        .write_tile(&tile_pipeline, queue, tile)
+                        .with_context(|| {
+                            format!("upload the RAW-stage scene of tile {}", global_index + 1)
+                        })?;
+                    tile_pipeline.dispatch_export_tile_from_scene(queue, device, &params);
+                }
+                None => tile_pipeline
+                    .dispatch_export_tile_with_remove(
+                        queue,
+                        device,
+                        &params,
+                        RemoveSceneContext::new(
+                            remove,
+                            raw,
+                            exposure,
+                            [tile.global_origin_x as f32, tile.global_origin_y as f32],
+                            [tile.padded_width as f32, tile.padded_height as f32],
+                        ),
+                    )
+                    .with_context(|| format!("apply Remove to export tile {}", global_index + 1))?,
+            }
             let readback = tile_pipeline
                 .begin_display_linear_region_readback(
                     device,
@@ -376,7 +434,26 @@ where
             row_sink(source_y, &band[start..end])?;
         }
     }
+    if let Some(timing) = gpu_timing {
+        timing.finish();
+    }
     Ok(())
+}
+
+/// Stores the RAW-stage texels of tile `index`, which `readback` reads.
+fn store_raw_stage_tile(
+    store: &mut RawStageStore<'_>,
+    device: &wgpu::Device,
+    watch_gpu: &mut impl FnMut(Duration) -> bool,
+    tile: crate::pipeline::ExportTile,
+    index: usize,
+    readback: crate::pipeline::PendingSceneReadback,
+) -> Result<()> {
+    readback
+        .finish(device, GpuWait::Watched(watch_gpu), |row, texels| {
+            store.store_row(tile, row, texels);
+        })
+        .with_context(|| format!("read the RAW-stage scene of tile {}", index + 1))
 }
 
 /// Watches an export's GPU readbacks: they wait as long as the export is not cancelled, and
@@ -416,12 +493,54 @@ fn report_completed_export_tile(
     });
 }
 
+/// The mask atlas edge of an export tile `padded` pixels across in a photo of
+/// `image` pixels: the tile and the masks' raster margin around it, or the
+/// default edge without masks.
+pub(super) fn export_tile_mask_atlas_edge(
+    masks: &MaskStack,
+    image: [u32; 2],
+    padded: [u32; 2],
+) -> u32 {
+    if masks.masks.is_empty() {
+        return mask_atlas_edge();
+    }
+    let margin = masks.raster_margin_pixels(image[0], image[1]);
+    export_mask_atlas_edge(
+        padded[0].saturating_add(margin.saturating_mul(2)),
+        padded[1].saturating_add(margin.saturating_mul(2)),
+    )
+}
+
 /// Largest edge of an export tile with its halo, which bounds the GPU memory
-/// of one tile: the largest core with a 768 px halo.
-const MAX_PADDED_TILE_EDGE: u32 = 1024 + 2 * 768;
+/// of one tile: a 1024 px core with a 768 px halo, or a larger core with a
+/// smaller halo.
+pub(super) const MAX_PADDED_TILE_EDGE: u32 = 1024 + 2 * 768;
+
+/// Largest export tile core: the one the narrowest halo leaves.
+const MAX_TILE_CORE: u32 = MAX_PADDED_TILE_EDGE - 2 * MIN_EXPORT_TILE_HALO;
+
+/// Bytes of the source band an export holds: a fixed amount on a computer, and
+/// on a phone or tablet the 64 MiB the 384 MiB GPU floor allows, scaled like
+/// the export tile whose rows it holds.
+fn max_export_band_bytes() -> u64 {
+    crate::pipeline::scale_with_mobile_export_tile(MAX_EXPORT_BAND_BYTES)
+}
+
+/// Most source rows, aligned to the tone-guide grid, a band of a
+/// `source_width` px wide photo may hold.
+pub(super) fn max_export_band_rows(source_width: u32) -> Result<u32> {
+    let bytes_per_source_row = u64::from(source_width)
+        .checked_mul(3)
+        .and_then(|value| value.checked_mul(std::mem::size_of::<f32>() as u64))
+        .context("export source-band row size overflow")?;
+    anyhow::ensure!(bytes_per_source_row > 0, "export source width is zero");
+    let maximum_rows =
+        (max_export_band_bytes() / bytes_per_source_row).min(u64::from(u32::MAX)) as u32;
+    Ok(maximum_rows - maximum_rows % TONE_GUIDE_CELL_SIZE)
+}
 
 fn validate_tile_spec(spec: TileSpec) -> Result<()> {
-    let maximum_core = 1024;
+    let maximum_core = MAX_TILE_CORE;
     let scale = TONE_GUIDE_CELL_SIZE;
     anyhow::ensure!(
         (64..=maximum_core).contains(&spec.core_edge),
@@ -454,15 +573,7 @@ pub(super) fn bounded_tile_spec(mut spec: TileSpec, source_width: u32) -> Result
         .core_edge
         .min(core_room - core_room % TONE_GUIDE_CELL_SIZE);
     validate_tile_spec(spec)?;
-    let bytes_per_source_row = u64::from(source_width)
-        .checked_mul(3)
-        .and_then(|value| value.checked_mul(std::mem::size_of::<f32>() as u64))
-        .context("export source-band row size overflow")?;
-    anyhow::ensure!(bytes_per_source_row > 0, "export source width is zero");
-    let alignment = TONE_GUIDE_CELL_SIZE;
-    let maximum_rows =
-        (MAX_EXPORT_BAND_BYTES / bytes_per_source_row).min(u64::from(spec.core_edge)) as u32;
-    let aligned_rows = maximum_rows - maximum_rows % alignment;
+    let aligned_rows = max_export_band_rows(source_width)?.min(spec.core_edge);
     anyhow::ensure!(
         aligned_rows >= 64,
         "the source image is too wide for the bounded export memory budget"

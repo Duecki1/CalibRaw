@@ -17,6 +17,7 @@ use calibraw_core::color_math::{linear_srgb_to_oklab, srgb_decode};
 use calibraw_core::luts::{CubeLut, LutId, ResolvedLook};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::gpu_errors::GpuErrorScopes;
 use crate::stage_timing;
@@ -49,7 +50,11 @@ use effect_inputs::{
 };
 pub(crate) use geometry_resample::{resample_geometry, GeometryResampleJob};
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
+pub(crate) use preview_budget::{
+    gpu_working_set_is_limited, scale_with_mobile_export_tile, ExportTileShape,
+};
 pub use preview_budget::{preview_mask_layer_capacity, MobilePreviewRole, PreviewResourceShape};
+pub(crate) use readback::PendingSceneReadback;
 use readback::*;
 use resources::*;
 use shader_manager::ShaderManager;
@@ -387,6 +392,15 @@ impl RawGpuProgramTemplate {
         }
     }
 
+    /// Saves the programs compiled so far to the persistent pipeline cache the
+    /// template compiles with, if it has one, so the next launch loads them.
+    pub fn persist_pipeline_cache(&self) -> Result<()> {
+        if let Some(cache) = &self.pipeline_cache {
+            cache.persist()?;
+        }
+        Ok(())
+    }
+
     fn bayer_demosaic_programs(&self) -> impl Iterator<Item = &ComputeProgram> {
         self.pipelines
             .iter()
@@ -517,7 +531,21 @@ pub struct RawGpuPipeline {
     out_texture: wgpu::Texture,
     out_view: wgpu::TextureView,
     pipeline_cache: Option<Arc<PersistentGpuPipelineCache>>,
+    setup_times: PipelineSetupTimes,
     _gpu_budget_reservation: GpuBudgetReservation,
+}
+
+/// Where [`RawGpuPipeline::new`] spent its time, on the CPU.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PipelineSetupTimes {
+    /// Textures, buffers, bind group layouts and bind groups.
+    pub resources: Duration,
+    /// Composing the WGSL and creating the shader modules; none when the
+    /// programs come from a template.
+    pub shader_modules: Duration,
+    /// Compiling the programs these edits use, and the Remove composite.
+    /// Programs a template already compiled cost nothing here.
+    pub programs: Duration,
 }
 
 #[derive(Clone)]
@@ -635,6 +663,11 @@ impl RawGpuPipeline {
                 tone_guide_axis_cell_count(origin_x, self.width, scale),
                 tone_guide_axis_cell_count(origin_y, self.height, scale),
             ]
+    }
+
+    /// Where building this pipeline spent its time.
+    pub const fn setup_times(&self) -> PipelineSetupTimes {
+        self.setup_times
     }
 
     pub const fn mask_atlas_edge(&self) -> u32 {
@@ -1047,6 +1080,7 @@ impl RawGpuPipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw Remove-aware export tone tile"),
         });
+        let timing = stage_timing::begin(device, || self.timed_stage_name("Export tone"));
         self.encode_pass(&mut encoder, self.indices.tone_prepare_pass_index);
         // Each tile adds its core to the shared full-image maps. Without a
         // receiver a map stays empty and the tiles skip reading it all again.
@@ -1064,7 +1098,7 @@ impl RawGpuPipeline {
                 self.accumulate_scene_working_image(&mut encoder, &bake);
             }
         }
-        queue.submit(Some(encoder.finish()));
+        stage_timing::submit(queue, encoder, timing);
         Ok(())
     }
 
@@ -1072,6 +1106,7 @@ impl RawGpuPipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw export tone histogram reduction"),
         });
+        let timing = stage_timing::begin(device, || self.timed_stage_name("Export tone reduce"));
         self.encode_pass(&mut encoder, self.indices.tone_reduce_pass_index);
         // Tiles accumulated a map only if an effect reads it, which allocated
         // its grid.
@@ -1088,7 +1123,7 @@ impl RawGpuPipeline {
         if let Some(bake) = self.effect_inputs.scene_bake() {
             self.encode_scene_bake(&mut encoder, &bake);
         }
-        queue.submit(Some(encoder.finish()));
+        stage_timing::submit(queue, encoder, timing);
         // Resolved from every tile's accumulation; tiles must not rebuild them
         // from their own region.
         for (map, allocated) in FullImageMap::ALL.into_iter().zip(allocated) {
@@ -1105,18 +1140,96 @@ impl RawGpuPipeline {
         remove: RemoveSceneContext<'_>,
     ) -> Result<()> {
         self.dispatch_stage_with_remove(queue, device, params, ProcessingStage::Raw, remove)?;
+        self.dispatch_export_tile_from_scene(queue, device, params);
+        Ok(())
+    }
+
+    /// Bytes of one scene texel, in which [`Self::begin_scene_region_readback`]
+    /// reads and [`Self::write_scene_region`] writes.
+    pub fn scene_texel_bytes(&self) -> u32 {
+        self.scene_format.block_copy_size(None).unwrap_or(16)
+    }
+
+    /// Writes scene texels a RAW stage of this export left
+    /// ([`Self::begin_scene_region_readback`]) into the region at `origin`
+    /// (pixels of this graph) of `extent`, so that
+    /// [`Self::dispatch_export_tile_from_scene`] renders the tile without its
+    /// RAW stage. `texels` holds the region's rows, each starting
+    /// `bytes_per_row` bytes after the previous.
+    pub fn write_scene_region(
+        &self,
+        queue: &wgpu::Queue,
+        texels: &[u8],
+        bytes_per_row: u32,
+        origin: [u32; 2],
+        extent: [u32; 2],
+    ) -> Result<()> {
+        let [width, height] = extent;
+        anyhow::ensure!(
+            width > 0
+                && height > 0
+                && origin[0]
+                    .checked_add(width)
+                    .is_some_and(|right| right <= self.width)
+                && origin[1]
+                    .checked_add(height)
+                    .is_some_and(|bottom| bottom <= self.height),
+            "scene region {width}x{height} at {origin:?} lies outside the {}x{} graph",
+            self.width,
+            self.height
+        );
+        let row_bytes = u64::from(width) * u64::from(self.scene_texel_bytes());
+        let required = u64::from(bytes_per_row) * u64::from(height - 1) + row_bytes;
+        anyhow::ensure!(
+            u64::from(bytes_per_row) >= row_bytes && texels.len() as u64 >= required,
+            "scene region texels are shorter than {width}x{height}"
+        );
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.scene_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: origin[0],
+                    y: origin[1],
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        Ok(())
+    }
+
+    /// Renders the tone and output stages of an export tile whose scene the
+    /// RAW stage, or [`Self::write_scene_region`], already holds.
+    pub fn dispatch_export_tile_from_scene(
+        &self,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+        params: &GpuParams,
+    ) {
         self.upload_params(queue, params);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw Remove-aware tiled export encoder"),
         });
+        let timing = stage_timing::begin(device, || self.timed_stage_name("Export tile"));
         self.encode_pass_range(
             &mut encoder,
             self.indices.tone_prepare_pass_index,
             self.indices.tone_reduce_pass_index,
         );
         self.encode_output_stage(&mut encoder, params);
-        queue.submit(Some(encoder.finish()));
-        Ok(())
+        stage_timing::submit(queue, encoder, timing);
     }
 
     fn encode_raw_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {

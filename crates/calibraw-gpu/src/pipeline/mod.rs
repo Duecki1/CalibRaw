@@ -11,17 +11,21 @@ pub use hdr::merge_hdr_bracket;
 pub use raw_merge::MergedImage;
 
 pub use export::{
-    render_developed_linear_crop, render_remove_scene_crop, render_remove_scene_crop_resized,
-    spawn_tiled_export, Carousel, CarouselLayout, CarouselRatio, DevelopedCropJob, ExportBitDepth,
-    ExportEvent, ExportFiles, ExportFormat, ExportMetadata, ExportResizeMode, ExportSettings,
-    ExportTarget, ExportWatermark, ResizedRemoveSceneCrop, TiledExportJob, WatermarkAnchor,
-    WatermarkImage, WatermarkPlacement, MAX_EXPORT_EDGE, MAX_EXPORT_PIXELS,
+    compile_export_programs, render_developed_linear_crop, render_remove_scene_crop,
+    render_remove_scene_crop_resized, spawn_tiled_export, Carousel, CarouselLayout, CarouselRatio,
+    DevelopedCropJob, ExportBitDepth, ExportEvent, ExportFiles, ExportFormat, ExportMetadata,
+    ExportProgramEdits, ExportResizeMode, ExportSettings, ExportTarget, ExportWatermark,
+    ResizedRemoveSceneCrop, TiledExportJob, WatermarkAnchor, WatermarkImage, WatermarkPlacement,
+    MAX_EXPORT_EDGE, MAX_EXPORT_PIXELS,
+};
+pub(crate) use gpu::{
+    gpu_working_set_is_limited, resample_geometry, scale_with_mobile_export_tile, ExportTileShape,
+    GeometryResampleJob, PendingSceneReadback, SLOW_GPU_WAIT,
 };
 pub use gpu::{
     preview_mask_layer_capacity, GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, GpuWait,
-    MobilePreviewRole, PipelineOptions, PreviewClippingGpu, PreviewHistogram, PreviewHistogramGpu,
-    PreviewResourceShape, ProcessingQuality, RawGpuPipeline, RawGpuProgramTemplate,
-    RemoveSceneContext, SceneLightQuality, PREVIEWED_PROFILE_BYTES,
+    MobilePreviewRole, PipelineOptions, PipelineSetupTimes, PreviewClippingGpu, PreviewHistogram,
+    PreviewHistogramGpu, PreviewResourceShape, ProcessingQuality, RawGpuPipeline,
+    RawGpuProgramTemplate, RemoveSceneContext, SceneLightQuality, PREVIEWED_PROFILE_BYTES,
 };
-pub(crate) use gpu::{resample_geometry, GeometryResampleJob, SLOW_GPU_WAIT};
 pub use gpu_cache::PersistentGpuPipelineCache;

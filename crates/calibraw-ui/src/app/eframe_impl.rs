@@ -208,6 +208,7 @@ impl CalibRawApp {
             self.poll_library_batch_export_worker();
         }
         self.poll_export_worker(frame);
+        self.compile_export_programs_ahead(frame);
         if caps.has_media_library() {
             self.resume_android_library_batch_export_if_possible(frame);
         }
