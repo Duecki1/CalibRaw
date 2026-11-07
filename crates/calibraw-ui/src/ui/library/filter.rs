@@ -144,25 +144,53 @@ fn sort_filter_menu(
     }
 }
 
-/// The View menu's options: the thumbnail size as a list that closes the
-/// menu once a choice is made, then the square and subfolder switches.
+/// How wide the View menu's choices are in a popup; a sheet gives them its
+/// own width.
+const VIEW_CHOICE_WIDTH: f32 = 320.0;
+
+/// The View menu's options, each a segmented control like the app's tabs
+/// under a static label. Choosing keeps the menu open, so several options can
+/// be changed at once.
 fn view_menu_items(ui: &mut Ui, view: &mut LibraryView) {
-    let size_item = MenuItem::new(tr("Thumbnail size"))
-        .icon(regular::SQUARES_FOUR)
-        .value(view.thumbnail_size.label());
-    moduwu_design::submenu(ui, size_item, |ui| {
-        for value in LibraryThumbnailSize::ALL {
-            if ui
-                .add(MenuItem::new(value.label()).selected(view.thumbnail_size == value))
-                .clicked()
-            {
-                view.thumbnail_size = value;
-                ui.close();
-            }
-        }
-    });
-    moduwu_design::menu_checkbox_item(ui, &mut view.square_thumbnails, tr("Square thumbnails"));
-    moduwu_design::menu_checkbox_item(ui, &mut view.include_subfolders, tr("Include subfolders"));
+    let width = if moduwu_design::menu_sheet_open(ui.ctx()) {
+        ui.available_width().max(1.0)
+    } else {
+        VIEW_CHOICE_WIDTH
+    };
+    let sizes = LibraryThumbnailSize::ALL.map(|size| (size, size.label()));
+    view_choice(
+        ui,
+        tr("Thumbnail size"),
+        &mut view.thumbnail_size,
+        &sizes,
+        width,
+    );
+    view_choice(
+        ui,
+        tr("Thumbnail shape"),
+        &mut view.square_thumbnails,
+        &[(false, tr("Original")), (true, tr("Square"))],
+        width,
+    );
+    view_choice(
+        ui,
+        tr("Folders"),
+        &mut view.include_subfolders,
+        &[(false, tr("This folder")), (true, tr("Include subfolders"))],
+        width,
+    );
+}
+
+fn view_choice<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    heading: &str,
+    value: &mut T,
+    options: &[(T, &str)],
+    width: f32,
+) {
+    ui.add_space(moduwu_design::SPACE_XS);
+    ui.weak(heading);
+    moduwu_design::segmented_control(ui, value, options, width);
 }
 
 /// The header's View menu, where it has room for one.
