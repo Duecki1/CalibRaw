@@ -3,16 +3,16 @@
 
 use super::*;
 
-/// `w` below which a point counts as on or behind a homography's vanishing line. Valid points
-/// have `w` near 1 (see [`PerspectiveCorrection`]).
-const HORIZON_EPSILON: f64 = 1e-9;
-
 /// A projective map of the plane: `[x, y, 1]` is multiplied by the rows and divided by the
 /// third coordinate.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Homography([[f64; 3]; 3]);
 
 impl Homography {
+    /// `w` below which a point counts as on or behind the vanishing line. Valid points have `w`
+    /// near 1 (see [`PerspectiveCorrection`]).
+    pub const HORIZON_EPSILON: f64 = 1e-9;
+
     pub const IDENTITY: Self = Self([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
 
     pub(super) const fn from_rows(rows: [[f64; 3]; 3]) -> Self {
@@ -86,7 +86,7 @@ impl Homography {
     pub(super) fn apply_f64(&self, [x, y]: [f64; 2]) -> [f64; 2] {
         let m = &self.0;
         let w = m[2][0] * x + m[2][1] * y + m[2][2];
-        if w.is_nan() || w <= HORIZON_EPSILON {
+        if w.is_nan() || w <= Self::HORIZON_EPSILON {
             return [f64::INFINITY; 2];
         }
         [

@@ -126,6 +126,7 @@ fn run_export_worker(
         job.settings.bit_depth
     };
 
+    let memory = IntermediateMemory::for_this_device();
     export_to_destinations(targets, &job.cancellation, |outputs| {
         let context = ExportContext {
             device: &job.device,
@@ -133,6 +134,7 @@ fn run_export_worker(
             events,
             cancellation: &job.cancellation,
             program_template: program_template.as_deref(),
+            memory: &memory,
         };
         let request = ExportRequest {
             raw: &job.raw,

@@ -46,6 +46,7 @@ where
         events,
         cancellation,
         program_template,
+        memory: _,
     } = context;
     let ExportRequest {
         raw,
@@ -238,15 +239,7 @@ where
         plan.tile_count()
     ));
 
-    // Tile readbacks wait for the GPU as long as the export is not cancelled.
-    let mut reported_wait_seconds = 0;
-    let mut watch_gpu = |waited: Duration| {
-        if waited >= SLOW_GPU_WAIT && waited.as_secs() != reported_wait_seconds {
-            reported_wait_seconds = waited.as_secs();
-            let _ = events.send(ExportEvent::WaitingForGpu { waited });
-        }
-        !cancellation.load(Ordering::Acquire)
-    };
+    let mut watch_gpu = export_gpu_watcher(events, cancellation);
     let total_tiles = plan.tile_count();
     let mut completed_tiles = 0usize;
     let mut first_progress_logged = false;
@@ -384,6 +377,22 @@ where
         }
     }
     Ok(())
+}
+
+/// Watches an export's GPU readbacks: they wait as long as the export is not cancelled, and
+/// each further second past [`SLOW_GPU_WAIT`] is reported.
+pub(super) fn export_gpu_watcher<'a>(
+    events: &'a mpsc::Sender<ExportEvent>,
+    cancellation: &'a AtomicBool,
+) -> impl FnMut(Duration) -> bool + 'a {
+    let mut reported_wait_seconds = 0;
+    move |waited| {
+        if waited >= SLOW_GPU_WAIT && waited.as_secs() != reported_wait_seconds {
+            reported_wait_seconds = waited.as_secs();
+            let _ = events.send(ExportEvent::WaitingForGpu { waited });
+        }
+        !cancellation.load(Ordering::Acquire)
+    }
 }
 
 fn report_completed_export_tile(

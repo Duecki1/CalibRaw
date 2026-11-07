@@ -1,0 +1,12 @@
+{
+  "edits": {
+    "geometry": {
+      "crop": [0.04,0.05,0.97,0.93],
+      "rotation_degrees": 2.5
+    },
+    "lens": {
+      "enabled": true,
+      "manual": {"distortion": 60.0, "vignetting": 35.0}
+    }
+  }
+}

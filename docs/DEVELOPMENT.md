@@ -454,9 +454,14 @@ image, final sharpening, color encoding, and file compression. Its duration
 must be measured separately from tile rendering. Diagnostics report geometry
 finalization and JPEG compression separately.
 
-Final resampling, sharpening, and color conversion use ordered batches of 32
-rows across CPU cores. Memory stays bounded and each pixel retains the serial
-calculation order. PNG uses fast lossless compression; file size can increase.
+Lens, perspective, rotation and crop resampling runs on the GPU
+(`pipeline/gpu/geometry_resample.rs`), which uploads only the source rows each
+band of output reads. Final sharpening and color conversion use ordered batches
+of 32 rows across CPU cores, and each pixel retains the serial calculation
+order. The linear raster the resampler reads and the raster an encoder
+compresses stay in memory up to an eighth of the device's RAM and are staged
+beside the output beyond that. PNG uses fast lossless compression; file size
+can increase.
 GPU templates share deferred programs and compile the selected Bayer mode and
 active denoise/CA paths. A newly enabled effect or mode may compile on first use.
 
@@ -474,10 +479,18 @@ The rotated JPEG files were byte-identical. Decoded RGBA16 PNG samples were
 identical; the fast-compressed PNG was about 5.4% larger. These are single-image
 local measurements, not a cross-platform comparison.
 
+Moving geometry resampling to the GPU and keeping intermediates in memory took
+the same photo with Lensfun correction from 5.5 s to 3.9 s as a full-size JPEG
+and from 5.9 s to 4.4 s as a 16-bit PNG (export worker time, programs compiled
+by the export). Its samples moved by at most 59 of 65535; positions are
+evaluated in f32 on the GPU, where the CPU used f64.
+
 Regression coverage is in `calibraw-gpu`: serial versus parallel export rows,
-batch boundaries, lens/rotation resampling, cancellation and writer errors,
+batch boundaries, cancellation and writer errors,
 deferred program reuse, and specialized versus dynamic Bayer shader output
-for every mode with denoise and CA enabled and disabled.
+for every mode with denoise and CA enabled and disabled. Export geometry is
+covered by the render-parity cases `geometry`, `perspective` and
+`lens-correction`.
 
 ## Dependency duplicates
 

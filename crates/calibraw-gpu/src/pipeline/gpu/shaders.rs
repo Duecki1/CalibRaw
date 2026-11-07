@@ -164,6 +164,8 @@ pub(super) const HAZE_ANALYSIS: ShaderSource = wgsl!("haze_analysis.wgsl");
 pub(super) const SCENE_ADJUSTMENTS: ShaderSource = wgsl!("scene_adjustments.wgsl");
 pub(super) const VIEW_TRANSFORM: ShaderSource = wgsl!("view_transform.wgsl");
 pub(super) const REMOVE_COMPOSITE: ShaderSource = wgsl!("remove_composite.wgsl");
+/// Export geometry, compiled outside the processing pipeline (geometry_resample.rs).
+pub(super) const GEOMETRY_RESAMPLE: ShaderSource = wgsl!("geometry_resample.wgsl");
 /// The scene bake's accumulation, a pass of the processing pipeline, and its
 /// own passes (pipeline/gpu/scene/).
 pub(super) const SCENE_BAKE_ACCUMULATE: ShaderSource = wgsl!("scene/bake_accumulate.wgsl");
@@ -351,6 +353,14 @@ pub(super) const REMOVE_COMPOSITE_ENTRY: EntryShader = entry(
     None,
 );
 
+/// Compiled directly with wgpu (it imports nothing), outside the composer.
+pub(super) const GEOMETRY_RESAMPLE_ENTRY: EntryShader = entry(
+    "calibraw export geometry shader",
+    GEOMETRY_RESAMPLE,
+    false,
+    None,
+);
+
 pub(super) const SCENE_BAKE_ACCUMULATE_ENTRY: EntryShader = entry(
     "calibraw scene bake accumulation",
     SCENE_BAKE_ACCUMULATE,
@@ -359,10 +369,10 @@ pub(super) const SCENE_BAKE_ACCUMULATE_ENTRY: EntryShader = entry(
 );
 
 /// Every entry shader, for validation and layout tests. The scene bake's own
-/// passes compile outside the processing pipeline (scene/bake.rs) but are
-/// validated with the rest.
+/// passes and export geometry compile outside the processing pipeline
+/// (scene/bake.rs, geometry_resample.rs) but are validated with the rest.
 #[cfg(test)]
-pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 26] = [
+pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 27] = [
     HIGHLIGHTS_ENTRY,
     BAYER_RCD_P1_ENTRY,
     BAYER_RCD_P2_ENTRY,
@@ -380,6 +390,7 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 26] = [
     CREATIVE_EFFECTS_ENTRY,
     VIEW_TRANSFORM_ENTRY,
     REMOVE_COMPOSITE_ENTRY,
+    GEOMETRY_RESAMPLE_ENTRY,
     SCENE_BAKE_ACCUMULATE_ENTRY,
     entry("scene bake depth", SCENE_BAKE_DEPTH, false, None),
     entry("scene bake lens blur", SCENE_BAKE_FOCUS, false, None),

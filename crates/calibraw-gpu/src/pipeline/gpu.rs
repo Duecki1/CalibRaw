@@ -25,6 +25,7 @@ mod builder;
 mod clipping;
 mod construction;
 mod effect_inputs;
+mod geometry_resample;
 mod histogram;
 mod mask_layers;
 mod preview_budget;
@@ -46,6 +47,7 @@ use effect_inputs::{
     EffectInputs, FullImageMap, InputBindingSources, InputBoundPass, HAZE_PASSES,
     SCENE_EMISSION_PASSES,
 };
+pub(crate) use geometry_resample::{resample_geometry, GeometryResampleJob};
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 pub use preview_budget::{preview_mask_layer_capacity, MobilePreviewRole, PreviewResourceShape};
 use readback::*;

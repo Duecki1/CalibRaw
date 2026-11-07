@@ -209,16 +209,6 @@ fn temporary_export_path(directory: &Path, name: &str) -> Result<PathBuf> {
     )))
 }
 
-/// Runs `action` with a staged intermediate file for `output`, which is
-/// removed afterwards whatever the outcome.
-pub(super) fn with_staging_file<T, F>(output: ExportOutput<'_>, action: F) -> Result<T>
-where
-    F: FnOnce(&Path) -> Result<T>,
-{
-    let staged = StagedFile::for_output(output)?;
-    action(staged.path())
-}
-
 fn cleanup_stale_export_parts(parent: &Path, destination_name: &str) {
     let prefix = format!(".{destination_name}.");
     let Ok(entries) = fs::read_dir(parent) else {

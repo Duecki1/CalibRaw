@@ -8,6 +8,7 @@ use super::{
     RemoveSceneContext, SrgbOutputTransform, TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
     MIN_EXPORT_TILE_HALO, SLOW_GPU_WAIT, TONE_GUIDE_CELL_SIZE,
 };
+use super::{resample_geometry, GeometryResampleJob};
 use anyhow::{Context, Result};
 use calibraw_core::file_ops::{move_file_to_free_name, replace_file, sync_parent_directory};
 use calibraw_core::luts::ResolvedLook;
@@ -27,6 +28,7 @@ mod crop;
 mod destination;
 mod encoders;
 mod geometry_output;
+mod intermediate;
 mod resize;
 mod tiff;
 pub use carousel::*;
@@ -34,6 +36,7 @@ pub use crop::*;
 use destination::*;
 use encoders::*;
 use geometry_output::*;
+use intermediate::*;
 use resize::*;
 use tiff::*;
 
@@ -131,6 +134,8 @@ struct ExportContext<'a> {
     events: &'a mpsc::Sender<ExportEvent>,
     cancellation: &'a AtomicBool,
     program_template: Option<&'a RawGpuProgramTemplate>,
+    /// The RAM the export may hold its intermediates in.
+    memory: &'a IntermediateMemory,
 }
 
 #[derive(Clone, Copy)]

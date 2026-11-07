@@ -81,47 +81,34 @@ fn write_png_header(
         .with_context(|| format!("write PNG header for {}", output.path.display()))
 }
 
-/// Renders `request` into one staged raster per slide, then hands `encode` each slide's output
-/// and pixels, removing each raster once it is encoded.
-fn render_staged_slides(
+/// Renders `request` into one raster per slide (see [`IntermediateWriter`]), then hands
+/// `encode` each slide's output and pixels.
+fn render_slide_rasters(
     context: ExportContext<'_>,
     request: ExportRequest<'_>,
     row_format: ExportRowFormat,
     mut encode: impl FnMut(ExportOutput<'_>, &[u8]) -> Result<()>,
 ) -> Result<()> {
-    let staged = request
+    let slide_bytes = u64::from(request.slide_width())
+        * u64::from(request.window.height)
+        * row_format.bytes_per_pixel() as u64;
+    let mut writers = request
         .outputs
         .iter()
-        .map(|&output| StagedFile::for_output(output))
+        .map(|&output| IntermediateWriter::new(output, slide_bytes, context.memory, "raster"))
         .collect::<Result<Vec<_>>>()?;
     {
-        let mut writers = staged
-            .iter()
-            .map(|raster| {
-                let file = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(raster.path())
-                    .with_context(|| {
-                        format!("create staged RGB raster {}", raster.path().display())
-                    })?;
-                Ok(BufWriter::new(file))
-            })
-            .collect::<Result<Vec<_>>>()?;
         let mut rows = SlideWriter::new(&mut writers, request.slide_width(), row_format);
         render_export_output(context, request, &mut rows, row_format)?;
-        rows.flush().context("flush staged RGB raster")?;
+        rows.flush().context("flush slide rasters")?;
     }
-
-    for (raster, &output) in staged.into_iter().zip(request.outputs) {
+    let rasters = writers
+        .into_iter()
+        .map(IntermediateWriter::finish)
+        .collect::<Result<Vec<_>>>()?;
+    for (raster, &output) in rasters.into_iter().zip(request.outputs) {
         ensure_export_not_cancelled(context.cancellation)?;
-        let file = fs::File::open(raster.path())
-            .with_context(|| format!("open staged RGB raster {}", raster.path().display()))?;
-        // SAFETY: the raster is a private staging file with a unique name, finished above and
-        // not written again; the mapping is dropped before the file is removed.
-        let mapped = unsafe { memmap2::MmapOptions::new().map(&file) }
-            .with_context(|| format!("map staged RGB raster {}", raster.path().display()))?;
-        encode(output, &mapped)?;
+        encode(output, &raster)?;
     }
     Ok(())
 }
@@ -132,7 +119,7 @@ pub(super) fn export_tiled_jpeg(
     quality: u8,
 ) -> Result<()> {
     let quality = quality.clamp(1, 100);
-    render_staged_slides(context, request, ExportRowFormat::Rgb8, |output, rgb| {
+    render_slide_rasters(context, request, ExportRowFormat::Rgb8, |output, rgb| {
         encode_jpeg_rgb(JpegEncodeRequest {
             rgb,
             output,
@@ -164,7 +151,7 @@ pub(super) fn export_tiled_jxl(
         ExportBitDepth::Sixteen => ExportRowFormat::Rgb16Le,
         ExportBitDepth::Float32Linear => unreachable!(),
     };
-    render_staged_slides(context, request, row_format, |output, mapped| {
+    render_slide_rasters(context, request, row_format, |output, raster| {
         let bytes_per_sample = if request.bit_depth == ExportBitDepth::Eight {
             1
         } else {
@@ -174,7 +161,7 @@ pub(super) fn export_tiled_jxl(
             .checked_mul(bytes_per_sample)
             .context("JPEG XL raster length overflow")?;
         anyhow::ensure!(
-            mapped.len() == expected,
+            raster.len() == expected,
             "JPEG XL RGB raster has unexpected size"
         );
         let depth = if bytes_per_sample == 1 {
@@ -188,34 +175,30 @@ pub(super) fn export_tiled_jxl(
             zune_core::colorspace::ColorSpace::RGB,
             depth,
         );
-        let encoder = zune_jpegxl::JxlSimpleEncoder::new(mapped, options);
+        let encoder = zune_jpegxl::JxlSimpleEncoder::new(raster, options);
         if request.keep_metadata {
-            with_staging_file(output, |staged_jxl| {
-                let encoded_file = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(staged_jxl)
-                    .context("create staged JPEG XL codestream")?;
-                let mut encoded_writer = BufWriter::new(encoded_file);
-                encoder
-                    .encode(&mut encoded_writer)
-                    .map_err(|error| anyhow::anyhow!("encode JPEG XL: {error}"))?;
-                encoded_writer.flush().context("flush JPEG XL codestream")?;
-                drop(encoded_writer);
-                let mut encoded_file =
-                    fs::File::open(staged_jxl).context("open staged JPEG XL codestream")?;
-                let codestream_len = encoded_file.metadata()?.len();
-                let output_file = open_export_destination(output)
-                    .with_context(|| format!("create JPEG XL {}", output.path.display()))?;
-                let mut writer = BufWriter::new(output_file);
-                write_jxl_container(
-                    &mut writer,
-                    &mut encoded_file,
-                    codestream_len,
-                    &build_exif_payload(request.metadata, width, height),
-                )?;
-                writer.flush().context("flush JPEG XL container")
-            })?;
+            // The container's boxes precede the codestream, whose length is known only
+            // once it is encoded.
+            let mut codestream = IntermediateWriter::new(
+                output,
+                raster.len() as u64,
+                context.memory,
+                "JPEG XL codestream",
+            )?;
+            encoder
+                .encode(&mut codestream)
+                .map_err(|error| anyhow::anyhow!("encode JPEG XL: {error}"))?;
+            let codestream = codestream.finish()?;
+            let output_file = open_export_destination(output)
+                .with_context(|| format!("create JPEG XL {}", output.path.display()))?;
+            let mut writer = BufWriter::new(output_file);
+            write_jxl_container(
+                &mut writer,
+                &mut &codestream[..],
+                codestream.len() as u64,
+                &build_exif_payload(request.metadata, width, height),
+            )?;
+            writer.flush().context("flush JPEG XL container")?;
         } else {
             let output_file = open_export_destination(output)
                 .with_context(|| format!("create JPEG XL {}", output.path.display()))?;

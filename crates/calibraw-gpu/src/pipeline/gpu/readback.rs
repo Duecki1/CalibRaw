@@ -460,7 +460,7 @@ fn submit_texture_to_buffer_copy(
 
 /// Requests a read mapping of the whole `buffer`; the result arrives on the
 /// returned channel once the device is polled (see `wait_for_mapping`).
-fn map_read_async(
+pub(super) fn map_read_async(
     buffer: &wgpu::Buffer,
 ) -> std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>> {
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
@@ -470,7 +470,7 @@ fn map_read_async(
     receiver
 }
 
-fn wait_for_mapping(
+pub(super) fn wait_for_mapping(
     device: &wgpu::Device,
     submission: wgpu::SubmissionIndex,
     receiver: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,

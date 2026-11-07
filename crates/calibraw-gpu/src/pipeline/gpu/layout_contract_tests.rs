@@ -686,6 +686,54 @@ fn remove_composite_params_match_rust_layout() {
     );
 }
 
+/// The export geometry pass's parameters, flags and workgroup edge match its WGSL.
+#[test]
+fn geometry_resample_matches_its_wgsl_declarations() {
+    use super::geometry_resample::{
+        GeometryResampleParams, GEOMETRY_AFFINE, GEOMETRY_LENS, GEOMETRY_WORKGROUP_EDGE,
+    };
+    let rust = rust_layout!(GeometryResampleParams {
+        source_from_output,
+        source_size,
+        raster_size,
+        window,
+        lens_map_size,
+        lens_grid_size,
+        band,
+        region,
+        chunk,
+        cell_edge,
+        cells_per_row,
+        flags,
+        horizon_epsilon
+    });
+    let modules = production_modules();
+    let geometry: Vec<_> = modules
+        .iter()
+        .filter(|(name, _)| name.starts_with(shaders::GEOMETRY_RESAMPLE_ENTRY.label))
+        .collect();
+    assert!(!geometry.is_empty(), "export geometry is composed");
+    for (context, module) in geometry {
+        assert!(
+            check_struct_layout(module, "GeometryResampleParams", &rust, context),
+            "{context} declares GeometryResampleParams"
+        );
+        assert_eq!(
+            u32_constant(module, "GEOMETRY_AFFINE"),
+            Some(GEOMETRY_AFFINE)
+        );
+        assert_eq!(u32_constant(module, "GEOMETRY_LENS"), Some(GEOMETRY_LENS));
+        for entry in &module.entry_points {
+            assert_eq!(
+                entry.workgroup_size,
+                [GEOMETRY_WORKGROUP_EDGE, GEOMETRY_WORKGROUP_EDGE, 1],
+                "{context}: {}",
+                entry.name
+            );
+        }
+    }
+}
+
 fn screaming_snake_case(camel: &str) -> String {
     let mut output = String::new();
     for (index, character) in camel.chars().enumerate() {

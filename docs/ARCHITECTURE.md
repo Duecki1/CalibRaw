@@ -64,6 +64,10 @@ change that establishes a boundary, not in advance.
   next free `{stem}-N` name; `ExportTarget::Descriptor` (Android MediaStore)
   is written in place with intermediates in a caller-chosen staging directory.
   The exporter no longer asks the platform bridge which kind a path is.
+- An export keeps its intermediates (the linear raster a geometry export
+  resamples, the raster an encoder compresses, a JPEG XL codestream awaiting its
+  container) in memory while they fit an eighth of the device's RAM
+  (`IntermediateMemory`), and stages larger ones beside the output.
 - A carousel export (`ExportFiles::Carousel`) renders a window of the output
   raster once, with the photo's geometry unchanged, and cuts its encoded rows
   into one file per slide (`SlideWriter`). Sharpening runs on the whole window,
@@ -307,6 +311,16 @@ runs before it and `apply_weather_air` after it, so their result does not depend
 the order of their cards and edits without them run the same passes as before. Each
 pass reads the image from one work texture and writes the other, and
 `encode_output_stage` tracks which one holds it.
+
+Export geometry (`geometry_resample.rs`, `geometry_resample.wgsl`) resamples the
+rendered photo through crop, turns, flips, rotation, perspective and the lens map
+on the GPU, from a source held in CPU memory. A first pass finds the source
+rectangle each 64-pixel square of the output reads; bands of output then upload
+only those rectangles, at most 32 MiB at a time, reserved against the working-set
+limit. The shader mirrors `GeometryInverseMap::source_position` and
+`LensGeometryMap`, which map the same positions on the CPU for thumbnails and the
+editor.
+
 Compiled programs are shared through `RawGpuProgramTemplate` and the persistent
 pipeline cache. Rust/WGSL layout contracts are tested in
 `calibraw-gpu/src/pipeline/gpu/layout_contract_tests.rs` against the modules the

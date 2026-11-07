@@ -17,11 +17,11 @@ pub use export::{
     ExportTarget, ExportWatermark, ResizedRemoveSceneCrop, TiledExportJob, WatermarkAnchor,
     WatermarkImage, WatermarkPlacement, MAX_EXPORT_EDGE, MAX_EXPORT_PIXELS,
 };
-pub(crate) use gpu::SLOW_GPU_WAIT;
 pub use gpu::{
     preview_mask_layer_capacity, GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, GpuWait,
     MobilePreviewRole, PipelineOptions, PreviewClippingGpu, PreviewHistogram, PreviewHistogramGpu,
     PreviewResourceShape, ProcessingQuality, RawGpuPipeline, RawGpuProgramTemplate,
     RemoveSceneContext, SceneLightQuality, PREVIEWED_PROFILE_BYTES,
 };
+pub(crate) use gpu::{resample_geometry, GeometryResampleJob, SLOW_GPU_WAIT};
 pub use gpu_cache::PersistentGpuPipelineCache;

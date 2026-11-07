@@ -15,15 +15,16 @@
 //! changed images before committing them. A failing case leaves its render and
 //! an amplified difference image in `target/tmp/render-parity/`.
 //!
-//! The edit is rendered as the export path receives it. What the app prepares
-//! before an export is not covered: lens corrections, LUTs and the source
-//! images of range, depth and AI masks.
+//! The edit is rendered as the export path receives it, after the lens
+//! correction the app applies first; the synthetic photos name no lens, so only
+//! manual corrections apply. What else the app prepares before an export is not
+//! covered: LUTs and the source images of range, depth and AI masks.
 
 use calibraw_core::sidecar::{self, EditState};
 use calibraw_gpu::pipeline::{
-    build_proxy, spawn_tiled_export, CfaKind, CompactPixelMap, ExportBitDepth, ExportEvent,
-    ExportFiles, ExportFormat, ExportMetadata, ExportSettings, ExportTarget, LoadedRaw, ProxySpec,
-    TileSpec, TiledExportJob,
+    apply_lens_correction, build_proxy, spawn_tiled_export, CfaKind, CompactPixelMap,
+    ExportBitDepth, ExportEvent, ExportFiles, ExportFormat, ExportMetadata, ExportSettings,
+    ExportTarget, LoadedRaw, ProxySpec, TileSpec, TiledExportJob,
 };
 use calibraw_gpu::{request_headless_device, wgpu, HeadlessAdapter, HeadlessDeviceRequest};
 use image::{ImageBuffer, Rgb, RgbImage};
@@ -332,6 +333,11 @@ fn render(
     tile_spec: TileSpec,
     path: &Path,
 ) {
+    let raw = match edits.lens.requested_correction(&raw) {
+        Some(correction) => apply_lens_correction(&raw, &correction)
+            .unwrap_or_else(|error| panic!("{}: lens correction: {error:#}", path.display())),
+        None => raw,
+    };
     let receiver = spawn_tiled_export(
         ExportFormat::Png,
         TiledExportJob {

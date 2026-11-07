@@ -42,6 +42,9 @@ impl<'a> GeometryInverseMap<'a> {
         self.lens_geometry.is_none() && !self.projective
     }
 
+    /// The source pixel that output pixel `(output_x, output_y)` shows. Export resamples
+    /// through the same map on the GPU (`geometry_resample.wgsl` in calibraw-gpu), so a
+    /// change here is made there too.
     pub fn source_position(self, output_x: f32, output_y: f32) -> [f32; 2] {
         let corrected = self.source_from_output.apply([output_x, output_y]);
         if corrected[0] < -0.5
@@ -61,42 +64,24 @@ impl<'a> GeometryInverseMap<'a> {
         })
     }
 
-    pub fn pixel_jacobian(self) -> [[f32; 2]; 2] {
-        self.pixel_jacobian_at(0.0, 0.0)
+    /// The map from output pixel to lens-corrected source pixel, before the lens map.
+    pub fn source_from_output(self) -> Homography {
+        self.source_from_output
     }
 
-    pub fn pixel_jacobian_at(self, output_x: f32, output_y: f32) -> [[f32; 2]; 2] {
-        let x = output_x.clamp(0.0, self.output_width.saturating_sub(1) as f32);
-        let y = output_y.clamp(0.0, self.output_height.saturating_sub(1) as f32);
-        let origin = self.source_position(x, y);
+    /// The lens map applied after [`Self::source_from_output`], if any.
+    pub fn lens_geometry(self) -> Option<&'a LensGeometryMap> {
+        self.lens_geometry
+    }
 
-        let jx = if self.output_width == 1 {
-            let left = self.source_position(-0.5, y);
-            let right = self.source_position(0.5, y);
-            [right[0] - left[0], right[1] - left[1]]
-        } else {
-            let (sample_x, sign) = if x + 1.0 < self.output_width as f32 {
-                (x + 1.0, 1.0)
-            } else {
-                (x - 1.0, -1.0)
-            };
-            let step = self.source_position(sample_x, y);
-            [(step[0] - origin[0]) * sign, (step[1] - origin[1]) * sign]
-        };
-        let jy = if self.output_height == 1 {
-            let top = self.source_position(x, -0.5);
-            let bottom = self.source_position(x, 0.5);
-            [bottom[0] - top[0], bottom[1] - top[1]]
-        } else {
-            let (sample_y, sign) = if y + 1.0 < self.output_height as f32 {
-                (y + 1.0, 1.0)
-            } else {
-                (y - 1.0, -1.0)
-            };
-            let step = self.source_position(x, sample_y);
-            [(step[0] - origin[0]) * sign, (step[1] - origin[1]) * sign]
-        };
-        [jx, jy]
+    /// Width and height of the source image, in pixels.
+    pub fn source_size(self) -> [u32; 2] {
+        [self.source_width, self.source_height]
+    }
+
+    /// Width and height of the output raster, in pixels.
+    pub fn output_size(self) -> [u32; 2] {
+        [self.output_width, self.output_height]
     }
 }
 

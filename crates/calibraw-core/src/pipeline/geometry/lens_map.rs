@@ -47,6 +47,12 @@ impl LensGeometryMap {
         self.height
     }
 
+    /// The sampled map: its grid's width and height, and for each grid point in row order
+    /// the source position it shows, in map pixels (see [`Self::source_position_for_raster`]).
+    pub fn grid(&self) -> ([u32; 2], &[[f32; 2]]) {
+        ([self.grid_width, self.grid_height], &self.coordinates)
+    }
+
     pub(crate) fn shares_mapping(&self, other: &Self) -> bool {
         self.width == other.width
             && self.height == other.height
@@ -55,6 +61,9 @@ impl LensGeometryMap {
             && Arc::ptr_eq(&self.coordinates, &other.coordinates)
     }
 
+    /// The source position that corrected position `(corrected_x, corrected_y)` of a
+    /// `raster_width` × `raster_height` image shows. `geometry_resample.wgsl` (calibraw-gpu)
+    /// evaluates the same interpolation for export, so a change here is made there too.
     pub fn source_position_for_raster(
         &self,
         corrected_x: f32,
