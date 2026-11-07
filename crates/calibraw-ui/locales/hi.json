@@ -1299,7 +1299,7 @@
   "Previous / next photo in Develop": "Develop में पिछली / अगली फ़ोटो",
   "Profile": "प्रोफ़ाइल",
   "Profile mode": "प्रोफ़ाइल मोड",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "प्रोफ़ाइल आधारित शोर कमी फ़ोटो से अनुमानित a·signal+b शोर मॉडल का अनुसरण करती है: RAW के लिए सेंसर डेटा और रेंडर की गई फ़ोटो के लिए पिक्सेल। AI डीनॉइज़ चालू होने पर इन मैन्युअल नियंत्रणों की जगह लेता है।",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "प्रोफ़ाइल आधारित शोर कमी फ़ोटो से अनुमानित a·signal+b शोर मॉडल का अनुसरण करती है: RAW के लिए सेंसर डेटा और रेंडर की गई फ़ोटो के लिए पिक्सेल।",
   "Project and third-party notices": "प्रोजेक्ट और तृतीय-पक्ष नोटिस",
   "Project source and license": "प्रोजेक्ट स्रोत और लाइसेंस",
   "Publishing to {location}…": "{location} पर प्रकाशित हो रहा है…",

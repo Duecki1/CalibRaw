@@ -1299,7 +1299,7 @@
   "Previous / next photo in Develop": "Vorheriges / nächstes Foto in Entwickeln",
   "Profile": "Profil",
   "Profile mode": "Profilmodus",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "Die profilbasierte Rauschminderung folgt dem aus dem Foto ermittelten Rauschmodell a·Signal+b: bei RAW-Dateien anhand der Sensordaten, bei bereits entwickelten Bildern anhand der Pixel. Solange KI-Entrauschen aktiviert ist, ersetzt es diese manuellen Regler.",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "Die profilbasierte Rauschminderung folgt dem aus dem Foto ermittelten Rauschmodell a·Signal+b: bei RAW-Dateien anhand der Sensordaten, bei bereits entwickelten Bildern anhand der Pixel.",
   "Project and third-party notices": "Projekt- und Drittanbieter-Hinweise",
   "Project source and license": "Projektquelle und Lizenz",
   "Publishing to {location}…": "Wird in {location} gespeichert…",

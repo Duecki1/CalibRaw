@@ -1299,7 +1299,7 @@
   "Previous / next photo in Develop": "現像画面で前／次の写真へ",
   "Profile": "プロファイル",
   "Profile mode": "プロファイルモード",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "プロファイルによるノイズ除去では、写真から推定した「a×信号+b」のノイズモデルに従います。RAWではセンサーデータ、現像済み写真ではピクセルを使います。有効にするとAIノイズ除去がこれらの手動設定に代わります。",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "プロファイルによるノイズ除去では、写真から推定した「a×信号+b」のノイズモデルに従います。RAWではセンサーデータ、現像済み写真ではピクセルを使います。",
   "Project and third-party notices": "プロジェクトおよびサードパーティの通知",
   "Project source and license": "プロジェクトのソースとライセンス",
   "Publishing to {location}…": "{location}に公開中…",

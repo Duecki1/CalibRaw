@@ -1376,7 +1376,7 @@
   "Previous / next photo in Develop": "Previous / next photo in Develop",
   "Profile": "프로필",
   "Profile mode": "Profile mode",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.",
   "Project and third-party notices": "Project and third-party notices",
   "Project source and license": "Project source and license",
   "Publishing to {location}…": "Publishing to {location}…",
