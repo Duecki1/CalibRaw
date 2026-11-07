@@ -925,7 +925,8 @@ pub mod fog {
         "Fog start",
         0.0,
         95.0,
-        8.0,
+        // Control depth: the old linear default 8 (`scene_depth_controls`).
+        23.0,
         0.5,
         0,
         Some("Keeps the nearest part of the scene clear. Distance is relative to the depth map, not meters."),

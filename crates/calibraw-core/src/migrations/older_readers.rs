@@ -34,11 +34,11 @@
 //! - Readers of schema 4, development builds after v1.4, read scene depth as
 //!   one 8-bit map. Edits holding scene depth are written with schema 5, its
 //!   layout as `SceneDepth`, which those readers report as newer.
-//! - Every reader before schema 5 reads Relight's `relief` and `depth`,
-//!   which edits now hold as `relief_scale` and `light_depth`
-//!   (`scene_depth_controls`): they would show a Relight at its defaults and
-//!   save it so. Edits with a Relight are written with schema 5 too, and
-//!   presets with their schema 5.
+//! - Every reader before schema 5 reads Relight's `relief` and `depth` and
+//!   Fog's `start`, which edits now hold as `relief_scale`, `light_depth` and
+//!   `start_depth` (`scene_depth_controls`): they would show a Relight or Fog
+//!   at its defaults and save it so. Edits with a Relight or a Fog are
+//!   written with schema 5 too, and presets with their schema 5.
 
 use super::effect_sliders::GlobalSliders;
 use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskRgbImage};
@@ -114,7 +114,7 @@ pub(crate) fn serialize_color_range<S: Serializer>(
 /// v1.2 can decode them, [`V2_SCHEMA_VERSION`] when readers up to v1.3 can,
 /// [`V3_SCHEMA_VERSION`] when readers up to v1.4 can, [`V4_SCHEMA_VERSION`]
 /// when readers of the 8-bit depth map can, otherwise `current`: for scene
-/// depth and for Relight's scene controls.
+/// depth and for Relight's and Fog's scene controls.
 pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     let masks = &edits.masks;
     let uses_effect = |effects: &[MaskEffect]| {
@@ -128,7 +128,7 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
                 .iter()
                 .any(|mask| effects.contains(&mask.effect))
     };
-    if masks.scene_depth.is_some() || uses_effect(&[MaskEffect::Relight]) {
+    if masks.scene_depth.is_some() || uses_effect(&[MaskEffect::Relight, MaskEffect::Fog]) {
         return current;
     }
     let has_instances = masks

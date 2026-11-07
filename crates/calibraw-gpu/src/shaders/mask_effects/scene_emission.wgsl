@@ -18,9 +18,11 @@
 // their centroid in full-image uv.
 //
 // Light. Each cell is a disc as wide as the cell, placed at its depth in the
-// scene frame (scene_lights.wgsl, the default relief): a scene light whose reach
+// scene frame (scene_lights.wgsl, relief scale 1): a scene light whose reach
 // is that radius, so its light falls off with the inverse square of the distance
-// beyond it and stays finite inside it. Two passes spread the cells once per
+// beyond it and stays finite inside it. Depths are the scene bake's linear
+// depth d (scene/geometry.wgsl), averaged over a cell, or 0 without scene
+// depth. Two passes spread the cells once per
 // render, so a receiver's cost does not depend on the emitters:
 // - `build_scene_emission_surfaces` gives the light arriving at the scene's
 //   surfaces on a grid twice as fine, at each cell's depth, with its mean
@@ -52,19 +54,17 @@ const SCENE_EMISSION_VOLUME_ROW: u32 = 2u * SCENE_EMISSION_SURFACE_GRID_LONG;
 // Rows of scene_emission_light_tex.
 const SCENE_EMISSION_LIGHT_ROWS: u32 =
     SCENE_EMISSION_VOLUME_ROW + 2u * MEDIUM_CELLS * SCENE_EMISSION_GRID_LONG;
-// Scene-depth mip levels read by the emitters' samples and the surface cells:
-// about their spacing on the 1024-texel depth.
-const SCENE_EMISSION_DEPTH_LEVEL: f32 = 3.0;
-const SCENE_EMISSION_SURFACE_DEPTH_LEVEL: f32 = 2.0;
+// Taps per axis with which a surface cell averages the bake's depth.
+const SCENE_EMISSION_SURFACE_TAPS: u32 = 3u;
 // Light at Scene light 100 relative to the radiance an emitter adds to the image.
 const SCENE_EMISSION_GAIN: f32 = 1.0;
 // Wrap of the Lambert term on surfaces, which also lets light that arrives from
 // all around reach a surface facing away from its mean direction.
 const SCENE_EMISSION_WRAP: f32 = 0.35;
 // Normal smoothing radius in shorter-edge units: the light is broad, so it
-// integrates the surface over a wide disc (`relight_smoothed_gradient`).
+// integrates the surface over a wide disc (`Geometry::scene_soft_normal`).
 const SCENE_EMISSION_NORMAL_RADIUS: f32 = 0.03;
-// Normalized depth over which a surface stops sharing the light of a
+// Linear depth over which a surface stops sharing the light of a
 // neighbouring surface cell, so light does not bleed across silhouettes.
 const SCENE_EMISSION_DEPTH_TOLERANCE: f32 = 0.05;
 
@@ -153,11 +153,19 @@ fn scene_contour_line_share(
     return min(covered / summary.x * spacing / max(summary.y, 1e-3), 1.0);
 }
 
+// The scene bake's linear depth of the visible surface's texel at full-image
+// `uv`; 0 without scene depth. The nearer surface of an edge texel counts: the
+// light of an emitter lies on what stands before the rest.
+fn scene_emission_depth_at(uv: vec2<f32>) -> f32 {
+    if !Geometry::scene_geometry_present() { return 0.0; }
+    let texel = vec2<i32>(floor(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.9999)) * vec2<f32>(Bake::scene_bake_size())));
+    return Geometry::scene_layer(texel, Bake::SCENE_LAYER_GEOMETRY).x;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn build_scene_emission(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid = scene_emission_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
-    let has_depth = scene_depth_present();
     let samples = SCENE_EMISSION_SUBSAMPLES;
     var light = vec3<f32>(0.0);
     var weights = 0.0;
@@ -168,15 +176,7 @@ fn build_scene_emission(@builtin(global_invocation_id) gid: vec3<u32>) {
         for (var sx = 0u; sx < samples; sx = sx + 1u) {
             let offset = (vec2<f32>(f32(sx), f32(sy)) + vec2<f32>(0.5)) / f32(samples);
             let uv = (vec2<f32>(gid.xy) + offset) / vec2<f32>(grid);
-            var depth = 0.0;
-            if has_depth {
-                depth = textureSampleLevel(
-                    scene_depth_tex,
-                    SceneAdjustments::local_mask_sampler,
-                    uv,
-                    SCENE_EMISSION_DEPTH_LEVEL,
-                ).y;
-            }
+            let depth = scene_emission_depth_at(uv);
             mean_depth += depth;
             var radiance = vec3<f32>(0.0);
             for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
@@ -215,33 +215,33 @@ fn scene_emission_center(cell: vec2<i32>) -> vec2<f32> {
     return textureLoad(scene_emission_tex, cell + vec2<i32>(0, i32(SCENE_EMISSION_GRID_LONG)), 0).xy;
 }
 
-// A grid cell's light as a scene light in `camera`'s frame: `light` and `depth`
-// as `build_scene_emission` stores them, `center` its centroid and `extent` the
-// width of the cell in shorter-edge units. Its intensity is relative to
-// `ambient`.
+// A grid cell's light as a scene light in the frame at relief scale 1:
+// `light` and `depth` as `build_scene_emission` stores them, `center` its
+// centroid and `extent` the width of the cell in shorter-edge units. Its
+// intensity is relative to `ambient`.
 fn scene_emitter(
-    camera: SceneCamera,
     light: vec3<f32>,
     depth: f32,
     center: vec2<f32>,
     extent: f32,
     ambient: f32,
 ) -> SceneLight {
-    let z = scene_depth_z(camera, depth);
+    let camera = scene_light_camera();
+    let z = Camera::scene_frame_depth(camera, depth, 1.0);
     // Scene units per shorter-edge unit of the image at that depth.
-    let scale = 2.0 * SCENE_FOCAL_TAN * z;
+    let scale = 2.0 * camera.lens.x * z;
     let core = max(0.5 * extent * scale, 1e-4);
     // Light (radiance × area) over the core's square, so that intensity ×
     // falloff = light / (core² + distance²).
     let power = light * (scale * scale);
     return SceneLight(
         true,
-        camera,
-        scene_camera_point(camera, center * camera.image_size, z),
+        Camera::scene_frame_position(camera, Camera::scene_image_point(center, Common::scene_image_size()), z),
         core,
         power / (core * core * ambient),
-        SCENE_LIGHT_UNCONFINED,
         0u,
+        SCENE_LIGHT_UNCONFINED,
+        1.0,
     );
 }
 
@@ -255,18 +255,23 @@ fn scene_emission_cell_extent(grid: vec2<u32>) -> f32 {
 fn build_scene_emission_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid = scene_emission_surface_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
-    let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
+    let camera = scene_light_camera();
     let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(grid);
+    // The cell's depth: a few taps over its extent.
     var depth = 0.0;
-    if scene_depth_present() {
-        depth = textureSampleLevel(
-            scene_depth_tex,
-            SceneAdjustments::local_mask_sampler,
-            uv,
-            SCENE_EMISSION_SURFACE_DEPTH_LEVEL,
-        ).y;
+    let taps = SCENE_EMISSION_SURFACE_TAPS;
+    for (var ty = 0u; ty < taps; ty = ty + 1u) {
+        for (var tx = 0u; tx < taps; tx = tx + 1u) {
+            let offset = (vec2<f32>(f32(tx), f32(ty)) + vec2<f32>(0.5)) / f32(taps) - vec2<f32>(0.5);
+            depth += scene_emission_depth_at(uv + offset / vec2<f32>(grid));
+        }
     }
-    let surface = scene_camera_point(camera, uv * camera.image_size, scene_depth_z(camera, depth));
+    depth /= f32(taps * taps);
+    let surface = Camera::scene_frame_position(
+        camera,
+        Camera::scene_image_point(uv, Common::scene_image_size()),
+        Camera::scene_frame_depth(camera, depth, 1.0),
+    );
     let emitters = scene_emission_grid();
     let extent = scene_emission_cell_extent(emitters);
     let ambient = scene_ambient_level();
@@ -279,7 +284,7 @@ fn build_scene_emission_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) 
             let light = textureLoad(scene_emission_tex, cell, 0);
             if dot(light.xyz, Common::LUMA) <= 0.0 { continue; }
             let center = scene_emission_center(cell);
-            let emitter = scene_emitter(camera, light.xyz, light.w, center, extent, ambient);
+            let emitter = scene_emitter(light.xyz, light.w, center, extent, ambient);
             let arriving = emitter.intensity * scene_light_falloff(emitter, surface);
             received += arriving;
             let weight = dot(arriving, Common::LUMA);
@@ -301,9 +306,8 @@ fn build_scene_emission_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) 
 fn build_scene_emission_volume(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid = scene_emission_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
-    let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
     let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(grid);
-    let point = uv * camera.image_size;
+    let ray = scene_light_ray(Camera::scene_image_point(uv, Common::scene_image_size()));
     let extent = 2.0 * scene_emission_cell_extent(grid);
     let ambient = scene_ambient_level();
     var even: array<vec3<f32>, MEDIUM_CELLS>;
@@ -333,14 +337,14 @@ fn build_scene_emission_volume(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             if weights <= 0.0 { continue; }
             let emitter = scene_emitter(
-                camera, light, weighted_depth / weights, weighted_uv / weights, extent, ambient,
+                light, weighted_depth / weights, weighted_uv / weights, extent, ambient,
             );
             for (var i = 0u; i < MEDIUM_CELLS; i = i + 1u) {
                 let near = f32(i) / f32(MEDIUM_CELLS);
                 let far = f32(i + 1u) / f32(MEDIUM_CELLS);
-                let along = scene_light_falloff_along(emitter, point, near, far);
+                let along = scene_light_falloff_along(emitter, ray, near, far);
                 if along <= 0.0 { continue; }
-                let middle = scene_camera_point(camera, point, scene_depth_z(camera, 0.5 * (near + far)));
+                let middle = scene_light_ray_position(emitter, ray, 0.5 * (near + far));
                 even[i] += emitter.intensity * along;
                 forward[i] += emitter.intensity
                     * (along * scene_light_phase_at(emitter, middle, FOG_LIGHT_ANISOTROPY));
@@ -444,45 +448,55 @@ fn scene_emission_surface_at(uv: vec2<f32>, depth: f32) -> SceneEmissionArrival 
     return SceneEmissionArrival(light / weights, direction / weights);
 }
 
-// Light from emitters on the scene's surfaces, in proportion to an estimate of
-// their reflectance as Relight's (`apply_relight`). It is added before the
-// creative effects (creative_effects.wgsl), so Relight's Ambient dims it with
-// everything else and Fog veils it, and the sky and far scenery stay unlit as
-// Relight leaves them. Normals are Relight's, from the scene surface (scene_surface.rs,
-// which takes them from the predicted normals where the depth has them); without
-// depth the scene is a plane facing the camera.
-fn apply_scene_emission_light(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
-    if !scene_emission_present() { return input_rgb; }
-    let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
-    let uv = full_image_uv(pos);
-    let point = uv * camera.image_size;
-    var depth = 0.0;
-    var gradient = vec2<f32>(0.0);
-    var reachable = 1.0;
-    var sky = SceneSky(0.0, 1.0);
-    if scene_depth_present() {
-        let taps = scene_surface_taps_at(pos);
-        sky = taps.sky;
-        if sky.share >= 1.0 { return input_rgb; }
-        depth = taps.surface.y;
-        gradient = relight_smoothed_gradient(
-            camera, uv, depth, taps.surface.zw, SCENE_EMISSION_NORMAL_RADIUS,
-        );
-        reachable = relight_reach(uv, depth);
-    }
-    if reachable <= 0.0 { return input_rgb; }
-    let normal = relight_normal(camera, point, scene_depth_z(camera, depth), gradient);
-    let arrival = scene_emission_surface_at(uv, depth);
+// One surface of a pixel lit by the emitters, in proportion to an estimate of
+// its reflectance as Relight's (`relight_shade`); `rgb` is its part of the
+// pixel's colour. The sky stays unlit, as Relight leaves it.
+fn scene_emission_shade(
+    pos: vec2<i32>,
+    uv: vec2<f32>,
+    surface: Geometry::SceneSurface,
+    normal: vec3<f32>,
+    rgb: vec3<f32>,
+) -> vec3<f32> {
+    let arrival = scene_emission_surface_at(uv, surface.d);
     let facing = clamp(
         (dot(normal, arrival.direction) + SCENE_EMISSION_WRAP) / (1.0 + SCENE_EMISSION_WRAP),
         0.0,
         1.0,
     );
-    // Of what stands before the sky where it covers part of the pixel, as Relight's.
-    let positive = Color::gamut_project_nonnegative_rec2020(input_rgb);
-    let coverage = 1.0 - sky.share;
-    let solid = positive * sky.solid;
+    let solid = Color::gamut_project_nonnegative_rec2020(rgb);
     let relative = clamp(Common::safe_luma(solid) / scene_ambient_level(), 0.02, 64.0);
-    let reflectance = solid * pow(relative, -0.3) * coverage;
-    return input_rgb + reflectance * arrival.light * (facing * reachable);
+    let reflectance = solid * pow(relative, -0.3) * (1.0 - surface.sky);
+    return rgb + reflectance * arrival.light * facing;
+}
+
+// Light from emitters on the scene's surfaces. It is added before the creative
+// effects (creative_effects.wgsl), so Relight's Ambient dims it with
+// everything else and Fog veils it. Each of a pixel's surfaces is lit with
+// its own normal, softened over the wide disc of the light; without scene depth the
+// scene is a plane facing the camera.
+fn apply_scene_emission_light(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
+    if !scene_emission_present() { return input_rgb; }
+    let uv = full_image_uv(pos);
+    if !Geometry::scene_geometry_present() {
+        let plane = Geometry::SceneSurface(
+            vec3<f32>(0.0), vec3<f32>(0.0, 0.0, -1.0), input_rgb, 0.0, 0.0, 0u,
+        );
+        return scene_emission_shade(pos, uv, plane, plane.normal, input_rgb);
+    }
+    let scene_rgb = Geometry::scene_unedited_at(pos);
+    let pixel = Geometry::scene_pixel(uv, scene_rgb, 1.0);
+    let colors = Geometry::scene_split(pixel, scene_rgb, input_rgb);
+    let near = scene_emission_shade(
+        pos, uv, pixel.near,
+        Geometry::scene_soft_normal(pixel.near, uv, SCENE_EMISSION_NORMAL_RADIUS, 1.0), colors[0],
+    );
+    if !pixel.in_band {
+        return near;
+    }
+    let far = scene_emission_shade(
+        pos, uv, pixel.far,
+        Geometry::scene_soft_normal(pixel.far, uv, SCENE_EMISSION_NORMAL_RADIUS, 1.0), colors[1],
+    );
+    return Geometry::scene_blend(pixel, near, far);
 }

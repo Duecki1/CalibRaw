@@ -202,6 +202,12 @@ fn effect_picker(
                     MaskEffect::ALL
                         .into_iter()
                         .filter(|effect| effect.category() == Some(category))
+                        // Rain and Wet Surfaces are not offered while they wait for
+                        // their rework to be judged (docs/rework/DEPTH_EFFECTS_PLAN.md);
+                        // edits that hold them keep rendering them.
+                        .filter(|effect| {
+                            !matches!(effect, MaskEffect::Rain | MaskEffect::WetSurfaces)
+                        })
                         .map(|effect| {
                             let added = components
                                 .iter()

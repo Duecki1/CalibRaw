@@ -45,7 +45,7 @@ pub use lens_blur::LensBlurEffectSettings;
 pub use light_rays::{LightRaySource, LightRaysEffectSettings};
 pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
-pub use passes::{EffectPass, EffectReach, ReachGroup, SceneMapUse, SceneNeed, SceneNeeds};
+pub use passes::{EffectPass, EffectReach, ReachGroup, SceneNeed, SceneNeeds};
 pub use pixelate::PixelateEffectSettings;
 pub use radial_blur::{RadialBlurEffectSettings, RadialBlurMode};
 pub use rain::RainEffectSettings;
@@ -59,7 +59,7 @@ pub use wet_surfaces::WetSurfacesEffectSettings;
 
 use crate::pipeline::processing::{
     CAPTURE_SHARPEN_SUPPORT, EDGE_GLOW_SUPPORT, FOCUS_BLUR_SUPPORT, GLOW_SUPPORT,
-    MASK_BLUR_SUPPORT, NEON_SUPPORT, PIXELATE_SUPPORT, SCENE_DEPTH_GUIDE_SUPPORT,
+    MASK_BLUR_SUPPORT, NEON_SUPPORT, PIXELATE_SUPPORT,
 };
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -83,7 +83,6 @@ pub trait EffectSettingsVisitor {
 /// - `passes`, where it runs ([`EffectPass`]); a `Creative` effect defines
 ///   `apply_<field>` in its shader, which the creative pass calls;
 /// - `reach`, how far around a pixel it reads ([`EffectReach`]);
-/// - `scene_map`, when it reads the scene map ([`SceneMapUse`]);
 /// - optionally `scene`, what it reads of the scene bake ([`SceneNeed`]s).
 ///
 /// Rows are in the order the settings serialize, which sidecars and presets
@@ -97,8 +96,7 @@ macro_rules! mask_effects {
             category: $category:ident,
             settings: $field:ident: $settings:ty,
             passes: [$($pass:ident),+],
-            reach: $reach:ident $(($pixels:expr))?,
-            scene_map: $scene_map:ident
+            reach: $reach:ident $(($pixels:expr))?
             $(, scene: [$($need:ident),* $(,)?])? $(,)?
         }
     )+) => {
@@ -176,13 +174,6 @@ macro_rules! mask_effects {
                 match self {
                     Self::Adjustment => EffectReach::Pixel,
                     $(Self::$variant => EffectReach::$reach $(($pixels))?,)+
-                }
-            }
-
-            pub const fn scene_map(self) -> SceneMapUse {
-                match self {
-                    Self::Adjustment => SceneMapUse::Never,
-                    $(Self::$variant => SceneMapUse::$scene_map,)+
                 }
             }
 
@@ -293,7 +284,6 @@ mask_effects! {
         settings: blur: BlurEffectSettings,
         passes: [Blur],
         reach: MaskBlur(MASK_BLUR_SUPPORT),
-        scene_map: Never,
     }
     LensBlur {
         label: "Lens Blur",
@@ -303,7 +293,6 @@ mask_effects! {
         settings: lens_blur: LensBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
-        scene_map: Never,
     }
     MotionBlur {
         label: "Motion Blur",
@@ -313,7 +302,6 @@ mask_effects! {
         settings: motion_blur: MotionBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
-        scene_map: Never,
     }
     RadialBlur {
         label: "Radial Blur",
@@ -323,7 +311,6 @@ mask_effects! {
         settings: radial_blur: RadialBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
-        scene_map: Never,
     }
     TiltShift {
         label: "Tilt-Shift",
@@ -333,7 +320,6 @@ mask_effects! {
         settings: tilt_shift: TiltShiftEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
-        scene_map: Never,
     }
     Sharpen {
         label: "Sharpen",
@@ -343,7 +329,6 @@ mask_effects! {
         settings: sharpen: SharpenEffectSettings,
         passes: [CaptureSharpening],
         reach: CaptureSharpening(CAPTURE_SHARPEN_SUPPORT),
-        scene_map: Never,
     }
     EdgeGlow {
         label: "Edge Glow",
@@ -353,7 +338,6 @@ mask_effects! {
         settings: edge_glow: EdgeGlowEffectSettings,
         passes: [Creative],
         reach: Creative(EDGE_GLOW_SUPPORT),
-        scene_map: Never,
     }
     Glow {
         label: "Glow",
@@ -363,7 +347,6 @@ mask_effects! {
         settings: glow: GlowEffectSettings,
         passes: [CreativeLight],
         reach: Glow(GLOW_SUPPORT),
-        scene_map: Never,
     }
     LightRays {
         label: "Light Rays",
@@ -373,7 +356,6 @@ mask_effects! {
         settings: light_rays: LightRaysEffectSettings,
         passes: [CreativeLight],
         reach: Pixel,
-        scene_map: Never,
     }
     Relight {
         label: "Relight",
@@ -383,7 +365,6 @@ mask_effects! {
         settings: relight: RelightEffectSettings,
         passes: [Creative],
         reach: Pixel,
-        scene_map: Never,
         scene: [LightBake],
     }
     Neon {
@@ -394,7 +375,6 @@ mask_effects! {
         settings: neon: NeonEffectSettings,
         passes: [SceneEffects],
         reach: SceneEffects(NEON_SUPPORT),
-        scene_map: Never,
     }
     Pixelate {
         label: "Pixelate",
@@ -404,7 +384,6 @@ mask_effects! {
         settings: pixelate: PixelateEffectSettings,
         passes: [Creative],
         reach: Creative(PIXELATE_SUPPORT),
-        scene_map: Never,
     }
     Fog {
         label: "Fog",
@@ -413,8 +392,8 @@ mask_effects! {
         category: Texture,
         settings: fog: FogEffectSettings,
         passes: [Creative],
-        reach: Creative(SCENE_DEPTH_GUIDE_SUPPORT),
-        scene_map: WithDepth,
+        reach: Pixel,
+        scene: [AirLight],
     }
     Smoke {
         label: "Smoke",
@@ -423,8 +402,8 @@ mask_effects! {
         category: Texture,
         settings: smoke: SmokeEffectSettings,
         passes: [Creative],
-        reach: Creative(SCENE_DEPTH_GUIDE_SUPPORT),
-        scene_map: WithDepth,
+        reach: Pixel,
+        scene: [LightBake],
     }
     Grain {
         label: "Grain",
@@ -434,7 +413,6 @@ mask_effects! {
         settings: grain: GrainEffectSettings,
         passes: [DisplayFinish],
         reach: Pixel,
-        scene_map: Never,
     }
     Halation {
         label: "Halation",
@@ -444,7 +422,6 @@ mask_effects! {
         settings: halation: HalationEffectSettings,
         passes: [Creative],
         reach: Glow(GLOW_SUPPORT),
-        scene_map: Never,
     }
     Vignette {
         label: "Vignette",
@@ -454,7 +431,6 @@ mask_effects! {
         settings: vignette: VignetteEffectSettings,
         passes: [DisplayFinish],
         reach: Pixel,
-        scene_map: Never,
     }
     Rain {
         label: "Rain",
@@ -464,7 +440,7 @@ mask_effects! {
         settings: rain: RainEffectSettings,
         passes: [AfterCreative],
         reach: Pixel,
-        scene_map: Always,
+        scene: [AirLight, Image],
     }
     WetSurfaces {
         label: "Wet Surfaces",
@@ -474,7 +450,7 @@ mask_effects! {
         settings: wet_surfaces: WetSurfacesEffectSettings,
         passes: [BeforeCreative, AfterCreative],
         reach: Pixel,
-        scene_map: Always,
+        scene: [Geometry, Image],
     }
 }
 

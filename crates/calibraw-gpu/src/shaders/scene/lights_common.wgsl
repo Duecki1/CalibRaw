@@ -3,7 +3,8 @@
 // The light bake (pipeline/gpu/scene/lights.rs, docs/rework/DEPTH_EFFECTS_PLAN.md
 // §4.4): per light a shadow cube of the scene's visible surface (L1,
 // shadow_raster.wgsl) and from it the visibility of each surface of the scene
-// bake (L2, visibility.wgsl).
+// bake (L2, visibility.wgsl), and from the cubes the share of each light
+// along every view ray that the scene does not shadow (L3, air_light.wgsl).
 //
 // Frame. Lights and the scene share the shading frame of camera.wgsl at the
 // light's relief scale E: the camera at the origin, x right, y down, z away,
@@ -31,6 +32,9 @@ struct SceneShadowLight {
     // first layer (z); the mesh level it is drawn from (w: 0 the working
     // size, 1 half of it).
     shape: vec4<f32>,
+    // The distance at which the light's falloff has halved, in frame units
+    // (x): what the air light weighs the view ray by. yzw unused.
+    air: vec4<f32>,
 }
 
 struct SceneShadowLights {
@@ -55,7 +59,7 @@ const SCENE_CUBE_MARGIN: f32 = 0.1;
 // The light in `channel`; inactive past the last channel.
 fn scene_shadow_light(channel: u32) -> SceneShadowLight {
     if channel >= SCENE_SHADOW_LIGHTS {
-        return SceneShadowLight(vec4<f32>(0.0), vec4<f32>(0.0));
+        return SceneShadowLight(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
     }
     return scene_shadow_lights.lights[channel];
 }
@@ -223,3 +227,23 @@ fn scene_vogel(tap: u32, count: u32) -> vec2<f32> {
     let angle = f32(tap) * 2.39996323;
     return radius * vec2<f32>(cos(angle), sin(angle));
 }
+
+// The air light (L3, air_light.wgsl) of one pipeline: a grid over the full
+// image whose texel (i, j) covers full-image pixels
+// [i, i + 1) · `march.x` × [j, j + 1) · `march.x`, of which a texture array
+// holds the part `region` names. Layer 0 holds the linear depth of the near
+// (x) and the far (y) surface the march ended at; then, per group of four
+// light bake channels, a layer of each channel's shadowed share along the
+// view ray to the near surface and one to the far surface.
+struct SceneAirLight {
+    // The texture's first texel in grid coordinates (xy) and its size (zw).
+    region: vec4<i32>,
+    // Full-image pixels per grid texel (x), 0 when no air light is built;
+    // steps along each ray (y); cube taps per step (z); groups of four lights
+    // (w).
+    march: vec4<u32>,
+    // The full image's size in pixels (xy).
+    image: vec4<u32>,
+}
+
+@group(0) @binding(115) var<uniform> scene_air: SceneAirLight;

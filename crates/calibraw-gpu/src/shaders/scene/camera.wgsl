@@ -58,6 +58,25 @@ fn scene_depth_of_control(camera: SceneCamera, control: f32) -> f32 {
     return (pow(ratio, control) - 1.0) / (ratio - 1.0);
 }
 
+// Control depth of linear depth `d`: c = ln(1 + (Q − 1) · d) / ln Q, the
+// inverse of scene_depth_of_control.
+fn scene_control_of_depth(camera: SceneCamera, d: f32) -> f32 {
+    let ratio = camera.anchors.w / camera.anchors.z;
+    if ratio < 1.0001 {
+        return d;
+    }
+    return log(1.0 + (ratio - 1.0) * d) / log(ratio);
+}
+
+// d(d_of_c) / dc at control depth `control`: ln Q · Q^c / (Q − 1).
+fn scene_depth_per_control(camera: SceneCamera, control: f32) -> f32 {
+    let ratio = camera.anchors.w / camera.anchors.z;
+    if ratio < 1.0001 {
+        return 1.0;
+    }
+    return log(ratio) * pow(ratio, control) / (ratio - 1.0);
+}
+
 // Frame depth z of a light at control depth `control` (Relight's Light
 // depth / 100) with relief scale E: on the scene's depth range from 0 on,
 // and before the nearest surface, toward the camera, z = 1 + 0.9 · control

@@ -91,8 +91,7 @@ impl EffectReach {
 }
 
 /// What an effect reads of the scene bake (calibraw-gpu `scene`): the scene's
-/// geometry with two surfaces per pixel. Depth effects move here from
-/// [`SceneMapUse`] as they are rebuilt (docs/rework/DEPTH_EFFECTS_PLAN.md).
+/// geometry with two surfaces per pixel, its working image and its lights.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SceneNeeds {
     /// Depth, coverage, and each surface's normal and colour; read only while
@@ -105,6 +104,9 @@ pub struct SceneNeeds {
     /// The shadowed share of each light along every view ray (the air
     /// light); with the light bake.
     pub air_light: bool,
+    /// The working image with its mip chain, to read the scene's colour
+    /// with a footprint (`scene_image`). Also without a depth result.
+    pub image: bool,
 }
 
 /// One part of [`SceneNeeds`], as the effect registry names it.
@@ -113,6 +115,7 @@ pub enum SceneNeed {
     Geometry,
     LightBake,
     AirLight,
+    Image,
 }
 
 impl SceneNeeds {
@@ -120,6 +123,7 @@ impl SceneNeeds {
         geometry: false,
         light_bake: false,
         air_light: false,
+        image: false,
     };
 
     /// These needs and `need`, with what it is built from.
@@ -138,19 +142,12 @@ impl SceneNeeds {
                 geometry: true,
                 light_bake: true,
                 air_light: true,
+                ..self
+            },
+            SceneNeed::Image => Self {
+                image: true,
+                ..self
             },
         }
     }
-}
-
-/// When an effect reads the scene map: scene depth refined against the photo,
-/// the photo's coarse colour, the ground and the lens blur per depth
-/// (scene_analysis.wgsl).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SceneMapUse {
-    Never,
-    /// Only while scene depth is present.
-    WithDepth,
-    /// Also without scene depth, for the photo's environment.
-    Always,
 }

@@ -1,0 +1,31 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Relight",
+          "settings": {
+            "relight": {
+              "ambient": 60.0,
+              "amount": 70.0,
+              "source": [
+                30.0,
+                55.0
+              ],
+              "light_depth": -30.0,
+              "size": 40.0
+            }
+          }
+        }
+      ]
+    }
+  },
+  "mask_assets": [
+    {
+      "height": 96,
+      "png": "iVBORw0KGgoAAAANSUhEUgAAAJAAAABgCAAAAADXv6R9AAABMElEQVR4nO3X0W0CMRAE0GFwFZGoBjpKHXSU9EERtHBr/viIkCa2dKsB7/se31nj1RkOHV4IM4QZwgxhhjBDmCHMEGYIM4QZwgxhhjBDmCHMEGYIM4QZwkzLeMmvjpxTN4QfFbj4Hhlhpo0vuerIN6bNzNB1x/34HRlhhjBDmCHMEGYIM4SZdhtecteJ2/yKFsMb6jrx56H6HfGMtG2PDW3zKyYaCp2I+U4/oaGuEzVDQs2QUjOk1AyNztDQl7o+jC/V5arU5arUDCk1Q+88Q5Hwm7qPbKj+dbxU/1yVmiGlZkipGXKboeP/V6TcZQf90Ei97UekHNmIlCNbraHQicUb6jqxeEOhE4s31HUiPmlD2/sfWejE4g11nUhu6GTW0JeO5Da0r4mG9lUNKdUQhAc60FdvolTjrAAAAABJRU5ErkJggg==",
+      "width": 144
+    }
+  ],
+  "scene_depth_asset": 0
+}

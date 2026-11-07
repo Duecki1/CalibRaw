@@ -3,8 +3,9 @@
 // The scene bake's first passes (bake_common.wgsl): the working image from the
 // accumulated sums, then depth per texel (B1) and the band around depth edges
 // and the sky's outline (B2). The band's extent is a separable minimum and
-// maximum over SCENE_BAND_RADIUS texels: rows into the scratch buffer, then
-// columns. Edges clamp.
+// maximum, of depth over SCENE_BAND_RADIUS texels and of sky probability over
+// SCENE_SKY_BAND_RADIUS: rows into the scratch buffer, then columns. Edges
+// clamp.
 
 // The working image's level 0: each texel's mean colour. Alpha holds nothing
 // at level 0 (the mips' alpha is B6's, bake_mips.wgsl).
@@ -27,22 +28,30 @@ fn bake_scene_distance(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(Bake::scene_coverage_out, texel, vec4<f32>(depth, 0.0, 0.0));
 }
 
-// B2, rows: the least and greatest depth (xy) and sky probability (zw) within
-// SCENE_BAND_RADIUS along the row, into the scratch buffer.
+// An extent (least and greatest depth, least and greatest sky probability)
+// widened by a tap's `values` (in the same order) `distance` texels away:
+// depth within SCENE_BAND_RADIUS, sky probability within
+// SCENE_SKY_BAND_RADIUS.
+fn scene_extend(extent: vec4<f32>, values: vec4<f32>, distance: i32) -> vec4<f32> {
+    var result = vec4<f32>(extent.xy, min(extent.z, values.z), max(extent.w, values.w));
+    if distance <= Bake::SCENE_BAND_RADIUS {
+        result = vec4<f32>(min(extent.x, values.x), max(extent.y, values.y), result.zw);
+    }
+    return result;
+}
+
+// B2, rows: the least and greatest depth (xy) within SCENE_BAND_RADIUS and sky
+// probability (zw) within SCENE_SKY_BAND_RADIUS along the row, into the
+// scratch buffer.
 @compute @workgroup_size(8, 8, 1)
 fn bake_scene_extent_rows(@builtin(global_invocation_id) gid: vec3<u32>) {
     let texel = vec2<i32>(gid.xy);
     if any(texel >= Bake::scene_bake_size()) { return; }
     var extent = vec4<f32>(1.0, 0.0, 1.0, 0.0);
-    for (var dx = -Bake::SCENE_BAND_RADIUS; dx <= Bake::SCENE_BAND_RADIUS; dx = dx + 1) {
+    for (var dx = -Bake::SCENE_SKY_BAND_RADIUS; dx <= Bake::SCENE_SKY_BAND_RADIUS; dx = dx + 1) {
         let tap = Bake::scene_bake_clamp(texel + vec2<i32>(dx, 0));
         let depth = textureLoad(Bake::scene_coverage_tex, tap, 0).xy;
-        extent = vec4<f32>(
-            min(extent.x, depth.x),
-            max(extent.y, depth.x),
-            min(extent.z, depth.y),
-            max(extent.w, depth.y),
-        );
+        extent = scene_extend(extent, vec4<f32>(depth.xx, depth.yy), abs(dx));
     }
     Bake::scene_bake_scratch[Bake::scene_bake_index(texel)] = bitcast<vec4<u32>>(extent);
 }
@@ -56,15 +65,10 @@ fn bake_scene_extent_columns(@builtin(global_invocation_id) gid: vec3<u32>) {
     let texel = vec2<i32>(gid.xy);
     if any(texel >= Bake::scene_bake_size()) { return; }
     var extent = vec4<f32>(1.0, 0.0, 1.0, 0.0);
-    for (var dy = -Bake::SCENE_BAND_RADIUS; dy <= Bake::SCENE_BAND_RADIUS; dy = dy + 1) {
+    for (var dy = -Bake::SCENE_SKY_BAND_RADIUS; dy <= Bake::SCENE_SKY_BAND_RADIUS; dy = dy + 1) {
         let tap = Bake::scene_bake_clamp(texel + vec2<i32>(0, dy));
         let rows = bitcast<vec4<f32>>(Bake::scene_bake_scratch[Bake::scene_bake_index(tap)]);
-        extent = vec4<f32>(
-            min(extent.x, rows.x),
-            max(extent.y, rows.y),
-            min(extent.z, rows.z),
-            max(extent.w, rows.w),
-        );
+        extent = scene_extend(extent, rows, abs(dy));
     }
     let depth = textureLoad(Bake::scene_coverage_tex, texel, 0).xy;
     var band = 0u;

@@ -25,12 +25,14 @@
 //   COVERAGE  the near surface's coverage at a pixel is
 //             clamp(dot(xyz, guide) + w, 0, 1) for the pixel's own guide
 //   NORMALS   the near (xy) and far (zw) surface's normal, octahedral
-//   NEAR      the near surface's colour (xyz); w is 1 at an edge, else 0
+//   NEAR      the near surface's colour (xyz); w is the texel's kind of edge
+//             (SCENE_EDGE_*, 0 at no edge)
 //   FAR       the far surface's colour (xyz); w as NEAR's
-// The band is where a depth edge (SCENE_BAND_DEPTH) or the sky's outline
-// (SCENE_BAND_SKY) may lie within SCENE_BAND_RADIUS texels; B3 finds the
-// edges in it. A texel at no edge holds one surface: both surfaces are its own
-// and coverage is a constant 0 or 1.
+// The band is where a depth edge (SCENE_BAND_DEPTH) may lie within
+// SCENE_BAND_RADIUS texels or the sky's outline (SCENE_BAND_SKY) within
+// SCENE_SKY_BAND_RADIUS; B3 finds the edges in it. A texel at no edge holds
+// one surface: both surfaces are its own and coverage is a constant 0 or 1.
+// At the sky's outline the far surface is the sky.
 //
 // Normals use the camera frame of calibraw-core `SceneNormals`: x to the
 // right, y down the image, z away from the camera; visible surfaces have
@@ -106,6 +108,18 @@ fn scene_focus_blur(z: f32) -> f32 {
     return (fit.x * abs(1.0 / z - fit.y) + fit.z) * short;
 }
 
+// The lens blur's deviation at frame depth `z`, in working texels, as
+// `scene_focus_blur` gives it, for passes that read the uniform's copy of the
+// fit.
+fn scene_lens_blur(z: f32) -> f32 {
+    let fit = scene_bake.focus_fit;
+    if fit.w == 0.0 {
+        return 0.0;
+    }
+    let short = f32(min(scene_bake.size.x, scene_bake.size.y));
+    return (fit.x * abs(1.0 / z - fit.y) + fit.z) * short;
+}
+
 // 1 / z of the farthest surface: depth bins span [this, 1].
 fn scene_focus_farthest_inverse() -> f32 {
     return 1.0 / scene_bake_frame_depth(1.0);
@@ -125,6 +139,9 @@ struct SceneBakeUniforms {
     // image centre, with x · p.x + y · p.y + z = 0; w is 1 when the photo
     // shows a ground, else 0 and the rest unset.
     ground_horizon: vec4<f32>,
+    // The lens blur's fit (`SceneFocus.fit`), copied here after B7 so that
+    // effects, which bind no lens blur buffer, read it (`scene_lens_blur`).
+    focus_fit: vec4<f32>,
 }
 
 // Layers of the bake array.
@@ -140,11 +157,20 @@ const SCENE_BAND_SKY: u32 = 2u;
 // How far from an edge the band reaches, in working texels: the width of the
 // depth model's own ramp across a silhouette (6–10 texels at 1540).
 const SCENE_BAND_RADIUS: i32 = 8;
+// How far from the sky's outline the band reaches. Coverage there follows the
+// photo's own ramp (bake_coverage.wgsl), which a defocused tree line spreads
+// over 20–30 texels at 1540, and the depth model's outline may lie 20 texels
+// off its middle.
+const SCENE_SKY_BAND_RADIUS: i32 = 32;
+// Kinds of edge, added: a depth edge and the sky's outline (NEAR.w, FAR.w).
+const SCENE_EDGE_DEPTH: u32 = 1u;
+const SCENE_EDGE_SKY: u32 = 2u;
 // A depth edge: the farthest surface within SCENE_BAND_RADIUS lies more than
 // this fraction farther than the nearest, in the shading frame. A surface
 // seen at a grazing angle may pass it too; its two halves then shade alike.
 const SCENE_BAND_RELIEF: f32 = 0.1;
-// The sky's outline: sky probability within SCENE_BAND_RADIUS spans past both.
+// The sky's outline: sky probability within SCENE_SKY_BAND_RADIUS spans past
+// both.
 const SCENE_SKY_EDGE: vec2<f32> = vec2<f32>(0.02, 0.98);
 // A texel whose coverage lies beyond these shows one surface only: a sample
 // of that surface for the layers (bake_layers.wgsl).

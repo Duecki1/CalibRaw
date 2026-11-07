@@ -52,11 +52,6 @@ const _: () = assert!(HAZE_GUIDE_SUPPORT <= TONE_GUIDE_SUPPORT);
 /// reads, so the guide's halo covers it too.
 pub const WET_SURFACES_SUPPORT: u32 = 6;
 const _: () = assert!(WET_SURFACES_SUPPORT <= TONE_GUIDE_SUPPORT);
-/// Pixels past a tile core that the scene map's edge profiles read in the
-/// export tone prepass (`SCENE_EDGE_REACH` in scene_analysis.wgsl), in the
-/// scene the tone guide reads.
-pub const SCENE_EDGE_SUPPORT: u32 = 64;
-const _: () = assert!(SCENE_EDGE_SUPPORT <= TONE_GUIDE_SUPPORT);
 /// Footprint of the Texture and Clarity cascade (detail_scale_space.wgsl):
 /// 2 taps each side at steps 1, 2, 4, …, 2^(levels - 1), so 2 × (2^levels - 1).
 /// Texture alone builds 5 levels, Clarity all 7; `layout_contract_tests`
@@ -73,14 +68,6 @@ pub(crate) const MASK_BLUR_SUPPORT: u32 = 72;
 pub(crate) const FOCUS_BLUR_SUPPORT: u32 = 144;
 pub(crate) const EDGE_GLOW_SUPPORT: u32 = 48;
 pub(crate) const PIXELATE_SUPPORT: u32 = 96;
-// Depth-guided effects (Fog, Smoke, Relight) upsample scene depth with image
-// colours up to 3.5 depth texels away (fog_depth_at in atmosphere.wgsl). The
-// depth texture is 1024 texels across, so this covers images up to about
-// 13,500 pixels wide.
-pub(crate) const SCENE_DEPTH_GUIDE_SUPPORT: u32 = 48;
-// EXPORT_CUMULATIVE_SUPPORT reserves Pixelate's support for the whole
-// post-blur creative pass.
-const _: () = assert!(SCENE_DEPTH_GUIDE_SUPPORT <= PIXELATE_SUPPORT);
 // Maximum footprint of Glow diffusion and independent Glow/Halation modules.
 // These sample the same local_effects input, so their support is not cumulative.
 pub(crate) const GLOW_SUPPORT: u32 = 96;

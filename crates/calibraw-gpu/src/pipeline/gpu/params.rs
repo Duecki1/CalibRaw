@@ -1,9 +1,8 @@
 //! `GpuParams`: edit parameters packed into the uniform layouts the WGSL stages read.
 
-use super::ground_plane::estimate_ground_horizon;
 use super::*;
 use crate::pipeline::effect_lanes::{glow, light_rays, neon, pixelate, relight};
-use crate::pipeline::{EffectOption, EffectPass, Lane, SceneMapUse};
+use crate::pipeline::{EffectOption, EffectPass, Lane};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -180,8 +179,8 @@ pub(super) struct SceneToneUniforms {
     pub(super) exposure: f32,
     pub(super) saturation: f32,
     pub(super) vibrance: f32,
-    // Depth availability must not share the packed mask crop bounds below.
-    pub(super) scene_depth_present: u32,
+    /// Keeps the next vector aligned (the shader's `_padding`).
+    pub(super) _padding: u32,
     pub(super) basic_tone: [f32; 4],
     /// The edit's sigmoid: white target, black target, log2 paper exposure, film fog.
     pub(super) sigmoid_curve: [f32; 4],
@@ -247,12 +246,11 @@ pub(super) struct EffectsUniforms {
     pub(super) capture_scale_sigma: [f32; 4],
     pub(super) capture_thresholds: [f32; 4],
     pub(super) capture_mask_coherence: [f32; 4],
-    pub(super) scene_ground: [f32; 4],
 }
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_448);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_432);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -303,7 +301,7 @@ impl MaskData {
     }
 
     /// The effect of an active slot.
-    fn active_effect(&self) -> Option<MaskEffect> {
+    pub(super) fn active_effect(&self) -> Option<MaskEffect> {
         self.is_active()
             .then(|| MaskEffect::from_shader_id(self.effect_id()))
             .flatten()
@@ -344,22 +342,6 @@ impl MaskData {
     pub(super) fn option(&self, option: EffectOption) -> f32 {
         self.effect_options[option.index()]
     }
-
-    pub(super) fn set_option(&mut self, option: EffectOption, value: f32) {
-        self.effect_options[option.index()] = value;
-    }
-}
-
-/// Up in the output frame.
-const OUTPUT_UP: [f32; 2] = [0.0, -1.0];
-
-/// Inputs of the scene shadow map besides scene depth
-/// (`GpuParams::scene_shadow_map_key`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct SceneShadowMapKey {
-    full_size: [u32; 2],
-    /// Per channel: the light's effect and the lanes that place it.
-    lights: [Option<(MaskEffect, [f32; 5])>; SCENE_SHADOW_MAP_CHANNELS],
 }
 
 #[derive(Clone, Debug)]
@@ -368,12 +350,6 @@ pub struct GpuParams {
     pub(super) scene_tone: SceneToneUniforms,
     pub(super) effects: EffectsUniforms,
     mask_data: Box<[MaskData]>,
-    // depth-rework-bridge: delete in P7. Today's effects read a depth
-    // result as the 8-bit map they were written for (near 0, sky 255): its
-    // selection map, which is a migrated result's stored map exactly.
-    pub(super) scene_depth: Option<MaskImage>,
-    /// The normals predicted with `scene_depth`.
-    pub(super) scene_normals: Option<SceneNormals>,
     /// The depth result the scene bake is made from (`scene`).
     pub(super) depth_result: Option<SceneDepth>,
     /// How carefully the light bake is built for this render.
@@ -650,51 +626,16 @@ impl GpuParams {
             },
         };
         let mask_data = pack_mask_params(masks, raw.capture_metadata.shutter_seconds);
-        let mut params = Self {
+        Self {
             camera: pack_camera_params(&context),
             scene_tone: pack_scene_tone_params(&context),
             effects: pack_effect_params(&context, &mask_data),
             mask_data,
-            // depth-rework-bridge: delete in P7.
-            scene_depth: masks
-                .scene_depth
-                .as_ref()
-                .map(|depth| depth.selection_map().clone()),
-            scene_normals: masks
-                .scene_depth
-                .as_ref()
-                .map(|depth| depth.normals().clone()),
             depth_result: masks.scene_depth.clone(),
             scene_light_quality: SceneLightQuality::default(),
             look_lut: None,
             profile_color: Arc::clone(profile_color),
-        };
-        // Without a geometry yet the output frame is the image.
-        params.set_scene_ground(OUTPUT_UP);
-        params
-    }
-
-    /// Finds the ground for an active Wet Surfaces effect or Rain's splashes, with
-    /// `up` in image points. Without scene depth, or without ground in it, there
-    /// is none. Without them nothing reads the ground, and `up` stays fixed so that
-    /// straightening does not rebuild the scene map.
-    fn set_scene_ground(&mut self, up: [f32; 2]) {
-        if !self
-            .mask_slots()
-            .iter()
-            .any(|mask| mask.applies(MaskEffect::WetSurfaces) || rain_reads_ground(mask))
-        {
-            self.effects.scene_ground = [OUTPUT_UP[0], OUTPUT_UP[1], 0.0, 0.0];
-            return;
         }
-        let horizon = self
-            .scene_depth
-            .as_ref()
-            .and_then(|depth| estimate_ground_horizon(depth, up));
-        self.effects.scene_ground = match horizon {
-            Some(horizon) => [up[0], up[1], horizon, 1.0],
-            None => [up[0], up[1], 0.0, 0.0],
-        };
     }
 
     /// Applies `look`'s LUT at its amount after tone mapping (look_lut.wgsl).
@@ -780,7 +721,6 @@ impl GpuParams {
         };
         let count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         orient_rain_slots(&mut self.mask_data[..count], direction_of);
-        self.set_scene_ground(direction_of(OUTPUT_UP));
         self
     }
 
@@ -969,39 +909,37 @@ impl GpuParams {
             .any(|mask| mask.runs_in(EffectPass::AfterCreative))
     }
 
-    /// Whether an effect reads the scene map ([`MaskEffect::scene_map`]): Fog,
-    /// Smoke and Relight while scene depth is present, and Rain and Wet
-    /// Surfaces, which fall back on the map's environment without it. Light
-    /// that Glow and Neon emit reads it on surfaces while depth is present.
-    fn needs_scene_map(&self) -> bool {
-        let depth_present = self.scene_tone.scene_depth_present != 0;
-        (depth_present && self.needs_scene_emission())
-            || self
-                .mask_slots()
-                .iter()
-                .filter_map(MaskData::active_effect)
-                .any(|effect| match effect.scene_map() {
-                    SceneMapUse::Never => false,
-                    SceneMapUse::WithDepth => depth_present,
-                    SceneMapUse::Always => true,
-                })
-    }
-
     /// Whether an active effect reads the scene bake's geometry
     /// ([`MaskEffect::scene_needs`]), which needs a depth result.
-    pub(super) fn needs_scene_bake(&self) -> bool {
+    pub(super) fn needs_scene_geometry(&self) -> bool {
         self.depth_result.is_some()
-            && self
-                .mask_slots()
-                .iter()
-                .filter_map(MaskData::active_effect)
-                .any(|effect| effect.scene_needs().geometry)
+            && (self.needs_scene_emission()
+                || self
+                    .mask_slots()
+                    .iter()
+                    .filter_map(MaskData::active_effect)
+                    .any(|effect| effect.scene_needs().geometry))
+    }
+
+    /// Whether an active effect reads the scene bake's working image
+    /// ([`MaskEffect::scene_needs`]), which exists without a depth result.
+    pub(super) fn needs_scene_image(&self) -> bool {
+        self.mask_slots()
+            .iter()
+            .filter_map(MaskData::active_effect)
+            .any(|effect| effect.scene_needs().image)
+    }
+
+    /// Whether an active effect reads the scene bake: its working image, and
+    /// with a depth result its geometry.
+    pub(super) fn needs_scene_bake(&self) -> bool {
+        self.needs_scene_geometry() || self.needs_scene_image()
     }
 
     /// Whether an active effect reads the light bake and a light casts
     /// shadows into it.
     pub(super) fn needs_light_bake(&self) -> bool {
-        self.needs_scene_bake()
+        self.needs_scene_geometry()
             && self
                 .mask_slots()
                 .iter()
@@ -1013,6 +951,22 @@ impl GpuParams {
                 .any(|mask| scene_bake_light_channel(mask).is_some())
     }
 
+    /// Whether an active effect reads the air light (L3), which needs the
+    /// light bake.
+    pub(super) fn needs_air_light(&self) -> bool {
+        self.needs_light_bake()
+            && self
+                .mask_slots()
+                .iter()
+                .filter_map(MaskData::active_effect)
+                .any(|effect| effect.scene_needs().air_light)
+    }
+
+    /// The light bake's tier.
+    pub(super) fn scene_light_quality(&self) -> SceneLightQuality {
+        self.scene_light_quality
+    }
+
     /// The lights of the light bake in their channels
     /// (`assign_scene_bake_lights`), and the tier to build them in.
     pub(super) fn scene_light_set(&self) -> SceneLightSet {
@@ -1021,11 +975,28 @@ impl GpuParams {
             let Some(channel) = scene_bake_light_channel(mask) else {
                 continue;
             };
-            lights[channel] = Some(SceneShadowLight {
-                source: [mask.lane(relight::SOURCE_X), mask.lane(relight::SOURCE_Y)],
-                light_depth: mask.lane(relight::LIGHT_DEPTH),
-                relief_scale: mask.lane(relight::RELIEF_SCALE) / 100.0,
-                size: mask.percent(relight::SIZE),
+            lights[channel] = Some(if mask.applies(MaskEffect::LightRays) {
+                // A point light at the farthest surface (control depth 100).
+                SceneShadowLight {
+                    kind: SceneLightKind::LightRays,
+                    source: [
+                        mask.lane(light_rays::SOURCE_X),
+                        mask.lane(light_rays::SOURCE_Y),
+                    ],
+                    light_depth: 100.0,
+                    relief_scale: 1.0,
+                    size: 0.0,
+                    reach: mask.lane(light_rays::LENGTH),
+                }
+            } else {
+                SceneShadowLight {
+                    kind: SceneLightKind::Relight,
+                    source: [mask.lane(relight::SOURCE_X), mask.lane(relight::SOURCE_Y)],
+                    light_depth: mask.lane(relight::LIGHT_DEPTH),
+                    relief_scale: mask.lane(relight::RELIEF_SCALE) / 100.0,
+                    size: mask.percent(relight::SIZE),
+                    reach: mask.lane(relight::REACH),
+                }
             });
         }
         SceneLightSet {
@@ -1053,69 +1024,8 @@ impl GpuParams {
         match map {
             FullImageMap::ImageLights => self.needs_image_lights(),
             FullImageMap::Haze => self.needs_haze(),
-            FullImageMap::Scene => self.needs_scene_map(),
             FullImageMap::Contours => self.needs_contours(),
         }
-    }
-
-    /// Whether an active Wet Surfaces effect in a visible slot, or light that
-    /// Glow and Neon emit, reads the surface derived from scene depth. Mirrors
-    /// `scene_emission_present` in scene_emission.wgsl. Relight reads the
-    /// scene bake instead (`needs_scene_bake`).
-    pub(super) fn needs_scene_surface(&self) -> bool {
-        self.needs_scene_emission()
-            // depth-rework-bridge: delete in P7. The scene shadow map marches
-            // through the surface, which Relight used to request for it.
-            || self.scene_shadow_map_key().is_some()
-            || self
-                .mask_slots()
-                .iter()
-                .any(|mask| mask.applies(MaskEffect::WetSurfaces))
-    }
-
-    /// What the scene shadow map depends on besides scene depth: the frame
-    /// and, per channel, the light's position and, for Relight, its depth,
-    /// size and relief. `None` when nothing reads the map: no light, or no
-    /// receiver of scene light (Relight's own shadows come from the light
-    /// bake).
-    /// Amount, reach, colour, ambient and shadow strength are applied per pixel
-    /// and leave the map valid.
-    pub(super) fn scene_shadow_map_key(&self) -> Option<SceneShadowMapKey> {
-        if self.scene_tone.scene_depth_present == 0 {
-            return None;
-        }
-        let slots = self.mask_slots();
-        let read = slots.iter().any(receives_scene_light);
-        if !read {
-            return None;
-        }
-        let mut lights = [None; SCENE_SHADOW_MAP_CHANNELS];
-        for mask in slots {
-            let Some(channel) = scene_light_channel(mask) else {
-                continue;
-            };
-            lights[channel] = if mask.applies(MaskEffect::Relight) {
-                let lanes = [
-                    relight::SOURCE_X,
-                    relight::SOURCE_Y,
-                    relight::LIGHT_DEPTH,
-                    relight::SIZE,
-                    relight::RELIEF_SCALE,
-                ];
-                Some((MaskEffect::Relight, lanes.map(|lane| mask.lane(lane))))
-            } else {
-                let source =
-                    [light_rays::SOURCE_X, light_rays::SOURCE_Y].map(|lane| mask.lane(lane));
-                Some((MaskEffect::LightRays, [source[0], source[1], 0.0, 0.0, 0.0]))
-            };
-        }
-        lights
-            .iter()
-            .any(Option::is_some)
-            .then_some(SceneShadowMapKey {
-                full_size: [self.camera.full_width, self.camera.full_height],
-                lights,
-            })
     }
 
     pub(super) fn needs_blur_passes(&self) -> bool {

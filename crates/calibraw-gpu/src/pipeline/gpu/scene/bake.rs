@@ -15,7 +15,7 @@ use super::super::{
     texture_entry, WORKGROUP_EDGE,
 };
 use super::lights::SceneLightPrograms;
-use super::{SceneBake, SceneBakeInputs, SCENE_BAKE_FORMAT, SCENE_LAYER_LEVELS};
+use super::{SceneBake, SceneBakeInputs, SceneBakeUniforms, SCENE_BAKE_FORMAT, SCENE_LAYER_LEVELS};
 use anyhow::{Context, Result};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -95,7 +95,7 @@ use Binding::{
 };
 
 /// The bake's passes in the order they run (`Pass` indexes this).
-const PASSES: [(shaders::ShaderSource, &str, &[Binding]); 14] = [
+const PASSES: [(shaders::ShaderSource, &str, &[Binding]); 16] = [
     (
         shaders::SCENE_BAKE_DEPTH,
         "resolve_scene_working_image",
@@ -134,12 +134,27 @@ const PASSES: [(shaders::ShaderSource, &str, &[Binding]); 14] = [
     ),
     (
         shaders::SCENE_BAKE_COVERAGE,
+        "bake_scene_sky_colours",
+        &[
+            Uniforms,
+            Sampler,
+            WorkingIn,
+            LayerIn(GEOMETRY),
+            LayerIn(FAR),
+            LayerOut(NORMALS),
+            LayerOut(NEAR),
+        ],
+    ),
+    (
+        shaders::SCENE_BAKE_COVERAGE,
         "bake_scene_coverage",
         &[
             Scratch,
             Uniforms,
             WorkingIn,
             LayerIn(GEOMETRY),
+            LayerIn(NORMALS),
+            LayerIn(NEAR),
             LayerIn(FAR),
             LayerOut(COVERAGE),
             Focus,
@@ -148,7 +163,13 @@ const PASSES: [(shaders::ShaderSource, &str, &[Binding]); 14] = [
     (
         shaders::SCENE_BAKE_COVERAGE,
         "bake_scene_coverage_sides",
-        &[Scratch, Uniforms, LayerIn(GEOMETRY), LayerOut(COVERAGE)],
+        &[
+            Scratch,
+            Uniforms,
+            LayerIn(GEOMETRY),
+            LayerOut(COVERAGE),
+            LayerOut(FAR),
+        ],
     ),
     (
         shaders::SCENE_BAKE_LAYERS,
@@ -161,6 +182,7 @@ const PASSES: [(shaders::ShaderSource, &str, &[Binding]); 14] = [
             WorkingIn,
             LayerIn(GEOMETRY),
             LayerIn(COVERAGE),
+            LayerIn(FAR),
         ],
     ),
     (
@@ -184,6 +206,7 @@ const PASSES: [(shaders::ShaderSource, &str, &[Binding]); 14] = [
             WorkingIn,
             LayerIn(GEOMETRY),
             LayerIn(COVERAGE),
+            LayerIn(FAR),
             LayerOut(NORMALS),
             LayerOut(NEAR),
         ],
@@ -200,6 +223,7 @@ const PASSES: [(shaders::ShaderSource, &str, &[Binding]); 14] = [
             Sampler,
             WorkingIn,
             LayerIn(COVERAGE),
+            LayerIn(NEAR),
             LayerOut(GEOMETRY),
             LayerOut(FAR),
         ],
@@ -215,6 +239,11 @@ const PASSES: [(shaders::ShaderSource, &str, &[Binding]); 14] = [
             Level,
         ],
     ),
+    (
+        shaders::SCENE_BAKE_MIPS,
+        "bake_scene_working_mip_flat",
+        &[WorkingIn, WorkingOut, Level],
+    ),
 ];
 
 #[derive(Clone, Copy)]
@@ -225,6 +254,7 @@ enum Pass {
     ExtentColumns,
     FocusSamples,
     FocusFit,
+    SkyColours,
     Coverage,
     CoverageSides,
     PushFirst,
@@ -233,6 +263,7 @@ enum Pass {
     LayersNear,
     LayersFar,
     WorkingMip,
+    WorkingMipFlat,
 }
 
 struct Program {
@@ -350,7 +381,7 @@ impl SceneBakePrograms {
         accumulated: bool,
     ) {
         let [width, height] = bake.size;
-        let resources = Resources::new(bake, inputs, &self.sampler);
+        let resources = Resources::new(bake, Some(inputs), &self.sampler);
         let run = |encoder: &mut wgpu::CommandEncoder,
                    pass: Pass,
                    working: [u32; 2],
@@ -383,6 +414,15 @@ impl SceneBakePrograms {
             &[&resources.bind_group(device, fit, [0, 0], None)],
             [1, 1, 1],
         );
+        // Effects read the fit from the uniforms.
+        encoder.copy_buffer_to_buffer(
+            &bake.focus,
+            0,
+            &bake.uniforms,
+            std::mem::offset_of!(SceneBakeUniforms, focus_fit) as u64,
+            16,
+        );
+        run(encoder, Pass::SkyColours, [0, 0], None, size);
         run(encoder, Pass::Coverage, [0, 0], None, size);
         run(encoder, Pass::CoverageSides, [0, 0], None, size);
 
@@ -425,26 +465,88 @@ impl SceneBakePrograms {
     }
 }
 
+impl SceneBakePrograms {
+    /// Encodes the bake of `bake` without a depth result: with `accumulated`,
+    /// the working image from the accumulated sums, then its mip chain. The
+    /// chain's alpha, the nearest visible depth, holds 1: no geometry.
+    pub(super) fn encode_image(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        bake: &SceneBake,
+        accumulated: bool,
+    ) {
+        let resources = Resources::new(bake, None, &self.sampler);
+        let run = |encoder: &mut wgpu::CommandEncoder,
+                   pass: Pass,
+                   working: [u32; 2],
+                   level: Option<&wgpu::Buffer>,
+                   [x, y]: [u32; 2]| {
+            let program = &self.programs[pass as usize];
+            let bind_group = resources.bind_group(device, program, working, level);
+            dispatch_compute(
+                encoder,
+                program.label,
+                &program.pipeline,
+                &[&bind_group],
+                [x.div_ceil(WORKGROUP_EDGE), y.div_ceil(WORKGROUP_EDGE), 1],
+            );
+        };
+        let size = bake.size;
+        if accumulated {
+            run(encoder, Pass::Resolve, [0, 0], None, size);
+        }
+        for level in 1..bake.working.mip_level_count() {
+            let uniform = &bake.mip_uniforms[level as usize - 1];
+            let out = size.map(|edge| (edge >> level).max(1));
+            run(
+                encoder,
+                Pass::WorkingMipFlat,
+                [level - 1, level],
+                Some(uniform),
+                out,
+            );
+        }
+    }
+}
+
 /// The bake's resources a pass may bind. A layer's view serves both for
 /// reading and writing it.
 struct Resources<'a> {
     bake: &'a SceneBake,
-    inputs: [wgpu::TextureView; 3],
+    /// The depth result's inputs; none for a bake of the working image alone,
+    /// whose passes bind no depth input.
+    inputs: Option<[wgpu::TextureView; 3]>,
     sampler: &'a wgpu::Sampler,
     layers: Vec<wgpu::TextureView>,
 }
 
 impl<'a> Resources<'a> {
-    fn new(bake: &'a SceneBake, inputs: &SceneBakeInputs, sampler: &'a wgpu::Sampler) -> Self {
+    fn new(
+        bake: &'a SceneBake,
+        inputs: Option<&SceneBakeInputs>,
+        sampler: &'a wgpu::Sampler,
+    ) -> Self {
         Self {
             bake,
-            inputs: [&inputs.disparity, &inputs.sky, &inputs.normals]
-                .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default())),
+            inputs: inputs.map(|inputs| {
+                [&inputs.disparity, &inputs.sky, &inputs.normals]
+                    .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()))
+            }),
             sampler,
             layers: (0..super::SCENE_BAKE_LAYERS)
                 .map(|layer| bake.layer_view(layer))
                 .collect(),
         }
+    }
+
+    /// The depth result's input `index`. Only passes of a bake with a depth
+    /// result bind them (`SceneBakePrograms::encode_image` runs none that do).
+    fn input(&self, index: usize) -> &wgpu::TextureView {
+        &self
+            .inputs
+            .as_ref()
+            .expect("a pass that binds a depth input runs only with a depth result")[index]
     }
 
     /// `program`'s bind group, with working image levels `[read, write]`.
@@ -468,9 +570,9 @@ impl<'a> Resources<'a> {
                     Level => level
                         .expect("pyramid and mip passes are given their level")
                         .as_entire_binding(),
-                    Disparity => wgpu::BindingResource::TextureView(&self.inputs[0]),
-                    Sky => wgpu::BindingResource::TextureView(&self.inputs[1]),
-                    Normals => wgpu::BindingResource::TextureView(&self.inputs[2]),
+                    Disparity => wgpu::BindingResource::TextureView(self.input(0)),
+                    Sky => wgpu::BindingResource::TextureView(self.input(1)),
+                    Normals => wgpu::BindingResource::TextureView(self.input(2)),
                     Sampler => wgpu::BindingResource::Sampler(self.sampler),
                     WorkingIn => wgpu::BindingResource::TextureView(&working_in),
                     WorkingOut => wgpu::BindingResource::TextureView(&working_out),

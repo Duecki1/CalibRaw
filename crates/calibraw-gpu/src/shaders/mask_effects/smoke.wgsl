@@ -9,15 +9,10 @@ const SMOKE_LIGHT_GLOW_GAIN: f32 = 4.0;
 
 // Light from scene lights at the smoke, relative to the ambient level, before
 // the smoke's albedo and Light glow. Smoke drifts over the scene's surfaces,
-// so it is lit where it lies over them: at the pixel's scene depth, or at the
-// nearest surface without depth.
-fn smoke_light_scattering(pos: vec2<i32>) -> vec3<f32> {
-    if !effect_scene_lights_present() { return vec3<f32>(0.0); }
-    var depth = 0.0;
-    if effect_scene_depth_present() {
-        depth = effect_scene_depth(pos);
-    }
-    return effect_surface_scene_light(pos, depth, SMOKE_LIGHT_ANISOTROPY);
+// so it is lit where it lies over them: on the surface of the scene bake it
+// lies over (medium.wgsl), or at the nearest surface without scene depth.
+fn smoke_light_scattering(pos: vec2<i32>, receiver: MediumTarget) -> vec3<f32> {
+    return medium_surface_light(pos, SMOKE_LIGHT_ANISOTROPY, receiver);
 }
 
 fn apply_smoke(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
@@ -81,7 +76,19 @@ fn apply_smoke(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -
     let strength = glow * SMOKE_LIGHT_GLOW_GAIN;
     let brightness = effect_luma(albedo);
     let scattering = 1.0 - transmission;
-    let lit = smoke_light_scattering(pos);
+    let uv = full_image_uv(pos);
+    var lit = vec3<f32>(0.0);
+    if Geometry::scene_geometry_present() {
+        let scene_rgb = Geometry::scene_unedited_at(pos);
+        let pixel = Geometry::scene_pixel(uv, scene_rgb, 1.0);
+        lit = smoke_light_scattering(pos, medium_target(pixel, pixel.near, uv));
+        if pixel.in_band {
+            let far = smoke_light_scattering(pos, medium_target(pixel, pixel.far, uv));
+            lit = mix(far, lit, pixel.coverage);
+        }
+    } else {
+        lit = smoke_light_scattering(pos, medium_unbaked(uv));
+    }
     return smoked + lit * (strength * ambient * brightness * scattering)
         + medium_image_light(pos, params, strength, brightness, scattering);
 }

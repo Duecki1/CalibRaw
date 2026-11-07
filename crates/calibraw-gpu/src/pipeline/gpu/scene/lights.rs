@@ -4,6 +4,10 @@
 //! every surface of the scene bake (L2, `visibility.wgsl`). Conventions are
 //! documented in `lights_common.wgsl`.
 //!
+//! From the cubes, each pipeline marches its own region's view rays for the
+//! share of each light the air receives (L3, `air_light.wgsl`); that result
+//! is the pipeline's ([`SceneAirLightKey`] says what it was built from).
+//!
 //! It belongs to the [`SceneBake`] it is made from, so the views that share
 //! a bake share its lights. It is rebuilt only for what changed:
 //! - the mesh the cubes are drawn from, when the scene bake is baked again;
@@ -77,11 +81,32 @@ impl SceneLightQuality {
             Self::Draft => [8, 12],
         }
     }
+
+    /// The air light's march (§4.4 L3): the pipeline's pixels per grid
+    /// texel on an edge, steps along each ray and cube taps per step.
+    fn air_march(self) -> [u32; 3] {
+        match self {
+            Self::Final => [2, 48, 4],
+            Self::Draft => [4, 16, 1],
+        }
+    }
 }
 
-/// One light of the bake as Relight places it: `light_position` in camera.rs.
+/// Which effect places a light of the bake.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::pipeline::gpu) enum SceneLightKind {
+    /// A Relight light, placed by its card.
+    Relight,
+    /// A Light Rays source: a point light at the farthest surface, with a
+    /// reach that follows the rays' Length.
+    LightRays,
+}
+
+/// One light of the bake as its effect places it: `light_position` in
+/// camera.rs, and `scene_light_at` in scene_lights.wgsl for the receivers.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::pipeline::gpu) struct SceneShadowLight {
+    pub(in crate::pipeline::gpu) kind: SceneLightKind,
     /// Percent of the full image.
     pub(in crate::pipeline::gpu) source: [f32; 2],
     /// Control depth in percent (Relight's Light depth).
@@ -90,6 +115,10 @@ pub(in crate::pipeline::gpu) struct SceneShadowLight {
     pub(in crate::pipeline::gpu) relief_scale: f32,
     /// Light size in [0, 1].
     pub(in crate::pipeline::gpu) size: f32,
+    /// Relight's Reach in percent: shorter-edge widths at the nearest
+    /// surface at which the falloff has halved. For Light Rays, its Length in
+    /// percent.
+    pub(in crate::pipeline::gpu) reach: f32,
 }
 
 /// What the light bake is built from besides the scene bake: the lights in
@@ -106,6 +135,16 @@ pub(in crate::pipeline::gpu) struct SceneLightSet {
 pub(in crate::pipeline::gpu) struct SceneShadowLightUniform {
     pub(in crate::pipeline::gpu) position: [f32; 4],
     pub(in crate::pipeline::gpu) shape: [f32; 4],
+    pub(in crate::pipeline::gpu) air: [f32; 4],
+}
+
+/// `SceneAirLight` in lights_common.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(in crate::pipeline::gpu) struct SceneAirLightUniform {
+    pub(in crate::pipeline::gpu) region: [i32; 4],
+    pub(in crate::pipeline::gpu) march: [u32; 4],
+    pub(in crate::pipeline::gpu) image: [u32; 4],
 }
 
 /// `SceneShadowLights` in lights_common.wgsl.
@@ -121,6 +160,23 @@ pub(in crate::pipeline::gpu) struct SceneShadowLightsUniform {
 /// edge spans `2 · focal_tan`.
 fn light_radius(camera: &SceneCamera, size: f32) -> f32 {
     (0.002 + 0.15 * size.clamp(0.0, 1.0)) * 2.0 * camera.focal_tan
+}
+
+/// The falloff's half distance in frame units at Reach `reach` (percent):
+/// as `relight_light` in relight.wgsl.
+fn light_reach(camera: &SceneCamera, reach: f32) -> f32 {
+    (reach / 100.0).clamp(0.1, 4.0) * 2.0 * camera.focal_tan
+}
+
+/// The falloff's half distance of a Light Rays source with Length `length`
+/// (percent) in frame units: the share of the rays' reach
+/// (`LIGHT_RAYS_LIGHT_REACH` in scene_lights.wgsl) in shorter edges at the
+/// source, which lies at the farthest surface, `z = 1 + R`.
+fn rays_reach(camera: &SceneCamera, length: f32) -> f32 {
+    const LIGHT_RAYS_LIGHT_REACH: f32 = 0.35;
+    let length = (length / 100.0).clamp(0.0, 2.0);
+    (length * LIGHT_RAYS_LIGHT_REACH * 2.0 * camera.focal_tan * (1.0 + camera.frame_relief))
+        .max(1e-3)
 }
 
 /// Lights uploaded for the next encode.
@@ -279,6 +335,7 @@ pub(in crate::pipeline::gpu) struct SceneLightPrograms {
     mesh_prepare: Compute,
     mesh_reduce: Compute,
     visibility: Compute,
+    air: Compute,
     raster: wgpu::RenderPipeline,
     raster_layout: wgpu::BindGroupLayout,
     compare: wgpu::Sampler,
@@ -307,7 +364,13 @@ mod binding {
     pub(super) const VISIBILITY_NEAR_OUT: u32 = 109;
     pub(super) const VISIBILITY_FAR_OUT: u32 = 110;
     pub(super) const GROUP: u32 = 111;
+    pub(super) const AIR: u32 = 115;
+    pub(super) const AIR_OUT: u32 = 116;
 }
+
+/// The air light's texture format (air_light.wgsl).
+pub(in crate::pipeline::gpu) const AIR_LIGHT_FORMAT: wgpu::TextureFormat =
+    wgpu::TextureFormat::Rgba16Float;
 
 fn float_texture(
     binding: u32,
@@ -346,6 +409,7 @@ impl SceneLightPrograms {
         };
         let raster_module = module(manager, shaders::SCENE_SHADOW_RASTER)?;
         let visibility_module = module(manager, shaders::SCENE_VISIBILITY)?;
+        let air_module = module(manager, shaders::SCENE_AIR_LIGHT)?;
         let program = |module: &wgpu::ShaderModule,
                        label: &'static str,
                        entries: &[wgpu::BindGroupLayoutEntry]| {
@@ -435,6 +499,45 @@ impl SceneLightPrograms {
             ],
         );
 
+        let cubes_entry = wgpu::BindGroupLayoutEntry {
+            binding: binding::CUBES,
+            visibility: compute,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2Array,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let air = program(
+            &air_module,
+            "bake_scene_air_light",
+            &[
+                uniform(binding::BAKE_UNIFORMS, compute),
+                float_texture(binding::GEOMETRY, true, compute),
+                float_texture(binding::COVERAGE, true, compute),
+                uniform(binding::LIGHTS, compute),
+                cubes_entry,
+                wgpu::BindGroupLayoutEntry {
+                    binding: binding::COMPARE,
+                    visibility: compute,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                uniform(binding::AIR, compute),
+                wgpu::BindGroupLayoutEntry {
+                    binding: binding::AIR_OUT,
+                    visibility: compute,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: AIR_LIGHT_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                    },
+                    count: None,
+                },
+            ],
+        );
+
         let vertex = wgpu::ShaderStages::VERTEX;
         let raster_layout = create_bind_group_layout(
             device,
@@ -491,6 +594,7 @@ impl SceneLightPrograms {
             mesh_prepare,
             mesh_reduce,
             visibility,
+            air,
             raster,
             raster_layout,
             compare,
@@ -562,6 +666,10 @@ impl SceneBake {
                 light.light_depth,
                 light.relief_scale,
             );
+            let reach = match light.kind {
+                SceneLightKind::Relight => light_reach(&camera, light.reach),
+                SceneLightKind::LightRays => rays_reach(&camera, light.reach),
+            };
             uniform.lights[channel] = SceneShadowLightUniform {
                 position: [position[0], position[1], position[2], light.relief_scale],
                 shape: [
@@ -570,6 +678,7 @@ impl SceneBake {
                     (CUBE_FACES as usize * channel) as f32,
                     mesh_level as f32,
                 ],
+                air: [reach, 0.0, 0.0, 0.0],
             };
         }
         queue.write_buffer(&lights.uniforms, 0, bytemuck::bytes_of(&uniform));
@@ -668,6 +777,21 @@ impl SceneBake {
         self.lock_lights()
             .as_ref()
             .map(|lights| lights.visibility.clone())
+    }
+
+    /// The shadow cubes, once the light bake exists (geometry.wgsl
+    /// `scene_point_visibility`).
+    pub(in crate::pipeline::gpu) fn cubes_texture(&self) -> Option<wgpu::Texture> {
+        self.lock_lights()
+            .as_ref()
+            .map(|lights| lights.cubes.clone())
+    }
+
+    /// The lights' uniform, once the light bake exists.
+    pub(in crate::pipeline::gpu) fn lights_uniforms(&self) -> Option<wgpu::Buffer> {
+        self.lock_lights()
+            .as_ref()
+            .map(|lights| lights.uniforms.clone())
     }
 
     /// The working size's width and height in shorter edges.
@@ -926,4 +1050,174 @@ fn scene_faces(
             .iter()
             .any(|&normal| corners.iter().all(|&corner| dot(normal, corner) < 0.0))
     })
+}
+
+/// The part of the air light's grid (lights_common.wgsl `SceneAirLight`) a
+/// pipeline needs: every texel the upsample in geometry.wgsl reads for its
+/// pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::pipeline::gpu) struct SceneAirLightRegion {
+    /// First grid texel and the texels on each edge.
+    pub(in crate::pipeline::gpu) origin: [i32; 2],
+    pub(in crate::pipeline::gpu) size: [u32; 2],
+    /// Full-image pixels per grid texel on an edge.
+    pub(in crate::pipeline::gpu) factor: u32,
+    /// The full image in pixels.
+    pub(in crate::pipeline::gpu) image: [u32; 2],
+}
+
+impl SceneAirLightRegion {
+    /// The region for a pipeline whose pixels are full-image pixels
+    /// `[origin, origin + size)`, in tier `quality`. A pixel at `p` reads the
+    /// texels `floor(p / factor − 1/2)` and one past it.
+    pub(in crate::pipeline::gpu) fn covering(
+        origin: [u32; 2],
+        size: [u32; 2],
+        image: [u32; 2],
+        quality: SceneLightQuality,
+    ) -> Self {
+        let factor = quality.air_march()[0];
+        let first = |pixel: u32| {
+            ((2 * pixel as i64 + 1 - factor as i64).div_euclid(2 * factor as i64)) as i32
+        };
+        let start = [first(origin[0]), first(origin[1])];
+        let end = [
+            first(origin[0] + size[0].max(1) - 1) + 1,
+            first(origin[1] + size[1].max(1) - 1) + 1,
+        ];
+        Self {
+            origin: start,
+            size: [
+                (end[0] - start[0] + 1) as u32,
+                (end[1] - start[1] + 1) as u32,
+            ],
+            factor,
+            image,
+        }
+    }
+}
+
+/// What a pipeline's air light was built from: the scene bake, each light's
+/// cube and reach, the region and the march.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::pipeline::gpu) struct SceneAirLightKey {
+    cubes: [Option<(CubeKey, f32)>; SCENE_SHADOW_LIGHTS],
+    region: SceneAirLightRegion,
+    march: [u32; 3],
+}
+
+/// A pipeline's air light texture: a 2D array of `layers` layers and its
+/// uniform buffer.
+pub(in crate::pipeline::gpu) struct SceneAirLightTarget<'a> {
+    pub(in crate::pipeline::gpu) texture: &'a wgpu::Texture,
+    pub(in crate::pipeline::gpu) uniforms: &'a wgpu::Buffer,
+}
+
+/// Layers of the air light for `groups` groups of four lights: the depths,
+/// then near and far shares per group.
+pub(in crate::pipeline::gpu) fn air_light_layers(groups: u32) -> u32 {
+    1 + 2 * groups
+}
+
+impl SceneBake {
+    /// Groups of four lights the light bake holds, once lights were
+    /// prepared.
+    pub(in crate::pipeline::gpu) fn air_light_groups(&self) -> u32 {
+        self.lock_lights()
+            .as_ref()
+            .filter(|lights| lights.pending.is_some())
+            .map_or(0, |lights| {
+                lights.capacity.div_ceil(LIGHTS_PER_GROUP) as u32
+            })
+    }
+
+    /// Encodes the air light of `region` into `target` unless `built` says
+    /// it holds it already, and returns what it holds: `None` when there is
+    /// nothing to march (no baked scene or no lights). Call after
+    /// `encode_lights`, whose cubes it reads.
+    pub(in crate::pipeline::gpu) fn encode_air_light(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        programs: &SceneLightPrograms,
+        target: &SceneAirLightTarget<'_>,
+        region: SceneAirLightRegion,
+        built: Option<SceneAirLightKey>,
+    ) -> Option<SceneAirLightKey> {
+        self.baked_generation()?;
+        let guard = self.lock_lights();
+        let lights = guard.as_ref()?;
+        let pending = lights.pending?;
+        let march = pending.set.quality.air_march();
+        let key = SceneAirLightKey {
+            cubes: std::array::from_fn(|channel| {
+                lights.cubes_built[channel]
+                    .filter(|_| pending.set.lights[channel].is_some())
+                    .map(|cube| (cube, pending.uniform.lights[channel].air[0]))
+            }),
+            region,
+            march,
+        };
+        if key.cubes.iter().all(Option::is_none) {
+            return None;
+        }
+        if built == Some(key) {
+            return built;
+        }
+        let groups = lights.capacity.div_ceil(LIGHTS_PER_GROUP) as u32;
+        let uniform = SceneAirLightUniform {
+            region: [
+                region.origin[0],
+                region.origin[1],
+                region.size[0] as i32,
+                region.size[1] as i32,
+            ],
+            march: [march[0], march[1], march[2], groups],
+            image: [region.image[0], region.image[1], 0, 0],
+        };
+        let staging = super::super::create_initialized_buffer(
+            device,
+            "calibraw scene air light uniforms",
+            bytemuck::bytes_of(&uniform),
+            wgpu::BufferUsages::COPY_SRC,
+        );
+        encoder.copy_buffer_to_buffer(
+            &staging,
+            0,
+            target.uniforms,
+            0,
+            std::mem::size_of::<SceneAirLightUniform>() as u64,
+        );
+        let views = self.light_bake_views();
+        let cubes = lights.cubes.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("calibraw scene shadow cubes"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let out = target.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("calibraw scene air light"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        run(
+            device,
+            encoder,
+            &programs.air,
+            &[
+                entry(binding::BAKE_UNIFORMS, self.uniforms.as_entire_binding()),
+                entry(binding::GEOMETRY, view(&views.geometry)),
+                entry(binding::COVERAGE, view(&views.coverage)),
+                entry(binding::LIGHTS, lights.uniforms.as_entire_binding()),
+                entry(binding::CUBES, view(&cubes)),
+                entry(
+                    binding::COMPARE,
+                    wgpu::BindingResource::Sampler(&programs.compare),
+                ),
+                entry(binding::AIR, target.uniforms.as_entire_binding()),
+                entry(binding::AIR_OUT, view(&out)),
+            ],
+            region.size,
+        );
+        Some(key)
+    }
 }

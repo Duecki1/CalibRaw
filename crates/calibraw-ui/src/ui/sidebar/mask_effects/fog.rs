@@ -24,7 +24,7 @@ struct FogOnset {
 
 impl FogOnset {
     fn start(self) -> f32 {
-        fog::START.clamp(self.settings.start) / 100.0
+        fog::START.clamp(self.settings.start_depth) / 100.0
     }
 
     fn onset_width(self) -> f32 {
@@ -113,13 +113,13 @@ impl FeatheredRange for FogOnset {
                 fade
             }
         };
-        self.settings.start = fog::START.clamp((start * 100.0).round());
+        self.settings.start_depth = fog::START.clamp((start * 100.0).round());
     }
 
     fn handle_text(&self, handle: RangeHandle) -> String {
         match handle {
             RangeHandle::StartFeather => {
-                format!("{} {:.0}", tr(fog::START.label), self.settings.start)
+                format!("{} {:.0}", tr(fog::START.label), self.settings.start_depth)
             }
             _ => tr_fmt(
                 "Full strength at {full}, {softness_label} {softness}",
@@ -140,7 +140,7 @@ impl FeatheredRange for FogOnset {
     }
 
     fn reset(&mut self) {
-        self.settings.start = fog::START.default;
+        self.settings.start_depth = fog::START.default;
         self.settings.softness = fog::SOFTNESS.default;
     }
 }
@@ -157,7 +157,7 @@ fn fog_onset(ui: &mut Ui, settings: &mut FogEffectSettings) -> bool {
         tr(fog::START.label),
         feathered_range::plain_track_background(ui.visuals()),
     );
-    settings.start = onset.settings.start;
+    settings.start_depth = onset.settings.start_depth;
     settings.softness = onset.settings.softness;
     *settings != before
 }

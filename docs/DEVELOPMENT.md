@@ -167,9 +167,9 @@ An effect is one row in the `mask_effects!` table
 and a settings module beside it that implements `EffectSettings`: its starting point,
 when it is active, its controls (specs in `effects/params.rs`), its lanes
 (`effect_lanes!`) and how it packs them. The row says where it runs (`EffectPass`), how
-far around a pixel it reads (`EffectReach`, the export-tile halo) and when it reads the
-scene map (`SceneMapUse`). Sidecar validation, scene depth generation, the GPU's
-passes and maps, the shader constants and the card follow from the row and the
+far around a pixel it reads (`EffectReach`, the export-tile halo) and what it reads of
+the scene bake (`scene: [...]`, `SceneNeed`). Sidecar validation, scene depth generation,
+the GPU's passes and maps, the shader constants and the card follow from the row and the
 settings.
 
 Its shader is one WGSL file in `shaders/mask_effects/`, added to `CREATIVE_EFFECTS`. A
@@ -180,15 +180,15 @@ reads the photo and the scene through `effect_api.wgsl` and `medium.wgsl`. What 
 effect needs already exists in the scene (`scene_*.wgsl`), so do not sample or upsample
 it again: when the API lacks it, add a function to `effect_api.wgsl` that reads it. An
 effect that shades the scene's surfaces or needs its camera or ground, as Relight, Rain
-and Wet Surfaces do, reads `scene_surface_taps_at` and the rest of `scene_depth.wgsl`,
-`scene_environment.wgsl` and `scene_lights.wgsl` directly. An effect that lights the
+and Wet Surfaces do, reads the scene bake through `scene/geometry.wgsl` (`scene_pixel`,
+`scene_split`, `scene_blend`) and `scene_lights.wgsl` directly. An effect that lights the
 scene from an area of the image (particles, glowing props) writes into the scene
 emission grid instead: it gives its radiance at a full-image point from full-image
 inputs only, adds its case to `scene_emission_slot_at` and `scene_emission_present`
 (`scene_emission.wgsl`) and to `GpuParams::needs_scene_emission`, and keeps its mask in
 the full-image atlas (`MaskEffect::reads_full_image_mask`); Fog, Smoke, Rain, Wet Surfaces and the
 surfaces then receive its light. Effects with passes of their
-own (the blurs, Glow, Light Rays, Rain, Wet Surfaces, the scene shadow map) also need
+own (the blurs, Glow, Light Rays, Rain, Wet Surfaces, the light bake) also need
 those passes and their `GpuParams::needs_*` checks, and read their slots by lane name
 too (`mask_effect_params`).
 

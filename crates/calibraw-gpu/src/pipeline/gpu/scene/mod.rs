@@ -33,7 +33,11 @@ use std::sync::{Arc, Mutex};
 
 pub(super) use bake::SceneBakePrograms;
 pub use lights::SceneLightQuality;
-pub(super) use lights::{SceneLightSet, SceneShadowLight, SCENE_SHADOW_LIGHTS};
+pub(super) use lights::{
+    air_light_layers, SceneAirLightKey, SceneAirLightRegion, SceneAirLightTarget,
+    SceneAirLightUniform, SceneLightKind, SceneLightPrograms, SceneLightSet, SceneShadowLight,
+    SceneShadowLightsUniform, AIR_LIGHT_FORMAT, SCENE_SHADOW_LIGHTS,
+};
 
 /// The largest working size's longer edge, which the accumulation pass's
 /// dispatch covers.
@@ -51,6 +55,11 @@ fn working_long_edge() -> u32 {
 }
 
 const FULL_BAKE_BUDGET: u64 = 1 << 30;
+
+/// The longer edge of a bake that holds only the working image, for effects
+/// that read the scene's colour with a wide footprint (Rain's surroundings)
+/// on a photo without a depth result.
+const IMAGE_ONLY_LONG_EDGE: u32 = 640;
 
 /// Layers of the bake array (`SCENE_LAYER_*` in bake_common.wgsl).
 pub(super) const SCENE_BAKE_LAYERS: u32 = 5;
@@ -75,6 +84,8 @@ pub(super) struct SceneBakeUniforms {
     pub(super) camera: SceneCameraUniform,
     pub(super) ground_plane: [f32; 4],
     pub(super) ground_horizon: [f32; 4],
+    /// The lens blur's fit, copied from the buffer after B7 (`focus_fit`).
+    pub(super) focus_fit: [f32; 4],
 }
 
 /// The working size for `depth` on a pipeline whose whole image is
@@ -101,6 +112,21 @@ pub(super) fn scene_working_size(
     }
 }
 
+/// The working size of a bake without a depth result: the full image's
+/// aspect, its longer edge at most [`IMAGE_ONLY_LONG_EDGE`].
+pub(super) fn scene_image_size(full_width: u32, full_height: u32) -> [u32; 2] {
+    let long = IMAGE_ONLY_LONG_EDGE.min(full_width.max(full_height)).max(1);
+    let (full_width, full_height) = (full_width.max(1), full_height.max(1));
+    let short = |short_edge: u32, long_edge: u32| {
+        ((long as f64 * f64::from(short_edge) / f64::from(long_edge)).round() as u32).clamp(1, long)
+    };
+    if full_width >= full_height {
+        [long, short(full_height, full_width)]
+    } else {
+        [short(full_width, full_height), long]
+    }
+}
+
 /// Mip levels of the working image: down to 1 texel on the longer edge.
 fn working_mip_levels([width, height]: [u32; 2]) -> u32 {
     32 - width.max(height).max(1).leading_zeros()
@@ -113,6 +139,8 @@ pub(super) struct SceneBake {
     /// All layers, as effects read them (geometry.wgsl).
     layers_view: wgpu::TextureView,
     working: wgpu::Texture,
+    /// The working image with its whole mip chain, as effects read it.
+    working_view_all: wgpu::TextureView,
     scratch: wgpu::Buffer,
     uniforms: wgpu::Buffer,
     focus: wgpu::Buffer,
@@ -131,6 +159,9 @@ pub(super) struct SceneBake {
 }
 
 struct SceneBakeState {
+    /// The uniforms hold the working size without a depth result's values:
+    /// effects see no geometry (`SceneBake::clear_depth`).
+    image_only: bool,
     scene: WorkingScene,
     /// The depth result uploaded, if any.
     inputs: Option<SceneBakeInputs>,
@@ -214,7 +245,9 @@ impl SceneBake {
             device,
             "calibraw scene lens blur",
             SCENE_FOCUS_BYTES,
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
         );
         let level_uniform = |values: [u32; 4]| {
             create_initialized_buffer(
@@ -233,6 +266,10 @@ impl SceneBake {
                 level_uniform([level, (width >> finer).max(1), (height >> finer).max(1), 0])
             })
             .collect();
+        let working_view_all = working.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("calibraw scene working image"),
+            ..Default::default()
+        });
         let layers_view = layers.create_view(&wgpu::TextureViewDescriptor {
             label: Some("calibraw scene bake layers"),
             dimension: Some(wgpu::TextureViewDimension::D2Array),
@@ -243,12 +280,14 @@ impl SceneBake {
             layers,
             layers_view,
             working,
+            working_view_all,
             scratch,
             uniforms,
             focus,
             pyramid_uniforms,
             mip_uniforms,
             state: Mutex::new(SceneBakeState {
+                image_only: false,
                 scene: WorkingScene::Outdated,
                 inputs: None,
                 baked: false,
@@ -267,13 +306,14 @@ impl SceneBake {
     /// What passes bind of the bake, with the light bake's `visibility`.
     pub(super) fn bindings<'a>(
         &'a self,
-        visibility: &'a wgpu::TextureView,
+        lights: &'a super::effect_inputs::SceneLightBindings,
     ) -> super::effect_inputs::SceneBakeBindings<'a> {
         super::effect_inputs::SceneBakeBindings {
             scratch: &self.scratch,
             uniforms: &self.uniforms,
             layers: &self.layers_view,
-            visibility,
+            working: &self.working_view_all,
+            lights,
         }
     }
 
@@ -325,10 +365,28 @@ impl SceneBake {
             camera: SceneCameraUniform::new(depth.camera()),
             ground_plane,
             ground_horizon,
+            focus_fit: [0.0; 4],
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
         state.inputs = Some(inputs);
+        state.image_only = false;
         Ok(())
+    }
+
+    /// Drops the depth result, if any: effects read the working image only.
+    pub(super) fn clear_depth(&self, queue: &wgpu::Queue) {
+        let mut state = self.lock();
+        if state.image_only {
+            return;
+        }
+        state.inputs = None;
+        state.baked = false;
+        state.image_only = true;
+        let uniforms = SceneBakeUniforms {
+            size: [self.size[0], self.size[1], 0, 0],
+            ..Default::default()
+        };
+        queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
     }
 
     /// Marks the working image outdated: the scene changed.
@@ -370,8 +428,9 @@ impl SceneBake {
     }
 
     /// Bakes what is outdated: after an accumulation, the working image and
-    /// then the layers; after a new depth result, the layers. It encodes
-    /// nothing without a depth result or a scene.
+    /// then the layers; after a new depth result, the layers. Without a depth
+    /// result it bakes the working image alone. It encodes nothing without a
+    /// scene.
     pub(super) fn encode(
         &self,
         device: &wgpu::Device,
@@ -379,16 +438,19 @@ impl SceneBake {
         programs: &SceneBakePrograms,
     ) {
         let mut state = self.lock();
-        let Some(inputs) = state.inputs.as_ref() else {
-            return;
-        };
         let accumulated = match state.scene {
             WorkingScene::Outdated => return,
             WorkingScene::Accumulating => true,
             WorkingScene::Current if state.baked => return,
             WorkingScene::Current => false,
         };
-        programs.encode(device, encoder, self, inputs, accumulated);
+        match state.inputs.as_ref() {
+            Some(inputs) => programs.encode(device, encoder, self, inputs, accumulated),
+            None if state.image_only => programs.encode_image(device, encoder, self, accumulated),
+            // Neither a depth result nor the uniforms of a bake without one:
+            // nothing says what to bake.
+            None => return,
+        }
         state.scene = WorkingScene::Current;
         state.baked = true;
         state.generation += 1;
@@ -589,23 +651,35 @@ impl super::RawGpuPipeline {
     }
 
     /// Allocates the bake `params` needs at the image's working size and
-    /// uploads its depth result: for a pipeline that fills the bake itself
-    /// (the whole image, or an export's tiles).
+    /// uploads its depth result, if its effects read the geometry: for a
+    /// pipeline that fills the bake itself (the whole image, or an export's
+    /// tiles). Otherwise the bake holds the working image alone.
     pub(super) fn own_scene_bake(
         &self,
         queue: &wgpu::Queue,
         params: &super::GpuParams,
     ) -> Option<Arc<SceneBake>> {
-        let depth = params.depth_result.as_ref()?;
-        let size = scene_working_size(depth, params.camera.full_width, params.camera.full_height);
+        let (full_width, full_height) = (params.camera.full_width, params.camera.full_height);
+        let depth = params
+            .depth_result
+            .as_ref()
+            .filter(|_| params.needs_scene_geometry());
+        let size = match depth {
+            Some(depth) => scene_working_size(depth, full_width, full_height),
+            None => scene_image_size(full_width, full_height),
+        };
         let bake = self
             .effect_inputs
             .allocate_scene_bake(size)
             .inspect_err(|error| log::error!("scene bake not allocated: {error:#}"))
             .ok()?;
-        bake.upload_depth(self.effect_inputs.device(), queue, depth)
-            .inspect_err(|error| log::error!("scene depth not uploaded: {error:#}"))
-            .ok()?;
+        match depth {
+            Some(depth) => bake
+                .upload_depth(self.effect_inputs.device(), queue, depth)
+                .inspect_err(|error| log::error!("scene depth not uploaded: {error:#}"))
+                .ok()?,
+            None => bake.clear_depth(queue),
+        }
         Some(bake)
     }
 
@@ -620,14 +694,17 @@ impl super::RawGpuPipeline {
         let bake = if self.renders_whole_image() {
             self.own_scene_bake(queue, params)
         } else {
-            let (Some(bake), Some(depth)) = (
-                self.effect_inputs.scene_bake(),
-                params.depth_result.as_ref(),
-            ) else {
+            let Some(bake) = self.effect_inputs.scene_bake() else {
                 return;
             };
-            if let Err(error) = bake.upload_depth(device, queue, depth) {
-                log::error!("scene depth not uploaded: {error:#}");
+            if let Some(depth) = params
+                .depth_result
+                .as_ref()
+                .filter(|_| params.needs_scene_geometry())
+            {
+                if let Err(error) = bake.upload_depth(device, queue, depth) {
+                    log::error!("scene depth not uploaded: {error:#}");
+                }
             }
             Some(bake)
         };
@@ -668,10 +745,38 @@ impl super::RawGpuPipeline {
         if params.needs_light_bake() {
             let device = self.effect_inputs.device();
             match SceneBakePrograms::shared(device) {
-                Ok(programs) => bake.encode_lights(device, encoder, programs.lights()),
+                Ok(programs) => {
+                    bake.encode_lights(device, encoder, programs.lights());
+                    if params.needs_air_light() {
+                        self.effect_inputs.encode_air_light(
+                            encoder,
+                            &bake,
+                            programs.lights(),
+                            self.air_light_region(params.scene_light_quality()),
+                        );
+                    }
+                }
                 Err(error) => log::error!("scene bake programs did not compile: {error:#}"),
             }
         }
+    }
+
+    /// The air light grid this pipeline needs: the texels its pixels read.
+    fn air_light_region(&self, quality: SceneLightQuality) -> SceneAirLightRegion {
+        let uploaded = self
+            .uploaded_stage_uniforms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let camera = &uploaded.camera;
+        SceneAirLightRegion::covering(
+            [
+                camera.tile_origin_x.max(0) as u32,
+                camera.tile_origin_y.max(0) as u32,
+            ],
+            [camera.width, camera.height],
+            [camera.full_width, camera.full_height],
+            quality,
+        )
     }
 
     /// Adds this pipeline's tile core (or whole image) to the bake's working

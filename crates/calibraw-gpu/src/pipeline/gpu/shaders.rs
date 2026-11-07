@@ -104,12 +104,10 @@ pub(super) const MASK_GLOW: ShaderSource = wgsl!("mask_effects/glow.wgsl");
 pub(super) const MASK_NEON: ShaderSource = wgsl!("mask_effects/neon.wgsl");
 pub(super) const MASK_PIXELATE: ShaderSource = wgsl!("mask_effects/pixelate.wgsl");
 pub(super) const MASK_LIGHT_RAYS: ShaderSource = wgsl!("mask_effects/light_rays.wgsl");
-pub(super) const MASK_SCENE_DEPTH: ShaderSource = wgsl!("mask_effects/scene_depth.wgsl");
 pub(super) const MASK_SCENE_ENVIRONMENT: ShaderSource =
     wgsl!("mask_effects/scene_environment.wgsl");
 pub(super) const MASK_SCENE_LIGHTS: ShaderSource = wgsl!("mask_effects/scene_lights.wgsl");
 pub(super) const MASK_SCENE_EMISSION: ShaderSource = wgsl!("mask_effects/scene_emission.wgsl");
-pub(super) const MASK_SCENE_SHADOWS: ShaderSource = wgsl!("mask_effects/scene_shadows.wgsl");
 pub(super) const MASK_MEDIUM: ShaderSource = wgsl!("mask_effects/medium.wgsl");
 pub(super) const MASK_FOG: ShaderSource = wgsl!("mask_effects/fog.wgsl");
 pub(super) const MASK_SMOKE: ShaderSource = wgsl!("mask_effects/smoke.wgsl");
@@ -136,11 +134,9 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         MASK_NEON,
         MASK_PIXELATE,
         MASK_LIGHT_RAYS,
-        MASK_SCENE_DEPTH,
         MASK_SCENE_ENVIRONMENT,
         MASK_SCENE_LIGHTS,
         MASK_SCENE_EMISSION,
-        MASK_SCENE_SHADOWS,
         MASK_MEDIUM,
         MASK_FOG,
         MASK_SMOKE,
@@ -165,7 +161,6 @@ pub(super) const COLOR_DENOISE: ShaderSource = wgsl!("color_denoise.wgsl");
 pub(super) const CHROMATIC_ABERRATION: ShaderSource = wgsl!("chromatic_aberration.wgsl");
 pub(super) const TONE_ANALYSIS: ShaderSource = wgsl!("tone_analysis.wgsl");
 pub(super) const HAZE_ANALYSIS: ShaderSource = wgsl!("haze_analysis.wgsl");
-pub(super) const SCENE_ANALYSIS: ShaderSource = wgsl!("scene_analysis.wgsl");
 pub(super) const SCENE_ADJUSTMENTS: ShaderSource = wgsl!("scene_adjustments.wgsl");
 pub(super) const VIEW_TRANSFORM: ShaderSource = wgsl!("view_transform.wgsl");
 pub(super) const REMOVE_COMPOSITE: ShaderSource = wgsl!("remove_composite.wgsl");
@@ -180,6 +175,7 @@ pub(super) const SCENE_BAKE_MIPS: ShaderSource = wgsl!("scene/bake_mips.wgsl");
 /// The light bake's passes (pipeline/gpu/scene/lights.rs).
 pub(super) const SCENE_SHADOW_RASTER: ShaderSource = wgsl!("scene/shadow_raster.wgsl");
 pub(super) const SCENE_VISIBILITY: ShaderSource = wgsl!("scene/visibility.wgsl");
+pub(super) const SCENE_AIR_LIGHT: ShaderSource = wgsl!("scene/air_light.wgsl");
 
 /// A module other shaders import.
 pub(super) struct ComposableModule {
@@ -222,7 +218,6 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 24] = [
     module(LOOK_LUT),
     module(BASIC_ADJUSTMENTS),
     module(SCENE_SOURCE),
-    module(SCENE_GEOMETRY),
     module(HAZE),
     module(TONE_COMMON),
     module(TONEMAP),
@@ -244,6 +239,7 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 24] = [
         sensor: None,
         work_format: true,
     },
+    module(SCENE_GEOMETRY),
     module(CREATIVE_EFFECTS),
 ];
 
@@ -341,8 +337,6 @@ pub(super) const TONE_ANALYSIS_ENTRY: EntryShader =
     entry("calibraw tone analysis", TONE_ANALYSIS, false, None);
 pub(super) const HAZE_ANALYSIS_ENTRY: EntryShader =
     entry("calibraw haze analysis", HAZE_ANALYSIS, false, None);
-pub(super) const SCENE_ANALYSIS_ENTRY: EntryShader =
-    entry("calibraw scene analysis", SCENE_ANALYSIS, false, None);
 pub(super) const SCENE_ADJUSTMENTS_ENTRY: EntryShader =
     entry("calibraw scene adjustments", SCENE_ADJUSTMENTS, true, None);
 pub(super) const CREATIVE_EFFECTS_ENTRY: EntryShader =
@@ -382,7 +376,6 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 26] = [
     CHROMATIC_ABERRATION_ENTRY,
     TONE_ANALYSIS_ENTRY,
     HAZE_ANALYSIS_ENTRY,
-    SCENE_ANALYSIS_ENTRY,
     SCENE_ADJUSTMENTS_ENTRY,
     CREATIVE_EFFECTS_ENTRY,
     VIEW_TRANSFORM_ENTRY,
@@ -395,4 +388,5 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 26] = [
     entry("scene bake mips", SCENE_BAKE_MIPS, false, None),
     entry("scene shadow raster", SCENE_SHADOW_RASTER, false, None),
     entry("scene visibility", SCENE_VISIBILITY, false, None),
+    entry("scene air light", SCENE_AIR_LIGHT, false, None),
 ];

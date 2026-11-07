@@ -175,7 +175,23 @@
           },
           {
             "effect": "Fog",
-            "enabled": true
+            "enabled": true,
+            "settings": {
+              "fog": {
+                "amount": 50.0,
+                "color": [0.82,0.87,0.92],
+                "density": 55.0,
+                "depth_enabled": true,
+                "depth_influence": 100.0,
+                "image_lights": false,
+                "light_glow": 0.0,
+                "scale": 65.0,
+                "seed": 0.0,
+                "softness": 70.0,
+                "start_depth": 23.245703,
+                "variation": 30.0
+              }
+            }
           }
         ],
         "masks": [

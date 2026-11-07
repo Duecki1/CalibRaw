@@ -1,6 +1,6 @@
 //! Relight's scene controls saved before control depth: a Relief control and
-//! a light depth linear in distance (docs/rework/DEPTH_EFFECTS_PLAN.md §7,
-//! M2).
+//! a light depth linear in distance, and Fog's start likewise
+//! (docs/rework/DEPTH_EFFECTS_PLAN.md §7, M2 and M3).
 //!
 //! migration: remove in v2.0.0
 //!
@@ -23,8 +23,15 @@
 //! [`LegacySceneControls`] reads the old keys from the same `edits` object as
 //! the decoded edit; Relights that already hold the new keys are left alone.
 //! The old keys are dropped when the edit is written again.
+//!
+//! Fog's `start` (0 to 95, linear in distance like a light depth) becomes
+//! `start_depth`, in control depth by the same conversion as a light depth, so
+//! the onset lies where it did on migrated depth.
 
-use crate::pipeline::{effect_params::relight, MaskEffect};
+use crate::pipeline::{
+    effect_params::{fog, relight},
+    MaskEffect,
+};
 use crate::sidecar::EditState;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -69,6 +76,15 @@ struct LegacyComponent {
 struct LegacySettings {
     #[serde(default)]
     relight: Option<LegacyRelight>,
+    #[serde(default)]
+    fog: Option<LegacyFog>,
+}
+
+/// Fog's start, old key and new. A new key next to an old one wins.
+#[derive(Debug, Default, Deserialize)]
+struct LegacyFog {
+    start: Option<f32>,
+    start_depth: Option<f32>,
 }
 
 /// The fields of a Relight that this migration converts. A new key next to
@@ -95,9 +111,10 @@ impl LegacySceneControls {
     /// component is removed or reordered. Returns whether any was converted.
     pub(crate) fn migrate(self, edits: &mut EditState) -> bool {
         let saved = |components: &[LegacyComponent]| {
-            components
-                .iter()
-                .any(|component| component.settings.relight.as_ref().is_some_and(is_old))
+            components.iter().any(|component| {
+                component.settings.relight.as_ref().is_some_and(is_old)
+                    || component.settings.fog.as_ref().is_some_and(is_old_fog)
+            })
         };
         if !saved(&self.masks.global_effects)
             && !self
@@ -126,12 +143,29 @@ fn is_old(relight: &LegacyRelight) -> bool {
         || relight.additional.iter().any(old_light)
 }
 
+fn is_old_fog(fog: &LegacyFog) -> bool {
+    fog.start.is_some() && fog.start_depth.is_none()
+}
+
 fn migrate_components(
     components: &mut [crate::pipeline::EffectComponent],
     legacy: &[LegacyComponent],
 ) -> bool {
     let mut migrated = false;
     for (component, legacy) in components.iter_mut().zip(legacy) {
+        if component.effect == MaskEffect::Fog {
+            if let Some(start) = legacy
+                .settings
+                .fog
+                .as_ref()
+                .filter(|old| is_old_fog(old))
+                .and_then(|old| old.start)
+            {
+                component.settings.fog.start_depth = control_depth(start, fog::START.max);
+                migrated = true;
+            }
+            continue;
+        }
         let Some(old) = legacy.settings.relight.as_ref().filter(|old| is_old(old)) else {
             continue;
         };
@@ -160,14 +194,21 @@ fn relief_scale(relief: f32) -> f32 {
     relight::RELIEF_SCALE.clamp(100.0 * frame / LEGACY_FRAME_RELIEF)
 }
 
-/// The control depth of an old light depth: `c = ln(1 + (Q − 1) · p) / ln Q`
-/// for `p ≥ 0` in the old range `Q`, so `(Q^c − 1) / (Q − 1)` returns `p`.
-/// Lights before the nearest surface keep their depth.
+/// The control depth of an old light depth: lights before the nearest surface
+/// keep their depth.
 fn light_depth(depth: f32) -> f32 {
     let depth = relight::LIGHT_DEPTH.clamp(depth);
     if depth < 0.0 {
         return depth;
     }
-    let fraction = depth / 100.0;
-    100.0 * (1.0 + (LEGACY_RANGE_RATIO - 1.0) * fraction).ln() / LEGACY_RANGE_RATIO.ln()
+    control_depth(depth, 100.0)
+}
+
+/// The control depth of an old linear depth `p` (percent of the old range):
+/// `c = ln(1 + (Q − 1) · p) / ln Q` in the old range `Q`, so
+/// `(Q^c − 1) / (Q − 1)` returns `p`. `limit` is the control's largest value.
+fn control_depth(percent: f32, limit: f32) -> f32 {
+    let fraction = percent.clamp(0.0, 100.0) / 100.0;
+    (100.0 * (1.0 + (LEGACY_RANGE_RATIO - 1.0) * fraction).ln() / LEGACY_RANGE_RATIO.ln())
+        .min(limit)
 }

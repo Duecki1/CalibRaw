@@ -56,3 +56,22 @@ fn bake_scene_working_mip(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     textureStore(Bake::scene_working_out, texel, vec4<f32>(color / count, depth));
 }
+
+// The same mip chain for a bake without a depth result: no geometry, so the
+// alpha, the nearest visible depth, is 1 at every level.
+@compute @workgroup_size(8, 8, 1)
+fn bake_scene_working_mip_flat(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let texel = vec2<i32>(gid.xy);
+    let size = vec2<i32>(textureDimensions(Bake::scene_working_out));
+    if any(texel >= size) { return; }
+    let children = scene_mip_children(texel, size, vec2<i32>(scene_mip_level.yz));
+    var color = vec3<f32>(0.0);
+    var count = 0.0;
+    for (var y = children.y; y <= children.w; y = y + 1) {
+        for (var x = children.x; x <= children.z; x = x + 1) {
+            color += textureLoad(Bake::scene_working_tex, vec2<i32>(x, y), 0).rgb;
+            count += 1.0;
+        }
+    }
+    textureStore(Bake::scene_working_out, texel, vec4<f32>(color / count, 1.0));
+}
