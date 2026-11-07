@@ -2053,5 +2053,6 @@
   "Choose at least one setting to copy.": "Choisissez au moins un réglage à copier.",
   "Settings that are not selected keep the destination photo’s values.": "Les réglages non sélectionnés conservent les valeurs de la photo de destination.",
   "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Point noir, mappage des tons, dématriçage, reconstruction des hautes lumières et négatif argentique.",
-  "Switch the preview background": "Changer l’arrière-plan de l’aperçu"
+  "Switch the preview background": "Changer l’arrière-plan de l’aperçu",
+  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "La réduction du bruit par IA n’est pas disponible pour les DNG linéaires : l’appareil a dématricé ce fichier avant de l’enregistrer, comme le font les téléphones. Utilisez plutôt la réduction du bruit Luminance et Couleur."
 }

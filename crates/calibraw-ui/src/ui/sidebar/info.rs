@@ -95,6 +95,8 @@ impl Sidebar {
                     ui,
                     "Sensor pattern",
                     match raw.cfa_kind {
+                        // A linear DNG was demosaiced before it was saved.
+                        _ if raw.is_camera_linear_raster() => "Demosaiced in camera",
                         CfaKind::Bayer => "Bayer",
                         CfaKind::XTrans => "X-Trans",
                     },
@@ -163,7 +165,8 @@ fn finite_positive(value: f32) -> Option<f32> {
     (value.is_finite() && value > 0.0).then_some(value)
 }
 
-/// "JPEG · rendered photo", "TIFF · rendered image" or "NEF · camera RAW".
+/// "JPEG · rendered photo", "TIFF · rendered image", "DNG · linear RAW" (a DNG
+/// the camera demosaiced before saving, as phones do) or "NEF · camera RAW".
 fn source_format_description(
     file_name: &str,
     rendered: Option<crate::pipeline::RenderedImageFormat>,
@@ -179,6 +182,8 @@ fn source_format_description(
         .unwrap_or_else(|| "RAW".to_owned());
     if raw.is_display_referred_raster() {
         format!("{extension} · rendered image")
+    } else if raw.is_camera_linear_raster() {
+        format!("{extension} · linear RAW")
     } else {
         format!("{extension} · camera RAW")
     }

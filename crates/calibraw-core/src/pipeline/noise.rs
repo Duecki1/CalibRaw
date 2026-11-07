@@ -36,6 +36,15 @@ const RAW_MEASURED_LEVEL_LIMIT: f32 = 0.985;
 /// Summed sample weight at which a RAW channel's fit is fully trusted over the ISO-based
 /// fallback.
 const RAW_FULL_CONFIDENCE_WEIGHT: f32 = 2_000.0;
+/// Signal bins a linear estimate sorts its variance samples into, and the
+/// samples a bin needs before it takes part in the fit.
+const BIN_COUNT: usize = 20;
+const MIN_BIN_SAMPLES: usize = 24;
+/// Plausible shot and read noise of a linear DNG's camera RGB (white = 1).
+/// Its photo was often merged from several frames, so the limits do not
+/// follow the ISO the way a single exposure's do.
+const CAMERA_RGB_SHOT_RANGE: RangeInclusive<f32> = 1e-7..=0.08;
+const CAMERA_RGB_MAX_READ: f32 = 0.02;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AdaptiveDetailDefaults {
@@ -77,9 +86,6 @@ impl NoiseProfile {
         iso_speed: f32,
         cfa_period: u32,
     ) -> Self {
-        const BIN_COUNT: usize = 20;
-        const MIN_BIN_SAMPLES: usize = 24;
-
         let green2_present = cfa_plane_present(width, height, color_indices, cfa_period, 3);
         let expected_len = (width as usize).saturating_mul(height as usize);
 
@@ -148,46 +154,16 @@ impl NoiseProfile {
         let mut channel_confidence = [0.0f32; 4];
 
         for channel in 0..4 {
-            let mut points = Vec::<(f32, f32, f32)>::new();
-            for (bin_index, values) in bins[channel].iter_mut().enumerate() {
-                if values.len() < MIN_BIN_SAMPLES {
-                    continue;
-                }
-                values.sort_unstable_by(|a, b| a.total_cmp(b));
-                let median_sq = values[values.len() / 2];
-                let variance = (median_sq / FLAT_MIN_SECOND_DIFFERENCE_MEDIAN_SQUARED).max(0.0);
-                let signal = (bin_index as f32 + 0.5) / BIN_COUNT as f32;
-                let weight = values.len().min(256) as f32;
-                points.push((signal, variance, weight));
-            }
-            if points.len() < 3 {
+            let shot_range =
+                (fallback.shot[channel] * 0.15)..=(fallback.shot[channel] * 8.0).clamp(0.001, 0.08);
+            let read_range =
+                (fallback.read[channel] * 0.15)..=(fallback.read[channel] * 64.0).clamp(1e-5, 0.02);
+            let Some(fit) = fit_shot_read(&mut bins[channel], shot_range, read_range) else {
                 continue;
-            }
-
-            let (mut sw, mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0, 0.0);
-            for &(x, y, w) in &points {
-                sw += w;
-                sx += w * x;
-                sy += w * y;
-                sxx += w * x * x;
-                sxy += w * x * y;
-            }
-            let denom: f32 = sw * sxx - sx * sx;
-            if denom.abs() <= 1e-12 {
-                continue;
-            }
-            let min_shot = fallback.shot[channel] * 0.15;
-            let min_read = fallback.read[channel] * 0.15;
-            let max_shot = (fallback.shot[channel] * 8.0).clamp(0.001, 0.08);
-            let max_read = (fallback.read[channel] * 64.0).clamp(1e-5, 0.02);
-            let fitted_a = ((sw * sxy - sx * sy) / denom).clamp(min_shot, max_shot);
-            let fitted_b = ((sy - fitted_a * sx) / sw).clamp(min_read, max_read);
-
-            let confidence = (points.iter().map(|point| point.2).sum::<f32>()
-                / RAW_FULL_CONFIDENCE_WEIGHT)
-                .clamp(0.0, 1.0);
-            shot[channel] = fallback.shot[channel] * (1.0 - confidence) + fitted_a * confidence;
-            read[channel] = fallback.read[channel] * (1.0 - confidence) + fitted_b * confidence;
+            };
+            let confidence = fit.confidence;
+            shot[channel] = fallback.shot[channel] * (1.0 - confidence) + fit.shot * confidence;
+            read[channel] = fallback.read[channel] * (1.0 - confidence) + fit.read * confidence;
             channel_confidence[channel] = confidence;
         }
 
@@ -203,6 +179,88 @@ impl NoiseProfile {
             confidence: (channel_confidence[0] + channel_confidence[1] + channel_confidence[2])
                 / 3.0,
             green2_present,
+        }
+    }
+
+    /// Estimates the noise of a linear DNG: camera RGB that the camera
+    /// demosaiced before saving (`width * height * 3` values, black at 0 and
+    /// white at 1, before white balance), as a phone saves its RAWs. The
+    /// noise is that of sensor data, shot and read noise in linear light,
+    /// so each channel is fitted as [`Self::estimate`] fits a CFA colour.
+    /// Second differences span two pixels, past the correlation demosaicing
+    /// leaves between neighbours. `code_range` is each channel's white level
+    /// less its black level in the file, which the ISO fallback is scaled by
+    /// where too little of the photo is flat enough to measure.
+    pub fn estimate_camera_rgb(
+        width: u32,
+        height: u32,
+        rgb: &[f32],
+        iso_speed: f32,
+        code_range: [f32; 3],
+    ) -> Self {
+        const RADIUS: u32 = 2;
+        let [red, green, blue] = code_range;
+        let fallback = Self::iso_fallback(iso_speed, [red, green, blue, green], false);
+        let expected_len = (width as usize)
+            .saturating_mul(height as usize)
+            .saturating_mul(3);
+        if width < 2 * RADIUS + 1 || height < 2 * RADIUS + 1 || rgb.len() < expected_len {
+            return fallback;
+        }
+
+        let stride = coprime_stride(anchor_spacing(width, height), RADIUS);
+        let at = |x: u32, y: u32, channel: usize| {
+            rgb[(y as usize * width as usize + x as usize) * 3 + channel].clamp(0.0, 1.25)
+        };
+        let mut bins: [[Vec<f32>; BIN_COUNT]; 3] =
+            std::array::from_fn(|_| std::array::from_fn(|_| Vec::new()));
+        for y in (RADIUS..height - RADIUS).step_by(stride as usize) {
+            for x in (RADIUS..width - RADIUS).step_by(stride as usize) {
+                for (channel, channel_bins) in bins.iter_mut().enumerate() {
+                    let center = at(x, y, channel);
+                    if center >= RAW_MEASURED_LEVEL_LIMIT {
+                        continue;
+                    }
+                    let horizontal = (at(x - RADIUS, y, channel) - 2.0 * center
+                        + at(x + RADIUS, y, channel))
+                    .powi(2)
+                        / 6.0;
+                    let vertical = (at(x, y - RADIUS, channel) - 2.0 * center
+                        + at(x, y + RADIUS, channel))
+                    .powi(2)
+                        / 6.0;
+                    let variance_sample = horizontal.min(vertical);
+                    if variance_sample.is_finite() {
+                        let bin = ((center.clamp(0.0, 0.999_999) * BIN_COUNT as f32) as usize)
+                            .min(BIN_COUNT - 1);
+                        channel_bins[bin].push(variance_sample);
+                    }
+                }
+            }
+        }
+
+        let mut shot = fallback.shot;
+        let mut read = fallback.read;
+        let mut channel_confidence = [0.0f32; 3];
+        for (channel, channel_bins) in bins.iter_mut().enumerate() {
+            // Quantization of the file's codes is the least read noise there is.
+            let quantization = (0.5 / code_range[channel].max(1.0)).powi(2);
+            let read_range = quantization..=CAMERA_RGB_MAX_READ.max(quantization);
+            let Some(fit) = fit_shot_read(channel_bins, CAMERA_RGB_SHOT_RANGE, read_range) else {
+                continue;
+            };
+            let confidence = fit.confidence;
+            shot[channel] = fallback.shot[channel] * (1.0 - confidence) + fit.shot * confidence;
+            read[channel] = fallback.read[channel] * (1.0 - confidence) + fit.read * confidence;
+            channel_confidence[channel] = confidence;
+        }
+        shot[3] = shot[1];
+        read[3] = read[1];
+        Self {
+            shot,
+            read,
+            confidence: channel_confidence.iter().sum::<f32>() / 3.0,
+            green2_present: false,
         }
     }
 
@@ -292,10 +350,14 @@ impl NoiseProfile {
         }
     }
 
+    /// The Detail settings a photo with this noise opens with. The noise
+    /// counted is at least what the ISO predicts for a sensor whose code
+    /// ranges are `metadata_white_levels`; None counts this profile alone,
+    /// for a profile that has no sensor codes to scale the ISO by.
     pub fn adaptive_detail_defaults(
         self,
         iso_speed: f32,
-        white_levels: [f32; 4],
+        metadata_white_levels: Option<[f32; 4]>,
         wb_coeffs: [f32; 4],
     ) -> AdaptiveDetailDefaults {
         const REFERENCE_SIGNAL: f32 = 0.18;
@@ -315,14 +377,16 @@ impl NoiseProfile {
         // Needs above which the High denoise quality is selected.
         const HIGH_QUALITY_LUMINANCE_NEED: f32 = 0.72;
         const HIGH_QUALITY_CHROMA_NEED: f32 = 0.40;
-        let fallback = Self::iso_fallback(iso_speed, white_levels, self.green2_present);
+        let fallback = metadata_white_levels
+            .map(|white_levels| Self::iso_fallback(iso_speed, white_levels, self.green2_present));
         let mut variance = [0.0f32; 3];
         for channel in 0..3 {
             let wb = wb_coeffs[channel].max(0.0);
             let measured =
                 self.read[channel] * wb * wb + self.shot[channel] * wb * REFERENCE_SIGNAL;
-            let metadata =
-                fallback.read[channel] * wb * wb + fallback.shot[channel] * wb * REFERENCE_SIGNAL;
+            let metadata = fallback.map_or(0.0, |fallback| {
+                fallback.read[channel] * wb * wb + fallback.shot[channel] * wb * REFERENCE_SIGNAL
+            });
             variance[channel] = measured.max(metadata * METADATA_VARIANCE_FLOOR);
         }
 
@@ -383,6 +447,62 @@ impl NoiseProfile {
             green2_present,
         }
     }
+}
+
+/// A channel's noise fitted by [`fit_shot_read`].
+struct ShotReadFit {
+    shot: f32,
+    read: f32,
+    /// How much of the fit to trust over a fallback, from 0 to 1.
+    confidence: f32,
+}
+
+/// Fits `variance = shot · signal + read` by weighted least squares to the
+/// median of each signal bin's squared second differences, with the slope
+/// limited to `shot_range` and the intercept to `read_range`. None when fewer
+/// than three bins have enough samples or the bins cannot be told apart.
+fn fit_shot_read(
+    bins: &mut [Vec<f32>; BIN_COUNT],
+    shot_range: RangeInclusive<f32>,
+    read_range: RangeInclusive<f32>,
+) -> Option<ShotReadFit> {
+    let mut points = Vec::<(f32, f32, f32)>::new();
+    for (bin_index, values) in bins.iter_mut().enumerate() {
+        if values.len() < MIN_BIN_SAMPLES {
+            continue;
+        }
+        values.sort_unstable_by(|a, b| a.total_cmp(b));
+        let median_sq = values[values.len() / 2];
+        let variance = (median_sq / FLAT_MIN_SECOND_DIFFERENCE_MEDIAN_SQUARED).max(0.0);
+        let signal = (bin_index as f32 + 0.5) / BIN_COUNT as f32;
+        let weight = values.len().min(256) as f32;
+        points.push((signal, variance, weight));
+    }
+    if points.len() < 3 {
+        return None;
+    }
+
+    let (mut sw, mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for &(x, y, w) in &points {
+        sw += w;
+        sx += w * x;
+        sy += w * y;
+        sxx += w * x * x;
+        sxy += w * x * y;
+    }
+    let denom: f32 = sw * sxx - sx * sx;
+    if denom.abs() <= 1e-12 {
+        return None;
+    }
+    let shot = ((sw * sxy - sx * sy) / denom).clamp(*shot_range.start(), *shot_range.end());
+    let read = ((sy - shot * sx) / sw).clamp(*read_range.start(), *read_range.end());
+    let confidence = (points.iter().map(|point| point.2).sum::<f32>() / RAW_FULL_CONFIDENCE_WEIGHT)
+        .clamp(0.0, 1.0);
+    Some(ShotReadFit {
+        shot,
+        read,
+        confidence,
+    })
 }
 
 fn smoothstep(low: f32, high: f32, value: f32) -> f32 {

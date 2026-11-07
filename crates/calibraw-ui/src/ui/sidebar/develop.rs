@@ -595,13 +595,12 @@ impl Sidebar {
     /// double-clicks and the card reset restore. `ai_strength_available` is
     /// whether the photo has an AI result that can be blended with the
     /// original: a Bayer RAW whose denoised mosaic is loaded.
-    /// `ai_denoise_available` is false for rendered photos and raster TIFFs,
-    /// which have no sensor data for RawNIND.
+    /// `ai_denoise` says whether the photo can be AI denoised.
     pub(super) fn show_detail(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         defaults: &ExposureParams,
-        ai_denoise_available: bool,
+        ai_denoise: AiDenoiseOffer,
         ai_strength_available: bool,
         foldable: bool,
     ) -> (bool, Option<bool>) {
@@ -609,16 +608,21 @@ impl Sidebar {
         let mut ai_request = None;
         let ai_before = exposure.ai_denoise_enabled;
         let action = Self::adjustment_card(ui, "Detail", false, foldable, true, |ui| {
-            if ai_denoise_available {
-                let mut ai_enabled = exposure.ai_denoise_enabled;
-                if moduwu_design::toggle_with_help(
-                    ui,
-                    &mut ai_enabled,
-                    tr("AI Denoise — RawNIND UtNet2"),
-                    tr("Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant."),
-                )
-                .changed()
-                {
+            if ai_denoise != AiDenoiseOffer::Hidden {
+                let available = ai_denoise == AiDenoiseOffer::Available;
+                let mut ai_enabled = exposure.ai_denoise_enabled && available;
+                let toggle = ui
+                    .add_enabled_ui(available, |ui| {
+                        moduwu_design::toggle_with_help(
+                            ui,
+                            &mut ai_enabled,
+                            tr("AI Denoise — RawNIND UtNet2"),
+                            tr("Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant."),
+                        )
+                    })
+                    .inner
+                    .on_disabled_hover_text(tr("AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead."));
+                if available && toggle.changed() {
                     ai_request = Some(ai_enabled);
                 }
                 ui.weak(tr("Experimental"));
@@ -879,5 +883,26 @@ impl Sidebar {
         });
         changed |= action.apply(exposure, AdjustmentGroup::Calibration);
         changed
+    }
+}
+
+/// Whether the Detail card offers AI denoise for the open photo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AiDenoiseOffer {
+    Available,
+    /// A linear DNG, which the camera demosaiced before saving: the switch
+    /// shows, turned off, with why on hover.
+    UnavailableForLinearDng,
+    /// A rendered photo or raster TIFF, which has no sensor data for RawNIND.
+    Hidden,
+}
+
+impl AiDenoiseOffer {
+    pub(super) fn for_photo(raw: Option<&LoadedRaw>) -> Self {
+        match raw {
+            Some(raw) if raw.is_camera_linear_raster() => Self::UnavailableForLinearDng,
+            Some(raw) if raw.is_pre_demosaiced_raster() => Self::Hidden,
+            _ => Self::Available,
+        }
     }
 }

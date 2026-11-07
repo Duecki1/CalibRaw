@@ -72,7 +72,7 @@ fn ca_amount() -> f32 {
 
 // Gains that white-balance the scene's red, green and blue.
 fn ca_neutral_gains() -> vec3<f32> {
-    return max(Common::camera_uniforms.chromatic_aberration.yzw, vec3<f32>(1e-6));
+    return Common::scene_neutral_gains();
 }
 
 // Where `model` ([k1, k2, tx, ty], see calibraw-core) says its channel shows

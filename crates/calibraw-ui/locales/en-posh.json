@@ -2052,5 +2052,6 @@
   "Choose at least one setting to copy.": "Select at least one preference to duplicate.",
   "Settings that are not selected keep the destination photo’s values.": "Preferences that are not selected retain the destination photograph’s values.",
   "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.",
-  "Switch the preview background": "Change the preview background"
+  "Switch the preview background": "Change the preview background",
+  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "AI denoise is not available for linear DNGs: the camera demosaiced this file before saving it, as telephones do. Kindly use Luminance and Colour noise reduction instead."
 }

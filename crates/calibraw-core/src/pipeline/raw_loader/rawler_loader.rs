@@ -892,6 +892,17 @@ fn adapt(
                     }
                 }
             }
+            // A linear DNG keeps no sensor mosaic to profile, so Detail's
+            // denoise reads a noise model measured from the RGB itself.
+            let code_range: [f32; 3] =
+                std::array::from_fn(|c| (white[c] - black_at(0, 0, c)).max(1.0));
+            loaded.noise_profile = NoiseProfile::estimate_camera_rgb(
+                width,
+                height,
+                &rgb,
+                loaded.capture_metadata.iso_speed,
+                code_range,
+            );
             loaded.scene_linear_raster = Some(Arc::from(rgb));
         }
         _ => bail!("unsupported Rawler photometric interpretation"),

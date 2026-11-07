@@ -2053,5 +2053,6 @@
   "Choose at least one setting to copy.": "कॉपी करने के लिए कम-से-कम एक सेटिंग चुनें।",
   "Settings that are not selected keep the destination photo’s values.": "न चुनी गई सेटिंग गंतव्य फ़ोटो के मान बनाए रखती हैं।",
   "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "ब्लैक पॉइंट, टोन मैपर, डिमोज़ेक, हाइलाइट पुनर्निर्माण और फ़िल्म नेगेटिव।",
-  "Switch the preview background": "प्रीव्यू पृष्ठभूमि बदलें"
+  "Switch the preview background": "प्रीव्यू पृष्ठभूमि बदलें",
+  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "लीनियर DNG के लिए AI नॉइज़ हटाना उपलब्ध नहीं है: कैमरे ने इस फ़ाइल को सहेजने से पहले डिमोज़ेक कर दिया था, जैसा फ़ोन करते हैं। इसके बजाय ल्यूमिनेंस और रंग नॉइज़ रिडक्शन का उपयोग करें।"
 }

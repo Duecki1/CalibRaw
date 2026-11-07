@@ -362,11 +362,7 @@ impl Sidebar {
         let mut ai_denoise_request = None;
         let white_balance_raw = app.develop.loaded_raw.clone();
         let area_picker_before = app.develop_ui.area_picker;
-        let ai_denoise_available = !app
-            .develop
-            .loaded_raw
-            .as_deref()
-            .is_some_and(|raw| raw.is_pre_demosaiced_raster());
+        let ai_denoise = develop::AiDenoiseOffer::for_photo(app.develop.loaded_raw.as_deref());
         // Matches the GPU pipeline: only a Bayer-mosaic AI result is blended.
         // X-Trans and raster results are demosaiced RGB and always apply fully.
         let ai_strength_available = app.develop.loaded_raw.as_deref().is_some_and(|raw| {
@@ -414,7 +410,7 @@ impl Sidebar {
                         ui,
                         &mut app.develop.exposure,
                         &detail_defaults,
-                        ai_denoise_available,
+                        ai_denoise,
                         ai_strength_available,
                         false,
                     );
@@ -494,7 +490,7 @@ impl Sidebar {
                             ui,
                             &mut app.develop.exposure,
                             &detail_defaults,
-                            ai_denoise_available,
+                            ai_denoise,
                             ai_strength_available,
                             true,
                         );

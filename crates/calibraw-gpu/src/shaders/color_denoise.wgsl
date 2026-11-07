@@ -5,9 +5,13 @@
 @group(0) @binding(11) var color_denoise_read: texture_2d<f32>;
 @group(0) @binding(10) var color_denoise_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 
+// The scene white balanced, the units of the noise model and of the
+// opponents' neutral axis. Only a linear DNG's scene changes
+// (`Common::scene_neutral_gains`); the result is unbalanced again on output.
 fn color_denoise_at(pos: vec2<i32>) -> vec3<f32> {
     let maximum = vec2<i32>(i32(Common::camera_uniforms.width) - 1, i32(Common::camera_uniforms.height) - 1);
-    return textureLoad(color_denoise_read, clamp(pos, vec2<i32>(0), maximum), 0).rgb;
+    return textureLoad(color_denoise_read, clamp(pos, vec2<i32>(0), maximum), 0).rgb
+        * Common::scene_neutral_gains();
 }
 
 fn color_denoise_kernel_weight(index: i32, compact: bool) -> f32 {
@@ -38,7 +42,7 @@ fn color_denoise_enabled(scale: i32) -> bool {
 
 fn color_denoise_apply(pos: vec2<i32>, radius: i32, scale: i32) -> vec3<f32> {
     let center = color_denoise_at(pos);
-    if !color_denoise_enabled(scale) { return center; }
+    if !color_denoise_enabled(scale) { return center / Common::scene_neutral_gains(); }
 
     let center_signal = Noise::nr_signal(center);
     let center_variance = Noise::nr_component_variance(center);
@@ -123,7 +127,8 @@ fn color_denoise_apply(pos: vec2<i32>, radius: i32, scale: i32) -> vec3<f32> {
         max(feature_retention, saturated_feature),
     );
     let filtered_opponents = low_opponents + opponent_detail * retained;
-    return Noise::nr_from_signal_opponents(center_signal, filtered_opponents);
+    return Noise::nr_from_signal_opponents(center_signal, filtered_opponents)
+        / Common::scene_neutral_gains();
 }
 
 @compute @workgroup_size(8, 8, 1)

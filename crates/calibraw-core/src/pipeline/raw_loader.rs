@@ -675,9 +675,12 @@ impl LoadedRaw {
             exposure.sharpen_amount = 0.0;
             return;
         }
+        // A linear DNG's white levels are 1 after decoding, not the codes of
+        // a sensor, and its profile was measured from its own pixels.
+        let metadata_white_levels = (!self.is_camera_linear_raster()).then_some(self.white_levels);
         let defaults = self.noise_profile.adaptive_detail_defaults(
             self.capture_metadata.iso_speed,
-            self.white_levels,
+            metadata_white_levels,
             self.wb_coeffs,
         );
         exposure.luminance_denoise = defaults.luminance_denoise;

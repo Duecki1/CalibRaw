@@ -2053,5 +2053,6 @@
   "Choose at least one setting to copy.": "Выберите хотя бы один параметр для копирования.",
   "Settings that are not selected keep the destination photo’s values.": "Для невыбранных настроек сохраняются значения фотографии назначения.",
   "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Точка чёрного, тональное отображение, демозаика, восстановление светов и плёночный негатив.",
-  "Switch the preview background": "Переключить фон предпросмотра"
+  "Switch the preview background": "Переключить фон предпросмотра",
+  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "ИИ-шумоподавление недоступно для линейных DNG: камера выполнила демозаику до сохранения файла, как это делают телефоны. Используйте вместо него шумоподавление яркости и цвета."
 }

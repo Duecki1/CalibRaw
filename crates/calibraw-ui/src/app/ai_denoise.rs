@@ -122,18 +122,20 @@ impl CalibRawApp {
             self.egui_ctx.request_repaint();
             return;
         }
-        if self
+        if let Some(raw) = self
             .develop
             .loaded_raw
             .as_ref()
-            .is_some_and(|raw| raw.is_pre_demosaiced_raster())
+            .filter(|raw| raw.is_pre_demosaiced_raster())
         {
+            let notice = if raw.is_camera_linear_raster() {
+                tr("AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.")
+            } else {
+                tr("AI denoise works on sensor RAW data; rendered photos (JPEG, PNG, HEIC, TIFF) use the standard Detail controls.")
+            };
             self.develop.exposure.ai_denoise_enabled = false;
             self.develop.target_exposure.ai_denoise_enabled = false;
-            self.ui.notice = Some(
-                tr("AI denoise works on sensor RAW data; rendered photos (JPEG, PNG, HEIC, TIFF) use the standard Detail controls.")
-                    .to_owned(),
-            );
+            self.ui.notice = Some(notice.to_owned());
             self.egui_ctx.request_repaint();
             return;
         }

@@ -129,8 +129,10 @@ pub(super) fn merge_sources(
         let step = format!("{noun} {}/{count}", index + 1);
         ensure!(progress(format!("Decoding {step}")), "Merge cancelled");
         let mut raw = load_raw_file_with_profile_config(path, CameraProfileMode::MatrixOnly, None)?;
+        // Linear DNGs merge like sensor RAWs: their pixels are camera RGB
+        // before white balance, as `render_camera_rgb` develops a mosaic.
         ensure!(
-            !raw.is_pre_demosaiced_raster(),
+            !raw.is_display_referred_raster(),
             "Merging requires original RAW files, not rendered TIFFs"
         );
         if let Some(camera) = &reference_camera {
@@ -290,24 +292,40 @@ pub(super) fn render_camera_rgb(
 /// Per pixel, the brightest normalized sensor sample (white = 1) within the demosaic
 /// footprint, so a pixel interpolated from a saturated photosite reads as saturated even
 /// where demosaicing smoothed its value below the white level.
+///
+/// A linear DNG was demosaiced by the camera, so its photosites are gone: each pixel's
+/// brightest channel stands in for them (its channels are normalized to the file's white
+/// level), and the footprint covers the smoothing a camera's demosaic leaves.
 pub(super) fn sensor_footprint_peak(raw: &LoadedRaw) -> Vec<f32> {
+    /// Pixels of a linear DNG within which the camera's demosaic spread a clipped
+    /// photosite, as for a Bayer mosaic.
+    const LINEAR_DNG_RADIUS: usize = 3;
     let width = raw.width as usize;
     let height = raw.height as usize;
-    let radius = match raw.cfa_kind {
-        CfaKind::Bayer => 3,
-        CfaKind::XTrans => 6,
+    let (sensor, radius): (Vec<f32>, usize) = match raw.scene_linear_raster() {
+        Some(rgb) if raw.is_camera_linear_raster() => (
+            rgb.par_chunks_exact(3)
+                .map(|pixel| pixel[0].max(pixel[1]).max(pixel[2]))
+                .collect(),
+            LINEAR_DNG_RADIUS,
+        ),
+        _ => (
+            raw.raw_pixels
+                .par_iter()
+                .enumerate()
+                .map(|(i, value)| {
+                    let c = usize::from(raw.color_indices[i].min(3));
+                    let black = raw.black_levels_per_pixel[i];
+                    let range = (raw.white_levels[c] - black).max(1.0);
+                    (f32::from(*value) - black) / range
+                })
+                .collect(),
+            match raw.cfa_kind {
+                CfaKind::Bayer => 3,
+                CfaKind::XTrans => 6,
+            },
+        ),
     };
-    let sensor: Vec<f32> = raw
-        .raw_pixels
-        .par_iter()
-        .enumerate()
-        .map(|(i, value)| {
-            let c = usize::from(raw.color_indices[i].min(3));
-            let black = raw.black_levels_per_pixel[i];
-            let range = (raw.white_levels[c] - black).max(1.0);
-            (f32::from(*value) - black) / range
-        })
-        .collect();
     let horizontal: Vec<f32> = (0..sensor.len())
         .into_par_iter()
         .map(|i| {
