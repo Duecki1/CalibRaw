@@ -429,14 +429,14 @@ fn rain_splash_shape(
 // a thing's image scales with. A row of its cells lies at one distance. Rows farther
 // away hold more ground, and so more splashes, until their cells are full.
 fn rain_splashes(field: RainField, pixel: WetPixel, control: f32) -> f32 {
-    let below = Geometry::scene_below_horizon(pixel.point);
-    if below <= 1e-3 { return 0.0; }
+    let pixel_below = Geometry::scene_below_horizon(pixel.point);
+    if pixel_below <= 1e-3 { return 0.0; }
     // Camera heights per image point below the horizon, for a level camera.
     let focal = Bake::scene_bake.camera.lens.x;
     let ground_scale = 0.5 / focal;
     let right = vec2<f32>(-pixel.up.y, pixel.up.x);
     let lateral = dot(pixel.point, right);
-    let row = i32(floor(log(below) / RAIN_SPLASH_CELL));
+    let row = i32(floor(log(pixel_below) / RAIN_SPLASH_CELL));
     let exposure = min(RAIN_SPLASH_LENGTH / field.length, 1.0);
     let salt = field.seed * 3145739u + 41u;
     var coverage = 0.0;
@@ -455,7 +455,7 @@ fn rain_splashes(field: RainField, pixel: WetPixel, control: f32) -> f32 {
             let below = row_below * exp((placed.z - 0.5) * RAIN_SPLASH_CELL);
             let offset = vec2<f32>(
                 across - (f32(cell.x) + placed.y) * RAIN_SPLASH_CELL,
-                (below - below) / row_below,
+                (below - pixel_below) / row_below,
             );
             let random = effect_cell_random(cell, salt + 1u);
             let radius = RAIN_SPLASH_RADIUS * mix(0.5, 1.3, placed.w);

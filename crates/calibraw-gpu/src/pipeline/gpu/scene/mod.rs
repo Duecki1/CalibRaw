@@ -744,7 +744,7 @@ impl super::RawGpuPipeline {
         self.encode_scene_bake(encoder, &bake);
         if params.needs_light_bake() {
             let device = self.effect_inputs.device();
-            match SceneBakePrograms::shared(device) {
+            match self.effect_inputs.scene_programs() {
                 Ok(programs) => {
                     bake.encode_lights(device, encoder, programs.lights());
                     if params.needs_air_light() {
@@ -792,7 +792,7 @@ impl super::RawGpuPipeline {
 
     pub(super) fn encode_scene_bake(&self, encoder: &mut wgpu::CommandEncoder, bake: &SceneBake) {
         let device = self.effect_inputs.device();
-        match SceneBakePrograms::shared(device) {
+        match self.effect_inputs.scene_programs() {
             Ok(programs) => bake.encode(device, encoder, &programs),
             Err(error) => log::error!("scene bake programs did not compile: {error:#}"),
         }

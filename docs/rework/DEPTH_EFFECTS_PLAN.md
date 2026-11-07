@@ -4,9 +4,11 @@ Status (2026-11-07): P1 to P7 are built; all awaiting the user's review. The old
 path is deleted (§8's check returns nothing outside this file). Left over: P8 timings,
 the P2/P3/P5 photo checks listed in §11, and photos S1 to S3, which the user never
 gave. The user dropped all device tests on 2026-11-06 (Tab M11 timings and memory are
-out of scope; everything is judged on the desktop). Rain and Wet Surfaces are no longer
-offered in the effect picker (2026-11-07, the user's decision to save work: nobody uses
-them); edits that hold them keep rendering them through the new path. Written
+out of scope; everything is judged on the desktop). Rain and Wet Surfaces are switched
+off (2026-11-07, the user's decision: nobody uses them and no release shipped them):
+`MaskEffect::is_disabled` keeps them out of the picker and out of rendering, and
+prewarm does not compile their passes, as Rain's crashed the Adreno 830 shader
+compiler at startup. Their code and settings stay. Written
 2026-11-06 against `fb9e74df`, reviewed and corrected the same day (§12); the user
 decided the texture limit and the air light the same day (§12, items 3 and 6). Work
 through it phase by phase (§6). After each phase, fill in its row in §11 (Progress and

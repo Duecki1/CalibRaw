@@ -22,7 +22,8 @@
 
 use super::scene::{
     air_light_layers, SceneAirLightKey, SceneAirLightRegion, SceneAirLightTarget,
-    SceneAirLightUniform, SceneLightPrograms, SceneShadowLightsUniform, AIR_LIGHT_FORMAT,
+    SceneAirLightUniform, SceneBakePrograms, SceneLightPrograms, SceneShadowLightsUniform,
+    AIR_LIGHT_FORMAT,
 };
 use super::*;
 
@@ -936,6 +937,11 @@ pub(super) struct EffectInputs {
     placeholder_air_light: AirLightInputs,
     /// Compares with the shadow cubes (`SceneLightBindings`).
     scene_compare: wgpu::Sampler,
+    /// The scene bake's and light bake's programs, compiled on this
+    /// pipeline's first bake. Held here because `SceneBakePrograms::shared`
+    /// keeps only weak references: without an owner every render compiled
+    /// them again (about 45 ms each on a desktop GPU).
+    scene_programs: Mutex<Option<Arc<SceneBakePrograms>>>,
     allocated: Mutex<Allocated>,
 }
 
@@ -975,6 +981,7 @@ impl EffectInputs {
             placeholder_scene_bake,
             placeholder_air_light,
             scene_compare,
+            scene_programs: Mutex::new(None),
             allocated: Mutex::new(Allocated {
                 image_lights: None,
                 haze: None,
@@ -1223,6 +1230,21 @@ impl EffectInputs {
 
     pub(super) fn device(&self) -> &wgpu::Device {
         &self.device
+    }
+
+    /// The scene programs of this pipeline's device, compiled on first use
+    /// and kept for the pipeline's lifetime.
+    pub(super) fn scene_programs(&self) -> Result<Arc<SceneBakePrograms>> {
+        let mut programs = self
+            .scene_programs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(programs) = programs.as_ref() {
+            return Ok(Arc::clone(programs));
+        }
+        let shared = SceneBakePrograms::shared(&self.device)?;
+        *programs = Some(Arc::clone(&shared));
+        Ok(shared)
     }
 
     /// The scene bake, once allocated or shared.

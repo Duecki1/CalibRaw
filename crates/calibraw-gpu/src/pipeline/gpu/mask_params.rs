@@ -142,7 +142,7 @@ pub(super) fn pack_effect_slots(
     shutter_seconds: f32,
 ) -> impl Iterator<Item = MaskData> + '_ {
     let count = settings.instance_count(effect);
-    let active = enabled && settings.effect_is_active(effect);
+    let active = enabled && !effect.is_disabled() && settings.effect_is_active(effect);
     (0..count).filter_map(move |instance| {
         let context = PackContext {
             shutter_seconds,

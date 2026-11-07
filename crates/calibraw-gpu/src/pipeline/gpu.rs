@@ -200,6 +200,15 @@ impl ComputeProgram {
         self.entry == "bayer_rcd_output"
     }
 
+    /// The passes of the switched-off effects ([`MaskEffect::is_disabled`]),
+    /// which nothing encodes, so prewarm leaves them uncompiled.
+    fn serves_disabled_effect(&self) -> bool {
+        matches!(
+            self.entry.as_str(),
+            "apply_wet_surfaces" | "apply_weather_air"
+        )
+    }
+
     fn for_demosaic_params(&self, camera: &CameraUniforms) -> &wgpu::ComputePipeline {
         if !self.is_bayer_demosaic() {
             return self.get();
@@ -355,7 +364,11 @@ impl RawGpuProgramTemplate {
     /// the sensor-denoise variant of the reference demosaic. The other demosaic variants take seconds each and are left to
     /// [`Self::compile_for_params`].
     pub fn compile_common_programs(&self) {
-        for program in &self.pipelines {
+        for program in self
+            .pipelines
+            .iter()
+            .filter(|program| !program.serves_disabled_effect())
+        {
             program.get();
         }
         for variant in COMMON_DEMOSAIC_VARIANTS {

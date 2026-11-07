@@ -479,6 +479,14 @@ impl MaskEffect {
         Self::WetSurfaces,
     ];
 
+    /// Switched off: never offered and never rendered (2026-11-07; Rain and Wet
+    /// Surfaces shipped in no release and nobody uses them). Components that hold
+    /// one keep their settings and render as if disabled. Their GPU passes are
+    /// never compiled either: Rain's crashes the Adreno 830 shader compiler.
+    pub const fn is_disabled(self) -> bool {
+        matches!(self, Self::Rain | Self::WetSurfaces)
+    }
+
     /// Available, but its results are not yet reliable enough to present as finished.
     pub const fn is_experimental(self) -> bool {
         matches!(self, Self::Relight)
