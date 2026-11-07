@@ -3,8 +3,9 @@ use super::*;
 impl Preview {
     /// Long press on the canvas shows the unedited original until the finger
     /// lifts or moves. Works in every sidebar tab except Crop, whose handles
-    /// are often pressed and held before dragging; the caller cancels the
-    /// tool gesture the press started when `original_started` is set.
+    /// are often pressed and held before dragging, and presses that started a
+    /// mask gesture; the caller cancels the tool gesture the press started
+    /// when `original_started` is set.
     pub(crate) fn handle_android_original_hold(
         ui: &Ui,
         app: &mut CalibRawApp,
@@ -27,7 +28,13 @@ impl Preview {
             )
         });
 
+        // A press that grabbed a mask handle or started a mask stroke stays
+        // that gesture: slow, small adjustments rest within the stationary
+        // distance and would otherwise turn into the comparison.
+        let mask_gesture =
+            app.ui.sidebar_tab == SidebarTab::Masks && app.masks.touch_gesture_backup.is_some();
         let allowed = app.ui.sidebar_tab != SidebarTab::Crop
+            && !mask_gesture
             && !touch_navigation
             && !multi_touch
             && any_touches;
