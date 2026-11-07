@@ -2055,5 +2055,11 @@
   "Settings that are not selected keep the destination photo’s values.": "Indstillinger, der ikke er valgt, beholder destinationsfotoets værdier.",
   "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Sortpunkt, tonemapper, demosaik, rekonstruktion af højlys og filmnegativet.",
   "Switch the preview background": "Skift baggrund for forhåndsvisning",
-  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "AI-støjreduktion er ikke tilgængelig for lineære DNG-filer: kameraet demosaikerede filen, før den blev gemt, som telefoner gør. Brug Luminans- og Farve-støjreduktion i stedet."
+  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "AI-støjreduktion er ikke tilgængelig for lineære DNG-filer: kameraet demosaikerede filen, før den blev gemt, som telefoner gør. Brug Luminans- og Farve-støjreduktion i stedet.",
+  "Background": "Baggrund",
+  "Linear": "Lineær",
+  "Radial": "Radial",
+  "People": "Personer",
+  "Object": "Objekt",
+  "Path": "Sti"
 }

@@ -16,7 +16,7 @@ impl Sidebar {
         Self::show_ai_update_card(ui, app, frame);
 
         if app.masks.stack.masks.is_empty() {
-            moduwu_design::section_card(ui, tr("No masks yet"), |_| {});
+            Self::show_first_mask_picker(ui, app, frame);
             return None;
         }
 
@@ -27,6 +27,29 @@ impl Sidebar {
             }
             ScreenLayout::Horizontal => Self::show_masks_horizontal_details(ui, app, frame),
         }
+    }
+
+    /// Without masks, the panel offers the kind tiles directly; a click
+    /// creates the first group as the strip's picker does.
+    fn show_first_mask_picker(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
+        let picked = moduwu_design::section_card(ui, tr("No masks yet"), |ui| {
+            ui.add_space(moduwu_design::SPACE_XS);
+            super::kind_picker::mask_kind_tiles(ui)
+        })
+        .inner;
+        let Some(kind) = picked else {
+            return;
+        };
+        Self::requesting_new_content(app, frame, |app| {
+            let actions = MaskStripActions {
+                command: Some(MaskStripCommand::CreateGroup(kind)),
+                edits: Vec::new(),
+                open_group: None,
+            };
+            if app.apply_mask_strip_actions(ui.ctx(), frame, actions) {
+                Self::refresh_mask_thumbnails(ui, app);
+            }
+        });
     }
 
     pub(crate) fn show_vertical_mask_strip(

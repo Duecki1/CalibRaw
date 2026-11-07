@@ -5,15 +5,17 @@ use super::*;
 use crate::app::{apply_mask_property_actions, MaskPropertiesControls};
 use crate::i18n::tr;
 
-fn mask_creation_menu_button<R>(
+/// A creation button of the strip that opens the kind picker: beside a strip
+/// along the right edge, above or below one along the top, and as a sheet on
+/// touch layouts. Returns the picked kind.
+fn mask_creation_button(
     ui: &mut Ui,
     id_salt: impl egui::AsIdSalt,
     icon: &str,
-    size: egui::Vec2,
-    icon_size: f32,
+    (size, icon_size): (egui::Vec2, f32),
     tooltip: &str,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> egui::Response {
+    orientation: MaskStripOrientation,
+) -> Option<MaskKind> {
     let response = ui
         .push_id(id_salt, |ui| {
             ui.add_sized(
@@ -24,8 +26,16 @@ fn mask_creation_menu_button<R>(
         })
         .inner
         .on_hover_text(tooltip);
-    moduwu_design::dropdown_menu(&response, add_contents);
-    response
+    let placement = match orientation {
+        MaskStripOrientation::Vertical => moduwu_design::PickerPlacement::Left,
+        MaskStripOrientation::Horizontal => moduwu_design::PickerPlacement::BelowOrAbove,
+    };
+    moduwu_design::picker_menu(
+        &response,
+        kind_picker::KIND_PICKER_MIN_WIDTH,
+        placement,
+        kind_picker::mask_kind_tiles,
+    )
 }
 
 impl Sidebar {
@@ -40,49 +50,69 @@ impl Sidebar {
             egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
             |ui| {
                 ui.spacing_mut().interact_size = size;
-                mask_creation_menu_button(
+                *new_mask = mask_creation_button(
                     ui,
                     "mask-group-creation",
                     mask_creation_icon(),
-                    size,
-                    20.0,
+                    (size, 20.0),
                     tr("Create a new mask group"),
-                    |ui| {
-                        *new_mask = Self::mask_kind_menu(
-                            ui,
-                            tr("This mask type is planned but not implemented yet."),
-                        );
-                    },
+                    orientation,
                 );
             },
         );
     }
 
+    /// One button per combine mode, each opening the kind picker for a
+    /// sub-mask combined that way. Side by side at card height in a strip
+    /// along the top, so each stays touch-sized; in a row as wide as a group
+    /// card in a strip along the right edge.
     pub(super) fn create_submask_card(
         ui: &mut Ui,
         add_component: &mut Option<(MaskKind, MaskCombineMode)>,
         orientation: MaskStripOrientation,
     ) {
-        let size = MaskCardSize::Submask.create_button_size(orientation);
+        const MODES: [MaskCombineMode; 3] = [
+            MaskCombineMode::Add,
+            MaskCombineMode::Subtract,
+            MaskCombineMode::Intersect,
+        ];
+        let gap = moduwu_design::SPACE_XXS;
+        let (button_size, icon_size) = match orientation {
+            MaskStripOrientation::Horizontal => {
+                (MaskCardSize::Submask.create_button_size(orientation), 16.0)
+            }
+            MaskStripOrientation::Vertical => {
+                let row = MaskCardSize::Group.create_button_size(orientation);
+                let width = (row.x - 2.0 * gap) / MODES.len() as f32;
+                (egui::vec2(width, row.y), 14.0)
+            }
+        };
+        let row_size = egui::vec2(
+            button_size.x * MODES.len() as f32 + gap * (MODES.len() - 1) as f32,
+            button_size.y,
+        );
         ui.allocate_ui_with_layout(
-            size,
-            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+            row_size,
+            egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-                ui.spacing_mut().interact_size = size;
-                mask_creation_menu_button(
-                    ui,
-                    "mask-submask-creation",
-                    submask_creation_icon(),
-                    size,
-                    18.0,
-                    tr("Add, subtract or intersect a sub-mask in the selected group"),
-                    |ui| {
-                        *add_component = Self::submask_creation_menu(
-                            ui,
-                            tr("This sub-mask type is planned but not implemented yet."),
-                        );
-                    },
-                );
+                ui.spacing_mut().item_spacing.x = gap;
+                ui.spacing_mut().interact_size = button_size;
+                // The default padding would widen the narrow buttons past
+                // their share of the row.
+                ui.spacing_mut().button_padding.x = 2.0;
+                for combine in MODES {
+                    let picked = mask_creation_button(
+                        ui,
+                        ("mask-submask-creation", combine.label()),
+                        combine_icon(combine),
+                        (button_size, icon_size),
+                        tr(combine.label()),
+                        orientation,
+                    );
+                    if let Some(kind) = picked {
+                        *add_component = Some((kind, combine));
+                    }
+                }
             },
         );
     }

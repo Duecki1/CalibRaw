@@ -2055,5 +2055,11 @@
   "Settings that are not selected keep the destination photo’s values.": "未选中的设置会保留目标照片的原有值。",
   "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "黑点、色调映射、去马赛克、高光重建和胶片负片。",
   "Switch the preview background": "切换预览背景",
-  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "线性 DNG 无法使用 AI 降噪：相机在保存此文件前已完成去马赛克，手机也是如此。请改用亮度和色彩降噪。"
+  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "线性 DNG 无法使用 AI 降噪：相机在保存此文件前已完成去马赛克，手机也是如此。请改用亮度和色彩降噪。",
+  "Background": "背景",
+  "Linear": "线性",
+  "Radial": "径向",
+  "People": "人物",
+  "Object": "对象",
+  "Path": "路径"
 }

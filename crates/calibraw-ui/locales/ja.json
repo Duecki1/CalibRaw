@@ -2055,5 +2055,11 @@
   "Settings that are not selected keep the destination photo’s values.": "選択していない設定では、貼り付け先の写真の値が保持されます。",
   "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "黒レベル、トーンマッパー、デモザイク、ハイライト復元、フィルムネガ。",
   "Switch the preview background": "プレビューの背景を切り替え",
-  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "リニアDNGではAIノイズ除去を使用できません。スマートフォンと同様に、カメラが保存前にこのファイルをデモザイク処理しています。代わりに輝度と色のノイズ低減を使用してください。"
+  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "リニアDNGではAIノイズ除去を使用できません。スマートフォンと同様に、カメラが保存前にこのファイルをデモザイク処理しています。代わりに輝度と色のノイズ低減を使用してください。",
+  "Background": "背景",
+  "Linear": "線形",
+  "Radial": "放射状",
+  "People": "人物",
+  "Object": "オブジェクト",
+  "Path": "パス"
 }

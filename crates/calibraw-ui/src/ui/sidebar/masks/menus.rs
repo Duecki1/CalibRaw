@@ -4,61 +4,6 @@ use egui_phosphor::regular;
 use moduwu_design::MenuItem;
 
 impl Sidebar {
-    pub(super) fn mask_kind_menu(ui: &mut Ui, unavailable_message: &str) -> Option<MaskKind> {
-        let mut selected = None;
-        for kind in [
-            MaskKind::Fullscreen,
-            MaskKind::Brush,
-            MaskKind::Radial,
-            MaskKind::Linear,
-            MaskKind::Path,
-            MaskKind::Subject,
-            MaskKind::Background,
-            MaskKind::Sky,
-            MaskKind::Object,
-            MaskKind::Person,
-            MaskKind::LuminanceRange,
-            MaskKind::ColorRange,
-            MaskKind::DepthRange,
-        ] {
-            let label = if !kind.is_available() {
-                tr_fmt("{kind} · soon", &[("kind", &tr(kind.label()))])
-            } else if kind.is_experimental() {
-                tr_fmt("{kind} · experimental", &[("kind", &tr(kind.label()))])
-            } else {
-                tr(kind.label()).to_owned()
-            };
-            let response = ui
-                .add_enabled(kind.is_available(), MenuItem::new(label))
-                .on_disabled_hover_text(unavailable_message);
-            if response.clicked() {
-                selected = Some(kind);
-                ui.close();
-            }
-        }
-        selected
-    }
-
-    pub(super) fn submask_creation_menu(
-        ui: &mut Ui,
-        unavailable_message: &str,
-    ) -> Option<(MaskKind, MaskCombineMode)> {
-        let mut selected = None;
-        ui.label(egui::RichText::new(tr("Combine as")).weak());
-        for (combine, icon) in [
-            (MaskCombineMode::Add, regular::PLUS),
-            (MaskCombineMode::Subtract, regular::MINUS),
-            (MaskCombineMode::Intersect, regular::INTERSECT),
-        ] {
-            moduwu_design::submenu(ui, MenuItem::new(tr(combine.label())).icon(icon), |ui| {
-                if let Some(kind) = Self::mask_kind_menu(ui, unavailable_message) {
-                    selected = Some((kind, combine));
-                }
-            });
-        }
-        selected
-    }
-
     pub(super) fn mask_group_context_menu(
         ui: &mut Ui,
         mask: &LocalMask,

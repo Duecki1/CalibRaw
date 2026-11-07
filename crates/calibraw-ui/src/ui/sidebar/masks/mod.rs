@@ -9,22 +9,20 @@ pub(super) fn mask_component_badge(
     if component_index == 0 {
         tr("BASE")
     } else {
-        match combine {
-            MaskCombineMode::Add => egui_phosphor::regular::PLUS,
-            MaskCombineMode::Subtract => egui_phosphor::regular::MINUS,
-            MaskCombineMode::Intersect => egui_phosphor::regular::INTERSECT,
-        }
+        combine_icon(combine)
+    }
+}
+
+pub(super) fn combine_icon(combine: MaskCombineMode) -> &'static str {
+    match combine {
+        MaskCombineMode::Add => egui_phosphor::regular::PLUS,
+        MaskCombineMode::Subtract => egui_phosphor::regular::MINUS,
+        MaskCombineMode::Intersect => egui_phosphor::regular::INTERSECT,
     }
 }
 
 pub(super) fn mask_creation_icon() -> &'static str {
     egui_phosphor::regular::PLUS
-}
-
-/// Sub-masks can be added, subtracted or intersected; ± hints that the menu
-/// offers more than adding.
-pub(super) fn submask_creation_icon() -> &'static str {
-    egui_phosphor::regular::PLUS_MINUS
 }
 
 /// Touch drags scroll the strip on Android, except while they carry a card:
@@ -146,6 +144,7 @@ struct SubmaskMenu {
 
 mod adjustments;
 mod details;
+mod kind_picker;
 mod menus;
 mod properties;
 mod strip;

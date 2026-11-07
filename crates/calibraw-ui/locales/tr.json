@@ -2055,5 +2055,11 @@
   "Settings that are not selected keep the destination photo’s values.": "Seçilmeyen ayarlar hedef fotoğrafın değerlerini korur.",
   "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Siyah nokta, ton eşleyici, demozaik, parlak alan yeniden oluşturma ve film negatifi.",
   "Switch the preview background": "Önizleme arka planını değiştir",
-  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "Yapay zeka gürültü giderme doğrusal DNG'ler için kullanılamaz: kamera bu dosyayı kaydetmeden önce, telefonların yaptığı gibi demozaik işleminden geçirdi. Bunun yerine Parlaklık ve Renk gürültü azaltmayı kullanın."
+  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "Yapay zeka gürültü giderme doğrusal DNG'ler için kullanılamaz: kamera bu dosyayı kaydetmeden önce, telefonların yaptığı gibi demozaik işleminden geçirdi. Bunun yerine Parlaklık ve Renk gürültü azaltmayı kullanın.",
+  "Background": "Arka Plan",
+  "Linear": "Doğrusal",
+  "Radial": "Radyal",
+  "People": "Kişiler",
+  "Object": "Nesne",
+  "Path": "Yol"
 }

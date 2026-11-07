@@ -2055,5 +2055,11 @@
   "Settings that are not selected keep the destination photo’s values.": "Setările neselectate păstrează valorile fotografiei de destinație.",
   "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Punctul de negru, maparea tonurilor, demozaicarea, reconstrucția luminilor și negativul de film.",
   "Switch the preview background": "Schimbă fundalul previzualizării",
-  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "Reducerea zgomotului cu AI nu este disponibilă pentru DNG-urile liniare: camera a demozaicat acest fișier înainte de a-l salva, așa cum fac telefoanele. Folosește în schimb reducerea zgomotului de luminanță și culoare."
+  "AI denoise isn’t available for linear DNGs: the camera demosaiced this file before saving it, as phones do. Use Luminance and Color noise reduction instead.": "Reducerea zgomotului cu AI nu este disponibilă pentru DNG-urile liniare: camera a demozaicat acest fișier înainte de a-l salva, așa cum fac telefoanele. Folosește în schimb reducerea zgomotului de luminanță și culoare.",
+  "Background": "Fundal",
+  "Linear": "Liniar",
+  "Radial": "Radial",
+  "People": "Persoane",
+  "Object": "Obiect",
+  "Path": "Traseu"
 }
