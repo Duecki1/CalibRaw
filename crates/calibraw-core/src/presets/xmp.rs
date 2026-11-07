@@ -10,15 +10,18 @@
 //!
 //! CalibRaw keeps the XMP as the preset source and translates it into a
 //! [`Preset`] whenever presets load, so a later version can translate more
-//! of it. Settings without an equivalent (perspective, defringing, camera
-//! calibration, the black-and-white mixer, profiles and some local
-//! adjustments) are reported as warnings instead of failing the import.
+//! of it. Settings without an equivalent (perspective, defringing, the
+//! calibration's shadow tint, the black-and-white mixer, profiles and some
+//! local adjustments) are reported as warnings instead of failing the import.
 //!
 //! Where CalibRaw's controls differ, the translation approximates: the
 //! parametric curve is folded into the RGB point curve ([`curves`]), Point
 //! Color is rescaled to CalibRaw's ranges ([`point_colors`]), lens profiles
 //! are matched on the target photo, and white balance is absolute, so named
-//! white balances use their usual temperature and tint. Masks are covered in
+//! white balances use their usual temperature and tint. Calibration takes
+//! Lightroom's slider values as they are: CalibRaw's sliders have the same
+//! range and directions, but how far Lightroom moves a primary per unit is not
+//! published ([`crate::pipeline::Calibration`]). Masks are covered in
 //! [`masks`].
 //!
 //! XMP writers use the conventional `rdf` and `crs` prefixes, so elements and
@@ -33,8 +36,8 @@ use super::{read_preset_bytes, Preset, PresetError, DEFAULT_PRESET_GROUP, MAX_PR
 use crate::pipeline::{
     AdjustmentGroup, AdjustmentGroupSet, ColorGradeWheel, ColorGrading, EffectComponent,
     ExposureParams, GrainEffectSettings, ManualLensCorrection, MaskEffect, MaskEffectSettings,
-    MaskStack, VignetteEffectSettings, WhiteBalance, HSL_HUE_LIMIT, MAX_TEMPERATURE_KELVIN,
-    MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
+    MaskStack, VignetteEffectSettings, WhiteBalance, CALIBRATION_LIMIT, HSL_HUE_LIMIT,
+    MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
 use crate::sidecar::{default_edit_state, is_manual_mask_kind, EditSelection, LensEditState};
 use curves::{compose, point_curve, read_points, ParametricCurve};
@@ -158,6 +161,13 @@ const DETAIL_KEYS: &[&str] = &[
     "ColorNoiseReduction",
 ];
 const PRESENCE_KEYS: &[&str] = &["Texture", "Clarity2012", "Clarity", "Dehaze"];
+/// The Calibration primaries, in CalibRaw's order, each as its hue and
+/// saturation key.
+const CALIBRATION_KEYS: [[&str; 2]; 3] = [
+    ["RedHue", "RedSaturation"],
+    ["GreenHue", "GreenSaturation"],
+    ["BlueHue", "BlueSaturation"],
+];
 const GRAIN_KEYS: &[&str] = &["GrainAmount", "GrainSize", "GrainFrequency"];
 const POST_CROP_VIGNETTE_KEYS: &[&str] = &[
     "PostCropVignetteAmount",
@@ -202,17 +212,6 @@ const UNSUPPORTED_SETTINGS: &[(&[(&str, f32)], &str)] = &[
     (
         &[("DefringePurpleAmount", 0.0), ("DefringeGreenAmount", 0.0)],
         "Defringing was not imported.",
-    ),
-    (
-        &[
-            ("RedHue", 0.0),
-            ("RedSaturation", 0.0),
-            ("GreenHue", 0.0),
-            ("GreenSaturation", 0.0),
-            ("BlueHue", 0.0),
-            ("BlueSaturation", 0.0),
-        ],
-        "Camera calibration color adjustments were not imported.",
     ),
     // CalibRaw's single Denoise Detail slider follows the luminance detail.
     (
@@ -261,6 +260,7 @@ impl Converter<'_> {
         self.convert_color_grading(&mut exposure, &mut groups);
         self.convert_detail(&mut exposure, &mut groups);
         self.convert_effects(&mut exposure, &mut groups, &mut effects);
+        self.convert_calibration(&mut exposure, &mut groups);
         let lens = self.convert_lens(&mut exposure);
         let masks = masks::convert_masks(&document.corrections(), &mut self.warnings);
         self.warn_unsupported_settings();
@@ -588,6 +588,34 @@ impl Converter<'_> {
         }
         if let Some(value) = self.number("ColorNoiseReduction") {
             exposure.chroma_denoise = (value / 100.0).clamp(0.0, 1.0);
+        }
+    }
+
+    fn convert_calibration(
+        &mut self,
+        exposure: &mut ExposureParams,
+        groups: &mut AdjustmentGroupSet,
+    ) {
+        if !CALIBRATION_KEYS
+            .iter()
+            .any(|keys| self.properties.has_any(keys))
+        {
+            return;
+        }
+        groups.set(AdjustmentGroup::Calibration, true);
+        let calibration = &mut exposure.calibration;
+        let primaries = [
+            &mut calibration.red,
+            &mut calibration.green,
+            &mut calibration.blue,
+        ];
+        for (primary, [hue_key, saturation_key]) in primaries.into_iter().zip(CALIBRATION_KEYS) {
+            if let Some(value) = self.properties.number(hue_key, &mut self.warnings) {
+                primary.hue = value.clamp(-CALIBRATION_LIMIT, CALIBRATION_LIMIT);
+            }
+            if let Some(value) = self.properties.number(saturation_key, &mut self.warnings) {
+                primary.saturation = value.clamp(-CALIBRATION_LIMIT, CALIBRATION_LIMIT);
+            }
         }
     }
 

@@ -805,4 +805,79 @@ impl Sidebar {
         changed |= action.apply(exposure, AdjustmentGroup::ColorMixer);
         changed
     }
+
+    /// The Calibration card: the hue and saturation of the red, green and
+    /// blue primaries ([`crate::pipeline::Calibration`]).
+    pub(super) fn show_calibration(
+        ui: &mut Ui,
+        exposure: &mut ExposureParams,
+        foldable: bool,
+    ) -> bool {
+        use crate::pipeline::CALIBRATION_LIMIT;
+        use crate::ui::theme::HSL_CHANNELS as CHANNELS;
+
+        let mut changed = false;
+        let action = Self::adjustment_card(ui, "Calibration", false, foldable, true, |ui| {
+            let calibration = &mut exposure.calibration;
+            // Each primary with the channels its hue track runs through, as
+            // the hue turns it (negative, neutral, positive).
+            let primaries = [
+                (
+                    &mut calibration.red,
+                    tr("Red Primary"),
+                    tr("Turns the red primary towards magenta or orange and makes it more or less saturated. Every color that contains red shifts with it."),
+                    [7, 0, 1],
+                ),
+                (
+                    &mut calibration.green,
+                    tr("Green Primary"),
+                    tr("Turns the green primary towards yellow or cyan and makes it more or less saturated. Every color that contains green shifts with it."),
+                    [2, 3, 4],
+                ),
+                (
+                    &mut calibration.blue,
+                    tr("Blue Primary"),
+                    tr("Turns the blue primary towards cyan or purple and makes it more or less saturated. Every color that contains blue shifts with it."),
+                    [4, 5, 6],
+                ),
+            ];
+            for (index, (primary, heading, help, [negative, neutral, positive])) in
+                primaries.into_iter().enumerate()
+            {
+                if index > 0 {
+                    moduwu_design::section_separator(ui);
+                }
+                moduwu_design::strong_with_help(ui, heading, help);
+                let accent = CHANNELS[neutral].1;
+                ui.push_id(("calibration-primary", index), |ui| {
+                    changed |= AdjustmentSlider::new(
+                        tr("Hue"),
+                        &mut primary.hue,
+                        -CALIBRATION_LIMIT..=CALIBRATION_LIMIT,
+                    )
+                    .decimals(0)
+                    .step(1.0)
+                    .accent(accent)
+                    .gradient(SliderGradient::ChannelHue {
+                        left: CHANNELS[negative].1,
+                        center: accent,
+                        right: CHANNELS[positive].1,
+                    })
+                    .show(ui);
+                    changed |= AdjustmentSlider::new(
+                        tr("Saturation"),
+                        &mut primary.saturation,
+                        -CALIBRATION_LIMIT..=CALIBRATION_LIMIT,
+                    )
+                    .decimals(0)
+                    .step(1.0)
+                    .accent(accent)
+                    .gradient(SliderGradient::Saturation(accent))
+                    .show(ui);
+                });
+            }
+        });
+        changed |= action.apply(exposure, AdjustmentGroup::Calibration);
+        changed
+    }
 }

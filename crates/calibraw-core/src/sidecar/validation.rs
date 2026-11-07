@@ -525,6 +525,18 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
             return invalid("film negative base must be positive");
         }
     }
+    let calibration = exposure.calibration;
+    finite(
+        "calibration",
+        &[
+            calibration.red.hue,
+            calibration.red.saturation,
+            calibration.green.hue,
+            calibration.green.saturation,
+            calibration.blue.hue,
+            calibration.blue.saturation,
+        ],
+    )?;
     finite("global HSL hue", &exposure.hsl_hue)?;
     finite("global HSL saturation", &exposure.hsl_saturation)?;
     finite("global HSL luminance", &exposure.hsl_luminance)?;

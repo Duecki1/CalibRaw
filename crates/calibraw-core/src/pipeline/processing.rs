@@ -38,6 +38,10 @@ pub fn affected_stage(before: &ExposureParams, after: &ExposureParams) -> Option
 
     if RawStageControls::of(before) != RawStageControls::of(after) {
         Some(ProcessingStage::Raw)
+    } else if before.calibration != after.calibration {
+        // Calibration changes only the camera transform, which the scene
+        // stages apply to the demosaiced image, starting with tone analysis.
+        Some(ProcessingStage::Tone)
     } else {
         Some(ProcessingStage::Output)
     }
@@ -115,6 +119,7 @@ impl RawStageControls {
             point_colors: _,
             point_color_visualize: _,
             color_grading: _,
+            calibration: _,
         } = *params;
         Self {
             black_point,

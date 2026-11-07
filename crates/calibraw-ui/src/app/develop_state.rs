@@ -217,6 +217,7 @@ pub(crate) enum AdjustmentSection {
     Effects,
     ColorMixer,
     Optics,
+    Calibration,
 }
 
 impl AdjustmentSection {
@@ -235,6 +236,7 @@ impl AdjustmentSection {
             DevelopCard::Effects => Some(Self::Effects),
             DevelopCard::ColorMixer => Some(Self::ColorMixer),
             DevelopCard::LensCorrections => Some(Self::Optics),
+            DevelopCard::Calibration => Some(Self::Calibration),
         }
     }
 }

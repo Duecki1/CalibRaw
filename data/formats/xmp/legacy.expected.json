@@ -9,6 +9,20 @@
         "blacks": 0.0,
         "ca_blue": 0.0,
         "ca_red": 0.0,
+        "calibration": {
+          "blue": {
+            "hue": 0.0,
+            "saturation": 0.0
+          },
+          "green": {
+            "hue": 0.0,
+            "saturation": 0.0
+          },
+          "red": {
+            "hue": 5.0,
+            "saturation": 0.0
+          }
+        },
         "chroma_denoise": 0.0,
         "chromatic_aberration": 0.0,
         "clarity": 8.0,
@@ -148,7 +162,8 @@
         "tone_curve",
         "color",
         "color_grading",
-        "effects"
+        "effects",
+        "calibration"
       ],
       "ai_masks": false,
       "camera_profile": false,
@@ -163,7 +178,6 @@
     "Grayscale mix settings were not imported; the preset is imported as a black-and-white conversion.",
     "Perspective corrections were not imported.",
     "Defringing was not imported.",
-    "Camera calibration color adjustments were not imported.",
     "Some noise reduction detail settings were not imported.",
     "The post-crop vignette style was not imported.",
     "Process version 10 is older than 11; the preset may look different.",

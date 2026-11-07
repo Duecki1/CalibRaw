@@ -158,6 +158,7 @@ impl Sidebar {
                         AdjustmentSection::Effects => (regular::SPARKLE, tr("Effects")),
                         AdjustmentSection::ColorMixer => (regular::SWATCHES, tr("Mixer")),
                         AdjustmentSection::Optics => (regular::EYE, tr("Optics")),
+                        AdjustmentSection::Calibration => (regular::FADERS, tr("Calibration")),
                     };
                     if Self::mobile_icon_tab(
                         ui,

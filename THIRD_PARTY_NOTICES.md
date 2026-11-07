@@ -46,6 +46,10 @@ against darktable release 5.6.0:
   highlight envelope and its saturation margin) in
   `crates/calibraw-core/src/pipeline/hdr.rs`, based on
   `src/control/jobs/control_jobs.c`.
+- The white-preserving matrix of the Calibration primaries in
+  `crates/calibraw-core/src/pipeline/calibration.rs`, which converts working
+  RGB to XYZ through the adjusted primaries and back through the original
+  ones, as `src/iop/primaries.c` does.
 
 Copyright (C) 2010-2026 darktable developers and the authors named in the
 upstream files. darktable is GPL-3.0-or-later. The referenced source is in the
@@ -68,6 +72,22 @@ documented above.
 Ansel and the relevant adapted source are GPL-3.0-or-later. The implementation
 was reviewed at Ansel revision
 [`17343ac785c067be88b33ba141c5a80bdcaab1b6`](https://github.com/aurelienpierreeng/ansel/tree/17343ac785c067be88b33ba141c5a80bdcaab1b6).
+
+### ART
+
+The Calibration primaries in `crates/calibraw-core/src/pipeline/calibration.rs`
+follow the primaries mode of ART's channel mixer (`get_mixer_matrix` in
+`src/engine/ipchmixer.cc`): each working-space primary is rotated about the
+white point in CIE xy and scaled in its distance from it, with ART's slider
+ranges, after the four-color matrix method of Y. Ohno and J. E. Hardis, "Four-Color
+Matrix Method for Correction of Tristimulus Colorimeters", Proc. IS&T Fifth Color
+Imaging Conference (1997). The matrix keeps white as darktable's does, and
+neighbouring primaries are kept from rotating apart past what one slider alone
+reaches.
+
+Copyright (C) 2019-2026 Alberto Griggio. ART is GPL-3.0-or-later. The
+implementation was reviewed at ART revision
+[`9429cd370a9ccc2c91f8a8e200d9b081c366bb70`](https://github.com/artraweditor/ART/tree/9429cd370a9ccc2c91f8a8e200d9b081c366bb70).
 
 ### GIMP 3.0.4
 

@@ -81,6 +81,12 @@ change that establishes a boundary, not in advance.
   `DecodedRawCache` entry therefore serves every camera-profile request; only
   a decode with the embedded matrix alone, which did not read the RAW's
   calibration signature, cannot serve requests that match DCPs.
+- Calibration (the hue and saturation of the primaries) is folded into the
+  camera transform whenever a stage's camera uniforms are packed
+  (`pack_camera_params`), after white balance, so like a camera profile it
+  changes how the samples' colour is read and nothing cached from the decode.
+  Its changes rerun the pipeline from the Tone stage, the first that applies
+  the camera transform.
 
 ## Inside `calibraw-ui`
 

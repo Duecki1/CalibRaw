@@ -17,10 +17,11 @@ pub(crate) enum DevelopCard {
     Effects,
     ColorMixer,
     LensCorrections,
+    Calibration,
 }
 
 impl DevelopCard {
-    pub(crate) const DEFAULT_ORDER: [Self; 10] = [
+    pub(crate) const DEFAULT_ORDER: [Self; 11] = [
         Self::CameraProfile,
         Self::Light,
         Self::ToneCurve,
@@ -31,6 +32,8 @@ impl DevelopCard {
         Self::Effects,
         Self::ColorMixer,
         Self::LensCorrections,
+        // Lightroom's last panel.
+        Self::Calibration,
     ];
 
     pub(crate) fn label(self) -> &'static str {
@@ -45,6 +48,7 @@ impl DevelopCard {
             Self::Effects => tr("Effects"),
             Self::ColorMixer => tr("Color Mixer"),
             Self::LensCorrections => tr("Lens Corrections"),
+            Self::Calibration => tr("Calibration"),
         }
     }
 
@@ -61,6 +65,7 @@ impl DevelopCard {
             Self::Effects => "effects",
             Self::ColorMixer => "color_mixer",
             Self::LensCorrections => "lens_corrections",
+            Self::Calibration => "calibration",
         }
     }
 

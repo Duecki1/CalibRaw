@@ -1,3 +1,4 @@
+use super::calibration::Calibration;
 use super::film_negative::FilmSource;
 use super::noise::DenoiseQuality;
 use super::sigmoid::SigmoidParams;
@@ -337,6 +338,11 @@ pub struct ExposureParams {
     pub point_color_visualize: Option<usize>,
 
     pub color_grading: ColorGrading,
+
+    /// Lightroom's Calibration of the primaries. Left out of files while
+    /// neutral, which stay as they were.
+    #[serde(default, skip_serializing_if = "Calibration::is_neutral")]
+    pub calibration: Calibration,
 }
 
 pub fn sigmoid_contrast_from_percent(contrast: f32) -> f32 {
@@ -423,6 +429,7 @@ impl Default for ExposureParams {
             point_colors: super::PointColors::default(),
             point_color_visualize: None,
             color_grading: ColorGrading::default(),
+            calibration: Calibration::default(),
         }
     }
 }

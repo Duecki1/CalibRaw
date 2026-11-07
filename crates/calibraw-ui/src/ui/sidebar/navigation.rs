@@ -451,6 +451,9 @@ impl Sidebar {
                     lens_changed |= optics.lens;
                     changed |= optics.exposure;
                 }
+                AdjustmentSection::Calibration => {
+                    changed |= Self::show_calibration(ui, &mut app.develop.exposure, false);
+                }
             }
         } else {
             let mut added = None;
@@ -522,6 +525,9 @@ impl Sidebar {
                         let optics = Self::show_optics(ui, app, true);
                         lens_changed |= optics.lens;
                         changed |= optics.exposure;
+                    }
+                    DevelopCard::Calibration => {
+                        changed |= Self::show_calibration(ui, &mut app.develop.exposure, true);
                     }
                 }
             }

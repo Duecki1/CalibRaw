@@ -35,6 +35,13 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
     } else {
         camera_transform
     };
+    // Calibration acts on the working RGB the camera transform produces, so
+    // it is part of how the camera's colour is read, ahead of the profile's
+    // tables (`calibraw_core::pipeline::Calibration`).
+    let camera_transform = match exposure.calibration.working_matrix() {
+        Some(calibration) => calibraw_core::matrix::multiply(calibration, camera_transform),
+        None => camera_transform,
+    };
     let mut profile_layout = color.camera_profile.gpu_layout();
     profile_layout.flags[3] = profile_weight.clamp(0.0, 1.0).to_bits();
     let profile_stages = profile_layout.stages();

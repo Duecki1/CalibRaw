@@ -2,8 +2,9 @@
 //! amount of an applied preset. Only settings that can take values in between
 //! fade; switches and choices keep the newer edit's value.
 use super::{
-    AdjustmentGroupSet, ColorGradeWheel, ColorGrading, ExposureParams, LoadedRaw, PointColor,
-    PointColorRange, PointColors, PointCurve, WhiteBalance, MAX_POINT_CURVE_POINTS,
+    AdjustmentGroupSet, Calibration, ColorGradeWheel, ColorGrading, ExposureParams, LoadedRaw,
+    PointColor, PointColorRange, PointColors, PointCurve, PrimaryCalibration, WhiteBalance,
+    MAX_POINT_CURVE_POINTS,
 };
 
 impl ExposureParams {
@@ -90,6 +91,7 @@ impl ExposureParams {
             point_colors,
             point_color_visualize: _,
             color_grading,
+            calibration,
         } = *self;
         Self {
             black_point: black_point.blend(target.black_point, amount),
@@ -140,6 +142,7 @@ impl ExposureParams {
             point_colors: point_colors.blend(target.point_colors, amount),
             point_color_visualize: target.point_color_visualize,
             color_grading: color_grading.blend(target.color_grading, amount),
+            calibration: calibration.blend(target.calibration, amount),
         }
     }
 }
@@ -252,6 +255,25 @@ fn curve_value(points: &[[f32; 2]], x: f32) -> f32 {
         y1
     } else {
         y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+    }
+}
+
+impl Blend for PrimaryCalibration {
+    fn blend(self, target: Self, amount: f32) -> Self {
+        Self {
+            hue: self.hue.blend(target.hue, amount),
+            saturation: self.saturation.blend(target.saturation, amount),
+        }
+    }
+}
+
+impl Blend for Calibration {
+    fn blend(self, target: Self, amount: f32) -> Self {
+        Self {
+            red: self.red.blend(target.red, amount),
+            green: self.green.blend(target.green, amount),
+            blue: self.blue.blend(target.blue, amount),
+        }
     }
 }
 

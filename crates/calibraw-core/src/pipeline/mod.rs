@@ -3,6 +3,7 @@ pub mod adjustment_groups;
 pub use adjustment_groups::{AdjustmentGroup, AdjustmentGroupSet};
 pub mod alignment;
 pub mod basicadj;
+mod calibration;
 mod chromatic_aberration;
 pub mod color_profile;
 mod display_raster;
@@ -38,6 +39,7 @@ pub use basicadj::{
     GLOBAL_TINT_OFFSET_LIMIT, HSL_HUE_LIMIT, HUE_ROTATION_LIMIT_DEGREES, MAX_POINT_CURVE_POINTS,
     MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
+pub use calibration::{Calibration, PrimaryCalibration, CALIBRATION_LIMIT};
 pub use chromatic_aberration::{LateralChannel, LateralChromaticAberration, MAX_LATERAL_SHIFT};
 pub use color_profile::{
     CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, SrgbOutputTransform,

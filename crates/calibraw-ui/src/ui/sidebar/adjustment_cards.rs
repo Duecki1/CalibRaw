@@ -124,6 +124,7 @@ pub(super) fn card_title_text(title: &'static str) -> &'static str {
         "Detail" => tr("Detail"),
         "Effects" => tr("Effects"),
         "Color Mixer" => tr("Color Mixer"),
+        "Calibration" => tr("Calibration"),
         "Mask Properties" => tr("Mask Properties"),
         "Subject refinement" => tr("Subject refinement"),
         "Lens Corrections" => tr("Lens Corrections"),

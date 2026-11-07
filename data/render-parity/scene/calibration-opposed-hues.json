@@ -1,0 +1,11 @@
+{
+  "edits": {
+    "exposure": {
+      "calibration": {
+        "red": { "hue": 0.0, "saturation": 0.0 },
+        "green": { "hue": -100.0, "saturation": 0.0 },
+        "blue": { "hue": 100.0, "saturation": 0.0 }
+      }
+    }
+  }
+}

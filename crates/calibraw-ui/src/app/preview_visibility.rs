@@ -112,6 +112,7 @@ impl PreviewVisibility {
             "Detail" => AdjustmentGroup::Detail,
             "Effects" => AdjustmentGroup::Effects,
             "Color Mixer" => AdjustmentGroup::ColorMixer,
+            "Calibration" => AdjustmentGroup::Calibration,
             _ => return None,
         })
     }

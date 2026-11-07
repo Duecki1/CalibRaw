@@ -13,10 +13,11 @@ pub enum AdjustmentGroup {
     Detail,
     Effects,
     ColorMixer,
+    Calibration,
 }
 
 impl AdjustmentGroup {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Light,
         Self::ToneCurve,
         Self::Color,
@@ -24,6 +25,7 @@ impl AdjustmentGroup {
         Self::Detail,
         Self::Effects,
         Self::ColorMixer,
+        Self::Calibration,
     ];
 
     /// The title of the sidebar card that owns this group.
@@ -36,6 +38,7 @@ impl AdjustmentGroup {
             Self::Detail => "Detail",
             Self::Effects => "Effects",
             Self::ColorMixer => "Color Mixer",
+            Self::Calibration => "Calibration",
         }
     }
 
@@ -189,6 +192,7 @@ impl ExposureParams {
             // Transient picker state of the image being edited, never copied.
             point_color_visualize: _,
             color_grading,
+            calibration,
         } = *source;
 
         match section {
@@ -238,6 +242,9 @@ impl ExposureParams {
                 self.hsl_saturation = hsl_saturation;
                 self.hsl_luminance = hsl_luminance;
                 self.point_colors = point_colors;
+            }
+            ExposureSection::Group(AdjustmentGroup::Calibration) => {
+                self.calibration = calibration;
             }
             ExposureSection::LensCorrection => {
                 self.chromatic_aberration = chromatic_aberration;
@@ -292,7 +299,8 @@ impl LocalAdjustments {
             AdjustmentGroup::ColorGrading => {
                 self.color_grading = defaults.color_grading;
             }
-            AdjustmentGroup::Detail => {}
+            // Masks have neither card.
+            AdjustmentGroup::Detail | AdjustmentGroup::Calibration => {}
             AdjustmentGroup::Effects => {
                 self.texture = defaults.texture;
                 self.clarity = defaults.clarity;
