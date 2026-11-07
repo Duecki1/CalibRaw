@@ -327,13 +327,22 @@ fn embedded_thumbnail_orientation(ctx: &LibRawContext) -> i32 {
     .unwrap_or(raw.rawdata.sizes.flip)
 }
 
+/// The LibRaw flip code of the listed preview matching `selected`, when that
+/// preview carries its own orientation.
+///
+/// LibRaw marks previews found outside TIFF IFDs (CR3, ORF, RW2, RAF) with
+/// `0xFFFF`, but TIFF IFD previews start zeroed and only get a flip from an
+/// Orientation tag, so 0 also means "not stated": NEF SubIFD previews and many
+/// DNG previews have none while the photo is rotated. LibRaw reads 0 the same
+/// way when choosing the image flip, so both fall back to the photo's flip.
 pub(super) fn matching_thumbnail_orientation(
     selected: (u16, u16, u32),
     candidates: impl IntoIterator<Item = (u16, u16, u32, u16)>,
 ) -> Option<i32> {
     candidates.into_iter().find_map(|candidate| {
         let (width, height, length, flip) = candidate;
-        (flip != u16::MAX && (width, height, length) == selected).then_some(i32::from(flip))
+        (flip != 0 && flip != u16::MAX && (width, height, length) == selected)
+            .then_some(i32::from(flip))
     })
 }
 

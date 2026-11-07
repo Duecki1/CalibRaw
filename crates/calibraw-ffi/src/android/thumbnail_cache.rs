@@ -50,7 +50,8 @@ fn cache_file(app: &AndroidApp, identity: &str, suffix: &str) -> Result<PathBuf,
 }
 
 /// The preview extracted from one version of a photo. "raw-v2" dropped the
-/// previews made before TIFF colour and tone handling settled.
+/// previews made before TIFF colour and tone handling settled; "raw-v3" drops
+/// those left unrotated because the embedded preview stated no orientation.
 fn raw_preview_path(
     app: &AndroidApp,
     uri: &str,
@@ -60,7 +61,7 @@ fn raw_preview_path(
 ) -> Result<PathBuf, String> {
     cache_file(
         app,
-        &format!("raw-v2\n{uri}\n{bytes}\n{modified_seconds}\n{maximum_edge}"),
+        &format!("raw-v3\n{uri}\n{bytes}\n{modified_seconds}\n{maximum_edge}"),
         ".raw.jpg",
     )
 }

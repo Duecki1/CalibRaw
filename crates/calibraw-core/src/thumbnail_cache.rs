@@ -11,8 +11,9 @@ use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 /// Generation of the desktop thumbnail stamp for sensor RAWs; bump it to drop every cached
-/// RAW thumbnail.
-const RAW_STAMP_GENERATION: u32 = 1;
+/// RAW thumbnail. Generation 2 drops thumbnails left unrotated because their embedded preview
+/// stated no orientation of its own.
+const RAW_STAMP_GENERATION: u32 = 2;
 /// Generation for TIFFs, which render through the float raster path. Generation 3 drops
 /// thumbnails whose float downscale lifted black.
 const TIFF_STAMP_GENERATION: u32 = 3;
