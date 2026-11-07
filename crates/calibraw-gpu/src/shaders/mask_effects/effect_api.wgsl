@@ -62,6 +62,12 @@ fn mask_effect_instance(params: MaskEffectParams) -> u32 {
     return params.instances & 0xffu;
 }
 
+// The light bake's channel of the slot's light plus one, or 0 when the bake
+// holds none for it (common.wgsl, MASK_SCENE_BAKE_LIGHT_BITS).
+fn mask_effect_scene_bake_light(params: MaskEffectParams) -> u32 {
+    return Common::mask_data[params.slot].metadata.w & Common::MASK_SCENE_BAKE_LIGHT_BITS;
+}
+
 // The instances of the slot's card.
 fn mask_effect_instance_count(params: MaskEffectParams) -> u32 {
     return (params.instances >> 8u) + 1u;
@@ -203,22 +209,12 @@ fn mask_effect_source_linear_at(pos: vec2<f32>) -> vec3<f32> {
 }
 
 // --- The scene ---
-// Reading scene depth needs `SceneMapUse::WithDepth` in the effect's registry row. An
-// effect that needs more of what the scene provides (scene_*.wgsl: the photo's
-// environment, its image lights, the lens blur at a depth) adds a function here.
+// An effect that reads the scene's geometry, its working image or its lights names it
+// in its registry row (`scene: [...]`) and reads it through scene/geometry.wgsl
+// (`Geometry::`, medium.wgsl and scene_lights.wgsl for what scenes lights do).
 
 // The distance to assume until scene depth is generated.
 const EFFECT_SCENE_DEPTH_UNKNOWN: f32 = SCENE_DEPTH_UNKNOWN;
-
-fn effect_scene_depth_present() -> bool {
-    return scene_depth_present();
-}
-
-// Normalized relative distance of the surface at `pos`, edge-accurate: near 0, far 1
-// (scene_depth.wgsl). Only while effect_scene_depth_present().
-fn effect_scene_depth(pos: vec2<i32>) -> f32 {
-    return scene_depth_at(pos);
-}
 
 // Scene-linear middle grey at the photo's ambient light and current exposure.
 fn effect_ambient() -> f32 {
@@ -228,14 +224,6 @@ fn effect_ambient() -> f32 {
 // Whether any effect places a light in the scene (Relight, Light Rays).
 fn effect_scene_lights_present() -> bool {
     return scene_lights_present();
-}
-
-// Light from every scene light that a point on the surface `pos` shows, at
-// `depth`, scatters toward the camera, relative to the ambient level;
-// `anisotropy` > 0 scatters forward (scene_lights.wgsl). Surfaces between the
-// point and a light shadow it (scene_shadows.wgsl).
-fn effect_surface_scene_light(pos: vec2<i32>, depth: f32, anisotropy: f32) -> vec3<f32> {
-    return scene_light_received(pos, depth, anisotropy, scene_shadow_surface_at(pos));
 }
 
 // --- Noise ---

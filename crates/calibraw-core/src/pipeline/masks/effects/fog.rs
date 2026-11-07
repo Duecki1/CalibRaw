@@ -13,7 +13,9 @@ pub struct FogEffectSettings {
     pub softness: f32,
     pub variation: f32,
     pub seed: f32,
-    pub start: f32,
+    /// Where fog begins, in control depth (`migrations::scene_depth_controls`
+    /// converts the linear `start` older edits saved).
+    pub start_depth: f32,
     pub depth_influence: f32,
     pub color: [f32; 3],
     /// How strongly scene lights (Relight, Light Rays, Glow, Neon) glow in it. The
@@ -36,7 +38,7 @@ impl Default for FogEffectSettings {
             softness: SOFTNESS.default,
             variation: VARIATION.default,
             seed: SEED.default,
-            start: START.default,
+            start_depth: START.default,
             depth_influence: DEPTH_INFLUENCE.default,
             color: COLOR.default,
             light_glow: 0.0,
@@ -78,7 +80,7 @@ impl EffectSettings for FogEffectSettings {
             EffectControl::Slider(&mut self.amount, AMOUNT),
             EffectControl::Slider(&mut self.density, DENSITY),
             EffectControl::Toggle(&mut self.depth_enabled, SCENE_DEPTH),
-            EffectControl::Slider(&mut self.start, START),
+            EffectControl::Slider(&mut self.start_depth, START),
             EffectControl::Color(&mut self.color, COLOR),
             EffectControl::Slider(&mut self.light_glow, LIGHT_GLOW),
             EffectControl::Toggle(&mut self.image_lights, IMAGE_LIGHTS),
@@ -109,7 +111,7 @@ impl EffectSettings for FogEffectSettings {
         slot.set(lanes::SEED, SEED.clamp(self.seed));
         // Without scene depth the fog is an even veil from the camera on.
         if self.depth_enabled {
-            slot.set(lanes::START, START.clamp(self.start));
+            slot.set(lanes::START, START.clamp(self.start_depth));
             slot.set(
                 lanes::DEPTH_INFLUENCE,
                 DEPTH_INFLUENCE.clamp(self.depth_influence),

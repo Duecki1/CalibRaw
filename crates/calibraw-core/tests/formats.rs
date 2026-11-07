@@ -11,12 +11,18 @@
 //! A file CalibRaw rejects expects `{"error": message}`. To add a case, add
 //! the file and run this test with `CALIBRAW_PARITY_BLESS=1`, which writes
 //! every expected file; review their diff before committing it.
+//!
+//! Mask assets are compared by their samples, not their PNG bytes: the bytes
+//! depend on the deflate backend that the build's features select, which
+//! differs between `cargo test -p calibraw-core` and a workspace build.
 
+use base64::Engine as _;
 use calibraw_core::presets::xmp::read_xmp_preset_file;
 use calibraw_core::presets::Preset;
 use calibraw_core::sidecar;
 use serde_json::{json, Value};
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 const KINDS: [(&str, &str); 3] = [("sidecar", "json"), ("preset", "json"), ("xmp", "xmp")];
@@ -106,7 +112,48 @@ fn read_xmp(path: &Path) -> Result<Value, String> {
 }
 
 fn parse(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).expect("CalibRaw writes JSON")
+    let mut value = serde_json::from_slice(bytes).expect("CalibRaw writes JSON");
+    decode_pngs(&mut value);
+    value
+}
+
+/// Replaces every `png` field, a base64 grayscale PNG, with its rows of
+/// samples.
+fn decode_pngs(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            for (key, field) in fields.iter_mut() {
+                match field {
+                    Value::String(encoded) if key == "png" => *field = png_rows(encoded),
+                    _ => decode_pngs(field),
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(decode_pngs),
+        _ => {}
+    }
+}
+
+fn png_rows(encoded: &str) -> Value {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .expect("PNG assets are base64");
+    let mut reader = png::Decoder::new(Cursor::new(bytes))
+        .read_info()
+        .expect("mask assets are PNGs");
+    let mut samples = vec![0; reader.output_buffer_size().expect("PNG size")];
+    let frame = reader.next_frame(&mut samples).expect("decode PNG asset");
+    let values: Vec<u16> = match frame.bit_depth {
+        png::BitDepth::Sixteen => samples
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect(),
+        _ => samples.iter().map(|&sample| u16::from(sample)).collect(),
+    };
+    json!({
+        "bit_depth": frame.bit_depth as u8,
+        "rows": values.chunks(frame.width as usize).collect::<Vec<_>>(),
+    })
 }
 
 /// Indented JSON that keeps arrays of numbers, such as curve points, on one

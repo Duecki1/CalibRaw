@@ -90,14 +90,64 @@ impl EffectReach {
     }
 }
 
-/// When an effect reads the scene map: scene depth refined against the photo,
-/// the photo's coarse colour, the ground and the lens blur per depth
-/// (scene_analysis.wgsl).
+/// What an effect reads of the scene bake (calibraw-gpu `scene`): the scene's
+/// geometry with two surfaces per pixel, its working image and its lights.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SceneNeeds {
+    /// Depth, coverage, and each surface's normal and colour; read only while
+    /// scene depth is present.
+    pub geometry: bool,
+    /// The light bake's shadow cubes and each surface's visibility of the
+    /// lights that cast shadows (calibraw-gpu `scene::lights`); with the
+    /// geometry.
+    pub light_bake: bool,
+    /// The shadowed share of each light along every view ray (the air
+    /// light); with the light bake.
+    pub air_light: bool,
+    /// The working image with its mip chain, to read the scene's colour
+    /// with a footprint (`scene_image`). Also without a depth result.
+    pub image: bool,
+}
+
+/// One part of [`SceneNeeds`], as the effect registry names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SceneMapUse {
-    Never,
-    /// Only while scene depth is present.
-    WithDepth,
-    /// Also without scene depth, for the photo's environment.
-    Always,
+pub enum SceneNeed {
+    Geometry,
+    LightBake,
+    AirLight,
+    Image,
+}
+
+impl SceneNeeds {
+    pub const NONE: Self = Self {
+        geometry: false,
+        light_bake: false,
+        air_light: false,
+        image: false,
+    };
+
+    /// These needs and `need`, with what it is built from.
+    pub const fn with(self, need: SceneNeed) -> Self {
+        match need {
+            SceneNeed::Geometry => Self {
+                geometry: true,
+                ..self
+            },
+            SceneNeed::LightBake => Self {
+                geometry: true,
+                light_bake: true,
+                ..self
+            },
+            SceneNeed::AirLight => Self {
+                geometry: true,
+                light_bake: true,
+                air_light: true,
+                ..self
+            },
+            SceneNeed::Image => Self {
+                image: true,
+                ..self
+            },
+        }
+    }
 }

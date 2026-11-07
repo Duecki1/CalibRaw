@@ -98,6 +98,15 @@ impl CalibRawApp {
         )
     }
 
+    /// The open photo's 35 mm-equivalent focal length, when its metadata and the lens database
+    /// state it.
+    pub(crate) fn known_focal_length(&self) -> Option<f32> {
+        PerspectiveCorrection::known_focal_length_35mm(
+            self.develop.original_raw.as_ref()?.focal_length,
+            self.develop.lens_correction.catalog.camera_crop_factor,
+        )
+    }
+
     /// Whether an automatic geometry job can start: a photo is open, no other foreground job
     /// runs and no lens correction is about to replace the source pixels.
     pub(crate) fn auto_geometry_available(&self) -> bool {

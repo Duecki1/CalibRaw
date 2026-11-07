@@ -8,24 +8,30 @@
 // the reflections here add). Dark materials darken most, and each channel
 // darkens by its own albedo, so wet colours deepen by themselves.
 //
-// The scene map says where the ground is and how far each part of it lies
-// below what stands on it (scene_analysis.wgsl). A vertical object mirrors
-// about the row it stands on: a pixel at some distance below it shows the object
-// the same distance above it. Reflections are read from the environment map,
-// which holds the whole photo for every export tile, and spread along the view
-// on rough ground, which elongates them toward the viewer.
+// The scene bake (scene/geometry.wgsl) gives every pixel up to two surfaces,
+// the ground plane fitted to the photo (B8) and the working image. A surface is
+// ground where its normal lies within about 20 degrees of the plane's and it lies
+// on the plane: each surface of an edge pixel is judged and shaded on its own, so
+// only what is ground gets wet. A reflection is traced (`scene_trace`): the view
+// ray reflected about the plane's normal, tilted by ripples, is followed through
+// the visible surfaces of the working image, and what it meets is read from the
+// photo with a footprint that grows with the surface's roughness and the
+// distance travelled. A ray that leaves the image reads the wide-footprint
+// surroundings where it left.
 //
 // Standing water has a level surface, so its edge is where that level meets the
 // ground: a contour line. Everything that limits a puddle therefore raises the
-// ground rather than fading the water: the terrain in the scene map, rough
-// surfaces and what is not ground. The photo's own detail is the last height: its
-// lighter grains stand clear of shallow water and its dark joints and pits fill
-// first, so an edge breaks up on the texture that is really there. Ground beside
-// the water has drawn it in, and stays dark past the edge.
+// ground rather than fading the water: rough surfaces and what is not ground. The
+// photo's own detail is the last height: its lighter grains stand clear of shallow
+// water and its dark joints and pits fill first, so an edge breaks up on the texture
+// that is really there. Ground beside the water has drawn it in, and stays dark past
+// the edge. The puddle field lives on the plane, in camera heights, so puddles
+// keep their ground size with distance and dissolve into the far sheen when a pixel
+// covers more of them than they hold.
 //
 // Water is photographed through the same lens as the ground it lies on. Out of focus
-// its edge and ripples blur as much as the ground does (scene_focus_blur), and the
-// photo there has no grain left for the edge to break up on.
+// its edge and ripples blur as much as the ground does (the bake's lens blur), and
+// the photo there has no grain left for the edge to break up on.
 
 // Packed parameter lanes: `WET_SURFACES_<NAME>_LANE` (generated from the effect
 // registry, effect_wgsl.rs).
@@ -36,12 +42,19 @@ const WET_INTERNAL_REFLECTION: f32 = 0.475;
 // Share of the ground's darkening that walls and other surfaces take: rain runs
 // off them.
 const WET_OTHER_SURFACES: f32 = 0.72;
-// Depths beyond which nothing is wet: the sky and far scenery.
-const WET_FAR_START: f32 = 0.9;
-const WET_FAR_END: f32 = 0.97;
-// Surface roughness (scene_map_cell_roughness) from which a surface starts to lose
-// its sheen, and at which it holds no standing water: gravel and grass drink it.
+// Cosines of the angle between a surface's normal and the plane's over which a
+// surface starts and ends to count as ground, and its distance from the plane
+// relative to its depth over which it stops: B8's inliers (scene/ground.rs) lie
+// within 0.94 and 0.05.
+const WET_GROUND_COSINE: vec2<f32> = vec2<f32>(0.90, 0.97);
+const WET_GROUND_DISTANCE: vec2<f32> = vec2<f32>(0.04, 0.10);
+// A surface's roughness (`wet_roughness`) from which it starts to lose its sheen,
+// and at which it holds no standing water: gravel and grass drink it.
 const WET_ROUGHNESS_RANGE: vec2<f32> = vec2<f32>(0.018, 0.04);
+// The guide's samples spacing in pixels and how far the windows of the smoothest
+// neighbourhood lie from the pixel, in pixels.
+const WET_ROUGHNESS_SPACING: i32 = 2;
+const WET_ROUGHNESS_REACH: i32 = 4;
 // How far rough surfaces and what is not ground rise above the water, in the units
 // of the puddle field: past its whole range.
 const WET_NOT_GROUND_RISE: f32 = 0.6;
@@ -69,22 +82,21 @@ const WET_SOAK_REACH: f32 = 0.05;
 // Puddle size, in units of the puddle field. A pixel spans many grains, some already under water and some not,
 // so its coverage is partial rather than a hard flip that would read as dither.
 const WET_WATER_EDGE: f32 = 0.035;
-// Taps of a reflection along the view.
-const WET_REFLECTION_TAPS: i32 = 3;
-// How far a rough reflection spreads along the view, relative to its distance
-// from its contact point.
-const WET_REFLECTION_SPREAD: f32 = 0.9;
+// The deviation of the footprint a rough surface reads its reflection with,
+// relative to the image distance the ray travelled, at roughness 1.
+const WET_REFLECTION_SPREAD: f32 = 0.45;
+// The deviation of what a ray that leaves the image reads, in shorter edges.
+const WET_REFLECTION_EXIT: f32 = 0.12;
+// Lift of a reflection ray's origin off the surface, relative to its depth.
+const WET_REFLECTION_LIFT: f32 = 0.004;
 // Reflectance of water at normal incidence.
 const WET_F0: f32 = 0.02;
-// Camera height units per image point below the horizon, and puddles per
-// camera height at Puddle size 0 and 100.
-const WET_GROUND_SCALE: f32 = 1.25;
+// Puddles per camera height at Puddle size 0 and 100.
 const WET_PUDDLE_FREQUENCY: vec2<f32> = vec2<f32>(2.4, 0.5);
 // Ripple cells per camera height.
 const WET_RIPPLE_FREQUENCY: f32 = 7.0;
-// Largest image offset of a reflection in a ripple, relative to its distance
-// from its contact point.
-const WET_RIPPLE_DISTORTION: f32 = 0.25;
+// How far a ripple at full strength tilts the water's normal.
+const WET_RIPPLE_TILT: f32 = 0.12;
 // Scene-light highlight strength relative to the ambient level.
 const WET_GLINT_GAIN: f32 = 2.5;
 const WET_GLINT_LIMIT: f32 = 24.0;
@@ -92,90 +104,118 @@ const WET_GLINT_LIMIT: f32 = 24.0;
 // around (scene_emission.wgsl); light from one direction keeps the ground's.
 const WET_EMISSION_SPREAD_ALPHA: f32 = 0.6;
 
-// Everything about the ground at one pixel.
+// Everything about the ground at one surface of a pixel.
 struct WetPixel {
-    // Edge-accurate scene depth.
-    depth: f32,
-    // How much the pixel is ground.
+    // The surface, and how much of it is ground.
+    surface: Geometry::SceneSurface,
     on_ground: f32,
-    // Distance from the pixel along the ground to what stands on it.
-    contact: f32,
-    // Distance from the pixel down from the horizon.
-    below: f32,
-    // Image point of the pixel.
+    // Image point of the pixel (shorter edges from the image centre) and the unit
+    // vector in image points toward the horizon.
     point: vec2<f32>,
-    // Unit vector in image points toward the horizon.
     up: vec2<f32>,
     // 1 on smooth surfaces, 0 on rough ones.
     smooth_surface: f32,
-    // The ground's height (scene_terrain_height).
-    terrain: f32,
     // The guide's mean around the pixel.
     guide_mean: f32,
-    // The lens blur here in shorter edges.
+    // The lens blur at the surface in shorter edges.
     blur: f32,
 }
 
-// The pixel's ground: the surrounding map cells, each weighted by how near its
-// depth lies to the pixel's, which keeps the ground's edge on the edge-accurate
-// depth rather than on the coarse cells. The contact distance comes only from
-// cells on the ground.
-fn wet_pixel(pos: vec2<i32>) -> WetPixel {
-    let map = scene_depth_map_at(pos);
-    let depth = select(0.0, scene_depth_from(map, pos), scene_depth_present());
-    let ground = Common::effects_uniforms.scene_ground;
-    let point = full_image_uv(pos) * Common::scene_image_size();
-    let below = ground.z - dot(point, ground.xy);
-    let smooth_surface = 1.0 - smoothstep(WET_ROUGHNESS_RANGE.x, WET_ROUGHNESS_RANGE.y, map.z);
-    let blur = select(0.0, scene_focus_blur(depth), scene_depth_present());
-    var pixel = WetPixel(depth, 0.0, 0.0, below, point, ground.xy, smooth_surface, 0.0, map.w, blur);
-    if ground.w < 0.5 || !scene_depth_present() || below <= 0.0 { return pixel; }
+// How much a surface at `position` with `normal`, sky share `sky`, is ground:
+// its normal lies within about 20 degrees of the plane's and it lies on the plane
+// (both in the frame of relief scale 1). Without a fitted ground, none.
+fn wet_ground_of(normal: vec3<f32>, position: vec3<f32>, sky: f32) -> f32 {
+    if !Geometry::scene_has_ground() { return 0.0; }
+    let plane = Geometry::scene_ground_plane();
+    let cosine = dot(normal, plane.xyz);
+    let offset = abs(dot(plane.xyz, position) - plane.w) / max(position.z, 1e-3);
+    return (1.0 - sky) * smoothstep(WET_GROUND_COSINE.x, WET_GROUND_COSINE.y, cosine)
+        * (1.0 - smoothstep(WET_GROUND_DISTANCE.x, WET_GROUND_DISTANCE.y, offset));
+}
 
-    let grid = vec2<i32>(Common::scene_map_grid());
-    let position = full_image_uv(pos) * vec2<f32>(grid) - vec2<f32>(0.5);
-    let base = vec2<i32>(floor(position)) - vec2<i32>(1);
-    var score = 0.0;
-    var weights = 0.0;
-    var contact = 0.0;
-    var terrain = 0.0;
-    var on_ground_weights = 0.0;
-    for (var y = 0; y < 4; y = y + 1) {
-        for (var x = 0; x < 4; x = x + 1) {
-            let cell = base + vec2<i32>(x, y);
-            let offset = abs(vec2<f32>(cell) - position);
-            let tent = max(1.0 - 0.5 * offset.x, 0.0) * max(1.0 - 0.5 * offset.y, 0.0);
-            if tent <= 0.0 { continue; }
-            let texel = textureLoad(
-                scene_ground_tex,
-                clamp(cell, vec2<i32>(0), grid - vec2<i32>(1)),
-                0,
-            );
-            let weight = tent * scene_depth_closeness(texel.z, depth);
-            score += texel.x * weight;
-            weights += weight;
-            contact += texel.y * texel.x * weight;
-            terrain += texel.w * texel.x * weight;
-            on_ground_weights += texel.x * weight;
+// How much of the bake's surface near full-image `uv` is ground, from the one
+// working texel there and the surface of it whose depth lies nearer the
+// texel's own: without the pixel's coverage, for the soft estimates around a
+// pixel (`wet_level_near`).
+fn wet_ground_near(uv: vec2<f32>) -> f32 {
+    if !Geometry::scene_has_ground() { return 0.0; }
+    let camera = Bake::scene_bake.camera;
+    let size = vec2<f32>(Bake::scene_bake_size());
+    let texel = vec2<i32>(floor(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.9999)) * size));
+    let geometry = Geometry::scene_layer(texel, Bake::SCENE_LAYER_GEOMETRY);
+    let normals = Geometry::scene_layer(texel, Bake::SCENE_LAYER_NORMALS);
+    let far = abs(geometry.x - geometry.w) < abs(geometry.x - geometry.z);
+    let d = select(geometry.z, geometry.w, far);
+    let encoded = select(normals.xy, normals.zw, far);
+    let point = Camera::scene_image_point(uv, Geometry::scene_aspect());
+    let position = Camera::scene_frame_position(camera, point, Camera::scene_frame_depth(camera, d, 1.0));
+    return wet_ground_of(
+        Bake::scene_from_octahedral(encoded),
+        position,
+        select(0.0, geometry.y, far),
+    );
+}
+
+// The mean and relative variance of the guide over three samples either way
+// around `pos`, WET_ROUGHNESS_SPACING pixels apart.
+fn wet_guide_window(pos: vec2<i32>) -> vec2<f32> {
+    var sum = 0.0;
+    var square = 0.0;
+    for (var dy = -1; dy <= 1; dy = dy + 1) {
+        for (var dx = -1; dx <= 1; dx = dx + 1) {
+            let guide = SceneSource::scene_guide_at(pos + vec2<i32>(dx, dy) * WET_ROUGHNESS_SPACING);
+            sum += guide;
+            square += guide * guide;
         }
     }
-    pixel.on_ground = score / max(weights, 1e-6);
-    pixel.contact = contact / max(on_ground_weights, 1e-6);
-    pixel.terrain = terrain / max(on_ground_weights, 1e-6);
+    let mean = sum / 9.0;
+    return vec2<f32>(mean, max(square / 9.0 - mean * mean, 0.0) / max(mean * mean, 1e-6));
+}
+
+// How rough the photo's surface is at `pos`: the guide's variance relative to its
+// squared mean, high on gravel and grass and low on asphalt or paving, in the
+// smoothest of three windows so that an object standing on smooth ground leaves no
+// rough ring around it; and the guide's mean there.
+fn wet_roughness(pos: vec2<i32>) -> vec2<f32> {
+    let centre = wet_guide_window(pos);
+    let reach = vec2<i32>(WET_ROUGHNESS_REACH, 0);
+    let roughness = min(
+        centre.y,
+        min(wet_guide_window(pos + reach).y, wet_guide_window(pos - reach).y),
+    );
+    return vec2<f32>(roughness, centre.x);
+}
+
+// The lens blur at a surface, a Gaussian's deviation in shorter edges.
+fn wet_blur(surface: Geometry::SceneSurface) -> f32 {
+    let size = Bake::scene_bake_size();
+    return Bake::scene_lens_blur(surface.position.z) / f32(min(size.x, size.y));
+}
+
+// The ground at `surface`, one of the pixel at tile position `pos` and
+// full-image `uv`.
+fn wet_pixel(pos: vec2<i32>, uv: vec2<f32>, surface: Geometry::SceneSurface) -> WetPixel {
+    let on_ground = wet_ground_of(surface.normal, surface.position, surface.sky);
+    var pixel = WetPixel(
+        surface,
+        on_ground,
+        Camera::scene_image_point(uv, Geometry::scene_aspect()),
+        Geometry::scene_horizon_up(),
+        0.0,
+        0.0,
+        wet_blur(surface),
+    );
+    if on_ground <= 1e-4 { return pixel; }
+    let roughness = wet_roughness(pos);
+    pixel.smooth_surface = 1.0 - smoothstep(WET_ROUGHNESS_RANGE.x, WET_ROUGHNESS_RANGE.y, roughness.x);
+    pixel.guide_mean = roughness.y;
     return pixel;
 }
 
 // Position on the ground of an image point in camera heights (x across the view, y
 // along it), and in its z the ground distance one pixel covers there.
 fn wet_ground_position(point: vec2<f32>) -> vec3<f32> {
-    let ground = Common::effects_uniforms.scene_ground;
-    let right = vec2<f32>(-ground.y, ground.x);
-    let lateral = dot(point - 0.5 * Common::scene_image_size(), right);
-    let clamped = max(ground.z - dot(point, ground.xy), 0.01);
-    return vec3<f32>(
-        lateral * WET_GROUND_SCALE / clamped,
-        WET_GROUND_SCALE / clamped,
-        WET_GROUND_SCALE * scene_pixel_extent() / (clamped * clamped),
-    );
+    return Geometry::scene_ground_position(point, scene_pixel_extent());
 }
 
 // Height of the photo's grain at a pixel: how far the guide of a few pixels lies from
@@ -221,23 +261,23 @@ struct WetBasins {
     threshold: f32,
 }
 
-// How far the ground rises from a surface's terrain and whether it can hold water.
-fn wet_rise(terrain: f32, on_ground: f32, smooth_surface: f32) -> f32 {
-    return terrain + (1.0 - on_ground * smooth_surface) * WET_NOT_GROUND_RISE;
+// How far the ground rises above the water's level where a surface is ground
+// by `on_ground` and smooth by `smooth_surface`: rough surfaces and what is not
+// ground lift it past the puddle field's range.
+fn wet_rise(on_ground: f32, smooth_surface: f32) -> f32 {
+    return (1.0 - on_ground * smooth_surface) * WET_NOT_GROUND_RISE;
 }
 
 fn wet_field(point: vec2<f32>, basins: WetBasins) -> f32 {
     return wet_undulation(wet_ground_position(point).xy * basins.frequency + basins.offset);
 }
 
-// How far the water's level lies above the ground at an image point near a pixel:
-// from the interpolated maps, without the pixel's edge-accurate depth.
-fn wet_level_near(point: vec2<f32>, basins: WetBasins) -> f32 {
-    let uv = point / Common::scene_image_size();
-    let ground = scene_ground_near(uv);
-    let roughness = scene_depth_map_near(uv).z;
-    let smooth_surface = 1.0 - smoothstep(WET_ROUGHNESS_RANGE.x, WET_ROUGHNESS_RANGE.y, roughness);
-    return wet_field(point, basins) - basins.threshold - wet_rise(ground.w, ground.x, smooth_surface);
+// How far the water's level lies above the ground at an image point near a
+// pixel: from the bake's surface beside it, without the pixel's coverage, and
+// the pixel's own roughness.
+fn wet_level_near(point: vec2<f32>, smooth_surface: f32, basins: WetBasins) -> f32 {
+    let uv = point / Geometry::scene_aspect() + vec2<f32>(0.5);
+    return wet_field(point, basins) - basins.threshold - wet_rise(wet_ground_near(uv), smooth_surface);
 }
 
 fn wet_water(pos: vec2<i32>, pixel: WetPixel, position: vec3<f32>, params: MaskEffectParams) -> WetWater {
@@ -251,7 +291,7 @@ fn wet_water(pos: vec2<i32>, pixel: WetPixel, position: vec3<f32>, params: MaskE
         vec2<f32>(seed * 0.113 + 3.7, seed * -0.071 + 17.1),
         mix(0.72, 0.36, amount),
     );
-    let rise = wet_rise(pixel.terrain, pixel.on_ground, pixel.smooth_surface);
+    let rise = wet_rise(pixel.on_ground, pixel.smooth_surface);
     // Above zero the ground lies below the water's level.
     let level = wet_field(pixel.point, basins) - basins.threshold - rise;
     // Broader forms have gentler slopes in the field, so the edge's heights shrink
@@ -272,10 +312,10 @@ fn wet_water(pos: vec2<i32>, pixel: WetPixel, position: vec3<f32>, params: MaskE
         let along = pixel.up * reach;
         let across = vec2<f32>(-along.y, along.x);
         around = vec4<f32>(
-            wet_level_near(pixel.point + along, basins),
-            wet_level_near(pixel.point - along, basins),
-            wet_level_near(pixel.point + across, basins),
-            wet_level_near(pixel.point - across, basins),
+            wet_level_near(pixel.point + along, pixel.smooth_surface, basins),
+            wet_level_near(pixel.point - along, pixel.smooth_surface, basins),
+            wet_level_near(pixel.point + across, pixel.smooth_surface, basins),
+            wet_level_near(pixel.point - across, pixel.smooth_surface, basins),
         );
         ramp = max(edge, 0.5 * length(around.xz - around.yw));
     }
@@ -337,52 +377,37 @@ fn wet_ripples(position: vec3<f32>, blur: f32, seed: u32) -> vec2<f32> {
     return tilt * resolved;
 }
 
-// What the ground reflects at an image point that lies `contact` below what stands
-// on it, spread along the view by `roughness`.
-fn wet_reflected(point: vec2<f32>, contact: f32, up: vec2<f32>, roughness: f32, distortion: vec2<f32>) -> vec3<f32> {
-    let image_size = Common::scene_image_size();
-    let mirrored = point + up * (2.0 * contact) + distortion;
-    let spread = roughness * WET_REFLECTION_SPREAD * (contact + 0.02);
-    var sum = vec3<f32>(0.0);
-    var weights = 0.0;
-    for (var tap = -WET_REFLECTION_TAPS; tap <= WET_REFLECTION_TAPS; tap = tap + 1) {
-        let offset = f32(tap) / f32(WET_REFLECTION_TAPS);
-        let weight = exp(-2.0 * offset * offset);
-        let at = mirrored + up * (offset * spread);
-        sum += scene_environment_at(at / image_size) * weight;
-        weights += weight;
+// What the ground reflects at a surface: the view ray reflected about `normal`
+// (the plane's, tilted by ripples) traced through the scene, and what it meets
+// read from the photo with a footprint that widens with the roughness and the
+// distance the ray travelled, and with the lens blur at the ground. A ray that
+// leaves the image reads the wide surroundings where it left.
+fn wet_reflected(pixel: WetPixel, normal: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let position = pixel.surface.position;
+    let direction = reflect(normalize(position), normal);
+    let origin = position + normal * (WET_REFLECTION_LIFT * position.z);
+    let hit = Geometry::scene_trace(origin, direction);
+    let spread = roughness * WET_REFLECTION_SPREAD * hit.travel;
+    var footprint = sqrt(spread * spread + pixel.blur * pixel.blur);
+    if !hit.found {
+        footprint = max(footprint, WET_REFLECTION_EXIT);
     }
-    // A rough surface also scatters sideways, by less.
-    return mix(
-        sum / weights,
-        scene_environment_blurred_at(mirrored / image_size),
-        smoothstep(0.35, 0.9, roughness) * 0.5,
-    );
+    return Geometry::scene_image(hit.uv, footprint) * exp2(Common::scene_tone_uniforms.exposure);
 }
 
-// The same seen through the lens: over the footprint of its blur. Where the contact
-// changes quickly the mirror squeezes a light into a thin line, sharper than anything
-// around it unless it blurs with the rest.
-fn wet_reflected_through_lens(pixel: WetPixel, roughness: f32, distortion: vec2<f32>) -> vec3<f32> {
-    var sum = wet_reflected(pixel.point, pixel.contact, pixel.up, roughness, distortion);
-    let reach = pixel.blur * WET_EDGE_PER_DEVIATION;
-    if reach <= scene_pixel_extent() { return sum; }
-    let along = pixel.up * reach;
-    let across = vec2<f32>(-along.y, along.x);
-    let image_size = Common::scene_image_size();
-    for (var index = 0; index < 4; index = index + 1) {
-        let sign_of = f32(1 - (index & 2));
-        let point = pixel.point + select(across, along, index < 2) * sign_of;
-        let contact = scene_ground_near(point / image_size).y;
-        sum += wet_reflected(point, contact, pixel.up, roughness, distortion);
-    }
-    return sum / 5.0;
-}
-
-fn wet_surface(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+// A surface of the pixel wet: darkened as water does, and where it is ground,
+// with its puddles and the reflection it shows.
+fn wet_shade(
+    pos: vec2<i32>,
+    uv: vec2<f32>,
+    surface: Geometry::SceneSurface,
+    input_rgb: vec3<f32>,
+    params: MaskEffectParams,
+) -> vec3<f32> {
     let wetness = mask_effect_percent(params, WET_SURFACES_WETNESS_LANE);
-    let pixel = wet_pixel(pos);
-    let reachable = 1.0 - smoothstep(WET_FAR_START, WET_FAR_END, pixel.depth);
+    let pixel = wet_pixel(pos, uv, surface);
+    // The sky is not wet.
+    let reachable = 1.0 - surface.sky;
 
     // Darkening, by each channel's albedo estimated against the ambient level,
     // where middle grey is 18% reflectance. Lamps and sky are past albedo 1 and
@@ -407,7 +432,8 @@ fn wet_surface(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -
     // What the ground reflects: stronger toward the horizon, as for all water.
     let reflections = mask_effect_percent(params, WET_SURFACES_REFLECTIONS_LANE);
     let gloss = mask_effect_percent(params, WET_SURFACES_GLOSS_LANE);
-    let view_cosine = sin(atan(pixel.below * 2.0 * SCENE_FOCAL_TAN));
+    let plane = Geometry::scene_ground_plane();
+    let view_cosine = clamp(-dot(plane.xyz, normalize(surface.position)), 0.0, 1.0);
     let fresnel = WET_F0 + (1.0 - WET_F0) * pow(1.0 - view_cosine, 5.0);
     let sheen = wetness * mix(0.18, 0.75, gloss) * mix(0.25, 1.0, pixel.smooth_surface);
     let reflectance = fresnel * max(sheen, puddle) * pixel.on_ground * reflections * 1.6;
@@ -419,87 +445,115 @@ fn wet_surface(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -
         gloss,
     );
     let roughness = mix(film_roughness, 0.05, puddle);
-    var distortion = vec2<f32>(0.0);
+    var normal = plane.xyz;
     var ripple_light = 0.0;
     let ripples = mask_effect_percent(params, WET_SURFACES_RIPPLES_LANE)
         * wet_rain_strength() * puddle;
     if ripples > 1e-4 {
         let seed = u32(clamp(mask_effect_lane(params, WET_SURFACES_SEED_LANE), 0.0, 1000.0));
         let tilt = wet_ripples(position, pixel.blur, seed) * ripples;
-        let right = vec2<f32>(-pixel.up.y, pixel.up.x);
-        distortion = (right * tilt.x + pixel.up * tilt.y) * WET_RIPPLE_DISTORTION * (pixel.contact + 0.05);
+        let axes = Geometry::scene_ground_axes();
+        normal = normalize(plane.xyz + (axes[0] * tilt.x + axes[1] * tilt.y) * WET_RIPPLE_TILT);
         ripple_light = length(tilt);
     }
     let shimmer = min(reflectance * (1.0 + ripple_light), 1.0);
-    return rgb * (1.0 - shimmer) + wet_reflected_through_lens(pixel, roughness, distortion) * shimmer;
+    return rgb * (1.0 - shimmer) + wet_reflected(pixel, normal, roughness) * shimmer;
 }
 
-// Highlights of scene lights on the wet ground, added after the creative
-// effects, so Relight's Ambient does not dim them. A GGX lobe stretches into a
-// long streak toward the viewer at grazing angles by itself. Surfaces between
-// the ground and a light shadow it (scene_shadows.wgsl).
-fn wet_glints(pos: vec2<i32>, params: MaskEffectParams) -> vec3<f32> {
+// Wet Surfaces on a pixel: each surface of the scene bake wet on its own, and the
+// two blended by coverage. Without scene depth only the darkening applies, as
+// on any surface that is not ground.
+fn wet_surface(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    if !Geometry::scene_geometry_present() {
+        let ambient = scene_ambient_level();
+        let albedo = clamp(0.18 * max(input_rgb, vec3<f32>(0.0)) / ambient, vec3<f32>(1e-4), vec3<f32>(1.0));
+        let darkened = input_rgb * ((1.0 - WET_INTERNAL_REFLECTION) / (vec3<f32>(1.0) - WET_INTERNAL_REFLECTION * albedo));
+        return mix(input_rgb, darkened, mask_effect_percent(params, WET_SURFACES_WETNESS_LANE) * WET_OTHER_SURFACES);
+    }
+    let uv = full_image_uv(pos);
+    let scene_rgb = Geometry::scene_unedited_at(pos);
+    let pixel = Geometry::scene_pixel(uv, scene_rgb, 1.0);
+    let colors = Geometry::scene_split(pixel, scene_rgb, input_rgb);
+    let near = wet_shade(pos, uv, pixel.near, colors[0], params);
+    if !pixel.in_band {
+        return near;
+    }
+    return Geometry::scene_blend(pixel, near, wet_shade(pos, uv, pixel.far, colors[1], params));
+}
+
+// Highlights of scene lights on one surface of the wet ground: a GGX lobe, which
+// stretches into a long streak toward the viewer at grazing angles by itself.
+// Light the scene's surfaces shadow does not reach it (the light bake).
+fn wet_glint_surface(
+    pos: vec2<i32>,
+    uv: vec2<f32>,
+    pixel: Geometry::ScenePixel,
+    surface: Geometry::SceneSurface,
+    params: MaskEffectParams,
+) -> vec3<f32> {
     let reflections = mask_effect_percent(params, WET_SURFACES_REFLECTIONS_LANE);
     let wetness = mask_effect_percent(params, WET_SURFACES_WETNESS_LANE);
-    if reflections <= 1e-4 || !scene_lights_present() {
-        return vec3<f32>(0.0);
-    }
-    let pixel = wet_pixel(pos);
-    if pixel.on_ground <= 1e-4 { return vec3<f32>(0.0); }
-    let position = wet_ground_position(pixel.point);
-    let puddle = wet_water(pos, pixel, position, params).standing;
+    let ground = wet_pixel(pos, uv, surface);
+    if ground.on_ground <= 1e-4 { return vec3<f32>(0.0); }
+    let position = wet_ground_position(ground.point);
+    let puddle = wet_water(pos, ground, position, params).standing;
     let gloss = mask_effect_percent(params, WET_SURFACES_GLOSS_LANE);
     let roughness = mix(mix(0.55, 0.16, gloss), 0.05, puddle);
     let alpha = roughness * roughness;
-    let strength = max(wetness * mix(0.3, 1.0, gloss) * mix(0.25, 1.0, pixel.smooth_surface), puddle)
-        * pixel.on_ground;
+    let strength = max(wetness * mix(0.3, 1.0, gloss) * mix(0.25, 1.0, ground.smooth_surface), puddle)
+        * ground.on_ground;
 
-    // The ground's normal in the camera frame: perpendicular to every view ray
-    // through the horizon.
-    let image_center = 0.5 * Common::scene_image_size();
-    let horizon_offset = Common::effects_uniforms.scene_ground.z - dot(image_center, pixel.up);
-    let normal = normalize(vec3<f32>(
-        pixel.up,
-        -horizon_offset * 2.0 * SCENE_FOCAL_TAN,
-    ));
-
-    let uv = full_image_uv(pos);
-    let shadows = scene_shadow_surface_at(pos);
+    let camera = Bake::scene_bake.camera;
+    let plane = Geometry::scene_ground_plane();
     var glint = vec3<f32>(0.0);
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
         let light = scene_light_at(index);
         if !light.emits { continue; }
         let coverage = scene_light_coverage(light, pos);
         if coverage <= 1e-6 { continue; }
-        let surface = scene_camera_point(
-            light.camera,
-            uv * light.camera.image_size,
-            scene_depth_z(light.camera, pixel.depth),
-        );
-        let specular = wet_glint_specular(
-            normal, normalize(light.position - surface), normalize(-surface), alpha,
-        );
+        // The surface and the ground's normal in the light's own frame.
+        let z = Camera::scene_frame_depth(camera, surface.d, light.relief_scale);
+        let at = Camera::scene_frame_position(camera, ground.point, z);
+        let normal = Camera::scene_frame_normal(camera, plane.xyz, ground.point, z, light.relief_scale);
+        let offset = light.position - at;
+        let specular = wet_glint_specular(normal, normalize(offset), normalize(-at), alpha);
         if specular <= 0.0 { continue; }
-        glint += light.intensity
-            * (specular * scene_light_falloff(light, surface) * coverage * scene_shadow_of(shadows, light));
+        var visibility = 1.0;
+        if light.channel != 0u {
+            visibility = Geometry::scene_visibility(pixel, surface, light.channel - 1u);
+        }
+        let falloff = 1.0 / (1.0 + dot(offset, offset) / (light.reach * light.reach));
+        glint += light.intensity * (specular * falloff * coverage * visibility);
     }
     if scene_emission_present() {
-        let arrival = scene_emission_surface_at(uv, pixel.depth);
+        let arrival = scene_emission_surface_at(uv, surface.d);
         let spread = length(arrival.direction);
         if spread > 1e-4 {
-            let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
-            let surface = scene_camera_point(
-                camera, uv * camera.image_size, scene_depth_z(camera, pixel.depth),
-            );
             // Light from many directions spreads the highlight as a rougher
             // surface would.
             let broadened = mix(WET_EMISSION_SPREAD_ALPHA, alpha, spread);
             glint += arrival.light * wet_glint_specular(
-                normal, arrival.direction / spread, normalize(-surface), broadened,
+                plane.xyz, arrival.direction / spread, normalize(-surface.position), broadened,
             );
         }
     }
     return glint * (WET_GLINT_GAIN * scene_ambient_level() * reflections * strength);
+}
+
+// Highlights of scene lights on the wet ground, added after the creative
+// effects, so Relight's Ambient does not dim them.
+fn wet_glints(pos: vec2<i32>, params: MaskEffectParams) -> vec3<f32> {
+    let reflections = mask_effect_percent(params, WET_SURFACES_REFLECTIONS_LANE);
+    if reflections <= 1e-4 || !scene_lights_present() || !Geometry::scene_geometry_present() {
+        return vec3<f32>(0.0);
+    }
+    let uv = full_image_uv(pos);
+    let pixel = Geometry::scene_pixel(uv, Geometry::scene_unedited_at(pos), 1.0);
+    let near = wet_glint_surface(pos, uv, pixel, pixel.near, params);
+    if !pixel.in_band {
+        return near;
+    }
+    return Geometry::scene_blend(pixel, near, wet_glint_surface(pos, uv, pixel, pixel.far, params));
 }
 
 // The GGX highlight toward the camera of light arriving along `to_light` on

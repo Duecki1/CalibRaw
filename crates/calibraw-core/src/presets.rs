@@ -12,7 +12,7 @@
 pub mod xmp;
 
 use crate::file_ops::write_bytes_atomically;
-use crate::migrations::{self, LegacyEffectSliders};
+use crate::migrations::{self, LegacyEdits};
 use crate::pipeline::{
     AdjustmentGroup, ExposureParams, MaskGeometry, MaskKind, MaskStack, MAX_LOCAL_MASKS,
 };
@@ -30,9 +30,11 @@ pub const PRESET_SUFFIX: &str = ".calibraw-preset";
 /// The newest schema. Bump for every incompatible change to the serialized
 /// layout. Schemas 2 to 4 share the layout of schema 1; schema 2 adds the
 /// Relight effect, schema 3 the LUT, perspective correction and aspect stretch
-/// and schema 4 Rain and Wet Surfaces. Presets are written with the oldest
-/// schema that holds them (`migrations::older_readers`).
-pub const PRESET_SCHEMA_VERSION: u32 = 4;
+/// and schema 4 Rain and Wet Surfaces. Schema 5 holds Relight's scene controls
+/// as `relief_scale` and `light_depth` (`migrations::scene_depth_controls`).
+/// Presets are written with the oldest schema that holds them
+/// (`migrations::older_readers`).
+pub const PRESET_SCHEMA_VERSION: u32 = 5;
 pub const DEFAULT_PRESET_GROUP: &str = "User Presets";
 pub const MAX_PRESET_NAME_CHARS: usize = 64;
 /// Presets hold no image data, so anything larger is not a preset.
@@ -351,6 +353,7 @@ impl Preset {
             migrations::older_readers::V1_SCHEMA_VERSION
             | migrations::older_readers::V2_SCHEMA_VERSION
             | migrations::older_readers::V3_SCHEMA_VERSION
+            | migrations::older_readers::V4_SCHEMA_VERSION
             | PRESET_SCHEMA_VERSION => {
                 serde_json::from_slice::<PresetDocument>(bytes).map_err(|error| {
                     PresetError::Invalid(format!("invalid preset JSON: {error}"))
@@ -416,7 +419,7 @@ struct PresetHeader {
     schema_version: u32,
     /// Collected in the same pass that reads the header.
     #[serde(default)]
-    edits: LegacyEffectSliders,
+    edits: LegacyEdits,
 }
 
 #[derive(Deserialize, Serialize)]

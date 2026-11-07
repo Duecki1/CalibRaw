@@ -8,23 +8,22 @@
 //! offset and size are therefore compared explicitly.
 
 use super::{
-    ground_plane, processing_work_format, scene_emission_light_rows, scene_surface,
-    shader_manager::ShaderManager, shaders, work_shader_source, CameraUniforms, CfaKind,
-    EffectsUniforms, MaskData, PackedPointColor, ProcessingQuality, RemoveCompositeParams,
-    SceneToneUniforms, ViewTransformMode, CONTOUR_BRIGHTNESS_BINS, CONTOUR_CELL_BYTES,
-    CONTOUR_CONTRAST_BINS, CONTOUR_GRID_LONG, FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE,
-    HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG, IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG,
-    MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS, MEDIUM_CELLS, SCENE_EMISSION_GRID_LONG,
-    SCENE_EMISSION_SURFACE_GRID_LONG, SCENE_FOCUS_BINS, SCENE_MAP_BLUR_GRID_LONG,
-    SCENE_MAP_CELL_BYTES, SCENE_MAP_GRID_LONG, SCENE_SHADOW_MAP_CHANNELS, SCENE_SHADOW_SLICES,
-    SCENE_SHADOW_TILES, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    processing_work_format, scene_emission_light_rows, shader_manager::ShaderManager, shaders,
+    work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
+    ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, ViewTransformMode,
+    CONTOUR_BRIGHTNESS_BINS, CONTOUR_CELL_BYTES, CONTOUR_CONTRAST_BINS, CONTOUR_GRID_LONG,
+    FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE, HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG,
+    IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MASK_SCENE_BAKE_LIGHT_BITS,
+    MAX_RENDER_MASK_SLOTS, MEDIUM_CELLS, SCENE_EMISSION_GRID_LONG,
+    SCENE_EMISSION_SURFACE_GRID_LONG, SCENE_SHADOW_LIGHTS, TONE_HISTOGRAM_BIN_COUNT,
+    TONE_STATS_SIZE_BYTES,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::{effect_lanes::options, MaskEffect, OPTION_COUNT};
 use calibraw_core::pipeline::{
     CA_WINDOW_RADIUS, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT,
-    HAZE_GUIDE_SUPPORT, MAX_LATERAL_SHIFT, MAX_RESOLUTION_SCALE, SCENE_EDGE_SUPPORT,
-    TONE_GUIDE_RADIUS_CELLS, WET_SURFACES_SUPPORT,
+    HAZE_GUIDE_SUPPORT, MAX_LATERAL_SHIFT, MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
+    WET_SURFACES_SUPPORT,
 };
 use naga::proc::Layouter;
 use std::collections::BTreeSet;
@@ -242,7 +241,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 exposure,
                 saturation,
                 vibrance,
-                scene_depth_present,
+                _padding,
                 basic_tone,
                 sigmoid_curve,
                 sigmoid_power,
@@ -288,7 +287,6 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 capture_scale_sigma,
                 capture_thresholds,
                 capture_mask_coherence,
-                scene_ground,
             }),
         ),
         (
@@ -441,6 +439,14 @@ fn shared_constants_and_effect_ids_match_rust() {
         MAX_RENDER_MASK_SLOTS
     );
     assert_eq!(constant("MASK_EFFECT_ID_SHIFT"), MASK_EFFECT_ID_SHIFT);
+    assert_eq!(
+        constant("MASK_SCENE_BAKE_LIGHT_BITS"),
+        MASK_SCENE_BAKE_LIGHT_BITS
+    );
+    const {
+        assert!(MASK_SCENE_BAKE_LIGHT_BITS as usize >= SCENE_SHADOW_LIGHTS);
+        assert!(MASK_SCENE_BAKE_LIGHT_BITS < 1 << MASK_EFFECT_ID_SHIFT);
+    }
     for (name, mode) in [
         ("VIEW_TRANSFORM_PASSTHROUGH", ViewTransformMode::Passthrough),
         (
@@ -465,13 +471,6 @@ fn shared_constants_and_effect_ids_match_rust() {
     assert_eq!(constant("IMAGE_LIGHT_BANDS"), IMAGE_LIGHT_BANDS);
     // So are the haze grid's.
     assert_eq!(constant("HAZE_GRID_LONG"), HAZE_GRID_LONG);
-    // And the scene map's.
-    assert_eq!(constant("SCENE_MAP_GRID_LONG"), SCENE_MAP_GRID_LONG);
-    assert_eq!(
-        constant("SCENE_MAP_BLUR_GRID_LONG"),
-        SCENE_MAP_BLUR_GRID_LONG
-    );
-    assert_eq!(constant("SCENE_FOCUS_BINS"), SCENE_FOCUS_BINS);
     // The contour grid buffer and the scene emission textures are sized from these.
     assert_eq!(constant("CONTOUR_GRID_LONG"), CONTOUR_GRID_LONG);
     assert_eq!(constant("CONTOUR_CONTRAST_BINS"), CONTOUR_CONTRAST_BINS);
@@ -497,42 +496,6 @@ fn shared_constants_and_effect_ids_match_rust() {
             MEDIUM_CELLS
         )
     );
-    // ground_plane.rs finds the photo's horizon by the scene map's ground rule.
-    let ground_range = |name: &str| {
-        let source = include_str!("../../shaders/scene_analysis.wgsl");
-        let start = format!("const {name}: vec2<f32> = vec2<f32>(");
-        let (_, rest) = source
-            .split_once(&start)
-            .unwrap_or_else(|| panic!("scene_analysis.wgsl has no {name}"));
-        let (values, _) = rest.split_once(')').unwrap();
-        let (low, high) = values.split_once(", ").unwrap();
-        [low, high].map(|value| value.parse::<f32>().unwrap())
-    };
-    let middle = |[low, high]: [f32; 2]| (low + high) * 0.5;
-    assert_eq!(
-        ground_range("SCENE_GROUND_FAR")[1],
-        ground_plane::FAR_DISTANCE
-    );
-    assert!((middle(ground_range("SCENE_GROUND_SLOPE")) - ground_plane::MIN_SLOPE).abs() < 1e-5);
-    assert!(
-        (middle(ground_range("SCENE_GROUND_ALIGNMENT")) - ground_plane::MIN_ALIGNMENT).abs() < 1e-5
-    );
-    // scene_surface.rs turns model normals into gradients in the scene camera.
-    let lights_constant = |name: &str| {
-        let source = include_str!("../../shaders/mask_effects/scene_lights.wgsl");
-        let start = format!("const {name}: f32 = ");
-        let (_, rest) = source
-            .split_once(&start)
-            .unwrap_or_else(|| panic!("scene_lights.wgsl has no {name}"));
-        rest.split_once(';').unwrap().0.parse::<f32>().unwrap()
-    };
-    assert_eq!(
-        lights_constant("SCENE_FOCAL_TAN"),
-        scene_surface::SCENE_FOCAL_TAN
-    );
-    let default_relief =
-        0.25 + (6.0 - 0.25) * lights_constant("SCENE_DEFAULT_RELIEF_CONTROL").powf(1.5);
-    assert!((default_relief - scene_surface::DEFAULT_RELIEF).abs() < 1e-3);
     for effect in MaskEffect::ALL {
         if effect == MaskEffect::Adjustment {
             assert_eq!(effect.shader_id(), 0, "adjustment masks use shader ID 0");
@@ -614,17 +577,6 @@ fn effect_lanes_and_options_reach_the_shaders() {
         assert!((1..OPTION_COUNT).contains(&index), "{wgsl_name}");
         expected.insert(wgsl_name);
     }
-    assert_eq!(
-        constant("SCENE_SHADOW_MAP_CHANNELS"),
-        SCENE_SHADOW_MAP_CHANNELS
-    );
-    // The map's height (scene_shadow_map_height) holds the air slices as the
-    // shader tiles them.
-    assert_eq!(
-        constant("SCENE_SHADOW_SLICES"),
-        SCENE_SHADOW_SLICES as usize
-    );
-    assert_eq!(constant("SCENE_SHADOW_TILES"), SCENE_SHADOW_TILES as usize);
     let declared: BTreeSet<_> = creative
         .constants
         .iter()
@@ -689,29 +641,13 @@ fn haze_buffers_and_supports_match_their_wgsl_declarations() {
     );
 }
 
-/// The scene map's grid buffer Rust allocates holds the WGSL cell.
+/// The export halo reserves how far Wet Surfaces reads the photo around a pixel.
 #[test]
-fn scene_map_cell_matches_its_wgsl_declaration() {
+fn wet_surfaces_halo_matches_its_wgsl_reach() {
     let modules = production_modules();
-    let (_, analysis) = modules
-        .iter()
-        .find(|(name, _)| name.starts_with(shaders::SCENE_ANALYSIS_ENTRY.label))
-        .expect("scene analysis module");
-    let mut layouter = Layouter::default();
-    layouter.update(analysis.to_ctx()).unwrap();
-    let (handle, _) = analysis
-        .types
-        .iter()
-        .find(|(_, ty)| ty.name.as_deref().map(undecorated) == Some("SceneMapCell"))
-        .expect("SceneMapCell is declared");
-    assert_eq!(u64::from(layouter[handle].size), SCENE_MAP_CELL_BYTES);
     assert_eq!(
         shared_u32_constant(&modules, "WET_DETAIL_REACH"),
         WET_SURFACES_SUPPORT
-    );
-    assert_eq!(
-        shared_u32_constant(&modules, "SCENE_EDGE_REACH"),
-        SCENE_EDGE_SUPPORT
     );
 }
 
@@ -759,4 +695,106 @@ fn screaming_snake_case(camel: &str) -> String {
         output.push(character.to_ascii_uppercase());
     }
     output
+}
+
+/// The scene bake's and the light bake's uniforms, the lens blur buffer and
+/// the pyramid match the WGSL the bakes compile (scene/, shaders/scene/).
+#[test]
+fn scene_bake_uniforms_and_buffers_match_their_wgsl_declarations() {
+    use super::scene::camera::SceneCameraUniform;
+    use super::scene::lights::{
+        SceneAirLightUniform, SceneShadowLightUniform, SceneShadowLightsUniform,
+    };
+    use super::scene::{
+        SCENE_FOCUS_BLUR_BINS, SCENE_FOCUS_BYTES, SCENE_FOCUS_DEPTH_BINS, SCENE_LAYER_LEVELS,
+    };
+    use super::SceneBakeUniforms;
+    let modules = production_modules();
+    let contracts: [(&str, RustLayout); 5] = [
+        (
+            "SceneBakeUniforms",
+            rust_layout!(SceneBakeUniforms {
+                size,
+                input_size,
+                camera,
+                ground_plane,
+                ground_horizon,
+                focus_fit
+            }),
+        ),
+        (
+            "SceneCamera",
+            rust_layout!(SceneCameraUniform { lens, anchors }),
+        ),
+        (
+            "SceneShadowLight",
+            rust_layout!(SceneShadowLightUniform {
+                position,
+                shape,
+                air
+            }),
+        ),
+        (
+            "SceneShadowLights",
+            rust_layout!(SceneShadowLightsUniform { lights, taps }),
+        ),
+        (
+            "SceneAirLight",
+            rust_layout!(SceneAirLightUniform {
+                region,
+                march,
+                image
+            }),
+        ),
+    ];
+    // The old depth path declares a `SceneCamera` of its own until P7 of
+    // docs/rework/DEPTH_EFFECTS_PLAN.md; only the bakes' modules are checked.
+    let bake_modules: Vec<_> = modules
+        .iter()
+        .filter(|(context, _)| {
+            [
+                "scene bake",
+                "calibraw scene bake",
+                "scene shadow",
+                "scene visibility",
+                "scene air light",
+            ]
+            .iter()
+            .any(|prefix| context.starts_with(prefix))
+        })
+        .collect();
+    for (wgsl_name, rust) in &contracts {
+        let found = bake_modules
+            .iter()
+            .filter(|(context, module)| check_struct_layout(module, wgsl_name, rust, context))
+            .count();
+        assert!(found > 0, "{wgsl_name} is declared in the bake's modules");
+    }
+    let constant = |name: &str| shared_u32_constant(&modules, name);
+    assert_eq!(constant("SCENE_FOCUS_DEPTH_BINS"), SCENE_FOCUS_DEPTH_BINS);
+    assert_eq!(constant("SCENE_FOCUS_BLUR_BINS"), SCENE_FOCUS_BLUR_BINS);
+    assert_eq!(constant("SCENE_LAYER_LEVELS"), SCENE_LAYER_LEVELS);
+    assert_eq!(
+        constant("SCENE_SHADOW_LIGHTS") as usize,
+        SCENE_SHADOW_LIGHTS
+    );
+    assert_eq!(
+        constant("SCENE_VERTICES_PER_TRIANGLE"),
+        super::scene::lights::VERTICES_PER_TRIANGLE
+    );
+    for (context, module) in &bake_modules {
+        let mut layouter = Layouter::default();
+        layouter.update(module.to_ctx()).unwrap();
+        if let Some((handle, _)) = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref().map(undecorated) == Some("SceneFocus"))
+        {
+            assert_eq!(
+                u64::from(layouter[handle].size),
+                SCENE_FOCUS_BYTES,
+                "{context}"
+            );
+        }
+    }
 }

@@ -5,11 +5,6 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use wgpu::util::DeviceExt;
 
-pub(super) const SCENE_DEPTH_EDGE: u32 = 1024;
-/// Scene depth: distance, smooth distance and its two gradients, with a mip
-/// chain (`scene_surface`).
-pub(super) const SCENE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-
 /// Image lights (tone_analysis.wgsl): grid cells along the full image's
 /// longer edge. Textures and the cell buffer are sized for a square grid.
 pub(super) const IMAGE_LIGHT_GRID_LONG: u32 = 160;
@@ -63,40 +58,6 @@ pub(super) const HAZE_AIRLIGHT_BYTES: u64 = 2 * 16;
 /// nearly cancels its offset.
 pub(super) const HAZE_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
-/// The scene map (scene_analysis.wgsl): grid cells along the full image's
-/// longer edge of the map and of its blurred environment. Textures and the
-/// cell buffer are sized for a square grid.
-pub(super) const SCENE_MAP_GRID_LONG: u32 = 256;
-pub(super) const SCENE_MAP_BLUR_GRID_LONG: u32 = 48;
-/// Depth bins of the scene map's lens blur table (scene_analysis.wgsl).
-pub(super) const SCENE_FOCUS_BINS: u32 = 32;
-/// Bytes of one scene map cell (`SceneMapCell` in scene_analysis.wgsl): four
-/// RGBA f32 vectors, the last holding three values.
-pub(super) const SCENE_MAP_CELL_BYTES: u64 = 4 * 16;
-pub(super) const SCENE_ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// The guided filter's coefficients. They stay f32, as Dehaze's do: a steep
-/// slope times the guide nearly cancels its offset.
-pub(super) const SCENE_COEFFICIENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
-/// Square blocks of the grid stacked downward in the scene map's coefficient
-/// textures: depth's guided filter, then the sky's luminance
-/// (`SCENE_MAP_SKY_ROW` in common.wgsl, one grid edge down).
-pub(super) const SCENE_MAP_COEFFICIENT_BLOCKS: u32 = 2;
-
-/// Shadows of up to four scene lights on the surface and in the air
-/// (scene_shadows.wgsl).
-pub(super) const SCENE_SHADOW_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// Air slices of the scene shadow map, and the slices in each of its rows of
-/// tiles (`SCENE_SHADOW_SLICES`, `SCENE_SHADOW_TILES` in scene_shadows.wgsl).
-pub(super) const SCENE_SHADOW_SLICES: u32 = 16;
-pub(super) const SCENE_SHADOW_TILES: u32 = 8;
-
-/// Rows of the scene shadow map over a scene-depth grid of `edge` × `edge`
-/// texels: the surface, then the air slices in tiles of `edge /
-/// SCENE_SHADOW_TILES` texels.
-pub(super) const fn scene_shadow_map_height(edge: u32) -> u32 {
-    edge + edge / SCENE_SHADOW_TILES * (SCENE_SHADOW_SLICES / SCENE_SHADOW_TILES)
-}
-
 /// Bytes of an image-light grid of `edge` × `edge` cells.
 pub(super) const fn image_light_cells_bytes(edge: u32) -> u64 {
     edge as u64 * edge as u64 * IMAGE_LIGHT_CELL_BYTES
@@ -105,11 +66,6 @@ pub(super) const fn image_light_cells_bytes(edge: u32) -> u64 {
 /// Bytes of a contour grid of `edge` × `edge` cells.
 pub(super) const fn contour_cells_bytes(edge: u32) -> u64 {
     edge as u64 * edge as u64 * CONTOUR_CELL_BYTES
-}
-
-/// Bytes of a scene map of `edge` × `edge` cells.
-pub(super) const fn scene_map_cells_bytes(edge: u32) -> u64 {
-    edge as u64 * edge as u64 * SCENE_MAP_CELL_BYTES
 }
 
 /// Bytes of a haze grid of `edge` × `edge` cells.
@@ -446,18 +402,6 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         tone_bytes,
     );
 
-    push_entry(
-        &mut entries,
-        "scene depth",
-        GpuResourceResidency::OnDemand,
-        texture_allocation_bytes(
-            SCENE_DEPTH_EDGE,
-            SCENE_DEPTH_EDGE,
-            1,
-            SCENE_DEPTH_MIP_LEVELS,
-            SCENE_DEPTH_FORMAT,
-        )?,
-    );
     let mask_bytes = texture_allocation_bytes(
         input.mask_atlas_edge,
         input.mask_atlas_edge,
@@ -519,18 +463,6 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
     );
     push_entry(
         &mut entries,
-        "scene shadow map",
-        GpuResourceResidency::OnDemand,
-        texture_allocation_bytes(
-            SCENE_DEPTH_EDGE,
-            scene_shadow_map_height(SCENE_DEPTH_EDGE),
-            1,
-            1,
-            SCENE_SHADOW_MAP_FORMAT,
-        )?,
-    );
-    push_entry(
-        &mut entries,
         "image-light grid buffer",
         GpuResourceResidency::OnDemand,
         aligned_buffer_bytes(image_light_cells_bytes(IMAGE_LIGHT_GRID_LONG))?,
@@ -589,52 +521,6 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         GpuResourceResidency::OnDemand,
         2 * texture_allocation_bytes(HAZE_GRID_LONG, HAZE_GRID_LONG, 1, 1, HAZE_MAP_FORMAT)?,
     );
-    push_entry(
-        &mut entries,
-        "scene map grid buffer",
-        GpuResourceResidency::OnDemand,
-        aligned_buffer_bytes(scene_map_cells_bytes(SCENE_MAP_GRID_LONG))?,
-    );
-    push_entry(
-        &mut entries,
-        "scene map textures",
-        GpuResourceResidency::OnDemand,
-        texture_allocation_bytes(
-            SCENE_MAP_GRID_LONG,
-            SCENE_MAP_GRID_LONG,
-            1,
-            1,
-            SCENE_ENVIRONMENT_FORMAT,
-        )? + texture_allocation_bytes(
-            SCENE_MAP_BLUR_GRID_LONG,
-            SCENE_MAP_BLUR_GRID_LONG,
-            1,
-            1,
-            SCENE_ENVIRONMENT_FORMAT,
-        )? + texture_allocation_bytes(SCENE_FOCUS_BINS, 1, 1, 1, SCENE_ENVIRONMENT_FORMAT)?
-            + texture_allocation_bytes(
-                SCENE_MAP_GRID_LONG,
-                SCENE_MAP_GRID_LONG,
-                1,
-                1,
-                SCENE_ENVIRONMENT_FORMAT,
-            )?
-            + texture_allocation_bytes(
-                SCENE_MAP_GRID_LONG,
-                SCENE_MAP_GRID_LONG,
-                1,
-                1,
-                SCENE_ENVIRONMENT_FORMAT,
-            )?
-            + 2 * texture_allocation_bytes(
-                SCENE_MAP_GRID_LONG,
-                SCENE_MAP_GRID_LONG * SCENE_MAP_COEFFICIENT_BLOCKS,
-                1,
-                1,
-                SCENE_COEFFICIENT_FORMAT,
-            )?,
-    );
-
     let rgba8_readback = aligned_copy_buffer_bytes(input.width, input.height, 4)?;
     // Every RGBA32F readback (display-linear regions, the scene texture, the
     // camera scene) is refused unless the graph is `ProcessingQuality::High`,

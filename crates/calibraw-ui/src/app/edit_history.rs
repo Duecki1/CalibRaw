@@ -310,7 +310,6 @@ impl EditHistory {
                 && self.current.masks.subject_refinement.stroke_starts
                     == masks.subject_refinement.stroke_starts
                 && self.current.masks.scene_depth == masks.scene_depth
-                && self.current.masks.scene_normals == masks.scene_normals
         } else {
             true
         };

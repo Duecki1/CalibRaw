@@ -84,6 +84,9 @@ pub enum MaskGeometry {
         sampled: bool,
     },
     DepthRange {
+        /// The stack's [`SceneDepth::selection_map`](crate::pipeline::SceneDepth::selection_map)
+        /// while the stack has depth, cropped with the stack; never stored.
+        #[serde(skip)]
         depth: Option<MaskImage>,
         #[serde(flatten)]
         range: DepthRangeSettings,

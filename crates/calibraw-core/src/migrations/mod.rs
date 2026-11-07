@@ -12,8 +12,6 @@
 //! there with the same marker and is listed here:
 //! - `LocalMask::effect` and `effect_settings`: masks with one legacy effect,
 //!   converted when the mask is opened (`pipeline/masks.rs`).
-//! - Inline scene-depth pixels of depth-range components, moved into the
-//!   asset table on the next save (`sidecar/mask_assets.rs`).
 //! - Presets that carry global effects in the masks category
 //!   (`presets.rs`).
 //! - White balance stored as offsets (`WhiteBalance::LegacyOffset` and
@@ -52,18 +50,55 @@ mod effect_sliders;
 pub(crate) mod older_readers;
 pub mod onnx_runtime_selection;
 pub(crate) mod point_curve_slots;
+mod scene_depth_controls;
+mod scene_depth_layout;
 pub(crate) mod white_balance_offsets;
 
 pub(crate) use effect_sliders::LegacyEffectSliders;
+pub(crate) use scene_depth_layout::LegacySceneDepth;
 
 use crate::sidecar::EditState;
+use scene_depth_controls::LegacySceneControls;
+use serde::{Deserialize, Deserializer};
 
-/// Brings edits decoded from a sidecar or preset up to date. `sliders` must be
+/// What older layouts kept in a serialized `edits` object besides what the
+/// edit decodes: the Effects-card sliders and Relight's old scene controls.
+/// Read in the same pass as a document's header.
+#[derive(Debug, Default)]
+pub(crate) struct LegacyEdits {
+    sliders: LegacyEffectSliders,
+    scene_controls: LegacySceneControls,
+}
+
+impl<'de> Deserialize<'de> for LegacyEdits {
+    /// Each reader looks at the same object.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let edits = serde_json::Value::deserialize(deserializer)?;
+        let read = |error: serde_json::Error| serde::de::Error::custom(error);
+        Ok(Self {
+            sliders: LegacyEffectSliders::deserialize(&edits).map_err(read)?,
+            scene_controls: LegacySceneControls::deserialize(&edits).map_err(read)?,
+        })
+    }
+}
+
+impl LegacyEdits {
+    /// Drops the Effects-card sliders and keeps the rest.
+    pub(crate) fn without_global(self) -> Self {
+        Self {
+            sliders: self.sliders.without_global(),
+            ..self
+        }
+    }
+}
+
+/// Brings edits decoded from a sidecar or preset up to date. `legacy` must be
 /// read from the same document, before any mask is removed or reordered.
 /// Returns whether the edits changed, so the file can be saved again in the
 /// current layout.
-pub(crate) fn migrate_edits(edits: &mut EditState, sliders: LegacyEffectSliders) -> bool {
-    let effects = sliders.migrate(edits);
+pub(crate) fn migrate_edits(edits: &mut EditState, legacy: LegacyEdits) -> bool {
+    let effects = legacy.sliders.migrate(edits);
+    let scene_controls = legacy.scene_controls.migrate(edits);
     let names = component_names::migrate(edits);
-    effects || names
+    effects || scene_controls || names
 }

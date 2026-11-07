@@ -25,6 +25,7 @@
 use super::preview_dispatch_gate::Batch;
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::SceneLightQuality;
 
 /// The smallest source edge (the fitted proxy, or the zoomed crop's raw) that
 /// gets a reduced graph; half of it must still reach the smallest proxy
@@ -431,9 +432,55 @@ impl CalibRawApp {
         self.preview.interactive.following
     }
 
+    /// The light bake's tier for a sharp preview rendered now
+    /// (docs/rework/DEPTH_EFFECTS_PLAN.md §4.4): Draft while a control or an
+    /// effect's handle is dragged, so the drag stays quick, else Final. The
+    /// reduced preview always renders Draft.
+    pub(in crate::app) fn sharp_scene_light_quality(&self) -> SceneLightQuality {
+        if super::interaction::control_dragged(&self.egui_ctx) {
+            SceneLightQuality::Draft
+        } else {
+            SceneLightQuality::Final
+        }
+    }
+
+    /// Notes a sharp render with `params`, so a Draft light bake is refined
+    /// once the drag ends.
+    pub(in crate::app) fn note_sharp_scene_lights(
+        &mut self,
+        params: &GpuParams,
+        quality: SceneLightQuality,
+    ) {
+        if quality == SceneLightQuality::Draft && params.uses_scene_light_quality() {
+            self.preview.draft_scene_lights = true;
+        }
+    }
+
+    /// Once no control is dragged, renders the output stage of the sharp
+    /// previews again if they last rendered a Draft light bake: the same
+    /// "sharp after release" refine the reduced preview gets. Both tiers
+    /// estimate the same light, so only its detail changes.
+    fn refine_draft_scene_lights(&mut self) {
+        if !self.preview.draft_scene_lights || super::interaction::control_dragged(&self.egui_ctx) {
+            return;
+        }
+        self.preview.draft_scene_lights = false;
+        self.queue_preview_processing(ProcessingStage::Output);
+        if self.preview.detail.is_some() {
+            self.preview.detail_pending_stage = Some(
+                self.preview
+                    .detail_pending_stage
+                    .map_or(ProcessingStage::Output, |stage| {
+                        stage.min(ProcessingStage::Output)
+                    }),
+            );
+        }
+    }
+
     /// Keeps the reduced graph (builds it when the editor is quiet, drops it
     /// when it cannot be used) and advances the drag phase.
     pub(in crate::app) fn advance_interactive_preview(&mut self, frame: &eframe::Frame) {
+        self.refine_draft_scene_lights();
         let now = Instant::now();
         let edit = self.preview.interactive.edit.take();
         let usable = self.interactive_usable();
@@ -737,7 +784,8 @@ impl CalibRawApp {
         let masks = self.preview_mask_stack();
         let params = GpuParams::new(&self.develop.target_exposure, &masks, reduced)
             .with_vignette_geometry(self.develop.geometry)
-            .with_look_lut(self.develop.target_look.as_ref());
+            .with_look_lut(self.develop.target_look.as_ref())
+            .with_scene_light_quality(SceneLightQuality::Draft);
         let options = fitted_pipeline_options(masks.masks.len())
             .mask_atlas_edge(interactive_mask_edge())
             .programs(&template);
@@ -842,7 +890,8 @@ impl CalibRawApp {
         }
         let params = GpuParams::new(&self.develop.target_exposure, masks, raw)
             .with_vignette_geometry(self.develop.geometry)
-            .with_look_lut(self.develop.target_look.as_ref());
+            .with_look_lut(self.develop.target_look.as_ref())
+            .with_scene_light_quality(SceneLightQuality::Draft);
         pipeline.gpu().dispatch_stage_with_remove(
             &render_state.queue,
             &render_state.device,

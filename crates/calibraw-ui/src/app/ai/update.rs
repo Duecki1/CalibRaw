@@ -307,7 +307,7 @@ impl CalibRawApp {
 
     fn generated_result_missing(&self, model: AiMaskModel) -> bool {
         if model == AiMaskModel::Depth {
-            return self.masks.stack.scene_depth_image().is_none();
+            return self.masks.stack.scene_depth.is_none();
         }
         self.masks
             .stack

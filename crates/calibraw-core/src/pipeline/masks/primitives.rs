@@ -230,7 +230,7 @@ impl MaskImage {
 }
 
 /// Surface normals predicted together with the scene depth
-/// (`MaskStack::scene_normals`), in full-image coordinates at the model's
+/// (`SceneDepth::normals`), in full-image coordinates at the model's
 /// resolution, which may differ from the depth's.
 ///
 /// Camera frame: x to the right, y down the image, z away from the camera.

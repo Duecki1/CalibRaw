@@ -1,384 +1,153 @@
-// Relight: virtual point lights shading the scene that scene depth describes.
+// Relight: virtual point lights that shade the scene's surfaces
+// (docs/rework/DEPTH_EFFECTS_PLAN.md §5).
 //
-// Geometry. `scene_depth_tex` (scene_depth.wgsl) covers the full source image:
-// channel y is dequantized smooth depth and z/w its edge-aware gradient per
-// shorter-edge length; mip levels average them (scene_surface.rs). The shared scene
-// depth says which of that surface a pixel lies on (`scene_surface_taps_at`).
-// Positions are in the scene frame (scene_lights.wgsl), where the light is also a
-// scene light other effects receive. Everything depends only on full-image
-// coordinates, the shared depth texture and global tone statistics, so export
-// tiles match the preview.
+// Surfaces. A pixel is up to two surfaces of the scene bake
+// (scene/geometry.wgsl), each with its own depth, normal and colour. Each is
+// shaded on its own and the two are blended by how much of the pixel the near
+// one covers, so the light ends on the photo's own outline and nothing is lit
+// at a depth between a subject and what lies behind it. The sky is no surface
+// and receives no light.
+//
+// Frame. The card's Relief is the relief scale E of the shading frame
+// (scene/camera.wgsl): the nearest surface at z = 1, x right and y down. A
+// light lies at its Light X and Y over the full image and at its Light depth,
+// in control depth. Positions, normals and the light share that frame.
+//
+// Shadows. A light that casts shadows holds a channel of the light bake
+// (pipeline/gpu/scene/lights.rs); this reads the visibility of each surface
+// from it, with the light's Size setting the penumbra there.
 //
 // Shading is scene-linear Rec.2020 before tone mapping. The added light is
-// proportional to an estimate of surface reflectance (the pixel with part of
-// its existing shading divided out), so lit shadows recover their texture and
-// colour instead of receiving a flat wash.
-
-// Packed parameter lanes: `RELIGHT_<NAME>_LANE` (generated from the effect
-// registry, effect_wgsl.rs). Shadows come from the scene shadow map
-// (scene_shadows.wgsl) where it holds the light.
-
-const RELIGHT_NORMAL_TAPS: u32 = 12u;
-// Shadow-march steps: one per few depth texels of the ray's image path, within
-// these bounds. Too few steps skip over a silhouette between them and leave
-// banded copies of its shadow.
-const RELIGHT_MIN_SHADOW_STEPS: f32 = 24.0;
-const RELIGHT_MAX_SHADOW_STEPS: f32 = 96.0;
-const RELIGHT_TEXELS_PER_SHADOW_STEP: f32 = 4.0;
-// Narrowest shadow-sample footprint in level-0 texels: about one pixel of the
-// depth model, whose silhouettes were blocky, when it predicted roughly 700
-// pixels across the image. Not retuned for today's 1540.
-const RELIGHT_MIN_SHADOW_FOOTPRINT: f32 = 4.0;
-// Normalized depths where the light fades out and beyond which nothing is lit
-// (`apply_relight`).
-const RELIGHT_REACH_FADE_START: f32 = 0.92;
-const RELIGHT_REACH_LIMIT: f32 = 0.96;
-// Radius of the disc `relight_reach` averages over, in deviations of the lens
-// blur, and its samples. A blurred step runs over two deviations on either side
-// of it.
-const RELIGHT_REACH_BLUR_RADIUS: f32 = 4.0;
-const RELIGHT_REACH_TAPS: u32 = 8u;
-fn relight_surface(uv: vec2<f32>, level: f32) -> vec4<f32> {
-    return textureSampleLevel(scene_depth_tex, SceneAdjustments::local_mask_sampler, uv, level);
-}
-
-// Texels of scene-depth mip `level`. Derived from level 0 because
-// lavapipe in Mesa 25 reports wrong sizes for higher levels.
-fn relight_depth_level_size(level: i32) -> vec2<i32> {
-    let base = vec2<i32>(textureDimensions(scene_depth_tex));
-    return max(base >> vec2<u32>(u32(level)), vec2<i32>(1));
-}
-
-// Mean extent of one level-0 texel in shorter-edge units.
-fn relight_texel_extent(camera: SceneCamera) -> f32 {
-    let texels = vec2<f32>(textureDimensions(scene_depth_tex));
-    let extent = camera.image_size / texels;
-    return sqrt(extent.x * extent.y);
-}
-
-// Averages the depth gradient over a disc, as a light of that size integrates
-// the surface. Taps that leave the pixel's own surface (their depth departs
-// from the tangent plane) are rejected, so a background slope does not tilt
-// a foreground edge and the light leaves no halo around silhouettes.
-fn relight_smoothed_gradient(
-    camera: SceneCamera,
-    uv: vec2<f32>,
-    depth: f32,
-    gradient: vec2<f32>,
-    radius: f32,
-) -> vec2<f32> {
-    let spacing = radius * 0.5 / relight_texel_extent(camera);
-    let levels = f32(textureNumLevels(scene_depth_tex));
-    let level = clamp(log2(max(spacing, 1.0)), 0.0, levels - 1.0);
-    let tolerance = 0.01 + radius * (0.25 + 0.5 * length(gradient));
-    var sum = gradient;
-    var weights = 1.0;
-    for (var tap = 0u; tap < RELIGHT_NORMAL_TAPS; tap = tap + 1u) {
-        let distance = radius * sqrt((f32(tap) + 0.5) / f32(RELIGHT_NORMAL_TAPS));
-        let angle = f32(tap) * SCENE_GOLDEN_ANGLE;
-        let offset = distance * vec2<f32>(cos(angle), sin(angle));
-        let tap_surface = relight_surface(uv + offset / camera.image_size, level);
-        let residual = (tap_surface.y - depth - dot(gradient, offset)) / tolerance;
-        let weight = exp(-residual * residual);
-        sum += tap_surface.zw * weight;
-        weights += weight;
-    }
-    return sum / weights;
-}
-
-// How much of a light a surface at `depth` can receive at all: none beyond the
-// far end of reach (`relight_contribution`). Where the lens blurred that depth,
-// the reach is averaged over a disc as wide as the blur, as the photo's own
-// light is, and the pixel keeps the lesser of that and its own: the light fades
-// on toward a blurred outline, while a sharp nearer object beside far scenery
-// lends it no reach. Its own reach still ends the light at the far cutoff, where
-// the disc's mean is about a half.
-fn relight_reach(uv: vec2<f32>, depth: f32) -> f32 {
-    let own = 1.0 - smoothstep(RELIGHT_REACH_FADE_START, RELIGHT_REACH_LIMIT, depth);
-    let image = Common::scene_image_size();
-    let texel = max(image.x, image.y) / f32(textureDimensions(scene_depth_tex).x);
-    let radius = RELIGHT_REACH_BLUR_RADIUS * scene_focus_blur(depth);
-    if own <= 0.0 || radius <= texel { return own; }
-    // Each sample reads depth averaged over about its share of the disc.
-    let spacing = radius / sqrt(f32(RELIGHT_REACH_TAPS));
-    let level = clamp(log2(spacing / texel), 0.0, f32(textureNumLevels(scene_depth_tex)) - 1.0);
-    var sum = own;
-    for (var tap = 0u; tap < RELIGHT_REACH_TAPS; tap = tap + 1u) {
-        let distance = radius * sqrt((f32(tap) + 0.5) / f32(RELIGHT_REACH_TAPS));
-        let angle = f32(tap) * SCENE_GOLDEN_ANGLE;
-        let offset = distance * vec2<f32>(cos(angle), sin(angle));
-        let sample_depth = relight_surface(uv + offset / image, level).y;
-        sum += 1.0 - smoothstep(RELIGHT_REACH_FADE_START, RELIGHT_REACH_LIMIT, sample_depth);
-    }
-    return min(own, sum / f32(RELIGHT_REACH_TAPS + 1u));
-}
-
-// Surface normal from the depth gradient (depth per shorter-edge length),
-// facing the camera.
-fn relight_normal(camera: SceneCamera, point: vec2<f32>, z: f32, gradient: vec2<f32>) -> vec3<f32> {
-    let focal = 2.0 * SCENE_FOCAL_TAN;
-    let lateral = scene_lateral(camera, point);
-    let slope = camera.relief * gradient;
-    let along_x = vec3<f32>(focal * z + lateral.x * slope.x, lateral.y * slope.x, slope.x);
-    let along_y = vec3<f32>(lateral.x * slope.y, focal * z + lateral.y * slope.y, slope.y);
-    let normal = normalize(cross(along_x, along_y));
-    return select(normal, -normal, dot(normal, vec3<f32>(lateral * z, z)) > 0.0);
-}
-
-// How much the depth-map texels around `uv` block the ray at `position`.
-// Each of the four texels is tested on its own and the results are blended
-// bilinearly (percentage-closer filtering): thresholding interpolated depth
-// would trace the texel grid as a hard staircase, while blending the tests
-// gives an edge that ramps smoothly across one texel of `level`.
-fn relight_blocked(
-    camera: SceneCamera,
-    position: vec3<f32>,
-    uv: vec2<f32>,
-    level: i32,
-    width: f32,
-) -> f32 {
-    let size = relight_depth_level_size(level);
-    let p = uv * vec2<f32>(size) - vec2<f32>(0.5);
-    let base = vec2<i32>(floor(p));
-    let f = p - vec2<f32>(base);
-    var blocked = 0.0;
-    for (var y = 0; y < 2; y = y + 1) {
-        for (var x = 0; x < 2; x = x + 1) {
-            let cell = clamp(base + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
-            let occluder_z = scene_depth_z(camera, textureLoad(scene_depth_tex, cell, level).y);
-            // Bias and minimum penumbra keep noisy depth (foliage) from speckling.
-            let penetration = position.z - occluder_z - 0.006 * occluder_z;
-            let thickness = 0.15 * occluder_z;
-            let test = smoothstep(-0.5 * width, width, penetration)
-                * (1.0 - smoothstep(thickness, thickness * 1.5, penetration));
-            let weight = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
-            blocked += test * weight;
-        }
-    }
-    return blocked;
-}
-
-// Whether a shadow ray at depth `z` passes in front of every surface that
-// one march step's occlusion tests read (`relight_blocked` around `uv` and
-// `uv ± side` on `level`) by at least the test's ramp, so that every test
-// reports exactly zero and the step can be skipped. Above level 0, channel x
-// of the surface holds the nearest depth of each texel's footprint
-// (scene_surface.rs), never farther than the depth any test reads there; the
-// check reads 2×2 texels of the finest such level covering the tested cells.
-fn relight_step_unoccluded(
-    camera: SceneCamera,
-    z: f32,
-    width: f32,
-    uv: vec2<f32>,
-    side: vec2<f32>,
-    level: i32,
-) -> bool {
-    let size = relight_depth_level_size(level);
-    let last = size - vec2<i32>(1);
-    let extent = vec2<f32>(size);
-    // The cells `relight_blocked` reads for all three taps.
-    let lo = clamp(
-        vec2<i32>(floor(min(uv - side, uv + side) * extent - vec2<f32>(0.5))),
-        vec2<i32>(0),
-        last,
-    );
-    let hi = clamp(
-        vec2<i32>(floor(max(uv - side, uv + side) * extent - vec2<f32>(0.5))) + vec2<i32>(1),
-        vec2<i32>(0),
-        last,
-    );
-    let top = i32(textureNumLevels(scene_depth_tex)) - 1;
-    // Level 0 holds stored depth in channel x, not the nearest depth.
-    var shift = select(0u, 1u, level == 0);
-    while level + i32(shift) < top
-        && any((hi >> vec2<u32>(shift)) - (lo >> vec2<u32>(shift)) > vec2<i32>(1)) {
-        shift = shift + 1u;
-    }
-    let a = lo >> vec2<u32>(shift);
-    let b = hi >> vec2<u32>(shift);
-    if any(b - a > vec2<i32>(1)) { return false; }
-    let coarse = level + i32(shift);
-    let nearest = min(
-        min(
-            textureLoad(scene_depth_tex, a, coarse).x,
-            textureLoad(scene_depth_tex, vec2<i32>(b.x, a.y), coarse).x,
-        ),
-        min(
-            textureLoad(scene_depth_tex, vec2<i32>(a.x, b.y), coarse).x,
-            textureLoad(scene_depth_tex, b, coarse).x,
-        ),
-    );
-    let occluder_z = scene_depth_z(camera, nearest);
-    // The largest penetration any test can see; at or below the ramp's start
-    // its smoothstep is zero.
-    return z - occluder_z - 0.006 * occluder_z <= -0.5 * width;
-}
-
-// Screen-space shadow: marches from the surface toward the light through the
-// depth map. Depth maps hold only front surfaces, so an occluder is assumed to
-// be solid for a thickness proportional to its distance; a ray passing farther
-// behind it is lit.
+// proportional to an estimate of the surface's reflectance (its colour with
+// part of its existing shading divided out), so lit shadows recover their
+// texture and colour instead of receiving a flat wash. Everything depends
+// only on full-image coordinates, the bakes and global tone statistics, so
+// export tiles match the preview, and every pixel reads only itself.
 //
-// Each step is a cone section toward the light: its footprint widens with the
-// distance from the receiver and with light size, as a real penumbra does, and
-// is never narrower than twice the step spacing or a depth-model pixel, so
-// consecutive steps cover the path without gaps. The step reads the mip level
-// whose texels are half that footprint, filters the occlusion test over it and
-// averages three taps across the ray, so silhouettes in the low-resolution
-// depth map give soft shadow edges instead of texel staircases, and thin
-// structures fade instead of striping. `jitter` in [0, 1) offsets the steps
-// per pixel, so what aliasing remains becomes fine dither rather than
-// contour-like copies of a silhouette's shadow. Steps where the ray provably
-// passes in front of everything nearby are skipped
-// (`relight_step_unoccluded`); they would leave the visibility unchanged.
-fn relight_visibility(
-    camera: SceneCamera,
-    surface: vec3<f32>,
-    light: vec3<f32>,
+// Without scene depth (still generating, or failed) the scene is a plane
+// facing the camera at the nearest distance: the lights keep their falloff
+// but cast no shadows.
+
+// The field of view of the plane without scene depth: about a 30 mm lens on
+// full frame.
+const RELIGHT_FLAT_FOCAL_TAN: f32 = 0.4;
+// Radius in shorter edges over which Size 100 averages a surface's normal.
+const RELIGHT_SOFT_NORMAL_RADIUS: f32 = 0.03;
+
+// One of the card's lights in the shading frame.
+struct RelightLight {
+    emits: bool,
+    position: vec3<f32>,
+    // Distance at which the light has halved.
+    reach: f32,
+    // Colour times strength, relative to the ambient level.
+    intensity: vec3<f32>,
     size: f32,
-    jitter: f32,
-) -> f32 {
-    let path = light - surface;
-    let path_length = length(path);
-    let start = scene_image_point(camera, surface);
-    let end = scene_image_point(camera, light);
-    let texel = relight_texel_extent(camera);
-    let path_texels = length(end - start) / texel;
-    if path_texels < 1.0 { return 1.0; }
-    let direction = (end - start) / (path_texels * texel);
-    let across = vec2<f32>(-direction.y, direction.x);
-    // Leave the receiver's own texels; the tangent plane already shades them.
-    let first = min(1.5 / path_texels, 0.5);
-    let penumbra_rate = mix(0.01, 0.25, size);
-    let top_level = f32(textureNumLevels(scene_depth_tex)) - 1.0;
-    let steps = clamp(
-        ceil(path_texels / RELIGHT_TEXELS_PER_SHADOW_STEP),
-        RELIGHT_MIN_SHADOW_STEPS,
-        RELIGHT_MAX_SHADOW_STEPS,
-    );
-    var visibility = 1.0;
-    for (var index = 0.0; index < steps; index = index + 1.0) {
-        let fraction = (index + jitter) / steps;
-        // Denser near the receiver, where contact shadows are narrow.
-        let t = mix(first, 1.0, fraction * fraction);
-        let position = surface + path * t;
-        if position.z <= 0.02 { break; }
-        let point = scene_image_point(camera, position);
-        let uv = point / camera.image_size;
-        // Nothing is known beyond the frame: it casts no shadow.
-        if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) { break; }
-        let travel = path_length * t;
-        // Penumbra radius in the image at this step's distance.
-        let cone = travel * penumbra_rate / (2.0 * SCENE_FOCAL_TAN * position.z);
-        let spacing = path_texels * (1.0 - first) * 2.0 * fraction / steps;
-        let footprint = max(max(cone / texel, 2.0 * spacing), RELIGHT_MIN_SHADOW_FOOTPRINT);
-        // The filtered test ramps over one texel of the level, half the footprint.
-        let level = i32(clamp(round(log2(footprint) - 1.0), 0.0, top_level));
-        let width = 0.01 * position.z + travel * penumbra_rate;
-        let side = across * (0.5 * footprint * texel) / camera.image_size;
-        if relight_step_unoccluded(camera, position.z, width, uv, side, level) { continue; }
-        let blocked = 0.5 * relight_blocked(camera, position, uv, level, width)
-            + 0.25 * relight_blocked(camera, position, uv - side, level, width)
-            + 0.25 * relight_blocked(camera, position, uv + side, level, width);
-        visibility = min(visibility, 1.0 - blocked);
-        if visibility <= 0.0 { break; }
-    }
-    return visibility;
+    // Shadow strength; 0 when the light casts none.
+    shadows: f32,
+    // Its light bake channel plus one, or 0.
+    channel: u32,
 }
 
-// Interleaved gradient noise in [0, 1) per full-image pixel at full-image
-// `uv`, so export tiles and the preview dither alike.
-fn relight_jitter(uv: vec2<f32>) -> f32 {
-    let full_size = vec2<f32>(
-        f32(Common::camera_uniforms.full_width),
-        f32(Common::camera_uniforms.full_height),
-    );
-    let p = floor(uv * full_size);
-    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
-}
-
-fn relight_size(params: MaskEffectParams) -> f32 {
-    return mask_effect_percent(params, RELIGHT_SIZE_LANE);
-}
-
-// The light one of Relight's lights casts on the pixel's surface, as colour
-// times irradiance relative to the ambient level; `lit` is false when it adds
-// none there. `depth` and `taps` describe the surface (`scene_surface_taps_at`)
-// when `has_depth`; without scene depth (still generating, or failed) the scene
-// is a plane facing the camera: the light keeps its falloff but casts no
-// shadows. `mapped` is the scene shadow map's visibility of every channel at
-// the surface, read when a light holds a channel.
-struct RelightContribution {
-    lit: bool,
-    // Colour and strength of the light times its irradiance.
-    light: vec3<f32>,
-    // Irradiance alone: diffuse term, falloff and visibility.
-    irradiance: f32,
-}
-
-fn relight_contribution(
+fn relight_light(
     params: MaskEffectParams,
-    uv: vec2<f32>,
-    has_depth: bool,
-    depth: f32,
-    reachable: f32,
-    taps: SceneSurfaceTaps,
-    mapped: vec4<f32>,
-) -> RelightContribution {
-    let none = RelightContribution(false, vec3<f32>(0.0), 0.0);
+    camera: Camera::SceneCamera,
+    relief_scale: f32,
+    aspect: vec2<f32>,
+) -> RelightLight {
     let amount = mask_effect_percent(params, RELIGHT_AMOUNT_LANE);
-    if amount <= 1e-6 { return none; }
-
-    let light = relight_scene_light(params);
-    let camera = light.camera;
-    let size = relight_size(params);
-    let point = uv * camera.image_size;
-    let shadows = mask_effect_percent(params, RELIGHT_SHADOWS_LANE);
-    let shadow_channel = scene_shadow_channel(params);
-    var gradient = vec2<f32>(0.0);
-    var mapped_visibility = 1.0;
-    if has_depth {
-        // Shading reads the smooth depth and gradient of the surface the pixel lies
-        // on. The shadow map shares the surface's grid, so it takes the same taps.
-        gradient = relight_smoothed_gradient(
-            camera, uv, depth, taps.surface.zw, mix(0.004, 0.05, size * size),
-        );
-        if shadow_channel != 0u && shadows > 1e-6 {
-            mapped_visibility = mapped[shadow_channel - 1u];
-        }
-    }
-    let z = scene_depth_z(camera, depth);
-    let surface = scene_camera_point(camera, point, z);
-    let normal = relight_normal(camera, point, z, gradient);
-
-    let to_light = light.position - surface;
-    let distance = max(length(to_light), 1e-5);
-    // Wrapped Lambert: a larger source reaches further around a form.
-    let wrap = 0.5 * size;
-    let diffuse = clamp((dot(normal, to_light / distance) + wrap) / (1.0 + wrap), 0.0, 1.0)
-        * reachable;
-    if diffuse <= 1e-6 { return none; }
-    // Inverse-square falloff with a finite core (scene_light_falloff).
-    let falloff = 1.0 / (1.0 + distance * distance / (light.reach * light.reach));
-    var visibility = 1.0;
-    if has_depth && shadows > 1e-6 {
-        var traced = mapped_visibility;
-        if shadow_channel == 0u {
-            // Beyond the shadow map's channels: trace this pixel.
-            traced = relight_visibility(camera, surface, light.position, size, relight_jitter(uv));
-        }
-        visibility = mix(1.0, traced, shadows);
-    }
-    return RelightContribution(true, light.intensity, diffuse * falloff * visibility);
+    let source = mask_effect_lane_pair(params, RELIGHT_SOURCE_X_LANE) / 100.0;
+    let control = clamp(mask_effect_lane(params, RELIGHT_LIGHT_DEPTH_LANE) / 100.0, -1.0, 1.0);
+    // As scene/camera.rs `light_position` places it for the light bake.
+    let z = Camera::scene_light_frame_depth(camera, control, relief_scale);
+    let position = Camera::scene_frame_position(camera, Camera::scene_image_point(source, aspect), z);
+    // Reach is in shorter-edge widths at the nearest surface.
+    let reach = clamp(mask_effect_lane(params, RELIGHT_REACH_LANE) / 100.0, 0.1, 4.0) * 2.0 * camera.lens.x;
+    let intensity = mask_effect_picker_color_to_working(mask_effect_color(params, RELIGHT_COLOR_LANE))
+        * (amount * SCENE_LIGHT_GAIN);
+    return RelightLight(
+        amount > 1e-6,
+        position,
+        reach,
+        intensity,
+        mask_effect_percent(params, RELIGHT_SIZE_LANE),
+        mask_effect_percent(params, RELIGHT_SHADOWS_LANE),
+        mask_effect_scene_bake_light(params),
+    );
 }
 
-// Whether any of the card's lights holds a channel of the scene shadow map
-// and casts shadows, so the map is read at the surface.
-fn relight_reads_shadow_map(params: MaskEffectParams) -> bool {
+// The plane Relight lights without scene depth: one nearest distance deep,
+// so lights behind it keep a distance to it.
+fn relight_flat_camera() -> Camera::SceneCamera {
+    return Camera::SceneCamera(vec4<f32>(RELIGHT_FLAT_FOCAL_TAN, 1.0, 1.0, 1.0), vec4<f32>(1.0, 0.0, 0.5, 1.0));
+}
+
+// What one surface of `pixel` shows: the existing light dimmed to Ambient,
+// plus every light of the card on an estimate of its reflectance. `rgb` is
+// the surface's part of the pixel's colour.
+fn relight_shade(
+    surface: Geometry::SceneSurface,
+    pixel: Geometry::ScenePixel,
+    rgb: vec3<f32>,
+    params: MaskEffectParams,
+    frame: RelightFrame,
+) -> vec3<f32> {
+    let ambient_rgb = rgb * frame.ambient;
+    let lit_share = 1.0 - surface.sky;
+    if lit_share <= 0.0 {
+        return ambient_rgb;
+    }
+    // Divide out part of the existing shading relative to the scene's ambient
+    // level (shared by export tiles), so the estimate approaches reflectance.
+    let solid = Color::gamut_project_nonnegative_rec2020(rgb);
+    let relative = clamp(Common::safe_luma(solid) / frame.ambient_level, 0.02, 64.0);
+    let reflectance = solid * pow(relative, -0.3);
+
+    var added = vec3<f32>(0.0);
+    for (var instance = 0u; instance < mask_effect_instance_count(params); instance = instance + 1u) {
+        let light = relight_light(
+            mask_effect_instance_params(params, instance), frame.camera, frame.relief_scale, frame.aspect,
+        );
+        if !light.emits { continue; }
+        var normal = surface.normal;
+        if frame.has_geometry {
+            normal = Geometry::scene_soft_normal(
+                surface, frame.uv, RELIGHT_SOFT_NORMAL_RADIUS * light.size * light.size, frame.relief_scale,
+            );
+        }
+        let to_light = light.position - surface.position;
+        let distance = max(length(to_light), 1e-5);
+        // Wrapped Lambert: a larger source reaches further around a form.
+        let wrap = 0.5 * light.size;
+        let diffuse = clamp((dot(normal, to_light / distance) + wrap) / (1.0 + wrap), 0.0, 1.0);
+        if diffuse <= 1e-6 { continue; }
+        // Inverse-square falloff with a finite core: 1 at the light, 1/2 at its reach.
+        let falloff = 1.0 / (1.0 + distance * distance / (light.reach * light.reach));
+        var visibility = 1.0;
+        if frame.has_geometry && light.channel != 0u && light.shadows > 1e-6 {
+            visibility = mix(1.0, Geometry::scene_visibility(pixel, surface, light.channel - 1u), light.shadows);
+        }
+        added += light.intensity * (diffuse * falloff * visibility);
+    }
+    return ambient_rgb + reflectance * added * lit_share;
+}
+
+// What every surface of a pixel shares.
+struct RelightFrame {
+    camera: Camera::SceneCamera,
+    relief_scale: f32,
+    aspect: vec2<f32>,
+    uv: vec2<f32>,
+    ambient: f32,
+    ambient_level: f32,
+    has_geometry: bool,
+}
+
+// Whether any of the card's lights adds light.
+fn relight_any_light(params: MaskEffectParams) -> bool {
     for (var instance = 0u; instance < mask_effect_instance_count(params); instance = instance + 1u) {
         let light = mask_effect_instance_params(params, instance);
-        if scene_shadow_channel(light) != 0u
-            && mask_effect_percent(light, RELIGHT_SHADOWS_LANE) > 1e-6 {
+        if mask_effect_percent(light, RELIGHT_AMOUNT_LANE) > 1e-6 {
             return true;
         }
     }
@@ -387,72 +156,46 @@ fn relight_reads_shadow_map(params: MaskEffectParams) -> bool {
 
 // Relight shades the pixel once with all its card's lights, in the slot of the
 // first light (instances.rs in calibraw-core): the existing light dims to the
-// shared Ambient level once, and the lights add up on one estimate of the
+// shared Ambient level once, and the lights add up on one estimate of each
 // surface's reflectance. Slots of the other lights leave the image alone.
 fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
     if mask_effect_instance(params) != 0u { return input_rgb; }
     let ambient = mask_effect_percent(params, RELIGHT_AMBIENT_LANE);
-    let ambient_rgb = input_rgb * ambient;
-    var any_light = false;
-    for (var instance = 0u; instance < mask_effect_instance_count(params); instance = instance + 1u) {
-        let light = mask_effect_instance_params(params, instance);
-        any_light = any_light || mask_effect_percent(light, RELIGHT_AMOUNT_LANE) > 1e-6;
-    }
-    if !any_light { return ambient_rgb; }
+    if !relight_any_light(params) { return input_rgb * ambient; }
 
     let uv = full_image_uv(pos);
-    let has_depth = scene_depth_present();
-    var depth = 0.0;
-    // The far end of normalized depth is where the depth model clips the sky
-    // and distant scenery (typically 245–255 of 255, often with a gap below):
-    // beyond any local light, it receives neither light nor shadows.
-    var reachable = 1.0;
-    var taps: SceneSurfaceTaps;
-    var mapped = vec4<f32>(1.0);
-    var sky = SceneSky(0.0, 1.0);
-    if has_depth {
-        taps = scene_surface_taps_at(pos);
-        sky = taps.sky;
-        // The sky is beyond any light.
-        if sky.share >= 1.0 { return ambient_rgb; }
-        depth = taps.surface.y;
-        reachable = relight_reach(uv, depth);
-        if relight_reads_shadow_map(params) {
-            mapped = scene_shadow_surface_resolve(taps);
-        }
-    }
-
-    // Divide out part of the existing shading relative to the scene's ambient
-    // level (shared by export tiles), so the estimate approaches reflectance.
-    // Where the sky covers part of the pixel, the estimate is of what stands
-    // before it, no brighter than it may be, and the light it receives covers its
-    // part alone (`scene_sky_at`).
-    let ambient_level = scene_ambient_level();
-    let positive = Color::gamut_project_nonnegative_rec2020(input_rgb);
-    let coverage = 1.0 - sky.share;
-    let solid = positive * sky.solid;
-    let relative = clamp(Common::safe_luma(solid) / ambient_level, 0.02, 64.0);
-    let reflectance = solid * pow(relative, -0.3) * coverage;
-
-    // The first lit light is shaded in the expression a single light always
-    // was, so one light renders exactly as before; the others add to it.
-    var lit = 0u;
-    var first = RelightContribution(false, vec3<f32>(0.0), 0.0);
-    var others = vec3<f32>(0.0);
-    for (var instance = 0u; instance < mask_effect_instance_count(params); instance = instance + 1u) {
-        let contribution = relight_contribution(
-            mask_effect_instance_params(params, instance), uv, has_depth, depth, reachable, taps, mapped,
+    let has_geometry = Geometry::scene_geometry_present();
+    var frame = RelightFrame(
+        relight_flat_camera(),
+        clamp(mask_effect_lane(params, RELIGHT_RELIEF_SCALE_LANE) / 100.0, 0.1, 3.0),
+        Common::scene_image_size(),
+        uv,
+        ambient,
+        scene_ambient_level(),
+        has_geometry,
+    );
+    if !has_geometry {
+        let point = Camera::scene_image_point(uv, frame.aspect);
+        let surface = Geometry::SceneSurface(
+            Camera::scene_frame_position(frame.camera, point, 1.0),
+            vec3<f32>(0.0, 0.0, -1.0),
+            input_rgb,
+            0.0,
+            0.0,
+            0u,
         );
-        if !contribution.lit { continue; }
-        if lit == 0u {
-            first = contribution;
-        } else {
-            others += reflectance * contribution.light * contribution.irradiance;
-        }
-        lit = lit + 1u;
+        let pixel = Geometry::ScenePixel(1.0, surface, surface, false, vec2<i32>(0), vec4<f32>(0.0), vec4<f32>(0.0));
+        return relight_shade(surface, pixel, input_rgb, params, frame);
     }
-    if lit == 0u { return ambient_rgb; }
-    let shaded = ambient_rgb + reflectance * first.light * first.irradiance;
-    if lit == 1u { return shaded; }
-    return shaded + others;
+    frame.camera = Bake::scene_bake.camera;
+    frame.aspect = Geometry::scene_aspect();
+    let scene_rgb = Geometry::scene_unedited_at(pos);
+    let pixel = Geometry::scene_pixel(uv, scene_rgb, frame.relief_scale);
+    let colors = Geometry::scene_split(pixel, scene_rgb, input_rgb);
+    let near = relight_shade(pixel.near, pixel, colors[0], params, frame);
+    if !pixel.in_band {
+        return near;
+    }
+    let far = relight_shade(pixel.far, pixel, colors[1], params, frame);
+    return Geometry::scene_blend(pixel, near, far);
 }

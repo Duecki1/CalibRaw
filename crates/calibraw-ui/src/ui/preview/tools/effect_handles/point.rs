@@ -56,7 +56,7 @@ impl PointSpec {
                     position: light.source,
                     specs: [relight::SOURCE_X, relight::SOURCE_Y],
                     light: Some(light.color),
-                    depth: Some(light.depth),
+                    depth: Some(light.light_depth),
                     name: numbered("Relight light", "Light {number}"),
                 }
             }
@@ -179,7 +179,7 @@ fn show_instance(
         let rate = DEPTH_PER_SCROLL_POINT * if fine { FINE_STEP } else { 1.0 };
         let delta = scroll * rate + page_steps(ui, &response);
         if delta.abs() > 1e-4 {
-            let moved = effect_params::relight::DEPTH.clamp(current + delta);
+            let moved = effect_params::relight::LIGHT_DEPTH.clamp(current + delta);
             if moved != current {
                 edits.push(EffectHandleEdit::Depth(moved));
                 depth = Some(moved);
@@ -208,7 +208,7 @@ fn paint(
     let opacity = if selected { 1.0 } else { UNSELECTED_OPACITY };
     let center = placement.drawn;
     let ring = depth.map_or(RING_RADIUS, |depth| {
-        let range = effect_params::relight::DEPTH;
+        let range = effect_params::relight::LIGHT_DEPTH;
         let nearness = ((range.max - depth) / (range.max - range.min)).clamp(0.0, 1.0);
         egui::lerp(DEPTH_RING_RADIUS[1]..=DEPTH_RING_RADIUS[0], nearness)
     });

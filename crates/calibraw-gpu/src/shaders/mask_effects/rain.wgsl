@@ -12,7 +12,7 @@
 // What the drop covers stays the same, so at the middle of its streak it replaces a
 // share (w / 2R) (w / max(L, 2R)) of the background: long and blurred streaks are
 // fainter. L follows the shutter speed (RainEffectSettings::streak_length). The blur
-// at each distance is measured in the photo (scene_focus_blur), so drops are as soft
+// at each distance is measured in the photo (the scene bake's lens blur), so drops are as soft
 // as what lies at their distance; without scene depth a control sets the focus.
 //
 // Drops fill the air evenly, so the image holds many small far ones and few large
@@ -135,16 +135,45 @@ struct RainLens {
     focus: f32,
 }
 
+// The frame rain's slabs live in: the depth result's own with a scene bake,
+// else the plane it assumes (a 30 mm lens, about the relief of Relight's default).
+const RAIN_FLAT_FOCAL_TAN: f32 = 0.4;
+const RAIN_FLAT_RELIEF: f32 = 2.283;
+
+fn rain_camera(baked: bool) -> Camera::SceneCamera {
+    if baked {
+        return Bake::scene_bake.camera;
+    }
+    return Camera::SceneCamera(
+        vec4<f32>(RAIN_FLAT_FOCAL_TAN, 1.0, 1.0, RAIN_FLAT_RELIEF), vec4<f32>(1.0, 0.0, 1.0, 1.0),
+    );
+}
+
+// The frame depth of a slab side or drop: before the nearest surface, down to
+// -1 at the camera, depth is a share of the way to it.
+fn rain_depth_z(camera: Camera::SceneCamera, depth: f32) -> f32 {
+    if depth < 0.0 { return 1.0 + 0.9 * depth; }
+    return Camera::scene_frame_depth(camera, depth, 1.0);
+}
+
+// The lens blur at linear depth `depth` as a Gaussian's deviation in shorter
+// edges: the scene bake's fit to the photo's own edges (scene/bake_focus.wgsl).
+// Only called with a scene bake.
+fn rain_scene_blur(depth: f32) -> f32 {
+    let size = Bake::scene_bake_size();
+    return Bake::scene_lens_blur(Bake::scene_bake_frame_depth(depth)) / f32(min(size.x, size.y));
+}
+
 // A thin lens blurs in proportion to |1 / distance - 1 / focus|, so what the farthest
 // and the nearest surface blur together is that rate across their inverse distances
 // when the focus lies between them or at either.
-fn rain_lens(measured: bool, camera: SceneCamera, focus_control: f32) -> RainLens {
+fn rain_lens(measured: bool, camera: Camera::SceneCamera, focus_control: f32) -> RainLens {
     if !measured {
         return RainLens(false, 0.0, 0.0, 1.0 / mix(0.3, 3.0, focus_control * focus_control));
     }
-    let nearest = scene_focus_blur(0.0);
-    let span = 1.0 - 1.0 / scene_depth_z(camera, 1.0);
-    let rate = max((nearest + scene_focus_blur(1.0)) / span, RAIN_NEAR_BLUR_RATE);
+    let nearest = rain_scene_blur(0.0);
+    let span = 1.0 - 1.0 / rain_depth_z(camera, 1.0);
+    let rate = max((nearest + rain_scene_blur(1.0)) / span, RAIN_NEAR_BLUR_RATE);
     return RainLens(true, nearest, rate, 0.0);
 }
 
@@ -153,7 +182,7 @@ fn rain_lens(measured: bool, camera: SceneCamera, focus_control: f32) -> RainLen
 fn rain_lens_blur(lens: RainLens, depth: f32, distance: f32) -> f32 {
     let inverse = 1.0 / distance;
     if !lens.measured { return abs(inverse - lens.focus) * RAIN_DEFOCUS; }
-    if depth >= 0.0 { return scene_focus_blur(depth); }
+    if depth >= 0.0 { return rain_scene_blur(depth); }
     return lens.nearest + lens.rate * (inverse - 1.0);
 }
 
@@ -181,11 +210,22 @@ struct RainField {
     // that slabs do not share one pattern: see `rain_slab_mix`.
     curtains: vec2<f32>,
     drift: vec2<f32>,
-    camera: SceneCamera,
+    camera: Camera::SceneCamera,
     lens: RainLens,
     // Whether drops pass behind surfaces, and the depth of the surface here.
     occluded: bool,
     surface_depth: f32,
+    // Whether depths are the scene bake's, and slab sides are control depths.
+    baked: bool,
+}
+
+// A slab side from `RAIN_SLAB_SIDES` as linear depth: sides at or past the
+// nearest surface are control depths c (even in the log of distance), so
+// slabs spread over the scene whatever its range; those before it are as they
+// are.
+fn rain_side(field: RainField, side: f32) -> f32 {
+    if side <= 0.0 || !field.baked { return side; }
+    return Camera::scene_depth_of_control(field.camera, side);
 }
 
 // A slab's grid and what the blur does to its streaks.
@@ -213,10 +253,10 @@ fn rain_merge(ratio: f32) -> i32 {
 // keep the same streaks.
 fn rain_slab(field: RainField, layer: u32) -> RainSlab {
     var sides = RAIN_SLAB_SIDES;
-    let far_depth = sides[layer];
-    let near_depth = sides[layer + 1u];
-    let near = scene_depth_z(field.camera, near_depth);
-    let far = scene_depth_z(field.camera, far_depth);
+    let far_depth = rain_side(field, sides[layer]);
+    let near_depth = rain_side(field, sides[layer + 1u]);
+    let near = rain_depth_z(field.camera, near_depth);
+    let far = rain_depth_z(field.camera, far_depth);
     let near_blur = rain_lens_blur(field.lens, near_depth, near);
     let far_blur = rain_lens_blur(field.lens, far_depth, far);
 
@@ -253,7 +293,7 @@ fn rain_streak(field: RainField, slab: RainSlab, offset: vec2<f32>, random: vec4
     let distance = pow(cubed, 1.0 / 3.0);
     var visible = 1.0;
     if field.occluded && distance > 1.0 {
-        let depth = (distance - 1.0) / field.camera.relief;
+        let depth = (distance - 1.0) / field.camera.lens.w;
         visible = smoothstep(
             depth - RAIN_OCCLUSION_SOFTNESS,
             depth + RAIN_OCCLUSION_SOFTNESS,
@@ -389,17 +429,22 @@ fn rain_splash_shape(
 // a thing's image scales with. A row of its cells lies at one distance. Rows farther
 // away hold more ground, and so more splashes, until their cells are full.
 fn rain_splashes(field: RainField, pixel: WetPixel, control: f32) -> f32 {
+    let pixel_below = Geometry::scene_below_horizon(pixel.point);
+    if pixel_below <= 1e-3 { return 0.0; }
+    // Camera heights per image point below the horizon, for a level camera.
+    let focal = Bake::scene_bake.camera.lens.x;
+    let ground_scale = 0.5 / focal;
     let right = vec2<f32>(-pixel.up.y, pixel.up.x);
-    let lateral = dot(pixel.point - 0.5 * Common::scene_image_size(), right);
-    let row = i32(floor(log(pixel.below) / RAIN_SPLASH_CELL));
+    let lateral = dot(pixel.point, right);
+    let row = i32(floor(log(pixel_below) / RAIN_SPLASH_CELL));
     let exposure = min(RAIN_SPLASH_LENGTH / field.length, 1.0);
     let salt = field.seed * 3145739u + 41u;
     var coverage = 0.0;
     for (var dy = -1; dy <= 1; dy = dy + 1) {
         let candidate_row = row + dy;
         let row_below = exp((f32(candidate_row) + 0.5) * RAIN_SPLASH_CELL);
-        let ground_distance = WET_GROUND_SCALE / row_below;
-        let cell_ground = WET_GROUND_SCALE * ground_distance * RAIN_SPLASH_CELL * RAIN_SPLASH_CELL;
+        let ground_distance = ground_scale / row_below;
+        let cell_ground = ground_scale * ground_distance * RAIN_SPLASH_CELL * RAIN_SPLASH_CELL;
         let presence = RAIN_SPLASH_DENSITY * cell_ground * field.amount;
         let across = lateral / row_below;
         let column = i32(floor(across / RAIN_SPLASH_CELL));
@@ -410,14 +455,14 @@ fn rain_splashes(field: RainField, pixel: WetPixel, control: f32) -> f32 {
             let below = row_below * exp((placed.z - 0.5) * RAIN_SPLASH_CELL);
             let offset = vec2<f32>(
                 across - (f32(cell.x) + placed.y) * RAIN_SPLASH_CELL,
-                (below - pixel.below) / row_below,
+                (below - pixel_below) / row_below,
             );
             let random = effect_cell_random(cell, salt + 1u);
             let radius = RAIN_SPLASH_RADIUS * mix(0.5, 1.3, placed.w);
             let blur = sqrt(4.0 * pixel.blur * pixel.blur
                 + scene_pixel_extent() * scene_pixel_extent()) / row_below;
             // The ground's tilt toward the view there.
-            let slope = 2.0 * SCENE_FOCAL_TAN * row_below;
+            let slope = 2.0 * focal * row_below;
             let aspect = slope / sqrt(1.0 + slope * slope);
             coverage += rain_splash_shape(offset, radius, blur, aspect, random);
         }
@@ -425,35 +470,34 @@ fn rain_splashes(field: RainField, pixel: WetPixel, control: f32) -> f32 {
     return min(coverage * control * exposure * RAIN_SPLASH_OPACITY, 1.0);
 }
 
-// Light from scene lights and the photograph's light sources that a drop at
-// `depth` refracts toward the camera, past `shadows` (scene_shadows.wgsl).
-fn rain_drop_light(
-    pos: vec2<i32>,
-    params: MaskEffectParams,
-    depth: f32,
-    shadows: vec4<f32>,
-) -> vec3<f32> {
+// What a drop refracts toward the camera of the light it receives, `received`
+// (relative to the ambient level, from scene_lights.wgsl): scene lights and
+// emission, and the photograph's own light sources with Image lights.
+fn rain_drop_light(pos: vec2<i32>, params: MaskEffectParams, received: vec3<f32>) -> vec3<f32> {
     let glow = mask_effect_percent(params, RAIN_LIGHT_GLOW_LANE);
     if glow <= 1e-6 { return vec3<f32>(0.0); }
-    var result = scene_light_received(pos, depth, RAIN_LIGHT_ANISOTROPY, shadows)
-        * (glow * RAIN_LIGHT_GAIN * scene_ambient_level());
+    var result = received * (glow * RAIN_LIGHT_GAIN * scene_ambient_level());
     if medium_image_lights_enabled(params) {
         result += image_light_at(pos) * (glow * RAIN_IMAGE_LIGHT_GAIN);
     }
     return result;
 }
 
-fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+// Rain over one surface of a pixel, at linear depth `surface_depth`: a pixel with
+// two surfaces is rained on twice and blended by coverage, so a drop between
+// the near and the far surface shows through the part the near one does not
+// cover (`apply_rain`).
+fn rain_shade(
+    pos: vec2<i32>,
+    input_rgb: vec3<f32>,
+    params: MaskEffectParams,
+    surface_depth: f32,
+    uses_depth: bool,
+    receiver: MediumTarget,
+) -> vec3<f32> {
     let amount = mask_effect_percent(params, RAIN_AMOUNT_LANE);
-    if amount <= 1e-6 { return input_rgb; }
-    let wants_depth = params.options[RAIN_DEPTH_OPTION] > 0.5;
-    let uses_depth = wants_depth && scene_depth_present();
-    var surface_depth = select(1.0, SCENE_DEPTH_UNKNOWN, wants_depth);
-    if uses_depth {
-        surface_depth = scene_depth_at(pos);
-    }
     let uv = full_image_uv(pos);
-    let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
+    let camera = rain_camera(receiver.baked);
 
     let seed = u32(clamp(mask_effect_lane(params, RAIN_SEED_LANE), 0.0, 1000.0));
     let seed_offset = vec2<f32>(f32(seed) * 0.071 + 5.3, f32(seed) * -0.113 + 41.7);
@@ -511,21 +555,22 @@ fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) ->
         rain_lens(uses_depth, camera, focus_control),
         uses_depth,
         surface_depth,
+        receiver.baked,
     );
 
     // What lands on the ground, seen through the mist like the ground itself.
     var ground_rgb = input_rgb;
     let splashes = mask_effect_percent(params, RAIN_SPLASHES_LANE);
-    if uses_depth && splashes > 1e-4 && Common::effects_uniforms.scene_ground.w > 0.5 {
-        let pixel = wet_pixel(pos);
-        // Only what is surely ground: the map also rates some walls near the horizon.
+    if uses_depth && receiver.baked && splashes > 1e-4 && Geometry::scene_has_ground() {
+        let pixel = wet_pixel(pos, uv, receiver.surface);
+        // Only what is surely ground: a wall near the horizon may pass the plane's tests.
         let on_ground = smoothstep(0.4, 0.9, pixel.on_ground);
         if on_ground > 1e-4 {
-            var shadows = vec4<f32>(1.0);
+            var received = vec3<f32>(0.0);
             if mask_effect_percent(params, RAIN_LIGHT_GLOW_LANE) > 1e-6 {
-                shadows = scene_shadow_surface_at(pos);
+                received = scene_light_on_surface(pos, uv, receiver.pixel, receiver.surface, RAIN_LIGHT_ANISOTROPY);
             }
-            let drop = around_drop + rain_drop_light(pos, params, pixel.depth, shadows);
+            let drop = around_drop + rain_drop_light(pos, params, received);
             ground_rgb = mix(ground_rgb, drop, rain_splashes(field, pixel, splashes) * on_ground);
         }
     }
@@ -544,7 +589,7 @@ fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) ->
     if extinction > 1e-6 && glow > 1e-6 {
         let ray = vec3<f32>(effect_image_point(pos) * 1.25, 1.0);
         let volume = MediumVolume(ray, 0.0, 0.1, 1.0, vec3<f32>(0.0), 0.0, 0.5);
-        let scattered = medium_light_scattering(pos, volume, distance, extinction, uses_depth);
+        let scattered = medium_light_scattering(pos, volume, distance, extinction, receiver);
         rgb += scattered * (glow * RAIN_MIST_GLOW_GAIN * scene_ambient_level());
         rgb += medium_image_light(pos, params, glow, 1.0, 1.0 - transmission);
     }
@@ -552,7 +597,7 @@ fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) ->
     // Streaks, far to near, each slab veiled by the mist in front of it.
     var sides = RAIN_SLAB_SIDES;
     for (var layer = 0u; layer < RAIN_SLABS; layer = layer + 1u) {
-        let near_depth = sides[layer + 1u];
+        let near_depth = rain_side(field, sides[layer + 1u]);
         // A surface before the whole slab hides all of it.
         if uses_depth && near_depth > 0.0
             && surface_depth <= near_depth - RAIN_OCCLUSION_SOFTNESS {
@@ -560,16 +605,44 @@ fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) ->
         }
         let coverage = rain_slab_coverage(field, layer);
         if coverage <= 1e-4 { continue; }
-        let depth = 0.5 * (near_depth + sides[layer]);
+        let depth = 0.5 * (near_depth + rain_side(field, sides[layer]));
         let veil = exp(-extinction * (RAIN_MIST_NEAR + max(depth, 0.0)));
         // Drops scatter forward, so a light straight behind them shows most:
-        // surfaces between them hide it, unless the rain ignores them.
-        var shadows = vec4<f32>(1.0);
-        if uses_depth && glow > 1e-6 {
-            shadows = scene_shadow_air_at(pos, depth);
+        // surfaces between them hide it (the light bake's cubes), unless the
+        // rain ignores them.
+        var received = vec3<f32>(0.0);
+        if glow > 1e-6 {
+            received = scene_light_in_air(pos, uv, depth, RAIN_LIGHT_ANISOTROPY);
         }
-        let drop = around_drop + rain_drop_light(pos, params, depth, shadows);
+        let drop = around_drop + rain_drop_light(pos, params, received);
         rgb = mix(rgb, drop, coverage * veil);
     }
     return rgb;
+}
+
+fn apply_rain(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    if mask_effect_percent(params, RAIN_AMOUNT_LANE) <= 1e-6 { return input_rgb; }
+    let wants_depth = params.options[RAIN_DEPTH_OPTION] > 0.5;
+    let uv = full_image_uv(pos);
+    if wants_depth && Geometry::scene_geometry_present() {
+        let scene_rgb = Geometry::scene_unedited_at(pos);
+        let pixel = Geometry::scene_pixel(uv, scene_rgb, 1.0);
+        let colors = Geometry::scene_split(pixel, scene_rgb, input_rgb);
+        let near = rain_shade(
+            pos, colors[0], params, medium_surface_depth(pixel.near), true,
+            medium_target(pixel, pixel.near, uv),
+        );
+        if !pixel.in_band {
+            return near;
+        }
+        let far = rain_shade(
+            pos, colors[1], params, medium_surface_depth(pixel.far), true,
+            medium_target(pixel, pixel.far, uv),
+        );
+        return Geometry::scene_blend(pixel, near, far);
+    }
+    // Without scene depth, or without the effect reading it, the scene lies at an
+    // assumed distance; rain without depth falls in front of everything.
+    let surface_depth = select(1.0, SCENE_DEPTH_UNKNOWN, wants_depth);
+    return rain_shade(pos, input_rgb, params, surface_depth, false, medium_unbaked(uv));
 }

@@ -2,10 +2,11 @@ use crate::file_ops::write_atomically;
 use crate::luts::LookLut;
 use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
-    lensfun_catalog, ExposureParams, GeometryTransform, LensCorrection, LensfunCorrections,
-    LensfunLens, LoadedRaw, ManualLensCorrection, MaskGeometry, MaskImage, MaskKind, MaskStack,
-    RemoveEditState, SceneNormals, SubjectRefinement, WhiteBalance, MAX_LOCAL_MASKS,
-    MAX_MASK_COMPONENTS, MAX_PATH_POINTS, REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
+    lensfun_catalog, DisparityMap, ExposureParams, GeometryTransform, LensCorrection,
+    LensfunCorrections, LensfunLens, LoadedRaw, ManualLensCorrection, MaskGeometry, MaskImage,
+    MaskKind, MaskStack, RemoveEditState, SceneCamera, SceneDepth, SceneNormals, SubjectRefinement,
+    WhiteBalance, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
+    REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -20,8 +21,9 @@ mod files;
 mod mask_assets;
 mod remove_assets;
 mod size_limits;
-use crate::migrations::{self, LegacyEffectSliders};
+use crate::migrations::{self, LegacyEdits};
 pub use files::*;
+pub(crate) use mask_assets::decode_mask_png;
 use mask_assets::*;
 use remove_assets::*;
 pub use size_limits::*;
@@ -30,9 +32,10 @@ pub use size_limits::*;
 // serialized layout change; pre-release AuRaw sidecars use a different format discriminator.
 // Schemas 2 to 4 share the layout of schema 1. Schema 2 adds the Relight effect and manual lens
 // correction, schema 3 the LUT, perspective correction and aspect stretch, schema 4 Rain and Wet
-// Surfaces; edits are written with the oldest schema that holds them
-// (`migrations::older_readers`).
-pub const SIDECAR_SCHEMA_VERSION: u32 = 4;
+// Surfaces. Schema 5 stores scene depth as `SceneDepth` (`SidecarSceneDepth`), which schemas 1
+// to 4 held as an 8-bit map (`migrations::scene_depth_layout`). Edits are written with the
+// oldest schema that holds them (`migrations::older_readers`).
+pub const SIDECAR_SCHEMA_VERSION: u32 = 5;
 pub const DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT: u64 = 0x4155_5241_5700_0008;
 pub const SIDECAR_SUFFIX: &str = ".calibraw";
 /// The AI-denoise result saved next to a RAW. It is large derived data, so it
@@ -62,10 +65,12 @@ impl PhotoCompanion {
 }
 pub const DEVELOPED_THUMBNAIL_SUFFIX: &str = ".calibraw-thumb.jpg";
 const DEVELOPED_THUMBNAIL_FINGERPRINT_SUFFIX: &str = ".calibraw-thumb.fingerprint";
+/// Largest sidecar file read or written. Android's copy is
+/// `LibraryStore.MAX_SIDECAR_BYTES`; change both together.
 pub const MAX_SIDECAR_BYTES: u64 = if cfg!(target_os = "android") {
-    32 * 1024 * 1024
+    128 * 1024 * 1024
 } else {
-    256 * 1024 * 1024
+    1024 * 1024 * 1024
 };
 
 const SIDECAR_FORMAT: &str = "CalibRaw edit sidecar";
@@ -74,14 +79,16 @@ const MAX_OBJECT_STROKES: usize = 4096;
 const MAX_OBJECT_STROKE_POINTS: usize = 1_000_000;
 const MAX_MASK_IMAGE_EDGE: u32 = 8192;
 const MAX_MASK_ASSET_REFS: usize = MAX_LOCAL_MASKS * MAX_MASK_COMPONENTS;
-const MAX_MASK_ASSETS: usize = MAX_MASK_ASSET_REFS + 1;
+/// Every reference's asset, plus the scene depth's disparity, sky and two
+/// normal components.
+const MAX_MASK_ASSETS: usize = MAX_MASK_ASSET_REFS + 4;
 const MAX_REMOVE_ASSET_REFS: usize = REMOVE_MAX_STROKES * REMOVE_MAX_PATCHES_PER_STROKE;
 /// Memory a sidecar may expand to when its mask and retouch assets are decoded; the
 /// mask and retouch budgets are checked separately against this one value.
-const MAX_DECODED_ASSET_BYTES: u64 = if cfg!(target_os = "android") {
-    256 * 1024 * 1024
-} else {
+pub(crate) const MAX_DECODED_ASSET_BYTES: u64 = if cfg!(target_os = "android") {
     512 * 1024 * 1024
+} else {
+    2 * 1024 * 1024 * 1024
 };
 /// Longest edge, in pixels, of a stored retouch patch.
 const MAX_REMOVE_PATCH_EDGE: u32 = 32_768;
@@ -275,10 +282,7 @@ struct SidecarDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mask_asset_refs: Vec<SidecarMaskAssetRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    scene_depth_asset: Option<usize>,
-    /// The x and y components of the scene normals.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    scene_normal_assets: Option<[usize; 2]>,
+    scene_depth: Option<SidecarSceneDepth>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     remove_assets: Vec<SidecarRemoveAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -295,29 +299,40 @@ struct SidecarHeader {
     schema_version: u32,
     /// Collected in the same pass that reads the header.
     #[serde(default)]
-    edits: LegacyEffectSliders,
+    edits: LegacyEdits,
 }
 
+/// A grayscale PNG: 8-bit for masks, 16-bit for the scene disparity.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-struct SidecarMaskAsset {
-    width: u32,
-    height: u32,
+pub(crate) struct SidecarMaskAsset {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
     #[serde(with = "crate::base64_arc_bytes")]
-    png: Arc<[u8]>,
+    pub(crate) png: Arc<[u8]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-struct SidecarMaskAssetRef {
-    mask_index: usize,
-    component_index: usize,
-    asset_index: usize,
+pub(crate) struct SidecarMaskAssetRef {
+    pub(crate) mask_index: usize,
+    pub(crate) component_index: usize,
+    pub(crate) asset_index: usize,
+}
+
+/// A `SceneDepth`: its images as mask assets and its camera.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+struct SidecarSceneDepth {
+    /// The 16-bit disparity.
+    disparity_asset: usize,
+    sky_asset: usize,
+    /// The normals' x and y components.
+    normal_assets: [usize; 2],
+    camera: SceneCamera,
 }
 
 struct MaskAssets {
     assets: Vec<SidecarMaskAsset>,
     references: Vec<SidecarMaskAssetRef>,
-    scene_depth_asset: Option<usize>,
-    scene_normal_assets: Option<[usize; 2]>,
+    scene_depth: Option<SidecarSceneDepth>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -440,8 +455,7 @@ pub fn encode_with_review_and_editing_time(
         editing_time_ms,
         mask_assets: mask_assets.assets,
         mask_asset_refs: mask_assets.references,
-        scene_depth_asset: mask_assets.scene_depth_asset,
-        scene_normal_assets: mask_assets.scene_normal_assets,
+        scene_depth: mask_assets.scene_depth,
         remove_assets,
         remove_asset_refs,
     };
@@ -456,22 +470,31 @@ pub fn encode_with_review_and_editing_time(
     Ok(writer.bytes)
 }
 
+/// A decoded document and, for schemas 1 to 4, where it kept scene depth.
 fn decode_versioned_document(
     bytes: &[u8],
     schema_version: u32,
-) -> Result<(SidecarDocument, bool), SidecarError> {
+) -> Result<(SidecarDocument, Option<migrations::LegacySceneDepth>), SidecarError> {
+    let document = || {
+        serde_json::from_slice::<SidecarDocument>(bytes)
+            .map_err(|error| SidecarError::Invalid(format!("invalid sidecar JSON: {error}")))
+    };
     // Keep each future public schema's decoder and migration in its own match arm so an older
     // layout can never be deserialized as the current schema by accident. Schemas 1 to 4 share
-    // one layout.
+    // one layout, which differs from schema 5 only in where it keeps scene depth.
     match schema_version {
         migrations::older_readers::V1_SCHEMA_VERSION
         | migrations::older_readers::V2_SCHEMA_VERSION
         | migrations::older_readers::V3_SCHEMA_VERSION
-        | SIDECAR_SCHEMA_VERSION => {
-            serde_json::from_slice::<SidecarDocument>(bytes)
-                .map(|document| (document, false))
-                .map_err(|error| SidecarError::Invalid(format!("invalid sidecar JSON: {error}")))
+        | migrations::older_readers::V4_SCHEMA_VERSION => {
+            let mut document = document()?;
+            // Their layout has no `scene_depth` object.
+            document.scene_depth = None;
+            let legacy = serde_json::from_slice(bytes)
+                .map_err(|error| SidecarError::Invalid(format!("invalid sidecar JSON: {error}")))?;
+            Ok((document, Some(legacy)))
         }
+        SIDECAR_SCHEMA_VERSION => Ok((document()?, None)),
         version if version > SIDECAR_SCHEMA_VERSION => Err(SidecarError::Unsupported(format!(
             "sidecar schema {version} is newer than supported schema {SIDECAR_SCHEMA_VERSION}"
         ))),
@@ -493,16 +516,29 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
         ));
     }
 
-    let (mut document, schema_migrated) = decode_versioned_document(bytes, header.schema_version)?;
+    let (mut document, legacy_depth) = decode_versioned_document(bytes, header.schema_version)?;
     // Mask indices still match the serialized masks here.
     let edits_migrated = migrations::migrate_edits(&mut document.edits, header.edits);
-    restore_mask_assets(
+    // Before restoring the assets: older layouts keep depth among them.
+    let legacy_depth = legacy_depth
+        .map(|legacy| {
+            legacy.take_scene_depth(
+                &mut document.mask_assets,
+                &mut document.mask_asset_refs,
+                &document.edits.masks,
+            )
+        })
+        .transpose()?
+        .flatten();
+    let depth_migrated = legacy_depth.is_some();
+    let scene_depth = restore_mask_assets(
         &mut document.edits,
         &document.mask_assets,
         &document.mask_asset_refs,
-        document.scene_depth_asset,
-        document.scene_normal_assets,
-    )?;
+        document.scene_depth.as_ref(),
+    )?
+    .or(legacy_depth);
+    Arc::make_mut(&mut document.edits.masks).set_scene_depth(scene_depth);
     restore_remove_assets(
         &mut document.edits,
         &document.remove_assets,
@@ -525,19 +561,23 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
             ..document.review
         },
         editing_time_ms: document.editing_time_ms,
-        migrated: schema_migrated || edits_migrated,
+        migrated: depth_migrated || edits_migrated,
     })
 }
 
 mod validation;
-use validation::{invalid, validate_image};
+pub(crate) use validation::{invalid, validate_image};
 
 fn validate_scene_depth(masks: &MaskStack) -> Result<(), SidecarError> {
-    if let Some(image) = &masks.scene_depth {
-        validate_image(image.width, image.height, image.pixels.len(), 1)?;
-    }
-    if let Some(normals) = &masks.scene_normals {
-        for image in [normals.x(), normals.y()] {
+    if let Some(depth) = &masks.scene_depth {
+        let disparity = depth.disparity();
+        validate_image(
+            disparity.width(),
+            disparity.height(),
+            disparity.values().len(),
+            1,
+        )?;
+        for image in scene_depth_images(depth) {
             validate_image(image.width, image.height, image.pixels.len(), 1)?;
         }
     }

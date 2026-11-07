@@ -2,7 +2,8 @@
 //! them renders: scene depth and the scene map that every depth-reading effect
 //! shares, the scene shadow map, the image-light map that Fog, Smoke and Rain
 //! scatter, the contours and the light that Glow and Neon emit into the scene,
-//! the haze map Dehaze applies, and the LUT the view pass applies.
+//! the haze map Dehaze applies, the LUT the view pass applies, and the scene
+//! bake (`scene`), whose working image a pass of this pipeline accumulates.
 //!
 //! Until then the passes that read them are bound to placeholders of one
 //! texel, so a pipeline whose edits never use these effects holds none of their
@@ -19,6 +20,11 @@
 //! pipeline takes their bind groups from [`EffectInputs::bind_group`], which
 //! follow the allocation.
 
+use super::scene::{
+    air_light_layers, SceneAirLightKey, SceneAirLightRegion, SceneAirLightTarget,
+    SceneAirLightUniform, SceneBakePrograms, SceneLightPrograms, SceneShadowLightsUniform,
+    AIR_LIGHT_FORMAT,
+};
 use super::*;
 
 /// The image-light passes: accumulate, resolve, horizontal and vertical blur.
@@ -26,9 +32,6 @@ pub(super) const IMAGE_LIGHT_PASSES: usize = 4;
 /// The haze passes (haze_analysis.wgsl): accumulate, airlight, transmission
 /// and the guided filter's two window passes.
 pub(super) const HAZE_PASSES: usize = 5;
-/// The scene map passes (scene_analysis.wgsl): accumulate, resolve,
-/// coefficient smoothing, the environment blur, the ground and the lens blur.
-pub(super) const SCENE_MAP_PASSES: usize = 6;
 /// The scene emission passes (scene_emission.wgsl): the emitter grid, then the
 /// light on surfaces and in the volume.
 pub(super) const SCENE_EMISSION_PASSES: usize = 3;
@@ -43,16 +46,13 @@ pub(super) enum FullImageMap {
     ImageLights,
     /// The airlight and transmission Dehaze applies (haze_analysis.wgsl).
     Haze,
-    /// Edge-accurate depth, the photo's environment, the ground and the lens
-    /// blur that every effect reading the scene shares (scene_analysis.wgsl).
-    Scene,
     /// How much of the photo lies on its contours, for Neon's scene light
     /// (tone_analysis.wgsl). Views copy the grid itself; it has no resolve.
     Contours,
 }
 
 impl FullImageMap {
-    pub(super) const ALL: [Self; 4] = [Self::ImageLights, Self::Haze, Self::Scene, Self::Contours];
+    pub(super) const ALL: [Self; 3] = [Self::ImageLights, Self::Haze, Self::Contours];
 }
 
 /// The resources of an allocated [`FullImageMap`].
@@ -78,17 +78,16 @@ pub(super) enum InputBoundPass {
     /// The view transform and output (`apply_view_node`), which reads the LUT.
     View,
     ViewAfterBlur,
-    SceneShadowMap,
     /// One of the image-light passes, in pass order.
     ImageLights(usize),
     /// One of the haze passes, in pass order.
     Haze(usize),
-    /// One of the scene map passes, in pass order.
-    SceneMap(usize),
     /// Accumulation into the contour grid.
     Contours,
     /// One of the scene emission passes, in pass order.
     SceneEmission(usize),
+    /// Accumulation into the scene bake's working image.
+    SceneBakeAccumulation,
 }
 
 /// Bind groups of every [`InputBoundPass`].
@@ -98,12 +97,11 @@ struct InputBindGroups {
     effects_from_tex2: wgpu::BindGroup,
     view: wgpu::BindGroup,
     view_after_blur: wgpu::BindGroup,
-    scene_shadow_map: wgpu::BindGroup,
     image_lights: [wgpu::BindGroup; IMAGE_LIGHT_PASSES],
     haze: [wgpu::BindGroup; HAZE_PASSES],
-    scene_map: [wgpu::BindGroup; SCENE_MAP_PASSES],
     contours: wgpu::BindGroup,
     scene_emission: [wgpu::BindGroup; SCENE_EMISSION_PASSES],
+    scene_bake_accumulation: wgpu::BindGroup,
 }
 
 impl InputBindGroups {
@@ -114,12 +112,11 @@ impl InputBindGroups {
             InputBoundPass::EffectsFromTex2 => &self.effects_from_tex2,
             InputBoundPass::View => &self.view,
             InputBoundPass::ViewAfterBlur => &self.view_after_blur,
-            InputBoundPass::SceneShadowMap => &self.scene_shadow_map,
             InputBoundPass::ImageLights(index) => &self.image_lights[index],
             InputBoundPass::Haze(index) => &self.haze[index],
-            InputBoundPass::SceneMap(index) => &self.scene_map[index],
             InputBoundPass::Contours => &self.contours,
             InputBoundPass::SceneEmission(index) => &self.scene_emission[index],
+            InputBoundPass::SceneBakeAccumulation => &self.scene_bake_accumulation,
         }
     }
 }
@@ -130,12 +127,11 @@ pub(super) struct InputBindingSources {
     pub(super) scene_preparation_layout: wgpu::BindGroupLayout,
     pub(super) creative_layout: wgpu::BindGroupLayout,
     pub(super) view_layout: wgpu::BindGroupLayout,
-    pub(super) scene_shadow_map_layout: wgpu::BindGroupLayout,
     pub(super) image_light_layouts: [wgpu::BindGroupLayout; IMAGE_LIGHT_PASSES],
     pub(super) haze_layouts: [wgpu::BindGroupLayout; HAZE_PASSES],
-    pub(super) scene_map_layouts: [wgpu::BindGroupLayout; SCENE_MAP_PASSES],
     pub(super) contour_layout: wgpu::BindGroupLayout,
     pub(super) scene_emission_layouts: [wgpu::BindGroupLayout; SCENE_EMISSION_PASSES],
+    pub(super) scene_bake_accumulation_layout: wgpu::BindGroupLayout,
     pub(super) camera_uniforms: wgpu::Buffer,
     pub(super) mask_data: wgpu::Buffer,
     pub(super) tone_stats: wgpu::Buffer,
@@ -154,56 +150,6 @@ pub(super) struct InputBindingSources {
     pub(super) mask_sampler: wgpu::Sampler,
     pub(super) full_image_mask: wgpu::TextureView,
     pub(super) pixelate_blocks: wgpu::TextureView,
-}
-
-/// Scene depth with its mip chain (`scene_surface`), of `edge` × `edge` texels
-/// and `mip_levels` levels.
-struct SceneDepthInputs {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-}
-
-impl SceneDepthInputs {
-    fn new(device: &wgpu::Device, edge: u32, mip_levels: u32) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("calibraw full-image scene depth"),
-            size: texture_size(edge, edge),
-            mip_level_count: mip_levels,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: SCENE_DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[SCENE_DEPTH_FORMAT],
-        });
-        Self {
-            view: default_texture_view(&texture),
-            texture,
-        }
-    }
-}
-
-/// The scene shadow map (scene_shadows.wgsl): the surface on the level-0
-/// scene-depth grid of `edge` × `edge` texels, and below it the air slices
-/// (`scene_shadow_map_height`).
-struct SceneShadowMapInputs {
-    _texture: wgpu::Texture,
-    view: wgpu::TextureView,
-}
-
-impl SceneShadowMapInputs {
-    fn new(device: &wgpu::Device, edge: u32) -> Self {
-        let texture = create_processing_texture(
-            device,
-            texture_size(edge, scene_shadow_map_height(edge)),
-            SCENE_SHADOW_MAP_FORMAT,
-            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            "calibraw full-image scene shadow map",
-        );
-        Self {
-            view: default_texture_view(&texture),
-            _texture: texture,
-        }
-    }
 }
 
 /// The image-light grid and its maps (tone_analysis.wgsl).
@@ -376,117 +322,6 @@ impl HazeInputs {
     }
 }
 
-/// The scene map's grid and its maps (scene_analysis.wgsl).
-struct SceneMapInputs {
-    cells: wgpu::Buffer,
-    /// The coarse photo, its wide blur, depth's coefficients with the sky's
-    /// luminance, depth's range, the ground and the lens blur table effects
-    /// read; cropped and zoomed views copy them.
-    environment: wgpu::Texture,
-    environment_view: wgpu::TextureView,
-    environment_blur: wgpu::Texture,
-    environment_blur_view: wgpu::TextureView,
-    depth_map: wgpu::Texture,
-    depth_map_view: wgpu::TextureView,
-    depth_range: wgpu::Texture,
-    depth_range_view: wgpu::TextureView,
-    ground: wgpu::Texture,
-    ground_view: wgpu::TextureView,
-    focus: wgpu::Texture,
-    focus_view: wgpu::TextureView,
-    _coefficients: wgpu::Texture,
-    /// The guided filter's coefficients of one window, before averaging.
-    coefficients_view: wgpu::TextureView,
-}
-
-impl SceneMapInputs {
-    /// Inputs for a grid of `edge` × `edge` cells and a blur of `blur_edge`.
-    fn new(device: &wgpu::Device, edge: u32, blur_edge: u32) -> Self {
-        let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
-        let copied = usage | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST;
-        let blocks = |edge, blocks, format, usage, label| {
-            let texture = create_processing_texture(
-                device,
-                texture_size(edge, edge * blocks),
-                format,
-                usage,
-                label,
-            );
-            let view = default_texture_view(&texture);
-            (texture, view)
-        };
-        let texture = |edge, format, usage, label| blocks(edge, 1, format, usage, label);
-        let (environment, environment_view) = texture(
-            edge,
-            SCENE_ENVIRONMENT_FORMAT,
-            copied,
-            "calibraw full-image scene environment",
-        );
-        let (environment_blur, environment_blur_view) = texture(
-            blur_edge,
-            SCENE_ENVIRONMENT_FORMAT,
-            copied,
-            "calibraw full-image scene environment blur",
-        );
-        let (depth_map, depth_map_view) = blocks(
-            edge,
-            SCENE_MAP_COEFFICIENT_BLOCKS,
-            SCENE_COEFFICIENT_FORMAT,
-            copied,
-            "calibraw full-image scene depth map",
-        );
-        let (depth_range, depth_range_view) = texture(
-            edge,
-            SCENE_ENVIRONMENT_FORMAT,
-            copied,
-            "calibraw full-image scene depth range",
-        );
-        let (ground, ground_view) = texture(
-            edge,
-            SCENE_ENVIRONMENT_FORMAT,
-            copied,
-            "calibraw full-image scene ground",
-        );
-        let focus = create_processing_texture(
-            device,
-            texture_size(SCENE_FOCUS_BINS, 1),
-            SCENE_ENVIRONMENT_FORMAT,
-            copied,
-            "calibraw full-image scene lens blur",
-        );
-        let focus_view = default_texture_view(&focus);
-        let (coefficients, coefficients_view) = blocks(
-            edge,
-            SCENE_MAP_COEFFICIENT_BLOCKS,
-            SCENE_COEFFICIENT_FORMAT,
-            usage,
-            "calibraw scene map guided-filter coefficients",
-        );
-        Self {
-            cells: create_gpu_buffer(
-                device,
-                "calibraw scene map grid",
-                scene_map_cells_bytes(edge),
-                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            ),
-            environment,
-            environment_view,
-            environment_blur,
-            environment_blur_view,
-            depth_map,
-            depth_map_view,
-            depth_range,
-            depth_range_view,
-            ground,
-            ground_view,
-            focus,
-            focus_view,
-            _coefficients: coefficients,
-            coefficients_view,
-        }
-    }
-}
-
 /// The LUT the view pass applies (look_lut.wgsl): `size`³ texels, red along
 /// x, green along y and blue along z.
 struct LookLutInputs {
@@ -561,21 +396,256 @@ impl LookLutInputs {
 
 /// Views the input-bound passes bind, allocated or placeholder.
 struct BoundInputs<'a> {
-    scene_depth: &'a SceneDepthInputs,
-    scene_map: &'a SceneMapInputs,
-    shadow_map: &'a SceneShadowMapInputs,
     image_lights: &'a ImageLightInputs,
     haze: &'a HazeInputs,
     contours: &'a ContourInputs,
     scene_emission: &'a SceneEmissionInputs,
     look_lut: &'a LookLutInputs,
+    scene_bake: SceneBakeBindings<'a>,
+    air_light: &'a AirLightInputs,
+}
+
+/// This pipeline's air light (`scene::lights`, air_light.wgsl): a texture
+/// array of `groups` light groups over its region, the uniform that says
+/// where it lies, and what it was built from. A placeholder of one texel and
+/// an all-zero uniform (no air light) is bound until one is built.
+pub(super) struct AirLightInputs {
+    pub(super) texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    pub(super) uniforms: wgpu::Buffer,
+    pub(super) size: [u32; 2],
+    pub(super) groups: u32,
+    pub(super) built: Option<SceneAirLightKey>,
+    _reservation: Option<GpuBudgetReservation>,
+}
+
+impl AirLightInputs {
+    fn new(
+        device: &wgpu::Device,
+        size: [u32; 2],
+        groups: u32,
+        reservation: Option<GpuBudgetReservation>,
+    ) -> Self {
+        let layers = air_light_layers(groups);
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("calibraw scene air light"),
+            size: wgpu::Extent3d {
+                width: size[0].max(1),
+                height: size[1].max(1),
+                depth_or_array_layers: layers,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: AIR_LIGHT_FORMAT,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("calibraw scene air light"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let uniforms = create_gpu_buffer(
+            device,
+            "calibraw scene air light uniforms",
+            std::mem::size_of::<SceneAirLightUniform>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        Self {
+            texture,
+            view,
+            uniforms,
+            size,
+            groups,
+            built: None,
+            _reservation: reservation,
+        }
+    }
+
+    /// The bytes a texture of `size` and `groups` takes.
+    fn bytes(size: [u32; 2], groups: u32) -> u64 {
+        u64::from(size[0].max(1))
+            * u64::from(size[1].max(1))
+            * 8
+            * u64::from(air_light_layers(groups))
+    }
+}
+
+/// What passes bind of the scene bake: the scratch buffer and uniforms the
+/// working-image accumulation writes, and the bake's layers, its working image
+/// and the light bake that effects read (scene/geometry.wgsl).
+#[derive(Clone, Copy)]
+pub(super) struct SceneBakeBindings<'a> {
+    pub(super) scratch: &'a wgpu::Buffer,
+    pub(super) uniforms: &'a wgpu::Buffer,
+    pub(super) layers: &'a wgpu::TextureView,
+    /// The working image with its mip chain.
+    pub(super) working: &'a wgpu::TextureView,
+    pub(super) lights: &'a SceneLightBindings,
+}
+
+/// What effects read of the light bake: each surface's visibility, the shadow
+/// cubes with the lights' uniform (for points in the air) and the sampler
+/// that compares with them.
+pub(super) struct SceneLightBindings {
+    visibility: wgpu::TextureView,
+    cubes: wgpu::TextureView,
+    uniforms: wgpu::Buffer,
+    compare: wgpu::Sampler,
+}
+
+impl SceneLightBindings {
+    /// The light bake's, or placeholders while it does not exist, which no
+    /// light reads (the lights' uniform is zero).
+    fn new(device: &wgpu::Device, bake: Option<&SceneBake>, compare: &wgpu::Sampler) -> Self {
+        let view = |texture: wgpu::Texture, label: &str| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some(label),
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            })
+        };
+        let placeholder = |format, usage, label: &str| {
+            view(
+                create_processing_texture(
+                    device,
+                    wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 2,
+                    },
+                    format,
+                    usage,
+                    label,
+                ),
+                label,
+            )
+        };
+        Self {
+            visibility: bake
+                .and_then(SceneBake::visibility_texture)
+                .map(|texture| view(texture, "calibraw scene visibility"))
+                .unwrap_or_else(|| {
+                    placeholder(
+                        wgpu::TextureFormat::Rgba8Unorm,
+                        wgpu::TextureUsages::TEXTURE_BINDING,
+                        "calibraw scene visibility placeholder",
+                    )
+                }),
+            cubes: bake
+                .and_then(SceneBake::cubes_texture)
+                .map(|texture| view(texture, "calibraw scene shadow cubes"))
+                .unwrap_or_else(|| {
+                    placeholder(
+                        wgpu::TextureFormat::Depth32Float,
+                        wgpu::TextureUsages::TEXTURE_BINDING,
+                        "calibraw scene shadow cubes placeholder",
+                    )
+                }),
+            uniforms: bake
+                .and_then(SceneBake::lights_uniforms)
+                .unwrap_or_else(|| {
+                    create_gpu_buffer(
+                        device,
+                        "calibraw scene shadow lights placeholder",
+                        std::mem::size_of::<SceneShadowLightsUniform>() as u64,
+                        wgpu::BufferUsages::UNIFORM,
+                    )
+                }),
+            compare: compare.clone(),
+        }
+    }
+}
+
+/// Bound for the scene bake until it exists. Never read: the accumulation runs
+/// only for an allocated bake, and effects read the bake only when its
+/// uniforms hold a working size, which these leave at zero.
+struct PlaceholderSceneBake {
+    scratch: wgpu::Buffer,
+    uniforms: wgpu::Buffer,
+    layers: wgpu::TextureView,
+    working: wgpu::TextureView,
+    lights: SceneLightBindings,
+}
+
+impl PlaceholderSceneBake {
+    fn new(device: &wgpu::Device, compare: &wgpu::Sampler) -> Self {
+        let layers = create_processing_texture(
+            device,
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: SCENE_BAKE_LAYERS,
+            },
+            wgpu::TextureFormat::Rgba16Float,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+            "calibraw scene bake layers placeholder",
+        )
+        .create_view(&wgpu::TextureViewDescriptor {
+            label: Some("calibraw scene bake layers placeholder"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        Self {
+            scratch: create_gpu_buffer(
+                device,
+                "calibraw scene bake scratch placeholder",
+                16,
+                wgpu::BufferUsages::STORAGE,
+            ),
+            uniforms: create_gpu_buffer(
+                device,
+                "calibraw scene bake uniforms placeholder",
+                std::mem::size_of::<SceneBakeUniforms>() as u64,
+                wgpu::BufferUsages::UNIFORM,
+            ),
+            layers,
+            working: create_processing_texture(
+                device,
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                wgpu::TextureFormat::Rgba16Float,
+                wgpu::TextureUsages::TEXTURE_BINDING,
+                "calibraw scene working image placeholder",
+            )
+            .create_view(&wgpu::TextureViewDescriptor::default()),
+            lights: SceneLightBindings::new(device, None, compare),
+        }
+    }
+
+    fn bindings(&self) -> SceneBakeBindings<'_> {
+        SceneBakeBindings {
+            scratch: &self.scratch,
+            uniforms: &self.uniforms,
+            layers: &self.layers,
+            working: &self.working,
+            lights: &self.lights,
+        }
+    }
+}
+
+/// The sampler that compares a depth with a shadow cube's: 1 where the
+/// reference is at least the stored depth, filtered linearly.
+fn scene_compare_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("calibraw scene shadow compare (effects)"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        compare: Some(wgpu::CompareFunction::GreaterEqual),
+        ..Default::default()
+    })
 }
 
 impl InputBindingSources {
     fn bind_groups(&self, device: &wgpu::Device, inputs: &BoundInputs<'_>) -> InputBindGroups {
         let haze = inputs.haze;
-        let scene_depth = &inputs.scene_depth.view;
-        let scene_map = inputs.scene_map;
         let scene_preparation = create_bind_group(
             device,
             "bg adjustment preparation",
@@ -614,18 +684,20 @@ impl InputBindingSources {
                     sampler_binding(28, &self.mask_sampler),
                     buffer_binding(33, &self.mask_data),
                     texture_binding(34, &self.full_image_mask),
-                    texture_binding(35, scene_depth),
                     buffer_binding(16, &self.tone_stats),
                     texture_binding(36, &self.pixelate_blocks),
                     texture_binding(45, &inputs.image_lights.map_view),
-                    texture_binding(46, &inputs.shadow_map.view),
-                    texture_binding(69, &scene_map.environment_view),
-                    texture_binding(70, &scene_map.environment_blur_view),
-                    texture_binding(71, &scene_map.depth_map_view),
-                    texture_binding(77, &scene_map.depth_range_view),
-                    texture_binding(73, &scene_map.ground_view),
-                    texture_binding(75, &scene_map.focus_view),
                     texture_binding(83, &inputs.scene_emission.light_view),
+                    buffer_binding(85, inputs.scene_bake.uniforms),
+                    buffer_binding(104, &inputs.scene_bake.lights.uniforms),
+                    texture_binding(105, &inputs.scene_bake.lights.cubes),
+                    sampler_binding(106, &inputs.scene_bake.lights.compare),
+                    texture_binding(112, &inputs.scene_bake.lights.visibility),
+                    texture_binding(113, inputs.scene_bake.layers),
+                    texture_binding(117, inputs.scene_bake.working),
+                    texture_binding(114, &inputs.air_light.view),
+                    buffer_binding(115, &inputs.air_light.uniforms),
+                    buffer_binding(20, &self.profile),
                 ],
             )
         };
@@ -753,75 +825,6 @@ impl InputBindingSources {
                 ],
             ),
         ];
-        let [accumulate, resolve, smooth, blur, ground, focus] = &self.scene_map_layouts;
-        let scene_map_groups = [
-            create_bind_group(
-                device,
-                "bg scene map accumulation",
-                accumulate,
-                &[
-                    buffer_binding(0, &self.camera_uniforms),
-                    texture_binding(11, &self.scene),
-                    buffer_binding(20, &self.profile),
-                    texture_binding(35, scene_depth),
-                    buffer_binding(62, &scene_map.cells),
-                ],
-            ),
-            create_bind_group(
-                device,
-                "bg scene map resolve",
-                resolve,
-                &[
-                    buffer_binding(0, &self.camera_uniforms),
-                    buffer_binding(62, &scene_map.cells),
-                    texture_binding(63, &scene_map.environment_view),
-                    texture_binding(64, &scene_map.coefficients_view),
-                    texture_binding(76, &scene_map.depth_range_view),
-                ],
-            ),
-            create_bind_group(
-                device,
-                "bg scene map coefficient smoothing",
-                smooth,
-                &[
-                    buffer_binding(0, &self.camera_uniforms),
-                    texture_binding(65, &scene_map.coefficients_view),
-                    texture_binding(66, &scene_map.depth_map_view),
-                ],
-            ),
-            create_bind_group(
-                device,
-                "bg scene map environment blur",
-                blur,
-                &[
-                    buffer_binding(0, &self.camera_uniforms),
-                    texture_binding(67, &scene_map.environment_view),
-                    texture_binding(68, &scene_map.environment_blur_view),
-                ],
-            ),
-            create_bind_group(
-                device,
-                "bg scene map ground",
-                ground,
-                &[
-                    buffer_binding(0, &self.camera_uniforms),
-                    sampler_binding(28, &self.mask_sampler),
-                    texture_binding(35, scene_depth),
-                    texture_binding(67, &scene_map.environment_view),
-                    texture_binding(72, &scene_map.ground_view),
-                ],
-            ),
-            create_bind_group(
-                device,
-                "bg scene map lens blur",
-                focus,
-                &[
-                    buffer_binding(0, &self.camera_uniforms),
-                    buffer_binding(62, &scene_map.cells),
-                    texture_binding(74, &scene_map.focus_view),
-                ],
-            ),
-        ];
         let contours = create_bind_group(
             device,
             "bg contour accumulation",
@@ -845,7 +848,8 @@ impl InputBindingSources {
                     sampler_binding(28, &self.mask_sampler),
                     buffer_binding(33, &self.mask_data),
                     texture_binding(34, &self.full_image_mask),
-                    texture_binding(35, scene_depth),
+                    buffer_binding(85, inputs.scene_bake.uniforms),
+                    texture_binding(113, inputs.scene_bake.layers),
                     buffer_binding(78, &inputs.contours.cells),
                     texture_binding(79, &emission.emitters_view),
                 ],
@@ -857,8 +861,8 @@ impl InputBindingSources {
                 &[
                     buffer_binding(0, &self.camera_uniforms),
                     buffer_binding(16, &self.tone_stats),
-                    sampler_binding(28, &self.mask_sampler),
-                    texture_binding(35, scene_depth),
+                    buffer_binding(85, inputs.scene_bake.uniforms),
+                    texture_binding(113, inputs.scene_bake.layers),
                     texture_binding(80, &emission.emitters_view),
                     texture_binding(81, &emission.light_view),
                 ],
@@ -870,6 +874,7 @@ impl InputBindingSources {
                 &[
                     buffer_binding(0, &self.camera_uniforms),
                     buffer_binding(16, &self.tone_stats),
+                    buffer_binding(85, inputs.scene_bake.uniforms),
                     texture_binding(80, &emission.emitters_view),
                     texture_binding(81, &emission.light_view),
                 ],
@@ -881,30 +886,27 @@ impl InputBindingSources {
             effects_from_tex2: effects("bg scene effects from tex2", &self.tex2, &self.tex1),
             view: view("bg scene look view and output", &self.tex2),
             view_after_blur: view("bg scene look view and output after mask Blur", &self.tex1),
-            scene_shadow_map: create_bind_group(
-                device,
-                "bg scene shadow map",
-                &self.scene_shadow_map_layout,
-                &[
-                    buffer_binding(0, &self.camera_uniforms),
-                    buffer_binding(33, &self.mask_data),
-                    texture_binding(35, scene_depth),
-                    texture_binding(47, &inputs.shadow_map.view),
-                ],
-            ),
             image_lights,
             haze: haze_groups,
-            scene_map: scene_map_groups,
             contours,
             scene_emission,
+            scene_bake_accumulation: create_bind_group(
+                device,
+                "bg scene bake accumulation",
+                &self.scene_bake_accumulation_layout,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(11, &self.scene),
+                    buffer_binding(20, &self.profile),
+                    buffer_binding(84, inputs.scene_bake.scratch),
+                    buffer_binding(85, inputs.scene_bake.uniforms),
+                ],
+            ),
         }
     }
 }
 
 struct Allocated {
-    scene_depth: Option<SceneDepthInputs>,
-    scene_map: Option<SceneMapInputs>,
-    scene_shadow_map: Option<SceneShadowMapInputs>,
     image_lights: Option<ImageLightInputs>,
     haze: Option<HazeInputs>,
     contours: Option<ContourInputs>,
@@ -913,29 +915,39 @@ struct Allocated {
     /// The LUT that last failed to upload and why, so it is not retried for
     /// every render.
     look_lut_failure: Option<(LutId, String)>,
+    /// This pipeline's scene bake, or the whole image's that a view of part
+    /// of it shares.
+    scene_bake: Option<Arc<SceneBake>>,
+    /// The bake's light revision the bind groups hold (`SceneBake::lights_revision`).
+    bound_lights_revision: u64,
+    /// This pipeline's air light, when an effect reads it.
+    air_light: Option<AirLightInputs>,
     bind_groups: InputBindGroups,
 }
 
 pub(super) struct EffectInputs {
     device: wgpu::Device,
     sources: InputBindingSources,
-    placeholder_scene_depth: SceneDepthInputs,
-    placeholder_scene_map: SceneMapInputs,
-    placeholder_shadow_map: SceneShadowMapInputs,
     placeholder_image_lights: ImageLightInputs,
     placeholder_haze: HazeInputs,
     placeholder_contours: ContourInputs,
     placeholder_scene_emission: SceneEmissionInputs,
     placeholder_look_lut: LookLutInputs,
+    placeholder_scene_bake: PlaceholderSceneBake,
+    placeholder_air_light: AirLightInputs,
+    /// Compares with the shadow cubes (`SceneLightBindings`).
+    scene_compare: wgpu::Sampler,
+    /// The scene bake's and light bake's programs, compiled on this
+    /// pipeline's first bake. Held here because `SceneBakePrograms::shared`
+    /// keeps only weak references: without an owner every render compiled
+    /// them again (about 45 ms each on a desktop GPU).
+    scene_programs: Mutex<Option<Arc<SceneBakePrograms>>>,
     allocated: Mutex<Allocated>,
 }
 
 impl EffectInputs {
     /// Inputs with nothing allocated yet: passes bind the placeholders.
     pub(super) fn new(device: &wgpu::Device, sources: InputBindingSources) -> Self {
-        let placeholder_scene_depth = SceneDepthInputs::new(device, 1, 1);
-        let placeholder_scene_map = SceneMapInputs::new(device, 1, 1);
-        let placeholder_shadow_map = SceneShadowMapInputs::new(device, 1);
         let placeholder_image_lights = ImageLightInputs::new(device, 1);
         let placeholder_haze = HazeInputs::new(device, 1);
         let placeholder_contours = ContourInputs::new(device, 1);
@@ -943,40 +955,43 @@ impl EffectInputs {
         let placeholder_scene_emission = SceneEmissionInputs::new(device, 1, 1, 1);
         // Never read: the view pass skips the LUT unless one was uploaded.
         let placeholder_look_lut = LookLutInputs::new(device, 1, None);
+        let scene_compare = scene_compare_sampler(device);
+        let placeholder_scene_bake = PlaceholderSceneBake::new(device, &scene_compare);
+        let placeholder_air_light = AirLightInputs::new(device, [1, 1], 1, None);
         let bind_groups = sources.bind_groups(
             device,
             &BoundInputs {
-                scene_depth: &placeholder_scene_depth,
-                scene_map: &placeholder_scene_map,
-                shadow_map: &placeholder_shadow_map,
                 image_lights: &placeholder_image_lights,
                 haze: &placeholder_haze,
                 contours: &placeholder_contours,
                 scene_emission: &placeholder_scene_emission,
                 look_lut: &placeholder_look_lut,
+                scene_bake: placeholder_scene_bake.bindings(),
+                air_light: &placeholder_air_light,
             },
         );
         Self {
             device: device.clone(),
             sources,
-            placeholder_scene_depth,
-            placeholder_scene_map,
-            placeholder_shadow_map,
             placeholder_image_lights,
             placeholder_haze,
             placeholder_contours,
             placeholder_scene_emission,
             placeholder_look_lut,
+            placeholder_scene_bake,
+            placeholder_air_light,
+            scene_compare,
+            scene_programs: Mutex::new(None),
             allocated: Mutex::new(Allocated {
-                scene_depth: None,
-                scene_map: None,
-                scene_shadow_map: None,
                 image_lights: None,
                 haze: None,
                 contours: None,
                 scene_emission: None,
                 look_lut: None,
                 look_lut_failure: None,
+                scene_bake: None,
+                bound_lights_revision: 0,
+                air_light: None,
                 bind_groups,
             }),
         }
@@ -989,34 +1004,19 @@ impl EffectInputs {
     }
 
     /// The current bind group of `pass`.
+    /// `pass`'s bind group. The light bake allocates its visibility within the
+    /// scene bake, which views of part of the image share, so the bind groups
+    /// follow it here.
     pub(super) fn bind_group(&self, pass: InputBoundPass) -> wgpu::BindGroup {
-        self.lock().bind_groups.get(pass).clone()
-    }
-
-    /// Allocates scene depth unless it exists. Nothing is uploaded to it before
-    /// that, so `upload_scene_depth` fills it on the first upload after this.
-    pub(super) fn allocate_scene_depth(&self) {
         let mut allocated = self.lock();
-        if allocated.scene_depth.is_some() {
-            return;
+        let revision = allocated
+            .scene_bake
+            .as_ref()
+            .map_or(0, |bake| bake.lights_revision());
+        if revision != allocated.bound_lights_revision {
+            self.rebind(&mut allocated);
         }
-        allocated.scene_depth = Some(SceneDepthInputs::new(
-            &self.device,
-            SCENE_DEPTH_EDGE,
-            SCENE_DEPTH_MIP_LEVELS,
-        ));
-        self.rebind(&mut allocated);
-    }
-
-    /// Allocates the scene shadow map unless it exists.
-    pub(super) fn allocate_scene_shadow_map(&self) {
-        let mut allocated = self.lock();
-        if allocated.scene_shadow_map.is_some() {
-            return;
-        }
-        allocated.scene_shadow_map =
-            Some(SceneShadowMapInputs::new(&self.device, SCENE_DEPTH_EDGE));
-        self.rebind(&mut allocated);
+        allocated.bind_groups.get(pass).clone()
     }
 
     /// Allocates the scene emission textures unless they exist.
@@ -1050,16 +1050,6 @@ impl EffectInputs {
                     return;
                 }
                 allocated.haze = Some(HazeInputs::new(&self.device, HAZE_GRID_LONG));
-            }
-            FullImageMap::Scene => {
-                if allocated.scene_map.is_some() {
-                    return;
-                }
-                allocated.scene_map = Some(SceneMapInputs::new(
-                    &self.device,
-                    SCENE_MAP_GRID_LONG,
-                    SCENE_MAP_BLUR_GRID_LONG,
-                ));
             }
             FullImageMap::Contours => {
                 if allocated.contours.is_some() {
@@ -1112,21 +1102,17 @@ impl EffectInputs {
     }
 
     fn rebind(&self, allocated: &mut Allocated) {
+        let revision = allocated
+            .scene_bake
+            .as_ref()
+            .map_or(0, |bake| bake.lights_revision());
+        let scene_bake = allocated.scene_bake.clone().map(|bake| {
+            let lights = SceneLightBindings::new(&self.device, Some(&bake), &self.scene_compare);
+            (bake, lights)
+        });
         allocated.bind_groups = self.sources.bind_groups(
             &self.device,
             &BoundInputs {
-                scene_depth: allocated
-                    .scene_depth
-                    .as_ref()
-                    .unwrap_or(&self.placeholder_scene_depth),
-                scene_map: allocated
-                    .scene_map
-                    .as_ref()
-                    .unwrap_or(&self.placeholder_scene_map),
-                shadow_map: allocated
-                    .scene_shadow_map
-                    .as_ref()
-                    .unwrap_or(&self.placeholder_shadow_map),
                 image_lights: allocated
                     .image_lights
                     .as_ref()
@@ -1144,16 +1130,126 @@ impl EffectInputs {
                     .look_lut
                     .as_ref()
                     .unwrap_or(&self.placeholder_look_lut),
+                scene_bake: match &scene_bake {
+                    Some((bake, lights)) => bake.bindings(lights),
+                    None => self.placeholder_scene_bake.bindings(),
+                },
+                air_light: allocated
+                    .air_light
+                    .as_ref()
+                    .unwrap_or(&self.placeholder_air_light),
             },
         );
+        allocated.bound_lights_revision = revision;
     }
 
-    /// The scene-depth texture, once allocated.
-    pub(super) fn scene_depth_texture(&self) -> Option<wgpu::Texture> {
-        self.lock()
-            .scene_depth
+    /// The scene bake of `size`, allocated unless one of that size exists.
+    /// `None` when it does not fit the GPU budget.
+    pub(super) fn allocate_scene_bake(&self, size: [u32; 2]) -> Result<Arc<SceneBake>> {
+        let mut allocated = self.lock();
+        if let Some(bake) = allocated
+            .scene_bake
             .as_ref()
-            .map(|inputs| inputs.texture.clone())
+            .filter(|bake| bake.size() == size)
+        {
+            return Ok(Arc::clone(bake));
+        }
+        // Release the previous bake's reservation before taking one for the
+        // new size.
+        allocated.scene_bake = None;
+        let bake = SceneBake::new(&self.device, size).map(Arc::new);
+        allocated.scene_bake = bake.as_ref().ok().cloned();
+        self.rebind(&mut allocated);
+        bake
+    }
+
+    /// Encodes the air light of `region` for `groups` light groups into this
+    /// pipeline's texture, allocating or growing it first (the process budget
+    /// may refuse, which leaves the placeholder bound and no air light).
+    pub(super) fn encode_air_light(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bake: &SceneBake,
+        programs: &SceneLightPrograms,
+        region: SceneAirLightRegion,
+    ) {
+        let groups = bake.air_light_groups();
+        if groups == 0 {
+            return;
+        }
+        let mut allocated = self.lock();
+        let fits = allocated
+            .air_light
+            .as_ref()
+            .is_some_and(|air| air.size == region.size && air.groups == groups);
+        if !fits {
+            allocated.air_light = None;
+            let reservation = GpuBudgetReservation::acquire_bytes(
+                "scene air light",
+                AirLightInputs::bytes(region.size, groups),
+                gpu_working_set_limit_bytes(),
+            );
+            match reservation {
+                Ok(reservation) => {
+                    allocated.air_light = Some(AirLightInputs::new(
+                        &self.device,
+                        region.size,
+                        groups,
+                        Some(reservation),
+                    ));
+                }
+                Err(error) => log::error!("scene air light not allocated: {error:#}"),
+            }
+            self.rebind(&mut allocated);
+        }
+        let Some(air) = allocated.air_light.as_mut() else {
+            return;
+        };
+        let target = SceneAirLightTarget {
+            texture: &air.texture,
+            uniforms: &air.uniforms,
+        };
+        let built =
+            bake.encode_air_light(&self.device, encoder, programs, &target, region, air.built);
+        air.built = built;
+    }
+
+    /// Shares `bake`, the whole image's, with this view of part of it.
+    pub(super) fn share_scene_bake(&self, bake: &Arc<SceneBake>) {
+        let mut allocated = self.lock();
+        if allocated
+            .scene_bake
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, bake))
+        {
+            return;
+        }
+        allocated.scene_bake = Some(Arc::clone(bake));
+        self.rebind(&mut allocated);
+    }
+
+    pub(super) fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    /// The scene programs of this pipeline's device, compiled on first use
+    /// and kept for the pipeline's lifetime.
+    pub(super) fn scene_programs(&self) -> Result<Arc<SceneBakePrograms>> {
+        let mut programs = self
+            .scene_programs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(programs) = programs.as_ref() {
+            return Ok(Arc::clone(programs));
+        }
+        let shared = SceneBakePrograms::shared(&self.device)?;
+        *programs = Some(Arc::clone(&shared));
+        Ok(shared)
+    }
+
+    /// The scene bake, once allocated or shared.
+    pub(super) fn scene_bake(&self) -> Option<Arc<SceneBake>> {
+        self.lock().scene_bake.clone()
     }
 
     /// `map`'s grid and outputs, once allocated.
@@ -1175,23 +1271,6 @@ impl EffectInputs {
                 textures: vec![haze.map.clone()],
                 buffers: vec![haze.airlight.clone()],
             }),
-            FullImageMap::Scene => {
-                allocated
-                    .scene_map
-                    .as_ref()
-                    .map(|scene_map| FullImageMapResources {
-                        cells: scene_map.cells.clone(),
-                        textures: vec![
-                            scene_map.environment.clone(),
-                            scene_map.environment_blur.clone(),
-                            scene_map.depth_map.clone(),
-                            scene_map.depth_range.clone(),
-                            scene_map.ground.clone(),
-                            scene_map.focus.clone(),
-                        ],
-                        buffers: Vec::new(),
-                    })
-            }
             FullImageMap::Contours => {
                 allocated
                     .contours

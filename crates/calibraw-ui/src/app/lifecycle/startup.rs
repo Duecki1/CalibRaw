@@ -154,6 +154,7 @@ impl CalibRawApp {
                 original_rendered_state: None,
                 original_hold: None,
                 pending_stage: None,
+                draft_scene_lights: false,
                 dispatch_gate: PreviewDispatchGate::default(),
                 lens_original_cache: None,
                 lens_corrected_cache: None,

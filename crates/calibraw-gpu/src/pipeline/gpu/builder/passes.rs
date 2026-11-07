@@ -76,9 +76,6 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// The horizontal image-light blur; the vertical one follows.
     pub(in crate::pipeline::gpu) image_light_blur_pass_index: usize,
     pub(in crate::pipeline::gpu) image_light_end_index: usize,
-    /// Shadows of scene lights on the surface and in the air, built in the
-    /// output stage.
-    pub(in crate::pipeline::gpu) scene_shadow_map_pass_index: usize,
     /// Pre-demosaiced rasters' replacement for highlight reconstruction and
     /// demosaicing: copies the raster source into the scene with luminance
     /// denoise. It runs with the RAW stage but comes after the output passes
@@ -101,12 +98,6 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// follows as `AssembledPasses::binned_finish_pass`. It runs with the RAW
     /// stage but comes last so that adding it kept earlier positions.
     pub(in crate::pipeline::gpu) binned_highlight_pass_index: usize,
-    /// Accumulation into the scene map; the passes that resolve it follow.
-    /// Like the image lights they run with the tone stage and come last so that
-    /// adding them kept earlier positions.
-    pub(in crate::pipeline::gpu) scene_map_accumulate_pass_index: usize,
-    pub(in crate::pipeline::gpu) scene_map_resolve_pass_index: usize,
-    pub(in crate::pipeline::gpu) scene_map_end_index: usize,
     /// Wet Surfaces before the creative pass, and Rain and Wet Surfaces'
     /// highlights after it. They run with the output stage but come last so that
     /// adding them kept earlier positions.
@@ -117,6 +108,10 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// come last so that adding them kept earlier positions.
     pub(in crate::pipeline::gpu) contour_accumulate_pass_index: usize,
     pub(in crate::pipeline::gpu) scene_emission_pass_index: usize,
+    /// Accumulation into the scene bake's working image (`scene`), which runs
+    /// with the tone stage, or the export tone prepass. It comes last so that
+    /// adding it kept earlier positions.
+    pub(in crate::pipeline::gpu) scene_bake_accumulation_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -162,7 +157,6 @@ impl StageIndices {
         let image_light_accumulate_pass_index = take(1);
         let image_light_resolve_pass_index = take(1);
         let image_light_blur_pass_index = take(2);
-        let scene_shadow_map_pass_index = take(1);
         let raster_finish_pass_index = take(1);
         let haze_accumulate_pass_index = take(1);
         let haze_resolve_pass_index = take(HAZE_PASSES - 1);
@@ -170,13 +164,11 @@ impl StageIndices {
         let chromatic_aberration_prepare_pass_index = take(1);
         let chromatic_aberration_fringe_pass_index = take(1);
         let binned_highlight_pass_index = take(1);
-        let scene_map_accumulate_pass_index = take(1);
-        let scene_map_resolve_pass_index = take(SCENE_MAP_PASSES - 1);
-        let scene_map_end_index = take(0);
         let wet_surfaces_pass_index = take(1);
         let weather_air_pass_index = take(1);
         let contour_accumulate_pass_index = take(1);
         let scene_emission_pass_index = take(SCENE_EMISSION_PASSES);
+        let scene_bake_accumulation_pass_index = take(1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -207,8 +199,7 @@ impl StageIndices {
             image_light_accumulate_pass_index,
             image_light_resolve_pass_index,
             image_light_blur_pass_index,
-            image_light_end_index: scene_shadow_map_pass_index,
-            scene_shadow_map_pass_index,
+            image_light_end_index: raster_finish_pass_index,
             raster_finish_pass_index,
             haze_accumulate_pass_index,
             haze_resolve_pass_index,
@@ -216,13 +207,11 @@ impl StageIndices {
             chromatic_aberration_prepare_pass_index,
             chromatic_aberration_fringe_pass_index,
             binned_highlight_pass_index,
-            scene_map_accumulate_pass_index,
-            scene_map_resolve_pass_index,
-            scene_map_end_index,
             wet_surfaces_pass_index,
             weather_air_pass_index,
             contour_accumulate_pass_index,
             scene_emission_pass_index,
+            scene_bake_accumulation_pass_index,
             pass_count,
         }
     }
@@ -239,10 +228,6 @@ impl StageIndices {
             FullImageMap::Haze => FullImageMapPasses {
                 accumulate: self.haze_accumulate_pass_index,
                 resolve: self.haze_resolve_pass_index..self.haze_end_index,
-            },
-            FullImageMap::Scene => FullImageMapPasses {
-                accumulate: self.scene_map_accumulate_pass_index,
-                resolve: self.scene_map_resolve_pass_index..self.scene_map_end_index,
             },
             FullImageMap::Contours => FullImageMapPasses {
                 accumulate: self.contour_accumulate_pass_index,
@@ -653,23 +638,6 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             image_light_workgroups,
         ),
     ]);
-    ensure_planned(
-        &passes,
-        indices.scene_shadow_map_pass_index,
-        "scene shadow map",
-    )?;
-    passes.push(assembler.make_pass(
-        shaders.creative_effects_module.as_ref(),
-        "build_scene_shadow_map",
-        &layouts.bgl_scene_shadow_map,
-        InputBoundPass::SceneShadowMap,
-        [
-            SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
-            scene_shadow_map_height(SCENE_DEPTH_EDGE).div_ceil(WORKGROUP_EDGE),
-            1,
-        ],
-    ));
-
     ensure_planned(&passes, indices.raster_finish_pass_index, "raster finish")?;
     passes.push(assembler.make_pass(
         shaders.raster_finish_module.as_ref(),
@@ -742,40 +710,6 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         workgroups: image_workgroups,
     };
 
-    let scene_map_workgroups = [
-        SCENE_MAP_GRID_LONG.div_ceil(WORKGROUP_EDGE),
-        SCENE_MAP_GRID_LONG.div_ceil(WORKGROUP_EDGE),
-        1,
-    ];
-    ensure_planned(
-        &passes,
-        indices.scene_map_accumulate_pass_index,
-        "scene map",
-    )?;
-    let scene_map_programs: [(&str, [u32; 3]); SCENE_MAP_PASSES] = [
-        ("accumulate_scene_map", scene_map_workgroups),
-        ("resolve_scene_map", scene_map_workgroups),
-        ("smooth_scene_coefficients", scene_map_workgroups),
-        (
-            "blur_scene_environment",
-            [
-                SCENE_MAP_BLUR_GRID_LONG.div_ceil(WORKGROUP_EDGE),
-                SCENE_MAP_BLUR_GRID_LONG.div_ceil(WORKGROUP_EDGE),
-                1,
-            ],
-        ),
-        ("build_scene_ground", scene_map_workgroups),
-        ("build_scene_focus", [1, 1, 1]),
-    ];
-    for (index, (entry, workgroups)) in scene_map_programs.into_iter().enumerate() {
-        passes.push(assembler.make_pass(
-            shaders.scene_analysis_module.as_ref(),
-            entry,
-            &layouts.bgl_scene_map[index],
-            InputBoundPass::SceneMap(index),
-            workgroups,
-        ));
-    }
     ensure_planned(&passes, indices.wet_surfaces_pass_index, "wet surfaces")?;
     passes.extend([
         assembler.make_pass(
@@ -837,6 +771,20 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             workgroups,
         ));
     }
+    ensure_planned(
+        &passes,
+        indices.scene_bake_accumulation_pass_index,
+        "scene bake accumulation",
+    )?;
+    // Every working size fits the largest square; texels past it return.
+    let working_workgroups = SCENE_WORKING_LONG_EDGE_MAX.div_ceil(WORKGROUP_EDGE);
+    passes.push(assembler.make_pass(
+        shaders.scene_bake_accumulate_module.as_ref(),
+        "accumulate_scene_working_image",
+        &layouts.bgl_scene_bake_accumulation,
+        InputBoundPass::SceneBakeAccumulation,
+        [working_workgroups, working_workgroups, 1],
+    ));
 
     // These variants reuse the programs above with bind groups that read tex2:
     // the mask-blurred scene, or whatever else last wrote there.

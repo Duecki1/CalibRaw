@@ -202,6 +202,7 @@ fn effect_picker(
                     MaskEffect::ALL
                         .into_iter()
                         .filter(|effect| effect.category() == Some(category))
+                        .filter(|effect| !effect.is_disabled())
                         .map(|effect| {
                             let added = components
                                 .iter()

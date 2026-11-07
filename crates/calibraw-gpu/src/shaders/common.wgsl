@@ -36,8 +36,11 @@ const VIEW_TRANSFORM_SCENE_SIGMOID: u32 = 1u;
 // A developed raster is retoned from the reference sigmoid to the edit's sigmoid.
 const VIEW_TRANSFORM_DISPLAY_RETONE: u32 = 2u;
 
-// `metadata.w` packs the mask effect's shader ID above eight flag bits.
+// `metadata.w` packs the mask effect's shader ID above eight flag bits. Of
+// these, an effect slot's lowest four hold its light's channel of the light
+// bake plus one, or 0 (`assign_scene_bake_lights` in mask_params.rs).
 const MASK_EFFECT_ID_SHIFT: u32 = 8u;
+const MASK_SCENE_BAKE_LIGHT_BITS: u32 = 0xfu;
 
 fn mask_effect_id(metadata: vec4<u32>) -> u32 {
     return metadata.w >> MASK_EFFECT_ID_SHIFT;
@@ -123,7 +126,8 @@ struct SceneToneUniforms {
     exposure: f32,
     saturation: f32,
     vibrance: f32,
-    scene_depth_present: u32,
+    // Keeps the next vector aligned.
+    _padding: u32,
     basic_tone: vec4<f32>,
     // The edit's sigmoid: (white target, black target, log2 paper exposure, film fog)
     // and (film power, paper power, hue preservation, colour processing).
@@ -192,10 +196,6 @@ struct EffectsUniforms {
     capture_scale_sigma: vec4<f32>,
     capture_thresholds: vec4<f32>,
     capture_mask_coherence: vec4<f32>,
-    // The ground of an active Wet Surfaces effect (scene_analysis.wgsl): the unit vector toward the
-    // horizon in image points (xy), the horizon's position along it (z), and 1
-    // when the photo has ground (w).
-    scene_ground: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> camera_uniforms: CameraUniforms;
@@ -371,44 +371,6 @@ fn contour_radius() -> i32 {
 // Pixels between samples along a cell edge `span` pixels long.
 fn contour_sample_step(span: i32) -> i32 {
     return max(span / CONTOUR_SAMPLES_PER_CELL_EDGE, 1);
-}
-
-// The scene map (scene_analysis.wgsl): a coarse grid over the full image
-// with SCENE_MAP_GRID_LONG cells along its longer edge and a blurred copy with
-// SCENE_MAP_BLUR_GRID_LONG, stored in textures and a buffer sized for a square
-// grid. Match the constants of the same names in Rust.
-const SCENE_MAP_GRID_LONG: u32 = 256u;
-const SCENE_MAP_BLUR_GRID_LONG: u32 = 48u;
-// Depth bins of the lens blur table.
-const SCENE_FOCUS_BINS: u32 = 32u;
-// Row at which the scene map's sky block starts in the coefficient textures,
-// below the depth's guided filter (SCENE_MAP_COEFFICIENT_BLOCKS in Rust).
-const SCENE_MAP_SKY_ROW: i32 = i32(SCENE_MAP_GRID_LONG);
-// Level-0 scene-depth distance (channel x) above which a texel is sky: stored
-// depth 255, the sky or what lies beyond the depth model's far limit. Sky
-// texels hold exactly 1 and are never resampled together with nearer depth,
-// which converts to at most 0.963 (`resampled_depth` in scene_depth.rs).
-const SCENE_SKY_DISTANCE: f32 = 0.98;
-// Radius in cells of the scene map's sky windows (`scene_sky_window` in
-// scene_analysis.wgsl), 9 x 9 cells: wider than a blurred outline, so that a
-// window beside the sky reaches past the blur.
-const SCENE_SKY_RADIUS: i32 = 4;
-
-fn scene_map_grid_for(long_cells: u32) -> vec2<u32> {
-    // A cell holds at least one pixel, even for a very small preview.
-    return min(
-        full_image_grid(long_cells),
-        vec2<u32>(max(camera_uniforms.full_width, 1u), max(camera_uniforms.full_height, 1u)),
-    );
-}
-
-// Cells of the scene map across and down the full image.
-fn scene_map_grid() -> vec2<u32> {
-    return scene_map_grid_for(SCENE_MAP_GRID_LONG);
-}
-
-fn scene_map_blur_grid() -> vec2<u32> {
-    return scene_map_grid_for(SCENE_MAP_BLUR_GRID_LONG);
 }
 
 // The full image in shorter-edge units, the unit the scene's image points are in.

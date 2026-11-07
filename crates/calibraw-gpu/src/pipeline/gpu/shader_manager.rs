@@ -1,4 +1,4 @@
-use super::shaders::COMPOSABLE_MODULES;
+use super::shaders::{ShaderSource, COMPOSABLE_MODULES};
 use super::{work_shader_source, CfaKind};
 use anyhow::{anyhow, Context, Result};
 use naga_oil::compose::{
@@ -37,6 +37,23 @@ impl ShaderManager {
                 text
             };
             manager.register(&module.source.import_path(), module.source.file_name, &text)?;
+        }
+        Ok(manager)
+    }
+
+    /// Registers only `modules`, in dependency order, for programs outside the
+    /// processing pipeline that import nothing else and declare no work-format
+    /// storage.
+    pub(super) fn with_modules(modules: &[ShaderSource]) -> Result<Self> {
+        let mut manager = Self {
+            composer: Composer::default(),
+        };
+        for module in modules {
+            manager.register(
+                &module.import_path(),
+                module.file_name,
+                &module.module_text(),
+            )?;
         }
         Ok(manager)
     }

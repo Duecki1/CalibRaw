@@ -41,7 +41,7 @@ pub(crate) fn show(
             }
             changed |= float_param_slider(ui, &mut settings.ambient, relight::AMBIENT);
             changed |= effect_details(ui, tr("Scene details"), |ui| {
-                float_param_slider(ui, &mut settings.relief, relight::RELIEF)
+                float_param_slider(ui, &mut settings.relief_scale, relight::RELIEF_SCALE)
             });
             changed
         },
@@ -58,7 +58,7 @@ fn light_controls(ui: &mut Ui, light: &mut RelightLight, frame: &EffectFrame) ->
         frame,
         PositionSpace::Source,
     );
-    changed |= float_param_slider(ui, &mut light.depth, relight::DEPTH);
+    changed |= float_param_slider(ui, &mut light.light_depth, relight::LIGHT_DEPTH);
     changed |= effect_color(ui, "relight-color-picker", &mut light.color, relight::COLOR);
     changed |= effect_toggle(ui, &mut light.shadows_enabled, relight::CAST_SHADOWS);
     changed |= effect_details(ui, tr("Light details"), |ui| {

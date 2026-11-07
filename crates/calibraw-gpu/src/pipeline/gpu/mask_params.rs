@@ -36,14 +36,6 @@ fn effect_mask_data(
     }
 }
 
-/// Whether an active Rain slot throws splashes on the ground, which it finds in
-/// scene depth.
-pub(super) fn rain_reads_ground(data: &MaskData) -> bool {
-    data.applies(MaskEffect::Rain)
-        && data.option(options::RAIN_DEPTH) > 0.5
-        && data.lane(rain::SPLASHES) > 0.0
-}
-
 /// Whether an active Fog, Smoke or Rain slot scatters the photograph's own lights.
 pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
     (data.applies(MaskEffect::Fog)
@@ -52,15 +44,20 @@ pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
         && data.option(options::MEDIUM_IMAGE_LIGHTS) > 0.5
 }
 
-/// Lights whose shadows the scene shadow map holds, one per RGBA channel.
-pub(super) const SCENE_SHADOW_MAP_CHANNELS: usize = 4;
-
 /// Whether an active Relight slot casts shadows on its own shading. Mirrors
 /// the amount and shadow-strength checks of `apply_relight`.
 pub(super) fn relight_casts_shadows(data: &MaskData) -> bool {
     emits_scene_light(data)
         && data.applies(MaskEffect::Relight)
         && data.percent(relight::SHADOWS) > 1e-6
+}
+
+/// Whether an active slot of a medium (Fog, Smoke, Rain) reads the light
+/// bake: then every Relight light is in it, whether or not it casts shadows on
+/// surfaces, as light in the air was always shadowed by the scene.
+fn reads_air_light(data: &MaskData) -> bool {
+    data.active_effect()
+        .is_some_and(|effect| effect != MaskEffect::Relight && effect.scene_needs().light_bake)
 }
 
 /// Whether an active slot places a light in the scene. Mirrors `emits` of
@@ -72,37 +69,6 @@ fn emits_scene_light(data: &MaskData) -> bool {
     data.applies(MaskEffect::LightRays)
         && data.percent(light_rays::AMOUNT) > 1e-6
         && (data.lane(light_rays::LENGTH) / 100.0).clamp(0.0, 2.0) > 1e-6
-}
-
-/// Whether an active slot receives scene lights, shadowed by the scene shadow
-/// map (scene_shadows.wgsl).
-pub(super) fn receives_scene_light(data: &MaskData) -> bool {
-    [
-        MaskEffect::Fog,
-        MaskEffect::Smoke,
-        MaskEffect::Rain,
-        MaskEffect::WetSurfaces,
-    ]
-    .into_iter()
-    .any(|effect| data.applies(effect))
-}
-
-/// The scene shadow map's channel of a slot's light, if it has one.
-pub(super) fn scene_light_channel(data: &MaskData) -> Option<usize> {
-    let lane = data.option(options::SCENE_LIGHT_CHANNEL);
-    (lane > 0.5).then(|| lane.round() as usize - 1)
-}
-
-/// Gives the first slots that place a light in the scene, in slot order, a
-/// channel of the scene shadow map each.
-fn assign_scene_light_channels(packed: &mut [MaskData]) {
-    let lights = packed
-        .iter_mut()
-        .filter(|data| emits_scene_light(data))
-        .take(SCENE_SHADOW_MAP_CHANNELS);
-    for (channel, data) in lights.enumerate() {
-        data.set_option(options::SCENE_LIGHT_CHANNEL, (channel + 1) as f32);
-    }
 }
 
 /// The direction in image points that `output_direction`, a unit vector in the
@@ -176,7 +142,7 @@ pub(super) fn pack_effect_slots(
     shutter_seconds: f32,
 ) -> impl Iterator<Item = MaskData> + '_ {
     let count = settings.instance_count(effect);
-    let active = enabled && settings.effect_is_active(effect);
+    let active = enabled && !effect.is_disabled() && settings.effect_is_active(effect);
     (0..count).filter_map(move |instance| {
         let context = PackContext {
             shutter_seconds,
@@ -313,6 +279,33 @@ pub(super) fn pack_mask_params(masks: &MaskStack, shutter_seconds: f32) -> Box<[
         }
     }
     let used = slot;
-    assign_scene_light_channels(&mut packed[..used]);
+    assign_scene_bake_lights(&mut packed[..used]);
     packed
+}
+
+/// Gives the first Relight slots that light the scene and cast shadows, and
+/// every Relight and Light Rays slot that lights a medium or the wet ground,
+/// in slot order, a channel of the light bake each (`scene::lights`), as its
+/// number plus one in the flag bits of `metadata[3]` below the effect's ID
+/// (`mask_effect_scene_bake_light` in effect_api.wgsl). Later ones cast none.
+fn assign_scene_bake_lights(packed: &mut [MaskData]) {
+    let air_read = packed.iter().any(reads_air_light);
+    let lights = packed
+        .iter_mut()
+        .filter(|data| {
+            relight_casts_shadows(data)
+                || (air_read
+                    && (data.applies(MaskEffect::Relight) || data.applies(MaskEffect::LightRays))
+                    && emits_scene_light(data))
+        })
+        .take(SCENE_SHADOW_LIGHTS);
+    for (channel, data) in lights.enumerate() {
+        data.metadata[3] |= channel as u32 + 1;
+    }
+}
+
+/// The light bake's channel of a slot's light, if it has one.
+pub(super) fn scene_bake_light_channel(data: &MaskData) -> Option<usize> {
+    let bits = data.metadata[3] & MASK_SCENE_BAKE_LIGHT_BITS;
+    (bits != 0).then(|| bits as usize - 1)
 }

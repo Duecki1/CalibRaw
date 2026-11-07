@@ -580,8 +580,11 @@ pub mod relight {
         SOURCE_Y, "Light Y", -50.0, 150.0, 30.0, 1.0, 0,
         Some("Places the light vertically, as a percentage of the full image height. Values outside 0–100 place it beyond the frame."),
     );
+    // Control depth (docs/rework/DEPTH_EFFECTS_PLAN.md §4.1): even in the log
+    // of distance from the nearest surface (0) to the farthest (100); below 0
+    // toward the camera, which -100 reaches.
     float_param!(
-        DEPTH, "Light depth", -100.0, 100.0, -30.0, 1.0, 0,
+        LIGHT_DEPTH, "Light depth", -100.0, 100.0, -30.0, 1.0, 0,
         Some("Places the light in the scene: 0 is level with the nearest surface and 100 with the farthest. Negative values move it toward the camera; positive values behind a subject create rim light."),
     );
     float_param!(
@@ -614,15 +617,17 @@ pub mod relight {
         0,
         Some("Controls how strongly nearer objects block the light and cast shadows."),
     );
+    // A scale of the scene's depth range, in percent of the range the depth
+    // result measured.
     float_param!(
-        RELIEF,
+        RELIEF_SCALE,
         "Relief",
-        0.0,
+        10.0,
+        300.0,
         100.0,
-        50.0,
-        0.5,
+        1.0,
         0,
-        Some("Sets how deep the scene is taken to be. Higher values let shapes read from the depth map shade more strongly."),
+        Some("Scales the depth of the scene. 100 is the depth measured in the photo; higher values let shapes shade more strongly."),
     );
     float_param!(
         AMBIENT,
@@ -920,7 +925,8 @@ pub mod fog {
         "Fog start",
         0.0,
         95.0,
-        8.0,
+        // Control depth: the old linear default 8 (`scene_depth_controls`).
+        23.0,
         0.5,
         0,
         Some("Keeps the nearest part of the scene clear. Distance is relative to the depth map, not meters."),

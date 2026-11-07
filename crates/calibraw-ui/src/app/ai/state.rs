@@ -5,11 +5,13 @@ const INTERACTIVE_MASK_INTERVAL: Duration = Duration::from_millis(45);
 const SHARED_REFINEMENT_LAYER: usize = MAX_LOCAL_MASKS;
 
 impl MaskState {
-    pub(super) fn generated_cache_mut(&mut self, model: AiMaskModel) -> &mut Option<MaskImage> {
+    /// The last result of `model` for the open photo, applied again instead of
+    /// running the model.
+    pub(super) fn generated_cache(&self, model: AiMaskModel) -> Option<AiMaskResult> {
         match model {
-            AiMaskModel::Subject => &mut self.subject_cache,
-            AiMaskModel::Sky => &mut self.sky_cache,
-            AiMaskModel::Depth => &mut self.depth_cache,
+            AiMaskModel::Subject => self.subject_cache.clone().map(AiMaskResult::Probability),
+            AiMaskModel::Sky => self.sky_cache.clone().map(AiMaskResult::Probability),
+            AiMaskModel::Depth => self.depth_cache.clone().map(AiMaskResult::SceneDepth),
         }
     }
 
@@ -20,24 +22,20 @@ impl MaskState {
     }
 
     pub(in crate::app) fn restore_generated_caches(&mut self) {
-        for model in [AiMaskModel::Subject, AiMaskModel::Sky, AiMaskModel::Depth] {
-            if model == AiMaskModel::Depth {
-                self.depth_cache = self.stack.scene_depth_image().cloned();
-                continue;
-            }
-            let cached = self
-                .stack
+        self.depth_cache = self.stack.scene_depth.clone();
+        let cached = |model| {
+            self.stack
                 .masks
                 .iter()
                 .flat_map(|mask| &mask.components)
                 .filter(|component| generated_mask_model(component.kind) == Some(model))
                 .find_map(|component| match &component.geometry {
-                    MaskGeometry::Ai { mask, .. }
-                    | MaskGeometry::DepthRange { depth: mask, .. } => mask.clone(),
+                    MaskGeometry::Ai { mask, .. } => mask.clone(),
                     _ => None,
-                });
-            *self.generated_cache_mut(model) = cached;
-        }
+                })
+        };
+        self.subject_cache = cached(AiMaskModel::Subject);
+        self.sky_cache = cached(AiMaskModel::Sky);
     }
 
     /// Clear mask interaction state and derived caches without changing the stack.

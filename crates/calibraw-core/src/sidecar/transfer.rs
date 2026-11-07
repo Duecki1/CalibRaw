@@ -162,7 +162,6 @@ fn replace_selected_mask_categories(
     // Depth is tied to the destination image, and global effects belong to
     // the Effects group, so both stay.
     let scene_depth = destination.scene_depth.take();
-    let scene_normals = destination.scene_normals.take();
     let global_effects = std::mem::take(&mut destination.global_effects);
     if include_manual && include_ai {
         *destination = source.clone();
@@ -178,7 +177,6 @@ fn replace_selected_mask_categories(
         *destination = merged;
     }
     destination.scene_depth = scene_depth;
-    destination.scene_normals = scene_normals;
     destination.global_effects = global_effects;
 }
 
@@ -204,12 +202,10 @@ pub fn transfer_edits(
     if mode == AdjustmentPasteMode::Replace {
         let remove = Arc::clone(&destination.remove);
         let scene_depth = destination.masks.scene_depth.clone();
-        let scene_normals = destination.masks.scene_normals.clone();
         *destination = default_edit_state();
         destination.remove = remove;
         let masks = Arc::make_mut(&mut destination.masks);
         masks.scene_depth = scene_depth;
-        masks.scene_normals = scene_normals;
     }
     for group in selection.adjustment_groups.iter() {
         destination

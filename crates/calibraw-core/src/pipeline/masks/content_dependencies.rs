@@ -84,6 +84,6 @@ impl MaskStack {
     /// Scene depth is required by a depth-range mask or an effect that reads it
     /// (`has_scene_depth_effect`) but absent.
     pub fn scene_depth_missing(&self) -> bool {
-        self.scene_depth_image().is_none() && self.content_dependencies().scene_depth
+        self.scene_depth.is_none() && self.content_dependencies().scene_depth
     }
 }

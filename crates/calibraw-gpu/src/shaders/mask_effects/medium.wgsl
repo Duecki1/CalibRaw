@@ -38,23 +38,50 @@ fn medium_bank_density(volume: MediumVolume, lo: f32, cell_end: f32) -> f32 {
 // Forward scattering of fog droplets toward the camera (Henyey–Greenstein g).
 const FOG_LIGHT_ANISOTROPY: f32 = 0.6;
 
+// A surface of a pixel as a medium reads it from the scene bake
+// (scene/geometry.wgsl), or nothing where there is no scene depth.
+struct MediumTarget {
+    baked: bool,
+    pixel: Geometry::ScenePixel,
+    surface: Geometry::SceneSurface,
+    // Full-image uv of the pixel.
+    uv: vec2<f32>,
+}
+
+fn medium_unbaked(uv: vec2<f32>) -> MediumTarget {
+    let surface = Geometry::SceneSurface(vec3<f32>(0.0), vec3<f32>(0.0, 0.0, -1.0), vec3<f32>(0.0), 0.0, 0.0, 0u);
+    let pixel = Geometry::ScenePixel(1.0, surface, surface, false, vec2<i32>(0), vec4<f32>(0.0), vec4<f32>(0.0));
+    return MediumTarget(false, pixel, surface, uv);
+}
+
+fn medium_target(pixel: Geometry::ScenePixel, surface: Geometry::SceneSurface, uv: vec2<f32>) -> MediumTarget {
+    return MediumTarget(true, pixel, surface, uv);
+}
+
+// The linear depth of a surface as a medium counts it: sky lies at the far end
+// (d = 1).
+fn medium_surface_depth(surface: Geometry::SceneSurface) -> f32 {
+    return mix(surface.d, 1.0, surface.sky);
+}
+
 // Light from scene lights that the medium scatters toward the camera, relative to
 // the ambient level, before its albedo and Light glow. Single scattering: each cell
 // scatters what its extinction removes from the light, attenuated by the medium
-// between it and the camera. With `shadowed`, surfaces between a cell and a light
-// shadow it at the cell's middle (scene_shadows.wgsl).
+// between it and the camera. A scene light (scene_lights.wgsl): the unshadowed
+// integral over the cells times the air light's share, which the scene does not
+// shadow along the ray to the receiver's surface (scene/air_light.wgsl); and the
+// emission of Glow and Neon, which casts no shadows (scene_emission.wgsl).
 fn medium_light_scattering(
     pos: vec2<i32>,
     volume: MediumVolume,
     distance: f32,
     extinction: f32,
-    shadowed: bool,
+    receiver: MediumTarget,
 ) -> vec3<f32> {
     if !scene_lights_present() { return vec3<f32>(0.0); }
     // Per cell: near and far depth, extinction per unit depth, and the
     // transmission from the camera to the cell's middle.
     var cells: array<vec4<f32>, MEDIUM_CELLS>;
-    var shadows: array<vec4<f32>, MEDIUM_CELLS>;
     var through = 0.0;
     let step = 1.0 / f32(MEDIUM_CELLS);
     for (var i = 0u; i < MEDIUM_CELLS; i = i + 1u) {
@@ -74,32 +101,29 @@ fn medium_light_scattering(
         let optical_depth = extinction * segment * bank_density;
         cells[i] = vec4<f32>(lo, hi, optical_depth / (hi - lo), exp(-(through + 0.5 * optical_depth)));
         through += optical_depth;
-        shadows[i] = vec4<f32>(1.0);
-        if shadowed {
-            shadows[i] = scene_shadow_air_at(pos, 0.5 * (lo + hi));
-        }
     }
 
     let uv = full_image_uv(pos);
+    let ray = scene_light_ray(Camera::scene_image_point(uv, Common::scene_image_size()));
     var scattered = vec3<f32>(0.0);
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
         let light = scene_light_at(index);
         if !light.emits { continue; }
         let coverage = scene_light_coverage(light, pos);
         if coverage <= 1e-6 { continue; }
-        let point = uv * light.camera.image_size;
         var received = 0.0;
         for (var i = 0u; i < MEDIUM_CELLS; i = i + 1u) {
             let cell = cells[i];
             if cell.z <= 0.0 { continue; }
-            let middle = scene_camera_point(
-                light.camera, point, scene_depth_z(light.camera, 0.5 * (cell.x + cell.y)),
-            );
+            let middle = scene_light_ray_position(light, ray, 0.5 * (cell.x + cell.y));
             received += cell.z * cell.w * scene_light_phase_at(light, middle, FOG_LIGHT_ANISOTROPY)
-                * scene_light_falloff_along(light, point, cell.x, cell.y)
-                * scene_shadow_of(shadows[i], light);
+                * scene_light_falloff_along(light, ray, cell.x, cell.y);
         }
-        scattered += light.intensity * (received * coverage);
+        var share = 1.0;
+        if receiver.baked && light.channel != 0u {
+            share = Geometry::scene_air_light(uv, receiver.surface, light.channel - 1u);
+        }
+        scattered += light.intensity * (received * coverage * share);
     }
     if scene_emission_present() {
         for (var i = 0u; i < MEDIUM_CELLS; i = i + 1u) {
@@ -109,6 +133,14 @@ fn medium_light_scattering(
         }
     }
     return scattered;
+}
+
+// Light from scene lights that a medium over a surface scatters toward the
+// camera where it lies on the surface, relative to the ambient level (Smoke):
+// the surface's own light from the scene bake's visibility (L2).
+fn medium_surface_light(pos: vec2<i32>, anisotropy: f32, receiver: MediumTarget) -> vec3<f32> {
+    if !scene_lights_present() { return vec3<f32>(0.0); }
+    return scene_light_on_surface(pos, receiver.uv, receiver.pixel, receiver.surface, anisotropy);
 }
 
 // Image light a medium scatters at Light glow 100, relative to the halo's mean

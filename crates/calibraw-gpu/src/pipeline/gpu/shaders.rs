@@ -87,6 +87,11 @@ pub(super) const DETAIL_CAPTURE: ShaderSource = wgsl!("detail_capture.wgsl");
 pub(super) const DETAIL_SCALE_SPACE: ShaderSource = wgsl!("detail_scale_space.wgsl");
 pub(super) const CFA_LINEAR: ShaderSource = wgsl!("cfa_linear.wgsl");
 pub(super) const XTRANS_MARKESTEIJN: ShaderSource = wgsl!("xtrans/markesteijn.wgsl");
+pub(super) const SCENE_CAMERA: ShaderSource = wgsl!("scene/camera.wgsl");
+pub(super) const SCENE_BAKE_COMMON: ShaderSource = wgsl!("scene/bake_common.wgsl");
+pub(super) const SCENE_LIGHTS_COMMON: ShaderSource = wgsl!("scene/lights_common.wgsl");
+/// The scene's geometry per pixel, which depth effects read (scene/geometry.wgsl).
+pub(super) const SCENE_GEOMETRY: ShaderSource = wgsl!("scene/geometry.wgsl");
 
 pub(super) const MASK_EFFECT_API: ShaderSource = wgsl!("mask_effects/effect_api.wgsl");
 pub(super) const MASK_LENS_BLUR: ShaderSource = wgsl!("mask_effects/lens_blur.wgsl");
@@ -99,12 +104,10 @@ pub(super) const MASK_GLOW: ShaderSource = wgsl!("mask_effects/glow.wgsl");
 pub(super) const MASK_NEON: ShaderSource = wgsl!("mask_effects/neon.wgsl");
 pub(super) const MASK_PIXELATE: ShaderSource = wgsl!("mask_effects/pixelate.wgsl");
 pub(super) const MASK_LIGHT_RAYS: ShaderSource = wgsl!("mask_effects/light_rays.wgsl");
-pub(super) const MASK_SCENE_DEPTH: ShaderSource = wgsl!("mask_effects/scene_depth.wgsl");
 pub(super) const MASK_SCENE_ENVIRONMENT: ShaderSource =
     wgsl!("mask_effects/scene_environment.wgsl");
 pub(super) const MASK_SCENE_LIGHTS: ShaderSource = wgsl!("mask_effects/scene_lights.wgsl");
 pub(super) const MASK_SCENE_EMISSION: ShaderSource = wgsl!("mask_effects/scene_emission.wgsl");
-pub(super) const MASK_SCENE_SHADOWS: ShaderSource = wgsl!("mask_effects/scene_shadows.wgsl");
 pub(super) const MASK_MEDIUM: ShaderSource = wgsl!("mask_effects/medium.wgsl");
 pub(super) const MASK_FOG: ShaderSource = wgsl!("mask_effects/fog.wgsl");
 pub(super) const MASK_SMOKE: ShaderSource = wgsl!("mask_effects/smoke.wgsl");
@@ -131,11 +134,9 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         MASK_NEON,
         MASK_PIXELATE,
         MASK_LIGHT_RAYS,
-        MASK_SCENE_DEPTH,
         MASK_SCENE_ENVIRONMENT,
         MASK_SCENE_LIGHTS,
         MASK_SCENE_EMISSION,
-        MASK_SCENE_SHADOWS,
         MASK_MEDIUM,
         MASK_FOG,
         MASK_SMOKE,
@@ -160,10 +161,21 @@ pub(super) const COLOR_DENOISE: ShaderSource = wgsl!("color_denoise.wgsl");
 pub(super) const CHROMATIC_ABERRATION: ShaderSource = wgsl!("chromatic_aberration.wgsl");
 pub(super) const TONE_ANALYSIS: ShaderSource = wgsl!("tone_analysis.wgsl");
 pub(super) const HAZE_ANALYSIS: ShaderSource = wgsl!("haze_analysis.wgsl");
-pub(super) const SCENE_ANALYSIS: ShaderSource = wgsl!("scene_analysis.wgsl");
 pub(super) const SCENE_ADJUSTMENTS: ShaderSource = wgsl!("scene_adjustments.wgsl");
 pub(super) const VIEW_TRANSFORM: ShaderSource = wgsl!("view_transform.wgsl");
 pub(super) const REMOVE_COMPOSITE: ShaderSource = wgsl!("remove_composite.wgsl");
+/// The scene bake's accumulation, a pass of the processing pipeline, and its
+/// own passes (pipeline/gpu/scene/).
+pub(super) const SCENE_BAKE_ACCUMULATE: ShaderSource = wgsl!("scene/bake_accumulate.wgsl");
+pub(super) const SCENE_BAKE_DEPTH: ShaderSource = wgsl!("scene/bake_depth.wgsl");
+pub(super) const SCENE_BAKE_FOCUS: ShaderSource = wgsl!("scene/bake_focus.wgsl");
+pub(super) const SCENE_BAKE_COVERAGE: ShaderSource = wgsl!("scene/bake_coverage.wgsl");
+pub(super) const SCENE_BAKE_LAYERS: ShaderSource = wgsl!("scene/bake_layers.wgsl");
+pub(super) const SCENE_BAKE_MIPS: ShaderSource = wgsl!("scene/bake_mips.wgsl");
+/// The light bake's passes (pipeline/gpu/scene/lights.rs).
+pub(super) const SCENE_SHADOW_RASTER: ShaderSource = wgsl!("scene/shadow_raster.wgsl");
+pub(super) const SCENE_VISIBILITY: ShaderSource = wgsl!("scene/visibility.wgsl");
+pub(super) const SCENE_AIR_LIGHT: ShaderSource = wgsl!("scene/air_light.wgsl");
 
 /// A module other shaders import.
 pub(super) struct ComposableModule {
@@ -192,7 +204,7 @@ const fn xtrans_module(source: ShaderSource) -> ComposableModule {
 
 /// Composable modules in registration order: a module may only import
 /// modules listed before it.
-pub(super) const COMPOSABLE_MODULES: [ComposableModule; 20] = [
+pub(super) const COMPOSABLE_MODULES: [ComposableModule; 24] = [
     module(COMMON),
     module(COLOR),
     module(NOISE),
@@ -200,6 +212,9 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 20] = [
     module(CFA_LINEAR),
     xtrans_module(XTRANS_MARKESTEIJN),
     module(PROFILE),
+    module(SCENE_CAMERA),
+    module(SCENE_BAKE_COMMON),
+    module(SCENE_LIGHTS_COMMON),
     module(LOOK_LUT),
     module(BASIC_ADJUSTMENTS),
     module(SCENE_SOURCE),
@@ -224,6 +239,7 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 20] = [
         sensor: None,
         work_format: true,
     },
+    module(SCENE_GEOMETRY),
     module(CREATIVE_EFFECTS),
 ];
 
@@ -321,8 +337,6 @@ pub(super) const TONE_ANALYSIS_ENTRY: EntryShader =
     entry("calibraw tone analysis", TONE_ANALYSIS, false, None);
 pub(super) const HAZE_ANALYSIS_ENTRY: EntryShader =
     entry("calibraw haze analysis", HAZE_ANALYSIS, false, None);
-pub(super) const SCENE_ANALYSIS_ENTRY: EntryShader =
-    entry("calibraw scene analysis", SCENE_ANALYSIS, false, None);
 pub(super) const SCENE_ADJUSTMENTS_ENTRY: EntryShader =
     entry("calibraw scene adjustments", SCENE_ADJUSTMENTS, true, None);
 pub(super) const CREATIVE_EFFECTS_ENTRY: EntryShader =
@@ -337,9 +351,18 @@ pub(super) const REMOVE_COMPOSITE_ENTRY: EntryShader = entry(
     None,
 );
 
-/// Every entry shader, for validation and layout tests.
+pub(super) const SCENE_BAKE_ACCUMULATE_ENTRY: EntryShader = entry(
+    "calibraw scene bake accumulation",
+    SCENE_BAKE_ACCUMULATE,
+    false,
+    None,
+);
+
+/// Every entry shader, for validation and layout tests. The scene bake's own
+/// passes compile outside the processing pipeline (scene/bake.rs) but are
+/// validated with the rest.
 #[cfg(test)]
-pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 18] = [
+pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 26] = [
     HIGHLIGHTS_ENTRY,
     BAYER_RCD_P1_ENTRY,
     BAYER_RCD_P2_ENTRY,
@@ -353,9 +376,17 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 18] = [
     CHROMATIC_ABERRATION_ENTRY,
     TONE_ANALYSIS_ENTRY,
     HAZE_ANALYSIS_ENTRY,
-    SCENE_ANALYSIS_ENTRY,
     SCENE_ADJUSTMENTS_ENTRY,
     CREATIVE_EFFECTS_ENTRY,
     VIEW_TRANSFORM_ENTRY,
     REMOVE_COMPOSITE_ENTRY,
+    SCENE_BAKE_ACCUMULATE_ENTRY,
+    entry("scene bake depth", SCENE_BAKE_DEPTH, false, None),
+    entry("scene bake lens blur", SCENE_BAKE_FOCUS, false, None),
+    entry("scene bake coverage", SCENE_BAKE_COVERAGE, false, None),
+    entry("scene bake layers", SCENE_BAKE_LAYERS, false, None),
+    entry("scene bake mips", SCENE_BAKE_MIPS, false, None),
+    entry("scene shadow raster", SCENE_SHADOW_RASTER, false, None),
+    entry("scene visibility", SCENE_VISIBILITY, false, None),
+    entry("scene air light", SCENE_AIR_LIGHT, false, None),
 ];

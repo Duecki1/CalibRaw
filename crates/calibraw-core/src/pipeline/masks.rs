@@ -5,7 +5,7 @@ use std::f32::consts::TAU;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use super::LensGeometryMap;
+use super::{LensGeometryMap, SceneDepth};
 use crate::color_math::{linear_srgb_to_oklab, srgb_decode_signed};
 
 mod content_dependencies;
@@ -22,7 +22,7 @@ pub use effects::{
     LensBlurEffectSettings, LightRaySource, LightRaysEffectSettings, MaskEffect,
     MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings,
     PackContext, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode,
-    RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneMapUse,
+    RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneNeed, SceneNeeds,
     SharpenEffectSettings, SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
     WetSurfacesEffectSettings, MAX_EFFECT_INSTANCES, OPTION_COUNT,
 };
@@ -369,14 +369,12 @@ pub struct MaskStack {
     pub masks: Vec<LocalMask>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub global_effects: Vec<EffectComponent>,
-    /// Scene depth in full-image coordinates, including when this stack is cropped.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scene_depth: Option<MaskImage>,
-    /// Surface normals predicted with `scene_depth` by the same job, and only
-    /// beside it: set, moved and cleared with it. Stored only as sidecar
-    /// assets.
+    /// The photo's depth result in full-image coordinates, including when
+    /// this stack is cropped. Depth Range components select on its
+    /// [`SceneDepth::selection_map`], which they hold while it is set. Stored
+    /// only as sidecar assets.
     #[serde(skip)]
-    pub scene_normals: Option<SceneNormals>,
+    pub scene_depth: Option<SceneDepth>,
     pub selected_mask: Option<usize>,
     pub selected_component: Option<usize>,
     #[serde(skip, default)]
@@ -388,20 +386,16 @@ impl MaskStack {
         *self = Self::default();
     }
 
-    /// Returns full-image depth, falling back to the first cached depth-range image.
-    /// Disabled masks/components still provide useful scene data. Consumers sampling
-    /// full-image UVs must use width, height and pixels directly: a cropped depth-range
-    /// image shares its original pixels but has a region-specific sampling rectangle.
-    pub fn scene_depth_image(&self) -> Option<&MaskImage> {
-        self.scene_depth.as_ref().or_else(|| {
-            self.masks
-                .iter()
-                .flat_map(|mask| &mask.components)
-                .find_map(|component| match &component.geometry {
-                    MaskGeometry::DepthRange { depth, .. } => depth.as_ref(),
-                    _ => None,
-                })
-        })
+    /// Sets the photo's depth result, or clears it, and gives every Depth
+    /// Range component its selection map, or none.
+    pub fn set_scene_depth(&mut self, depth: Option<SceneDepth>) {
+        let selection = depth.as_ref().map(|depth| depth.selection_map().clone());
+        for component in self.masks.iter_mut().flat_map(|mask| &mut mask.components) {
+            if let MaskGeometry::DepthRange { depth, .. } = &mut component.geometry {
+                depth.clone_from(&selection);
+            }
+        }
+        self.scene_depth = depth;
     }
 
     /// Whether any component is a Select People one, enabled or not.

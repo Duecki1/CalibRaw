@@ -58,8 +58,8 @@ impl CalibRawApp {
                 Some(tr("Finish or cancel the current editing operation first.").to_owned());
             return false;
         }
-        if let Some(mask) = self.masks.generated_cache_mut(model).clone() {
-            self.apply_generated_mask(model, mask, None);
+        if let Some(result) = self.masks.generated_cache(model) {
+            self.apply_generated_mask(model, result);
             return true;
         }
         if !self.ai_runtime_ready() {
@@ -160,6 +160,7 @@ impl CalibRawApp {
                 subject_quality: self.ai.subject_mask_quality,
                 subject_precision,
                 scene_geometry: (model == AiMaskModel::Depth).then(|| self.scene_geometry_model()),
+                focal_length_35mm: self.known_focal_length(),
                 model_path,
                 allow_download,
                 width: source.width,
@@ -181,45 +182,46 @@ impl CalibRawApp {
         });
     }
 
-    /// Applies a `model` mask. For depth, `normals` are those predicted with
-    /// it; without them, depth the edit already holds keeps its own.
+    /// Applies a `model` result and keeps it for the open photo: scene depth
+    /// for the edit and its Depth Range components, a probability for the
+    /// components of `model`. `false`, changing nothing, when the result is
+    /// not of `model`'s kind.
     pub(super) fn apply_generated_mask(
         &mut self,
         model: AiMaskModel,
-        mask: MaskImage,
-        normals: Option<calibraw_ai::pipeline::SceneNormals>,
-    ) {
-        *self.masks.generated_cache_mut(model) = Some(mask.clone());
-        if model == AiMaskModel::Depth {
-            let stack = &mut self.masks.stack;
-            let same_depth = stack
-                .scene_depth
-                .as_ref()
-                .is_some_and(|depth| Arc::ptr_eq(&depth.pixels, &mask.pixels));
-            if normals.is_some() || !same_depth {
-                stack.scene_normals = normals;
+        result: AiMaskResult,
+    ) -> bool {
+        match (model, result) {
+            (AiMaskModel::Depth, AiMaskResult::SceneDepth(depth)) => {
+                self.masks.depth_cache = Some(depth.clone());
+                self.masks.stack.set_scene_depth(Some(depth));
             }
-            stack.scene_depth = Some(mask.clone());
-        }
-        for component in self
-            .masks
-            .stack
-            .masks
-            .iter_mut()
-            .flat_map(|mask| &mut mask.components)
-        {
-            if generated_mask_model(component.kind) == Some(model) {
-                match &mut component.geometry {
-                    MaskGeometry::Ai { mask: target, .. }
-                    | MaskGeometry::DepthRange { depth: target, .. } => {
-                        *target = Some(mask.clone())
+            (AiMaskModel::Subject | AiMaskModel::Sky, AiMaskResult::Probability(mask)) => {
+                let cache = if model == AiMaskModel::Subject {
+                    &mut self.masks.subject_cache
+                } else {
+                    &mut self.masks.sky_cache
+                };
+                *cache = Some(mask.clone());
+                for component in self
+                    .masks
+                    .stack
+                    .masks
+                    .iter_mut()
+                    .flat_map(|mask| &mut mask.components)
+                {
+                    if generated_mask_model(component.kind) == Some(model) {
+                        if let MaskGeometry::Ai { mask: target, .. } = &mut component.geometry {
+                            *target = Some(mask.clone());
+                        }
                     }
-                    _ => {}
                 }
             }
+            _ => return false,
         }
         self.mark_all_mask_layers_dirty();
         self.blink_selected_mask();
+        true
     }
 
     pub(in crate::app) fn poll_ai_mask_worker(&mut self) {
@@ -267,17 +269,20 @@ impl CalibRawApp {
         let mut error_message = None;
         if !cancelled && !stale {
             match result {
-                Ok(mut result) => {
-                    let normals = result.normals.take();
+                Ok(result) => {
                     // Hardened subject alpha is exactly 0 wherever BiRefNet
                     // found nothing, so an all-zero mask means no subject.
-                    if model == AiMaskModel::Subject && result.mask.iter().all(|&alpha| alpha == 0)
-                    {
+                    let no_subject = matches!(
+                        &result,
+                        AiMaskResult::Probability(mask)
+                            if model == AiMaskModel::Subject
+                                && mask.pixels.iter().all(|&alpha| alpha == 0)
+                    );
+                    if no_subject {
                         error_message = Some(
                             tr("Subject selection found no subject in this photo.").to_owned(),
                         );
-                    } else if let Some(mask) = result.into_probability_mask() {
-                        self.apply_generated_mask(model, mask, normals);
+                    } else if self.apply_generated_mask(model, result) {
                         succeeded = true;
                     } else {
                         error_message = Some(tr_fmt(
@@ -320,10 +325,24 @@ impl CalibRawApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use calibraw_ai::pipeline::{DisparityMap, SceneCamera, SceneNormals};
     use calibraw_ai::AiFeature;
 
     #[test]
     fn generated_worker_results_route_by_model_and_reject_cancelled_or_stale_jobs() {
+        let mask = MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap();
+        let depth = SceneDepth::new(
+            DisparityMap::new(2, 2, vec![0, 20_000, 40_000, 65_535]).unwrap(),
+            MaskImage::new(2, 2, vec![255, 0, 0, 0]).unwrap(),
+            SceneNormals::new(mask.clone(), mask.clone()).unwrap(),
+            SceneCamera {
+                focal_tan: 0.4,
+                fit: [1.0, 0.1],
+                anchors: [1.0, 0.0],
+                frame_relief: 9.0,
+            },
+        )
+        .unwrap();
         for (model, kind) in [
             (AiMaskModel::Subject, AiFeature::Subject),
             (AiMaskModel::Sky, AiFeature::Sky),
@@ -339,21 +358,16 @@ mod tests {
                 ] {
                     app.masks.stack.add_mask(mask_kind).unwrap();
                 }
-                let pixels = vec![0, 85, 170, 255];
+                let result = if model == AiMaskModel::Depth {
+                    AiMaskResult::SceneDepth(depth.clone())
+                } else {
+                    AiMaskResult::Probability(mask.clone())
+                };
                 let (sender, receiver) = std::sync::mpsc::channel();
                 sender
                     .send(AiMaskEvent::Progress(AiMaskProgress::Inferencing))
                     .unwrap();
-                sender
-                    .send(AiMaskEvent::Finished(Ok(
-                        calibraw_ai::models::masks::AiMaskResult {
-                            width: 2,
-                            height: 2,
-                            mask: pixels.clone(),
-                            normals: None,
-                        },
-                    )))
-                    .unwrap();
+                sender.send(AiMaskEvent::Finished(Ok(result))).unwrap();
                 assert!(app.begin_foreground_operation(ForegroundOperation {
                     kind: ForegroundOperationKind::Ai(kind),
                     document_id: app
@@ -369,18 +383,24 @@ mod tests {
                 app.poll_ai_mask_worker();
                 assert!(!app.foreground_operation_active());
                 let accepted = !cancelled && !stale;
+                let depth_accepted = accepted && model == AiMaskModel::Depth;
                 assert_eq!(
                     app.masks.stack.scene_depth.as_ref(),
-                    (accepted && model == AiMaskModel::Depth)
-                        .then(|| MaskImage::new(2, 2, pixels.clone()).unwrap())
-                        .as_ref()
+                    depth_accepted.then_some(&depth)
                 );
                 assert_eq!(
-                    app.masks.generated_cache_mut(model).as_ref(),
-                    accepted
-                        .then(|| MaskImage::new(2, 2, pixels.clone()).unwrap())
-                        .as_ref()
+                    app.masks.depth_cache.as_ref(),
+                    depth_accepted.then_some(&depth)
                 );
+                for (cache_model, cache) in [
+                    (AiMaskModel::Subject, &app.masks.subject_cache),
+                    (AiMaskModel::Sky, &app.masks.sky_cache),
+                ] {
+                    assert_eq!(
+                        cache.as_ref(),
+                        (accepted && model == cache_model).then_some(&mask)
+                    );
+                }
                 for component in app
                     .masks
                     .stack
@@ -392,11 +412,6 @@ mod tests {
                         component.geometry.is_initialized(),
                         accepted && generated_mask_model(component.kind) == Some(model)
                     );
-                }
-                for other_model in [AiMaskModel::Subject, AiMaskModel::Sky, AiMaskModel::Depth] {
-                    if other_model != model {
-                        assert!(app.masks.generated_cache_mut(other_model).is_none());
-                    }
                 }
             }
         }

@@ -166,8 +166,7 @@ GPU readbacks wait on one-slot channels.
 | provider statuses | `calibraw_ai::placement` | AI jobs, Settings | the provider each model's latest session uses |
 | out-of-memory records | `calibraw_ai::placement::out_of_memory` | AI jobs, also under the model runtime slot; Settings when GPU AI is switched | which models ran out of GPU memory and when they may retry; a leaf lock, never held while a session is created or run |
 | AI settings (`RwLock`) | `calibraw_ai::config` | the UI thread writes at startup and on Settings changes; AI jobs read | runtime source and model root; never held across a load or download |
-| `SHARED_SURFACE` | `calibraw_gpu` scene-depth upload | any thread uploading scene depth: preview pipelines on the UI thread, export workers | the relighting surface is derived once per depth result and shared by every pipeline; held while deriving, so a concurrent upload of the same result waits instead of repeating it |
-| effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates scene depth, the scene shadow map, the image-light map, haze map, scene map, contour grid or scene emission textures the first time an effect reads them, and the LUT texture when a LUT is uploaded, and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
+| effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates the image-light map, haze map, contour grid or scene emission textures, and the scene bake and its light bake (`calibraw_gpu::pipeline::gpu::scene`, shared by `Arc` with views of part of the image), the first time an effect reads them, and the LUT texture when a LUT is uploaded, and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
 | LUT cache | `calibraw_core::luts::LutStore`, shared by its clones | the UI thread, document loads, batch export and thumbnail workers | the recently parsed LUTs; a leaf lock, never held while a file is read or parsed |
 | `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
 | decoded-RAW cache state and condvar | `DecodedRawCache` | document loads and the prefetch worker | short critical sections; decodes run unlocked, and a second request for a decoding entry waits on the condvar |
@@ -253,31 +252,34 @@ halos and scene depth generation read it there; `calibraw-gpu` writes the IDs, l
 and the creative pass's per-slot dispatch into the creative module (`effect_wgsl.rs`)
 and decides from it which passes and maps to prepare. Fog, Smoke, Grain and Vignette
 read the photo and the scene through `mask_effects/effect_api.wgsl` and `medium.wgsl`;
-Relight, Rain and Wet Surfaces shade the scene's surfaces, use its camera or find its
-ground, and read the scene files below directly.
+Relight, Rain and Wet Surfaces shade the scene's surfaces through the scene bake
+(`shaders/scene/geometry.wgsl`).
 
 Every mask effect and the scene it reads compile into one module
 (`creative_effects.wgsl` with `mask_effects/`), and every effect pass binds the same
-scene, so an effect may read any of it whichever pass it runs in:
+scene, so an effect may read any of it whichever pass it runs in. An effect names what
+it reads in its registry row (`scene: [Geometry, LightBake, AirLight, Image]`), and
+`GpuParams::needs_*` build only that:
 
-- `scene_depth.wgsl` is the one depth (`scene_depth_at`). Fog, Smoke and Wet Surfaces
-  read it directly; Relight asks it which part of the surface derived from depth a
-  pixel lies on (`scene_surface_taps_at`), since shading needs that surface's own
-  smooth depth and gradient. It is relative distance, converted from the generated map
-  (linear in inverse depth) on upload (`scene_depth.rs`); Depth Range masks select on
-  the map itself.
+- **The scene bake** (`calibraw-gpu/src/pipeline/gpu/scene/`, `shaders/scene/bake_*.wgsl`)
+  holds, once per depth result and unedited scene, up to two surfaces per pixel (depth,
+  normal, colour and how much the near one covers) and the working image with a mip
+  chain, in the full-image frame at the working size, so every crop and export tile reads
+  the same values. The preview or export pipeline that renders the whole image owns it,
+  filling its working image itself; views of part of it share it. Without a depth result
+  it holds the working image alone. `geometry.wgsl` is how effects read it:
+  `scene_pixel` gives the two surfaces, `scene_split` and `scene_blend` shade each on
+  its own, `scene_image` reads the photo with a footprint, `scene_trace` follows a ray
+  through the visible surfaces and `scene_ground_*` give the ground plane fitted to the
+  photo. The camera (`camera.wgsl`) maps the depth model's disparity to distance and
+  defines the control depth sliders use.
+- **The light bake** (`scene/lights.rs`, `lights_common.wgsl`) holds a shadow cube per
+  light, each surface's visibility of it and, for the air, the share of each light that
+  reaches a view ray. `scene_lights.wgsl` turns Relight's lights and Light Rays' sources
+  into lights in that frame (a flat plane without depth) and receivers read them:
+  `medium.wgsl` is what Fog, Smoke and Rain's mist share to scatter them.
 - `scene_environment.wgsl` is the scene's light as effects receive it: its ambient
   level, the photo's coarse colour and the light sources in the photo.
-- `scene_lights.wgsl` turns each of Relight's lights and Light Rays' sources into a
-  light any effect receives, and `medium.wgsl` is what Fog, Smoke and Rain's mist
-  share to scatter them.
-- `scene_shadows.wgsl` says how much of each of those lights reaches a point past the
-  surfaces depth describes: one full-image map, traced in the output stage only when
-  depth or a light's placement changes (`GpuParams::scene_shadow_map_key`), holds the
-  surface and slices of the air for up to four lights. Every receiver reads it
-  (`scene_shadow_air_at`, `scene_shadow_surface_at`), so a light behind a subject
-  lights nothing in front of it; Relight's own shading applies it with its Shadows
-  strength.
 - `scene_emission.wgsl` makes effects that emit over an area (a self-illuminating
   Glow, Neon's lines) lights too. Each emitter gives its radiance at a full-image
   point from full-image inputs only (its parameters, its mask in the full-image mask
@@ -287,16 +289,12 @@ scene, so an effect may read any of it whichever pass it runs in:
   along view rays through the media's depth cells, and receivers read only those
   maps, whatever the number of emitters. A new emitter is one case in
   `scene_emission_slot_at` and `scene_emission_present`, and one in
-  `MaskEffect::reads_full_image_mask`.
+  `MaskEffect::reads_full_image_mask`. Emitters cast no shadows.
 
-All of it but the lights comes from the scene map (`scene_analysis.wgsl`), a
-`FullImageMap` holding the photo's coarse colour, a guided filter's coefficients that
-refine scene depth against the photo, how much sky lies around each cell and how
-bright what stands before it is (so that light fades out toward a soft sky outline,
-`scene_sky_at`), stored depth's range around each cell, the ground with its terrain
-height, and how much the lens blurs each depth. It depends on
-the scene, scene depth and the direction of up (`GpuParams::with_vignette_geometry`),
-not on the rest of the edit, and is rebuilt when any of them changes.
+The bake depends on the scene and the depth result, the light bake on the lights'
+placement and the bake, not on the rest of the edit, and each is rebuilt when any of
+them changes. While a control is dragged the light bake is built in a cheaper tier and
+rebuilt in the full one afterwards.
 
 Rain and Wet Surfaces do not run inside the creative pass: `apply_wet_surfaces`
 runs before it and `apply_weather_air` after it, so their result does not depend on

@@ -756,7 +756,7 @@ fn bounded(label: &str, value: f32, minimum: f32, maximum: f32) -> Result<(), Si
     }
 }
 
-pub(super) fn validate_image(
+pub(crate) fn validate_image(
     width: u32,
     height: u32,
     bytes: usize,
@@ -775,6 +775,6 @@ pub(super) fn validate_image(
     Ok(())
 }
 
-pub(super) fn invalid<T>(message: &str) -> Result<T, SidecarError> {
+pub(crate) fn invalid<T>(message: &str) -> Result<T, SidecarError> {
     Err(SidecarError::Invalid(message.to_owned()))
 }

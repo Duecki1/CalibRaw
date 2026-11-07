@@ -3,164 +3,133 @@
 // their order in the edit.
 //
 // Emitters. `scene_light_at` turns an effect slot into a light: one of
-// Relight's point lights, and a Light Rays source as a distant light behind the
-// scene. An effect with several lights or sources has a slot for each
-// (`mask_effect_instance`).
-// A new emitter is one more case there. Effects that emit over an area of the
-// image (a self-illuminating Glow, Neon) are lights of scene_emission.wgsl,
-// which receivers add through the same functions. Receivers loop over the effect slots
-// (`Common::mask_slot_count`), skip lights that do not emit and weight each light by
-// `scene_light_coverage`. Fog, Smoke and Rain's mist scatter it (medium.wgsl), and
-// drops and wet ground reflect it. `scene_light_received` is the loop for a point
-// that scatters what arrives. Surfaces between a receiver and a light shadow it
-// (scene_shadows.wgsl).
+// Relight's point lights, and a Light Rays source as a point light at the
+// farthest surface. A new emitter is one more case there. Effects that emit
+// over an area of the image (a self-illuminating Glow, Neon) are lights of
+// scene_emission.wgsl, which receivers add through the same functions.
+// Receivers loop over the effect slots (`Common::mask_slot_count`), skip lights
+// that do not emit and weight each light by `scene_light_coverage`. Fog, Smoke
+// and Rain's mist scatter it (medium.wgsl), drops and wet ground reflect it.
+// The scene's surfaces shadow it through the light bake (scene/lights.rs): a
+// light has a channel there (`SceneLight::channel`), from which a surface reads
+// its visibility (`Geometry::scene_visibility`), a point in the air the cube
+// (`Geometry::scene_point_visibility`) and a view ray the air light
+// (`Geometry::scene_air_light`).
 //
-// Scene frame. Lights and receivers share a pinhole camera in relative units:
+// Scene frame. Lights and receivers share the shading frame of
+// scene/camera.wgsl at the light's relief scale E: the camera at the origin,
 // x right and y down as in the image, z forward, the nearest surface at z = 1
-// and the farthest at z = 1 + relief, so normalized scene depth (0 near,
-// 1 far) maps linearly to z, and negative depths lie in the open air before the
-// nearest surface, down to -1 near the camera. Image points are in shorter-edge
-// units with (0, 0) at the top-left corner. Each light carries the frame it was placed
-// in (its relief), and receivers measure distances to it in that frame.
+// and the farthest at z = 1 + E · R, so linear depth d maps linearly to z, and
+// negative control depths lie in the open air before the nearest surface.
+// Without scene depth the scene is a plane (`scene_light_camera`).
+// Image points are in shorter-edge units from the image's centre.
 //
 // Intensities are scene-linear Rec.2020 relative to the scene's ambient level
-// (`scene_ambient_level`, scene_environment.wgsl), so a light keeps its strength across exposures.
-// Everything depends only on full-image coordinates, the effect uniforms and
-// global tone statistics, so export tiles match the preview.
+// (`scene_ambient_level`, scene_environment.wgsl), so a light keeps its
+// strength across exposures. Everything depends only on full-image
+// coordinates, the effect uniforms and global tone statistics, so export tiles
+// match the preview.
 
-// tan(half the field of view) across the shorter edge, about a 30 mm lens on
-// full frame. Monocular depth carries no focal length.
-const SCENE_FOCAL_TAN: f32 = 0.4;
-// Relight's Relief control (0–1) for an emitter without one of its own.
-const SCENE_DEFAULT_RELIEF_CONTROL: f32 = 0.5;
 // Relative intensity of Amount 100 on a surface facing a nearby light.
 const SCENE_LIGHT_GAIN: f32 = 2.5;
 // The Light Rays source relative to a Relight light of the same Amount, and
-// its reach relative to the rays' Length. Light Rays already draw their own
-// shafts; as a distant light it adds a glow around its source rather than
-// flooding a whole scene that lies within its reach.
+// its reach relative to the rays' Length (`rays_reach` in scene/lights.rs).
+// Light Rays already draw their own shafts; as a distant light it adds a glow
+// around its source rather than flooding a whole scene that lies within its
+// reach.
 const LIGHT_RAYS_LIGHT_INTENSITY: f32 = 0.4;
 const LIGHT_RAYS_LIGHT_REACH: f32 = 0.35;
 const SCENE_LIGHT_UNCONFINED: u32 = 0xffffffffu;
+// The distance an effect assumes until depth is generated: a restrained
+// constant, as no screen-height or luminance heuristic can know the scene's
+// geometry. Linear depth.
+const SCENE_DEPTH_UNKNOWN: f32 = 0.35;
 
-struct SceneCamera {
-    // Full image in shorter-edge units.
-    image_size: vec2<f32>,
-    // Depth range in units of the nearest surface's distance.
-    relief: f32,
+// The camera lights and receivers share: the bake's, or the plane Relight
+// lights without scene depth (relight.wgsl).
+fn scene_light_camera() -> Camera::SceneCamera {
+    if Geometry::scene_geometry_present() {
+        return Bake::scene_bake.camera;
+    }
+    return relight_flat_camera();
 }
 
-// The scene frame for a Relief control in [0, 1].
-fn scene_camera(relief_control: f32) -> SceneCamera {
-    return SceneCamera(
-        Common::scene_image_size(),
-        mix(0.25, 6.0, pow(clamp(relief_control, 0.0, 1.0), 1.5)),
-    );
-}
-
-fn scene_lateral(camera: SceneCamera, point: vec2<f32>) -> vec2<f32> {
-    return 2.0 * SCENE_FOCAL_TAN * (point - 0.5 * camera.image_size);
-}
-
-fn scene_camera_point(camera: SceneCamera, point: vec2<f32>, z: f32) -> vec3<f32> {
-    return vec3<f32>(scene_lateral(camera, point) * z, z);
-}
-
-fn scene_image_point(camera: SceneCamera, position: vec3<f32>) -> vec2<f32> {
-    return 0.5 * camera.image_size + position.xy / (2.0 * SCENE_FOCAL_TAN * position.z);
-}
-
-fn scene_depth_z(camera: SceneCamera, depth: f32) -> f32 {
-    if depth < 0.0 { return 1.0 + 0.9 * depth; }
-    return 1.0 + camera.relief * depth;
-}
-
+// A scene light in the shading frame at its own relief scale.
 struct SceneLight {
     emits: bool,
-    // The frame the light was placed in.
-    camera: SceneCamera,
     position: vec3<f32>,
-    // Distance at which the light has halved, in scene units.
+    // Distance at which the light has halved.
     reach: f32,
     // Colour times strength, relative to the ambient level.
     intensity: vec3<f32>,
+    // Its light bake channel plus one, or 0 when the bake does not hold it.
+    channel: u32,
     // The effect slot whose mask confines the light, or SCENE_LIGHT_UNCONFINED.
     confined_to: u32,
-    // Its channel of the scene shadow map plus one, or 0 when the map does not
-    // hold it (`scene_shadow_channel`).
-    channel: u32,
+    // The frame's relief scale E.
+    relief_scale: f32,
 }
 
-fn scene_light_inactive() -> SceneLight {
+fn scene_light_none() -> SceneLight {
     return SceneLight(
-        false, SceneCamera(vec2<f32>(1.0), 1.0), vec3<f32>(0.0), 1.0, vec3<f32>(0.0),
-        SCENE_LIGHT_UNCONFINED, 0u,
+        false, vec3<f32>(0.0), 1.0, vec3<f32>(0.0), 0u, SCENE_LIGHT_UNCONFINED, 1.0,
     );
 }
 
-// Relight's light from its packed parameters.
-fn relight_scene_light(params: MaskEffectParams) -> SceneLight {
-    let camera = scene_camera(mask_effect_lane(params, RELIGHT_RELIEF_LANE) / 100.0);
-    // Light depth: -1 at the camera, 0 at the nearest surface, 1 at the farthest.
-    let light_depth = clamp(mask_effect_lane(params, RELIGHT_DEPTH_LANE) / 100.0, -1.0, 1.0);
-    let z = scene_depth_z(camera, light_depth);
-    // Reach is in shorter-edge widths at the nearest surface.
-    let reach = clamp(mask_effect_lane(params, RELIGHT_REACH_LANE) / 100.0, 0.1, 4.0)
-        * 2.0 * SCENE_FOCAL_TAN;
-    let amount = mask_effect_percent(params, RELIGHT_AMOUNT_LANE);
-    let source = mask_effect_lane_pair(params, RELIGHT_SOURCE_X_LANE);
-    return SceneLight(
-        amount > 1e-6,
-        camera,
-        scene_camera_point(camera, source / 100.0 * camera.image_size, z),
-        reach,
-        mask_effect_picker_color_to_working(mask_effect_color(params, RELIGHT_COLOR_LANE))
-            * (amount * SCENE_LIGHT_GAIN),
-        SCENE_LIGHT_UNCONFINED,
-        scene_shadow_channel(params),
-    );
-}
-
-// The Light Rays source as a light just beyond the farthest surface, where
-// rays come from. Its mask marks where rays are emitted, not where the light
-// acts, so the light is never confined.
-fn light_rays_scene_light(params: MaskEffectParams) -> SceneLight {
-    let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
-    let z = scene_depth_z(camera, 1.0);
-    let amount = mask_effect_percent(params, LIGHT_RAYS_AMOUNT_LANE);
-    // Length is in shorter-edge widths in the image, measured at the source.
-    let rays_length = clamp(mask_effect_lane(params, LIGHT_RAYS_LENGTH_LANE) / 100.0, 0.0, 2.0);
-    let source = mask_effect_lane_pair(params, LIGHT_RAYS_SOURCE_X_LANE);
-    return SceneLight(
-        amount > 1e-6 && rays_length > 1e-6,
-        camera,
-        scene_camera_point(camera, source / 100.0 * camera.image_size, z),
-        max(rays_length * LIGHT_RAYS_LIGHT_REACH * 2.0 * SCENE_FOCAL_TAN * z, 1e-3),
-        mask_effect_picker_color_to_working(mask_effect_color(params, LIGHT_RAYS_COLOR_LANE))
-            * (amount * SCENE_LIGHT_GAIN * LIGHT_RAYS_LIGHT_INTENSITY),
-        SCENE_LIGHT_UNCONFINED,
-        scene_shadow_channel(params),
-    );
-}
-
-// The light the effect in slot `index` emits; inactive when it emits none.
+// The light the effect in slot `index` emits; none for a slot that emits none.
+// Relight's is placed as relight.wgsl places it (and scene/camera.rs
+// `light_position` for the light bake); the Light Rays source lies at the
+// farthest surface, where rays come from, and its mask marks where rays are
+// emitted, not where the light acts, so it is never confined.
 fn scene_light_at(index: u32) -> SceneLight {
     let state = Common::mask_data[index].metadata;
-    if !Common::mask_slot_active(state) { return scene_light_inactive(); }
-    let params = mask_effect_params(index);
+    if !Common::mask_slot_active(state) { return scene_light_none(); }
     let effect_id = Common::mask_effect_id(state);
+    let params = mask_effect_params(index);
+    let camera = scene_light_camera();
+    let aspect = Common::scene_image_size();
     if effect_id == MASK_EFFECT_RELIGHT_ID {
-        var light = relight_scene_light(params);
-        // A masked Relight lights only its mask.
+        let amount = mask_effect_percent(params, RELIGHT_AMOUNT_LANE);
+        if amount <= 1e-6 { return scene_light_none(); }
+        let relief_scale = clamp(mask_effect_lane(params, RELIGHT_RELIEF_SCALE_LANE) / 100.0, 0.1, 3.0);
+        let control = clamp(mask_effect_lane(params, RELIGHT_LIGHT_DEPTH_LANE) / 100.0, -1.0, 1.0);
+        let source = mask_effect_lane_pair(params, RELIGHT_SOURCE_X_LANE) / 100.0;
+        let z = Camera::scene_light_frame_depth(camera, control, relief_scale);
+        var confined = SCENE_LIGHT_UNCONFINED;
         if Common::mask_data[index].point_color_meta.z != 0xffffffffu {
-            light.confined_to = index;
+            confined = index;
         }
-        return light;
+        return SceneLight(
+            true,
+            Camera::scene_frame_position(camera, Camera::scene_image_point(source, aspect), z),
+            // Reach is in shorter-edge widths at the nearest surface.
+            clamp(mask_effect_lane(params, RELIGHT_REACH_LANE) / 100.0, 0.1, 4.0) * 2.0 * camera.lens.x,
+            mask_effect_picker_color_to_working(mask_effect_color(params, RELIGHT_COLOR_LANE))
+                * (amount * SCENE_LIGHT_GAIN),
+            mask_effect_scene_bake_light(params),
+            confined,
+            relief_scale,
+        );
     }
     if effect_id == MASK_EFFECT_LIGHT_RAYS_ID {
-        return light_rays_scene_light(params);
+        let amount = mask_effect_percent(params, LIGHT_RAYS_AMOUNT_LANE);
+        // Length is in shorter-edge widths in the image, measured at the source.
+        let rays_length = clamp(mask_effect_lane(params, LIGHT_RAYS_LENGTH_LANE) / 100.0, 0.0, 2.0);
+        if amount <= 1e-6 || rays_length <= 1e-6 { return scene_light_none(); }
+        let source = mask_effect_lane_pair(params, LIGHT_RAYS_SOURCE_X_LANE) / 100.0;
+        let z = Camera::scene_frame_depth(camera, 1.0, 1.0);
+        return SceneLight(
+            true,
+            Camera::scene_frame_position(camera, Camera::scene_image_point(source, aspect), z),
+            max(rays_length * LIGHT_RAYS_LIGHT_REACH * 2.0 * camera.lens.x * z, 1e-3),
+            mask_effect_picker_color_to_working(mask_effect_color(params, LIGHT_RAYS_COLOR_LANE))
+                * (amount * SCENE_LIGHT_GAIN * LIGHT_RAYS_LIGHT_INTENSITY),
+            mask_effect_scene_bake_light(params),
+            SCENE_LIGHT_UNCONFINED,
+            1.0,
+        );
     }
-    return scene_light_inactive();
+    return scene_light_none();
 }
 
 // Whether any effect slot emits a scene light or emits light over an area
@@ -181,22 +150,39 @@ fn scene_light_coverage(light: SceneLight, pos: vec2<i32>) -> f32 {
     return SceneAdjustments::local_mask_weight(pos, light.confined_to);
 }
 
+// The light's frame depth E · R, the change in z per unit of linear depth.
+fn scene_light_relief(light: SceneLight) -> f32 {
+    return light.relief_scale * scene_light_camera().lens.w;
+}
+
+// The view ray of image point `point` in the light's frame, at linear depth
+// 0 (x, y, z): its point at depth d is `ray · (1 + relief · d)`.
+fn scene_light_ray(point: vec2<f32>) -> vec3<f32> {
+    return vec3<f32>(2.0 * scene_light_camera().lens.x * point, 1.0);
+}
+
+// The point of a view ray at linear depth `d`, in the light's frame; negative
+// depths lie in the air before the nearest surface, down to -1 at the camera.
+fn scene_light_ray_position(light: SceneLight, ray: vec3<f32>, d: f32) -> vec3<f32> {
+    // Before the nearest surface depth is a share of the way to the camera.
+    if d < 0.0 { return ray * (1.0 + 0.9 * d); }
+    return ray * (1.0 + scene_light_relief(light) * d);
+}
+
 // Inverse-square falloff with a finite core: 1 at the light, 1/2 at its reach.
 fn scene_light_falloff(light: SceneLight, position: vec3<f32>) -> f32 {
     let offset = position - light.position;
     return 1.0 / (1.0 + dot(offset, offset) / (light.reach * light.reach));
 }
 
-// ∫ falloff dt along the view ray of image point `point` between normalized
-// depths `near` and `far`. The ray's position is linear in depth
-// (scene_camera_point), so the integral has a closed form and a light close
-// to the ray leaves no sampling bands.
-fn scene_light_falloff_along(light: SceneLight, point: vec2<f32>, near: f32, far: f32) -> f32 {
+// ∫ falloff dt along the view ray `ray` between linear depths `near` and
+// `far`. The ray's position is linear in depth, so the integral has a closed
+// form and a light close to the ray leaves no sampling bands.
+fn scene_light_falloff_along(light: SceneLight, ray: vec3<f32>, near: f32, far: f32) -> f32 {
     if far <= near { return 0.0; }
     // position(t) = start + direction * t
-    let ray = vec3<f32>(scene_lateral(light.camera, point), 1.0);
     let start = ray - light.position;
-    let direction = ray * light.camera.relief;
+    let direction = ray * scene_light_relief(light);
     let speed_squared = dot(direction, direction);
     let speed = sqrt(speed_squared);
     let closest = -dot(start, direction) / speed_squared;
@@ -226,34 +212,73 @@ fn scene_light_phase(cos_angle: f32, anisotropy: f32) -> f32 {
 // Phase of light from `light` scattered at `position` toward the camera.
 fn scene_light_phase_at(light: SceneLight, position: vec3<f32>, anisotropy: f32) -> f32 {
     let travel = position - light.position;
-    let toward_camera = -position;
-    let lengths = max(length(travel) * length(toward_camera), 1e-6);
-    return scene_light_phase(dot(travel, toward_camera) / lengths, anisotropy);
+    let lengths = max(length(travel) * length(position), 1e-6);
+    return scene_light_phase(dot(travel, -position) / lengths, anisotropy);
 }
 
-// Light from every scene light that a point on the view ray of pixel `pos`, at
-// `depth`, scatters toward the camera, relative to the ambient level. `shadows`
-// says how much of each light reaches the point (scene_shadows.wgsl), or is 1
-// where surfaces do not count.
-fn scene_light_received(
-    pos: vec2<i32>,
-    depth: f32,
-    anisotropy: f32,
-    shadows: vec4<f32>,
-) -> vec3<f32> {
-    let uv = full_image_uv(pos);
+// Light from every scene light that a point of the view ray of pixel `pos`
+// at linear depth `d` in the air scatters toward the camera, relative to the
+// ambient level: the light bake's cubes say how much of each light reaches
+// it, and the emission of Glow and Neon adds its own (it casts no shadows).
+// `uv` is the pixel's full-image position.
+fn scene_light_in_air(pos: vec2<i32>, uv: vec2<f32>, d: f32, anisotropy: f32) -> vec3<f32> {
+    let camera = scene_light_camera();
+    let baked = Geometry::scene_geometry_present();
+    let point = Camera::scene_image_point(uv, Common::scene_image_size());
+    let ray = scene_light_ray(point);
     var received = vec3<f32>(0.0);
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
         let light = scene_light_at(index);
         if !light.emits { continue; }
         let coverage = scene_light_coverage(light, pos);
         if coverage <= 1e-6 { continue; }
-        let position = scene_camera_point(
-            light.camera, uv * light.camera.image_size, scene_depth_z(light.camera, depth),
-        );
+        let position = scene_light_ray_position(light, ray, d);
+        var visibility = 1.0;
+        if baked && light.channel != 0u {
+            visibility = Geometry::scene_point_visibility(position, light.channel - 1u);
+        }
         received += light.intensity * (scene_light_falloff(light, position)
-            * scene_light_phase_at(light, position, anisotropy) * coverage
-            * scene_shadow_of(shadows, light));
+            * scene_light_phase_at(light, position, anisotropy) * coverage * visibility);
+    }
+    if scene_emission_present() {
+        received += scene_emission_received(pos, d, anisotropy);
+    }
+    return received;
+}
+
+// Light from every scene light that a medium over a surface of the pixel
+// scatters toward the camera where it lies on the surface, relative to the
+// ambient level: the surface's visibility from the light bake (L2). `surface`
+// and `pixel` are as the scene bake gives them; without scene depth, a
+// surface at SCENE_DEPTH_UNKNOWN.
+fn scene_light_on_surface(
+    pos: vec2<i32>,
+    uv: vec2<f32>,
+    pixel: Geometry::ScenePixel,
+    surface: Geometry::SceneSurface,
+    anisotropy: f32,
+) -> vec3<f32> {
+    let camera = scene_light_camera();
+    let baked = Geometry::scene_geometry_present();
+    let point = Camera::scene_image_point(uv, Common::scene_image_size());
+    var depth = SCENE_DEPTH_UNKNOWN;
+    if baked {
+        depth = mix(surface.d, 1.0, surface.sky);
+    }
+    var received = vec3<f32>(0.0);
+    for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
+        let light = scene_light_at(index);
+        if !light.emits { continue; }
+        let coverage = scene_light_coverage(light, pos);
+        if coverage <= 1e-6 { continue; }
+        let z = Camera::scene_frame_depth(camera, depth, light.relief_scale);
+        let position = Camera::scene_frame_position(camera, point, z);
+        var visibility = 1.0;
+        if baked && light.channel != 0u {
+            visibility = Geometry::scene_visibility(pixel, surface, light.channel - 1u);
+        }
+        received += light.intensity * (scene_light_falloff(light, position)
+            * scene_light_phase_at(light, position, anisotropy) * coverage * visibility);
     }
     if scene_emission_present() {
         received += scene_emission_received(pos, depth, anisotropy);

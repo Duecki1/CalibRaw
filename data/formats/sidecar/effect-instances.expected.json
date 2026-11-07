@@ -1,5 +1,5 @@
 {
-  "migrated": false,
+  "migrated": true,
   "saved": {
     "editing_time_ms": 61000,
     "edits": {
@@ -134,7 +134,7 @@
                   {
                     "amount": 45.0,
                     "color": [0.6,0.75,1.0],
-                    "depth": 15.0,
+                    "light_depth": 36.748074,
                     "reach": 120.0,
                     "shadows": 60.0,
                     "shadows_enabled": false,
@@ -144,7 +144,7 @@
                   {
                     "amount": 30.0,
                     "color": [1.0,0.93,0.84],
-                    "depth": -30.0,
+                    "light_depth": -30.0,
                     "reach": 120.0,
                     "shadows": 60.0,
                     "shadows_enabled": false,
@@ -155,9 +155,9 @@
                 "ambient": 60.0,
                 "amount": 70.0,
                 "color": [1.0,0.93,0.84],
-                "depth": -30.0,
+                "light_depth": -30.0,
                 "reach": 120.0,
-                "relief": 40.0,
+                "relief_scale": 74.669235,
                 "shadows": 60.0,
                 "shadows_enabled": true,
                 "size": 35.0,
@@ -456,6 +456,6 @@
       "flag": "picked",
       "rating": 3
     },
-    "schema_version": 4
+    "schema_version": 5
   }
 }

@@ -90,7 +90,7 @@ pub(crate) struct MaskState {
     pub(crate) source_cache: Option<MaskRgbImage>,
     pub(crate) subject_cache: Option<MaskImage>,
     pub(crate) sky_cache: Option<MaskImage>,
-    pub(crate) depth_cache: Option<MaskImage>,
+    pub(crate) depth_cache: Option<SceneDepth>,
     pub(crate) dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) detail_dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) navigation_dirty_layers: [bool; MAX_LOCAL_MASKS],

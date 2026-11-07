@@ -4,7 +4,7 @@ use super::scene_geometry::SceneGeometryModel;
 use super::{depth, sky, subject};
 use crate::config::CAPABILITIES;
 use crate::jobs::{spawn_job, AiJobEvent, JobKind};
-use crate::pipeline::{MaskImage, SceneNormals};
+use crate::pipeline::{MaskImage, SceneDepth};
 use crate::registry::AiModel;
 use crate::runtime::initialize_runtime;
 use crate::slot::ModelRetention;
@@ -40,18 +40,12 @@ pub enum AiMaskProgress {
 pub type AiMaskEvent = AiJobEvent<AiMaskResult, AiMaskProgress>;
 
 #[derive(Debug)]
-pub struct AiMaskResult {
-    pub width: u32,
-    pub height: u32,
-    pub mask: Vec<u8>,
-    /// For `AiMaskModel::Depth`, the normals predicted with the depth.
-    pub normals: Option<SceneNormals>,
-}
-
-impl AiMaskResult {
-    pub fn into_probability_mask(self) -> Option<MaskImage> {
-        MaskImage::new(self.width, self.height, self.mask)
-    }
+pub enum AiMaskResult {
+    /// `AiMaskModel::Subject` and `AiMaskModel::Sky`: the probability of each
+    /// pixel of the input, 0 to 255.
+    Probability(MaskImage),
+    /// `AiMaskModel::Depth`.
+    SceneDepth(SceneDepth),
 }
 
 pub struct AiMaskWorkerRequest {
@@ -63,6 +57,9 @@ pub struct AiMaskWorkerRequest {
     /// Required by `AiMaskModel::Depth`, which runs it beside the depth model
     /// at `model_path`.
     pub scene_geometry: Option<SceneGeometryModel>,
+    /// Used by `AiMaskModel::Depth`: the photo's 35 mm-equivalent focal
+    /// length, when known.
+    pub focal_length_35mm: Option<f32>,
     pub model_path: PathBuf,
     pub allow_download: bool,
     pub width: u32,
@@ -131,6 +128,7 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
         subject_quality,
         subject_precision,
         scene_geometry,
+        focal_length_35mm,
         model_path,
         allow_download: _,
         width,
@@ -159,27 +157,31 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
     let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba)
         .context("invalid preview image for AI mask")?;
     let started = std::time::Instant::now();
-    let (mask, normals) = match model {
+    let probability = |mask| MaskImage::new(width, height, mask).context("invalid mask image");
+    let result = match model {
         AiMaskModel::Depth => {
             let geometry = scene_geometry.context("scene depth needs a normal model")?;
-            let scene = depth::depth_mask(&model_path, &geometry, &image)?;
-            (scene.depth, Some(scene.normals))
+            AiMaskResult::SceneDepth(depth::scene_depth(
+                &model_path,
+                &geometry,
+                &image,
+                focal_length_35mm,
+            )?)
         }
-        AiMaskModel::Sky => (sky::sky_mask(&model_path, &image)?, None),
-        AiMaskModel::Subject => (
-            subject::subject_mask(&model_path, &image, subject_quality, subject_precision)?,
-            None,
-        ),
+        AiMaskModel::Sky => {
+            AiMaskResult::Probability(probability(sky::sky_mask(&model_path, &image)?)?)
+        }
+        AiMaskModel::Subject => AiMaskResult::Probability(probability(subject::subject_mask(
+            &model_path,
+            &image,
+            subject_quality,
+            subject_precision,
+        )?)?),
     };
     calibraw_core::diagnostics::record(format!(
         "AI {} mask finished in {:.3}s",
         model.noun(),
         started.elapsed().as_secs_f64()
     ));
-    Ok(AiMaskResult {
-        width,
-        height,
-        mask,
-        normals,
-    })
+    Ok(result)
 }

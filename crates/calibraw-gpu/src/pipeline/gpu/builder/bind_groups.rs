@@ -648,7 +648,6 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
         scene_preparation_layout: layouts.bgl_adjust_prepare.clone(),
         creative_layout: layouts.bgl_adjust_creative.clone(),
         view_layout: layouts.bgl_adjust_render.clone(),
-        scene_shadow_map_layout: layouts.bgl_scene_shadow_map.clone(),
         image_light_layouts: [
             layouts.bgl_image_light_accumulate.clone(),
             layouts.bgl_image_light_resolve.clone(),
@@ -656,9 +655,9 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
             layouts.bgl_image_light_blur_vertical.clone(),
         ],
         haze_layouts: layouts.bgl_haze.clone(),
-        scene_map_layouts: layouts.bgl_scene_map.clone(),
         contour_layout: layouts.bgl_contour_accumulate.clone(),
         scene_emission_layouts: layouts.bgl_scene_emission.clone(),
+        scene_bake_accumulation_layout: layouts.bgl_scene_bake_accumulation.clone(),
         camera_uniforms: buffers.camera_uniforms_buffer.clone(),
         mask_data: buffers.mask_data_buffer.clone(),
         tone_stats: buffers.tone_stats_buffer.clone(),

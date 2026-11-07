@@ -1,5 +1,5 @@
 {
-  "migrated": false,
+  "migrated": true,
   "saved": {
     "editing_time_ms": 61000,
     "edits": {
@@ -133,9 +133,9 @@
                 "ambient": 60.0,
                 "amount": 70.0,
                 "color": [1.0,0.93,0.84],
-                "depth": -30.0,
+                "light_depth": -30.0,
                 "reach": 120.0,
-                "relief": 50.0,
+                "relief_scale": 100.0,
                 "shadows": 60.0,
                 "shadows_enabled": true,
                 "size": 35.0,
@@ -153,17 +153,34 @@
     "mask_assets": [
       {
         "height": 3,
-        "png": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAAAAACRn/EaAAAAF0lEQVR4nGPSsPn/n+nbt0AGRi4uLm4AL10Ezi5WRcYAAAAASUVORK5CYII=",
+        "png": {
+          "bit_depth": 16,
+          "rows": [[55255,50115,0,0],[57825,52685,44975,0],[62965,60395,57825,54998]]
+        },
         "width": 4
       },
       {
         "height": 3,
-        "png": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAAAAACRn/EaAAAAF0lEQVR4nGNicGj4z8LwwIOBkYFBIAAAHfcDTzM2Sh4AAAAASUVORK5CYII=",
+        "png": {
+          "bit_depth": 8,
+          "rows": [[0,0,255,255],[0,0,0,255],[0,0,0,0]]
+        },
         "width": 4
       },
       {
         "height": 3,
-        "png": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAAAAACRn/EaAAAAF0lEQVR4nGNidGj6xcL0wuYbIysLhycAI7EEO6/T7bAAAAAASUVORK5CYII=",
+        "png": {
+          "bit_depth": 8,
+          "rows": [[0,64,128,255],[0,32,200,255],[0,0,16,96]]
+        },
+        "width": 4
+      },
+      {
+        "height": 3,
+        "png": {
+          "bit_depth": 8,
+          "rows": [[1,64,130,250],[3,40,190,240],[5,9,17,90]]
+        },
         "width": 4
       }
     ],
@@ -171,8 +188,17 @@
       "flag": "picked",
       "rating": 3
     },
-    "scene_depth_asset": 0,
-    "scene_normal_assets": [1,2],
-    "schema_version": 4
+    "scene_depth": {
+      "camera": {
+        "anchors": [1.0,0.0],
+        "fit": [1.0,0.115],
+        "focal_tan": 0.4,
+        "frame_relief": 2.282932
+      },
+      "disparity_asset": 0,
+      "normal_assets": [2,3],
+      "sky_asset": 1
+    },
+    "schema_version": 5
   }
 }

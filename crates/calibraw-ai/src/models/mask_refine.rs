@@ -225,46 +225,6 @@ pub(super) fn guided_filter_by_luminance(
     Ok(())
 }
 
-/// The guided filter with `values` as their own guide, an edge-preserving
-/// smoothing: within each window of `radius` pixels, variation well below
-/// `epsilon` (a variance in squared value units) is averaged away while
-/// steps well above it are kept.
-pub(super) fn self_guided_filter(
-    values: &mut [f32],
-    width: u32,
-    height: u32,
-    radius: u32,
-    epsilon: f32,
-) -> Result<()> {
-    let pixels = width as usize * height as usize;
-    anyhow::ensure!(
-        values.len() == pixels,
-        "guided-filter image dimensions mismatch"
-    );
-    if pixels == 0 {
-        return Ok(());
-    }
-    let (width, height, radius) = (width as usize, height as usize, radius as usize);
-    let mut workspace = vec![0.0; pixels];
-    let mut mean = values.to_vec();
-    box_mean_in_place(&mut mean, &mut workspace, width, height, radius);
-    let mut gain = values.iter().map(|value| value * value).collect::<Vec<_>>();
-    box_mean_in_place(&mut gain, &mut workspace, width, height, radius);
-    // Per window: the gain a = variance / (variance + epsilon) in `gain`,
-    // the offset (1 − a) × mean in `mean`.
-    for (gain, mean) in gain.iter_mut().zip(mean.iter_mut()) {
-        let variance = (*gain - *mean * *mean).max(0.0);
-        *gain = variance / (variance + epsilon.max(1e-8));
-        *mean *= 1.0 - *gain;
-    }
-    box_mean_in_place(&mut gain, &mut workspace, width, height, radius);
-    box_mean_in_place(&mut mean, &mut workspace, width, height, radius);
-    for ((value, gain), offset) in values.iter_mut().zip(&gain).zip(&mean) {
-        *value = gain * *value + offset;
-    }
-    Ok(())
-}
-
 /// Converts the model's broad uncertainty band into a hard-looking but still
 /// anti-aliased boundary. This happens at the native mask resolution, before
 /// the preview atlas can introduce visible stair-steps.
