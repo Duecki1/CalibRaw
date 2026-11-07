@@ -25,6 +25,7 @@ impl LibraryState {
             .clamp(1, maximum_thumbnail_worker_count());
         let render_edited_thumbnails_during_indexing =
             self.render_edited_thumbnails_during_indexing;
+        let include_subfolders = self.view.include_subfolders;
         let repaint = context.clone();
         let (event_sender, event_receiver) = mpsc::sync_channel(MAX_PENDING_THUMBNAIL_RESULTS);
         let (request_sender, request_receiver) = mpsc::sync_channel(MAX_PENDING_THUMBNAILS);
@@ -81,7 +82,7 @@ impl LibraryState {
                     {
                         log::warn!("could not start the library folder scanner: {error}");
                     }
-                    let scan = match scan_folder(&folder, || {
+                    let scan = match scan_folder(&folder, include_subfolders, || {
                         cancellation.load(Ordering::Acquire) != generation
                     }) {
                         Ok(result) => result,
@@ -158,7 +159,7 @@ impl LibraryState {
                         }
                     }
                     let sidecar_writes = platform.sidecar_write_count();
-                    let documents = match platform.list_library_documents() {
+                    let documents = match platform.list_library_documents(include_subfolders) {
                         Ok(documents) => documents,
                         Err(error) => {
                             send_scan_failure(&event_sender, generation, error, &repaint);

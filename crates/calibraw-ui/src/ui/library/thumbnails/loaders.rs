@@ -3,7 +3,6 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
 use calibraw_core::pipeline::RawDisplayMetadata;
-use std::ffi::OsStr;
 
 pub(crate) fn load_desktop_reference_preview(
     path: &Path,
@@ -61,7 +60,7 @@ pub(in crate::ui::library) fn load_desktop_library_thumbnail(
             match crate::sidecar::load_developed_thumbnail_cache(path, THUMBNAIL_EDGE) {
                 Ok(Some(thumbnail)) => {
                     let mut loaded = loaded_library_thumbnail(thumbnail, true);
-                    loaded.display_metadata = deferred_metadata.read_pending(path);
+                    loaded.display_metadata = deferred_metadata.read_pending(&asset.id, path);
                     return Ok(loaded);
                 }
                 Ok(None) => {}
@@ -73,6 +72,7 @@ pub(in crate::ui::library) fn load_desktop_library_thumbnail(
 
             let has_edits = crate::sidecar::sidecar_path_for_raw(path).is_file();
             load_desktop_raw_library_thumbnail(
+                &asset.id,
                 path,
                 has_edits,
                 render_edited_thumbnails_during_indexing,
@@ -82,9 +82,13 @@ pub(in crate::ui::library) fn load_desktop_library_thumbnail(
         ThumbnailLoadStage::DevelopedPreview => {
             match render_uncached_developed_thumbnail(path, THUMBNAIL_EDGE) {
                 Ok(Some(thumbnail)) => Ok(loaded_library_thumbnail(thumbnail, true)),
-                Ok(None) => {
-                    load_desktop_raw_library_thumbnail(path, false, false, deferred_metadata)
-                }
+                Ok(None) => load_desktop_raw_library_thumbnail(
+                    &asset.id,
+                    path,
+                    false,
+                    false,
+                    deferred_metadata,
+                ),
                 Err(error) => Err(tr_fmt(
                     "could not render the edited RAW thumbnail for {path}: {error}",
                     &[("path", &path.display()), ("error", &error)],
@@ -95,6 +99,7 @@ pub(in crate::ui::library) fn load_desktop_library_thumbnail(
 }
 
 fn load_desktop_raw_library_thumbnail(
+    asset_id: &LibraryAssetId,
     path: &Path,
     has_edits: bool,
     render_edited_thumbnails_during_indexing: bool,
@@ -110,7 +115,7 @@ fn load_desktop_raw_library_thumbnail(
         });
     let (thumbnail, display_metadata) =
         match calibraw_core::thumbnail_cache::load_desktop_raw_thumbnail(path, THUMBNAIL_EDGE) {
-            Ok(Some(thumbnail)) => (thumbnail, deferred_metadata.read_pending(path)),
+            Ok(Some(thumbnail)) => (thumbnail, deferred_metadata.read_pending(asset_id, path)),
             cached => {
                 if let Err(error) = cached {
                     log::warn!(
@@ -118,8 +123,7 @@ fn load_desktop_raw_library_thumbnail(
                         path.display()
                     );
                 }
-                let file_name = path.file_name().unwrap_or_default();
-                let (thumbnail, display_metadata) = if deferred_metadata.is_pending(file_name) {
+                let (thumbnail, display_metadata) = if deferred_metadata.is_pending(asset_id) {
                     let (thumbnail, metadata) =
                         load_raw_thumbnail_with_display_metadata(path, THUMBNAIL_EDGE).map_err(
                             |error| {
@@ -129,7 +133,7 @@ fn load_desktop_raw_library_thumbnail(
                                 )
                             },
                         )?;
-                    (thumbnail, deferred_metadata.complete(file_name, metadata))
+                    (thumbnail, deferred_metadata.complete(asset_id, metadata))
                 } else {
                     let thumbnail = load_raw_thumbnail(path, THUMBNAIL_EDGE).map_err(|error| {
                         tr_fmt(
@@ -181,11 +185,10 @@ pub(in crate::ui::library) fn load_media_library_thumbnail(
         extraction,
         asset,
         uri,
-        file_name: OsStr::new(&asset.display_name),
     };
     let written_since_listing =
         platform.sidecar_written_since(uri, folder.sidecar_writes_before_listing());
-    let sidecar = match folder.sidecar(photo.file_name) {
+    let sidecar = match folder.sidecar(&asset.id) {
         PhotoSidecar::Unlisted => return photo.load_unlisted(),
         // A rating, paste or edit since the listing: what it says is out of date.
         _ if written_since_listing => photo.read_sidecar_summary(false),
@@ -221,7 +224,6 @@ struct MediaPhoto<'a> {
     extraction: &'a ExtractionPermits,
     asset: &'a LibraryAsset,
     uri: &'a str,
-    file_name: &'a OsStr,
 }
 
 impl MediaPhoto<'_> {
@@ -275,7 +277,7 @@ impl MediaPhoto<'_> {
         {
             Ok(Some(summary)) => {
                 if record {
-                    self.folder.record_sidecar(self.file_name, summary.clone());
+                    self.folder.record_sidecar(&self.asset.id, summary.clone());
                 }
                 Some(summary)
             }
@@ -339,7 +341,7 @@ impl MediaPhoto<'_> {
                 self.asset.display_name
             ),
         }
-        let pending = self.folder.is_pending(self.file_name);
+        let pending = self.folder.is_pending(&self.asset.id);
         let (thumbnail, read) = {
             let _permit = self.extraction.acquire();
             self.platform.extract_library_preview(
@@ -352,7 +354,7 @@ impl MediaPhoto<'_> {
             )?
         };
         let display_metadata = if pending {
-            self.folder.complete(self.file_name, read)
+            self.folder.complete(&self.asset.id, read)
         } else {
             read
         };
@@ -365,7 +367,7 @@ impl MediaPhoto<'_> {
     /// Reads the display metadata the folder cache lacks, on its own; `None`
     /// when the cache has it.
     fn pending_display_metadata(&self) -> Option<RawDisplayMetadata> {
-        if !self.folder.is_pending(self.file_name) {
+        if !self.folder.is_pending(&self.asset.id) {
             return None;
         }
         let read = {
@@ -375,7 +377,7 @@ impl MediaPhoto<'_> {
         };
         let read = read.map_err(|error| log::warn!("{error}")).ok();
         self.folder
-            .complete(self.file_name, read)
+            .complete(&self.asset.id, read)
             .map(media_library_display_metadata)
     }
 }

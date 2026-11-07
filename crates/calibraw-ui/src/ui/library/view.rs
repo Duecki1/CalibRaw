@@ -101,7 +101,7 @@ impl Library {
         let compact_header =
             moduwu_design::ResponsiveWidth::from_width(ui.available_width()).is_compact();
         let mut selected_sort = app.library.sort_order();
-        let mut selected_size = app.library.thumbnail_size();
+        let mut selected_view = app.library.view();
         let mut selected_filter = app.library.review_filter;
         let mut stack_raw_companions = app.library.stacks_raw_companions();
         let header_title = library_header_title(app);
@@ -208,14 +208,14 @@ impl Library {
                             &mut selected_sort,
                             &mut selected_filter,
                             &mut stack_raw_companions,
-                            Some(&mut selected_size),
+                            Some(&mut selected_view),
                             64.0,
                         );
                     } else {
                         show_library_view_combos(
                             ui,
                             &mut selected_sort,
-                            &mut selected_size,
+                            &mut selected_view,
                             &mut selected_filter,
                             &mut stack_raw_companions,
                         );
@@ -245,7 +245,7 @@ impl Library {
             moduwu_design::card_header(ui, show_header);
         }
         app.set_library_sort_order(selected_sort);
-        app.set_library_thumbnail_size(selected_size);
+        app.set_library_view(selected_view);
         app.library.review_filter = selected_filter;
         app.set_library_stack_raw_companions(stack_raw_companions);
         if toggle_selecting {
@@ -426,11 +426,13 @@ fn show_folder_without_photos(ui: &mut Ui, app: &mut CalibRawApp) {
         return;
     }
     let folder = media.folder.as_str();
-    let has_subfolders = media.trees.get(&media.root).is_some_and(|tree| {
-        tree.folders
-            .iter()
-            .any(|child| android_folder_parent(&child.path) == folder)
-    });
+    // Shown subfolders have no photos either.
+    let has_subfolders = !app.library.view().include_subfolders
+        && media.trees.get(&media.root).is_some_and(|tree| {
+            tree.folders
+                .iter()
+                .any(|child| android_folder_parent(&child.path) == folder)
+        });
     if !has_subfolders {
         show_library_empty_state(
             ui,
@@ -493,14 +495,19 @@ fn show_thumbnail_grid(
     let available = ui.available_width().max(1.0);
     let available_height = ui.available_height().max(1.0);
     let gap = moduwu_design::SPACE_SM;
+    let view = app.library.view();
     let target_thumbnail_height = responsive_thumbnail_target_height(
         available,
         available_height,
         ui.ctx().pixels_per_point(),
         caps.is_mobile(),
-    ) * app.library.thumbnail_size().scale();
+    ) * view.thumbnail_size.scale();
     let layout = |entries: &[LibraryEntry], visible: &[usize]| {
-        justified_thumbnail_layout(entries, visible, available, target_thumbnail_height, gap)
+        if view.square_thumbnails {
+            square_thumbnail_layout(visible.len(), available, target_thumbnail_height, gap)
+        } else {
+            justified_thumbnail_layout(entries, visible, available, target_thumbnail_height, gap)
+        }
     };
     let (mut placements, mut grid_height) = layout(&app.library.entries, &visible);
 
@@ -543,7 +550,7 @@ fn show_thumbnail_grid(
     egui::ScrollArea::vertical()
         .wheel_scroll_multiplier(egui::vec2(
             1.0,
-            app.library.thumbnail_size().wheel_scroll_multiplier(),
+            view.thumbnail_size.wheel_scroll_multiplier(),
         ))
         .scroll_source(scroll_source)
         .auto_shrink([false, false])
@@ -738,19 +745,19 @@ fn show_library_empty_state(
 fn show_library_view_combos(
     ui: &mut Ui,
     selected_sort: &mut LibrarySortOrder,
-    selected_size: &mut LibraryThumbnailSize,
+    selected_view: &mut LibraryView,
     selected_filter: &mut LibraryReviewFilter,
     stack_raw_companions: &mut bool,
 ) {
     const SORT_WIDTH: f32 = 154.0;
-    const SIZE_WIDTH: f32 = 118.0;
+    const VIEW_WIDTH: f32 = 96.0;
     let available_width = ui.available_width().max(1.0);
-    let minimum_width = SORT_WIDTH + moduwu_design::SPACE_SM + SIZE_WIDTH;
-    let (sort_width, size_width) = if available_width < minimum_width {
+    let minimum_width = SORT_WIDTH + moduwu_design::SPACE_SM + VIEW_WIDTH;
+    let (sort_width, view_width) = if available_width < minimum_width {
         let width = ((available_width - moduwu_design::SPACE_SM).max(2.0)) * 0.5;
         (width, width)
     } else {
-        (SORT_WIDTH, SIZE_WIDTH)
+        (SORT_WIDTH, VIEW_WIDTH)
     };
 
     sort_filter_popup(
@@ -761,16 +768,5 @@ fn show_library_view_combos(
         None,
         sort_width,
     );
-    moduwu_design::responsive_combo_box(
-        ui,
-        "library-thumbnail-size",
-        tr_fmt("Size: {label}", &[("label", &selected_size.label())]),
-        size_width,
-        LibraryThumbnailSize::ALL.len(),
-        |ui| {
-            for thumbnail_size in LibraryThumbnailSize::ALL {
-                ui.selectable_value(selected_size, thumbnail_size, thumbnail_size.label());
-            }
-        },
-    );
+    view_popup(ui, selected_view, view_width);
 }

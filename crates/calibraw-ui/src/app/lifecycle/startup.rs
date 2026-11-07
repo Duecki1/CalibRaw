@@ -80,7 +80,11 @@ impl CalibRawApp {
         let library_preferences = crate::ui::library::LibraryPreferences {
             thumbnail_workers: performance.thumbnail_workers,
             automatic_thumbnail_workers: performance.thumbnail_workers_automatic,
-            thumbnail_size: performance.library_thumbnail_size,
+            view: crate::ui::library::LibraryView {
+                thumbnail_size: performance.library_thumbnail_size,
+                square_thumbnails: performance.library_square_thumbnails,
+                include_subfolders: performance.library_include_subfolders,
+            },
             sort_order: performance.library_sort_order,
             stack_raw_companions: performance.library_stack_raw_companions,
             render_edited_thumbnails_during_indexing: performance

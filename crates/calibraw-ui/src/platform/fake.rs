@@ -50,7 +50,10 @@ impl Platform for FakePlatform {
         Ok("Library".to_owned())
     }
 
-    fn list_library_documents(&self) -> Result<Vec<LibraryDocument>, String> {
+    fn list_library_documents(
+        &self,
+        _include_subfolders: bool,
+    ) -> Result<Vec<LibraryDocument>, String> {
         Ok(self.library_documents.lock().unwrap().clone())
     }
 

@@ -209,6 +209,35 @@ fn justified_thumbnail_layout_from_aspects(
     (placements, total_height)
 }
 
+/// Rectangles of `count` equal square tiles and the grid's height. Rows are
+/// as wide as the grid, with the fewest columns whose tiles are no larger than
+/// `target_edge`, like justified rows, which shrink to fit and never grow.
+pub(super) fn square_thumbnail_layout(
+    count: usize,
+    available_width: f32,
+    target_edge: f32,
+    gap: f32,
+) -> (Vec<egui::Rect>, f32) {
+    let available_width = available_width.max(1.0);
+    let gap = gap.max(0.0);
+    let pitch = target_edge.max(1.0) + gap;
+    // Saturates for an absurd width; the tiles then only get very small.
+    let columns = (((available_width + gap) / pitch).ceil() as usize).max(1);
+    let edge = ((available_width - gap * (columns - 1) as f32) / columns as f32).max(1.0);
+    let placements = (0..count)
+        .map(|position| {
+            let (row, column) = (position / columns, position % columns);
+            egui::Rect::from_min_size(
+                egui::pos2(column as f32 * (edge + gap), row as f32 * (edge + gap)),
+                egui::Vec2::splat(edge),
+            )
+        })
+        .collect();
+    let rows = count.div_ceil(columns);
+    let height = (rows as f32 * (edge + gap) - gap).max(0.0);
+    (placements, height)
+}
+
 /// A keyboard move through the thumbnail grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum GridStep {

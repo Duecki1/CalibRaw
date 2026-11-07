@@ -15,7 +15,7 @@ pub(crate) struct LibraryPreferences {
     /// The manual worker limit, used while `automatic_thumbnail_workers` is off.
     pub(crate) thumbnail_workers: usize,
     pub(crate) automatic_thumbnail_workers: bool,
-    pub(crate) thumbnail_size: LibraryThumbnailSize,
+    pub(crate) view: LibraryView,
     pub(crate) sort_order: LibrarySortOrder,
     pub(crate) stack_raw_companions: bool,
     pub(crate) render_edited_thumbnails_during_indexing: bool,
@@ -149,7 +149,7 @@ impl LibraryState {
         media: MediaLibraryState,
     ) -> Self {
         let LibraryPreferences {
-            thumbnail_size,
+            view,
             sort_order,
             stack_raw_companions,
             render_edited_thumbnails_during_indexing,
@@ -182,7 +182,7 @@ impl LibraryState {
             automatic_thumbnail_workers,
             render_edited_thumbnails_during_indexing,
             sort_order,
-            thumbnail_size,
+            view,
             search_query: String::new(),
             review_filter: LibraryReviewFilter::default(),
             stack_raw_companions,
@@ -406,15 +406,21 @@ impl LibraryState {
             .snapshot(self.decoding_paused.load(Ordering::Acquire))
     }
 
-    pub(crate) fn thumbnail_size(&self) -> LibraryThumbnailSize {
-        self.thumbnail_size
+    pub(crate) fn view(&self) -> LibraryView {
+        self.view
     }
 
-    pub(crate) fn set_thumbnail_size(&mut self, thumbnail_size: LibraryThumbnailSize) -> bool {
-        if self.thumbnail_size == thumbnail_size {
+    /// Returns whether the view changed. Showing or leaving out subfolders
+    /// scans the folder again; the grid keeps its photos until that arrives.
+    pub(crate) fn set_view(&mut self, view: LibraryView, context: &egui::Context) -> bool {
+        if self.view == view {
             return false;
         }
-        self.thumbnail_size = thumbnail_size;
+        let rescan = self.view.include_subfolders != view.include_subfolders;
+        self.view = view;
+        if rescan && self.location.is_some() {
+            self.rescan(context);
+        }
         true
     }
 

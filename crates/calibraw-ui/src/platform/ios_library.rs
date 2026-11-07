@@ -141,10 +141,40 @@ impl IosLibrary {
         })
     }
 
-    pub(super) fn list_library_documents(&self) -> Result<Vec<LibraryDocument>, String> {
+    pub(super) fn list_library_documents(
+        &self,
+        include_subfolders: bool,
+    ) -> Result<Vec<LibraryDocument>, String> {
         let folder = self.state()?;
+        let mut folders = vec![(folder.clone(), String::new())];
+        if include_subfolders {
+            folders.extend(self.folders_below(&folder)?.into_iter().map(|child| {
+                let subfolder = child
+                    .path
+                    .strip_prefix(folder.as_str())
+                    .unwrap_or(&child.path)
+                    .trim_start_matches('/')
+                    .to_owned();
+                (child.path, subfolder)
+            }));
+        }
         let mut documents = Vec::new();
-        for entry in fs::read_dir(self.folder_path(&folder)?).map_err(|error| error.to_string())? {
+        for (path, subfolder) in folders {
+            self.append_documents(&path, &subfolder, &mut documents)?;
+        }
+        documents.sort_by(|left, right| left.uri.cmp(&right.uri));
+        Ok(documents)
+    }
+
+    /// The photos directly in `folder`, which lies `subfolder` below the
+    /// listed folder.
+    fn append_documents(
+        &self,
+        folder: &str,
+        subfolder: &str,
+        documents: &mut Vec<LibraryDocument>,
+    ) -> Result<(), String> {
+        for entry in fs::read_dir(self.folder_path(folder)?).map_err(|error| error.to_string())? {
             let entry = entry.map_err(|error| error.to_string())?;
             if !entry
                 .file_type()
@@ -160,7 +190,7 @@ impl IosLibrary {
             if validate_name(&name).is_err() {
                 continue;
             }
-            let uri = relative_child(&folder, &name);
+            let uri = relative_child(folder, &name);
             self.photo(&uri)?;
             let metadata = entry.metadata().map_err(|error| error.to_string())?;
             documents.push(LibraryDocument {
@@ -174,16 +204,22 @@ impl IosLibrary {
                     .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                     .map_or(0, |time| time.as_secs()),
                 sidecar: ListedSidecar::Unlisted,
+                subfolder: subfolder.to_owned(),
             });
         }
-        documents.sort_by(|left, right| left.uri.cmp(&right.uri));
-        Ok(documents)
+        Ok(())
     }
 
     pub(super) fn list_library_folders(&self) -> Result<Vec<LibraryFolder>, String> {
         let _state = self.state()?;
+        self.folders_below("")
+    }
+
+    /// Every folder below `top`, sorted by path. The caller holds the state
+    /// lock.
+    fn folders_below(&self, top: &str) -> Result<Vec<LibraryFolder>, String> {
         let mut folders = Vec::new();
-        let mut pending = vec![String::new()];
+        let mut pending = vec![top.to_owned()];
         while let Some(parent) = pending.pop() {
             for entry in
                 fs::read_dir(self.folder_path(&parent)?).map_err(|error| error.to_string())?

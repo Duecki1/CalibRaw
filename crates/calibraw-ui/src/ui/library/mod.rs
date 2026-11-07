@@ -191,6 +191,18 @@ impl LibraryThumbnailSize {
     }
 }
 
+/// How the library shows the selected folder; each part persists with the
+/// settings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LibraryView {
+    pub(crate) thumbnail_size: LibraryThumbnailSize,
+    /// Equal square tiles, each photo cropped to fill its tile, instead of
+    /// justified rows of photos in their own shapes.
+    pub(crate) square_thumbnails: bool,
+    /// Also show the photos of every folder below the selected one.
+    pub(crate) include_subfolders: bool,
+}
+
 /// The manual worker setting's initial and reset value.
 pub(crate) fn default_thumbnail_worker_count() -> usize {
     sources::default_thumbnail_worker_count()
@@ -822,7 +834,7 @@ pub(crate) struct LibraryState {
     automatic_thumbnail_workers: bool,
     render_edited_thumbnails_during_indexing: bool,
     sort_order: LibrarySortOrder,
-    thumbnail_size: LibraryThumbnailSize,
+    view: LibraryView,
     search_query: String,
     review_filter: LibraryReviewFilter,
     /// Show RAW+JPEG pairs once, as the RAW. Rebuilt with the entry indices.

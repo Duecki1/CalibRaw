@@ -33,6 +33,10 @@ pub(crate) struct PerformanceSettings {
     pub thumbnail_workers_automatic: bool,
     pub render_edited_thumbnails_during_indexing: bool,
     pub library_thumbnail_size: crate::ui::library::LibraryThumbnailSize,
+    /// Show the library as equal square tiles.
+    pub library_square_thumbnails: bool,
+    /// Show the photos of the selected folder's subfolders with its own.
+    pub library_include_subfolders: bool,
     pub library_sort_order: crate::ui::library::LibrarySortOrder,
     /// Show RAW+JPEG (or RAW+HEIC) pairs once, as the RAW.
     pub library_stack_raw_companions: bool,
@@ -286,6 +290,8 @@ impl Default for PerformanceSettings {
             thumbnail_workers_automatic: true,
             render_edited_thumbnails_during_indexing: false,
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::default(),
+            library_square_thumbnails: false,
+            library_include_subfolders: false,
             library_sort_order: crate::ui::library::LibrarySortOrder::default(),
             library_stack_raw_companions: true,
             preview_quality: crate::app::PreviewQuality::default(),

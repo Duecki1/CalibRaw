@@ -248,8 +248,11 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::library_location(&self.app)
     }
 
-    fn list_library_documents(&self) -> Result<Vec<LibraryDocument>, String> {
-        calibraw_ffi::list_library_documents(&self.app).map(|documents| {
+    fn list_library_documents(
+        &self,
+        include_subfolders: bool,
+    ) -> Result<Vec<LibraryDocument>, String> {
+        calibraw_ffi::list_library_documents(&self.app, include_subfolders).map(|documents| {
             documents
                 .into_iter()
                 .map(|document| LibraryDocument {
@@ -261,6 +264,7 @@ impl Platform for AndroidPlatform {
                     sidecar: document
                         .sidecar
                         .map_or(ListedSidecar::Absent, ListedSidecar::Present),
+                    subfolder: document.subfolder,
                 })
                 .collect()
         })

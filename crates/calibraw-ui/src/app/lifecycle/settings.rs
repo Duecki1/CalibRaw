@@ -278,11 +278,8 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
-    pub(crate) fn set_library_thumbnail_size(
-        &mut self,
-        thumbnail_size: crate::ui::library::LibraryThumbnailSize,
-    ) {
-        if self.library.set_thumbnail_size(thumbnail_size) {
+    pub(crate) fn set_library_view(&mut self, view: crate::ui::library::LibraryView) {
+        if self.library.set_view(view, &self.egui_ctx) {
             self.persist_performance_settings();
             self.egui_ctx.request_repaint();
         }
@@ -362,7 +359,9 @@ impl CalibRawApp {
             render_edited_thumbnails_during_indexing: self
                 .library
                 .renders_edited_thumbnails_during_indexing(),
-            library_thumbnail_size: self.library.thumbnail_size(),
+            library_thumbnail_size: self.library.view().thumbnail_size,
+            library_square_thumbnails: self.library.view().square_thumbnails,
+            library_include_subfolders: self.library.view().include_subfolders,
             library_sort_order: self.library.sort_order(),
             library_stack_raw_companions: self.library.stacks_raw_companions(),
             preview_quality: self.preview.quality,

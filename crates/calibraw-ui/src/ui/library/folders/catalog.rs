@@ -121,15 +121,20 @@ pub(in crate::ui::library) fn scan_folder_tree(
     visit(root.to_path_buf(), &is_cancelled)
 }
 
+/// The photos of `folder` and, with `include_subfolders`, of every folder
+/// below it, newest first up to the library limit. Symbolic links to folders
+/// are not followed, so a walk cannot loop.
 pub(in crate::ui::library) fn scan_folder(
     folder: &Path,
+    include_subfolders: bool,
     is_cancelled: impl Fn() -> bool,
 ) -> Result<Option<FolderScan>, String> {
-    scan_folder_with_limit(folder, MAX_LIBRARY_FILES, is_cancelled)
+    scan_folder_with_limit(folder, include_subfolders, MAX_LIBRARY_FILES, is_cancelled)
 }
 
 pub(in crate::ui::library) fn scan_folder_with_limit(
     folder: &Path,
+    include_subfolders: bool,
     maximum_files: usize,
     is_cancelled: impl Fn() -> bool,
 ) -> Result<Option<FolderScan>, String> {
@@ -152,68 +157,91 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
     let mut ranked_assets = BinaryHeap::with_capacity(maximum_files);
     let mut warning_count = 0usize;
     let mut truncated = false;
-    let entries = std::fs::read_dir(folder).map_err(|error| {
-        tr_fmt(
-            "Could not scan {folder}: {error}",
-            &[("folder", &folder.display()), ("error", &error)],
-        )
-    })?;
-    for entry in entries {
-        if is_cancelled() {
-            return Ok(None);
-        }
-        let entry = match entry {
-            Ok(entry) => entry,
+    let mut unread_folders = vec![folder.to_path_buf()];
+    while let Some(current) = unread_folders.pop() {
+        let entries = match std::fs::read_dir(&current) {
+            Ok(entries) => entries,
+            // The chosen folder must be readable; a subfolder only counts as
+            // an unreadable item.
+            Err(error) if current == folder => {
+                return Err(tr_fmt(
+                    "Could not scan {folder}: {error}",
+                    &[("folder", &folder.display()), ("error", &error)],
+                ));
+            }
             Err(error) => {
                 warning_count += 1;
-                log::warn!("could not read a library directory entry: {error}");
+                log::warn!("could not scan {}: {error}", current.display());
                 continue;
             }
         };
-        let file_type = match entry.file_type() {
-            Ok(file_type) => file_type,
-            Err(error) => {
-                warning_count += 1;
-                log::warn!("could not inspect {}: {error}", entry.path().display());
+        for entry in entries {
+            if is_cancelled() {
+                return Ok(None);
+            }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    warning_count += 1;
+                    log::warn!("could not read a library directory entry: {error}");
+                    continue;
+                }
+            };
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    warning_count += 1;
+                    log::warn!("could not inspect {}: {error}", entry.path().display());
+                    continue;
+                }
+            };
+            if include_subfolders && file_type.is_dir() {
+                unread_folders.push(entry.path());
                 continue;
             }
-        };
-        if !file_type.is_file() || !is_supported_image_path(&entry.path()) {
-            continue;
-        }
-        let path = entry.path();
-        let file_metadata = entry.metadata().ok();
-        let modified_seconds = file_metadata
-            .as_ref()
-            .and_then(|metadata| metadata.modified().ok())
-            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |duration| duration.as_secs());
-        let asset = LibraryAsset::from_desktop_path(
-            path,
-            file_metadata.as_ref().map_or(0, std::fs::Metadata::len),
-            modified_seconds,
-            None,
-        );
-        let stamp = file_metadata.as_ref().map(FileStamp::from_metadata);
-        let candidate = RankedLibraryAsset::new(asset, stamp);
-        if ranked_assets.len() < maximum_files {
-            ranked_assets.push(candidate);
-        } else {
-            truncated = true;
-            if ranked_assets
-                .peek()
-                .is_some_and(|worst_retained| candidate < *worst_retained)
-            {
-                ranked_assets.pop();
+            if !file_type.is_file() || !is_supported_image_path(&entry.path()) {
+                continue;
+            }
+            let path = entry.path();
+            let file_metadata = entry.metadata().ok();
+            let modified_seconds = file_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |duration| duration.as_secs());
+            let asset = LibraryAsset::from_desktop_path(
+                path,
+                file_metadata.as_ref().map_or(0, std::fs::Metadata::len),
+                modified_seconds,
+                None,
+            );
+            let stamp = file_metadata.as_ref().map(FileStamp::from_metadata);
+            let candidate = RankedLibraryAsset::new(asset, stamp);
+            if ranked_assets.len() < maximum_files {
                 ranked_assets.push(candidate);
+            } else {
+                truncated = true;
+                if ranked_assets
+                    .peek()
+                    .is_some_and(|worst_retained| candidate < *worst_retained)
+                {
+                    ranked_assets.pop();
+                    ranked_assets.push(candidate);
+                }
             }
         }
     }
     let mut ranked_assets = ranked_assets.into_vec();
     ranked_assets.sort();
 
-    let mut metadata_cache = FolderDisplayMetadataCache::load(folder);
-    let mut pending_metadata = HashMap::new();
+    // The chosen folder's cache is always loaded, so it drops the entries of
+    // its removed photos even when none are left; a subfolder's is loaded
+    // once a photo of it is shown.
+    let mut deferred_metadata = DeferredFolderMetadata::new(0);
+    let mut folder_slots = HashMap::from([(
+        folder.to_path_buf(),
+        deferred_metadata.add_folder(FolderDisplayMetadataCache::load(folder)),
+    )]);
     let mut assets = Vec::with_capacity(ranked_assets.len());
     for RankedLibraryAsset {
         mut asset, stamp, ..
@@ -222,33 +250,34 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
         if is_cancelled() {
             return Ok(None);
         }
-        if let Some(path) = asset.desktop_path() {
-            let cached = path
-                .file_name()
-                .zip(stamp)
-                .and_then(|(file_name, stamp)| metadata_cache.get(file_name, stamp));
+        if let Some((parent, file_name)) = asset
+            .desktop_path()
+            .and_then(|path| path.parent().zip(path.file_name()))
+        {
+            let slot = *folder_slots.entry(parent.to_path_buf()).or_insert_with(|| {
+                deferred_metadata.add_folder(FolderDisplayMetadataCache::load(parent))
+            });
+            let cached =
+                stamp.and_then(|stamp| deferred_metadata.cache_mut(slot).get(file_name, stamp));
             match cached {
                 Some(metadata) => {
                     apply_display_metadata(&mut asset.metadata, metadata);
                 }
                 None => {
-                    if let Some(file_name) = path.file_name() {
-                        pending_metadata.insert(file_name.to_owned(), stamp);
-                    }
+                    let file_name = file_name.to_owned();
+                    deferred_metadata.defer(asset.id.clone(), slot, file_name, stamp);
                 }
             }
         }
         assets.push(asset);
     }
     // Drops the entries of removed photos now; the workers save what they read.
-    if let Err(error) = metadata_cache.save() {
-        log::warn!("{error}");
-    }
+    deferred_metadata.save();
 
     Ok(Some(FolderScan {
         assets,
         warning_count,
         truncated,
-        deferred_metadata: DeferredFolderMetadata::new(metadata_cache, pending_metadata),
+        deferred_metadata,
     }))
 }

@@ -19,8 +19,10 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.List;
 
 final class StorageManager {
     private static final String LOG_TAG = "CalibRaw";
@@ -56,6 +58,30 @@ final class StorageManager {
     }
 
     /** The store and folder that are listed and imported into; replaced as one. */
+    /** The folders a listing of {@code folder} in {@code store} read, {@code folder} first. */
+    private static final class Listing {
+        final LibraryStore store;
+        final String folder;
+        final List<String> folders;
+
+        Listing(LibraryStore store, String folder, List<String> folders) {
+            this.store = store;
+            this.folder = folder;
+            this.folders = folders;
+        }
+    }
+
+    /** A listed photo and the folder below the listed one that holds it, "" for that folder. */
+    private static final class ListedDocument {
+        final LibraryStore.Document document;
+        final String subfolder;
+
+        ListedDocument(LibraryStore.Document document, String subfolder) {
+            this.document = document;
+            this.subfolder = subfolder;
+        }
+    }
+
     private static final class Selection {
         final LibraryStore store;
         final String folder;
@@ -74,6 +100,8 @@ final class StorageManager {
     private final FileLibraryStore fileStore;
     private final LinkedFolders linkedFolders;
     private volatile Selection selection;
+    /** What the last listing read; null before the first. */
+    private volatile Listing listing;
 
     /**
      * @param externalCallbacks receives photos other apps sent through "Open with" or Share.
@@ -148,16 +176,28 @@ final class StorageManager {
         selection = new Selection(store, "");
     }
 
-    /** Reports a change sync made to the selected linked folder while the app was away. */
+    /**
+     * Reports a change sync made to the selected linked folder while the app was away, or to a
+     * subfolder the library shows with it.
+     */
     void checkLinkedFolderForChanges() {
         Selection current = selection;
         if (!(current.store instanceof TreeLibraryStore)) {
             return;
         }
+        Listing listed = listing;
+        List<String> folders = listed != null
+                && listed.store == current.store
+                && listed.folder.equals(current.folder)
+                ? listed.folders
+                : Collections.singletonList(current.folder);
         new Thread(() -> {
             try {
-                if (((TreeLibraryStore) current.store).changedSinceListing(current.folder)) {
-                    callbacks.onLibraryChanged();
+                for (String folder : folders) {
+                    if (((TreeLibraryStore) current.store).changedSinceListing(folder)) {
+                        callbacks.onLibraryChanged();
+                        return;
+                    }
                 }
             } catch (Exception error) {
                 // Only a folder path the store rejects reaches here; one it cannot read is
@@ -403,9 +443,13 @@ final class StorageManager {
         return selection.store.location();
     }
 
-    String listRawLibrary() {
+    /**
+     * The photos of the selected folder and, with {@code includeSubfolders}, of every folder
+     * below it.
+     */
+    String listRawLibrary(boolean includeSubfolders) {
         try {
-            return encodeRawLibrary();
+            return encodeRawLibrary(includeSubfolders);
         } catch (Exception error) {
             throw new IllegalStateException("Could not list the RAW library", error);
         }
@@ -752,26 +796,86 @@ final class StorageManager {
         }
     }
 
-    private String encodeRawLibrary() throws Exception {
+    private String encodeRawLibrary(boolean includeSubfolders) throws Exception {
         Selection current = selection;
+        ArrayList<String> folders = new ArrayList<>();
+        folders.add(current.folder);
+        if (includeSubfolders) {
+            folders.addAll(foldersBelow(current.store, current.folder));
+        }
+        String prefix = current.folder.isEmpty() ? "" : current.folder + "/";
         // Preserve one sentinel beyond the UI limit.
-        ArrayList<LibraryStore.Document> records =
-                current.store.listDocuments(current.folder, MAX_RAW_LIBRARY_FILES + 1);
-        records.sort(RAW_LIBRARY_OUTPUT_ORDER);
+        int retained = MAX_RAW_LIBRARY_FILES + 1;
+        ArrayList<ListedDocument> records = new ArrayList<>();
+        ArrayList<String> listedFolders = new ArrayList<>();
+        for (String folder : folders) {
+            boolean top = folder.equals(current.folder);
+            ArrayList<LibraryStore.Document> documents;
+            try {
+                documents = current.store.listDocuments(folder, retained);
+            } catch (Exception error) {
+                if (top) {
+                    throw error;
+                }
+                // One unreadable subfolder leaves the others shown.
+                Log.w(LOG_TAG, "Could not list a library subfolder", error);
+                continue;
+            }
+            listedFolders.add(folder);
+            String subfolder = top ? "" : folder.substring(prefix.length());
+            for (LibraryStore.Document document : documents) {
+                records.add(new ListedDocument(document, subfolder));
+            }
+            // Only the newest can be shown, which bounds the memory of many folders.
+            if (records.size() > 2 * retained) {
+                keepNewest(records, retained);
+            }
+        }
+        keepNewest(records, retained);
+        listing = new Listing(current.store, current.folder, listedFolders);
 
         StringBuilder result = new StringBuilder();
-        for (LibraryStore.Document record : records) {
-            appendLibraryRecord(result, record);
+        for (ListedDocument record : records) {
+            appendLibraryRecord(result, record.document, record.subfolder);
         }
         return result.toString();
     }
 
+    /** Sorts {@code records} in output order and drops all but the first {@code limit}. */
+    private static void keepNewest(ArrayList<ListedDocument> records, int limit) {
+        records.sort((left, right) ->
+                RAW_LIBRARY_OUTPUT_ORDER.compare(left.document, right.document));
+        if (records.size() > limit) {
+            records.subList(limit, records.size()).clear();
+        }
+    }
+
+    /** Every folder below {@code folder} in {@code store}, as {@code listFolders} names it. */
+    private static ArrayList<String> foldersBelow(LibraryStore store, String folder)
+            throws Exception {
+        String prefix = folder.isEmpty() ? "" : folder + "/";
+        ArrayList<String> result = new ArrayList<>();
+        for (String line : store.listFolders().split("\n")) {
+            int tab = line.indexOf('\t');
+            if (tab <= 0) {
+                continue;
+            }
+            String path = Uri.decode(line.substring(0, tab));
+            if (path.startsWith(prefix)) {
+                result.add(path);
+            }
+        }
+        return result;
+    }
+
     /**
      * One tab-separated line: the encoded URI, name and path, the byte size, the modification
-     * time in seconds, then the sidecar's byte size and modification time in milliseconds, both
-     * "-" when the photo has none. Read by {@code parse_library_record} in calibraw-ffi.
+     * time in seconds, the sidecar's byte size and modification time in milliseconds, both "-"
+     * when the photo has none, then the encoded subfolder, empty for the listed folder itself.
+     * Read by {@code parse_library_record} in calibraw-ffi.
      */
-    private static void appendLibraryRecord(StringBuilder result, LibraryStore.Document record) {
+    private static void appendLibraryRecord(
+            StringBuilder result, LibraryStore.Document record, String subfolder) {
         result.append(Uri.encode(record.uri)).append('\t')
                 .append(Uri.encode(record.displayName)).append('\t')
                 .append(Uri.encode(record.displayPath)).append('\t')
@@ -782,7 +886,7 @@ final class StorageManager {
         } else {
             result.append(record.sidecarBytes).append('\t').append(record.sidecarModifiedMillis);
         }
-        result.append('\n');
+        result.append('\t').append(Uri.encode(subfolder)).append('\n');
     }
 
     private void deleteStoredRaw(Uri uri, String displayName) {

@@ -724,6 +724,7 @@ pub(crate) fn current_photo_asset(app: &CalibRawApp) -> Option<LibraryAsset> {
             bytes: 0,
             modified_seconds: 0,
             sidecar: crate::platform::ListedSidecar::Unlisted,
+            subfolder: String::new(),
         }),
         (LibraryAssetId::Desktop(path), _) => LibraryAsset::from_desktop_path(path, 0, 0, None),
         // `current_document_id` gives an Android id only for an Android target.

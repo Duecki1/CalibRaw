@@ -32,6 +32,9 @@ pub(crate) struct LibraryDocument {
     pub(crate) bytes: u64,
     pub(crate) modified_seconds: u64,
     pub(crate) sidecar: ListedSidecar,
+    /// The folder below the listed one that holds the photo, `/`-separated
+    /// and relative to it; empty for the listed folder itself.
+    pub(crate) subfolder: String,
 }
 
 /// What a media-library listing says about a photo's sidecar.
@@ -353,7 +356,12 @@ pub(crate) trait Platform: Send + Sync {
     fn library_location(&self) -> Result<String, String> {
         Err(unavailable("the media library"))
     }
-    fn list_library_documents(&self) -> Result<Vec<LibraryDocument>, String> {
+    /// The photos of the selected folder and, with `include_subfolders`, of
+    /// every folder below it.
+    fn list_library_documents(
+        &self,
+        _include_subfolders: bool,
+    ) -> Result<Vec<LibraryDocument>, String> {
         Err(unavailable("the media library"))
     }
     fn list_library_folders(&self) -> Result<Vec<LibraryFolder>, String> {

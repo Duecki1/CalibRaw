@@ -88,17 +88,17 @@ const SORT_ORDERS: [(LibrarySortOrder, &str); 10] = [
 ];
 
 /// Sort & filter, laid out like the other menus and the same on every
-/// platform: the sort order and, where the header has no room for its own
-/// control, the thumbnail size as lists that close the menu once a choice is
+/// platform: the sort order as a list that closes the menu once a choice is
 /// made; the RAW + JPEG switch; the rating and flag filters, whose lists stay
-/// open for several choices; and Clear filters. Only a list closes the menu,
-/// so a sheet gets a close button.
+/// open for several choices; Clear filters; and, where the header has no room
+/// for the View menu, its options. Only a list closes the menu, so a sheet
+/// gets a close button.
 fn sort_filter_menu(
     ui: &mut Ui,
     sort: &mut LibrarySortOrder,
     filter: &mut LibraryReviewFilter,
     stack_raw_companions: &mut bool,
-    compact_size: Option<&mut LibraryThumbnailSize>,
+    compact_view: Option<&mut LibraryView>,
 ) {
     moduwu_design::menu_title_with_close(ui, tr("Sort & filter"));
     let sort_item = MenuItem::new(tr("Sort by"))
@@ -115,22 +115,6 @@ fn sort_filter_menu(
             }
         }
     });
-    if let Some(size) = compact_size {
-        let size_item = MenuItem::new(tr("Thumbnail size"))
-            .icon(regular::SQUARES_FOUR)
-            .value(size.label());
-        moduwu_design::submenu(ui, size_item, |ui| {
-            for value in LibraryThumbnailSize::ALL {
-                if ui
-                    .add(MenuItem::new(value.label()).selected(*size == value))
-                    .clicked()
-                {
-                    *size = value;
-                    ui.close();
-                }
-            }
-        });
-    }
     moduwu_design::menu_checkbox_item(ui, stack_raw_companions, tr("Show only the RAW"))
         .on_hover_text(tr(
             "Cameras shooting RAW+JPEG or RAW+HEIC save both files. Show each pair once, \
@@ -154,6 +138,41 @@ fn sort_filter_menu(
     if ui.add_enabled(filter.active(), clear_item).clicked() {
         *filter = LibraryReviewFilter::default();
     }
+    if let Some(view) = compact_view {
+        ui.separator();
+        view_menu_items(ui, view);
+    }
+}
+
+/// The View menu's options: the thumbnail size as a list that closes the
+/// menu once a choice is made, then the square and subfolder switches.
+fn view_menu_items(ui: &mut Ui, view: &mut LibraryView) {
+    let size_item = MenuItem::new(tr("Thumbnail size"))
+        .icon(regular::SQUARES_FOUR)
+        .value(view.thumbnail_size.label());
+    moduwu_design::submenu(ui, size_item, |ui| {
+        for value in LibraryThumbnailSize::ALL {
+            if ui
+                .add(MenuItem::new(value.label()).selected(view.thumbnail_size == value))
+                .clicked()
+            {
+                view.thumbnail_size = value;
+                ui.close();
+            }
+        }
+    });
+    moduwu_design::menu_checkbox_item(ui, &mut view.square_thumbnails, tr("Square thumbnails"));
+    moduwu_design::menu_checkbox_item(ui, &mut view.include_subfolders, tr("Include subfolders"));
+}
+
+/// The header's View menu, where it has room for one.
+pub(super) fn view_popup(ui: &mut Ui, view: &mut LibraryView, width: f32) {
+    let label = format!("{} {}", tr("View"), regular::CARET_DOWN);
+    let response = moduwu_design::toolbar_button(ui, label, width);
+    moduwu_design::dropdown_menu(&response, |ui| {
+        moduwu_design::menu_title_with_close(ui, tr("View"));
+        view_menu_items(ui, view);
+    });
 }
 
 /// The ratings to show; several can be chosen. The first one chosen sorts by
@@ -221,10 +240,10 @@ pub(super) fn sort_filter_popup(
     sort: &mut LibrarySortOrder,
     filter: &mut LibraryReviewFilter,
     stack_raw_companions: &mut bool,
-    compact_size: Option<&mut LibraryThumbnailSize>,
+    compact_view: Option<&mut LibraryView>,
     width: f32,
 ) {
-    let compact = compact_size.is_some();
+    let compact = compact_view.is_some();
     let label: egui::WidgetText = if compact {
         egui::RichText::new(format!(
             "{}{}",
@@ -252,6 +271,6 @@ pub(super) fn sort_filter_popup(
         }
     ));
     moduwu_design::dropdown_menu(&response, |ui| {
-        sort_filter_menu(ui, sort, filter, stack_raw_companions, compact_size);
+        sort_filter_menu(ui, sort, filter, stack_raw_companions, compact_view);
     });
 }

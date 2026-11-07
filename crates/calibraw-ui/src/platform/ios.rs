@@ -346,8 +346,13 @@ impl Platform for IosPlatform {
         self.state.library.library_location()
     }
 
-    fn list_library_documents(&self) -> Result<Vec<LibraryDocument>, String> {
-        self.state.library.list_library_documents()
+    fn list_library_documents(
+        &self,
+        include_subfolders: bool,
+    ) -> Result<Vec<LibraryDocument>, String> {
+        self.state
+            .library
+            .list_library_documents(include_subfolders)
     }
 
     fn list_library_folders(&self) -> Result<Vec<LibraryFolder>, String> {

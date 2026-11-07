@@ -15,13 +15,18 @@ pub fn library_location(app: &AndroidApp) -> Result<String, String> {
     .map_err(|error| format!("could not locate Android RAW library: {error:#}"))
 }
 
-pub fn list_library_documents(app: &AndroidApp) -> Result<Vec<LibraryDocument>, String> {
+/// The photos of the selected folder and, with `include_subfolders`, of every
+/// folder below it.
+pub fn list_library_documents(
+    app: &AndroidApp,
+    include_subfolders: bool,
+) -> Result<Vec<LibraryDocument>, String> {
     let encoded = with_storage_manager(app, |env, storage_manager| {
         let value = env.call_method(
             storage_manager,
             jni::jni_str!("listRawLibrary"),
-            jni::jni_sig!(() -> JString),
-            &[],
+            jni::jni_sig!((bool) -> JString),
+            &[JValue::Bool(include_subfolders)],
         )?;
         java_string(env, value)
     })
@@ -34,8 +39,9 @@ pub fn list_library_documents(app: &AndroidApp) -> Result<Vec<LibraryDocument>, 
 }
 
 /// One `listRawLibrary` line: the encoded URI, name and path, the byte size,
-/// the modification time in seconds, then the sidecar's byte size and
-/// modification time in milliseconds, both `-` when the photo has none.
+/// the modification time in seconds, the sidecar's byte size and
+/// modification time in milliseconds, both `-` when the photo has none, then
+/// the encoded subfolder, empty for the listed folder itself.
 fn parse_library_record(line: &str) -> Result<LibraryDocument, String> {
     fn number(field: Option<&str>, what: &str) -> Result<u64, String> {
         field
@@ -59,6 +65,11 @@ fn parse_library_record(line: &str) -> Result<LibraryDocument, String> {
             ))
         }
     };
+    let subfolder = decode_uri_component(
+        fields
+            .next()
+            .ok_or("Android library record has no subfolder")?,
+    )?;
     if fields.next().is_some() || uri.is_empty() || display_name.is_empty() {
         return Err("malformed Android library record".to_owned());
     }
@@ -69,6 +80,7 @@ fn parse_library_record(line: &str) -> Result<LibraryDocument, String> {
         bytes,
         modified_seconds,
         sidecar,
+        subfolder,
     })
 }
 
