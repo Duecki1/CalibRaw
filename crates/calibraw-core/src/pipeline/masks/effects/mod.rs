@@ -350,7 +350,7 @@ mask_effects! {
     }
     LightRays {
         label: "Light Rays",
-        description: "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.",
+        description: "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.",
         shader_id: 3,
         category: GlowAndLight,
         settings: light_rays: LightRaysEffectSettings,

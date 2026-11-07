@@ -118,6 +118,11 @@ fn scene_light_at(index: u32) -> SceneLight {
         if amount <= 1e-6 || rays_length <= 1e-6 { return scene_light_none(); }
         let source = mask_effect_lane_pair(params, LIGHT_RAYS_SOURCE_X_LANE) / 100.0;
         let z = Camera::scene_frame_depth(camera, 1.0, 1.0);
+        // Its light acts only where its mask covers, as its shafts do.
+        var confined = SCENE_LIGHT_UNCONFINED;
+        if Common::mask_data[index].point_color_meta.z != 0xffffffffu {
+            confined = index;
+        }
         return SceneLight(
             true,
             Camera::scene_frame_position(camera, Camera::scene_image_point(source, aspect), z),
@@ -125,7 +130,7 @@ fn scene_light_at(index: u32) -> SceneLight {
             mask_effect_picker_color_to_working(mask_effect_color(params, LIGHT_RAYS_COLOR_LANE))
                 * (amount * SCENE_LIGHT_GAIN * LIGHT_RAYS_LIGHT_INTENSITY),
             mask_effect_scene_bake_light(params),
-            SCENE_LIGHT_UNCONFINED,
+            confined,
             1.0,
         );
     }

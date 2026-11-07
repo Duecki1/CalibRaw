@@ -1225,7 +1225,7 @@
   "Pinch out": "İki parmakla genişlet",
   "Pinned SHA-256:": "Sabitlenmiş SHA-256:",
   "Pixelate": "Pikselleştir",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "Kaynağı tam görüntüye göre konumlandırın, ardından açıklıklarını boyayın. Maske ışık yayan alanları belirler; ışık huzmeleri bu alanların dışına taşar.",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Kaynağı tam görüntüye göre konumlandırın, ardından açıklıklarını boyayın. Işık huzmeleri maskeden geçer ve yalnızca maskenin içinde görünür.",
   "Plume size": "Duman sütunu boyutu",
   "Point Color": "Nokta Rengi",
   "Portrait": "Dikey",

@@ -1250,7 +1250,7 @@
   "Pinch out": "पिंच करके बड़ा करें",
   "Pinned SHA-256:": "निश्चित SHA-256:",
   "Pixelate": "पिक्सेलेट करें",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "पूरी छवि के अनुसार स्रोत रखें, फिर उसके छिद्रों पर पेंट करें। मास्क रोशनी निकलने वाले क्षेत्रों का आकार तय करता है; प्रकाश किरणें उनसे आगे तक जाती हैं।",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "पूरी छवि के अनुसार स्रोत रखें, फिर उसके छिद्रों पर पेंट करें। प्रकाश किरणें मास्क से होकर चमकती हैं और केवल उसके भीतर दिखती हैं।",
   "Plume size": "गुबार का आकार",
   "Point Color": "बिंदु का रंग",
   "Portrait": "पोर्ट्रेट",

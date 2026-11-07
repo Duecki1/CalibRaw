@@ -1226,7 +1226,7 @@
   "Pinch out": "Pinch out",
   "Pinned SHA-256:": "Pinned SHA-256:",
   "Pixelate": "Pixelate",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "Position the source in relation to the full image, then paint its openings. The mask determines the regions from which light is emitted; the light shafts themselves extend beyond those boundaries, quite splendidly.",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Position the source in relation to the full image, then paint its openings. The light shafts shine through the mask and appear only within it, quite splendidly.",
   "Plume size": "Plume size",
   "Point Color": "Point Colour",
   "Portrait": "Portrait",

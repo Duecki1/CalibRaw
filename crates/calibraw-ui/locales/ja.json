@@ -1250,7 +1250,7 @@
   "Pinch out": "ピンチアウト",
   "Pinned SHA-256:": "固定済みSHA-256：",
   "Pixelate": "ピクセル化",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "画像全体に対してソースを配置し、光の出口部分を塗ります。マスクで発光領域を形作り、光線はその外側まで伸びます。",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "画像全体に対してソースを配置し、光の出口部分を塗ります。光線はマスクを通して差し込み、マスクの内側にだけ表示されます。",
   "Plume size": "煙の筋のサイズ",
   "Point Color": "ポイントカラー",
   "Portrait": "ポートレート",

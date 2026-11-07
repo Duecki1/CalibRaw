@@ -1326,7 +1326,7 @@
   "Pinch out": "Pizzica per ingrandire",
   "Pinned SHA-256:": "SHA-256 bloccato:",
   "Pixelate": "Pixelizza",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "Posiziona la sorgente rispetto all'intera immagine, poi dipingi le sue aperture. La maschera definisce le aree che emettono luce; i fasci luminosi si estendono oltre queste aree.",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Posiziona la sorgente rispetto all'intera immagine, poi dipingi le sue aperture. I fasci luminosi attraversano la maschera e sono visibili solo al suo interno.",
   "Plume size": "Dimensione delle colonne di fumo",
   "Point Color": "Colore puntuale",
   "Portrait": "Ritratto",

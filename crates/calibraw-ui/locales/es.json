@@ -1326,7 +1326,7 @@
   "Pinch out": "Pellizcar para alejar",
   "Pinned SHA-256:": "SHA-256 fijado:",
   "Pixelate": "Pixelar",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "Coloca el origen en relación con la imagen completa y luego pinta sus aberturas. La máscara define las zonas emisoras; los haces de luz se extienden más allá de ellas.",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Coloca el origen en relación con la imagen completa y luego pinta sus aberturas. Los haces de luz atraviesan la máscara y solo se ven dentro de ella.",
   "Plume size": "Tamaño de las columnas",
   "Point Color": "Color puntual",
   "Portrait": "Vertical",

@@ -4,7 +4,8 @@ use super::params::light_rays::*;
 use super::settings::{EffectControl, EffectControls, EffectSettings};
 
 /// Light shafts from one or more sources through the openings the mask
-/// paints. The sources share the look of their rays.
+/// paints, shown only where the mask covers. The sources share the look of
+/// their rays.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct LightRaysEffectSettings {

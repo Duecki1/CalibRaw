@@ -1326,7 +1326,7 @@
   "Pinch out": "Knib ud",
   "Pinned SHA-256:": "Fastlåst SHA-256:",
   "Pixelate": "Pixelér",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "Placér kilden i forhold til hele billedet, og mal derefter dens åbninger. Masken former de områder, der udsender lys; lysstrålerne fortsætter uden for dem.",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Placér kilden i forhold til hele billedet, og mal derefter dens åbninger. Lysstrålerne skinner gennem masken og ses kun inden for den.",
   "Plume size": "Røgsøjlestørrelse",
   "Point Color": "Punktfarve",
   "Portrait": "Portræt",

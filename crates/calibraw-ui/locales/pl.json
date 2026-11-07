@@ -1226,7 +1226,7 @@
   "Pinch out": "Uszczypnij na zewnątrz",
   "Pinned SHA-256:": "Przypięta suma SHA-256:",
   "Pixelate": "Pikselizacja",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "Umieść źródło względem całego obrazu, a następnie pomaluj jego otwory. Maska określa obszary emisji, a promienie światła sięgają poza nie.",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Umieść źródło względem całego obrazu, a następnie pomaluj jego otwory. Promienie światła przechodzą przez maskę i są widoczne tylko w jej obrębie.",
   "Plume size": "Rozmiar smugi",
   "Point Color": "Kolor punktowy",
   "Portrait": "Portret",

@@ -137,10 +137,15 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         let radial_pixels = (output_uv - source_uv) * full_size;
         let distance = length(radial_pixels) / short_edge;
         if distance >= reach { continue; }
+        // The shafts show only where the mask covers this pixel, as every
+        // effect's result does; the mask's openings also shape them below.
+        let coverage = SceneAdjustments::local_mask_weight(pos, index);
+        if coverage <= 1e-6 { continue; }
         let fade = clamp(mask_effect_lane(params, LIGHT_RAYS_FADE_LANE) / 100.0, 0.0, 1.0);
         let softness = clamp(mask_effect_lane(params, LIGHT_RAYS_SOFTNESS_LANE) / 100.0, 0.0, 1.0);
         let spread = clamp(mask_effect_lane(params, LIGHT_RAYS_SPREAD_LANE), 0.0, 45.0);
-        let aperture = light_ray_path_energy(output_uv, source_uv, full_size, index, spread, softness);
+        let aperture = coverage
+            * light_ray_path_energy(output_uv, source_uv, full_size, index, spread, softness);
         if aperture <= 1e-6 { continue; }
         // Placement translates the same shafts without reshuffling their
         // texture on every slider movement.

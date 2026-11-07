@@ -1225,7 +1225,7 @@
   "Pinch out": "Развести двумя пальцами",
   "Pinned SHA-256:": "Закреплённая контрольная сумма SHA-256:",
   "Pixelate": "Пикселизация",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "Разместите источник относительно полного изображения, затем закрасьте области, через которые он будет виден. Маска задаёт излучающие области; световые лучи выходят за их пределы.",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Разместите источник относительно полного изображения, затем закрасьте области, через которые он будет виден. Световые лучи проходят сквозь маску и видны только внутри неё.",
   "Plume size": "Размер струй",
   "Point Color": "Цвет точки",
   "Portrait": "Портрет",

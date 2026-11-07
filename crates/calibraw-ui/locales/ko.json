@@ -1326,7 +1326,7 @@
   "Pinch out": "Pinch out",
   "Pinned SHA-256:": "Pinned SHA-256:",
   "Pixelate": "Pixelate",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "전체 이미지를 기준으로 광원을 배치한 다음 빛이 통과할 부분을 칠하세요. 광선은 마스크를 통과해 비치며 마스크 안에서만 보입니다.",
   "Plume size": "Plume size",
   "Point Color": "Point Color",
   "Portrait": "Portrait",

@@ -1326,7 +1326,7 @@
   "Pinch out": "Mărește prin depărtarea degetelor",
   "Pinned SHA-256:": "SHA-256 fixat:",
   "Pixelate": "Pixelare",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "Poziționează sursa față de imaginea completă, apoi pictează zonele prin care trece lumina. Masca definește regiunile emițătoare; razele se extind dincolo de acestea.",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Poziționează sursa față de imaginea completă, apoi pictează zonele prin care trece lumina. Razele trec prin mască și apar doar în interiorul ei.",
   "Plume size": "Dimensiunea coloanei de fum",
   "Point Color": "Culoare punctuală",
   "Portrait": "Portret",

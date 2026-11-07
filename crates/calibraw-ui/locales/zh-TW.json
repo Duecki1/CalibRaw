@@ -1250,7 +1250,7 @@
   "Pinch out": "雙指張開縮放",
   "Pinned SHA-256:": "固定的 SHA-256：",
   "Pixelate": "像素化",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "相對於整張影像放置光源，然後繪制光線開口。遮色片控制發光區域；光束會延伸到區域之外。",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "相對於整張影像放置光源，然後繪制光線開口。光束穿過遮色片照射，且只在遮色片內顯示。",
   "Plume size": "煙霧團大小",
   "Point Color": "點顏色",
   "Portrait": "人像",

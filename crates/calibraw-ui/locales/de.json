@@ -1250,7 +1250,7 @@
   "Pinch out": "Auseinanderziehen",
   "Pinned SHA-256:": "Festgelegte SHA-256-Prüfsumme:",
   "Pixelate": "Pixelieren",
-  "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.": "Positioniere die Lichtquelle relativ zum gesamten Bild und male anschließend die Öffnungen ein. Die Maske legt fest, aus welchen Bereichen Licht austritt; die Lichtstrahlen reichen über diese Bereiche hinaus.",
+  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Positioniere die Lichtquelle relativ zum gesamten Bild und male anschließend die Öffnungen ein. Die Lichtstrahlen scheinen durch die Maske und sind nur innerhalb der Maske zu sehen.",
   "Plume size": "Schwadengröße",
   "Point Color": "Punktfarbe",
   "Portrait": "Hochformat",
