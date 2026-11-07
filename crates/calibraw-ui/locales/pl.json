@@ -1275,7 +1275,7 @@
   "Previous / next photo in Develop": "Poprzednie / następne zdjęcie w module Wywoływanie",
   "Profile": "Profil",
   "Profile mode": "Tryb profilu",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "Profilowana redukcja szumu korzysta z modelu szumu a·sygnał+b oszacowanego na podstawie zdjęcia: danych matrycy dla plików RAW lub pikseli dla zdjęć wyrenderowanych. Gdy redukcja szumu AI jest włączona, zastępuje te ręczne ustawienia.",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "Profilowana redukcja szumu korzysta z modelu szumu a·sygnał+b oszacowanego na podstawie zdjęcia: danych matrycy dla plików RAW lub pikseli dla zdjęć wyrenderowanych.",
   "Project and third-party notices": "Informacje o projekcie i licencjach innych firm",
   "Project source and license": "Kod źródłowy i licencja projektu",
   "Publishing to {location}…": "Publikowanie w {location}…",

@@ -1274,7 +1274,7 @@
   "Previous / next photo in Develop": "Geliştir'de önceki/sonraki fotoğraf",
   "Profile": "Profil",
   "Profile mode": "Profil kipi",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "Profilli gürültü azaltma, fotoğrafın tahmin edilen a·sinyal+b gürültü modelini izler: RAW için sensör verilerini, işlenmiş fotoğraflar için pikselleri kullanır. Yapay zekâ ile gürültü giderme açıkken bu el ile denetimlerin yerini alır.",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "Profilli gürültü azaltma, fotoğrafın tahmin edilen a·sinyal+b gürültü modelini izler: RAW için sensör verilerini, işlenmiş fotoğraflar için pikselleri kullanır.",
   "Project and third-party notices": "Proje ve üçüncü taraf bildirimleri",
   "Project source and license": "Proje kaynağı ve lisansı",
   "Publishing to {location}…": "{location} konumunda yayımlanıyor…",

@@ -1274,7 +1274,7 @@
   "Previous / next photo in Develop": "Предыдущая / следующая фотография в разделе «Проявка»",
   "Profile": "Профиль",
   "Profile mode": "Режим профиля",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "Профильное шумоподавление следует модели шума a·signal+b, оценённой по фотографии: по данным сенсора для RAW или по пикселям для готовых изображений. Пока включено шумоподавление ИИ, оно заменяет эти ручные настройки.",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "Профильное шумоподавление следует модели шума a·signal+b, оценённой по фотографии: по данным сенсора для RAW или по пикселям для готовых изображений.",
   "Project and third-party notices": "Сведения о проекте и сторонних компонентах",
   "Project source and license": "Исходный код и лицензия проекта",
   "Publishing to {location}…": "Публикация в {location}…",

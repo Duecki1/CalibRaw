@@ -474,8 +474,8 @@ pub struct RawGpuPipeline {
     /// texture, which the render pass then read; otherwise it read the first
     /// (`post_blur_render_pass`). Point colour samples render from the same one.
     output_image_in_tex2: AtomicBool,
-    /// The raster finish program reading a binned source's reconstructed
-    /// camera RGB from highlight work A.
+    /// The raster finish program reading camera RGB from highlight work A: a
+    /// binned source's reconstruction, or an X-Trans photo's AI-denoised scene.
     binned_finish_pass: Pass,
     passes: Vec<Pass>,
     raw_texture: wgpu::Texture,
@@ -1128,12 +1128,13 @@ impl RawGpuPipeline {
             // A source overwritten by demosaicing leaves the scene as it is;
             // `immutable_ai_source_matches` asks for a new pipeline then.
             if self.ai_scene_intact.load(Ordering::Acquire) {
-                encoder.copy_texture_to_texture(
-                    self.highlight_work_a.as_image_copy(),
-                    self.scene_texture.as_image_copy(),
-                    self.scene_texture.size(),
-                );
+                // The model's demosaiced camera RGB in highlight work A takes
+                // the binned finish: the profiled luminance denoise on the way
+                // into the scene, a plain copy at zero. It only reads
+                // highlight work A, which stays intact for the next render.
+                self.encode_bound_pass(encoder, &self.binned_finish_pass, "AI scene finish");
                 self.encode_chromatic_aberration(encoder, params);
+                self.encode_color_denoise(encoder, params);
             }
             return;
         }

@@ -1376,7 +1376,7 @@
   "Previous / next photo in Develop": "Forrige / næste foto under Fremkald",
   "Profile": "Profil",
   "Profile mode": "Profiltilstand",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "Profilbaseret støjreduktion følger støjmodellen a·signal+b, der estimeres ud fra fotoet: sensordata for RAW-filer og pixels for fremkaldte fotos. AI-støjreduktion erstatter disse manuelle indstillinger, når den er aktiveret.",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "Profilbaseret støjreduktion følger støjmodellen a·signal+b, der estimeres ud fra fotoet: sensordata for RAW-filer og pixels for fremkaldte fotos.",
   "Project and third-party notices": "Projekt- og tredjepartsmeddelelser",
   "Project source and license": "Projektets kildekode og licens",
   "Publishing to {location}…": "Udgiver til {location}…",

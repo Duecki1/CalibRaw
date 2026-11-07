@@ -1299,7 +1299,7 @@
   "Previous / next photo in Develop": "“冲印”中的上一张 / 下一张照片",
   "Profile": "配置文件",
   "Profile mode": "配置文件模式",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "配置文件降噪根据照片估算的 a·信号+b 噪声模型进行处理：RAW 使用传感器数据，已渲染照片使用像素数据。启用 AI 降噪时，会取代这些手动控件。",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "配置文件降噪根据照片估算的 a·信号+b 噪声模型进行处理：RAW 使用传感器数据，已渲染照片使用像素数据。",
   "Project and third-party notices": "项目和第三方声明",
   "Project source and license": "项目源代码和许可证",
   "Publishing to {location}…": "正在发布到 {location}…",

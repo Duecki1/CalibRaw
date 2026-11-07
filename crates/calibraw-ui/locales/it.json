@@ -1376,7 +1376,7 @@
   "Previous / next photo in Develop": "Foto precedente / successiva in Sviluppo",
   "Profile": "Profilo",
   "Profile mode": "Modalità profilo",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "La riduzione del rumore con profilo segue il modello di rumore a·segnale+b stimato dalla foto: i dati del sensore per i RAW, i pixel per le foto renderizzate. Quando è attiva, la riduzione del rumore IA sostituisce questi controlli manuali.",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "La riduzione del rumore con profilo segue il modello di rumore a·segnale+b stimato dalla foto: i dati del sensore per i RAW, i pixel per le foto renderizzate.",
   "Project and third-party notices": "Avvisi del progetto e di terze parti",
   "Project source and license": "Codice sorgente e licenza del progetto",
   "Publishing to {location}…": "Pubblicazione in {location}…",

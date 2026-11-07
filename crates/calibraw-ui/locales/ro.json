@@ -1376,7 +1376,7 @@
   "Previous / next photo in Develop": "Fotografia anterioară / următoare din Editare",
   "Profile": "Profil",
   "Profile mode": "Mod profil",
-  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.": "Reducerea zgomotului pe bază de profil urmează modelul de zgomot a·semnal+b estimat din fotografie: din datele senzorului pentru fișierele RAW și din pixeli pentru fotografiile randate. Când este activată, Reducerea zgomotului cu IA înlocuiește aceste controale manuale.",
+  "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos.": "Reducerea zgomotului pe bază de profil urmează modelul de zgomot a·semnal+b estimat din fotografie: din datele senzorului pentru fișierele RAW și din pixeli pentru fotografiile randate.",
   "Project and third-party notices": "Licențe și mențiuni ale proiectului și terților",
   "Project source and license": "Codul-sursă și licența proiectului",
   "Publishing to {location}…": "Se publică în {location}…",

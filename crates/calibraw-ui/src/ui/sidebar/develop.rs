@@ -639,64 +639,62 @@ impl Sidebar {
             moduwu_design::strong_with_help(
                 ui,
                 tr("Noise reduction"),
-                tr("Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled."),
+                tr("Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos."),
             );
-            ui.add_enabled_ui(!exposure.ai_denoise_enabled, |ui| {
-                changed |= AdjustmentSlider::new(
-                    tr("Luminance"),
-                    &mut exposure.luminance_denoise,
-                    0.0..=100.0,
-                )
+            changed |= AdjustmentSlider::new(
+                tr("Luminance"),
+                &mut exposure.luminance_denoise,
+                0.0..=100.0,
+            )
+            .decimals(0)
+            .step(1.0)
+            .reset_to(defaults.luminance_denoise)
+            .show(ui);
+            let mut color_percent = exposure.chroma_denoise.clamp(0.0, 1.0) * 100.0;
+            if AdjustmentSlider::new(tr("Color"), &mut color_percent, 0.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .reset_to(defaults.luminance_denoise)
-                .show(ui);
-                let mut color_percent = exposure.chroma_denoise.clamp(0.0, 1.0) * 100.0;
-                if AdjustmentSlider::new(tr("Color"), &mut color_percent, 0.0..=100.0)
-                    .decimals(0)
-                    .step(1.0)
-                    .reset_to(defaults.chroma_denoise.clamp(0.0, 1.0) * 100.0)
-                    .show(ui)
-                {
-                    exposure.chroma_denoise = color_percent / 100.0;
-                    changed = true;
-                }
-                changed |= AdjustmentSlider::new(
-                    tr("Denoise Detail"),
-                    &mut exposure.denoise_detail,
-                    0.0..=100.0,
-                )
-                .decimals(0)
-                .step(1.0)
-                .reset_to(defaults.denoise_detail)
-                .show(ui);
-                let previous_quality = exposure.denoise_quality;
-                moduwu_design::form_combo(
-                    ui,
-                    tr("Denoise quality"),
-                    "develop-denoise-quality",
-                    tr(exposure.denoise_quality.label()),
-                    150.0,
-                    |ui| {
-                        ui.selectable_value(
-                            &mut exposure.denoise_quality,
-                            DenoiseQuality::Fast,
-                            tr(DenoiseQuality::Fast.label()),
-                        );
-                        ui.selectable_value(
-                            &mut exposure.denoise_quality,
-                            DenoiseQuality::Balanced,
-                            tr(DenoiseQuality::Balanced.label()),
-                        );
-                        ui.selectable_value(
-                            &mut exposure.denoise_quality,
-                            DenoiseQuality::High,
-                            tr(DenoiseQuality::High.label()),
-                        );
-                    },
-                );
-                changed |= previous_quality != exposure.denoise_quality;
-            });
+                .reset_to(defaults.chroma_denoise.clamp(0.0, 1.0) * 100.0)
+                .show(ui)
+            {
+                exposure.chroma_denoise = color_percent / 100.0;
+                changed = true;
+            }
+            changed |= AdjustmentSlider::new(
+                tr("Denoise Detail"),
+                &mut exposure.denoise_detail,
+                0.0..=100.0,
+            )
+            .decimals(0)
+            .step(1.0)
+            .reset_to(defaults.denoise_detail)
+            .show(ui);
+            let previous_quality = exposure.denoise_quality;
+            moduwu_design::form_combo(
+                ui,
+                tr("Denoise quality"),
+                "develop-denoise-quality",
+                tr(exposure.denoise_quality.label()),
+                150.0,
+                |ui| {
+                    ui.selectable_value(
+                        &mut exposure.denoise_quality,
+                        DenoiseQuality::Fast,
+                        tr(DenoiseQuality::Fast.label()),
+                    );
+                    ui.selectable_value(
+                        &mut exposure.denoise_quality,
+                        DenoiseQuality::Balanced,
+                        tr(DenoiseQuality::Balanced.label()),
+                    );
+                    ui.selectable_value(
+                        &mut exposure.denoise_quality,
+                        DenoiseQuality::High,
+                        tr(DenoiseQuality::High.label()),
+                    );
+                },
+            );
+            changed |= previous_quality != exposure.denoise_quality;
             moduwu_design::section_separator(ui);
             moduwu_design::strong_with_help(
                 ui,
