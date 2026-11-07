@@ -2048,5 +2048,9 @@
   "“{group}” will be deleted.": "“{group}” slettes.",
   "“{name}” will be deleted. Photos it was applied to keep their adjustments.": "“{name}” slettes. Fotos, den blev anvendt på, beholder deres justeringer.",
   "“{name}” will be removed. Photos that use it keep naming it and are shown without it until it is imported again.": "“{name}” fjernes. Fotos, der bruger den, beholder navnet og vises uden den, indtil den importeres igen.",
-  "◎  Stroke {number}": "◎  Strøg {number}"
+  "◎  Stroke {number}": "◎  Strøg {number}",
+  "Choose adjustments to copy…": "Vælg justeringer at kopiere…",
+  "Choose at least one setting to copy.": "Vælg mindst én indstilling at kopiere.",
+  "Settings that are not selected keep the destination photo’s values.": "Indstillinger, der ikke er valgt, beholder destinationsfotoets værdier.",
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Sortpunkt, tonemapper, demosaik, rekonstruktion af højlys og filmnegativet."
 }

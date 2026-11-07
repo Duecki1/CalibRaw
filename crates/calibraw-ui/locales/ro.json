@@ -2048,5 +2048,9 @@
   "“{group}” will be deleted.": "„{group}” va fi șters.",
   "“{name}” will be deleted. Photos it was applied to keep their adjustments.": "„{name}” va fi șters. Fotografiile cărora li s-a aplicat își păstrează ajustările.",
   "“{name}” will be removed. Photos that use it keep naming it and are shown without it until it is imported again.": "„{name}” va fi eliminat. Fotografiile care îl folosesc își păstrează numele și sunt afișate fără acesta până când este importat din nou.",
-  "◎  Stroke {number}": "◎  Tușa {number}"
+  "◎  Stroke {number}": "◎  Tușa {number}",
+  "Choose adjustments to copy…": "Alege ajustările de copiat…",
+  "Choose at least one setting to copy.": "Alege cel puțin o setare de copiat.",
+  "Settings that are not selected keep the destination photo’s values.": "Setările neselectate păstrează valorile fotografiei de destinație.",
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Punctul de negru, maparea tonurilor, demozaicarea, reconstrucția luminilor și negativul de film."
 }

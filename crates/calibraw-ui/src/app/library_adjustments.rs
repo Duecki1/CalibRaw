@@ -416,6 +416,20 @@ impl CalibRawApp {
         Ok(())
     }
 
+    /// Opens the dialog that chooses which settings of `asset` to copy.
+    pub(crate) fn open_library_adjustment_copy_dialog(
+        &mut self,
+        asset: &crate::ui::library::LibraryAsset,
+    ) -> Result<(), String> {
+        let edits = self.library_asset_edit_state(asset)?;
+        self.library.open_adjustment_copy_dialog(
+            asset.clone(),
+            edits,
+            self.preferences.adjustment_copy_settings.into(),
+        );
+        Ok(())
+    }
+
     /// Applies `transfer` to every photo in `assets`, saving each sidecar.
     pub(crate) fn apply_edit_transfer_to_library_assets(
         &mut self,

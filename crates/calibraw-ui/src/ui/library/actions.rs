@@ -12,6 +12,8 @@ pub(crate) enum LibraryAction {
     Export(Vec<LibraryAsset>),
     Merge(super::MergeKind, Vec<LibraryAsset>),
     CopyAdjustments(LibraryAsset),
+    /// Opens the dialog that chooses which settings Copy adjustments takes.
+    ChooseAdjustmentsToCopy(LibraryAsset),
     PasteAdjustments(Vec<LibraryAsset>),
     ApplyPreset(Vec<LibraryAsset>, PathBuf),
     SetFilm(Vec<LibraryAsset>, FilmSource),
@@ -98,6 +100,15 @@ pub(crate) fn photo_actions_menu(
     .clicked()
     {
         action = single.cloned().map(LibraryAction::CopyAdjustments);
+    }
+    if menu_row(
+        ui,
+        enabled && single.is_some(),
+        MenuItem::new(tr("Choose adjustments to copy…")).icon(regular::LIST_CHECKS),
+    )
+    .clicked()
+    {
+        action = single.cloned().map(LibraryAction::ChooseAdjustmentsToCopy);
     }
     if menu_row(
         ui,
@@ -324,6 +335,14 @@ pub(crate) fn apply_library_action(
                 ),
                 Err(error) => tr_fmt("Could not copy adjustments: {error}", &[("error", &error)]),
             };
+        }
+        LibraryAction::ChooseAdjustmentsToCopy(asset) => {
+            if let Err(error) = app.open_library_adjustment_copy_dialog(&asset) {
+                app.report_error(
+                    crate::app::ErrorKind::LibraryAdjustments,
+                    tr_fmt("Could not copy adjustments: {error}", &[("error", &error)]),
+                );
+            }
         }
         LibraryAction::PasteAdjustments(assets) => {
             let (edited_count, failures) = app.library_adjustment_edit_count(&assets);
@@ -869,6 +888,27 @@ pub(crate) fn show_library_action_overlays(
     }
 
     show_library_raw_name_dialog(ui, app, frame);
+
+    let copy_choice = app
+        .library
+        .adjustment_copy_dialog
+        .as_mut()
+        .map(|dialog| show_adjustment_copy_dialog(ui, dialog));
+    match copy_choice {
+        Some(moduwu_design::DialogAction::Confirm) => {
+            if let Some(dialog) = app.library.adjustment_copy_dialog.take() {
+                app.library.chosen_copy_selection = Some(dialog.selection);
+                app.library
+                    .install_adjustment_clipboard(*dialog.edits, dialog.selection);
+                app.library.status = tr_fmt(
+                    "Copied adjustments from {display_name}",
+                    &[("display_name", &dialog.asset.display_name)],
+                );
+            }
+        }
+        Some(moduwu_design::DialogAction::Cancel) => app.library.adjustment_copy_dialog = None,
+        Some(moduwu_design::DialogAction::None) | None => {}
+    }
 
     let paste_choice = app
         .library

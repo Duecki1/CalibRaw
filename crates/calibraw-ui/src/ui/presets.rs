@@ -1,7 +1,6 @@
 //! The Presets sidebar panel, its dialogs and the "Apply preset" menus.
 use crate::app::{CalibRawApp, GroupDialogMode, PresetEditor, PresetEditorMode};
 use crate::i18n::{tr, tr_fmt};
-use crate::pipeline::AdjustmentGroup;
 use crate::platform::PlatformCaps;
 use crate::presets::DeletedGroupPresets;
 use crate::sidecar::EditSelection;
@@ -528,7 +527,12 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
 
             if let PresetEditorMode::Create { edits } = &editor.mode {
                 moduwu_design::card_gap(ui);
-                show_selection_controls(ui, &mut editor.selection, edits);
+                crate::ui::edit_selection::show_selection_controls(
+                    ui,
+                    &mut editor.selection,
+                    edits,
+                    crate::ui::edit_selection::SelectionPurpose::Preset,
+                );
             }
 
             if replaces_existing {
@@ -733,168 +737,6 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
     } else if cancel {
         app.presets.pending_group_delete = None;
     }
-}
-
-fn show_selection_controls(
-    ui: &mut Ui,
-    selection: &mut EditSelection,
-    edits: &crate::sidecar::EditState,
-) {
-    moduwu_design::strong_with_help(
-        ui,
-        tr("Include settings"),
-        tr("Settings that are not selected keep the destination photo’s values. Selecting an unchanged group also saves its default values."),
-    );
-    ui.add_space(moduwu_design::SPACE_XS);
-    // Each column retains a readable checkbox width; small viewports stack the
-    // same cards inside the dialog's bounded scroll area.
-    if ui.available_width() >= 440.0 {
-        ui.columns(2, |columns| {
-            show_adjustment_selection(&mut columns[0], selection, edits);
-            show_additional_selection(&mut columns[1], selection);
-        });
-    } else {
-        show_adjustment_selection(ui, selection, edits);
-        moduwu_design::card_gap(ui);
-        show_additional_selection(ui, selection);
-    }
-
-    let selected_count = selection.adjustment_groups.iter().count()
-        + [
-            selection.raw_processing,
-            selection.camera_profile,
-            selection.lut,
-            selection.masks,
-            selection.ai_masks,
-            selection.geometry,
-            selection.lens_correction,
-        ]
-        .into_iter()
-        .filter(|included| *included)
-        .count();
-    ui.add_space(moduwu_design::SPACE_XS);
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(if selected_count == 0 {
-                tr("Choose at least one setting to save this preset.").to_owned()
-            } else if selected_count == 1 {
-                tr_fmt("{count} setting selected", &[("count", &selected_count)])
-            } else {
-                tr_fmt("{count} settings selected", &[("count", &selected_count)])
-            })
-            .small()
-            .weak(),
-        )
-        .wrap(),
-    );
-
-    let has_photo_specific_masks = edits
-        .masks
-        .masks
-        .iter()
-        .flat_map(|mask| &mask.components)
-        .any(|component| !crate::presets::is_portable_mask_kind(component.kind));
-    if has_photo_specific_masks && (selection.masks || selection.ai_masks) {
-        ui.add(egui::Label::new(
-            egui::RichText::new(
-                tr("Brush, path and object masks follow this photo's content and are not saved in presets."),
-            )
-            .small()
-            .weak(),
-        ).wrap());
-    }
-}
-
-fn show_adjustment_selection(
-    ui: &mut Ui,
-    selection: &mut EditSelection,
-    edits: &crate::sidecar::EditState,
-) {
-    moduwu_design::content_card(ui, |ui| {
-        moduwu_design::strong_with_help(
-            ui,
-            tr("Adjustments"),
-            tr("Each group matches a card in the Edit tab. Groups that are not selected keep the destination photo's settings. Edited groups are shown in bold."),
-        );
-        moduwu_design::action_row(ui, |ui| {
-            let all = selection.adjustment_groups == crate::pipeline::AdjustmentGroupSet::ALL;
-            if moduwu_design::chip(ui, tr("All"), all)
-                .on_hover_text(tr("Include every adjustment group, including unchanged values. Click again to clear them."))
-                .clicked()
-            {
-                selection.adjustment_groups = if all {
-                    crate::pipeline::AdjustmentGroupSet::EMPTY
-                } else {
-                    crate::pipeline::AdjustmentGroupSet::ALL
-                };
-            }
-            for group in AdjustmentGroup::ALL {
-                let included = selection.adjustment_groups.contains(group);
-                let edited = crate::sidecar::adjustment_group_is_edited(edits, group);
-                let label = egui::RichText::new(group.label());
-                let label = if edited { label.strong() } else { label };
-                let help = if edited {
-                    tr("Edited on this photo. Include this group’s current settings.")
-                } else {
-                    tr("Unchanged on this photo. Including this group replaces the destination’s settings with these defaults.")
-                };
-                if moduwu_design::chip(ui, label, included)
-                    .on_hover_text(help)
-                    .clicked()
-                {
-                    selection.adjustment_groups.set(group, !included);
-                }
-            }
-        });
-    });
-}
-
-fn show_additional_selection(ui: &mut Ui, selection: &mut EditSelection) {
-    moduwu_design::content_card(ui, |ui| {
-        ui.strong(tr("Also include"));
-        ui.add_space(moduwu_design::SPACE_XS);
-        moduwu_design::action_row(ui, |ui| {
-            for (included, label, help) in [
-                (
-                    &mut selection.camera_profile,
-                    tr("Camera profile"),
-                    tr("The DCP profile chosen for this photo. Photos from other camera models keep their automatic profile."),
-                ),
-                (
-                    &mut selection.lut,
-                    tr("LUT"),
-                    tr("The LUT and its amount. Photos whose LUT library lacks it are shown without it."),
-                ),
-                (
-                    &mut selection.masks,
-                    tr("Masks"),
-                    tr("Fullscreen, linear and radial masks with their adjustments. They are added next to each photo's own masks."),
-                ),
-                (
-                    &mut selection.ai_masks,
-                    tr("AI masks"),
-                    tr("Subject, background, sky, depth and range masks. They are regenerated for each photo the preset is applied to."),
-                ),
-                (
-                    &mut selection.geometry,
-                    tr("Crop & geometry"),
-                    tr("Crop, rotation, straighten, perspective and flips."),
-                ),
-                (
-                    &mut selection.lens_correction,
-                    tr("Lens correction"),
-                    tr("Lens correction state and the selected lens profile."),
-                ),
-            ] {
-                if moduwu_design::chip(ui, label, *included)
-                    .on_hover_text(help)
-                    .clicked()
-                {
-                    *included = !*included;
-                }
-            }
-        });
-    });
 }
 
 fn show_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {

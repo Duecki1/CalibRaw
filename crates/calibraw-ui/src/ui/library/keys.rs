@@ -25,6 +25,7 @@ pub(super) enum GridKey {
 pub(super) enum PhotoKey {
     Delete,
     CopyAdjustments,
+    ChooseAdjustmentsToCopy,
     PasteAdjustments,
     Export,
 }
@@ -44,8 +45,14 @@ const MOVES: [(egui::Key, GridStep); 8] = [
 pub(super) fn take_grid_key(ctx: &egui::Context) -> Option<GridKey> {
     use egui::{Key, Modifiers};
     let command_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-    // `consume_key` ignores an extra Shift, so every Shift form comes first.
+    // `consume_key` ignores an extra Shift or Alt, so the forms with more
+    // modifiers come first.
     let shortcuts = [
+        (
+            command_shift | Modifiers::ALT,
+            Key::C,
+            GridKey::Photo(PhotoKey::ChooseAdjustmentsToCopy),
+        ),
         (
             command_shift,
             Key::C,
@@ -173,6 +180,9 @@ fn photo_action(app: &CalibRawApp, key: PhotoKey, visible: &[usize]) -> Option<L
         PhotoKey::CopyAdjustments => library
             .active_asset(visible)
             .map(LibraryAction::CopyAdjustments),
+        PhotoKey::ChooseAdjustmentsToCopy => library
+            .active_asset(visible)
+            .map(LibraryAction::ChooseAdjustmentsToCopy),
         PhotoKey::PasteAdjustments => targets()
             .filter(|_| library.has_copied_adjustments())
             .map(LibraryAction::PasteAdjustments),

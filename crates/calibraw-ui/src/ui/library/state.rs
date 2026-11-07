@@ -186,6 +186,7 @@ impl LibraryState {
             reviews: ReviewWriter::default(),
             image_clipboard: None,
             adjustment_clipboard: None,
+            chosen_copy_selection: None,
             asset_transfer_receiver: None,
             merge: None,
             raw_import_receiver: None,
@@ -196,6 +197,7 @@ impl LibraryState {
             delete_originals_confirmation: None,
             raw_name_dialog: None,
             export_dialog: None,
+            adjustment_copy_dialog: None,
             adjustment_paste_dialog: None,
             ai_mask_refresh_prompt: None,
         }
@@ -217,6 +219,22 @@ impl LibraryState {
         self.adjustment_clipboard = Some(AdjustmentClipboard { edits, selection });
     }
 
+    /// Opens the dialog that chooses which of `edits`, the settings of
+    /// `asset`, to copy. It starts with the last choice made there, or with
+    /// `default` before the first.
+    pub(crate) fn open_adjustment_copy_dialog(
+        &mut self,
+        asset: LibraryAsset,
+        edits: crate::sidecar::EditState,
+        default: crate::sidecar::EditSelection,
+    ) {
+        self.adjustment_copy_dialog = Some(LibraryAdjustmentCopyDialog {
+            asset,
+            edits: Box::new(edits),
+            selection: self.chosen_copy_selection.unwrap_or(default),
+        });
+    }
+
     pub(crate) fn asset_transfer_in_progress(&self) -> bool {
         self.asset_transfer_receiver.is_some()
     }
@@ -225,6 +243,7 @@ impl LibraryState {
         let common = self.delete_originals_confirmation.is_some()
             || self.raw_name_dialog.is_some()
             || self.export_dialog.is_some()
+            || self.adjustment_copy_dialog.is_some()
             || self.adjustment_paste_dialog.is_some()
             || self.ai_mask_refresh_prompt.is_some();
         common

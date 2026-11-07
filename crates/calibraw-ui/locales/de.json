@@ -2048,5 +2048,9 @@
   "“{group}” will be deleted.": "„{group}“ wird gelöscht.",
   "“{name}” will be deleted. Photos it was applied to keep their adjustments.": "„{name}“ wird gelöscht. Fotos, auf die es angewendet wurde, behalten ihre Anpassungen.",
   "“{name}” will be removed. Photos that use it keep naming it and are shown without it until it is imported again.": "„{name}“ wird entfernt. Fotos, die sie verwenden, behalten den Namen und werden ohne sie angezeigt, bis sie erneut importiert wird.",
-  "◎  Stroke {number}": "◎  Strich {number}"
+  "◎  Stroke {number}": "◎  Strich {number}",
+  "Choose adjustments to copy…": "Anpassungen zum Kopieren auswählen…",
+  "Choose at least one setting to copy.": "Wähle mindestens eine Einstellung zum Kopieren.",
+  "Settings that are not selected keep the destination photo’s values.": "Nicht ausgewählte Einstellungen behalten die Werte des Zielfotos.",
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Schwarzpunkt, Tone-Mapper, Demosaicing, Lichterrekonstruktion und das Filmnegativ."
 }

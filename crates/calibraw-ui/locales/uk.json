@@ -2048,5 +2048,9 @@
   "“{group}” will be deleted.": "Групу «{group}» буде видалено.",
   "“{name}” will be deleted. Photos it was applied to keep their adjustments.": "«{name}» буде видалено. У фотографіях, до яких його застосовано, корекції залишаться.",
   "“{name}” will be removed. Photos that use it keep naming it and are shown without it until it is imported again.": "«{name}» буде вилучено. Фотографії, де його використано, зберігатимуть це посилання й відображатимуться без нього, доки його не буде імпортовано знову.",
-  "◎  Stroke {number}": "◎  Мазок {number}"
+  "◎  Stroke {number}": "◎  Мазок {number}",
+  "Choose adjustments to copy…": "Вибрати корекції для копіювання…",
+  "Choose at least one setting to copy.": "Виберіть принаймні одне налаштування для копіювання.",
+  "Settings that are not selected keep the destination photo’s values.": "Для невибраних налаштувань залишаються значення цільової фотографії.",
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Точка чорного, тональне відображення, демозаїка, відновлення світлих ділянок і плівковий негатив."
 }

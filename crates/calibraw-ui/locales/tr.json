@@ -2048,5 +2048,9 @@
   "“{group}” will be deleted.": "“{group}” silinecek.",
   "“{name}” will be deleted. Photos it was applied to keep their adjustments.": "“{name}” silinecek. Uygulandığı fotoğraflardaki düzenlemeler korunur.",
   "“{name}” will be removed. Photos that use it keep naming it and are shown without it until it is imported again.": "“{name}” kaldırılacak. Kullanan fotoğraflar adını korur ve yeniden içe aktarılana kadar onsuz gösterilir.",
-  "◎  Stroke {number}": "◎  Darbe {number}"
+  "◎  Stroke {number}": "◎  Darbe {number}",
+  "Choose adjustments to copy…": "Kopyalanacak düzenlemeleri seç…",
+  "Choose at least one setting to copy.": "Kopyalamak için en az bir ayar seçin.",
+  "Settings that are not selected keep the destination photo’s values.": "Seçilmeyen ayarlar hedef fotoğrafın değerlerini korur.",
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Siyah nokta, ton eşleyici, demozaik, parlak alan yeniden oluşturma ve film negatifi."
 }

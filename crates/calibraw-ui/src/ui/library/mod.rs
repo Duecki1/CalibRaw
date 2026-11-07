@@ -568,6 +568,15 @@ struct LibraryExportDialog {
     overrides: crate::app::ExportOverrideChoice,
 }
 
+/// Choosing which settings of `asset` Copy adjustments takes.
+struct LibraryAdjustmentCopyDialog {
+    asset: LibraryAsset,
+    /// The photo's edits when the dialog opened. The dialog is modal, so they
+    /// are what Copy installs.
+    edits: Box<crate::sidecar::EditState>,
+    selection: crate::sidecar::EditSelection,
+}
+
 #[derive(Clone)]
 struct LibraryAdjustmentPasteDialog {
     assets: Vec<LibraryAsset>,
@@ -757,7 +766,8 @@ impl LibraryFolderNode {
 #[derive(Clone, Debug)]
 pub(crate) struct AdjustmentClipboard {
     pub(crate) edits: crate::sidecar::EditState,
-    /// The categories chosen in Settings when the adjustments were copied.
+    /// The categories chosen in Settings, or in the copy dialog, when the
+    /// adjustments were copied.
     pub(crate) selection: crate::sidecar::EditSelection,
 }
 
@@ -797,6 +807,9 @@ pub(crate) struct LibraryState {
     reviews: state::ReviewWriter,
     image_clipboard: Option<ImageClipboard>,
     pub(crate) adjustment_clipboard: Option<AdjustmentClipboard>,
+    /// The last selection confirmed in the copy dialog, which opens with it
+    /// again until CalibRaw quits.
+    chosen_copy_selection: Option<crate::sidecar::EditSelection>,
     asset_transfer_receiver: Option<mpsc::Receiver<AssetTransferCompletion>>,
     merge: Option<merge::MergeTask>,
     raw_import_receiver: Option<mpsc::Receiver<RawImportResult>>,
@@ -807,6 +820,7 @@ pub(crate) struct LibraryState {
     delete_originals_confirmation: Option<Vec<LibraryAsset>>,
     raw_name_dialog: Option<LibraryRawNameDialog>,
     export_dialog: Option<LibraryExportDialog>,
+    adjustment_copy_dialog: Option<LibraryAdjustmentCopyDialog>,
     adjustment_paste_dialog: Option<LibraryAdjustmentPasteDialog>,
     ai_mask_refresh_prompt: Option<LibraryAiMaskRefreshPrompt>,
 }

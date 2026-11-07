@@ -93,6 +93,41 @@ pub(super) fn show_delete_originals_confirmation(
     }
 }
 
+/// Chooses which settings of the photo in `dialog` Copy adjustments takes.
+pub(super) fn show_adjustment_copy_dialog(
+    ui: &mut Ui,
+    dialog: &mut LibraryAdjustmentCopyDialog,
+) -> moduwu_design::DialogAction {
+    // The body updates eligibility before the fixed footer is drawn.
+    let can_copy = std::cell::Cell::new(false);
+    let mut action = moduwu_design::DialogAction::None;
+    moduwu_design::Dialog::new("library-adjustment-copy-dialog", tr("Copy adjustments"))
+        .size(moduwu_design::DialogSize::Wide)
+        .show_with_footer(
+            ui.ctx(),
+            |ui| {
+                crate::ui::edit_selection::show_selection_controls(
+                    ui,
+                    &mut dialog.selection,
+                    &dialog.edits,
+                    crate::ui::edit_selection::SelectionPurpose::Copy,
+                );
+                can_copy.set(!dialog.selection.is_empty());
+            },
+            |ui| {
+                action = moduwu_design::dialog_confirmation_actions(
+                    ui,
+                    tr("Cancel"),
+                    tr("Copy"),
+                    can_copy.get(),
+                    false,
+                    moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
+                );
+            },
+        );
+    action
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AdjustmentPasteChoice {
     Cancel,

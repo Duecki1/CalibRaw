@@ -3,6 +3,7 @@ pub(crate) mod capture_format;
 pub(crate) mod components;
 pub(crate) mod develop;
 pub(crate) mod develop_viewport;
+pub(crate) mod edit_selection;
 pub(crate) mod icons;
 pub(crate) mod layout;
 pub(crate) mod library;

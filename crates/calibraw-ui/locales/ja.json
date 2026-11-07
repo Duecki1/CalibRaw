@@ -2048,5 +2048,9 @@
   "“{group}” will be deleted.": "「{group}」を削除します。",
   "“{name}” will be deleted. Photos it was applied to keep their adjustments.": "「{name}」を削除します。適用済みの写真では調整内容が保持されます。",
   "“{name}” will be removed. Photos that use it keep naming it and are shown without it until it is imported again.": "「{name}」を削除します。このLUTを使用する写真では名前が保持され、再度読み込まれるまでLUTなしで表示されます。",
-  "◎  Stroke {number}": "◎  ストローク{number}"
+  "◎  Stroke {number}": "◎  ストローク{number}",
+  "Choose adjustments to copy…": "コピーする調整を選択…",
+  "Choose at least one setting to copy.": "コピーする設定を1つ以上選択してください。",
+  "Settings that are not selected keep the destination photo’s values.": "選択していない設定では、貼り付け先の写真の値が保持されます。",
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "黒レベル、トーンマッパー、デモザイク、ハイライト復元、フィルムネガ。"
 }

@@ -2048,5 +2048,9 @@
   "“{group}” will be deleted.": "将删除“{group}”。",
   "“{name}” will be deleted. Photos it was applied to keep their adjustments.": "将删除“{name}”。已应用该预设的照片会保留其调整项。",
   "“{name}” will be removed. Photos that use it keep naming it and are shown without it until it is imported again.": "将移除“{name}”。使用它的照片仍会保留名称；重新导入前将不应用该 LUT。",
-  "◎  Stroke {number}": "◎  笔画 {number}"
+  "◎  Stroke {number}": "◎  笔画 {number}",
+  "Choose adjustments to copy…": "选择要复制的调整项…",
+  "Choose at least one setting to copy.": "至少选择一项要复制的设置。",
+  "Settings that are not selected keep the destination photo’s values.": "未选中的设置会保留目标照片的原有值。",
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "黑点、色调映射、去马赛克、高光重建和胶片负片。"
 }
