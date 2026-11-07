@@ -243,7 +243,14 @@ impl Sidebar {
         adjustment: &mut crate::pipeline::LocalAdjustments,
         selected_tab: &mut ToneCurveTab,
     ) -> bool {
-        let changed = tone_curve_channel_editor(
+        let brightness_changed = gradient_float_param_slider(
+            ui,
+            &mut adjustment.brightness,
+            crate::pipeline::effect_params::adjustment::BRIGHTNESS,
+            SliderGradient::Brightness,
+        );
+        moduwu_design::section_separator(ui);
+        let curve_changed = tone_curve_channel_editor(
             ui,
             ToneCurveChannels {
                 rgb: &mut adjustment.tone_curve,
@@ -254,10 +261,10 @@ impl Sidebar {
             selected_tab,
             32.0,
         );
-        if changed {
+        if curve_changed {
             adjustment.sanitize_tone_curves();
         }
-        changed
+        brightness_changed || curve_changed
     }
 
     fn show_local_mask_color_mixer(

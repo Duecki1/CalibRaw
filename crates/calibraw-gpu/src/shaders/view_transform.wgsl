@@ -600,20 +600,30 @@ fn apply_view_transform(scene_rgb: vec3<f32>) -> vec3<f32> {
     }
 }
 
-fn apply_local_display_blacks(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
+// The display-referred tone after the global Blacks: each mask's Blacks in
+// turn, then Brightness. Brightness amounts add up (see
+// Tonemap::apply_display_brightness_amount), the global one and each mask's
+// weighted by its coverage, so they are applied once. `grade_options.w` holds
+// Brightness, -100 to 100.
+fn apply_local_display_tone(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
+    var brightness = Common::scene_tone_uniforms.grade_options.w / 100.0;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if !Common::mask_slot_applies(state, 0u) { continue; }
-        let value = Common::mask_data[index].adjust_1_field.y;
-        if abs(value) < 1e-7 { continue; }
+        let blacks = Common::mask_data[index].adjust_1_field.y;
+        let mask_brightness = Common::mask_data[index].grade_options.w;
+        if abs(blacks) < 1e-7 && abs(mask_brightness) < 1e-7 { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
-        let amount = Tonemap::basic_low_tone_control(value) * weight;
-        rgb = Tonemap::apply_display_blacks_toe_amount(rgb, amount);
+        if abs(blacks) >= 1e-7 {
+            let amount = Tonemap::basic_low_tone_control(blacks) * weight;
+            rgb = Tonemap::apply_display_blacks_toe_amount(rgb, amount);
+        }
+        brightness = brightness + mask_brightness / 100.0 * weight;
     }
-    return rgb;
+    return Tonemap::apply_display_brightness_amount(rgb, brightness);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -639,7 +649,7 @@ fn apply_view_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     let graded = apply_local_color_grading(pos, globally_graded);
     var display_linear = apply_view_transform(graded);
     display_linear = Tonemap::apply_display_blacks_toe_value(display_linear, Common::scene_tone_uniforms.basic_tone.w);
-    display_linear = apply_local_display_blacks(pos, display_linear);
+    display_linear = apply_local_display_tone(pos, display_linear);
     // Sampling modes capture the input to global or local point color.
     if Common::scene_tone_uniforms.point_color_meta.z == 1u {
         textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));

@@ -320,7 +320,7 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
         grade_midtones: pack_color_grade_wheel(exposure.color_grading.midtones),
         grade_highlights: pack_color_grade_wheel(exposure.color_grading.highlights),
         grade_global: pack_color_grade_wheel(exposure.color_grading.global),
-        grade_options: pack_view_color_options(exposure.color_grading, exposure.hue),
+        grade_options: pack_view_options(exposure.color_grading, exposure.hue, exposure.brightness),
         rec2020_to_xyz: [
             [0.636_958, 0.262_700_2, 0.0, 0.0],
             [0.144_616_9, 0.677_998_1, 0.028_072_7, 0.0],

@@ -113,6 +113,7 @@ pub mod adjustment {
     float_param!(TEXTURE, "Texture", -100.0, 100.0, 0.0, 1.0, 0, None);
     float_param!(CLARITY, "Clarity", -100.0, 100.0, 0.0, 1.0, 0, None);
     float_param!(DEHAZE, "Dehaze", -100.0, 100.0, 0.0, 1.0, 0, None);
+    float_param!(BRIGHTNESS, "Brightness", -100.0, 100.0, 0.0, 1.0, 0, None);
 }
 
 /// Capture sharpening under a mask. Ranges and defaults match the Detail

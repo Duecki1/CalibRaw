@@ -201,6 +201,7 @@
   "Brand": "ブランド",
   "Brighten the corners the lens darkens.": "レンズによって暗くなる四隅を明るくします。",
   "Brightens the corners the lens darkens automatically.": "レンズによって暗くなる四隅を自動で明るくします。",
+  "Brightness": "明るさ",
   "Brush": "ブラシ",
   "Brush, linear, radial, and fullscreen mask components with their local edits.": "局所編集を含むブラシ、パス、オブジェクトマスクの各コンポーネント。",
   "Brush, path and object masks follow this photo's content and are not saved in presets.": "ブラシ、パス、オブジェクトのマスクは写真の内容に追従し、プリセットには保存されません。",

@@ -275,6 +275,12 @@ pub struct ExposureParams {
     pub hue: f32,
     pub saturation: f32,
     pub vibrance: f32,
+    /// Brightness of the Tone Curve card, -100 to +100: brightens (positive) or
+    /// darkens the midtones of the display-referred image while black and the
+    /// display white stay where they are (`apply_display_brightness_amount` in
+    /// tonemap.wgsl). Left out of files while zero, which stay as they were.
+    #[serde(default, skip_serializing_if = "super::geometry::is_zero")]
+    pub brightness: f32,
     pub tone_curve: PointCurve,
     pub tone_curve_red: PointCurve,
     pub tone_curve_green: PointCurve,
@@ -394,6 +400,7 @@ impl Default for ExposureParams {
             hue: 0.0,
             saturation: 0.0,
             vibrance: 0.0,
+            brightness: 0.0,
             tone_curve: PointCurve::linear(),
             tone_curve_red: PointCurve::linear(),
             tone_curve_green: PointCurve::linear(),

@@ -518,15 +518,19 @@ pub(super) fn shader_highlight_method(
     }
 }
 
-pub(super) fn pack_view_color_options(
+/// The view node's options (`grade_options`), packed alike for the edit and
+/// each mask: colour grading's blending and balance as fractions, the hue
+/// rotation in degrees and Brightness, -100 to 100.
+pub(super) fn pack_view_options(
     grading: crate::pipeline::ColorGrading,
     hue: f32,
+    brightness: f32,
 ) -> [f32; 4] {
     [
         (grading.blending / 100.0).clamp(0.0, 1.0),
         (grading.balance / 100.0).clamp(-1.0, 1.0),
         effect_params::adjustment::HUE.clamp(hue),
-        0.0,
+        effect_params::adjustment::BRIGHTNESS.clamp(brightness),
     ]
 }
 

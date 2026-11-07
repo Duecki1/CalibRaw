@@ -320,6 +320,13 @@ impl Sidebar {
     ) -> bool {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Tone Curve", false, foldable, true, |ui| {
+            changed |=
+                AdjustmentSlider::new(tr("Brightness"), &mut exposure.brightness, -100.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .gradient(SliderGradient::Brightness)
+                    .show(ui);
+            moduwu_design::section_separator(ui);
             changed |= tone_curve_channel_editor(
                 ui,
                 ToneCurveChannels {

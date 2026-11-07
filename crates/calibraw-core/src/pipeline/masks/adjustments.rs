@@ -18,6 +18,10 @@ pub struct LocalAdjustments {
     pub texture: f32,
     pub clarity: f32,
     pub dehaze: f32,
+    /// As [`ExposureParams::brightness`](crate::pipeline::ExposureParams::brightness),
+    /// inside the mask. Left out of files while zero.
+    #[serde(default, skip_serializing_if = "crate::pipeline::geometry::is_zero")]
+    pub brightness: f32,
     pub tone_curve: crate::pipeline::PointCurve,
     pub tone_curve_red: crate::pipeline::PointCurve,
     pub tone_curve_green: crate::pipeline::PointCurve,
@@ -50,6 +54,7 @@ impl Default for LocalAdjustments {
             texture: adjustment::TEXTURE.default,
             clarity: adjustment::CLARITY.default,
             dehaze: adjustment::DEHAZE.default,
+            brightness: adjustment::BRIGHTNESS.default,
             tone_curve: crate::pipeline::PointCurve::linear(),
             tone_curve_red: crate::pipeline::PointCurve::linear(),
             tone_curve_green: crate::pipeline::PointCurve::linear(),

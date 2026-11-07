@@ -199,7 +199,11 @@ pub(super) fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
         grade_midtones: pack_color_grade_wheel(adjustment.color_grading.midtones),
         grade_highlights: pack_color_grade_wheel(adjustment.color_grading.highlights),
         grade_global: pack_color_grade_wheel(adjustment.color_grading.global),
-        grade_options: pack_view_color_options(adjustment.color_grading, adjustment.hue),
+        grade_options: pack_view_options(
+            adjustment.color_grading,
+            adjustment.hue,
+            adjustment.brightness,
+        ),
         curves_red: pack_local_point_curve(&adjustment.tone_curve_red),
         curves_green: pack_local_point_curve(&adjustment.tone_curve_green),
         curves_blue: pack_local_point_curve(&adjustment.tone_curve_blue),

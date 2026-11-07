@@ -14,6 +14,8 @@ struct MaskData {
     grade_midtones: vec4<f32>,
     grade_highlights: vec4<f32>,
     grade_global: vec4<f32>,
+    // View node options (Rust `pack_view_options`): colour grading's blending
+    // and balance, hue rotation in degrees, Brightness (-100 to 100).
     grade_options: vec4<f32>,
     curves_red: array<vec4<f32>, 9>,
     curves_green: array<vec4<f32>, 9>,
@@ -151,6 +153,8 @@ struct SceneToneUniforms {
     grade_midtones: vec4<f32>,
     grade_highlights: vec4<f32>,
     grade_global: vec4<f32>,
+    // View node options (Rust `pack_view_options`): colour grading's blending
+    // and balance, hue rotation in degrees, Brightness (-100 to 100).
     grade_options: vec4<f32>,
     // WGSL uses a 16-byte vec3 matrix-column stride; Rust mirrors padded columns.
     rec2020_to_xyz: mat3x3<f32>,

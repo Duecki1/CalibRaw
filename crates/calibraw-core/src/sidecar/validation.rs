@@ -479,6 +479,7 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
             exposure.hue,
             exposure.saturation,
             exposure.vibrance,
+            exposure.brightness,
             exposure.chroma_denoise,
             exposure.luminance_denoise,
             exposure.denoise_detail,
@@ -642,6 +643,7 @@ fn validate_local_adjustments(
             adjustments.texture,
             adjustments.clarity,
             adjustments.dehaze,
+            adjustments.brightness,
         ],
     )?;
     finite("local HSL hue", &adjustments.hsl_hue)?;

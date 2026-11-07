@@ -622,6 +622,93 @@ fn apply_display_blacks_toe_value(rgb: vec3<f32>, value: f32) -> vec3<f32> {
     return apply_display_blacks_toe_amount(rgb, basic_low_tone_control(value));
 }
 
+// Brightness: the odds of the lightness are multiplied by
+// exp2(DISPLAY_BRIGHTNESS_STRENGTH * amount), amount being the slider / 100.
+const DISPLAY_BRIGHTNESS_STRENGTH: f32 = 1.22;
+// Bounds the summed global and mask amounts, which keeps the curve finite.
+const DISPLAY_BRIGHTNESS_LIMIT: f32 = 3.0;
+// Share of the headroom to white above which a brightened colour's extent is
+// compressed.
+const DISPLAY_BRIGHTNESS_CHROMA_KNEE: f32 = 0.8;
+
+// CIE L* / 100 of a luminance relative to white, `relative` in [0, 1]. The
+// linear segment below L* 8 keeps the slope at black finite.
+fn display_lightness(relative: f32) -> f32 {
+    if relative <= 216.0 / 24389.0 {
+        return relative * (24389.0 / 27.0) / 100.0;
+    }
+    return (116.0 * pow(relative, 1.0 / 3.0) - 16.0) / 100.0;
+}
+
+// The relative luminance of CIE L* / 100, inverting display_lightness.
+fn display_lightness_luminance(lightness: f32) -> f32 {
+    if lightness <= 0.08 {
+        return lightness * 100.0 * (27.0 / 24389.0);
+    }
+    let cube_root = (100.0 * lightness + 16.0) / 116.0;
+    return cube_root * cube_root * cube_root;
+}
+
+// Brightness raises (positive `amount`) or lowers the midtones of
+// display-linear Rec.2020 RGB while black and the sigmoid's white target stay
+// fixed. On the CIE lightness L of the luminance relative to the white target,
+// scaled to [0, 1], it multiplies the odds L / (1 - L) by 1 / k:
+//   L' = L / (L + (1 - L) * k),  k = exp2(-DISPLAY_BRIGHTNESS_STRENGTH * amount),
+// the rational curve of RapidRAW's Brightness on the lightness ART's Brightness
+// uses. Its slopes stay finite, 1 / k at black and k at white, so shadows lift
+// by about as many EV as the midtones and noise no more. -amount inverts
+// +amount exactly, and amounts add up (the k multiply), so the global amount
+// and every mask's are applied in one call. At +1, L* 50 (middle grey) becomes
+// L* 70, +1.14 EV; Y = 0.05 rises by 1.6 EV, Y = 0.5 by 0.5 EV, Y = 0.9 by 0.1 EV.
+// Luminance at or above the white target is left as it is.
+//
+// RGB is scaled by the luminance ratio, keeping channel ratios as Blacks does.
+// Brightening can take the brightest channel past the white target, so the
+// colour's extent above the grey of the new luminance, as a share of the
+// headroom from that grey to white, is compressed with a soft knee, at the same
+// luminance and RGB hue. The knee starts at the larger of
+// DISPLAY_BRIGHTNESS_CHROMA_KNEE and the share the colour had before, so the
+// adjustment starts smoothly from 0, no colour clips, and darkened colours
+// (whose share shrinks) keep their ratios exactly.
+fn apply_display_brightness_amount(rgb: vec3<f32>, amount: f32) -> vec3<f32> {
+    let bounded = clamp(amount, -DISPLAY_BRIGHTNESS_LIMIT, DISPLAY_BRIGHTNESS_LIMIT);
+    if abs(bounded) < 1e-7 {
+        return rgb;
+    }
+    let white = Common::scene_tone_uniforms.sigmoid_curve.x;
+    let luminance = dot(rgb, Common::LUMA);
+    if !(white > 0.0) || luminance <= 0.0 || luminance >= white {
+        return rgb;
+    }
+
+    let lightness = display_lightness(luminance / white);
+    let k = exp2(-DISPLAY_BRIGHTNESS_STRENGTH * bounded);
+    let adjusted_lightness = lightness / (lightness + (1.0 - lightness) * k);
+    let target_luminance = white * display_lightness_luminance(adjusted_lightness);
+    let scaled = rgb * (target_luminance / luminance);
+    if target_luminance <= luminance {
+        return scaled;
+    }
+
+    let headroom = white - target_luminance;
+    if headroom <= 1e-6 * white {
+        return vec3<f32>(target_luminance);
+    }
+    let extent = max(scaled.r, max(scaled.g, scaled.b)) - target_luminance;
+    let share = extent / headroom;
+    let share_before = (max(rgb.r, max(rgb.g, rgb.b)) - luminance) / (white - luminance);
+    let knee = max(DISPLAY_BRIGHTNESS_CHROMA_KNEE, share_before);
+    if share <= knee {
+        return scaled;
+    }
+    // Slope 1 at the knee, approaching a share of 1 (the white target); a
+    // colour already past white is held at the share it had.
+    let room = max(1.0 - knee, 1e-6);
+    let over = (share - knee) / room;
+    let compressed = knee + room * over / (1.0 + over);
+    return vec3<f32>(target_luminance) + (scaled - vec3<f32>(target_luminance)) * (compressed / share);
+}
+
 fn apply_basic_tone(rgb: vec3<f32>, pos: vec2<i32>) -> vec3<f32> {
     let basic = apply_local_basic_tone(rgb, pos);
     return apply_rgb_point_curves(apply_point_tone_curve(basic));
