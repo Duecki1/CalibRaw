@@ -2052,5 +2052,6 @@
   "Choose adjustments to copy…": "Choisir les réglages à copier…",
   "Choose at least one setting to copy.": "Choisissez au moins un réglage à copier.",
   "Settings that are not selected keep the destination photo’s values.": "Les réglages non sélectionnés conservent les valeurs de la photo de destination.",
-  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Point noir, mappage des tons, dématriçage, reconstruction des hautes lumières et négatif argentique."
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Point noir, mappage des tons, dématriçage, reconstruction des hautes lumières et négatif argentique.",
+  "Switch the preview background": "Changer l’arrière-plan de l’aperçu"
 }

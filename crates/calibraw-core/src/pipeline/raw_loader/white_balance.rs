@@ -264,7 +264,9 @@ impl LoadedRaw {
 
     /// Offsets of the white balance that makes the area from `first` to
     /// `second` (normalized source coordinates) neutral. On a film negative
-    /// that is the area's positive, which `film` gives.
+    /// that is the area's positive, which `film` gives. Works on a sensor
+    /// mosaic and on a camera-linear raster (LinearRaw DNG); a rendered
+    /// raster has no white balance to estimate.
     pub fn white_balance_offsets_from_area(
         &self,
         first: [f32; 2],
@@ -272,7 +274,7 @@ impl LoadedRaw {
         black_point: f32,
         film: &FilmSource,
     ) -> Option<(f32, f32)> {
-        if self.is_pre_demosaiced_raster() {
+        if self.is_display_referred_raster() {
             return None;
         }
         if self.width == 0 || self.height == 0 {
@@ -310,29 +312,63 @@ impl LoadedRaw {
             stride += 1;
         }
 
-        let mut sums = [0.0f64; 4];
-        let mut counts = [0u64; 4];
-        for y in (y0..y1).step_by(stride) {
-            for x in (x0..x1).step_by(stride) {
-                let index = y as usize * self.width as usize + x as usize;
-                let channel = usize::from(self.color_indices[index].min(3));
-                let value = self.normalized_sensor_value(index, black_point);
-                if value.is_finite() && (0.001..0.98).contains(&value) {
-                    sums[channel] += f64::from(value);
-                    counts[channel] += 1;
+        // Samples from black (0) to the white level (1), outside which a
+        // sample is too dark or too close to clipping to judge colour by.
+        let usable = |value: f32| value.is_finite() && (0.001..0.98).contains(&value);
+        let rows = (y0..y1).step_by(stride);
+        let columns = || (x0..x1).step_by(stride);
+        let [red, green, blue] = match self.scene_linear_raster() {
+            // A camera-linear raster holds camera RGB before white balance,
+            // normalized from black to white like `normalized_sensor_value`.
+            // The raster shaders take no black point, so neither does this.
+            // A pixel counts only when all its channels are usable, so one
+            // clipped channel cannot tilt the colour.
+            Some(raster) if self.is_camera_linear_raster() => {
+                let mut sums = [0.0f64; 3];
+                let mut count = 0u64;
+                for y in rows {
+                    for x in columns() {
+                        let index = (y as usize * self.width as usize + x as usize) * 3;
+                        let pixel = &raster[index..index + 3];
+                        if pixel.iter().all(|value| usable(*value)) {
+                            for (sum, value) in sums.iter_mut().zip(pixel) {
+                                *sum += f64::from(*value);
+                            }
+                            count += 1;
+                        }
+                    }
                 }
+                if count == 0 {
+                    return None;
+                }
+                sums.map(|sum| (sum / count as f64) as f32)
             }
-        }
-        let mean = |channel: usize| {
-            (counts[channel] > 0).then(|| (sums[channel] / counts[channel] as f64) as f32)
+            _ => {
+                let mut sums = [0.0f64; 4];
+                let mut counts = [0u64; 4];
+                for y in rows {
+                    for x in columns() {
+                        let index = y as usize * self.width as usize + x as usize;
+                        let channel = usize::from(self.color_indices[index].min(3));
+                        let value = self.normalized_sensor_value(index, black_point);
+                        if usable(value) {
+                            sums[channel] += f64::from(value);
+                            counts[channel] += 1;
+                        }
+                    }
+                }
+                let mean = |channel: usize| {
+                    (counts[channel] > 0).then(|| (sums[channel] / counts[channel] as f64) as f32)
+                };
+                let red = mean(0)?;
+                let blue = mean(2)?;
+                let greens = [mean(1), mean(3)].into_iter().flatten().collect::<Vec<_>>();
+                if greens.is_empty() {
+                    return None;
+                }
+                [red, greens.iter().sum::<f32>() / greens.len() as f32, blue]
+            }
         };
-        let red = mean(0)?;
-        let blue = mean(2)?;
-        let greens = [mean(1), mean(3)].into_iter().flatten().collect::<Vec<_>>();
-        if greens.is_empty() {
-            return None;
-        }
-        let green = greens.iter().sum::<f32>() / greens.len() as f32;
         // The colour the white balance must neutralize, in the units of its
         // multipliers. A negative's positive follows the white balance
         // relative to the as-shot one (`pack_camera_params`).

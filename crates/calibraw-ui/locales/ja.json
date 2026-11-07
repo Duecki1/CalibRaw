@@ -2052,5 +2052,6 @@
   "Choose adjustments to copy…": "コピーする調整を選択…",
   "Choose at least one setting to copy.": "コピーする設定を1つ以上選択してください。",
   "Settings that are not selected keep the destination photo’s values.": "選択していない設定では、貼り付け先の写真の値が保持されます。",
-  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "黒レベル、トーンマッパー、デモザイク、ハイライト復元、フィルムネガ。"
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "黒レベル、トーンマッパー、デモザイク、ハイライト復元、フィルムネガ。",
+  "Switch the preview background": "プレビューの背景を切り替え"
 }

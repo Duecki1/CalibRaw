@@ -2052,5 +2052,6 @@
   "Choose adjustments to copy…": "Vælg justeringer at kopiere…",
   "Choose at least one setting to copy.": "Vælg mindst én indstilling at kopiere.",
   "Settings that are not selected keep the destination photo’s values.": "Indstillinger, der ikke er valgt, beholder destinationsfotoets værdier.",
-  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Sortpunkt, tonemapper, demosaik, rekonstruktion af højlys og filmnegativet."
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Sortpunkt, tonemapper, demosaik, rekonstruktion af højlys og filmnegativet.",
+  "Switch the preview background": "Skift baggrund for forhåndsvisning"
 }

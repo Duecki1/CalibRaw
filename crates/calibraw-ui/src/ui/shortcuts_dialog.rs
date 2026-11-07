@@ -46,6 +46,7 @@ fn groups() -> Vec<Group> {
                 control(tr("Save edits now"), &[&with_command("S")]),
                 control(tr("Previous / next photo in Develop"), &["←", "→"]),
                 control(tr("Toggle shadow and highlight clipping"), &["J"]),
+                control(tr("Switch the preview background"), &["B"]),
             ],
         },
         Group {

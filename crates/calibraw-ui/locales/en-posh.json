@@ -2051,5 +2051,6 @@
   "Choose adjustments to copy…": "Select adjustments to duplicate…",
   "Choose at least one setting to copy.": "Select at least one preference to duplicate.",
   "Settings that are not selected keep the destination photo’s values.": "Preferences that are not selected retain the destination photograph’s values.",
-  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Black point, tone mapper, demosaic, highlight reconstruction and the film negative."
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.",
+  "Switch the preview background": "Change the preview background"
 }

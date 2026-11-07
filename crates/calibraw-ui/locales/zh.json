@@ -2052,5 +2052,6 @@
   "Choose adjustments to copy…": "选择要复制的调整项…",
   "Choose at least one setting to copy.": "至少选择一项要复制的设置。",
   "Settings that are not selected keep the destination photo’s values.": "未选中的设置会保留目标照片的原有值。",
-  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "黑点、色调映射、去马赛克、高光重建和胶片负片。"
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "黑点、色调映射、去马赛克、高光重建和胶片负片。",
+  "Switch the preview background": "切换预览背景"
 }

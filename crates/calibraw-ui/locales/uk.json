@@ -2052,5 +2052,6 @@
   "Choose adjustments to copy…": "Вибрати корекції для копіювання…",
   "Choose at least one setting to copy.": "Виберіть принаймні одне налаштування для копіювання.",
   "Settings that are not selected keep the destination photo’s values.": "Для невибраних налаштувань залишаються значення цільової фотографії.",
-  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Точка чорного, тональне відображення, демозаїка, відновлення світлих ділянок і плівковий негатив."
+  "Black point, tone mapper, demosaic, highlight reconstruction and the film negative.": "Точка чорного, тональне відображення, демозаїка, відновлення світлих ділянок і плівковий негатив.",
+  "Switch the preview background": "Перемкнути тло попереднього перегляду"
 }

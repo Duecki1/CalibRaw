@@ -78,6 +78,15 @@ impl PreviewBackdrop {
         Self::White,
     ];
 
+    /// The backdrop after this one in [`Self::ALL`], wrapping to the first.
+    pub(crate) fn next(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|backdrop| *backdrop == self)
+            .unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Black => tr("Black"),
