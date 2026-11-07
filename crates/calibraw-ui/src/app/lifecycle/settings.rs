@@ -315,8 +315,13 @@ impl CalibRawApp {
         }
     }
 
-    pub(crate) fn select_android_library_folder(&mut self, folder: String) {
-        if self.library.select_android_folder(folder, &self.egui_ctx) {
+    /// Shows `folder` of a linked folder, or of the media library for an empty
+    /// key, which need not be the one shown.
+    pub(crate) fn select_android_library_root_folder(&mut self, root: String, folder: String) {
+        if self
+            .library
+            .select_android_root_folder(root, folder, &self.egui_ctx)
+        {
             self.persist_performance_settings();
         }
     }

@@ -420,19 +420,20 @@ final class StorageManager {
     }
 
     /**
-     * The folders of the linked folder {@code key}, as {@link #listRawLibraryFolders} lists them.
-     * Named rather than taken from the selection, as walking a large tree outlasts selecting
-     * another of its folders.
+     * The folders of the linked folder {@code key}, or of CalibRaw's library for an empty key, as
+     * {@link #listRawLibraryFolders} lists them. Named rather than taken from the selection, as
+     * the sidebar shows every root's folders and walking a large tree outlasts selecting another
+     * folder.
      */
-    String listLinkedFolderTree(String key) {
-        TreeLibraryStore store = linkedFolders.store(key);
+    String listFolderTree(String key) {
+        LibraryStore store = key.isEmpty() ? fileStore : linkedFolders.store(key);
         if (store == null) {
             throw new IllegalArgumentException("This folder is no longer linked");
         }
         try {
             return store.listFolders();
         } catch (Exception error) {
-            throw new IllegalStateException("Could not list the linked folder's folders", error);
+            throw new IllegalStateException("Could not list the folder's folders", error);
         }
     }
 

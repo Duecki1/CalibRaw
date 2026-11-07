@@ -131,7 +131,7 @@ impl LibraryState {
         } else {
             // A linked folder may be slow to walk, so its photos do not wait
             // for its folders.
-            self.start_linked_tree_walk(context);
+            self.start_folder_tree_walk(context);
             let platform = Arc::clone(&self.platform);
             let linked_folder = self.media.root.clone();
             let folder = self.media.folder.clone();
@@ -220,16 +220,34 @@ impl LibraryState {
         }
     }
 
-    /// Walks the shown linked folder's tree when a refresh asked for it and no
-    /// walk runs. A failure is only logged: the photo scan reaches the same
-    /// folder and reports it.
-    fn start_linked_tree_walk(&mut self, context: &egui::Context) {
-        if self.media.root.is_empty() || !self.media.tree_walk_due || self.media.tree_walk.is_some()
-        {
+    /// Walks one root's tree when no walk runs: the shown linked folder's
+    /// when a refresh asked for it, otherwise that of a root the sidebar shows
+    /// without its folders yet. A failure is only logged: the photo scan
+    /// reaches the shown folder and reports it, and a root not shown reports
+    /// it once opened.
+    fn start_folder_tree_walk(&mut self, context: &egui::Context) {
+        if self.media.tree_walk.is_some() {
             return;
         }
-        self.media.tree_walk_due = false;
-        let root = self.media.root.clone();
+        let root = if !self.media.root.is_empty() && self.media.tree_walk_due {
+            self.media.tree_walk_due = false;
+            self.media.root.clone()
+        } else {
+            let media = &self.media;
+            let unlisted = std::iter::once("")
+                .chain(
+                    media
+                        .linked_folders
+                        .iter()
+                        .map(|folder| folder.key.as_str()),
+                )
+                .filter(|key| *key != media.root)
+                .find(|key| !media.trees.get(*key).is_some_and(|tree| tree.listed));
+            match unlisted {
+                Some(key) => key.to_owned(),
+                None => return,
+            }
+        };
         let platform = Arc::clone(&self.platform);
         let repaint = context.clone();
         let (sender, result) = mpsc::channel();
@@ -238,54 +256,67 @@ impl LibraryState {
             .name("calibraw-library-folders".to_owned())
             .spawn(move || {
                 // The library may have stopped waiting for this walk.
-                let _ = sender.send(platform.list_linked_folder_tree(&walked_root));
+                let _ = sender.send(platform.list_folder_tree(&walked_root));
                 repaint.request_repaint();
             });
         match walk {
-            Ok(_) => self.media.tree_walk = Some(LinkedTreeWalk { root, result }),
-            Err(error) => log::warn!("could not walk the linked folder: {error}"),
+            Ok(_) => self.media.tree_walk = Some(FolderTreeWalk { root, result }),
+            Err(error) => {
+                log::warn!("could not walk the folder: {error}");
+                self.media.trees.entry(root).or_default().listed = true;
+            }
         }
     }
 
-    fn poll_linked_tree_walk(&mut self, context: &egui::Context) {
-        let Some(walk) = self.media.tree_walk.as_ref() else {
-            return;
-        };
-        let result = match walk.result.try_recv() {
-            Ok(result) => result,
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                Err("the linked folder walk stopped unexpectedly".to_owned())
+    fn poll_folder_tree_walk(&mut self, context: &egui::Context) {
+        if let Some(walk) = self.media.tree_walk.as_ref() {
+            let result = match walk.result.try_recv() {
+                Ok(result) => result,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Err("the folder walk stopped unexpectedly".to_owned())
+                }
+            };
+            let root = walk.root.clone();
+            self.media.tree_walk = None;
+            match result {
+                // An unlinked folder's walk is dropped.
+                Ok(folders) if self.media.has_root(&root) => {
+                    self.show_android_folders(&root, folders);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    log::warn!("{error}");
+                    if self.media.has_root(&root) {
+                        self.media.trees.entry(root).or_default().listed = true;
+                    }
+                }
             }
-        };
-        let shown = walk.root == self.media.root;
-        self.media.tree_walk = None;
-        match result {
-            Ok(folders) if shown => self.show_android_folders(folders),
-            Ok(_) => {}
-            Err(error) => log::warn!("{error}"),
         }
-        // A refresh while it ran, such as a folder created meanwhile.
-        self.start_linked_tree_walk(context);
+        // A refresh while it ran, such as a folder created meanwhile, or a
+        // root linked since.
+        self.start_folder_tree_walk(context);
     }
 
     /// Shows the folders of the media library or of a linked folder, keeping
-    /// the selected folder's ancestors open.
-    fn show_android_folders(&mut self, folders: Vec<crate::platform::LibraryFolder>) {
-        self.media.folders = folders;
-        let folder_paths = self
-            .media
+    /// the selected folder's ancestors open in the shown root.
+    fn show_android_folders(&mut self, root: &str, folders: Vec<crate::platform::LibraryFolder>) {
+        let shown = root == self.media.root;
+        let selected_folder = self.media.folder.clone();
+        let tree = self.media.trees.entry(root.to_owned()).or_default();
+        tree.folders = folders;
+        tree.listed = true;
+        let folder_paths = tree
             .folders
             .iter()
             .map(|folder| folder.path.as_str())
             .collect::<HashSet<_>>();
-        self.media
-            .expanded_folders
+        tree.expanded
             .retain(|path| path.is_empty() || folder_paths.contains(path.as_str()));
-        let selected_folder = self.media.folder.clone();
-        self.media
-            .expanded_folders
-            .extend(android_folder_ancestors(&selected_folder));
+        if shown {
+            tree.expanded
+                .extend(android_folder_ancestors(&selected_folder));
+        }
     }
 
     pub(crate) fn poll_dropped_raw_import(&mut self, context: &egui::Context) {
@@ -310,7 +341,7 @@ impl LibraryState {
     }
 
     pub(crate) fn poll(&mut self, context: &egui::Context) {
-        self.poll_linked_tree_walk(context);
+        self.poll_folder_tree_walk(context);
         let pasted = self
             .asset_transfer_receiver
             .as_ref()
@@ -399,7 +430,8 @@ impl LibraryState {
                     generation,
                     folders,
                 } if generation == self.generation.load(Ordering::Acquire) => {
-                    self.show_android_folders(folders);
+                    let root = self.media.root.clone();
+                    self.show_android_folders(&root, folders);
                 }
                 ScanEvent::Catalog {
                     generation,

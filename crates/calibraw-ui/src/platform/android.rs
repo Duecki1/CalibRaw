@@ -270,8 +270,8 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::list_library_folders(&self.app).map(library_folders)
     }
 
-    fn list_linked_folder_tree(&self, key: &str) -> Result<Vec<LibraryFolder>, String> {
-        calibraw_ffi::list_linked_folder_tree(&self.app, key).map(library_folders)
+    fn list_folder_tree(&self, key: &str) -> Result<Vec<LibraryFolder>, String> {
+        calibraw_ffi::list_folder_tree(&self.app, key).map(library_folders)
     }
 
     fn select_library_folder(&self, relative_path: &str) -> Result<(), String> {

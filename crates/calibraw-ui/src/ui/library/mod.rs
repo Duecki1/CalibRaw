@@ -703,8 +703,9 @@ struct AndroidLibraryFolderNameDialog {
 struct MediaLibraryState {
     root_location: String,
     folder: String,
-    folders: Vec<crate::platform::LibraryFolder>,
-    expanded_folders: HashSet<String>,
+    /// The folders of every root the sidebar shows, by root key (empty for
+    /// the media library), kept while another root is shown.
+    trees: HashMap<String, FolderTree>,
     folder_name_dialog: Option<AndroidLibraryFolderNameDialog>,
     /// The linked folder shown; empty for the media library itself.
     root: String,
@@ -715,24 +716,48 @@ struct MediaLibraryState {
     unlink_dialog: Option<crate::platform::LinkedFolder>,
     /// A failure the app shows in its error dialog on the next frame.
     pending_error: Option<String>,
-    /// The walk of the shown linked folder's tree. It lists every file of
+    /// The walk of one root's tree. A linked folder's lists every file of
     /// every folder through the Storage Access Framework, so one runs at a
     /// time and selecting a folder within the tree does not start one.
-    tree_walk: Option<LinkedTreeWalk>,
-    /// A refresh asked for the linked folder's tree again; walked once no
-    /// walk runs.
+    tree_walk: Option<FolderTreeWalk>,
+    /// A refresh asked for the shown linked folder's tree again; walked once
+    /// no walk runs.
     tree_walk_due: bool,
 }
 
-struct LinkedTreeWalk {
-    /// The linked folder walked; its folders are shown only while it is.
+impl MediaLibraryState {
+    /// The tree of the root shown.
+    fn shown_tree_mut(&mut self) -> &mut FolderTree {
+        self.trees.entry(self.root.clone()).or_default()
+    }
+
+    /// Whether `key` still names a root: the media library or a linked folder.
+    fn has_root(&self, key: &str) -> bool {
+        key.is_empty() || self.linked_folders.iter().any(|folder| folder.key == key)
+    }
+}
+
+#[derive(Default)]
+struct FolderTree {
+    folders: Vec<crate::platform::LibraryFolder>,
+    /// Open rows by folder path; the empty path is the root's own row.
+    expanded: HashSet<String>,
+    /// Set once the folders were listed, even when that failed, so a root that
+    /// is not shown is walked once rather than on every frame.
+    listed: bool,
+}
+
+struct FolderTreeWalk {
     root: String,
     result: mpsc::Receiver<Result<Vec<crate::platform::LibraryFolder>, String>>,
 }
 
 enum AndroidLibraryFolderUiAction {
-    Select(String),
-    SelectRoot(String),
+    /// A folder of a root, which need not be the root shown.
+    Select {
+        root: String,
+        folder: String,
+    },
     New(String),
     Refresh,
     Link,

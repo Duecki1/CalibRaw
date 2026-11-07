@@ -117,8 +117,13 @@ impl LibraryState {
             MediaLibraryState {
                 root_location,
                 folder: selected_folder.clone(),
-                folders: Vec::new(),
-                expanded_folders: android_folder_ancestors(&selected_folder),
+                trees: HashMap::from([(
+                    root.clone(),
+                    FolderTree {
+                        expanded: android_folder_ancestors(&selected_folder),
+                        ..FolderTree::default()
+                    },
+                )]),
                 folder_name_dialog: None,
                 root,
                 linked_folders,

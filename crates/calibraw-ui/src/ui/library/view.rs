@@ -426,10 +426,11 @@ fn show_folder_without_photos(ui: &mut Ui, app: &mut CalibRawApp) {
         return;
     }
     let folder = media.folder.as_str();
-    let has_subfolders = media
-        .folders
-        .iter()
-        .any(|child| android_folder_parent(&child.path) == folder);
+    let has_subfolders = media.trees.get(&media.root).is_some_and(|tree| {
+        tree.folders
+            .iter()
+            .any(|child| android_folder_parent(&child.path) == folder)
+    });
     if !has_subfolders {
         show_library_empty_state(
             ui,
@@ -447,7 +448,7 @@ fn show_folder_without_photos(ui: &mut Ui, app: &mut CalibRawApp) {
         Some(tr("Show folders")),
     ) {
         let folder = folder.to_owned();
-        app.library.media.expanded_folders.insert(folder);
+        app.library.media.shown_tree_mut().expanded.insert(folder);
         app.set_library_folder_sidebar_open(true);
     }
 }

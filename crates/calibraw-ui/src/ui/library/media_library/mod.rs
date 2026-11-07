@@ -21,38 +21,72 @@ pub(in crate::ui::library) fn maximum_thumbnail_worker_count() -> usize {
     super::MAX_ANDROID_THUMBNAIL_WORKERS
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn show_android_library_folder_node(
+/// One root's folders as the sidebar draws them.
+struct RootTreeView<'a> {
+    key: &'a str,
+    children_by_parent: HashMap<&'a str, Vec<&'a crate::platform::LibraryFolder>>,
+    /// The folder selected, while this root is shown. Creating and refreshing
+    /// folders act on the root shown, so only its rows offer them.
+    selected_folder: Option<&'a str>,
+    /// Set on a linked folder, with whether its last scan could reach it.
+    linked: Option<(&'a crate::platform::LinkedFolder, bool)>,
+    action_in_progress: bool,
+}
+
+impl<'a> RootTreeView<'a> {
+    fn new(
+        key: &'a str,
+        folders: &'a [crate::platform::LibraryFolder],
+        selected_folder: Option<&'a str>,
+        linked: Option<(&'a crate::platform::LinkedFolder, bool)>,
+        action_in_progress: bool,
+    ) -> Self {
+        let mut children_by_parent = HashMap::<&str, Vec<&crate::platform::LibraryFolder>>::new();
+        for folder in folders {
+            children_by_parent
+                .entry(android_folder_parent(&folder.path))
+                .or_default()
+                .push(folder);
+        }
+        Self {
+            key,
+            children_by_parent,
+            selected_folder,
+            linked,
+            action_in_progress,
+        }
+    }
+}
+
+fn show_android_library_folder_node(
     ui: &mut Ui,
+    tree: &RootTreeView<'_>,
     path: &str,
     name: &str,
     depth: usize,
-    children_by_parent: &HashMap<&str, Vec<&crate::platform::LibraryFolder>>,
-    selected_folder: &str,
-    action_in_progress: bool,
     expanded_folders: &mut HashSet<String>,
     requested_action: &mut Option<AndroidLibraryFolderUiAction>,
-    // Set on the top row of the linked folder being shown.
-    linked: Option<(&crate::platform::LinkedFolder, bool)>,
 ) {
-    let children = children_by_parent
+    let children = tree
+        .children_by_parent
         .get(path)
         .map(Vec::as_slice)
         .unwrap_or(&[]);
     let has_children = !children.is_empty();
     let expanded = has_children && expanded_folders.contains(path);
+    let linked = tree.linked.filter(|_| path.is_empty());
     let row = ui
-        .add_enabled_ui(!action_in_progress, |ui| {
+        .add_enabled_ui(!tree.action_in_progress, |ui| {
             crate::ui::icons::folder_tree_row_with_icon(
                 ui,
-                path,
+                ("library-folder", tree.key, path),
                 name,
                 depth,
                 has_children.then_some(expanded),
-                selected_folder == path,
+                tree.selected_folder == Some(path),
                 Sense::click(),
                 match linked {
-                    Some(_) => linked_folder_icon(linked.is_some_and(|(_, available)| !available)),
+                    Some((_, available)) => linked_folder_icon(!available),
                     None if expanded => regular::FOLDER_OPEN,
                     None => regular::FOLDER,
                 },
@@ -67,41 +101,47 @@ pub(super) fn show_android_library_folder_node(
         }
     }
     if row.row.clicked() {
-        *requested_action = Some(AndroidLibraryFolderUiAction::Select(path.to_owned()));
+        *requested_action = Some(AndroidLibraryFolderUiAction::Select {
+            root: tree.key.to_owned(),
+            folder: path.to_owned(),
+        });
     }
-    moduwu_design::context_menu(&row.row, |ui| {
-        let new_item = MenuItem::new(tr("New folder here…")).icon(regular::FOLDER_PLUS);
-        if ui.add(new_item).clicked() {
-            *requested_action = Some(AndroidLibraryFolderUiAction::New(path.to_owned()));
-            ui.close();
-        }
-        let refresh_item = MenuItem::new(tr("Refresh folders")).icon(regular::ARROWS_CLOCKWISE);
-        if ui.add(refresh_item).clicked() {
-            *requested_action = Some(AndroidLibraryFolderUiAction::Refresh);
-            ui.close();
-        }
-        if let Some((folder, _)) = linked {
-            let unlink_item = MenuItem::new(tr("Unlink folder")).icon(regular::LINK_BREAK);
-            if ui.add(unlink_item).clicked() {
-                *requested_action = Some(AndroidLibraryFolderUiAction::Unlink(folder.clone()));
-                ui.close();
+    let shown = tree.selected_folder.is_some();
+    if shown || linked.is_some() {
+        moduwu_design::context_menu(&row.row, |ui| {
+            if shown {
+                let new_item = MenuItem::new(tr("New folder here…")).icon(regular::FOLDER_PLUS);
+                if ui.add(new_item).clicked() {
+                    *requested_action = Some(AndroidLibraryFolderUiAction::New(path.to_owned()));
+                    ui.close();
+                }
+                let refresh_item =
+                    MenuItem::new(tr("Refresh folders")).icon(regular::ARROWS_CLOCKWISE);
+                if ui.add(refresh_item).clicked() {
+                    *requested_action = Some(AndroidLibraryFolderUiAction::Refresh);
+                    ui.close();
+                }
             }
-        }
-    });
+            if let Some((folder, _)) = linked {
+                let unlink_item = MenuItem::new(tr("Unlink folder")).icon(regular::LINK_BREAK);
+                if ui.add(unlink_item).clicked() {
+                    *requested_action = Some(AndroidLibraryFolderUiAction::Unlink(folder.clone()));
+                    ui.close();
+                }
+            }
+        });
+    }
 
     if expanded {
         for child in children {
             show_android_library_folder_node(
                 ui,
+                tree,
                 &child.path,
                 &child.name,
                 depth + 1,
-                children_by_parent,
-                selected_folder,
-                action_in_progress,
                 expanded_folders,
                 requested_action,
-                None,
             );
         }
     }
@@ -117,43 +157,32 @@ fn linked_folder_icon(unavailable: bool) -> &'static str {
     }
 }
 
-/// The top row of a folder that is not shown. Its subfolders are only known
-/// once it is.
-fn show_other_root_row(
+/// Draws the root `key` as a tree. A root not shown has no rows below its
+/// own until its folders were walked.
+#[allow(clippy::too_many_arguments)]
+fn show_root_tree(
     ui: &mut Ui,
-    name: &str,
-    action_in_progress: bool,
+    trees: &mut HashMap<String, FolderTree>,
     key: &str,
-    icon: &str,
-    linked: Option<&crate::platform::LinkedFolder>,
+    label: &str,
+    shown_root: &str,
+    selected_folder: &str,
+    linked: Option<(&crate::platform::LinkedFolder, bool)>,
+    action_in_progress: bool,
     requested_action: &mut Option<AndroidLibraryFolderUiAction>,
 ) {
-    let row = ui
-        .add_enabled_ui(!action_in_progress, |ui| {
-            crate::ui::icons::folder_tree_row_with_icon(
-                ui,
-                ("library-root", key),
-                name,
-                0,
-                None,
-                false,
-                Sense::click(),
-                icon,
-            )
-        })
-        .inner;
-    if row.row.clicked() {
-        *requested_action = Some(AndroidLibraryFolderUiAction::SelectRoot(key.to_owned()));
-    }
-    if let Some(folder) = linked {
-        moduwu_design::context_menu(&row.row, |ui| {
-            let unlink_item = MenuItem::new(tr("Unlink folder")).icon(regular::LINK_BREAK);
-            if ui.add(unlink_item).clicked() {
-                *requested_action = Some(AndroidLibraryFolderUiAction::Unlink(folder.clone()));
-                ui.close();
-            }
-        });
-    }
+    let mut unlisted = FolderTree::default();
+    let FolderTree {
+        folders, expanded, ..
+    } = trees.get_mut(key).unwrap_or(&mut unlisted);
+    let view = RootTreeView::new(
+        key,
+        folders,
+        (key == shown_root).then_some(selected_folder),
+        linked,
+        action_in_progress,
+    );
+    show_android_library_folder_node(ui, &view, "", label, 0, expanded, requested_action);
 }
 
 pub(super) fn apply_android_library_folder_ui_action(
@@ -162,12 +191,8 @@ pub(super) fn apply_android_library_folder_ui_action(
     context: &egui::Context,
 ) {
     match action {
-        AndroidLibraryFolderUiAction::Select(folder) => {
-            app.select_android_library_folder(folder);
-            app.set_library_folder_sidebar_open(false);
-        }
-        AndroidLibraryFolderUiAction::SelectRoot(key) => {
-            app.select_android_library_root(key);
+        AndroidLibraryFolderUiAction::Select { root, folder } => {
+            app.select_android_library_root_folder(root, folder);
             app.set_library_folder_sidebar_open(false);
         }
         AndroidLibraryFolderUiAction::Link => app.library.media.link_dialog = true,
@@ -247,47 +272,26 @@ pub(in crate::ui::library) fn show_local_folder_tree(
     let can_link = app.caps().linked_folders;
     let MediaLibraryState {
         folder: selected_folder,
-        folders,
-        expanded_folders,
+        trees,
         root,
         linked_folders,
         unavailable_roots,
         ..
     } = &mut app.library.media;
-    let mut children_by_parent = HashMap::<&str, Vec<&crate::platform::LibraryFolder>>::new();
-    for folder in folders.iter() {
-        children_by_parent
-            .entry(android_folder_parent(&folder.path))
-            .or_default()
-            .push(folder);
-    }
     let mut requested_action = None;
 
     moduwu_design::tree(ui, |ui| {
-        if root.is_empty() {
-            show_android_library_folder_node(
-                ui,
-                "",
-                tr("Library"),
-                0,
-                &children_by_parent,
-                selected_folder.as_str(),
-                action_in_progress,
-                expanded_folders,
-                &mut requested_action,
-                None,
-            );
-        } else {
-            show_other_root_row(
-                ui,
-                tr("Library"),
-                action_in_progress,
-                "",
-                regular::FOLDER,
-                None,
-                &mut requested_action,
-            );
-        }
+        show_root_tree(
+            ui,
+            trees,
+            "",
+            tr("Library"),
+            root,
+            selected_folder,
+            None,
+            action_in_progress,
+            &mut requested_action,
+        );
     });
 
     if can_link {
@@ -295,31 +299,18 @@ pub(in crate::ui::library) fn show_local_folder_tree(
         ui.weak(tr("Linked folders"));
         moduwu_design::tree(ui, |ui| {
             for folder in linked_folders.iter() {
-                let unavailable = unavailable_roots.contains(&folder.key);
-                if *root == folder.key {
-                    show_android_library_folder_node(
-                        ui,
-                        "",
-                        &folder.label,
-                        0,
-                        &children_by_parent,
-                        selected_folder.as_str(),
-                        action_in_progress,
-                        expanded_folders,
-                        &mut requested_action,
-                        Some((folder, !unavailable)),
-                    );
-                } else {
-                    show_other_root_row(
-                        ui,
-                        &folder.label,
-                        action_in_progress,
-                        &folder.key,
-                        linked_folder_icon(unavailable),
-                        Some(folder),
-                        &mut requested_action,
-                    );
-                }
+                let available = !unavailable_roots.contains(&folder.key);
+                show_root_tree(
+                    ui,
+                    trees,
+                    &folder.key,
+                    &folder.label,
+                    root,
+                    selected_folder,
+                    Some((folder, available)),
+                    action_in_progress,
+                    &mut requested_action,
+                );
             }
             let row = ui
                 .add_enabled_ui(!action_in_progress, |ui| {

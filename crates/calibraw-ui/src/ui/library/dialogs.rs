@@ -439,7 +439,7 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
         match app.library.platform.create_library_folder(&parent, &name) {
             Ok(folder) => {
                 app.library.media.folder_name_dialog = None;
-                app.library.media.expanded_folders.insert(parent);
+                app.library.media.shown_tree_mut().expanded.insert(parent);
                 app.library.status = tr_fmt("Created folder {folder}", &[("folder", &folder)]);
                 app.library.refresh(ui.ctx());
             }

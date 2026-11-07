@@ -88,19 +88,20 @@ pub fn list_library_folders(app: &AndroidApp) -> Result<Vec<LibraryFolder>, Stri
     parse_library_folders(&encoded)
 }
 
-/// The folders of the linked folder `key`, whichever folder is selected.
-pub fn list_linked_folder_tree(app: &AndroidApp, key: &str) -> Result<Vec<LibraryFolder>, String> {
+/// The folders of the linked folder `key`, or of CalibRaw's library for an
+/// empty key, whichever folder is selected.
+pub fn list_folder_tree(app: &AndroidApp, key: &str) -> Result<Vec<LibraryFolder>, String> {
     let encoded = with_storage_manager(app, |env, storage_manager| {
         let key = env.new_string(key)?;
         let value = env.call_method(
             storage_manager,
-            jni::jni_str!("listLinkedFolderTree"),
+            jni::jni_str!("listFolderTree"),
             jni::jni_sig!((JString) -> JString),
             &[JValue::Object(&key)],
         )?;
         java_string(env, value)
     })
-    .map_err(|error| format!("could not list the linked folder's folders: {error:#}"))?;
+    .map_err(|error| format!("could not list the folder's folders: {error:#}"))?;
     parse_library_folders(&encoded)
 }
 
