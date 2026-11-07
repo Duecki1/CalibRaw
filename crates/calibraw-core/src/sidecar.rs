@@ -65,10 +65,12 @@ impl PhotoCompanion {
 }
 pub const DEVELOPED_THUMBNAIL_SUFFIX: &str = ".calibraw-thumb.jpg";
 const DEVELOPED_THUMBNAIL_FINGERPRINT_SUFFIX: &str = ".calibraw-thumb.fingerprint";
+/// Largest sidecar file read or written. Android's copy is
+/// `LibraryStore.MAX_SIDECAR_BYTES`; change both together.
 pub const MAX_SIDECAR_BYTES: u64 = if cfg!(target_os = "android") {
-    32 * 1024 * 1024
+    128 * 1024 * 1024
 } else {
-    256 * 1024 * 1024
+    1024 * 1024 * 1024
 };
 
 const SIDECAR_FORMAT: &str = "CalibRaw edit sidecar";
@@ -84,9 +86,9 @@ const MAX_REMOVE_ASSET_REFS: usize = REMOVE_MAX_STROKES * REMOVE_MAX_PATCHES_PER
 /// Memory a sidecar may expand to when its mask and retouch assets are decoded; the
 /// mask and retouch budgets are checked separately against this one value.
 pub(crate) const MAX_DECODED_ASSET_BYTES: u64 = if cfg!(target_os = "android") {
-    256 * 1024 * 1024
-} else {
     512 * 1024 * 1024
+} else {
+    2 * 1024 * 1024 * 1024
 };
 /// Longest edge, in pixels, of a stored retouch patch.
 const MAX_REMOVE_PATCH_EDGE: u32 = 32_768;

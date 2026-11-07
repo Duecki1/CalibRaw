@@ -15,7 +15,8 @@ import java.util.ArrayList;
  * Methods reach storage, so they are called off the Android UI thread, except where noted.
  */
 interface LibraryStore {
-    long MAX_SIDECAR_BYTES = 32L * 1024L * 1024L;
+    // Matches calibraw_core::sidecar::MAX_SIDECAR_BYTES on Android; change both together.
+    long MAX_SIDECAR_BYTES = 128L * 1024L * 1024L;
     int MAX_FOLDERS = 10_000;
     int MAX_FOLDER_DEPTH = 64;
 

@@ -83,7 +83,10 @@ pub(super) fn encode_mask_png(image: &MaskImage) -> Result<Arc<[u8]>, SidecarErr
 
 pub(super) fn extract_mask_assets(edits: &mut EditState) -> Result<MaskAssets, SidecarError> {
     let mut assets = Vec::<SidecarMaskAsset>::new();
-    let mut unique_images = Vec::<MaskImage>::new();
+    // Each distinct image with its asset index. The disparity asset precedes
+    // the images, so asset indices are offset from positions in this list.
+    let mut unique_images = Vec::<(MaskImage, usize)>::new();
+    // Fingerprint to positions in `unique_images`.
     let mut buckets = HashMap::<u64, Vec<usize>>::new();
     let mut references = Vec::new();
     let mut decoded_asset_bytes = 0u64;
@@ -120,13 +123,13 @@ pub(super) fn extract_mask_assets(edits: &mut EditState) -> Result<MaskAssets, S
 
     let mut add_image = |image: MaskImage| -> Result<usize, SidecarError> {
         let fingerprint = mask_image_fingerprint(&image);
-        if let Some(index) = buckets.get(&fingerprint).and_then(|candidates| {
+        if let Some((_, asset_index)) = buckets.get(&fingerprint).and_then(|candidates| {
             candidates
                 .iter()
-                .copied()
-                .find(|index| unique_images[*index] == image)
+                .map(|position| &unique_images[*position])
+                .find(|(unique, _)| *unique == image)
         }) {
-            return Ok(index);
+            return Ok(*asset_index);
         }
         let pixels =
             u64::try_from(image.pixels.len()).map_err(|_| SidecarError::TooLarge(u64::MAX))?;
@@ -140,15 +143,18 @@ pub(super) fn extract_mask_assets(edits: &mut EditState) -> Result<MaskAssets, S
             base64_json_string_bytes(png.len())?,
         )?;
         enforce_size_limit(encoded_asset_bytes, MAX_SIDECAR_BYTES)?;
-        let index = assets.len();
+        let asset_index = assets.len();
         assets.push(SidecarMaskAsset {
             width: image.width,
             height: image.height,
             png,
         });
-        unique_images.push(image);
-        buckets.entry(fingerprint).or_default().push(index);
-        Ok(index)
+        buckets
+            .entry(fingerprint)
+            .or_default()
+            .push(unique_images.len());
+        unique_images.push((image, asset_index));
+        Ok(asset_index)
     };
 
     let scene_depth = match (scene_depth, disparity_asset) {
