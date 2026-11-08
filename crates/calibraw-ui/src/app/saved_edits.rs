@@ -251,6 +251,9 @@ pub(crate) struct EditedRenderJob<'a> {
     pub(crate) photo: &'a EditedPhoto,
     /// The long edge the result is fitted into.
     pub(crate) maximum_edge: u32,
+    /// Whether the saved lens correction applies. It resamples the whole
+    /// photo, so library thumbnails, too small to show it, leave it out.
+    pub(crate) lens_correction: bool,
     pub(crate) gpu: &'a SavedEditsGpu,
     pub(crate) settings: &'a SavedEditsSettings,
     pub(crate) platform: &'a dyn Platform,
@@ -287,7 +290,14 @@ impl EditedRenderJob<'_> {
         }
         let look = self.settings.look(&edits);
         let complete = edits.look_lut.is_none() || look.is_some();
-        let thumbnail = render_saved_edits(self.gpu, raw, edits, look.as_ref(), self.maximum_edge)?;
+        let thumbnail = render_saved_edits(
+            self.gpu,
+            raw,
+            edits,
+            look.as_ref(),
+            self.maximum_edge,
+            self.lens_correction,
+        )?;
         let current = !complete
             || self
                 .photo
@@ -301,14 +311,16 @@ impl EditedRenderJob<'_> {
 }
 
 /// `full_raw` rendered with `edits` as the editor's fitted preview shows them,
-/// fitted into `maximum_edge`. `look` is the edit's LUT, `None` when the
-/// library does not hold it.
+/// fitted into `maximum_edge`, and without their lens correction unless
+/// `lens_correction`. `look` is the edit's LUT, `None` when the library does
+/// not hold it.
 fn render_saved_edits(
     gpu: &SavedEditsGpu,
     full_raw: LoadedRaw,
     edits: EditState,
     look: Option<&ResolvedLook>,
     maximum_edge: u32,
+    lens_correction: bool,
 ) -> Result<RawThumbnail, String> {
     let EditState {
         mut exposure,
@@ -320,7 +332,10 @@ fn render_saved_edits(
     } = edits;
     // As the editor opens a photo: lens correction resamples the whole
     // mosaic, which a reduced proxy no longer holds, so it comes first.
-    let full_raw = match lens.requested_correction(&full_raw) {
+    let requested = lens_correction
+        .then(|| lens.requested_correction(&full_raw))
+        .flatten();
+    let full_raw = match requested {
         Some(correction) => match apply_lens_correction(&full_raw, &correction) {
             Ok(corrected) => corrected,
             // The editor shows the photo uncorrected too when this fails.

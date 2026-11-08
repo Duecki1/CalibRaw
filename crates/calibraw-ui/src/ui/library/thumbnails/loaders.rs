@@ -36,6 +36,7 @@ pub(crate) fn load_desktop_reference_preview(
         let render = crate::app::EditedRenderJob {
             photo: &photo,
             maximum_edge,
+            lens_correction: true,
             gpu,
             settings,
             platform,
