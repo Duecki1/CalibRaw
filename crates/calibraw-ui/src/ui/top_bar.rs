@@ -78,7 +78,8 @@ fn develop_toolbar_dock_geometry(
 
     let sidebar_id = egui::Id::new(crate::ui::layout::DEVELOP_SIDEBAR_ID);
     let separator_x = if app.develop_ui.sidebar_open {
-        if app.ui.sidebar_tab == crate::app::SidebarTab::Masks {
+        // The strip's panel state outlives the strip, so ask whether it shows.
+        if crate::ui::sidebar::Sidebar::shows_mask_strip(app) {
             egui::PanelState::load(ctx, egui::Id::new(crate::ui::layout::DEVELOP_MASK_STRIP_ID))
                 .map(|state| state.outer_rect.left())
                 .or_else(|| {
@@ -113,7 +114,7 @@ fn develop_toolbar_dock_geometry(
                 panel_max,
             );
             dock_width += sidebar_width;
-            if app.ui.sidebar_tab == crate::app::SidebarTab::Masks {
+            if crate::ui::sidebar::Sidebar::shows_mask_strip(app) {
                 dock_width += crate::ui::sidebar::Sidebar::HORIZONTAL_MASK_STRIP_WIDTH;
             }
         }

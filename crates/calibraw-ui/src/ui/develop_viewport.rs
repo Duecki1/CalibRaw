@@ -1,4 +1,4 @@
-use crate::app::{CalibRawApp, SidebarTab};
+use crate::app::CalibRawApp;
 use crate::ui::{sidebar::Sidebar, top_bar::TopBar};
 use eframe::egui::{self, Rect, Sense, Ui};
 use moduwu_design::ScreenLayout;
@@ -83,7 +83,7 @@ pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
             let content = Rect::from_min_max(egui::pos2(sheet.left(), handle.bottom()), sheet.max);
             let mut content_ui = ui.new_child(egui::UiBuilder::new().max_rect(content));
             content_ui.set_clip_rect(content);
-            if app.ui.sidebar_tab == SidebarTab::Masks && height > COLLAPSED_HEIGHT + 100.0 {
+            if Sidebar::shows_mask_strip(app) && height > COLLAPSED_HEIGHT + 100.0 {
                 egui::Panel::top("portrait-mask-strip")
                     .resizable(false)
                     .exact_size(Sidebar::VERTICAL_MASK_STRIP_HEIGHT)
@@ -173,7 +173,7 @@ fn show_landscape(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
                 ui.painter()
                     .rect_filled(tools, 0.0, ui.visuals().panel_fill.gamma_multiply(0.97));
                 let mut content = ui.new_child(egui::UiBuilder::new().max_rect(tools.shrink(8.0)));
-                if app.ui.sidebar_tab == SidebarTab::Masks {
+                if Sidebar::shows_mask_strip(app) {
                     egui::Panel::top("landscape-overlay-masks")
                         .resizable(false)
                         .exact_size(Sidebar::VERTICAL_MASK_STRIP_HEIGHT)

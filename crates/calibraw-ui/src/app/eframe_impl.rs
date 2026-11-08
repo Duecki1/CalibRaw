@@ -399,7 +399,7 @@ impl eframe::App for CalibRawApp {
                         })
                     });
 
-                if self.ui.sidebar_tab == SidebarTab::Masks {
+                if Sidebar::shows_mask_strip(self) {
                     egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
                         .resizable(false)
                         .exact_size(Sidebar::HORIZONTAL_MASK_STRIP_WIDTH)

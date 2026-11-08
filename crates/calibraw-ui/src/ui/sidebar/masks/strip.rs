@@ -52,6 +52,13 @@ impl Sidebar {
         });
     }
 
+    /// Whether the Develop layout shows the mask card strip: on the Masks
+    /// tab once a mask exists. Without masks the panel's kind picker is the
+    /// only way to start one, so the strip would only hold its add card.
+    pub(crate) fn shows_mask_strip(app: &CalibRawApp) -> bool {
+        app.ui.sidebar_tab == SidebarTab::Masks && !app.masks.stack.masks.is_empty()
+    }
+
     pub(crate) fn show_vertical_mask_strip(
         ui: &mut Ui,
         app: &mut CalibRawApp,
