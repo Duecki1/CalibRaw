@@ -225,6 +225,9 @@ fn reset_android_adjustments_impl(
     if review == calibraw_core::sidecar::PhotoReview::default() && editing_time_ms == 0 {
         return remove_raw_sidecar(app, raw_uri, display_name);
     }
+    // Reset, the photo is back at a start: the defaults.
+    let start = calibraw_core::sidecar::EditFingerprint::of_defaults()
+        .map_err(|error| error.to_string())?;
     save_android_with_review_and_editing_time(
         app,
         raw_uri,
@@ -232,6 +235,7 @@ fn reset_android_adjustments_impl(
         calibraw_core::sidecar::default_edit_state(),
         review,
         editing_time_ms,
+        calibraw_core::sidecar::SidecarStart::Set(start),
     )
     .map_err(|error| error.to_string())?;
     clear_developed_thumbnail_cache(app, raw_uri);
@@ -342,7 +346,9 @@ pub fn load_android(
     read_android_sidecar(app, raw_uri, display_name, calibraw_core::sidecar::decode)
 }
 
-fn load_android_sidecar_metadata(
+/// The photo's review, editing time and start; `None` when it has no
+/// sidecar.
+pub fn load_android_sidecar_metadata(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
@@ -353,15 +359,6 @@ fn load_android_sidecar_metadata(
         display_name,
         calibraw_core::sidecar::decode_sidecar_metadata,
     )
-}
-
-pub fn load_android_review(
-    app: &AndroidApp,
-    raw_uri: &str,
-    display_name: &str,
-) -> Result<Option<calibraw_core::sidecar::PhotoReview>, calibraw_core::sidecar::SidecarError> {
-    load_android_sidecar_metadata(app, raw_uri, display_name)
-        .map(|metadata| metadata.map(|metadata| metadata.review))
 }
 
 /// What the library grid needs from the photo's sidecar; `None` when it has
@@ -379,25 +376,26 @@ pub fn load_android_sidecar_summary(
     )
 }
 
+/// Saves `edits`, keeping the sidecar's review, editing time and start.
 pub fn save_android(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
     edits: calibraw_core::sidecar::EditState,
-) -> Result<String, calibraw_core::sidecar::SidecarError> {
+) -> Result<calibraw_core::sidecar::SavedSidecar, calibraw_core::sidecar::SidecarError> {
     let metadata = load_android_sidecar_metadata(app, raw_uri, display_name)?.unwrap_or_default();
-    let review = metadata.review;
-    let editing_time_ms = metadata.editing_time_ms;
-    save_android_with_review_and_editing_time(
+    write_android_sidecar(
         app,
         raw_uri,
         display_name,
         edits,
-        review,
-        editing_time_ms,
+        metadata.review,
+        metadata.editing_time_ms,
+        calibraw_core::sidecar::SidecarStart::Keep.fingerprint(metadata.start)?,
     )
 }
 
+/// Saves `edits` with `review`, `editing_time_ms` and `start`.
 pub fn save_android_with_review_and_editing_time(
     app: &AndroidApp,
     raw_uri: &str,
@@ -405,17 +403,46 @@ pub fn save_android_with_review_and_editing_time(
     edits: calibraw_core::sidecar::EditState,
     review: calibraw_core::sidecar::PhotoReview,
     editing_time_ms: u64,
-) -> Result<String, calibraw_core::sidecar::SidecarError> {
-    let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
-    let uses_people = calibraw_core::sidecar::uses_people_analysis(&edits);
-    let bytes = calibraw_core::sidecar::encode_with_review_and_editing_time(
+    start: calibraw_core::sidecar::SidecarStart,
+) -> Result<calibraw_core::sidecar::SavedSidecar, calibraw_core::sidecar::SidecarError> {
+    let recorded = match start {
+        calibraw_core::sidecar::SidecarStart::Set(_) => None,
+        calibraw_core::sidecar::SidecarStart::Keep => {
+            load_android_sidecar_metadata(app, raw_uri, display_name)?
+                .and_then(|metadata| metadata.start)
+        }
+    };
+    write_android_sidecar(
+        app,
+        raw_uri,
+        display_name,
         edits,
         review,
         editing_time_ms,
+        start.fingerprint(recorded)?,
+    )
+}
+
+fn write_android_sidecar(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    edits: calibraw_core::sidecar::EditState,
+    review: calibraw_core::sidecar::PhotoReview,
+    editing_time_ms: u64,
+    start: calibraw_core::sidecar::EditFingerprint,
+) -> Result<calibraw_core::sidecar::SavedSidecar, calibraw_core::sidecar::SidecarError> {
+    let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
+    let uses_people = calibraw_core::sidecar::uses_people_analysis(&edits);
+    let encoded = calibraw_core::sidecar::encode_with_review_and_editing_time(
+        edits,
+        review,
+        editing_time_ms,
+        start,
     )?;
     let path =
         create_raw_sidecar_cache(app).map_err(calibraw_core::sidecar::SidecarError::Platform)?;
-    let result = calibraw_core::sidecar::write_synced(&path, &bytes).and_then(|()| {
+    let result = calibraw_core::sidecar::write_synced(&path, &encoded.bytes).and_then(|()| {
         publish_raw_sidecar(app, &path, raw_uri, display_name)
             .map_err(calibraw_core::sidecar::SidecarError::Platform)
     });
@@ -441,5 +468,8 @@ pub fn save_android_with_review_and_editing_time(
             calibraw_core::sidecar::PhotoCompanion::PeopleAnalysis,
         );
     }
-    result
+    result.map(|location| calibraw_core::sidecar::SavedSidecar {
+        location,
+        edited: encoded.edited,
+    })
 }

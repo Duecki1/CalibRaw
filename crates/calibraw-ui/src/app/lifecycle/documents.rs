@@ -481,6 +481,9 @@ impl CalibRawApp {
                     &self.masks.stack,
                 );
                 self.reset_edit_history();
+                if let Some(start) = loaded.start {
+                    self.persistence.document_start = start;
+                }
                 self.install_sidecar_target(
                     loaded.sidecar_target,
                     loaded.document_generation,
@@ -491,6 +494,7 @@ impl CalibRawApp {
                 if loaded.starts_unedited && !self.document_load_is_background() {
                     self.apply_new_photo_preset(frame);
                 }
+                self.settle_document_start();
                 log::info!("loaded RAW preview for {}", loaded.label);
                 if self.caps().has_folders() && !self.document_load_is_background() {
                     self.prefetch_neighbour_raws();

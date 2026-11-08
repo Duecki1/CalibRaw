@@ -15,55 +15,80 @@ pub fn load_desktop(raw_path: &Path) -> Result<Option<LoadedSidecar>, SidecarErr
 // a review update made from the gallery on another thread.
 static SIDECAR_SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub fn save_desktop(raw_path: &Path, edits: EditState) -> Result<PathBuf, SidecarError> {
+/// A written sidecar.
+#[derive(Clone, Debug)]
+pub struct SavedSidecar {
+    /// Where it was written, for messages.
+    pub location: String,
+    /// Whether its edits differ from the photo's start.
+    pub edited: bool,
+}
+
+/// Saves `edits`, keeping the sidecar's review, editing time and start.
+pub fn save_desktop(raw_path: &Path, edits: EditState) -> Result<SavedSidecar, SidecarError> {
+    save_desktop_impl(raw_path, edits, None, SidecarStart::Keep)
+}
+
+/// Saves `edits` with `editing_time_ms` and `start`, keeping the review.
+pub fn save_desktop_with_editing_time(
+    raw_path: &Path,
+    edits: EditState,
+    editing_time_ms: u64,
+    start: SidecarStart,
+) -> Result<SavedSidecar, SidecarError> {
+    save_desktop_impl(raw_path, edits, Some(editing_time_ms), start)
+}
+
+fn save_desktop_impl(
+    raw_path: &Path,
+    edits: EditState,
+    editing_time_override_ms: Option<u64>,
+    start: SidecarStart,
+) -> Result<SavedSidecar, SidecarError> {
     let _guard = SIDECAR_SAVE_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
     let metadata = load_sidecar_metadata(raw_path)?;
     let companions = CompanionUse::of(&edits);
-    let bytes =
-        encode_with_review_and_editing_time(edits, metadata.review, metadata.editing_time_ms)?;
-    atomic_write(&path, &bytes)?;
+    let encoded = encode_with_review_and_editing_time(
+        edits,
+        metadata.review,
+        editing_time_override_ms.unwrap_or(metadata.editing_time_ms),
+        start.fingerprint(metadata.start)?,
+    )?;
+    atomic_write(&path, &encoded.bytes)?;
     remove_unused_companions(raw_path, companions);
-    Ok(path)
-}
-
-pub fn save_desktop_with_editing_time(
-    raw_path: &Path,
-    edits: EditState,
-    editing_time_ms: u64,
-) -> Result<PathBuf, SidecarError> {
-    let _guard = SIDECAR_SAVE_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let path = sidecar_path_for_raw(raw_path);
-    let review = load_sidecar_metadata(raw_path)?.review;
-    let companions = CompanionUse::of(&edits);
-    let bytes = encode_with_review_and_editing_time(edits, review, editing_time_ms)?;
-    atomic_write(&path, &bytes)?;
-    remove_unused_companions(raw_path, companions);
-    Ok(path)
+    Ok(SavedSidecar {
+        location: path.display().to_string(),
+        edited: encoded.edited,
+    })
 }
 
 /// Preserve an unreadable or newer desktop sidecar before replacing it with a
 /// current-schema document. The caller must explicitly request this recovery.
+/// Returns the backup and the new sidecar.
 pub fn backup_and_replace_desktop_sidecar(
     raw_path: &Path,
     edits: EditState,
     editing_time_ms: u64,
-) -> Result<PathBuf, SidecarError> {
+    start: EditFingerprint,
+) -> Result<(PathBuf, SavedSidecar), SidecarError> {
     let _guard = SIDECAR_SAVE_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
     let companions = CompanionUse::of(&edits);
-    let bytes =
-        encode_with_review_and_editing_time(edits, PhotoReview::default(), editing_time_ms)?;
+    let encoded =
+        encode_with_review_and_editing_time(edits, PhotoReview::default(), editing_time_ms, start)?;
     let backup = create_backup_copy(&path)?;
-    atomic_write(&path, &bytes)?;
+    atomic_write(&path, &encoded.bytes)?;
     remove_unused_companions(raw_path, companions);
-    Ok(backup)
+    let saved = SavedSidecar {
+        location: path.display().to_string(),
+        edited: encoded.edited,
+    };
+    Ok((backup, saved))
 }
 
 /// Which derived files beside a RAW its saved edit uses: the AI-denoise
@@ -169,13 +194,21 @@ fn reset_desktop_adjustments_impl(
     if review == PhotoReview::default() && editing_time_ms == 0 {
         return remove_desktop_edits(raw_path);
     }
-    save_desktop_with_editing_time(raw_path, default_edit_state(), editing_time_ms)
-        .map_err(|error| error.to_string())?;
+    // Reset, the photo is back at a start: the defaults.
+    let start = EditFingerprint::of_defaults().map_err(|error| error.to_string())?;
+    save_desktop_with_editing_time(
+        raw_path,
+        default_edit_state(),
+        editing_time_ms,
+        SidecarStart::Set(start),
+    )
+    .map_err(|error| error.to_string())?;
     invalidate_developed_thumbnail_cache(raw_path)?;
     Ok(true)
 }
 
-/// Read review/timer metadata without decoding embedded masks or development state.
+/// Read review, timer and start metadata without decoding embedded masks or
+/// development state.
 pub fn decode_sidecar_metadata(bytes: &[u8]) -> Result<SidecarMetadata, SidecarError> {
     if bytes.len() as u64 > MAX_SIDECAR_BYTES {
         return Err(SidecarError::TooLarge(bytes.len() as u64));
@@ -188,6 +221,10 @@ pub fn decode_sidecar_metadata(bytes: &[u8]) -> Result<SidecarMetadata, SidecarE
         review: PhotoReview,
         #[serde(default)]
         editing_time_ms: u64,
+        #[serde(default)]
+        edit_fingerprint: Option<EditFingerprint>,
+        #[serde(default)]
+        start_fingerprint: Option<EditFingerprint>,
     }
     let header: MetadataHeader =
         serde_json::from_slice(bytes).map_err(|error| SidecarError::Invalid(error.to_string()))?;
@@ -198,12 +235,21 @@ pub fn decode_sidecar_metadata(bytes: &[u8]) -> Result<SidecarMetadata, SidecarE
             "unsupported review sidecar".to_owned(),
         ));
     }
+    let (start, edited) = match (header.edit_fingerprint, header.start_fingerprint) {
+        (Some(edits), Some(start)) => (Some(start), edits != start),
+        _ => (
+            None,
+            crate::migrations::edit_fingerprints::edited_without_fingerprints_in(bytes)?,
+        ),
+    };
     Ok(SidecarMetadata {
         review: PhotoReview {
             rating: header.review.rating.min(5),
             ..header.review
         },
         editing_time_ms: header.editing_time_ms,
+        start,
+        edited,
     })
 }
 
@@ -329,24 +375,30 @@ pub fn read_bounded(path: &Path) -> Result<Vec<u8>, SidecarError> {
 }
 
 /// Fingerprint only sidecar content that can affect rendered pixels.
-/// Review metadata and accumulated editing time intentionally do not invalidate thumbnails.
+/// Review metadata, accumulated editing time and the edit fingerprints
+/// intentionally do not invalidate thumbnails.
 pub fn render_fingerprint(bytes: &[u8]) -> Result<u64, String> {
     let canonical = if let Ok(mut document) = serde_json::from_slice::<serde_json::Value>(bytes) {
         if let Some(object) = document.as_object_mut() {
-            object.remove("review");
-            object.remove("editing_time_ms");
+            for field in [
+                "review",
+                "editing_time_ms",
+                "edit_fingerprint",
+                "start_fingerprint",
+            ] {
+                object.remove(field);
+            }
         }
         serde_json::to_vec(&document)
             .map_err(|error| format!("could not fingerprint edit sidecar: {error}"))?
     } else {
         bytes.to_vec()
     };
-    let mut fingerprint = 0xcbf2_9ce4_8422_2325u64;
-    for byte in canonical {
-        fingerprint ^= u64::from(byte);
-        fingerprint = fingerprint.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    Ok(fingerprint)
+    let mut hasher = Fnv1a::new();
+    hasher
+        .write_all(&canonical)
+        .map_err(|error| format!("could not fingerprint edit sidecar: {error}"))?;
+    Ok(hasher.finish())
 }
 
 /// What the library grid needs from a sidecar. A library whose sidecars are
@@ -356,6 +408,10 @@ pub struct SidecarSummary {
     pub review: PhotoReview,
     /// Whether the edits change the rendered photo.
     pub has_edits: bool,
+    /// Whether the edits differ from the photo's start. Defaulted so folder
+    /// caches from before it parse, and are then dropped for their version.
+    #[serde(default)]
+    pub edited: bool,
     /// Crop and rotation, applied to the camera's embedded preview.
     pub geometry: GeometryTransform,
     /// The sidecar's [`render_fingerprint`]; a developed thumbnail is current
@@ -369,6 +425,7 @@ impl SidecarSummary {
         Ok(Self {
             review: sidecar.review,
             has_edits: edit_state_has_adjustments(&sidecar.edits),
+            edited: sidecar.edited,
             geometry: sidecar.edits.geometry,
             render_fingerprint: render_fingerprint(bytes).map_err(SidecarError::Invalid)?,
         })

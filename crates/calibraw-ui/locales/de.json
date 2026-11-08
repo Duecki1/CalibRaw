@@ -415,6 +415,7 @@
   "Could not apply preset “{name}”: {error}": "Preset „{name}“ konnte nicht angewendet werden: {error}",
   "Could not apply {selection}: {error}": "{selection} konnte nicht angewendet werden: {error}",
   "Could not back up and replace sidecar: {error}": "Die Sidecar-Datei konnte nicht gesichert und ersetzt werden: {error}",
+  "Could not record how this photo looked when opened: {error}": "Es konnte nicht festgehalten werden, wie dieses Foto beim Öffnen aussah: {error}",
   "Could not build the reduced preview: {error}": "Die verkleinerte Vorschau konnte nicht erstellt werden: {error}",
   "Could not clear the thumbnail cache.": "Der Vorschaubild-Cache konnte nicht geleert werden.",
   "Could not clear thumbnail cache: {error}": "Der Vorschaubild-Cache konnte nicht geleert werden: {error}",

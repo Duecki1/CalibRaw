@@ -134,6 +134,45 @@ impl CalibRawApp {
         }
     }
 
+    /// The start a save of the open photo records when it saves `edits`.
+    pub(super) fn document_sidecar_start(
+        &self,
+        edits: &SidecarEditState,
+    ) -> Result<crate::sidecar::SidecarStart, crate::sidecar::SidecarError> {
+        match self.persistence.document_start {
+            DocumentStart::Opening => {
+                crate::sidecar::EditFingerprint::of(edits).map(crate::sidecar::SidecarStart::Set)
+            }
+            DocumentStart::Settled(start) => Ok(start),
+        }
+    }
+
+    /// Fixes the start of a photo that opened unedited at how opening left it,
+    /// the new-photo preset included.
+    pub(super) fn settle_document_start(&mut self) {
+        if self.persistence.document_start != DocumentStart::Opening {
+            return;
+        }
+        match crate::sidecar::EditFingerprint::of(&self.capture_sidecar_edit_state()) {
+            Ok(start) => {
+                self.persistence.document_start =
+                    DocumentStart::Settled(crate::sidecar::SidecarStart::Set(start));
+            }
+            Err(error) => {
+                // Saves then compare the edits with the defaults instead.
+                self.persistence.document_start =
+                    DocumentStart::Settled(crate::sidecar::SidecarStart::Keep);
+                self.report_error(
+                    ErrorKind::PhotoOpenedWithProblems,
+                    tr_fmt(
+                        "Could not record how this photo looked when opened: {error}",
+                        &[("error", &error)],
+                    ),
+                );
+            }
+        }
+    }
+
     pub(crate) fn queue_explicit_sidecar_save(&mut self) {
         self.commit_edit_history_now();
         self.queue_current_sidecar_save(true);
@@ -161,14 +200,23 @@ impl CalibRawApp {
             return;
         }
 
+        let edits = self.capture_sidecar_edit_state();
+        let start = match self.document_sidecar_start(&edits) {
+            Ok(start) => start,
+            Err(error) => {
+                self.report_sidecar_save_failure(Some(revision), error.to_string());
+                return;
+            }
+        };
         let mut request = SidecarSaveRequest {
             target,
             generation,
             revision,
             explicit,
-            edits: self.capture_sidecar_edit_state(),
+            edits,
             editing_time_ms: self.raw_editing_time_ms(),
             review: self.develop.review,
+            start,
         };
         if let Some(index) = self
             .persistence
@@ -319,11 +367,13 @@ impl CalibRawApp {
             .name("calibraw-sidecar-save".to_owned())
             .spawn(move || {
                 let recovery = request.clone();
+                let target = request.target.clone();
                 let result = save_sidecar_request(request, &*platform);
                 let recovery = matches!(&result, Err(crate::sidecar::SidecarError::Unsupported(_)))
                     .then_some(recovery);
                 let _ = sender.send(SidecarSaveEvent {
                     job,
+                    target,
                     result,
                     recovery,
                 });
@@ -396,9 +446,15 @@ impl CalibRawApp {
     pub(super) fn finish_sidecar_save(&mut self, event: SidecarSaveEvent) {
         self.persistence.sidecar_receiver = None;
         self.persistence.sidecar_in_flight = None;
+        // Also for a photo opened before: the library shows every saved edit.
+        if let Ok(saved) = &event.result {
+            self.library
+                .show_saved_edit_state(&(&event.target).into(), saved.edited);
+        }
         if event.job.generation == self.persistence.document_generation {
             match event.result {
-                Ok(location) => {
+                Ok(saved) => {
+                    let location = saved.location;
                     let recovered_from_failure =
                         self.persistence.sidecar_failed_revision.take().is_some();
                     self.persistence.sidecar_saved_revision = Some(event.job.revision);
@@ -511,15 +567,15 @@ impl CalibRawApp {
 pub(super) fn save_sidecar_request(
     request: SidecarSaveRequest,
     platform: &dyn Platform,
-) -> Result<String, crate::sidecar::SidecarError> {
+) -> Result<crate::sidecar::SavedSidecar, crate::sidecar::SidecarError> {
     match request.target {
         crate::sidecar::SidecarTarget::Desktop { raw_path } => {
             crate::sidecar::save_desktop_with_editing_time(
                 &raw_path,
                 request.edits,
                 request.editing_time_ms,
+                request.start,
             )
-            .map(|path| path.display().to_string())
         }
         crate::sidecar::SidecarTarget::Android {
             raw_uri,
@@ -530,6 +586,7 @@ pub(super) fn save_sidecar_request(
             request.edits,
             request.review,
             request.editing_time_ms,
+            request.start,
         ),
     }
 }

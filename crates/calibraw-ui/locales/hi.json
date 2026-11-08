@@ -415,6 +415,7 @@
   "Could not apply preset “{name}”: {error}": "“{name}” प्रीसेट लागू नहीं हो सका: {error}",
   "Could not apply {selection}: {error}": "{selection} लागू नहीं हो सका: {error}",
   "Could not back up and replace sidecar: {error}": "साइडकार का बैकअप लेकर उसे बदला नहीं जा सका: {error}",
+  "Could not record how this photo looked when opened: {error}": "खोलते समय यह फ़ोटो कैसी दिखती थी, यह दर्ज नहीं किया जा सका: {error}",
   "Could not build the reduced preview: {error}": "कम आकार का प्रीव्यू नहीं बनाया जा सका: {error}",
   "Could not clear the thumbnail cache.": "थंबनेल कैश साफ़ नहीं हो सका।",
   "Could not clear thumbnail cache: {error}": "थंबनेल कैश साफ़ नहीं हो सका: {error}",

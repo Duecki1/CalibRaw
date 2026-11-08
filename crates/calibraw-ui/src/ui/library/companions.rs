@@ -77,6 +77,15 @@ pub(crate) fn rendered_format_label(display_name: &str) -> Option<&'static str> 
     RenderedImageFormat::from_path(Path::new(display_name)).map(RenderedImageFormat::label)
 }
 
+// Look of the pills in a thumbnail's top-right corner, in points.
+const CORNER_BADGE_HEIGHT: f32 = 18.0;
+/// From the tile's top and right edges to the pills.
+const CORNER_BADGE_MARGIN: f32 = 6.0;
+/// Between neighbouring pills.
+const CORNER_BADGE_GAP: f32 = 4.0;
+const CORNER_BADGE_RADIUS: f32 = 5.0;
+const CORNER_BADGE_FILL: Color32 = Color32::from_black_alpha(160);
+
 /// Paints a small format pill (e.g. "JPEG") in the top-right corner of a
 /// thumbnail. `right_inset` leaves room for other corner indicators. Returns
 /// the pill, unless the thumbnail is too small for it.
@@ -86,23 +95,84 @@ pub(crate) fn paint_format_badge(
     label: &str,
     right_inset: f32,
 ) -> Option<egui::Rect> {
-    const HEIGHT: f32 = 18.0;
-    const MARGIN: f32 = 6.0;
     let font = FontId::proportional(10.0);
     let painter = ui.painter_at(rect);
     let text = painter.layout_no_wrap(label.to_owned(), font, Color32::WHITE);
-    let size = egui::vec2(text.size().x + 10.0, HEIGHT);
-    if size.x + MARGIN * 2.0 + right_inset > rect.width() || HEIGHT + MARGIN * 2.0 > rect.height() {
+    let size = egui::vec2(text.size().x + 10.0, CORNER_BADGE_HEIGHT);
+    if size.x + CORNER_BADGE_MARGIN * 2.0 + right_inset > rect.width()
+        || CORNER_BADGE_HEIGHT + CORNER_BADGE_MARGIN * 2.0 > rect.height()
+    {
         return None;
     }
     let badge = egui::Rect::from_min_size(
         egui::pos2(
-            rect.right() - MARGIN - right_inset - size.x,
-            rect.top() + MARGIN,
+            rect.right() - CORNER_BADGE_MARGIN - right_inset - size.x,
+            rect.top() + CORNER_BADGE_MARGIN,
         ),
         size,
     );
-    painter.rect_filled(badge, 5.0, Color32::from_black_alpha(160));
+    painter.rect_filled(badge, CORNER_BADGE_RADIUS, CORNER_BADGE_FILL);
     painter.galley(badge.center() - text.size() * 0.5, text, Color32::WHITE);
     Some(badge)
+}
+
+/// What a thumbnail's edit pill tells.
+#[derive(Clone, Copy)]
+pub(crate) struct EditBadge {
+    /// The photo's saved edits differ from its start.
+    pub(crate) edited: bool,
+    /// The thumbnail does not show the saved edits yet.
+    pub(crate) stale: bool,
+}
+
+/// Paints the edit pill in the top-right corner of a thumbnail, beside the
+/// format pill and in its look: the Adjustments icon for an edited photo,
+/// then a refresh arrow while the thumbnail is out of date. Returns the pill,
+/// if it has anything to show.
+pub(crate) fn paint_edit_badge(ui: &Ui, rect: egui::Rect, badge: EditBadge) -> Option<egui::Rect> {
+    /// Between the centres of neighbouring icons.
+    const ICON_STEP: f32 = 15.0;
+    const ICON_SIZE: f32 = 12.0;
+
+    let icons = [
+        (badge.edited, egui_phosphor::regular::SLIDERS_HORIZONTAL),
+        (badge.stale, egui_phosphor::regular::ARROWS_CLOCKWISE),
+    ];
+    let count = icons.iter().filter(|(shown, _)| *shown).count();
+    if count == 0 {
+        return None;
+    }
+    // Shrinks with tiny tiles rather than vanishing: the status always shows.
+    let scale = (rect.width().min(rect.height()) * 0.3 / CORNER_BADGE_HEIGHT).clamp(0.0, 1.0);
+    let height = CORNER_BADGE_HEIGHT * scale;
+    let width = height + (count - 1) as f32 * ICON_STEP * scale;
+    let pill = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.right() - CORNER_BADGE_MARGIN - width,
+            rect.top() + CORNER_BADGE_MARGIN,
+        ),
+        egui::vec2(width, height),
+    );
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(pill, CORNER_BADGE_RADIUS * scale, CORNER_BADGE_FILL);
+    let shown = icons.iter().filter(|(shown, _)| *shown);
+    for (index, (_, icon)) in shown.enumerate() {
+        painter.text(
+            egui::pos2(
+                pill.left() + height * 0.5 + index as f32 * ICON_STEP * scale,
+                pill.center().y,
+            ),
+            Align2::CENTER_CENTER,
+            *icon,
+            FontId::proportional(ICON_SIZE * scale),
+            Color32::WHITE,
+        );
+    }
+    Some(pill)
+}
+
+/// The `right_inset` that places a format pill to the left of `pill`, a
+/// corner pill of the tile at `rect`.
+pub(crate) fn corner_inset_beside(rect: egui::Rect, pill: egui::Rect) -> f32 {
+    rect.right() - CORNER_BADGE_MARGIN - pill.left() + CORNER_BADGE_GAP
 }

@@ -1,6 +1,8 @@
 {
+  "edited": true,
   "migrated": true,
   "saved": {
+    "edit_fingerprint": "e8dfeb644f8127cb",
     "editing_time_ms": 61000,
     "edits": {
       "ai_masks_need_update": false,
@@ -334,6 +336,7 @@
       "normal_assets": [2,3],
       "sky_asset": 1
     },
-    "schema_version": 5
+    "schema_version": 5,
+    "start_fingerprint": "cbf29ce484222325"
   }
 }

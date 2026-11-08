@@ -478,6 +478,7 @@
   "could not apply thumbnail local mask: {error}": "could not apply thumbnail local mask: {error}",
   "Could not apply {selection}: {error}": "Could not apply {selection}: {error}",
   "Could not back up and replace sidecar: {error}": "Could not back up and replace sidecar: {error}",
+  "Could not record how this photo looked when opened: {error}": "이 사진을 열었을 때의 상태를 기록할 수 없습니다: {error}",
   "could not build range-mask thumbnail source: {error}": "could not build range-mask thumbnail source: {error}",
   "Could not build the reduced preview: {error}": "Could not build the reduced preview: {error}",
   "Could not clear the thumbnail cache.": "Could not clear the thumbnail cache.",

@@ -202,7 +202,7 @@ pub(in crate::ui::library) fn load_media_library_thumbnail(
             summary.render_fingerprint,
             THUMBNAIL_EDGE,
         ) {
-            Ok(Some(thumbnail)) => return Ok(photo.developed(thumbnail, Some(summary.review))),
+            Ok(Some(thumbnail)) => return Ok(photo.developed(thumbnail, Some(summary.into()))),
             Ok(None) => {}
             Err(error) => log::warn!(
                 "could not use Android developed-thumbnail cache for {}: {error}",
@@ -213,7 +213,7 @@ pub(in crate::ui::library) fn load_media_library_thumbnail(
     photo.camera_preview(
         sidecar.as_ref().map(|summary| summary.geometry),
         sidecar.as_ref().is_some_and(|summary| summary.has_edits),
-        sidecar.map(|summary| summary.review),
+        sidecar.as_ref().map(SidecarBadges::from),
     )
 }
 
@@ -235,16 +235,20 @@ impl MediaPhoto<'_> {
             .load_developed_thumbnail_cache(self.uri, display_name, THUMBNAIL_EDGE)
         {
             Ok(Some(thumbnail)) => {
-                let review = self
+                let badges = self
                     .platform
-                    .load_sidecar_review(self.uri, display_name)
+                    .load_sidecar_metadata(self.uri, display_name)
                     .unwrap_or_else(|error| {
                         log::warn!(
                             "could not inspect Android review sidecar for {display_name}: {error}"
                         );
                         None
+                    })
+                    .map(|metadata| SidecarBadges {
+                        review: metadata.review,
+                        edited: metadata.edited,
                     });
-                return Ok(self.developed(thumbnail, review));
+                return Ok(self.developed(thumbnail, badges));
             }
             Ok(None) => {}
             Err(error) => log::warn!(
@@ -263,7 +267,10 @@ impl MediaPhoto<'_> {
             sidecar
                 .as_ref()
                 .is_some_and(|sidecar| crate::sidecar::edit_state_has_adjustments(&sidecar.edits)),
-            sidecar.map(|sidecar| sidecar.review),
+            sidecar.map(|sidecar| SidecarBadges {
+                review: sidecar.review,
+                edited: sidecar.edited,
+            }),
         )
     }
 
@@ -296,10 +303,10 @@ impl MediaPhoto<'_> {
     fn developed(
         &self,
         thumbnail: RawThumbnail,
-        review: Option<crate::sidecar::PhotoReview>,
+        badges: Option<SidecarBadges>,
     ) -> LoadedLibraryThumbnail {
         let mut loaded = loaded_library_thumbnail(thumbnail, true);
-        loaded.review = review;
+        loaded.badges = badges;
         loaded.display_metadata = self.pending_display_metadata();
         loaded
     }
@@ -309,7 +316,7 @@ impl MediaPhoto<'_> {
         &self,
         geometry: Option<crate::pipeline::GeometryTransform>,
         has_edits: bool,
-        review: Option<crate::sidecar::PhotoReview>,
+        badges: Option<SidecarBadges>,
     ) -> Result<LoadedLibraryThumbnail, String> {
         let (thumbnail, display_metadata) = self.embedded_preview()?;
         let thumbnail = match geometry {
@@ -321,7 +328,7 @@ impl MediaPhoto<'_> {
         } else {
             loaded_library_thumbnail(thumbnail, false)
         };
-        loaded.review = review;
+        loaded.badges = badges;
         loaded.display_metadata = display_metadata;
         Ok(loaded)
     }

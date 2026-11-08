@@ -415,6 +415,7 @@
   "Could not apply preset “{name}”: {error}": "プリセット「{name}」を適用できませんでした：{error}",
   "Could not apply {selection}: {error}": "{selection}を適用できませんでした：{error}",
   "Could not back up and replace sidecar: {error}": "サイドカーファイルをバックアップして置き換えられませんでした：{error}",
+  "Could not record how this photo looked when opened: {error}": "この写真を開いたときの状態を記録できませんでした：{error}",
   "Could not build the reduced preview: {error}": "縮小プレビューを作成できませんでした：{error}",
   "Could not clear the thumbnail cache.": "サムネイルキャッシュを消去できませんでした。",
   "Could not clear thumbnail cache: {error}": "サムネイルキャッシュを消去できませんでした：{error}",

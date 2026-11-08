@@ -17,11 +17,14 @@ use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod edit_fingerprint;
 mod files;
 mod mask_assets;
 mod remove_assets;
 mod size_limits;
 use crate::migrations::{self, LegacyEdits};
+use edit_fingerprint::Fnv1a;
+pub use edit_fingerprint::{EditFingerprint, SidecarStart};
 pub use files::*;
 pub(crate) use mask_assets::decode_mask_png;
 use mask_assets::*;
@@ -266,6 +269,10 @@ pub struct PhotoReview {
 pub struct SidecarMetadata {
     pub review: PhotoReview,
     pub editing_time_ms: u64,
+    /// The photo's start; `None` while the sidecar records none.
+    pub start: Option<EditFingerprint>,
+    /// Whether the edits differ from the photo's start.
+    pub edited: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -277,6 +284,13 @@ struct SidecarDocument {
     review: PhotoReview,
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     editing_time_ms: u64,
+    /// The [`EditFingerprint`] of `edits`. Sidecars written before edit
+    /// fingerprints have neither fingerprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    edit_fingerprint: Option<EditFingerprint>,
+    /// The [`EditFingerprint`] of the photo's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    start_fingerprint: Option<EditFingerprint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mask_assets: Vec<SidecarMaskAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -364,7 +378,19 @@ pub struct LoadedSidecar {
     pub edits: EditState,
     pub review: PhotoReview,
     pub editing_time_ms: u64,
+    /// The photo's start; `None` while the sidecar records none.
+    pub start: Option<EditFingerprint>,
+    /// Whether the edits differ from the photo's start.
+    pub edited: bool,
     pub migrated: bool,
+}
+
+/// A serialized sidecar.
+#[derive(Clone, Debug)]
+pub struct EncodedSidecar {
+    pub bytes: Vec<u8>,
+    /// Whether its edits differ from the photo's start.
+    pub edited: bool,
 }
 
 #[derive(Debug)]
@@ -424,19 +450,20 @@ pub use desktop::{
     save_developed_thumbnail_cache,
 };
 
+/// `edits` alone, for a photo that starts at the defaults.
 pub fn encode(edits: EditState) -> Result<Vec<u8>, SidecarError> {
-    encode_with_review(edits, PhotoReview::default())
+    let start = EditFingerprint::of_defaults()?;
+    encode_with_review_and_editing_time(edits, PhotoReview::default(), 0, start)
+        .map(|encoded| encoded.bytes)
 }
 
-pub fn encode_with_review(edits: EditState, review: PhotoReview) -> Result<Vec<u8>, SidecarError> {
-    encode_with_review_and_editing_time(edits, review, 0)
-}
-
+/// `edits` with the photo's review, editing time and `start`.
 pub fn encode_with_review_and_editing_time(
     mut edits: EditState,
     review: PhotoReview,
     editing_time_ms: u64,
-) -> Result<Vec<u8>, SidecarError> {
+    start: EditFingerprint,
+) -> Result<EncodedSidecar, SidecarError> {
     if review.rating > 5 {
         return Err(SidecarError::Invalid(
             "rating must be between 0 and 5".to_owned(),
@@ -444,6 +471,7 @@ pub fn encode_with_review_and_editing_time(
     }
     synchronize_subject_refinement(&mut edits);
     validate_edit_state(&edits)?;
+    let edit_fingerprint = EditFingerprint::of(&edits)?;
     let schema_version = migrations::older_readers::schema_version(&edits, SIDECAR_SCHEMA_VERSION);
     let mask_assets = extract_mask_assets(&mut edits)?;
     let (remove_assets, remove_asset_refs) = extract_remove_assets(&mut edits)?;
@@ -453,6 +481,8 @@ pub fn encode_with_review_and_editing_time(
         edits,
         review,
         editing_time_ms,
+        edit_fingerprint: Some(edit_fingerprint),
+        start_fingerprint: Some(start),
         mask_assets: mask_assets.assets,
         mask_asset_refs: mask_assets.references,
         scene_depth: mask_assets.scene_depth,
@@ -467,7 +497,10 @@ pub fn encode_with_review_and_editing_time(
             SidecarError::Invalid(format!("could not serialize edit: {error}"))
         }
     })?;
-    Ok(writer.bytes)
+    Ok(EncodedSidecar {
+        bytes: writer.bytes,
+        edited: edit_fingerprint != start,
+    })
 }
 
 /// A decoded document and, for schemas 1 to 4, where it kept scene depth.
@@ -554,6 +587,19 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
     }
     validate_edit_state(&document.edits)?;
 
+    let (start, edited) = match (document.edit_fingerprint, document.start_fingerprint) {
+        // Saved at its start, the photo stays there although a later release
+        // may fingerprint the same edits differently: the start is taken
+        // again from the edits as read.
+        (Some(edits), Some(start)) if edits == start => {
+            (Some(EditFingerprint::of(&document.edits)?), false)
+        }
+        (Some(_), Some(start)) => (Some(start), true),
+        _ => (
+            None,
+            migrations::edit_fingerprints::edited_without_fingerprints(&document.edits)?,
+        ),
+    };
     Ok(LoadedSidecar {
         edits: document.edits,
         review: PhotoReview {
@@ -561,6 +607,8 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
             ..document.review
         },
         editing_time_ms: document.editing_time_ms,
+        start,
+        edited,
         migrated: depth_migrated || edits_migrated,
     })
 }

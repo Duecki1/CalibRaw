@@ -478,6 +478,7 @@
   "could not apply thumbnail local mask: {error}": "impossible d’appliquer le masque local de la vignette : {error}",
   "Could not apply {selection}: {error}": "Impossible d’appliquer {selection} : {error}",
   "Could not back up and replace sidecar: {error}": "Impossible de sauvegarder et remplacer le fichier annexe : {error}",
+  "Could not record how this photo looked when opened: {error}": "Impossible d’enregistrer l’aspect de cette photo à l’ouverture : {error}",
   "could not build range-mask thumbnail source: {error}": "impossible de créer la source de vignette du masque de plage : {error}",
   "Could not build the reduced preview: {error}": "Impossible de créer l’aperçu réduit : {error}",
   "Could not clear the thumbnail cache.": "Impossible de vider le cache des vignettes.",

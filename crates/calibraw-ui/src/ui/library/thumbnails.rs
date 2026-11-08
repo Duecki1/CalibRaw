@@ -389,7 +389,7 @@ pub(super) fn loaded_library_thumbnail(
     LoadedLibraryThumbnail {
         thumbnail,
         resident_thumbnail,
-        review: None,
+        badges: None,
         developed,
         developed_thumbnail_stale: false,
         developed_render_pending: false,

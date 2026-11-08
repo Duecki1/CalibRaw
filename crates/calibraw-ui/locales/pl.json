@@ -415,6 +415,7 @@
   "Could not apply preset “{name}”: {error}": "Nie udało się zastosować ustawienia wstępnego „{name}”: {error}",
   "Could not apply {selection}: {error}": "Nie udało się zastosować {selection}: {error}",
   "Could not back up and replace sidecar: {error}": "Nie udało się utworzyć kopii zapasowej pliku sidecar i zastąpić go: {error}",
+  "Could not record how this photo looked when opened: {error}": "Nie udało się zapisać, jak to zdjęcie wyglądało po otwarciu: {error}",
   "Could not build the reduced preview: {error}": "Nie udało się utworzyć pomniejszonego podglądu: {error}",
   "Could not clear the thumbnail cache.": "Nie udało się wyczyścić pamięci podręcznej miniatur.",
   "Could not clear thumbnail cache: {error}": "Nie udało się wyczyścić pamięci podręcznej miniatur: {error}",

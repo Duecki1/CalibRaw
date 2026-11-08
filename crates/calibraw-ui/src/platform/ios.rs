@@ -6,7 +6,10 @@ use super::{
     PickerResult, Platform, PlatformCaps, PublishedExport,
 };
 use calibraw_core::pipeline::RawThumbnail;
-use calibraw_core::sidecar::{EditState, LoadedSidecar, PhotoReview, SidecarError};
+use calibraw_core::sidecar::{
+    EditState, LoadedSidecar, PhotoReview, SavedSidecar, SidecarError, SidecarMetadata,
+    SidecarStart,
+};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::Deserialize;
 use std::collections::VecDeque;
@@ -419,12 +422,12 @@ impl Platform for IosPlatform {
         self.state.library.load_sidecar(uri, name)
     }
 
-    fn load_sidecar_review(
+    fn load_sidecar_metadata(
         &self,
         uri: &str,
         name: &str,
-    ) -> Result<Option<PhotoReview>, SidecarError> {
-        self.state.library.load_sidecar_review(uri, name)
+    ) -> Result<Option<SidecarMetadata>, SidecarError> {
+        self.state.library.load_sidecar_metadata(uri, name)
     }
 
     fn save_sidecar(
@@ -432,7 +435,7 @@ impl Platform for IosPlatform {
         uri: &str,
         name: &str,
         edits: EditState,
-    ) -> Result<String, SidecarError> {
+    ) -> Result<SavedSidecar, SidecarError> {
         self.state.library.save_sidecar(uri, name, edits)
     }
 
@@ -443,10 +446,18 @@ impl Platform for IosPlatform {
         edits: EditState,
         review: PhotoReview,
         editing_time_ms: u64,
-    ) -> Result<String, SidecarError> {
+        start: SidecarStart,
+    ) -> Result<SavedSidecar, SidecarError> {
         self.state
             .library
-            .save_sidecar_with_review_and_editing_time(uri, name, edits, review, editing_time_ms)
+            .save_sidecar_with_review_and_editing_time(
+                uri,
+                name,
+                edits,
+                review,
+                editing_time_ms,
+                start,
+            )
     }
 
     fn reset_adjustments(

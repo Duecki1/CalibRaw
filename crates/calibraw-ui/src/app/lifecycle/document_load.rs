@@ -5,6 +5,7 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::FilmSettlement;
+use crate::sidecar::SidecarStart;
 use std::sync::RwLock;
 
 /// The load notice for edits migrated to the current sidecar format. It is
@@ -213,6 +214,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             mut sidecar_needs_rewrite,
             use_adaptive_detail_defaults,
             starts_unedited,
+            start,
         } = edits;
         if use_adaptive_detail_defaults {
             original_raw.apply_adaptive_detail_defaults(&mut exposure);
@@ -413,6 +415,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             look_lut_table,
             geometry,
             starts_unedited,
+            start,
         })
     })();
 
@@ -707,6 +710,8 @@ struct InitialEdits {
     /// Documents without saved edits adopt camera-specific detail defaults.
     use_adaptive_detail_defaults: bool,
     starts_unedited: bool,
+    /// `None` for a reload, which keeps the open photo's start.
+    start: Option<DocumentStart>,
 }
 
 impl InitialEdits {
@@ -717,7 +722,10 @@ impl InitialEdits {
         default_exposure: ExposureParams,
     ) -> Self {
         if let Some(edits) = reload_edits {
-            return Self::from_edits(edits, editing_time_override_ms.unwrap_or(0), None, true);
+            return Self {
+                start: None,
+                ..Self::from_edits(edits, editing_time_override_ms.unwrap_or(0), None, true)
+            };
         }
         match sidecar {
             // A sidecar without adjustments (written by a rating or a reset)
@@ -733,16 +741,22 @@ impl InitialEdits {
                 let warning = loaded
                     .migrated
                     .then(|| sidecar_migrated_notice().to_owned());
-                Self::from_edits(
-                    loaded.edits,
-                    loaded.editing_time_ms,
-                    warning,
-                    loaded.migrated,
-                )
+                let start = loaded.start.map_or(SidecarStart::Keep, SidecarStart::Set);
+                Self {
+                    start: Some(DocumentStart::Settled(start)),
+                    ..Self::from_edits(
+                        loaded.edits,
+                        loaded.editing_time_ms,
+                        warning,
+                        loaded.migrated,
+                    )
+                }
             }
             Ok(None) => Self::defaults(default_exposure, None),
+            // Saving replaces the unreadable sidecar, whose start is lost.
             Err(error) => Self {
                 starts_unedited: false,
+                start: Some(DocumentStart::Settled(SidecarStart::Keep)),
                 ..Self::defaults(
                     default_exposure,
                     Some(tr_fmt(
@@ -773,6 +787,7 @@ impl InitialEdits {
             sidecar_needs_rewrite,
             use_adaptive_detail_defaults: false,
             starts_unedited: false,
+            start: Some(DocumentStart::Settled(SidecarStart::Keep)),
         }
     }
 
@@ -790,6 +805,7 @@ impl InitialEdits {
             sidecar_needs_rewrite: false,
             use_adaptive_detail_defaults: true,
             starts_unedited: true,
+            start: Some(DocumentStart::Opening),
         }
     }
 }

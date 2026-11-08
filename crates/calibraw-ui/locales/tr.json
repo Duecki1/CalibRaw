@@ -417,6 +417,7 @@
   "Could not apply preset “{name}”: {error}": "“{name}” ön ayarı uygulanamadı: {error}",
   "Could not apply {selection}: {error}": "{selection} uygulanamadı: {error}",
   "Could not back up and replace sidecar: {error}": "Yan dosya yedeklenip değiştirilemedi: {error}",
+  "Could not record how this photo looked when opened: {error}": "Bu fotoğrafın açıldığındaki hâli kaydedilemedi: {error}",
   "Could not build the reduced preview: {error}": "Küçültülmüş önizleme oluşturulamadı: {error}",
   "Could not clear the thumbnail cache.": "Küçük resim önbelleği temizlenemedi.",
   "Could not clear thumbnail cache: {error}": "Küçük resim önbelleği temizlenemedi: {error}",

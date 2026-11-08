@@ -478,6 +478,7 @@
   "could not apply thumbnail local mask: {error}": "nu s-a putut aplica masca locală a miniaturii: {error}",
   "Could not apply {selection}: {error}": "Nu s-a putut aplica {selection}: {error}",
   "Could not back up and replace sidecar: {error}": "Nu s-a putut face o copie de siguranță și înlocui sidecarul: {error}",
+  "Could not record how this photo looked when opened: {error}": "Nu s-a putut înregistra cum arăta această fotografie la deschidere: {error}",
   "could not build range-mask thumbnail source: {error}": "nu s-a putut crea sursa miniaturii pentru masca de interval: {error}",
   "Could not build the reduced preview: {error}": "Nu s-a putut crea previzualizarea redusă: {error}",
   "Could not clear the thumbnail cache.": "Nu s-a putut goli memoria cache a miniaturilor.",

@@ -417,6 +417,7 @@
   "Could not apply preset “{name}”: {error}": "Не удалось применить пресет «{name}»: {error}",
   "Could not apply {selection}: {error}": "Не удалось применить «{selection}»: {error}",
   "Could not back up and replace sidecar: {error}": "Не удалось создать резервную копию и заменить сопутствующий файл коррекций: {error}",
+  "Could not record how this photo looked when opened: {error}": "Не удалось запомнить, как выглядело это фото при открытии: {error}",
   "Could not build the reduced preview: {error}": "Не удалось создать уменьшенный предварительный просмотр: {error}",
   "Could not clear the thumbnail cache.": "Не удалось очистить кэш миниатюр.",
   "Could not clear thumbnail cache: {error}": "Не удалось очистить кэш миниатюр: {error}",

@@ -46,6 +46,7 @@
 mod component_names;
 pub(crate) mod depth_range_feather;
 pub mod desktop_model_folder;
+pub(crate) mod edit_fingerprints;
 mod effect_sliders;
 pub(crate) mod older_readers;
 pub mod onnx_runtime_selection;

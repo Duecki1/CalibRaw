@@ -1,7 +1,8 @@
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
 use crate::sidecar::{
-    EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SidecarError, SidecarSummary,
+    EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SavedSidecar, SidecarError,
+    SidecarMetadata, SidecarStart, SidecarSummary,
 };
 use calibraw_core::display_metadata_cache::FileStamp;
 use calibraw_core::pipeline::RawDisplayMetadata;
@@ -456,19 +457,22 @@ pub(crate) trait Platform: Send + Sync {
     ) -> Result<Option<LoadedSidecar>, SidecarError> {
         Ok(None)
     }
-    fn load_sidecar_review(
+    /// The sidecar's review, editing time and start, without decoding its
+    /// edits; `None` when the photo has no sidecar.
+    fn load_sidecar_metadata(
         &self,
         _raw_uri: &str,
         _display_name: &str,
-    ) -> Result<Option<PhotoReview>, SidecarError> {
+    ) -> Result<Option<SidecarMetadata>, SidecarError> {
         Ok(None)
     }
+    /// Saves `edits`, keeping the sidecar's review, editing time and start.
     fn save_sidecar(
         &self,
         _raw_uri: &str,
         _display_name: &str,
         _edits: EditState,
-    ) -> Result<String, SidecarError> {
+    ) -> Result<SavedSidecar, SidecarError> {
         Err(SidecarError::Io(std::io::Error::other(unavailable(
             "media-library sidecars",
         ))))
@@ -480,7 +484,8 @@ pub(crate) trait Platform: Send + Sync {
         _edits: EditState,
         _review: PhotoReview,
         _editing_time_ms: u64,
-    ) -> Result<String, SidecarError> {
+        _start: SidecarStart,
+    ) -> Result<SavedSidecar, SidecarError> {
         Err(SidecarError::Io(std::io::Error::other(unavailable(
             "media-library sidecars",
         ))))

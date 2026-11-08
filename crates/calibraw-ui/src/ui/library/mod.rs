@@ -73,7 +73,9 @@ use thumbnails::*;
 
 pub(crate) use actions::photo_actions_menu;
 pub(crate) use actions::{apply_library_action, show_library_action_overlays};
-pub(crate) use companions::{paint_format_badge, rendered_format_label};
+pub(crate) use companions::{
+    corner_inset_beside, paint_edit_badge, paint_format_badge, rendered_format_label, EditBadge,
+};
 pub(crate) use merge::{MergeKind, MergeOutcome};
 pub(crate) use thumbnails::{load_desktop_cached_thumbnail, load_desktop_reference_preview};
 pub(crate) use view::Library;
@@ -225,6 +227,17 @@ pub(crate) enum LibraryAssetId {
     Android(String),
 }
 
+impl From<&crate::sidecar::SidecarTarget> for LibraryAssetId {
+    fn from(target: &crate::sidecar::SidecarTarget) -> Self {
+        match target {
+            crate::sidecar::SidecarTarget::Desktop { raw_path } => Self::Desktop(raw_path.clone()),
+            crate::sidecar::SidecarTarget::Android { raw_uri, .. } => {
+                Self::Android(raw_uri.clone())
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum LibraryLocator {
     Desktop(PathBuf),
@@ -234,6 +247,9 @@ pub(crate) enum LibraryLocator {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LibraryAssetMetadata {
     pub(crate) review: crate::sidecar::PhotoReview,
+    /// Whether the saved edits differ from the photo's start
+    /// ([`crate::sidecar::EditFingerprint`]).
+    pub(crate) edited: bool,
     pub(crate) bytes: u64,
     pub(crate) dimensions_hint: Option<[u32; 2]>,
     /// Capture settings read from folder photos; zero for media-library photos.
@@ -283,9 +299,9 @@ impl LibraryAsset {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        let review = crate::sidecar::load_photo_review(&path).unwrap_or_else(|error| {
+        let sidecar = crate::sidecar::load_sidecar_metadata(&path).unwrap_or_else(|error| {
             log::warn!("Could not read review for {}: {error}", path.display());
-            crate::sidecar::PhotoReview::default()
+            crate::sidecar::SidecarMetadata::default()
         });
         Self {
             id: LibraryAssetId::Desktop(path.clone()),
@@ -293,7 +309,8 @@ impl LibraryAsset {
             display_name,
             locator: LibraryLocator::Desktop(path),
             metadata: LibraryAssetMetadata {
-                review,
+                review: sidecar.review,
+                edited: sidecar.edited,
                 bytes,
                 dimensions_hint,
                 iso_speed: 0.0,
@@ -314,6 +331,7 @@ impl LibraryAsset {
             locator: LibraryLocator::Android { uri: document.uri },
             metadata: LibraryAssetMetadata {
                 review: crate::sidecar::PhotoReview::default(),
+                edited: false,
                 bytes: document.bytes,
                 dimensions_hint: None,
                 iso_speed: 0.0,
@@ -363,6 +381,15 @@ impl LibraryEntry {
     }
 }
 
+impl From<&crate::sidecar::SidecarSummary> for SidecarBadges {
+    fn from(summary: &crate::sidecar::SidecarSummary) -> Self {
+        Self {
+            review: summary.review,
+            edited: summary.edited,
+        }
+    }
+}
+
 /// A photo as Develop's filmstrip shows it, from folders or the media library.
 #[derive(Clone)]
 pub(crate) struct FilmstripItem {
@@ -372,10 +399,19 @@ pub(crate) struct FilmstripItem {
     pub(crate) developed_thumbnail_pending: bool,
 }
 
+/// What a tile's badges show from the photo's sidecar.
+#[derive(Clone, Copy, Debug)]
+struct SidecarBadges {
+    review: crate::sidecar::PhotoReview,
+    /// Whether the edits differ from the photo's start.
+    edited: bool,
+}
+
 struct LoadedLibraryThumbnail {
     thumbnail: RawThumbnail,
     resident_thumbnail: RawThumbnail,
-    review: Option<crate::sidecar::PhotoReview>,
+    /// Read where loading the thumbnail reads the sidecar: in the media library.
+    badges: Option<SidecarBadges>,
     developed: bool,
     developed_thumbnail_stale: bool,
     developed_render_pending: bool,

@@ -480,6 +480,13 @@ impl LibraryState {
         changed && self.sorts_by_review()
     }
 
+    /// Shows whether the photo's saved edits now differ from its start.
+    pub(crate) fn show_saved_edit_state(&mut self, asset_id: &LibraryAssetId, edited: bool) {
+        if let Some(index) = self.entry_indices.get(asset_id).copied() {
+            self.entries[index].asset.metadata.edited = edited;
+        }
+    }
+
     /// Shows a review saved outside the library, re-sorting when needed.
     pub(crate) fn show_saved_review(
         &mut self,

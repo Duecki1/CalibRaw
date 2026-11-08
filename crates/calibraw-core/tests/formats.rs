@@ -3,7 +3,8 @@
 //! `<name>.expected.json` beside it.
 //!
 //! - `sidecar/*.json`: edit sidecars. `migrated` records whether CalibRaw
-//!   saves the file again in the current layout.
+//!   saves the file again in the current layout, `edited` whether its edits
+//!   differ from the photo's start.
 //! - `preset/*.json`: native presets.
 //! - `xmp/*.xmp`: Lightroom and Camera Raw presets, with the warnings the
 //!   import shows.
@@ -91,13 +92,21 @@ fn read(kind: &str, path: &Path) -> Value {
 
 fn read_sidecar(path: &Path) -> Result<Value, String> {
     let loaded = sidecar::decode(&fs::read(path).unwrap()).map_err(|error| error.to_string())?;
+    let start = sidecar::SidecarStart::Keep
+        .fingerprint(loaded.start)
+        .map_err(|error| error.to_string())?;
     let saved = sidecar::encode_with_review_and_editing_time(
         loaded.edits,
         loaded.review,
         loaded.editing_time_ms,
+        start,
     )
     .map_err(|error| error.to_string())?;
-    Ok(json!({ "migrated": loaded.migrated, "saved": parse(&saved) }))
+    Ok(json!({
+        "migrated": loaded.migrated,
+        "edited": loaded.edited,
+        "saved": parse(&saved.bytes),
+    }))
 }
 
 fn read_preset(path: &Path) -> Result<Value, String> {

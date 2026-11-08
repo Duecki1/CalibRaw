@@ -452,12 +452,13 @@ impl LibraryState {
                         .map(|mut asset| {
                             if let Some(mut entry) = previous.remove(&asset.id) {
                                 if same_library_asset_identity(&entry.asset, &asset) {
-                                    // A media-library scan reads no sidecars, so the review on
-                                    // screen stays: it may hold a rating not saved yet, and a
-                                    // thumbnail already on screen is not loaded again to
-                                    // supply one.
+                                    // A media-library scan reads no sidecars, so the review and
+                                    // edit badge on screen stay: the review may hold a rating not
+                                    // saved yet, and a thumbnail already on screen is not loaded
+                                    // again to supply either.
                                     if asset.android_uri().is_some() {
                                         asset.metadata.review = entry.asset.metadata.review;
+                                        asset.metadata.edited = entry.asset.metadata.edited;
                                     }
                                     entry.asset = asset;
                                     entry.thumbnail_error = None;
@@ -510,7 +511,7 @@ impl LibraryState {
                             let LoadedLibraryThumbnail {
                                 thumbnail,
                                 resident_thumbnail,
-                                review,
+                                badges,
                                 developed,
                                 developed_thumbnail_stale,
                                 developed_render_pending,
@@ -520,10 +521,12 @@ impl LibraryState {
                             let install_pixels =
                                 display_priority || self.entries[index].texture.is_some();
                             self.entries[index].resident_thumbnail = Some(resident_thumbnail);
-                            if let Some(review) =
-                                review.filter(|_| !self.review_save_pending(&asset_id))
-                            {
-                                review_sort_changed |= self.show_review(&asset_id, review);
+                            if let Some(badges) = badges {
+                                if !self.review_save_pending(&asset_id) {
+                                    review_sort_changed |=
+                                        self.show_review(&asset_id, badges.review);
+                                }
+                                self.entries[index].asset.metadata.edited = badges.edited;
                             }
                             self.entries[index].texture_is_resident = false;
                             if install_pixels {

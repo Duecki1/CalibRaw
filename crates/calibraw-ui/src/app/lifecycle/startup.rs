@@ -277,6 +277,7 @@ impl CalibRawApp {
             },
             persistence: PersistenceState {
                 history: edit_history,
+                document_start: DocumentStart::Settled(crate::sidecar::SidecarStart::Keep),
                 lens_restore_masks: None,
                 sidecar_target: None,
                 document_generation: 0,

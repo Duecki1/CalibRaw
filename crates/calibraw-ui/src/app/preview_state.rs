@@ -340,6 +340,8 @@ pub(crate) struct LoadedPreview {
     pub(super) look_lut_table: Option<Arc<crate::luts::CubeLut>>,
     pub(super) geometry: GeometryTransform,
     pub(super) starts_unedited: bool,
+    /// The photo's start; `None` for a reload, which keeps the open photo's.
+    pub(super) start: Option<DocumentStart>,
 }
 
 pub(crate) struct PreparedPreviewRebuild {

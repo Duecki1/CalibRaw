@@ -415,6 +415,7 @@
   "Could not apply preset “{name}”: {error}": "無法套用預設“{name}”：{error}",
   "Could not apply {selection}: {error}": "無法套用 {selection}：{error}",
   "Could not back up and replace sidecar: {error}": "無法備份並取代邊車檔案：{error}",
+  "Could not record how this photo looked when opened: {error}": "無法記錄此相片開啟時的狀態：{error}",
   "Could not build the reduced preview: {error}": "無法構建縮小後的預覽：{error}",
   "Could not clear the thumbnail cache.": "無法清除縮略圖快取。",
   "Could not clear thumbnail cache: {error}": "無法清除縮略圖快取：{error}",

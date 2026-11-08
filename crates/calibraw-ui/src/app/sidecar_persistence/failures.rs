@@ -126,8 +126,19 @@ impl CalibRawApp {
         } else {
             request.editing_time_ms
         };
-        match crate::sidecar::backup_and_replace_desktop_sidecar(raw_path, edits, editing_time_ms) {
-            Ok(backup) => {
+        // The unreadable sidecar's start is lost with it.
+        let replaced = request.start.fingerprint(None).and_then(|start| {
+            crate::sidecar::backup_and_replace_desktop_sidecar(
+                raw_path,
+                edits,
+                editing_time_ms,
+                start,
+            )
+        });
+        match replaced {
+            Ok((backup, saved)) => {
+                self.library
+                    .show_saved_edit_state(&(&request.target).into(), saved.edited);
                 self.persistence.sidecar_save_error_dialog = None;
                 self.persistence.sidecar_recovery = None;
                 self.ui.notice = Some(tr_fmt(

@@ -5,7 +5,6 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 pub(crate) const CANVAS_BACKDROP: Color32 = Color32::from_rgb(13, 15, 18);
-pub(crate) const STATUS_WARNING: Color32 = Color32::from_rgb(244, 142, 48);
 pub(crate) const MASK_ADD: Color32 = Color32::from_rgb(78, 163, 255);
 pub(crate) const MASK_SUBTRACT: Color32 = Color32::from_rgb(255, 105, 105);
 pub(crate) const DROP_TARGET: Color32 = Color32::from_rgb(225, 62, 62);

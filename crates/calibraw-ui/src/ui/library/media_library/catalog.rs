@@ -75,6 +75,7 @@ pub(in crate::ui::library) fn catalog_media_folder(
                 match deferred.cache_mut(slot).sidecar(&file_name, stamp) {
                     Some(summary) => {
                         asset.metadata.review = summary.review;
+                        asset.metadata.edited = summary.edited;
                         PhotoSidecar::Summarized(summary)
                     }
                     None => PhotoSidecar::Unread(stamp),

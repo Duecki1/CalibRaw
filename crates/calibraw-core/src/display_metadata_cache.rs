@@ -22,8 +22,9 @@ use std::time::UNIX_EPOCH;
 
 /// The file name ending of a folder's cache, after an identity of the folder.
 pub const CACHE_SUFFIX: &str = ".calibraw-folder-metadata.json";
-/// Bump when display-metadata extraction changes, so stored values are re-read.
-const CACHE_VERSION: u32 = 2;
+/// Bump when display-metadata extraction or the stored sidecar summary
+/// changes, so stored values are re-read.
+const CACHE_VERSION: u32 = 3;
 const MAX_CACHE_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Identifies one version of a file's contents for cache validation.

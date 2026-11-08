@@ -626,21 +626,22 @@ fn filmstrip_thumbnail(
     }
 
     filmstrip_name_hover_overlay(ui, &response, rect, &item.asset.display_name);
+    let edit_badge = crate::ui::library::paint_edit_badge(
+        ui,
+        rect,
+        crate::ui::library::EditBadge {
+            edited: item.asset.metadata.edited,
+            stale: item.developed_thumbnail_pending,
+        },
+    );
     if !response.hovered() {
         crate::ui::library::paint_review_badge(ui, rect, item.asset.metadata.review);
         if let Some(label) = format_label.filter(|_| item.texture.is_some()) {
-            let pending_inset = if item.developed_thumbnail_pending {
-                24.0
-            } else {
-                0.0
-            };
-            crate::ui::library::paint_format_badge(ui, rect, label, pending_inset);
+            let inset = edit_badge.map_or(0.0, |pill| {
+                crate::ui::library::corner_inset_beside(rect, pill)
+            });
+            crate::ui::library::paint_format_badge(ui, rect, label, inset);
         }
-    }
-
-    if item.developed_thumbnail_pending {
-        let center = rect.right_top() + egui::vec2(-13.0, 13.0);
-        crate::ui::components::pending_indicator(&painter, center, 10.0, 13.0);
     }
 
     if active {

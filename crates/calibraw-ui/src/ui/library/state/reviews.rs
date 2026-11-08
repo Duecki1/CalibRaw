@@ -132,6 +132,7 @@ fn write_review(platform: &dyn Platform, request: &ReviewSave) -> Result<PhotoRe
                     edits,
                     review,
                     request.editing_time_ms.unwrap_or(editing_time_ms),
+                    crate::sidecar::SidecarStart::Keep,
                 )
                 .map_err(|error| error.to_string())?;
             Ok(review)
@@ -143,8 +144,8 @@ fn read_review(platform: &dyn Platform, asset: &LibraryAsset) -> Result<PhotoRev
     match &asset.locator {
         LibraryLocator::Desktop(path) => crate::sidecar::load_photo_review(path),
         LibraryLocator::Android { uri } => platform
-            .load_sidecar_review(uri, &asset.display_name)
-            .map(Option::unwrap_or_default),
+            .load_sidecar_metadata(uri, &asset.display_name)
+            .map(|metadata| metadata.unwrap_or_default().review),
     }
     .map_err(|error| error.to_string())
 }

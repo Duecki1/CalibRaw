@@ -478,6 +478,7 @@
   "could not apply thumbnail local mask: {error}": "impossibile applicare la maschera locale alla miniatura: {error}",
   "Could not apply {selection}: {error}": "Impossibile applicare {selection}: {error}",
   "Could not back up and replace sidecar: {error}": "Impossibile creare una copia di sicurezza e sostituire il sidecar: {error}",
+  "Could not record how this photo looked when opened: {error}": "Impossibile registrare l'aspetto di questa foto all'apertura: {error}",
   "could not build range-mask thumbnail source: {error}": "impossibile creare la sorgente della miniatura per la maschera intervallo: {error}",
   "Could not build the reduced preview: {error}": "Impossibile creare l'anteprima ridotta: {error}",
   "Could not clear the thumbnail cache.": "Impossibile svuotare la cache delle miniature.",

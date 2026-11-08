@@ -418,22 +418,16 @@ pub(super) fn thumbnail_tile(
         );
     }
 
-    let mut corner_inset = 0.0;
     let mut corner_badges_bottom = rect.top();
-    if entry.developed_thumbnail_pending {
-        let badge_edge = 25.0_f32.min(rect.width() * 0.32).min(rect.height() * 0.32);
-        let center = egui::pos2(
-            rect.right() - badge_edge * 0.5 - 6.0,
-            rect.top() + badge_edge * 0.5 + 6.0,
-        );
-        crate::ui::components::pending_indicator(
-            &painter,
-            center,
-            badge_edge * 0.5,
-            (badge_edge * 0.72).max(12.0),
-        );
-        corner_inset = badge_edge + 4.0;
-        corner_badges_bottom = center.y + badge_edge * 0.5;
+    let stale = entry.developed_thumbnail_pending;
+    let edit_badge = EditBadge {
+        edited: entry.asset.metadata.edited,
+        stale,
+    };
+    let mut corner_inset = 0.0;
+    if let Some(pill) = paint_edit_badge(ui, tile_rect, edit_badge) {
+        corner_inset = corner_inset_beside(tile_rect, pill);
+        corner_badges_bottom = pill.bottom();
     }
     if entry.texture.is_some() {
         if let Some(badge) = rendered_format_label(&entry.asset.display_name)

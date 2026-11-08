@@ -9,7 +9,8 @@ use super::service::{
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
 use crate::sidecar::{
-    EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SidecarError, SidecarSummary,
+    EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SavedSidecar, SidecarError,
+    SidecarMetadata, SidecarStart, SidecarSummary,
 };
 use calibraw_core::pipeline::RawDisplayMetadata;
 use calibraw_ffi::AndroidApp;
@@ -376,12 +377,12 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::load_android(&self.app, raw_uri, display_name)
     }
 
-    fn load_sidecar_review(
+    fn load_sidecar_metadata(
         &self,
         raw_uri: &str,
         display_name: &str,
-    ) -> Result<Option<PhotoReview>, SidecarError> {
-        calibraw_ffi::load_android_review(&self.app, raw_uri, display_name)
+    ) -> Result<Option<SidecarMetadata>, SidecarError> {
+        calibraw_ffi::load_android_sidecar_metadata(&self.app, raw_uri, display_name)
     }
 
     fn save_sidecar(
@@ -389,7 +390,7 @@ impl Platform for AndroidPlatform {
         raw_uri: &str,
         display_name: &str,
         edits: EditState,
-    ) -> Result<String, SidecarError> {
+    ) -> Result<SavedSidecar, SidecarError> {
         calibraw_ffi::save_android(&self.app, raw_uri, display_name, edits)
     }
 
@@ -400,7 +401,8 @@ impl Platform for AndroidPlatform {
         edits: EditState,
         review: PhotoReview,
         editing_time_ms: u64,
-    ) -> Result<String, SidecarError> {
+        start: SidecarStart,
+    ) -> Result<SavedSidecar, SidecarError> {
         calibraw_ffi::save_android_with_review_and_editing_time(
             &self.app,
             raw_uri,
@@ -408,6 +410,7 @@ impl Platform for AndroidPlatform {
             edits,
             review,
             editing_time_ms,
+            start,
         )
     }
 

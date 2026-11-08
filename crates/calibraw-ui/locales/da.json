@@ -478,6 +478,7 @@
   "could not apply thumbnail local mask: {error}": "kunne ikke anvende lokal maske på miniaturebilledet: {error}",
   "Could not apply {selection}: {error}": "Kunne ikke anvende {selection}: {error}",
   "Could not back up and replace sidecar: {error}": "Kunne ikke sikkerhedskopiere og erstatte sidevognen: {error}",
+  "Could not record how this photo looked when opened: {error}": "Kunne ikke registrere, hvordan dette foto så ud ved åbning: {error}",
   "could not build range-mask thumbnail source: {error}": "kunne ikke opbygge kilde til miniaturebillede af områdemaske: {error}",
   "Could not build the reduced preview: {error}": "Kunne ikke opbygge den reducerede forhåndsvisning: {error}",
   "Could not clear the thumbnail cache.": "Kunne ikke rydde miniaturecachen.",

@@ -12,6 +12,7 @@ pub(crate) struct SidecarSaveRequest {
     pub(super) editing_time_ms: u64,
     /// Media-library sidecars carry the review; folder sidecars keep theirs on disk.
     pub(super) review: crate::sidecar::PhotoReview,
+    pub(super) start: crate::sidecar::SidecarStart,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,7 +24,8 @@ pub(crate) struct SidecarSaveJob {
 
 pub(crate) struct SidecarSaveEvent {
     pub(super) job: SidecarSaveJob,
-    pub(super) result: Result<String, crate::sidecar::SidecarError>,
+    pub(super) target: crate::sidecar::SidecarTarget,
+    pub(super) result: Result<crate::sidecar::SavedSidecar, crate::sidecar::SidecarError>,
     pub(super) recovery: Option<SidecarSaveRequest>,
 }
 
@@ -39,6 +41,17 @@ pub(crate) struct DevelopedThumbnailEvent {
     pub(super) result: Result<crate::pipeline::RawThumbnail, String>,
 }
 
+/// The start the open photo's saves record
+/// ([`crate::sidecar::EditFingerprint`]): how it looked once opened, before
+/// anyone changed it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DocumentStart {
+    /// An unedited photo is still opening, so what is saved now, such as the
+    /// new-photo preset, is its start.
+    Opening,
+    Settled(crate::sidecar::SidecarStart),
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SidecarAutosaveDeadline {
     pub(super) generation: u64,
@@ -49,6 +62,7 @@ pub(crate) struct PersistenceState {
     pub(crate) history: EditHistory,
     pub(crate) lens_restore_masks: Option<MaskStack>,
     pub(crate) sidecar_target: Option<crate::sidecar::SidecarTarget>,
+    pub(crate) document_start: DocumentStart,
     /// Identifies the open document. It increases whenever another document
     /// is installed, and document-bound jobs record the value they started with.
     pub(crate) document_generation: u64,

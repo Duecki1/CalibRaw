@@ -1,6 +1,8 @@
 {
+  "edited": true,
   "migrated": false,
   "saved": {
+    "edit_fingerprint": "73a9fc1b2f4ee661",
     "editing_time_ms": 61000,
     "edits": {
       "ai_masks_need_update": false,
@@ -425,6 +427,7 @@
       "flag": "picked",
       "rating": 3
     },
-    "schema_version": 4
+    "schema_version": 4,
+    "start_fingerprint": "cbf29ce484222325"
   }
 }

@@ -5,7 +5,10 @@ use super::{ImportedLibraryDocument, LibraryDocument, LibraryFolder, ListedSidec
 use calibraw_core::pipeline::{
     is_supported_image_path, load_raw_display_dimensions, load_raw_thumbnail, RawThumbnail,
 };
-use calibraw_core::sidecar::{self, EditState, LoadedSidecar, PhotoReview, SidecarError};
+use calibraw_core::sidecar::{
+    self, EditState, LoadedSidecar, PhotoReview, SavedSidecar, SidecarError, SidecarMetadata,
+    SidecarStart,
+};
 use calibraw_core::thumbnail_cache;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -460,17 +463,17 @@ impl IosLibrary {
         sidecar::load_desktop(&self.photo(uri).map_err(sidecar_error)?)
     }
 
-    pub(super) fn load_sidecar_review(
+    pub(super) fn load_sidecar_metadata(
         &self,
         uri: &str,
         _display_name: &str,
-    ) -> Result<Option<PhotoReview>, SidecarError> {
+    ) -> Result<Option<SidecarMetadata>, SidecarError> {
         let _state = self.state().map_err(sidecar_error)?;
         let raw = self.photo(uri).map_err(sidecar_error)?;
         if !sidecar::sidecar_path_for_raw(&raw).exists() {
             return Ok(None);
         }
-        sidecar::load_photo_review(&raw).map(Some)
+        sidecar::load_sidecar_metadata(&raw).map(Some)
     }
 
     pub(super) fn save_sidecar(
@@ -478,11 +481,14 @@ impl IosLibrary {
         uri: &str,
         _display_name: &str,
         edits: EditState,
-    ) -> Result<String, SidecarError> {
+    ) -> Result<SavedSidecar, SidecarError> {
         let _state = self.state().map_err(sidecar_error)?;
-        sidecar::save_desktop(&self.photo(uri).map_err(sidecar_error)?, edits)?;
+        let saved = sidecar::save_desktop(&self.photo(uri).map_err(sidecar_error)?, edits)?;
         self.invalidate_developed(uri).map_err(sidecar_error)?;
-        Ok(format!("{uri}{}", sidecar::SIDECAR_SUFFIX))
+        Ok(SavedSidecar {
+            location: format!("{uri}{}", sidecar::SIDECAR_SUFFIX),
+            edited: saved.edited,
+        })
     }
 
     pub(super) fn save_sidecar_with_review_and_editing_time(
@@ -492,7 +498,8 @@ impl IosLibrary {
         edits: EditState,
         review: PhotoReview,
         editing_time_ms: u64,
-    ) -> Result<String, SidecarError> {
+        start: SidecarStart,
+    ) -> Result<SavedSidecar, SidecarError> {
         let _state = self.state().map_err(sidecar_error)?;
         let raw = self.photo(uri).map_err(sidecar_error)?;
         if review.rating > 5 {
@@ -500,12 +507,17 @@ impl IosLibrary {
                 "rating must be between 0 and 5".to_owned(),
             ));
         }
-        sidecar::load_sidecar_metadata(&raw)?;
+        let recorded = sidecar::load_sidecar_metadata(&raw)?.start;
         let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
         let uses_people = sidecar::uses_people_analysis(&edits);
-        let bytes = sidecar::encode_with_review_and_editing_time(edits, review, editing_time_ms)?;
+        let encoded = sidecar::encode_with_review_and_editing_time(
+            edits,
+            review,
+            editing_time_ms,
+            start.fingerprint(recorded)?,
+        )?;
         calibraw_core::file_ops::write_atomically(&sidecar::sidecar_path_for_raw(&raw), |file| {
-            file.write_all(&bytes).map_err(SidecarError::Io)
+            file.write_all(&encoded.bytes).map_err(SidecarError::Io)
         })?;
         if !uses_ai_denoise {
             remove_optional(&sidecar::ai_denoise_path_for_raw(&raw)).map_err(sidecar_error)?;
@@ -514,7 +526,10 @@ impl IosLibrary {
             remove_optional(&sidecar::people_analysis_path_for_raw(&raw)).map_err(sidecar_error)?;
         }
         self.invalidate_developed(uri).map_err(sidecar_error)?;
-        Ok(format!("{uri}{}", sidecar::SIDECAR_SUFFIX))
+        Ok(SavedSidecar {
+            location: format!("{uri}{}", sidecar::SIDECAR_SUFFIX),
+            edited: encoded.edited,
+        })
     }
 
     pub(super) fn reset_adjustments(
@@ -530,8 +545,16 @@ impl IosLibrary {
         if metadata.review == PhotoReview::default() && time == 0 {
             remove_optional(&sidecar::sidecar_path_for_raw(&raw))?;
         } else {
-            sidecar::save_desktop_with_editing_time(&raw, sidecar::default_edit_state(), time)
-                .map_err(|error| error.to_string())?;
+            // Reset, the photo is back at a start: the defaults.
+            let start =
+                sidecar::EditFingerprint::of_defaults().map_err(|error| error.to_string())?;
+            sidecar::save_desktop_with_editing_time(
+                &raw,
+                sidecar::default_edit_state(),
+                time,
+                sidecar::SidecarStart::Set(start),
+            )
+            .map_err(|error| error.to_string())?;
         }
         remove_optional(&sidecar::ai_denoise_path_for_raw(&raw))?;
         remove_optional(&sidecar::people_analysis_path_for_raw(&raw))?;

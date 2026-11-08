@@ -415,6 +415,7 @@
   "Could not apply preset “{name}”: {error}": "Regrettably, preset “{name}” could not be applied: {error}",
   "Could not apply {selection}: {error}": "Regrettably, {selection} could not be applied: {error}",
   "Could not back up and replace sidecar: {error}": "Regrettably, the sidecar could not be backed up and replaced: {error}",
+  "Could not record how this photo looked when opened: {error}": "Regrettably, how this photograph looked upon opening could not be recorded: {error}",
   "Could not build the reduced preview: {error}": "Could not fashion the reduced preview: {error}",
   "Could not clear the thumbnail cache.": "Could not purge the thumbnail cache.",
   "Could not clear thumbnail cache: {error}": "Could not purge thumbnail cache: {error}",
