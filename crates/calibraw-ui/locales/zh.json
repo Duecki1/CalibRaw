@@ -118,7 +118,7 @@
   "Applied preset “{preset}” to {completed} selected image": "已将预设“{preset}”应用到 {completed} 张所选图像",
   "Applied preset “{preset}” to {completed} selected images": "已将预设“{preset}”应用到 {completed} 张所选图像",
   "Applied {label}": "已应用 {label}",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet, one photo at a time. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "图库加载预览后，逐张渲染缩略图尚未显示已保存编辑的照片。关闭后可降低内存占用；已渲染的缩略图仍会显示。",
+  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "图库加载预览后，渲染缩略图尚未显示已保存编辑的照片。关闭后可降低内存占用；已渲染的缩略图仍会显示。",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "打开照片时，根据照片 RAW 元数据匹配并应用 Lensfun 配置文件。默认启用。",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "应用于新生成的“主体”和“背景”蒙版。\n{descriptions}",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "应用于新生成的人物蒙版。\n中：推荐\n高：轮廓更精细，也会对每个人运行主体模型 · 耗时更长",

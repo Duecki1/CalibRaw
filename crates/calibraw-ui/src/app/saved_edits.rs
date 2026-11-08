@@ -22,10 +22,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-/// The long edge a photo renders at before the result is fitted into its
-/// thumbnail; a larger requested edge renders at that edge.
-const RENDER_EDGE: u32 = 1024;
-
 /// The editor's GPU device, which saved edits render on, and the programs
 /// they reuse.
 #[derive(Clone)]
@@ -87,10 +83,11 @@ impl SavedEditsGpu {
                 )
             })?;
         if template.is_none() {
-            self.compiled
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(pipeline.program_template());
+            // Renders running side by side may have compiled the same programs.
+            let mut compiled = self.compiled.lock().unwrap_or_else(PoisonError::into_inner);
+            if !compiled.iter().any(|template| template.fits(raw, quality)) {
+                compiled.push(pipeline.program_template());
+            }
         }
         Ok(pipeline)
     }
@@ -353,12 +350,14 @@ fn render_saved_edits(
         full_raw.inpaint_opposed_chroma_for_exposure(&exposure);
     }
     let full_raw = Arc::new(full_raw);
-    let render_edge = RENDER_EDGE.max(maximum_edge);
-    let preview_raw = if full_raw.width.max(full_raw.height) > render_edge {
+    // The photo renders at the size it is shown at; effects that reach
+    // across it scale with its full size (`source_extent`), so they look as
+    // they do in the editor.
+    let preview_raw = if full_raw.width.max(full_raw.height) > maximum_edge {
         Arc::new(build_proxy(
             &full_raw,
             ProxySpec {
-                max_edge: render_edge,
+                max_edge: maximum_edge,
             },
         ))
     } else {
@@ -422,13 +421,13 @@ impl CalibRawApp {
         }
     }
 
-    /// Starts the library's next edited-thumbnail render, and reports the
+    /// Starts the library's next edited-thumbnail renders, and reports the
     /// renders that failed once none is left.
     pub(crate) fn run_library_developed_renders(&mut self) {
         if self.library.developed_render_due() {
             let settings = self.saved_edits_settings();
             self.library
-                .start_developed_render(settings, &self.egui_ctx);
+                .start_developed_renders(&settings, &self.egui_ctx);
         }
         if let Some(message) = self.library.take_developed_render_failures() {
             self.report_error(ErrorKind::EditedThumbnails, message);

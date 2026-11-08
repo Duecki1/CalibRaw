@@ -625,7 +625,7 @@ impl Settings {
                 ui,
                 &mut render_edited_thumbnails,
                 tr("Render edited thumbnails"),
-                tr("Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet, one photo at a time. Turning it off keeps memory use lower; thumbnails already rendered are still shown."),
+                tr("Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown."),
             )
                 .changed()
             {

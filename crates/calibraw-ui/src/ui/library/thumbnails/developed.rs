@@ -1,7 +1,7 @@
-//! Rendering the saved edits of photos whose thumbnail does not show them:
-//! one photo at a time, once the library has loaded every preview of the
-//! folder, so the grid fills first. Until a render arrives, its tile keeps
-//! its thumbnail with the loading wave over it.
+//! Rendering the saved edits of photos whose thumbnail does not show them,
+//! once the library has loaded every preview of the folder, so the grid fills
+//! first. Until a render arrives, its tile keeps its thumbnail with the
+//! loading wave over it.
 
 use super::*;
 use crate::app::{EditedPhoto, EditedRender, EditedRenderJob, SavedEditsSettings};
@@ -10,11 +10,10 @@ use crate::i18n::{tr, tr_fmt};
 /// Failures a report names one by one; the rest are counted.
 const LISTED_FAILURES: usize = 5;
 
-/// The edited-thumbnail render that runs, if one does, and the failures not
-/// reported yet.
+/// The edited-thumbnail renders that run and the failures not reported yet.
 #[derive(Default)]
 pub(in crate::ui::library) struct DevelopedRenders {
-    running: Option<RunningRender>,
+    running: Vec<RunningRender>,
     /// `display name: error` of each render that failed since the last report.
     failures: Vec<String>,
     /// Tells the textures of rendered thumbnails apart.
@@ -29,10 +28,10 @@ struct RunningRender {
 }
 
 impl DevelopedRenders {
-    /// Stops the running render before its next step. Its photo keeps
-    /// waiting and renders again later.
+    /// Stops the running renders before their next step. Their photos keep
+    /// waiting and render again later.
     pub(in crate::ui::library) fn cancel(&self) {
-        if let Some(running) = &self.running {
+        for running in &self.running {
             running.cancel.store(true, Ordering::Release);
         }
     }
@@ -56,11 +55,26 @@ impl LibraryState {
         self.render_edited_thumbnails_during_indexing && self.platform.caps().edited_thumbnails
     }
 
-    /// The entry whose saved edits render next, when one may start: no render
-    /// runs, every preview of the folder has loaded and the library is shown.
-    /// The photo shown most recently goes first, then the grid's order.
+    /// How many photos' edits render at once. Each render holds a decoded
+    /// RAW: where memory is constrained, and shared with the GPU and the
+    /// editor's photo, one runs; elsewhere as many as indexing renders whole
+    /// RAWs at once (`MAX_RENDERED_THUMBNAIL_WORKERS`), within the worker
+    /// setting.
+    fn developed_render_limit(&self) -> usize {
+        if self.platform.caps().constrained_memory() {
+            1
+        } else {
+            self.active_thumbnail_worker_count()
+                .clamp(1, MAX_RENDERED_THUMBNAIL_WORKERS)
+        }
+    }
+
+    /// The entry whose saved edits render next, when one may start: fewer
+    /// renders run than the limit, every preview of the folder has loaded and
+    /// the library is shown. The photo shown most recently goes first, then
+    /// the grid's order.
     fn next_developed_render(&self) -> Option<usize> {
-        if self.developed.running.is_some()
+        if self.developed.running.len() >= self.developed_render_limit()
             || self.saved_edits_gpu.is_none()
             || self.decoding_paused.load(Ordering::Acquire)
             || self.scanning
@@ -72,7 +86,14 @@ impl LibraryState {
         self.entries
             .iter()
             .enumerate()
-            .filter(|(_, entry)| entry.edits == ThumbnailEdits::Rendering)
+            .filter(|(_, entry)| {
+                entry.edits == ThumbnailEdits::Rendering
+                    && !self
+                        .developed
+                        .running
+                        .iter()
+                        .any(|running| running.asset_id == entry.asset.id)
+            })
             .max_by_key(|(index, entry)| (entry.last_used, std::cmp::Reverse(*index)))
             .map(|(index, _)| index)
     }
@@ -81,16 +102,24 @@ impl LibraryState {
         self.next_developed_render().is_some()
     }
 
-    /// Starts rendering the saved edits of the next waiting photo, when one
-    /// is due.
-    pub(crate) fn start_developed_render(
+    /// Starts rendering the saved edits of the next waiting photos, as many as
+    /// may run.
+    pub(crate) fn start_developed_renders(
         &mut self,
+        settings: &SavedEditsSettings,
+        context: &egui::Context,
+    ) {
+        while let Some(index) = self.next_developed_render() {
+            self.start_developed_render(index, settings.clone(), context);
+        }
+    }
+
+    fn start_developed_render(
+        &mut self,
+        index: usize,
         settings: SavedEditsSettings,
         context: &egui::Context,
     ) {
-        let Some(index) = self.next_developed_render() else {
-            return;
-        };
         let Some(gpu) = self.saved_edits_gpu.clone() else {
             return;
         };
@@ -123,14 +152,12 @@ impl LibraryState {
                 repaint.request_repaint();
             });
         match spawn {
-            Ok(_) => {
-                self.developed.running = Some(RunningRender {
-                    generation,
-                    asset_id,
-                    cancel,
-                    result,
-                });
-            }
+            Ok(_) => self.developed.running.push(RunningRender {
+                generation,
+                asset_id,
+                cancel,
+                result,
+            }),
             Err(error) => self.fail_developed_render(
                 index,
                 tr_fmt(
@@ -141,27 +168,41 @@ impl LibraryState {
         }
     }
 
-    /// Shows a finished render in its tile.
-    pub(in crate::ui::library) fn poll_developed_render(&mut self, context: &egui::Context) {
-        let Some(running) = &self.developed.running else {
-            return;
-        };
-        let result = match running.result.try_recv() {
-            Ok(result) => result,
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                Err(tr("the edited-thumbnail render stopped unexpectedly").to_owned())
-            }
-        };
-        let Some(running) = self.developed.running.take() else {
-            return;
-        };
-        // The next render starts on the next frame.
-        context.request_repaint();
-        if running.generation != self.generation.load(Ordering::Acquire) {
+    /// Shows finished renders in their tiles.
+    pub(in crate::ui::library) fn poll_developed_renders(&mut self, context: &egui::Context) {
+        let mut finished = Vec::new();
+        self.developed.running.retain(|running| {
+            let result = match running.result.try_recv() {
+                Ok(result) => result,
+                Err(mpsc::TryRecvError::Empty) => return true,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Err(tr("the edited-thumbnail render stopped unexpectedly").to_owned())
+                }
+            };
+            finished.push((running.generation, running.asset_id.clone(), result));
+            false
+        });
+        if finished.is_empty() {
             return;
         }
-        let Some(index) = self.entry_indices.get(&running.asset_id).copied() else {
+        // The next renders start on the next frame.
+        context.request_repaint();
+        for (generation, asset_id, result) in finished {
+            self.show_developed_render(generation, &asset_id, result, context);
+        }
+    }
+
+    fn show_developed_render(
+        &mut self,
+        generation: u64,
+        asset_id: &LibraryAssetId,
+        result: Result<EditedRender, String>,
+        context: &egui::Context,
+    ) {
+        if generation != self.generation.load(Ordering::Acquire) {
+            return;
+        }
+        let Some(index) = self.entry_indices.get(asset_id).copied() else {
             return;
         };
         // The editor installed a newer render meanwhile, or the edits were reset.
@@ -197,7 +238,7 @@ impl LibraryState {
     /// edits to render.
     pub(crate) fn take_developed_render_failures(&mut self) -> Option<String> {
         if self.developed.failures.is_empty()
-            || self.developed.running.is_some()
+            || !self.developed.running.is_empty()
             || self
                 .entries
                 .iter()

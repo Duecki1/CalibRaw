@@ -350,7 +350,7 @@ impl LibraryState {
 
     pub(crate) fn poll(&mut self, context: &egui::Context) {
         self.poll_folder_tree_walk(context);
-        self.poll_developed_render(context);
+        self.poll_developed_renders(context);
         let pasted = self
             .asset_transfer_receiver
             .as_ref()
