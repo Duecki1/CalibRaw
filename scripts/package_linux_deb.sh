@@ -68,7 +68,7 @@ Version: $VERSION
 Section: graphics
 Priority: optional
 Architecture: $ARCH
-Maintainer: Duecki <dueckis@dueckis.de>
+Maintainer: Duecki <calibraw@dueckis.de>
 Installed-Size: $(du -sk --exclude=DEBIAN "$root" | cut -f1)
 Depends: $SHLIBS, $RUNTIME_LIBS
 Recommends: mesa-vulkan-drivers | vulkan-icd, xdg-desktop-portal

@@ -163,7 +163,7 @@ impl Sidebar {
         texture: Option<&egui::TextureHandle>,
         label: &str,
         selected: bool,
-        badge: Option<&str>,
+        badge: CardBadge,
         enabled: bool,
         card_size: MaskCardSize,
     ) -> egui::Response {
@@ -220,28 +220,7 @@ impl Sidebar {
             );
         }
 
-        if let Some(badge) = badge {
-            let (font_size, badge_height, horizontal_padding) = card_size.badge_metrics();
-            let badge_size = egui::vec2(
-                (badge.chars().count() as f32 * font_size * 0.62 + horizontal_padding)
-                    .max(badge_height + 2.0),
-                badge_height,
-            );
-            let badge_rect =
-                egui::Rect::from_min_size(image_rect.right_bottom() - badge_size, badge_size);
-            painter.rect_filled(
-                badge_rect,
-                4.0,
-                visuals.widgets.active.bg_fill.gamma_multiply(0.92),
-            );
-            painter.text(
-                badge_rect.center(),
-                Align2::CENTER_CENTER,
-                badge,
-                FontId::proportional(font_size),
-                visuals.widgets.active.fg_stroke.color,
-            );
-        }
+        paint_card_badge(&painter, visuals, image_rect, badge, card_size);
 
         let display_label: String = label.chars().take(card_size.max_label_chars()).collect();
         let label_center_y = (image_rect.bottom() + rect.bottom()) * 0.5;

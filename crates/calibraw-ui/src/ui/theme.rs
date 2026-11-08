@@ -1,4 +1,5 @@
 use crate::appearance::UiDesign;
+use crate::pipeline::MaskCombineMode;
 use crate::platform::{self, SystemFont};
 use eframe::egui::{self, Color32};
 use std::borrow::Cow;
@@ -18,6 +19,19 @@ pub(crate) fn inpaint_stroke_highlight() -> Color32 {
 
 pub(crate) fn inpaint_stroke_active() -> Color32 {
     Color32::from_rgba_unmultiplied(255, 120, 84, 84)
+}
+/// A sub-mask's combine mode on the mask strip: green adds, red subtracts
+/// and blue intersects. Light themes get darker shades for contrast on a
+/// light panel.
+pub(crate) fn mask_combine_color(combine: MaskCombineMode, dark_mode: bool) -> Color32 {
+    match (combine, dark_mode) {
+        (MaskCombineMode::Add, true) => Color32::from_rgb(92, 205, 116),
+        (MaskCombineMode::Subtract, true) => Color32::from_rgb(244, 96, 96),
+        (MaskCombineMode::Intersect, true) => Color32::from_rgb(92, 156, 250),
+        (MaskCombineMode::Add, false) => Color32::from_rgb(36, 140, 66),
+        (MaskCombineMode::Subtract, false) => Color32::from_rgb(204, 54, 54),
+        (MaskCombineMode::Intersect, false) => Color32::from_rgb(44, 104, 214),
+    }
 }
 pub(crate) const CHANNEL_RED: Color32 = Color32::from_rgb(238, 84, 84);
 pub(crate) const CHANNEL_GREEN: Color32 = Color32::from_rgb(92, 210, 116);

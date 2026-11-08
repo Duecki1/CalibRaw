@@ -2,22 +2,115 @@ use super::*;
 use crate::app::MaskStripEdit;
 use crate::i18n::tr;
 
-pub(super) fn mask_component_badge(
-    component_index: usize,
-    combine: MaskCombineMode,
-) -> &'static str {
-    if component_index == 0 {
-        tr("BASE")
-    } else {
-        combine_icon(combine)
+/// What a strip card's thumbnail badge shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CardBadge {
+    /// A group card: how many sub-masks the group has.
+    Count(usize),
+    /// The first sub-mask, which the others combine with.
+    Base,
+    /// A later sub-mask: how it combines with the ones before it.
+    Combine(MaskCombineMode),
+}
+
+impl CardBadge {
+    fn of_component(component_index: usize, combine: MaskCombineMode) -> Self {
+        if component_index == 0 {
+            Self::Base
+        } else {
+            Self::Combine(combine)
+        }
     }
 }
 
-pub(super) fn combine_icon(combine: MaskCombineMode) -> &'static str {
+/// Paint a badge at the bottom-right corner of a card's thumbnail. A
+/// combine badge is a white Venn glyph on the mode's colour, matching the
+/// buttons that create sub-masks.
+fn paint_card_badge(
+    painter: &egui::Painter,
+    visuals: &egui::Visuals,
+    image_rect: egui::Rect,
+    badge: CardBadge,
+    card_size: MaskCardSize,
+) {
+    let (font_size, badge_height, horizontal_padding) = card_size.badge_metrics();
+    let text = match badge {
+        CardBadge::Count(count) => count.to_string(),
+        CardBadge::Base => tr("BASE").to_owned(),
+        CardBadge::Combine(combine) => {
+            let size = egui::vec2(badge_height + 6.0, badge_height);
+            let rect = egui::Rect::from_min_size(image_rect.right_bottom() - size, size);
+            let fill = crate::ui::theme::mask_combine_color(combine, visuals.dark_mode);
+            painter.rect_filled(rect, 4.0, fill);
+            paint_combine_glyph(
+                painter,
+                rect.center(),
+                badge_height - 4.0,
+                combine,
+                egui::Color32::WHITE,
+                fill,
+            );
+            return;
+        }
+    };
+    let size = egui::vec2(
+        (text.chars().count() as f32 * font_size * 0.62 + horizontal_padding)
+            .max(badge_height + 2.0),
+        badge_height,
+    );
+    let rect = egui::Rect::from_min_size(image_rect.right_bottom() - size, size);
+    painter.rect_filled(
+        rect,
+        4.0,
+        visuals.widgets.active.bg_fill.gamma_multiply(0.92),
+    );
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(font_size),
+        visuals.widgets.active.fg_stroke.color,
+    );
+}
+
+/// Paint a combine mode as two overlapping squares in a `width`-point box,
+/// as image editors draw selection modes: the upper-left square is the mask
+/// so far, the lower-right one the new sub-mask, and the area the result
+/// keeps is filled with `color`. Squares stay crisp at badge size.
+///
+/// `background` must be the opaque colour behind the glyph, because Subtract
+/// cuts the new square out of the old one by painting it over.
+fn paint_combine_glyph(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    width: f32,
+    combine: MaskCombineMode,
+    color: egui::Color32,
+    background: egui::Color32,
+) {
+    // Squares offset by half a side span one and a half sides.
+    let side = (width / 1.5).round();
+    let offset = (side * 0.5).round();
+    let origin = (center - egui::Vec2::splat((side + offset) * 0.5)).round();
+    let old = egui::Rect::from_min_size(origin, egui::Vec2::splat(side));
+    let new = old.translate(egui::Vec2::splat(offset));
+    let corner = (side * 0.18).round();
+    let outline = egui::Stroke::new((width / 14.0).clamp(1.0, 1.5), color);
     match combine {
-        MaskCombineMode::Add => egui_phosphor::regular::PLUS,
-        MaskCombineMode::Subtract => egui_phosphor::regular::MINUS,
-        MaskCombineMode::Intersect => egui_phosphor::regular::INTERSECT,
+        MaskCombineMode::Add => {
+            painter.rect_filled(old, corner, color);
+            painter.rect_filled(new, corner, color);
+        }
+        MaskCombineMode::Subtract => {
+            painter.rect_filled(old, corner, color);
+            painter.rect_filled(new, corner, background);
+            painter.rect_stroke(new, corner, outline, egui::StrokeKind::Inside);
+        }
+        MaskCombineMode::Intersect => {
+            painter.rect_stroke(old, corner, outline, egui::StrokeKind::Inside);
+            painter.rect_stroke(new, corner, outline, egui::StrokeKind::Inside);
+            painter.rect_filled(old.intersect(new), 0.0, color);
+        }
     }
 }
 
@@ -101,7 +194,7 @@ struct StripDragState {
     source: StripDragSource,
     source_texture: Option<egui::TextureHandle>,
     source_name: String,
-    source_badge: String,
+    source_badge: CardBadge,
     source_enabled: bool,
     /// The group a dragged sub-mask rests on, to open it after a delay.
     hover_group: Option<(usize, std::time::Instant)>,

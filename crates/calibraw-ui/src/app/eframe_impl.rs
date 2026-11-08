@@ -403,7 +403,7 @@ impl eframe::App for CalibRawApp {
                     egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
                         .resizable(false)
                         .exact_size(Sidebar::HORIZONTAL_MASK_STRIP_WIDTH)
-                        .frame(moduwu_design::panel_frame(ui))
+                        .frame(Sidebar::horizontal_mask_strip_frame(ui))
                         .show(ui, |ui| {
                             crate::ui::layout::docked_panel_contents(ui, |ui| {
                                 Sidebar::show_horizontal_mask_strip(ui, self, frame)

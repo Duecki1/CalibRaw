@@ -5,37 +5,133 @@ use super::*;
 use crate::app::{apply_mask_property_actions, MaskPropertiesControls};
 use crate::i18n::tr;
 
-/// A creation button of the strip that opens the kind picker: beside a strip
+/// Open the kind picker from a creation button of the strip: beside a strip
 /// along the right edge, above or below one along the top, and as a sheet on
 /// touch layouts. Returns the picked kind.
-fn mask_creation_button(
-    ui: &mut Ui,
-    id_salt: impl egui::AsIdSalt,
-    icon: &str,
-    (size, icon_size): (egui::Vec2, f32),
-    tooltip: &str,
+fn kind_picker_from(
+    response: &egui::Response,
     orientation: MaskStripOrientation,
 ) -> Option<MaskKind> {
-    let response = ui
-        .push_id(id_salt, |ui| {
-            ui.add_sized(
-                size,
-                egui::Button::new(egui::RichText::new(icon).size(icon_size).strong())
-                    .corner_radius(6.0),
-            )
-        })
-        .inner
-        .on_hover_text(tooltip);
     let placement = match orientation {
         MaskStripOrientation::Vertical => moduwu_design::PickerPlacement::Left,
         MaskStripOrientation::Horizontal => moduwu_design::PickerPlacement::BelowOrAbove,
     };
     moduwu_design::picker_menu(
-        &response,
+        response,
         kind_picker::KIND_PICKER_MIN_WIDTH,
         placement,
         kind_picker::mask_kind_tiles,
     )
+}
+
+/// The icon of a creation tile.
+enum TileIcon {
+    /// A group of its own: a plus.
+    NewGroup,
+    /// A sub-mask combined this way: the mode's glyph.
+    Combine(MaskCombineMode),
+}
+
+/// A creation button of the strip: an icon over its caption on a tile in a
+/// strip along the top, beside it on a row in a strip along the right edge.
+/// `accent` tints the tile and colours the icon.
+fn creation_tile(
+    ui: &mut Ui,
+    size: egui::Vec2,
+    orientation: MaskStripOrientation,
+    label: &str,
+    icon: TileIcon,
+    accent: egui::Color32,
+) -> egui::Response {
+    use eframe::egui::{Align2, FontId, Stroke, StrokeKind};
+
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let visuals = ui.visuals();
+    let (accent, text_color) = if enabled {
+        (accent, visuals.text_color())
+    } else {
+        (accent.gamma_multiply(0.4), visuals.weak_text_color())
+    };
+    let hovered = response.hovered() && enabled;
+    let tint = if response.is_pointer_button_down_on() {
+        0.30
+    } else if hovered {
+        0.20
+    } else {
+        0.11
+    };
+    // The Subtract glyph cuts its square out with the fill, so it is opaque.
+    let fill = visuals.panel_fill.lerp_to_gamma(accent, tint);
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 6.0, fill);
+    painter.rect_stroke(
+        rect,
+        6.0,
+        Stroke::new(1.0, accent.gamma_multiply(if hovered { 0.9 } else { 0.45 })),
+        StrokeKind::Inside,
+    );
+    if response.has_focus() {
+        painter.rect_stroke(rect, 6.0, visuals.selection.stroke, StrokeKind::Inside);
+    }
+
+    let (icon_center, icon_width, text_anchor, text_align, text_width) = match orientation {
+        MaskStripOrientation::Horizontal => (
+            egui::pos2(rect.center().x, rect.top() + rect.height() * 0.38),
+            22.0,
+            egui::pos2(rect.center().x, rect.bottom() - 12.0),
+            Align2::CENTER_CENTER,
+            rect.width() - 6.0,
+        ),
+        MaskStripOrientation::Vertical => (
+            egui::pos2(rect.left() + 13.0, rect.center().y),
+            15.0,
+            egui::pos2(rect.left() + 25.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            rect.width() - 28.0,
+        ),
+    };
+    match icon {
+        TileIcon::NewGroup => {
+            painter.text(
+                icon_center,
+                Align2::CENTER_CENTER,
+                mask_creation_icon(),
+                FontId::proportional(icon_width),
+                accent,
+            );
+        }
+        TileIcon::Combine(combine) => {
+            super::paint_combine_glyph(&painter, icon_center, icon_width, combine, accent, fill);
+        }
+    }
+    // Long translations shrink to fit the tile instead of spilling over.
+    let font_size = 10.5;
+    let natural = painter
+        .layout_no_wrap(
+            label.to_owned(),
+            FontId::proportional(font_size),
+            text_color,
+        )
+        .size()
+        .x;
+    let font_size = if natural > text_width {
+        (font_size * text_width / natural).max(7.5)
+    } else {
+        font_size
+    };
+    painter.text(
+        text_anchor,
+        text_align,
+        label,
+        FontId::proportional(font_size),
+        text_color,
+    );
+    response
 }
 
 impl Sidebar {
@@ -45,27 +141,27 @@ impl Sidebar {
         orientation: MaskStripOrientation,
     ) {
         let size = MaskCardSize::Group.create_button_size(orientation);
-        ui.allocate_ui_with_layout(
-            size,
-            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-            |ui| {
-                ui.spacing_mut().interact_size = size;
-                *new_mask = mask_creation_button(
+        let accent = ui.visuals().text_color();
+        let response = ui
+            .push_id("mask-group-creation", |ui| {
+                creation_tile(
                     ui,
-                    "mask-group-creation",
-                    mask_creation_icon(),
-                    (size, 20.0),
-                    tr("Create a new mask group"),
+                    size,
                     orientation,
-                );
-            },
-        );
+                    tr("Mask"),
+                    TileIcon::NewGroup,
+                    accent,
+                )
+            })
+            .inner
+            .on_hover_text(tr("Create a new mask group"));
+        *new_mask = kind_picker_from(&response, orientation);
     }
 
     /// One button per combine mode, each opening the kind picker for a
-    /// sub-mask combined that way. Side by side at card height in a strip
-    /// along the top, so each stays touch-sized; in a row as wide as a group
-    /// card in a strip along the right edge.
+    /// sub-mask combined that way: touch-sized tiles side by side in a strip
+    /// along the top, rows as wide as a group card in a strip along the
+    /// right edge.
     pub(super) fn create_submask_card(
         ui: &mut Ui,
         add_component: &mut Option<(MaskKind, MaskCombineMode)>,
@@ -76,45 +172,39 @@ impl Sidebar {
             MaskCombineMode::Subtract,
             MaskCombineMode::Intersect,
         ];
-        let gap = moduwu_design::SPACE_XXS;
-        let (button_size, icon_size) = match orientation {
-            MaskStripOrientation::Horizontal => {
-                (MaskCardSize::Submask.create_button_size(orientation), 16.0)
-            }
-            MaskStripOrientation::Vertical => {
-                let row = MaskCardSize::Group.create_button_size(orientation);
-                let width = (row.x - 2.0 * gap) / MODES.len() as f32;
-                (egui::vec2(width, row.y), 14.0)
-            }
+        let (button_size, layout) = match orientation {
+            MaskStripOrientation::Horizontal => (
+                MaskCardSize::Submask.create_button_size(orientation),
+                egui::Layout::left_to_right(egui::Align::Center),
+            ),
+            MaskStripOrientation::Vertical => (
+                MaskCardSize::Group.create_button_size(orientation),
+                egui::Layout::top_down(egui::Align::Center),
+            ),
         };
-        let row_size = egui::vec2(
-            button_size.x * MODES.len() as f32 + gap * (MODES.len() - 1) as f32,
-            button_size.y,
-        );
-        ui.allocate_ui_with_layout(
-            row_size,
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                ui.spacing_mut().interact_size = button_size;
-                // The default padding would widen the narrow buttons past
-                // their share of the row.
-                ui.spacing_mut().button_padding.x = 2.0;
-                for combine in MODES {
-                    let picked = mask_creation_button(
-                        ui,
-                        ("mask-submask-creation", combine.label()),
-                        combine_icon(combine),
-                        (button_size, icon_size),
-                        tr(combine.label()),
-                        orientation,
-                    );
-                    if let Some(kind) = picked {
-                        *add_component = Some((kind, combine));
-                    }
+        ui.with_layout(layout, |ui| {
+            ui.spacing_mut().item_spacing =
+                egui::vec2(moduwu_design::SPACE_XXS, moduwu_design::SPACE_XXS);
+            for combine in MODES {
+                let response = ui
+                    .push_id(("mask-submask-creation", combine.label()), |ui| {
+                        let accent =
+                            crate::ui::theme::mask_combine_color(combine, ui.visuals().dark_mode);
+                        creation_tile(
+                            ui,
+                            button_size,
+                            orientation,
+                            tr(combine.label()),
+                            TileIcon::Combine(combine),
+                            accent,
+                        )
+                    })
+                    .inner;
+                if let Some(kind) = kind_picker_from(&response, orientation) {
+                    *add_component = Some((kind, combine));
                 }
-            },
-        );
+            }
+        });
     }
 
     pub(super) fn drop_placeholder(ui: &mut Ui, card_size: MaskCardSize) -> egui::Response {
@@ -173,22 +263,7 @@ impl Sidebar {
             );
         }
 
-        let (font_size, badge_height, horizontal_padding) = card_size.badge_metrics();
-        let badge_size = egui::vec2(
-            (drag.source_badge.chars().count() as f32 * font_size * 0.62 + horizontal_padding)
-                .max(badge_height + 2.0),
-            badge_height,
-        );
-        let badge_rect =
-            egui::Rect::from_min_size(image_rect.right_bottom() - badge_size, badge_size);
-        painter.rect_filled(badge_rect, 3.0, Color32::from_black_alpha(210));
-        painter.text(
-            badge_rect.center(),
-            Align2::CENTER_CENTER,
-            &drag.source_badge,
-            FontId::proportional(font_size),
-            Color32::WHITE,
-        );
+        paint_card_badge(&painter, visuals, image_rect, drag.source_badge, card_size);
 
         let display_label: String = drag
             .source_name
