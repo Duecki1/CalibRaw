@@ -19,9 +19,10 @@
 //!   photo is opened (`LoadedRaw::resolve_white_balance`,
 //!   `pipeline/raw_loader/white_balance.rs`). Their file layout is read and
 //!   written by `white_balance_offsets`.
-//! - Performance settings versions 1 to 5: the old desktop decoded-RAW
+//! - Performance settings versions 1 to 7: the old desktop decoded-RAW
 //!   cache default, automatic vignetting correction, Develop navigation
-//!   labels and, on memory-constrained devices, the Preview quality tiers,
+//!   labels, on memory-constrained devices the Preview quality tiers, and
+//!   the Develop card order before Calibration moved above Lens Corrections,
 //!   updated when the settings are loaded (`calibraw-ui`,
 //!   `performance_settings.rs`).
 //! - The automatic ONNX Runtimes the WebGPU packages replaced (CPU, Linux

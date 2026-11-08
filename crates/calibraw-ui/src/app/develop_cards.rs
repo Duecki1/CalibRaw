@@ -31,9 +31,8 @@ impl DevelopCard {
         Self::Detail,
         Self::Effects,
         Self::ColorMixer,
-        Self::LensCorrections,
-        // Lightroom's last panel.
         Self::Calibration,
+        Self::LensCorrections,
     ];
 
     pub(crate) fn label(self) -> &'static str {

@@ -10,13 +10,30 @@ use std::path::{Path, PathBuf};
 // Version 5 dropped the automatic runtime choice (`onnx_runtime_kind` and
 // `onnx_runtime_kind_chosen`), which unknown fields leave to be ignored.
 // Version 6 moved the Preview quality tiers of memory-constrained devices;
-// see `sanitized`.
-const SETTINGS_VERSION: u32 = 6;
+// version 7 moved the Calibration card above Lens Corrections. See `sanitized`.
+const SETTINGS_VERSION: u32 = 7;
 /// The desktop decoded-RAW cache default before version 2 raised it, so that
 /// Develop can prefetch both neighbours of the open photo.
 ///
 /// migration: remove in v2.0.0, with the version 2 step in `sanitized`.
 const DESKTOP_RAW_CACHE_FILES_BEFORE_V2: usize = 2;
+/// The Develop card order before version 7, which ended with Lens Corrections
+/// and Calibration.
+///
+/// migration: remove in v2.0.0, with the version 7 step in `sanitized`.
+const DEVELOP_CARD_ORDER_BEFORE_V7: [crate::app::DevelopCard; 11] = [
+    crate::app::DevelopCard::CameraProfile,
+    crate::app::DevelopCard::Light,
+    crate::app::DevelopCard::ToneCurve,
+    crate::app::DevelopCard::Lut,
+    crate::app::DevelopCard::Color,
+    crate::app::DevelopCard::ColorGrading,
+    crate::app::DevelopCard::Detail,
+    crate::app::DevelopCard::Effects,
+    crate::app::DevelopCard::ColorMixer,
+    crate::app::DevelopCard::LensCorrections,
+    crate::app::DevelopCard::Calibration,
+];
 const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -404,6 +421,15 @@ impl PerformanceSettings {
                 self.preview_quality,
                 PlatformCaps::CURRENT.constrained_memory(),
             );
+        }
+        // Version 7: the Calibration card moved above Lens Corrections. Every
+        // save wrote the whole order, so an order equal to the old default
+        // becomes the new default.
+        // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
+        if self.version < 7
+            && self.develop_card_order.cards() == DEVELOP_CARD_ORDER_BEFORE_V7.as_slice()
+        {
+            self.develop_card_order = crate::app::DevelopCardOrder::default();
         }
         self.version = SETTINGS_VERSION;
         // Setup offers the default until the user has chosen; earlier builds
