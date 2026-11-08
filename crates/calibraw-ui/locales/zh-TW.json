@@ -2064,5 +2064,7 @@
   "Add mask": "添加遮色片",
   "Add sub-mask": "添加子遮色片",
   "Subtract sub-mask": "減去子遮色片",
-  "Intersect sub-mask": "與子遮色片相交"
+  "Intersect sub-mask": "與子遮色片相交",
+  "Sub-mask": "子遮色片",
+  "Sub-mask opacity": "子遮色片不透明度"
 }

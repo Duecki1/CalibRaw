@@ -189,7 +189,24 @@ pub struct MaskComponent {
     pub common: MaskCommon,
     pub kind: MaskKind,
     pub combine: MaskCombineMode,
+    /// How strongly the component's combine step applies, 0 to 1: the mask
+    /// moves this far from its state before the component toward the
+    /// combined result. Full opacity is left out of saved files, so those
+    /// written before components had opacity read and write unchanged.
+    #[serde(
+        default = "full_component_opacity",
+        skip_serializing_if = "is_full_component_opacity"
+    )]
+    pub opacity: f32,
     pub geometry: MaskGeometry,
+}
+
+const fn full_component_opacity() -> f32 {
+    1.0
+}
+
+fn is_full_component_opacity(opacity: &f32) -> bool {
+    *opacity == 1.0
 }
 
 impl Deref for MaskComponent {
@@ -212,8 +229,13 @@ impl MaskComponent {
             common: MaskCommon::new(kind.label()),
             kind,
             combine,
+            opacity: full_component_opacity(),
             geometry: MaskGeometry::for_kind(kind),
         }
+    }
+
+    pub fn set_opacity(&mut self, opacity: f32) -> bool {
+        set_if_changed(&mut self.opacity, opacity.clamp(0.0, 1.0))
     }
 
     pub fn set_combine(&mut self, combine: MaskCombineMode) -> bool {

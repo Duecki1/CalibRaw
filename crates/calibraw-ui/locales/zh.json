@@ -2064,5 +2064,7 @@
   "Add mask": "添加蒙版",
   "Add sub-mask": "添加子蒙版",
   "Subtract sub-mask": "减去子蒙版",
-  "Intersect sub-mask": "与子蒙版相交"
+  "Intersect sub-mask": "与子蒙版相交",
+  "Sub-mask": "子蒙版",
+  "Sub-mask opacity": "子蒙版不透明度"
 }

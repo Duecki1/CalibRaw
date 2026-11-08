@@ -2064,5 +2064,7 @@
   "Add mask": "Maske ekle",
   "Add sub-mask": "Alt maske ekle",
   "Subtract sub-mask": "Alt maske çıkar",
-  "Intersect sub-mask": "Alt maskeyle kesiştir"
+  "Intersect sub-mask": "Alt maskeyle kesiştir",
+  "Sub-mask": "Alt maske",
+  "Sub-mask opacity": "Alt maske opaklığı"
 }

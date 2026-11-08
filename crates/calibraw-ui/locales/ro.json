@@ -2064,5 +2064,7 @@
   "Add mask": "Adaugă mască",
   "Add sub-mask": "Adaugă submască",
   "Subtract sub-mask": "Scade submască",
-  "Intersect sub-mask": "Intersectează cu submască"
+  "Intersect sub-mask": "Intersectează cu submască",
+  "Sub-mask": "Submască",
+  "Sub-mask opacity": "Opacitatea submăștii"
 }

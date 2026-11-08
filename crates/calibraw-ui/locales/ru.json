@@ -2064,5 +2064,7 @@
   "Add mask": "Добавить маску",
   "Add sub-mask": "Добавить подмаску",
   "Subtract sub-mask": "Вычесть подмаску",
-  "Intersect sub-mask": "Пересечь с подмаской"
+  "Intersect sub-mask": "Пересечь с подмаской",
+  "Sub-mask": "Подмаска",
+  "Sub-mask opacity": "Непрозрачность подмаски"
 }

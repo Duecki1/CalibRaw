@@ -2062,5 +2062,7 @@
   "Add mask": "Dodaj maskę",
   "Add sub-mask": "Dodaj maskę podrzędną",
   "Subtract sub-mask": "Odejmij maskę podrzędną",
-  "Intersect sub-mask": "Część wspólna z maską podrzędną"
+  "Intersect sub-mask": "Część wspólna z maską podrzędną",
+  "Sub-mask": "Maska podrzędna",
+  "Sub-mask opacity": "Krycie maski podrzędnej"
 }

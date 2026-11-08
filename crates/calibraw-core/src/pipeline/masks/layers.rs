@@ -228,35 +228,38 @@ impl MaskStack {
                     .par_iter_mut()
                     .for_each(|value| *value = 1.0 - *value);
             }
+            let opacity = component.opacity.clamp(0.0, 1.0);
 
             let Some(existing) = combined.as_mut() else {
                 combined = Some(if component.combine == MaskCombineMode::Add {
+                    // Moving an empty mask toward the coverage scales it.
+                    if opacity < 1.0 {
+                        coverage.par_iter_mut().for_each(|value| *value *= opacity);
+                    }
                     coverage
                 } else {
                     vec![0.0; len]
                 });
                 continue;
             };
-            match component.combine {
-                MaskCombineMode::Add => {
-                    existing
-                        .par_iter_mut()
-                        .zip(coverage.into_par_iter())
-                        .for_each(|(dst, src)| *dst = dst.max(src));
-                }
-                MaskCombineMode::Subtract => {
-                    existing
-                        .par_iter_mut()
-                        .zip(coverage.into_par_iter())
-                        .for_each(|(dst, src)| *dst *= 1.0 - src);
-                }
-                MaskCombineMode::Intersect => {
-                    existing
-                        .par_iter_mut()
-                        .zip(coverage.into_par_iter())
-                        .for_each(|(dst, src)| *dst *= src);
-                }
-            }
+            let combine: fn(f32, f32) -> f32 = match component.combine {
+                MaskCombineMode::Add => |dst, src| dst.max(src),
+                MaskCombineMode::Subtract => |dst, src| dst * (1.0 - src),
+                MaskCombineMode::Intersect => |dst, src| dst * src,
+            };
+            // Full opacity takes the combined value itself rather than a
+            // blend, so masks without component opacity stay bit-identical.
+            existing
+                .par_iter_mut()
+                .zip(coverage.into_par_iter())
+                .for_each(|(dst, src)| {
+                    let combined = combine(*dst, src);
+                    *dst = if opacity < 1.0 {
+                        *dst + (combined - *dst) * opacity
+                    } else {
+                        combined
+                    };
+                });
         }
 
         let Some(combined) = combined else {
@@ -376,8 +379,9 @@ impl MaskStack {
         )
     }
 
-    /// Rasterize one component of a native region, including component inversion.
-    /// Like `rasterize_component_layer`, this excludes mask opacity and composition.
+    /// Rasterize one component of a native region, including the component's
+    /// inversion and opacity. Like `rasterize_component_layer`, this excludes
+    /// mask opacity and composition.
     /// Only radial and linear shapes sample corrected full-image coordinates.
     pub fn rasterize_component_region(
         &self,
@@ -471,9 +475,11 @@ impl MaskStack {
                 *value = 1.0 - *value;
             }
         }
+        // The component's own coverage shows its opacity as strength.
+        let opacity = component.opacity.clamp(0.0, 1.0);
         coverage
             .into_iter()
-            .map(|value| (value.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
+            .map(|value| (value.clamp(0.0, 1.0) * opacity * 255.0 + 0.5) as u8)
             .collect()
     }
 }

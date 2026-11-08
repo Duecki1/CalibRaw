@@ -2058,5 +2058,7 @@
   "Add mask": "마스크 추가",
   "Add sub-mask": "하위 마스크 추가",
   "Subtract sub-mask": "하위 마스크 빼기",
-  "Intersect sub-mask": "하위 마스크 교차"
+  "Intersect sub-mask": "하위 마스크 교차",
+  "Sub-mask": "하위 마스크",
+  "Sub-mask opacity": "하위 마스크 불투명도"
 }

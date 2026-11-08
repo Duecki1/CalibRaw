@@ -2057,5 +2057,7 @@
   "Add mask": "Append mask",
   "Add sub-mask": "Append sub-mask",
   "Subtract sub-mask": "Subtract sub-mask",
-  "Intersect sub-mask": "Intersect sub-mask"
+  "Intersect sub-mask": "Intersect sub-mask",
+  "Sub-mask": "Sub-mask",
+  "Sub-mask opacity": "Sub-mask opacity"
 }

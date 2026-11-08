@@ -68,7 +68,14 @@ pub(crate) enum PeopleEdit {
 pub(crate) enum MaskPropertyAction {
     /// Whole-mask opacity.
     SetOpacity(f32),
-    ToggleInvert,
+    /// Whether the whole mask applies.
+    SetGroupEnabled(bool),
+    ToggleGroupInvert,
+    /// Whether the selected component takes part in the mask.
+    SetComponentEnabled(bool),
+    ToggleComponentInvert,
+    /// Strength of the selected component's combine step.
+    SetComponentOpacity(f32),
     SetCombine(MaskCombineMode),
     SetBrushSize(f32),
     /// Also re-feathers the existing dabs.
@@ -112,21 +119,34 @@ pub(crate) enum MaskPropertyAction {
     RequestObject,
 }
 
-/// Apply the panel's actions in order. Returns whether the mask coverage
-/// changed.
+/// What a panel's actions changed.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MaskPropertyChanges {
+    /// The mask's coverage.
+    pub(crate) geometry: bool,
+    /// Only whether the mask's adjustments apply.
+    pub(crate) adjustments: bool,
+}
+
+/// Apply the panel's actions in order.
 pub(crate) fn apply_mask_property_actions(
     mask: &mut LocalMask,
     component_index: usize,
     controls: &mut MaskPropertiesControls,
     actions: Vec<MaskPropertyAction>,
-) -> bool {
-    let mut geometry_changed = false;
+) -> MaskPropertyChanges {
+    let mut changes = MaskPropertyChanges::default();
     for action in actions {
-        geometry_changed |= apply_mask_property_action(mask, component_index, controls, action);
+        if let MaskPropertyAction::SetGroupEnabled(enabled) = action {
+            changes.adjustments |= mask.common.set_enabled(enabled);
+        } else {
+            changes.geometry |= apply_mask_property_action(mask, component_index, controls, action);
+        }
     }
-    geometry_changed
+    changes
 }
 
+/// Returns whether the mask coverage changed.
 fn apply_mask_property_action(
     mask: &mut LocalMask,
     component_index: usize,
@@ -136,6 +156,10 @@ fn apply_mask_property_action(
     match action {
         MaskPropertyAction::SetOpacity(opacity) => {
             mask.set_opacity(opacity);
+            true
+        }
+        MaskPropertyAction::ToggleGroupInvert => {
+            mask.common.toggle_invert();
             true
         }
         MaskPropertyAction::SetBrushMode(mode) => {
@@ -200,10 +224,12 @@ fn apply_mask_property_action(
 
 fn apply_component_action(component: &mut MaskComponent, action: MaskPropertyAction) -> bool {
     match action {
-        MaskPropertyAction::ToggleInvert => {
+        MaskPropertyAction::ToggleComponentInvert => {
             component.common.toggle_invert();
             true
         }
+        MaskPropertyAction::SetComponentEnabled(enabled) => component.common.set_enabled(enabled),
+        MaskPropertyAction::SetComponentOpacity(opacity) => component.set_opacity(opacity),
         MaskPropertyAction::SetCombine(combine) => component.set_combine(combine),
         MaskPropertyAction::SetFeather(value) => {
             // A luminance range without its own high feather softens its

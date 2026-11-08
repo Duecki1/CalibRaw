@@ -54,6 +54,9 @@ struct CardHeaderControls {
     show_mask_overlay_toggle: bool,
     /// Takes part in closing other cards when one opens ([`single_open_cards`]).
     single_open: bool,
+    /// Puts its actions in the shared footer on portrait screens, where cards
+    /// have no header. A card without them relies on another card's.
+    footer_actions: bool,
 }
 
 impl CardAction {
@@ -125,7 +128,8 @@ pub(super) fn card_title_text(title: &'static str) -> &'static str {
         "Effects" => tr("Effects"),
         "Color Mixer" => tr("Color Mixer"),
         "Calibration" => tr("Calibration"),
-        "Mask Properties" => tr("Mask Properties"),
+        "Mask" => tr("Mask"),
+        "Sub-mask" => tr("Sub-mask"),
         "Subject refinement" => tr("Subject refinement"),
         "Lens Corrections" => tr("Lens Corrections"),
         "Film negative" => tr("Film negative"),
@@ -522,6 +526,7 @@ impl Sidebar {
                 show_visibility: true,
                 show_mask_overlay_toggle: false,
                 single_open: true,
+                footer_actions: true,
             },
             contents,
         )
@@ -546,31 +551,62 @@ impl Sidebar {
                 show_visibility: false,
                 show_mask_overlay_toggle: false,
                 single_open: true,
+                footer_actions: true,
             },
             contents,
         )
     }
 
-    pub(super) fn mask_properties_card(
+    /// The selected mask group's card. On portrait screens, where cards have
+    /// no header, its footer actions also stand for the sub-mask card.
+    pub(super) fn mask_group_card(
         ui: &mut Ui,
-        default_open: bool,
         foldable: bool,
-        controls_enabled: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
         Self::adjustment_card_controls(
             ui,
-            "Mask Properties",
-            default_open,
+            "Mask",
+            true,
             foldable,
-            controls_enabled,
+            true,
             CardHeaderControls {
                 show_visibility: false,
                 show_mask_overlay_toggle: true,
                 single_open: false,
+                footer_actions: true,
             },
             contents,
         )
+    }
+
+    /// The selected sub-mask's card, below its group's.
+    pub(super) fn submask_card(
+        ui: &mut Ui,
+        foldable: bool,
+        contents: impl FnOnce(&mut Ui),
+    ) -> CardAction {
+        Self::adjustment_card_controls(
+            ui,
+            "Sub-mask",
+            true,
+            foldable,
+            true,
+            CardHeaderControls {
+                show_visibility: false,
+                show_mask_overlay_toggle: false,
+                single_open: false,
+                footer_actions: false,
+            },
+            contents,
+        )
+    }
+
+    /// Whether cards drop their header and put their actions in the shared
+    /// footer: on portrait screens.
+    pub(super) fn cards_use_footer(ctx: &egui::Context) -> bool {
+        let viewport = ctx.content_rect();
+        viewport.height() > viewport.width()
     }
 
     /// `controls_enabled` only greys out the card body; the header (fold, reset, preview eye)
@@ -589,6 +625,7 @@ impl Sidebar {
             show_visibility,
             show_mask_overlay_toggle,
             single_open,
+            footer_actions,
         } = header_controls;
         let visible = !show_visibility
             || crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
@@ -605,20 +642,20 @@ impl Sidebar {
                 let body = |ui: &mut Ui| {
                     ui.add_enabled_ui(controls_enabled, contents);
                 };
-                let viewport = ui.ctx().content_rect();
-                let vertical_screen = viewport.height() > viewport.width();
-                if vertical_screen {
+                if Self::cards_use_footer(ui.ctx()) {
                     // Vertical-screen cards deliberately have no header. Their preview/reset
                     // actions are registered here and rendered outside the cards in the shared
                     // sidebar footer alongside the other mobile actions.
                     body(ui);
-                    Self::register_vertical_card_actions(
-                        ui,
-                        title,
-                        show_visibility,
-                        show_mask_overlay_toggle,
-                    );
-                    action = Self::take_pending_vertical_card_action(ui.ctx(), title);
+                    if footer_actions {
+                        Self::register_vertical_card_actions(
+                            ui,
+                            title,
+                            show_visibility,
+                            show_mask_overlay_toggle,
+                        );
+                        action = Self::take_pending_vertical_card_action(ui.ctx(), title);
+                    }
                 } else if foldable {
                     let mut header_clicked = false;
                     let ctx = ui.ctx().clone();

@@ -2064,5 +2064,7 @@
   "Add mask": "Tilføj maske",
   "Add sub-mask": "Tilføj undermaske",
   "Subtract sub-mask": "Træk undermaske fra",
-  "Intersect sub-mask": "Fællesmængde med undermaske"
+  "Intersect sub-mask": "Fællesmængde med undermaske",
+  "Sub-mask": "Undermaske",
+  "Sub-mask opacity": "Undermaskeopacitet"
 }

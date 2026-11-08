@@ -1,0 +1,6 @@
+Color calibration, AI denoise and a brightness slider.
+Relight with several lights, Light Rays kept inside masks, and a reworked effects engine.
+Linked folders with subfolders on Android, edited-photo thumbnails and faster library previews.
+Faster, GPU-accelerated export, copy selected adjustments and a redesigned mask tab.
+Added Danish, Italian, Spanish, Romanian, Ukrainian and Russian translations.
+Fixes for DNG files, white balance picker, raw rotation and rating on Android.

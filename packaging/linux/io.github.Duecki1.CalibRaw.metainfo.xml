@@ -66,6 +66,22 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="1.4.1" date="2026-11-08" type="stable">
+      <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.4.1</url>
+      <description>
+        <p>This release adds color calibration, AI denoise and a reworked effects engine, and speeds up export and the library.</p>
+        <ul>
+          <li>Add color calibration, AI denoise and a brightness slider</li>
+          <li>Use several lights in Relight and keep Light Rays inside masks</li>
+          <li>Rework effects for higher quality</li>
+          <li>Show edited photos in the library with faster thumbnails</li>
+          <li>Export faster with GPU acceleration</li>
+          <li>Copy selected adjustments and use the redesigned mask tab</li>
+          <li>Add Danish, Italian, Spanish, Romanian, Ukrainian and Russian translations</li>
+          <li>Fix DNG files, the white balance picker and raw rotation</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.4.0" date="2026-10-30" type="stable">
       <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.4.0</url>
       <description>

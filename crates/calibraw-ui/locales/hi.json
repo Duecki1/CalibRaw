@@ -2064,5 +2064,7 @@
   "Add mask": "मास्क जोड़ें",
   "Add sub-mask": "सब-मास्क जोड़ें",
   "Subtract sub-mask": "सब-मास्क घटाएँ",
-  "Intersect sub-mask": "सब-मास्क से प्रतिच्छेद करें"
+  "Intersect sub-mask": "सब-मास्क से प्रतिच्छेद करें",
+  "Sub-mask": "सब-मास्क",
+  "Sub-mask opacity": "सब-मास्क की अपारदर्शिता"
 }

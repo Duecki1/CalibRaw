@@ -2064,5 +2064,7 @@
   "Add mask": "Aggiungi maschera",
   "Add sub-mask": "Aggiungi sottomaschera",
   "Subtract sub-mask": "Sottrai sottomaschera",
-  "Intersect sub-mask": "Interseca sottomaschera"
+  "Intersect sub-mask": "Interseca sottomaschera",
+  "Sub-mask": "Sottomaschera",
+  "Sub-mask opacity": "Opacità della sottomaschera"
 }

@@ -2064,5 +2064,7 @@
   "Add mask": "マスクを追加",
   "Add sub-mask": "サブマスクを追加",
   "Subtract sub-mask": "サブマスクを減算",
-  "Intersect sub-mask": "サブマスクと交差"
+  "Intersect sub-mask": "サブマスクと交差",
+  "Sub-mask": "サブマスク",
+  "Sub-mask opacity": "サブマスクの不透明度"
 }

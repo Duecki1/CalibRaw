@@ -10,7 +10,26 @@ use std::collections::BTreeSet;
 const PERSON_CHIP_SIZE: f32 = 44.0;
 
 impl Sidebar {
-    pub(super) fn apply_mask_properties_action(
+    /// Reset the group's switches and opacity. Returns whether anything reset.
+    pub(super) fn reset_mask_group(
+        mask: &mut LocalMask,
+        action: super::super::adjustment_cards::CardAction,
+    ) -> bool {
+        use super::super::adjustment_cards::CardAction;
+        match action {
+            CardAction::None | CardAction::Toggle => false,
+            CardAction::Reset => {
+                mask.enabled = true;
+                mask.invert = false;
+                mask.opacity = 1.0;
+                true
+            }
+        }
+    }
+
+    /// Reset a sub-mask's switches, opacity and property controls, keeping
+    /// its selection itself. Returns whether anything reset.
+    pub(super) fn reset_submask(
         mask: &mut LocalMask,
         component_index: usize,
         action: super::super::adjustment_cards::CardAction,
@@ -20,12 +39,10 @@ impl Sidebar {
             CardAction::None => return false,
             CardAction::Toggle => {}
             CardAction::Reset => {
-                mask.enabled = true;
-                mask.invert = false;
-                mask.opacity = 1.0;
                 if let Some(component) = mask.components.get_mut(component_index) {
                     component.enabled = true;
                     component.invert = false;
+                    component.opacity = 1.0;
                     // Reset the property controls while retaining the selection itself.
                     let defaults = MaskGeometry::for_kind(component.kind);
                     let previous = std::mem::replace(&mut component.geometry, defaults);
@@ -343,6 +360,7 @@ impl Sidebar {
                 [component]
                     if component.enabled
                         && !component.invert
+                        && component.opacity == 1.0
                         && component.kind == MaskKind::Fullscreen
             )
     }
@@ -384,9 +402,37 @@ impl Sidebar {
             .show(ui)
     }
 
-    /// The properties of the selected component. Returns the edits, in the
-    /// order they apply; `controls` is the tool state at the start of the frame.
-    pub(super) fn show_vertical_mask_properties(
+    /// The group card's body: the group's name and switches, and its
+    /// opacity. Returns the edits in the order they apply.
+    pub(super) fn show_mask_group_properties(
+        ui: &mut Ui,
+        mask: &LocalMask,
+    ) -> Vec<MaskPropertyAction> {
+        let mut actions = Vec::new();
+        let switches = switches_row(ui, mask.name.as_str(), mask.enabled, mask.invert);
+        if switches.enabled {
+            actions.push(MaskPropertyAction::SetGroupEnabled(!mask.enabled));
+        }
+        if switches.invert {
+            actions.push(MaskPropertyAction::ToggleGroupInvert);
+        }
+        let mut opacity = mask.opacity;
+        if AdjustmentSlider::new(tr("Mask opacity"), &mut opacity, 0.0..=1.0)
+            .decimals(2)
+            .step(0.01)
+            .reset_to(1.0)
+            .show(ui)
+        {
+            actions.push(MaskPropertyAction::SetOpacity(opacity));
+        }
+        actions
+    }
+
+    /// The sub-mask card's body: the selected sub-mask's name, switches,
+    /// combine mode and opacity, then its kind's properties. Returns the
+    /// edits, in the order they apply; `controls` is the tool state at the
+    /// start of the frame.
+    pub(super) fn show_submask_properties(
         ui: &mut Ui,
         mask: &LocalMask,
         component_index: usize,
@@ -397,21 +443,10 @@ impl Sidebar {
             actions: Vec::new(),
             controls: *controls,
         };
-        let mut opacity = mask.opacity;
-        if AdjustmentSlider::new(tr("Mask opacity"), &mut opacity, 0.0..=1.0)
-            .decimals(2)
-            .step(0.01)
-            .reset_to(1.0)
-            .show(ui)
-        {
-            edits.push(MaskPropertyAction::SetOpacity(opacity));
-        }
-
         let Some(component) = mask.components.get(component_index) else {
             return edits.actions;
         };
 
-        ui.add_space(moduwu_design::SPACE_XS);
         ui.scope(|ui| {
             Self::component_header(ui, component, component_index, &mut edits);
             let is_sky = component.kind == MaskKind::Sky;
@@ -505,51 +540,61 @@ impl Sidebar {
         edits.actions
     }
 
-    /// The component name, its Invert toggle and, after the base, its combine mode.
+    /// The component's name and switches, after the base its combine mode,
+    /// and its opacity.
     fn component_header(
         ui: &mut Ui,
         component: &MaskComponent,
         component_index: usize,
         edits: &mut PropertyEdits,
     ) {
-        let is_fullscreen = matches!(&component.geometry, MaskGeometry::Fullscreen);
-        ui.horizontal_wrapped(|ui| {
-            let component_name = ui.strong(component.name.as_str());
-            if is_fullscreen {
-                component_name
-                    .on_hover_text(tr("Covers the complete image with uniform mask strength."));
+        let switches = switches_row(
+            ui,
+            component.name.as_str(),
+            component.enabled,
+            component.invert,
+        );
+        if matches!(&component.geometry, MaskGeometry::Fullscreen) {
+            switches
+                .name
+                .on_hover_text(tr("Covers the complete image with uniform mask strength."));
+        }
+        if switches.enabled {
+            edits.push(MaskPropertyAction::SetComponentEnabled(!component.enabled));
+        }
+        if switches.invert {
+            edits.push(MaskPropertyAction::ToggleComponentInvert);
+        }
+        if component_index > 0 {
+            let mut combine = component.combine;
+            egui::ComboBox::from_id_salt("vertical-mask-combine")
+                .selected_text(tr(combine.label()))
+                // Flat rows, so their labels do not shift on hover.
+                .popup_style(egui::style::StyleModifier::new(
+                    egui::containers::menu::menu_style,
+                ))
+                .show_ui(ui, |ui| {
+                    for mode in [
+                        MaskCombineMode::Add,
+                        MaskCombineMode::Subtract,
+                        MaskCombineMode::Intersect,
+                    ] {
+                        ui.selectable_value(&mut combine, mode, tr(mode.label()));
+                    }
+                });
+            if combine != component.combine {
+                edits.push(MaskPropertyAction::SetCombine(combine));
             }
-            let mut invert = component.invert;
-            if moduwu_design::toggle(ui, &mut invert, tr("Invert")).changed() {
-                edits.push(MaskPropertyAction::ToggleInvert);
-            }
-            if component_index > 0 {
-                // A combo box lays out in a child `Ui` that never wraps, so
-                // start a new row when it would not fit.
-                if ui.available_size_before_wrap().x < ui.spacing().combo_width {
-                    ui.end_row();
-                }
-                let mut combine = component.combine;
-                egui::ComboBox::from_id_salt("vertical-mask-combine")
-                    .selected_text(tr(combine.label()))
-                    // Flat rows, so their labels do not shift on hover.
-                    .popup_style(egui::style::StyleModifier::new(
-                        egui::containers::menu::menu_style,
-                    ))
-                    .show_ui(ui, |ui| {
-                        for mode in [
-                            MaskCombineMode::Add,
-                            MaskCombineMode::Subtract,
-                            MaskCombineMode::Intersect,
-                        ] {
-                            ui.selectable_value(&mut combine, mode, tr(mode.label()));
-                        }
-                    });
-                if combine != component.combine {
-                    edits.push(MaskPropertyAction::SetCombine(combine));
-                }
-            }
-        });
+        }
+        let mut opacity = component.opacity;
+        if AdjustmentSlider::new(tr("Sub-mask opacity"), &mut opacity, 0.0..=1.0)
+            .decimals(2)
+            .step(0.01)
+            .reset_to(1.0)
+            .show(ui)
+        {
+            edits.push(MaskPropertyAction::SetComponentOpacity(opacity));
+        }
     }
 
     fn brush_properties(ui: &mut Ui, geometry: &MaskGeometry, edits: &mut PropertyEdits) {
@@ -1112,4 +1157,49 @@ fn person_chip(
         )
     });
     response
+}
+
+/// Which of a [`switches_row`]'s switches were clicked, and its name label.
+struct Switches {
+    name: egui::Response,
+    enabled: bool,
+    invert: bool,
+}
+
+/// A group's or sub-mask's name with its Enabled and Invert switches at the
+/// row's end, as chips that fill while on. Enabled shows a power symbol, as
+/// the card header's eye already toggles the mask overlay.
+fn switches_row(ui: &mut Ui, name: &str, enabled: bool, invert: bool) -> Switches {
+    use egui_phosphor::regular;
+
+    let height = ui.spacing().interact_size.y;
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width().max(1.0), height),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            let invert = moduwu_design::chip(
+                ui,
+                format!("{}  {}", regular::SELECTION_INVERSE, tr("Invert")),
+                invert,
+            )
+            .clicked();
+            let enabled = moduwu_design::chip(
+                ui,
+                format!("{}  {}", regular::POWER, tr("Enabled")),
+                enabled,
+            )
+            .clicked();
+            let name = ui
+                .with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(name).strong()).truncate())
+                })
+                .inner;
+            Switches {
+                name,
+                enabled,
+                invert,
+            }
+        },
+    )
+    .inner
 }

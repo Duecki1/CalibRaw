@@ -1,6 +1,6 @@
-Basic transform with aspect and guided perspective, basic chromatic aberration and LUTs.
-Simple negatives support and a reworked library with folders, sorting and filtering.
-Watermarks on export and batch export, and undoable crop and mask edits.
-People selection for masks.
-Translations in French, German, Hindi, Japanese, Polish and Chinese.
-Fixes for lens matching, dehaze, DNG and TIFF files and the tablet layout.
+Color calibration, AI denoise and a brightness slider.
+Relight with several lights, Light Rays kept inside masks, and a reworked effects engine.
+Linked folders with subfolders on Android, edited-photo thumbnails and faster library previews.
+Faster, GPU-accelerated export, copy selected adjustments and a redesigned mask tab.
+Added Danish, Italian, Spanish, Romanian, Ukrainian and Russian translations.
+Fixes for DNG files, white balance picker, raw rotation and rating on Android.

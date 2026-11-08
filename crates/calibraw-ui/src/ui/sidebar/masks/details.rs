@@ -2,7 +2,7 @@ use super::adjustments::{
     apply_local_adjustment_response, LocalAdjustmentTabs, LocalAdjustmentTarget,
 };
 use super::*;
-use crate::app::{apply_mask_property_actions, MaskPropertiesControls};
+use crate::app::{apply_mask_property_actions, MaskPropertiesControls, MaskPropertyChanges};
 use crate::i18n::tr;
 
 /// Open the kind picker from a creation button of the strip: beside a strip
@@ -392,6 +392,39 @@ impl Sidebar {
             });
     }
 
+    /// The selected group's card and, below it, the selected sub-mask's,
+    /// with their edits and resets applied to `mask`. On portrait screens
+    /// the group card's footer reset also resets the sub-mask, whose card
+    /// has no actions there.
+    fn show_mask_property_cards(
+        ui: &mut Ui,
+        mask: &mut LocalMask,
+        component_index: usize,
+        controls: &mut MaskPropertiesControls,
+        people: &crate::app::PeopleChoices,
+        foldable: bool,
+    ) -> MaskPropertyChanges {
+        let mut group_actions = Vec::new();
+        let group_action = Self::mask_group_card(ui, foldable, |ui| {
+            group_actions = Self::show_mask_group_properties(ui, mask);
+        });
+        let mut submask_actions = Vec::new();
+        let submask_action = Self::submask_card(ui, foldable, |ui| {
+            submask_actions =
+                Self::show_submask_properties(ui, mask, component_index, controls, people);
+        });
+        group_actions.extend(submask_actions);
+        let mut changes =
+            apply_mask_property_actions(mask, component_index, controls, group_actions);
+        let footer_reset = Self::cards_use_footer(ui.ctx());
+        changes.geometry |= Self::reset_mask_group(mask, group_action);
+        if footer_reset {
+            changes.geometry |= Self::reset_submask(mask, component_index, group_action);
+        }
+        changes.geometry |= Self::reset_submask(mask, component_index, submask_action);
+        changes
+    }
+
     fn show_mask_details(
         ui: &mut Ui,
         app: &mut CalibRawApp,
@@ -462,24 +495,16 @@ impl Sidebar {
             }
             match orientation {
                 MaskStripOrientation::Horizontal => {
-                    let mut property_actions = Vec::new();
-                    let action = Self::mask_properties_card(ui, true, true, true, |ui| {
-                        property_actions = Self::show_vertical_mask_properties(
-                            ui,
-                            mask,
-                            component_index,
-                            &controls,
-                            &people,
-                        );
-                    });
-                    geometry_changed |= apply_mask_property_actions(
+                    let changes = Self::show_mask_property_cards(
+                        ui,
                         mask,
                         component_index,
                         &mut controls,
-                        property_actions,
+                        &people,
+                        true,
                     );
-                    geometry_changed |=
-                        Self::apply_mask_properties_action(mask, component_index, action);
+                    geometry_changed |= changes.geometry;
+                    adjustments_changed |= changes.adjustments;
 
                     edit_header_rect = Some(
                         Self::render_mask_edit_header(ui, || {
@@ -536,24 +561,16 @@ impl Sidebar {
                     };
                     match mask_section {
                         MaskSection::Properties => {
-                            let mut property_actions = Vec::new();
-                            let action = Self::mask_properties_card(ui, true, false, true, |ui| {
-                                property_actions = Self::show_vertical_mask_properties(
-                                    ui,
-                                    mask,
-                                    component_index,
-                                    &controls,
-                                    &people,
-                                );
-                            });
-                            geometry_changed |= apply_mask_property_actions(
+                            let changes = Self::show_mask_property_cards(
+                                ui,
                                 mask,
                                 component_index,
                                 &mut controls,
-                                property_actions,
+                                &people,
+                                false,
                             );
-                            geometry_changed |=
-                                Self::apply_mask_properties_action(mask, component_index, action);
+                            geometry_changed |= changes.geometry;
+                            adjustments_changed |= changes.adjustments;
                         }
                         MaskSection::Effects if app.develop_ui.mask_effect_component.is_some() => {
                             let fullscreen = Self::is_plain_fullscreen_mask(mask);

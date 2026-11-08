@@ -2064,5 +2064,7 @@
   "Add mask": "Maske hinzufügen",
   "Add sub-mask": "Untermaske hinzufügen",
   "Subtract sub-mask": "Untermaske subtrahieren",
-  "Intersect sub-mask": "Schnittmenge mit Untermaske"
+  "Intersect sub-mask": "Schnittmenge mit Untermaske",
+  "Sub-mask": "Untermaske",
+  "Sub-mask opacity": "Deckkraft der Untermaske"
 }
