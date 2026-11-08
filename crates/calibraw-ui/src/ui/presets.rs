@@ -19,6 +19,7 @@ enum PresetAction {
     Delete(PathBuf),
     NewPreset(String),
     NewGroup,
+    Import,
     RenameGroup(String),
     DeleteGroup(String),
 }
@@ -276,6 +277,23 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
     {
         action = Some(PresetAction::NewGroup);
     }
+    moduwu_design::card_gap(ui);
+    if ui
+        .add_enabled_ui(app.presets.is_available(), |ui| {
+            moduwu_design::full_width_button(
+                ui,
+                format!(
+                    "{}  {}",
+                    egui_phosphor::regular::DOWNLOAD_SIMPLE,
+                    tr("Import presets")
+                ),
+            )
+        })
+        .inner
+        .clicked()
+    {
+        action = Some(PresetAction::Import);
+    }
     // A touch has no hover; a tap applies the preset directly.
     if let Some(path) = hovered.filter(|_| pointer_previews(ui)) {
         app.presets.hover.request(path);
@@ -288,6 +306,7 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
         Some(PresetAction::Delete(path)) => app.presets.pending_delete = Some(path),
         Some(PresetAction::NewPreset(group)) => app.open_new_preset_editor(group),
         Some(PresetAction::NewGroup) => app.open_group_dialog(GroupDialogMode::Create),
+        Some(PresetAction::Import) => app.choose_preset_files_to_import(),
         Some(PresetAction::RenameGroup(group)) => {
             app.open_group_dialog(GroupDialogMode::Rename { group });
         }
