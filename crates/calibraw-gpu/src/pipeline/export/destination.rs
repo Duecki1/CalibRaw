@@ -273,11 +273,11 @@ pub(super) fn publish_completed_export_to_free_name(
 }
 
 fn flush_completed_export(temporary: &Path) -> Result<()> {
-    OpenOptions::new()
+    let file = OpenOptions::new()
         .write(true)
         .open(temporary)
-        .with_context(|| format!("open completed export {}", temporary.display()))?
-        .sync_all()
+        .with_context(|| format!("open completed export {}", temporary.display()))?;
+    calibraw_core::file_ops::sync_file(&file)
         .with_context(|| format!("flush completed export {}", temporary.display()))
 }
 

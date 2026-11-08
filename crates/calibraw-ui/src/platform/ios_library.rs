@@ -339,7 +339,7 @@ impl IosLibrary {
                 committed: false,
             };
             io::copy(&mut source, &mut destination).map_err(|error| error.to_string())?;
-            destination.sync_all().map_err(|error| error.to_string())?;
+            calibraw_core::file_ops::sync_file(&destination).map_err(|error| error.to_string())?;
             partial.committed = true;
             return Ok(ImportedLibraryDocument {
                 uri,

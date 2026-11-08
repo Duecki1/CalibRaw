@@ -181,8 +181,8 @@ fn create_backup_copy(path: &Path) -> Result<PathBuf, SidecarError> {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(SidecarError::Io(error)),
         };
-        let copied =
-            std::io::copy(&mut source, &mut destination).and_then(|_| destination.sync_all());
+        let copied = std::io::copy(&mut source, &mut destination)
+            .and_then(|_| crate::file_ops::sync_file(&destination));
         drop(destination);
         if let Err(error) = copied {
             let _ = std::fs::remove_file(&backup);

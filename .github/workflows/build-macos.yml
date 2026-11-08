@@ -148,27 +148,27 @@ jobs:
           chmod +x "$executable"
           cp COPYING THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md README.md "$contents/Resources/"
 
-          icon_source="packaging/icons/calibraw-macos-1024.png"
-          iconset="$contents/Resources/CalibRaw.iconset"
-          mkdir -p "$iconset"
-          for icon_size in 16 32 128 256 512; do
-            retina_size=$((icon_size * 2))
-            sips -z "$icon_size" "$icon_size" "$icon_source" \
-              --out "$iconset/icon_${icon_size}x${icon_size}.png"
-            sips -z "$retina_size" "$retina_size" "$icon_source" \
-              --out "$iconset/icon_${icon_size}x${icon_size}@2x.png"
-          done
-          iconutil -c icns "$iconset" -o "$contents/Resources/CalibRaw.icns"
-          rm -rf "$iconset"
+          # Only an Icon Composer document adapts to Liquid Glass, and compiling one
+          # needs Xcode 26 or newer, which is not the runner's default. actool writes
+          # Assets.car for macOS 26 and later, and CalibRaw.icns for older systems.
+          DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcrun actool \
+            packaging/icons/CalibRaw.icon \
+            --compile "$contents/Resources" \
+            --app-icon CalibRaw \
+            --include-all-app-icons \
+            --platform macosx \
+            --target-device mac \
+            --minimum-deployment-target 12.0 \
+            --output-partial-info-plist "$(mktemp)" \
+            --errors \
+            --warnings
+          test -s "$contents/Resources/Assets.car"
           test -s "$contents/Resources/CalibRaw.icns"
-          # iconutil re-encodes PNG entries, so validate content dimensions rather than bytes.
-          verify_iconset="$(mktemp -d)/CalibRaw.iconset"
-          iconutil -c iconset "$contents/Resources/CalibRaw.icns" -o "$verify_iconset"
-          verify_icon="$verify_iconset/icon_512x512@2x.png"
-          test -s "$verify_icon"
-          test "$(sips -g pixelWidth "$verify_icon" | awk '/pixelWidth/ { print $2 }')" = "1024"
-          test "$(sips -g pixelHeight "$verify_icon" | awk '/pixelHeight/ { print $2 }')" = "1024"
-          rm -rf "$(dirname "$verify_iconset")"
+          # The catalog must hold the adaptive icon, and the full-size rendition older
+          # macOS shows; actool's CalibRaw.icns stops at 256 pixels.
+          icon_catalog="$(DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcrun assetutil --info "$contents/Resources/Assets.car")"
+          grep -q '"AssetType" : "IconImageStack"' <<<"$icon_catalog"
+          grep -q '"PixelWidth" : 1024' <<<"$icon_catalog"
 
           lensfun_db="$(find "$LENSFUN_PREFIX/share/lensfun" -type f -name '*.xml' -print | head -n 1)"
           test -n "$lensfun_db"
@@ -191,6 +191,8 @@ jobs:
             <string>de.duecki.calibraw</string>
             <key>CFBundleIconFile</key>
             <string>CalibRaw.icns</string>
+            <key>CFBundleIconName</key>
+            <string>CalibRaw</string>
             <key>CFBundleInfoDictionaryVersion</key>
             <string>6.0</string>
             <key>CFBundleName</key>

@@ -28,7 +28,7 @@ where
             .create_new(true)
             .open(&staging)?;
         write(&mut file)?;
-        file.sync_all()?;
+        sync_file(&file)?;
         drop(file);
         replace_file(&staging, path)?;
         sync_parent_directory(parent)?;
@@ -203,10 +203,123 @@ fn move_file_ex(
 
 #[cfg(unix)]
 pub fn sync_parent_directory(parent: &Path) -> std::io::Result<()> {
-    File::open(parent)?.sync_all()
+    sync_file(&File::open(parent)?)
 }
 
 #[cfg(not(unix))]
 pub fn sync_parent_directory(_parent: &Path) -> std::io::Result<()> {
     Ok(())
+}
+
+/// Flushes `file` to storage. Use this rather than [`File::sync_all`] for
+/// anything that can live in a folder the user chose.
+///
+/// On Apple platforms `sync_all` is `fcntl(F_FULLFSYNC)`, which fails with
+/// `ENOTSUP` on file systems that cannot honour it: SMB shares reject it for
+/// directories, and on some servers (Samba) for files too. Those get a plain
+/// `fsync`, the strongest flush they offer. Every other error is a real write
+/// failure and is returned; retrying it with `fsync` could report success for
+/// data that was lost.
+#[cfg(target_vendor = "apple")]
+pub fn sync_file(file: &File) -> io::Result<()> {
+    fall_back_if_unsupported(file.sync_all(), || fsync(file))
+}
+
+#[cfg(not(target_vendor = "apple"))]
+pub fn sync_file(file: &File) -> io::Result<()> {
+    file.sync_all()
+}
+
+#[cfg(target_vendor = "apple")]
+fn fall_back_if_unsupported(
+    full_sync: io::Result<()>,
+    fsync: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    match full_sync {
+        Err(error) if error.raw_os_error() == Some(libc::ENOTSUP) => fsync(),
+        result => result,
+    }
+}
+
+#[cfg(target_vendor = "apple")]
+fn fsync(file: &File) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    loop {
+        // SAFETY: `file` keeps the descriptor open for the whole call, and
+        // `fsync` only flushes it.
+        if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_file_flushes_files_and_directories() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let path = directory.path().join("photo.calibraw");
+        write_bytes_atomically(&path, b"edits").expect("write atomically");
+
+        // Windows refuses to flush a handle opened read-only.
+        let file = OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open file");
+        sync_file(&file).expect("sync file");
+        sync_parent_directory(directory.path()).expect("sync directory");
+        assert_eq!(fs::read(&path).expect("read file"), b"edits");
+    }
+
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn unsupported_full_sync_falls_back_to_fsync() {
+        let unsupported = io::Error::from_raw_os_error(libc::ENOTSUP);
+        let mut fell_back = false;
+        let result = fall_back_if_unsupported(Err(unsupported), || {
+            fell_back = true;
+            Ok(())
+        });
+        assert!(result.is_ok());
+        assert!(fell_back);
+    }
+
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn failing_fallback_reports_the_fsync_error() {
+        let unsupported = io::Error::from_raw_os_error(libc::ENOTSUP);
+        let result = fall_back_if_unsupported(Err(unsupported), || {
+            Err(io::Error::from_raw_os_error(libc::ENOSPC))
+        });
+        let error = result.expect_err("fsync failed");
+        assert_eq!(error.raw_os_error(), Some(libc::ENOSPC));
+    }
+
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn real_write_failures_do_not_fall_back() {
+        let failure = io::Error::from_raw_os_error(libc::EIO);
+        let mut fell_back = false;
+        let result = fall_back_if_unsupported(Err(failure), || {
+            fell_back = true;
+            Ok(())
+        });
+        let error = result.expect_err("write failure stays an error");
+        assert_eq!(error.raw_os_error(), Some(libc::EIO));
+        assert!(!fell_back);
+    }
+
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn fsync_flushes_an_open_file() {
+        let file = tempfile::tempfile().expect("create file");
+        fsync(&file).expect("fsync");
+    }
 }
