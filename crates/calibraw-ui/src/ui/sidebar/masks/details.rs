@@ -7,22 +7,33 @@ use crate::i18n::tr;
 
 /// Open the kind picker from a creation button of the strip: beside a strip
 /// along the right edge, above or below one along the top, and as a sheet on
-/// touch layouts. Returns the picked kind.
+/// touch layouts. `title` names what the pick creates, and `fill`, when set,
+/// gives the picker its button's tint. Returns the picked kind.
 fn kind_picker_from(
     response: &egui::Response,
     orientation: MaskStripOrientation,
+    title: &str,
+    fill: Option<egui::Color32>,
 ) -> Option<MaskKind> {
     let placement = match orientation {
         MaskStripOrientation::Vertical => moduwu_design::PickerPlacement::Left,
         MaskStripOrientation::Horizontal => moduwu_design::PickerPlacement::BelowOrAbove,
     };
-    moduwu_design::picker_menu(
-        response,
-        kind_picker::KIND_PICKER_MIN_WIDTH,
-        placement,
-        kind_picker::mask_kind_tiles,
-    )
+    let mut picker =
+        moduwu_design::Picker::new(kind_picker::KIND_PICKER_MIN_WIDTH, placement).title(title);
+    if let Some(fill) = fill {
+        picker = picker.fill(fill);
+    }
+    picker.show_menu(response, kind_picker::mask_kind_tiles)
 }
+
+/// The opaque fill of a creation tile tinted `amount` of the way toward
+/// `accent`; an idle tile and its picker use [`IDLE_TINT`].
+fn tinted_fill(visuals: &egui::Visuals, accent: egui::Color32, amount: f32) -> egui::Color32 {
+    visuals.panel_fill.lerp_to_gamma(accent, amount)
+}
+
+const IDLE_TINT: f32 = 0.11;
 
 /// The icon of a creation tile.
 enum TileIcon {
@@ -65,10 +76,10 @@ fn creation_tile(
     } else if hovered {
         0.20
     } else {
-        0.11
+        IDLE_TINT
     };
     // The Subtract glyph cuts its square out with the fill, so it is opaque.
-    let fill = visuals.panel_fill.lerp_to_gamma(accent, tint);
+    let fill = tinted_fill(visuals, accent, tint);
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 6.0, fill);
     painter.rect_stroke(
@@ -169,7 +180,7 @@ impl Sidebar {
             })
             .inner
             .on_hover_text(tr("Create a new mask group"));
-        *new_mask = kind_picker_from(&response, orientation);
+        *new_mask = kind_picker_from(&response, orientation, tr("Add mask"), None);
     }
 
     /// One button per combine mode, each opening the kind picker for a
@@ -200,10 +211,9 @@ impl Sidebar {
             ui.spacing_mut().item_spacing =
                 egui::vec2(moduwu_design::SPACE_XXS, moduwu_design::SPACE_XXS);
             for combine in MODES {
+                let accent = crate::ui::theme::mask_combine_color(combine, ui.visuals().dark_mode);
                 let response = ui
                     .push_id(("mask-submask-creation", combine.label()), |ui| {
-                        let accent =
-                            crate::ui::theme::mask_combine_color(combine, ui.visuals().dark_mode);
                         let response = creation_tile(
                             ui,
                             button_size,
@@ -221,7 +231,13 @@ impl Sidebar {
                         }
                     })
                     .inner;
-                if let Some(kind) = kind_picker_from(&response, orientation) {
+                let title = match combine {
+                    MaskCombineMode::Add => tr("Add sub-mask"),
+                    MaskCombineMode::Subtract => tr("Subtract sub-mask"),
+                    MaskCombineMode::Intersect => tr("Intersect sub-mask"),
+                };
+                let fill = tinted_fill(ui.visuals(), accent, IDLE_TINT);
+                if let Some(kind) = kind_picker_from(&response, orientation, title, Some(fill)) {
                     *add_component = Some((kind, combine));
                 }
             }

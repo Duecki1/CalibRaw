@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "Das Erstellen des bearbeiteten Vorschaubilds konnte nicht gestartet werden: {error}",
   "the edited-thumbnail render stopped unexpectedly": "Das Erstellen des bearbeiteten Vorschaubilds wurde unerwartet beendet",
   "Remove could not be applied: {error}": "„Entfernen“ konnte nicht angewendet werden: {error}",
-  "Edits {completed}/{total}": "Bearbeitungen {completed}/{total}"
+  "Edits {completed}/{total}": "Bearbeitungen {completed}/{total}",
+  "Add mask": "Maske hinzufügen",
+  "Add sub-mask": "Untermaske hinzufügen",
+  "Subtract sub-mask": "Untermaske subtrahieren",
+  "Intersect sub-mask": "Schnittmenge mit Untermaske"
 }

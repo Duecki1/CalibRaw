@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "düzenlenmiş küçük resmin işlenmesi başlatılamadı: {error}",
   "the edited-thumbnail render stopped unexpectedly": "düzenlenmiş küçük resmin işlenmesi beklenmedik şekilde durdu",
   "Remove could not be applied: {error}": "Kaldır uygulanamadı: {error}",
-  "Edits {completed}/{total}": "Düzenlemeler {completed}/{total}"
+  "Edits {completed}/{total}": "Düzenlemeler {completed}/{total}",
+  "Add mask": "Maske ekle",
+  "Add sub-mask": "Alt maske ekle",
+  "Subtract sub-mask": "Alt maske çıkar",
+  "Intersect sub-mask": "Alt maskeyle kesiştir"
 }

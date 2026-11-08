@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "impossibile avviare il rendering della miniatura modificata: {error}",
   "the edited-thumbnail render stopped unexpectedly": "il rendering della miniatura modificata si è interrotto inaspettatamente",
   "Remove could not be applied: {error}": "Impossibile applicare Rimuovi: {error}",
-  "Edits {completed}/{total}": "Modifiche {completed}/{total}"
+  "Edits {completed}/{total}": "Modifiche {completed}/{total}",
+  "Add mask": "Aggiungi maschera",
+  "Add sub-mask": "Aggiungi sottomaschera",
+  "Subtract sub-mask": "Sottrai sottomaschera",
+  "Intersect sub-mask": "Interseca sottomaschera"
 }

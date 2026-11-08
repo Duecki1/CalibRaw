@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "无法开始渲染已编辑的缩略图：{error}",
   "the edited-thumbnail render stopped unexpectedly": "已编辑缩略图的渲染意外停止",
   "Remove could not be applied: {error}": "无法应用“移除”：{error}",
-  "Edits {completed}/{total}": "编辑 {completed}/{total}"
+  "Edits {completed}/{total}": "编辑 {completed}/{total}",
+  "Add mask": "添加蒙版",
+  "Add sub-mask": "添加子蒙版",
+  "Subtract sub-mask": "减去子蒙版",
+  "Intersect sub-mask": "与子蒙版相交"
 }

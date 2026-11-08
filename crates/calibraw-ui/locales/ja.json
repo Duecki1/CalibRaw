@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "編集済みサムネイルのレンダリングを開始できませんでした：{error}",
   "the edited-thumbnail render stopped unexpectedly": "編集済みサムネイルのレンダリングが予期せず停止しました",
   "Remove could not be applied: {error}": "削除を適用できませんでした：{error}",
-  "Edits {completed}/{total}": "編集内容{completed}/{total}"
+  "Edits {completed}/{total}": "編集内容{completed}/{total}",
+  "Add mask": "マスクを追加",
+  "Add sub-mask": "サブマスクを追加",
+  "Subtract sub-mask": "サブマスクを減算",
+  "Intersect sub-mask": "サブマスクと交差"
 }

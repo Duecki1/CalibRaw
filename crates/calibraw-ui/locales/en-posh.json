@@ -2053,5 +2053,9 @@
   "could not start the edited-thumbnail render: {error}": "Could not commence the edited thumbnail's rendering: {error}.",
   "the edited-thumbnail render stopped unexpectedly": "The edited thumbnail's rendering ceased unexpectedly.",
   "Remove could not be applied: {error}": "Remove could not be applied, most regrettably: {error}",
-  "Edits {completed}/{total}": "Edits {completed}/{total}"
+  "Edits {completed}/{total}": "Edits {completed}/{total}",
+  "Add mask": "Append mask",
+  "Add sub-mask": "Append sub-mask",
+  "Subtract sub-mask": "Subtract sub-mask",
+  "Intersect sub-mask": "Intersect sub-mask"
 }

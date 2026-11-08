@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "redarea miniaturii editate nu a putut porni: {error}",
   "the edited-thumbnail render stopped unexpectedly": "redarea miniaturii editate s-a oprit neașteptat",
   "Remove could not be applied: {error}": "Eliminarea nu a putut fi aplicată: {error}",
-  "Edits {completed}/{total}": "Editări {completed}/{total}"
+  "Edits {completed}/{total}": "Editări {completed}/{total}",
+  "Add mask": "Adaugă mască",
+  "Add sub-mask": "Adaugă submască",
+  "Subtract sub-mask": "Scade submască",
+  "Intersect sub-mask": "Intersectează cu submască"
 }

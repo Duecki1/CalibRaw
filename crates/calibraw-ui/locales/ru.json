@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "не удалось запустить отрисовку миниатюры с коррекциями: {error}",
   "the edited-thumbnail render stopped unexpectedly": "отрисовка миниатюры с коррекциями неожиданно прекратилась",
   "Remove could not be applied: {error}": "Не удалось применить удаление: {error}",
-  "Edits {completed}/{total}": "Коррекции {completed}/{total}"
+  "Edits {completed}/{total}": "Коррекции {completed}/{total}",
+  "Add mask": "Добавить маску",
+  "Add sub-mask": "Добавить подмаску",
+  "Subtract sub-mask": "Вычесть подмаску",
+  "Intersect sub-mask": "Пересечь с подмаской"
 }

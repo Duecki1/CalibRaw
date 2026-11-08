@@ -2058,5 +2058,9 @@
   "could not start the edited-thumbnail render: {error}": "nie udało się uruchomić renderowania edytowanej miniatury: {error}",
   "the edited-thumbnail render stopped unexpectedly": "renderowanie edytowanej miniatury nieoczekiwanie się zatrzymało",
   "Remove could not be applied: {error}": "Nie udało się zastosować narzędzia Usuń: {error}",
-  "Edits {completed}/{total}": "Edycje {completed}/{total}"
+  "Edits {completed}/{total}": "Edycje {completed}/{total}",
+  "Add mask": "Dodaj maskę",
+  "Add sub-mask": "Dodaj maskę podrzędną",
+  "Subtract sub-mask": "Odejmij maskę podrzędną",
+  "Intersect sub-mask": "Część wspólna z maską podrzędną"
 }

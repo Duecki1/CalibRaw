@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "impossible de lancer la génération de la vignette retouchée : {error}",
   "the edited-thumbnail render stopped unexpectedly": "la génération de la vignette retouchée s’est arrêtée de façon inattendue",
   "Remove could not be applied: {error}": "Impossible d’appliquer Suppression : {error}",
-  "Edits {completed}/{total}": "Retouches {completed}/{total}"
+  "Edits {completed}/{total}": "Retouches {completed}/{total}",
+  "Add mask": "Ajouter un masque",
+  "Add sub-mask": "Ajouter un sous-masque",
+  "Subtract sub-mask": "Soustraire un sous-masque",
+  "Intersect sub-mask": "Intersection avec un sous-masque"
 }

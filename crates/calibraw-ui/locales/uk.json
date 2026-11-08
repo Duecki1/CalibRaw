@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "не вдалося запустити рендеринг обробленої мініатюри: {error}",
   "the edited-thumbnail render stopped unexpectedly": "рендеринг обробленої мініатюри несподівано зупинився",
   "Remove could not be applied: {error}": "Не вдалося застосувати «Видалити»: {error}",
-  "Edits {completed}/{total}": "Зміни {completed}/{total}"
+  "Edits {completed}/{total}": "Зміни {completed}/{total}",
+  "Add mask": "Додати маску",
+  "Add sub-mask": "Додати підмаску",
+  "Subtract sub-mask": "Відняти підмаску",
+  "Intersect sub-mask": "Перетнути з підмаскою"
 }

@@ -2054,5 +2054,9 @@
   "could not start the edited-thumbnail render: {error}": "편집된 썸네일 렌더링을 시작할 수 없습니다: {error}",
   "the edited-thumbnail render stopped unexpectedly": "편집된 썸네일 렌더링이 예기치 않게 중지되었습니다",
   "Remove could not be applied: {error}": "제거를 적용할 수 없습니다: {error}",
-  "Edits {completed}/{total}": "편집 {completed}/{total}"
+  "Edits {completed}/{total}": "편집 {completed}/{total}",
+  "Add mask": "마스크 추가",
+  "Add sub-mask": "하위 마스크 추가",
+  "Subtract sub-mask": "하위 마스크 빼기",
+  "Intersect sub-mask": "하위 마스크 교차"
 }

@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "無法開始渲染已編輯的縮略圖：{error}",
   "the edited-thumbnail render stopped unexpectedly": "已編輯縮略圖的渲染意外停止",
   "Remove could not be applied: {error}": "無法套用“移除”：{error}",
-  "Edits {completed}/{total}": "編輯 {completed}/{total}"
+  "Edits {completed}/{total}": "編輯 {completed}/{total}",
+  "Add mask": "添加遮色片",
+  "Add sub-mask": "添加子遮色片",
+  "Subtract sub-mask": "減去子遮色片",
+  "Intersect sub-mask": "與子遮色片相交"
 }

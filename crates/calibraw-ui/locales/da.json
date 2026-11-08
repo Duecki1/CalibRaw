@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "kunne ikke starte gengivelsen af miniaturebilledet med redigeringer: {error}",
   "the edited-thumbnail render stopped unexpectedly": "gengivelsen af miniaturebilledet med redigeringer stoppede uventet",
   "Remove could not be applied: {error}": "Fjern kunne ikke anvendes: {error}",
-  "Edits {completed}/{total}": "Redigeringer {completed}/{total}"
+  "Edits {completed}/{total}": "Redigeringer {completed}/{total}",
+  "Add mask": "Tilføj maske",
+  "Add sub-mask": "Tilføj undermaske",
+  "Subtract sub-mask": "Træk undermaske fra",
+  "Intersect sub-mask": "Fællesmængde med undermaske"
 }

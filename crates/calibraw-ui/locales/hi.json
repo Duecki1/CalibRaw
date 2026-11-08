@@ -2060,5 +2060,9 @@
   "could not start the edited-thumbnail render: {error}": "संपादित थंबनेल का रेंडर शुरू नहीं हो सका: {error}",
   "the edited-thumbnail render stopped unexpectedly": "संपादित थंबनेल का रेंडर अप्रत्याशित रूप से रुक गया",
   "Remove could not be applied: {error}": "Remove लागू नहीं हो सका: {error}",
-  "Edits {completed}/{total}": "संपादन {completed}/{total}"
+  "Edits {completed}/{total}": "संपादन {completed}/{total}",
+  "Add mask": "मास्क जोड़ें",
+  "Add sub-mask": "सब-मास्क जोड़ें",
+  "Subtract sub-mask": "सब-मास्क घटाएँ",
+  "Intersect sub-mask": "सब-मास्क से प्रतिच्छेद करें"
 }
