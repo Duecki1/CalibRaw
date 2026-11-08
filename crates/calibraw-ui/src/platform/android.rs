@@ -540,6 +540,39 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::load_android_sidecar_summary(&self.app, raw_uri, display_name)
     }
 
+    fn read_library_photo(
+        &self,
+        uri: &str,
+        display_name: &str,
+        read: &mut dyn FnMut(&Path) -> Result<(), String>,
+    ) -> Result<(), String> {
+        calibraw_ffi::read_library_photo(&self.app, uri, display_name, "photo", read)
+    }
+
+    fn load_sidecar_for_render(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+    ) -> Result<Option<(LoadedSidecar, u64)>, SidecarError> {
+        calibraw_ffi::load_android_sidecar_for_render(&self.app, raw_uri, display_name)
+    }
+
+    fn save_rendered_developed_thumbnail(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        thumbnail: &RawThumbnail,
+        render_fingerprint: u64,
+    ) -> Result<bool, String> {
+        calibraw_ffi::save_rendered_developed_thumbnail(
+            &self.app,
+            raw_uri,
+            display_name,
+            thumbnail,
+            render_fingerprint,
+        )
+    }
+
     fn load_current_developed_thumbnail(
         &self,
         raw_uri: &str,

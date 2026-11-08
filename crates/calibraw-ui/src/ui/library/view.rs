@@ -90,6 +90,7 @@ impl Library {
     pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         app.library.resume_thumbnail_decoding();
         app.library.poll(ui.ctx());
+        app.run_library_developed_renders();
 
         let caps = app.caps();
         let mut refresh = false;

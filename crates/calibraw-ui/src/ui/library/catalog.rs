@@ -392,6 +392,14 @@ pub(super) fn thumbnail_tile(
             egui::epaint::RectShape::filled(image_rect, THUMBNAIL_CARD_RADIUS, Color32::WHITE)
                 .with_texture(texture.id(), uv),
         );
+        // The thumbnail stays until the saved edits it lacks have rendered.
+        if entry.edits == ThumbnailEdits::Rendering {
+            crate::ui::components::loading_wave::paint_loading_wave(
+                ui,
+                image_rect,
+                THUMBNAIL_CARD_RADIUS,
+            );
+        }
     } else {
         painter.rect_filled(
             image_rect,
@@ -419,7 +427,7 @@ pub(super) fn thumbnail_tile(
     }
 
     let mut corner_badges_bottom = rect.top();
-    let stale = entry.developed_thumbnail_pending;
+    let stale = entry.edits.is_stale();
     let edit_badge = EditBadge {
         edited: entry.asset.metadata.edited,
         stale,

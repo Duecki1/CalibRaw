@@ -188,15 +188,10 @@ impl RawGpuPipeline {
             config,
         } = build;
         validate_raw(raw)?;
-        if let Some(template) = program_template {
-            if template.cfa_kind != raw.cfa_kind
-                || template.processing_quality != quality
-                || template.pipelines.len() != expected_pass_count(raw.cfa_kind)
-            {
-                return Err(anyhow!(
-                    "cannot reuse GPU programs from an incompatible pipeline"
-                ));
-            }
+        if program_template.is_some_and(|template| !template.fits(raw, quality)) {
+            return Err(anyhow!(
+                "cannot reuse GPU programs from an incompatible pipeline"
+            ));
         }
 
         let geometry = compute_derived_geometry(raw, params, quality, config);

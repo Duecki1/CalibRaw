@@ -84,13 +84,14 @@ pub(super) fn selected_picker_directory(path: &std::path::Path) -> Option<std::p
 pub(super) fn spawn_gpu_preview_prewarm(
     cc: &eframe::CreationContext<'_>,
     cache_root: Option<std::path::PathBuf>,
+    preview_prewarm: Arc<crate::pipeline::GpuProgramPrewarm>,
     export_prewarm: Arc<crate::pipeline::GpuProgramPrewarm>,
     platform: Arc<dyn Platform>,
 ) -> Option<mpsc::Receiver<Result<RawGpuPipeline, String>>> {
     let Some(render_state) = cc.wgpu_render_state.as_ref() else {
-        export_prewarm.publish(Err(
-            tr("eframe is not running with the wgpu backend").to_owned()
-        ));
+        let error = tr("eframe is not running with the wgpu backend").to_owned();
+        preview_prewarm.publish(Err(error.clone()));
+        export_prewarm.publish(Err(error));
         return None;
     };
     let device = render_state.device.clone();
@@ -99,6 +100,7 @@ pub(super) fn spawn_gpu_preview_prewarm(
     let repaint = cc.egui_ctx.clone();
     let (sender, receiver) = mpsc::channel();
     let export_prewarm_for_thread = Arc::clone(&export_prewarm);
+    let preview_prewarm_for_thread = Arc::clone(&preview_prewarm);
     let spawn_result = std::thread::Builder::new()
         .name("calibraw-gpu-preview-prewarm".to_owned())
         .spawn(move || {
@@ -172,7 +174,13 @@ pub(super) fn spawn_gpu_preview_prewarm(
 
             // Programs are shared, so finishing the template's compiles below also
             // serves the pipeline handed to the first document.
-            let preview_template = result.as_ref().ok().map(RawGpuPipeline::program_template);
+            let preview_template = result
+                .as_ref()
+                .map(RawGpuPipeline::program_template)
+                .map_err(Clone::clone);
+            // The library renders saved edits with the same programs.
+            preview_prewarm_for_thread.publish(preview_template.clone());
+            let preview_template = preview_template.ok();
             let _ = sender.send(result);
             repaint.request_repaint();
 
@@ -236,13 +244,15 @@ pub(super) fn spawn_gpu_preview_prewarm(
     match spawn_result {
         Ok(_) => Some(receiver),
         Err(error) => {
-            export_prewarm.publish(Err(tr_fmt(
-                "GPU prewarm thread could not start: {error}",
-                &[("error", &error)],
-            )));
             calibraw_core::diagnostics::record(format!(
                 "GPU preview prewarm thread could not start: {error}"
             ));
+            let error = tr_fmt(
+                "GPU prewarm thread could not start: {error}",
+                &[("error", &error)],
+            );
+            preview_prewarm.publish(Err(error.clone()));
+            export_prewarm.publish(Err(error));
             None
         }
     }
@@ -258,7 +268,7 @@ pub(super) fn append_notice(notice: &mut Option<String>, message: &str) {
     }
 }
 
-pub(crate) fn masks_have_missing_range_sources(masks: &MaskStack) -> bool {
+pub(in crate::app) fn masks_have_missing_range_sources(masks: &MaskStack) -> bool {
     masks.masks.iter().any(|mask| {
         mask.components.iter().any(|component| {
             matches!(
@@ -270,7 +280,7 @@ pub(crate) fn masks_have_missing_range_sources(masks: &MaskStack) -> bool {
     })
 }
 
-pub(super) fn needs_canonical_mask_source(masks: &MaskStack) -> bool {
+pub(in crate::app) fn needs_canonical_mask_source(masks: &MaskStack) -> bool {
     masks_have_missing_range_sources(masks)
         || masks.masks.iter().any(|mask| {
             mask.components
@@ -279,7 +289,7 @@ pub(super) fn needs_canonical_mask_source(masks: &MaskStack) -> bool {
         })
 }
 
-pub(crate) fn install_missing_range_sources(masks: &mut MaskStack, source: &MaskRgbImage) {
+fn install_missing_range_sources(masks: &mut MaskStack, source: &MaskRgbImage) {
     for mask in &mut masks.masks {
         for component in &mut mask.components {
             match &mut component.geometry {
@@ -293,6 +303,45 @@ pub(crate) fn install_missing_range_sources(masks: &mut MaskStack, source: &Mask
             }
         }
     }
+}
+
+/// Range masks sample a canonical (default-edit) rendering of the photo. For
+/// masks whose sidecar lacks it, `pipeline`, built for `pipeline_raw`, renders
+/// it, and it is installed into them. `full_raw` is the whole photo, whose
+/// highlight analysis the rendering reads.
+pub(in crate::app) fn reconstruct_canonical_mask_source(
+    pipeline: &RawGpuPipeline,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    full_raw: &LoadedRaw,
+    pipeline_raw: &LoadedRaw,
+    exposure: &ExposureParams,
+    masks: &mut MaskStack,
+) -> Result<MaskRgbImage, String> {
+    let started = Instant::now();
+    let reference_exposure = exposure.source_reference();
+    if full_raw.uses_opposed_chroma(&reference_exposure) {
+        full_raw.inpaint_opposed_chroma_for_exposure(&reference_exposure);
+    }
+    let reference_masks = MaskStack::default();
+    let reference_params = GpuParams::new(&reference_exposure, &reference_masks, pipeline_raw);
+    pipeline.recompute(queue, device, &reference_params);
+    let rgba = pipeline
+        .read_output_region_blocking(device, queue, 0, 0, pipeline.width, pipeline.height)
+        .map_err(|error| {
+            tr_fmt(
+                "range-mask source readback failed: {error}",
+                &[("error", &format!("{error:#}"))],
+            )
+        })?;
+    let source = MaskRgbImage::new(pipeline.width, pipeline.height, rgba)
+        .ok_or_else(|| tr("range-mask source dimensions are invalid").to_owned())?;
+    install_missing_range_sources(masks, &source);
+    calibraw_core::diagnostics::record(format!(
+        "Canonical mask source reconstructed in {:.3}s",
+        started.elapsed().as_secs_f64()
+    ));
+    Ok(source)
 }
 
 mod cache;

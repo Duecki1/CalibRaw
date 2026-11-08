@@ -49,6 +49,7 @@ pub(crate) enum ErrorKind {
     Tip,
     EditNotApplied,
     LibraryAdjustments,
+    EditedThumbnails,
     PhotoReview,
     RevealFile,
     LinkedFolder,
@@ -93,6 +94,7 @@ impl ErrorKind {
             Self::Tip => tr("Tip unavailable"),
             Self::EditNotApplied => tr("Edit not applied"),
             Self::LibraryAdjustments => tr("Library adjustment failed"),
+            Self::EditedThumbnails => tr("Edited thumbnails failed"),
             Self::PhotoReview => tr("Rating not saved"),
             Self::RevealFile => tr("File manager did not open"),
         }

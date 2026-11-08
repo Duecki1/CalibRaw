@@ -346,6 +346,24 @@ pub fn load_android(
     read_android_sidecar(app, raw_uri, display_name, calibraw_core::sidecar::decode)
 }
 
+/// The photo's sidecar with its [`calibraw_core::sidecar::render_fingerprint`],
+/// both from one read, for rendering its edits; `None` when it has none.
+pub fn load_android_sidecar_for_render(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+) -> Result<
+    Option<(calibraw_core::sidecar::LoadedSidecar, u64)>,
+    calibraw_core::sidecar::SidecarError,
+> {
+    read_android_sidecar(
+        app,
+        raw_uri,
+        display_name,
+        calibraw_core::sidecar::decode_for_render,
+    )
+}
+
 /// The photo's review, editing time and start; `None` when it has no
 /// sidecar.
 pub fn load_android_sidecar_metadata(

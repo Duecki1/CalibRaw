@@ -24,6 +24,9 @@ pub(crate) struct PlatformCaps {
     /// The person can link folders of their own, whose photos are worked on
     /// where they are, beside the media library.
     pub(crate) linked_folders: bool,
+    /// The library renders the saved edits of photos whose thumbnail does not
+    /// show them yet, once their previews have loaded.
+    pub(crate) edited_thumbnails: bool,
 }
 
 /// How the person works with the app.
@@ -78,6 +81,7 @@ impl PlatformCaps {
         video_encoder: VideoEncoder::Ffmpeg,
         can_restart: true,
         linked_folders: false,
+        edited_thumbnails: true,
     };
 
     pub(crate) const ANDROID: Self = Self {
@@ -89,6 +93,7 @@ impl PlatformCaps {
         video_encoder: VideoEncoder::Platform,
         can_restart: false,
         linked_folders: true,
+        edited_thumbnails: true,
     };
 
     #[cfg(target_os = "ios")]
@@ -101,6 +106,7 @@ impl PlatformCaps {
         video_encoder: VideoEncoder::Platform,
         can_restart: false,
         linked_folders: false,
+        edited_thumbnails: false,
     };
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]

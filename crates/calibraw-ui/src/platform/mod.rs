@@ -35,8 +35,8 @@ mod ios_library;
 
 pub(crate) use caps::{MemoryClass, PlatformCaps, StorageKind, VideoEncoder};
 pub(crate) use files::{
-    camera_profile_search_locations, desktop_settings_path, detected_camera_profile_folder,
-    is_flatpak, is_onnx_runtime_library_name, show_fatal_message, trash, trash_name, FileDialog,
+    camera_profile_search_locations, detected_camera_profile_folder, is_flatpak,
+    is_onnx_runtime_library_name, show_fatal_message, trash, trash_name, FileDialog,
     ONNX_RUNTIME_IS_DLL, PRIMARY_MODIFIER_NAME,
 };
 pub(crate) use fonts::{chinese_font, hindi_font, SystemFont};

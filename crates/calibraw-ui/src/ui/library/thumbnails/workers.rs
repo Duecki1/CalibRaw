@@ -4,6 +4,10 @@ use super::*;
 use crate::i18n::tr;
 use std::sync::Condvar;
 
+/// Loads one photo's thumbnail on a worker.
+pub(in crate::ui::library) type ThumbnailLoader =
+    Arc<dyn Fn(&LibraryAsset) -> Result<LoadedLibraryThumbnail, String> + Send + Sync + 'static>;
+
 pub(in crate::ui::library) fn run_thumbnail_workers(
     worker: ThumbnailWorker,
     worker_count: usize,
@@ -185,12 +189,8 @@ fn run_one_thumbnail_worker(context: ThumbnailWorkerContext) {
             let Some(asset) = assets.iter().find(|asset| asset.id == request.asset_id) else {
                 break Err(tr("thumbnail asset disappeared from the catalog").to_owned());
             };
-            break load(asset, request.stage);
+            break load(asset);
         };
-        let queue_developed_preview = request.stage == ThumbnailLoadStage::RawPreview
-            && result
-                .as_ref()
-                .is_ok_and(|loaded| loaded.developed_render_pending);
         let display_priority = {
             let mut queue = work_queue
                 .lock()
@@ -202,18 +202,11 @@ fn run_one_thumbnail_worker(context: ThumbnailWorkerContext) {
                 generation,
                 asset_id: request.asset_id.clone(),
                 display_priority,
-                final_thumbnail: !queue_developed_preview,
                 result,
             })
             .is_err()
         {
             break;
-        }
-        if queue_developed_preview {
-            work_queue
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .schedule_developed_preview(generation, request.asset_id.clone());
         }
         repaint.request_repaint();
     }

@@ -339,14 +339,19 @@ mod tips;
 pub(crate) use tips::{ShownTip, TipPreferences};
 mod unsupported_gpu;
 pub(crate) use unsupported_gpu::create_app;
+mod saved_edits;
+pub(crate) use saved_edits::{
+    EditedPhoto, EditedRender, EditedRenderJob, SavedEditsGpu, SavedEditsSettings,
+};
 mod sidecar_persistence;
 #[cfg(test)]
 mod ui_review_tests;
 
 use ai::{AiUpdate, PeopleState};
-use lifecycle::needs_canonical_mask_source;
-pub(crate) use lifecycle::{
-    install_missing_range_sources, masks_have_missing_range_sources, DocumentSource,
+pub(crate) use lifecycle::DocumentSource;
+use lifecycle::{
+    masks_have_missing_range_sources, needs_canonical_mask_source,
+    reconstruct_canonical_mask_source,
 };
 pub(crate) use lifecycle::{CameraProfileChoice, ProfileReload};
 use sidecar_persistence::sidecar_interaction_active;

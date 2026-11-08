@@ -36,7 +36,6 @@ impl LibraryState {
             generation,
             asset_id: entry.asset.id.clone(),
             display_priority: true,
-            stage: ThumbnailLoadStage::RawPreview,
         };
         if request_sender
             .as_ref()
@@ -124,8 +123,7 @@ impl LibraryState {
         entry.thumbnail_failures = 0;
         entry.thumbnail_retry_after = None;
         entry.thumbnail_queued = false;
-        entry.developed_thumbnail = false;
-        entry.developed_thumbnail_pending = false;
+        entry.edits = ThumbnailEdits::Unedited;
     }
 
     pub(super) fn install_developed_thumbnail_at(
@@ -154,8 +152,7 @@ impl LibraryState {
         self.entries[index].thumbnail_failures = 0;
         self.entries[index].thumbnail_retry_after = None;
         self.entries[index].thumbnail_queued = false;
-        self.entries[index].developed_thumbnail = true;
-        self.entries[index].developed_thumbnail_pending = false;
+        self.entries[index].edits = ThumbnailEdits::Developed;
     }
 
     pub(crate) fn evict_old_textures(&mut self, protected_indices: &HashSet<usize>) {
@@ -277,8 +274,7 @@ pub(super) fn new_library_entry(asset: LibraryAsset) -> LibraryEntry {
         thumbnail_failures: 0,
         thumbnail_retry_after: None,
         thumbnail_queued: false,
-        developed_thumbnail: false,
-        developed_thumbnail_pending: false,
+        edits: ThumbnailEdits::Unedited,
         last_used: 0,
     }
 }
@@ -383,33 +379,14 @@ pub(super) fn make_resident_thumbnail(thumbnail: &RawThumbnail) -> RawThumbnail 
 
 pub(super) fn loaded_library_thumbnail(
     thumbnail: RawThumbnail,
-    developed: bool,
+    edits: LoadedEdits,
 ) -> LoadedLibraryThumbnail {
     let resident_thumbnail = make_resident_thumbnail(&thumbnail);
     LoadedLibraryThumbnail {
         thumbnail,
         resident_thumbnail,
         badges: None,
-        developed,
-        developed_thumbnail_stale: false,
-        developed_render_pending: false,
+        edits,
         display_metadata: None,
     }
-}
-
-pub(super) fn loaded_library_raw_preview_pending_development(
-    thumbnail: RawThumbnail,
-) -> LoadedLibraryThumbnail {
-    let mut loaded = loaded_library_thumbnail(thumbnail, false);
-    loaded.developed_thumbnail_stale = true;
-    loaded.developed_render_pending = true;
-    loaded
-}
-
-pub(super) fn loaded_library_raw_preview_with_stale_edits(
-    thumbnail: RawThumbnail,
-) -> LoadedLibraryThumbnail {
-    let mut loaded = loaded_library_thumbnail(thumbnail, false);
-    loaded.developed_thumbnail_stale = true;
-    loaded
 }

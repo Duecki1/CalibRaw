@@ -23,8 +23,6 @@ impl LibraryState {
         let thumbnail_workers = self
             .active_thumbnail_worker_count()
             .clamp(1, maximum_thumbnail_worker_count());
-        let render_edited_thumbnails_during_indexing =
-            self.render_edited_thumbnails_during_indexing;
         let include_subfolders = self.view.include_subfolders;
         let repaint = context.clone();
         let (event_sender, event_receiver) = mpsc::sync_channel(MAX_PENDING_THUMBNAIL_RESULTS);
@@ -32,15 +30,29 @@ impl LibraryState {
         self.event_receiver = Some(event_receiver);
         self.request_sender = Some(request_sender);
         self.thumbnail_progress = ThumbnailBackgroundProgress::default();
+        self.developed.cancel();
+        let renders_saved_edits = self.renders_saved_edits();
         for entry in &mut self.entries {
             entry.thumbnail_queued = false;
             entry.thumbnail_error = None;
             entry.thumbnail_failures = 0;
             entry.thumbnail_retry_after = None;
-            if !render_edited_thumbnails_during_indexing {
-                entry.developed_thumbnail = false;
-                entry.developed_thumbnail_pending = false;
-            }
+            // Every thumbnail loads again, which settles what it shows; a
+            // failed render is tried again.
+            entry.edits = match std::mem::take(&mut entry.edits) {
+                ThumbnailEdits::Rendering | ThumbnailEdits::Stale | ThumbnailEdits::Failed(_)
+                    if renders_saved_edits =>
+                {
+                    ThumbnailEdits::Rendering
+                }
+                ThumbnailEdits::Rendering | ThumbnailEdits::Stale | ThumbnailEdits::Failed(_) => {
+                    ThumbnailEdits::Stale
+                }
+                // Without rendering, a render on screen keeps out the camera's
+                // preview only until the folder is scanned again.
+                ThumbnailEdits::Developed if !renders_saved_edits => ThumbnailEdits::Unedited,
+                edits => edits,
+            };
         }
         self.scanning = true;
         self.catalog_ready = !self.entries.is_empty();
@@ -116,13 +128,8 @@ impl LibraryState {
                             repaint,
                         },
                         thumbnail_workers,
-                        Arc::new(move |asset, stage| {
-                            load_desktop_library_thumbnail(
-                                asset,
-                                stage,
-                                render_edited_thumbnails_during_indexing,
-                                &worker_metadata,
-                            )
+                        Arc::new(move |asset| {
+                            load_desktop_library_thumbnail(asset, &worker_metadata)
                         }),
                     );
                     // Keeps metadata read since the last periodic save when the
@@ -194,7 +201,7 @@ impl LibraryState {
                             repaint,
                         },
                         MEDIA_LIBRARY_PREVIEW_WORKERS.max(thumbnail_workers),
-                        Arc::new(move |asset, _stage| {
+                        Arc::new(move |asset| {
                             load_media_library_thumbnail(
                                 &*platform,
                                 &worker_metadata,
@@ -343,6 +350,7 @@ impl LibraryState {
 
     pub(crate) fn poll(&mut self, context: &egui::Context) {
         self.poll_folder_tree_walk(context);
+        self.poll_developed_render(context);
         let pasted = self
             .asset_transfer_receiver
             .as_ref()
@@ -463,7 +471,6 @@ impl LibraryState {
                                     entry.asset = asset;
                                     entry.thumbnail_error = None;
                                     entry.thumbnail_queued = false;
-                                    entry.developed_thumbnail_pending = false;
                                     entry.last_used = 0;
                                     return entry;
                                 }
@@ -483,13 +490,10 @@ impl LibraryState {
                     generation,
                     asset_id,
                     display_priority,
-                    final_thumbnail,
                     result,
                 } if generation == self.generation.load(Ordering::Acquire) => {
-                    if final_thumbnail {
-                        self.thumbnail_progress
-                            .record_completion(generation, asset_id.clone());
-                    }
+                    self.thumbnail_progress
+                        .record_completion(generation, asset_id.clone());
                     let Some(index) = self.entry_indices.get(&asset_id).copied() else {
                         continue;
                     };
@@ -502,25 +506,38 @@ impl LibraryState {
                                     metadata,
                                 );
                             }
-                            if self.entries[index].developed_thumbnail
-                                && !loaded.developed
-                                && !loaded.developed_render_pending
-                            {
-                                continue;
-                            }
+                            let entry = &self.entries[index];
+                            let shown = &entry.edits;
+                            let shows_render = *shown == ThumbnailEdits::Developed;
+                            let render_kept = shows_render
+                                && (entry.texture.is_some() || entry.resident_thumbnail.is_some());
+                            // The new state, and whether the tile keeps the
+                            // thumbnail it has instead of the loaded one.
+                            let (edits, keep_pixels) = match loaded.edits {
+                                LoadedEdits::Developed => (ThumbnailEdits::Developed, false),
+                                // A load that started before a render was
+                                // installed does not replace it.
+                                LoadedEdits::Unedited if shows_render => continue,
+                                LoadedEdits::Unedited => (ThumbnailEdits::Unedited, false),
+                                // A failed render waits for the next scan.
+                                LoadedEdits::Stale
+                                    if matches!(shown, ThumbnailEdits::Failed(_)) =>
+                                {
+                                    (shown.clone(), false)
+                                }
+                                // An earlier render stays until the edits render.
+                                LoadedEdits::Stale if self.renders_saved_edits() => {
+                                    (ThumbnailEdits::Rendering, render_kept)
+                                }
+                                LoadedEdits::Stale if shows_render => continue,
+                                LoadedEdits::Stale => (ThumbnailEdits::Stale, false),
+                            };
                             let LoadedLibraryThumbnail {
                                 thumbnail,
                                 resident_thumbnail,
                                 badges,
-                                developed,
-                                developed_thumbnail_stale,
-                                developed_render_pending,
                                 ..
                             } = loaded;
-                            let decoded_size = [thumbnail.width, thumbnail.height];
-                            let install_pixels =
-                                display_priority || self.entries[index].texture.is_some();
-                            self.entries[index].resident_thumbnail = Some(resident_thumbnail);
                             if let Some(badges) = badges {
                                 if !self.review_save_pending(&asset_id) {
                                     review_sort_changed |=
@@ -528,30 +545,34 @@ impl LibraryState {
                                 }
                                 self.entries[index].asset.metadata.edited = badges.edited;
                             }
-                            self.entries[index].texture_is_resident = false;
+                            let entry = &mut self.entries[index];
+                            entry.edits = edits;
+                            entry.thumbnail_error = None;
+                            entry.thumbnail_failures = 0;
+                            entry.thumbnail_retry_after = None;
+                            if keep_pixels {
+                                continue;
+                            }
+                            let decoded_size = [thumbnail.width, thumbnail.height];
+                            let install_pixels = display_priority || entry.texture.is_some();
+                            entry.resident_thumbnail = Some(resident_thumbnail);
+                            entry.texture_is_resident = false;
                             if install_pixels {
                                 let image = egui::ColorImage::from_rgba_unmultiplied(
                                     [thumbnail.width as usize, thumbnail.height as usize],
                                     &thumbnail.rgba,
                                 );
-                                self.entries[index].texture = Some(context.load_texture(
+                                entry.texture = Some(context.load_texture(
                                     format!("library-thumbnail-{generation}-{index}"),
                                     image,
                                     egui::TextureOptions::LINEAR,
                                 ));
                             }
-                            self.entries[index].thumbnail_size = Some(decoded_size);
-                            self.entries[index].layout_size = Some(decoded_size);
-                            self.entries[index].thumbnail_error = None;
-                            self.entries[index].thumbnail_failures = 0;
-                            self.entries[index].thumbnail_retry_after = None;
-                            self.entries[index].developed_thumbnail = developed;
-                            self.entries[index].thumbnail_queued = developed_render_pending;
-                            self.entries[index].developed_thumbnail_pending =
-                                developed_thumbnail_stale;
+                            entry.thumbnail_size = Some(decoded_size);
+                            entry.layout_size = Some(decoded_size);
                         }
                         Err(error) => {
-                            if !self.entries[index].developed_thumbnail {
+                            if self.entries[index].edits != ThumbnailEdits::Developed {
                                 let entry = &mut self.entries[index];
                                 entry.thumbnail_failures =
                                     entry.thumbnail_failures.saturating_add(1);
@@ -561,7 +582,7 @@ impl LibraryState {
                                     .min(THUMBNAIL_RETRY_MAX_DELAY);
                                 entry.thumbnail_error = Some(error);
                                 entry.thumbnail_retry_after = Some(Instant::now() + delay);
-                                entry.developed_thumbnail_pending = false;
+                                entry.edits = ThumbnailEdits::Unedited;
                                 context.request_repaint_after(delay);
                             }
                         }

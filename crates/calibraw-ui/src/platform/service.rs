@@ -639,6 +639,38 @@ pub(crate) trait Platform: Send + Sync {
     ) -> Result<Option<SidecarSummary>, SidecarError> {
         Err(SidecarError::Platform(unavailable("sidecar summaries")))
     }
+    /// Runs `read` with a readable path to a media-library photo, valid only
+    /// while `read` runs: the photo's descriptor, or a private copy when the
+    /// decoders cannot reopen that, so `read` may run twice.
+    fn read_library_photo(
+        &self,
+        _uri: &str,
+        _display_name: &str,
+        _read: &mut dyn FnMut(&Path) -> Result<(), String>,
+    ) -> Result<(), String> {
+        Err(unavailable("reading media-library photos"))
+    }
+    /// The photo's sidecar and its render fingerprint from one read, for
+    /// rendering its edits; `None` when it has none.
+    fn load_sidecar_for_render(
+        &self,
+        _raw_uri: &str,
+        _display_name: &str,
+    ) -> Result<Option<(LoadedSidecar, u64)>, SidecarError> {
+        Err(SidecarError::Platform(unavailable("rendering saved edits")))
+    }
+    /// Saves a developed thumbnail rendered from the photo's sidecar while it
+    /// had `render_fingerprint`. False, and nothing kept, when the sidecar no
+    /// longer has it.
+    fn save_rendered_developed_thumbnail(
+        &self,
+        _raw_uri: &str,
+        _display_name: &str,
+        _thumbnail: &RawThumbnail,
+        _render_fingerprint: u64,
+    ) -> Result<bool, String> {
+        Err(unavailable("media-library thumbnails"))
+    }
     /// The developed thumbnail saved for the photo while its sidecar had
     /// `render_fingerprint`; `None` when there is none or it is out of date.
     /// Asked only of platforms whose listing reports sidecars.

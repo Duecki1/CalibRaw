@@ -7,7 +7,32 @@ pub(crate) fn main() -> eframe::Result {
     if let Some(code) = run_onnx_runtime_probe_cli(&args) {
         std::process::exit(code);
     }
-    run_desktop()
+    end_process(run_desktop())
+}
+
+/// Ends the program once the window has closed and the app has saved what it
+/// keeps (`on_exit`). Worker threads are detached and may still be inside the
+/// GPU driver or a native library, so the process ends without running exit
+/// handlers, which would tear those libraries down under the threads: the
+/// NVIDIA driver and Lensfun crashed so at quit.
+fn end_process(result: eframe::Result) -> ! {
+    let code = match result {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("Error: {error:?}");
+            1
+        }
+    };
+    log::logger().flush();
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    #[cfg(unix)]
+    // SAFETY: `_exit` ends the process at once; nothing runs after it.
+    unsafe {
+        libc::_exit(code)
+    }
+    // `ExitProcess` ends the other threads before any library tears down.
+    #[cfg(not(unix))]
+    std::process::exit(code)
 }
 
 fn run_onnx_runtime_probe_cli(args: &[String]) -> Option<i32> {

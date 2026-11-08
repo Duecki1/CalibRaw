@@ -3,7 +3,6 @@
 use super::super::files::FileDialog;
 use std::path::{Path, PathBuf};
 
-pub(in crate::platform) use super::performance_settings_path;
 pub(in crate::platform) use super::portal::is_flatpak;
 
 fn async_dialog(dialog: FileDialog) -> rfd::AsyncFileDialog {

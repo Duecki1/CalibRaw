@@ -21,7 +21,7 @@ use super::catalog::{thumbnail_capture_fields, thumbnail_file_fields, CHECK_EDGE
 use super::review::{
     flag_buttons, paint_review_badge, star_buttons, ReviewSurface, BADGE_FILL, REVIEW_ICON_SIZE,
 };
-use super::{LibraryAction, LibraryEntry};
+use super::{LibraryAction, LibraryEntry, ThumbnailEdits};
 use crate::i18n::tr;
 use crate::pipeline::RenderedImageFormat;
 use crate::ui::capture_format::FIELD_SEPARATOR;
@@ -331,14 +331,13 @@ fn field_candidates(fields: &[String]) -> impl Iterator<Item = String> + '_ {
 
 /// Why the preview does not show the photo's current state, if it does not.
 fn preview_status(entry: &LibraryEntry) -> Option<String> {
-    entry.thumbnail_error.clone().or_else(|| {
-        entry.developed_thumbnail_pending.then(|| {
-            if entry.thumbnail_queued {
-                tr("Rendering edits…")
-            } else {
-                tr("Preview awaiting saved edits")
-            }
-            .to_owned()
+    entry
+        .thumbnail_error
+        .clone()
+        .or_else(|| match &entry.edits {
+            ThumbnailEdits::Rendering => Some(tr("Rendering edits…").to_owned()),
+            ThumbnailEdits::Stale => Some(tr("Preview awaiting saved edits").to_owned()),
+            ThumbnailEdits::Failed(error) => Some(error.clone()),
+            ThumbnailEdits::Unedited | ThumbnailEdits::Developed => None,
         })
-    })
 }

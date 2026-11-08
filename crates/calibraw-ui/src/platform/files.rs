@@ -129,12 +129,6 @@ pub(crate) fn camera_profile_search_locations() -> &'static [&'static str] {
     imp::CAMERA_PROFILE_SEARCH_LOCATIONS
 }
 
-/// The desktop settings file, for workers that read it without the app.
-/// `None` where the platform hands out its location at run time (Android).
-pub(crate) fn desktop_settings_path() -> Option<PathBuf> {
-    imp::performance_settings_path()
-}
-
 /// The first standard DCP camera-profile folder that exists.
 pub(crate) fn detected_camera_profile_folder() -> Option<PathBuf> {
     imp::camera_profile_candidates()
@@ -191,9 +185,5 @@ mod imp {
 
     pub(super) fn camera_profile_candidates() -> Vec<PathBuf> {
         Vec::new()
-    }
-
-    pub(super) fn performance_settings_path() -> Option<PathBuf> {
-        None
     }
 }

@@ -367,6 +367,14 @@ pub struct RawGpuProgramTemplate {
 /// for up to seconds. These calls compile ahead of time. They block, so call
 /// them off the UI thread; pipelines built from the template share the results.
 impl RawGpuProgramTemplate {
+    /// Whether a pipeline of `quality` for `raw` can be built from these
+    /// programs ([`PipelineOptions::programs`]).
+    pub fn fits(&self, raw: &LoadedRaw, quality: ProcessingQuality) -> bool {
+        self.cfa_kind == raw.cfa_kind
+            && self.processing_quality == quality
+            && self.pipelines.len() == expected_pass_count(raw.cfa_kind)
+    }
+
     /// Compiles the programs ordinary edits switch on: every effect pass, and
     /// the sensor-denoise variant of the reference demosaic. The other demosaic variants take seconds each and are left to
     /// [`Self::compile_for_params`].
@@ -434,15 +442,15 @@ impl GpuProgramPrewarm {
         let mut slot = self
             .result
             .lock()
-            .map_err(|_| "GPU export prewarm state was poisoned".to_owned())?;
+            .map_err(|_| "GPU prewarm state was poisoned".to_owned())?;
         while slot.is_none() {
             slot = self
                 .ready
                 .wait(slot)
-                .map_err(|_| "GPU export prewarm state was poisoned".to_owned())?;
+                .map_err(|_| "GPU prewarm state was poisoned".to_owned())?;
         }
         slot.as_ref()
-            .expect("GPU export prewarm result is present")
+            .expect("the loop above waits until a prewarm result is present")
             .clone()
     }
 }

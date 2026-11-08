@@ -739,6 +739,7 @@ dependencies = [
  "image",
  "image-webp",
  "jiff",
+ "libc",
  "log",
  "moduwu-design",
  "objc2 0.6.5",

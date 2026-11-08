@@ -1,8 +1,46 @@
-//! Owned Lensfun database, modifier and pointer-list handles.
+//! The process's Lensfun database and owned modifier and pointer-list handles.
 
 use super::*;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+/// The process's one Lensfun database, loaded on first use and kept until the
+/// process ends.
+///
+/// Lensfun cannot be called from two threads at once: every `lfLens`
+/// constructor and destructor updates a global reference count without
+/// synchronization, the last destructor frees the lens-name patterns, and
+/// `lfLens::GuessParameters` compiles them lazily into a global table while a
+/// database loads. So every Lensfun call except a configured modifier's
+/// `lf_modifier_apply_*` functions holds this lock: through
+/// [`with_database`], or [`lock_lensfun`] for calls that need no database.
+static DATABASE: Mutex<Option<Database>> = Mutex::new(None);
+
+/// Runs `use_database` on the database while holding the Lensfun lock. A load
+/// that fails is not kept, so the next call tries again.
+pub(super) fn with_database<T>(use_database: impl FnOnce(&Database) -> Result<T>) -> Result<T> {
+    let mut slot = lock_lensfun();
+    if slot.is_none() {
+        *slot = Some(Database::load()?);
+    }
+    match slot.as_ref() {
+        Some(database) => use_database(database),
+        None => Err(anyhow!("the Lensfun database is not loaded")),
+    }
+}
+
+/// Holds the Lensfun lock for Lensfun calls that need no database, such as
+/// destroying a modifier.
+pub(super) fn lock_lensfun() -> MutexGuard<'static, Option<Database>> {
+    // A Rust panic never interrupts a Lensfun call, so Lensfun's state is
+    // intact when a holder panicked.
+    DATABASE.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 pub(super) struct Database(pub(super) *mut lfDatabase);
+
+// SAFETY: the database is only reached through `DATABASE`'s lock, so one
+// thread at a time calls Lensfun with it.
+unsafe impl Send for Database {}
 
 impl Database {
     fn create() -> Result<Self> {
@@ -14,7 +52,7 @@ impl Database {
         }
     }
 
-    pub(super) fn load() -> Result<Self> {
+    fn load() -> Result<Self> {
         for candidate in database_candidates() {
             if !candidate.exists() {
                 continue;

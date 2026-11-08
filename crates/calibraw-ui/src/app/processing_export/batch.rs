@@ -269,15 +269,12 @@ fn prepare_desktop_library_export_item(
     let remove = Arc::unwrap_or_clone(edits.remove);
     let mut masks = Arc::unwrap_or_clone(edits.masks);
     if needs_canonical_mask_source(&masks) {
-        let neutral_exposure = edits.exposure.source_reference();
-        if raw.uses_opposed_chroma(&neutral_exposure) {
-            raw.inpaint_opposed_chroma_for_exposure(&neutral_exposure);
-        }
         let source_raw = if raw.width.max(raw.height) <= 2048 {
             Arc::clone(&raw)
         } else {
             Arc::new(build_proxy(&raw, ProxySpec { max_edge: 2048 }))
         };
+        let neutral_exposure = edits.exposure.source_reference();
         let neutral_masks = MaskStack::default();
         let neutral_params = GpuParams::new(&neutral_exposure, &neutral_masks, &source_raw);
         let pipeline = RawGpuPipeline::new(
@@ -296,21 +293,21 @@ fn prepare_desktop_library_export_item(
                 ],
             )
         })?;
-        pipeline.recompute(queue, device, &neutral_params);
-        let rgba = pipeline
-            .read_output_region_blocking(device, queue, 0, 0, source_raw.width, source_raw.height)
-            .map_err(|error| {
-                tr_fmt(
-                    "{source}: range-mask source readback failed: {error}",
-                    &[
-                        ("source", &job.source.display()),
-                        ("error", &format!("{error:#}")),
-                    ],
-                )
-            })?;
-        let source = MaskRgbImage::new(source_raw.width, source_raw.height, rgba)
-            .ok_or_else(|| tr("range-mask source dimensions are invalid").to_owned())?;
-        install_missing_range_sources(&mut masks, &source);
+        reconstruct_canonical_mask_source(
+            &pipeline,
+            device,
+            queue,
+            &raw,
+            &source_raw,
+            &edits.exposure,
+            &mut masks,
+        )
+        .map_err(|error| {
+            tr_fmt(
+                "{source}: {error}",
+                &[("source", &job.source.display()), ("error", &error)],
+            )
+        })?;
     }
 
     if cancellation.load(Ordering::Acquire) {

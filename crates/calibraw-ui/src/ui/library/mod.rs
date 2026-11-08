@@ -2,10 +2,8 @@ use crate::app::CalibRawApp;
 use crate::app::LibraryExportDestination;
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{
-    apply_lens_correction, build_proxy, is_supported_image_path, load_raw_display_metadata,
-    load_raw_file_with_profile_selection, load_raw_thumbnail,
-    load_raw_thumbnail_with_display_metadata, mask_atlas_edge, GpuParams, MaskRgbImage, MaskStack,
-    PipelineOptions, ProcessingQuality, ProxySpec, RawGpuPipeline, MAX_LOCAL_MASKS,
+    is_supported_image_path, load_raw_display_metadata, load_raw_thumbnail,
+    load_raw_thumbnail_with_display_metadata,
 };
 use crate::pipeline::{ExportFormat, ExportSettings, RawThumbnail};
 use crate::platform::{Platform, PlatformCaps};
@@ -18,7 +16,6 @@ use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::OnceLock;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -94,7 +91,6 @@ const ANDROID_DEVELOP_TEXTURE_CACHE_LIMIT: usize = 10;
 const THUMBNAIL_PAUSE_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const THUMBNAIL_QUEUE_POLL_INTERVAL: Duration = Duration::from_millis(8);
 const THUMBNAIL_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
-const DEVELOPED_THUMBNAIL_PROXY_EDGE: u32 = 1024;
 /// The manual worker limit always allows at least this many on desktop, even
 /// on machines with fewer cores.
 pub(crate) const MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT: usize = 8;
@@ -104,9 +100,9 @@ pub(crate) const MAX_ANDROID_THUMBNAIL_WORKERS: usize = 2;
 /// them read previews out of photos at once ([`ExtractionPermits`]); the rest
 /// serve cached previews, so a screenful of them arrives together.
 const MEDIA_LIBRARY_PREVIEW_WORKERS: usize = 4;
-/// Concurrent full RAW renders for thumbnails (files without an embedded
-/// preview, and edited thumbnails), whatever the worker count. Each one holds
-/// an unpacked sensor image, so this bounds the indexing memory peak.
+/// Concurrent full RAW renders for thumbnails of files without an embedded
+/// preview, whatever the worker count. Each one holds an unpacked sensor
+/// image, so this bounds the indexing memory peak.
 const MAX_RENDERED_THUMBNAIL_WORKERS: usize = 4;
 /// Peak memory one thumbnail job may need: a decoded full-size embedded JPEG
 /// or a half-size RAW fallback of a high-resolution sensor.
@@ -370,14 +366,37 @@ pub(crate) struct LibraryEntry {
     thumbnail_failures: u8,
     thumbnail_retry_after: Option<Instant>,
     thumbnail_queued: bool,
-    developed_thumbnail: bool,
-    developed_thumbnail_pending: bool,
+    edits: ThumbnailEdits,
     last_used: u64,
 }
 
 impl LibraryEntry {
     fn review(&self) -> crate::sidecar::PhotoReview {
         self.asset.metadata.review
+    }
+}
+
+/// What a tile's thumbnail shows of the photo's saved edits.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum ThumbnailEdits {
+    /// The photo has no edits that change it, or no thumbnail yet.
+    #[default]
+    Unedited,
+    /// A render of the saved edits.
+    Developed,
+    /// The camera's preview with the saved crop, or an earlier render, stands
+    /// in until the saved edits render, once the previews have loaded.
+    Rendering,
+    /// As `Rendering`, but the edits do not render: the setting is off.
+    Stale,
+    /// Rendering the saved edits failed with this error.
+    Failed(String),
+}
+
+impl ThumbnailEdits {
+    /// Whether the thumbnail does not show the saved edits.
+    fn is_stale(&self) -> bool {
+        matches!(self, Self::Rendering | Self::Stale | Self::Failed(_))
     }
 }
 
@@ -412,17 +431,20 @@ struct LoadedLibraryThumbnail {
     resident_thumbnail: RawThumbnail,
     /// Read where loading the thumbnail reads the sidecar: in the media library.
     badges: Option<SidecarBadges>,
-    developed: bool,
-    developed_thumbnail_stale: bool,
-    developed_render_pending: bool,
+    edits: LoadedEdits,
     /// Display metadata the catalog scan deferred, read while loading this thumbnail.
     display_metadata: Option<crate::pipeline::RawDisplayMetadata>,
 }
 
+/// What a loaded thumbnail shows of the photo's saved edits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ThumbnailLoadStage {
-    RawPreview,
-    DevelopedPreview,
+enum LoadedEdits {
+    /// The photo has no edits that change it.
+    Unedited,
+    /// The developed thumbnail saved for the current edits.
+    Developed,
+    /// The camera's preview with the saved crop: the edits are not rendered.
+    Stale,
 }
 
 #[derive(Clone)]
@@ -430,14 +452,12 @@ struct ThumbnailRequest {
     generation: u64,
     asset_id: LibraryAssetId,
     display_priority: bool,
-    stage: ThumbnailLoadStage,
 }
 
 struct ThumbnailWorkQueue {
     background: VecDeque<ThumbnailRequest>,
     in_flight: HashMap<LibraryAssetId, bool>,
     initial_completed: HashSet<LibraryAssetId>,
-    developed_queued: HashSet<LibraryAssetId>,
 }
 
 #[derive(Default)]
@@ -467,6 +487,11 @@ impl ThumbnailBackgroundProgress {
         }
     }
 
+    /// Whether every thumbnail of the folder has loaded or failed.
+    fn is_complete(&self) -> bool {
+        self.completed_assets.len() >= self.total
+    }
+
     fn snapshot(&self, paused: bool) -> Option<ThumbnailProgress> {
         let completed = self.completed_assets.len().min(self.total);
         (self.total > 0 && completed < self.total).then_some(ThumbnailProgress {
@@ -486,20 +511,15 @@ impl ThumbnailWorkQueue {
                     generation,
                     asset_id: asset.id.clone(),
                     display_priority: false,
-                    stage: ThumbnailLoadStage::RawPreview,
                 })
                 .collect(),
             in_flight: HashMap::new(),
             initial_completed: HashSet::new(),
-            developed_queued: HashSet::new(),
         }
     }
 
     fn claim(&mut self, request: &ThumbnailRequest, initial_background: bool) -> bool {
-        if initial_background
-            && request.stage == ThumbnailLoadStage::RawPreview
-            && self.initial_completed.contains(&request.asset_id)
-        {
+        if initial_background && self.initial_completed.contains(&request.asset_id) {
             return false;
         }
         if let Some(display_priority) = self.in_flight.get_mut(&request.asset_id) {
@@ -512,23 +532,8 @@ impl ThumbnailWorkQueue {
     }
 
     fn finish(&mut self, request: &ThumbnailRequest) -> bool {
-        if request.stage == ThumbnailLoadStage::RawPreview {
-            self.initial_completed.insert(request.asset_id.clone());
-        } else {
-            self.developed_queued.remove(&request.asset_id);
-        }
+        self.initial_completed.insert(request.asset_id.clone());
         self.in_flight.remove(&request.asset_id).unwrap_or(false)
-    }
-
-    fn schedule_developed_preview(&mut self, generation: u64, asset_id: LibraryAssetId) {
-        if self.developed_queued.insert(asset_id.clone()) {
-            self.background.push_back(ThumbnailRequest {
-                generation,
-                asset_id,
-                display_priority: false,
-                stage: ThumbnailLoadStage::DevelopedPreview,
-            });
-        }
     }
 }
 
@@ -551,7 +556,6 @@ enum ScanEvent {
         generation: u64,
         asset_id: LibraryAssetId,
         display_priority: bool,
-        final_thumbnail: bool,
         result: Result<LoadedLibraryThumbnail, String>,
     },
     Failed {
@@ -861,6 +865,10 @@ pub(crate) struct LibraryState {
     decoding_paused: Arc<AtomicBool>,
     decode_gate: Arc<RwLock<()>>,
     thumbnail_progress: ThumbnailBackgroundProgress,
+    /// Renders the saved edits of photos whose thumbnail does not show them.
+    developed: DevelopedRenders,
+    /// The editor's GPU device for those renders, once the app has one.
+    saved_edits_gpu: Option<crate::app::SavedEditsGpu>,
     scanning: bool,
     catalog_ready: bool,
     status: String,

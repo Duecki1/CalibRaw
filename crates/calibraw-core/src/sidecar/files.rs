@@ -11,6 +11,28 @@ pub fn load_desktop(raw_path: &Path) -> Result<Option<LoadedSidecar>, SidecarErr
     }
 }
 
+/// [`load_desktop`] with the sidecar's [`render_fingerprint`], for rendering
+/// its edits.
+pub fn load_desktop_for_render(
+    raw_path: &Path,
+) -> Result<Option<(LoadedSidecar, u64)>, SidecarError> {
+    let path = sidecar_path_for_raw(raw_path);
+    match read_bounded(&path) {
+        Ok(bytes) => decode_for_render(&bytes).map(Some),
+        Err(SidecarError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// A sidecar and its [`render_fingerprint`] from the same bytes, so a
+/// thumbnail rendered from the edits is kept only while the sidecar still has
+/// that fingerprint.
+pub fn decode_for_render(bytes: &[u8]) -> Result<(LoadedSidecar, u64), SidecarError> {
+    let sidecar = decode(bytes)?;
+    let fingerprint = render_fingerprint(bytes).map_err(SidecarError::Invalid)?;
+    Ok((sidecar, fingerprint))
+}
+
 // Serialize read/modify/write operations so background development saves cannot lose
 // a review update made from the gallery on another thread.
 static SIDECAR_SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

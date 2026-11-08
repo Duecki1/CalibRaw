@@ -171,13 +171,14 @@ pub fn load_library_display_metadata(
 
 /// Runs `read` on the photo through its descriptor. The decoders reopen it by
 /// path, which a document provider may refuse or answer with an unseekable
-/// pipe; then `read` runs on a private copy instead.
-fn read_library_photo<T>(
+/// pipe; then `read` runs again on a private copy. `what` names the read in
+/// the log line that reports the copy.
+pub fn read_library_photo<T>(
     app: &AndroidApp,
     uri: &str,
     display_name: &str,
     what: &str,
-    read: impl Fn(&Path) -> Result<T, String>,
+    mut read: impl FnMut(&Path) -> Result<T, String>,
 ) -> Result<T, String> {
     let direct =
         open_library_descriptor(app, uri).and_then(|descriptor| read(&descriptor.proc_path()));
@@ -311,12 +312,45 @@ pub fn save_developed_thumbnail_cache(
     let Some(fingerprint) = sidecar_render_fingerprint(app, raw_uri, display_name)? else {
         return Err("edit sidecar disappeared before thumbnail capture".to_owned());
     };
+    if store_developed_thumbnail(app, raw_uri, display_name, thumbnail, fingerprint)? {
+        Ok(())
+    } else {
+        Err("edit sidecar changed while its thumbnail was being cached".to_owned())
+    }
+}
+
+/// Saves a thumbnail rendered from the photo's sidecar while it had
+/// `render_fingerprint`. False, and nothing kept, when the sidecar no longer
+/// has that fingerprint.
+pub fn save_rendered_developed_thumbnail(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    thumbnail: &RawThumbnail,
+    render_fingerprint: u64,
+) -> Result<bool, String> {
+    if sidecar_render_fingerprint(app, raw_uri, display_name)? != Some(render_fingerprint) {
+        return Ok(false);
+    }
+    store_developed_thumbnail(app, raw_uri, display_name, thumbnail, render_fingerprint)
+}
+
+/// Writes the developed thumbnail with `render_fingerprint`. The sidecar is
+/// read again afterwards: an edit saved meanwhile makes the thumbnail out of
+/// date the moment it is written, so it is removed and false returned.
+fn store_developed_thumbnail(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    thumbnail: &RawThumbnail,
+    render_fingerprint: u64,
+) -> Result<bool, String> {
     let cache_path = developed_thumbnail_cache_path(app, raw_uri)?;
     let fingerprint_path = fingerprint_path(&cache_path);
     calibraw_core::thumbnail_cache::save_jpeg(&cache_path, thumbnail)?;
     calibraw_core::file_ops::write_bytes_atomically(
         &fingerprint_path,
-        developed_fingerprint_line(fingerprint).as_bytes(),
+        developed_fingerprint_line(render_fingerprint).as_bytes(),
     )
     .map_err(|error| {
         format!(
@@ -324,15 +358,12 @@ pub fn save_developed_thumbnail_cache(
             fingerprint_path.display()
         )
     })?;
-
-    // The sidecar is read again: an edit saved meanwhile makes this thumbnail
-    // out of date the moment it is written.
-    if sidecar_render_fingerprint(app, raw_uri, display_name)? != Some(fingerprint) {
+    if sidecar_render_fingerprint(app, raw_uri, display_name)? != Some(render_fingerprint) {
         remove_developed_thumbnail(&cache_path);
-        return Err("edit sidecar changed while its thumbnail was being cached".to_owned());
+        return Ok(false);
     }
     maintain_thumbnail_cache(app);
-    Ok(())
+    Ok(true)
 }
 
 /// Gives the photo at `destination_uri` the developed thumbnail of the one at

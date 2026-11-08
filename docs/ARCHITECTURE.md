@@ -151,6 +151,7 @@ job records the value it started with.
 | Linked folder tree | one `calibraw-library-folders` thread at a time, beside the photo scan; started by a refresh, not by selecting a folder within the tree; a refresh during a walk walks again after it | none; bounded by the folder limits | its folders carry the linked folder walked and are shown only while it is; switching linked folders abandons the walk | logged; the photo scan reaches the same folder and shows the error dialog |
 | Linked folder AI results | one thread per finished AI job, polled through `AndroidState::companion_publishes` | none | copies to the photo the job finished for | error dialog; the result stays usable until the photo closes |
 | Library thumbnails | shared work queue for a worker pool | `AtomicU64` generation; workers exit when it changes | generation bump on folder change | each item's result, success or error, is sent with its generation; older generations are ignored |
+| Edited thumbnails (`ui/library/thumbnails/developed.rs`) | one `calibraw-edited-thumbnail` thread at a time, started once every thumbnail of the folder has loaded; it renders the saved edits of one photo whose thumbnail does not show them (`ThumbnailEdits::Rendering`), on the editor's device with the startup prewarm's programs (`app/saved_edits.rs`), and keeps the result as its developed thumbnail | `AtomicBool`, checked before decoding and before rendering; set by a rescan and when the library gives way to another tab | the result is shown only while its generation is current and the tile still waits for it; a sidecar that changed while it rendered sends the photo back to the queue | the tile shows the error on hover; failures are collected and shown in one error dialog once no photo is waiting |
 
 Job channels are unbounded `std::sync::mpsc` channels: each job sends a
 bounded number of progress events and one result, drained each frame by
@@ -165,11 +166,10 @@ GPU readbacks wait on one-slot channels.
 
 | Lock | Owner | Holders | Purpose |
 |---|---|---|---|
-| decode gate (`RwLock<()>`) | `LibraryState`, shared by `decode_gate()` | write: document load and batch-export decodes, and the UI thread while clearing the thumbnail cache; read: library thumbnail, reference-preview and neighbour-prefetch decodes | an interactive decode runs alone; background decodes share the gate and yield; the cache is never cleared under a reader |
+| decode gate (`RwLock<()>`) | `LibraryState`, shared by `decode_gate()` | write: document load and batch-export decodes, and the UI thread while clearing the thumbnail cache; read: library thumbnail, edited-thumbnail, reference-preview and neighbour-prefetch decodes | an interactive decode runs alone; background decodes share the gate and yield; the cache is never cleared under a reader |
 | `REFERENCE_PREVIEW_SERIAL` | `ui::develop` | the reference-preview worker | one reference decode at a time |
-| `DEVELOPED_THUMBNAIL_GPU` | `ui::library::thumbnails::developed` | thumbnail workers | one headless device for developed thumbnails, used by one render at a time |
 | thumbnail work queue and request receiver | `ThumbnailWorkerContext` | thumbnail workers | short critical sections; never held while decoding |
-| rendered-thumbnail permits (counting semaphore) | `calibraw_core::thumbnail_cache` | thumbnail workers rendering a full RAW (no embedded preview, or edited) | at most four such renders, fewer with fewer workers, bounding indexing memory |
+| rendered-thumbnail permits (counting semaphore) | `calibraw_core::thumbnail_cache` | thumbnail workers rendering a full RAW for a photo without an embedded preview | at most four such renders, fewer with fewer workers, bounding indexing memory |
 | `ExtractionPermits` (counting semaphore) | one per media-library scan | its thumbnail workers while reading a photo (preview or display metadata) | at most the thumbnail-worker setting of photo reads at once; the scan has more workers, which serve cached previews without a permit |
 | model runtime slot | `calibraw_ai::slot` | the running AI job | one ONNX session at a time; evicted models unload once released |
 | `RUNTIME_INIT_LOCK`, runtime probe cache, runtime install lock | `calibraw_ai::runtime` | AI jobs, the Settings runtime picker | serialize ONNX Runtime initialization, probes and automatic runtime installs |
@@ -179,6 +179,7 @@ GPU readbacks wait on one-slot channels.
 | effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates the image-light map, haze map, contour grid or scene emission textures, and the scene bake and its light bake (`calibraw_gpu::pipeline::gpu::scene`, shared by `Arc` with views of part of the image), the first time an effect reads them, and the LUT texture when a LUT is uploaded, and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
 | LUT cache | `calibraw_core::luts::LutStore`, shared by its clones | the UI thread, document loads, batch export and thumbnail workers | the recently parsed LUTs; a leaf lock, never held while a file is read or parsed |
 | `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
+| Lensfun lock (`DATABASE`) | `calibraw_core::pipeline::lensfun` | every lens correction and lens catalog | Lensfun keeps unsynchronized global state, so one thread at a time loads, looks up and configures; the database loads once and stays; a configured correction's pixel passes run without it. A leaf lock |
 | decoded-RAW cache state and condvar | `DecodedRawCache` | document loads and the prefetch worker | short critical sections; decodes run unlocked, and a second request for a decoding entry waits on the condvar |
 | per-entry lens-correction slot | `DecodedRaw` | document loads and the prefetch worker | held while correcting, so one correction per selection runs at a time |
 | per-entry recoloured-copy slot | `DecodedRaw` | document loads and the prefetch worker | held while another camera profile is applied to the decode (reading its DCP); never held with the lens-correction slot |
@@ -188,8 +189,9 @@ GPU readbacks wait on one-slot channels.
 
 Apart from the serialized-read gate, only these nestings exist, each in a fixed
 order: the reference-preview serial lock is taken before the decode gate; a
-thumbnail worker takes `DEVELOPED_THUMBNAIL_GPU` or an `ExtractionPermits`
-permit while holding the decode gate for reading; and a decode that owns a decoded-RAW cache entry takes the decode
+thumbnail worker takes an `ExtractionPermits` permit while holding the decode
+gate for reading; a lens correction takes the Lensfun lock while holding its
+entry's lens-correction slot; and a decode that owns a decoded-RAW cache entry takes the decode
 gate without holding the cache lock, so waiting for an entry never holds the
 gate. No code takes the decode gate while holding any other lock in this
 table. The serialized-read gate may be taken while holding any of them, but none
@@ -202,8 +204,10 @@ as errors where it may not.
 `eframe::App::on_exit` empties the warm AI feature set (models unload once
 their job releases them), stops Discord presence, clears the Android task
 notification, persists performance settings and flushes the pending sidecar
-synchronously. Worker threads are detached; GPU and model resources are
-released when their owners drop.
+synchronously. Worker threads are detached. Once the window has closed, the
+desktop program ends without running exit handlers
+(`platform/desktop/entry.rs`): they would tear down the GPU driver and
+Lensfun under threads still inside them.
 
 ## GPU resources
 
@@ -335,7 +339,7 @@ production `ShaderManager` composes.
   else compiles on every target and branches at run time:
   - `PlatformCaps` (`form_factor`, `storage`, `memory`,
     `tasks_need_foreground`, `configurable_ai_runtime`, `video_encoder`,
-    `can_restart`, `linked_folders`) is what views and handlers read. Views take it, or
+    `can_restart`, `linked_folders`, `edited_thumbnails`) is what views and handlers read. Views take it, or
     `app.caps()`, and return actions; leaf widgets without the app use
     `PlatformCaps::CURRENT`. Data that already names its kind is matched
     instead: `LibraryLocator`, `SidecarTarget` and `ExportDestination`.

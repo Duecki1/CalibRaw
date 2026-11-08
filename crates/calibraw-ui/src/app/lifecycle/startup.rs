@@ -520,10 +520,12 @@ impl CalibRawApp {
             }
             prewarm_dcp_profile_folder(performance.camera_profile_folder.clone());
         }
+        let gpu_preview_prewarm = Arc::new(crate::pipeline::GpuProgramPrewarm::new());
         let gpu_export_prewarm = Arc::new(crate::pipeline::GpuProgramPrewarm::new());
         let gpu_preview_prewarm_receiver = spawn_gpu_preview_prewarm(
             cc,
             gpu_pipeline_cache_root,
+            Arc::clone(&gpu_preview_prewarm),
             Arc::clone(&gpu_export_prewarm),
             Arc::clone(&platform),
         );
@@ -535,6 +537,14 @@ impl CalibRawApp {
         );
         app.preview.gpu_prewarm_receiver = gpu_preview_prewarm_receiver;
         app.export.gpu_prewarm = Some(gpu_export_prewarm);
+        if let Some(render_state) = cc.wgpu_render_state.as_ref() {
+            app.library
+                .set_saved_edits_gpu(crate::app::SavedEditsGpu::new(
+                    render_state.device.clone(),
+                    render_state.queue.clone(),
+                    gpu_preview_prewarm,
+                ));
+        }
         if let Err(error) = crate::i18n::set_active(app.preferences.language.resolve()) {
             app.report_error(ErrorKind::Settings, error.to_string());
         }

@@ -66,8 +66,11 @@ pub(super) fn catalog(raw: &LoadedRaw) -> LensfunCatalog {
 }
 
 fn catalog_result(raw: &LoadedRaw) -> Result<LensfunCatalog> {
-    let database = Database::load()?;
-    let camera = find_camera(&database, &raw.camera_make, &raw.camera_model);
+    with_database(|database| catalog_from(database, raw))
+}
+
+fn catalog_from(database: &Database, raw: &LoadedRaw) -> Result<LensfunCatalog> {
+    let camera = find_camera(database, &raw.camera_make, &raw.camera_model);
     let camera_label = camera
         .and_then(camera_name)
         .map(|(maker, model)| format!("{maker} {model}").trim().to_owned())
@@ -85,15 +88,15 @@ fn catalog_result(raw: &LoadedRaw) -> Result<LensfunCatalog> {
     // The picker always lists every profile: a camera that is missing or
     // misidentified must not hide the lens the user needs. Only the automatic
     // match is limited to profiles that fit the matched camera.
-    let mut lenses = all_lenses(&database);
+    let mut lenses = all_lenses(database);
     sort_and_deduplicate_lenses(&mut lenses);
     let auto_match = match camera {
         Some(camera) => {
-            let mut compatible = compatible_lenses(&database, camera);
+            let mut compatible = compatible_lenses(database, camera);
             sort_and_deduplicate_lenses(&mut compatible);
-            find_auto_lens(&database, Some(camera), raw, &compatible)
+            find_auto_lens(database, Some(camera), raw, &compatible)
         }
-        None => find_auto_lens(&database, None, raw, &lenses),
+        None => find_auto_lens(database, None, raw, &lenses),
     };
     let message = if let Some(found) = &auto_match {
         format!("Auto-detected {} from RAW metadata", found.label())
@@ -123,92 +126,118 @@ fn catalog_result(raw: &LoadedRaw) -> Result<LensfunCatalog> {
 }
 
 pub(super) fn apply(raw: &LoadedRaw, selection: &LensfunLens) -> Result<LoadedRaw> {
-    let database = Database::load()?;
-    let camera = find_camera(&database, &raw.camera_make, &raw.camera_model);
-    let lens = find_lens(&database, camera, selection)
-        .ok_or_else(|| anyhow!("Lensfun has no profile for {}", selection.label()))?;
+    let correction = with_database(|database| ConfiguredCorrection::new(database, raw, selection))?;
+    let corrected = correction.apply(raw);
+    // Destroying a modifier is a Lensfun call like creating one.
+    let _lensfun = lock_lensfun();
+    drop(correction);
+    corrected
+}
 
-    let lens_fields =
-        lens_fields(lens).ok_or_else(|| anyhow!("Lensfun returned a null lens profile"))?;
-    let crop = camera
-        .and_then(camera_crop_factor)
-        .and_then(positive)
-        .or_else(|| positive(lens_fields.crop_factor))
-        .unwrap_or(1.0);
-    let focal = positive(raw.focal_length).unwrap_or_else(|| {
-        let min = lens_fields.min_focal;
-        let max = lens_fields.max_focal;
-        if min.is_finite() && max.is_finite() && min > 0.0 && max >= min {
-            0.5 * (min + max)
-        } else {
-            min.max(1.0)
-        }
-    });
-    let width = c_int::try_from(raw.width).context("RAW width does not fit Lensfun")?;
-    let height = c_int::try_from(raw.height).context("RAW height does not fit Lensfun")?;
-    let aperture = positive(raw.aperture).unwrap_or(8.0);
-    let distance = positive(raw.focus_distance).unwrap_or(1000.0);
+/// The modifiers of one correction, configured under the Lensfun lock. Applying
+/// them calls only `lf_modifier_apply_*`, so it runs without the lock, on as
+/// many threads as the passes use.
+struct ConfiguredCorrection {
+    /// Vignetting and TCA, which act on the mosaic.
+    early: Modifier,
+    early_flags: c_int,
+    /// Distortion and auto-scale, which become a geometry map applied later.
+    geometry: Option<(Modifier, c_int)>,
+}
 
-    let LensfunCorrections {
-        geometry: geometry_requested,
-        vignetting: vignetting_requested,
-    } = selection.corrections;
-    if !geometry_requested && !vignetting_requested {
-        return Err(anyhow!("no lens correction type is selected"));
-    }
-    let config = |requested_flags| ModifierConfig {
-        crop,
-        dimensions: [width, height],
-        focal,
-        aperture,
-        distance,
-        requested_flags,
-    };
+impl ConfiguredCorrection {
+    fn new(database: &Database, raw: &LoadedRaw, selection: &LensfunLens) -> Result<Self> {
+        let camera = find_camera(database, &raw.camera_make, &raw.camera_model);
+        let lens = find_lens(database, camera, selection)
+            .ok_or_else(|| anyhow!("Lensfun has no profile for {}", selection.label()))?;
 
-    // Vignetting and TCA act on the mosaic; distortion becomes a geometry map
-    // applied later. TCA is part of the geometry option.
-    let mut early_requested = 0;
-    if geometry_requested {
-        early_requested |= LF_MODIFY_TCA;
-    }
-    if vignetting_requested {
-        early_requested |= LF_MODIFY_VIGNETTING;
-    }
-    let (early_modifier, early_flags) = initialize_modifier(lens, config(early_requested))?;
-
-    let mut geometry_flags = 0;
-    let mut geometry_modifier = None;
-    if geometry_requested {
-        let (modifier, flags) = initialize_modifier(lens, config(LF_MODIFY_DISTORTION))?;
-        geometry_flags = flags;
-
-        let (scale_probe_modifier, scale_probe_flags) =
-            initialize_modifier(lens, config(LF_MODIFY_TCA | LF_MODIFY_DISTORTION))?;
-        if scale_probe_flags & (LF_MODIFY_DISTORTION | LF_MODIFY_GEOMETRY | LF_MODIFY_TCA) != 0 {
-            let scale = unsafe { lf_modifier_get_auto_scale(scale_probe_modifier.0, 0) };
-            if scale.is_finite() && scale > 0.0 {
-                geometry_flags = unsafe { lf_modifier_enable_scaling(modifier.0, scale) };
+        let lens_fields =
+            lens_fields(lens).ok_or_else(|| anyhow!("Lensfun returned a null lens profile"))?;
+        let crop = camera
+            .and_then(camera_crop_factor)
+            .and_then(positive)
+            .or_else(|| positive(lens_fields.crop_factor))
+            .unwrap_or(1.0);
+        let focal = positive(raw.focal_length).unwrap_or_else(|| {
+            let min = lens_fields.min_focal;
+            let max = lens_fields.max_focal;
+            if min.is_finite() && max.is_finite() && min > 0.0 && max >= min {
+                0.5 * (min + max)
+            } else {
+                min.max(1.0)
             }
+        });
+        let width = c_int::try_from(raw.width).context("RAW width does not fit Lensfun")?;
+        let height = c_int::try_from(raw.height).context("RAW height does not fit Lensfun")?;
+        let aperture = positive(raw.aperture).unwrap_or(8.0);
+        let distance = positive(raw.focus_distance).unwrap_or(1000.0);
+
+        let LensfunCorrections {
+            geometry: geometry_requested,
+            vignetting: vignetting_requested,
+        } = selection.corrections;
+        if !geometry_requested && !vignetting_requested {
+            return Err(anyhow!("no lens correction type is selected"));
         }
-        geometry_modifier = Some(modifier);
+        let config = |requested_flags| ModifierConfig {
+            crop,
+            dimensions: [width, height],
+            focal,
+            aperture,
+            distance,
+            requested_flags,
+        };
+
+        // TCA is part of the geometry option.
+        let mut early_requested = 0;
+        if geometry_requested {
+            early_requested |= LF_MODIFY_TCA;
+        }
+        if vignetting_requested {
+            early_requested |= LF_MODIFY_VIGNETTING;
+        }
+        let (early, early_flags) = initialize_modifier(lens, config(early_requested))?;
+
+        let mut geometry = None;
+        if geometry_requested {
+            let (modifier, mut flags) = initialize_modifier(lens, config(LF_MODIFY_DISTORTION))?;
+            let (scale_probe_modifier, scale_probe_flags) =
+                initialize_modifier(lens, config(LF_MODIFY_TCA | LF_MODIFY_DISTORTION))?;
+            if scale_probe_flags & (LF_MODIFY_DISTORTION | LF_MODIFY_GEOMETRY | LF_MODIFY_TCA) != 0
+            {
+                let scale = unsafe { lf_modifier_get_auto_scale(scale_probe_modifier.0, 0) };
+                if scale.is_finite() && scale > 0.0 {
+                    flags = unsafe { lf_modifier_enable_scaling(modifier.0, scale) };
+                }
+            }
+            geometry = Some((modifier, flags));
+        }
+
+        let geometry_flags = geometry.as_ref().map_or(0, |(_, flags)| *flags);
+        if early_flags & (LF_MODIFY_TCA | LF_MODIFY_VIGNETTING) == 0
+            && geometry_flags & (LF_MODIFY_DISTORTION | LF_MODIFY_GEOMETRY | LF_MODIFY_SCALE) == 0
+        {
+            return Err(anyhow!(
+                "the selected Lensfun profile contains no applicable data for the chosen corrections"
+            ));
+        }
+        Ok(Self {
+            early,
+            early_flags,
+            geometry,
+        })
     }
 
-    if early_flags & (LF_MODIFY_TCA | LF_MODIFY_VIGNETTING) == 0
-        && geometry_flags & (LF_MODIFY_DISTORTION | LF_MODIFY_GEOMETRY | LF_MODIFY_SCALE) == 0
-    {
-        return Err(anyhow!(
-            "the selected Lensfun profile contains no applicable data for the chosen corrections"
-        ));
+    fn apply(&self, raw: &LoadedRaw) -> Result<LoadedRaw> {
+        let lens_geometry = match &self.geometry {
+            Some((modifier, flags)) => build_lens_geometry_map(raw, modifier, *flags)?,
+            None => None,
+        };
+        if self.early_flags & (LF_MODIFY_TCA | LF_MODIFY_VIGNETTING) == 0 {
+            let mut corrected = raw.clone();
+            corrected.lens_geometry = lens_geometry;
+            return Ok(corrected);
+        }
+        correct_mosaic(raw, &self.early, self.early_flags, lens_geometry)
     }
-
-    let lens_geometry = match &geometry_modifier {
-        Some(modifier) => build_lens_geometry_map(raw, modifier, geometry_flags)?,
-        None => None,
-    };
-    if early_flags & (LF_MODIFY_TCA | LF_MODIFY_VIGNETTING) == 0 {
-        let mut corrected = raw.clone();
-        corrected.lens_geometry = lens_geometry;
-        return Ok(corrected);
-    }
-    correct_mosaic(raw, &early_modifier, early_flags, lens_geometry)
 }

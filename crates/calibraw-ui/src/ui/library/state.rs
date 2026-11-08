@@ -174,6 +174,8 @@ impl LibraryState {
             decoding_paused: Arc::new(AtomicBool::new(false)),
             decode_gate: Arc::new(RwLock::new(())),
             thumbnail_progress: ThumbnailBackgroundProgress::default(),
+            developed: DevelopedRenders::default(),
+            saved_edits_gpu: None,
             scanning: false,
             catalog_ready: false,
             status,
@@ -320,7 +322,7 @@ impl LibraryState {
             asset: entry.asset.clone(),
             texture: entry.texture.clone(),
             thumbnail_size: entry.thumbnail_size,
-            developed_thumbnail_pending: entry.developed_thumbnail_pending,
+            developed_thumbnail_pending: entry.edits.is_stale(),
         })
     }
 
@@ -386,6 +388,15 @@ impl LibraryState {
 
     pub(crate) fn renders_edited_thumbnails_during_indexing(&self) -> bool {
         self.render_edited_thumbnails_during_indexing
+    }
+
+    /// Gives the library the editor's GPU device for rendering saved edits.
+    pub(crate) fn set_saved_edits_gpu(&mut self, gpu: crate::app::SavedEditsGpu) {
+        self.saved_edits_gpu = Some(gpu);
+    }
+
+    pub(crate) fn saved_edits_gpu(&self) -> Option<&crate::app::SavedEditsGpu> {
+        self.saved_edits_gpu.as_ref()
     }
 
     pub(crate) fn set_render_edited_thumbnails_during_indexing(
@@ -555,6 +566,8 @@ impl LibraryState {
 
     pub(crate) fn prepare_for_develop(&mut self) {
         self.decoding_paused.store(true, Ordering::Release);
+        // Its photo renders again when the library is shown.
+        self.developed.cancel();
         if self.platform.caps().constrained_memory() {
             self.evict_textures_to_limit(ANDROID_DEVELOP_TEXTURE_CACHE_LIMIT);
         }
@@ -566,6 +579,7 @@ impl LibraryState {
 
     pub(crate) fn prepare_for_thumbnail_cache_clear(&mut self) {
         self.generation.fetch_add(1, Ordering::AcqRel);
+        self.developed.cancel();
         self.event_receiver = None;
         self.request_sender = None;
         self.thumbnail_progress = ThumbnailBackgroundProgress::default();
@@ -580,8 +594,7 @@ impl LibraryState {
             entry.thumbnail_failures = 0;
             entry.thumbnail_retry_after = None;
             entry.thumbnail_queued = false;
-            entry.developed_thumbnail = false;
-            entry.developed_thumbnail_pending = false;
+            entry.edits = ThumbnailEdits::Unedited;
             entry.last_used = 0;
         }
     }
