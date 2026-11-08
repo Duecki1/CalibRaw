@@ -10,10 +10,13 @@ use crate::i18n::{tr, tr_fmt};
 /// Failures a report names one by one; the rest are counted.
 const LISTED_FAILURES: usize = 5;
 
-/// The edited-thumbnail renders that run and the failures not reported yet.
+/// The edited-thumbnail renders that run, how many finished, and the failures
+/// not reported yet.
 #[derive(Default)]
 pub(in crate::ui::library) struct DevelopedRenders {
     running: Vec<RunningRender>,
+    /// Renders finished since no photo was waiting, for the progress bar.
+    finished: usize,
     /// `display name: error` of each render that failed since the last report.
     failures: Vec<String>,
     /// Tells the textures of rendered thumbnails apart.
@@ -50,9 +53,9 @@ impl LibraryAsset {
 }
 
 impl LibraryState {
-    /// Whether thumbnails that do not show the saved edits render them.
+    /// Whether the platform renders the saved edits thumbnails do not show.
     pub(in crate::ui::library) fn renders_saved_edits(&self) -> bool {
-        self.render_edited_thumbnails_during_indexing && self.platform.caps().edited_thumbnails
+        self.platform.caps().edited_thumbnails
     }
 
     /// How many photos' edits render at once. Each render holds a decoded
@@ -170,6 +173,10 @@ impl LibraryState {
 
     /// Shows finished renders in their tiles.
     pub(in crate::ui::library) fn poll_developed_renders(&mut self, context: &egui::Context) {
+        // The next photos to wait count their progress from zero.
+        if self.developed.running.is_empty() && self.developed_renders_waiting() == 0 {
+            self.developed.finished = 0;
+        }
         let mut finished = Vec::new();
         self.developed.running.retain(|running| {
             let result = match running.result.try_recv() {
@@ -214,6 +221,7 @@ impl LibraryState {
                 thumbnail,
                 current: true,
             }) => {
+                self.developed.finished += 1;
                 self.developed.revision += 1;
                 let revision = self.developed.revision;
                 self.install_developed_thumbnail_at(index, thumbnail, context, revision);
@@ -221,12 +229,16 @@ impl LibraryState {
             // The sidecar changed while the edits rendered, or the library
             // gave way to Develop: the photo renders again.
             Ok(EditedRender::Rendered { current: false, .. } | EditedRender::Cancelled) => {}
-            Ok(EditedRender::Unedited) => self.entries[index].edits = ThumbnailEdits::Unedited,
+            Ok(EditedRender::Unedited) => {
+                self.developed.finished += 1;
+                self.entries[index].edits = ThumbnailEdits::Unedited;
+            }
             Err(error) => self.fail_developed_render(index, error),
         }
     }
 
     fn fail_developed_render(&mut self, index: usize, error: String) {
+        self.developed.finished += 1;
         let entry = &mut self.entries[index];
         self.developed
             .failures
@@ -234,15 +246,35 @@ impl LibraryState {
         entry.edits = ThumbnailEdits::Failed(error);
     }
 
+    /// Photos waiting for their saved edits to render, the running ones too.
+    fn developed_renders_waiting(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| entry.edits == ThumbnailEdits::Rendering)
+            .count()
+    }
+
+    /// How far the renders have come since no photo was waiting; `None`
+    /// while none waits.
+    pub(in crate::ui::library) fn developed_render_progress(
+        &self,
+        paused: bool,
+    ) -> Option<ThumbnailProgress> {
+        let waiting = self.developed_renders_waiting();
+        (waiting > 0).then_some(ThumbnailProgress {
+            stage: ThumbnailStage::Edits,
+            completed: self.developed.finished,
+            total: self.developed.finished + waiting,
+            paused,
+        })
+    }
+
     /// One message for the renders that failed, once no photo waits for its
     /// edits to render.
     pub(crate) fn take_developed_render_failures(&mut self) -> Option<String> {
         if self.developed.failures.is_empty()
             || !self.developed.running.is_empty()
-            || self
-                .entries
-                .iter()
-                .any(|entry| entry.edits == ThumbnailEdits::Rendering)
+            || self.developed_renders_waiting() > 0
         {
             return None;
         }

@@ -18,6 +18,7 @@ fn thumbnail_background_progress_is_generation_scoped_and_deduplicated() {
     assert_eq!(
         progress.snapshot(false),
         Some(ThumbnailProgress {
+            stage: ThumbnailStage::Previews,
             completed: 1,
             total: 2,
             paused: false,

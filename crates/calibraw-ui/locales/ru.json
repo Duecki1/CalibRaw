@@ -120,7 +120,6 @@
   "Applied preset “{preset}” to {completed} selected image": "Пресет «{preset}» применён к {completed} выбранному изображению",
   "Applied preset “{preset}” to {completed} selected images": "Пресет «{preset}» применён к {completed} выбранным изображениям",
   "Applied {label}": "Применено: {label}",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "Когда библиотека загрузит превью, отрисовывает сохранённые коррекции фотографий, миниатюра которых их ещё не показывает. Если выключить, расход памяти ниже; уже созданные миниатюры по-прежнему показываются.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "Применяет профиль Lensfun, подобранный по метаданным RAW фотографии при её открытии. Включено по умолчанию.",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "Применяется к новым маскам объекта и фона.\n{descriptions}",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "Применяется к новым маскам людей.\nСреднее: рекомендуется\nВысокое: более точные контуры; также запускает модель объектов отдельно для каждого человека · медленнее",
@@ -1402,7 +1401,6 @@
   "Renamed preset to “{name}”.": "Пресет переименован в «{name}».",
   "Renamed the LUT to “{name}”.": "LUT переименована в «{name}».",
   "Rename…": "Переименовать…",
-  "Render edited thumbnails": "Создавать миниатюры с коррекциями",
   "Rendered {label}": "Отрисовано: {label}",
   "Rendering edits…": "Отрисовка коррекций…",
   "Rendering image…": "Отрисовка изображения…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…и ещё {count}",
   "could not start the edited-thumbnail render: {error}": "не удалось запустить отрисовку миниатюры с коррекциями: {error}",
   "the edited-thumbnail render stopped unexpectedly": "отрисовка миниатюры с коррекциями неожиданно прекратилась",
-  "Remove could not be applied: {error}": "Не удалось применить удаление: {error}"
+  "Remove could not be applied: {error}": "Не удалось применить удаление: {error}",
+  "Edits {completed}/{total}": "Коррекции {completed}/{total}"
 }

@@ -118,7 +118,6 @@
   "Applied preset “{preset}” to {completed} selected image": "चुनी गई {completed} छवि पर “{preset}” प्रीसेट लागू किया गया",
   "Applied preset “{preset}” to {completed} selected images": "चुनी गई {completed} छवियों पर “{preset}” प्रीसेट लागू किया गया",
   "Applied {label}": "{label} लागू किया गया",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "लाइब्रेरी के प्रीव्यू लोड हो जाने के बाद, उन फ़ोटो के सहेजे गए संपादन रेंडर करता है जिनके थंबनेल में वे अभी नहीं दिखते। बंद करने पर मेमोरी कम इस्तेमाल होती है; पहले से रेंडर हुए थंबनेल दिखते रहते हैं।",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "फ़ोटो खोलते समय उसके RAW मेटाडेटा से मेल खाती Lensfun प्रोफ़ाइल लागू करता है। डिफ़ॉल्ट रूप से चालू।",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "नए बनाए गए सब्जेक्ट और बैकग्राउंड मास्क पर लागू होता है।\n{descriptions}",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "नए बनाए गए लोगों के मास्क पर लागू होता है।\nमध्यम: अनुशंसित\nउच्च: अधिक बारीक रूपरेखाएँ; हर व्यक्ति पर सब्जेक्ट मॉडल भी चलता है · अधिक समय लगता है",
@@ -1430,7 +1429,6 @@
   "Renamed preset to “{name}”.": "प्रीसेट का नाम बदलकर “{name}” किया गया।",
   "Renamed the LUT to “{name}”.": "LUT का नाम बदलकर “{name}” किया गया।",
   "Rename…": "नाम बदलें…",
-  "Render edited thumbnails": "संपादित थंबनेल रेंडर करें",
   "Rendered {label}": "{label} रेंडर हुआ",
   "Rendering edits…": "संपादन रेंडर हो रहे हैं…",
   "Rendering image…": "छवि रेंडर हो रही है…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…और {count} अन्य",
   "could not start the edited-thumbnail render: {error}": "संपादित थंबनेल का रेंडर शुरू नहीं हो सका: {error}",
   "the edited-thumbnail render stopped unexpectedly": "संपादित थंबनेल का रेंडर अप्रत्याशित रूप से रुक गया",
-  "Remove could not be applied: {error}": "Remove लागू नहीं हो सका: {error}"
+  "Remove could not be applied: {error}": "Remove लागू नहीं हो सका: {error}",
+  "Edits {completed}/{total}": "संपादन {completed}/{total}"
 }

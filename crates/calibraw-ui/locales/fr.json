@@ -182,7 +182,6 @@
   "Applied preset “{preset}” to {completed} selected image": "Préréglage « {preset} » appliqué à {completed} image sélectionnée",
   "Applied preset “{preset}” to {completed} selected images": "Préréglage « {preset} » appliqué à {completed} images sélectionnées",
   "Applied {label}": "{label} appliqué",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "Une fois les aperçus de la bibliothèque chargés, génère les retouches enregistrées des photos dont la vignette ne les montre pas encore. Désactivé, l’usage de mémoire reste plus faible ; les vignettes déjà générées restent affichées.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "Applique à l’ouverture le profil Lensfun correspondant aux métadonnées RAW de la photo. Activé par défaut.",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "S’applique aux nouveaux masques de personnes.\nMoyen : recommandé\nÉlevé : contours plus précis ; le modèle de sujet est aussi exécuté sur chaque personne · plus lent",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "S’applique aux nouveaux masques Sujet et Arrière-plan.\n{descriptions}",
@@ -1500,7 +1499,6 @@
   "Renamed preset to “{name}”.": "Préréglage renommé en « {name} ».",
   "Renamed the LUT to “{name}”.": "LUT renommée en « {name} ».",
   "Rename…": "Renommer…",
-  "Render edited thumbnails": "Générer les vignettes retouchées",
   "Rendered {label}": "{label} rendu",
   "Rendering edits…": "Rendu des retouches…",
   "Rendering image…": "Rendu de l’image…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…et {count} autres",
   "could not start the edited-thumbnail render: {error}": "impossible de lancer la génération de la vignette retouchée : {error}",
   "the edited-thumbnail render stopped unexpectedly": "la génération de la vignette retouchée s’est arrêtée de façon inattendue",
-  "Remove could not be applied: {error}": "Impossible d’appliquer Suppression : {error}"
+  "Remove could not be applied: {error}": "Impossible d’appliquer Suppression : {error}",
+  "Edits {completed}/{total}": "Retouches {completed}/{total}"
 }

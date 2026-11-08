@@ -83,16 +83,6 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
-    pub(crate) fn set_render_edited_thumbnails_during_indexing(&mut self, enabled: bool) {
-        let context = self.egui_ctx.clone();
-        if self
-            .library
-            .set_render_edited_thumbnails_during_indexing(enabled, &context)
-        {
-            self.persist_performance_settings();
-        }
-    }
-
     pub(crate) fn set_ai_gpu_acceleration(&mut self, enabled: bool) {
         if self.ai.gpu_acceleration == enabled {
             return;
@@ -356,9 +346,6 @@ impl CalibRawApp {
             raw_cache_files: self.develop.decoded_raws.limit(),
             thumbnail_workers: self.library.thumbnail_worker_count(),
             thumbnail_workers_automatic: self.library.automatic_thumbnail_workers(),
-            render_edited_thumbnails_during_indexing: self
-                .library
-                .renders_edited_thumbnails_during_indexing(),
             library_thumbnail_size: self.library.view().thumbnail_size,
             library_square_thumbnails: self.library.view().square_thumbnails,
             library_include_subfolders: self.library.view().include_subfolders,

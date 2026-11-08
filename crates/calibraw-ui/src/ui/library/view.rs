@@ -225,16 +225,17 @@ impl Library {
             });
         };
         if let Some(progress) = thumbnail_progress {
+            let counts: [(&str, &dyn std::fmt::Display); 2] = [
+                ("completed", &progress.completed),
+                ("total", &progress.total),
+            ];
             let label = if compact_header {
                 format!("{}/{}", progress.completed, progress.total)
             } else {
-                tr_fmt(
-                    "Previews {completed}/{total}",
-                    &[
-                        ("completed", &progress.completed),
-                        ("total", &progress.total),
-                    ],
-                )
+                match progress.stage {
+                    ThumbnailStage::Previews => tr_fmt("Previews {completed}/{total}", &counts),
+                    ThumbnailStage::Edits => tr_fmt("Edits {completed}/{total}", &counts),
+                }
             };
             moduwu_design::progress_card_header(
                 ui,

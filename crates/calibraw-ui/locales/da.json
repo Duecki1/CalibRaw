@@ -182,7 +182,6 @@
   "Applied preset “{preset}” to {completed} selected image": "Forudindstillingen “{preset}” blev anvendt på {completed} valgt billede",
   "Applied preset “{preset}” to {completed} selected images": "Forudindstillingen “{preset}” blev anvendt på {completed} valgte billeder",
   "Applied {label}": "{label} anvendt",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "Når biblioteket har indlæst sine forhåndsvisninger, gengives de gemte redigeringer af fotos, hvis miniaturebillede endnu ikke viser dem. Er funktionen slået fra, bruges mindre hukommelse; miniaturebilleder, der allerede er gengivet, vises stadig.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "Anvender den Lensfun-profil, der matches ud fra fotoets RAW-metadata, når du åbner det. Slået til som standard.",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "Gælder for nyoprettede personmasker.\nMellem: anbefalet\nHøj: finere konturer, kører også motivmodellen på hver person · tager længere tid",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "Gælder for nyoprettede Motiv- og Baggrundsmasker.\n{descriptions}",
@@ -1500,7 +1499,6 @@
   "Renamed preset to “{name}”.": "Forudindstilling omdøbt til “{name}”.",
   "Renamed the LUT to “{name}”.": "LUT omdøbt til “{name}”.",
   "Rename…": "Omdøb…",
-  "Render edited thumbnails": "Gengiv miniaturebilleder med redigeringer",
   "Rendered {label}": "Gengivet {label}",
   "Rendering edits…": "Gengiver redigeringer…",
   "Rendering image…": "Gengiver billede…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…og {count} mere",
   "could not start the edited-thumbnail render: {error}": "kunne ikke starte gengivelsen af miniaturebilledet med redigeringer: {error}",
   "the edited-thumbnail render stopped unexpectedly": "gengivelsen af miniaturebilledet med redigeringer stoppede uventet",
-  "Remove could not be applied: {error}": "Fjern kunne ikke anvendes: {error}"
+  "Remove could not be applied: {error}": "Fjern kunne ikke anvendes: {error}",
+  "Edits {completed}/{total}": "Redigeringer {completed}/{total}"
 }

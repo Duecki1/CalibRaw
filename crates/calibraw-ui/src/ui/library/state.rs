@@ -18,7 +18,6 @@ pub(crate) struct LibraryPreferences {
     pub(crate) view: LibraryView,
     pub(crate) sort_order: LibrarySortOrder,
     pub(crate) stack_raw_companions: bool,
-    pub(crate) render_edited_thumbnails_during_indexing: bool,
 }
 
 impl LibraryPreferences {
@@ -152,7 +151,6 @@ impl LibraryState {
             view,
             sort_order,
             stack_raw_companions,
-            render_edited_thumbnails_during_indexing,
             automatic_thumbnail_workers,
             ..
         } = preferences;
@@ -182,7 +180,6 @@ impl LibraryState {
             usage_clock: 0,
             thumbnail_workers,
             automatic_thumbnail_workers,
-            render_edited_thumbnails_during_indexing,
             sort_order,
             view,
             search_query: String::new(),
@@ -386,10 +383,6 @@ impl LibraryState {
         self.scanning
     }
 
-    pub(crate) fn renders_edited_thumbnails_during_indexing(&self) -> bool {
-        self.render_edited_thumbnails_during_indexing
-    }
-
     /// Gives the library the editor's GPU device for rendering saved edits.
     pub(crate) fn set_saved_edits_gpu(&mut self, gpu: crate::app::SavedEditsGpu) {
         self.saved_edits_gpu = Some(gpu);
@@ -399,22 +392,12 @@ impl LibraryState {
         self.saved_edits_gpu.as_ref()
     }
 
-    pub(crate) fn set_render_edited_thumbnails_during_indexing(
-        &mut self,
-        enabled: bool,
-        context: &egui::Context,
-    ) -> bool {
-        if self.render_edited_thumbnails_during_indexing == enabled {
-            return false;
-        }
-        self.render_edited_thumbnails_during_indexing = enabled;
-        self.refresh(context);
-        true
-    }
-
+    /// The previews loading, or after them the saved edits rendering.
     pub(crate) fn thumbnail_background_progress(&self) -> Option<ThumbnailProgress> {
+        let paused = self.decoding_paused.load(Ordering::Acquire);
         self.thumbnail_progress
-            .snapshot(self.decoding_paused.load(Ordering::Acquire))
+            .snapshot(paused)
+            .or_else(|| self.developed_render_progress(paused))
     }
 
     pub(crate) fn view(&self) -> LibraryView {

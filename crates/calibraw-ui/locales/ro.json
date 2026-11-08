@@ -182,7 +182,6 @@
   "Applied preset “{preset}” to {completed} selected image": "Presetarea „{preset}” a fost aplicată la {completed} imagine selectată",
   "Applied preset “{preset}” to {completed} selected images": "Presetarea „{preset}” a fost aplicată la {completed} imagini selectate",
   "Applied {label}": "S-a aplicat {label}",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "După ce biblioteca și-a încărcat previzualizările, redă editările salvate ale fotografiilor a căror miniatură nu le arată încă. Dezactivată, folosește mai puțină memorie; miniaturile deja redate rămân afișate.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "La deschiderea fotografiei, aplică profilul Lensfun identificat din metadatele RAW. Activat în mod implicit.",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "Se aplică măștilor de persoane nou generate.\nMedie: recomandată\nRidicată: contururi mai precise; rulează și modelul de subiect pentru fiecare persoană · durează mai mult",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "Se aplică măștilor Subiect și Fundal nou generate.\n{descriptions}",
@@ -1500,7 +1499,6 @@
   "Renamed preset to “{name}”.": "Presetarea a fost redenumită „{name}”.",
   "Renamed the LUT to “{name}”.": "LUT-ul a fost redenumit „{name}”.",
   "Rename…": "Redenumește…",
-  "Render edited thumbnails": "Redă miniaturile editate",
   "Rendered {label}": "S-a redat {label}",
   "Rendering edits…": "Se redau editările…",
   "Rendering image…": "Se redă imaginea…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…și încă {count}",
   "could not start the edited-thumbnail render: {error}": "redarea miniaturii editate nu a putut porni: {error}",
   "the edited-thumbnail render stopped unexpectedly": "redarea miniaturii editate s-a oprit neașteptat",
-  "Remove could not be applied: {error}": "Eliminarea nu a putut fi aplicată: {error}"
+  "Remove could not be applied: {error}": "Eliminarea nu a putut fi aplicată: {error}",
+  "Edits {completed}/{total}": "Editări {completed}/{total}"
 }

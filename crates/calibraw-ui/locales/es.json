@@ -182,7 +182,6 @@
   "Applied preset “{preset}” to {completed} selected image": "Se aplicó el ajuste preestablecido «{preset}» a {completed} imagen seleccionada",
   "Applied preset “{preset}” to {completed} selected images": "Se aplicó el ajuste preestablecido «{preset}» a {completed} imágenes seleccionadas",
   "Applied {label}": "Se aplicó {label}",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "Cuando la biblioteca ha cargado sus vistas previas, renderiza las ediciones guardadas de las fotos cuya miniatura aún no las muestra. Desactivarlo reduce el uso de memoria; las miniaturas ya renderizadas se siguen mostrando.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "Aplica al abrir la foto el perfil Lensfun que coincide con sus metadatos RAW. Está activado de forma predeterminada.",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "Se aplica a las máscaras de personas recién generadas.\nMedia: recomendado\nAlta: contornos más precisos; también ejecuta el modelo de sujeto para cada persona · tarda más",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "Se aplica a las máscaras de Sujeto y Fondo recién generadas.\n{descriptions}",
@@ -1500,7 +1499,6 @@
   "Renamed preset to “{name}”.": "Se cambió el nombre del ajuste preestablecido a «{name}».",
   "Renamed the LUT to “{name}”.": "Se cambió el nombre de la LUT a «{name}».",
   "Rename…": "Cambiar nombre…",
-  "Render edited thumbnails": "Renderizar miniaturas editadas",
   "Rendered {label}": "Se renderizó {label}",
   "Rendering edits…": "Renderizando ediciones…",
   "Rendering image…": "Renderizando imagen…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…y {count} más",
   "could not start the edited-thumbnail render: {error}": "no se pudo iniciar el renderizado de la miniatura editada: {error}",
   "the edited-thumbnail render stopped unexpectedly": "el renderizado de la miniatura editada se detuvo inesperadamente",
-  "Remove could not be applied: {error}": "No se pudo aplicar Eliminación: {error}"
+  "Remove could not be applied: {error}": "No se pudo aplicar Eliminación: {error}",
+  "Edits {completed}/{total}": "Ediciones {completed}/{total}"
 }

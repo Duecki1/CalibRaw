@@ -120,7 +120,6 @@
   "Applied preset “{preset}” to {completed} selected image": "Пресет «{preset}» застосовано до {completed} вибраного зображення",
   "Applied preset “{preset}” to {completed} selected images": "Пресет «{preset}» застосовано до {completed} вибраних зображень",
   "Applied {label}": "Застосовано: {label}",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "Коли бібліотека завантажить попередні перегляди, рендерить збережені зміни тих фото, мініатюра яких їх ще не показує. Якщо вимкнути, використовується менше пам’яті; уже створені мініатюри й надалі показуються.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "Під час відкриття фотографії застосовує профіль Lensfun, підібраний за її метаданими RAW. Увімкнено типово.",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "Застосовується до новостворених масок «Об’єкт» і «Тло».\n{descriptions}",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "Застосовується до новостворених масок людей.\nСередній: рекомендовано\nВисокий: точніші контури; для кожної людини також запускається модель об’єкта · потребує більше часу",
@@ -1402,7 +1401,6 @@
   "Renamed preset to “{name}”.": "Пресет перейменовано на «{name}».",
   "Renamed the LUT to “{name}”.": "LUT перейменовано на «{name}».",
   "Rename…": "Перейменувати…",
-  "Render edited thumbnails": "Рендерити оброблені мініатюри",
   "Rendered {label}": "Відрендерено {label}",
   "Rendering edits…": "Рендеринг змін…",
   "Rendering image…": "Рендеринг зображення…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…і ще {count}",
   "could not start the edited-thumbnail render: {error}": "не вдалося запустити рендеринг обробленої мініатюри: {error}",
   "the edited-thumbnail render stopped unexpectedly": "рендеринг обробленої мініатюри несподівано зупинився",
-  "Remove could not be applied: {error}": "Не вдалося застосувати «Видалити»: {error}"
+  "Remove could not be applied: {error}": "Не вдалося застосувати «Видалити»: {error}",
+  "Edits {completed}/{total}": "Зміни {completed}/{total}"
 }

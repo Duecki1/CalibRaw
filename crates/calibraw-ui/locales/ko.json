@@ -182,7 +182,6 @@
   "Applied preset “{preset}” to {completed} selected image": "Applied preset “{preset}” to {completed} selected image",
   "Applied preset “{preset}” to {completed} selected images": "Applied preset “{preset}” to {completed} selected images",
   "Applied {label}": "Applied {label}",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "라이브러리가 미리보기를 불러온 뒤, 썸네일에 아직 반영되지 않은 사진의 저장된 편집을 렌더링합니다. 끄면 메모리 사용량이 줄어들며, 이미 렌더링된 썸네일은 계속 표시됩니다.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "Applies to newly generated Subject and Background masks.\n{descriptions}",
@@ -1500,7 +1499,6 @@
   "Renamed preset to “{name}”.": "Renamed preset to “{name}”.",
   "Renamed the LUT to “{name}”.": "Renamed the LUT to “{name}”.",
   "Rename…": "Rename…",
-  "Render edited thumbnails": "편집된 썸네일 렌더링",
   "Rendered {label}": "Rendered {label}",
   "Rendering edits…": "Rendering edits…",
   "Rendering image…": "Rendering image…",
@@ -2055,5 +2053,6 @@
   "…and {count} more": "…외 {count}개",
   "could not start the edited-thumbnail render: {error}": "편집된 썸네일 렌더링을 시작할 수 없습니다: {error}",
   "the edited-thumbnail render stopped unexpectedly": "편집된 썸네일 렌더링이 예기치 않게 중지되었습니다",
-  "Remove could not be applied: {error}": "제거를 적용할 수 없습니다: {error}"
+  "Remove could not be applied: {error}": "제거를 적용할 수 없습니다: {error}",
+  "Edits {completed}/{total}": "편집 {completed}/{total}"
 }

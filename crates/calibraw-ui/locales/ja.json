@@ -118,7 +118,6 @@
   "Applied preset “{preset}” to {completed} selected image": "選択した画像{completed}枚にプリセット「{preset}」を適用しました",
   "Applied preset “{preset}” to {completed} selected images": "選択した画像{completed}枚にプリセット「{preset}」を適用しました",
   "Applied {label}": "{label}を適用しました",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "ライブラリがプレビューを読み込んだ後、保存済みの編集内容がまだサムネイルに反映されていない写真をレンダリングします。オフにするとメモリ使用量を抑えられます。レンダリング済みのサムネイルは引き続き表示されます。",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "写真を開くとき、RAWメタデータに一致するLensfunプロファイルを適用します。初期設定では有効です。",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "新しく生成する被写体マスクと背景マスクに適用されます。\n{descriptions}",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "新しく生成する人物マスクに適用されます。\n中：推奨\n高：輪郭をより細かく検出し、人物ごとに被写体モデルも実行します（時間がかかります）",
@@ -1430,7 +1429,6 @@
   "Renamed preset to “{name}”.": "プリセット名を「{name}」に変更しました。",
   "Renamed the LUT to “{name}”.": "LUT名を「{name}」に変更しました。",
   "Rename…": "名前を変更…",
-  "Render edited thumbnails": "編集済みサムネイルをレンダリング",
   "Rendered {label}": "{label}をレンダリングしました",
   "Rendering edits…": "編集内容をレンダリング中…",
   "Rendering image…": "画像をレンダリング中…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…ほか{count}件",
   "could not start the edited-thumbnail render: {error}": "編集済みサムネイルのレンダリングを開始できませんでした：{error}",
   "the edited-thumbnail render stopped unexpectedly": "編集済みサムネイルのレンダリングが予期せず停止しました",
-  "Remove could not be applied: {error}": "削除を適用できませんでした：{error}"
+  "Remove could not be applied: {error}": "削除を適用できませんでした：{error}",
+  "Edits {completed}/{total}": "編集内容{completed}/{total}"
 }

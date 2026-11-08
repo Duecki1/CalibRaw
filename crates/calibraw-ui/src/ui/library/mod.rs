@@ -387,7 +387,7 @@ enum ThumbnailEdits {
     /// The camera's preview with the saved crop, or an earlier render, stands
     /// in until the saved edits render, once the previews have loaded.
     Rendering,
-    /// As `Rendering`, but the edits do not render: the setting is off.
+    /// As `Rendering`, but the edits do not render: the platform does not.
     Stale,
     /// Rendering the saved edits failed with this error.
     Failed(String),
@@ -469,9 +469,19 @@ struct ThumbnailBackgroundProgress {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ThumbnailProgress {
+    pub(crate) stage: ThumbnailStage,
     pub(crate) completed: usize,
     pub(crate) total: usize,
     pub(crate) paused: bool,
+}
+
+/// What the library's background work is doing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ThumbnailStage {
+    /// Loading every photo's preview.
+    Previews,
+    /// Rendering the saved edits that previews do not show, after them.
+    Edits,
 }
 
 impl ThumbnailBackgroundProgress {
@@ -495,6 +505,7 @@ impl ThumbnailBackgroundProgress {
     fn snapshot(&self, paused: bool) -> Option<ThumbnailProgress> {
         let completed = self.completed_assets.len().min(self.total);
         (self.total > 0 && completed < self.total).then_some(ThumbnailProgress {
+            stage: ThumbnailStage::Previews,
             completed,
             total: self.total,
             paused,
@@ -876,7 +887,6 @@ pub(crate) struct LibraryState {
     /// The manual worker limit; see `automatic_thumbnail_workers`.
     thumbnail_workers: usize,
     automatic_thumbnail_workers: bool,
-    render_edited_thumbnails_during_indexing: bool,
     sort_order: LibrarySortOrder,
     view: LibraryView,
     search_query: String,

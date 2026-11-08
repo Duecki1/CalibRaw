@@ -118,7 +118,6 @@
   "Applied preset “{preset}” to {completed} selected image": "已將預設“{preset}”套用到 {completed} 張所選影像",
   "Applied preset “{preset}” to {completed} selected images": "已將預設“{preset}”套用到 {completed} 張所選影像",
   "Applied {label}": "已套用 {label}",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "圖庫載入預覽後，渲染縮略圖尚未顯示已儲存編輯的照片。關閉後可降低記憶體用量；已渲染的縮略圖仍會顯示。",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "打開照片時，根據照片 RAW 元資料匹配並套用 Lensfun 設定檔。預設啟用。",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "套用於新生成的“主體”和“背景”遮色片。\n{descriptions}",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "套用於新生成的人物遮色片。\n中：建議\n高：輪廓更精細，也會對每個人執行主體模型 · 耗時更長",
@@ -1430,7 +1429,6 @@
   "Renamed preset to “{name}”.": "已將預設重命名為“{name}”。",
   "Renamed the LUT to “{name}”.": "已將 LUT 重命名為“{name}”。",
   "Rename…": "重命名…",
-  "Render edited thumbnails": "渲染已編輯的縮略圖",
   "Rendered {label}": "已渲染 {label}",
   "Rendering edits…": "正在渲染編輯…",
   "Rendering image…": "正在渲染影像…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…以及另外 {count} 個",
   "could not start the edited-thumbnail render: {error}": "無法開始渲染已編輯的縮略圖：{error}",
   "the edited-thumbnail render stopped unexpectedly": "已編輯縮略圖的渲染意外停止",
-  "Remove could not be applied: {error}": "無法套用“移除”：{error}"
+  "Remove could not be applied: {error}": "無法套用“移除”：{error}",
+  "Edits {completed}/{total}": "編輯 {completed}/{total}"
 }

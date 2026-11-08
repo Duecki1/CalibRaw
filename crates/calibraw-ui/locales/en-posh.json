@@ -118,7 +118,6 @@
   "Applied preset “{preset}” to {completed} selected image": "Preset “{preset}” was applied to {completed} selected image, as requested.",
   "Applied preset “{preset}” to {completed} selected images": "Preset “{preset}” was applied to {completed} selected images, as requested.",
   "Applied {label}": "Applied {label}",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "Once the Library has loaded its previews, renders the preserved edits of photographs whose thumbnail does not yet show them. Turning it off keeps memory use more modest; thumbnails already rendered are still shown.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "Applies the Lensfun profile matched from the photograph's RAW metadata when you open it. Enabled by default.",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "Takes effect upon the generation of new Subject and Background masks.\n{descriptions}",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also executes the subject model on each person · takes longer",
@@ -1405,7 +1404,6 @@
   "Renamed preset to “{name}”.": "Renamed preset to “{name}”.",
   "Renamed the LUT to “{name}”.": "Renamed the LUT to “{name}”.",
   "Rename…": "Rename…",
-  "Render edited thumbnails": "Render edited thumbnails, for a more polished Library.",
   "Rendered {label}": "Rendered {label}",
   "Rendering edits…": "Rendering edits…",
   "Rendering image…": "Rendering image…",
@@ -2054,5 +2052,6 @@
   "…and {count} more": "…and {count} further",
   "could not start the edited-thumbnail render: {error}": "Could not commence the edited thumbnail's rendering: {error}.",
   "the edited-thumbnail render stopped unexpectedly": "The edited thumbnail's rendering ceased unexpectedly.",
-  "Remove could not be applied: {error}": "Remove could not be applied, most regrettably: {error}"
+  "Remove could not be applied: {error}": "Remove could not be applied, most regrettably: {error}",
+  "Edits {completed}/{total}": "Edits {completed}/{total}"
 }

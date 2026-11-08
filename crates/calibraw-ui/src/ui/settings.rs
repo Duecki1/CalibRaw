@@ -618,21 +618,6 @@ impl Settings {
             tr("Library performance"),
             tr("Tune memory use and background preview generation. Conservative values are recommended on phones."),
         );
-        if app.caps().edited_thumbnails {
-            let mut render_edited_thumbnails =
-                app.library.renders_edited_thumbnails_during_indexing();
-            if moduwu_design::toggle_with_help(
-                ui,
-                &mut render_edited_thumbnails,
-                tr("Render edited thumbnails"),
-                tr("Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown."),
-            )
-                .changed()
-            {
-                app.set_render_edited_thumbnails_during_indexing(render_edited_thumbnails);
-            }
-        }
-
         if !app.caps().constrained_memory() {
             let mut raw_cache_files = app.develop.decoded_raws.limit();
             if count_setting(

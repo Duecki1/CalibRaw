@@ -31,7 +31,6 @@ pub(crate) struct PerformanceSettings {
     /// Size the thumbnail worker pool from the machine's cores and memory.
     /// Missing in files written before it existed, which therefore turn it on.
     pub thumbnail_workers_automatic: bool,
-    pub render_edited_thumbnails_during_indexing: bool,
     pub library_thumbnail_size: crate::ui::library::LibraryThumbnailSize,
     /// Show the library as equal square tiles.
     pub library_square_thumbnails: bool,
@@ -288,7 +287,6 @@ impl Default for PerformanceSettings {
             raw_cache_files: crate::app::default_raw_cache_limit(),
             thumbnail_workers: crate::ui::library::default_thumbnail_worker_count(),
             thumbnail_workers_automatic: true,
-            render_edited_thumbnails_during_indexing: false,
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::default(),
             library_square_thumbnails: false,
             library_include_subfolders: false,

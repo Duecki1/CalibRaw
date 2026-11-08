@@ -120,7 +120,6 @@
   "Applied preset “{preset}” to {completed} selected image": "“{preset}” ön ayarı seçili {completed} görüntüye uygulandı",
   "Applied preset “{preset}” to {completed} selected images": "“{preset}” ön ayarı seçili {completed} görüntüye uygulandı",
   "Applied {label}": "{label} uygulandı",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "Kitaplık önizlemelerini yükledikten sonra, küçük resmi kayıtlı düzenlemeleri henüz göstermeyen fotoğrafların düzenlemelerini işler. Kapatıldığında daha az bellek kullanılır; işlenmiş küçük resimler gösterilmeye devam eder.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "Fotoğraf açıldığında RAW meta verileriyle eşleşen Lensfun profilini uygular. Varsayılan olarak açıktır.",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "Yeni oluşturulan Konu ve Arka Plan maskelerine uygulanır.\n{descriptions}",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "Yeni oluşturulan kişi maskelerine uygulanır.\nOrta: önerilen\nYüksek: daha ayrıntılı dış hatlar; her kişide konu modeli de çalışır · daha uzun sürer",
@@ -1402,7 +1401,6 @@
   "Renamed preset to “{name}”.": "Ön ayarın adı “{name}” olarak değiştirildi.",
   "Renamed the LUT to “{name}”.": "LUT'un adı “{name}” olarak değiştirildi.",
   "Rename…": "Yeniden adlandır…",
-  "Render edited thumbnails": "Düzenlenmiş küçük resimleri işle",
   "Rendered {label}": "{label} işlendi",
   "Rendering edits…": "Düzenlemeler işleniyor…",
   "Rendering image…": "Görüntü işleniyor…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…ve {count} tane daha",
   "could not start the edited-thumbnail render: {error}": "düzenlenmiş küçük resmin işlenmesi başlatılamadı: {error}",
   "the edited-thumbnail render stopped unexpectedly": "düzenlenmiş küçük resmin işlenmesi beklenmedik şekilde durdu",
-  "Remove could not be applied: {error}": "Kaldır uygulanamadı: {error}"
+  "Remove could not be applied: {error}": "Kaldır uygulanamadı: {error}",
+  "Edits {completed}/{total}": "Düzenlemeler {completed}/{total}"
 }

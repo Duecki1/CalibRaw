@@ -118,7 +118,6 @@
   "Applied preset “{preset}” to {completed} selected image": "Zastosowano ustawienie wstępne „{preset}” do {completed} wybranego obrazu",
   "Applied preset “{preset}” to {completed} selected images": "Zastosowano ustawienie wstępne „{preset}” do {completed} wybranych obrazów",
   "Applied {label}": "Zastosowano: {label}",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "Gdy biblioteka wczyta podglądy, renderuje zapisane edycje zdjęć, których miniatura jeszcze ich nie pokazuje. Po wyłączeniu zużycie pamięci jest mniejsze; już wyrenderowane miniatury nadal są wyświetlane.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "Podczas otwierania zdjęcia stosowany jest profil Lensfun dopasowany na podstawie jego metadanych RAW. Opcja jest domyślnie włączona.",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "Dotyczy nowo wygenerowanych masek motywu i tła.\n{descriptions}",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "Dotyczy nowo wygenerowanych masek osób.\nŚrednia: zalecana\nWysoka: dokładniejsze kontury; dodatkowo uruchamia model motywu dla każdej osoby, co wydłuża przetwarzanie",
@@ -1405,7 +1404,6 @@
   "Renamed preset to “{name}”.": "Zmieniono nazwę ustawienia wstępnego na „{name}”.",
   "Renamed the LUT to “{name}”.": "Zmieniono nazwę LUT-u na „{name}”.",
   "Rename…": "Zmień nazwę…",
-  "Render edited thumbnails": "Renderuj edytowane miniatury",
   "Rendered {label}": "Wyrenderowano {label}",
   "Rendering edits…": "Renderowanie edycji…",
   "Rendering image…": "Renderowanie obrazu…",
@@ -2059,5 +2057,6 @@
   "…and {count} more": "…i {count} więcej",
   "could not start the edited-thumbnail render: {error}": "nie udało się uruchomić renderowania edytowanej miniatury: {error}",
   "the edited-thumbnail render stopped unexpectedly": "renderowanie edytowanej miniatury nieoczekiwanie się zatrzymało",
-  "Remove could not be applied: {error}": "Nie udało się zastosować narzędzia Usuń: {error}"
+  "Remove could not be applied: {error}": "Nie udało się zastosować narzędzia Usuń: {error}",
+  "Edits {completed}/{total}": "Edycje {completed}/{total}"
 }

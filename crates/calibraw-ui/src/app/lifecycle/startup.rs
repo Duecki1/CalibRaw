@@ -87,8 +87,6 @@ impl CalibRawApp {
             },
             sort_order: performance.library_sort_order,
             stack_raw_companions: performance.library_stack_raw_companions,
-            render_edited_thumbnails_during_indexing: performance
-                .render_edited_thumbnails_during_indexing,
         };
         let app = Self {
             develop: DevelopState {

@@ -118,7 +118,6 @@
   "Applied preset “{preset}” to {completed} selected image": "Preset „{preset}“ auf {completed} ausgewähltes Bild angewendet",
   "Applied preset “{preset}” to {completed} selected images": "Preset „{preset}“ auf {completed} ausgewählte Bilder angewendet",
   "Applied {label}": "{label} angewendet",
-  "Once the library has loaded its previews, renders the saved edits of photos whose thumbnail does not show them yet. Turning it off keeps memory use lower; thumbnails already rendered are still shown.": "Sobald die Bibliothek ihre Vorschauen geladen hat, werden die gespeicherten Bearbeitungen von Fotos gerendert, deren Vorschaubild sie noch nicht zeigt. Deaktiviert wird weniger Speicher benötigt; bereits erstellte Vorschaubilder werden weiterhin angezeigt.",
   "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.": "Wendet beim Öffnen das Lensfun-Profil an, das anhand der RAW-Metadaten des Fotos ermittelt wurde. Standardmäßig aktiviert.",
   "Applies to newly generated Subject and Background masks.\n{descriptions}": "Gilt für neu erzeugte Motiv- und Hintergrundmasken.\n{descriptions}",
   "Applies to newly generated people masks.\nMedium: recommended\nHigh: finer outlines, also runs the subject model on each person · takes longer": "Gilt für neu erzeugte Personenmasken.\nMittel: empfohlen\nHoch: feinere Umrisse, führt zusätzlich das Motivmodell für jede Person aus · dauert länger",
@@ -1430,7 +1429,6 @@
   "Renamed preset to “{name}”.": "Preset in „{name}“ umbenannt.",
   "Renamed the LUT to “{name}”.": "LUT in „{name}“ umbenannt.",
   "Rename…": "Umbenennen…",
-  "Render edited thumbnails": "Bearbeitete Vorschaubilder erstellen",
   "Rendered {label}": "{label} gerendert",
   "Rendering edits…": "Bearbeitungen werden gerendert…",
   "Rendering image…": "Bild wird gerendert…",
@@ -2061,5 +2059,6 @@
   "…and {count} more": "…und {count} weitere",
   "could not start the edited-thumbnail render: {error}": "Das Erstellen des bearbeiteten Vorschaubilds konnte nicht gestartet werden: {error}",
   "the edited-thumbnail render stopped unexpectedly": "Das Erstellen des bearbeiteten Vorschaubilds wurde unerwartet beendet",
-  "Remove could not be applied: {error}": "„Entfernen“ konnte nicht angewendet werden: {error}"
+  "Remove could not be applied: {error}": "„Entfernen“ konnte nicht angewendet werden: {error}",
+  "Edits {completed}/{total}": "Bearbeitungen {completed}/{total}"
 }
