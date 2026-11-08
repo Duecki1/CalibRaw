@@ -151,7 +151,12 @@ jobs:
           # Only an Icon Composer document adapts to Liquid Glass, and compiling one
           # needs Xcode 26 or newer, which is not the runner's default. actool writes
           # Assets.car for macOS 26 and later, and CalibRaw.icns for older systems.
-          DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcrun actool \
+          # On macOS 15 its icon renderer crashes against the system frameworks, so it
+          # has to load the newer ones Xcode bundles. xcrun would go through the
+          # SIP-protected /usr/bin stub, which strips DYLD_*, so run Xcode's tool itself.
+          xcode=/Applications/Xcode_26.3.app/Contents/Developer
+          DYLD_FRAMEWORK_PATH="$xcode/Platforms/MacOSX.platform/System/AssetRuntime/System/Library/PrivateFrameworks" \
+            "$xcode/usr/bin/actool" \
             packaging/icons/CalibRaw.icon \
             --compile "$contents/Resources" \
             --app-icon CalibRaw \
@@ -165,10 +170,11 @@ jobs:
           test -s "$contents/Resources/Assets.car"
           test -s "$contents/Resources/CalibRaw.icns"
           # The catalog must hold the adaptive icon, and the full-size rendition older
-          # macOS shows; actool's CalibRaw.icns stops at 256 pixels.
-          icon_catalog="$(DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcrun assetutil --info "$contents/Resources/Assets.car")"
-          grep -q '"AssetType" : "IconImageStack"' <<<"$icon_catalog"
-          grep -q '"PixelWidth" : 1024' <<<"$icon_catalog"
+          # macOS shows; actool's CalibRaw.icns stops at 256 pixels. Both are matched by
+          # rendition name in the raw file: assetutil is a system tool, not part of
+          # Xcode, so on this runner it is older than the catalog it would be reading.
+          LC_ALL=C grep -aq 'CalibRaw\.iconstack' "$contents/Resources/Assets.car"
+          LC_ALL=C grep -aq 'CalibRaw1024x1024_' "$contents/Resources/Assets.car"
 
           lensfun_db="$(find "$LENSFUN_PREFIX/share/lensfun" -type f -name '*.xml' -print | head -n 1)"
           test -n "$lensfun_db"
