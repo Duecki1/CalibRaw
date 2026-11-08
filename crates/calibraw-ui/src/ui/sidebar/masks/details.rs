@@ -32,9 +32,11 @@ enum TileIcon {
     Combine(MaskCombineMode),
 }
 
-/// A creation button of the strip: an icon over its caption on a tile in a
-/// strip along the top, beside it on a row in a strip along the right edge.
-/// `accent` tints the tile and colours the icon.
+/// A creation button of the strip: an icon beside its caption on a row in a
+/// strip along the right edge. In a strip along the top, where phones have
+/// little width, a combine tile shows only its glyph and the new-group tile
+/// puts its short caption under the plus. `label` is also the accessible
+/// name. `accent` tints the tile and colours the icon.
 fn creation_tile(
     ui: &mut Ui,
     size: egui::Vec2,
@@ -79,7 +81,16 @@ fn creation_tile(
         painter.rect_stroke(rect, 6.0, visuals.selection.stroke, StrokeKind::Inside);
     }
 
+    let captioned =
+        !(orientation == MaskStripOrientation::Horizontal && matches!(icon, TileIcon::Combine(_)));
     let (icon_center, icon_width, text_anchor, text_align, text_width) = match orientation {
+        MaskStripOrientation::Horizontal if !captioned => (
+            rect.center(),
+            20.0,
+            rect.center(),
+            Align2::CENTER_CENTER,
+            0.0,
+        ),
         MaskStripOrientation::Horizontal => (
             egui::pos2(rect.center().x, rect.top() + rect.height() * 0.38),
             22.0,
@@ -108,6 +119,9 @@ fn creation_tile(
         TileIcon::Combine(combine) => {
             super::paint_combine_glyph(&painter, icon_center, icon_width, combine, accent, fill);
         }
+    }
+    if !captioned {
+        return response;
     }
     // Long translations shrink to fit the tile instead of spilling over.
     let font_size = 10.5;
@@ -190,14 +204,21 @@ impl Sidebar {
                     .push_id(("mask-submask-creation", combine.label()), |ui| {
                         let accent =
                             crate::ui::theme::mask_combine_color(combine, ui.visuals().dark_mode);
-                        creation_tile(
+                        let response = creation_tile(
                             ui,
                             button_size,
                             orientation,
                             tr(combine.label()),
                             TileIcon::Combine(combine),
                             accent,
-                        )
+                        );
+                        // The top strip's tiles have no caption to read.
+                        match orientation {
+                            MaskStripOrientation::Horizontal => {
+                                response.on_hover_text(tr(combine.label()))
+                            }
+                            MaskStripOrientation::Vertical => response,
+                        }
                     })
                     .inner;
                 if let Some(kind) = kind_picker_from(&response, orientation) {

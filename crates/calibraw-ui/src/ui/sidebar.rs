@@ -74,16 +74,17 @@ impl MaskCardSize {
         }
     }
 
-    /// A creation tile beside cards of this size: a captioned tile as tall
-    /// as the card in a strip along the top, a control-high row as wide as
-    /// the card in a strip along the right edge.
+    /// A creation tile beside cards of this size: a narrow tile as tall as
+    /// the card in a strip along the top, a row as wide as the card in a
+    /// strip along the right edge. The row keeps the desktop control height
+    /// on touch tablets too, so the open group's three rows stay compact.
     fn create_button_size(self, orientation: MaskStripOrientation) -> egui::Vec2 {
-        const TILE_WIDTH: f32 = 50.0;
-        const THIN_EDGE: f32 = moduwu_design::CONTROL_HEIGHT;
+        const TILE_WIDTH: f32 = 36.0;
+        const ROW_HEIGHT: f32 = moduwu_design::DESKTOP_CONTROL_HEIGHT;
         let card = self.card_size();
         match orientation {
             MaskStripOrientation::Horizontal => egui::vec2(TILE_WIDTH, card.y),
-            MaskStripOrientation::Vertical => egui::vec2(card.x, THIN_EDGE),
+            MaskStripOrientation::Vertical => egui::vec2(card.x, ROW_HEIGHT),
         }
     }
 }
