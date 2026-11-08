@@ -169,6 +169,9 @@ fn component(element: &Element) -> Result<MaskComponent, String> {
         component.name = sanitize_label(name, kind.label(), MAX_PRESET_NAME_CHARS).0;
     }
     component.enabled = attributes.boolean("MaskActive").unwrap_or(true);
+    // The value the component paints, as a brush's density sets it: its
+    // strength, which a component's opacity is.
+    component.set_opacity(attributes.value("MaskValue").unwrap_or(1.0));
     // `Flipped` is the older radial filter's own inversion.
     component.invert = attributes.boolean("MaskInverted").unwrap_or(false)
         ^ attributes.boolean("Flipped").unwrap_or(false);
