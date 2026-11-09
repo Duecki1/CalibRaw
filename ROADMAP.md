@@ -24,13 +24,13 @@ Checked items are done. Order within a section is not a priority.
 - [ ]  Auto tone, auto geometry, auto perspective
 - [ ]  Depth lens blur
 - [X]  LUT support
-- [x]  Watermark
+- [X]  Watermark
 - [ ]  Retouch tab: blemish removal, skin smoothing, eye enhancement (maybe)
 - [ ]  Straight brush lines, rectangle and circle brushes
-- [x]  Preset opacity
+- [X]  Preset opacity
 - [ ]  Copy tone curve
 - [ ]  Lens profile saving for unrecognized lenses
-- [x]  Rotate in crop tab
+- [X]  Rotate in crop tab
 - [X]  Depth effects rework: two surfaces per pixel, light bake with shadows, traced Wet Surfaces reflections (docs/rework/DEPTH_EFFECTS_PLAN.md)
 - [ ]  Depth lens blur fit: far tree lines read too sharp (about 5 px instead of 30–40 px)
 - [ ]  Depth cut-out edges: raise the share of the foreground edge within 1.5 px of the photo's edge above 66%
@@ -53,10 +53,10 @@ Checked items are done. Order within a section is not a priority.
 - [X]  Subject mask: error when nothing is selected, faster on Android
 - [X]  Per-element visibility toggle
 - [ ]  Compound masks
-- [x]  Better mask and sky edges
-- [ ]  Light rays subtract/intersect fix
+- [X]  Better mask and sky edges
+- [X]  Light rays subtract/intersect fix
 - [X]  Undo/redo for object mask and crop
-- [x]  Cancelable object mask
+- [X]  Cancelable object mask
 
 ## Library
 
@@ -69,11 +69,11 @@ Checked items are done. Order within a section is not a priority.
 - [ ]  Virtual copies
 - [ ]  Culling tools
 - [ ]  Collections
-- [x]  Tiff thumbnails
-- [ ]  Stale thumbnail re-rendering
+- [X]  Tiff thumbnails
+- [X]  Stale thumbnail re-rendering
 - [ ]  Faster initial indexing on HDDs, automatic HDD mode
-- [x]  Duplicate-file export naming (`_1`, `_2`, …)
-- [x]  Keep zoom when switching color profiles
+- [X]  Duplicate-file export naming (`_1`, `_2`, …)
+- [X]  Keep zoom when switching color profiles
 - [ ]  Better drag and drop
 - [ ]  Edit history
 - [ ]  Export progress in export button
@@ -89,8 +89,8 @@ Checked items are done. Order within a section is not a priority.
 - [X]  AuRaw → CalibRaw conversion script
 - [ ]  Panorama and focus alignment
 - [X]  Lower preview memory use: RAM-scaled limit, on-demand mask layers
-- [x]  Lower preview memory use: on-demand effect buffers, shared mask atlas
-- [x]  Android notifications, new tablet UI
+- [X]  Lower preview memory use: on-demand effect buffers, shared mask atlas
+- [X]  Android notifications, new tablet UI
 - [ ]  AppImage built on oldest Ubuntu LTS
 - [ ]  Play Store, Winget
 - [ ]  Crash log file
@@ -104,8 +104,8 @@ Checked items are done. Order within a section is not a priority.
 - [X]  Double-click slider reset fixes
 - [X]  Grey theme
 - [X]  Issue and PR templates
-- [x]  Simpler right-click menu and detail card
+- [X]  Simpler right-click menu and detail card
 - [ ]  New app icon
-- [x]  Tutorial pop-ups with images/GIFs, smaller GIFs
+- [X]  Tutorial pop-ups with images/GIFs, smaller GIFs
 - [ ]  Keyboard shortcuts changeable
 - [ ]  Preset repository
