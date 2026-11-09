@@ -368,6 +368,7 @@ impl CalibRawApp {
             onboarding_completed: self.preferences.onboarding_completed,
             subject_mask_quality_chosen: self.preferences.subject_mask_quality_chosen,
             people_mask_quality_chosen: self.preferences.people_mask_quality_chosen,
+            scene_depth_quality_chosen: self.preferences.scene_depth_quality_chosen,
             tips_enabled: self.preferences.tips.enabled,
             seen_tips: self.preferences.tips.seen.clone(),
             auto_check_updates: self.preferences.auto_check_updates,

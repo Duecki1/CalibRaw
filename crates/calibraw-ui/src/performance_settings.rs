@@ -88,6 +88,10 @@ pub(crate) struct PerformanceSettings {
     /// quality, so existing users are asked about it once where their device
     /// offers the choice; the choice itself is never reset by it.
     pub people_mask_quality_chosen: bool,
+    /// Missing in files written before the setup step offered the scene-depth
+    /// quality, so existing users are asked about it once where their device
+    /// offers the choice; the choice itself is never reset by it.
+    pub scene_depth_quality_chosen: bool,
     /// Show a feature's tip the first time it is used.
     pub tips_enabled: bool,
     /// `Tip::key`s of the tips already shown, including keys of tips other
@@ -329,6 +333,7 @@ impl Default for PerformanceSettings {
             onboarding_completed: false,
             subject_mask_quality_chosen: false,
             people_mask_quality_chosen: false,
+            scene_depth_quality_chosen: false,
             tips_enabled: true,
             seen_tips: BTreeSet::new(),
             auto_check_updates: true,

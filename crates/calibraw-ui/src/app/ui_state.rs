@@ -39,6 +39,7 @@ pub(crate) struct PreferencesState {
     pub(crate) onboarding_completed: bool,
     pub(crate) subject_mask_quality_chosen: bool,
     pub(crate) people_mask_quality_chosen: bool,
+    pub(crate) scene_depth_quality_chosen: bool,
     pub(crate) tips: TipPreferences,
     pub(crate) auto_check_updates: bool,
     pub(crate) github_update_check_allowed: Option<bool>,
@@ -56,7 +57,7 @@ pub(crate) struct PreferencesState {
 pub(crate) enum OnboardingStep {
     Appearance,
     Preview,
-    SubjectMasks,
+    AiQuality,
     CopyPaste,
     ExportNames,
     /// Desktop only: Android imports profiles from Settings.

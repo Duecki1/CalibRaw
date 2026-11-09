@@ -36,6 +36,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             app.preferences.onboarding_completed = true;
             app.preferences.subject_mask_quality_chosen = true;
             app.preferences.people_mask_quality_chosen = true;
+            app.preferences.scene_depth_quality_chosen = true;
             app.ui.onboarding_step = None;
             if !app.persist_performance_settings() {
                 app.report_error(
@@ -60,7 +61,7 @@ fn show_step_body(
     match step {
         OnboardingStep::Appearance => show_appearance(ui, app),
         OnboardingStep::Preview => show_preview(ui, app),
-        OnboardingStep::SubjectMasks => show_subject_masks(ui, app),
+        OnboardingStep::AiQuality => show_ai_quality(ui, app),
         OnboardingStep::CopyPaste => show_copy_paste(ui, app),
         OnboardingStep::ExportNames => show_export_names(ui, app),
         OnboardingStep::CameraProfiles => show_camera_profiles(ui, app),
@@ -187,9 +188,10 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     });
 }
 
-fn show_subject_masks(ui: &mut egui::Ui, app: &mut CalibRawApp) {
+fn show_ai_quality(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     crate::ui::settings::subject_mask_quality_control(ui, app, "onboarding-subject-mask-quality");
     crate::ui::settings::people_mask_quality_control(ui, app, "onboarding-people-mask-quality");
+    crate::ui::settings::scene_depth_quality_control(ui, app, "onboarding-scene-depth-quality");
     ui.add_space(moduwu_design::SPACE_SM);
     ui.small(crate::ui::settings::subject_mask_quality_descriptions());
 }
@@ -366,7 +368,7 @@ impl OnboardingStep {
     const ALL: &'static [Self] = &[
         Self::Appearance,
         Self::Preview,
-        Self::SubjectMasks,
+        Self::AiQuality,
         Self::CopyPaste,
         Self::ExportNames,
         Self::CameraProfiles,
@@ -389,36 +391,40 @@ impl OnboardingStep {
 
     /// Steps added after setup first shipped, shown alone to users who
     /// finished an earlier setup.
-    const CATCH_UP: &'static [Self] = &[Self::SubjectMasks];
+    const CATCH_UP: &'static [Self] = &[Self::AiQuality];
 
     /// The steps a user still has to go through, empty when none.
     pub(crate) fn pending(app: &CalibRawApp) -> &'static [Self] {
         use calibraw_ai::models::people::PeopleMaskQuality;
-        // The subject step asks for every mask quality this device offers,
-        // including the people-mask quality it gained: a user who finished an
-        // earlier setup that had none still has that choice outstanding and is
-        // shown the step once again. Where the device offers a single people
-        // quality there is nothing left to ask.
-        let mask_choices_outstanding = !app.preferences.subject_mask_quality_chosen
+        use calibraw_ai::models::scene_geometry::SceneDepthQuality;
+        // The quality step asks for every AI quality this device offers: the
+        // subject-mask quality, the people-mask quality it gained and the
+        // scene-depth quality it gained. A user who finished an earlier setup
+        // that had fewer still has those choices outstanding and is shown the
+        // step once again. Where the device offers a single quality for a
+        // model there is nothing left to ask.
+        let quality_choices_outstanding = !app.preferences.subject_mask_quality_chosen
             || !(app.preferences.people_mask_quality_chosen
-                || PeopleMaskQuality::available().len() < 2);
+                || PeopleMaskQuality::available().len() < 2)
+            || !(app.preferences.scene_depth_quality_chosen
+                || SceneDepthQuality::AVAILABLE.len() < 2);
         Self::pending_with(
             app.preferences.onboarding_completed,
-            mask_choices_outstanding,
+            quality_choices_outstanding,
             app.caps().has_folders(),
             crate::platform::discord::presence_supported(),
         )
     }
 
-    /// `mask_choices_outstanding`: setup has a mask-quality choice this device
-    /// offers that the user has not made.
+    /// `quality_choices_outstanding`: setup has an AI-quality choice this
+    /// device offers that the user has not made.
     fn pending_with(
         onboarding_completed: bool,
-        mask_choices_outstanding: bool,
+        quality_choices_outstanding: bool,
         camera_profile_folders: bool,
         discord_supported: bool,
     ) -> &'static [Self] {
-        match (onboarding_completed, mask_choices_outstanding) {
+        match (onboarding_completed, quality_choices_outstanding) {
             (false, _) if !camera_profile_folders => Self::ALL_WITHOUT_CAMERA_PROFILES,
             (false, _) if discord_supported => Self::ALL,
             (false, _) => Self::ALL_WITHOUT_DISCORD,
@@ -449,7 +455,7 @@ impl OnboardingStep {
         match self {
             Self::Appearance => tr("Welcome to CalibRaw"),
             Self::Preview => tr("Preview setup"),
-            Self::SubjectMasks => tr("Subject masks"),
+            Self::AiQuality => tr("AI model quality"),
             Self::CopyPaste => tr("Copy & paste setup"),
             Self::ExportNames => tr("Export file names"),
             Self::CameraProfiles => tr("Camera profiles"),
@@ -465,8 +471,8 @@ impl OnboardingStep {
             Self::Preview => {
                 tr("Choose the balance between interactive preview detail and GPU memory use.")
             }
-            Self::SubjectMasks => {
-                tr("Choose the balance between AI subject selection speed and edge detail on this device. Models are downloaded when you first select a subject.")
+            Self::AiQuality => {
+                tr("Choose the model quality for subject masks, people masks and scene depth on this device. Higher quality takes longer. Models are downloaded when first needed.")
             }
             Self::CopyPaste => {
                 tr("Choose which edit categories are included when copying and pasting adjustments.")
