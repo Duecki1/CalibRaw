@@ -51,6 +51,15 @@ fn run_onnx_runtime_probe_cli(args: &[String]) -> Option<i32> {
     }
 }
 
+/// An empty icon, the only way to keep the bundle's own: eframe skips
+/// `setApplicationIconImage` for it, whereas no icon at all sets egui's default.
+/// That call would replace the adaptive icon in the Dock with a flat square.
+#[cfg(target_os = "macos")]
+fn desktop_icon() -> std::sync::Arc<eframe::egui::IconData> {
+    std::sync::Arc::default()
+}
+
+#[cfg(not(target_os = "macos"))]
 fn desktop_icon() -> std::sync::Arc<eframe::egui::IconData> {
     static ICON: std::sync::OnceLock<std::sync::Arc<eframe::egui::IconData>> =
         std::sync::OnceLock::new();

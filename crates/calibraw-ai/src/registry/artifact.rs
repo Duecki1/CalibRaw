@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use calibraw_core::file_ops::{replace_file, sync_parent_directory};
+use calibraw_core::file_ops::{replace_file, sync_file, sync_parent_directory};
 use ring::digest::{Context as Sha256Context, SHA256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -87,8 +87,7 @@ where
         &mut cancellation,
     )
     .map_err(TransferError::into_anyhow)?;
-    file.sync_all()
-        .with_context(|| format!("flush {}", artifact.name))?;
+    sync_file(&file).with_context(|| format!("flush {}", artifact.name))?;
     anyhow::ensure!(
         downloaded == artifact.bytes,
         "{} size mismatch: received {downloaded}, expected {}",
@@ -295,8 +294,7 @@ where
             }
         };
 
-        file.sync_all()
-            .with_context(|| format!("flush {}", artifact.name))?;
+        sync_file(&file).with_context(|| format!("flush {}", artifact.name))?;
         if downloaded < artifact.bytes {
             last_error = Some(anyhow::anyhow!(
                 "{} download ended early at {downloaded} / {} bytes",

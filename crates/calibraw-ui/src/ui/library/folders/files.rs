@@ -29,7 +29,8 @@ pub(in crate::ui::library) fn copy_file_create_new(
         .write(true)
         .create_new(true)
         .open(destination)?;
-    let result = io::copy(&mut input, &mut output).and_then(|_| output.sync_all());
+    let result =
+        io::copy(&mut input, &mut output).and_then(|_| calibraw_core::file_ops::sync_file(&output));
     if result.is_err() {
         drop(output);
         let _ = fs::remove_file(destination);

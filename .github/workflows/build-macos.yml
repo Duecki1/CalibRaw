@@ -25,10 +25,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Homebrew's libraries on this runner require macOS 26.0, so the app
+          # does too. LibRaw and Lensfun are built for it: without a target they
+          # would require the runner's newer SDK version.
           - name: Apple Silicon
-            runner: macos-15
+            runner: macos-26
             target: aarch64-apple-darwin
             artifact_arch: arm64
+            deployment_target: "26.0"
+          # There is no macOS 26 Intel runner.
           - name: Intel
             runner: macos-15-intel
             target: x86_64-apple-darwin
@@ -73,7 +78,11 @@ jobs:
       # Homebrew's LibRaw is a release that lacks newer cameras, so build the
       # pinned commit. Apple Clang has no built-in OpenMP, so LibRaw's OpenMP
       # check is pointed at Homebrew's libomp to keep its threaded decoders.
+      # The deployment target is empty, so the default, on Intel. It is not set for
+      # the Rust build, which targets an older macOS by default.
       - name: Build pinned LibRaw
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
         run: |
           set -euxo pipefail
 
@@ -86,6 +95,8 @@ jobs:
 
       # Homebrew's Lensfun is the 0.3.4 release, so build the pinned commit.
       - name: Build pinned Lensfun
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
         run: bash scripts/build_lensfun.sh "$LENSFUN_PREFIX"
 
       - name: Verify native toolchain
@@ -132,6 +143,7 @@ jobs:
           set -euxo pipefail
 
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          minimum_system="${{ matrix.deployment_target || '12.0' }}"
           package_name="CalibRaw-macos-${{ matrix.artifact_arch }}"
           app_dir="dist/$package_name/CalibRaw.app"
           contents="$app_dir/Contents"
@@ -148,27 +160,37 @@ jobs:
           chmod +x "$executable"
           cp COPYING THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md README.md "$contents/Resources/"
 
-          icon_source="packaging/icons/calibraw-macos-1024.png"
-          iconset="$contents/Resources/CalibRaw.iconset"
-          mkdir -p "$iconset"
-          for icon_size in 16 32 128 256 512; do
-            retina_size=$((icon_size * 2))
-            sips -z "$icon_size" "$icon_size" "$icon_source" \
-              --out "$iconset/icon_${icon_size}x${icon_size}.png"
-            sips -z "$retina_size" "$retina_size" "$icon_source" \
-              --out "$iconset/icon_${icon_size}x${icon_size}@2x.png"
-          done
-          iconutil -c icns "$iconset" -o "$contents/Resources/CalibRaw.icns"
-          rm -rf "$iconset"
+          # Only an Icon Composer document adapts to Liquid Glass, and compiling one
+          # needs Xcode 26 or newer, which is not the macOS 15 runner's default;
+          # actool from 26.5 is reported to crash on .icon documents. actool writes
+          # Assets.car for macOS 26 and later, and CalibRaw.icns for older systems.
+          xcode=/Applications/Xcode_26.3.app/Contents/Developer
+          actool=("$xcode/usr/bin/actool")
+          # Before macOS 26 its icon renderer crashes against the system frameworks
+          # and must load the ones Xcode bundles. This runs Xcode's tool itself
+          # because the SIP-protected /usr/bin stub that xcrun uses strips DYLD_*.
+          if (( "$(sw_vers -productVersion | cut -d . -f 1)" < 26 )); then
+            actool=(env "DYLD_FRAMEWORK_PATH=$xcode/Platforms/MacOSX.platform/System/AssetRuntime/System/Library/PrivateFrameworks" "${actool[@]}")
+          fi
+          "${actool[@]}" \
+            packaging/icons/CalibRaw.icon \
+            --compile "$contents/Resources" \
+            --app-icon CalibRaw \
+            --include-all-app-icons \
+            --platform macosx \
+            --target-device mac \
+            --minimum-deployment-target 12.0 \
+            --output-partial-info-plist "$(mktemp)" \
+            --errors \
+            --warnings
+          test -s "$contents/Resources/Assets.car"
           test -s "$contents/Resources/CalibRaw.icns"
-          # iconutil re-encodes PNG entries, so validate content dimensions rather than bytes.
-          verify_iconset="$(mktemp -d)/CalibRaw.iconset"
-          iconutil -c iconset "$contents/Resources/CalibRaw.icns" -o "$verify_iconset"
-          verify_icon="$verify_iconset/icon_512x512@2x.png"
-          test -s "$verify_icon"
-          test "$(sips -g pixelWidth "$verify_icon" | awk '/pixelWidth/ { print $2 }')" = "1024"
-          test "$(sips -g pixelHeight "$verify_icon" | awk '/pixelHeight/ { print $2 }')" = "1024"
-          rm -rf "$(dirname "$verify_iconset")"
+          # The catalog must hold the adaptive icon, and the full-size rendition older
+          # macOS shows; actool's CalibRaw.icns stops at 256 pixels. Both are matched by
+          # rendition name in the raw file: assetutil is a system tool, not part of
+          # Xcode, so on macOS 15 it is older than the catalog it would be reading.
+          LC_ALL=C grep -aq 'CalibRaw\.iconstack' "$contents/Resources/Assets.car"
+          LC_ALL=C grep -aq 'CalibRaw1024x1024_' "$contents/Resources/Assets.car"
 
           lensfun_db="$(find "$LENSFUN_PREFIX/share/lensfun" -type f -name '*.xml' -print | head -n 1)"
           test -n "$lensfun_db"
@@ -191,6 +213,8 @@ jobs:
             <string>de.duecki.calibraw</string>
             <key>CFBundleIconFile</key>
             <string>CalibRaw.icns</string>
+            <key>CFBundleIconName</key>
+            <string>CalibRaw</string>
             <key>CFBundleInfoDictionaryVersion</key>
             <string>6.0</string>
             <key>CFBundleName</key>
@@ -202,7 +226,7 @@ jobs:
             <key>CFBundleVersion</key>
             <string>${{ github.run_number }}</string>
             <key>LSMinimumSystemVersion</key>
-            <string>12.0</string>
+            <string>$minimum_system</string>
             <key>NSHighResolutionCapable</key>
             <true/>
           </dict>
@@ -234,6 +258,19 @@ jobs:
           file "$executable" | grep -q "${{ matrix.artifact_arch }}"
           test -n "$(find "$contents/Frameworks" -name '*.dylib' -print -quit)"
           test -z "$(otool -L "$executable" | awk '/\\/opt\\/homebrew|\\/usr\\/local\\/Cellar/ { print }')"
+
+          # A build with a deployment target must run on the version Info.plist states:
+          # a bundled library that needs a newer macOS would crash at launch instead.
+          if [[ -n "${{ matrix.deployment_target }}" ]]; then
+            while IFS= read -r -d '' binary; do
+              minos="$(otool -l "$binary" | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; exit }')"
+              test -n "$minos"
+              if [[ "$(printf '%s\n' "$minos" "$minimum_system" | sort -V | tail -n 1)" != "$minimum_system" ]]; then
+                echo "$binary requires macOS $minos, above $minimum_system" >&2
+                exit 1
+              fi
+            done < <(find "$executable" "$contents/Frameworks" -type f -print0)
+          fi
 
           (
             cd "dist/$package_name"

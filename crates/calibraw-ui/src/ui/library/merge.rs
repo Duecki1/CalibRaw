@@ -168,7 +168,7 @@ fn save_merged(
         .suffix(".tmp")
         .tempfile_in(parent)?;
     merged.write_tiff(temporary.as_file_mut())?;
-    temporary.as_file().sync_all()?;
+    calibraw_core::file_ops::sync_file(temporary.as_file())?;
     anyhow::ensure!(!cancelled.load(Ordering::Relaxed), tr("Merge cancelled"));
     match &source.locator {
         LibraryLocator::Desktop(path) => {
@@ -195,17 +195,16 @@ fn save_merged(
 
 /// Moves `temporary` to `{stem}-{suffix}.tif` beside `source`, or the first free
 /// `{stem}-{suffix}-N.tif`, never replacing a file.
-fn save_unique(
-    mut temporary: tempfile::NamedTempFile,
-    source: &Path,
-    suffix: &str,
-) -> Result<PathBuf> {
+fn save_unique(temporary: tempfile::NamedTempFile, source: &Path, suffix: &str) -> Result<PathBuf> {
     let parent = source
         .parent()
         .context(tr("Merge source has no parent folder"))?;
     let stem = source
         .file_stem()
         .context(tr("Merge source has no file name"))?;
+    // Closes the file before it moves. The path is still removed on drop, so a
+    // failed save leaves nothing behind.
+    let temporary = temporary.into_temp_path();
     for number in 0..10_000 {
         let mut name = stem.to_os_string();
         name.push(if number == 0 {
@@ -214,15 +213,62 @@ fn save_unique(
             format!("-{}-{}.tif", suffix, number)
         });
         let path = parent.join(name);
-        match temporary.persist_noclobber(&path) {
-            Ok(_) => return Ok(path),
-            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                temporary = error.file
-            }
-            Err(error) => return Err(error.error).context(tr("save merged master")),
+        // Not `persist_noclobber`: its exclusive rename fails with `ENOTSUP` on
+        // SMB shares on macOS, where this falls back to checking the name.
+        match calibraw_core::file_ops::move_file_without_replacing(&temporary, &path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error).context(tr("save merged master")),
         }
     }
     anyhow::bail!(tr("Could not find an unused output name"))
+}
+
+#[cfg(test)]
+mod save_unique_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    fn staged(directory: &Path, contents: &[u8]) -> tempfile::NamedTempFile {
+        let mut temporary = tempfile::Builder::new()
+            .prefix(".calibraw-merge-")
+            .suffix(".tmp")
+            .tempfile_in(directory)
+            .expect("create staged merge");
+        temporary.write_all(contents).expect("write staged merge");
+        temporary
+    }
+
+    #[test]
+    fn takes_the_first_free_name_without_replacing_earlier_merges() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let source = directory.path().join("IMG_1.CR3");
+
+        let first = save_unique(staged(directory.path(), b"first"), &source, "HDR")
+            .expect("save first merge");
+        let second = save_unique(staged(directory.path(), b"second"), &source, "HDR")
+            .expect("save second merge");
+
+        assert_eq!(first, directory.path().join("IMG_1-HDR.tif"));
+        assert_eq!(second, directory.path().join("IMG_1-HDR-1.tif"));
+        assert_eq!(fs::read(&first).expect("read first merge"), b"first");
+        assert_eq!(fs::read(&second).expect("read second merge"), b"second");
+    }
+
+    #[test]
+    fn leaves_no_staging_file_behind() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let source = directory.path().join("IMG_1.CR3");
+
+        save_unique(staged(directory.path(), b"merged"), &source, "FocusStack")
+            .expect("save merge");
+
+        let names: Vec<_> = fs::read_dir(directory.path())
+            .expect("list directory")
+            .map(|entry| entry.expect("read entry").file_name())
+            .collect();
+        assert_eq!(names, ["IMG_1-FocusStack.tif"]);
+    }
 }
 
 /// How a merge ended.
