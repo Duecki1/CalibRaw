@@ -9,6 +9,10 @@
     <uses-feature
         android:glEsVersion="0x00030001"
         android:required="true" />
+    <uses-feature
+        android:name="android.hardware.vulkan.version"
+        android:version="0x00400000"
+        android:required="true" />
 
     <application
         android:allowBackup="false"
