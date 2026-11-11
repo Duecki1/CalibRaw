@@ -1,5 +1,6 @@
 package de.duecki.calibraw;
 
+import android.app.AlertDialog;
 import android.app.NativeActivity;
 import android.content.pm.ActivityInfo;
 import android.content.ClipData;
@@ -9,6 +10,8 @@ import android.content.Intent;
 import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Looper;
+import android.os.Process;
 import android.graphics.Insets;
 import android.view.View;
 import android.view.ViewConfiguration;
@@ -24,6 +27,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -55,6 +59,12 @@ public final class CalibRawActivity extends NativeActivity {
     private NumericInputView numericInputView;
     // The view that had input focus before the number layout took it.
     private View focusBeforeNumericInput;
+    // Whether this process was started by GpuLossRestartActivity. Kept for the
+    // process, as the activity's intent changes with "Open with" and Share.
+    private static volatile boolean restartedAfterGpuLoss;
+    // Released when the notice of showFatalMessage is dismissed, or the
+    // activity ends while it is shown.
+    private volatile CountDownLatch fatalMessageDismissed;
     private final ExecutorService startupMaintenanceExecutor =
             Executors.newSingleThreadExecutor(runnable ->
                     new Thread(runnable, "CalibRaw startup maintenance"));
@@ -66,6 +76,12 @@ public final class CalibRawActivity extends NativeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         updateRequestedOrientation(getResources().getConfiguration());
+        // Before NativeActivity starts Rust, which asks for it.
+        Intent launch = getIntent();
+        if (launch != null && launch.getBooleanExtra(
+                GpuLossRestartActivity.EXTRA_RESTARTED_AFTER_GPU_LOSS, false)) {
+            restartedAfterGpuLoss = true;
+        }
         super.onCreate(savedInstanceState);
         // NativeActivity may start Rust during creation, so install this bridge first.
         taskNotificationController = new TaskNotificationController(this);
@@ -454,6 +470,60 @@ public final class CalibRawActivity extends NativeActivity {
         return intent != null && intent.getBooleanExtra(EXTRA_GPU_STAGE_TIMING, false);
     }
 
+    public boolean restartedAfterGpuLoss() {
+        return restartedAfterGpuLoss;
+    }
+
+    /**
+     * Shows a notice for a failure the native UI can no longer draw, such as a
+     * lost GPU device, and blocks the calling thread until it is dismissed.
+     * Rust calls it from its own thread; on the main thread, which shows the
+     * dialog, it would wait for itself, so there it only logs.
+     */
+    public void showFatalMessage(String title, String message) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            Log.e(LOG_TAG, title + ": " + message);
+            return;
+        }
+        CountDownLatch dismissed = new CountDownLatch(1);
+        fatalMessageDismissed = dismissed;
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed()) {
+                dismissed.countDown();
+                return;
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle(title)
+                    .setMessage(message)
+                    .setCancelable(false)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .setOnDismissListener(dialog -> dismissed.countDown())
+                    .show();
+        });
+        try {
+            dismissed.await();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } finally {
+            fatalMessageDismissed = null;
+        }
+    }
+
+    /**
+     * Ends this process and starts CalibRaw again in a new one, after the GPU
+     * device was lost: the editor's GPU state cannot be rebuilt in this
+     * process. GpuLossRestartActivity, in a process of its own, makes sure
+     * this one has ended and starts the activity again. Returns only if the
+     * restart could not be started.
+     */
+    public void restartAfterGpuLoss() {
+        Intent restart = new Intent(this, GpuLossRestartActivity.class)
+                .putExtra(GpuLossRestartActivity.EXTRA_ENDING_PID, Process.myPid())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(restart);
+        Runtime.getRuntime().exit(0);
+    }
+
     public String performanceSettingsPath() {
         return new File(getFilesDir(), "calibraw-performance.json").getAbsolutePath();
     }
@@ -504,6 +574,10 @@ public final class CalibRawActivity extends NativeActivity {
 
     @Override
     protected void onDestroy() {
+        CountDownLatch dismissed = fatalMessageDismissed;
+        if (dismissed != null) {
+            dismissed.countDown();
+        }
         startupMaintenanceExecutor.shutdownNow();
         if (taskNotificationController != null) {
             taskNotificationController.clear();

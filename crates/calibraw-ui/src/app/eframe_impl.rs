@@ -57,7 +57,7 @@ impl CalibRawApp {
         }
         self.masks.source_cache = None;
         self.ai.object_cache = None;
-        if self.caps().configurable_ai_runtime && self.ai.gpu_acceleration {
+        if self.caps().gpu_ai != GpuAi::Unavailable && self.ai.gpu_acceleration {
             self.set_ai_gpu_acceleration(false);
         }
         self.release_optional_gpu_memory();

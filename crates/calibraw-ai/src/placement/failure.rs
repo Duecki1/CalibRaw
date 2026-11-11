@@ -5,14 +5,10 @@
 
 use super::place::CpuReason;
 use anyhow::Result;
-#[cfg(not(target_os = "android"))]
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-#[cfg(not(target_os = "android"))]
 static AI_GPU_QUARANTINED: AtomicBool = AtomicBool::new(false);
 /// A device loss that switched GPU AI off and that the app was not told of.
-#[cfg(not(target_os = "android"))]
 static AI_GPU_DEVICE_LOST: AtomicBool = AtomicBool::new(false);
 
 /// The WebGPU errors ONNX Runtime logged so far, by `LoggedGpuError`.
@@ -220,18 +216,10 @@ impl RunFailure {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn quarantined() -> bool {
     AI_GPU_QUARANTINED.load(Ordering::Acquire)
 }
 
-/// Android has no switch-off.
-#[cfg(target_os = "android")]
-pub(super) fn quarantined() -> bool {
-    false
-}
-
-#[cfg(not(target_os = "android"))]
 pub(super) fn clear_quarantine() {
     AI_GPU_QUARANTINED.store(false, Ordering::Release);
     AI_GPU_DEVICE_LOST.store(false, Ordering::Release);
@@ -239,17 +227,10 @@ pub(super) fn clear_quarantine() {
 
 /// Whether the GPU was lost during an AI job, switching GPU AI off, since
 /// the last call.
-#[cfg(not(target_os = "android"))]
 pub fn take_ai_gpu_device_loss() -> bool {
     AI_GPU_DEVICE_LOST.swap(false, Ordering::AcqRel)
 }
 
-#[cfg(target_os = "android")]
-pub fn take_ai_gpu_device_loss() -> bool {
-    false
-}
-
-#[cfg(not(target_os = "android"))]
 pub(super) fn quarantine_after_device_loss(operation: &str, provider: &str, error: &anyhow::Error) {
     AI_GPU_QUARANTINED.store(true, Ordering::Release);
     AI_GPU_DEVICE_LOST.store(true, Ordering::Release);
@@ -258,14 +239,6 @@ pub(super) fn quarantine_after_device_loss(operation: &str, provider: &str, erro
     );
     log::error!("{message}: {error:#}");
     calibraw_core::diagnostics::record(message);
-}
-
-#[cfg(target_os = "android")]
-pub(super) fn quarantine_after_device_loss(
-    _operation: &str,
-    _provider: &str,
-    _error: &anyhow::Error,
-) {
 }
 
 /// Whether `message`, in lowercase, reports running out of GPU memory.

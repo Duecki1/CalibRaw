@@ -29,9 +29,11 @@ impl SubjectModelPrecision {
     /// (`SubjectMaskQuality::float16_on_gpu`) and sessions are expected on
     /// it, i.e. with GPU acceleration enabled and Automatic mode's runtime
     /// built with a GPU provider. A manually selected runtime is not known
-    /// before it loads, so it keeps float32.
+    /// before it loads, so it keeps float32, as do devices without
+    /// `AiCapabilities::float16_gpu_models`.
     pub fn for_current_sessions(quality: SubjectMaskQuality, manual_runtime: bool) -> Self {
         let gpu = quality.float16_on_gpu()
+            && CAPABILITIES.float16_gpu_models
             && !manual_runtime
             && crate::runtime::ai_sessions_may_use_gpu(false);
         if gpu {

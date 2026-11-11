@@ -120,6 +120,11 @@ pub(crate) struct AiCapabilities {
     /// people's body parts; the others outline entire people only. The
     /// body-part model needs gigabytes and several seconds per person.
     pub(crate) people_body_parts_memory: u64,
+    /// GPU sessions may run the float16 model conversions the parity harness
+    /// confirmed on the desktop WebGPU provider. Not on Android, whose
+    /// built-in WebGPU provider the harness has not run on and whose GPUs may
+    /// lack `shader-f16`.
+    pub(crate) float16_gpu_models: bool,
 }
 
 /// A phone sold with 12 GB reports about 11.2 GiB (a Pixel 7 Pro 11.19 GiB),
@@ -142,16 +147,32 @@ pub(crate) const CAPABILITIES: AiCapabilities =
             memory: MemoryClass::Constrained,
             keep_mask_sessions_warm: false,
             people_body_parts_memory: MOBILE_PEOPLE_BODY_PARTS_MEMORY,
+            float16_gpu_models: false,
         }
     } else {
         AiCapabilities {
             memory: MemoryClass::Standard,
             keep_mask_sessions_warm: true,
             people_body_parts_memory: 0,
+            float16_gpu_models: true,
         }
     };
 
 const GIB: u64 = 1 << 30;
+
+/// The least RAM GPU AI is offered with where the GPU shares the system's
+/// memory (Android): what a phone sold with 8 GB reports, about 7.3 GiB. A
+/// GPU session's buffers come out of the memory the system ends apps for.
+const SHARED_MEMORY_GPU_AI_MEMORY: u64 = 7 * GIB;
+
+/// Whether this device has the memory GPU AI needs. Where the GPU has memory
+/// of its own it does; on Android only with `SHARED_MEMORY_GPU_AI_MEMORY` of
+/// RAM, and not where the RAM is not reported.
+pub fn gpu_ai_memory_sufficient() -> bool {
+    !cfg!(target_os = "android")
+        || calibraw_core::system_memory::total_memory_bytes()
+            .is_some_and(|memory| memory >= SHARED_MEMORY_GPU_AI_MEMORY)
+}
 
 /// How CPU sessions run on `MemoryClass::Constrained`, where every model runs
 /// beside the RAW preview and the system ends apps that grow too large.
@@ -254,7 +275,7 @@ fn fast_core_count() -> Option<usize> {
 }
 
 pub struct AiConfig {
-    /// Whether sessions may use GPU execution providers. Android always may.
+    /// Whether sessions may use GPU execution providers.
     pub acceleration: bool,
     pub runtime: RuntimeSource,
     /// The folder models and the automatic runtime are cached in.

@@ -14,9 +14,10 @@ pub(crate) struct PlatformCaps {
     /// UI and show a system notification while they run.
     pub(crate) tasks_need_foreground: bool,
     /// The person chooses the ONNX Runtime (automatic download or a manual
-    /// library) and whether AI may use the GPU. Elsewhere the runtime is
-    /// built into the app and GPU AI is always allowed.
+    /// library). Elsewhere the runtime is built into the app.
     pub(crate) configurable_ai_runtime: bool,
+    /// Whether AI may run on the GPU, and how the person decides.
+    pub(crate) gpu_ai: GpuAi,
     pub(crate) video_encoder: VideoEncoder,
     /// The app can start itself again, so a lost GPU device ends in a
     /// native notice and a restart.
@@ -50,6 +51,18 @@ pub(crate) enum StorageKind {
     MediaLibrary,
 }
 
+/// How AI comes to run on the GPU.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GpuAi {
+    /// A setting, on by default.
+    Setting,
+    /// An experimental setting, off by default and offered only where the
+    /// device has the memory for it (`calibraw_ai::gpu_ai_memory_sufficient`).
+    Experimental,
+    /// Never: the built-in runtime has no GPU provider in use.
+    Unavailable,
+}
+
 /// What encodes the Edit Replay video.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum VideoEncoder {
@@ -78,6 +91,7 @@ impl PlatformCaps {
         memory: MemoryClass::Standard,
         tasks_need_foreground: false,
         configurable_ai_runtime: true,
+        gpu_ai: GpuAi::Setting,
         video_encoder: VideoEncoder::Ffmpeg,
         can_restart: true,
         linked_folders: false,
@@ -90,8 +104,9 @@ impl PlatformCaps {
         memory: MemoryClass::Constrained,
         tasks_need_foreground: true,
         configurable_ai_runtime: false,
+        gpu_ai: GpuAi::Experimental,
         video_encoder: VideoEncoder::Platform,
-        can_restart: false,
+        can_restart: true,
         linked_folders: true,
         edited_thumbnails: true,
     };
@@ -103,6 +118,7 @@ impl PlatformCaps {
         memory: MemoryClass::Constrained,
         tasks_need_foreground: false,
         configurable_ai_runtime: false,
+        gpu_ai: GpuAi::Unavailable,
         video_encoder: VideoEncoder::Platform,
         can_restart: false,
         linked_folders: false,

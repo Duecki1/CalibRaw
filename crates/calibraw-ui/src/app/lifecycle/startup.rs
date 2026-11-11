@@ -224,7 +224,15 @@ impl CalibRawApp {
                 subject_mask_quality: performance.subject_mask_quality,
                 people_mask_quality: performance.people_mask_quality,
                 scene_depth_quality: performance.scene_depth_quality,
-                gpu_acceleration: performance.ai_gpu_acceleration,
+                gpu_acceleration: match caps.gpu_ai {
+                    GpuAi::Setting => performance.ai_gpu_acceleration,
+                    GpuAi::Experimental => {
+                        performance.experimental_gpu_ai && calibraw_ai::gpu_ai_memory_sufficient()
+                    }
+                    // Allowed, so that placement tells the runtime has no GPU
+                    // build rather than a setting that does not exist.
+                    GpuAi::Unavailable => true,
+                },
                 update_needed: false,
                 update: None,
                 runtime_mode: performance.onnx_runtime_mode,
@@ -562,10 +570,8 @@ impl CalibRawApp {
             app.remove_retired_onnx_runtimes();
         }
         app.remove_retired_depth_model();
-        // Where the runtime is built in (Android), GPU providers are always
-        // allowed and no GPU job record is kept.
         let interrupted_gpu_ai = calibraw_ai::configure(calibraw_ai::AiConfig {
-            acceleration: !caps.configurable_ai_runtime || app.ai.gpu_acceleration,
+            acceleration: app.ai.gpu_acceleration,
             runtime: app.ai_runtime_source(),
             model_root: app.ai_model_root(),
             job_record_path: app.platform.gpu_ai_job_record_path(),

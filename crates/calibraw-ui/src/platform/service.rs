@@ -182,6 +182,12 @@ pub(crate) trait ReplayVideoEncoder: Send {
     fn finish(self: Box<Self>) -> Result<(), String>;
 }
 
+/// Starts CalibRaw again after a lost GPU device, once the edits are saved
+/// and the notice was shown. On the desktop it starts a new process and this
+/// one then closes; on Android it ends this process and returns only with
+/// the reason it could not.
+pub(crate) type GpuLossRestart = Box<dyn FnOnce() -> Result<(), String>>;
+
 /// The operating-system services behind actions. Handlers call these; views
 /// never do.
 ///
@@ -243,10 +249,15 @@ pub(crate) trait Platform: Send + Sync {
     fn clear_task_notification(&self) -> Result<(), String> {
         Ok(())
     }
-    /// The command that starts this program again after a lost GPU device,
-    /// or `None` where a restart cannot work.
-    fn restart_after_gpu_loss_command(&self) -> Option<std::process::Command> {
+    /// What starts CalibRaw again after a lost GPU device, or `None` where a
+    /// restart cannot work.
+    fn restart_after_gpu_loss(&self) -> Option<GpuLossRestart> {
         None
+    }
+    /// A native notice for a failure the UI can no longer draw, such as a
+    /// lost GPU device. Blocks until dismissed.
+    fn show_fatal_message(&self, title: &str, description: &str) {
+        super::files::show_fatal_message(title, description);
     }
 
     // --- Memory ---
@@ -273,7 +284,8 @@ pub(crate) trait Platform: Send + Sync {
         Ok(None)
     }
     /// Where GPU AI jobs are recorded, so the next start can tell a run that
-    /// died during one; `None` keeps no record.
+    /// died during one; `None` keeps no record. Where GPU AI is unavailable
+    /// there is nothing to record.
     fn gpu_ai_job_record_path(&self) -> Option<PathBuf> {
         None
     }

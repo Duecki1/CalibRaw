@@ -593,8 +593,23 @@ impl Settings {
             app.persist_performance_settings();
         }
         // Without a configurable AI runtime there is no AI models card to hold
-        // this control.
+        // these controls.
         if !app.caps().configurable_ai_runtime {
+            if app.caps().gpu_ai == crate::platform::GpuAi::Experimental
+                && calibraw_ai::gpu_ai_memory_sufficient()
+            {
+                let mut acceleration = app.ai.gpu_acceleration;
+                if moduwu_design::toggle_with_help(
+                    ui,
+                    &mut acceleration,
+                    tr("Use the GPU for AI (experimental)"),
+                    tr("Lets AI masks and AI denoise run on the GPU. Experimental: on some devices it is slower than the CPU or fails. A model that does not fit in free memory still runs on the CPU."),
+                )
+                .changed()
+                {
+                    app.set_ai_gpu_acceleration(acceleration);
+                }
+            }
             subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
             people_mask_quality_control(ui, app, "settings-people-mask-quality");
             scene_depth_quality_control(ui, app, "settings-scene-depth-quality");

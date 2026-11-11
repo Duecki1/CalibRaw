@@ -41,9 +41,11 @@ impl CalibRawApp {
 
     /// Saves and restarts after the GPU device was lost, usually a driver
     /// reset. Nothing can be drawn on a lost device, so the notice is a native
-    /// dialog. A GPU AI job that was running, or a model loaded on the GPU,
-    /// switches AI to the CPU first: a loaded model's memory alone can drive
-    /// the GPU into paging and a reset.
+    /// dialog. Where the platform cannot restart CalibRaw, or this run already
+    /// followed such a restart, the window closes after the notice. A GPU AI
+    /// job that was running, or a model loaded on the GPU, switches AI to the
+    /// CPU first: a loaded model's memory alone can drive the GPU into paging
+    /// and a reset.
     pub(in crate::app) fn handle_gpu_device_loss(&mut self, ctx: &egui::Context) {
         if calibraw_gpu::take_gpu_device_lost().is_none() {
             return;
@@ -57,7 +59,7 @@ impl CalibRawApp {
         }
         let save_failure = self.save_edits_before_exit();
 
-        let restart = self.platform.restart_after_gpu_loss_command();
+        let restart = self.platform.restart_after_gpu_loss();
         let mut message =
             tr("The graphics driver reset the GPU, so CalibRaw cannot continue.").to_owned();
         match &save_failure {
@@ -75,13 +77,14 @@ impl CalibRawApp {
         } else {
             tr(" Please start CalibRaw again.")
         });
-        crate::platform::show_fatal_message(tr("CalibRaw has to restart"), &message);
+        self.platform
+            .show_fatal_message(tr("CalibRaw has to restart"), &message);
 
         // This loss has been reported; the next start must not find the record
         // of a job that is still running and report it again.
         calibraw_ai::end_gpu_job_records();
-        if let Some(mut command) = restart {
-            if let Err(error) = command.spawn() {
+        if let Some(restart) = restart {
+            if let Err(error) = restart() {
                 log::error!("could not restart CalibRaw after the GPU was lost: {error}");
             }
         }

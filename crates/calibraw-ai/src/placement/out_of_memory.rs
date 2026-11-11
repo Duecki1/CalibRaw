@@ -98,10 +98,6 @@ pub(super) fn forget(model: &Path) {
 }
 
 /// Forgets every failure, for a change of the GPU AI setting.
-#[cfg_attr(
-    target_os = "android",
-    allow(dead_code, reason = "Android has no GPU AI setting")
-)]
 pub(super) fn forget_all() {
     failures().0.clear();
 }

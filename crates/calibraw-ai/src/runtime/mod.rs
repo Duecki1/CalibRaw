@@ -85,15 +85,17 @@ mod builtin {
     }
 }
 
-/// Mobile sessions use the constrained CPU configuration. iOS CoreML
-/// acceleration is not enabled until its numerical and fallback paths are tested.
+/// Whether new AI sessions may run on a GPU: on Android while GPU AI is
+/// enabled, through the WebGPU provider built into its runtime. iOS CoreML
+/// acceleration is not enabled until its numerical and fallback paths are
+/// tested.
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub fn ai_sessions_may_use_gpu(_manual_runtime: bool) -> bool {
-    false
+    cfg!(target_os = "android") && crate::placement::ai_acceleration_enabled()
 }
 
-/// The built-in mobile runtime is not used with the desktop GPU pipeline.
+/// Android's built-in runtime has WebGPU; iOS's has no GPU provider in use.
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub(crate) fn automatic_runtime_lacks_gpu_build() -> bool {
-    true
+    cfg!(target_os = "ios")
 }

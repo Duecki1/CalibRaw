@@ -65,6 +65,7 @@ def calibrawTargetSdk = requireMetadata("android_target_sdk", Integer)
 def calibrawLibrawRevision = requireMetadata("libraw_revision", String)
 def calibrawLensfunRevision = requireMetadata("lensfun_revision", String)
 def calibrawUseLegacyPackaging = requireMetadata("android_use_legacy_packaging", Boolean)
+def calibrawOnnxRuntimeCmakeVersion = requireMetadata("android_onnxruntime_cmake_version", String)
 
 def calibrawVersionCode = providers.gradleProperty("calibrawVersionCode")
     .getOrElse("1")
@@ -148,6 +149,7 @@ android {
                     "-DCALIBRAW_ANDROID_MIN_SDK=${calibrawMinSdk}",
                     "-DCALIBRAW_LIBRAW_VERSION=${calibrawLibrawRevision}",
                     "-DCALIBRAW_LENSFUN_VERSION=${calibrawLensfunRevision}",
+                    "-DCALIBRAW_ONNXRUNTIME_CMAKE_VERSION=${calibrawOnnxRuntimeCmakeVersion}",
                     "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
                 )
             }

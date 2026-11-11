@@ -12,7 +12,7 @@ use crate::pipeline::{
     RemoveBrushStroke, RemoveEditState, RemoveSceneContext, RetouchAlignment, RetouchStroke,
     RetouchTool, SceneDepth, SubjectRefinement, TileSpec, TiledExportJob, MAX_LOCAL_MASKS,
 };
-use crate::platform::{Platform, PlatformCaps};
+use crate::platform::{GpuAi, Platform, PlatformCaps};
 use crate::sidecar::{
     AdjustmentCopySettings, AdjustmentPasteMode, EditSelection, EditState as SidecarEditState,
     LensEditState as SidecarLensEditState,

@@ -20,7 +20,7 @@ Builds:
     subdir: android
     sudo:
       - apt-get update
-      - apt-get install -y rustup clang libclang-dev pkg-config make unzip curl python3-setuptools
+      - apt-get install -y rustup clang libclang-dev pkg-config make git patch python3-setuptools
     gradle:
       - yes
     output: app/build/outputs/apk/release/app-release-unsigned.apk
@@ -30,31 +30,24 @@ Builds:
       - rustup toolchain install 1.92.0 --profile minimal
       - rustup target add --toolchain 1.92.0 aarch64-linux-android
       - cargo +1.92.0 install cargo-ndk --version 4.1.2 --locked
-      - sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'cmake;3.22.1'
+      - sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'cmake;3.22.1' 'cmake;4.1.2'
     build:
       - cd ..
       - export PATH="$HOME/.cargo/bin:$$SDK$$/cmake/3.22.1/bin:$PATH"
       - export ANDROID_HOME=$$SDK$$ ANDROID_SDK_ROOT=$$SDK$$ ANDROID_NDK_HOME=$$NDK$$
       - gradle :app:externalNativeBuildRelease -PcalibrawBuildRust=false -PcalibrawVersionCode=$$VERCODE$$
-      - mkdir -p android/native/onnxruntime
-      - curl --fail --location --output android/native/onnxruntime/onnxruntime.aar
-        https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.24.2/onnxruntime-android-1.24.2.aar
-      - echo 'bc461499a735653dff285a6a3477d28b9cfd119a09c7753eaf003426b577f223 android/native/onnxruntime/onnxruntime.aar'
-        | sha256sum --check
-      - unzip -jo android/native/onnxruntime/onnxruntime.aar jni/arm64-v8a/libonnxruntime.so
-        -d android/native/onnxruntime
-      - export ORT_LIB_LOCATION="$PWD/android/native/onnxruntime" ORT_PREFER_DYNAMIC_LINK=1
-        ORT_SKIP_DOWNLOAD=1
+      - export ORT_LIB_LOCATION="$PWD/android/native/onnxruntime/arm64-v8a/lib" ORT_PREFER_DYNAMIC_LINK=1
       - export CALIBRAW_LIBRAW_ROOT="$PWD/android/native/libraw/arm64-v8a" CALIBRAW_LENSFUN_ROOT="$PWD/android/native/lensfun/arm64-v8a"
       - export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-linux-android26 --sysroot=$$NDK$$/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
       - export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) CARGO_INCREMENTAL=0
       - cargo ndk -t arm64-v8a --platform 26 -o android/app/src/main/jniLibs build
         --release --locked --package calibraw-ui --lib --features fdroid
-      - cp android/native/onnxruntime/libonnxruntime.so android/app/src/main/jniLibs/arm64-v8a/
+      - cp android/native/onnxruntime/arm64-v8a/lib/libonnxruntime.so android/app/src/main/jniLibs/arm64-v8a/
       - cp 
         $$NDK$$/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so
         android/app/src/main/jniLibs/arm64-v8a/
     ndk: 28.2.13676358
+    timeout: 14400
     gradleprops:
       - calibrawBuildRust=false
 
@@ -63,11 +56,15 @@ MaintainerNotes: |-
   Cargo.toml in each stable vMAJOR.MINOR.PATCH tag. Increase the code for
   every release. See packaging/fdroid/README.md upstream.
 
-  ONNX Runtime is the official MIT-licensed Microsoft Android AAR from Maven
-  Central, pinned by SHA-256. Only libonnxruntime.so is used, with the ort crate's
-  downloads disabled. Other native dependencies are built from pinned source.
-  This differs from the statically linked GitHub APK, so reproducible builds
-  against GitHub binaries are not enabled. F-Droid signs the resulting APK.
+  ONNX Runtime 1.30.0 (MIT) is built from its pinned source release with the
+  WebGPU execution provider by the upstream Gradle native build, like LibRaw,
+  Lensfun and the other native dependencies. Its configure step fetches the
+  archives pinned by SHA1 in its cmake/deps.txt and the Dawn commits pinned in
+  Dawn's DEPS file; protoc is built from the pinned protobuf source instead of
+  ONNX Runtime's prebuilt download, and telemetry is not built. It needs the
+  SDK CMake 4.1.2 package and takes most of an hour, hence the timeout.
+  Reproducible builds against GitHub binaries are not enabled. F-Droid signs
+  the resulting APK.
   Optional AI models are downloaded only after user consent; their license and
   source information is documented upstream in THIRD_PARTY_NOTICES.md.
 

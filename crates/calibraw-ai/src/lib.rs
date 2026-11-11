@@ -12,7 +12,10 @@ mod slot;
 
 #[cfg(not(target_os = "android"))]
 pub use config::desktop_model_root;
-pub use config::{configure, update, AiConfig, AiConfigChange, GpuIdentity, RuntimeSource, Sha256};
+pub use config::{
+    configure, gpu_ai_memory_sufficient, update, AiConfig, AiConfigChange, GpuIdentity,
+    RuntimeSource, Sha256,
+};
 pub use jobs::AiJobEvent;
 pub use placement::{
     ai_acceleration_enabled, ai_session_statuses, end_gpu_job_records, gpu_ai_activity,

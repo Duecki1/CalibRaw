@@ -11,12 +11,12 @@ mod portal;
 
 pub(crate) use entry::main;
 
-use super::service::Platform;
+use super::service::{GpuLossRestart, Platform};
 use super::PlatformCaps;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Set in a process started by `restart_after_gpu_loss_command`, so a GPU
+/// Set in a process started by `restart_after_gpu_loss`, so a GPU
 /// that fails again right away does not restart CalibRaw in a loop.
 const RESTARTED_AFTER_GPU_LOSS: &str = "CALIBRAW_RESTARTED_AFTER_GPU_LOSS";
 
@@ -70,10 +70,10 @@ impl Platform for DesktopPlatform {
         Some(calibraw_core::thumbnail_cache::desktop_app_cache_root().join("gpu-ai-job.txt"))
     }
 
-    /// This program with its arguments, or `None` after a restart that
-    /// already followed a GPU loss, and inside Flatpak, whose sandbox ends
-    /// with this process.
-    fn restart_after_gpu_loss_command(&self) -> Option<std::process::Command> {
+    /// Starts this program with its arguments, or `None` after a restart
+    /// that already followed a GPU loss, and inside Flatpak, whose sandbox
+    /// ends with this process.
+    fn restart_after_gpu_loss(&self) -> Option<GpuLossRestart> {
         if std::env::var_os(RESTARTED_AFTER_GPU_LOSS).is_some()
             || std::env::var_os("FLATPAK_ID").is_some()
         {
@@ -88,7 +88,9 @@ impl Platform for DesktopPlatform {
         command
             .args(std::env::args_os().skip(1))
             .env(RESTARTED_AFTER_GPU_LOSS, "1");
-        Some(command)
+        Some(Box::new(move || {
+            command.spawn().map(drop).map_err(|error| error.to_string())
+        }))
     }
 
     fn clear_thumbnail_cache(&self) -> Result<(), String> {

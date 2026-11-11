@@ -26,9 +26,7 @@ pub(crate) use session::{
 pub use status::{ai_session_statuses, AiSessionStatus};
 
 use crate::config::{GpuIdentity, RuntimeSource};
-#[cfg(not(target_os = "android"))]
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 /// Rises whenever the providers new sessions may use change; a loaded session
@@ -39,14 +37,8 @@ pub(crate) fn provider_generation() -> u64 {
     PROVIDER_GENERATION.load(Ordering::Acquire)
 }
 
-#[cfg(not(target_os = "android"))]
 static AI_ACCELERATION_ENABLED: AtomicBool = AtomicBool::new(true);
 
-/// Android always allows GPU providers.
-#[cfg(target_os = "android")]
-pub(crate) fn set_ai_acceleration_enabled(_enabled: bool) {}
-
-#[cfg(not(target_os = "android"))]
 pub(crate) fn set_ai_acceleration_enabled(enabled: bool) {
     if enabled {
         failure::clear_quarantine();
@@ -65,16 +57,9 @@ pub(crate) fn set_ai_acceleration_enabled(enabled: bool) {
     }
 }
 
-/// Whether GPU AI is on in Settings; always on Android.
+/// Whether GPU AI is on in Settings.
 fn acceleration_setting() -> bool {
-    #[cfg(not(target_os = "android"))]
-    {
-        AI_ACCELERATION_ENABLED.load(Ordering::Acquire)
-    }
-    #[cfg(target_os = "android")]
-    {
-        true
-    }
+    AI_ACCELERATION_ENABLED.load(Ordering::Acquire)
 }
 
 /// Whether new sessions may use a GPU provider: GPU AI is on and was not

@@ -1,10 +1,10 @@
 //! The Android backend: the JNI bridge in `calibraw-ffi`.
 
 use super::service::{
-    CameraProfileFolderResult, ExportPublishResult, ImportProgress, ImportedLibraryDocument,
-    LibraryDocument, LibraryFolder, LinkFolderResult, LinkedFolder, ListedSidecar, PickedDocument,
-    PickerResult, Platform, PublishedExport, ReplayVideoEncoder, StagedFilesResult,
-    TaskNotification,
+    CameraProfileFolderResult, ExportPublishResult, GpuLossRestart, ImportProgress,
+    ImportedLibraryDocument, LibraryDocument, LibraryFolder, LinkFolderResult, LinkedFolder,
+    ListedSidecar, PickedDocument, PickerResult, Platform, PublishedExport, ReplayVideoEncoder,
+    StagedFilesResult, TaskNotification,
 };
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
@@ -152,6 +152,37 @@ impl Platform for AndroidPlatform {
 
     fn gpu_pipeline_cache_dir(&self) -> Result<Option<PathBuf>, String> {
         calibraw_ffi::gpu_pipeline_cache_dir(&self.app).map(Some)
+    }
+
+    /// In the app's files folder rather than its cache, which Android may
+    /// clear while the app is not running.
+    fn gpu_ai_job_record_path(&self) -> Option<PathBuf> {
+        self.app
+            .internal_data_path()
+            .map(|folder| folder.join("gpu-ai-job.txt"))
+    }
+
+    /// Ends this process and starts CalibRaw in a new one, or `None` after a
+    /// restart that already followed a GPU loss.
+    fn restart_after_gpu_loss(&self) -> Option<GpuLossRestart> {
+        match calibraw_ffi::restarted_after_gpu_loss(&self.app) {
+            Ok(false) => {}
+            Ok(true) => return None,
+            Err(error) => {
+                log::warn!("{error}");
+                return None;
+            }
+        }
+        let app = self.app.clone();
+        Some(Box::new(move || calibraw_ffi::restart_after_gpu_loss(&app)))
+    }
+
+    /// A dialog over the activity. The UI runs on its own thread, not on
+    /// Android's main thread that shows it.
+    fn show_fatal_message(&self, title: &str, description: &str) {
+        if let Err(error) = calibraw_ffi::show_fatal_message(&self.app, title, description) {
+            log::error!("{error}. {title}: {description}");
+        }
     }
 
     fn lensfun_database_dir(&self) -> Result<Option<PathBuf>, String> {

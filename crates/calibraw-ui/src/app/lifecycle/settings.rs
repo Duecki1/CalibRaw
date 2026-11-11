@@ -377,7 +377,10 @@ impl CalibRawApp {
             subject_mask_quality: self.ai.subject_mask_quality,
             people_mask_quality: self.ai.people_mask_quality,
             scene_depth_quality: self.ai.scene_depth_quality,
-            ai_gpu_acceleration: self.ai.gpu_acceleration,
+            // The default where it is not read.
+            ai_gpu_acceleration: self.caps().gpu_ai != GpuAi::Setting || self.ai.gpu_acceleration,
+            experimental_gpu_ai: self.caps().gpu_ai == GpuAi::Experimental
+                && self.ai.gpu_acceleration,
             onnx_runtime_mode: self.ai.runtime_mode,
             discord_rich_presence: self.preferences.discord_rich_presence,
             hdd_mode: self.preferences.hdd_mode,

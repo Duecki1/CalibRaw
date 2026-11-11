@@ -471,6 +471,54 @@ pub fn gpu_stage_timing_requested(app: &AndroidApp) -> Result<bool, String> {
     .map_err(|error| format!("could not read the GPU stage timing switch: {error:#}"))
 }
 
+/// Whether this process was started by [`restart_after_gpu_loss`], so that a
+/// GPU that fails again right away does not restart CalibRaw in a loop.
+pub fn restarted_after_gpu_loss(app: &AndroidApp) -> Result<bool, String> {
+    with_activity(app, |env, activity| {
+        env.call_method(
+            activity,
+            jni::jni_str!("restartedAfterGpuLoss"),
+            jni::jni_sig!(() -> bool),
+            &[],
+        )?
+        .z()
+    })
+    .map_err(|error| format!("could not read how CalibRaw was started: {error:#}"))
+}
+
+/// Shows `title` and `message` in a native dialog, for a failure the UI can
+/// no longer draw, and blocks the calling thread until it is dismissed. Must
+/// not be called on Android's main thread, which shows the dialog.
+pub fn show_fatal_message(app: &AndroidApp, title: &str, message: &str) -> Result<(), String> {
+    with_activity(app, |env, activity| {
+        let title = env.new_string(title)?;
+        let message = env.new_string(message)?;
+        env.call_method(
+            activity,
+            jni::jni_str!("showFatalMessage"),
+            jni::jni_sig!((JString, JString) -> void),
+            &[JValue::Object(&title), JValue::Object(&message)],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("could not show the notice: {error:#}"))
+}
+
+/// Ends this process and starts CalibRaw again in a new one, after a lost
+/// GPU device. Returns only when Android could not start the restart.
+pub fn restart_after_gpu_loss(app: &AndroidApp) -> Result<(), String> {
+    with_activity(app, |env, activity| {
+        env.call_method(
+            activity,
+            jni::jni_str!("restartAfterGpuLoss"),
+            jni::jni_sig!(() -> void),
+            &[],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("could not restart CalibRaw: {error:#}"))
+}
+
 pub fn copy_text_to_clipboard(app: &AndroidApp, label: &str, text: &str) -> Result<(), String> {
     with_activity(app, |env, activity| {
         let label = env.new_string(label)?;

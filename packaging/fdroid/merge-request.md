@@ -64,20 +64,25 @@ that code (including the R8 change) under a new version name and code. The exact
 --auto` steps are in upstream `packaging/fdroid/README.md`.
 
 LibRaw, Lensfun and the native support libraries build from pinned source.
-ONNX Runtime uses Microsoft's official MIT-licensed Android AAR from Maven
-Central, pinned by SHA-256; its only packaged component is
-`libonnxruntime.so`. The ort crate's own binary downloader is disabled.
-Optional AI model weights are not bundled; their licenses and provenance are
-documented in upstream `THIRD_PARTY_NOTICES.md`, and downloads require consent.
+ONNX Runtime 1.30.0 (MIT) is built from its pinned source release with its
+WebGPU execution provider by the same upstream Gradle native build. Its
+configure step fetches the archives pinned by SHA1 in ONNX Runtime's
+`cmake/deps.txt` and the Dawn commits pinned in Dawn's `DEPS` file. `protoc` is
+built from the pinned protobuf source instead of ONNX Runtime's prebuilt
+download, and telemetry is not built. This needs the SDK's CMake 4.1.2 package
+and takes most of an hour, hence the raised `timeout`. Optional AI model weights
+are not bundled; their licenses and provenance are documented in upstream
+`THIRD_PARTY_NOTICES.md`, and downloads require consent.
 
-Upstream-signature reproducible builds are not enabled because GitHub releases
-statically link ONNX Runtime, while this recipe links the Maven Central shared
-runtime. F-Droid will sign the resulting APK. Only ARM64 is supported upstream,
-so there is no multi-ABI APK to split.
+Upstream-signature reproducible builds are not enabled: the native builds have
+not been checked for bit-identical output. F-Droid will sign the resulting APK.
+Only ARM64 is supported upstream, so there is no multi-ABI APK to split.
 
 Prior local validation: `fdroid lint` and a full local `fdroid build` passed,
-with source scanning and APK scanning enabled. The resulting APK passed the
-16 KB ELF and ZIP alignment checks. F-Droid's `check_tags` routine detected
+with source scanning and APK scanning enabled. With ONNX Runtime built from
+source, a local fdroidserver 2.4.5 build (16 cores, 10 ONNX Runtime jobs) took
+19 minutes and passed the source scan and `fdroid scanner` on the APK. The
+resulting APK passed the 16 KB ELF and ZIP alignment checks. F-Droid's `check_tags` routine detected
 simulated future release tags and selected the highest committed Android
 version code; those tests did not cover the published tags missing that field.
 

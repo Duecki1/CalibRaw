@@ -18,7 +18,8 @@ const MEMORY_MARGIN_PERCENT: u64 = 20;
 /// a few MiB between jobs without anything having been released.
 const MIN_RETRY_GROWTH: u64 = 256 * MIB;
 
-/// An accelerated execution provider: WebGPU on desktop. Android has none.
+/// An accelerated execution provider: WebGPU, a plugin on desktop and built
+/// into the runtime on Android.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GpuProvider {
     WebGpu,
@@ -42,7 +43,9 @@ pub enum GpuBuffers {
     Cached,
     /// Frees them once the GPU is done with them (`disabled`), and allocates
     /// them again on every run. Where free memory is short of the cached
-    /// peak but not of `SessionOptions::released_gpu_memory_bytes`.
+    /// peak but not of `SessionOptions::released_gpu_memory_bytes`, and
+    /// always on an adapter that shares the system's memory
+    /// (`ProviderOffer::shared_memory`).
     Released,
 }
 
@@ -80,7 +83,7 @@ pub enum CpuReason {
     /// GPU AI is off for this process after the GPU was lost during a job.
     Quarantined,
     /// The automatic runtime has no GPU build for this platform (macOS
-    /// x86_64, Android).
+    /// x86_64, iOS).
     NoGpuBuild,
     /// The loaded ONNX Runtime has none of this platform's GPU providers, or
     /// its WebGPU provider found no adapter.
@@ -138,6 +141,10 @@ pub(crate) struct ProviderOffer {
     pub(crate) free_memory: Option<u64>,
     /// The editor's adapter name, when the provider runs on it.
     pub(crate) adapter: Option<String>,
+    /// The adapter's memory is the system's (Android), which ends apps that
+    /// hold too much: sessions on it always release their buffers, so that
+    /// between runs and models they hold only what a run needs.
+    pub(crate) shared_memory: bool,
 }
 
 /// A model that ran out of GPU memory in this process
@@ -197,7 +204,7 @@ pub(crate) const fn may_stay_loaded(free: Option<u64>, peak: Option<u64>) -> boo
 /// What `place` knows besides the session.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AccelerationState<'a> {
-    /// GPU AI is on in Settings; always on Android.
+    /// GPU AI is on in Settings.
     pub(crate) enabled: bool,
     /// GPU AI is off for this process after the GPU was lost.
     pub(crate) quarantined: bool,
@@ -217,9 +224,10 @@ pub(crate) const fn needed_memory(peak: u64) -> u64 {
 
 /// Places a session: on the first offered provider whose adapter has room
 /// for it with cached buffers, or with released buffers where only that
-/// fits, or whose free memory or the session's need is unknown, otherwise on
-/// the CPU. A model that ran out of GPU memory before skips providers its
-/// `OutOfMemoryRecord` does not allow yet.
+/// fits or the adapter shares the system's memory, or whose free memory or
+/// the session's need is unknown, otherwise on the CPU. A model that ran out
+/// of GPU memory before skips providers its `OutOfMemoryRecord` does not
+/// allow yet.
 pub(crate) fn place(session: &SessionOptions, state: &AccelerationState<'_>) -> Placement {
     let reason = if !session.allow_acceleration {
         CpuReason::CpuOnly
@@ -240,16 +248,26 @@ pub(crate) fn place(session: &SessionOptions, state: &AccelerationState<'_>) -> 
                     continue;
                 }
             }
-            let buffers = match (offer.free_memory, needed) {
-                (Some(free), Some(needed)) if free < needed => match released_needed {
-                    Some(released) if free >= released => GpuBuffers::Released,
-                    _ => {
-                        let needed = released_needed.unwrap_or(needed);
+            let buffers = if offer.shared_memory {
+                match (offer.free_memory, released_needed.or(needed)) {
+                    (Some(free), Some(needed)) if free < needed => {
                         shortfall.get_or_insert(CpuReason::InsufficientMemory { free, needed });
                         continue;
                     }
-                },
-                _ => GpuBuffers::Cached,
+                    _ => GpuBuffers::Released,
+                }
+            } else {
+                match (offer.free_memory, needed) {
+                    (Some(free), Some(needed)) if free < needed => match released_needed {
+                        Some(released) if free >= released => GpuBuffers::Released,
+                        _ => {
+                            let needed = released_needed.unwrap_or(needed);
+                            shortfall.get_or_insert(CpuReason::InsufficientMemory { free, needed });
+                            continue;
+                        }
+                    },
+                    _ => GpuBuffers::Cached,
+                }
             };
             return Placement::Gpu {
                 provider: offer.provider,

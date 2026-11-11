@@ -60,7 +60,6 @@ pub(super) fn publish_status(
 }
 
 /// Forgets every status, for a change that makes them stale.
-#[cfg(not(target_os = "android"))]
 pub(super) fn clear() {
     if let Ok(mut statuses) = statuses().lock() {
         statuses.clear();

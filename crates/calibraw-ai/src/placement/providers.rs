@@ -5,26 +5,31 @@ use super::place::{GpuBuffers, GpuProvider, ProviderOffer};
 use super::quirks;
 use super::session::{CpuFallbackProfile, SessionOptions};
 use crate::config::{constrained_cpu_sessions, GpuIdentity, MemoryClass, CAPABILITIES};
-use anyhow::{Context, Result};
-use ort::device::Device;
-use ort::environment::Environment;
+use anyhow::Result;
 use ort::ep::ExecutionProviderDispatch;
 use ort::session::builder::SessionBuilder;
-use ort::AsPointer;
-
-/// This platform's GPU providers, most preferred first. Android's built-in
-/// runtime has none: its NNAPI ran on Android's
-/// CPU reference code where no vendor driver exists, slower than ONNX
-/// Runtime's own CPU kernels, and its prebuilt binary has no XNNPACK.
 #[cfg(not(target_os = "android"))]
+use {
+    anyhow::Context,
+    ort::{device::Device, environment::Environment, AsPointer},
+};
+
+/// This platform's GPU providers, most preferred first. Android's runtime
+/// has WebGPU built in (`android/app/src/main/cpp/cmake/OnnxRuntime.cmake`)
+/// and no NNAPI: NNAPI ran on Android's CPU reference code where no vendor
+/// driver exists, slower than ONNX Runtime's own CPU kernels.
 const PLATFORM_PROVIDERS: &[GpuProvider] = &[GpuProvider::WebGpu];
-#[cfg(target_os = "android")]
-const PLATFORM_PROVIDERS: &[GpuProvider] = &[];
 
 /// The name ONNX Runtime gives the WebGPU plugin's execution provider.
+#[cfg(not(target_os = "android"))]
 const WEBGPU_EP: &str = "WebGpuExecutionProvider";
 
+/// Whether the GPU shares the system's memory, so that sessions always
+/// release their buffers (`ProviderOffer::shared_memory`): on Android.
+const SHARED_GPU_MEMORY: bool = cfg!(target_os = "android");
+
 /// PCI vendor and device ID of the hardware `device` stands for.
+#[cfg(not(target_os = "android"))]
 fn hardware_ids(device: &Device<'_>) -> (u32, u32) {
     let api = ort::api();
     // SAFETY: `device` is an entry of its environment's `GetEpDevices` list,
@@ -42,6 +47,7 @@ fn hardware_ids(device: &Device<'_>) -> (u32, u32) {
 /// The plugin picks its physical adapter itself, by `powerPreference`
 /// (`webgpu_options`). The editor asks wgpu for the high-performance
 /// adapter too, so both normally land on the same GPU.
+#[cfg(not(target_os = "android"))]
 fn webgpu_device<'e>(
     environment: &'e Environment,
     gpu: Option<&GpuIdentity>,
@@ -67,7 +73,28 @@ fn webgpu_device<'e>(
 }
 
 /// Whether the loaded runtime offers WebGPU, and if so whether it runs on
+/// the editor's adapter `gpu`. Android's runtime has it built in, where ONNX
+/// Runtime finds no GPU device (its device discovery there reports the CPU
+/// only), and the phone or tablet has one GPU, the editor's.
+#[cfg(target_os = "android")]
+fn webgpu_offered(_gpu: Option<&GpuIdentity>) -> Option<bool> {
+    use ort::ep::ExecutionProvider;
+    match ort::ep::WebGPU::default().is_available() {
+        Ok(true) => Some(true),
+        Ok(false) => {
+            log::info!("the built-in ONNX Runtime has no WebGPU provider");
+            None
+        }
+        Err(error) => {
+            log::warn!("AI execution provider WebGPU skipped: {error}");
+            None
+        }
+    }
+}
+
+/// Whether the loaded runtime offers WebGPU, and if so whether it runs on
 /// the editor's adapter `gpu`.
+#[cfg(not(target_os = "android"))]
 fn webgpu_offered(gpu: Option<&GpuIdentity>) -> Option<bool> {
     let environment = match ort::environment::current() {
         Ok(environment) => environment,
@@ -99,6 +126,7 @@ pub(super) fn offered_providers(gpu: Option<&GpuIdentity>) -> Vec<ProviderOffer>
                     .and_then(GpuIdentity::memory)
                     .map(|memory| memory.available()),
                 adapter: editor_gpu.map(|gpu| gpu.name().to_owned()),
+                shared_memory: SHARED_GPU_MEMORY,
             })
         })
         .collect()
@@ -111,6 +139,7 @@ pub(super) fn offered_providers(gpu: Option<&GpuIdentity>) -> Vec<ProviderOffer>
 ///   size buckets for reuse, which suits inputs of fixed shape; `disabled`
 ///   frees them (`GpuBuffers`).
 /// - `forceCpuNodeNames`: the session's `quirks::WebGpuCpuNodes`.
+#[cfg(not(target_os = "android"))]
 fn webgpu_options(options: &SessionOptions, buffers: GpuBuffers) -> Vec<(String, String)> {
     let cache_mode = match buffers {
         GpuBuffers::Cached => "bucket",
@@ -129,8 +158,32 @@ fn webgpu_options(options: &SessionOptions, buffers: GpuBuffers) -> Vec<(String,
         .collect()
 }
 
+/// The built-in WebGPU provider with the options the desktop plugin gets
+/// (`webgpu_options`) but `powerPreference`, which a device with one GPU does
+/// not need. It fails the session when it cannot be added rather than leaving
+/// it to the CPU, so the failure is classified and recorded like a plugin's.
+#[cfg(target_os = "android")]
+fn builtin_webgpu(options: &SessionOptions, buffers: GpuBuffers) -> ExecutionProviderDispatch {
+    use ort::ep::webgpu::BufferCacheMode;
+    let mut provider = ort::ep::WebGPU::default().with_storage_buffer_cache_mode(match buffers {
+        GpuBuffers::Cached => BufferCacheMode::Bucket,
+        GpuBuffers::Released => BufferCacheMode::Disabled,
+    });
+    if let Some(names) = options.webgpu_cpu_nodes.node_names() {
+        provider = provider.with_force_cpu_node_names(names);
+    }
+    provider.build().error_on_failure()
+}
+
 /// Adds `offer`'s provider to `builder`, handling released buffers as
 /// `buffers` says, then the CPU for the nodes it does not run.
+#[cfg_attr(
+    target_os = "android",
+    expect(
+        unused_variables,
+        reason = "Android devices have one GPU, the editor's"
+    )
+)]
 pub(super) fn with_gpu_provider(
     builder: SessionBuilder,
     offer: &ProviderOffer,
@@ -141,6 +194,11 @@ pub(super) fn with_gpu_provider(
     let name = offer.provider.name();
     let cpu = cpu_provider(options);
     let builder = match offer.provider {
+        #[cfg(target_os = "android")]
+        GpuProvider::WebGpu => {
+            builder.with_execution_providers([builtin_webgpu(options, buffers), cpu])
+        }
+        #[cfg(not(target_os = "android"))]
         GpuProvider::WebGpu => {
             let environment = ort::environment::current()
                 .map_err(|error| anyhow::anyhow!("get the ONNX Runtime environment: {error}"))?;

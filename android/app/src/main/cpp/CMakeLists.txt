@@ -440,6 +440,9 @@ add_custom_target(calibraw_verify_lensfun
     VERBATIM
 )
 
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/OnnxRuntime.cmake")
+
 # AGP builds this explicit target for every ABI in ndk.abiFilters.
 add_custom_target(calibraw_native_deps ALL)
-add_dependencies(calibraw_native_deps calibraw_stage_libraw calibraw_verify_lensfun)
+add_dependencies(calibraw_native_deps
+    calibraw_stage_libraw calibraw_verify_lensfun calibraw_onnxruntime)

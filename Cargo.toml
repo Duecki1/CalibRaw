@@ -34,6 +34,9 @@ libraw_revision = "830ac963b40223c6a25add5be65036fa8d56e2d6"
 # release, 0.3.4 from 2023, lacks the lens profiles added since.
 lensfun_revision = "bc5615d6278cb5fb75dd53e74015367453d5591d"
 android_use_legacy_packaging = false
+# The SDK CMake package that builds ONNX Runtime (1.30 needs CMake 3.28); the
+# other native dependencies keep AGP's 3.22.1.
+android_onnxruntime_cmake_version = "4.1.2"
 
 [workspace.package]
 version = "1.4.1"

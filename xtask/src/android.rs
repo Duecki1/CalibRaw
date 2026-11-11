@@ -512,6 +512,15 @@ fn command_build_android(args: BuildAndroidArgs) -> Result<()> {
 
     let libraw_root = root.join("android/native/libraw").join(&args.abi);
     let lensfun_root = root.join("android/native/lensfun").join(&args.abi);
+    // ONNX Runtime with WebGPU, which the native build compiles
+    // (android/app/src/main/cpp/cmake/OnnxRuntime.cmake). ort-sys links it
+    // as a shared library, which the APK packages beside libcalibraw.so.
+    let onnxruntime_lib = root
+        .join("android/native/onnxruntime")
+        .join(&args.abi)
+        .join("lib");
+    let onnxruntime = onnxruntime_lib.join("libonnxruntime.so");
+    require_file(&onnxruntime)?;
     let jni_root = root.join("android/app/src/main/jniLibs");
     let abi_jni = jni_root.join(&args.abi);
     remove_path(&abi_jni)?;
@@ -526,6 +535,8 @@ fn command_build_android(args: BuildAndroidArgs) -> Result<()> {
         )
         .env("CALIBRAW_LIBRAW_ROOT", &libraw_root)
         .env("CALIBRAW_LENSFUN_ROOT", &lensfun_root)
+        .env("ORT_LIB_LOCATION", &onnxruntime_lib)
+        .env("ORT_PREFER_DYNAMIC_LINK", "1")
         .env("CARGO_INCREMENTAL", "0")
         .env("CARGO_TARGET_DIR", root.join("target"))
         .args(["ndk", "-t"])
@@ -580,12 +591,14 @@ fn command_build_android(args: BuildAndroidArgs) -> Result<()> {
     require_file(&cxx_runtime)?;
     fs::create_dir_all(&abi_jni)?;
     fs::copy(&cxx_runtime, abi_jni.join("libc++_shared.so"))?;
+    fs::copy(&onnxruntime, abi_jni.join("libonnxruntime.so"))?;
     require_file(&abi_jni.join("libcalibraw.so"))?;
     require_file(&abi_jni.join("libc++_shared.so"))?;
+    require_file(&abi_jni.join("libonnxruntime.so"))?;
 
     require_lensfun_assets(&lensfun_root)?;
     println!(
-        "Rust, LibRaw, and Lensfun Android libraries are ready for Gradle ({}, {}).",
+        "Rust, LibRaw, Lensfun and ONNX Runtime Android libraries are ready for Gradle ({}, {}).",
         args.abi, args.profile
     );
     Ok(())

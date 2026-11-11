@@ -49,5 +49,14 @@
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
+        <!-- Starts CalibRaw again after its process ended for a lost GPU
+             device, from a process of its own. -->
+        <activity
+            android:name=".GpuLossRestartActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:process=":gpu_restart"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 </manifest>

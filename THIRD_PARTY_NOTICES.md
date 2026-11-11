@@ -211,10 +211,12 @@ native components:
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime), under the MIT
   license. Desktop Automatic mode downloads a pinned platform archive from
   [CalibRaw Artifacts](https://huggingface.co/Duecki/CalibRaw-Artifacts); Manual
-  mode uses the runtime selected by the user. Android statically links the
-  pinned ONNX Runtime 1.24.2 archive selected by `ort-sys`; see its
-  [license](https://github.com/microsoft/onnxruntime/blob/v1.24.2/LICENSE) and
-  [third-party notices](https://github.com/microsoft/onnxruntime/blob/v1.24.2/ThirdPartyNotices.txt).
+  mode uses the runtime selected by the user. Android ships ONNX Runtime 1.30.0
+  built from source with its WebGPU execution provider, which includes
+  [Dawn](https://dawn.googlesource.com/dawn) (BSD-3-Clause) and the
+  dependencies its pinned release lists; see its
+  [license](https://github.com/microsoft/onnxruntime/blob/v1.30.0/LICENSE) and
+  [third-party notices](https://github.com/microsoft/onnxruntime/blob/v1.30.0/ThirdPartyNotices.txt).
 - [DirectML](https://github.com/microsoft/DirectML) 1.15.4. The Windows
   Automatic runtime archive includes the redistributable `DirectML.dll` from the
   `Microsoft.AI.DirectML` NuGet package under its

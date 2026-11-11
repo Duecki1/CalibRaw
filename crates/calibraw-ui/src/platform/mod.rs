@@ -33,11 +33,11 @@ mod ios;
 #[cfg(target_os = "ios")]
 mod ios_library;
 
-pub(crate) use caps::{MemoryClass, PlatformCaps, StorageKind, VideoEncoder};
+pub(crate) use caps::{GpuAi, MemoryClass, PlatformCaps, StorageKind, VideoEncoder};
 pub(crate) use files::{
     camera_profile_search_locations, detected_camera_profile_folder, is_flatpak,
-    is_onnx_runtime_library_name, show_fatal_message, trash, trash_name, FileDialog,
-    ONNX_RUNTIME_IS_DLL, PRIMARY_MODIFIER_NAME,
+    is_onnx_runtime_library_name, trash, trash_name, FileDialog, ONNX_RUNTIME_IS_DLL,
+    PRIMARY_MODIFIER_NAME,
 };
 pub(crate) use fonts::{chinese_font, hindi_font, SystemFont};
 pub(crate) use graphics::{PROCESSING_DRIVER_INSTALL_HINT, PROCESSING_GRAPHICS_API};

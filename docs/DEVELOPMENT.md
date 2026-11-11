@@ -102,13 +102,15 @@ export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
 host="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
 CALIBRAW_LIBRAW_ROOT="$PWD/android/native/libraw/arm64-v8a" \
 CALIBRAW_LENSFUN_ROOT="$PWD/android/native/lensfun/arm64-v8a" \
+ORT_LIB_LOCATION="$PWD/android/native/onnxruntime/arm64-v8a/lib" ORT_PREFER_DYNAMIC_LINK=1 \
 BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-linux-android26 --sysroot=$host/sysroot" \
 LIBCLANG_PATH="$host/lib" CARGO_TARGET_DIR=target/android-check \
   cargo ndk -t arm64-v8a check --locked -p calibraw-ui --lib
 ```
 
-The staged LibRaw and Lensfun come from `cargo xtask build-android-libraw` and
-`build-android-lensfun`. Test targets are host-only and do not build for Android.
+The staged LibRaw, Lensfun and ONNX Runtime come from the Gradle native build
+(`cargo xtask build-android-libraw` and `build-android-lensfun` run it). Test
+targets are host-only and do not build for Android.
 
 ### Screenshot and numerical baselines
 
@@ -567,12 +569,15 @@ xcrun simctl spawn booted "$PWD/target/picker-lifecycle-test"
 ### Requirements
 
 - Rust target `aarch64-linux-android`
-- JDK 17, Python 3, `libclang`, `make`, and `pkg-config`
+- JDK 17, Python 3, Git, `patch`, `libclang`, `make`, and `pkg-config`
 - Android SDK, Build Tools, and NDK versions from `Cargo.toml`
-- CMake 3.22.1 with Ninja and `cargo-ndk` 4.1.2
+- The SDK's CMake 3.22.1 with Ninja, and its CMake package
+  `android_onnxruntime_cmake_version` from `Cargo.toml` for ONNX Runtime
+- `cargo-ndk` 4.1.2
 
 ```sh
 export ANDROID_SDK_ROOT="$HOME/Android/Sdk"
+sdkmanager 'cmake;3.22.1' 'cmake;4.1.2'
 rustup target add aarch64-linux-android
 cargo install cargo-ndk --version 4.1.2 --locked
 ```
@@ -587,7 +592,14 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 Gradle builds pinned LibRaw and Lensfun dependencies and packages the APK at
-`android/app/build/outputs/apk/debug/app-debug.apk`. To build one ABI through
+`android/app/build/outputs/apk/debug/app-debug.apk`. It also builds ONNX
+Runtime with its WebGPU execution provider from source
+(`android/app/src/main/cpp/cmake/OnnxRuntime.cmake`), which takes most of an
+hour the first time and needs network access for the archives and Dawn
+commits ONNX Runtime pins. The library is staged in
+`android/native/onnxruntime/arm64-v8a` and reused while its recipe and the NDK
+stay the same; set `CALIBRAW_ONNXRUNTIME_BUILD_JOBS` below the core count on
+machines with less than about 2 GiB of memory per core. To build one ABI through
 the compatibility helper, use `cargo xtask build-android arm64-v8a release`.
 
 Depth masks, fog, rain, Wet Surfaces and Relight on every platform share a pinned
