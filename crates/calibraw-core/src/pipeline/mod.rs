@@ -97,8 +97,7 @@ pub use raw_loader::{
     load_raw_file_with_profile_selection, load_raw_thumbnail,
     load_raw_thumbnail_with_display_metadata, reflect_index, AiDenoisedImage, BinnedSensor,
     CameraProfileCandidate, CameraProfileMode, CfaKind, CompactPixelMap, HighlightModel, LoadedRaw,
-    PixelLayout,
-    ProfileColor, ProfileColorSource, RawDisplayMetadata, RawThumbnail, SensorSamples,
+    PixelLayout, ProfileColor, ProfileColorSource, RawDisplayMetadata, RawThumbnail, SensorSamples,
     SensorSaturation, WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
 };
 pub use raw_loader::{

@@ -221,7 +221,8 @@ impl SpreadLevel {
         let y1 = (y0 + 1).min(self.height - 1);
         let fx = x - x0 as f32;
         let fy = y - y0 as f32;
-        let at = |column: usize, row: usize| self.data[(row * self.width + column) * stride + channel];
+        let at =
+            |column: usize, row: usize| self.data[(row * self.width + column) * stride + channel];
         let top = at(x0, y0) * (1.0 - fx) + at(x1, y0) * fx;
         let bottom = at(x0, y1) * (1.0 - fx) + at(x1, y1) * fx;
         top * (1.0 - fy) + bottom * fy
@@ -286,10 +287,11 @@ impl HighlightStatistics {
             let [a, b] = other_channels(channel);
             // Covariance of the colour's excess over the mean of the other two with their
             // difference, over the variance of that difference.
-            let excess = moment(channel, a) - moment(channel, b) - 0.5 * (moment(a, a) - moment(b, b));
+            let excess =
+                moment(channel, a) - moment(channel, b) - 0.5 * (moment(a, a) - moment(b, b));
             let difference = moment(a, a) - 2.0 * moment(a, b) + moment(b, b);
-            let slope = self.moment_support[index] * excess
-                / (difference + SLOPE_RIDGE * energy + 1e-12);
+            let slope =
+                self.moment_support[index] * excess / (difference + SLOPE_RIDGE * energy + 1e-12);
             if slope.is_finite() {
                 slope.clamp(-SLOPE_LIMIT, SLOPE_LIMIT)
             } else {
@@ -303,7 +305,8 @@ impl HighlightStatistics {
         let mut slopes = Vec::with_capacity(count);
         let mut entry_base = Vec::with_capacity(count * 4);
         for index in 0..count {
-            let colour: [f32; 3] = std::array::from_fn(|channel| self.mean[index][channel] * wb[channel]);
+            let colour: [f32; 3] =
+                std::array::from_fn(|channel| self.mean[index][channel] * wb[channel]);
             let clipped = self.clipped[index];
             let slope = self.slopes(index, wb);
             // The colour of a cell with two known colours: its clipped one rebuilt from them.
@@ -436,7 +439,8 @@ impl LoadedRaw {
                 0.0
             };
             let [r, g, b] = cell_mean;
-            moment_base.extend([r * r, g * g, b * b, r * g, r * b, g * b].map(|value| value * weight));
+            moment_base
+                .extend([r * r, g * g, b * b, r * g, r * b, g * b].map(|value| value * weight));
             moment_base.push(weight);
             mean.push(cell_mean);
             clipped.push(cell_clipped);

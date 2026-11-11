@@ -315,8 +315,7 @@ pub fn extract_padded_tile_into(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mu
         return;
     }
     tile_raw.highlight_model_cache = std::sync::Arc::clone(&raw.highlight_model_cache);
-    tile_raw.highlight_source_identity =
-        std::sync::Arc::clone(&raw.highlight_source_identity);
+    tile_raw.highlight_source_identity = std::sync::Arc::clone(&raw.highlight_source_identity);
     tile_raw.highlight_reference_source = false;
     if raw.is_pre_demosaiced_raster() {
         let dimensions_changed =
