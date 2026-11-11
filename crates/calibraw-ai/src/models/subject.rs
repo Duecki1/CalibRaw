@@ -5,7 +5,7 @@ use super::masks::mask_model_retention;
 use super::{normalized_rgb_input, sigmoid_probability};
 use crate::config::{MemoryClass, CAPABILITIES};
 use crate::placement::FallbackSession;
-use crate::registry::{AiModel, ModelInfo, BIREFNET_FLOAT16_ON_GPU};
+use crate::registry::{AiModel, ModelInfo};
 use crate::slot::with_model_session;
 use anyhow::{Context, Result};
 use image::{imageops::FilterType, ImageBuffer, Luma, Rgba};
@@ -24,14 +24,14 @@ pub enum SubjectModelPrecision {
 }
 
 impl SubjectModelPrecision {
-    /// The precision for subject masks with the current settings: float16
-    /// where it is confirmed on the GPU provider (`BIREFNET_FLOAT16_ON_GPU`,
-    /// so nowhere at present) and sessions are expected on it, i.e. with GPU
-    /// acceleration enabled and Automatic mode's runtime built with a GPU
-    /// provider. A manually selected runtime is not known before it loads, so
-    /// it keeps float32.
-    pub fn for_current_sessions(manual_runtime: bool) -> Self {
-        let gpu = BIREFNET_FLOAT16_ON_GPU
+    /// The precision for `quality`'s masks with the current settings:
+    /// float16 where the parity harness confirmed it on the GPU provider
+    /// (`SubjectMaskQuality::float16_on_gpu`) and sessions are expected on
+    /// it, i.e. with GPU acceleration enabled and Automatic mode's runtime
+    /// built with a GPU provider. A manually selected runtime is not known
+    /// before it loads, so it keeps float32.
+    pub fn for_current_sessions(quality: SubjectMaskQuality, manual_runtime: bool) -> Self {
+        let gpu = quality.float16_on_gpu()
             && !manual_runtime
             && crate::runtime::ai_sessions_may_use_gpu(false);
         if gpu {
@@ -89,6 +89,16 @@ impl SubjectMaskQuality {
             (Self::Medium | Self::High, SubjectModelPrecision::Float32) => AiModel::BiRefNet,
             (Self::Medium | Self::High, SubjectModelPrecision::Float16) => AiModel::BiRefNetFp16,
         }
+    }
+
+    /// Whether this quality's masks use the float16 conversion when they are
+    /// expected on the GPU: where the parity harness confirmed it on the GPU
+    /// provider. On the WebGPU provider of `registry::measured_peak`'s
+    /// machine, Low's masks reached an IoU of 0.995 against the float32 CPU
+    /// goldens and Medium's 0.984, where the harness asks for 0.995. Float16
+    /// takes about 10% less time per mask and 60% of the GPU memory.
+    const fn float16_on_gpu(self) -> bool {
+        matches!(self, Self::Low)
     }
 
     const fn crop_refinement(self) -> bool {

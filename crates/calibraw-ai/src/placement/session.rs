@@ -7,11 +7,11 @@ use super::failure::{
 use super::job_record::{GpuJobRecord, GpuSessionRecord};
 use super::memory::ensure_cpu_memory_available;
 use super::out_of_memory;
-use super::place::{CpuReason, GpuProvider, Placement, ProviderOffer};
+use super::place::{CpuReason, GpuBuffers, GpuProvider, Placement, ProviderOffer};
 use super::providers::{cpu_provider, offered_providers, with_gpu_provider};
 use super::quirks::{self, WebGpuCpuNodes};
 use super::status::publish_status;
-use crate::config::{MemoryClass, CAPABILITIES};
+use crate::config::{constrained_cpu_sessions, MemoryClass, CAPABILITIES};
 use anyhow::{Context, Result};
 use ort::session::{
     builder::{GraphOptimizationLevel, SessionBuilder},
@@ -20,12 +20,6 @@ use ort::session::{
 use std::path::{Path, PathBuf};
 
 const MIB: u64 = 1 << 20;
-/// Intra-op threads of a CPU session on `MemoryClass::Constrained`. Phones
-/// and tablets pair a few fast cores with slow ones (the Tab M11's Helio G88
-/// has two Cortex-A75s and six A55s), and every thread holds its own scratch
-/// buffers.
-const CONSTRAINED_CPU_THREADS: usize = 2;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum CpuFallbackProfile {
     #[default]
@@ -45,6 +39,10 @@ pub(crate) struct SessionOptions {
     /// margin included: allocations beyond it fail, or on Windows overcommit
     /// video memory, which pages until the slowdown ends in a driver reset.
     pub(crate) gpu_memory_bytes: Option<u64>,
+    /// Peak GPU memory of one inference with `GpuBuffers::Released`, in
+    /// bytes, where it is lower than `gpu_memory_bytes`; `place` releases
+    /// buffers only for models that have one.
+    pub(crate) released_gpu_memory_bytes: Option<u64>,
     /// Peak CPU memory of creating and running a fresh session, in bytes.
     /// On iOS it must fit in the process allowance, with a margin, before
     /// loading the model. Unknown peaks are not subject to admission.
@@ -60,6 +58,7 @@ impl SessionOptions {
             allow_acceleration: true,
             cpu_fallback_profile: CpuFallbackProfile::Default,
             gpu_memory_bytes: None,
+            released_gpu_memory_bytes: None,
             cpu_memory_bytes: None,
             webgpu_cpu_nodes: WebGpuCpuNodes::None,
         }
@@ -68,6 +67,20 @@ impl SessionOptions {
     pub(crate) const fn with_gpu_memory(mut self, bytes: u64) -> Self {
         self.gpu_memory_bytes = Some(bytes);
         self
+    }
+
+    pub(crate) const fn with_released_gpu_memory(mut self, bytes: u64) -> Self {
+        self.released_gpu_memory_bytes = Some(bytes);
+        self
+    }
+
+    /// The measured peak of a GPU session handling released buffers as
+    /// `buffers` says.
+    pub(crate) const fn gpu_peak(&self, buffers: GpuBuffers) -> Option<u64> {
+        match (buffers, self.released_gpu_memory_bytes) {
+            (GpuBuffers::Released, Some(peak)) => Some(peak),
+            _ => self.gpu_memory_bytes,
+        }
     }
 
     pub(crate) const fn with_cpu_memory(mut self, bytes: u64) -> Self {
@@ -132,11 +145,11 @@ fn configure_cpu_builder(
         // Every model runs beside the RAW preview here, where the system
         // ends apps that grow too large. Bound the thread pool, keep idle
         // threads from spinning, and keep no second, packed copy of the
-        // model's weights. `cpu_provider` turns the arena allocator off.
+        // model's weights. `cpu_provider` decides the arena allocator.
         builder = builder
             .with_parallel_execution(false)
             .map_err(|error| anyhow::anyhow!("force sequential CPU execution: {error}"))?
-            .with_intra_threads(CONSTRAINED_CPU_THREADS)
+            .with_intra_threads(constrained_cpu_sessions().threads)
             .map_err(|error| anyhow::anyhow!("limit CPU inference threads: {error}"))?
             .with_intra_op_spinning(false)
             .map_err(|error| anyhow::anyhow!("disable CPU thread spinning: {error}"))?
@@ -176,12 +189,13 @@ fn create_accelerated_session(
     source: &Path,
     options: &SessionOptions,
     offer: &ProviderOffer,
+    buffers: GpuBuffers,
 ) -> Result<Session> {
     let name = offer.provider.name();
     let builder =
         Session::builder().with_context(|| format!("create {name} ONNX Runtime session"))?;
     let builder = configure_common_builder(builder)?;
-    let mut builder = with_gpu_provider(builder, offer, options, super::editor_gpu())?;
+    let mut builder = with_gpu_provider(builder, offer, buffers, options, super::editor_gpu())?;
     commit_model(&mut builder, source)
 }
 
@@ -207,7 +221,7 @@ impl FallbackSession {
     /// for CPU sessions.
     pub(crate) fn record_gpu_job(&self) -> Option<GpuJobRecord> {
         match self.placement {
-            Placement::Gpu { provider } => Some(GpuJobRecord::begin(
+            Placement::Gpu { provider, .. } => Some(GpuJobRecord::begin(
                 self.options.model_name,
                 provider.name(),
             )),
@@ -239,10 +253,10 @@ impl FallbackSession {
     /// which leaves the editor room. CPU sessions may stay. Records why when
     /// it may not.
     pub(crate) fn may_stay_loaded(&self) -> bool {
-        let Placement::Gpu { provider } = self.placement else {
+        let Placement::Gpu { provider, buffers } = self.placement else {
             return true;
         };
-        let peak = self.options.gpu_memory_bytes;
+        let peak = self.options.gpu_peak(buffers);
         let free = offered_providers(super::editor_gpu())
             .into_iter()
             .find(|offer| offer.provider == provider)
@@ -264,7 +278,7 @@ impl FallbackSession {
     where
         F: FnMut(&mut Session, bool) -> Result<T>,
     {
-        let Placement::Gpu { provider } = self.placement else {
+        let Placement::Gpu { provider, .. } = self.placement else {
             return run(&mut self.session, false);
         };
         let result = run(&mut self.session, true);
@@ -324,13 +338,13 @@ pub(crate) fn create_session_with_fallback(
     let mut setup_failures = Vec::new();
 
     let reason = loop {
-        let provider = match placement {
-            Placement::Gpu { provider } => provider,
+        let (provider, buffers) = match placement {
+            Placement::Gpu { provider, buffers } => (provider, buffers),
             Placement::Cpu { reason } if setup_failures.is_empty() => break reason,
             Placement::Cpu { .. } => break CpuReason::GpuFailed,
         };
         let offer = take_offer(&mut offers, provider);
-        match try_gpu_session(&source, &options, &offer) {
+        match try_gpu_session(&source, &options, &offer, buffers) {
             Ok((session, logged_gpu_errors, gpu_record)) => {
                 let gpu_free_before = offer.free_memory;
                 publish_status(options.model_name, placement, offer.adapter);
@@ -421,9 +435,10 @@ fn try_gpu_session(
     source: &Path,
     options: &SessionOptions,
     offer: &ProviderOffer,
+    buffers: GpuBuffers,
 ) -> std::result::Result<(Session, LoggedGpuErrors, GpuSessionRecord), GpuFailure> {
     let name = offer.provider.name();
-    let memory = match (offer.free_memory, options.gpu_memory_bytes) {
+    let mut memory = match (offer.free_memory, options.gpu_peak(buffers)) {
         (Some(free), Some(peak)) => format!(
             ", {} MiB free, {} MiB needed",
             free / MIB,
@@ -431,6 +446,9 @@ fn try_gpu_session(
         ),
         _ => String::new(),
     };
+    if buffers == GpuBuffers::Released {
+        memory.push_str(", buffers released after use");
+    }
     calibraw_core::diagnostics::record(format!(
         "AI {} creating {name} session{memory}",
         options.model_name
@@ -439,7 +457,7 @@ fn try_gpu_session(
     let _record = GpuJobRecord::begin(options.model_name, name);
     let logged_gpu_errors = LoggedGpuErrors::now();
     // Creating the session uploads the model's weights.
-    let created = create_accelerated_session(source, options, offer);
+    let created = create_accelerated_session(source, options, offer, buffers);
     let session = GpuFailure::check("creating the session", created, logged_gpu_errors.since())?;
     log::info!(
         "AI {} uses {name} for {}",

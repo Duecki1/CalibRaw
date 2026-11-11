@@ -1,10 +1,10 @@
 //! The GPU providers a session may try, in order, before the CPU, and what is
 //! known about the adapter each runs on.
 
-use super::place::{GpuProvider, ProviderOffer};
+use super::place::{GpuBuffers, GpuProvider, ProviderOffer};
 use super::quirks;
 use super::session::{CpuFallbackProfile, SessionOptions};
-use crate::config::{GpuIdentity, MemoryClass, CAPABILITIES};
+use crate::config::{constrained_cpu_sessions, GpuIdentity, MemoryClass, CAPABILITIES};
 use anyhow::{Context, Result};
 use ort::device::Device;
 use ort::environment::Environment;
@@ -107,13 +107,18 @@ pub(super) fn offered_providers(gpu: Option<&GpuIdentity>) -> Vec<ProviderOffer>
 /// Options for the WebGPU provider, prefixed with its name as `with_devices`
 /// expects:
 /// - `powerPreference`: the adapter the editor's eframe device asks for.
-/// - `storageBufferCacheMode=bucket`: keep released storage buffers in size
-///   buckets for the next run, which suits inputs of fixed shape.
+/// - `storageBufferCacheMode`: `bucket` keeps released storage buffers in
+///   size buckets for reuse, which suits inputs of fixed shape; `disabled`
+///   frees them (`GpuBuffers`).
 /// - `forceCpuNodeNames`: the session's `quirks::WebGpuCpuNodes`.
-fn webgpu_options(options: &SessionOptions) -> Vec<(String, String)> {
+fn webgpu_options(options: &SessionOptions, buffers: GpuBuffers) -> Vec<(String, String)> {
+    let cache_mode = match buffers {
+        GpuBuffers::Cached => "bucket",
+        GpuBuffers::Released => "disabled",
+    };
     let mut entries = vec![
         ("powerPreference", "high-performance".to_owned()),
-        ("storageBufferCacheMode", "bucket".to_owned()),
+        ("storageBufferCacheMode", cache_mode.to_owned()),
     ];
     if let Some(names) = options.webgpu_cpu_nodes.node_names() {
         entries.push(("forceCpuNodeNames", names));
@@ -124,11 +129,12 @@ fn webgpu_options(options: &SessionOptions) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Adds `offer`'s provider to `builder`, then the CPU for the nodes it does
-/// not run.
+/// Adds `offer`'s provider to `builder`, handling released buffers as
+/// `buffers` says, then the CPU for the nodes it does not run.
 pub(super) fn with_gpu_provider(
     builder: SessionBuilder,
     offer: &ProviderOffer,
+    buffers: GpuBuffers,
     options: &SessionOptions,
     gpu: Option<&GpuIdentity>,
 ) -> Result<SessionBuilder> {
@@ -141,7 +147,7 @@ pub(super) fn with_gpu_provider(
             let (device, _) =
                 webgpu_device(&environment, gpu).context("the WebGPU provider has no device")?;
             builder
-                .with_devices([device], Some(&webgpu_options(options)))
+                .with_devices([device], Some(&webgpu_options(options, buffers)))
                 .map_err(|error| anyhow::anyhow!("configure {name} execution provider: {error}"))?
                 .with_execution_providers([cpu])
         }
@@ -150,7 +156,8 @@ pub(super) fn with_gpu_provider(
 }
 
 pub(super) fn cpu_provider(options: &SessionOptions) -> ExecutionProviderDispatch {
-    let disable_arena = CAPABILITIES.memory == MemoryClass::Constrained
+    let disable_arena = (CAPABILITIES.memory == MemoryClass::Constrained
+        && !constrained_cpu_sessions().arena)
         || (options.cpu_fallback_profile == CpuFallbackProfile::SamEncoder
             && quirks::sam_encoder_cpu_needs_unfused_graph());
     ort::ep::CPU::default()

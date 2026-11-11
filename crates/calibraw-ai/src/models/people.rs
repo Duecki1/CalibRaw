@@ -235,10 +235,13 @@ impl PeopleModels {
     }
 }
 
-/// The BiRefNet model that outlines people: the subject model with the
-/// 1024 x 1024 input, one file with it.
+/// The subject-mask quality whose BiRefNet model outlines people: the one
+/// with the 1024 x 1024 input, one file with the subject model.
+pub const FOREGROUND_QUALITY: SubjectMaskQuality = SubjectMaskQuality::High;
+
+/// The BiRefNet model that outlines people.
 pub const fn foreground_model(precision: SubjectModelPrecision) -> ModelInfo {
-    SubjectMaskQuality::High.model(precision)
+    FOREGROUND_QUALITY.model(precision)
 }
 
 /// Where the BiRefNet model that outlines people is, and which of its files.
@@ -250,7 +253,7 @@ pub struct ForegroundModel {
 
 impl ForegroundModel {
     fn ai_model(&self) -> AiModel {
-        SubjectMaskQuality::High.ai_model(self.precision)
+        FOREGROUND_QUALITY.ai_model(self.precision)
     }
 }
 

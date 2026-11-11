@@ -33,18 +33,36 @@ impl GpuProvider {
     }
 }
 
+/// What a GPU session does with the storage buffers a run releases.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuBuffers {
+    /// Keeps them in size buckets for reuse, within the run and by the next
+    /// one (the WebGPU provider's `storageBufferCacheMode=bucket`). The
+    /// session holds its measured peak, `SessionOptions::gpu_memory_bytes`.
+    Cached,
+    /// Frees them once the GPU is done with them (`disabled`), and allocates
+    /// them again on every run. Where free memory is short of the cached
+    /// peak but not of `SessionOptions::released_gpu_memory_bytes`.
+    Released,
+}
+
 /// Where a session runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Placement {
-    Gpu { provider: GpuProvider },
-    Cpu { reason: CpuReason },
+    Gpu {
+        provider: GpuProvider,
+        buffers: GpuBuffers,
+    },
+    Cpu {
+        reason: CpuReason,
+    },
 }
 
 impl Placement {
     /// The GPU provider's name, or `CPU`.
     pub const fn provider_name(self) -> &'static str {
         match self {
-            Self::Gpu { provider } => provider.name(),
+            Self::Gpu { provider, .. } => provider.name(),
             Self::Cpu { .. } => "CPU",
         }
     }
@@ -68,7 +86,8 @@ pub enum CpuReason {
     /// its WebGPU provider found no adapter.
     NoGpuBackend,
     /// Every GPU provider's adapter has less memory free than the session
-    /// needs, margin included; in bytes, for the first provider.
+    /// needs, margin included, with its buffers released where that needs
+    /// less; in bytes, for the first provider.
     InsufficientMemory { free: u64, needed: u64 },
     /// The GPU ran out of memory creating or running the model's session.
     /// The model goes back to the GPU once more memory is free than then, or,
@@ -197,8 +216,9 @@ pub(crate) const fn needed_memory(peak: u64) -> u64 {
 }
 
 /// Places a session: on the first offered provider whose adapter has room
-/// for it, or whose free memory or the session's need is unknown, otherwise
-/// on the CPU. A model that ran out of GPU memory before skips providers its
+/// for it with cached buffers, or with released buffers where only that
+/// fits, or whose free memory or the session's need is unknown, otherwise on
+/// the CPU. A model that ran out of GPU memory before skips providers its
 /// `OutOfMemoryRecord` does not allow yet.
 pub(crate) fn place(session: &SessionOptions, state: &AccelerationState<'_>) -> Placement {
     let reason = if !session.allow_acceleration {
@@ -211,6 +231,7 @@ pub(crate) fn place(session: &SessionOptions, state: &AccelerationState<'_>) -> 
         CpuReason::NoGpuBuild
     } else {
         let needed = session.gpu_memory_bytes.map(needed_memory);
+        let released_needed = session.released_gpu_memory_bytes.map(needed_memory);
         let mut shortfall = None;
         for offer in state.providers {
             if let Some(record) = state.out_of_memory {
@@ -219,16 +240,21 @@ pub(crate) fn place(session: &SessionOptions, state: &AccelerationState<'_>) -> 
                     continue;
                 }
             }
-            match (offer.free_memory, needed) {
-                (Some(free), Some(needed)) if free < needed => {
-                    shortfall.get_or_insert(CpuReason::InsufficientMemory { free, needed });
-                }
-                _ => {
-                    return Placement::Gpu {
-                        provider: offer.provider,
+            let buffers = match (offer.free_memory, needed) {
+                (Some(free), Some(needed)) if free < needed => match released_needed {
+                    Some(released) if free >= released => GpuBuffers::Released,
+                    _ => {
+                        let needed = released_needed.unwrap_or(needed);
+                        shortfall.get_or_insert(CpuReason::InsufficientMemory { free, needed });
+                        continue;
                     }
-                }
-            }
+                },
+                _ => GpuBuffers::Cached,
+            };
+            return Placement::Gpu {
+                provider: offer.provider,
+                buffers,
+            };
         }
         shortfall.unwrap_or(CpuReason::NoGpuBackend)
     };

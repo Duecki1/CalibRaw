@@ -17,7 +17,7 @@ pub use jobs::AiJobEvent;
 pub use placement::{
     ai_acceleration_enabled, ai_session_statuses, end_gpu_job_records, gpu_ai_activity,
     gpu_job_in_progress, take_ai_gpu_device_loss, AiSessionStatus, CpuReason, GpuAiActivity,
-    GpuProvider, Placement,
+    GpuBuffers, GpuProvider, Placement,
 };
 pub use registry::install::ModelDownloadProgress;
 pub use registry::{AiFeature, InputShape, ModelInfo};

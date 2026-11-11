@@ -32,8 +32,13 @@ provider then computes in float16 and its masks reach only an IoU of 0.978
 against the CPU's, where the AI parity harness asks for 0.98.
 
 The Sapiens2 License (github.com/facebookresearch/sapiens2/blob/main/LICENSE.md)
-applies to both exports; publish them with a copy of it. Record the size and
-SHA-256 of FP16_WEIGHTS.onnx in crates/calibraw-ai/src/registry/mod.rs.
+applies to both exports; publish them with a copy of it.
+
+CalibRaw downloads FP16_WEIGHTS.onnx with its attention split by
+`packaging/models/attention_blocks.py FP16_WEIGHTS.onnx OUT.onnx rows 24`,
+which lowers the WebGPU peak from about 4.5 to 3.4 GiB and keeps the CPU's
+output bit-identical. Record the size and SHA-256 of OUT.onnx in
+crates/calibraw-ai/src/registry/mod.rs.
 """
 
 import os

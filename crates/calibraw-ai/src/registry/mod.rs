@@ -213,14 +213,19 @@ const RAWNIND_DOWNLOAD: DownloadOptions = DownloadOptions {
 /// the process held while creating the session and running it three times,
 /// sampled through NVML every 5 ms, less the 15 MiB it held with only the
 /// provider's device, rounded up to 100 MiB. Direct3D 12 and Metal are
-/// assumed to need about as much. Placement adds a margin.
+/// assumed to need about as much. Placement adds a margin. Peaks with
+/// released buffers (`GpuBuffers::Released`) are the device's used memory
+/// above idle during one parity-harness run of the model's case
+/// (`crates/calibraw-ai/tests/parity.rs`), sampled the same way; they are
+/// given only where they are lower than the cached peak.
 const fn measured_peak(mib: u64) -> u64 {
     mib * MIB
 }
 
-const fn birefnet_session(peak: u64) -> SessionOptions {
+const fn birefnet_session(peak: u64, released_peak: u64) -> SessionOptions {
     SessionOptions::new("BiRefNet")
         .with_gpu_memory(peak)
+        .with_released_gpu_memory(released_peak)
         .with_webgpu_cpu_nodes(WebGpuCpuNodes::BiRefNetDecoderSplits)
 }
 
@@ -245,12 +250,13 @@ const BIREFNET: ModelSpec = ModelSpec {
         progress_label: "BiRefNet General-Lite",
     },
     input: InputShape::Square { edge: 1024 },
-    // Measured 4557 MiB.
+    // Measured 4557 MiB, 3536 MiB with released buffers.
     // CPU peak: 5093 MiB with ONNX Runtime 1.24.2 on Apple Silicon,
     // sequential execution, two threads, no arena or weight prepacking and
     // memory patterns disabled. Rounded up; placement adds a margin before
     // admitting the session against iOS's process memory allowance.
-    session: birefnet_session(measured_peak(4600)).with_cpu_memory(5300 * MIB),
+    session: birefnet_session(measured_peak(4600), measured_peak(3600))
+        .with_cpu_memory(5300 * MIB),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -273,19 +279,12 @@ const BIREFNET_LOW: ModelSpec = ModelSpec {
         progress_label: "BiRefNet General-Lite 768",
     },
     input: InputShape::Square { edge: 768 },
-    // Measured 3018 MiB.
+    // Measured 3018 MiB, 2192 MiB with released buffers.
     // CPU peak: 4643 MiB under the same configuration as BIREFNET above.
-    session: birefnet_session(measured_peak(3100)).with_cpu_memory(4800 * MIB),
+    session: birefnet_session(measured_peak(3100), measured_peak(2200))
+        .with_cpu_memory(4800 * MIB),
     retention: ModelRetention::WhileWarm,
 };
-
-/// Whether subject masks expected on the GPU use the float16 BiRefNet
-/// conversions below instead of float32: only once the parity harness
-/// confirms them on the GPU provider. On the
-/// WebGPU provider of `measured_peak`'s machine, Medium's masks reached an
-/// IoU of 0.984 against the float32 CPU goldens and Low's 0.995, where the
-/// harness asks for 0.995, for about 10% less time per mask.
-pub(crate) const BIREFNET_FLOAT16_ON_GPU: bool = false;
 
 /// `BIREFNET` converted by `packaging/models/birefnet_fp16.py` for GPU
 /// sessions. Needs about two thirds of the GPU memory on WebGPU; on CUDA its
@@ -305,8 +304,8 @@ const BIREFNET_FP16: ModelSpec = ModelSpec {
         progress_label: "BiRefNet General-Lite (GPU)",
     },
     input: InputShape::Square { edge: 1024 },
-    // Measured 2886 MiB.
-    session: birefnet_session(measured_peak(2900)),
+    // Measured 2886 MiB, 2623 MiB with released buffers.
+    session: birefnet_session(measured_peak(2900), measured_peak(2700)),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -327,8 +326,8 @@ const BIREFNET_LOW_FP16: ModelSpec = ModelSpec {
         progress_label: "BiRefNet General-Lite 768 (GPU)",
     },
     input: InputShape::Square { edge: 768 },
-    // Measured 1713 MiB.
-    session: birefnet_session(measured_peak(1800)),
+    // Measured 1713 MiB, 1495 MiB with released buffers.
+    session: birefnet_session(measured_peak(1800), measured_peak(1500)),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -364,9 +363,9 @@ const DEPTH: ModelSpec = ModelSpec {
     feature: AiFeature::SceneDepth,
     artifact: ModelArtifact {
         name: "Distill-Any-Depth Small",
-        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/distill/distill_any_depth_small_fp32.onnx"),
-        sha256: "ecc33ae26a7899e37dd4edd846d6e553ecafe335b2b97cf129930c840d139093",
-        bytes: 99_487_619,
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/distill/distill_any_depth_small_fp32_chunked.onnx"),
+        sha256: "188d8bba5da3fa07e3027c669bcbffaf6de638d6ada4134f14e7d4ed0977039a",
+        bytes: 102_696_543,
         cache_filename: "distill_any_depth_small_fp32.onnx",
     },
     source: ModelSource::Download {
@@ -377,10 +376,11 @@ const DEPTH: ModelSpec = ModelSpec {
         edge: 1540,
         multiple: 14,
     },
-    // Measured at 1540 × 1036: 6.3 GiB on the GPU, as the device's used memory
-    // above idle, since WebGPU keeps every attention head's score matrix the
-    // export computes one at a time; 1.86 GiB resident on the CPU provider.
-    session: SessionOptions::new("Distill-Any-Depth Small").with_gpu_memory(measured_peak(6300)),
+    // Measured at 1540 × 1036: 2045 MiB on the GPU, as the device's used
+    // memory above idle, and about 0.8 GiB resident on the CPU provider. The
+    // export splits attention into blocks small enough for WebGPU to reuse
+    // within a run; whole score matrices peaked at 6.3 GiB.
+    session: SessionOptions::new("Distill-Any-Depth Small").with_gpu_memory(measured_peak(2100)),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -458,9 +458,11 @@ const SAM_ENCODER: ModelSpec = ModelSpec {
         progress_label: "SAM 2.1 encoder",
     },
     input: InputShape::Square { edge: 1024 },
-    // Measured 2088 MiB.
+    // Measured 2088 MiB; with released buffers 1388 MiB, the decoder's
+    // session included.
     session: SessionOptions::new("SAM 2.1 encoder")
         .with_gpu_memory(measured_peak(2100))
+        .with_released_gpu_memory(measured_peak(1400))
         .with_cpu_fallback_profile(CpuFallbackProfile::SamEncoder),
     retention: ModelRetention::WhileWarm,
 };
@@ -605,15 +607,17 @@ const PERSON_DETECTOR: ModelSpec = ModelSpec {
 /// person's crop, stretched to 768 x 1024. Its weights are stored as float16
 /// and cast to float32 when the session is created, so it computes in
 /// float32 from half the download; computing in float16 on WebGPU missed the
-/// parity harness's IoU.
+/// parity harness's IoU. Its attention runs in 24 blocks of query rows
+/// (`packaging/models/attention_blocks.py`), whose score tensors WebGPU
+/// reuses within a run.
 const BODY_PARTS: ModelSpec = ModelSpec {
     id: AiModel::BodyParts,
     feature: AiFeature::People,
     artifact: ModelArtifact {
         name: "Sapiens2 0.4B body parts",
-        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/sapiens2/sapiens2-seg-0.4b-fp16-weights.onnx"),
-        sha256: "d8350f109b1a91ae84680366d1863e5466e049c3e2b62c4c813b56930ac64e04",
-        bytes: 819_707_563,
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/sapiens2/sapiens2-seg-0.4b-fp16-weights-blocks.onnx"),
+        sha256: "042d4e5aed8380d1e6ecafbd716370f8f5c4d1dc9bc1a73d1bed022d68ef6a5a",
+        bytes: 826_237_739,
         cache_filename: "sapiens2-seg-0.4b-fp16-weights.onnx",
     },
     source: ModelSource::Download {
@@ -624,7 +628,8 @@ const BODY_PARTS: ModelSpec = ModelSpec {
         width: 768,
         height: 1024,
     },
-    // Measured 4531 MiB.
-    session: SessionOptions::new("Sapiens2 0.4B body parts").with_gpu_memory(measured_peak(4600)),
+    // Measured 3436 MiB as the device's used memory above idle with
+    // RF-DETR-Seg loaded beside it; 4550 MiB with whole score tensors.
+    session: SessionOptions::new("Sapiens2 0.4B body parts").with_gpu_memory(measured_peak(3500)),
     retention: ModelRetention::WhileWarm,
 };

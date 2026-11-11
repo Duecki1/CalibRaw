@@ -19,7 +19,7 @@ pub(crate) use job_record::{set_gpu_job_record_path, GpuJobRecord};
 use place::{
     may_stay_loaded, needed_memory, place, AccelerationState, OutOfMemoryRecord, ProviderOffer,
 };
-pub use place::{CpuReason, GpuProvider, Placement};
+pub use place::{CpuReason, GpuBuffers, GpuProvider, Placement};
 pub(crate) use session::{
     create_session_with_fallback, CpuFallbackProfile, FallbackSession, SessionOptions,
 };

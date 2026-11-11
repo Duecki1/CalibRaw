@@ -55,9 +55,9 @@ use calibraw_ai::models::scene_geometry::{SceneDepthQuality, SceneGeometryModel}
 use calibraw_ai::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
 use calibraw_ai::models::{depth, remove, sky};
 use calibraw_ai::pipeline::{
-    crop_raw, load_raw_file, CfaKind, ExposureParams, GeometryTransform, LoadedRaw, MaskImage,
-    MaskStack, ObjectStroke, PersonPart, RemoveBrushPoint, RemoveBrushStroke, RemoveEditState,
-    SceneCamera, SceneDepth,
+    crop_raw, load_raw_embedded_thumbnail, load_raw_file, CfaKind, ExposureParams,
+    GeometryTransform, LoadedRaw, MaskImage, MaskStack, ObjectStroke, PersonPart, RemoveBrushPoint,
+    RemoveBrushStroke, RemoveEditState, SceneCamera, SceneDepth,
 };
 use calibraw_ai::{
     AiConfigChange, AiJobEvent, AiSessionStatus, CpuReason, Placement, RuntimeSource, Sha256,
@@ -90,12 +90,13 @@ const SCENE_PHOTO: Photo = Photo {
     path: "Demo3.5/DSC01000.jpg",
     sha256: "a46fff617da3b759054b9821fec1c524171f218aa040cb92faa6b0976f8cb394",
 };
-/// Someone walking a bicycle across a level crossing, with smaller people
-/// behind: the people model has one clear person to choose and others to
-/// tell apart from them.
+/// A singer with long two-toned hair, bare arms and a patterned dress, a
+/// hand and microphone before her face: face, hair, clothes and skin all
+/// have a clear target. A Panasonic RAW in the `TestFiles` folder beside the
+/// Demo photos.
 const PEOPLE_PHOTO: Photo = Photo {
-    path: "Demo2.5/DSC09867 (1).jpg",
-    sha256: "f2853ff48e00b561469e01201cb6c77c599e911e8f6b66e22b654be7d46a8b91",
+    path: "../TestFiles/hair/1094425.RW2",
+    sha256: "0bd06d1597fd467718629244fc561bed8ae56ea38ac65c1c7d079682c4459a44",
 };
 const BAYER_RAW: Photo = Photo {
     path: "Demo1/DSC00950.arw",
@@ -473,10 +474,18 @@ impl Harness {
         SCENE.get_or_init(|| self.scaled(&SCENE_PHOTO))
     }
 
-    /// `PEOPLE_PHOTO` scaled to `SCENE_EDGE`, decoded once per process.
+    /// `PEOPLE_PHOTO`'s embedded preview at up to `SCENE_EDGE`, decoded
+    /// once per process: a RAW, whose preview the CPU decodes the same way
+    /// on every machine, unlike a GPU render.
     fn people_scene(&self) -> &'static RgbaImage {
         static PEOPLE: OnceLock<RgbaImage> = OnceLock::new();
-        PEOPLE.get_or_init(|| self.scaled(&PEOPLE_PHOTO))
+        PEOPLE.get_or_init(|| {
+            let path = self.photo(&PEOPLE_PHOTO);
+            let preview = load_raw_embedded_thumbnail(&path, SCENE_EDGE)
+                .unwrap_or_else(|error| panic!("preview of {}: {error:#}", path.display()));
+            RgbaImage::from_raw(preview.width, preview.height, preview.rgba)
+                .expect("a preview holds width x height RGBA pixels")
+        })
     }
 
     fn scaled(&self, photo: &Photo) -> RgbaImage {

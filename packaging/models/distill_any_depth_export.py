@@ -25,9 +25,23 @@ side, keeping its aspect ratio.
 Two changes keep the export usable at that size, without changing its
 result (PyTorch agrees with the unchanged model to about 1e-6):
 
-- Attention runs one head at a time. At 1036 x 1540 a head's score matrix
-  is 8141 x 8141 float32 (265 MB); with all six at once ONNX Runtime's CPU
-  provider peaks near 6.9 GB, one at a time near 1.9 GB.
+- Attention runs one head at a time, and each head in QUERY_CHUNKS blocks
+  of query rows; softmax is per row, so the blocks are independent. At
+  1036 x 1540 a head's score matrix is 8141 x 8141 float32 (265 MB); with
+  all six at once ONNX Runtime's CPU provider peaks near 6.9 GB, one at a
+  time near 1.9 GB. ONNX Runtime's WebGPU provider reuses a released
+  buffer within a run only up to 160 MiB, and in a few sizes it keeps
+  several of (`BUCKET_DEFAULT_LIMIT_TABLE` in its `buffer_manager.cc`); it
+  holds the others until its next flush, every 16 dispatches, so whole
+  score matrices piled up to 6.3 GB on the GPU. An eighth of the rows is
+  32 MiB at 1036 x 1540, a size it keeps 22 of, and 73 MB at 1540 x 1540.
+  With 8 blocks the GPU peaks near 2.0 GiB.
+- The blocks' bounds come from the token count, which ONNX's own shape
+  inference does not follow, so ONNX Runtime could not prove that buffers
+  fit one another and reuse them: the CPU peak rose from about 1.0 to
+  1.6 GB. ONNX Runtime's symbolic shape inference names every dimension in
+  the saved graph, which brings it to about 0.8 GB and speeds up the GPU,
+  for about 0.4 GiB more GPU memory than without it.
 - The head's last resize takes its size from the input instead of a Python
   integer, which the TorchScript exporter would freeze at the export size.
 
@@ -44,8 +58,10 @@ import time
 os.environ["TORCHDYNAMO_DISABLE"] = "1"
 
 import numpy as np
+import onnx
 import onnxruntime
 import torch
+from onnxruntime.tools.symbolic_shape_infer import SymbolicShapeInference
 from PIL import Image
 from safetensors.torch import load_file
 from torch import nn
@@ -60,13 +76,27 @@ STD = np.array([0.229, 0.224, 0.225], np.float32)
 CHECK_SIZES = [(1036, 1540), (1540, 1036), (728, 1092)]
 
 
+# Blocks of query rows per head; see the module notes.
+QUERY_CHUNKS = 8
+
+
 def per_head_attention(module, query, key, value, attention_mask, scaling=None, dropout=0.0, **kwargs):
     if scaling is None:
         scaling = query.size(-1) ** -0.5
+    tokens = query.size(2)
     outputs = []
     for head in range(query.shape[1]):
-        scores = torch.matmul(query[:, head : head + 1], key[:, head : head + 1].transpose(2, 3)) * scaling
-        outputs.append(torch.matmul(nn.functional.softmax(scores, dim=-1), value[:, head : head + 1]))
+        keys = key[:, head : head + 1].transpose(2, 3)
+        values = value[:, head : head + 1]
+        rows = []
+        for chunk in range(QUERY_CHUNKS):
+            # Traced from the input's token count, so the bounds follow the
+            # dynamic height and width.
+            start = tokens * chunk // QUERY_CHUNKS
+            end = tokens * (chunk + 1) // QUERY_CHUNKS
+            scores = torch.matmul(query[:, head : head + 1, start:end], keys) * scaling
+            rows.append(torch.matmul(nn.functional.softmax(scores, dim=-1), values))
+        outputs.append(torch.cat(rows, dim=2))
     return torch.cat(outputs, dim=1).transpose(1, 2).contiguous(), None
 
 
@@ -207,6 +237,7 @@ def main():
     finally:
         dinov2.eager_attention_forward = original_attention
         depth_anything.DepthAnythingDepthEstimationHead.forward = original_head
+    onnx.save(SymbolicShapeInference.infer_shapes(onnx.load(output), auto_merge=True), output)
 
     session = onnxruntime.InferenceSession(output, providers=["CPUExecutionProvider"])
     for size in CHECK_SIZES:

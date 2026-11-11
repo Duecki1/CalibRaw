@@ -19,10 +19,10 @@ impl AiSessionStatus {
     /// not known, or `CPU · <reason>`.
     pub fn label(&self) -> String {
         match (self.placement, &self.adapter) {
-            (Placement::Gpu { provider }, Some(adapter)) => {
+            (Placement::Gpu { provider, .. }, Some(adapter)) => {
                 format!("GPU · {adapter} ({})", provider.name())
             }
-            (Placement::Gpu { provider }, None) => format!("GPU · {}", provider.name()),
+            (Placement::Gpu { provider, .. }, None) => format!("GPU · {}", provider.name()),
             (Placement::Cpu { reason }, _) => format!("CPU · {reason}"),
         }
     }

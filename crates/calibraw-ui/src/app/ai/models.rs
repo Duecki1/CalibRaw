@@ -232,16 +232,26 @@ impl CalibRawApp {
         calibraw_ai::models::people::PeopleModels::new(
             self.people_segmentation(),
             &self.ai_model_root(),
-            self.subject_model_precision(),
+            self.subject_model_precision_for(calibraw_ai::models::people::FOREGROUND_QUALITY),
         )
     }
 
-    /// Float16 when subject masks are expected to run on the GPU; see
-    /// `SubjectModelPrecision::for_current_sessions`.
+    /// The precision of the subject model at the subject-mask quality.
     pub(in crate::app) fn subject_model_precision(
         &self,
     ) -> calibraw_ai::models::subject::SubjectModelPrecision {
+        self.subject_model_precision_for(self.ai.subject_mask_quality)
+    }
+
+    /// Float16 when `quality`'s masks are expected to run on the GPU and
+    /// float16 is confirmed for it; see
+    /// `SubjectModelPrecision::for_current_sessions`.
+    fn subject_model_precision_for(
+        &self,
+        quality: calibraw_ai::models::subject::SubjectMaskQuality,
+    ) -> calibraw_ai::models::subject::SubjectModelPrecision {
         calibraw_ai::models::subject::SubjectModelPrecision::for_current_sessions(
+            quality,
             self.manual_onnx_runtime(),
         )
     }

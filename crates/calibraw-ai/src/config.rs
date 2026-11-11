@@ -10,7 +10,7 @@ use calibraw_gpu::memory::AdapterMemory;
 use std::{
     fmt,
     path::{Path, PathBuf},
-    sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
 /// A SHA-256 digest: 64 lowercase hexadecimal digits, checked once when it is
@@ -150,6 +150,108 @@ pub(crate) const CAPABILITIES: AiCapabilities =
             people_body_parts_memory: 0,
         }
     };
+
+const GIB: u64 = 1 << 30;
+
+/// How CPU sessions run on `MemoryClass::Constrained`, where every model runs
+/// beside the RAW preview and the system ends apps that grow too large.
+/// Chosen once per process from the device (`constrained_cpu_sessions`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ConstrainedCpuSessions {
+    /// Intra-op threads of a session, the calling thread included.
+    pub(crate) threads: usize,
+    /// Whether the CPU provider keeps its arena allocator, which saves
+    /// allocations on every run but holds a session's peak until it ends.
+    pub(crate) arena: bool,
+}
+
+impl ConstrainedCpuSessions {
+    /// Two threads, as many as the Tab M11's Helio G88 has fast cores (two
+    /// Cortex-A75s beside six A55s), and no arena. For devices whose RAM or
+    /// cores are not known, and iOS.
+    const ENTRY: Self = Self {
+        threads: 2,
+        arena: false,
+    };
+
+    /// The sessions for a device with `memory` bytes of RAM and `fast_cores`
+    /// fast cores: one thread per fast core, as slow cores hold the others
+    /// back, up to a cap by RAM, as every thread holds its own scratch
+    /// buffers and the preview needs cores too. The arena only from 10 GiB,
+    /// what a phone sold with 12 GB reports (a Galaxy S25 Ultra 10.9 GiB).
+    /// A phone sold with 6 GB reports about 5.5 GiB, one with 8 GB about 7.3.
+    const fn for_device(memory: Option<u64>, fast_cores: Option<usize>) -> Self {
+        let Some(memory) = memory else {
+            return Self::ENTRY;
+        };
+        let (max_threads, arena) = if memory < 6 * GIB {
+            (2, false)
+        } else if memory < 10 * GIB {
+            (4, false)
+        } else {
+            (6, true)
+        };
+        let threads = match fast_cores {
+            Some(fast_cores) if fast_cores < max_threads => fast_cores,
+            Some(_) => max_threads,
+            None => Self::ENTRY.threads,
+        };
+        Self {
+            threads: if threads == 0 { 1 } else { threads },
+            arena,
+        }
+    }
+}
+
+/// How CPU sessions run on `MemoryClass::Constrained` on this device. Records
+/// the choice in diagnostics the first time.
+pub(crate) fn constrained_cpu_sessions() -> ConstrainedCpuSessions {
+    static SESSIONS: OnceLock<ConstrainedCpuSessions> = OnceLock::new();
+    *SESSIONS.get_or_init(|| {
+        let (memory, fast_cores) = if cfg!(target_os = "android") {
+            (
+                calibraw_core::system_memory::total_memory_bytes(),
+                fast_core_count(),
+            )
+        } else {
+            (None, None)
+        };
+        let sessions = ConstrainedCpuSessions::for_device(memory, fast_cores);
+        calibraw_core::diagnostics::record(format!(
+            "AI CPU sessions: {} threads, arena {} ({} MiB RAM, {} fast cores)",
+            sessions.threads,
+            if sessions.arena { "on" } else { "off" },
+            memory.map_or_else(|| "unknown".to_owned(), |bytes| (bytes >> 20).to_string()),
+            fast_cores.map_or_else(|| "unknown".to_owned(), |cores| cores.to_string()),
+        ));
+        sessions
+    })
+}
+
+/// How many cores have at least half the capacity of the fastest, from the
+/// kernel's `cpu_capacity` (1024 for the fastest core). Clock speeds do not
+/// tell: the Helio G88's slow Cortex-A55s run at 90% of its A75s' clock.
+/// `None` where the kernel reports no capacities.
+fn fast_core_count() -> Option<usize> {
+    let capacities: Vec<u32> = (0..)
+        .map(|core| format!("/sys/devices/system/cpu/cpu{core}"))
+        .take_while(|core| Path::new(core).is_dir())
+        .filter_map(|core| {
+            std::fs::read_to_string(format!("{core}/cpu_capacity"))
+                .ok()?
+                .trim()
+                .parse()
+                .ok()
+        })
+        .collect();
+    let fastest = *capacities.iter().max()?;
+    Some(
+        capacities
+            .iter()
+            .filter(|&&capacity| capacity * 2 >= fastest)
+            .count(),
+    )
+}
 
 pub struct AiConfig {
     /// Whether sessions may use GPU execution providers. Android always may.
