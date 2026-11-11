@@ -14,6 +14,11 @@
 # commits pinned in its DEPS file. The prebuilt protoc that ONNX Runtime would
 # download for cross builds is replaced by one built here from the pinned
 # protobuf source. Telemetry (the 1DS SDK) is not built.
+#
+# Patches applied to the ONNX Runtime source:
+# - onnxruntime-webgpu-split-batches.patch: WebGPU Split nodes with more
+#   outputs than the GPU's storage buffer limit run in batches (BiRefNet on
+#   Adreno).
 
 set(CALIBRAW_ONNXRUNTIME_VERSION 1.30.0)
 # Keep in step with ONNX Runtime 1.30.0's cmake/deps.txt, whose SHA1s these
@@ -25,9 +30,12 @@ set(CALIBRAW_ONNXRUNTIME_STAGE "${CALIBRAW_NATIVE_STAGE_ROOT}/onnxruntime/${ANDR
 set(CALIBRAW_ONNXRUNTIME_LIBRARY "${CALIBRAW_ONNXRUNTIME_STAGE}/lib/libonnxruntime.so")
 set(CALIBRAW_ONNXRUNTIME_STAMP "${CALIBRAW_ONNXRUNTIME_STAGE}/calibraw-build.stamp")
 
+set(CALIBRAW_ONNXRUNTIME_PATCH
+    "${CMAKE_CURRENT_LIST_DIR}/onnxruntime-webgpu-split-batches.patch")
 file(SHA256 "${CMAKE_CURRENT_LIST_FILE}" CALIBRAW_ONNXRUNTIME_RECIPE_HASH)
+file(SHA256 "${CALIBRAW_ONNXRUNTIME_PATCH}" CALIBRAW_ONNXRUNTIME_PATCH_HASH)
 set(CALIBRAW_ONNXRUNTIME_STAMP_TEXT
-    "onnxruntime ${CALIBRAW_ONNXRUNTIME_VERSION}\nrecipe ${CALIBRAW_ONNXRUNTIME_RECIPE_HASH}\nndk ${CMAKE_ANDROID_NDK}\nabi ${ANDROID_ABI}\napi ${CALIBRAW_ANDROID_MIN_SDK}\n")
+    "onnxruntime ${CALIBRAW_ONNXRUNTIME_VERSION}\nrecipe ${CALIBRAW_ONNXRUNTIME_RECIPE_HASH}\npatch ${CALIBRAW_ONNXRUNTIME_PATCH_HASH}\nndk ${CMAKE_ANDROID_NDK}\nabi ${ANDROID_ABI}\napi ${CALIBRAW_ANDROID_MIN_SDK}\n")
 
 set(CALIBRAW_ONNXRUNTIME_STAGED_TEXT "")
 if(EXISTS "${CALIBRAW_ONNXRUNTIME_STAMP}" AND EXISTS "${CALIBRAW_ONNXRUNTIME_LIBRARY}")
@@ -133,12 +141,19 @@ ExternalProject_Add(calibraw_onnxruntime_host_protoc
 # -----------------------------------------------------------------------------
 # The options follow `build.py --android --use_webgpu --build_shared_lib
 # --android_cpp_shared --no_telemetry --skip_tests` of the same release.
+# The source folder is named after the patch, so a changed patch is applied to
+# freshly extracted source rather than over the previous one.
+string(SUBSTRING "${CALIBRAW_ONNXRUNTIME_PATCH_HASH}" 0 12 CALIBRAW_ONNXRUNTIME_PATCH_ID)
 ExternalProject_Add(calibraw_onnxruntime_build
     URL https://github.com/microsoft/onnxruntime/archive/refs/tags/v${CALIBRAW_ONNXRUNTIME_VERSION}.tar.gz
     URL_HASH SHA256=f6681ecbddf53898adf0cc9e8e9e84657485b84d2eca3c8aa353de6d7dd417ef
     PREFIX "${CALIBRAW_ONNXRUNTIME_ROOT}/onnxruntime-prefix"
+    SOURCE_DIR "${CALIBRAW_ONNXRUNTIME_ROOT}/onnxruntime-src-${CALIBRAW_ONNXRUNTIME_PATCH_ID}"
     BINARY_DIR "${CALIBRAW_ONNXRUNTIME_ROOT}/onnxruntime-build"
     DEPENDS calibraw_onnxruntime_host_protoc
+    PATCH_COMMAND
+        "${CALIBRAW_PATCH_EXECUTABLE}" -p1 --forward --batch -d <SOURCE_DIR>
+        -i "${CALIBRAW_ONNXRUNTIME_PATCH}"
     CONFIGURE_COMMAND
         "${CALIBRAW_ONNXRUNTIME_CMAKE}"
         -S <SOURCE_DIR>/cmake

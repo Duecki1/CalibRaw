@@ -217,6 +217,9 @@ native components:
   dependencies its pinned release lists; see its
   [license](https://github.com/microsoft/onnxruntime/blob/v1.30.0/LICENSE) and
   [third-party notices](https://github.com/microsoft/onnxruntime/blob/v1.30.0/ThirdPartyNotices.txt).
+  Its WebGPU Split kernel carries CalibRaw's patch
+  `android/app/src/main/cpp/cmake/onnxruntime-webgpu-split-batches.patch`,
+  under the same license.
 - [DirectML](https://github.com/microsoft/DirectML) 1.15.4. The Windows
   Automatic runtime archive includes the redistributable `DirectML.dll` from the
   `Microsoft.AI.DirectML` NuGet package under its
