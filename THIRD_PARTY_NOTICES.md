@@ -34,11 +34,9 @@ against darktable release 5.6.0:
   `crates/calibraw-gpu/src/shaders/xtrans/`, `xtrans_demosaic.wgsl`, and
   `xtrans_finish.wgsl`, based on
   `src/iop/demosaicing/xtrans.c`, `dual.c`, and their OpenCL kernels.
-- LCh and inpaint-opposed highlight reconstruction in
-  `crates/calibraw-gpu/src/shaders/highlights.wgsl` and
-  `crates/calibraw-core/src/pipeline/raw_loader.rs`, based primarily on
-  `src/iop/highlights.c`, `src/iop/hlreconstruct/opposed.c`,
-  `src/iop/hlreconstruct/segbased.c`, and `data/kernels/basic.cl`.
+- LCh highlight reconstruction in
+  `crates/calibraw-gpu/src/shaders/highlights.wgsl`, based on
+  `src/iop/highlights.c` and `data/kernels/basic.cl`.
 - The sigmoid display transform in `crates/calibraw-core/src/pipeline/sigmoid.rs`
   and `crates/calibraw-gpu/src/shaders/tonemap.wgsl`, based on
   `src/iop/sigmoid.c` and `data/kernels/sigmoid.cl`.

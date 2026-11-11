@@ -134,7 +134,8 @@ fn lch_reconstructed_cfa_at(pos: vec2<i32>) -> f32 {
 //   white as the known colour nears its own clip level;
 // - none: blown white, every colour at the highest clip level.
 // A recorded clipped value is a lower bound of its colour, so the two-colour
-// relation on the recorded values is a floor of every case.
+// relation on the recorded values, with the slope highlight_floor_slope
+// allows, is a floor of every case.
 
 struct HighlightCell {
     // Slope of red against green - blue, of green against red - blue and of
@@ -202,6 +203,25 @@ fn highlight_other_colors(color: u32) -> vec2<u32> {
 
 fn highlight_two_known(a: f32, b: f32, slope: f32) -> f32 {
     return 0.5 * (a + b) + slope * (a - b);
+}
+
+// The slope the floor may use when the two colours it reads have clipped
+// samples (`a_clipped`, `b_clipped`). The relation weighs a by 0.5 + slope
+// and b by 0.5 - slope; a recorded value with clipped samples is only a lower
+// bound, so its weight must not be negative or the floor overshoots, which
+// tinted blown spots cyan. With both colours clipped the floor stays at or
+// below the brighter of them. Where the colours are mostly known the estimate
+// follows the unlimited slope and lies above this floor, so limiting it from
+// the first clipped sample on leaves no step.
+fn highlight_floor_slope(slope: f32, a_clipped: bool, b_clipped: bool) -> f32 {
+    var limited = slope;
+    if a_clipped {
+        limited = max(limited, -0.5);
+    }
+    if b_clipped {
+        limited = min(limited, 0.5);
+    }
+    return limited;
 }
 
 // Clipped `color` from the one known colour `known_color` at level `known`.
@@ -277,7 +297,8 @@ fn guided_cfa_at(pos: vec2<i32>) -> f32 {
         + share_a * (1.0 - share_b) * highlight_one_known(known[others.x], others.x, color, cell, clip_levels, white)
         + (1.0 - share_a) * share_b * highlight_one_known(known[others.y], others.y, color, cell, clip_levels, white)
         + (1.0 - share_a) * (1.0 - share_b) * white;
-    let lower_bound = highlight_two_known(recorded[others.x], recorded[others.y], slope);
+    let floor_slope = highlight_floor_slope(slope, share_a < 1.0, share_b < 1.0);
+    let lower_bound = highlight_two_known(recorded[others.x], recorded[others.y], floor_slope);
     return max(original, max(estimate, lower_bound));
 }
 
@@ -377,26 +398,48 @@ fn binned_guided_rgb(pos: vec2<i32>, sensor: vec3<f32>, camera: vec3<f32>) -> ve
     let clip_levels = highlight_clip_levels();
     let white = max(clip_levels.r, max(clip_levels.g, clip_levels.b));
     let recorded = max(camera, vec3<f32>(0.0));
+    // One call per colour, the other colours' clipping passed as swizzles: the
+    // Adreno 830 Vulkan compiler crashes on a bool vector indexed at run time.
     var output = camera;
-    for (var color = 0u; color < 3u; color = color + 1u) {
-        if !clipped[color] {
-            continue;
-        }
-        let others = highlight_other_colors(color);
-        let a = recorded[others.x];
-        let b = recorded[others.y];
-        let lower_bound = highlight_two_known(a, b, cell.slopes[color]);
-        var estimate = white;
-        if !clipped[others.x] && !clipped[others.y] {
-            estimate = lower_bound;
-        } else if !clipped[others.x] {
-            estimate = highlight_one_known(a, others.x, color, cell, clip_levels, white);
-        } else if !clipped[others.y] {
-            estimate = highlight_one_known(b, others.y, color, cell, clip_levels, white);
-        }
-        output[color] = max(camera[color], max(estimate, lower_bound));
+    if clipped.r {
+        output.r = binned_guided_color(0u, camera.r, recorded, clipped.gb, cell, clip_levels, white);
+    }
+    if clipped.g {
+        output.g = binned_guided_color(1u, camera.g, recorded, clipped.rb, cell, clip_levels, white);
+    }
+    if clipped.b {
+        output.b = binned_guided_color(2u, camera.b, recorded, clipped.rg, cell, clip_levels, white);
     }
     return output;
+}
+
+// Clipped `color` of a binned pixel at level `camera_value`, from `recorded`,
+// the pixel's colours, of which the other two (highlight_other_colors) clipped
+// as `others_clipped` says.
+fn binned_guided_color(
+    color: u32,
+    camera_value: f32,
+    recorded: vec3<f32>,
+    others_clipped: vec2<bool>,
+    cell: HighlightCell,
+    clip_levels: vec3<f32>,
+    white: f32,
+) -> f32 {
+    let others = highlight_other_colors(color);
+    let a = recorded[others.x];
+    let b = recorded[others.y];
+    let slope = cell.slopes[color];
+    let floor_slope = highlight_floor_slope(slope, others_clipped.x, others_clipped.y);
+    let lower_bound = highlight_two_known(a, b, floor_slope);
+    var estimate = white;
+    if !others_clipped.x && !others_clipped.y {
+        estimate = highlight_two_known(a, b, slope);
+    } else if !others_clipped.x {
+        estimate = highlight_one_known(a, others.x, color, cell, clip_levels, white);
+    } else if !others_clipped.y {
+        estimate = highlight_one_known(b, others.y, color, cell, clip_levels, white);
+    }
+    return max(camera_value, max(estimate, lower_bound));
 }
 
 // highlight_reconstruct for a binned source, which holds every colour at

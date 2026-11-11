@@ -90,7 +90,7 @@ Set `WGPU_BACKEND` (for example `vulkan`) to choose the graphics API yourself.
 - **Rust & GPU Compute:** Built with `egui` and `wgpu`, with compute shaders for image processing.
 - **Color Grading & Point Color:** Sample colors directly with an eyedropper, fine-tune custom Hue, Saturation, and Luminance ranges, and preview affected areas with a live selection mask.
 - **Demosaicing:** Shader-based Bayer RCD, Fujifilm X-Trans (Markesteijn 3-pass), and Dual Demosaicing to reduce noise and artifacts in high-ISO images.
-- **Sigmoid Tone Mapping:** Smooth highlight roll-off inspired by modern scene-referred color workflows, paired with Opposed and LCh highlight recovery.
+- **Sigmoid Tone Mapping:** Smooth highlight roll-off inspired by modern scene-referred color workflows, paired with guided and LCh highlight recovery.
 - **Local AI Tools (Offline):** Subject, sky, depth and object masks, AI Denoise, and AI Remove.
 - **Android App:** An ARM64 NDK build with 16 KB memory page support, touch layouts, and MediaStore exporting.
 - **Non-Destructive Edits:** All sliders, curves, and masks are saved to lightweight `.calibraw` JSON sidecar files.
@@ -257,7 +257,7 @@ cargo install cargo-ndk --version 4.1.2 --locked
 
 CalibRaw's shaders and tools draw on work from these projects:
 
-- **[darktable](https://www.darktable.org/)**: Bayer RCD, X-Trans Markesteijn, Opposed highlight recovery, and Sigmoid tone mapping logic.
+- **[darktable](https://www.darktable.org/)**: Bayer RCD, X-Trans Markesteijn, LCh highlight recovery, and Sigmoid tone mapping logic.
 - **[GIMP](https://www.gimp.org/) & [Ansel](https://ansel.photos/)**: Laplace inpainting foundations and color normalization references.
 - **[LibRaw](https://github.com/LibRaw/LibRaw), [Rawler](https://github.com/dnglab/dnglab), & [Lensfun](https://github.com/lensfun/lensfun)**: RAW decoding, DNG metadata extraction, and lens profile databases.
 - **[RapidRAW](https://github.com/CyberTimon/RapidRAW)**: Interface and workflow layout inspiration.
