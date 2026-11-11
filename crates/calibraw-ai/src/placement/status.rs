@@ -1,6 +1,6 @@
 //! Where each model's latest session runs, for Settings and diagnostics.
 
-use super::place::{CpuProvider, CpuReason, Placement};
+use super::place::{CpuReason, Placement};
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
@@ -16,40 +16,24 @@ pub struct AiSessionStatus {
 
 impl AiSessionStatus {
     /// `GPU · <adapter> (<provider>)`, `GPU · <provider>` when the adapter is
-    /// not known, `CPU · <reason>`, or `CPU (OpenVINO) · <reason>`.
+    /// not known, or `CPU · <reason>`.
     pub fn label(&self) -> String {
         match (self.placement, &self.adapter) {
             (Placement::Gpu { provider, .. }, Some(adapter)) => {
                 format!("GPU · {adapter} ({})", provider.name())
             }
             (Placement::Gpu { provider, .. }, None) => format!("GPU · {}", provider.name()),
-            (
-                Placement::Cpu {
-                    reason,
-                    provider: CpuProvider::Default,
-                },
-                _,
-            ) => format!("CPU · {reason}"),
-            (
-                Placement::Cpu {
-                    reason,
-                    provider: CpuProvider::OpenVino,
-                },
-                _,
-            ) => format!("CPU (OpenVINO) · {reason}"),
+            (Placement::Cpu { reason }, _) => format!("CPU · {reason}"),
         }
     }
 
     /// Whether a GPU provider failed for this model, other than by running
     /// out of memory.
     pub fn gpu_failed(&self) -> bool {
-        matches!(
-            self.placement,
-            Placement::Cpu {
+        self.placement
+            == Placement::Cpu {
                 reason: CpuReason::GpuFailed,
-                ..
             }
-        )
     }
 }
 

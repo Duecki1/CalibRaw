@@ -83,16 +83,6 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
-    pub(crate) fn set_ai_openvino(&mut self, enabled: bool) {
-        if self.ai.openvino == enabled {
-            return;
-        }
-        self.ai.openvino = enabled;
-        calibraw_ai::update(calibraw_ai::AiConfigChange::OpenVino(enabled));
-        self.persist_performance_settings();
-        self.egui_ctx.request_repaint();
-    }
-
     pub(crate) fn set_ai_gpu_acceleration(&mut self, enabled: bool) {
         if self.ai.gpu_acceleration == enabled {
             return;
@@ -388,7 +378,6 @@ impl CalibRawApp {
             people_mask_quality: self.ai.people_mask_quality,
             scene_depth_quality: self.ai.scene_depth_quality,
             ai_gpu_acceleration: self.ai.gpu_acceleration,
-            ai_openvino: self.ai.openvino,
             onnx_runtime_mode: self.ai.runtime_mode,
             discord_rich_presence: self.preferences.discord_rich_presence,
             hdd_mode: self.preferences.hdd_mode,

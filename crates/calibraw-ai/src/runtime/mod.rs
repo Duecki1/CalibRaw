@@ -1,12 +1,9 @@
 //! The ONNX Runtime library: loading it into this process (`load`), its log
 //! (`logger`), checking a user-selected one in a separate process first
-//! (`probe`), the automatic runtime packages (`package`) and the OpenVINO
-//! package (`openvino`).
+//! (`probe`), and the automatic runtime packages (`package`).
 
 mod load;
 mod logger;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-mod openvino;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod package;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -14,20 +11,17 @@ mod probe;
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub use builtin::{
-    automatic_onnx_runtime_core_is_installed, automatic_onnx_runtime_info,
-    automatic_onnx_runtime_is_installed, bundled_onnx_runtime_path, openvino_package_info,
-    openvino_package_is_installed, openvino_supported, probe_runtime_subprocess,
-    retired_runtime_paths, run_runtime_probe_process, runtime_loaded_in_process,
+    automatic_onnx_runtime_info, automatic_onnx_runtime_is_installed, bundled_onnx_runtime_path,
+    probe_runtime_subprocess, retired_runtime_paths, run_runtime_probe_process,
+    runtime_loaded_in_process,
 };
 pub use load::initialize_runtime;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use load::runtime_loaded_in_process;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub use openvino::{openvino_package_info, openvino_package_is_installed, openvino_supported};
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use package::{
-    ai_sessions_may_use_gpu, automatic_onnx_runtime_core_is_installed, automatic_onnx_runtime_info,
-    automatic_onnx_runtime_is_installed, bundled_onnx_runtime_path, retired_runtime_paths,
+    ai_sessions_may_use_gpu, automatic_onnx_runtime_info, automatic_onnx_runtime_is_installed,
+    bundled_onnx_runtime_path, retired_runtime_paths,
 };
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) use package::{automatic_runtime_lacks_gpu_build, ensure_automatic_onnx_runtime};
@@ -41,15 +35,6 @@ pub struct AutomaticOnnxRuntimeInfo {
     pub download_bytes: u64,
     /// `None` for a bundled runtime.
     pub download_url: Option<&'static str>,
-}
-
-/// What the consent dialog says about the OpenVINO download.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OpenVinoPackageInfo {
-    pub plugin_version: &'static str,
-    pub openvino_version: &'static str,
-    pub download_bytes: u64,
-    pub download_url: &'static str,
 }
 
 /// Mobile builds link ONNX Runtime into the app: there is no runtime to
@@ -77,23 +62,6 @@ mod builtin {
     }
 
     pub fn automatic_onnx_runtime_is_installed() -> bool {
-        true
-    }
-
-    pub fn automatic_onnx_runtime_core_is_installed() -> bool {
-        true
-    }
-
-    /// OpenVINO is desktop-only.
-    pub fn openvino_supported() -> bool {
-        false
-    }
-
-    pub fn openvino_package_info() -> Option<super::OpenVinoPackageInfo> {
-        None
-    }
-
-    pub fn openvino_package_is_installed() -> bool {
         true
     }
 

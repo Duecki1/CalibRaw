@@ -1,7 +1,6 @@
 //! Where sessions run: the rule that puts each on a GPU provider when it fits
 //! and on the CPU otherwise (`place`), the providers on offer, rebuilding on
-//! the CPU when a GPU fails or on ONNX Runtime's CPU provider when OpenVINO
-//! does, and where each model ended up.
+//! the CPU when a GPU fails, and where each model ended up.
 
 mod failure;
 mod job_record;
@@ -20,7 +19,7 @@ pub(crate) use job_record::{set_gpu_job_record_path, GpuJobRecord};
 use place::{
     may_stay_loaded, needed_memory, place, AccelerationState, OutOfMemoryRecord, ProviderOffer,
 };
-pub use place::{CpuProvider, CpuReason, GpuBuffers, GpuProvider, Placement};
+pub use place::{CpuReason, GpuBuffers, GpuProvider, Placement};
 pub(crate) use session::{
     create_session_with_fallback, CpuFallbackProfile, FallbackSession, SessionOptions,
 };
@@ -42,42 +41,6 @@ pub(crate) fn provider_generation() -> u64 {
 
 #[cfg(not(target_os = "android"))]
 static AI_ACCELERATION_ENABLED: AtomicBool = AtomicBool::new(true);
-
-/// Off until `configure` says otherwise.
-#[cfg(not(target_os = "android"))]
-static OPENVINO_ENABLED: AtomicBool = AtomicBool::new(false);
-
-/// Android has no OpenVINO.
-#[cfg(target_os = "android")]
-pub(crate) fn set_openvino_enabled(_enabled: bool) {}
-
-/// Lets CPU sessions created from now on use OpenVINO where the runtime
-/// offers it, or keeps them on ONNX Runtime's CPU provider. Loaded sessions
-/// of the other choice are not reused.
-#[cfg(not(target_os = "android"))]
-pub(crate) fn set_openvino_enabled(enabled: bool) {
-    if OPENVINO_ENABLED.swap(enabled, Ordering::AcqRel) != enabled {
-        status::clear();
-        calibraw_core::diagnostics::record(format!(
-            "AI OpenVINO {} in Settings",
-            if enabled { "enabled" } else { "disabled" }
-        ));
-        PROVIDER_GENERATION.fetch_add(1, Ordering::AcqRel);
-        crate::slot::unload_cold_session();
-    }
-}
-
-/// Whether CPU sessions may use OpenVINO.
-pub(crate) fn openvino_enabled() -> bool {
-    #[cfg(not(target_os = "android"))]
-    {
-        OPENVINO_ENABLED.load(Ordering::Acquire)
-    }
-    #[cfg(target_os = "android")]
-    {
-        false
-    }
-}
 
 /// Android always allows GPU providers.
 #[cfg(target_os = "android")]
@@ -136,7 +99,6 @@ impl AccelerationSettings {
     fn with_providers(
         self,
         providers: &[ProviderOffer],
-        cpu_provider: CpuProvider,
         out_of_memory: Option<OutOfMemoryRecord>,
     ) -> AccelerationState<'_> {
         AccelerationState {
@@ -144,7 +106,6 @@ impl AccelerationSettings {
             quarantined: self.quarantined,
             gpu_build: self.gpu_build,
             providers,
-            cpu_provider,
             out_of_memory,
         }
     }

@@ -304,10 +304,10 @@ impl CalibRawApp {
                 Err(error) => {
                     if error.contains("consent to its download again") {
                         self.inpaint.pending_brush = pending_brush;
-                        let runtime_download = self.automatic_onnx_runtime_download();
+                        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
                         self.ai.consent = Some(AiConsent {
                             feature: AiFeature::Remove,
-                            runtime_download,
+                            runtime_download_needed,
                             origin: AiJobOrigin::Requested,
                         });
                         self.ui.notice = Some(
@@ -363,7 +363,7 @@ mod tests {
             app.inpaint.selected_stroke = Some(0);
             app.ai.consent = Some(AiConsent {
                 feature: AiFeature::Remove,
-                runtime_download: RuntimeDownload::default(),
+                runtime_download_needed: false,
                 origin: AiJobOrigin::Requested,
             });
 

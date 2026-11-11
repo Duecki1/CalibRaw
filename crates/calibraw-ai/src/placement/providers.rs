@@ -1,7 +1,7 @@
-//! The GPU providers a session may try, in order, before the CPU, what is
-//! known about the adapter each runs on, and the provider CPU sessions use.
+//! The GPU providers a session may try, in order, before the CPU, and what is
+//! known about the adapter each runs on.
 
-use super::place::{CpuProvider, GpuBuffers, GpuProvider, ProviderOffer};
+use super::place::{GpuBuffers, GpuProvider, ProviderOffer};
 use super::quirks;
 use super::session::{CpuFallbackProfile, SessionOptions};
 use crate::config::{constrained_cpu_sessions, GpuIdentity, MemoryClass, CAPABILITIES};
@@ -9,7 +9,6 @@ use anyhow::{Context, Result};
 use ort::device::Device;
 use ort::environment::Environment;
 use ort::ep::ExecutionProviderDispatch;
-use ort::memory::DeviceType;
 use ort::session::builder::SessionBuilder;
 use ort::AsPointer;
 
@@ -24,9 +23,6 @@ const PLATFORM_PROVIDERS: &[GpuProvider] = &[];
 
 /// The name ONNX Runtime gives the WebGPU plugin's execution provider.
 const WEBGPU_EP: &str = "WebGpuExecutionProvider";
-
-/// The name ONNX Runtime gives the OpenVINO plugin's execution provider.
-const OPENVINO_EP: &str = "OpenVINOExecutionProvider";
 
 /// PCI vendor and device ID of the hardware `device` stands for.
 fn hardware_ids(device: &Device<'_>) -> (u32, u32) {
@@ -106,52 +102,6 @@ pub(super) fn offered_providers(gpu: Option<&GpuIdentity>) -> Vec<ProviderOffer>
             })
         })
         .collect()
-}
-
-/// The OpenVINO plugin's CPU device, where `runtime` registered it.
-/// The plugin offers devices for Intel hardware only.
-fn openvino_cpu_device(environment: &Environment) -> Option<Device<'_>> {
-    environment.devices().find(|device| {
-        device.ep().is_ok_and(|name| name == OPENVINO_EP) && device.ty() == DeviceType::CPU
-    })
-}
-
-/// The provider CPU sessions run on: OpenVINO where it is enabled and the
-/// loaded runtime offers its CPU device, otherwise ONNX Runtime's own. GPU
-/// providers come first (`place`), so OpenVINO only takes sessions that
-/// would otherwise run on ONNX Runtime's CPU provider.
-pub(super) fn offered_cpu_provider() -> CpuProvider {
-    if !super::openvino_enabled() {
-        return CpuProvider::Default;
-    }
-    match ort::environment::current() {
-        Ok(environment) if openvino_cpu_device(&environment).is_some() => CpuProvider::OpenVino,
-        _ => CpuProvider::Default,
-    }
-}
-
-/// Adds the OpenVINO plugin's CPU device to `builder`, then ONNX Runtime's
-/// CPU provider for the nodes it does not run. `load_config` holds
-/// OpenVINO's CPU inference to float32, the precision ONNX Runtime's CPU
-/// provider computes in; OpenVINO would otherwise use bfloat16 on CPUs that
-/// have it.
-pub(super) fn with_openvino_provider(
-    builder: SessionBuilder,
-    options: &SessionOptions,
-) -> Result<SessionBuilder> {
-    let environment = ort::environment::current()
-        .map_err(|error| anyhow::anyhow!("get the ONNX Runtime environment: {error}"))?;
-    let device =
-        openvino_cpu_device(&environment).context("the OpenVINO provider has no CPU device")?;
-    let provider_options = [(
-        format!("{OPENVINO_EP}.load_config"),
-        r#"{"CPU":{"INFERENCE_PRECISION_HINT":"f32"}}"#.to_owned(),
-    )];
-    builder
-        .with_devices([device], Some(&provider_options))
-        .map_err(|error| anyhow::anyhow!("configure OpenVINO execution provider: {error}"))?
-        .with_execution_providers([cpu_provider(options)])
-        .map_err(|error| anyhow::anyhow!("configure OpenVINO execution provider: {error}"))
 }
 
 /// Options for the WebGPU provider, prefixed with its name as `with_devices`

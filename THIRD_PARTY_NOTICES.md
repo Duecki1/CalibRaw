@@ -215,19 +215,6 @@ native components:
   pinned ONNX Runtime 1.24.2 archive selected by `ort-sys`; see its
   [license](https://github.com/microsoft/onnxruntime/blob/v1.24.2/LICENSE) and
   [third-party notices](https://github.com/microsoft/onnxruntime/blob/v1.24.2/ThirdPartyNotices.txt).
-- On Intel CPUs under Linux x86_64 and Windows x64, Automatic mode with
-  "Use OpenVINO on Intel CPUs" on (the default) downloads a pinned archive from
-  [CalibRaw Artifacts](https://huggingface.co/Duecki/CalibRaw-Artifacts) with
-  Intel's OpenVINO execution provider plugin for ONNX Runtime 1.8.1
-  ([`onnxruntime-ep-openvino`](https://pypi.org/project/onnxruntime-ep-openvino/1.8.1/),
-  MIT, Copyright Intel Corporation) and the CPU part of the runtime it
-  bundles: [OpenVINO](https://github.com/openvinotoolkit/openvino/tree/2026.4.1)
-  2026.4.1 and [oneTBB](https://github.com/uxlfoundation/oneTBB/tree/v2021.13.1)
-  2021.13.1, both Apache-2.0, and
-  [hwloc](https://github.com/open-mpi/hwloc/blob/hwloc-2.9.3/COPYING) 2.9.3,
-  BSD-3-Clause. The archive carries their license texts and the plugin's
-  `third-party-programs.txt`; on Windows its `openvino_runtime.manifest` lists
-  only the libraries it ships.
 - [DirectML](https://github.com/microsoft/DirectML) 1.15.4. The Windows
   Automatic runtime archive includes the redistributable `DirectML.dll` from the
   `Microsoft.AI.DirectML` NuGet package under its

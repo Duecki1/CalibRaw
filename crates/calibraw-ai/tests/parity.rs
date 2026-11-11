@@ -23,9 +23,6 @@
 //!   the automatic runtime.
 //! - `CALIBRAW_PARITY_GPU=1`: keep GPU acceleration on, to compare GPU
 //!   sessions with the CPU goldens. Without it every session runs on the CPU.
-//! - `CALIBRAW_PARITY_OPENVINO=1`: let CPU sessions use OpenVINO on an Intel
-//!   CPU in Automatic runtime mode, to compare them with the goldens of ONNX
-//!   Runtime's CPU provider. The package must be installed or downloadable.
 //! - `CALIBRAW_PARITY_BLESS=1`: write the goldens and their SHA-256 pins from
 //!   this run instead of comparing. CPU sessions only.
 //!
@@ -441,19 +438,13 @@ impl Harness {
             });
         let flag = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
         let gpu = flag("CALIBRAW_PARITY_GPU");
-        let openvino = flag("CALIBRAW_PARITY_OPENVINO");
         let bless = flag("CALIBRAW_PARITY_BLESS");
         assert!(
             !(gpu && bless),
             "goldens come from CPU sessions; unset CALIBRAW_PARITY_GPU to bless"
         );
-        assert!(
-            !(openvino && bless),
-            "goldens come from ONNX Runtime's CPU provider; unset CALIBRAW_PARITY_OPENVINO to bless"
-        );
         calibraw_ai::update(AiConfigChange::Runtime(runtime));
         calibraw_ai::update(AiConfigChange::Acceleration(gpu));
-        calibraw_ai::update(AiConfigChange::OpenVino(openvino));
         Self {
             _serial: serial,
             photos,
@@ -773,7 +764,7 @@ impl Harness {
             Ok(report) => eprintln!("{name}: {report}"),
             Err(report) => panic!("{name}: {report}"),
         }
-        let on_cpu = |status: &AiSessionStatus| matches!(status.placement, Placement::Cpu { reason, .. } if reason != CpuReason::CpuOnly);
+        let on_cpu = |status: &AiSessionStatus| matches!(status.placement, Placement::Cpu { reason } if reason != CpuReason::CpuOnly);
         if self.gpu && statuses.iter().any(on_cpu) {
             eprintln!("{name}: warning: a session ran on the CPU");
         }

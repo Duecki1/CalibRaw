@@ -1,6 +1,5 @@
 //! The rule for where a session runs: on a GPU provider when the session fits
-//! in the memory free on that provider's adapter, otherwise on the CPU, with
-//! OpenVINO where it is enabled and the runtime offers it. It is
+//! in the memory free on that provider's adapter, otherwise on the CPU. It is
 //! a pure function of the session and the state it is given, so every model
 //! on every platform follows it the same way.
 
@@ -34,28 +33,6 @@ impl GpuProvider {
     }
 }
 
-/// The provider a CPU session runs on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CpuProvider {
-    /// ONNX Runtime's own CPU provider.
-    Default,
-    /// The OpenVINO plugin's CPU device (`runtime::openvino`), with ONNX
-    /// Runtime's CPU provider for the nodes OpenVINO does not take. A
-    /// session it fails to create or run, or that would not fit in the free
-    /// RAM, moves to `Default`.
-    OpenVino,
-}
-
-impl CpuProvider {
-    /// The name in diagnostics and statuses.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Default => "CPU",
-            Self::OpenVino => "OpenVINO",
-        }
-    }
-}
-
 /// What a GPU session does with the storage buffers a run releases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GpuBuffers {
@@ -78,16 +55,15 @@ pub enum Placement {
     },
     Cpu {
         reason: CpuReason,
-        provider: CpuProvider,
     },
 }
 
 impl Placement {
-    /// The GPU provider's name, or the CPU provider's.
+    /// The GPU provider's name, or `CPU`.
     pub const fn provider_name(self) -> &'static str {
         match self {
             Self::Gpu { provider, .. } => provider.name(),
-            Self::Cpu { provider, .. } => provider.name(),
+            Self::Cpu { .. } => "CPU",
         }
     }
 }
@@ -230,9 +206,6 @@ pub(crate) struct AccelerationState<'a> {
     pub(crate) gpu_build: bool,
     /// The GPU providers the loaded runtime offers, most preferred first.
     pub(crate) providers: &'a [ProviderOffer],
-    /// The provider CPU sessions run on: OpenVINO where the loaded runtime
-    /// offers its CPU device.
-    pub(crate) cpu_provider: CpuProvider,
     /// Whether and how the model ran out of GPU memory before.
     pub(crate) out_of_memory: Option<OutOfMemoryRecord>,
 }
@@ -245,9 +218,8 @@ pub(crate) const fn needed_memory(peak: u64) -> u64 {
 /// Places a session: on the first offered provider whose adapter has room
 /// for it with cached buffers, or with released buffers where only that
 /// fits, or whose free memory or the session's need is unknown, otherwise on
-/// the CPU, on `AccelerationState::cpu_provider`. A model that ran out of
-/// GPU memory before skips providers its `OutOfMemoryRecord` does not allow
-/// yet.
+/// the CPU. A model that ran out of GPU memory before skips providers its
+/// `OutOfMemoryRecord` does not allow yet.
 pub(crate) fn place(session: &SessionOptions, state: &AccelerationState<'_>) -> Placement {
     let reason = if !session.allow_acceleration {
         CpuReason::CpuOnly
@@ -286,8 +258,5 @@ pub(crate) fn place(session: &SessionOptions, state: &AccelerationState<'_>) -> 
         }
         shortfall.unwrap_or(CpuReason::NoGpuBackend)
     };
-    Placement::Cpu {
-        reason,
-        provider: state.cpu_provider,
-    }
+    Placement::Cpu { reason }
 }

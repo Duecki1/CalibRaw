@@ -1,18 +1,14 @@
-//! Creating a session where `place` puts it, rebuilding it on the CPU when
-//! its GPU provider fails, and on ONNX Runtime's CPU provider when OpenVINO
-//! does.
+//! Creating a session where `place` puts it, and rebuilding it on the CPU
+//! when its GPU provider fails.
 
 use super::failure::{
     quarantine_after_device_loss, GpuFailure, LoggedGpuErrors, RunFailure, SetupFailure,
 };
 use super::job_record::{GpuJobRecord, GpuSessionRecord};
-use super::memory::{ensure_cpu_memory_available, ensure_openvino_memory_available};
+use super::memory::ensure_cpu_memory_available;
 use super::out_of_memory;
-use super::place::{CpuProvider, CpuReason, GpuBuffers, GpuProvider, Placement, ProviderOffer};
-use super::providers::{
-    cpu_provider, offered_cpu_provider, offered_providers, with_gpu_provider,
-    with_openvino_provider,
-};
+use super::place::{CpuReason, GpuBuffers, GpuProvider, Placement, ProviderOffer};
+use super::providers::{cpu_provider, offered_providers, with_gpu_provider};
 use super::quirks::{self, WebGpuCpuNodes};
 use super::status::publish_status;
 use crate::config::{constrained_cpu_sessions, MemoryClass, CAPABILITIES};
@@ -108,21 +104,17 @@ impl SessionOptions {
     }
 }
 
-/// Where a session of `options` for the model at `source` runs now, with
-/// CPU sessions on `cpu`, and the GPU providers on offer. Those are only
-/// queried when the session may use one.
-fn current_placement(
-    source: &Path,
-    options: &SessionOptions,
-    cpu: CpuProvider,
-) -> (Placement, Vec<ProviderOffer>) {
+/// Where a session of `options` for the model at `source` runs now, and the
+/// providers on offer. The providers are only queried when the session may
+/// use one.
+fn current_placement(source: &Path, options: &SessionOptions) -> (Placement, Vec<ProviderOffer>) {
     let settings = super::acceleration_settings();
     let offers = if options.allow_acceleration && settings.usable() {
         offered_providers(super::editor_gpu())
     } else {
         Vec::new()
     };
-    let placement = place_on(source, options, settings, &offers, cpu);
+    let placement = place_on(source, options, settings, &offers);
     (placement, offers)
 }
 
@@ -131,11 +123,10 @@ fn place_on(
     options: &SessionOptions,
     settings: super::AccelerationSettings,
     offers: &[ProviderOffer],
-    cpu: CpuProvider,
 ) -> Placement {
     super::place(
         options,
-        &settings.with_providers(offers, cpu, out_of_memory::lookup(source)),
+        &settings.with_providers(offers, out_of_memory::lookup(source)),
     )
 }
 
@@ -194,46 +185,6 @@ fn create_cpu_session_inner(source: &Path, options: &SessionOptions) -> Result<S
     commit_model(&mut builder, source)
 }
 
-/// A CPU session on `provider`, else on ONNX Runtime's CPU provider when
-/// OpenVINO fails to create it, and the provider it ended up on.
-fn create_cpu_session(
-    source: &Path,
-    options: &SessionOptions,
-    provider: CpuProvider,
-) -> Result<(Session, CpuProvider)> {
-    if provider == CpuProvider::OpenVino {
-        match create_openvino_session(source, options) {
-            Ok(session) => return Ok((session, provider)),
-            Err(error) => {
-                log::warn!(
-                    "AI {} could not create its OpenVINO session; using the CPU provider: {error:#}",
-                    options.model_name
-                );
-                calibraw_core::diagnostics::record(format!(
-                    "AI {}: OpenVINO session failed ({error:#}); using the CPU provider",
-                    options.model_name
-                ));
-            }
-        }
-    }
-    let session = create_cpu_session_inner(source, options)?;
-    Ok((session, CpuProvider::Default))
-}
-
-fn create_openvino_session(source: &Path, options: &SessionOptions) -> Result<Session> {
-    // Check before loading: the peak already includes the model's weights.
-    ensure_cpu_memory_available(options)?;
-    let model_bytes = std::fs::metadata(source)
-        .with_context(|| format!("inspect ONNX model {}", source.display()))?
-        .len();
-    ensure_openvino_memory_available(options, model_bytes)?;
-    let builder = Session::builder().context("create OpenVINO ONNX Runtime session")?;
-    let builder = configure_common_builder(builder)?;
-    let builder = configure_cpu_builder(builder, options)?;
-    let mut builder = with_openvino_provider(builder, options)?;
-    commit_model(&mut builder, source)
-}
-
 fn create_accelerated_session(
     source: &Path,
     options: &SessionOptions,
@@ -288,8 +239,8 @@ impl FallbackSession {
     /// "room" is what `out_of_memory` allows.
     pub(crate) fn gpu_now_fits(&self) -> bool {
         match self.placement {
-            Placement::Cpu { reason, .. } if reason.memory_bound() => matches!(
-                current_placement(&self.source, &self.options, offered_cpu_provider()).0,
+            Placement::Cpu { reason } if reason.memory_bound() => matches!(
+                current_placement(&self.source, &self.options).0,
                 Placement::Gpu { .. }
             ),
             _ => false,
@@ -327,13 +278,8 @@ impl FallbackSession {
     where
         F: FnMut(&mut Session, bool) -> Result<T>,
     {
-        let provider = match self.placement {
-            Placement::Gpu { provider, .. } => provider,
-            Placement::Cpu {
-                reason,
-                provider: CpuProvider::OpenVino,
-            } => return self.run_with_cpu_fallback(operation, reason, run),
-            Placement::Cpu { .. } => return run(&mut self.session, false),
+        let Placement::Gpu { provider, .. } = self.placement else {
+            return run(&mut self.session, false);
         };
         let result = run(&mut self.session, true);
         let failure = match GpuFailure::check(operation, result, self.logged_gpu_errors.since()) {
@@ -364,64 +310,21 @@ impl FallbackSession {
             "AI {model_name}: {failed} inference failed ({reason}); switching to CPU fallback"
         ));
 
-        let (cpu_session, cpu) = create_cpu_session(
-            &self.source,
-            &self.options,
-            offered_cpu_provider(),
-        )
-        .with_context(|| {
-            format!("rebuild {model_name} on CPU after {failed} inference failure: {gpu_error:#}")
-        })?;
+        let cpu_session =
+            create_cpu_session_inner(&self.source, &self.options).with_context(|| {
+                format!(
+                    "rebuild {model_name} on CPU after {failed} inference failure: {gpu_error:#}"
+                )
+            })?;
         self.session = cpu_session;
-        self.placement = Placement::Cpu {
-            reason,
-            provider: cpu,
-        };
+        self.placement = Placement::Cpu { reason };
         self.gpu_free_before = None;
         self.gpu_record = None;
         publish_status(model_name, self.placement, None);
 
         log::info!("{model_name} now uses CPU fallback after {failed} runtime failure");
-        if cpu == CpuProvider::OpenVino {
-            return self.run_with_cpu_fallback(operation, reason, run);
-        }
         run(&mut self.session, false).with_context(|| {
             format!("{operation} failed on {failed} ({gpu_error:#}) and again on CPU fallback")
-        })
-    }
-
-    /// Runs `run` on this OpenVINO session, and when it fails, rebuilds the
-    /// session on ONNX Runtime's CPU provider and runs it again there. The
-    /// session stays on the CPU provider for later runs.
-    fn run_with_cpu_fallback<T, F>(
-        &mut self,
-        operation: &str,
-        reason: CpuReason,
-        mut run: F,
-    ) -> Result<T>
-    where
-        F: FnMut(&mut Session, bool) -> Result<T>,
-    {
-        let error = match run(&mut self.session, false) {
-            Ok(value) => return Ok(value),
-            Err(error) => error,
-        };
-        let model_name = self.options.model_name;
-        log::warn!("{operation} failed on OpenVINO; rebuilding {model_name} on the CPU provider: {error:#}");
-        calibraw_core::diagnostics::record(format!(
-            "AI {model_name}: OpenVINO inference failed ({error:#}); switching to the CPU provider"
-        ));
-        self.session =
-            create_cpu_session_inner(&self.source, &self.options).with_context(|| {
-                format!("rebuild {model_name} on the CPU provider after OpenVINO failed: {error:#}")
-            })?;
-        self.placement = Placement::Cpu {
-            reason,
-            provider: CpuProvider::Default,
-        };
-        publish_status(model_name, self.placement, None);
-        run(&mut self.session, false).with_context(|| {
-            format!("{operation} failed on OpenVINO ({error:#}) and again on the CPU provider")
         })
     }
 }
@@ -431,14 +334,13 @@ pub(crate) fn create_session_with_fallback(
     options: SessionOptions,
 ) -> Result<FallbackSession> {
     let source = model.as_ref().to_path_buf();
-    let cpu = offered_cpu_provider();
-    let (mut placement, mut offers) = current_placement(&source, &options, cpu);
+    let (mut placement, mut offers) = current_placement(&source, &options);
     let mut setup_failures = Vec::new();
 
     let reason = loop {
         let (provider, buffers) = match placement {
             Placement::Gpu { provider, buffers } => (provider, buffers),
-            Placement::Cpu { reason, .. } if setup_failures.is_empty() => break reason,
+            Placement::Cpu { reason } if setup_failures.is_empty() => break reason,
             Placement::Cpu { .. } => break CpuReason::GpuFailed,
         };
         let offer = take_offer(&mut offers, provider);
@@ -474,24 +376,14 @@ pub(crate) fn create_session_with_fallback(
                     "AI {} could not initialize {name}; trying the next provider: {error:#}",
                     options.model_name
                 );
-                placement = place_on(
-                    &source,
-                    &options,
-                    super::acceleration_settings(),
-                    &offers,
-                    cpu,
-                );
+                placement = place_on(&source, &options, super::acceleration_settings(), &offers);
             }
         }
     };
 
-    calibraw_core::diagnostics::record(format!(
-        "AI {} creating {} session",
-        options.model_name,
-        cpu.name()
-    ));
+    calibraw_core::diagnostics::record(format!("AI {} creating CPU session", options.model_name));
     let started = std::time::Instant::now();
-    let (session, cpu) = create_cpu_session(&source, &options, cpu).with_context(|| {
+    let session = create_cpu_session_inner(&source, &options).with_context(|| {
         if setup_failures.is_empty() {
             format!("create CPU ONNX session for {}", options.model_name)
         } else {
@@ -503,21 +395,16 @@ pub(crate) fn create_session_with_fallback(
         }
     })?;
     log::info!(
-        "AI {} uses {} for {} ({reason})",
+        "AI {} uses CPU for {} ({reason})",
         options.model_name,
-        cpu.name(),
         source.display()
     );
     calibraw_core::diagnostics::record(format!(
-        "AI {} execution provider: {}, {reason} (session created in {:.3}s)",
+        "AI {} execution provider: CPU, {reason} (session created in {:.3}s)",
         options.model_name,
-        cpu.name(),
         started.elapsed().as_secs_f64()
     ));
-    let placement = Placement::Cpu {
-        reason,
-        provider: cpu,
-    };
+    let placement = Placement::Cpu { reason };
     publish_status(options.model_name, placement, None);
 
     Ok(FallbackSession {

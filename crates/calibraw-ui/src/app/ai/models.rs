@@ -54,51 +54,16 @@ impl CalibRawApp {
         }
     }
 
-    /// What Automatic mode downloads before the next AI job: the runtime,
-    /// and where OpenVINO applies its package. Checked once per job, as it
-    /// hashes the installed libraries.
-    pub(in crate::app) fn automatic_onnx_runtime_download(&self) -> RuntimeDownload {
-        if !(self.caps().configurable_ai_runtime
+    pub(in crate::app) fn automatic_onnx_runtime_download_needed(&self) -> bool {
+        self.caps().configurable_ai_runtime
             && self.ai.runtime_mode == OnnxRuntimeMode::Automatic
-            && calibraw_ai::runtime::bundled_onnx_runtime_path().is_none())
-        {
-            return RuntimeDownload::default();
-        }
-        RuntimeDownload {
-            runtime: !calibraw_ai::runtime::automatic_onnx_runtime_core_is_installed(),
-            openvino: !calibraw_ai::runtime::openvino_package_is_installed(),
-        }
+            && calibraw_ai::runtime::bundled_onnx_runtime_path().is_none()
+            && !calibraw_ai::runtime::automatic_onnx_runtime_is_installed()
     }
 
-    pub(in crate::app) fn show_automatic_onnx_runtime_download_details(
-        ui: &mut egui::Ui,
-        download: RuntimeDownload,
-    ) {
+    pub(in crate::app) fn show_automatic_onnx_runtime_download_details(ui: &mut egui::Ui) {
         ui.separator();
         ui.strong(tr("ONNX Runtime"));
-        if download.runtime {
-            Self::show_onnx_runtime_package_details(ui);
-        }
-        if let Some(openvino) =
-            calibraw_ai::runtime::openvino_package_info().filter(|_| download.openvino)
-        {
-            ui.label(tr_fmt(
-                "OpenVINO for Intel CPUs: OpenVINO {openvino} and its ONNX Runtime plugin {plugin}, {size} MB download.",
-                &[
-                    ("openvino", &openvino.openvino_version),
-                    ("plugin", &openvino.plugin_version),
-                    (
-                        "size",
-                        &format!("{:.1}", openvino.download_bytes as f64 / 1_000_000.0),
-                    ),
-                ],
-            ));
-            ui.label(tr("AI on the CPU uses OpenVINO where it can and ONNX Runtime otherwise. SHA-256 verified and cached locally. Licenses: MIT (plugin), Apache-2.0 (OpenVINO, oneTBB), BSD-3-Clause (hwloc)."));
-            ui.hyperlink_to(tr("OpenVINO package source"), openvino.download_url);
-        }
-    }
-
-    fn show_onnx_runtime_package_details(ui: &mut egui::Ui) {
         let runtime = calibraw_ai::runtime::automatic_onnx_runtime_info();
         if let Some(runtime) = runtime {
             ui.label(tr_fmt(
@@ -131,10 +96,10 @@ impl CalibRawApp {
     pub(in crate::app) fn show_ai_consent_runtime_details(
         &self,
         ui: &mut egui::Ui,
-        runtime_download: RuntimeDownload,
+        runtime_download_needed: bool,
     ) {
-        if runtime_download.needed() {
-            Self::show_automatic_onnx_runtime_download_details(ui, runtime_download);
+        if runtime_download_needed {
+            Self::show_automatic_onnx_runtime_download_details(ui);
         }
     }
 
@@ -143,18 +108,14 @@ impl CalibRawApp {
         model_name: &str,
         task: &str,
         model_download_needed: bool,
-        runtime_download: RuntimeDownload,
+        runtime_download_needed: bool,
     ) {
-        let download = match (model_download_needed, runtime_download.needed()) {
-            (true, true) if runtime_download.openvino_only() => {
-                tr_fmt("{model_name} and OpenVINO", &[("model_name", &model_name)])
-            }
+        let download = match (model_download_needed, runtime_download_needed) {
             (true, true) => tr_fmt(
                 "{model_name} and ONNX Runtime",
                 &[("model_name", &model_name)],
             ),
             (true, false) => model_name.to_owned(),
-            (false, true) if runtime_download.openvino_only() => "OpenVINO".to_owned(),
             (false, true) => tr("ONNX Runtime").to_owned(),
             (false, false) => String::new(),
         };
@@ -176,11 +137,11 @@ impl CalibRawApp {
         ui: &mut egui::Ui,
         id: &'static str,
         model_download_needed: bool,
-        runtime_download: RuntimeDownload,
+        runtime_download_needed: bool,
         license_links: &[(&str, &str)],
         model_details: impl FnOnce(&mut egui::Ui),
     ) {
-        if !model_download_needed && !runtime_download.needed() {
+        if !model_download_needed && !runtime_download_needed {
             return;
         }
         egui::CollapsingHeader::new(tr("Model, runtime and privacy details"))
@@ -189,7 +150,7 @@ impl CalibRawApp {
                 if model_download_needed {
                     model_details(ui);
                 }
-                self.show_ai_consent_runtime_details(ui, runtime_download);
+                self.show_ai_consent_runtime_details(ui, runtime_download_needed);
                 Self::show_hugging_face_privacy(
                     ui,
                     if model_download_needed {

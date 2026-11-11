@@ -160,17 +160,6 @@ review the new goldens like code. The Remove and X-Trans denoise cases
 render or demosaic on the GPU first, so their goldens hold only on the
 adapter that blessed them. The file header documents the formats.
 
-On an Intel CPU under Linux x86_64 or Windows x64 in Automatic runtime mode,
-"Use OpenVINO on Intel CPUs" (on by default) makes sessions that would run on
-ONNX Runtime's CPU provider run on OpenVINO's CPU device (`runtime/openvino.rs`);
-GPU providers still come first. The AI consent offers its 22–29 MB package,
-and a session falls back to ONNX Runtime's CPU provider when OpenVINO fails
-or the free RAM is short of an estimate (`placement/memory.rs`). The plugin
-offers devices for Intel hardware only. The AI status shows such sessions as
-`CPU (OpenVINO) · …`, and the parity test with `CALIBRAW_PARITY_OPENVINO=1`
-compares them with the CPU goldens. `packaging/onnxruntime/package_openvino.py`
-builds the archives from Intel's PyPI wheels.
-
 ### Adding an effect
 
 An effect is one row in the `mask_effects!` table

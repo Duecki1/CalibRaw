@@ -243,7 +243,7 @@ impl CalibRawApp {
     ) {
         let Some(AiConsent {
             feature,
-            runtime_download,
+            runtime_download_needed,
             origin,
         }) = self.ai.consent
         else {
@@ -251,7 +251,6 @@ impl CalibRawApp {
         };
         let model_download_needed = self.model_download_needed(feature);
         let description = self.describe_ai_job(feature);
-        let runtime_download_needed = runtime_download.needed();
         let download_needed = model_download_needed || runtime_download_needed;
         let restore = description
             .restore
@@ -259,19 +258,12 @@ impl CalibRawApp {
             .filter(|_| origin == AiJobOrigin::Restore);
         let title = match (restore, model_download_needed, runtime_download_needed) {
             (Some(restore), ..) => restore.title.to_owned(),
-            (None, true, true) if runtime_download.openvino_only() => tr_fmt(
-                "Download {label} model and OpenVINO?",
-                &[("label", &description.label)],
-            ),
             (None, true, true) => tr_fmt(
                 "Download {label} model and ONNX Runtime?",
                 &[("label", &description.label)],
             ),
             (None, true, false) => {
                 tr_fmt("Download {label} model?", &[("label", &description.label)])
-            }
-            (None, false, true) if runtime_download.openvino_only() => {
-                tr("Download OpenVINO?").to_owned()
             }
             (None, false, true) => tr("Download ONNX Runtime?").to_owned(),
             (None, false, false) => tr_fmt("Prepare {label}?", &[("label", &description.label)]),
@@ -292,7 +284,7 @@ impl CalibRawApp {
                             &description.model,
                             description.purpose,
                             model_download_needed,
-                            runtime_download,
+                            runtime_download_needed,
                         );
                     }
                     if let Some((license, url)) =
@@ -308,7 +300,7 @@ impl CalibRawApp {
                         ui,
                         description.details_id,
                         model_download_needed,
-                        runtime_download,
+                        runtime_download_needed,
                         &[(description.artifact.0, description.artifact.1.as_str())],
                         |ui| {
                             ui.label(&description.details);
