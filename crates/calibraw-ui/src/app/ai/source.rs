@@ -125,8 +125,8 @@ impl CalibRawApp {
                 .as_ref()
                 .ok_or_else(|| tr("The original photo is not available.").to_owned())?;
             let reference_exposure = self.develop.exposure.source_reference();
-            if full_raw.uses_opposed_chroma(&reference_exposure) {
-                full_raw.inpaint_opposed_chroma_for_exposure(&reference_exposure);
+            if full_raw.uses_highlight_model(&reference_exposure) {
+                full_raw.prime_highlight_model(&reference_exposure);
             }
             let source_edge = ai_mask_source_proxy_edge(full_raw.width, full_raw.height);
             let raw = if full_raw.width.max(full_raw.height) <= source_edge {

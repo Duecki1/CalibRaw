@@ -122,9 +122,9 @@ impl RawGpuPipeline {
             lens_shading: None,
             lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
             ai_denoised: Arc::new(std::sync::RwLock::new(None)),
-            opposed_chroma_cache: Default::default(),
-            opposed_chroma_source_identity: Default::default(),
-            opposed_chroma_reference_source: true,
+            highlight_model_cache: Default::default(),
+            highlight_source_identity: Default::default(),
+            highlight_reference_source: true,
         };
         let exposure = ExposureParams::scene_referred_default();
         let masks = MaskStack::default();
@@ -254,7 +254,13 @@ impl RawGpuPipeline {
         let (surfaces, has_ai_scene) =
             create_pipeline_surfaces(device, queue, raw, ai_cfa, ai_binned, &geometry)?;
 
-        let camera = params.camera_for_raw_texture(has_ai_cfa);
+        let mut camera = params.camera_for_raw_texture(has_ai_cfa);
+        let uploaded_highlight_model = params.highlight_model.clone().filter(|model| {
+            upload_highlight_model_texture(queue, &surfaces.highlight_model_texture, model)
+        });
+        if uploaded_highlight_model.is_none() {
+            camera = GpuParams::without_highlight_model(camera);
+        }
         let buffers = create_pipeline_buffers(device, params, &camera, &profile_words);
 
         let layouts = create_bind_group_layouts(
@@ -352,6 +358,8 @@ impl RawGpuPipeline {
             color_texture: surfaces.color_texture,
             black_texture: surfaces.black_texture,
             lens_shading_texture: surfaces.lens_shading_texture,
+            highlight_model_texture: surfaces.highlight_model_texture,
+            uploaded_highlight_model: Mutex::new(uploaded_highlight_model),
             _reconstructed_raw_texture: surfaces.reconstructed_raw_texture,
             highlight_work_a: surfaces.highlight_work_a,
             ai_scene_intact: AtomicBool::new(has_ai_scene),

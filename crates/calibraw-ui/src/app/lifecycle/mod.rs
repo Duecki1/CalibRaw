@@ -320,8 +320,8 @@ pub(in crate::app) fn reconstruct_canonical_mask_source(
 ) -> Result<MaskRgbImage, String> {
     let started = Instant::now();
     let reference_exposure = exposure.source_reference();
-    if full_raw.uses_opposed_chroma(&reference_exposure) {
-        full_raw.inpaint_opposed_chroma_for_exposure(&reference_exposure);
+    if full_raw.uses_highlight_model(&reference_exposure) {
+        full_raw.prime_highlight_model(&reference_exposure);
     }
     let reference_masks = MaskStack::default();
     let reference_params = GpuParams::new(&reference_exposure, &reference_masks, pipeline_raw);

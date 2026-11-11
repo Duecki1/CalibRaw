@@ -8,7 +8,7 @@ use std::sync::Arc;
 /// [`Self::EDGE`]×[`Self::EDGE`] grid over the whole photo.
 ///
 /// The gains are not baked into the mosaic. Highlight reconstruction applies
-/// them to its output, so clip detection and opposed-highlight chroma see the
+/// them to its output, so clip detection and the highlight model see the
 /// recorded sensor values, and brightened corners are neither taken for
 /// clipped samples nor limited to the 16-bit mosaic range.
 ///

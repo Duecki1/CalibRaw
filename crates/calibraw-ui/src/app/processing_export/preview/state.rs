@@ -268,8 +268,8 @@ impl CalibRawApp {
             Arc::clone(previewed_profile.unwrap_or(&raw.profile_color))
         };
         if let Some(full_raw) = preview_source.as_ref() {
-            if full_raw.uses_opposed_chroma(exposure) {
-                full_raw.inpaint_opposed_chroma_for_exposure(exposure);
+            if full_raw.uses_highlight_model(exposure) {
+                full_raw.prime_highlight_model(exposure);
             }
         }
         // Reported once the borrows of `exposure` and the pipelines end.

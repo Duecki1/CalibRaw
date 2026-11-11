@@ -291,11 +291,11 @@ impl CalibRawApp {
         };
         if prepared
             .full_raw
-            .uses_opposed_chroma(&self.preview_exposure())
+            .uses_highlight_model(&self.preview_exposure())
         {
             prepared
                 .full_raw
-                .inpaint_opposed_chroma_for_exposure(&self.preview_exposure());
+                .prime_highlight_model(&self.preview_exposure());
         }
 
         // Constrained memory updates the current preview in place instead of

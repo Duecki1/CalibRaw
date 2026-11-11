@@ -93,6 +93,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     wgpu::StorageTextureAccess::WriteOnly,
                 ),
                 texture_entry(13, wgpu::TextureSampleType::Float { filterable: false }),
+                texture_entry(14, wgpu::TextureSampleType::Float { filterable: false }),
             ],
         )
     });
@@ -110,6 +111,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(12, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(13, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(14, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });

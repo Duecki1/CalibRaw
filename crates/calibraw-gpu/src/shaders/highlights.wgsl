@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Adapted from darktable 5.6.0 hlreconstruct/opposed code.
+// The LCh reconstruction is adapted from darktable 5.6.0.
 // Copyright (C) 2010-2026 darktable developers.
-// Copyright (C) 2026 CalibRaw contributors (WGSL adaptation).
+// Copyright (C) 2026 CalibRaw contributors (WGSL adaptation, guided reconstruction).
 
 #import calibraw::common as Common
 #import calibraw::raw_sampling as RawSampling
@@ -18,9 +18,17 @@
 @group(0) @binding(12) var binned_ai_tex: texture_2d<f32>;
 @group(0) @binding(10) var binned_camera_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 
+// The highlight model (HighlightModel in Rust) on a grid of
+// camera_uniforms.highlight_options.yz cells over the full image, cell (i, j)
+// centred at ((i + 0.5) / cells.x, (j + 0.5) / cells.y) of it. Texel (i, j)
+// holds the cell's slopes in rgb; texel (i + cells.x, j) its entry colour
+// multiplied by its support in rgb and the support in a. Colours are
+// white-balanced camera RGB, the units of RawSampling::raw_camera_at. The
+// texture's content is undefined while the cell counts are 0.
+@group(0) @binding(14) var highlight_model_tex: texture_2d<f32>;
+
 const DARKTABLE_SQRT3: f32 = 1.7320508075688772;
 const DARKTABLE_SQRT12: f32 = 3.4641016151377544;
-const DARKTABLE_OPPOSED_CLIP_MAGIC: f32 = 0.987;
 
 // The white-balanced level every channel of a clipped LCh block is limited to,
 // as darktable's clip * processed_minimum. One level for all channels keeps a
@@ -118,58 +126,159 @@ fn lch_reconstructed_cfa_at(pos: vec2<i32>) -> f32 {
     return mix(original, max(recovered, 0.0), strength);
 }
 
-fn inpaint_opposed_refavg(pos: vec2<i32>) -> f32 {
-    let center = Common::clamp_pos(pos);
-    let color = RawSampling::color_at(center);
-    var mean = vec3<f32>(0.0);
-    var count = vec3<f32>(0.0);
-    let max_row = max(i32(Common::camera_uniforms.height) - 1, 0);
-    let max_col = max(i32(Common::camera_uniforms.width) - 1, 0);
-    let row_end = min(max_row, center.y + 2);
-    let col_end = min(max_col, center.x + 2);
+// Guided reconstruction (highlight_model.rs describes the model). A clipped
+// colour is rebuilt from the colours beside it that did not clip, the "known"
+// ones:
+// - two known colours a and b: (a + b) / 2 + slope * (a - b);
+// - one known colour: a mix of the entry colour and blown white that reaches
+//   white as the known colour nears its own clip level;
+// - none: blown white, every colour at the highest clip level.
+// A recorded clipped value is a lower bound of its colour, so the two-colour
+// relation on the recorded values is a floor of every case.
 
-    for (var row = max(0, center.y - 1); row < row_end; row = row + 1) {
-        for (var col = max(0, center.x - 1); col < col_end; col = col + 1) {
-            let sample_pos = vec2<i32>(col, row);
-            let sample_color = RawSampling::color_at(sample_pos);
-            mean[sample_color] = mean[sample_color] + max(RawSampling::raw_camera_at(sample_pos), 0.0);
-            count[sample_color] = count[sample_color] + 1.0;
-        }
-    }
-    for (var channel = 0u; channel < 3u; channel = channel + 1u) {
-        mean[channel] = select(0.0, pow(mean[channel] / count[channel], 1.0 / 3.0), count[channel] > 0.0);
-    }
-    return opposed_reference(mean, color);
+struct HighlightCell {
+    // Slope of red against green - blue, of green against red - blue and of
+    // blue against red - green.
+    slopes: vec3<f32>,
+    // Entry colour multiplied by `support`.
+    entry: vec3<f32>,
+    // 0 where no reconstructed or bright unclipped colour is near, up to 1.
+    support: f32,
 }
 
-// The level opposed reconstruction expects of colour `color` (0 R, 1 G,
-// 2 B) from the cube roots `roots` of each colour's mean around it: the cube
-// of the mean root of the other two colours.
-fn opposed_reference(roots: vec3<f32>, color: u32) -> f32 {
-    let root_reference = select(
-        select(0.5 * (roots.r + roots.b), 0.5 * (roots.g + roots.b), color == 0u),
-        0.5 * (roots.r + roots.g),
-        color == 2u,
+// The model at tile-local `pos`, interpolated bilinearly between cells.
+// Positions outside the full image, such as tile halos, take its edge cells.
+// Without a model every slope and the support are 0, which rebuilds clipped
+// colours as neutral.
+fn highlight_cell_at(pos: vec2<i32>) -> HighlightCell {
+    let cells = vec2<i32>(Common::camera_uniforms.highlight_options.yz);
+    if cells.x <= 0 || cells.y <= 0 {
+        return HighlightCell(vec3<f32>(0.0), vec3<f32>(0.0), 0.0);
+    }
+    let full = vec2<f32>(Common::full_image_max() + vec2<i32>(1));
+    let uv = (vec2<f32>(pos + Common::tile_origin()) + vec2<f32>(0.5)) / max(full, vec2<f32>(1.0));
+    let last = cells - vec2<i32>(1);
+    let grid = clamp(uv * vec2<f32>(cells) - vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(last));
+    let p0 = min(vec2<i32>(floor(grid)), last);
+    let p1 = min(p0 + vec2<i32>(1), last);
+    let f = grid - vec2<f32>(p0);
+    let entry_column = vec2<i32>(cells.x, 0);
+    let slopes = mix(
+        mix(textureLoad(highlight_model_tex, p0, 0), textureLoad(highlight_model_tex, vec2<i32>(p1.x, p0.y), 0), f.x),
+        mix(textureLoad(highlight_model_tex, vec2<i32>(p0.x, p1.y), 0), textureLoad(highlight_model_tex, p1, 0), f.x),
+        f.y,
     );
-    return root_reference * root_reference * root_reference;
+    let entry = mix(
+        mix(
+            textureLoad(highlight_model_tex, p0 + entry_column, 0),
+            textureLoad(highlight_model_tex, vec2<i32>(p1.x, p0.y) + entry_column, 0),
+            f.x,
+        ),
+        mix(
+            textureLoad(highlight_model_tex, vec2<i32>(p0.x, p1.y) + entry_column, 0),
+            textureLoad(highlight_model_tex, p1 + entry_column, 0),
+            f.x,
+        ),
+        f.y,
+    );
+    return HighlightCell(slopes.rgb, entry.rgb, clamp(entry.a, 0.0, 1.0));
 }
 
-fn inpaint_opposed_cfa_at(pos: vec2<i32>) -> f32 {
+// The white-balanced level each colour (R, G, B) clips at. Green takes the
+// mean multiplier of both greens when the sensor has a second one.
+fn highlight_clip_levels() -> vec3<f32> {
+    let wb = Common::camera_uniforms.wb;
+    let green = select(wb.g, 0.5 * (wb.g + wb.a), wb.a > 0.0);
+    return max(Common::camera_uniforms.highlight_clip, 0.01) * vec3<f32>(wb.r, green, wb.b);
+}
+
+// The two colours a clipped `color` is rebuilt from, in the order the slope's
+// difference takes them (other_channels in highlight_model.rs).
+fn highlight_other_colors(color: u32) -> vec2<u32> {
+    if color == 0u { return vec2<u32>(1u, 2u); }
+    if color == 1u { return vec2<u32>(0u, 2u); }
+    return vec2<u32>(0u, 1u);
+}
+
+fn highlight_two_known(a: f32, b: f32, slope: f32) -> f32 {
+    return 0.5 * (a + b) + slope * (a - b);
+}
+
+// Clipped `color` from the one known colour `known_color` at level `known`.
+// Below the level the entry colour has there it keeps that colour's ratio;
+// above, it moves to `white` as `known` nears its clip level. Without support
+// the entry colour is neutral at `known`.
+fn highlight_one_known(
+    known: f32,
+    known_color: u32,
+    color: u32,
+    cell: HighlightCell,
+    clip_levels: vec3<f32>,
+    white: f32,
+) -> f32 {
+    let entry = cell.entry + vec3<f32>((1.0 - cell.support) * known);
+    let entry_known = entry[known_color];
+    let entry_color = entry[color];
+    if known <= entry_known {
+        return entry_color * known / max(entry_known, 1e-6);
+    }
+    let clip = clip_levels[known_color];
+    let entry_share = clamp((clip - known) / max(clip - entry_known, 1e-6), 0.0, 1.0);
+    return mix(white, entry_color, entry_share);
+}
+
+// Guided reconstruction of a photosite. The known colours are the means of
+// the unclipped samples of the other two colours in the 3x3 window around
+// it; a colour with clipped samples there counts as known by its share of
+// unclipped ones, which blends the cases.
+fn guided_cfa_at(pos: vec2<i32>) -> f32 {
     let center = Common::clamp_pos(pos);
-    let physical_channel = RawSampling::cfa_channel_at(center);
-    let color = RawSampling::color_at(center);
     let original = RawSampling::raw_camera_at(center);
-    let clip = DARKTABLE_OPPOSED_CLIP_MAGIC
-        * max(Common::camera_uniforms.highlight_clip, 0.01)
-        * RawSampling::wb_for_cfa_channel(physical_channel);
-    if original < clip {
+    if !RawSampling::is_raw_clipped(center) {
         return original;
     }
-    let reference = inpaint_opposed_refavg(center);
-    // y/z/w are estimated once from the full active RAW source with the same
-    // adjusted WB carried in camera_uniforms.wb, then shared by proxies/tiles.
-    let full_source_chrominance = Common::camera_uniforms.highlight_options[color + 1u];
-    return max(original, reference + full_source_chrominance);
+    let color = RawSampling::color_at(center);
+    var known_sum = vec3<f32>(0.0);
+    var known_count = vec3<f32>(0.0);
+    var recorded_sum = vec3<f32>(0.0);
+    var recorded_count = vec3<f32>(0.0);
+    let image_max = vec2<i32>(
+        i32(Common::camera_uniforms.width) - 1,
+        i32(Common::camera_uniforms.height) - 1,
+    );
+    for (var dy = -1; dy <= 1; dy = dy + 1) {
+        for (var dx = -1; dx <= 1; dx = dx + 1) {
+            let sample_pos = center + vec2<i32>(dx, dy);
+            if any(sample_pos < vec2<i32>(0)) || any(sample_pos > image_max) {
+                continue;
+            }
+            let sample_color = RawSampling::color_at(sample_pos);
+            let value = max(RawSampling::raw_camera_at(sample_pos), 0.0);
+            recorded_sum[sample_color] = recorded_sum[sample_color] + value;
+            recorded_count[sample_color] = recorded_count[sample_color] + 1.0;
+            if !RawSampling::is_raw_clipped(sample_pos) {
+                known_sum[sample_color] = known_sum[sample_color] + value;
+                known_count[sample_color] = known_count[sample_color] + 1.0;
+            }
+        }
+    }
+    let recorded = recorded_sum / max(recorded_count, vec3<f32>(1.0));
+    let known = select(recorded, known_sum / max(known_count, vec3<f32>(1.0)), known_count > vec3<f32>(0.0));
+    let known_share = known_count / max(recorded_count, vec3<f32>(1.0));
+
+    let others = highlight_other_colors(color);
+    let cell = highlight_cell_at(center);
+    let slope = cell.slopes[color];
+    let clip_levels = highlight_clip_levels();
+    let white = max(clip_levels.r, max(clip_levels.g, clip_levels.b));
+    let share_a = known_share[others.x];
+    let share_b = known_share[others.y];
+    let estimate = share_a * share_b * highlight_two_known(known[others.x], known[others.y], slope)
+        + share_a * (1.0 - share_b) * highlight_one_known(known[others.x], others.x, color, cell, clip_levels, white)
+        + (1.0 - share_a) * share_b * highlight_one_known(known[others.y], others.y, color, cell, clip_levels, white)
+        + (1.0 - share_a) * (1.0 - share_b) * white;
+    let lower_bound = highlight_two_known(recorded[others.x], recorded[others.y], slope);
+    return max(original, max(estimate, lower_bound));
 }
 
 // The lens shading gains of every CFA channel (R, G1, B, G2) at tile-local
@@ -191,7 +300,7 @@ fn lens_shading_gains(pos: vec2<i32>) -> vec4<f32> {
 }
 
 // Reconstructs clipped highlights on the recorded mosaic, then applies the
-// lens shading gain. Clip detection and opposed-highlight chroma thus see the
+// lens shading gain. Clip detection and the highlight model thus see the
 // sensor values: a corner brightened by vignetting correction is not clipped.
 @compute @workgroup_size(8, 8, 1)
 fn highlight_reconstruct(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -202,7 +311,7 @@ fn highlight_reconstruct(@builtin(global_invocation_id) gid: vec3<u32>) {
     if method >= 0.5 && method < 1.5 {
         output = lch_reconstructed_cfa_at(pos);
     } else if method >= 1.5 {
-        output = inpaint_opposed_cfa_at(pos);
+        output = guided_cfa_at(pos);
     }
     let shading = lens_shading_gains(pos)[RawSampling::cfa_channel_at(pos)];
     textureStore(
@@ -257,37 +366,37 @@ fn binned_lch_rgb(sensor: vec3<f32>, camera: vec3<f32>) -> vec3<f32> {
     return mix(camera, max(recovered, vec3<f32>(0.0)), strength);
 }
 
-// Opposed reconstruction of a binned pixel: inpaint_opposed_cfa_at for each
-// clipped colour, the colour means taken over the window
-// inpaint_opposed_refavg reads.
-fn binned_opposed_rgb(pos: vec2<i32>, camera: vec3<f32>) -> vec3<f32> {
-    let clip = DARKTABLE_OPPOSED_CLIP_MAGIC
-        * max(Common::camera_uniforms.highlight_clip, 0.01)
-        * Common::camera_uniforms.wb.rgb;
-    let clipped = camera >= clip;
+// Guided reconstruction of a binned pixel: guided_cfa_at with the pixel's own
+// colours as the known ones.
+fn binned_guided_rgb(pos: vec2<i32>, sensor: vec3<f32>, camera: vec3<f32>) -> vec3<f32> {
+    let clipped = sensor >= vec3<f32>(0.987 * max(Common::camera_uniforms.highlight_clip, 0.01));
     if !any(clipped) {
         return camera;
     }
-    let center = Common::clamp_pos(pos);
-    var mean = vec3<f32>(0.0);
-    var count = 0.0;
-    let max_row = max(i32(Common::camera_uniforms.height) - 1, 0);
-    let max_col = max(i32(Common::camera_uniforms.width) - 1, 0);
-    let row_end = min(max_row, center.y + 2);
-    let col_end = min(max_col, center.x + 2);
-    for (var row = max(0, center.y - 1); row < row_end; row = row + 1) {
-        for (var col = max(0, center.x - 1); col < col_end; col = col + 1) {
-            mean += max(binned_camera_at(vec2<i32>(col, row)), vec3<f32>(0.0));
-            count += 1.0;
+    let cell = highlight_cell_at(Common::clamp_pos(pos));
+    let clip_levels = highlight_clip_levels();
+    let white = max(clip_levels.r, max(clip_levels.g, clip_levels.b));
+    let recorded = max(camera, vec3<f32>(0.0));
+    var output = camera;
+    for (var color = 0u; color < 3u; color = color + 1u) {
+        if !clipped[color] {
+            continue;
         }
+        let others = highlight_other_colors(color);
+        let a = recorded[others.x];
+        let b = recorded[others.y];
+        let lower_bound = highlight_two_known(a, b, cell.slopes[color]);
+        var estimate = white;
+        if !clipped[others.x] && !clipped[others.y] {
+            estimate = lower_bound;
+        } else if !clipped[others.x] {
+            estimate = highlight_one_known(a, others.x, color, cell, clip_levels, white);
+        } else if !clipped[others.y] {
+            estimate = highlight_one_known(b, others.y, color, cell, clip_levels, white);
+        }
+        output[color] = max(camera[color], max(estimate, lower_bound));
     }
-    let roots = select(vec3<f32>(0.0), pow(mean / count, vec3<f32>(1.0 / 3.0)), count > 0.0);
-    let reference = vec3<f32>(
-        opposed_reference(roots, 0u),
-        opposed_reference(roots, 1u),
-        opposed_reference(roots, 2u),
-    ) + Common::camera_uniforms.highlight_options.yzw;
-    return select(camera, max(camera, reference), clipped);
+    return output;
 }
 
 // highlight_reconstruct for a binned source, which holds every colour at
@@ -305,7 +414,7 @@ fn binned_highlight_reconstruct(@builtin(global_invocation_id) gid: vec3<u32>) {
     if method >= 0.5 && method < 1.5 {
         output = binned_lch_rgb(sensor, output);
     } else if method >= 1.5 {
-        output = binned_opposed_rgb(pos, output);
+        output = binned_guided_rgb(pos, sensor, output);
     }
     let shading = lens_shading_gains(pos);
     output *= vec3<f32>(shading.r, 0.5 * (shading.g + shading.a), shading.b);

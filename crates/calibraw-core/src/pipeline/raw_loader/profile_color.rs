@@ -111,8 +111,8 @@ impl LoadedRaw {
     pub fn with_profile_color_of(&self, colored: &Self) -> Self {
         Self {
             available_camera_profiles: colored.available_camera_profiles.clone(),
-            opposed_chroma_cache: Arc::clone(&colored.opposed_chroma_cache),
-            opposed_chroma_source_identity: Arc::clone(&colored.opposed_chroma_source_identity),
+            highlight_model_cache: Arc::clone(&colored.highlight_model_cache),
+            highlight_source_identity: Arc::clone(&colored.highlight_source_identity),
             ..self.with_profile_color(Arc::clone(&colored.profile_color))
         }
     }
@@ -125,8 +125,8 @@ impl LoadedRaw {
         Self {
             profile_color: color,
             ai_denoised: Arc::new(RwLock::new(None)),
-            opposed_chroma_cache: Default::default(),
-            opposed_chroma_source_identity: Default::default(),
+            highlight_model_cache: Default::default(),
+            highlight_source_identity: Default::default(),
             ..self.clone()
         }
     }

@@ -3,7 +3,11 @@
 use super::*;
 use crate::pipeline::effect_lanes::glow;
 
-pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
+/// The camera uniforms, and the highlight model `highlight_options` describes: the pipeline
+/// uploads the model with the uniforms.
+pub(super) fn pack_camera_params(
+    ctx: &GpuParamContext<'_>,
+) -> (CameraUniforms, Option<Arc<HighlightModel>>) {
     let exposure = ctx.exposure;
     let raw = ctx.raw;
     let GpuTileInfo {
@@ -54,16 +58,19 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
     } else {
         shader_highlight_method(raw.cfa_kind, exposure.highlight_method)
     };
-    let opposed_chroma = if highlight_method >= 1.5 {
-        raw.inpaint_opposed_chroma(
+    let highlight_model = if highlight_method >= 1.5 {
+        raw.highlight_model(
             exposure.black_point,
             exposure.highlight_clip,
             exposure.ai_denoise_enabled,
             white_balance,
         )
     } else {
-        [0.0; 3]
+        None
     };
+    let highlight_cells = highlight_model
+        .as_ref()
+        .map_or([0; 2], |model| model.cells());
 
     let chromatic_aberration = if exposure.chromatic_aberration.is_finite() {
         (exposure.chromatic_aberration / 100.0).clamp(0.0, 1.0)
@@ -87,10 +94,10 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
             .map(|coefficient| coefficient * chromatic_aberration)
     };
 
-    CameraUniforms {
+    let camera = CameraUniforms {
         black_point: exposure.black_point,
         // The shaders compare normalized sensor values against it, so it is scaled by where
-        // the photo's photosites saturate. `inpaint_opposed_chroma` scales its own threshold.
+        // the photo's photosites saturate. `LoadedRaw::highlight_model` scales its own threshold.
         highlight_clip: raw.sensor_saturation.clip_level(exposure.highlight_clip),
         chroma_denoise: exposure.chroma_denoise,
         highlight_reconstruction: exposure.highlight_reconstruction,
@@ -105,9 +112,9 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         padding_1: 0,
         highlight_options: [
             highlight_method,
-            opposed_chroma[0],
-            opposed_chroma[1],
-            opposed_chroma[2],
+            highlight_cells[0] as f32,
+            highlight_cells[1] as f32,
+            0.0,
         ],
         noise_shot: canonicalize_greens(
             std::array::from_fn(|channel| {
@@ -172,7 +179,8 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         film_base,
         film_exponents,
         film_gains,
-    }
+    };
+    (camera, highlight_model)
 }
 
 /// The film-negative uniforms of `film` (`film_positive` in

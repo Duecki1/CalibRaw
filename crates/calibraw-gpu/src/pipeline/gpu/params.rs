@@ -21,6 +21,8 @@ pub(super) struct CameraUniforms {
     /// Pads the scalars to the 16-byte alignment of `highlight_options`.
     pub(super) padding_0: u32,
     pub(super) padding_1: u32,
+    /// [`HighlightReconstructionMethod::shader_value`], then the cells across and down the
+    /// highlight model the pipeline uploaded (0 without one); the fourth value is unused.
     pub(super) highlight_options: [f32; 4],
     pub(super) noise_shot: [f32; 4],
     pub(super) noise_read: [f32; 4],
@@ -359,6 +361,9 @@ pub struct GpuParams {
     /// The camera profile `camera` describes, whose tables the pipeline
     /// uploads with the parameters.
     pub(super) profile_color: Arc<ProfileColor>,
+    /// The highlight model `camera.highlight_options` describes, uploaded with
+    /// the parameters.
+    pub(super) highlight_model: Option<Arc<HighlightModel>>,
 }
 
 impl GpuParams {
@@ -370,6 +375,14 @@ impl GpuParams {
         if !has_ai_cfa {
             camera.ai_cfa_weight = 0.0;
         }
+        camera
+    }
+
+    /// `camera` for a pipeline that could not upload the highlight model: without its
+    /// cell counts the shader rebuilds clipped photosites as neutral.
+    pub(super) fn without_highlight_model(mut camera: CameraUniforms) -> CameraUniforms {
+        camera.highlight_options[1] = 0.0;
+        camera.highlight_options[2] = 0.0;
         camera
     }
 
@@ -630,8 +643,10 @@ impl GpuParams {
             },
         };
         let mask_data = pack_mask_params(masks, raw.capture_metadata.shutter_seconds);
+        let (camera, highlight_model) = pack_camera_params(&context);
         Self {
-            camera: pack_camera_params(&context),
+            camera,
+            highlight_model,
             scene_tone: pack_scene_tone_params(&context),
             effects: pack_effect_params(&context, &mask_data),
             mask_data,

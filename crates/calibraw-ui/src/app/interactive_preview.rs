@@ -821,9 +821,9 @@ impl CalibRawApp {
             return;
         };
         if stage == ProcessingStage::Raw
-            && full_raw.uses_opposed_chroma(&self.develop.target_exposure)
+            && full_raw.uses_highlight_model(&self.develop.target_exposure)
         {
-            full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
+            full_raw.prime_highlight_model(&self.develop.target_exposure);
         }
         let result = match &graph.reduced {
             Reduced::Whole { pipeline, raw } => self.render_whole_stage(

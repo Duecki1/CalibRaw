@@ -1595,6 +1595,63 @@ pub(super) fn upload_lens_shading_texture(
     );
 }
 
+/// The RGBA16F texture that holds a highlight model of `raw`'s photo
+/// (`highlight_model_tex` in highlights.wgsl): the slopes of its cells beside
+/// their entry colours, so twice as wide as the model's grid. At most
+/// 1024×512 texels (4 MiB), sized by the whole photo, which crops, proxies
+/// and tiles share.
+pub(super) fn create_highlight_model_texture(
+    device: &wgpu::Device,
+    raw: &LoadedRaw,
+) -> wgpu::Texture {
+    let [cells_x, cells_y] = HighlightModel::grid_for(raw.source_extent);
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("calibraw highlight model"),
+        size: texture_size(cells_x * 2, cells_y),
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+/// Uploads `model`. Returns false, leaving the texture as it was, when the
+/// model's grid does not fit it.
+pub(super) fn upload_highlight_model_texture(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    model: &HighlightModel,
+) -> bool {
+    let [cells_x, cells_y] = model.cells();
+    if cells_x * 2 > texture.width() || cells_y > texture.height() {
+        return false;
+    }
+    let row = cells_x as usize;
+    let mut texels = Vec::with_capacity(row * 2 * cells_y as usize * 4);
+    for (slopes, entry) in model
+        .slopes()
+        .chunks_exact(row)
+        .zip(model.entry().chunks_exact(row))
+    {
+        for texel in slopes.iter().chain(entry) {
+            texels.extend(texel.map(|value| half::f16::from_f32(value).to_bits()));
+        }
+    }
+    queue.write_texture(
+        copy_texture(texture),
+        bytemuck::cast_slice(&texels),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(cells_x * 2 * 8),
+            rows_per_image: Some(cells_y),
+        },
+        texture_size(cells_x * 2, cells_y),
+    );
+    true
+}
+
 fn create_per_pixel_texture(
     device: &wgpu::Device,
     raw: &LoadedRaw,

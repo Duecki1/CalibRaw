@@ -65,6 +65,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) color_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) black_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) lens_shading_texture: wgpu::Texture,
+    pub(in crate::pipeline::gpu) highlight_model_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) reconstructed_raw_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) highlight_work_a: wgpu::Texture,
     pub(in crate::pipeline::gpu) highlight_work_b: wgpu::Texture,
@@ -95,6 +96,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) color_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) black_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) lens_shading_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) highlight_model_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) full_image_mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_sampler: wgpu::Sampler,
@@ -127,6 +129,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     let color_texture = create_color_texture(device, queue, raw);
     let black_texture = create_black_texture(device, queue, raw);
     let lens_shading_texture = create_lens_shading_texture(device, queue, raw);
+    let highlight_model_texture = create_highlight_model_texture(device, raw);
 
     // Only a mosaic is reconstructed photosite by photosite.
     let reconstructed_raw_texture = create_processing_texture(
@@ -249,6 +252,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     let color_view = default_texture_view(&color_texture);
     let black_view = default_texture_view(&black_texture);
     let lens_shading_view = default_texture_view(&lens_shading_texture);
+    let highlight_model_view = default_texture_view(&highlight_model_texture);
     let mask_view = mask_texture.create_view(&wgpu::TextureViewDescriptor {
         label: Some("calibraw local-mask array view"),
         dimension: Some(wgpu::TextureViewDimension::D2Array),
@@ -278,6 +282,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             color_texture,
             black_texture,
             lens_shading_texture,
+            highlight_model_texture,
             reconstructed_raw_texture,
             highlight_work_a,
             highlight_work_b,
@@ -308,6 +313,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             color_view,
             black_view,
             lens_shading_view,
+            highlight_model_view,
             mask_view,
             full_image_mask_view,
             mask_sampler,

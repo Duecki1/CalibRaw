@@ -346,8 +346,8 @@ fn render_saved_edits(
     // A film negative the Library marked renders as its estimate; opening the
     // photo saves one.
     exposure.settle_film(&full_raw, geometry);
-    if full_raw.uses_opposed_chroma(&exposure) {
-        full_raw.inpaint_opposed_chroma_for_exposure(&exposure);
+    if full_raw.uses_highlight_model(&exposure) {
+        full_raw.prime_highlight_model(&exposure);
     }
     let full_raw = Arc::new(full_raw);
     // The photo renders at the size it is shown at; effects that reach

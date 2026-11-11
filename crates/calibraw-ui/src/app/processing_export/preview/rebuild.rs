@@ -588,8 +588,8 @@ impl CalibRawApp {
             .then(|| self.develop.preview_raw.clone())
             .flatten();
 
-        if source_raw.uses_opposed_chroma(&self.develop.target_exposure) {
-            source_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
+        if source_raw.uses_highlight_model(&self.develop.target_exposure) {
+            source_raw.prime_highlight_model(&self.develop.target_exposure);
         }
 
         self.discard_auxiliary_previews();

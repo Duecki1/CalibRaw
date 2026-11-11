@@ -38,8 +38,8 @@ impl CalibRawApp {
                 self.preview.navigation_pending_stage = None;
                 return;
             }
-            if full_raw.uses_opposed_chroma(&self.develop.target_exposure) {
-                full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
+            if full_raw.uses_highlight_model(&self.develop.target_exposure) {
+                full_raw.prime_highlight_model(&self.develop.target_exposure);
             }
             let raw = if full_raw.width.max(full_raw.height) <= navigation_proxy_edge() {
                 Arc::clone(&full_raw)
@@ -147,9 +147,9 @@ impl CalibRawApp {
         }
 
         if matches!(stage, ProcessingStage::Raw)
-            && full_raw.uses_opposed_chroma(&self.develop.target_exposure)
+            && full_raw.uses_highlight_model(&self.develop.target_exposure)
         {
-            full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
+            full_raw.prime_highlight_model(&self.develop.target_exposure);
         }
         let params = GpuParams::new_with_profile_color(
             &self.develop.target_exposure,

@@ -26,10 +26,11 @@ fn main() -> anyhow::Result<()> {
     };
     println!("lens correction: {:.3}s", stage.elapsed().as_secs_f64());
     let stage = Instant::now();
-    let chroma = raw.inpaint_opposed_chroma_for_exposure(&ExposureParams::scene_referred_default());
+    let model = raw.prime_highlight_model(&ExposureParams::scene_referred_default());
     println!(
-        "highlight analysis: {:.3}s; chroma: {chroma:?}",
-        stage.elapsed().as_secs_f64()
+        "highlight analysis: {:.3}s; model cells: {:?}",
+        stage.elapsed().as_secs_f64(),
+        model.map(|model| model.cells())
     );
     let stage = Instant::now();
     let proxy = build_proxy(&raw, ProxySpec { max_edge: 800 });

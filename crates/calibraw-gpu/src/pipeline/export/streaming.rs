@@ -75,7 +75,7 @@ where
         || (raw.cfa_kind == CfaKind::XTrans
             && exposure.highlight_method == crate::pipeline::HighlightReconstructionMethod::Lch)
     {
-        raw.inpaint_opposed_chroma_for_exposure(exposure);
+        raw.prime_highlight_model(exposure);
     }
     let plan = TilePlan::new(raw.width, raw.height, tile_spec);
     calibraw_core::diagnostics::record(format!(

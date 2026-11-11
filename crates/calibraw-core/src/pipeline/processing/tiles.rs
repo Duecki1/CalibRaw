@@ -314,10 +314,10 @@ pub fn extract_padded_tile_into(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mu
         *tile_raw = extract_padded_binned_tile(raw, binned, tile);
         return;
     }
-    tile_raw.opposed_chroma_cache = std::sync::Arc::clone(&raw.opposed_chroma_cache);
-    tile_raw.opposed_chroma_source_identity =
-        std::sync::Arc::clone(&raw.opposed_chroma_source_identity);
-    tile_raw.opposed_chroma_reference_source = false;
+    tile_raw.highlight_model_cache = std::sync::Arc::clone(&raw.highlight_model_cache);
+    tile_raw.highlight_source_identity =
+        std::sync::Arc::clone(&raw.highlight_source_identity);
+    tile_raw.highlight_reference_source = false;
     if raw.is_pre_demosaiced_raster() {
         let dimensions_changed =
             tile_raw.width != tile.padded_width || tile_raw.height != tile.padded_height;

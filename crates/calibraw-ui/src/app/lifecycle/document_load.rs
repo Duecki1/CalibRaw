@@ -684,9 +684,9 @@ fn decode_cached(
 /// Runs the full-resolution highlight analysis `exposure` needs. Its result is
 /// cached in `full_raw`, so preparing it ahead of an open is reused there.
 fn prepare_highlight_analysis(full_raw: &LoadedRaw, exposure: &ExposureParams) {
-    if full_raw.uses_opposed_chroma(exposure) {
+    if full_raw.uses_highlight_model(exposure) {
         let highlight_started = Instant::now();
-        full_raw.inpaint_opposed_chroma_for_exposure(exposure);
+        full_raw.prime_highlight_model(exposure);
         calibraw_core::diagnostics::record(format!(
             "Full-resolution highlight analysis finished in {:.3}s",
             highlight_started.elapsed().as_secs_f64()

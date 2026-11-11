@@ -21,22 +21,21 @@ use anyhow::anyhow;
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt;
-use std::ops::{Deref, DerefMut, Index, RangeInclusive};
+use std::ops::{Index, RangeInclusive};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 mod binned_sensor;
 mod compact_pixel_map;
-mod opposed_chroma;
+mod highlight_model;
 mod profile_color;
 mod sensor_samples;
 mod sensor_saturation;
 mod white_balance;
 pub use binned_sensor::BinnedSensor;
 pub use compact_pixel_map::*;
-pub use opposed_chroma::*;
+pub use highlight_model::*;
 pub use profile_color::{ProfileColor, ProfileColorSource};
 pub use sensor_samples::SensorSamples;
 pub use sensor_saturation::SensorSaturation;
@@ -462,20 +461,23 @@ pub struct LoadedRaw {
     /// and tiles keep their source's.
     pub lateral_chromatic_aberration: LateralChromaticAberration,
     pub ai_denoised: Arc<RwLock<Option<AiDenoisedImage>>>,
-    pub opposed_chroma_cache: OpposedChromaCache,
-    /// Runtime identity of the full sensor source used to estimate opposed-highlight chroma.
+    /// The highlight models measured from the full sensor source ([`HighlightModel`]), shared
+    /// with its crops, proxies and tiles.
+    pub highlight_model_cache: HighlightModelCache,
+    /// Runtime identity of the full sensor source the highlight model is measured from.
     /// Crops, proxies, and tiles retain this token so shared cache entries cannot cross images.
-    pub opposed_chroma_source_identity: Arc<u8>,
-    /// Only full-source RAWs may populate the shared opposed-chroma cache. Derived views may
-    /// consume it, but fall back to a local estimate on a miss rather than poisoning it.
-    pub opposed_chroma_reference_source: bool,
+    pub highlight_source_identity: Arc<u8>,
+    /// Only full-source RAWs may measure into the shared highlight-model cache. Derived views
+    /// consume it, and reconstruct clipped photosites as neutral on a miss rather than
+    /// poisoning it.
+    pub highlight_reference_source: bool,
 }
 
 impl LoadedRaw {
     /// Builds a sensor-mosaic view of the same capture with new pixels (a crop, proxy, tile or
     /// corrected mosaic). Capture metadata, colour calibration and the noise profile are copied
     /// from `self`, and so is the lens shading, which is placed over the whole photo. The view
-    /// has no scene-linear raster, no lens geometry and a fresh, empty AI-denoise slot. It shares `self`'s opposed-chroma cache and source identity as a
+    /// has no scene-linear raster, no lens geometry and a fresh, empty AI-denoise slot. It shares `self`'s highlight-model cache and source identity as a
     /// non-reference consumer. Callers override per-view fields with struct update syntax.
     pub fn derive_with(
         &self,
@@ -516,9 +518,9 @@ impl LoadedRaw {
             lens_shading: self.lens_shading.clone(),
             lateral_chromatic_aberration: self.lateral_chromatic_aberration,
             ai_denoised: Arc::new(RwLock::new(None)),
-            opposed_chroma_cache: Arc::clone(&self.opposed_chroma_cache),
-            opposed_chroma_source_identity: Arc::clone(&self.opposed_chroma_source_identity),
-            opposed_chroma_reference_source: false,
+            highlight_model_cache: Arc::clone(&self.highlight_model_cache),
+            highlight_source_identity: Arc::clone(&self.highlight_source_identity),
+            highlight_reference_source: false,
         }
     }
 
@@ -567,9 +569,9 @@ impl LoadedRaw {
             lens_shading: None,
             lateral_chromatic_aberration: LateralChromaticAberration::NONE,
             ai_denoised: Arc::new(RwLock::new(None)),
-            opposed_chroma_cache: Default::default(),
-            opposed_chroma_source_identity: Default::default(),
-            opposed_chroma_reference_source: true,
+            highlight_model_cache: Default::default(),
+            highlight_source_identity: Default::default(),
+            highlight_reference_source: true,
         })
     }
 
@@ -645,9 +647,8 @@ impl LoadedRaw {
                 .map_err(|_| anyhow::anyhow!("AI-denoise cache lock was poisoned"))?;
             *cached = Some(image);
         }
-        if let Ok(mut chroma) = self.opposed_chroma_cache.write() {
-            chroma.retain(|key, _| !key.use_ai_cfa);
-            chroma.prepared.retain(|key, _| !key.use_ai_cfa);
+        if let Ok(mut cache) = self.highlight_model_cache.write() {
+            cache.forget_ai_denoised();
         }
         Ok(())
     }
@@ -656,9 +657,8 @@ impl LoadedRaw {
         if let Ok(mut cached) = self.ai_denoised.write() {
             *cached = None;
         }
-        if let Ok(mut chroma) = self.opposed_chroma_cache.write() {
-            chroma.retain(|key, _| !key.use_ai_cfa);
-            chroma.prepared.retain(|key, _| !key.use_ai_cfa);
+        if let Ok(mut cache) = self.highlight_model_cache.write() {
+            cache.forget_ai_denoised();
         }
     }
 

@@ -231,11 +231,11 @@ fn resample_mosaic(raw: &LoadedRaw, modifier: &Modifier) -> LoadedRaw {
         )
     };
     // The corrected mosaic replaces the source as the full-sensor reference, so it starts its
-    // own opposed-chroma cache and source identity instead of sharing the uncorrected ones.
+    // own highlight-model cache and source identity instead of sharing the uncorrected ones.
     LoadedRaw {
-        opposed_chroma_cache: Default::default(),
-        opposed_chroma_source_identity: Default::default(),
-        opposed_chroma_reference_source: true,
+        highlight_model_cache: Default::default(),
+        highlight_source_identity: Default::default(),
+        highlight_reference_source: true,
         ..raw.derive_with(
             raw.width,
             raw.height,
@@ -313,7 +313,7 @@ fn correct_raster(
     corrected.scene_linear_raster = Some(Arc::from(output));
     corrected.lens_geometry = lens_geometry;
     corrected.ai_denoised = Arc::new(std::sync::RwLock::new(None));
-    corrected.opposed_chroma_cache = Default::default();
+    corrected.highlight_model_cache = Default::default();
     if coordinate_enabled {
         corrected.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&corrected);
     }

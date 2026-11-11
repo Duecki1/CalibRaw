@@ -75,6 +75,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         color_view,
         black_view,
         lens_shading_view,
+        highlight_model_view,
         mask_view,
         mask_sampler,
         xtrans_homogeneity_view,
@@ -105,6 +106,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             texture_binding(19, black_view),
             texture_binding(3, reconstructed_raw_view),
             texture_binding(13, lens_shading_view),
+            texture_binding(14, highlight_model_view),
         ],
     );
 
@@ -118,6 +120,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             texture_binding(11, rgb_source_view),
             texture_binding(12, binned_ai_view),
             texture_binding(13, lens_shading_view),
+            texture_binding(14, highlight_model_view),
         ],
     );
 

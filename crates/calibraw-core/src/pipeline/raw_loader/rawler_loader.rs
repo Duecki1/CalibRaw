@@ -734,9 +734,9 @@ fn adapt(
         lens_shading: None,
         lateral_chromatic_aberration: LateralChromaticAberration::NONE,
         ai_denoised: Default::default(),
-        opposed_chroma_cache: Default::default(),
-        opposed_chroma_source_identity: Default::default(),
-        opposed_chroma_reference_source: true,
+        highlight_model_cache: Default::default(),
+        highlight_source_identity: Default::default(),
+        highlight_reference_source: true,
     };
     match &image.photometric {
         RawPhotometricInterpretation::Cfa(config) => {

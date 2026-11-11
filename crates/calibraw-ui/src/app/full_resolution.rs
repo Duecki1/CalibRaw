@@ -467,8 +467,8 @@ fn render_full_resolution(job: &FullResolutionJob) -> anyhow::Result<FullResolut
         !job.cancel.load(Ordering::Acquire),
         "full-resolution render cancelled"
     );
-    if raw.uses_opposed_chroma(&job.exposure) {
-        raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
+    if raw.uses_highlight_model(&job.exposure) {
+        raw.prime_highlight_model(&job.exposure);
     }
     let params = GpuParams::new(&job.exposure, &job.masks, raw)
         .with_vignette_geometry(job.geometry)

@@ -68,7 +68,7 @@ fn tone_consistency_scene(width: u32, height: u32) -> LoadedRaw {
     LoadedRaw::from_scene_linear_rec2020(width, height, rgb).unwrap()
 }
 
-fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
+fn highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
     let mut colors = Vec::with_capacity((width * height) as usize);
     let mut pixels = Vec::with_capacity((width * height) as usize);
     for y in 0..height {
@@ -96,7 +96,7 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         height,
         source_extent: [width, height],
         camera_make: "Test".to_owned(),
-        camera_model: "Opposed highlights".to_owned(),
+        camera_model: "Highlight consistency".to_owned(),
         lens_make: String::new(),
         lens_model: String::new(),
         focal_length: 0.0,
@@ -131,9 +131,9 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         lens_shading: None,
         lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
         ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
-        opposed_chroma_cache: Default::default(),
-        opposed_chroma_source_identity: Default::default(),
-        opposed_chroma_reference_source: true,
+        highlight_model_cache: Default::default(),
+        highlight_source_identity: Default::default(),
+        highlight_reference_source: true,
     }
 }
 
@@ -229,8 +229,8 @@ fn pipelines_build_and_render_for_every_sensor_layout_and_quality() -> anyhow::R
         eprintln!("Pipeline construction check skipped: no headless wgpu adapter");
         return Ok(());
     };
-    let bayer = opposed_highlight_consistency_raw(EDGE, EDGE);
-    let mut xtrans = opposed_highlight_consistency_raw(EDGE, EDGE);
+    let bayer = highlight_consistency_raw(EDGE, EDGE);
+    let mut xtrans = highlight_consistency_raw(EDGE, EDGE);
     xtrans.cfa_kind = CfaKind::XTrans;
     xtrans.color_indices = CompactPixelMap::dense(
         EDGE,
@@ -343,7 +343,7 @@ fn xtrans_demosaic_matches_darktable_markesteijn() -> anyhow::Result<()> {
         return Ok(());
     };
     let color = |x: u32, y: u32| XTRANS[(y as usize + 1) % 6][(x as usize + 2) % 6];
-    let mut raw = opposed_highlight_consistency_raw(EDGE, EDGE);
+    let mut raw = highlight_consistency_raw(EDGE, EDGE);
     raw.cfa_kind = CfaKind::XTrans;
     raw.wb_coeffs = [1.0; 4];
     raw.color_indices = CompactPixelMap::dense(

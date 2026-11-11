@@ -54,7 +54,7 @@ fn raster_with_metadata(
         .then(|| raw.lens_geometry.clone())
         .flatten();
     output.lateral_chromatic_aberration = raw.lateral_chromatic_aberration;
-    output.opposed_chroma_cache = Arc::clone(&raw.opposed_chroma_cache);
+    output.highlight_model_cache = Arc::clone(&raw.highlight_model_cache);
     output
 }
 

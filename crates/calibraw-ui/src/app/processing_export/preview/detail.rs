@@ -308,8 +308,8 @@ impl CalibRawApp {
             interactive,
         );
         let mask_extent = detail_mask_texture_extent(mask_region, detail_mask_edge(), interactive);
-        if full_raw.uses_opposed_chroma(&self.develop.target_exposure) {
-            full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
+        if full_raw.uses_highlight_model(&self.develop.target_exposure) {
+            full_raw.prime_highlight_model(&self.develop.target_exposure);
         }
         let placement = DetailPlacement {
             virtual_origin: [virtual_origin_x, virtual_origin_y],
@@ -745,8 +745,8 @@ fn prepare_preview_detail(
     if cancel.load(std::sync::atomic::Ordering::Acquire) {
         return Ok(None);
     }
-    if source_raw.uses_opposed_chroma(&exposure) {
-        source_raw.inpaint_opposed_chroma_for_exposure(&exposure);
+    if source_raw.uses_highlight_model(&exposure) {
+        source_raw.prime_highlight_model(&exposure);
     }
     let raw = Arc::new(
         if settled_detail_uses_native_source(
@@ -762,7 +762,7 @@ fn prepare_preview_detail(
             // preserves clipping decisions, CFA detail, and sensor-noise scale.
             let mut native =
                 crate::pipeline::crop_raw(&source_raw, x0, y0, source_size[0], source_size[1]);
-            native.opposed_chroma_cache = Arc::clone(&source_raw.opposed_chroma_cache);
+            native.highlight_model_cache = Arc::clone(&source_raw.highlight_model_cache);
             native
         } else {
             let Some(proxy) = build_region_proxy_until(

@@ -295,8 +295,8 @@ pub(super) fn infer_linear(
     neutral.luminance_denoise = 0.0;
     neutral.chroma_denoise = 0.0;
     let masks = MaskStack::default();
-    if raw.uses_opposed_chroma(&neutral) {
-        raw.inpaint_opposed_chroma_for_exposure(&neutral);
+    if raw.uses_highlight_model(&neutral) {
+        raw.prime_highlight_model(&neutral);
     }
     let mut pipeline: Option<RawGpuPipeline> = None;
     let cam_to_rec2020 =

@@ -135,7 +135,7 @@ pub fn render_remove_scene_crop(job: DevelopedCropJob, wait: GpuWait<'_>) -> Res
 }
 
 /// Rejects an empty crop or one outside the RAW, then prepares the RAW's
-/// opposed-chroma highlight data for this exposure when the crop needs it.
+/// highlight model for this exposure when the crop needs it.
 fn prepare_crop_source(job: &DevelopedCropJob) -> Result<()> {
     anyhow::ensure!(
         job.crop.width > 0 && job.crop.height > 0,
@@ -145,8 +145,8 @@ fn prepare_crop_source(job: &DevelopedCropJob) -> Result<()> {
         job.crop.right() <= job.raw.width && job.crop.bottom() <= job.raw.height,
         "Remove crop lies outside the native source image"
     );
-    if job.raw.uses_opposed_chroma(&job.exposure) {
-        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
+    if job.raw.uses_highlight_model(&job.exposure) {
+        job.raw.prime_highlight_model(&job.exposure);
     }
     Ok(())
 }

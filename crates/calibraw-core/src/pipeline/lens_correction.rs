@@ -240,7 +240,7 @@ fn apply_vignetting(raw: &LoadedRaw, model: &ManualLensModel) -> Result<LoadedRa
         let mut corrected = raw.clone();
         corrected.scene_linear_raster = Some(Arc::from(shaded));
         corrected.ai_denoised = Default::default();
-        corrected.opposed_chroma_cache = Default::default();
+        corrected.highlight_model_cache = Default::default();
         return Ok(corrected);
     }
 

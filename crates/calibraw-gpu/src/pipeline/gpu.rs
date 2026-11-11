@@ -4,7 +4,8 @@ use super::sigmoid::{coefficients as sigmoid_coefficients, SigmoidCoefficients};
 use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
     mask_atlas_edge, AiDenoisedImage, BinnedSensor, CfaKind, ExposureParams, FilmSource, FilmStock,
-    GeometryMapping, GeometryTransform, HighlightReconstructionMethod, LateralChannel,
+    GeometryMapping, GeometryTransform, HighlightModel, HighlightReconstructionMethod,
+    LateralChannel,
     LensGeometryMap, LoadedRaw, LocalMask, MaskEffect, MaskStack, PixelLayout, PointColor,
     PointCurve, ProcessingStage, ProfileColor, RawThumbnail, RemoveEditState, RemovePatch,
     SceneDepth, SensorSaturation, SigmoidParams, GLOBAL_TEMPERATURE_LIMIT,
@@ -506,6 +507,9 @@ pub struct RawGpuPipeline {
     color_texture: wgpu::Texture,
     black_texture: wgpu::Texture,
     lens_shading_texture: wgpu::Texture,
+    highlight_model_texture: wgpu::Texture,
+    /// The highlight model `highlight_model_texture` holds.
+    uploaded_highlight_model: Mutex<Option<Arc<HighlightModel>>>,
     _reconstructed_raw_texture: wgpu::Texture,
     /// Highlight reconstruction scratch. Pipelines with an AI-denoised scene
     /// (X-Trans), which skips reconstruction and demosaicing, keep that scene
@@ -623,7 +627,10 @@ impl RawGpuPipeline {
                 false
             }
         };
-        let camera = params.camera_for_raw_texture(self.has_ai_cfa);
+        let mut camera = params.camera_for_raw_texture(self.has_ai_cfa);
+        if !self.upload_highlight_model(queue, params.highlight_model.as_ref()) {
+            camera = GpuParams::without_highlight_model(camera);
+        }
         let scene_tone = params.scene_tone_for_upload(look_lut_uploaded);
         match self.uploaded_stage_uniforms.lock() {
             Ok(mut uploaded) => {
@@ -899,6 +906,38 @@ impl RawGpuPipeline {
         }
         queue.write_buffer(&self.profile_buffer, 0, bytemuck::cast_slice(&data.words));
         *uploaded = Arc::clone(color);
+    }
+
+    /// Uploads `model` unless the pipeline holds it already. Returns whether the highlight
+    /// pass may read it: false without a model, and for one that does not fit the texture.
+    fn upload_highlight_model(
+        &self,
+        queue: &wgpu::Queue,
+        model: Option<&Arc<HighlightModel>>,
+    ) -> bool {
+        let Some(model) = model else {
+            return false;
+        };
+        let Ok(mut uploaded) = self.uploaded_highlight_model.lock() else {
+            return false;
+        };
+        if uploaded
+            .as_ref()
+            .is_some_and(|uploaded| Arc::ptr_eq(uploaded, model))
+        {
+            return true;
+        }
+        if !upload_highlight_model_texture(queue, &self.highlight_model_texture, model) {
+            log::error!(
+                "highlight model of {:?} cells does not fit the pipeline's {}x{} texture",
+                model.cells(),
+                self.highlight_model_texture.width(),
+                self.highlight_model_texture.height()
+            );
+            return false;
+        }
+        *uploaded = Some(Arc::clone(model));
+        true
     }
 
     /// Allocates the effect inputs `params` reads (`effect_inputs`).
