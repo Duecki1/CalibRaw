@@ -138,14 +138,14 @@ impl CalibRawApp {
             self.abandon_ai_job(feature);
             return false;
         }
-        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        if runtime_download_needed
+        let runtime_download = self.automatic_onnx_runtime_download();
+        if runtime_download.needed()
             || self.model_download_needed(feature)
             || origin == AiJobOrigin::Restore
         {
             self.ai.consent = Some(AiConsent {
                 feature,
-                runtime_download_needed,
+                runtime_download,
                 origin,
             });
             self.egui_ctx.request_repaint();
@@ -306,7 +306,10 @@ mod tests {
         app.ai.update = Some(AiUpdate::planned(&app.masks.stack.content_dependencies()));
         app.ai.consent = Some(AiConsent {
             feature: AiFeature::Sky,
-            runtime_download_needed: true,
+            runtime_download: RuntimeDownload {
+                runtime: true,
+                openvino: false,
+            },
             origin: AiJobOrigin::Requested,
         });
 

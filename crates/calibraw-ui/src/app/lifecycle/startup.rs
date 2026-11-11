@@ -225,6 +225,7 @@ impl CalibRawApp {
                 people_mask_quality: performance.people_mask_quality,
                 scene_depth_quality: performance.scene_depth_quality,
                 gpu_acceleration: performance.ai_gpu_acceleration,
+                openvino: performance.ai_openvino,
                 update_needed: false,
                 update: None,
                 runtime_mode: performance.onnx_runtime_mode,
@@ -566,6 +567,7 @@ impl CalibRawApp {
         // allowed and no GPU job record is kept.
         let interrupted_gpu_ai = calibraw_ai::configure(calibraw_ai::AiConfig {
             acceleration: !caps.configurable_ai_runtime || app.ai.gpu_acceleration,
+            openvino: app.ai.openvino,
             runtime: app.ai_runtime_source(),
             model_root: app.ai_model_root(),
             job_record_path: app.platform.gpu_ai_job_record_path(),

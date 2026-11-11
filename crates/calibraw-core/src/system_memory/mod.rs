@@ -28,6 +28,19 @@ pub fn total_memory_bytes() -> Option<u64> {
     bytes
 }
 
+/// Physical memory the system can give to new allocations without swapping,
+/// in bytes (`MemAvailable` on Linux and Android, `ullAvailPhys` on
+/// Windows), or `None` elsewhere or when it is not reported.
+pub fn available_memory_bytes() -> Option<u64> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let bytes = procfs::available_memory_bytes();
+    #[cfg(windows)]
+    let bytes = win32::available_memory_bytes();
+    #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+    let bytes = None;
+    bytes
+}
+
 /// Asks a background thread to return the heap's free pages to the system.
 /// Requests made while a purge is queued or running are served by one more.
 ///

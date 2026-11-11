@@ -21,7 +21,7 @@ const INSTALL_MANIFEST: &str = "calibraw-runtime.txt";
 const RUNTIME_CACHE_FOLDER: &str = "onnxruntime";
 
 #[derive(Clone, Copy, Debug)]
-enum ArchiveFormat {
+pub(super) enum ArchiveFormat {
     TarGz,
     Zip,
 }
@@ -175,7 +175,7 @@ pub fn retired_runtime_paths(model_root: &Path) -> impl Iterator<Item = PathBuf>
 }
 
 /// The folder automatic runtimes are installed in.
-fn runtime_cache_dir() -> PathBuf {
+pub(super) fn runtime_cache_dir() -> PathBuf {
     crate::config::model_root().join(RUNTIME_CACHE_FOLDER)
 }
 
@@ -259,7 +259,15 @@ pub fn automatic_onnx_runtime_info() -> Option<AutomaticOnnxRuntimeInfo> {
     Some(configured_automatic_runtime().ok()?.info())
 }
 
+/// Whether Automatic mode has everything it downloads: the runtime and,
+/// where OpenVINO applies, its package.
 pub fn automatic_onnx_runtime_is_installed() -> bool {
+    automatic_onnx_runtime_core_is_installed() && super::openvino::openvino_package_is_installed()
+}
+
+/// Whether Automatic mode's runtime is installed, without the OpenVINO
+/// package.
+pub fn automatic_onnx_runtime_core_is_installed() -> bool {
     configured_automatic_runtime().is_ok_and(|runtime| runtime.is_installed())
 }
 
@@ -295,14 +303,15 @@ pub fn ai_sessions_may_use_gpu(manual_runtime: bool) -> bool {
         && (manual_runtime || automatic_onnx_runtime_has_gpu_provider())
 }
 
-fn install_lock() -> MutexGuard<'static, ()> {
+/// Held while an automatic runtime or plugin package is installed.
+pub(super) fn install_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn runtime_download_options() -> DownloadOptions {
+pub(super) fn runtime_download_options() -> DownloadOptions {
     DownloadOptions {
         connect_timeout: Duration::from_secs(45),
         response_timeout: Duration::from_secs(60),
@@ -319,11 +328,13 @@ pub(crate) struct RuntimeLibraries {
     pub(crate) core: (PathBuf, Sha256),
     /// The WebGPU plugin execution provider and its version, where the
     /// package has one.
-    pub(crate) webgpu: Option<WebGpuPlugin>,
+    pub(crate) webgpu: Option<PluginLibrary>,
 }
 
+/// A plugin execution provider library, with the SHA-256 it had when it was
+/// installed and its version.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct WebGpuPlugin {
+pub(crate) struct PluginLibrary {
     pub(crate) path: PathBuf,
     pub(crate) sha256: Sha256,
     pub(crate) version: &'static str,
@@ -378,7 +389,17 @@ fn ensure_automatic_runtime(runtime: AutomaticRuntime<'_>) -> Result<RuntimeLibr
     )
     .with_context(|| format!("download automatic ONNX Runtime for {}", package.platform))?;
 
-    install_archive(&archive_path, &package, &install_dir)?;
+    let mut libraries: Vec<(&str, LibraryFinder)> = vec![("", find_runtime_library)];
+    if package.webgpu.is_some() {
+        libraries.push(("webgpu_", find_webgpu_plugin));
+    }
+    install_archive(
+        &archive_path,
+        package.sha256,
+        package.format,
+        &install_dir,
+        &libraries,
+    )?;
     load_verified_install(&install_dir, &package)?
         .context("automatic ONNX Runtime install is invalid")
 }
@@ -390,6 +411,37 @@ fn load_verified_install(
     install_dir: &Path,
     package: &RuntimePackage,
 ) -> Result<Option<RuntimeLibraries>> {
+    let prefixes: &[&str] = if package.webgpu.is_some() {
+        &["", "webgpu_"]
+    } else {
+        &[""]
+    };
+    let Some(mut libraries) = read_verified_manifest(install_dir, package.sha256, prefixes)? else {
+        return Ok(None);
+    };
+    let webgpu = package.webgpu.and_then(|version| {
+        let (path, sha256) = libraries.pop()?;
+        Some(PluginLibrary {
+            path,
+            sha256,
+            version,
+        })
+    });
+    let core = libraries
+        .pop()
+        .context("the runtime manifest lists no core library")?;
+    Ok(Some(RuntimeLibraries { core, webgpu }))
+}
+
+/// The libraries `install_archive` listed in the manifest in `install_dir`,
+/// in the order of `prefixes`, when the install came from the archive with
+/// SHA-256 `archive_sha256` and each library still has its hash; `None`
+/// when it is missing, stale or changed.
+pub(super) fn read_verified_manifest(
+    install_dir: &Path,
+    archive_sha256: &str,
+    prefixes: &[&str],
+) -> Result<Option<Vec<(PathBuf, Sha256)>>> {
     let manifest = match fs::read_to_string(install_dir.join(INSTALL_MANIFEST)) {
         Ok(manifest) => manifest,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -399,28 +451,21 @@ fn load_verified_install(
     if lines
         .next()
         .and_then(|line| line.strip_prefix("archive_sha256="))
-        != Some(package.sha256)
+        != Some(archive_sha256)
     {
         return Ok(None);
     }
-    let Some(core) = verified_library(install_dir, &mut lines, "")? else {
-        return Ok(None);
-    };
-    let webgpu = match package.webgpu {
-        Some(version) => match verified_library(install_dir, &mut lines, "webgpu_")? {
-            Some((path, sha256)) => Some(WebGpuPlugin {
-                path,
-                sha256,
-                version,
-            }),
-            None => return Ok(None),
-        },
-        None => None,
-    };
+    let mut libraries = Vec::with_capacity(prefixes.len());
+    for prefix in prefixes {
+        let Some(library) = verified_library(install_dir, &mut lines, prefix)? else {
+            return Ok(None);
+        };
+        libraries.push(library);
+    }
     if lines.next().is_some() {
         return Ok(None);
     }
-    Ok(Some(RuntimeLibraries { core, webgpu }))
+    Ok(Some(libraries))
 }
 
 /// Reads a `{prefix}sha256=` and `{prefix}path=` line pair and checks the
@@ -457,10 +502,19 @@ fn verified_library<'a>(
     Ok(Some((path, sha256)))
 }
 
-fn install_archive(
+/// Finds a library below an extracted archive.
+pub(super) type LibraryFinder = fn(&Path) -> Result<PathBuf>;
+
+/// Extracts the archive at `archive_path` (SHA-256 `archive_sha256`) into
+/// `install_dir`, replacing what is there, with a manifest listing each
+/// library a finder of `libraries` locates under its prefix, for
+/// `read_verified_manifest`.
+pub(super) fn install_archive(
     archive_path: &Path,
-    package: &RuntimePackage,
+    archive_sha256: &str,
+    format: ArchiveFormat,
     install_dir: &Path,
+    libraries: &[(&str, LibraryFinder)],
 ) -> Result<()> {
     let temporary = install_dir.with_extension(format!("installing.{}", std::process::id()));
     if temporary.exists() {
@@ -470,7 +524,7 @@ fn install_archive(
     fs::create_dir_all(&temporary)
         .with_context(|| format!("create runtime install {}", temporary.display()))?;
     let result = (|| {
-        match package.format {
+        match format {
             ArchiveFormat::TarGz => {
                 let file = File::open(archive_path)
                     .with_context(|| format!("open {}", archive_path.display()))?;
@@ -489,16 +543,9 @@ fn install_archive(
                     .with_context(|| format!("extract {}", archive_path.display()))?;
             }
         }
-        let mut manifest = format!("archive_sha256={}\n", package.sha256);
-        manifest_entry(
-            &temporary,
-            &find_runtime_library(&temporary)?,
-            "",
-            &mut manifest,
-        )?;
-        if package.webgpu.is_some() {
-            let plugin = find_webgpu_plugin(&temporary)?;
-            manifest_entry(&temporary, &plugin, "webgpu_", &mut manifest)?;
+        let mut manifest = format!("archive_sha256={archive_sha256}\n");
+        for (prefix, find) in libraries {
+            manifest_entry(&temporary, &find(&temporary)?, prefix, &mut manifest)?;
         }
         fs::write(temporary.join(INSTALL_MANIFEST), manifest)
             .context("write automatic ONNX Runtime manifest")?;
@@ -540,7 +587,7 @@ fn manifest_entry(root: &Path, library: &Path, prefix: &str, manifest: &mut Stri
 }
 
 /// Every regular file below `root`, by lowercase file name.
-fn files_below(root: &Path) -> Result<Vec<(String, PathBuf)>> {
+pub(super) fn files_below(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     let mut directories = vec![root.to_path_buf()];
     let mut files = Vec::new();
     while let Some(directory) = directories.pop() {

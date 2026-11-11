@@ -1,7 +1,8 @@
 //! Loading the ONNX Runtime library once per process. Desktop builds load a
 //! library file pinned by its SHA-256, and register the automatic runtime's
-//! WebGPU plugin execution provider beside it; mobile builds link the runtime
-//! into the app. Either way its log goes to `logger`.
+//! WebGPU plugin execution provider beside it, and where it applies
+//! (`openvino`) the OpenVINO one; mobile builds link the runtime into the
+//! app. Either way its log goes to `logger`.
 
 use super::logger;
 use crate::config::RuntimeSource;
@@ -9,7 +10,7 @@ use anyhow::Result;
 use std::sync::{Mutex, OnceLock};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use {
-    super::package::WebGpuPlugin,
+    super::package::PluginLibrary,
     crate::config::Sha256,
     anyhow::Context,
     std::{fs, path::PathBuf},
@@ -91,7 +92,9 @@ pub(super) fn load(source: &RuntimeSource) -> Result<()> {
             started.elapsed().as_secs_f64()
         ));
         if let Some(plugin) = &webgpu {
-            register_webgpu_plugin(plugin);
+            #[cfg(target_os = "windows")]
+            preload_plugin_imports();
+            register_plugin("WebGPU", plugin, "AI runs on the CPU");
         }
         DESKTOP_RUNTIME_IDENTITY
             .set((runtime_path.clone(), actual_sha256.clone()))
@@ -107,45 +110,79 @@ pub(super) fn load(source: &RuntimeSource) -> Result<()> {
         loaded_path == &runtime_path && loaded_sha256 == &actual_sha256,
         "a different ONNX Runtime is already active in this process; restart CalibRaw before changing the pinned runtime"
     );
+    // Here rather than with the runtime, so that allowing OpenVINO in
+    // Settings later registers it before the next job. Still under the lock.
+    if *source == RuntimeSource::Automatic {
+        register_openvino_plugin_once();
+    }
     Ok(())
 }
 
-/// Registers the WebGPU plugin execution provider with the loaded runtime.
-/// A plugin that fails to register leaves sessions on the CPU; the reason is
-/// recorded in diagnostics. Registration lasts as long as the process.
+/// Registers the plugin execution provider `plugin`, named `provider`, with
+/// the loaded runtime. A plugin that fails to register leaves sessions where
+/// `without` says; the reason is recorded in diagnostics. Registration lasts
+/// as long as the process.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn register_webgpu_plugin(plugin: &WebGpuPlugin) {
+fn register_plugin(provider: &str, plugin: &PluginLibrary, without: &str) {
     let result = (|| -> Result<()> {
         // Checked again right before loading, as the core library is.
-        let sha256 = Sha256::of_file(&plugin.path).context("verify the WebGPU provider")?;
+        let sha256 = Sha256::of_file(&plugin.path)
+            .with_context(|| format!("verify the {provider} provider"))?;
         anyhow::ensure!(
             sha256 == plugin.sha256,
-            "the WebGPU provider changed after it was installed: expected SHA-256 {}, found {sha256}",
+            "the {provider} provider changed after it was installed: expected SHA-256 {}, found {sha256}",
             plugin.sha256
         );
-        #[cfg(target_os = "windows")]
-        preload_plugin_imports();
         let environment = ort::environment::current()
             .map_err(|error| anyhow::anyhow!("get the ONNX Runtime environment: {error}"))?;
         environment
-            .register_ep_library("CalibRaw WebGPU", &plugin.path)
+            .register_ep_library(format!("CalibRaw {provider}"), &plugin.path)
             .map_err(|error| anyhow::anyhow!("{error}"))?;
         Ok(())
     })();
     calibraw_core::diagnostics::record(match result {
         Ok(()) => format!(
-            "ONNX Runtime WebGPU provider {} registered from {}",
+            "ONNX Runtime {provider} provider {} registered from {}",
             plugin.version,
             plugin.path.display()
         ),
         Err(error) => {
-            log::warn!("could not register the WebGPU provider: {error:#}");
+            log::warn!("could not register the {provider} provider: {error:#}");
             format!(
-                "ONNX Runtime WebGPU provider {} not registered, AI runs on the CPU: {error:#}",
+                "ONNX Runtime {provider} provider {} not registered, {without}: {error:#}",
                 plugin.version
             )
         }
     });
+}
+
+/// Downloads the OpenVINO package if needed and registers its plugin, the
+/// first time OpenVINO applies in this process (`openvino`). A failure
+/// leaves CPU sessions on ONNX Runtime's own CPU provider until CalibRaw
+/// restarts. Callers hold `RUNTIME_INIT_LOCK`.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn register_openvino_plugin_once() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    const WITHOUT: &str = "CPU sessions use ONNX Runtime's CPU provider";
+    static TRIED: AtomicBool = AtomicBool::new(false);
+    if TRIED.load(Ordering::Acquire) {
+        return;
+    }
+    let prepared = super::openvino::ensure_openvino_plugin();
+    if matches!(prepared, Ok(None)) {
+        return;
+    }
+    TRIED.store(true, Ordering::Release);
+    match prepared {
+        Ok(Some(plugin)) => register_plugin("OpenVINO", &plugin, WITHOUT),
+        Ok(None) => {}
+        Err(error) => {
+            log::warn!("could not prepare the OpenVINO provider: {error:#}");
+            calibraw_core::diagnostics::record(format!(
+                "ONNX Runtime OpenVINO provider not prepared, {WITHOUT}: {error:#}"
+            ));
+        }
+    }
 }
 
 /// The Visual C++ runtime libraries the WebGPU plugin imports and the core

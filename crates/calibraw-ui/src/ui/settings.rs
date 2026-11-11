@@ -1069,6 +1069,19 @@ impl Settings {
         {
             app.set_ai_gpu_acceleration(acceleration);
         }
+        if calibraw_ai::runtime::openvino_supported() {
+            let mut openvino = app.ai.openvino;
+            if moduwu_design::toggle_with_help(
+                ui,
+                &mut openvino,
+                tr("Use OpenVINO on Intel CPUs"),
+                tr("AI that would run on the CPU uses Intel's OpenVINO instead; a GPU that has room is still used first. Needs the Automatic ONNX Runtime and a separate download. AI falls back to the standard CPU runtime when OpenVINO fails or free memory is short."),
+            )
+            .changed()
+            {
+                app.set_ai_openvino(openvino);
+            }
+        }
         let statuses = calibraw_ai::ai_session_statuses();
         let mut in_use: Vec<String> = statuses.iter().map(|status| status.label()).collect();
         in_use.sort_unstable();

@@ -111,6 +111,10 @@ pub(crate) struct PerformanceSettings {
     // configure; every platform writes all of them.
     /// Where the AI runtime is configurable.
     pub ai_gpu_acceleration: bool,
+    /// Run AI that would use the CPU on OpenVINO, where the CPU is Intel's.
+    /// Missing in files written before it existed, which therefore turn it
+    /// on.
+    pub ai_openvino: bool,
     /// Where the AI runtime is configurable.
     pub onnx_runtime_mode: crate::app::OnnxRuntimeMode,
     /// Where Discord can be reached.
@@ -343,6 +347,7 @@ impl Default for PerformanceSettings {
             people_mask_quality: calibraw_ai::models::people::PeopleMaskQuality::default(),
             scene_depth_quality: calibraw_ai::models::scene_geometry::SceneDepthQuality::default(),
             ai_gpu_acceleration: true,
+            ai_openvino: true,
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::default(),
             discord_rich_presence: false,
             hdd_mode: false,

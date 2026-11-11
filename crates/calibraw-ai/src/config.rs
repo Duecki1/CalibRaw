@@ -256,6 +256,9 @@ fn fast_core_count() -> Option<usize> {
 pub struct AiConfig {
     /// Whether sessions may use GPU execution providers. Android always may.
     pub acceleration: bool,
+    /// Whether sessions that run on the CPU may use OpenVINO, where it is
+    /// supported (`runtime::openvino_supported`).
+    pub openvino: bool,
     pub runtime: RuntimeSource,
     /// The folder models and the automatic runtime are cached in.
     pub model_root: PathBuf,
@@ -271,6 +274,10 @@ pub enum AiConfigChange {
     /// Sessions created from now on may use the GPU, or must not. Enabling
     /// it also lifts a switch-off after a GPU failure.
     Acceleration(bool),
+    /// CPU sessions created from now on may use OpenVINO, or must not.
+    /// Allowing it in a process whose runtime is loaded registers the
+    /// plugin before the next job.
+    OpenVino(bool),
     /// Takes effect only before a runtime is loaded; the loaded one stays
     /// until CalibRaw restarts.
     Runtime(RuntimeSource),
@@ -293,6 +300,7 @@ static SETTINGS: RwLock<Settings> = RwLock::new(Settings {
 pub fn configure(config: AiConfig) -> Option<placement::GpuAiActivity> {
     let AiConfig {
         acceleration,
+        openvino,
         runtime,
         model_root,
         job_record_path,
@@ -304,6 +312,7 @@ pub fn configure(config: AiConfig) -> Option<placement::GpuAiActivity> {
         settings.model_root = Some(model_root);
     }
     placement::set_ai_acceleration_enabled(acceleration);
+    placement::set_openvino_enabled(openvino);
     if let Some(gpu) = gpu {
         placement::set_editor_gpu(gpu);
     }
@@ -313,6 +322,7 @@ pub fn configure(config: AiConfig) -> Option<placement::GpuAiActivity> {
 pub fn update(change: AiConfigChange) {
     match change {
         AiConfigChange::Acceleration(enabled) => placement::set_ai_acceleration_enabled(enabled),
+        AiConfigChange::OpenVino(enabled) => placement::set_openvino_enabled(enabled),
         AiConfigChange::Runtime(runtime) => write().runtime = runtime,
     }
 }

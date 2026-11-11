@@ -135,12 +135,33 @@ pub(crate) enum AiJobOrigin {
     Restore,
 }
 
+/// What Automatic runtime mode still has to download before an AI job.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RuntimeDownload {
+    /// The ONNX Runtime package.
+    pub(crate) runtime: bool,
+    /// The OpenVINO package.
+    pub(crate) openvino: bool,
+}
+
+impl RuntimeDownload {
+    pub(crate) const fn needed(self) -> bool {
+        self.runtime || self.openvino
+    }
+
+    /// Only the OpenVINO package, which the dialog then names instead of
+    /// ONNX Runtime.
+    pub(crate) const fn openvino_only(self) -> bool {
+        self.openvino && !self.runtime
+    }
+}
+
 /// A local-AI job waiting for the user to confirm it, either to accept a model
 /// or runtime download or to re-run a model for a restored edit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AiConsent {
     pub(crate) feature: calibraw_ai::AiFeature,
-    pub(crate) runtime_download_needed: bool,
+    pub(crate) runtime_download: RuntimeDownload,
     pub(crate) origin: AiJobOrigin,
 }
 
@@ -149,6 +170,8 @@ pub(crate) struct AiState {
     pub(crate) people_mask_quality: calibraw_ai::models::people::PeopleMaskQuality,
     pub(crate) scene_depth_quality: calibraw_ai::models::scene_geometry::SceneDepthQuality,
     pub(crate) gpu_acceleration: bool,
+    /// CPU sessions may use OpenVINO where it is supported.
+    pub(crate) openvino: bool,
     /// Content results (AI masks, scene depth, range sources) were made from an
     /// image that has since changed. Persisted as `ai_masks_need_update`.
     pub(crate) update_needed: bool,
