@@ -71,7 +71,7 @@ objc2-foundation.workspace = true
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-zbus = "=5.16.0"
+zbus = "=5.19.0"
 
 [target.'cfg(target_os = "android")'.dependencies]
 calibraw-ffi.workspace = true
