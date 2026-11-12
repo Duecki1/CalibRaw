@@ -193,7 +193,7 @@ inputs only, adds its case to `scene_emission_slot_at` and `scene_emission_prese
 (`scene_emission.wgsl`) and to `GpuParams::needs_scene_emission`, and keeps its mask in
 the full-image atlas (`MaskEffect::reads_full_image_mask`); Fog, Smoke, Rain, Wet Surfaces and the
 surfaces then receive its light. Effects with passes of their
-own (the blurs, Glow, Light Rays, Rain, Wet Surfaces, the light bake) also need
+own (the blurs, Glow, the legacy Light Rays, Rain, Wet Surfaces, the light bake) also need
 those passes and their `GpuParams::needs_*` checks, and read their slots by lane name
 too (`mask_effect_params`).
 

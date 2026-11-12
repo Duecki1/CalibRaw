@@ -9,6 +9,7 @@
 #import calibraw::scene::camera as Camera
 #import calibraw::scene::bake_common as Bake
 #import calibraw::scene::geometry as Geometry
+#import calibraw::scene::lights_common as Lights
 
 fn glow_work_at(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0).xyz;
@@ -232,6 +233,7 @@ fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
     rgb = apply_mask_glow_cores(pos, rgb);
     rgb = apply_styled_glow(pos, rgb);
     rgb = apply_light_rays(pos, rgb);
+    rgb = apply_light_shafts(pos, rgb);
     textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
 }
 

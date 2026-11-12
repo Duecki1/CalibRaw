@@ -1279,7 +1279,6 @@
   "Pinch out": "双指张开缩放",
   "Pinned SHA-256:": "固定的 SHA-256：",
   "Pixelate": "像素化",
-  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "相对于整张图像放置光源，然后绘制光线开口。光束穿过蒙版照射，且只在蒙版内显示。",
   "Plume size": "烟雾团大小",
   "Point Color": "点颜色",
   "Portrait": "人像",
@@ -2085,5 +2084,11 @@
   "Make the mask emit colored light, so it glows even over dark surfaces. The glow extends beyond the selection and lights the scene around it; Scene light sets how much.": "让蒙版发出彩色光，即使在暗面上也会发光。光芒会延伸到选区之外并照亮周围场景；场景光照设置强度。",
   "Let light spread from the bright parts of the mask: Bloom glows around highlights, Diffusion softens across tones, Halation adds a film's red halo around bright edges. Range sets which tones glow, Spread how far. The glow can extend beyond the selection.": "让光从蒙版的明亮部分扩散：泛光在高光周围发光，柔焦柔化所有色调，光晕在明亮边缘周围添加胶片般的红色光晕。范围设置哪些色调发光，扩散设置扩散距离。光芒可延伸到选区之外。",
   "The earlier Glow, which bloomed bright pixels inside the mask. Replace it with the new Glow.": "旧版光晕，会让蒙版内的明亮像素发光。请替换为新版光晕。",
-  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "旧版胶片光晕，蒙版内温暖的胶片光晕。请替换为新版光晕的光晕样式。"
+  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "旧版胶片光晕，蒙版内温暖的胶片光晕。请替换为新版光晕的光晕样式。",
+  "Light Rays (legacy)": "光线（旧版）",
+  "The earlier Light Rays, which drew shafts through openings painted with the mask. Replace it with the new Light Rays.": "旧版光线，通过用蒙版绘制的开口画出光束。请将其替换为新的光线。",
+  "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "从每个光源添加光束，光源相对于完整图像放置，也可放在画面之外。场景让光穿过空气，使树木、窗框等物体切开它的光线；场景深度会自动生成。2D 通过用蒙版绘制的开口画出光线，不使用深度。穿透让光线穿过阻挡它的物体。光线只在蒙版内显示。",
+  "Penetration": "穿透",
+  "Scene": "场景",
+  "2D": "2D"
 }

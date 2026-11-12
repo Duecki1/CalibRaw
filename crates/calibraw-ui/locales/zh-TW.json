@@ -1279,7 +1279,6 @@
   "Pinch out": "雙指張開縮放",
   "Pinned SHA-256:": "固定的 SHA-256：",
   "Pixelate": "像素化",
-  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "相對於整張影像放置光源，然後繪制光線開口。光束穿過遮色片照射，且只在遮色片內顯示。",
   "Plume size": "煙霧團大小",
   "Point Color": "點顏色",
   "Portrait": "人像",
@@ -2085,5 +2084,11 @@
   "Make the mask emit colored light, so it glows even over dark surfaces. The glow extends beyond the selection and lights the scene around it; Scene light sets how much.": "讓遮罩發出彩色光，即使在暗面上也會發光。光芒會延伸到選取範圍之外並照亮周圍場景；場景光照設定強度。",
   "Let light spread from the bright parts of the mask: Bloom glows around highlights, Diffusion softens across tones, Halation adds a film's red halo around bright edges. Range sets which tones glow, Spread how far. The glow can extend beyond the selection.": "讓光從遮罩的明亮部分擴散：泛光在高光周圍發光，柔焦柔化所有色調，光暈則在明亮邊緣周圍加上底片般的紅色光暈。範圍設定哪些色調發光，擴散設定擴散距離。光芒可延伸到選取範圍之外。",
   "The earlier Glow, which bloomed bright pixels inside the mask. Replace it with the new Glow.": "舊版光晕，會讓遮罩內的明亮像素發光。請以新版光晕取代。",
-  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "舊版底片光暈，遮罩內溫暖的底片光暈。請以新版光晕的光暈樣式取代。"
+  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "舊版底片光暈，遮罩內溫暖的底片光暈。請以新版光晕的光暈樣式取代。",
+  "Light Rays (legacy)": "光線（舊版）",
+  "The earlier Light Rays, which drew shafts through openings painted with the mask. Replace it with the new Light Rays.": "舊版光線，透過以遮罩繪製的開口畫出光束。請將其替換為新的光線。",
+  "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "從每個光源加入光束，光源相對於完整影像放置，也可放在畫面之外。場景讓光穿過空氣，使樹木、窗框等物體切開它的光線；場景深度會自動產生。2D 透過以遮罩繪製的開口畫出光線，不使用深度。穿透讓光線穿過阻擋它的物體。光線只在遮罩內顯示。",
+  "Penetration": "穿透",
+  "Scene": "場景",
+  "2D": "2D"
 }

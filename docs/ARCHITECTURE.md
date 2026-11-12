@@ -312,9 +312,12 @@ it reads in its registry row (`scene: [Geometry, LightBake, AirLight, Image]`), 
   defines the control depth sliders use.
 - **The light bake** (`scene/lights.rs`, `lights_common.wgsl`) holds a shadow cube per
   light, each surface's visibility of it and, for the air, the share of each light that
-  reaches a view ray. `scene_lights.wgsl` turns Relight's lights and Light Rays' sources
-  into lights in that frame (a flat plane without depth) and receivers read them:
-  `medium.wgsl` is what Fog, Smoke and Rain's mist share to scatter them.
+  reaches a view ray, past what blocks it by the light's Penetration.
+  `scene_lights.wgsl` turns Relight's lights and Light Rays' sources into lights in
+  that frame (a flat plane without depth) and receivers read them: `medium.wgsl` is
+  what Fog, Smoke and Rain's mist share to scatter them, and Light Rays draws the
+  light the air scatters along each view ray from that share (`light_shafts.wgsl`);
+  its 2D style draws without depth (`light_shafts_flat.wgsl`).
 - `scene_environment.wgsl` is the scene's light as effects receive it: its ambient
   level, the photo's coarse colour and the light sources in the photo.
 - `scene_emission.wgsl` makes effects that emit over an area (a self-illuminating

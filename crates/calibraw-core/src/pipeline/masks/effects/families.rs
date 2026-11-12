@@ -3,12 +3,12 @@
 //!
 //! A family changes only how effects are offered. Each style is an effect of
 //! the registry (`mask_effects!`), with the modes an effect keeps in its
-//! settings (Radial Blur's Zoom and Spin, Glow's [`GlowStyle`]s) as styles of
-//! their own, so sidecars, presets, shader IDs and rendering stay those of
-//! the effects.
+//! settings (Radial Blur's Zoom and Spin, Glow's [`GlowStyle`]s, Light Rays'
+//! Scene and 2D) as styles of their own, so sidecars, presets, shader IDs and
+//! rendering stay those of the effects.
 
 use super::{
-    EffectControl, EffectSettings, EffectSettingsVisitor, GlowStyle, MaskEffect,
+    EffectControl, EffectSettings, EffectSettingsVisitor, GlowStyle, LightShaftsMode, MaskEffect,
     MaskEffectCategory, MaskEffectSettings, RadialBlurMode,
 };
 use crate::pipeline::EffectComponent;
@@ -33,6 +33,7 @@ pub enum EffectFamily {
     Rain,
     WetSurfaces,
     LegacyHighlightGlow,
+    LegacyLightRays,
 }
 
 /// One way a family's effect can look: an effect, and the mode its settings
@@ -49,6 +50,7 @@ pub struct EffectStyle {
 enum StyleMode {
     RadialBlur(RadialBlurMode),
     Glow(GlowStyle),
+    LightShafts(LightShaftsMode),
 }
 
 impl StyleMode {
@@ -67,6 +69,10 @@ impl StyleMode {
                 Self::Glow(GlowStyle::ALL[3]),
                 Self::Glow(GlowStyle::ALL[4]),
             ],
+            MaskEffect::LightShafts => &[
+                Self::LightShafts(LightShaftsMode::ALL[0]),
+                Self::LightShafts(LightShaftsMode::ALL[1]),
+            ],
             _ => &[],
         }
     }
@@ -76,6 +82,7 @@ impl StyleMode {
         match effect {
             MaskEffect::RadialBlur => Some(Self::RadialBlur(settings.radial_blur.mode)),
             MaskEffect::StyledGlow => Some(Self::Glow(settings.styled_glow.style)),
+            MaskEffect::LightShafts => Some(Self::LightShafts(settings.light_shafts.mode)),
             _ => None,
         }
     }
@@ -84,6 +91,7 @@ impl StyleMode {
         match self {
             Self::RadialBlur(mode) => mode.label(),
             Self::Glow(style) => style.label(),
+            Self::LightShafts(mode) => mode.label(),
         }
     }
 
@@ -91,6 +99,7 @@ impl StyleMode {
         match self {
             Self::RadialBlur(mode) => settings.radial_blur.mode = mode,
             Self::Glow(style) => settings.styled_glow.style = style,
+            Self::LightShafts(mode) => settings.light_shafts.mode = mode,
         }
     }
 }
@@ -101,6 +110,14 @@ impl EffectStyle {
         Self {
             effect: MaskEffect::StyledGlow,
             mode: Some(StyleMode::Glow(style)),
+        }
+    }
+
+    /// Light Rays in `mode`.
+    pub const fn light_shafts(mode: LightShaftsMode) -> Self {
+        Self {
+            effect: MaskEffect::LightShafts,
+            mode: Some(StyleMode::LightShafts(mode)),
         }
     }
 

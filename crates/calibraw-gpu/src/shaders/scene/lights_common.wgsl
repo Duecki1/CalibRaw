@@ -33,7 +33,10 @@ struct SceneShadowLight {
     // size, 1 half of it).
     shape: vec4<f32>,
     // The distance at which the light's falloff has halved, in frame units
-    // (x): what the air light weighs the view ray by. yzw unused.
+    // (x): what the air light weighs the view ray by. The distance behind a
+    // blocker over which light in the air falls to 1/e, in frame units (y):
+    // 0, a hard shadow, for every light but a Light Rays source with
+    // Penetration (`scene_cube_air_visibility`). zw unused.
     air: vec4<f32>,
 }
 
@@ -124,25 +127,33 @@ fn scene_cube_distance(stored: f32) -> f32 {
     return SCENE_CUBE_NEAR / max(stored, 1e-30);
 }
 
-// How much of light `light` reaches the scene point `position`, whose surface
-// faces `normal` (zero for a point in the air), from its cube: percentage-
-// closer soft shadows (Fernando, "Percentage-Closer Soft Shadows", 2005).
-// Blockers are searched over the light's disc seen from the point; their mean
-// distance gives the penumbra's width, which a filter of that radius
-// realizes. Each filter tap is a bilinear comparison. Taps follow a fixed
-// Vogel spiral, so results do not depend on the pixel. `blocker_taps` 0
-// skips the search and filters over one texel.
+// Where a point lies in its light's cube, for the filters that read the cube
+// around it: the layer and uv of the face that owns its direction, its
+// distance along that face's axis less the bias (`receiver`), and extents in
+// uv. `shadowed` is false for a point at or behind the light's near plane,
+// which nothing shadows.
 //
 // Self-shadowing is avoided by moving the point along its normal by about a
 // shadow texel's footprint there (normal offset), and by a bias that grows
 // with the slope of the surface seen from the light (slope-scaled bias).
-fn scene_cube_visibility(
-    light: SceneShadowLight,
-    position: vec3<f32>,
-    normal: vec3<f32>,
-    blocker_taps: u32,
-    filter_taps: u32,
-) -> f32 {
+struct SceneCubeLookup {
+    shadowed: bool,
+    layer: i32,
+    uv: vec2<f32>,
+    receiver: f32,
+    layer_texels: f32,
+    // A texel, one face's guard band, which filters stay within, and the
+    // narrowest filter radius.
+    texel_uv: f32,
+    margin_uv: f32,
+    least_uv: f32,
+    // Face coordinates per uv.
+    coordinates_per_uv: f32,
+}
+
+// The lookup of the scene point `position` of a surface facing `normal`
+// (zero for a point in the air).
+fn scene_cube_lookup(light: SceneShadowLight, position: vec3<f32>, normal: vec3<f32>) -> SceneCubeLookup {
     let face_texels = light.shape.y;
     let layer_texels = f32(textureDimensions(scene_cube_tex).x);
     let raw = position - light.position.xyz;
@@ -157,38 +168,59 @@ fn scene_cube_visibility(
     let v = offset_point - light.position.xyz;
     let face = scene_cube_face(v);
     let c = scene_cube_coordinates(v, face);
-    if c.z <= SCENE_CUBE_NEAR {
-        return 1.0;
-    }
     let slope = select(min(sine / max(facing, 1e-3), SCENE_SHADOW_MAX_SLOPE), 0.0, dot(normal, normal) < 0.5);
     let bias = texel * (SCENE_SHADOW_BIAS + SCENE_SHADOW_SLOPE_BIAS * slope);
-    let receiver = c.z - bias;
-    let reference = scene_cube_depth(receiver);
-    let layer = i32(light.shape.z) + i32(face);
-    let uv = scene_cube_uv(c, face_texels, layer_texels);
-    // One face's guard band in uv, which filters stay within.
-    let margin_uv = SCENE_CUBE_MARGIN / (2.0 * (1.0 + SCENE_CUBE_MARGIN)) * (face_texels / layer_texels);
     let texel_uv = 1.0 / layer_texels;
-    // The narrowest filter: the mesh's outline is only as exact as its texels,
-    // so a sharper shadow edge would show their steps as dots.
-    let least_uv = SCENE_SHADOW_LEAST_FILTER * texel_uv;
-    // Face coordinates per uv.
-    let coordinates_per_uv = 2.0 * (1.0 + SCENE_CUBE_MARGIN) * (layer_texels / face_texels);
+    return SceneCubeLookup(
+        c.z > SCENE_CUBE_NEAR,
+        i32(light.shape.z) + i32(face),
+        scene_cube_uv(c, face_texels, layer_texels),
+        c.z - bias,
+        layer_texels,
+        texel_uv,
+        SCENE_CUBE_MARGIN / (2.0 * (1.0 + SCENE_CUBE_MARGIN)) * (face_texels / layer_texels),
+        // The mesh's outline is only as exact as its texels, so a sharper
+        // shadow edge would show their steps as dots.
+        SCENE_SHADOW_LEAST_FILTER * texel_uv,
+        2.0 * (1.0 + SCENE_CUBE_MARGIN) * (layer_texels / face_texels),
+    );
+}
+
+// How much of light `light` reaches the scene point `position`, whose surface
+// faces `normal` (zero for a point in the air), from its cube: percentage-
+// closer soft shadows (Fernando, "Percentage-Closer Soft Shadows", 2005).
+// Blockers are searched over the light's disc seen from the point; their mean
+// distance gives the penumbra's width, which a filter of that radius
+// realizes. Each filter tap is a bilinear comparison. Taps follow a fixed
+// Vogel spiral, so results do not depend on the pixel. `blocker_taps` 0
+// skips the search and filters over one texel.
+fn scene_cube_visibility(
+    light: SceneShadowLight,
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    blocker_taps: u32,
+    filter_taps: u32,
+) -> f32 {
+    let lookup = scene_cube_lookup(light, position, normal);
+    if !lookup.shadowed {
+        return 1.0;
+    }
+    let reference = scene_cube_depth(lookup.receiver);
     let radius = light.shape.x;
 
-    var filter_uv = least_uv;
+    var filter_uv = lookup.least_uv;
     if blocker_taps > 0u && radius > 0.0 {
         // The light's disc seen from the receiver, at half its distance:
         // where the blockers that shade it most lie.
-        let search_uv = clamp(2.0 * radius / receiver / coordinates_per_uv, texel_uv, margin_uv);
+        let search_uv = clamp(2.0 * radius / lookup.receiver / lookup.coordinates_per_uv, lookup.texel_uv, lookup.margin_uv);
         var blockers = 0.0;
         var count = 0.0;
         for (var tap = 0u; tap < blocker_taps; tap = tap + 1u) {
-            let sample_uv = uv + search_uv * scene_vogel(tap, blocker_taps);
-            let texel_position = vec2<i32>(sample_uv * layer_texels);
-            let stored = textureLoad(scene_cube_tex, texel_position, layer, 0);
+            let sample_uv = lookup.uv + search_uv * scene_vogel(tap, blocker_taps);
+            let texel_position = vec2<i32>(sample_uv * lookup.layer_texels);
+            let stored = textureLoad(scene_cube_tex, texel_position, lookup.layer, 0);
             let distance = scene_cube_distance(stored);
-            if stored > 0.0 && distance < receiver {
+            if stored > 0.0 && distance < lookup.receiver {
                 blockers += distance;
                 count += 1.0;
             }
@@ -197,14 +229,50 @@ fn scene_cube_visibility(
             return 1.0;
         }
         let blocker = blockers / count;
-        let penumbra = radius * (receiver - blocker) / (blocker * receiver);
-        filter_uv = clamp(penumbra / coordinates_per_uv, least_uv, margin_uv);
+        let penumbra = radius * (lookup.receiver - blocker) / (blocker * lookup.receiver);
+        filter_uv = clamp(penumbra / lookup.coordinates_per_uv, lookup.least_uv, lookup.margin_uv);
     }
     var lit = 0.0;
     let taps = max(filter_taps, 1u);
     for (var tap = 0u; tap < taps; tap = tap + 1u) {
-        let sample_uv = uv + filter_uv * scene_vogel(tap, taps);
-        lit += textureSampleCompareLevel(scene_cube_tex, scene_cube_compare, sample_uv, layer, reference);
+        let sample_uv = lookup.uv + filter_uv * scene_vogel(tap, taps);
+        lit += textureSampleCompareLevel(scene_cube_tex, scene_cube_compare, sample_uv, lookup.layer, reference);
+    }
+    return lit / f32(taps);
+}
+
+// How much of light `light` reaches the point `position` in the air, from
+// its cube over `filter_taps` taps of the narrowest filter. With Penetration
+// (`light.air.y` > 0) light continues behind the first surface it meets and
+// fades with the distance it has travelled behind it, as through foliage or
+// haze: exp(-behind / air.y). Each tap interpolates that transmission of the
+// four texels around it bilinearly, so it becomes the comparison of
+// `scene_cube_visibility` as Penetration goes to 0; at 0 it is that.
+fn scene_cube_air_visibility(light: SceneShadowLight, position: vec3<f32>, filter_taps: u32) -> f32 {
+    let depth = light.air.y;
+    if depth <= 0.0 {
+        return scene_cube_visibility(light, position, vec3<f32>(0.0), 0u, filter_taps);
+    }
+    let lookup = scene_cube_lookup(light, position, vec3<f32>(0.0));
+    if !lookup.shadowed {
+        return 1.0;
+    }
+    let last = vec2<i32>(i32(lookup.layer_texels) - 1);
+    var lit = 0.0;
+    let taps = max(filter_taps, 1u);
+    for (var tap = 0u; tap < taps; tap = tap + 1u) {
+        let texel = (lookup.uv + lookup.least_uv * scene_vogel(tap, taps)) * lookup.layer_texels - vec2<f32>(0.5);
+        let base = vec2<i32>(floor(texel));
+        let t = texel - floor(texel);
+        var corners = vec4<f32>(0.0);
+        for (var corner = 0u; corner < 4u; corner = corner + 1u) {
+            let offset = vec2<i32>(i32(corner & 1u), i32(corner >> 1u));
+            let stored = textureLoad(scene_cube_tex, clamp(base + offset, vec2<i32>(0), last), lookup.layer, 0);
+            // Nothing drawn (0) or a blocker no nearer than the point: lit.
+            let behind = select(lookup.receiver - scene_cube_distance(stored), 0.0, stored <= 0.0);
+            corners[corner] = exp(-max(behind, 0.0) / depth);
+        }
+        lit += mix(mix(corners.x, corners.y, t.x), mix(corners.z, corners.w, t.x), t.y);
     }
     return lit / f32(taps);
 }

@@ -4,7 +4,7 @@ mod generated;
 pub(super) mod glow;
 mod instances;
 pub(super) mod legacy;
-pub(super) mod light_rays;
+pub(super) mod light_shafts;
 mod picker;
 pub(super) mod radial_blur;
 pub(super) mod rain;

@@ -568,6 +568,23 @@ pub mod light_rays {
     );
 }
 
+/// Light Rays (light_shafts.rs). The meaning of each value is set there.
+pub mod light_shafts {
+    use super::*;
+
+    float_param!(AMOUNT, "Amount", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(LENGTH, "Length", 0.0, 200.0, 100.0, 1.0, 0, None);
+    float_param!(SOURCE_X, "Source X", -50.0, 150.0, 50.0, 1.0, 0, None);
+    float_param!(SOURCE_Y, "Source Y", -50.0, 150.0, 20.0, 1.0, 0, None);
+    float_param!(WARMTH, "Warmth", -100.0, 100.0, 20.0, 0.5, 0, None);
+    float_param!(PENETRATION, "Penetration", 0.0, 100.0, 0.0, 0.5, 0, None);
+    // The 2D style's ray look, from the legacy Light Rays.
+    float_param!(SPREAD, "Spread", 0.0, 45.0, 8.0, 0.25, 1, None);
+    float_param!(RAY_COUNT, "Ray Count", 4.0, 96.0, 32.0, 1.0, 0, None);
+    float_param!(VARIATION, "Variation", 0.0, 100.0, 65.0, 0.5, 0, None);
+    float_param!(SOFTNESS, "Softness", 0.0, 100.0, 60.0, 0.5, 0, None);
+}
+
 pub mod relight {
     use super::*;
 

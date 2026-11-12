@@ -3,8 +3,8 @@
 // their order in the edit.
 //
 // Emitters. `scene_light_at` turns an effect slot into a light: one of
-// Relight's point lights, and a Light Rays source as a point light at the
-// farthest surface. A new emitter is one more case there. Effects that emit
+// Relight's point lights, and a Light Rays source (and a legacy one) as a point
+// light at the farthest surface. A new emitter is one more case there. Effects that emit
 // over an area of the image (a Glowing Area, Neon) are lights of
 // scene_emission.wgsl, which receivers add through the same functions.
 // Receivers loop over the effect slots (`Common::mask_slot_count`), skip lights
@@ -32,11 +32,11 @@
 
 // Relative intensity of Amount 100 on a surface facing a nearby light.
 const SCENE_LIGHT_GAIN: f32 = 2.5;
-// The Light Rays source relative to a Relight light of the same Amount, and
-// its reach relative to the rays' Length (`rays_reach` in scene/lights.rs).
-// Light Rays already draw their own shafts; as a distant light it adds a glow
-// around its source rather than flooding a whole scene that lies within its
-// reach.
+// The legacy Light Rays source relative to a Relight light of the same Amount,
+// and its reach relative to the rays' Length (`rays_reach` in
+// scene/lights.rs). Light Rays already draw their own shafts; as a distant
+// light it adds a glow around its source rather than flooding a whole scene
+// that lies within its reach.
 const LIGHT_RAYS_LIGHT_INTENSITY: f32 = 0.4;
 const LIGHT_RAYS_LIGHT_REACH: f32 = 0.35;
 const SCENE_LIGHT_UNCONFINED: u32 = 0xffffffffu;
@@ -78,9 +78,9 @@ fn scene_light_none() -> SceneLight {
 
 // The light the effect in slot `index` emits; none for a slot that emits none.
 // Relight's is placed as relight.wgsl places it (and scene/camera.rs
-// `light_position` for the light bake); the Light Rays source lies at the
-// farthest surface, where rays come from, and its mask marks where rays are
-// emitted, not where the light acts, so it is never confined.
+// `light_position` for the light bake); a Light Rays source lies at the
+// farthest surface, where rays come from (`light_shafts_source`, and the legacy
+// one below), confined to its mask as its rays are.
 fn scene_light_at(index: u32) -> SceneLight {
     let state = Common::mask_data[index].metadata;
     if !Common::mask_slot_active(state) { return scene_light_none(); }
@@ -110,6 +110,9 @@ fn scene_light_at(index: u32) -> SceneLight {
             confined,
             relief_scale,
         );
+    }
+    if effect_id == MASK_EFFECT_LIGHT_SHAFTS_ID {
+        return light_shafts_source(index, params);
     }
     if effect_id == MASK_EFFECT_LIGHT_RAYS_ID {
         let amount = mask_effect_percent(params, LIGHT_RAYS_AMOUNT_LANE);

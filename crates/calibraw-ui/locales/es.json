@@ -1347,7 +1347,6 @@
   "Pinch out": "Pellizcar para alejar",
   "Pinned SHA-256:": "SHA-256 fijado:",
   "Pixelate": "Pixelar",
-  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Coloca el origen en relación con la imagen completa y luego pinta sus aberturas. Los haces de luz atraviesan la máscara y solo se ven dentro de ella.",
   "Plume size": "Tamaño de las columnas",
   "Point Color": "Color puntual",
   "Portrait": "Vertical",
@@ -2085,5 +2084,11 @@
   "Make the mask emit colored light, so it glows even over dark surfaces. The glow extends beyond the selection and lights the scene around it; Scene light sets how much.": "Haz que la máscara emita luz de color, de modo que brille incluso sobre superficies oscuras. El resplandor se extiende más allá de la selección e ilumina la escena a su alrededor; Luz de escena define cuánto.",
   "Let light spread from the bright parts of the mask: Bloom glows around highlights, Diffusion softens across tones, Halation adds a film's red halo around bright edges. Range sets which tones glow, Spread how far. The glow can extend beyond the selection.": "Deja que la luz se extienda desde las partes claras de la máscara: Bloom brilla alrededor de las altas luces, Difusión suaviza todos los tonos y Halación añade el halo rojo de la película alrededor de los bordes claros. Rango define qué tonos brillan y Extensión hasta dónde. El resplandor puede ir más allá de la selección.",
   "The earlier Glow, which bloomed bright pixels inside the mask. Replace it with the new Glow.": "El Resplandor anterior, que hacía brillar los píxeles claros dentro de la máscara. Sustitúyelo por el nuevo Resplandor.",
-  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "La Halación anterior, un cálido halo de película dentro de la máscara. Sustitúyela por el estilo Halación del nuevo Resplandor."
+  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "La Halación anterior, un cálido halo de película dentro de la máscara. Sustitúyela por el estilo Halación del nuevo Resplandor.",
+  "Light Rays (legacy)": "Rayos de luz (antiguos)",
+  "The earlier Light Rays, which drew shafts through openings painted with the mask. Replace it with the new Light Rays.": "Los Rayos de luz anteriores, que dibujaban haces a través de aberturas pintadas con la máscara. Sustitúyelos por los nuevos Rayos de luz.",
+  "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "Añade haces de luz desde cada fuente, colocada respecto a la imagen completa, también fuera del encuadre. Escena hace que la luz brille a través del aire para que árboles, marcos de ventana y otros objetos corten sus rayos; la profundidad de escena se genera automáticamente. 2D dibuja rayos a través de aberturas pintadas con la máscara, sin profundidad. Penetración deja pasar la luz a través de lo que la bloquea. Los rayos solo se muestran dentro de la máscara.",
+  "Penetration": "Penetración",
+  "Scene": "Escena",
+  "2D": "2D"
 }

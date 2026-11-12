@@ -4,8 +4,10 @@ use super::styled_glow::{
     is_styled_glow, styled_glow_near_top, styled_glow_streaks, StyledGlowStreaks,
 };
 use super::*;
-use crate::pipeline::effect_lanes::{glow, light_rays, neon, pixelate, relight, styled_glow};
-use crate::pipeline::{EffectOption, EffectPass, Lane};
+use crate::pipeline::effect_lanes::{
+    glow, light_rays, light_shafts, neon, options, pixelate, relight, styled_glow,
+};
+use crate::pipeline::{EffectOption, EffectPass, Lane, SceneNeeds};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -312,6 +314,16 @@ impl MaskData {
         self.is_active()
             .then(|| MaskEffect::from_shader_id(self.effect_id()))
             .flatten()
+    }
+
+    /// What the slot's active effect reads of the scene bake: its registry
+    /// row's needs, none for Light Rays' 2D style, which draws without depth.
+    pub(super) fn scene_needs(&self) -> Option<SceneNeeds> {
+        let effect = self.active_effect()?;
+        if effect == MaskEffect::LightShafts && self.option(options::LIGHT_SHAFTS_FLAT) > 0.5 {
+            return Some(SceneNeeds::NONE);
+        }
+        Some(effect.scene_needs())
     }
 
     /// Whether the slot is active and its effect runs in `pass`.
@@ -1010,24 +1022,24 @@ impl GpuParams {
     }
 
     /// Whether an active effect reads the scene bake's geometry
-    /// ([`MaskEffect::scene_needs`]), which needs a depth result.
+    /// ([`MaskData::scene_needs`]), which needs a depth result.
     pub(super) fn needs_scene_geometry(&self) -> bool {
         self.depth_result.is_some()
             && (self.needs_scene_emission()
                 || self
                     .mask_slots()
                     .iter()
-                    .filter_map(MaskData::active_effect)
-                    .any(|effect| effect.scene_needs().geometry))
+                    .filter_map(MaskData::scene_needs)
+                    .any(|needs| needs.geometry))
     }
 
     /// Whether an active effect reads the scene bake's working image
-    /// ([`MaskEffect::scene_needs`]), which exists without a depth result.
+    /// ([`MaskData::scene_needs`]), which exists without a depth result.
     pub(super) fn needs_scene_image(&self) -> bool {
         self.mask_slots()
             .iter()
-            .filter_map(MaskData::active_effect)
-            .any(|effect| effect.scene_needs().image)
+            .filter_map(MaskData::scene_needs)
+            .any(|needs| needs.image)
     }
 
     /// Whether an active effect reads the scene bake: its working image, and
@@ -1043,8 +1055,8 @@ impl GpuParams {
             && self
                 .mask_slots()
                 .iter()
-                .filter_map(MaskData::active_effect)
-                .any(|effect| effect.scene_needs().light_bake)
+                .filter_map(MaskData::scene_needs)
+                .any(|needs| needs.light_bake)
             && self
                 .mask_slots()
                 .iter()
@@ -1058,8 +1070,8 @@ impl GpuParams {
             && self
                 .mask_slots()
                 .iter()
-                .filter_map(MaskData::active_effect)
-                .any(|effect| effect.scene_needs().air_light)
+                .filter_map(MaskData::scene_needs)
+                .any(|needs| needs.air_light)
     }
 
     /// The light bake's tier.
@@ -1087,6 +1099,21 @@ impl GpuParams {
                     relief_scale: 1.0,
                     size: 0.0,
                     reach: mask.lane(light_rays::LENGTH),
+                    penetration: 0.0,
+                }
+            } else if mask.applies(MaskEffect::LightShafts) {
+                // A point light at the farthest surface (control depth 100).
+                SceneShadowLight {
+                    kind: SceneLightKind::LightShafts,
+                    source: [
+                        mask.lane(light_shafts::SOURCE_X),
+                        mask.lane(light_shafts::SOURCE_Y),
+                    ],
+                    light_depth: 100.0,
+                    relief_scale: 1.0,
+                    size: 0.0,
+                    reach: mask.lane(light_shafts::LENGTH),
+                    penetration: mask.percent(light_shafts::PENETRATION),
                 }
             } else {
                 SceneShadowLight {
@@ -1096,6 +1123,7 @@ impl GpuParams {
                     relief_scale: mask.lane(relight::RELIEF_SCALE) / 100.0,
                     size: mask.percent(relight::SIZE),
                     reach: mask.lane(relight::REACH),
+                    penetration: 0.0,
                 }
             });
         }

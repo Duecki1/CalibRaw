@@ -1279,7 +1279,6 @@
   "Pinch out": "पिंच करके बड़ा करें",
   "Pinned SHA-256:": "निश्चित SHA-256:",
   "Pixelate": "पिक्सेलेट करें",
-  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "पूरी छवि के अनुसार स्रोत रखें, फिर उसके छिद्रों पर पेंट करें। प्रकाश किरणें मास्क से होकर चमकती हैं और केवल उसके भीतर दिखती हैं।",
   "Plume size": "गुबार का आकार",
   "Point Color": "बिंदु का रंग",
   "Portrait": "पोर्ट्रेट",
@@ -2085,5 +2084,11 @@
   "Make the mask emit colored light, so it glows even over dark surfaces. The glow extends beyond the selection and lights the scene around it; Scene light sets how much.": "मास्क से रंगीन प्रकाश निकलवाएँ, ताकि वह अंधेरी सतहों पर भी चमके। चमक चयन से आगे तक फैलती है और आसपास के दृश्य को रोशन करती है; दृश्य प्रकाश तय करता है कितना।",
   "Let light spread from the bright parts of the mask: Bloom glows around highlights, Diffusion softens across tones, Halation adds a film's red halo around bright edges. Range sets which tones glow, Spread how far. The glow can extend beyond the selection.": "मास्क के चमकीले हिस्सों से प्रकाश फैलने दें: ब्लूम हाइलाइट्स के चारों ओर चमकता है, डिफ़्यूज़न सभी टोन को कोमल बनाता है, हेलिएशन चमकीले किनारों के चारों ओर फ़िल्म जैसा लाल प्रभामंडल जोड़ता है। रेंज तय करती है कौन से टोन चमकें, फैलाव कितनी दूर तक। चमक चयन से आगे जा सकती है।",
   "The earlier Glow, which bloomed bright pixels inside the mask. Replace it with the new Glow.": "पुराना Glow, जो मास्क के भीतर चमकीले पिक्सेल को चमकाता था। इसे नए Glow से बदलें।",
-  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "पुराना हेलिएशन, मास्क के भीतर फ़िल्म जैसा गर्म प्रभामंडल। इसे नए Glow की हेलिएशन शैली से बदलें।"
+  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "पुराना हेलिएशन, मास्क के भीतर फ़िल्म जैसा गर्म प्रभामंडल। इसे नए Glow की हेलिएशन शैली से बदलें।",
+  "Light Rays (legacy)": "Light Rays (पुराना)",
+  "The earlier Light Rays, which drew shafts through openings painted with the mask. Replace it with the new Light Rays.": "पुराना Light Rays, जो मास्क से पेंट किए गए खुले हिस्सों से किरणें बनाता था। इसे नए Light Rays से बदलें।",
+  "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "हर स्रोत से रोशनी की किरणें जोड़ें, जिसे पूरी छवि के सापेक्ष रखा जाता है, फ़्रेम के बाहर भी। Scene रोशनी को हवा में से चमकने देता है ताकि पेड़, खिड़की के फ़्रेम और दूसरी वस्तुएँ उसकी किरणों को काटें; दृश्य की गहराई अपने-आप बनती है। 2D मास्क से पेंट किए गए खुले हिस्सों से किरणें बनाता है, बिना गहराई के। Penetration रोशनी को रोकने वाली चीज़ों के पार जाने देता है। किरणें केवल मास्क के भीतर दिखती हैं।",
+  "Penetration": "Penetration",
+  "Scene": "Scene",
+  "2D": "2D"
 }

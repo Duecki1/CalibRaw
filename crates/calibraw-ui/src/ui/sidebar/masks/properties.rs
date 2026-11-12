@@ -321,13 +321,14 @@ impl Sidebar {
                 is_fullscreen_mask,
                 style.as_deref_mut(),
             ),
-            MaskEffect::LightRays => mask_effects::light_rays::show(
+            MaskEffect::LightShafts => mask_effects::light_shafts::show(
                 ui,
-                &mut component.settings.light_rays,
+                &mut component.settings.light_shafts,
                 &mut component.enabled,
                 remove,
                 frame,
                 instances,
+                style.as_deref_mut(),
             ),
             MaskEffect::Relight => mask_effects::relight::show(
                 ui,

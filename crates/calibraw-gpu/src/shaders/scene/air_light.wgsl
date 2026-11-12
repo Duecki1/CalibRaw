@@ -23,10 +23,11 @@
 // moved by one jitter hashed from the grid position (deterministic, the same
 // for every render), and a step's weight is the light's falloff at it times
 // the length of ray the step stands for. Visibility at a step is the light's
-// shadow cube read there (`scene_cube_visibility` with no normal), filtered
-// over `march.z` taps. The share to the near surface sums the steps before
-// it; to the far surface, all. The scene's frame is the light's (its relief
-// scale E): the cube was drawn in it.
+// shadow cube read there (`scene_cube_air_visibility`, which lets light pass
+// behind blockers by the light's Penetration), filtered over `march.z` taps.
+// The share to the near surface sums the steps before it; to the far surface,
+// all. The scene's frame is the light's (its relief scale E): the cube was
+// drawn in it.
 //
 // Precision: f32 throughout; the shares are stored as half floats, depths
 // likewise (within 1/2048 of linear depth).
@@ -96,7 +97,7 @@ fn bake_scene_air_light(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let offset = position - light.position.xyz;
                 let falloff = 1.0 / (1.0 + dot(offset, offset) / (reach * reach));
                 let weight = falloff * Camera::scene_depth_per_control(camera, control);
-                let visibility = Lights::scene_cube_visibility(light, position, vec3<f32>(0.0), 0u, air.march.z);
+                let visibility = Lights::scene_cube_air_visibility(light, position, air.march.z);
                 let sample = vec2<f32>(visibility * weight, weight);
                 sums = sums + vec4<f32>(select(vec2<f32>(0.0), sample, d <= near_depth), sample);
             }

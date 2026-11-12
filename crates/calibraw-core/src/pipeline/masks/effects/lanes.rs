@@ -67,13 +67,16 @@ impl EffectOption {
 pub mod options {
     use super::EffectOption;
 
+    /// Light Rays: 1 in its 2D style (`LightShaftsMode::Flat`).
+    pub const LIGHT_SHAFTS_FLAT: EffectOption = EffectOption::new(2);
     /// Rain: 1 when streaks and mist follow scene depth.
     pub const RAIN_DEPTH: EffectOption = EffectOption::new(1);
     /// Fog, Smoke and Rain: 1 when Image lights is on.
     pub const MEDIUM_IMAGE_LIGHTS: EffectOption = EffectOption::new(3);
 
     /// Every option as (name, index), for the shaders.
-    pub const ALL: [(&str, usize); 2] = [
+    pub const ALL: [(&str, usize); 3] = [
+        ("LIGHT_SHAFTS_FLAT", LIGHT_SHAFTS_FLAT.index()),
         ("RAIN_DEPTH", RAIN_DEPTH.index()),
         ("MEDIUM_IMAGE_LIGHTS", MEDIUM_IMAGE_LIGHTS.index()),
     ];

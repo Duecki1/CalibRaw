@@ -304,7 +304,7 @@ fn effect_icon(effect: MaskEffect) -> &'static str {
         MaskEffect::TiltShift => regular::ARROWS_IN_LINE_VERTICAL,
         MaskEffect::StyledGlow => regular::SUN,
         MaskEffect::Glow => regular::SPARKLE,
-        MaskEffect::LightRays => regular::SUN_HORIZON,
+        MaskEffect::LightShafts | MaskEffect::LightRays => regular::SUN_HORIZON,
         MaskEffect::Neon => regular::LIGHTNING,
         MaskEffect::Relight => regular::LIGHTBULB,
         MaskEffect::EdgeGlow => regular::SCRIBBLE,

@@ -18,7 +18,7 @@ mod instances;
 mod lanes;
 mod legacy;
 mod lens_blur;
-mod light_rays;
+mod light_shafts;
 mod motion_blur;
 mod neon;
 pub mod params;
@@ -33,6 +33,7 @@ mod smoke;
 mod styled_glow;
 mod tilt_shift;
 mod vignette;
+mod warmth;
 mod wet_surfaces;
 
 pub use blur::BlurEffectSettings;
@@ -45,8 +46,9 @@ pub use instances::{EffectInstances, MAX_EFFECT_INSTANCES};
 pub use lanes::{ColorLane, EffectLanes, EffectOption, Lane, LaneName, PackContext, OPTION_COUNT};
 pub use legacy::halation::HalationEffectSettings;
 pub use legacy::highlight_glow::LegacyHighlightGlowEffectSettings;
+pub use legacy::light_rays::LightRaysEffectSettings;
 pub use lens_blur::LensBlurEffectSettings;
-pub use light_rays::{LightRaySource, LightRaysEffectSettings};
+pub use light_shafts::{LightShaftSource, LightShaftsEffectSettings, LightShaftsMode};
 pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
 pub use passes::{EffectPass, EffectReach, ReachGroup, SceneNeed, SceneNeeds};
@@ -64,7 +66,7 @@ pub use wet_surfaces::WetSurfacesEffectSettings;
 
 // The legacy effects' settings modules, by their settings fields, as the
 // registry names them.
-use legacy::{halation, highlight_glow as legacy_highlight_glow};
+use legacy::{halation, highlight_glow as legacy_highlight_glow, light_rays};
 
 use crate::pipeline::processing::{
     CAPTURE_SHARPEN_SUPPORT, EDGE_GLOW_SUPPORT, FOCUS_BLUR_SUPPORT, GLOW_SUPPORT,
@@ -402,11 +404,11 @@ mask_effects! {
         reach: Glow(GLOW_SUPPORT),
     }
     LightRays {
-        label: "Light Rays",
-        description: "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.",
+        label: "Light Rays (legacy)",
+        description: "The earlier Light Rays, which drew shafts through openings painted with the mask. Replace it with the new Light Rays.",
         shader_id: 3,
         category: GlowAndLight,
-        family: LightRays,
+        family: LegacyLightRays,
         settings: light_rays: LightRaysEffectSettings,
         passes: [CreativeLight],
         reach: Pixel,
@@ -536,6 +538,17 @@ mask_effects! {
         passes: [CreativeLight],
         reach: Glow(GLOW_SUPPORT),
     }
+    LightShafts {
+        label: "Light Rays",
+        description: "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.",
+        shader_id: 22,
+        category: GlowAndLight,
+        family: LightRays,
+        settings: light_shafts: LightShaftsEffectSettings,
+        passes: [CreativeLight],
+        reach: Pixel,
+        scene: [AirLight],
+    }
 }
 
 impl MaskEffect {
@@ -550,7 +563,7 @@ impl MaskEffect {
         Self::TiltShift,
         Self::StyledGlow,
         Self::Glow,
-        Self::LightRays,
+        Self::LightShafts,
         Self::Neon,
         Self::Relight,
         Self::EdgeGlow,
@@ -563,6 +576,7 @@ impl MaskEffect {
         Self::WetSurfaces,
         Self::Halation,
         Self::LegacyHighlightGlow,
+        Self::LightRays,
     ];
 
     /// Switched off: never offered and never rendered (2026-11-07; Rain and Wet
@@ -577,7 +591,10 @@ impl MaskEffect {
     /// as before, but it is never offered, and its card offers only to switch
     /// it, remove it or replace it with [`Self::replacement`].
     pub const fn is_legacy(self) -> bool {
-        matches!(self, Self::Halation | Self::LegacyHighlightGlow)
+        matches!(
+            self,
+            Self::Halation | Self::LegacyHighlightGlow | Self::LightRays
+        )
     }
 
     /// Whether pickers, quick-add buttons and Style controls offer it: neither
@@ -592,6 +609,7 @@ impl MaskEffect {
         match self {
             Self::Halation => Some(EffectStyle::glow(GlowStyle::Halation)),
             Self::LegacyHighlightGlow => Some(EffectStyle::glow(GlowStyle::Bloom)),
+            Self::LightRays => Some(EffectStyle::light_shafts(LightShaftsMode::Flat)),
             _ => None,
         }
     }
@@ -606,13 +624,16 @@ impl MaskEffect {
     }
 
     /// Whether the effect reads its mask beyond an export tile or zoomed
-    /// view, from the full-image mask atlas: Light Rays shapes rays from
-    /// openings anywhere in the frame, and Glow and Neon light the scene from
+    /// view, from the full-image mask atlas: Light Rays' 2D style and the
+    /// legacy Light Rays shape rays from openings anywhere in the frame, and Glow and Neon light the scene from
     /// wherever they emit (scene_emission.wgsl). Their masks
     /// are kept there whatever their settings, so changing one needs no new
     /// mask upload.
     pub const fn reads_full_image_mask(self) -> bool {
-        matches!(self, Self::LightRays | Self::Glow | Self::Neon)
+        matches!(
+            self,
+            Self::LightShafts | Self::LightRays | Self::Glow | Self::Neon
+        )
     }
 }
 

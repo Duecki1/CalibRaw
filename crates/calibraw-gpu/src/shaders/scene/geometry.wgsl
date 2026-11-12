@@ -621,7 +621,7 @@ fn scene_point_visibility(position: vec3<f32>, channel: u32) -> f32 {
     if !Lights::scene_shadow_light_active(light) {
         return 1.0;
     }
-    return Lights::scene_cube_visibility(light, position, vec3<f32>(0.0), 0u, SCENE_POINT_TAPS);
+    return Lights::scene_cube_air_visibility(light, position, SCENE_POINT_TAPS);
 }
 
 // Filter taps of `scene_point_visibility`, as the Final air light's.

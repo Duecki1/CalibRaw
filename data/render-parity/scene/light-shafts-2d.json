@@ -1,0 +1,33 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "LightShafts",
+          "settings": {
+            "light_shafts": {
+              "mode": "Flat",
+              "amount": 80.0,
+              "source": [
+                70.0,
+                20.0
+              ],
+              "warmth": 40.0,
+              "additional": [
+                {
+                  "amount": 60.0,
+                  "length": 80.0,
+                  "source": [
+                    -20.0,
+                    110.0
+                  ],
+                  "warmth": -40.0
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

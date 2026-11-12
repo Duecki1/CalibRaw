@@ -1,7 +1,7 @@
 //! Packing of local adjustment masks and mask effects into `MaskData` slots.
 
 use super::*;
-use crate::pipeline::effect_lanes::{light_rays, options, rain, relight};
+use crate::pipeline::effect_lanes::{light_rays, light_shafts, options, rain, relight};
 use crate::pipeline::{EffectLanes, PackContext};
 
 /// Bits of `metadata[2]` of an effect slot that hold its instance; the bits
@@ -54,21 +54,37 @@ pub(super) fn relight_casts_shadows(data: &MaskData) -> bool {
 
 /// Whether an active slot of a medium (Fog, Smoke, Rain) reads the light
 /// bake: then every Relight light is in it, whether or not it casts shadows on
-/// surfaces, as light in the air was always shadowed by the scene.
+/// surfaces, as light in the air was always shadowed by the scene. Relight and
+/// Light Rays read only their own lights.
 fn reads_air_light(data: &MaskData) -> bool {
-    data.active_effect()
-        .is_some_and(|effect| effect != MaskEffect::Relight && effect.scene_needs().light_bake)
+    !data.applies(MaskEffect::Relight)
+        && !data.applies(MaskEffect::LightShafts)
+        && data.scene_needs().is_some_and(|needs| needs.light_bake)
 }
 
 /// Whether an active slot places a light in the scene. Mirrors `emits` of
-/// `scene_light_at` in scene_lights.wgsl.
+/// `scene_light_at` in scene_lights.wgsl, where a Light Rays source emits
+/// only from its channel of the light bake.
 fn emits_scene_light(data: &MaskData) -> bool {
     if data.applies(MaskEffect::Relight) {
         return data.percent(relight::AMOUNT) > 1e-6;
     }
+    if data.applies(MaskEffect::LightShafts) {
+        return light_shafts_emit(data);
+    }
     data.applies(MaskEffect::LightRays)
         && data.percent(light_rays::AMOUNT) > 1e-6
         && (data.lane(light_rays::LENGTH) / 100.0).clamp(0.0, 2.0) > 1e-6
+}
+
+/// Whether an active Light Rays slot in its Scene style draws a source, which
+/// then needs a light bake channel. Mirrors the checks of
+/// `light_shafts_source` in light_shafts.wgsl.
+fn light_shafts_emit(data: &MaskData) -> bool {
+    data.applies(MaskEffect::LightShafts)
+        && data.option(options::LIGHT_SHAFTS_FLAT) <= 0.5
+        && data.percent(light_shafts::AMOUNT) > 1e-6
+        && data.lane(light_shafts::LENGTH) > 1e-6
 }
 
 /// The direction in image points that `output_direction`, a unit vector in the
@@ -287,17 +303,20 @@ pub(super) fn pack_mask_params(masks: &MaskStack, shutter_seconds: f32) -> Box<[
     packed
 }
 
-/// Gives the first Relight slots that light the scene and cast shadows, and
-/// every Relight and Light Rays slot that lights a medium or the wet ground,
+/// Gives the first Relight slots that light the scene and cast shadows, every
+/// Light Rays source (its rays are the air light of its channel), and every
+/// Relight and legacy Light Rays slot that lights a medium or the wet ground,
 /// in slot order, a channel of the light bake each (`scene::lights`), as its
 /// number plus one in the flag bits of `metadata[3]` below the effect's ID
-/// (`mask_effect_scene_bake_light` in effect_api.wgsl). Later ones cast none.
+/// (`mask_effect_scene_bake_light` in effect_api.wgsl). Later ones cast none,
+/// and their Light Rays sources draw nothing.
 fn assign_scene_bake_lights(packed: &mut [MaskData]) {
     let air_read = packed.iter().any(reads_air_light);
     let lights = packed
         .iter_mut()
         .filter(|data| {
             relight_casts_shadows(data)
+                || light_shafts_emit(data)
                 || (air_read
                     && (data.applies(MaskEffect::Relight) || data.applies(MaskEffect::LightRays))
                     && emits_scene_light(data))

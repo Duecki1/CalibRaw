@@ -1279,7 +1279,6 @@
   "Pinch out": "Auseinanderziehen",
   "Pinned SHA-256:": "Festgelegte SHA-256-Prüfsumme:",
   "Pixelate": "Pixelieren",
-  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Positioniere die Lichtquelle relativ zum gesamten Bild und male anschließend die Öffnungen ein. Die Lichtstrahlen scheinen durch die Maske und sind nur innerhalb der Maske zu sehen.",
   "Plume size": "Schwadengröße",
   "Point Color": "Punktfarbe",
   "Portrait": "Hochformat",
@@ -2085,5 +2084,11 @@
   "Make the mask emit colored light, so it glows even over dark surfaces. The glow extends beyond the selection and lights the scene around it; Scene light sets how much.": "Lass die Maske farbiges Licht ausstrahlen, sodass sie selbst über dunklen Flächen leuchtet. Das Leuchten reicht über die Auswahl hinaus und beleuchtet die Szene um sie herum; Szenenlicht legt fest, wie stark.",
   "Let light spread from the bright parts of the mask: Bloom glows around highlights, Diffusion softens across tones, Halation adds a film's red halo around bright edges. Range sets which tones glow, Spread how far. The glow can extend beyond the selection.": "Lass Licht von den hellen Teilen der Maske ausstrahlen: Bloom leuchtet um Lichter, Diffusion macht alle Töne weicher, Halation fügt hellen Kanten den roten Halo eines Films hinzu. Bereich legt fest, welche Töne leuchten, Streuung wie weit. Das Leuchten kann über die Auswahl hinausreichen.",
   "The earlier Glow, which bloomed bright pixels inside the mask. Replace it with the new Glow.": "Das frühere Leuchten, das helle Pixel innerhalb der Maske erstrahlen ließ. Ersetze es durch das neue Leuchten.",
-  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "Die frühere Halation, ein warmer Filmhalo innerhalb der Maske. Ersetze sie durch den Halation-Stil des neuen Leuchtens."
+  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "Die frühere Halation, ein warmer Filmhalo innerhalb der Maske. Ersetze sie durch den Halation-Stil des neuen Leuchtens.",
+  "Light Rays (legacy)": "Lichtstrahlen (alt)",
+  "The earlier Light Rays, which drew shafts through openings painted with the mask. Replace it with the new Light Rays.": "Die früheren Lichtstrahlen, die Strahlen durch mit der Maske gemalte Öffnungen zeichneten. Ersetze sie durch die neuen Lichtstrahlen.",
+  "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "Füge Lichtstrahlen von jeder Quelle hinzu, platziert relativ zum ganzen Bild, auch außerhalb des Rahmens. Szene lässt das Licht durch die Luft scheinen, sodass Bäume, Fensterrahmen und andere Objekte seine Strahlen durchschneiden; die Szenentiefe wird automatisch erzeugt. 2D zeichnet Strahlen durch mit der Maske gemalte Öffnungen, ohne Tiefe. Durchdringung lässt Licht an dem vorbei, was es blockiert. Die Strahlen erscheinen nur innerhalb der Maske.",
+  "Penetration": "Durchdringung",
+  "Scene": "Szene",
+  "2D": "2D"
 }

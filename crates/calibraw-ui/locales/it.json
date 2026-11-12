@@ -1347,7 +1347,6 @@
   "Pinch out": "Pizzica per ingrandire",
   "Pinned SHA-256:": "SHA-256 bloccato:",
   "Pixelate": "Pixelizza",
-  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Posiziona la sorgente rispetto all'intera immagine, poi dipingi le sue aperture. I fasci luminosi attraversano la maschera e sono visibili solo al suo interno.",
   "Plume size": "Dimensione delle colonne di fumo",
   "Point Color": "Colore puntuale",
   "Portrait": "Ritratto",
@@ -2085,5 +2084,11 @@
   "Make the mask emit colored light, so it glows even over dark surfaces. The glow extends beyond the selection and lights the scene around it; Scene light sets how much.": "Fai emettere alla maschera luce colorata, così brilla anche sulle superfici scure. Il bagliore si estende oltre la selezione e illumina la scena intorno; Luce della scena ne regola l'intensità.",
   "Let light spread from the bright parts of the mask: Bloom glows around highlights, Diffusion softens across tones, Halation adds a film's red halo around bright edges. Range sets which tones glow, Spread how far. The glow can extend beyond the selection.": "Lascia che la luce si diffonda dalle parti chiare della maschera: Bloom brilla intorno alle alte luci, Diffusione morbida ammorbidisce tutti i toni, Aloni luminosi aggiunge l'alone rosso della pellicola intorno ai bordi chiari. Intervallo stabilisce quali toni brillano, Diffusione fin dove. Il bagliore può estendersi oltre la selezione.",
   "The earlier Glow, which bloomed bright pixels inside the mask. Replace it with the new Glow.": "Il Bagliore precedente, che faceva risplendere i pixel chiari nella maschera. Sostituiscilo con il nuovo Bagliore.",
-  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "Gli Aloni luminosi precedenti, un caldo alone da pellicola nella maschera. Sostituiscili con lo stile Aloni luminosi del nuovo Bagliore."
+  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "Gli Aloni luminosi precedenti, un caldo alone da pellicola nella maschera. Sostituiscili con lo stile Aloni luminosi del nuovo Bagliore.",
+  "Light Rays (legacy)": "Raggi luminosi (precedenti)",
+  "The earlier Light Rays, which drew shafts through openings painted with the mask. Replace it with the new Light Rays.": "I Raggi luminosi precedenti, che disegnavano fasci attraverso aperture dipinte con la maschera. Sostituiscili con i nuovi Raggi luminosi.",
+  "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "Aggiungi fasci di luce da ogni sorgente, posizionata rispetto all'immagine intera, anche fuori dall'inquadratura. Scena fa brillare la luce attraverso l'aria, così alberi, telai delle finestre e altri oggetti ne tagliano i raggi; la profondità della scena viene generata automaticamente. 2D disegna raggi attraverso aperture dipinte con la maschera, senza profondità. Penetrazione lascia passare la luce attraverso ciò che la blocca. I raggi appaiono solo dentro la maschera.",
+  "Penetration": "Penetrazione",
+  "Scene": "Scena",
+  "2D": "2D"
 }

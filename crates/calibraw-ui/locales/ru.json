@@ -1240,7 +1240,6 @@
   "Pinch out": "Развести двумя пальцами",
   "Pinned SHA-256:": "Закреплённая контрольная сумма SHA-256:",
   "Pixelate": "Пикселизация",
-  "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.": "Разместите источник относительно полного изображения, затем закрасьте области, через которые он будет виден. Световые лучи проходят сквозь маску и видны только внутри неё.",
   "Plume size": "Размер струй",
   "Point Color": "Цвет точки",
   "Portrait": "Портрет",
@@ -2085,5 +2084,11 @@
   "Make the mask emit colored light, so it glows even over dark surfaces. The glow extends beyond the selection and lights the scene around it; Scene light sets how much.": "Маска излучает цветной свет и светится даже над тёмными поверхностями. Свечение выходит за пределы выделения и освещает сцену вокруг; Свет сцены задаёт силу.",
   "Let light spread from the bright parts of the mask: Bloom glows around highlights, Diffusion softens across tones, Halation adds a film's red halo around bright edges. Range sets which tones glow, Spread how far. The glow can extend beyond the selection.": "Свет расходится от светлых частей маски: Блум светится вокруг светлых участков, Диффузия смягчает все тона, Ореол добавляет красный плёночный ореол вокруг ярких краёв. Диапазон задаёт, какие тона светятся, Разброс — как далеко. Свечение может выходить за пределы выделения.",
   "The earlier Glow, which bloomed bright pixels inside the mask. Replace it with the new Glow.": "Прежнее Свечение, которое заставляло светиться яркие пиксели внутри маски. Замените его новым Свечением.",
-  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "Прежний Ореол — тёплый плёночный ореол внутри маски. Замените его стилем Ореол нового Свечения."
+  "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.": "Прежний Ореол — тёплый плёночный ореол внутри маски. Замените его стилем Ореол нового Свечения.",
+  "Light Rays (legacy)": "Световые лучи (прежние)",
+  "The earlier Light Rays, which drew shafts through openings painted with the mask. Replace it with the new Light Rays.": "Прежние Световые лучи, которые рисовали пучки через проёмы, нарисованные маской. Замените их новыми Световыми лучами.",
+  "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "Добавьте пучки света от каждого источника, размещённого относительно всего изображения, в том числе за кадром. Сцена пропускает свет сквозь воздух, а деревья, оконные рамы и другие объекты рассекают его лучи; глубина сцены создаётся автоматически. 2D рисует лучи через проёмы, нарисованные маской, без глубины. Проникновение пропускает свет сквозь то, что его загораживает. Лучи видны только внутри маски.",
+  "Penetration": "Проникновение",
+  "Scene": "Сцена",
+  "2D": "2D"
 }
