@@ -186,6 +186,10 @@ impl Sidebar {
         }
     }
 
+    /// Whether the header row `available` was clicked outside its `buttons`,
+    /// which may come in any order. The click areas are added after the
+    /// buttons, so egui would give them a click on a button they overlap;
+    /// they only span the gaps between buttons.
     pub(super) fn card_header_background_clicked(
         ui: &mut Ui,
         available: egui::Rect,
@@ -193,6 +197,9 @@ impl Sidebar {
     ) -> bool {
         let button_top = buttons[0].top();
         let button_bottom = buttons[0].bottom();
+        // Right-to-left headers add their buttons rightmost first.
+        let mut buttons = buttons.to_vec();
+        buttons.sort_by(|a, b| a.left().total_cmp(&b.left()));
         let mut left = available.left();
         let mut clicked = false;
         for (index, right) in buttons
