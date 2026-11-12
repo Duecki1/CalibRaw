@@ -9,16 +9,15 @@
 //! render the hovered LUT once its table is read, and saved edits, history
 //! and export never contain it.
 use super::*;
-use crate::app::camera_match::CAMERA_MATCH_CARD_TITLE;
 use crate::app::hover_preview::HoverPreview;
-use crate::app::preview_visibility::PreviewVisibility;
 use crate::i18n::{tr, tr_fmt};
 use crate::luts::{
     CubeLut, LookLut, LutEntry, LutId, LutLibrary, LutLibraryError, LutStore, ResolvedLook,
 };
+use crate::pipeline::CardSwitch;
 
-/// The title of the Develop card that holds the LUT, which its preview eye
-/// is keyed by.
+/// The title of the Develop card that holds the LUT, which keys its reveal
+/// and footer actions.
 pub(crate) const LOOK_LUT_CARD_TITLE: &str = "LUT";
 
 /// A row of the LUT list: a library LUT, or `None` for no LUT.
@@ -190,9 +189,15 @@ pub(in crate::app) fn resolve_look_for_export(
 
 impl CalibRawApp {
     /// The edit's looks for an export of the open photo: its camera look
-    /// and its LUT, which must be in the library.
+    /// and its LUT, which must be in the library, while their cards are on.
     pub(in crate::app) fn look_for_export(&self) -> Result<Option<ResolvedLook>, String> {
-        let creative = match &self.develop.look_lut {
+        let exposure = &self.develop.exposure;
+        let lut = self
+            .develop
+            .look_lut
+            .as_ref()
+            .filter(|_| exposure.card_on(CardSwitch::Lut));
+        let creative = match lut {
             None => None,
             Some(look) => match self.creative_look() {
                 Some(resolved) => Some(resolved),
@@ -201,7 +206,10 @@ impl CalibRawApp {
         };
         Ok(ResolvedLook::of_edit(
             creative,
-            self.develop.camera_look.as_ref(),
+            self.develop
+                .camera_look
+                .as_ref()
+                .filter(|_| exposure.card_on(CardSwitch::CameraMatch)),
         ))
     }
 
@@ -367,19 +375,21 @@ impl CalibRawApp {
     }
 
     /// The looks the edited previews render: the camera look unless the
-    /// Camera match card's preview eye hides it, then a hovered LUT once its
-    /// table is read, otherwise the edit's, unless the LUT card's preview
-    /// eye hides it.
+    /// Camera match card is switched off, then a hovered LUT once its table
+    /// is read, otherwise the edit's, unless the LUT card is switched off.
     pub(in crate::app) fn preview_look(&self) -> Option<ResolvedLook> {
+        let exposure = &self.develop.exposure;
         let creative = match self.hovered_look() {
             Some(hovered) => hovered,
-            None => PreviewVisibility::globally_visible(&self.egui_ctx, LOOK_LUT_CARD_TITLE)
-                .then(|| self.creative_look())
-                .flatten(),
+            None => self
+                .creative_look()
+                .filter(|_| exposure.card_on(CardSwitch::Lut)),
         };
-        let camera = self.develop.camera_look.as_ref().filter(|_| {
-            PreviewVisibility::globally_visible(&self.egui_ctx, CAMERA_MATCH_CARD_TITLE)
-        });
+        let camera = self
+            .develop
+            .camera_look
+            .as_ref()
+            .filter(|_| exposure.card_on(CardSwitch::CameraMatch));
         ResolvedLook::of_edit(creative, camera)
     }
 

@@ -413,14 +413,14 @@ impl CalibRawApp {
                 self.preview.gpu_pipeline =
                     Some(self.present_pipeline(loaded.pipeline, render_state));
                 self.develop.review = loaded.review;
-                self.develop.exposure = loaded.rendered_exposure;
+                self.develop.exposure = loaded.exposure;
                 self.develop.geometry = loaded.geometry.sanitized();
                 self.develop_ui.crop_constraint_reference = None;
                 self.develop_ui.set_crop_tool(CropTool::Crop);
                 self.develop_ui.perspective_guides.clear();
                 self.develop.geometry_revision = 0;
                 self.export.carousel.reset_for_new_photo();
-                self.masks.stack = loaded.rendered_masks;
+                self.masks.stack = loaded.masks;
                 self.install_remove_edits(Arc::new(loaded.remove));
                 self.ai.update_needed = loaded.ai_masks_need_update;
                 self.rehydrate_restored_mask_state();
@@ -473,7 +473,8 @@ impl CalibRawApp {
                         self.preview.lens_corrected_cache = None;
                     }
                 }
-                self.develop.target_exposure = loaded.rendered_exposure;
+                // The open worker rendered the edit with its switches applied.
+                self.develop.target_exposure = self.preview_exposure();
                 self.preview.pending_stage = None;
                 match loaded.sidecar_warning {
                     Some(warning) if warning != sidecar_migrated_notice() => {
@@ -482,10 +483,7 @@ impl CalibRawApp {
                     warning => self.ui.notice = warning,
                 }
                 self.report_camera_profile_limit();
-                crate::app::preview_visibility::PreviewVisibility::invalidate_masks(
-                    &self.egui_ctx,
-                    &self.masks.stack,
-                );
+                crate::app::preview_visibility::PreviewVisibility::edit_installed(&self.egui_ctx);
                 self.reset_edit_history();
                 if let Some(start) = loaded.start {
                     self.persistence.document_start = start;

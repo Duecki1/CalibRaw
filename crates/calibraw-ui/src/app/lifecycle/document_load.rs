@@ -5,7 +5,7 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::camera_look::CameraLook;
-use crate::pipeline::FilmSettlement;
+use crate::pipeline::{CardSwitch, FilmSettlement};
 use crate::sidecar::SidecarStart;
 use std::sync::RwLock;
 
@@ -344,7 +344,17 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         restore_ai_denoise_result(&full_raw, &exposure, ai_denoise_result_path.as_deref())?;
         let people_analysis =
             load_people_analysis(people_analysis_path.as_deref(), &masks, &full_raw, &remove);
-        prepare_highlight_analysis(&full_raw, &exposure);
+        // The preview shows the edit with its switched-off cards at rest, as
+        // every renderer does; the document keeps the edit as stored.
+        let rendered_exposure = exposure.applied(lens_correction.enabled);
+        let rendered_look = |creative: Option<crate::luts::ResolvedLook>,
+                             camera: Option<&CameraLook>| {
+            crate::luts::ResolvedLook::of_edit(
+                creative.filter(|_| exposure.card_on(CardSwitch::Lut)),
+                camera.filter(|_| exposure.card_on(CardSwitch::CameraMatch)),
+            )
+        };
+        prepare_highlight_analysis(&full_raw, &rendered_exposure);
         let camera_fit = camera_preview.as_ref().filter(|_| {
             (automatic_camera_match && starts_unedited || camera_look_refit)
                 && crate::app::camera_match::camera_match_applies(&full_raw, &exposure)
@@ -360,11 +370,11 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             geometry,
             masks.masks.len(),
         );
-        let initial_look = crate::luts::ResolvedLook::of_edit(
+        let initial_look = rendered_look(
             creative_look.clone(),
             camera_look.as_ref().filter(|_| camera_fit.is_none()),
         );
-        let initial_params = GpuParams::new(&exposure, &masks, &preview_raw)
+        let initial_params = GpuParams::new(&rendered_exposure, &masks, &preview_raw)
             .with_vignette_geometry(geometry)
             .with_look_lut(initial_look.as_ref());
         let pipeline = create_preview_pipeline(
@@ -402,7 +412,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 look
             });
         }
-        let look = crate::luts::ResolvedLook::of_edit(creative_look, camera_look.as_ref());
+        let look = rendered_look(creative_look, camera_look.as_ref());
         let mask_source = if needs_canonical_mask_source(&masks) {
             Some(reconstruct_canonical_mask_source(
                 &pipeline,
@@ -416,13 +426,19 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         } else {
             None
         };
+        let switched_masks = masks.has_cards_off().then(|| {
+            let mut switched = masks.clone();
+            switched.apply_card_switches();
+            switched
+        });
+        let rendered_masks = switched_masks.as_ref().unwrap_or(&masks);
         let mask_upload_started = Instant::now();
-        CalibRawApp::upload_preview_masks(&pipeline, &queue, &masks, &preview_raw)?;
+        CalibRawApp::upload_preview_masks(&pipeline, &queue, rendered_masks, &preview_raw)?;
         calibraw_core::diagnostics::record(format!(
             "Preview masks rasterized/uploaded in {:.3}s",
             mask_upload_started.elapsed().as_secs_f64()
         ));
-        let params = GpuParams::new(&exposure, &masks, &preview_raw)
+        let params = GpuParams::new(&rendered_exposure, rendered_masks, &preview_raw)
             .with_vignette_geometry(geometry)
             .with_look_lut(look.as_ref());
         let render_started = Instant::now();
@@ -431,7 +447,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 &queue,
                 &device,
                 &params,
-                RemoveSceneContext::full_frame(&remove, &full_raw, &exposure),
+                RemoveSceneContext::full_frame(&remove, &full_raw, &rendered_exposure),
             )
             .map_err(|error| {
                 tr_fmt(
@@ -458,8 +474,8 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             preview_raw,
             pipeline,
             review,
-            rendered_exposure: exposure,
-            rendered_masks: masks,
+            exposure,
+            masks,
             remove,
             ai_masks_need_update,
             mask_source,
@@ -542,19 +558,21 @@ pub(super) fn prepare_ahead_of_open(
             .original
             .apply_adaptive_detail_defaults(&mut exposure);
     }
-    let (_, full_raw) =
+    let (lens_correction, full_raw) =
         apply_saved_lens_correction(&decoded, saved_lens, context.automatic_lens, &mut None);
     if cancelled() {
         return Ok(());
     }
 
+    // As the open renders it, with its switched-off cards at rest.
+    let rendered = exposure.applied(lens_correction.enabled);
     // With AI denoise the analysis reads the denoised image, which only the
     // open installs.
     if !exposure.ai_denoise_enabled {
-        prepare_highlight_analysis(&full_raw, &exposure);
+        prepare_highlight_analysis(&full_raw, &rendered);
     }
     if let Some(template) = &context.program_template {
-        template.compile_for_params(&GpuParams::new(&exposure, &MaskStack::default(), &full_raw));
+        template.compile_for_params(&GpuParams::new(&rendered, &MaskStack::default(), &full_raw));
     }
     Ok(())
 }
@@ -913,11 +931,14 @@ fn apply_saved_lens_correction(
         lens_started.elapsed().as_secs_f64()
     ));
     if let Some(saved) = saved_lens {
+        let wants_profile = saved.manual.is_none() && !saved.model.is_empty();
         lens_correction.corrections = saved.corrections();
         lens_correction.selected_maker = saved.maker;
         lens_correction.selected_model = saved.model;
-        lens_correction.enabled = saved.enabled && lens_correction.catalog.available;
-        if saved.enabled && !lens_correction.catalog.available {
+        // The card's switch, which also gates chromatic aberration removal;
+        // a profile without the catalog is not applied (`requested_correction`).
+        lens_correction.enabled = saved.enabled;
+        if saved.enabled && wants_profile && !lens_correction.catalog.available {
             append_notice(
                 sidecar_warning,
                 tr("The saved lens correction is unavailable in this build."),
@@ -926,10 +947,7 @@ fn apply_saved_lens_correction(
     }
     let selection = lens_correction.requested_correction();
     let full_raw = match selection {
-        None => {
-            lens_correction.enabled = false;
-            Arc::clone(original_raw)
-        }
+        None => Arc::clone(original_raw),
         Some(selection) => {
             let apply_started = Instant::now();
             match decoded

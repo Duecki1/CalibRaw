@@ -343,6 +343,7 @@ impl EditHistory {
                 && self.current.masks.subject_refinement.dabs == masks.subject_refinement.dabs
                 && self.current.masks.subject_refinement.stroke_starts
                     == masks.subject_refinement.stroke_starts
+                && self.current.masks.subject_refinement.enabled == masks.subject_refinement.enabled
                 && self.current.masks.scene_depth == masks.scene_depth
         } else {
             true
@@ -490,10 +491,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn note_mask_edit_changed(&mut self) {
-        super::preview_visibility::PreviewVisibility::invalidate_masks(
-            &self.egui_ctx,
-            &self.masks.stack,
-        );
+        super::preview_visibility::PreviewVisibility::invalidate_mask_cache(&self.egui_ctx);
         self.persistence.history.note_mask_change();
     }
 

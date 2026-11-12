@@ -8,12 +8,12 @@ use super::{
     CalibRawApp, ErrorKind,
 };
 use crate::i18n::tr_fmt;
-use crate::luts::{LutStore, ResolvedLook};
+use crate::luts::{LookLut, LutStore, ResolvedLook};
 use crate::pipeline::{
     apply_lens_correction, build_proxy, load_raw_file_with_profile_selection,
-    transform_thumbnail_geometry_with_lens, CameraProfileMode, GpuParams, GpuProgramPrewarm,
-    LoadedRaw, MaskStack, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RawThumbnail,
-    RemoveSceneContext,
+    transform_thumbnail_geometry_with_lens, CameraProfileMode, CardSwitch, GpuParams,
+    GpuProgramPrewarm, LoadedRaw, MaskStack, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate,
+    RawThumbnail, RemoveSceneContext,
 };
 use crate::platform::Platform;
 use crate::sidecar::{EditState, SidecarError};
@@ -103,15 +103,27 @@ pub(crate) struct SavedEditsSettings {
 }
 
 impl SavedEditsSettings {
-    /// The edit's camera look and LUT; without the LUT when the library
-    /// does not hold it.
+    /// The edit's camera look and LUT while their cards are on; without the
+    /// LUT when the library does not hold it.
     fn look(&self, edits: &EditState) -> Option<ResolvedLook> {
-        let creative = edits.look_lut.as_ref().and_then(|look| {
+        let creative = applied_lut(edits).and_then(|look| {
             let lut = self.luts.as_ref()?.load(look.id).ok()?;
             Some(ResolvedLook::creative(lut, look.amount))
         });
-        ResolvedLook::of_edit(creative, edits.camera_look.as_ref())
+        let camera = edits
+            .camera_look
+            .as_ref()
+            .filter(|_| edits.exposure.card_on(CardSwitch::CameraMatch));
+        ResolvedLook::of_edit(creative, camera)
     }
+}
+
+/// The LUT `edits` render: none while the LUT card is switched off.
+fn applied_lut(edits: &EditState) -> Option<&LookLut> {
+    edits
+        .look_lut
+        .as_ref()
+        .filter(|_| edits.exposure.card_on(CardSwitch::Lut))
 }
 
 /// Where a photo, its sidecar and its developed thumbnail live.
@@ -285,7 +297,7 @@ impl EditedRenderJob<'_> {
             return Ok(EditedRender::Cancelled);
         }
         let look = self.settings.look(&edits);
-        let complete = edits.look_lut.is_none() || look.is_some();
+        let complete = applied_lut(&edits).is_none() || look.is_some();
         let thumbnail = render_saved_edits(
             self.gpu,
             raw,
@@ -345,8 +357,11 @@ fn render_saved_edits(
     // A film negative the Library marked renders as its estimate; opening the
     // photo saves one.
     exposure.settle_film(&full_raw, geometry);
-    if full_raw.uses_highlight_model(&exposure) {
-        full_raw.prime_highlight_model(&exposure);
+    // The edit as it renders, with its switched-off cards at rest. Mask
+    // sources develop it as stored, as the editor's do.
+    let rendered = exposure.applied(lens.enabled);
+    if full_raw.uses_highlight_model(&rendered) {
+        full_raw.prime_highlight_model(&rendered);
     }
     let full_raw = Arc::new(full_raw);
     // The photo renders at the size it is shown at; effects that reach
@@ -365,7 +380,7 @@ fn render_saved_edits(
 
     let mut masks = Arc::unwrap_or_clone(masks);
     let params = |masks: &MaskStack| {
-        GpuParams::new(&exposure, masks, &preview_raw)
+        GpuParams::new(&rendered, masks, &preview_raw)
             .with_vignette_geometry(geometry)
             .with_look_lut(look)
     };
@@ -381,13 +396,14 @@ fn render_saved_edits(
             &mut masks,
         )?;
     }
+    masks.apply_card_switches();
     CalibRawApp::upload_preview_masks(&pipeline, &gpu.queue, &masks, &preview_raw)?;
     pipeline
         .recompute_with_remove(
             &gpu.queue,
             &gpu.device,
             &params(&masks),
-            RemoveSceneContext::full_frame(&remove, &full_raw, &exposure),
+            RemoveSceneContext::full_frame(&remove, &full_raw, &rendered),
         )
         .map_err(|error| {
             tr_fmt(

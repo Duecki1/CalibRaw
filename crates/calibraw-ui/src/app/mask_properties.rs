@@ -18,6 +18,8 @@ pub(crate) struct MaskPropertiesControls {
     pub(crate) refinement_size: f32,
     pub(crate) refinement_feather: f32,
     pub(crate) refinement_flow: f32,
+    /// The subject refinement card's switch.
+    pub(crate) refinement_enabled: bool,
     pub(crate) clear_refinement: bool,
     /// Generate (or regenerate) the subject, sky, or depth map of the component.
     pub(crate) request_generation: bool,
@@ -114,6 +116,7 @@ pub(crate) enum MaskPropertyAction {
     SetRefinementSize(f32),
     SetRefinementFeather(f32),
     SetRefinementFlow(f32),
+    SetRefinementEnabled(bool),
     ClearRefinement,
     RequestGeneration,
     RequestObject,
@@ -180,6 +183,10 @@ fn apply_mask_property_action(
         }
         MaskPropertyAction::SetRefinementFlow(flow) => {
             controls.refinement_flow = flow;
+            false
+        }
+        MaskPropertyAction::SetRefinementEnabled(enabled) => {
+            controls.refinement_enabled = enabled;
             false
         }
         MaskPropertyAction::ClearRefinement => {

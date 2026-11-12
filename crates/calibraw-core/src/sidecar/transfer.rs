@@ -1,7 +1,9 @@
 //! Moving selected edit categories from one edit state to another. Adjustment
 //! paste and presets both go through [`transfer_edits`].
 use super::{default_edit_state, EditState};
-use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet, MaskGeometry, MaskKind, MaskStack};
+use crate::pipeline::{
+    AdjustmentGroup, AdjustmentGroupSet, MaskGeometry, MaskKind, MaskStack, SubjectRefinement,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -160,15 +162,18 @@ fn replace_selected_mask_categories(
     include_ai: bool,
 ) {
     // Depth is tied to the destination image, and global effects belong to
-    // the Effects group, so both stay.
+    // the Effects group, so both stay. Copied masks arrive with every card
+    // on: switch states stay with their photo.
     let scene_depth = destination.scene_depth.take();
     let global_effects = std::mem::take(&mut destination.global_effects);
     if include_manual && include_ai {
         *destination = source.clone();
+        destination.turn_cards_on();
         clear_copied_depth_images(destination);
     } else {
         let mut merged = filtered_mask_stack(destination, !include_manual, !include_ai);
         let mut copied = filtered_mask_stack(source, include_manual, include_ai);
+        copied.turn_cards_on();
         clear_copied_depth_images(&mut copied);
         if include_ai {
             merged.subject_refinement = copied.subject_refinement;
@@ -190,8 +195,8 @@ fn clear_copied_depth_images(masks: &mut MaskStack) {
 
 /// Applies the categories in `selection` from `source` to `destination`.
 ///
-/// Inpainting, the camera look and the destination's scene depth always stay
-/// with the destination image. Copied masks that depend on image content are flagged
+/// Inpainting, the camera look, the destination's scene depth and its card
+/// switches always stay with the destination image. Copied masks that depend on image content are flagged
 /// for regeneration through `ai_masks_need_update`.
 pub fn transfer_edits(
     destination: &mut EditState,
@@ -258,10 +263,17 @@ pub fn transfer_edits(
         );
         destination.masks = Arc::new(masks);
         destination.subject_refinement = if selection.ai_masks {
-            source.subject_refinement.clone().or_else(|| {
-                (!source.masks.subject_refinement.is_empty())
-                    .then(|| source.masks.subject_refinement.clone())
-            })
+            source
+                .subject_refinement
+                .clone()
+                .or_else(|| {
+                    (!source.masks.subject_refinement.is_empty())
+                        .then(|| source.masks.subject_refinement.clone())
+                })
+                .map(|refinement| SubjectRefinement {
+                    enabled: true,
+                    ..refinement
+                })
         } else {
             previous_subject_refinement
         };

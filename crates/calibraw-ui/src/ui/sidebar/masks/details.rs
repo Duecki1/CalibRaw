@@ -1,8 +1,11 @@
+use super::super::adjustment_cards::CardAction;
 use super::adjustments::{
     apply_local_adjustment_response, LocalAdjustmentTabs, LocalAdjustmentTarget,
 };
 use super::*;
-use crate::app::{apply_mask_property_actions, MaskPropertiesControls, MaskPropertyChanges};
+use crate::app::{
+    apply_mask_property_actions, MaskPropertiesControls, MaskPropertyAction, MaskPropertyChanges,
+};
 use crate::i18n::tr;
 
 /// Open the kind picker from a creation button of the strip: beside a strip
@@ -405,14 +408,25 @@ impl Sidebar {
         foldable: bool,
     ) -> MaskPropertyChanges {
         let mut group_actions = Vec::new();
-        let group_action = Self::mask_group_card(ui, foldable, |ui| {
+        let group_on = mask.enabled;
+        let group_action = Self::mask_group_card(ui, group_on, foldable, |ui| {
             group_actions = Self::show_mask_group_properties(ui, mask);
         });
+        if matches!(group_action, CardAction::Toggle) {
+            group_actions.push(MaskPropertyAction::SetGroupEnabled(!group_on));
+        }
         let mut submask_actions = Vec::new();
-        let submask_action = Self::submask_card(ui, foldable, |ui| {
+        let submask_on = mask
+            .components
+            .get(component_index)
+            .is_some_and(|component| component.enabled);
+        let submask_action = Self::submask_card(ui, submask_on, foldable, |ui| {
             submask_actions =
                 Self::show_submask_properties(ui, mask, component_index, controls, people);
         });
+        if matches!(submask_action, CardAction::Toggle) {
+            submask_actions.push(MaskPropertyAction::SetComponentEnabled(!submask_on));
+        }
         group_actions.extend(submask_actions);
         let mut changes =
             apply_mask_property_actions(mask, component_index, controls, group_actions);
@@ -466,6 +480,7 @@ impl Sidebar {
             refinement_size: refinement.size,
             refinement_feather: refinement.feather,
             refinement_flow: refinement.flow,
+            refinement_enabled: refinement.enabled,
             clear_refinement: false,
             request_generation: false,
             request_object: false,
@@ -639,8 +654,12 @@ impl Sidebar {
         refinement.size = controls.refinement_size;
         refinement.feather = controls.refinement_feather;
         refinement.flow = controls.refinement_flow;
+        let refinement_switched = refinement.enabled != controls.refinement_enabled;
+        refinement.enabled = controls.refinement_enabled;
         if controls.clear_refinement && !refinement.is_empty() {
             refinement.clear();
+            app.mark_all_mask_layers_dirty();
+        } else if refinement_switched {
             app.mark_all_mask_layers_dirty();
         } else if refinement_settings_changed {
             app.note_mask_edit_changed();

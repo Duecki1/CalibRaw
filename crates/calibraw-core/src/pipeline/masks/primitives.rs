@@ -101,6 +101,19 @@ pub struct SubjectRefinement {
     pub stroke_starts: Vec<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dabs: Vec<BrushDab>,
+    /// Its card's switch: off keeps the strokes and renders the AI masks
+    /// without them ([`MaskStack::apply_card_switches`]). Left out of files
+    /// while on, as files without it mean.
+    #[serde(default = "default_enabled", skip_serializing_if = "is_enabled")]
+    pub enabled: bool,
+}
+
+const fn default_enabled() -> bool {
+    true
+}
+
+const fn is_enabled(enabled: &bool) -> bool {
+    *enabled
 }
 
 impl Default for SubjectRefinement {
@@ -111,6 +124,7 @@ impl Default for SubjectRefinement {
             flow: default_subject_refinement_flow(),
             stroke_starts: Vec::new(),
             dabs: Vec::new(),
+            enabled: true,
         }
     }
 }

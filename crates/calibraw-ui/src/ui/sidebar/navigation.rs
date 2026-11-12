@@ -3,6 +3,7 @@ use super::film_negative::FilmNegativeAction;
 use super::*;
 use crate::app::{AreaPicker, CameraProfileChoice, FILM_NEGATIVE_CARD_TITLE};
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::CardSwitch;
 use crate::ui::components::preview_list::{preview_combo, PreviewListItem};
 
 mod mobile;
@@ -616,13 +617,21 @@ impl Sidebar {
         };
         let picking_base = app.develop_ui.area_picker == Some(AreaPicker::FilmBase);
         let foldable = layout == ScreenLayout::Horizontal;
-        match Self::show_film_negative(ui, &negative, picking_base, foldable) {
+        let on = app.develop.exposure.card_on(CardSwitch::FilmNegative);
+        match Self::show_film_negative(ui, &negative, on, picking_base, foldable) {
             Some(FilmNegativeAction::Stock(stock)) => app.set_film_stock(stock),
             Some(FilmNegativeAction::PickBase(active)) => {
                 app.develop_ui.set_area_picker(AreaPicker::FilmBase, active);
             }
             Some(FilmNegativeAction::Auto) => app.auto_film_negative(),
-            Some(FilmNegativeAction::Remove) => app.remove_film_negative(),
+            Some(FilmNegativeAction::Remove) => {
+                app.set_card_on(CardSwitch::FilmNegative, true);
+                app.remove_film_negative();
+            }
+            Some(FilmNegativeAction::Toggle) => {
+                app.develop_ui.cancel_area_picker();
+                app.set_card_on(CardSwitch::FilmNegative, !on);
+            }
             None => {}
         }
     }
@@ -659,9 +668,21 @@ impl Sidebar {
             return;
         };
         let foldable = layout == ScreenLayout::Horizontal;
-        match Self::show_camera_match(ui, amount, foldable) {
+        let on = app.develop.exposure.card_on(CardSwitch::CameraMatch);
+        match Self::show_camera_match(ui, amount, on, foldable) {
             Some(CameraMatchAction::Amount(amount)) => app.set_camera_look_amount(amount),
-            Some(CameraMatchAction::Remove) => app.remove_camera_look(),
+            // A look fitted later starts on.
+            Some(CameraMatchAction::Remove) => {
+                app.set_card_on(CardSwitch::CameraMatch, true);
+                app.remove_camera_look();
+            }
+            Some(CameraMatchAction::Toggle) => app.set_card_on(CardSwitch::CameraMatch, !on),
+            Some(CameraMatchAction::Reset) => {
+                app.set_card_on(CardSwitch::CameraMatch, true);
+                app.set_camera_look_amount(
+                    crate::pipeline::camera_look::CameraLook::DEFAULT_AMOUNT,
+                );
+            }
             None => {}
         }
     }
@@ -708,6 +729,7 @@ impl Sidebar {
             ui,
             &look_lut::LookLutView {
                 look: app.develop.look_lut.as_ref(),
+                on: app.develop.exposure.card_on(CardSwitch::Lut),
                 entries: app.luts.entries(),
                 can_import: app.luts.is_available(),
                 layout,
@@ -720,6 +742,14 @@ impl Sidebar {
             Some(look_lut::LookLutAction::Select(id)) => app.select_look_lut(id),
             Some(look_lut::LookLutAction::Amount(amount)) => app.set_look_lut_amount(amount),
             Some(look_lut::LookLutAction::Import) => app.choose_lut_files_to_import(true),
+            Some(look_lut::LookLutAction::Toggle) => {
+                let on = app.develop.exposure.card_on(CardSwitch::Lut);
+                app.set_card_on(CardSwitch::Lut, !on);
+            }
+            Some(look_lut::LookLutAction::Reset) => {
+                app.set_card_on(CardSwitch::Lut, true);
+                app.select_look_lut(None);
+            }
             None => {}
         }
     }

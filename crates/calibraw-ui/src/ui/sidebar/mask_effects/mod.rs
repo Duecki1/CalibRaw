@@ -21,7 +21,70 @@ pub(super) use picker::{
 
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::{ColorParamSpec, ToggleSpec};
-use crate::pipeline::{effect_places, EffectComponent, EffectSettings, MAX_EFFECT_COMPONENTS};
+use crate::pipeline::{
+    effect_places, EffectComponent, EffectSettings, EffectStyle, MAX_EFFECT_COMPONENTS,
+};
+
+/// The Style control of a card whose effect has kin ([`crate::pipeline::EffectFamily`]):
+/// the styles it may take, and the one picked this frame.
+pub(in crate::ui::sidebar) struct StyleChoice {
+    current: EffectStyle,
+    offered: Vec<EffectStyle>,
+    pub(in crate::ui::sidebar) picked: Option<EffectStyle>,
+}
+
+impl StyleChoice {
+    /// The choice for `component` in its list `components`; `None` for an
+    /// effect without kin. Other effects of its family that the list holds
+    /// are not offered, as a list holds each effect at most once.
+    pub(in crate::ui::sidebar) fn of(
+        component: &EffectComponent,
+        components: &[EffectComponent],
+    ) -> Option<Self> {
+        let family = component.effect.family()?;
+        family.has_styles().then(|| Self {
+            current: EffectStyle::of(component),
+            offered: family.styles_for(component, components).collect(),
+            picked: None,
+        })
+    }
+}
+
+/// The Style control, disabled while the card's style is the only one left.
+fn style_control(ui: &mut Ui, effect: MaskEffect, choice: &mut StyleChoice) {
+    ui.add_enabled_ui(choice.offered.len() > 1, |ui| {
+        moduwu_design::form_combo(
+            ui,
+            tr("Style"),
+            ("effect-style", effect.shader_id()),
+            tr(choice.current.label()),
+            240.0,
+            |ui| {
+                for style in &choice.offered {
+                    if ui
+                        .selectable_label(*style == choice.current, tr(style.label()))
+                        .clicked()
+                        && *style != choice.current
+                    {
+                        choice.picked = Some(*style);
+                    }
+                }
+            },
+        );
+    });
+}
+
+/// An effect card's title: its family's name, with what its effect does as
+/// the tooltip.
+fn effect_card_title(ui: &mut Ui, effect: MaskEffect) {
+    let label = effect
+        .family()
+        .map_or(effect.label(), |family| family.label());
+    let response = ui.strong(tr(label));
+    if let Some(help) = effect_description(effect) {
+        response.on_hover_text(help);
+    }
+}
 
 pub(super) use crate::ui::components::adjustment_slider::{float_param_angle, float_param_slider};
 
@@ -36,7 +99,26 @@ fn effect_card<Settings>(
 where
     Settings: EffectSettings,
 {
+    styled_effect_card(ui, effect, settings, enabled, remove, None, body)
+}
+
+/// [`effect_card`] with the Style control of `style` leading its body.
+fn styled_effect_card<Settings>(
+    ui: &mut Ui,
+    effect: MaskEffect,
+    settings: &mut Settings,
+    enabled: &mut bool,
+    remove: &mut bool,
+    style: Option<&mut StyleChoice>,
+    body: impl FnOnce(&mut Ui, &mut Settings) -> bool,
+) -> bool
+where
+    Settings: EffectSettings,
+{
     let body = |ui: &mut Ui, settings: &mut Settings| {
+        if let Some(style) = style {
+            style_control(ui, effect, style);
+        }
         if effect.is_experimental() {
             ui.weak(tr("Experimental"));
         }
@@ -77,7 +159,7 @@ where
                 let was_open = header.is_open();
                 let mut header = header.show_header(ui, |ui| {
                     let available = ui.available_rect_before_wrap();
-                    super::Sidebar::adjustment_card_title(ui, effect.label());
+                    effect_card_title(ui, effect);
                     let buttons = ui
                         .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let size = egui::vec2(26.0, 26.0);
@@ -95,31 +177,10 @@ where
                                 &tr_fmt("Remove {title}", &[("title", &tr(effect.label()))]),
                             );
                             *remove = remove_button.clicked();
-                            let icon = if *enabled {
-                                egui_phosphor::regular::EYE_SLASH
-                            } else {
-                                egui_phosphor::regular::EYE
-                            };
-                            let visibility_button = moduwu_design::ghost_icon_toggle_button(
-                                ui,
-                                icon,
-                                !*enabled,
-                                size,
-                                &if *enabled {
-                                    tr_fmt("Hide {title}", &[("title", &tr(effect.label()))])
-                                } else {
-                                    tr_fmt("Show {title}", &[("title", &tr(effect.label()))])
-                                },
-                            );
-                            if visibility_button.clicked() {
-                                *enabled = !*enabled;
-                                changed = true;
-                            }
-                            [
-                                visibility_button.rect,
-                                remove_button.rect,
-                                reset_button.rect,
-                            ]
+                            let switch =
+                                moduwu_design::toggle_switch(ui, enabled, tr(effect.label()));
+                            changed |= switch.changed();
+                            [switch.rect, remove_button.rect, reset_button.rect]
                         })
                         .inner;
                     header_clicked =

@@ -5,7 +5,7 @@ use std::f32::consts::TAU;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use super::{LensGeometryMap, SceneDepth};
+use super::{AdjustmentGroupSet, LensGeometryMap, SceneDepth};
 use crate::color_math::{linear_srgb_to_oklab, srgb_decode_signed};
 
 mod content_dependencies;
@@ -16,10 +16,10 @@ pub use content_dependencies::ContentDependencies;
 
 pub use effects::{
     effect_lanes, params as effect_params, BlurEffectSettings, ColorLane, EdgeGlowEffectSettings,
-    EffectControl, EffectControls, EffectDetails, EffectInstances, EffectLanes, EffectOption,
-    EffectPass, EffectReach, EffectSettings, EffectSettingsVisitor, FogEffectSettings,
-    GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, Lane, LaneName,
-    LensBlurEffectSettings, LightRaySource, LightRaysEffectSettings, MaskEffect,
+    EffectControl, EffectControls, EffectDetails, EffectFamily, EffectInstances, EffectLanes,
+    EffectOption, EffectPass, EffectReach, EffectSettings, EffectSettingsVisitor, EffectStyle,
+    FogEffectSettings, GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, Lane,
+    LaneName, LensBlurEffectSettings, LightRaySource, LightRaysEffectSettings, MaskEffect,
     MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings,
     PackContext, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode,
     RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneNeed, SceneNeeds,
@@ -266,6 +266,11 @@ pub struct LocalMask {
     pub opacity: f32,
     pub components: Vec<MaskComponent>,
     pub adjustments: LocalAdjustments,
+    /// The adjustment cards switched off: their settings stay in
+    /// `adjustments` and render at rest ([`MaskStack::apply_card_switches`]).
+    /// Left out of files while every card is on, as files without it mean.
+    #[serde(default, skip_serializing_if = "super::card_switches::no_groups")]
+    pub cards_off: AdjustmentGroupSet,
 }
 
 impl Deref for LocalMask {
@@ -293,6 +298,7 @@ impl LocalMask {
             opacity: 1.0,
             components: vec![MaskComponent::new(kind, MaskCombineMode::Add)],
             adjustments: LocalAdjustments::default(),
+            cards_off: AdjustmentGroupSet::EMPTY,
         }
     }
 

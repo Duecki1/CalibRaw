@@ -1,4 +1,5 @@
 use super::calibration::Calibration;
+use super::card_switches::CardSwitches;
 use super::film_negative::FilmSource;
 use super::noise::DenoiseQuality;
 use super::sigmoid::SigmoidParams;
@@ -349,6 +350,12 @@ pub struct ExposureParams {
     /// neutral, which stay as they were.
     #[serde(default, skip_serializing_if = "Calibration::is_neutral")]
     pub calibration: Calibration,
+
+    /// The cards switched off: their settings stay here and render at rest
+    /// ([`Self::applied`]). Left out of files while every card is on, as
+    /// files without it mean.
+    #[serde(default, skip_serializing_if = "CardSwitches::is_empty")]
+    pub cards_off: CardSwitches,
 }
 
 pub fn sigmoid_contrast_from_percent(contrast: f32) -> f32 {
@@ -437,6 +444,7 @@ impl Default for ExposureParams {
             point_color_visualize: None,
             color_grading: ColorGrading::default(),
             calibration: Calibration::default(),
+            cards_off: CardSwitches::EMPTY,
         }
     }
 }

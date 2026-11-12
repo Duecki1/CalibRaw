@@ -1,11 +1,15 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::CardSwitch;
 
+/// What a card's header asked of its handler.
 #[derive(Clone, Copy, Default)]
 pub(super) enum CardAction {
     #[default]
     None,
+    /// Flip the card's switch.
     Toggle,
+    /// Reset the card's settings and switch it on.
     Reset,
 }
 
@@ -31,7 +35,9 @@ struct VerticalCardActions {
 #[derive(Clone, Copy)]
 enum VerticalCardKind {
     Adjustment {
-        show_visibility: bool,
+        on: bool,
+        /// Has its own reset; a sub-mask's is its group's.
+        reset: bool,
         show_mask_overlay_toggle: bool,
     },
     Effect {
@@ -50,28 +56,41 @@ pub(super) enum EffectCardAction {
 
 #[derive(Clone, Copy)]
 struct CardHeaderControls {
-    show_visibility: bool,
+    /// The card's switch.
+    on: bool,
     show_mask_overlay_toggle: bool,
     /// Takes part in closing other cards when one opens ([`single_open_cards`]).
     single_open: bool,
-    /// Puts its actions in the shared footer on portrait screens, where cards
-    /// have no header. A card without them relies on another card's.
-    footer_actions: bool,
+    /// Puts its reset in the shared footer on portrait screens, where cards
+    /// have no header; its switch goes there in any case. A card without it
+    /// relies on another card's reset.
+    footer_reset: bool,
 }
 
 impl CardAction {
-    fn apply_reset(self, reset: impl FnOnce()) -> bool {
+    /// Applies the action to the photo-wide card `card`; `reset` resets its
+    /// settings. Returns whether the edit changed.
+    pub(super) fn apply_to_card(
+        self,
+        exposure: &mut ExposureParams,
+        card: CardSwitch,
+        reset: impl FnOnce(&mut ExposureParams),
+    ) -> bool {
         match self {
-            Self::None | Self::Toggle => false,
+            Self::None => false,
+            Self::Toggle => exposure.set_card_on(card, !exposure.card_on(card)),
             Self::Reset => {
-                reset();
+                reset(exposure);
+                exposure.set_card_on(card, true);
                 true
             }
         }
     }
 
     pub(super) fn apply(self, exposure: &mut ExposureParams, group: AdjustmentGroup) -> bool {
-        self.apply_reset(|| exposure.reset_group(group))
+        self.apply_to_card(exposure, CardSwitch::of_group(group), |exposure| {
+            exposure.reset_group(group)
+        })
     }
 
     /// Resets `group` to the photo-specific starting values in `defaults`.
@@ -81,15 +100,9 @@ impl CardAction {
         defaults: &ExposureParams,
         group: AdjustmentGroup,
     ) -> bool {
-        self.apply_reset(|| exposure.copy_group_from(defaults, group))
-    }
-
-    pub(super) fn apply_local(
-        self,
-        adjustments: &mut crate::pipeline::LocalAdjustments,
-        group: AdjustmentGroup,
-    ) -> bool {
-        self.apply_reset(|| adjustments.reset_group(group))
+        self.apply_to_card(exposure, CardSwitch::of_group(group), |exposure| {
+            exposure.copy_group_from(defaults, group)
+        })
     }
 }
 
@@ -105,16 +118,8 @@ pub(super) fn reveal_adjustment_card(ctx: &egui::Context, title: &'static str) {
     moduwu_design::request_scroll_into_view(ctx, target, Some(egui::Align::TOP));
 }
 
-fn visibility_icon(visible: bool) -> &'static str {
-    if visible {
-        egui_phosphor::regular::EYE_SLASH
-    } else {
-        egui_phosphor::regular::EYE
-    }
-}
-
-/// The name an adjustment card shows. `title` stays the card's key (reveal,
-/// preview visibility and pending actions use it), so only the name is
+/// The name an adjustment card shows. `title` stays the card's key (reveal
+/// and pending footer actions use it), so only the name is
 /// translated. Names listed here are literals so the catalog extraction
 /// finds them; any other title, such as a mask effect name from
 /// `calibraw-core`, is looked up by its English text.
@@ -139,12 +144,32 @@ pub(super) fn card_title_text(title: &'static str) -> &'static str {
     }
 }
 
-fn visibility_label(visible: bool, title: &'static str) -> String {
-    if visible {
-        tr_fmt("Hide {title}", &[("title", &card_title_text(title))])
-    } else {
-        tr_fmt("Show {title}", &[("title", &card_title_text(title))])
+/// A card's switch, showing `on`. Its title names it for assistive
+/// technology; on a header the title shows beside it. A click on the returned
+/// response asks to flip it.
+pub(super) fn card_switch(ui: &mut Ui, on: bool, title: &str) -> egui::Response {
+    let mut on = on;
+    moduwu_design::toggle_switch(ui, &mut on, title)
+}
+
+/// The forced mask overlay's eye, which the mask cards keep.
+fn mask_overlay_toggle(ui: &mut Ui, size: egui::Vec2) -> egui::Response {
+    let forced = crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(ui.ctx());
+    let response = moduwu_design::ghost_icon_toggle_button(
+        ui,
+        egui_phosphor::regular::EYE,
+        forced,
+        size,
+        if forced {
+            tr("Use automatic mask overlay visibility")
+        } else {
+            tr("Always show the selected mask overlay")
+        },
+    );
+    if response.clicked() {
+        crate::app::preview_visibility::PreviewVisibility::toggle_mask_overlay(ui.ctx());
     }
+    response
 }
 
 impl Sidebar {
@@ -194,8 +219,7 @@ impl Sidebar {
     fn card_actions(
         ui: &mut Ui,
         title: &'static str,
-        visible: bool,
-        show_visibility: bool,
+        on: bool,
         show_mask_overlay_toggle: bool,
     ) -> CardActionLayout {
         let mut action = CardAction::None;
@@ -210,49 +234,14 @@ impl Sidebar {
             if reset.clicked() {
                 action = CardAction::Reset;
             }
-            let overlay = show_mask_overlay_toggle.then(|| {
-                let forced = crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(
-                    ui.ctx(),
-                );
-                let response = moduwu_design::ghost_icon_toggle_button(
-                    ui,
-                    egui_phosphor::regular::EYE,
-                    forced,
-                    size,
-                    if forced {
-                        tr("Use automatic mask overlay visibility")
-                    } else {
-                        tr("Always show the selected mask overlay")
-                    },
-                );
-                if response.clicked() {
-                    crate::app::preview_visibility::PreviewVisibility::toggle_mask_overlay(
-                        ui.ctx(),
-                    );
-                }
-                response
-            });
-            if show_visibility {
-                // Like the topbar eye, highlight the button when edits are bypassed.
-                let eye = moduwu_design::ghost_icon_toggle_button(
-                    ui,
-                    visibility_icon(visible),
-                    !visible,
-                    size,
-                    &visibility_label(visible, title),
-                );
-                if eye.clicked() {
-                    action = CardAction::Toggle;
-                }
-                if let Some(overlay) = overlay {
-                    ([eye.rect, overlay.rect, reset.rect], 3)
-                } else {
-                    ([eye.rect, reset.rect, egui::Rect::NOTHING], 2)
-                }
-            } else if let Some(overlay) = overlay {
-                ([overlay.rect, reset.rect, egui::Rect::NOTHING], 2)
-            } else {
-                ([reset.rect, egui::Rect::NOTHING, egui::Rect::NOTHING], 1)
+            let overlay = show_mask_overlay_toggle.then(|| mask_overlay_toggle(ui, size));
+            let switch = card_switch(ui, on, card_title_text(title));
+            if switch.clicked() {
+                action = CardAction::Toggle;
+            }
+            match overlay {
+                Some(overlay) => ([switch.rect, overlay.rect, reset.rect], 3),
+                None => ([switch.rect, reset.rect, egui::Rect::NOTHING], 2),
             }
         });
         CardActionLayout {
@@ -283,14 +272,16 @@ impl Sidebar {
     fn register_vertical_card_actions(
         ui: &Ui,
         title: &'static str,
-        show_visibility: bool,
+        on: bool,
+        reset: bool,
         show_mask_overlay_toggle: bool,
     ) {
         Self::register_vertical_actions(
             ui,
             title,
             VerticalCardKind::Adjustment {
-                show_visibility,
+                on,
+                reset,
                 show_mask_overlay_toggle,
             },
         );
@@ -381,32 +372,27 @@ impl Sidebar {
                 ui.ctx(),
                 entry.scope,
             );
-
-            if moduwu_design::ghost_icon_button(
-                ui,
-                egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                size,
-                &tr_fmt("Reset {title}", &[("title", &card_title_text(entry.title))]),
-            )
-            .clicked()
+            let title = card_title_text(entry.title);
+            let reset = match entry.kind {
+                VerticalCardKind::Adjustment { reset, .. } => reset,
+                VerticalCardKind::Effect { .. } => true,
+            };
+            if reset
+                && moduwu_design::ghost_icon_button(
+                    ui,
+                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                    size,
+                    &tr_fmt("Reset {title}", &[("title", &title)]),
+                )
+                .clicked()
             {
                 match entry.kind {
-                    VerticalCardKind::Adjustment {
-                        show_visibility, ..
-                    } => {
-                        if show_visibility {
-                            crate::app::preview_visibility::PreviewVisibility::show(
-                                ui.ctx(),
-                                entry.title,
-                            );
-                        }
-                        Self::queue_vertical_card_action(
-                            ui.ctx(),
-                            entry.scope,
-                            entry.title,
-                            CardAction::Reset,
-                        );
-                    }
+                    VerticalCardKind::Adjustment { .. } => Self::queue_vertical_card_action(
+                        ui.ctx(),
+                        entry.scope,
+                        entry.title,
+                        CardAction::Reset,
+                    ),
                     VerticalCardKind::Effect { .. } => Self::queue_vertical_effect_action(
                         ui.ctx(),
                         entry.scope,
@@ -416,92 +402,48 @@ impl Sidebar {
                 }
             }
 
-            if let VerticalCardKind::Effect { enabled } = entry.kind {
-                if moduwu_design::ghost_icon_button(
-                    ui,
-                    egui_phosphor::regular::TRASH,
-                    size,
-                    &tr_fmt(
-                        "Remove {title}",
-                        &[("title", &card_title_text(entry.title))],
-                    ),
-                )
-                .clicked()
-                {
-                    Self::queue_vertical_effect_action(
-                        ui.ctx(),
-                        entry.scope,
-                        entry.title,
-                        EffectCardAction::Remove,
-                    );
+            match entry.kind {
+                VerticalCardKind::Effect { enabled } => {
+                    if moduwu_design::ghost_icon_button(
+                        ui,
+                        egui_phosphor::regular::TRASH,
+                        size,
+                        &tr_fmt("Remove {title}", &[("title", &title)]),
+                    )
+                    .clicked()
+                    {
+                        Self::queue_vertical_effect_action(
+                            ui.ctx(),
+                            entry.scope,
+                            entry.title,
+                            EffectCardAction::Remove,
+                        );
+                    }
+                    if card_switch(ui, enabled, title).clicked() {
+                        Self::queue_vertical_effect_action(
+                            ui.ctx(),
+                            entry.scope,
+                            entry.title,
+                            EffectCardAction::Toggle,
+                        );
+                    }
                 }
-                if moduwu_design::ghost_icon_toggle_button(
-                    ui,
-                    visibility_icon(enabled),
-                    !enabled,
-                    size,
-                    &visibility_label(enabled, entry.title),
-                )
-                .clicked()
-                {
-                    Self::queue_vertical_effect_action(
-                        ui.ctx(),
-                        entry.scope,
-                        entry.title,
-                        EffectCardAction::Toggle,
-                    );
-                }
-                continue;
-            }
-
-            let VerticalCardKind::Adjustment {
-                show_visibility,
-                show_mask_overlay_toggle,
-            } = entry.kind
-            else {
-                unreachable!()
-            };
-            if show_mask_overlay_toggle {
-                let forced = crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(
-                    ui.ctx(),
-                );
-                if moduwu_design::ghost_icon_toggle_button(
-                    ui,
-                    egui_phosphor::regular::EYE,
-                    forced,
-                    size,
-                    if forced {
-                        tr("Use automatic mask overlay visibility")
-                    } else {
-                        tr("Always show the selected mask overlay")
-                    },
-                )
-                .clicked()
-                {
-                    crate::app::preview_visibility::PreviewVisibility::toggle_mask_overlay(
-                        ui.ctx(),
-                    );
-                }
-            }
-
-            if show_visibility {
-                let visible = crate::app::preview_visibility::PreviewVisibility::visible(
-                    ui.ctx(),
-                    entry.title,
-                );
-                if moduwu_design::ghost_icon_toggle_button(
-                    ui,
-                    visibility_icon(visible),
-                    !visible,
-                    size,
-                    &visibility_label(visible, entry.title),
-                )
-                .clicked()
-                {
-                    crate::app::preview_visibility::PreviewVisibility::toggle(
-                        ui.ctx(),
-                        entry.title,
-                    );
+                VerticalCardKind::Adjustment {
+                    on,
+                    show_mask_overlay_toggle,
+                    ..
+                } => {
+                    if show_mask_overlay_toggle {
+                        mask_overlay_toggle(ui, size);
+                    }
+                    if card_switch(ui, on, title).clicked() {
+                        Self::queue_vertical_card_action(
+                            ui.ctx(),
+                            entry.scope,
+                            entry.title,
+                            CardAction::Toggle,
+                        );
+                    }
                 }
             }
         }
@@ -509,12 +451,15 @@ impl Sidebar {
         crate::app::preview_visibility::PreviewVisibility::set_mask_scope(ui.ctx(), None);
     }
 
+    /// A card with a switch, `on`, in its header; off greys out its body.
+    /// Its handler applies the returned action, flipping the switch and
+    /// resetting.
     pub(super) fn adjustment_card(
         ui: &mut Ui,
         title: &'static str,
         default_open: bool,
         foldable: bool,
-        controls_enabled: bool,
+        on: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
         Self::adjustment_card_controls(
@@ -522,46 +467,22 @@ impl Sidebar {
             title,
             default_open,
             foldable,
-            controls_enabled,
             CardHeaderControls {
-                show_visibility: true,
+                on,
                 show_mask_overlay_toggle: false,
                 single_open: true,
-                footer_actions: true,
+                footer_reset: true,
             },
             contents,
         )
     }
 
-    /// An adjustment card without the preview eye, for adjustments the
-    /// preview cannot temporarily hide.
-    pub(super) fn adjustment_card_without_eye(
-        ui: &mut Ui,
-        title: &'static str,
-        default_open: bool,
-        foldable: bool,
-        contents: impl FnOnce(&mut Ui),
-    ) -> CardAction {
-        Self::adjustment_card_controls(
-            ui,
-            title,
-            default_open,
-            foldable,
-            true,
-            CardHeaderControls {
-                show_visibility: false,
-                show_mask_overlay_toggle: false,
-                single_open: true,
-                footer_actions: true,
-            },
-            contents,
-        )
-    }
-
-    /// The selected mask group's card. On portrait screens, where cards have
-    /// no header, its footer actions also stand for the sub-mask card.
+    /// The selected mask group's card, switched by whether the mask applies.
+    /// On portrait screens, where cards have no header, its footer reset
+    /// also stands for the sub-mask card.
     pub(super) fn mask_group_card(
         ui: &mut Ui,
+        on: bool,
         foldable: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
@@ -570,20 +491,21 @@ impl Sidebar {
             "Mask",
             true,
             foldable,
-            true,
             CardHeaderControls {
-                show_visibility: false,
+                on,
                 show_mask_overlay_toggle: true,
                 single_open: false,
-                footer_actions: true,
+                footer_reset: true,
             },
             contents,
         )
     }
 
-    /// The selected sub-mask's card, below its group's.
+    /// The selected sub-mask's card, below its group's, switched by whether
+    /// the sub-mask takes part in the mask.
     pub(super) fn submask_card(
         ui: &mut Ui,
+        on: bool,
         foldable: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
@@ -592,12 +514,11 @@ impl Sidebar {
             "Sub-mask",
             true,
             foldable,
-            true,
             CardHeaderControls {
-                show_visibility: false,
+                on,
                 show_mask_overlay_toggle: false,
                 single_open: false,
-                footer_actions: false,
+                footer_reset: false,
             },
             contents,
         )
@@ -610,27 +531,22 @@ impl Sidebar {
         viewport.height() > viewport.width()
     }
 
-    /// `controls_enabled` only greys out the card body; the header (fold, reset, preview eye)
-    /// stays interactive so a disabled card can still be re-enabled. Pass an already-`&&`ed
-    /// expression – there is deliberately no second “card enabled” flag to keep in sync.
+    /// The switch only greys out the card body; the header (fold, reset, switch) stays
+    /// interactive so a card that is off can be switched on again.
     fn adjustment_card_controls(
         ui: &mut Ui,
         title: &'static str,
         default_open: bool,
         foldable: bool,
-        controls_enabled: bool,
         header_controls: CardHeaderControls,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
         let CardHeaderControls {
-            show_visibility,
+            on,
             show_mask_overlay_toggle,
             single_open,
-            footer_actions,
+            footer_reset,
         } = header_controls;
-        let visible = !show_visibility
-            || crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
-        let controls_enabled = controls_enabled && visible;
         let reveal = ui
             .ctx()
             .data_mut(|data| data.remove_temp::<bool>(card_reveal_id(title)))
@@ -641,22 +557,21 @@ impl Sidebar {
                 // Reserve the button height before laying out the title.
                 ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(26.0);
                 let body = |ui: &mut Ui| {
-                    ui.add_enabled_ui(controls_enabled, contents);
+                    ui.add_enabled_ui(on, contents);
                 };
                 if Self::cards_use_footer(ui.ctx()) {
-                    // Vertical-screen cards deliberately have no header. Their preview/reset
-                    // actions are registered here and rendered outside the cards in the shared
-                    // sidebar footer alongside the other mobile actions.
+                    // Vertical-screen cards deliberately have no header. Their switch and reset
+                    // are registered here and rendered outside the cards in the shared sidebar
+                    // footer alongside the other mobile actions.
                     body(ui);
-                    if footer_actions {
-                        Self::register_vertical_card_actions(
-                            ui,
-                            title,
-                            show_visibility,
-                            show_mask_overlay_toggle,
-                        );
-                        action = Self::take_pending_vertical_card_action(ui.ctx(), title);
-                    }
+                    Self::register_vertical_card_actions(
+                        ui,
+                        title,
+                        on,
+                        footer_reset,
+                        show_mask_overlay_toggle,
+                    );
+                    action = Self::take_pending_vertical_card_action(ui.ctx(), title);
                 } else if foldable {
                     let mut header_clicked = false;
                     let ctx = ui.ctx().clone();
@@ -673,13 +588,8 @@ impl Sidebar {
                     let mut header = header.show_header(ui, |ui| {
                         let available = ui.available_rect_before_wrap();
                         Self::adjustment_card_title(ui, title);
-                        let card_actions = Self::card_actions(
-                            ui,
-                            title,
-                            visible,
-                            show_visibility,
-                            show_mask_overlay_toggle,
-                        );
+                        let card_actions =
+                            Self::card_actions(ui, title, on, show_mask_overlay_toggle);
                         action = card_actions.action;
                         let buttons = card_actions.button_rects();
                         // The built-in arrow already toggles.
@@ -703,14 +613,7 @@ impl Sidebar {
                 } else {
                     ui.horizontal(|ui| {
                         Self::adjustment_card_title(ui, title);
-                        action = Self::card_actions(
-                            ui,
-                            title,
-                            visible,
-                            show_visibility,
-                            show_mask_overlay_toggle,
-                        )
-                        .action;
+                        action = Self::card_actions(ui, title, on, show_mask_overlay_toggle).action;
                     });
                     body(ui);
                 }
@@ -719,18 +622,6 @@ impl Sidebar {
         single_open_cards::keep_in_view(ui, card_reveal_id(title), card.response.rect);
         moduwu_design::scroll_into_view_on_draw(ui, card_reveal_id(title), card.response.rect);
         moduwu_design::card_gap(ui);
-        match action {
-            CardAction::Toggle => {
-                crate::app::preview_visibility::PreviewVisibility::toggle(ui.ctx(), title);
-                CardAction::None
-            }
-            CardAction::Reset => {
-                if show_visibility {
-                    crate::app::preview_visibility::PreviewVisibility::show(ui.ctx(), title);
-                }
-                CardAction::Reset
-            }
-            CardAction::None => CardAction::None,
-        }
+        action
     }
 }

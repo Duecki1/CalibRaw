@@ -1,5 +1,5 @@
 //! Adding effects: the Add effect button and the picker it opens, which shows
-//! every effect as an icon tile under its category.
+//! every effect family as an icon tile under its category.
 
 use super::{add_effect_buttons, effect_description, egui, MaskEffect, Ui};
 use crate::app::{CalibRawApp, CAMERA_MATCH_CARD_TITLE, FILM_NEGATIVE_CARD_TITLE};
@@ -147,11 +147,12 @@ struct Tile {
     enabled: bool,
 }
 
-/// Every effect as a tile under its category's heading, to add one to
-/// `components`; the film negative and Camera match tiles lead Film & Finish
-/// unless `photo_tiles` hides them. An effect already in `components` shows a check
-/// mark and is disabled; once `components` is full, every effect is
-/// disabled. Returns the clicked tile's pick.
+/// Every effect family as a tile under its category's heading, to add one of
+/// its effects to `components`: the first style whose effect `components`
+/// lacks; the film negative and Camera match tiles lead Film & Finish unless
+/// `photo_tiles` hides them. A family whose every effect `components` holds
+/// shows a check mark and is disabled; once `components` is full, every
+/// family is disabled. Returns the clicked tile's pick.
 fn effect_picker(
     ui: &mut Ui,
     components: &[EffectComponent],
@@ -204,20 +205,29 @@ fn effect_picker(
         tiles.extend(
             MaskEffect::ALL
                 .into_iter()
-                .filter(|effect| effect.category() == Some(category))
-                .filter(|effect| !effect.is_disabled())
-                .map(|effect| {
-                    let added = components
-                        .iter()
-                        .any(|component| component.effect == effect);
-                    Tile {
+                // Each family once, where its first effect is listed.
+                .filter_map(|effect| {
+                    effect
+                        .family()
+                        .filter(|family| family.first_effect() == effect)
+                })
+                .filter(|family| family.category() == Some(category))
+                .filter_map(|family| {
+                    // Effects switched off for good are never offered.
+                    family
+                        .styles()
+                        .find(|style| !style.effect().is_disabled())?;
+                    let to_add = family.styles_to_add(components).next();
+                    let effect = to_add.map_or(family.first_effect(), |style| style.effect());
+                    let added = to_add.is_none();
+                    Some(Tile {
                         pick: EffectPick::Effect(effect),
-                        label: tr(effect.label()),
-                        icon: effect_icon(effect),
+                        label: tr(family.label()),
+                        icon: effect_icon(family.first_effect()),
                         help: effect_description(effect),
                         added,
                         enabled: !added && !full,
-                    }
+                    })
                 }),
         );
         for row in tiles.chunks(TILES_PER_ROW) {

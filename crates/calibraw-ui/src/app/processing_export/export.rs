@@ -434,11 +434,14 @@ impl CalibRawApp {
         let Some(render_state) = frame.wgpu_render_state() else {
             return Err(tr("eframe is not running with the wgpu backend.").to_owned());
         };
+        // The edit as it renders, with its switched-off cards at rest.
         let (exposure, geometry, masks, look) = match export_override {
             None => (
-                self.develop.exposure,
+                self.develop
+                    .exposure
+                    .applied(self.develop.lens_correction.enabled),
                 self.develop.geometry,
-                self.masks.stack.clone(),
+                self.applied_masks(),
                 self.look_for_export(),
             ),
             Some(export_override) => {
@@ -448,9 +451,14 @@ impl CalibRawApp {
                     masks: Arc::new(self.masks.stack.clone()),
                     look_lut: self.develop.look_lut.clone(),
                     camera_look: self.develop.camera_look.clone(),
+                    lens: crate::sidecar::LensEditState {
+                        enabled: self.develop.lens_correction.enabled,
+                        ..crate::sidecar::LensEditState::default()
+                    },
                     ..crate::sidecar::default_edit_state()
                 };
                 export_override.apply(&mut edits);
+                let edits = edits.into_applied();
                 let look = edits
                     .look_lut
                     .as_ref()

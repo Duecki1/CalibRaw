@@ -24,10 +24,12 @@ impl<'a> LocalAdjustmentTabs<'a> {
     }
 }
 
-/// The part of a mask the local adjustment cards edit: its adjustments, and
-/// the effect components the Effects card can add to.
+/// The part of a mask the local adjustment cards edit: its adjustments and
+/// the switches of their cards, and the effect components the Effects card
+/// can add to.
 pub(super) struct LocalAdjustmentTarget<'a> {
     pub(super) adjustments: &'a mut crate::pipeline::LocalAdjustments,
+    pub(super) cards_off: &'a mut crate::pipeline::AdjustmentGroupSet,
     pub(super) effect_components: &'a [crate::pipeline::EffectComponent],
 }
 
@@ -35,6 +37,7 @@ impl<'a> LocalAdjustmentTarget<'a> {
     pub(super) fn of(mask: &'a mut LocalMask) -> Self {
         Self {
             adjustments: &mut mask.adjustments,
+            cards_off: &mut mask.cards_off,
             effect_components: &mask.effect_components,
         }
     }
@@ -45,6 +48,8 @@ impl<'a> LocalAdjustmentTarget<'a> {
 pub(super) struct LocalAdjustmentResponse {
     /// An adjustment changed.
     pub(super) changed: bool,
+    /// The card's switch flipped.
+    pub(super) switched: bool,
     /// An effect to add to the mask's effect components.
     pub(super) added_effect: Option<MaskEffect>,
 }
@@ -64,7 +69,7 @@ pub(super) fn apply_local_adjustment_response(
             .push(crate::pipeline::EffectComponent::new(effect));
         mask_effects::reveal_effect_card(ctx, effect);
     }
-    response.changed || response.added_effect.is_some()
+    response.changed || response.switched || response.added_effect.is_some()
 }
 
 impl Sidebar {
@@ -88,10 +93,12 @@ impl Sidebar {
         };
         let LocalAdjustmentTarget {
             adjustments,
+            cards_off,
             effect_components,
         } = target;
         let mut response = LocalAdjustmentResponse::default();
-        let action = Self::adjustment_card(ui, title, default_open, foldable, true, |ui| {
+        let on = !cards_off.contains(group);
+        let action = Self::adjustment_card(ui, title, default_open, foldable, on, |ui| {
             if section == MaskSection::Effects {
                 response = Self::show_local_mask_effects(ui, adjustments, effect_components);
             } else {
@@ -99,7 +106,18 @@ impl Sidebar {
                     Self::show_local_mask_adjustment_section(ui, adjustments, section, tabs);
             }
         });
-        response.changed |= action.apply_local(adjustments, group);
+        match action {
+            super::super::adjustment_cards::CardAction::None => {}
+            super::super::adjustment_cards::CardAction::Toggle => {
+                cards_off.set(group, on);
+                response.switched = true;
+            }
+            super::super::adjustment_cards::CardAction::Reset => {
+                adjustments.reset_group(group);
+                cards_off.set(group, false);
+                response.changed = true;
+            }
+        }
         response
     }
 
@@ -226,6 +244,7 @@ impl Sidebar {
         .and_then(mask_effects::EffectPick::effect);
         LocalAdjustmentResponse {
             changed,
+            switched: false,
             added_effect,
         }
     }

@@ -15,75 +15,73 @@ pub(super) enum FilmNegativeAction {
     PickBase(bool),
     /// Estimates the negative anew from what the crop shows.
     Auto,
-    /// Develops the photo as it is again: the card's reset.
+    /// Develops the photo as it is again, switched on: the card's reset.
     Remove,
+    /// Flip the card's switch.
+    Toggle,
 }
 
 impl Sidebar {
-    /// The Film negative card for `negative`. `picking_base` is whether the
-    /// film base picker is active.
+    /// The Film negative card for `negative`, switched `on`. `picking_base`
+    /// is whether the film base picker is active.
     pub(super) fn show_film_negative(
         ui: &mut Ui,
         negative: &FilmNegative,
+        on: bool,
         picking_base: bool,
         foldable: bool,
     ) -> Option<FilmNegativeAction> {
         let mut action = None;
-        let card = Self::adjustment_card(
-            ui,
-            FILM_NEGATIVE_CARD_TITLE,
-            true,
-            foldable,
-            true,
-            |ui| {
-                let mut stock = negative.stock;
-                if moduwu_design::segmented_control(
-                    ui,
-                    &mut stock,
-                    &[
-                        (FilmStock::Color, tr("Color")),
-                        (FilmStock::BlackAndWhite, tr("B&W")),
-                    ],
-                    ui.available_width(),
-                )
-                .changed()
-                {
-                    action = Some(FilmNegativeAction::Stock(stock));
-                }
-                ui.horizontal(|ui| {
-                    ui.label(tr("Film base"));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let size = egui::vec2(
-                            moduwu_design::TOOLBAR_ICON_EDGE,
-                            moduwu_design::CONTROL_HEIGHT,
-                        );
-                        if moduwu_design::ghost_icon_toggle_button(
-                            ui,
-                            egui_phosphor::regular::EYEDROPPER,
-                            picking_base,
-                            size,
-                            tr("Pick unexposed film, such as the border between frames"),
-                        )
-                        .clicked()
-                        {
-                            action = Some(FilmNegativeAction::PickBase(!picking_base));
-                        }
-                        if moduwu_design::ghost_icon_button(
-                            ui,
-                            egui_phosphor::regular::MAGIC_WAND,
-                            size,
-                            tr("Estimate the base from the whole scan and the colors from the crop"),
-                        )
-                        .clicked()
-                        {
-                            action = Some(FilmNegativeAction::Auto);
-                        }
-                    });
+        let card = Self::adjustment_card(ui, FILM_NEGATIVE_CARD_TITLE, true, foldable, on, |ui| {
+            let mut stock = negative.stock;
+            if moduwu_design::segmented_control(
+                ui,
+                &mut stock,
+                &[
+                    (FilmStock::Color, tr("Color")),
+                    (FilmStock::BlackAndWhite, tr("B&W")),
+                ],
+                ui.available_width(),
+            )
+            .changed()
+            {
+                action = Some(FilmNegativeAction::Stock(stock));
+            }
+            ui.horizontal(|ui| {
+                ui.label(tr("Film base"));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let size = egui::vec2(
+                        moduwu_design::TOOLBAR_ICON_EDGE,
+                        moduwu_design::CONTROL_HEIGHT,
+                    );
+                    if moduwu_design::ghost_icon_toggle_button(
+                        ui,
+                        egui_phosphor::regular::EYEDROPPER,
+                        picking_base,
+                        size,
+                        tr("Pick unexposed film, such as the border between frames"),
+                    )
+                    .clicked()
+                    {
+                        action = Some(FilmNegativeAction::PickBase(!picking_base));
+                    }
+                    if moduwu_design::ghost_icon_button(
+                        ui,
+                        egui_phosphor::regular::MAGIC_WAND,
+                        size,
+                        tr("Estimate the base from the whole scan and the colors from the crop"),
+                    )
+                    .clicked()
+                    {
+                        action = Some(FilmNegativeAction::Auto);
+                    }
                 });
-            },
-        );
-        if matches!(card, CardAction::Reset) {
-            action = Some(FilmNegativeAction::Remove);
+            });
+        });
+        match card {
+            CardAction::None => {}
+            CardAction::Toggle => action = Some(FilmNegativeAction::Toggle),
+            CardAction::Reset => action = Some(FilmNegativeAction::Remove),
         }
         action
     }

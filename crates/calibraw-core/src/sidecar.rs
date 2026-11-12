@@ -3,7 +3,7 @@ use crate::luts::LookLut;
 use crate::pipeline::camera_look::CameraLook;
 use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
-    lensfun_catalog, DisparityMap, ExposureParams, GeometryTransform, LensCorrection,
+    lensfun_catalog, CardSwitch, DisparityMap, ExposureParams, GeometryTransform, LensCorrection,
     LensfunCorrections, LensfunLens, LoadedRaw, ManualLensCorrection, MaskGeometry, MaskImage,
     MaskKind, MaskStack, RemoveEditState, SceneCamera, SceneDepth, SceneNormals, SubjectRefinement,
     WhiteBalance, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
@@ -213,6 +213,36 @@ pub struct EditState {
     pub remove: Arc<RemoveEditState>,
     #[serde(default)]
     pub ai_masks_need_update: bool,
+}
+
+impl EditState {
+    /// The edit as it renders, with every card that is switched off at rest
+    /// (`pipeline::card_switches`): its settings, mask cards and subject
+    /// refinement, and the LUT and camera look while their cards are off.
+    /// Renderers draw this; saving, history and comparisons keep the edit.
+    /// Mask sources develop the edit as stored (`ExposureParams::source_reference`),
+    /// so they are made before this is taken.
+    pub fn into_applied(mut self) -> Self {
+        let stored = self.exposure;
+        self.exposure = stored.applied(self.lens.enabled);
+        if !stored.card_on(CardSwitch::Lut) {
+            self.look_lut = None;
+        }
+        if !stored.card_on(CardSwitch::CameraMatch) {
+            self.camera_look = None;
+        }
+        if self.masks.has_cards_off() {
+            Arc::make_mut(&mut self.masks).apply_card_switches();
+        }
+        if self
+            .subject_refinement
+            .as_ref()
+            .is_some_and(|refinement| !refinement.enabled)
+        {
+            self.subject_refinement = None;
+        }
+        self
+    }
 }
 
 fn arc_remove_is_empty(remove: &Arc<RemoveEditState>) -> bool {

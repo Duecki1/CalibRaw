@@ -319,8 +319,10 @@ pub(crate) struct LoadedPreview {
     pub(super) preview_raw: Arc<LoadedRaw>,
     pub(super) pipeline: RawGpuPipeline,
     pub(super) review: crate::sidecar::PhotoReview,
-    pub(super) rendered_exposure: ExposureParams,
-    pub(super) rendered_masks: MaskStack,
+    /// The edit as stored; the preview renders it with its card switches
+    /// applied.
+    pub(super) exposure: ExposureParams,
+    pub(super) masks: MaskStack,
     pub(super) remove: RemoveEditState,
     pub(super) ai_masks_need_update: bool,
     pub(super) mask_source: Option<MaskRgbImage>,

@@ -334,6 +334,8 @@ fn render(
     tile_spec: TileSpec,
     path: &Path,
 ) {
+    // As the app renders an edit, with the cards that are switched off at rest.
+    let edits = edits.into_applied();
     let raw = match edits.lens.requested_correction(&raw) {
         Some(correction) => apply_lens_correction(&raw, &correction)
             .unwrap_or_else(|error| panic!("{}: lens correction: {error:#}", path.display())),

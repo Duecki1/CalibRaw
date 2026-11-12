@@ -95,6 +95,17 @@ change that establishes a boundary, not in advance.
   is packed. Fitting renders the photo, so callers pass a render closure and
   the fit stays in `calibraw-core`. The look belongs to the photo: presets
   and pastes never carry it, and a reset keeps it.
+- A sidebar card's switch turns its edits off without clearing them
+  (`pipeline/card_switches.rs` in `calibraw-core`). The states are part of
+  the edit, so they are saved, undone and compared (edit fingerprints, the
+  edited badge) like any value, but presets and pastes never carry them.
+  Every renderer draws the edit through the same projection: preview, export,
+  batch export, edited thumbnails, Edit Replay and render parity apply
+  `ExposureParams::applied`, `MaskStack::apply_card_switches` and the LUT and
+  Camera match switches (`EditState::into_applied` for a whole edit). Mask
+  sources develop the stored edit, as they do in the editor. The Lens
+  Corrections card's switch is `LensEditState::enabled`, which also gates its
+  chromatic aberration removal; effects and masks keep their own `enabled`.
 - Calibration (the hue and saturation of the primaries) is folded into the
   camera transform whenever a stage's camera uniforms are packed
   (`pack_camera_params`), after white balance, so like a camera profile it

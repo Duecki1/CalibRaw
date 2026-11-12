@@ -21,6 +21,10 @@ pub(super) enum LookLutAction {
     /// 0–1.
     Amount(f32),
     Import,
+    /// Flip the card's switch.
+    Toggle,
+    /// No LUT, switched on.
+    Reset,
 }
 
 pub(super) struct LookLutResponse {
@@ -32,6 +36,8 @@ pub(super) struct LookLutResponse {
 /// What the LUT card shows.
 pub(super) struct LookLutView<'a> {
     pub(super) look: Option<&'a LookLut>,
+    /// The card's switch.
+    pub(super) on: bool,
     /// Every library LUT, sorted by name.
     pub(super) entries: &'a [LutEntry],
     pub(super) can_import: bool,
@@ -49,7 +55,8 @@ impl Sidebar {
             hovered: None,
         };
         let foldable = view.layout == ScreenLayout::Horizontal;
-        let card = Self::adjustment_card(ui, LOOK_LUT_CARD_TITLE, false, foldable, true, |ui| {
+        let on = view.on;
+        let card = Self::adjustment_card(ui, LOOK_LUT_CARD_TITLE, false, foldable, on, |ui| {
             let query = Self::show_look_lut_search(ui, view.entries.len());
             let items = look_lut_items(view, &query);
             let list_id = "develop-look-lut-list";
@@ -84,8 +91,10 @@ impl Sidebar {
                 response.action = Some(LookLutAction::Import);
             }
         });
-        if matches!(card, CardAction::Reset) {
-            response.action = Some(LookLutAction::Select(None));
+        match card {
+            CardAction::None => {}
+            CardAction::Toggle => response.action = Some(LookLutAction::Toggle),
+            CardAction::Reset => response.action = Some(LookLutAction::Reset),
         }
         response
     }

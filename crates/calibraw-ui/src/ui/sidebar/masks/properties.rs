@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 const PERSON_CHIP_SIZE: f32 = 44.0;
 
 impl Sidebar {
-    /// Reset the group's switches and opacity. Returns whether anything reset.
+    /// Reset the group's switches and opacity; its card's switch is a
+    /// property action (`SetGroupEnabled`). Returns whether anything reset.
     pub(super) fn reset_mask_group(
         mask: &mut LocalMask,
         action: super::super::adjustment_cards::CardAction,
@@ -36,8 +37,8 @@ impl Sidebar {
     ) -> bool {
         use super::super::adjustment_cards::CardAction;
         match action {
-            CardAction::None => return false,
-            CardAction::Toggle => {}
+            // The switch is a property action (`SetComponentEnabled`).
+            CardAction::None | CardAction::Toggle => return false,
             CardAction::Reset => {
                 if let Some(component) = mask.components.get_mut(component_index) {
                     component.enabled = true;
@@ -193,7 +194,11 @@ impl Sidebar {
         let mut changed = false;
         let mut remove = None;
         let room = Self::effect_list_has_room(components);
-        for (index, component) in components.iter_mut().enumerate() {
+        let mut styles: Vec<_> = components
+            .iter()
+            .map(|component| mask_effects::StyleChoice::of(component, components))
+            .collect();
+        for ((index, component), style) in components.iter_mut().enumerate().zip(&mut styles) {
             ui.push_id(index, |ui| {
                 let mut remove_component = false;
                 changed |= Self::show_effect_component_settings(
@@ -206,6 +211,7 @@ impl Sidebar {
                         selected: instances.entry(list, component.effect),
                         room,
                     },
+                    style.as_mut(),
                 );
                 if remove_component {
                     remove = Some(index);
@@ -248,6 +254,7 @@ impl Sidebar {
         };
         let mut remove = false;
         let room = Self::effect_list_has_room(components);
+        let mut style = mask_effects::StyleChoice::of(&components[index], components);
         let changed = ui
             .push_id(index, |ui| {
                 Self::show_effect_component_settings(
@@ -260,12 +267,16 @@ impl Sidebar {
                         selected: instances.entry(list, effect),
                         room,
                     },
+                    style.as_mut(),
                 )
             })
             .inner;
         if remove {
             components.remove(index);
             *selection = None;
+        } else {
+            // A new style is another effect, whose tab shows it.
+            *selection = Some(components[index].effect);
         }
         changed || remove
     }
@@ -277,7 +288,9 @@ impl Sidebar {
     }
 
     /// `instances` is the light or source the card shows, for effects with
-    /// several.
+    /// several, and `style` its Style control, for effects with kin. A
+    /// picked style replaces the effect, keeping the values it shares.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn show_effect_component_settings(
         ui: &mut Ui,
         component: &mut crate::pipeline::EffectComponent,
@@ -285,17 +298,19 @@ impl Sidebar {
         is_fullscreen_mask: bool,
         frame: &mask_effects::EffectFrame,
         instances: mask_effects::InstanceSelection<'_>,
+        mut style: Option<&mut mask_effects::StyleChoice>,
     ) -> bool {
         // Effects with a position pad, a range track or a conditional
         // control draw their own card; every other effect's card is drawn
         // from its controls.
-        match component.effect {
+        let changed = match component.effect {
             MaskEffect::RadialBlur => mask_effects::radial_blur::show(
                 ui,
                 &mut component.settings.radial_blur,
                 &mut component.enabled,
                 remove,
                 frame,
+                style.as_deref_mut(),
             ),
             MaskEffect::TiltShift => mask_effects::tilt_shift::show(
                 ui,
@@ -304,6 +319,7 @@ impl Sidebar {
                 remove,
                 frame,
                 is_fullscreen_mask,
+                style.as_deref_mut(),
             ),
             MaskEffect::LightRays => mask_effects::light_rays::show(
                 ui,
@@ -326,6 +342,7 @@ impl Sidebar {
                 &mut component.settings.fog,
                 &mut component.enabled,
                 remove,
+                style.as_deref_mut(),
             ),
             MaskEffect::Rain => mask_effects::rain::show(
                 ui,
@@ -346,7 +363,16 @@ impl Sidebar {
                 &mut component.settings,
                 &mut component.enabled,
                 remove,
+                style.as_deref_mut(),
             ),
+        };
+        match style.and_then(|style| style.picked) {
+            Some(picked) => {
+                component.set_style(picked);
+                mask_effects::reveal_effect_card(ui.ctx(), component.effect);
+                true
+            }
+            None => changed,
         }
     }
 
@@ -406,10 +432,7 @@ impl Sidebar {
         mask: &LocalMask,
     ) -> Vec<MaskPropertyAction> {
         let mut actions = Vec::new();
-        let switches = switches_row(ui, mask.name.as_str(), mask.enabled, mask.invert);
-        if switches.enabled {
-            actions.push(MaskPropertyAction::SetGroupEnabled(!mask.enabled));
-        }
+        let switches = switches_row(ui, mask.name.as_str(), mask.invert);
         if switches.invert {
             actions.push(MaskPropertyAction::ToggleGroupInvert);
         }
@@ -545,19 +568,11 @@ impl Sidebar {
         component_index: usize,
         edits: &mut PropertyEdits,
     ) {
-        let switches = switches_row(
-            ui,
-            component.name.as_str(),
-            component.enabled,
-            component.invert,
-        );
+        let switches = switches_row(ui, component.name.as_str(), component.invert);
         if matches!(&component.geometry, MaskGeometry::Fullscreen) {
             switches
                 .name
                 .on_hover_text(tr("Covers the complete image with uniform mask strength."));
-        }
-        if switches.enabled {
-            edits.push(MaskPropertyAction::SetComponentEnabled(!component.enabled));
         }
         if switches.invert {
             edits.push(MaskPropertyAction::ToggleComponentInvert);
@@ -1009,7 +1024,8 @@ impl Sidebar {
         if !edits.controls.refinement_active {
             return;
         }
-        let action = Self::adjustment_card(ui, "Subject refinement", true, false, true, |ui| {
+        let on = edits.controls.refinement_enabled;
+        let action = Self::adjustment_card(ui, "Subject refinement", true, false, on, |ui| {
             Self::brush_mode_selector(ui, edits, tr("Add subject"), tr("Subtract subject"));
             let mut size = edits.controls.refinement_size;
             if AdjustmentSlider::new(tr("Size"), &mut size, 0.0025..=0.25)
@@ -1044,12 +1060,19 @@ impl Sidebar {
                 edits.push(MaskPropertyAction::ClearRefinement);
             }
         });
-        if matches!(action, super::super::adjustment_cards::CardAction::Reset) {
-            let defaults = crate::pipeline::SubjectRefinement::default();
-            edits.set_refinement_size(defaults.size);
-            edits.set_refinement_feather(defaults.feather);
-            edits.set_refinement_flow(defaults.flow);
-            edits.push(MaskPropertyAction::ClearRefinement);
+        match action {
+            super::super::adjustment_cards::CardAction::None => {}
+            super::super::adjustment_cards::CardAction::Toggle => {
+                edits.push(MaskPropertyAction::SetRefinementEnabled(!on));
+            }
+            super::super::adjustment_cards::CardAction::Reset => {
+                let defaults = crate::pipeline::SubjectRefinement::default();
+                edits.set_refinement_size(defaults.size);
+                edits.set_refinement_feather(defaults.feather);
+                edits.set_refinement_flow(defaults.flow);
+                edits.push(MaskPropertyAction::SetRefinementEnabled(true));
+                edits.push(MaskPropertyAction::ClearRefinement);
+            }
         }
     }
 
@@ -1159,14 +1182,12 @@ fn person_chip(
 /// Which of a [`switches_row`]'s switches were clicked, and its name label.
 struct Switches {
     name: egui::Response,
-    enabled: bool,
     invert: bool,
 }
 
-/// A group's or sub-mask's name with its Enabled and Invert switches at the
-/// row's end, as chips that fill while on. Enabled shows a power symbol, as
-/// the card header's eye already toggles the mask overlay.
-fn switches_row(ui: &mut Ui, name: &str, enabled: bool, invert: bool) -> Switches {
+/// A group's or sub-mask's name with its Invert switch at the row's end, as
+/// a chip that fills while on. Whether it applies is its card's switch.
+fn switches_row(ui: &mut Ui, name: &str, invert: bool) -> Switches {
     use egui_phosphor::regular;
 
     let height = ui.spacing().interact_size.y;
@@ -1180,22 +1201,12 @@ fn switches_row(ui: &mut Ui, name: &str, enabled: bool, invert: bool) -> Switche
                 invert,
             )
             .clicked();
-            let enabled = moduwu_design::chip(
-                ui,
-                format!("{}  {}", regular::POWER, tr("Enabled")),
-                enabled,
-            )
-            .clicked();
             let name = ui
                 .with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.add(egui::Label::new(egui::RichText::new(name).strong()).truncate())
                 })
                 .inner;
-            Switches {
-                name,
-                enabled,
-                invert,
-            }
+            Switches { name, invert }
         },
     )
     .inner

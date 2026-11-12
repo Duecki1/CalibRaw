@@ -1,5 +1,6 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::CardSwitch;
 use crate::pipeline::FilmSettlement;
 
 use super::export::{ai_denoise_phase, run_export_item};
@@ -229,9 +230,11 @@ fn prepare_desktop_library_export_item(
         original_raw.apply_adaptive_detail_defaults(&mut edits.exposure);
     }
     context.export_override.apply(&mut edits);
+    let lut_on = edits.exposure.card_on(CardSwitch::Lut);
     let creative = edits
         .look_lut
         .as_ref()
+        .filter(|_| lut_on)
         .map(|look| crate::app::luts::resolve_look_for_export(context.luts.as_ref(), look))
         .transpose()
         .map_err(|error| {
@@ -240,7 +243,13 @@ fn prepare_desktop_library_export_item(
                 &[("source", &job.source.display()), ("error", &error)],
             )
         })?;
-    let look = crate::luts::ResolvedLook::of_edit(creative, edits.camera_look.as_ref());
+    let look = crate::luts::ResolvedLook::of_edit(
+        creative,
+        edits
+            .camera_look
+            .as_ref()
+            .filter(|_| edits.exposure.card_on(CardSwitch::CameraMatch)),
+    );
 
     if cancellation.load(Ordering::Acquire) {
         return Err("batch export cancelled".to_owned());
@@ -261,8 +270,10 @@ fn prepare_desktop_library_export_item(
         None => Arc::clone(&original_raw),
     };
     // A film negative the Library marked exports as its estimate, as opening
-    // the photo would settle it.
-    if edits.exposure.settle_film(&raw, edits.geometry) == FilmSettlement::NotFound {
+    // the photo would settle it, unless its card is switched off.
+    if edits.exposure.settle_film(&raw, edits.geometry) == FilmSettlement::NotFound
+        && edits.exposure.card_on(CardSwitch::FilmNegative)
+    {
         return Err(tr_fmt(
             "{source}: no film negative was found to invert",
             &[("source", &job.source.display())],
@@ -313,6 +324,11 @@ fn prepare_desktop_library_export_item(
         })?;
     }
 
+    // The edit as it renders, with its switched-off cards at rest. Mask
+    // sources above develop it as stored, as the editor's do.
+    let exposure = edits.exposure.applied(edits.lens.enabled);
+    masks.apply_card_switches();
+
     if cancellation.load(Ordering::Acquire) {
         return Err("batch export cancelled".to_owned());
     }
@@ -328,7 +344,7 @@ fn prepare_desktop_library_export_item(
         source: PreparedExportSource {
             raw,
             geometry: edits.geometry.sanitized(),
-            exposure: edits.exposure,
+            exposure,
             masks,
             remove,
             look,

@@ -1,26 +1,29 @@
-use super::{effect_card, effect_position, float_param_slider, EffectFrame, PositionSpace};
-use crate::i18n::tr;
-use crate::pipeline::{
-    effect_params::radial_blur, MaskEffect, RadialBlurEffectSettings, RadialBlurMode,
+use super::{
+    effect_position, float_param_slider, styled_effect_card, EffectFrame, PositionSpace,
+    StyleChoice,
 };
+use crate::i18n::tr;
+use crate::pipeline::{effect_params::radial_blur, MaskEffect, RadialBlurEffectSettings};
 use eframe::egui::Ui;
 
+/// Its mode is the Blur family's Zoom and Spin styles (`style`).
 pub(crate) fn show(
     ui: &mut Ui,
     settings: &mut RadialBlurEffectSettings,
     enabled: &mut bool,
     remove: &mut bool,
     frame: &EffectFrame,
+    style: Option<&mut StyleChoice>,
 ) -> bool {
-    effect_card(
+    styled_effect_card(
         ui,
         MaskEffect::RadialBlur,
         settings,
         enabled,
         remove,
+        style,
         |ui, settings| {
-            let mut changed = mode_selector(ui, &mut settings.mode);
-            changed |= float_param_slider(ui, &mut settings.amount, radial_blur::AMOUNT);
+            let mut changed = float_param_slider(ui, &mut settings.amount, radial_blur::AMOUNT);
             changed |= float_param_slider(ui, &mut settings.strength, radial_blur::STRENGTH);
             changed |= effect_position(
                 ui,
@@ -33,25 +36,4 @@ pub(crate) fn show(
             changed
         },
     )
-}
-
-fn mode_selector(ui: &mut Ui, mode: &mut RadialBlurMode) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(1.0);
-        for candidate in RadialBlurMode::ALL {
-            if moduwu_design::segmented_button(ui, tr(candidate.label()), *mode == candidate, width)
-                .on_hover_text(match candidate {
-                    RadialBlurMode::Zoom => tr("Trails radiate toward the blur center."),
-                    RadialBlurMode::Spin => tr("Trails rotate around the blur center."),
-                })
-                .clicked()
-                && *mode != candidate
-            {
-                *mode = candidate;
-                changed = true;
-            }
-        }
-    });
-    changed
 }

@@ -10,6 +10,7 @@
 
 mod blur;
 mod edge_glow;
+mod families;
 mod fog;
 mod glow;
 mod grain;
@@ -35,6 +36,7 @@ mod wet_surfaces;
 
 pub use blur::BlurEffectSettings;
 pub use edge_glow::EdgeGlowEffectSettings;
+pub use families::{EffectFamily, EffectStyle};
 pub use fog::FogEffectSettings;
 pub use glow::GlowEffectSettings;
 pub use grain::GrainEffectSettings;
@@ -79,6 +81,8 @@ pub trait EffectSettingsVisitor {
 /// - `label`, and `description` for the tooltip of its card's title;
 /// - `shader_id`, its ID in the shaders (`MASK_EFFECT_<VARIANT>_ID`);
 /// - `category`, its place in the picker;
+/// - `family`, the picker tile and card it shares with effects of the same
+///   kind ([`EffectFamily`]), whose Style control switches between them;
 /// - `settings`, the field of [`MaskEffectSettings`] and its type;
 /// - `passes`, where it runs ([`EffectPass`]); a `Creative` effect defines
 ///   `apply_<field>` in its shader, which the creative pass calls;
@@ -94,6 +98,7 @@ macro_rules! mask_effects {
             description: $description:literal,
             shader_id: $id:literal,
             category: $category:ident,
+            family: $family:ident,
             settings: $field:ident: $settings:ty,
             passes: [$($pass:ident),+],
             reach: $reach:ident $(($pixels:expr))?
@@ -129,6 +134,15 @@ macro_rules! mask_effects {
                 match self {
                     Self::Adjustment => None,
                     $(Self::$variant => Some(MaskEffectCategory::$category),)+
+                }
+            }
+
+            /// The family whose tile and Style control offer the effect;
+            /// none for an adjustment.
+            pub const fn family(self) -> Option<EffectFamily> {
+                match self {
+                    Self::Adjustment => None,
+                    $(Self::$variant => Some(EffectFamily::$family),)+
                 }
             }
 
@@ -261,6 +275,30 @@ macro_rules! mask_effects {
                 }
             }
 
+            /// `effect`'s settings as their serialized fields; `None` for an
+            /// adjustment.
+            fn fields(&self, effect: MaskEffect) -> Option<serde_json::Value> {
+                match effect {
+                    MaskEffect::Adjustment => None,
+                    $(MaskEffect::$variant => serde_json::to_value(self.$field).ok(),)+
+                }
+            }
+
+            /// Sets `effect`'s settings from serialized `fields`; false, and
+            /// nothing set, when they do not decode.
+            fn set_fields(&mut self, effect: MaskEffect, fields: serde_json::Value) -> bool {
+                match effect {
+                    MaskEffect::Adjustment => false,
+                    $(MaskEffect::$variant => match serde_json::from_value(fields) {
+                        Ok(settings) => {
+                            self.$field = settings;
+                            true
+                        }
+                        Err(_) => false,
+                    },)+
+                }
+            }
+
             /// Every effect's controls, in serialized order.
             pub fn all_controls(&mut self) -> impl Iterator<Item = (MaskEffect, EffectControls<'_>)> {
                 [$((MaskEffect::$variant, self.$field.controls()),)+].into_iter()
@@ -281,6 +319,7 @@ mask_effects! {
         description: "Soften distracting detail. The mask controls where the blurred image is blended in.",
         shader_id: 4,
         category: BlurAndFocus,
+        family: Blur,
         settings: blur: BlurEffectSettings,
         passes: [Blur],
         reach: MaskBlur(MASK_BLUR_SUPPORT),
@@ -290,6 +329,7 @@ mask_effects! {
         description: "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.",
         shader_id: 7,
         category: BlurAndFocus,
+        family: Blur,
         settings: lens_blur: LensBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
@@ -299,6 +339,7 @@ mask_effects! {
         description: "Add directional movement. Distance sets the trail length; the mask controls where the blur appears.",
         shader_id: 8,
         category: BlurAndFocus,
+        family: Blur,
         settings: motion_blur: MotionBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
@@ -308,6 +349,7 @@ mask_effects! {
         description: "Zoom toward a center or spin around it. Position is relative to the full image; the mask controls the blend.",
         shader_id: 9,
         category: BlurAndFocus,
+        family: Blur,
         settings: radial_blur: RadialBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
@@ -317,6 +359,7 @@ mask_effects! {
         description: "Keep a band in focus and soften its surroundings. Position is relative to the full image. Use a Fullscreen mask for an uninterrupted focus transition.",
         shader_id: 10,
         category: BlurAndFocus,
+        family: Blur,
         settings: tilt_shift: TiltShiftEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
@@ -326,6 +369,7 @@ mask_effects! {
         description: "Sharpen fine detail inside the mask with its own radius, detail and masking. It adds to the Detail card's sharpening.",
         shader_id: 17,
         category: BlurAndFocus,
+        family: Sharpen,
         settings: sharpen: SharpenEffectSettings,
         passes: [CaptureSharpening],
         reach: CaptureSharpening(CAPTURE_SHARPEN_SUPPORT),
@@ -335,6 +379,7 @@ mask_effects! {
         description: "Light up image contours with a soft halo. Both the outlines and their glow stay inside the mask.",
         shader_id: 5,
         category: Stylize,
+        family: Neon,
         settings: edge_glow: EdgeGlowEffectSettings,
         passes: [Creative],
         reach: Creative(EDGE_GLOW_SUPPORT),
@@ -344,6 +389,7 @@ mask_effects! {
         description: "Spread colored light from bright pixels. The mask selects the highlights that emit light; their glow can extend beyond the selection. A self-illuminating Glow also lights the scene around it; Scene light sets how much.",
         shader_id: 2,
         category: GlowAndLight,
+        family: Glow,
         settings: glow: GlowEffectSettings,
         passes: [CreativeLight],
         reach: Glow(GLOW_SUPPORT),
@@ -353,6 +399,7 @@ mask_effects! {
         description: "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.",
         shader_id: 3,
         category: GlowAndLight,
+        family: LightRays,
         settings: light_rays: LightRaysEffectSettings,
         passes: [CreativeLight],
         reach: Pixel,
@@ -362,6 +409,7 @@ mask_effects! {
         description: "Add a light that shapes the scene in depth. Position it like Light Rays; scene depth is generated automatically. Turn on Shadows to let nearer objects block the light. The sky and anything the depth map places at its far limit stay unlit. The mask controls where the light falls.",
         shader_id: 16,
         category: GlowAndLight,
+        family: Relight,
         settings: relight: RelightEffectSettings,
         passes: [Creative],
         reach: Pixel,
@@ -372,6 +420,7 @@ mask_effects! {
         description: "Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask. Scene light lets the lines light their surroundings.",
         shader_id: 1,
         category: GlowAndLight,
+        family: Neon,
         settings: neon: NeonEffectSettings,
         passes: [SceneEffects],
         reach: SceneEffects(NEON_SUPPORT),
@@ -381,6 +430,7 @@ mask_effects! {
         description: "Create a graphic mosaic. Block size sets the tile scale; the mask controls where the result appears.",
         shader_id: 6,
         category: Stylize,
+        family: Pixelate,
         settings: pixelate: PixelateEffectSettings,
         passes: [Creative],
         reach: Creative(PIXELATE_SUPPORT),
@@ -390,6 +440,7 @@ mask_effects! {
         description: "Add atmospheric haze through the mask. Scene depth builds fog with distance; turn it off for an even-distance veil.",
         shader_id: 11,
         category: Texture,
+        family: Atmosphere,
         settings: fog: FogEffectSettings,
         passes: [Creative],
         reach: Pixel,
@@ -400,6 +451,7 @@ mask_effects! {
         description: "Layer drifting plumes through the mask. The pattern stays anchored to the full image as you edit the selection.",
         shader_id: 12,
         category: Texture,
+        family: Atmosphere,
         settings: smoke: SmokeEffectSettings,
         passes: [Creative],
         reach: Pixel,
@@ -410,6 +462,7 @@ mask_effects! {
         description: "Add photographic texture. Grain stays anchored to the image; the mask controls its local strength.",
         shader_id: 13,
         category: FilmAndFinish,
+        family: Grain,
         settings: grain: GrainEffectSettings,
         passes: [DisplayFinish],
         reach: Pixel,
@@ -419,6 +472,7 @@ mask_effects! {
         description: "Give bright highlights a warm film halo inside the mask. Nearby highlights outside the selection can cast a halo into it. Use Fullscreen for a whole-image finish.",
         shader_id: 14,
         category: FilmAndFinish,
+        family: Halation,
         settings: halation: HalationEffectSettings,
         passes: [Creative],
         reach: Glow(GLOW_SUPPORT),
@@ -428,6 +482,7 @@ mask_effects! {
         description: "Darken edges with negative amounts or brighten them with positive amounts. The center follows the cropped, rotated frame; the mask controls the blend.",
         shader_id: 15,
         category: FilmAndFinish,
+        family: Vignette,
         settings: vignette: VignetteEffectSettings,
         passes: [DisplayFinish],
         reach: Pixel,
@@ -437,6 +492,7 @@ mask_effects! {
         description: "Add falling rain and its mist. Drops pass behind nearer objects, catch Relight, Light Rays, Glow, Neon and the photo's own lights, and show best against dark areas. The mask controls where it falls.",
         shader_id: 18,
         category: Texture,
+        family: Rain,
         settings: rain: RainEffectSettings,
         passes: [AfterCreative],
         reach: Pixel,
@@ -447,6 +503,7 @@ mask_effects! {
         description: "Darken surfaces as water does and let the ground reflect the photo, with standing puddles on smooth ground. The ground is found in scene depth, which is generated automatically; a Rain effect ripples the puddles. The mask controls where it applies.",
         shader_id: 19,
         category: Texture,
+        family: WetSurfaces,
         settings: wet_surfaces: WetSurfacesEffectSettings,
         passes: [BeforeCreative, AfterCreative],
         reach: Pixel,

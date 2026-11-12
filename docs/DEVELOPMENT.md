@@ -169,8 +169,11 @@ An effect is one row in the `mask_effects!` table
 and a settings module beside it that implements `EffectSettings`: its starting point,
 when it is active, its controls (specs in `effects/params.rs`), its lanes
 (`effect_lanes!`) and how it packs them. The row says where it runs (`EffectPass`), how
-far around a pixel it reads (`EffectReach`, the export-tile halo) and what it reads of
-the scene bake (`scene: [...]`, `SceneNeed`). Sidecar validation, scene depth generation,
+far around a pixel it reads (`EffectReach`, the export-tile halo), what it reads of
+the scene bake (`scene: [...]`, `SceneNeed`) and its `family` (`EffectFamily`): effects
+of one kind share a picker tile and switch between each other with their card's Style
+control, which keeps the values whose fields they share. An effect without kin names a
+family of its own; a new one is added to `EffectFamily`. Sidecar validation, scene depth generation,
 the GPU's passes and maps, the shader constants and the card follow from the row and the
 settings.
 
@@ -206,9 +209,10 @@ combine them works in the slot of the first (`mask_effect_instance` in
 
 Its card is drawn from its controls. An effect with a position pad, a range track or a
 control that shows only sometimes draws its own card in
-`calibraw-ui/src/ui/sidebar/mask_effects/`, chosen in `show_effect_component_settings`.
-Its icon goes in the picker's `effect_icon`, and its label, description, control labels
-and details title in the locale catalogs.
+`calibraw-ui/src/ui/sidebar/mask_effects/`, chosen in `show_effect_component_settings`;
+in a family with several styles it passes on the card's `StyleChoice`. Its icon goes in
+the picker's `effect_icon` (a family's tile shows its first effect's), and its label,
+description, control labels and details title in the locale catalogs.
 
 ### Render parity and format fixtures
 

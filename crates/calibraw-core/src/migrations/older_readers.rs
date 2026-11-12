@@ -39,6 +39,9 @@
 //!   `start_depth` (`scene_depth_controls`): they would show a Relight or Fog
 //!   at its defaults and save it so. Edits with a Relight or a Fog are
 //!   written with schema 5 too, and presets with their schema 5.
+//! - Every reader before schema 5 ignores the card switches and would show
+//!   and save a card that is off as on. Edits with a card off are written
+//!   with schema 5 too; presets never hold switch states.
 
 use super::effect_sliders::GlobalSliders;
 use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskRgbImage};
@@ -114,7 +117,7 @@ pub(crate) fn serialize_color_range<S: Serializer>(
 /// v1.2 can decode them, [`V2_SCHEMA_VERSION`] when readers up to v1.3 can,
 /// [`V3_SCHEMA_VERSION`] when readers up to v1.4 can, [`V4_SCHEMA_VERSION`]
 /// when readers of the 8-bit depth map can, otherwise `current`: for scene
-/// depth and for Relight's and Fog's scene controls.
+/// depth, for Relight's and Fog's scene controls and for cards switched off.
 pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     let masks = &edits.masks;
     let uses_effect = |effects: &[MaskEffect]| {
@@ -128,7 +131,16 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
                 .iter()
                 .any(|mask| effects.contains(&mask.effect))
     };
-    if masks.scene_depth.is_some() || uses_effect(&[MaskEffect::Relight, MaskEffect::Fog]) {
+    let cards_off = !edits.exposure.cards_off.is_empty()
+        || masks.has_cards_off()
+        || edits
+            .subject_refinement
+            .as_ref()
+            .is_some_and(|refinement| !refinement.enabled);
+    if masks.scene_depth.is_some()
+        || uses_effect(&[MaskEffect::Relight, MaskEffect::Fog])
+        || cards_off
+    {
         return current;
     }
     let has_instances = masks

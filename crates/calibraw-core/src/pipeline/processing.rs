@@ -121,6 +121,9 @@ impl RawStageControls {
             point_color_visualize: _,
             color_grading: _,
             calibration: _,
+            // Renderers receive the settings with every card on
+            // (`ExposureParams::applied`).
+            cards_off: _,
         } = *params;
         Self {
             black_point,

@@ -1,6 +1,6 @@
 use super::{
-    effect_card, effect_details, effect_position, float_param_angle, float_param_slider,
-    EffectFrame, PositionSpace,
+    effect_details, effect_position, float_param_angle, float_param_slider, styled_effect_card,
+    EffectFrame, PositionSpace, StyleChoice,
 };
 use crate::i18n::tr;
 use crate::pipeline::{effect_params::tilt_shift, MaskEffect, TiltShiftEffectSettings};
@@ -13,13 +13,15 @@ pub(crate) fn show(
     remove: &mut bool,
     frame: &EffectFrame,
     is_fullscreen_mask: bool,
+    style: Option<&mut StyleChoice>,
 ) -> bool {
-    effect_card(
+    styled_effect_card(
         ui,
         MaskEffect::TiltShift,
         settings,
         enabled,
         remove,
+        style,
         |ui, settings| {
             if !is_fullscreen_mask {
                 ui.add(eframe::egui::Label::new(eframe::egui::RichText::new(

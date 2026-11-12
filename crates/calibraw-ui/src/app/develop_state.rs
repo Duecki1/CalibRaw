@@ -360,27 +360,24 @@ impl LensCorrectionState {
         }
     }
 
-    /// Switches to hand-set corrections, starting neutral and turned on, or
-    /// back to the selected profile, which stays on only if one is selected.
+    /// Switches to hand-set corrections, starting neutral, or back to the
+    /// selected profile. `enabled` is the card's switch, which also gates its
+    /// chromatic aberration removal, so neither mode changes it.
     pub(crate) fn set_manual_mode(&mut self, manual: bool) {
-        if manual {
-            self.manual = Some(ManualLensCorrection::default());
-            self.enabled = true;
-        } else {
-            self.manual = None;
-            self.enabled &= self.catalog.available && self.selected_lens().is_some();
-        }
+        self.manual = manual.then(ManualLensCorrection::default);
     }
 
     /// The correction the photo should show; `None` shows the original
-    /// geometry. Manual mode at its neutral values corrects nothing.
+    /// geometry. Manual mode at its neutral values corrects nothing, and a
+    /// profile needs the Lensfun catalog.
     pub(crate) fn requested_correction(&self) -> Option<LensCorrection> {
         if !self.enabled {
             return None;
         }
         match self.manual {
             Some(manual) => (!manual.is_identity()).then_some(LensCorrection::Manual(manual)),
-            None => self.selected_lens().map(LensCorrection::Profile),
+            None if self.catalog.available => self.selected_lens().map(LensCorrection::Profile),
+            None => None,
         }
     }
 

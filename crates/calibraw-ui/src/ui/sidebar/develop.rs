@@ -1,6 +1,6 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
-use crate::pipeline::effect_params;
+use crate::pipeline::{effect_params, CardSwitch};
 
 const LENS_CARD_TITLE: &str = "Lens Corrections";
 
@@ -44,216 +44,204 @@ impl Sidebar {
             adjustment_cards::reveal_adjustment_card(ui.ctx(), LENS_CARD_TITLE);
         }
 
-        let action = Self::adjustment_card_without_eye(
-            ui,
-            LENS_CARD_TITLE,
-            false,
-            foldable,
-            |ui| {
-                let lens_correction_busy = app.lens_correction_busy();
-                let state = &mut app.develop.lens_correction;
-                let can_enable = state.manual.is_some()
-                    || (state.catalog.available && state.selected_lens().is_some());
-                let enabled_response = ui
-                    .add_enabled_ui(can_enable && !lens_correction_busy, |ui| {
-                        moduwu_design::toggle_row(ui, &mut state.enabled, tr("Enabled"))
-                    })
-                    .inner;
-                if enabled_response.changed() {
-                    changes.lens = true;
-                }
-                if !state.catalog.available && state.manual.is_none() {
-                    state.enabled = false;
-                    state.applied = false;
-                }
+        // The card's switch is the lens correction's own: off, neither the
+        // profile or manual correction nor chromatic aberration removal applies.
+        let on = app.develop.lens_correction.enabled;
+        let action = Self::adjustment_card(ui, LENS_CARD_TITLE, false, foldable, on, |ui| {
+            let lens_correction_busy = app.lens_correction_busy();
+            let state = &mut app.develop.lens_correction;
+            let mut manual_mode = state.manual.is_some();
+            ui.add_enabled_ui(!lens_correction_busy, |ui| {
+                lens_mode_selector(ui, &mut manual_mode)
+            });
+            if manual_mode != state.manual.is_some() {
+                state.set_manual_mode(manual_mode);
+                changes.lens = true;
+            }
 
-                ui.add_space(moduwu_design::SPACE_XXS);
-                let mut manual_mode = state.manual.is_some();
-                ui.add_enabled_ui(!lens_correction_busy, |ui| {
-                    lens_mode_selector(ui, &mut manual_mode)
-                });
-                if manual_mode != state.manual.is_some() {
-                    state.set_manual_mode(manual_mode);
-                    changes.lens = true;
-                }
-
-                ui.add_space(moduwu_design::SPACE_XXS);
-                // Grid cells do not wrap text, so the camera and lens names
-                // wrap explicitly instead of running past the sidebar.
-                egui::Grid::new("lens-correction-capture-metadata")
-                    .num_columns(2)
-                    .spacing(egui::vec2(10.0, 3.0))
-                    .show(ui, |ui| {
-                        ui.label(tr("Camera"));
-                        ui.add(
-                            egui::Label::new(if state.catalog.camera_label.is_empty() {
-                                tr("Not matched")
-                            } else {
-                                state.catalog.camera_label.as_str()
-                            })
-                            .wrap(),
-                        );
+            ui.add_space(moduwu_design::SPACE_XXS);
+            // Grid cells do not wrap text, so the camera and lens names
+            // wrap explicitly instead of running past the sidebar.
+            egui::Grid::new("lens-correction-capture-metadata")
+                .num_columns(2)
+                .spacing(egui::vec2(10.0, 3.0))
+                .show(ui, |ui| {
+                    ui.label(tr("Camera"));
+                    ui.add(
+                        egui::Label::new(if state.catalog.camera_label.is_empty() {
+                            tr("Not matched")
+                        } else {
+                            state.catalog.camera_label.as_str()
+                        })
+                        .wrap(),
+                    );
+                    ui.end_row();
+                    if let Some((lens, focal, aperture)) = &capture {
+                        ui.label(tr("RAW lens"));
+                        ui.add(egui::Label::new(lens).wrap());
                         ui.end_row();
-                        if let Some((lens, focal, aperture)) = &capture {
-                            ui.label(tr("RAW lens"));
-                            ui.add(egui::Label::new(lens).wrap());
+                        if let Some(focal) = focal {
+                            ui.label(tr("Focal length"));
+                            ui.label(focal);
                             ui.end_row();
-                            if let Some(focal) = focal {
-                                ui.label(tr("Focal length"));
-                                ui.label(focal);
-                                ui.end_row();
-                            }
-                            if let Some(aperture) = aperture {
-                                ui.label(tr("Aperture"));
-                                ui.label(aperture);
-                                ui.end_row();
-                            }
                         }
-                    });
+                        if let Some(aperture) = aperture {
+                            ui.label(tr("Aperture"));
+                            ui.label(aperture);
+                            ui.end_row();
+                        }
+                    }
+                });
+
+            ui.add_space(moduwu_design::SPACE_XS);
+            if state.manual.is_some() {
+                open_adjust_dialog = ui
+                    .add_enabled_ui(!lens_correction_busy, |ui| {
+                        moduwu_design::full_width_button(ui, tr("Adjust"))
+                    })
+                    .inner
+                    .clicked();
+            } else {
+                let makers = state.makers();
+                let previous_maker = state.selected_maker.clone();
+                let selected_maker_text = if state.selected_maker.is_empty() {
+                    if state.selected_model.is_empty() {
+                        tr("Select a brand").to_owned()
+                    } else {
+                        tr("Unknown").to_owned()
+                    }
+                } else {
+                    state.selected_maker.clone()
+                };
+                ui.add_enabled_ui(
+                    state.catalog.available && !makers.is_empty() && !lens_correction_busy,
+                    |ui| {
+                        moduwu_design::form_combo(
+                            ui,
+                            tr("Brand"),
+                            "lens-correction-brand",
+                            selected_maker_text,
+                            240.0,
+                            |ui| {
+                                for maker in &makers {
+                                    ui.selectable_value(
+                                        &mut state.selected_maker,
+                                        maker.clone(),
+                                        if maker.is_empty() {
+                                            tr("Unknown")
+                                        } else {
+                                            maker
+                                        },
+                                    );
+                                }
+                            },
+                        );
+                    },
+                );
+                let mut selection_changed = state.selected_maker != previous_maker;
+                if selection_changed {
+                    let first_model = state
+                        .models_for_maker(&state.selected_maker)
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default();
+                    state.selected_model = first_model;
+                }
+
+                let models = state.models_for_maker(&state.selected_maker);
+                let previous_model = state.selected_model.clone();
+                let selected_model_text = if state.selected_model.is_empty() {
+                    tr("Select a lens").to_owned()
+                } else {
+                    state.selected_model.clone()
+                };
+                ui.add_enabled_ui(
+                    state.catalog.available && !models.is_empty() && !lens_correction_busy,
+                    |ui| {
+                        moduwu_design::form_combo(
+                            ui,
+                            tr("Lens"),
+                            "lens-correction-model",
+                            selected_model_text,
+                            240.0,
+                            |ui| {
+                                for model in &models {
+                                    ui.selectable_value(
+                                        &mut state.selected_model,
+                                        model.clone(),
+                                        model,
+                                    );
+                                }
+                            },
+                        );
+                    },
+                );
+                selection_changed |= state.selected_model != previous_model;
 
                 ui.add_space(moduwu_design::SPACE_XS);
-                if state.manual.is_some() {
-                    open_adjust_dialog = ui
-                        .add_enabled_ui(!lens_correction_busy, |ui| {
-                            moduwu_design::full_width_button(ui, tr("Adjust"))
-                        })
-                        .inner
-                        .clicked();
-                } else {
-                    let makers = state.makers();
-                    let previous_maker = state.selected_maker.clone();
-                    let selected_maker_text = if state.selected_maker.is_empty() {
-                        if state.selected_model.is_empty() {
-                            tr("Select a brand").to_owned()
+                let previous_corrections = state.corrections;
+                ui.add_enabled_ui(state.catalog.available && !lens_correction_busy, |ui| {
+                    moduwu_design::toggle_with_help(
+                        ui,
+                        &mut state.corrections.geometry,
+                        tr("Geometry"),
+                        tr("Correct lens distortion and colour fringing (lateral chromatic aberration)."),
+                    );
+                    moduwu_design::toggle_with_help(
+                        ui,
+                        &mut state.corrections.vignetting,
+                        tr("Vignetting"),
+                        tr("Brighten the corners the lens darkens."),
+                    );
+                });
+                // At least one correction must stay selected.
+                if !state.corrections.geometry && !state.corrections.vignetting {
+                    state.corrections = previous_corrections;
+                }
+                selection_changed |= state.corrections != previous_corrections;
+                if selection_changed {
+                    state.applied = false;
+                    if let Some(selection) = state.selected_lens() {
+                        state.catalog.status = if state.enabled {
+                            tr_fmt("Applying {label}…", &[("label", &selection.label())])
                         } else {
-                            tr("Unknown").to_owned()
-                        }
-                    } else {
-                        state.selected_maker.clone()
-                    };
-                    ui.add_enabled_ui(
-                        state.catalog.available && !makers.is_empty() && !lens_correction_busy,
-                        |ui| {
-                            moduwu_design::form_combo(
-                                ui,
-                                tr("Brand"),
-                                "lens-correction-brand",
-                                selected_maker_text,
-                                240.0,
-                                |ui| {
-                                    for maker in &makers {
-                                        ui.selectable_value(
-                                            &mut state.selected_maker,
-                                            maker.clone(),
-                                            if maker.is_empty() {
-                                                tr("Unknown")
-                                            } else {
-                                                maker
-                                            },
-                                        );
-                                    }
-                                },
-                            );
-                        },
-                    );
-                    let mut selection_changed = state.selected_maker != previous_maker;
-                    if selection_changed {
-                        let first_model = state
-                            .models_for_maker(&state.selected_maker)
-                            .into_iter()
-                            .next()
-                            .unwrap_or_default();
-                        state.selected_model = first_model;
+                            tr_fmt(
+                                "Selected {label}. Enable correction to apply it.",
+                                &[("label", &selection.label())],
+                            )
+                        };
                     }
-
-                    let models = state.models_for_maker(&state.selected_maker);
-                    let previous_model = state.selected_model.clone();
-                    let selected_model_text = if state.selected_model.is_empty() {
-                        tr("Select a lens").to_owned()
-                    } else {
-                        state.selected_model.clone()
-                    };
-                    ui.add_enabled_ui(
-                        state.catalog.available && !models.is_empty() && !lens_correction_busy,
-                        |ui| {
-                            moduwu_design::form_combo(
-                                ui,
-                                tr("Lens"),
-                                "lens-correction-model",
-                                selected_model_text,
-                                240.0,
-                                |ui| {
-                                    for model in &models {
-                                        ui.selectable_value(
-                                            &mut state.selected_model,
-                                            model.clone(),
-                                            model,
-                                        );
-                                    }
-                                },
-                            );
-                        },
-                    );
-                    selection_changed |= state.selected_model != previous_model;
-
-                    ui.add_space(moduwu_design::SPACE_XS);
-                    let previous_corrections = state.corrections;
-                    ui.add_enabled_ui(state.catalog.available && !lens_correction_busy, |ui| {
-                        moduwu_design::toggle_with_help(
-                            ui,
-                            &mut state.corrections.geometry,
-                            tr("Geometry"),
-                            tr("Correct lens distortion and colour fringing (lateral chromatic aberration)."),
-                        );
-                        moduwu_design::toggle_with_help(
-                            ui,
-                            &mut state.corrections.vignetting,
-                            tr("Vignetting"),
-                            tr("Brighten the corners the lens darkens."),
-                        );
-                    });
-                    // At least one correction must stay selected.
-                    if !state.corrections.geometry && !state.corrections.vignetting {
-                        state.corrections = previous_corrections;
-                    }
-                    selection_changed |= state.corrections != previous_corrections;
-                    if selection_changed {
-                        state.applied = false;
-                        if let Some(selection) = state.selected_lens() {
-                            state.catalog.status = if state.enabled {
-                                tr_fmt("Applying {label}…", &[("label", &selection.label())])
-                            } else {
-                                tr_fmt(
-                                    "Selected {label}. Enable correction to apply it.",
-                                    &[("label", &selection.label())],
-                                )
-                            };
-                        }
-                        if state.enabled {
-                            changes.lens = true;
-                        }
+                    if state.enabled {
+                        changes.lens = true;
                     }
                 }
+            }
 
-                moduwu_design::section_separator(ui);
-                moduwu_design::strong_with_help(
-                    ui,
-                    tr("Chromatic aberration"),
-                    tr("Removes colour fringes along high-contrast edges: moves red and blue back onto green, then desaturates the purple, blue and green fringes that remain."),
-                );
-                changes.exposure |= AdjustmentSlider::new(
-                    tr("Amount"),
-                    &mut app.develop.exposure.chromatic_aberration,
-                    0.0..=100.0,
-                )
-                .decimals(0)
-                .step(1.0)
-                .show(ui);
-            },
-        );
+            moduwu_design::section_separator(ui);
+            moduwu_design::strong_with_help(
+                ui,
+                tr("Chromatic aberration"),
+                tr("Removes colour fringes along high-contrast edges: moves red and blue back onto green, then desaturates the purple, blue and green fringes that remain."),
+            );
+            changes.exposure |= AdjustmentSlider::new(
+                tr("Amount"),
+                &mut app.develop.exposure.chromatic_aberration,
+                0.0..=100.0,
+            )
+            .decimals(0)
+            .step(1.0)
+            .show(ui);
+        });
         match action {
             adjustment_cards::CardAction::None => {}
-            adjustment_cards::CardAction::Toggle => {}
+            // The photo is corrected again, which a running correction would race.
+            adjustment_cards::CardAction::Toggle if app.lens_correction_busy() => {}
+            adjustment_cards::CardAction::Toggle => {
+                app.develop.lens_correction.enabled = !on;
+                changes.lens = true;
+                // Chromatic aberration removal follows the switch.
+                changes.exposure = true;
+            }
             adjustment_cards::CardAction::Reset => {
                 let automatic = app.preferences.automatic_lens_correction;
                 let state = &mut app.develop.lens_correction;
@@ -274,7 +262,8 @@ impl Sidebar {
 
     pub(super) fn show_basic(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
         let mut changed = false;
-        let action = Self::adjustment_card(ui, "Light", true, foldable, true, |ui| {
+        let on = exposure.card_on(CardSwitch::Light);
+        let action = Self::adjustment_card(ui, "Light", true, foldable, on, |ui| {
             changed |= AdjustmentSlider::new(tr("Exposure"), &mut exposure.exposure, -5.0..=5.0)
                 .decimals(2)
                 .step(0.05)
@@ -319,7 +308,8 @@ impl Sidebar {
         foldable: bool,
     ) -> bool {
         let mut changed = false;
-        let action = Self::adjustment_card(ui, "Tone Curve", false, foldable, true, |ui| {
+        let on = exposure.card_on(CardSwitch::ToneCurve);
+        let action = Self::adjustment_card(ui, "Tone Curve", false, foldable, on, |ui| {
             changed |=
                 AdjustmentSlider::new(tr("Brightness"), &mut exposure.brightness, -100.0..=100.0)
                     .decimals(0)
@@ -351,7 +341,8 @@ impl Sidebar {
         foldable: bool,
     ) -> bool {
         let mut changed = false;
-        let action = Self::adjustment_card(ui, "Color", false, foldable, true, |ui| {
+        let on = exposure.card_on(CardSwitch::Color);
+        let action = Self::adjustment_card(ui, "Color", false, foldable, on, |ui| {
             if let Some((raw, (shown_kelvin, shown_tint))) = raw.and_then(|raw| {
                 raw.shown_white_balance(exposure.white_balance)
                     .map(|shown| (raw, shown))
@@ -576,7 +567,7 @@ impl Sidebar {
                     .show(ui);
         });
         changed |= action.apply(exposure, AdjustmentGroup::Color);
-        if !crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), "Color")
+        if !exposure.card_on(CardSwitch::Color)
             || !matches!(action, adjustment_cards::CardAction::None)
         {
             *white_balance_picker_active = false;
@@ -591,7 +582,8 @@ impl Sidebar {
         foldable: bool,
     ) -> bool {
         let mut changed = false;
-        let action = Self::adjustment_card(ui, "Color Grading", false, foldable, true, |ui| {
+        let on = exposure.card_on(CardSwitch::ColorGrading);
+        let action = Self::adjustment_card(ui, "Color Grading", false, foldable, on, |ui| {
             changed |= color_grading_editor(ui, &mut exposure.color_grading, selected_tab);
         });
         changed |= action.apply(exposure, AdjustmentGroup::ColorGrading);
@@ -614,7 +606,8 @@ impl Sidebar {
         let mut changed = false;
         let mut ai_request = None;
         let ai_before = exposure.ai_denoise_enabled;
-        let action = Self::adjustment_card(ui, "Detail", false, foldable, true, |ui| {
+        let on = exposure.card_on(CardSwitch::Detail);
+        let action = Self::adjustment_card(ui, "Detail", false, foldable, on, |ui| {
             if ai_denoise != AiDenoiseOffer::Hidden {
                 let available = ai_denoise == AiDenoiseOffer::Available;
                 let mut ai_enabled = exposure.ai_denoise_enabled && available;
@@ -755,7 +748,8 @@ impl Sidebar {
     ) -> (bool, Option<mask_effects::EffectPick>) {
         let mut changed = false;
         let mut added = None;
-        let action = Self::adjustment_card(ui, "Effects", false, foldable, true, |ui| {
+        let on = exposure.card_on(CardSwitch::Effects);
+        let action = Self::adjustment_card(ui, "Effects", false, foldable, on, |ui| {
             changed |= AdjustmentSlider::new(tr("Texture"), &mut exposure.texture, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
@@ -790,7 +784,8 @@ impl Sidebar {
         foldable: bool,
     ) -> bool {
         let mut changed = false;
-        let action = Self::adjustment_card(ui, "Color Mixer", false, foldable, true, |ui| {
+        let on = exposure.card_on(CardSwitch::ColorMixer);
+        let action = Self::adjustment_card(ui, "Color Mixer", false, foldable, on, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(point_color_tab, false, tr("Mixer"));
                 ui.selectable_value(point_color_tab, true, tr("Point Color"));
@@ -829,7 +824,8 @@ impl Sidebar {
         use crate::ui::theme::HSL_CHANNELS as CHANNELS;
 
         let mut changed = false;
-        let action = Self::adjustment_card(ui, "Calibration", false, foldable, true, |ui| {
+        let on = exposure.card_on(CardSwitch::Calibration);
+        let action = Self::adjustment_card(ui, "Calibration", false, foldable, on, |ui| {
             let calibration = &mut exposure.calibration;
             // Each primary with the channels its hue track runs through, as
             // the hue turns it (negative, neutral, positive).
