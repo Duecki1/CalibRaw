@@ -257,7 +257,7 @@ cargo install cargo-ndk --version 4.1.2 --locked
 
 CalibRaw's shaders and tools draw on work from these projects:
 
-- **[darktable](https://www.darktable.org/)**: Bayer RCD, X-Trans Markesteijn, LCh highlight recovery, and Sigmoid tone mapping logic.
+- **[darktable](https://www.darktable.org/)**: Bayer RCD, X-Trans Markesteijn, LCh highlight recovery, the opposed estimate and segmentation-based chroma of guided highlight recovery, and Sigmoid tone mapping logic.
 - **[GIMP](https://www.gimp.org/) & [Ansel](https://ansel.photos/)**: Laplace inpainting foundations and color normalization references.
 - **[LibRaw](https://github.com/LibRaw/LibRaw), [Rawler](https://github.com/dnglab/dnglab), & [Lensfun](https://github.com/lensfun/lensfun)**: RAW decoding, DNG metadata extraction, and lens profile databases.
 - **[RapidRAW](https://github.com/CyberTimon/RapidRAW)**: Interface and workflow layout inspiration.

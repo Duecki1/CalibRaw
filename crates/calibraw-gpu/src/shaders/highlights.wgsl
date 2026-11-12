@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The LCh reconstruction is adapted from darktable 5.6.0.
+// The LCh reconstruction and the opposed estimate of the guided one are
+// adapted from darktable 5.6.0.
 // Copyright (C) 2010-2026 darktable developers.
 // Copyright (C) 2026 CalibRaw contributors (WGSL adaptation, guided reconstruction).
 
@@ -21,7 +22,7 @@
 // The highlight model (HighlightModel in Rust) on a grid of
 // camera_uniforms.highlight_options.yz cells over the full image, cell (i, j)
 // centred at ((i + 0.5) / cells.x, (j + 0.5) / cells.y) of it. Texel (i, j)
-// holds the cell's slopes in rgb; texel (i + cells.x, j) its entry colour
+// holds the cell's chroma in rgb; texel (i + cells.x, j) its entry colour
 // multiplied by its support in rgb and the support in a. Colours are
 // white-balanced camera RGB, the units of RawSampling::raw_camera_at. The
 // texture's content is undefined while the cell counts are 0.
@@ -129,18 +130,19 @@ fn lch_reconstructed_cfa_at(pos: vec2<i32>) -> f32 {
 // Guided reconstruction (highlight_model.rs describes the model). A clipped
 // colour is rebuilt from the colours beside it that did not clip, the "known"
 // ones:
-// - two known colours a and b: (a + b) / 2 + slope * (a - b);
+// - two known colours a and b: darktable's opposed estimate with the cell's
+//   chroma, (cbrt(a) / 2 + cbrt(b) / 2 + chroma)^3;
 // - one known colour: a mix of the entry colour and blown white that reaches
 //   white as the known colour nears its own clip level;
 // - none: blown white, every colour at the highest clip level.
-// A recorded clipped value is a lower bound of its colour, so the two-colour
-// relation on the recorded values, with the slope highlight_floor_slope
-// allows, is a floor of every case.
+// A recorded clipped value is a lower bound of its colour and the estimate
+// grows with both colours, so the estimate from the recorded values
+// (highlight_floor) is a floor of every case.
 
 struct HighlightCell {
-    // Slope of red against green - blue, of green against red - blue and of
-    // blue against red - green.
-    slopes: vec3<f32>,
+    // Chroma of red, green and blue: a colour's cube root less the mean cube
+    // root of the other two where it did not clip.
+    chroma: vec3<f32>,
     // Entry colour multiplied by `support`.
     entry: vec3<f32>,
     // 0 where no reconstructed or bright unclipped colour is near, up to 1.
@@ -149,7 +151,7 @@ struct HighlightCell {
 
 // The model at tile-local `pos`, interpolated bilinearly between cells.
 // Positions outside the full image, such as tile halos, take its edge cells.
-// Without a model every slope and the support are 0, which rebuilds clipped
+// Without a model the chroma and the support are 0, which rebuilds clipped
 // colours as neutral.
 fn highlight_cell_at(pos: vec2<i32>) -> HighlightCell {
     let cells = vec2<i32>(Common::camera_uniforms.highlight_options.yz);
@@ -164,7 +166,7 @@ fn highlight_cell_at(pos: vec2<i32>) -> HighlightCell {
     let p1 = min(p0 + vec2<i32>(1), last);
     let f = grid - vec2<f32>(p0);
     let entry_column = vec2<i32>(cells.x, 0);
-    let slopes = mix(
+    let chroma = mix(
         mix(textureLoad(highlight_model_tex, p0, 0), textureLoad(highlight_model_tex, vec2<i32>(p1.x, p0.y), 0), f.x),
         mix(textureLoad(highlight_model_tex, vec2<i32>(p0.x, p1.y), 0), textureLoad(highlight_model_tex, p1, 0), f.x),
         f.y,
@@ -182,7 +184,7 @@ fn highlight_cell_at(pos: vec2<i32>) -> HighlightCell {
         ),
         f.y,
     );
-    return HighlightCell(slopes.rgb, entry.rgb, clamp(entry.a, 0.0, 1.0));
+    return HighlightCell(chroma.rgb, entry.rgb, clamp(entry.a, 0.0, 1.0));
 }
 
 // The white-balanced level each colour (R, G, B) clips at. Green takes the
@@ -193,35 +195,35 @@ fn highlight_clip_levels() -> vec3<f32> {
     return max(Common::camera_uniforms.highlight_clip, 0.01) * vec3<f32>(wb.r, green, wb.b);
 }
 
-// The two colours a clipped `color` is rebuilt from, in the order the slope's
-// difference takes them (other_channels in highlight_model.rs).
+// The two colours a clipped `color` is rebuilt from (other_channels in
+// highlight_model.rs).
 fn highlight_other_colors(color: u32) -> vec2<u32> {
     if color == 0u { return vec2<u32>(1u, 2u); }
     if color == 1u { return vec2<u32>(0u, 2u); }
     return vec2<u32>(0u, 1u);
 }
 
-fn highlight_two_known(a: f32, b: f32, slope: f32) -> f32 {
-    return 0.5 * (a + b) + slope * (a - b);
+// Cube root of `value`, 0 at or below 0, where pow is undefined.
+fn highlight_cube_root(value: f32) -> f32 {
+    return select(0.0, pow(max(value, 1e-30), 1.0 / 3.0), value > 0.0);
 }
 
-// The slope the floor may use when the two colours it reads have clipped
-// samples (`a_clipped`, `b_clipped`). The relation weighs a by 0.5 + slope
-// and b by 0.5 - slope; a recorded value with clipped samples is only a lower
-// bound, so its weight must not be negative or the floor overshoots, which
-// tinted blown spots cyan. With both colours clipped the floor stays at or
-// below the brighter of them. Where the colours are mostly known the estimate
-// follows the unlimited slope and lies above this floor, so limiting it from
-// the first clipped sample on leaves no step.
-fn highlight_floor_slope(slope: f32, a_clipped: bool, b_clipped: bool) -> f32 {
-    var limited = slope;
-    if a_clipped {
-        limited = max(limited, -0.5);
-    }
-    if b_clipped {
-        limited = min(limited, 0.5);
-    }
-    return limited;
+// darktable's opposed estimate of a colour from the other two, `a` and `b`,
+// and the colour's `chroma`, in cube-root space as its segmentation method
+// keeps chroma. Negative inputs count as 0.
+fn highlight_two_known(a: f32, b: f32, chroma: f32) -> f32 {
+    let root = 0.5 * (highlight_cube_root(a) + highlight_cube_root(b)) + chroma;
+    return root * root * root;
+}
+
+// The floor from the recorded values `a` and `b` of the other two colours,
+// which have clipped samples as `a_clipped` and `b_clipped` say. A clipped
+// value only bounds its colour from below, so where either has clipped
+// samples the floor stays at or below their cube-root mean: a positive chroma
+// is dropped, or the chroma of the colours beside a blown area would tint it
+// past white. Where both are known it is the estimate itself.
+fn highlight_floor(a: f32, b: f32, chroma: f32, a_clipped: bool, b_clipped: bool) -> f32 {
+    return highlight_two_known(a, b, select(chroma, min(chroma, 0.0), a_clipped || b_clipped));
 }
 
 // Clipped `color` from the one known colour `known_color` at level `known`.
@@ -288,17 +290,22 @@ fn guided_cfa_at(pos: vec2<i32>) -> f32 {
 
     let others = highlight_other_colors(color);
     let cell = highlight_cell_at(center);
-    let slope = cell.slopes[color];
+    let chroma = cell.chroma[color];
     let clip_levels = highlight_clip_levels();
     let white = max(clip_levels.r, max(clip_levels.g, clip_levels.b));
     let share_a = known_share[others.x];
     let share_b = known_share[others.y];
-    let estimate = share_a * share_b * highlight_two_known(known[others.x], known[others.y], slope)
+    let estimate = share_a * share_b * highlight_two_known(known[others.x], known[others.y], chroma)
         + share_a * (1.0 - share_b) * highlight_one_known(known[others.x], others.x, color, cell, clip_levels, white)
         + (1.0 - share_a) * share_b * highlight_one_known(known[others.y], others.y, color, cell, clip_levels, white)
         + (1.0 - share_a) * (1.0 - share_b) * white;
-    let floor_slope = highlight_floor_slope(slope, share_a < 1.0, share_b < 1.0);
-    let lower_bound = highlight_two_known(recorded[others.x], recorded[others.y], floor_slope);
+    let lower_bound = highlight_floor(
+        recorded[others.x],
+        recorded[others.y],
+        chroma,
+        share_a < 1.0,
+        share_b < 1.0,
+    );
     return max(original, max(estimate, lower_bound));
 }
 
@@ -428,12 +435,11 @@ fn binned_guided_color(
     let others = highlight_other_colors(color);
     let a = recorded[others.x];
     let b = recorded[others.y];
-    let slope = cell.slopes[color];
-    let floor_slope = highlight_floor_slope(slope, others_clipped.x, others_clipped.y);
-    let lower_bound = highlight_two_known(a, b, floor_slope);
+    let chroma = cell.chroma[color];
+    let lower_bound = highlight_floor(a, b, chroma, others_clipped.x, others_clipped.y);
     var estimate = white;
     if !others_clipped.x && !others_clipped.y {
-        estimate = highlight_two_known(a, b, slope);
+        estimate = highlight_two_known(a, b, chroma);
     } else if !others_clipped.x {
         estimate = highlight_one_known(a, others.x, color, cell, clip_levels, white);
     } else if !others_clipped.y {

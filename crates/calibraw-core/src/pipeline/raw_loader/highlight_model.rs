@@ -10,15 +10,21 @@
 //! multiplier, the units of `RawSampling::raw_camera_at`. A colour is "known" where it did not
 //! clip. Three cases, by how many colours of a pixel are known:
 //!
-//! - Two known, `a` and `b`: the clipped colour is `(a + b) / 2 + slope * (a - b)`. The slope is
-//!   fitted to the bright unclipped colours nearby. A neutral pixel stays neutral whatever the
-//!   slope, and both scaling a colour and adding white to it keep the relation, so a sky keeps
-//!   its hue as it brightens and loses it as it hazes over.
+//! - Two known, `a` and `b`: the clipped colour is `(∛a / 2 + ∛b / 2 + chroma)³`, darktable's
+//!   opposed estimate. The chroma is a colour's cube root less the mean cube root of the other
+//!   two where it did not clip, chosen as darktable's segmentation method chooses it: per clipped
+//!   segment of the colour, at the one candidate beside it that is smooth and close to the clip
+//!   level, else 0 (`segments` says where this differs from darktable). A candidate rather than
+//!   a mean of the border keeps a sky between clouds from taking the clouds' noisy fringes.
 //! - One known: the colour runs from the entry colour, the reconstructed colour where the
 //!   second colour starts to clip, to blown white as the known colour nears its own clip level.
 //! - None known: blown white, every colour at the highest clip level.
 
 use super::*;
+
+mod segments;
+
+use segments::ColourSegments;
 
 /// Target edge of a model cell in photosites: a multiple of the Bayer and X-Trans periods, so
 /// every cell holds each colour.
@@ -33,12 +39,6 @@ const DONOR_FULL: f32 = 0.8;
 const SPREAD_DECAY: f32 = 0.7;
 /// Summed weight below which a spread value is trusted less than fully.
 const SUPPORT_FLOOR: f32 = 1e-4;
-/// Ridge of the slope fit as a share of the colours' energy: where the two known colours
-/// hardly differ the slope falls to 0, the mean of the two.
-const SLOPE_RIDGE: f32 = 2e-3;
-/// Limit of a slope. Beyond it the fit amplifies the noise of the known colours more than it
-/// recovers, and the clipped colour stays at its clip level instead.
-const SLOPE_LIMIT: f32 = 4.0;
 /// A colour counts as known in a cell while at most this share of its samples clipped.
 const KNOWN_CLIPPED_SHARE: f32 = 0.25;
 const STATISTICS_CACHE_ENTRIES: usize = 3;
@@ -52,7 +52,7 @@ const MODEL_CACHE_ENTRIES: usize = 4;
 #[derive(Debug)]
 pub struct HighlightModel {
     cells: [u32; 2],
-    slopes: Box<[[f32; 4]]>,
+    chroma: Box<[[f32; 4]]>,
     entry: Box<[[f32; 4]]>,
 }
 
@@ -70,10 +70,10 @@ impl HighlightModel {
         self.cells
     }
 
-    /// Per cell, the slope of red against green − blue, of green against red − blue and of
-    /// blue against red − green; the fourth value is unused.
-    pub fn slopes(&self) -> &[[f32; 4]] {
-        &self.slopes
+    /// Per cell, the chroma of red, green and blue: a colour's cube root less the mean cube root
+    /// of the other two where it did not clip; the fourth value is unused.
+    pub fn chroma(&self) -> &[[f32; 4]] {
+        &self.chroma
     }
 
     /// Per cell, the entry colour multiplied by its support, then the support in `[0, 1]`:
@@ -137,25 +137,13 @@ fn logical_white_balance(wb_coeffs: [f32; 4]) -> [f32; 3] {
     [wb_coeffs[0], green, wb_coeffs[2]]
 }
 
-/// The two colours a clipped `channel` is rebuilt from, in the order the slope's difference
-/// takes them. `highlights.wgsl` uses the same order.
+/// The two colours a clipped `channel` is rebuilt from, in the order its chroma reads them.
+/// `highlights.wgsl` uses the same order.
 const fn other_channels(channel: usize) -> [usize; 2] {
     match channel {
         0 => [1, 2],
         1 => [0, 2],
         _ => [0, 1],
-    }
-}
-
-/// Index into `[rr, gg, bb, rg, rb, gb]` of the product of colours `a` and `b`.
-const fn moment_index(a: usize, b: usize) -> usize {
-    match (a, b) {
-        (0, 0) => 0,
-        (1, 1) => 1,
-        (2, 2) => 2,
-        (0, 1) | (1, 0) => 3,
-        (0, 2) | (2, 0) => 4,
-        _ => 5,
     }
 }
 
@@ -170,10 +158,8 @@ struct HighlightStatistics {
     clipped: Vec<[f32; 3]>,
     /// Weight of a cell without clipping as evidence of a highlight's colour.
     donor: Vec<f32>,
-    /// Second moments `[rr, gg, bb, rg, rb, gb]` of the donor colours around each cell.
-    moments: Vec<[f32; 6]>,
-    /// How much evidence `moments` rests on, in `[0, 1]`.
-    moment_support: Vec<f32>,
+    /// Per colour, its segments and their candidates (`segments`).
+    segments: [ColourSegments; 3],
 }
 
 #[derive(Clone, Copy, Default)]
@@ -278,46 +264,34 @@ fn spread([width, height]: [u32; 2], stride: usize, base: Vec<f32>) -> Vec<f32> 
 }
 
 impl HighlightStatistics {
-    /// The slopes of a cell under white balance `wb`: [`HighlightModel::slopes`].
-    fn slopes(&self, index: usize, wb: [f32; 3]) -> [f32; 3] {
-        let moments = self.moments[index];
-        let moment = |a: usize, b: usize| moments[moment_index(a, b)] * wb[a] * wb[b];
-        let energy = moment(0, 0) + moment(1, 1) + moment(2, 2);
-        std::array::from_fn(|channel| {
-            let [a, b] = other_channels(channel);
-            // Covariance of the colour's excess over the mean of the other two with their
-            // difference, over the variance of that difference.
-            let excess =
-                moment(channel, a) - moment(channel, b) - 0.5 * (moment(a, a) - moment(b, b));
-            let difference = moment(a, a) - 2.0 * moment(a, b) + moment(b, b);
-            let slope =
-                self.moment_support[index] * excess / (difference + SLOPE_RIDGE * energy + 1e-12);
-            if slope.is_finite() {
-                slope.clamp(-SLOPE_LIMIT, SLOPE_LIMIT)
-            } else {
-                0.0
-            }
-        })
+    /// The chroma of every cell under white balance `wb` ([`HighlightModel::chroma`]).
+    fn chroma(&self, wb: [f32; 3]) -> Vec<[f32; 3]> {
+        let wb_roots = wb.map(f32::cbrt);
+        let colours: [Vec<f32>; 3] =
+            std::array::from_fn(|channel| self.segments[channel].cell_chroma(channel, wb_roots));
+        (0..self.mean.len())
+            .map(|cell| std::array::from_fn(|channel| colours[channel][cell]))
+            .collect()
     }
 
     fn model(&self, wb: [f32; 3]) -> HighlightModel {
         let count = self.mean.len();
-        let mut slopes = Vec::with_capacity(count);
+        let cell_chromas = self.chroma(wb);
+        let mut chroma = Vec::with_capacity(count);
         let mut entry_base = Vec::with_capacity(count * 4);
-        for index in 0..count {
+        for (index, cell_chroma) in cell_chromas.iter().enumerate() {
             let colour: [f32; 3] =
                 std::array::from_fn(|channel| self.mean[index][channel] * wb[channel]);
             let clipped = self.clipped[index];
-            let slope = self.slopes(index, wb);
             // The colour of a cell with two known colours: its clipped one rebuilt from them.
             let rebuilt: [f32; 3] = std::array::from_fn(|channel| {
                 if clipped[channel] <= 0.0 {
                     return colour[channel];
                 }
                 let [a, b] = other_channels(channel);
-                let estimate =
-                    0.5 * (colour[a] + colour[b]) + slope[channel] * (colour[a] - colour[b]);
-                colour[channel].max(estimate)
+                let root = 0.5 * (colour[a].max(0.0).cbrt() + colour[b].max(0.0).cbrt())
+                    + cell_chroma[channel];
+                colour[channel].max(root * root * root)
             });
             let known = clipped
                 .iter()
@@ -337,7 +311,7 @@ impl HighlightStatistics {
                 entry[2] * weight,
                 weight,
             ]);
-            slopes.push([slope[0], slope[1], slope[2], 0.0]);
+            chroma.push([cell_chroma[0], cell_chroma[1], cell_chroma[2], 0.0]);
         }
         let entry = spread(self.cells, 4, entry_base)
             .chunks_exact(4)
@@ -349,7 +323,7 @@ impl HighlightStatistics {
             .collect();
         HighlightModel {
             cells: self.cells,
-            slopes: slopes.into_boxed_slice(),
+            chroma: chroma.into_boxed_slice(),
             entry,
         }
     }
@@ -422,7 +396,6 @@ impl LoadedRaw {
         let mut mean = Vec::with_capacity(samples.len());
         let mut clipped = Vec::with_capacity(samples.len());
         let mut donor = Vec::with_capacity(samples.len());
-        let mut moment_base = Vec::with_capacity(samples.len() * 7);
         for cell in &samples {
             let complete = cell.count.iter().all(|count| *count > 0);
             let cell_mean: [f32; 3] =
@@ -438,29 +411,22 @@ impl LoadedRaw {
             } else {
                 0.0
             };
-            let [r, g, b] = cell_mean;
-            moment_base
-                .extend([r * r, g * g, b * b, r * g, r * b, g * b].map(|value| value * weight));
-            moment_base.push(weight);
             mean.push(cell_mean);
             clipped.push(cell_clipped);
             donor.push(weight);
         }
-        let spread_moments = spread(cells, 7, moment_base);
-        let mut moments = Vec::with_capacity(samples.len());
-        let mut moment_support = Vec::with_capacity(samples.len());
-        for cell in spread_moments.chunks_exact(7) {
-            let weight = cell[6].max(1e-9);
-            moments.push(std::array::from_fn(|index| cell[index] / weight));
-            moment_support.push((cell[6] / SUPPORT_FLOOR).clamp(0.0, 1.0));
-        }
+        let clipped_cells: Vec<bool> = samples
+            .iter()
+            .map(|cell| cell.clipped.iter().any(|count| *count > 0))
+            .collect();
+        let segments =
+            self.highlight_segments(cells, &clipped_cells, black_point, clip_threshold, pixels);
         Some(HighlightStatistics {
             cells,
             mean,
             clipped,
             donor,
-            moments,
-            moment_support,
+            segments,
         })
     }
 

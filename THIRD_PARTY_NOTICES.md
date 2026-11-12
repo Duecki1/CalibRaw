@@ -37,6 +37,12 @@ against darktable release 5.6.0:
 - LCh highlight reconstruction in
   `crates/calibraw-gpu/src/shaders/highlights.wgsl`, based on
   `src/iop/highlights.c` and `data/kernels/basic.cl`.
+- The opposed estimate of guided highlight reconstruction in
+  `crates/calibraw-gpu/src/shaders/highlights.wgsl` and its segmentation-based
+  chroma in
+  `crates/calibraw-core/src/pipeline/raw_loader/highlight_model/segments.rs`,
+  based on `src/iop/hlreconstruct/opposed.c`, `segbased.c` and
+  `segmentation.c`.
 - The sigmoid display transform in `crates/calibraw-core/src/pipeline/sigmoid.rs`
   and `crates/calibraw-gpu/src/shaders/tonemap.wgsl`, based on
   `src/iop/sigmoid.c` and `data/kernels/sigmoid.cl`.

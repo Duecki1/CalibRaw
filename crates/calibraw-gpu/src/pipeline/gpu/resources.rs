@@ -1596,7 +1596,7 @@ pub(super) fn upload_lens_shading_texture(
 }
 
 /// The RGBA16F texture that holds a highlight model of `raw`'s photo
-/// (`highlight_model_tex` in highlights.wgsl): the slopes of its cells beside
+/// (`highlight_model_tex` in highlights.wgsl): the chroma of its cells beside
 /// their entry colours, so twice as wide as the model's grid. At most
 /// 1024×512 texels (4 MiB), sized by the whole photo, which crops, proxies
 /// and tiles share.
@@ -1630,12 +1630,12 @@ pub(super) fn upload_highlight_model_texture(
     }
     let row = cells_x as usize;
     let mut texels = Vec::with_capacity(row * 2 * cells_y as usize * 4);
-    for (slopes, entry) in model
-        .slopes()
+    for (chroma, entry) in model
+        .chroma()
         .chunks_exact(row)
         .zip(model.entry().chunks_exact(row))
     {
-        for texel in slopes.iter().chain(entry) {
+        for texel in chroma.iter().chain(entry) {
             texels.extend(texel.map(|value| half::f16::from_f32(value).to_bits()));
         }
     }
