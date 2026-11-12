@@ -22,7 +22,7 @@ Checked items are done. Order within a section is not a priority.
 - [X]  Chromatic aberration and color fringing
 - [ ]  Dead and hot pixel correction
 - [ ]  Auto tone, auto geometry, auto perspective
-- [ ]  Depth lens blur
+- [X]  Depth lens blur
 - [X]  LUT support
 - [X]  Watermark
 - [ ]  Retouch tab: blemish removal, skin smoothing, eye enhancement (maybe)

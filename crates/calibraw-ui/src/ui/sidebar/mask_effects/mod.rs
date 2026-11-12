@@ -4,6 +4,7 @@ mod generated;
 pub(super) mod glow;
 mod instances;
 pub(super) mod legacy;
+pub(super) mod lens_blur;
 pub(super) mod light_shafts;
 mod picker;
 pub(super) mod radial_blur;
@@ -17,6 +18,7 @@ pub(crate) use controls::EffectFrame;
 use controls::{effect_details, effect_position, pattern_seed, PositionSpace};
 pub(super) use generated::generated_card;
 pub(crate) use instances::InstanceSelection;
+pub(crate) use lens_blur::focus_range_adjusting;
 pub(super) use picker::{
     add_effect_button, add_effect_controls, effect_picker_popup, EffectPick, PhotoTiles,
 };

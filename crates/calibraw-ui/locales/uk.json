@@ -581,7 +581,7 @@
   "Decoding and preparing proxy for {label}…": "Декодування та підготовка проксі для {label}…",
   "Default": "Типово",
   "Default preset": "Стандартний пресет",
-  "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.": "Розмивайте тло боке у формі діафрагми. Маска визначає змішування; для плавного переходу використовуйте м’який край.",
+  "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.": "Розмиває тло з боке у формі діафрагми. З параметром «Фокус за глибиною» поверхні в діапазоні фокуса лишаються різкими, а розмиття зростає з віддаленням від нього; глибина сцени створюється автоматично. Маска визначає, де розмивати.",
   "Dehaze": "Видалення імли",
   "Delete": "Видалити",
   "Delete Folder": "Видалити папку",
@@ -2090,5 +2090,11 @@
   "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "Додайте пучки світла від кожного джерела, розміщеного відносно всього зображення, також за кадром. Сцена пропускає світло крізь повітря, а дерева, віконні рами та інші об'єкти розсікають його промені; глибина сцени створюється автоматично. 2D малює промені крізь отвори, намальовані маскою, без глибини. Проникнення пропускає світло крізь те, що його затуляє. Промені видно лише всередині маски.",
   "Penetration": "Проникнення",
   "Scene": "Сцена",
-  "2D": "2D"
+  "2D": "2D",
+  "Focus by depth": "Фокус за глибиною",
+  "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.": "Створює і використовує спільну глибину сцени, щоб поверхні в діапазоні фокуса лишалися різкими, а розмиття зростало з їх віддаленням від нього. Вимкніть, щоб розмити маску рівномірно; діапазон фокуса зберігається.",
+  "Focus range": "Діапазон фокуса",
+  "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Поверхні на цій глибині лишаються різкими; розмиття зростає з віддаленням від діапазону. Радіус — це розмиття на найменш різкому краю сцени.",
+  "Focus near": "Фокус: ближче",
+  "Focus far": "Фокус: далі"
 }

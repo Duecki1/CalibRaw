@@ -580,7 +580,7 @@
   "Decoding and preparing proxy for {label}…": "{label} के लिए प्रॉक्सी डिकोड और तैयार की जा रही है…",
   "Default": "डिफ़ॉल्ट",
   "Default preset": "डिफ़ॉल्ट प्रीसेट",
-  "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.": "अपर्चर के आकार वाला बोकेह बनाकर पृष्ठभूमि को डीफ़ोकस करें। मास्क से मिश्रण नियंत्रित होता है; धीरे बदलाव के लिए नरम किनारा चुनें।",
+  "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.": "अपर्चर के आकार वाला बोकेह बनाकर पृष्ठभूमि को डीफ़ोकस करें। गहराई से फ़ोकस चालू होने पर फ़ोकस सीमा के भीतर की सतहें तीखी रहती हैं और सीमा से दूरी के साथ धुंधलापन बढ़ता है; दृश्य की गहराई अपने-आप बनती है। मास्क तय करता है कि कहाँ धुंधला हो।",
   "Dehaze": "धुंध हटाएँ",
   "Delete": "हटाएँ",
   "Delete Folder": "फ़ोल्डर हटाएँ",
@@ -2090,5 +2090,11 @@
   "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "हर स्रोत से रोशनी की किरणें जोड़ें, जिसे पूरी छवि के सापेक्ष रखा जाता है, फ़्रेम के बाहर भी। Scene रोशनी को हवा में से चमकने देता है ताकि पेड़, खिड़की के फ़्रेम और दूसरी वस्तुएँ उसकी किरणों को काटें; दृश्य की गहराई अपने-आप बनती है। 2D मास्क से पेंट किए गए खुले हिस्सों से किरणें बनाता है, बिना गहराई के। Penetration रोशनी को रोकने वाली चीज़ों के पार जाने देता है। किरणें केवल मास्क के भीतर दिखती हैं।",
   "Penetration": "Penetration",
   "Scene": "Scene",
-  "2D": "2D"
+  "2D": "2D",
+  "Focus by depth": "गहराई से फ़ोकस",
+  "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.": "साझा दृश्य गहराई बनाकर उसका उपयोग करें, ताकि फ़ोकस सीमा के भीतर की सतहें तीखी रहें और सीमा से उनकी दूरी के साथ धुंधलापन बढ़े। मास्क को समान रूप से धुंधला करने के लिए बंद करें; फ़ोकस सीमा बनी रहती है।",
+  "Focus range": "फ़ोकस सीमा",
+  "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "इन गहराइयों की सतहें तीखी रहती हैं; सीमा से दूरी के साथ धुंधलापन बढ़ता है। त्रिज्या दृश्य के सबसे अधिक आउट-ऑफ़-फ़ोकस छोर का धुंधलापन है।",
+  "Focus near": "निकट फ़ोकस",
+  "Focus far": "दूर फ़ोकस"
 }

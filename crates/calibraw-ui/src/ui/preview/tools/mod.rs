@@ -3,6 +3,7 @@ mod carousel;
 pub(super) use carousel::carousel_slide_rects;
 mod crop;
 mod effect_handles;
+mod focus_depth;
 mod inpaint;
 pub(super) use effect_handles::EffectHandleInput;
 mod masks;

@@ -335,13 +335,14 @@ mask_effects! {
     }
     LensBlur {
         label: "Lens Blur",
-        description: "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.",
+        description: "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.",
         shader_id: 7,
         category: BlurAndFocus,
         family: Blur,
         settings: lens_blur: LensBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
+        scene: [Geometry],
     }
     MotionBlur {
         label: "Motion Blur",

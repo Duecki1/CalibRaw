@@ -146,6 +146,21 @@ impl SceneCamera {
         1.0 + self.frame_relief * self.linear_depth(disparity)
     }
 
+    /// Control depth of `disparity`, which depth sliders use: 0 at the nearest
+    /// anchor and 1 at the farthest, even in the log of distance,
+    /// `ln(D / D_near) / ln Q` with `Q = D_far / D_near`, clamped. A flat
+    /// scene (Q about 1) gives linear depth. As `scene_control_of_depth` in
+    /// calibraw-gpu's camera.wgsl.
+    pub fn control_depth(&self, disparity: f32) -> f32 {
+        let [near, far] = self.anchors.map(|anchor| self.distance(anchor));
+        let ratio = far / near;
+        let d = self.linear_depth(disparity);
+        if ratio < 1.0001 {
+            return d;
+        }
+        ((1.0 + (ratio - 1.0) * d).ln() / ratio.ln()).clamp(0.0, 1.0)
+    }
+
     /// What Depth Range masks select on, before the sky: 0 at the nearest
     /// anchor and 1 at the farthest, linear in disparity and clamped.
     pub fn selection(&self, disparity: f32) -> f32 {

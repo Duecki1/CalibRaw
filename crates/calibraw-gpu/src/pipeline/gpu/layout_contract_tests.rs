@@ -578,8 +578,7 @@ fn effect_lanes_and_options_reach_the_shaders() {
     for (name, index) in options::ALL {
         let wgsl_name = format!("{name}_OPTION");
         assert_eq!(constant(&wgsl_name), index, "{wgsl_name}");
-        // Lane 0 is local Halation in every slot.
-        assert!((1..OPTION_COUNT).contains(&index), "{wgsl_name}");
+        assert!((0..OPTION_COUNT).contains(&index), "{wgsl_name}");
         expected.insert(wgsl_name);
     }
     let declared: BTreeSet<_> = creative

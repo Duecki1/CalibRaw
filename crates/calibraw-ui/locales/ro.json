@@ -672,7 +672,7 @@
   "Decoding and preparing proxy for {label}…": "Se decodează și se pregătește previzualizarea intermediară pentru {label}…",
   "Default": "Implicit",
   "Default preset": "Presetare implicită",
-  "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.": "Defocalizează fundalul cu un efect bokeh modelat de diafragmă. Masca controlează amestecul; folosește o margine moale pentru o tranziție graduală.",
+  "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.": "Defocalizează fundalul cu un efect bokeh modelat de diafragmă. Cu Focalizare după adâncime, suprafețele din intervalul de focalizare rămân clare, iar estomparea crește cu distanța față de el; adâncimea scenei se generează automat. Masca stabilește unde se estompează.",
   "Dehaze": "Eliminare ceață",
   "Delete": "Șterge",
   "Delete all colors": "Șterge toate culorile",
@@ -2090,5 +2090,11 @@
   "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "Adaugă fascicule de lumină din fiecare sursă, plasată față de întreaga imagine, chiar și în afara cadrului. Scenă lasă lumina să strălucească prin aer, astfel încât copacii, ramele ferestrelor și alte obiecte să-i taie razele; adâncimea scenei este generată automat. 2D desenează raze prin deschideri pictate cu masca, fără adâncime. Penetrare lasă lumina să treacă de ceea ce o blochează. Razele apar doar în interiorul măștii.",
   "Penetration": "Penetrare",
   "Scene": "Scenă",
-  "2D": "2D"
+  "2D": "2D",
+  "Focus by depth": "Focalizare după adâncime",
+  "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.": "Generează și folosește adâncimea comună a scenei, astfel încât suprafețele din intervalul de focalizare să rămână clare, iar estomparea să crească odată cu distanța lor față de el. Dezactivează pentru a estompa masca uniform; intervalul de focalizare se păstrează.",
+  "Focus range": "Interval de focalizare",
+  "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Suprafețele de la aceste adâncimi rămân clare; estomparea crește cu distanța față de interval. Raza este estomparea la capătul cel mai nefocalizat al scenei.",
+  "Focus near": "Focalizare aproape",
+  "Focus far": "Focalizare departe"
 }

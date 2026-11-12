@@ -672,7 +672,7 @@
   "Decoding and preparing proxy for {label}…": "Decodifica e preparazione del proxy per {label}…",
   "Default": "Predefinito",
   "Default preset": "Preimpostazione predefinita",
-  "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.": "Sfoca gli sfondi con un bokeh a forma di diaframma. La maschera controlla la fusione; usa un bordo sfumato per una transizione graduale.",
+  "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.": "Sfoca gli sfondi con un bokeh a forma di diaframma. Con Messa a fuoco per profondità, le superfici nell’intervallo di fuoco restano nitide e la sfocatura cresce con la distanza da esso; la profondità della scena viene generata automaticamente. La maschera controlla dove sfocare.",
   "Dehaze": "Rimozione foschia",
   "Delete": "Elimina",
   "Delete all colors": "Elimina tutti i colori",
@@ -2090,5 +2090,11 @@
   "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "Aggiungi fasci di luce da ogni sorgente, posizionata rispetto all'immagine intera, anche fuori dall'inquadratura. Scena fa brillare la luce attraverso l'aria, così alberi, telai delle finestre e altri oggetti ne tagliano i raggi; la profondità della scena viene generata automaticamente. 2D disegna raggi attraverso aperture dipinte con la maschera, senza profondità. Penetrazione lascia passare la luce attraverso ciò che la blocca. I raggi appaiono solo dentro la maschera.",
   "Penetration": "Penetrazione",
   "Scene": "Scena",
-  "2D": "2D"
+  "2D": "2D",
+  "Focus by depth": "Messa a fuoco per profondità",
+  "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.": "Genera e usa la profondità di scena condivisa, così le superfici nell’intervallo di fuoco restano nitide e la sfocatura cresce con la loro distanza da esso. Disattiva per sfocare la maschera in modo uniforme; l’intervallo di fuoco viene conservato.",
+  "Focus range": "Intervallo di fuoco",
+  "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Le superfici a queste profondità restano nitide; la sfocatura cresce con la distanza dall’intervallo. Il raggio è la sfocatura all’estremità più sfocata della scena.",
+  "Focus near": "Fuoco vicino",
+  "Focus far": "Fuoco lontano"
 }

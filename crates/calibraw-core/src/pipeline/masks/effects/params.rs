@@ -205,6 +205,20 @@ pub mod lens_blur {
         0,
         Some("Makes bright out-of-focus highlights stand out."),
     );
+
+    pub const FOCUS_BY_DEPTH: ToggleSpec = ToggleSpec {
+        label: "Focus by depth",
+        help: "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.",
+    };
+
+    // The focus range's two ends, in control depth: 0 is the nearest surface
+    // and 100 the farthest, even in the log of distance between them, as
+    // Relight's Light depth.
+    float_param!(FOCUS_NEAR, "Focus near", 0.0, 100.0, 0.0, 0.1, 1, None);
+    float_param!(FOCUS_FAR, "Focus far", 0.0, 100.0, 20.0, 0.1, 1, None);
+
+    /// Help for the focus range track, on its static label.
+    pub const FOCUS_RANGE_HELP: &str = "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.";
 }
 
 pub mod motion_blur {

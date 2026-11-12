@@ -193,10 +193,16 @@ fn apply_mask_blur_stage(
             combined_amount,
         );
     }
+    return rgb;
+}
 
-    if stage != 0u {
-        return rgb;
-    }
+// The focus blurs (Lens Blur, Motion Blur, Radial Blur, Tilt-Shift) of the
+// first stage, over `diffused`, the stage's diffused image, each blurring
+// the neighbourhood of `source_rgb`, the stage's input. Only the first stage's program calls this:
+// Lens Blur reads the scene bake, which only that program binds (the creative
+// layout), and WGSL checks the bindings of every function a program calls.
+fn apply_mask_focus_blurs(pos: vec2<i32>, source_rgb: vec3<f32>, diffused: vec3<f32>) -> vec3<f32> {
+    var rgb = diffused;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
@@ -227,26 +233,45 @@ fn apply_mask_blur_stage(
     return rgb;
 }
 
+fn mask_blur_stage_in_bounds(gid: vec3<u32>) -> bool {
+    return gid.x < Common::camera_uniforms.width && gid.y < Common::camera_uniforms.height;
+}
+
+// The next stage's amount at `pos`, for its taps (`mask_blur_diffused_at`).
+// Nothing after the stages reads alpha.
+fn mask_blur_next_amount(pos: vec2<i32>, stage: u32) -> f32 {
+    if stage + 1u < MASK_BLUR_STAGE_COUNT {
+        return mask_blur_stage_amount(pos, stage + 1u);
+    }
+    return 1.0;
+}
+
 fn store_mask_blur_stage(gid: vec3<u32>, stage: u32) {
-    if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
+    if !mask_blur_stage_in_bounds(gid) { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let source = SceneAdjustments::local_effects_rgba_at(pos);
-    // The next stage's amount here, for its taps (`mask_blur_diffused_at`).
-    // Nothing after the stages reads alpha.
-    var next_amount = 1.0;
-    if stage + 1u < MASK_BLUR_STAGE_COUNT {
-        next_amount = mask_blur_stage_amount(pos, stage + 1u);
-    }
     textureStore(
         SceneAdjustments::creative_effects_out,
         pos,
-        vec4<f32>(apply_mask_blur_stage(pos, source.xyz, source.w, stage), next_amount),
+        vec4<f32>(apply_mask_blur_stage(pos, source.xyz, source.w, stage), mask_blur_next_amount(pos, stage)),
+    );
+}
+
+fn store_first_mask_blur_stage(gid: vec3<u32>) {
+    if !mask_blur_stage_in_bounds(gid) { return; }
+    let pos = vec2<i32>(i32(gid.x), i32(gid.y));
+    let source = SceneAdjustments::local_effects_rgba_at(pos);
+    let diffused = apply_mask_blur_stage(pos, source.xyz, source.w, 0u);
+    textureStore(
+        SceneAdjustments::creative_effects_out,
+        pos,
+        vec4<f32>(apply_mask_focus_blurs(pos, source.xyz, diffused), mask_blur_next_amount(pos, 0u)),
     );
 }
 
 @compute @workgroup_size(8, 8, 1)
 fn diffuse_mask_blur_0(@builtin(global_invocation_id) gid: vec3<u32>) {
-    store_mask_blur_stage(gid, 0u);
+    store_first_mask_blur_stage(gid);
 }
 
 @compute @workgroup_size(8, 8, 1)

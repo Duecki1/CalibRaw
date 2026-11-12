@@ -580,7 +580,7 @@
   "Decoding and preparing proxy for {label}…": "{label}のプロキシをデコードして準備中…",
   "Default": "初期設定",
   "Default preset": "初期設定のプリセット",
-  "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.": "絞り形状のボケで背景をぼかします。マスクで合成具合を調整し、なだらかに切り替えるには境界をぼかします。",
+  "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.": "絞り形状のボケで背景をぼかします。「深度でピント」をオンにすると、ピント範囲内の面はシャープなまま、範囲から離れるほどぼけが大きくなります。シーン深度は自動で生成されます。マスクでぼかす場所を決めます。",
   "Dehaze": "かすみ除去",
   "Delete": "削除",
   "Delete Folder": "フォルダーを削除",
@@ -2090,5 +2090,11 @@
   "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "各光源から光の筋を加えます。光源は画像全体を基準に配置でき、フレームの外にも置けます。シーンでは光が空気中を通り、木や窓枠などの物体がその光線を遮ります。シーンの奥行きは自動で生成されます。2Dでは、マスクで塗った開口部を通して奥行きなしで光線を描きます。透過を上げると、遮るものを光が通り抜けます。光線はマスクの内側にのみ表示されます。",
   "Penetration": "透過",
   "Scene": "シーン",
-  "2D": "2D"
+  "2D": "2D",
+  "Focus by depth": "深度でピント",
+  "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.": "共有のシーン深度を生成して使用し、ピント範囲内の面をシャープに保ち、範囲から離れるほどぼけを大きくします。オフにするとマスク全体を均一にぼかします。ピント範囲は保持されます。",
+  "Focus range": "ピント範囲",
+  "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "この深度の面はシャープなままです。範囲から離れるほどぼけが大きくなります。半径はシーンで最もピントが外れた端のぼけです。",
+  "Focus near": "ピント手前",
+  "Focus far": "ピント奥"
 }

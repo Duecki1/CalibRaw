@@ -33,7 +33,9 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_detail_pyramid: [wgpu::BindGroup; DETAIL_PYRAMID_LEVELS],
     pub(in crate::pipeline::gpu) bg_adjust_effects: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_effects_copy: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_mask_blur: [wgpu::BindGroup; MASK_BLUR_STEPS],
+    /// The mask Blur steps after the first, which binds the scene's inputs
+    /// (`InputBoundPass::EffectsFromTex1`).
+    pub(in crate::pipeline::gpu) bg_mask_blur: [wgpu::BindGroup; MASK_BLUR_STEPS - 1],
     pub(in crate::pipeline::gpu) bg_glow_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_glow_blur: [wgpu::BindGroup; GLOW_BLUR_STEPS],
     pub(in crate::pipeline::gpu) bg_glow_prepare_after_blur: wgpu::BindGroup,
@@ -502,13 +504,12 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                 ],
             )
         };
-    // Step 0 reads the effects output in tex1; later steps alternate between
-    // tex2 and display_linear.
-    let bg_mask_blur = std::array::from_fn(|step| {
-        let (read_view, write_view) = match step {
-            0 => (tex1_view, tex2_view),
-            _ => ping_pong(step - 1, tex2_view, display_linear_view),
-        };
+    // Step 0 reads the effects output in tex1 and writes tex2 with the
+    // scene's inputs (`InputBoundPass::EffectsFromTex1`); later steps
+    // alternate between tex2 and display_linear.
+    let bg_mask_blur = std::array::from_fn(|index| {
+        let step = index + 1;
+        let (read_view, write_view) = ping_pong(index, tex2_view, display_linear_view);
         make_mask_blur_bind_group(
             &format!("bg mask Blur diffusion {step}"),
             read_view,

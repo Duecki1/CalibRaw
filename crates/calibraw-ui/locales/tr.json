@@ -581,7 +581,7 @@
   "Decoding and preparing proxy for {label}…": "{label} için vekil çözümleniyor ve hazırlanıyor…",
   "Default": "Varsayılan",
   "Default preset": "Varsayılan ön ayar",
-  "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.": "Diyafram biçimli bokeh ile arka planı odak dışına çıkarın. Harmanlamayı maske denetler; yumuşak geçiş için kenarı yumuşatın.",
+  "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.": "Arka planları diyafram biçimli bokeh ile bulanıklaştırın. Derinliğe göre odak ile odak aralığındaki yüzeyler net kalır ve bulanıklık aralığa olan uzaklıkla artar; sahne derinliği otomatik oluşturulur. Maske, bulanıklığın nerede uygulanacağını belirler.",
   "Dehaze": "Pus giderme",
   "Delete": "Sil",
   "Delete Folder": "Klasörü Sil",
@@ -2090,5 +2090,11 @@
   "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "Her kaynaktan ışık huzmeleri ekleyin; kaynaklar tüm görüntüye göre, çerçevenin dışına da yerleştirilir. Sahne, ışığın havada parlamasını sağlar; böylece ağaçlar, pencere çerçeveleri ve diğer nesneler ışınlarını keser; sahne derinliği otomatik oluşturulur. 2D, maskeyle boyanan açıklıklardan derinlik olmadan ışınlar çizer. Nüfuz, ışığın onu engelleyen şeylerden geçmesini sağlar. Işınlar yalnızca maskenin içinde görünür.",
   "Penetration": "Nüfuz",
   "Scene": "Sahne",
-  "2D": "2D"
+  "2D": "2D",
+  "Focus by depth": "Derinliğe göre odak",
+  "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.": "Odak aralığındaki yüzeylerin net kalması ve bulanıklığın aralığa olan uzaklıkla artması için paylaşılan sahne derinliğini oluşturur ve kullanır. Maskeyi eşit bulanıklaştırmak için kapatın; odak aralığı korunur.",
+  "Focus range": "Odak aralığı",
+  "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Bu derinliklerdeki yüzeyler net kalır; bulanıklık aralığa olan uzaklıkla artar. Yarıçap, sahnenin en odak dışı ucundaki bulanıklıktır.",
+  "Focus near": "Yakın odak",
+  "Focus far": "Uzak odak"
 }

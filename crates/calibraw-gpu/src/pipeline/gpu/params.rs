@@ -317,10 +317,14 @@ impl MaskData {
     }
 
     /// What the slot's active effect reads of the scene bake: its registry
-    /// row's needs, none for Light Rays' 2D style, which draws without depth.
+    /// row's needs, none for Light Rays' 2D style, which draws without depth,
+    /// or for a Lens Blur that blurs evenly (Focus by depth off).
     pub(super) fn scene_needs(&self) -> Option<SceneNeeds> {
         let effect = self.active_effect()?;
         if effect == MaskEffect::LightShafts && self.option(options::LIGHT_SHAFTS_FLAT) > 0.5 {
+            return Some(SceneNeeds::NONE);
+        }
+        if effect == MaskEffect::LensBlur && self.option(options::LENS_BLUR_DEPTH) < 0.5 {
             return Some(SceneNeeds::NONE);
         }
         Some(effect.scene_needs())

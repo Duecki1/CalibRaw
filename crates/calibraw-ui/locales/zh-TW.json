@@ -580,7 +580,7 @@
   "Decoding and preparing proxy for {label}…": "正在為 {label} 解碼並準備代理影像…",
   "Default": "預設",
   "Default preset": "預設預設",
-  "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.": "使用光圈形狀的散景虛化背景。遮色片控制混合效果；使用柔和邊緣可實現平缓過渡。",
+  "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.": "以光圈形狀的散景模糊背景。開啟「依深度對焦」後，對焦範圍內的表面保持清晰，模糊會隨與該範圍的距離增加；場景深度會自動產生。遮罩決定模糊的位置。",
   "Dehaze": "去霧",
   "Delete": "刪除",
   "Delete Folder": "刪除資料夾",
@@ -2090,5 +2090,11 @@
   "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "從每個光源加入光束，光源相對於完整影像放置，也可放在畫面之外。場景讓光穿過空氣，使樹木、窗框等物體切開它的光線；場景深度會自動產生。2D 透過以遮罩繪製的開口畫出光線，不使用深度。穿透讓光線穿過阻擋它的物體。光線只在遮罩內顯示。",
   "Penetration": "穿透",
   "Scene": "場景",
-  "2D": "2D"
+  "2D": "2D",
+  "Focus by depth": "依深度對焦",
+  "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.": "產生並使用共用的場景深度，讓對焦範圍內的表面保持清晰，模糊隨其與該範圍的距離增加。關閉後會均勻模糊遮罩；對焦範圍會保留。",
+  "Focus range": "對焦範圍",
+  "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "這些深度上的表面保持清晰；模糊會隨與範圍的距離增加。半徑是場景中最失焦一端的模糊。",
+  "Focus near": "近端對焦",
+  "Focus far": "遠端對焦"
 }

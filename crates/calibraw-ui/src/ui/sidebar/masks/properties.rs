@@ -312,6 +312,13 @@ impl Sidebar {
                 frame,
                 style.as_deref_mut(),
             ),
+            MaskEffect::LensBlur => mask_effects::lens_blur::show(
+                ui,
+                &mut component.settings.lens_blur,
+                &mut component.enabled,
+                remove,
+                style.as_deref_mut(),
+            ),
             MaskEffect::TiltShift => mask_effects::tilt_shift::show(
                 ui,
                 &mut component.settings.tilt_shift,

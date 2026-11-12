@@ -13,6 +13,11 @@ pub(crate) const DROP_TARGET: Color32 = Color32::from_rgb(225, 62, 62);
 pub(crate) const PERSON_ADD: Color32 = Color32::from_rgb(92, 210, 116);
 /// A person's canvas highlight when a click removes them from a people mask.
 pub(crate) const PERSON_REMOVE: Color32 = MASK_SUBTRACT;
+/// Lens Blur's depth overlay and focus range track: surfaces nearer than the
+/// focus range, inside it and farther.
+pub(crate) const FOCUS_NEAR: Color32 = Color32::from_rgb(255, 150, 60);
+pub(crate) const FOCUS_IN: Color32 = Color32::from_rgb(92, 210, 116);
+pub(crate) const FOCUS_FAR: Color32 = Color32::from_rgb(88, 150, 245);
 pub(crate) fn inpaint_stroke_highlight() -> Color32 {
     Color32::from_rgba_unmultiplied(255, 96, 78, 62)
 }

@@ -672,7 +672,7 @@
   "Decoding and preparing proxy for {label}…": "Decoding and preparing proxy for {label}…",
   "Default": "기본값",
   "Default preset": "Default preset",
-  "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.": "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.",
+  "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.": "조리개 모양의 보케로 배경을 흐리게 합니다. 깊이로 초점을 켜면 초점 범위 안의 면은 선명하게 유지되고 범위에서 멀어질수록 흐림이 커집니다. 장면 깊이는 자동으로 생성됩니다. 마스크로 흐릴 위치를 정합니다.",
   "Dehaze": "Dehaze",
   "Delete": "삭제",
   "Delete all colors": "Delete all colors",
@@ -2084,5 +2084,11 @@
   "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "각 광원에서 빛줄기를 더합니다. 광원은 전체 이미지를 기준으로 배치하며 프레임 밖에도 둘 수 있습니다. 장면은 빛이 공기 중을 비추게 하여 나무, 창틀 등 물체가 빛줄기를 가르게 하며, 장면 깊이는 자동으로 생성됩니다. 2D는 마스크로 칠한 틈을 통해 깊이 없이 빛줄기를 그립니다. 투과는 빛이 가리는 것을 지나가게 합니다. 빛줄기는 마스크 안에서만 보입니다.",
   "Penetration": "투과",
   "Scene": "장면",
-  "2D": "2D"
+  "2D": "2D",
+  "Focus by depth": "깊이로 초점",
+  "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.": "공유 장면 깊이를 생성하고 사용해 초점 범위 안의 면은 선명하게 유지하고 범위에서 멀어질수록 흐림을 키웁니다. 끄면 마스크를 고르게 흐립니다. 초점 범위는 유지됩니다.",
+  "Focus range": "초점 범위",
+  "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "이 깊이의 면은 선명하게 유지되고, 범위에서 멀어질수록 흐림이 커집니다. 반경은 장면에서 초점이 가장 많이 벗어난 끝의 흐림입니다.",
+  "Focus near": "가까운 초점",
+  "Focus far": "먼 초점"
 }

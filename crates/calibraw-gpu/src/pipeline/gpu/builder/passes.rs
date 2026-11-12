@@ -549,10 +549,20 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         ),
     ]);
     ensure_planned(&passes, indices.mask_blur_start_index, "mask Blur")?;
-    for (step, bind_group) in groups.bg_mask_blur.iter().enumerate() {
+    // The first step also runs the focus blurs, and Lens Blur reads the scene
+    // bake there, so it binds the scene's inputs as the creative pass does.
+    // It reads tex1 and writes tex2, as that pass's bind group from tex1.
+    passes.push(assembler.make_pass(
+        shaders.creative_effects_module.as_ref(),
+        "diffuse_mask_blur_0",
+        &layouts.bgl_adjust_creative,
+        InputBoundPass::EffectsFromTex1,
+        image_workgroups,
+    ));
+    for (index, bind_group) in groups.bg_mask_blur.iter().enumerate() {
         passes.push(assembler.make_pass(
             shaders.creative_effects_module.as_ref(),
-            &format!("diffuse_mask_blur_{step}"),
+            &format!("diffuse_mask_blur_{}", index + 1),
             &layouts.bgl_mask_blur,
             bind_group.clone(),
             image_workgroups,

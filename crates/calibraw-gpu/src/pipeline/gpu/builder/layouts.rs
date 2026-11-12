@@ -439,7 +439,8 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             )
         });
 
-    let bgl_mask_blur = reused_layout(plan.mask_blur_start_index).unwrap_or_else(|| {
+    // The steps after the first; the first binds the creative layout.
+    let bgl_mask_blur = reused_layout(plan.mask_blur_start_index + 1).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl mask Blur diffusion",

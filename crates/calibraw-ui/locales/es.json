@@ -672,7 +672,7 @@
   "Decoding and preparing proxy for {label}…": "Decodificando y preparando el proxy de {label}…",
   "Default": "Predeterminado",
   "Default preset": "Ajuste preestablecido predeterminado",
-  "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.": "Desenfoca el fondo con un bokeh cuya forma imita el diafragma. La máscara controla la fusión; usa un borde suave para una transición gradual.",
+  "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.": "Desenfoca los fondos con un bokeh con forma de diafragma. Con Enfoque por profundidad, las superficies dentro del rango de enfoque siguen nítidas y el desenfoque crece con la distancia a él; la profundidad de la escena se genera automáticamente. La máscara controla dónde se desenfoca.",
   "Dehaze": "Eliminar neblina",
   "Delete": "Eliminar",
   "Delete all colors": "Eliminar todos los colores",
@@ -2090,5 +2090,11 @@
   "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.": "Añade haces de luz desde cada fuente, colocada respecto a la imagen completa, también fuera del encuadre. Escena hace que la luz brille a través del aire para que árboles, marcos de ventana y otros objetos corten sus rayos; la profundidad de escena se genera automáticamente. 2D dibuja rayos a través de aberturas pintadas con la máscara, sin profundidad. Penetración deja pasar la luz a través de lo que la bloquea. Los rayos solo se muestran dentro de la máscara.",
   "Penetration": "Penetración",
   "Scene": "Escena",
-  "2D": "2D"
+  "2D": "2D",
+  "Focus by depth": "Enfoque por profundidad",
+  "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.": "Genera y usa la profundidad de escena compartida para que las superficies dentro del rango de enfoque sigan nítidas y el desenfoque crezca con su distancia a él. Desactívalo para desenfocar la máscara de forma uniforme; el rango de enfoque se conserva.",
+  "Focus range": "Rango de enfoque",
+  "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Las superficies a estas profundidades siguen nítidas; el desenfoque crece con la distancia al rango. El radio es el desenfoque en el extremo más desenfocado de la escena.",
+  "Focus near": "Enfoque cercano",
+  "Focus far": "Enfoque lejano"
 }
