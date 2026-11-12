@@ -322,7 +322,7 @@ where
             tile_inputs.load_scene(tile, index, &params, raw_stage_store.as_ref())?;
             tile_pipeline.accumulate_export_styled_glow_tile(queue, device, &params);
         }
-        tile_pipeline.finish_export_styled_glow(queue, device);
+        tile_pipeline.finish_export_styled_glow(queue, device, &first_params);
         calibraw_core::diagnostics::record(format!(
             "Glow full-image map prepass queued in {:.3}s across {} tiles",
             glow_started.elapsed().as_secs_f64(),

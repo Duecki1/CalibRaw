@@ -12,6 +12,10 @@
 //!   it at any spread ([`EffectInputs::share_styled_glow_map`]). An export
 //!   builds it once in a prepass over its tiles
 //!   ([`RawGpuPipeline::begin_export_styled_glow`]).
+//! - Motion and Streak spread the map's first level into streaks, which the
+//!   map texture keeps in a second set of layers at mip 0, so they are built
+//!   and shared with the map and the creative pass binds nothing more. A
+//!   scratch texture takes every other pass of the streak filter.
 //!
 //! Both are allocated when a Glow first renders, each with a budget
 //! reservation of its own sized for the slots, so pipelines whose edits hold
@@ -20,21 +24,55 @@
 //! uniforms whether either is ready (`EffectsUniforms::glow_diffusion`).
 
 use super::*;
+use crate::pipeline::effect_lanes::styled_glow::STYLE;
+use crate::pipeline::GlowStyle;
 
 /// The programs of the Glow's passes, in the order the pass plan places them.
-pub(super) const STYLED_GLOW_PASSES: usize = 5;
+pub(super) const STYLED_GLOW_PASSES: usize = 7;
 pub(super) const STYLED_GLOW_ENTRIES: [&str; STYLED_GLOW_PASSES] = [
     "build_styled_glow_near_first",
     "build_styled_glow_near_level",
     "accumulate_styled_glow_map",
     "resolve_styled_glow_map",
     "build_styled_glow_map_level",
+    "blur_styled_glow_streak_across",
+    "build_styled_glow_streak",
 ];
 const NEAR_FIRST: usize = 0;
 const NEAR_LEVEL: usize = 1;
 const MAP_ACCUMULATE: usize = 2;
 const MAP_RESOLVE: usize = 3;
 const MAP_LEVEL: usize = 4;
+const STREAK_ACROSS: usize = 5;
+const STREAK_ALONG: usize = 6;
+
+/// Passes of the streak filter in each direction, their taps 4^n cells apart:
+/// together they reach 4^6 − 1 cells, past the map's longer edge. The passes
+/// after the one across alternate between the scratch texture and the streak
+/// layers, so an even count ends in the streak layers.
+const STREAK_STEPS: usize = 6;
+const _: () = assert!(STREAK_STEPS.is_multiple_of(2));
+
+/// The streak passes a render runs, from the Glow slots' styles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum StyledGlowStreaks {
+    None,
+    /// Motion only: toward the direction.
+    OneWay,
+    /// A Streak: toward the direction and back.
+    BothWays,
+}
+
+impl StyledGlowStreaks {
+    /// The streak passes along the direction, after the one across it.
+    fn along_passes(self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::OneWay => STREAK_STEPS,
+            Self::BothWays => 2 * STREAK_STEPS,
+        }
+    }
+}
 
 /// Cells of the full-image map along the image's longer edge
 /// (`STYLED_GLOW_MAP_LONG` in styled_glow.wgsl). Its sums take a square of
@@ -50,6 +88,15 @@ const STYLED_GLOW_CELL_BYTES: u64 = 16;
 /// Whether `mask` is an active Glow slot, which takes a layer.
 pub(super) fn is_styled_glow(mask: &MaskData) -> bool {
     mask.applies(MaskEffect::StyledGlow)
+}
+
+/// The streak passes the Glow slot `mask` needs.
+pub(super) fn styled_glow_streaks(mask: &MaskData) -> StyledGlowStreaks {
+    match GlowStyle::from_shader_value(mask.lane(STYLE)) {
+        Some(GlowStyle::Motion) => StyledGlowStreaks::OneWay,
+        Some(GlowStyle::Streak) => StyledGlowStreaks::BothWays,
+        _ => StyledGlowStreaks::None,
+    }
 }
 
 /// log2 of the deviation of the widest near level in shorter edges of an
@@ -104,7 +151,7 @@ fn texture_bytes(size: [u32; 2], mips: u32, layers: u32) -> u64 {
 /// A texture array with `mips` levels, its view of every level and a view of
 /// each level alone.
 struct LevelTexture {
-    _texture: wgpu::Texture,
+    texture: wgpu::Texture,
     all: wgpu::TextureView,
     levels: Vec<wgpu::TextureView>,
 }
@@ -137,8 +184,21 @@ impl LevelTexture {
         Self {
             all: view(0, None),
             levels: (0..mips).map(|mip| view(mip, Some(1))).collect(),
-            _texture: texture,
+            texture,
         }
+    }
+
+    /// A view of mip 0's layers `base` to `base + count`.
+    fn first_level_layers(&self, base: u32, count: u32, label: &str) -> wgpu::TextureView {
+        self.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(label),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            base_mip_level: 0,
+            mip_level_count: Some(1),
+            base_array_layer: base,
+            array_layer_count: Some(count),
+            ..Default::default()
+        })
     }
 }
 
@@ -203,10 +263,17 @@ impl StyledGlowNear {
 }
 
 /// The full-image map: the sums tiles add to, and the mean emission per cell
-/// halved down to a texel, one layer per Glow slot.
+/// halved down to a texel, one layer per Glow slot; then, at mip 0, the
+/// streaks of each slot.
 pub(super) struct StyledGlowMap {
     cells: wgpu::Buffer,
+    /// `2 × layers` layers: the map's, then the streaks'.
     texture: LevelTexture,
+    /// Mip 0's map layers and streak layers.
+    first_level: wgpu::TextureView,
+    streaks: wgpu::TextureView,
+    /// Every other pass of the streak filter, `layers` layers at mip 0's size.
+    scratch: LevelTexture,
     grid: [u32; 2],
     layers: u32,
     _reservation: Option<GpuBudgetReservation>,
@@ -220,6 +287,13 @@ impl StyledGlowMap {
         layers: u32,
         reservation: Option<GpuBudgetReservation>,
     ) -> Self {
+        let texture = LevelTexture::new(
+            device,
+            grid,
+            mip_levels(grid),
+            2 * layers,
+            "calibraw Glow full-image map",
+        );
         Self {
             cells: create_gpu_buffer(
                 device,
@@ -227,13 +301,10 @@ impl StyledGlowMap {
                 Self::cells_bytes(cell_layers).max(STYLED_GLOW_CELL_BYTES),
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
-            texture: LevelTexture::new(
-                device,
-                grid,
-                mip_levels(grid),
-                layers,
-                "calibraw Glow full-image map",
-            ),
+            first_level: texture.first_level_layers(0, layers, "calibraw Glow map first level"),
+            streaks: texture.first_level_layers(layers, layers, "calibraw Glow streaks"),
+            texture,
+            scratch: LevelTexture::new(device, grid, 1, layers, "calibraw Glow streak scratch"),
             grid,
             layers,
             _reservation: reservation,
@@ -254,7 +325,9 @@ impl StyledGlowMap {
     fn reserved(device: &wgpu::Device, grid: [u32; 2], layers: u32) -> Result<Self> {
         let reservation = GpuBudgetReservation::acquire_bytes(
             "Glow full-image map",
-            texture_bytes(grid, mip_levels(grid), layers) + Self::cells_bytes(layers),
+            texture_bytes(grid, mip_levels(grid), 2 * layers)
+                + texture_bytes(grid, 1, layers)
+                + Self::cells_bytes(layers),
             gpu_working_set_limit_bytes(),
         )?;
         Ok(Self::build(device, grid, layers, layers, Some(reservation)))
@@ -284,6 +357,10 @@ pub(super) struct StyledGlowBindGroups {
     pub(super) map_accumulate: [StyledGlowDispatch; 2],
     pub(super) map_resolve: StyledGlowDispatch,
     pub(super) map_levels: Vec<StyledGlowDispatch>,
+    /// The streak filter: across, then [`STREAK_STEPS`] passes toward the
+    /// direction and as many back.
+    pub(super) streak_across: StyledGlowDispatch,
+    pub(super) streak_along: Vec<StyledGlowDispatch>,
     /// The sums the accumulation adds to, cleared before a new image.
     pub(super) map_cells: wgpu::Buffer,
 }
@@ -297,7 +374,9 @@ impl StyledGlowBindGroups {
             NEAR_LEVEL => &self.near_levels[0].bind_group,
             MAP_ACCUMULATE => &self.map_accumulate[0].bind_group,
             MAP_RESOLVE => &self.map_resolve.bind_group,
-            _ => &self.map_levels[0].bind_group,
+            MAP_LEVEL => &self.map_levels[0].bind_group,
+            STREAK_ACROSS => &self.streak_across.bind_group,
+            _ => &self.streak_along[0].bind_group,
         }
     }
 }
@@ -319,6 +398,7 @@ impl StyledGlowSources<'_> {
         device: &wgpu::Device,
         near: &StyledGlowNear,
         map: &StyledGlowMap,
+        streak_spacings: &[wgpu::Buffer],
     ) -> StyledGlowBindGroups {
         let inputs = [self.tex1, self.tex2];
         let near_first = inputs.map(|input| StyledGlowDispatch {
@@ -402,15 +482,81 @@ impl StyledGlowSources<'_> {
                 texels: mip_size(map.grid, mip as u32),
             })
             .collect();
+        let streak_across = StyledGlowDispatch {
+            bind_group: create_bind_group(
+                device,
+                "bg Glow streaks across",
+                &self.layouts[STREAK_ACROSS],
+                &[
+                    buffer_binding(0, self.camera_uniforms),
+                    sampler_binding(28, self.mask_sampler),
+                    buffer_binding(33, self.mask_data),
+                    texture_binding(120, &map.streaks),
+                    texture_binding(121, &map.first_level),
+                ],
+            ),
+            texels: map.grid,
+        };
+        // The across pass wrote the streak layers; each pass along reads the
+        // one the pass before wrote.
+        let streak_along = streak_spacings
+            .iter()
+            .enumerate()
+            .map(|(pass, spacing)| {
+                let (read, write) = if pass.is_multiple_of(2) {
+                    (&map.streaks, &map.scratch.levels[0])
+                } else {
+                    (&map.scratch.levels[0], &map.streaks)
+                };
+                StyledGlowDispatch {
+                    bind_group: create_bind_group(
+                        device,
+                        "bg Glow streaks along",
+                        &self.layouts[STREAK_ALONG],
+                        &[
+                            buffer_binding(0, self.camera_uniforms),
+                            sampler_binding(28, self.mask_sampler),
+                            buffer_binding(33, self.mask_data),
+                            texture_binding(120, write),
+                            texture_binding(121, read),
+                            buffer_binding(123, spacing),
+                        ],
+                    ),
+                    texels: map.grid,
+                }
+            })
+            .collect();
         StyledGlowBindGroups {
             near_first,
             near_levels,
             map_accumulate,
             map_resolve,
             map_levels,
+            streak_across,
+            streak_along,
             map_cells: map.cells.clone(),
         }
     }
+}
+
+/// The uniforms of the streak passes along the direction, in pass order
+/// (`styled_glow_level` in styled_glow.wgsl): the taps' spacing in cells, 4^n
+/// for pass n, and 1 for the passes back.
+fn streak_spacings(device: &wgpu::Device) -> Vec<wgpu::Buffer> {
+    [0u32, 1]
+        .into_iter()
+        .flat_map(|backward| {
+            (0..STREAK_STEPS as u32).map(move |step| [1 << (2 * step), backward, 0, 0])
+        })
+        .map(|uniform| {
+            create_initialized_buffer(
+                device,
+                "calibraw Glow streak pass",
+                bytemuck::bytes_of(&uniform),
+                wgpu::BufferUsages::UNIFORM,
+            )
+        })
+        .collect()
 }
 
 /// The pyramids a pipeline binds: its own or placeholders, and a map of its
@@ -422,6 +568,7 @@ pub(super) struct StyledGlowInputs {
     map: Option<Arc<StyledGlowMap>>,
     /// The map is this pipeline's to build, not a full frame's it shares.
     owns_map: bool,
+    streak_spacings: Vec<wgpu::Buffer>,
 }
 
 impl StyledGlowInputs {
@@ -432,6 +579,7 @@ impl StyledGlowInputs {
             near: None,
             map: None,
             owns_map: false,
+            streak_spacings: streak_spacings(device),
         }
     }
 
@@ -532,7 +680,7 @@ impl StyledGlowInputs {
         } else {
             &self.placeholder_map
         };
-        sources.bind_groups(device, self.near(), map)
+        sources.bind_groups(device, self.near(), map, &self.streak_spacings)
     }
 }
 
@@ -590,6 +738,21 @@ pub(super) fn styled_glow_layout_entries() -> [Vec<wgpu::BindGroupLayoutEntry>; 
             level_out,
             parent,
         ],
+        vec![
+            buffer_entry(0),
+            sampler_entry(28),
+            storage_buffer_entry(33, true),
+            level_out,
+            parent,
+        ],
+        vec![
+            buffer_entry(0),
+            sampler_entry(28),
+            storage_buffer_entry(33, true),
+            level_out,
+            parent,
+            buffer_entry(123),
+        ],
     ]
 }
 
@@ -599,6 +762,8 @@ pub(super) const STYLED_GLOW_LAYOUT_LABELS: [&str; STYLED_GLOW_PASSES] = [
     "bgl Glow map accumulation",
     "bgl Glow map resolve",
     "bgl Glow map level",
+    "bgl Glow streaks across",
+    "bgl Glow streaks along",
 ];
 
 /// The layers the pyramids need for `params`: one per Glow slot.
@@ -658,19 +823,28 @@ impl RawGpuPipeline {
         if params.renders_whole_image() && self.effect_inputs.owns_styled_glow_map() {
             encoder.clear_buffer(&groups.map_cells, 0, None);
             self.dispatch_styled_glow(encoder, MAP_ACCUMULATE, &groups.map_accumulate[input]);
-            self.encode_styled_glow_map_levels(encoder, &groups);
+            self.encode_styled_glow_map_levels(encoder, &groups, params.styled_glow_streaks());
         }
     }
 
-    /// The map's first level from its sums, then the levels after it.
+    /// The map's first level from its sums, then the levels after it and
+    /// the `streaks` it spreads into.
     fn encode_styled_glow_map_levels(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         groups: &StyledGlowBindGroups,
+        streaks: StyledGlowStreaks,
     ) {
         self.dispatch_styled_glow(encoder, MAP_RESOLVE, &groups.map_resolve);
         for dispatch in &groups.map_levels {
             self.dispatch_styled_glow(encoder, MAP_LEVEL, dispatch);
+        }
+        if streaks == StyledGlowStreaks::None {
+            return;
+        }
+        self.dispatch_styled_glow(encoder, STREAK_ACROSS, &groups.streak_across);
+        for dispatch in &groups.streak_along[..streaks.along_passes()] {
+            self.dispatch_styled_glow(encoder, STREAK_ALONG, dispatch);
         }
     }
 
@@ -754,13 +928,19 @@ impl RawGpuPipeline {
         stage_timing::submit(queue, encoder, timing);
     }
 
-    /// Resolves the Glow map every tile added to and builds its levels.
-    pub fn finish_export_styled_glow(&self, queue: &wgpu::Queue, device: &wgpu::Device) {
+    /// Resolves the Glow map every tile added to and builds its levels and
+    /// the streaks of `params`, any tile's.
+    pub fn finish_export_styled_glow(
+        &self,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+        params: &GpuParams,
+    ) {
         let groups = self.effect_inputs.styled_glow_bind_groups();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw export Glow map levels"),
         });
-        self.encode_styled_glow_map_levels(&mut encoder, &groups);
+        self.encode_styled_glow_map_levels(&mut encoder, &groups, params.styled_glow_streaks());
         queue.submit(Some(encoder.finish()));
     }
 }

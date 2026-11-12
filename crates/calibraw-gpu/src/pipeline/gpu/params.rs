@@ -1,6 +1,8 @@
 //! `GpuParams`: edit parameters packed into the uniform layouts the WGSL stages read.
 
-use super::styled_glow::{is_styled_glow, styled_glow_near_top};
+use super::styled_glow::{
+    is_styled_glow, styled_glow_near_top, styled_glow_streaks, StyledGlowStreaks,
+};
 use super::*;
 use crate::pipeline::effect_lanes::{glow, light_rays, neon, pixelate, relight, styled_glow};
 use crate::pipeline::{EffectOption, EffectPass, Lane};
@@ -928,17 +930,30 @@ impl GpuParams {
             .count()
     }
 
-    /// Whether a Glow's spread reaches past the near pyramid at this
-    /// pipeline's resolution, so it reads the full-image map, which an export
-    /// then builds in a prepass. The near pyramid's reach is a share of the
-    /// image that shrinks as the resolution grows.
+    /// Whether a Glow reads the full-image map, which an export then builds
+    /// in a prepass: its streaks always, its spread when it reaches past the
+    /// near pyramid at this pipeline's resolution. The near pyramid's reach is
+    /// a share of the image that shrinks as the resolution grows.
     pub(super) fn needs_styled_glow_map(&self) -> bool {
         let short_edge = self.camera.full_width.min(self.camera.full_height);
         let near_top = styled_glow_near_top(short_edge);
         self.mask_slots()
             .iter()
             .filter(|mask| is_styled_glow(mask))
-            .any(|mask| mask.lane(styled_glow::WIDEST) > near_top)
+            .any(|mask| {
+                styled_glow_streaks(mask) != StyledGlowStreaks::None
+                    || mask.lane(styled_glow::WIDEST) > near_top
+            })
+    }
+
+    /// The streak passes the Glow slots need: both ways for any Streak.
+    pub(super) fn styled_glow_streaks(&self) -> StyledGlowStreaks {
+        self.mask_slots()
+            .iter()
+            .filter(|mask| is_styled_glow(mask))
+            .map(styled_glow_streaks)
+            .max()
+            .unwrap_or(StyledGlowStreaks::None)
     }
 
     /// Whether this pipeline renders the whole image rather than a crop or an

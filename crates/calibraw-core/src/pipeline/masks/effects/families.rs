@@ -64,6 +64,8 @@ impl StyleMode {
                 Self::Glow(GlowStyle::ALL[0]),
                 Self::Glow(GlowStyle::ALL[1]),
                 Self::Glow(GlowStyle::ALL[2]),
+                Self::Glow(GlowStyle::ALL[3]),
+                Self::Glow(GlowStyle::ALL[4]),
             ],
             _ => &[],
         }

@@ -474,6 +474,8 @@ pub mod styled_glow {
     float_param!(RANGE, "Range", 0.0, 100.0, 50.0, 0.5, 0, None);
     float_param!(SPREAD, "Spread", 0.0, 100.0, 50.0, 0.5, 0, None);
     float_param!(WARMTH, "Warmth", -100.0, 100.0, 0.0, 0.5, 0, None);
+    float_param!(DIRECTION, "Direction", -180.0, 180.0, 0.0, 1.0, 0, None);
+    float_param!(SOFTNESS, "Softness", 0.0, 100.0, 50.0, 0.5, 0, None);
 }
 
 pub mod light_rays {

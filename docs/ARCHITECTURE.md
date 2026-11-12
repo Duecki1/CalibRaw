@@ -341,7 +341,10 @@ A pipeline that renders the whole image rebuilds the map in its output stage whe
 Glow is active, and zoomed views share it (`share_styled_glow_map`); the fitted preview
 then renders before the crop. An export builds it in a prepass over every tile after
 the tone prepass (`begin_export_styled_glow`), running each tile up to the creative
-input. The effect uniforms tell the shader whether each part is ready.
+input. The effect uniforms tell the shader whether each part is ready. Motion and
+Streak build their streaks from the map alone, in passes after its levels, and keep
+them in the map texture's second set of layers, so they are shared and exported with
+it.
 
 Rain and Wet Surfaces do not run inside the creative pass: `apply_wet_surfaces`
 runs before it and `apply_weather_air` after it, so their result does not depend on
