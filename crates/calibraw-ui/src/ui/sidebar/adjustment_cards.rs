@@ -42,6 +42,8 @@ enum VerticalCardKind {
     },
     Effect {
         enabled: bool,
+        /// Has a reset; a legacy effect's card has none.
+        reset: bool,
     },
 }
 
@@ -287,8 +289,13 @@ impl Sidebar {
         );
     }
 
-    pub(super) fn register_vertical_effect_actions(ui: &Ui, title: &'static str, enabled: bool) {
-        Self::register_vertical_actions(ui, title, VerticalCardKind::Effect { enabled });
+    pub(super) fn register_vertical_effect_actions(
+        ui: &Ui,
+        title: &'static str,
+        enabled: bool,
+        reset: bool,
+    ) {
+        Self::register_vertical_actions(ui, title, VerticalCardKind::Effect { enabled, reset });
     }
 
     fn register_vertical_actions(ui: &Ui, title: &'static str, kind: VerticalCardKind) {
@@ -375,7 +382,7 @@ impl Sidebar {
             let title = card_title_text(entry.title);
             let reset = match entry.kind {
                 VerticalCardKind::Adjustment { reset, .. } => reset,
-                VerticalCardKind::Effect { .. } => true,
+                VerticalCardKind::Effect { reset, .. } => reset,
             };
             if reset
                 && moduwu_design::ghost_icon_button(
@@ -403,7 +410,7 @@ impl Sidebar {
             }
 
             match entry.kind {
-                VerticalCardKind::Effect { enabled } => {
+                VerticalCardKind::Effect { enabled, .. } => {
                     if moduwu_design::ghost_icon_button(
                         ui,
                         egui_phosphor::regular::TRASH,

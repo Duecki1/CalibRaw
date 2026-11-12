@@ -2,13 +2,14 @@
 //! and whose cards switch between them with a Style control.
 //!
 //! A family changes only how effects are offered. Each style is an effect of
-//! the registry (`mask_effects!`), with Radial Blur's two modes as two
-//! styles, so sidecars, presets, shader IDs and rendering stay those of the
-//! effects.
+//! the registry (`mask_effects!`), with the modes an effect keeps in its
+//! settings (Radial Blur's Zoom and Spin, Glow's [`GlowStyle`]s) as styles of
+//! their own, so sidecars, presets, shader IDs and rendering stay those of
+//! the effects.
 
 use super::{
-    EffectControl, EffectSettings, EffectSettingsVisitor, MaskEffect, MaskEffectCategory,
-    MaskEffectSettings, RadialBlurMode,
+    EffectControl, EffectSettings, EffectSettingsVisitor, GlowStyle, MaskEffect,
+    MaskEffectCategory, MaskEffectSettings, RadialBlurMode,
 };
 use crate::pipeline::EffectComponent;
 
@@ -20,6 +21,7 @@ pub enum EffectFamily {
     Blur,
     Sharpen,
     Glow,
+    GlowingArea,
     LightRays,
     Neon,
     Relight,
@@ -30,25 +32,83 @@ pub enum EffectFamily {
     Vignette,
     Rain,
     WetSurfaces,
+    LegacyHighlightGlow,
 }
 
-/// One way a family's effect can look: an effect, and for Radial Blur its
-/// mode.
+/// One way a family's effect can look: an effect, and the mode its settings
+/// keep, if it has modes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EffectStyle {
     effect: MaskEffect,
-    /// Radial Blur's mode; `None` for every other effect.
-    radial_mode: Option<RadialBlurMode>,
+    mode: Option<StyleMode>,
+}
+
+/// A mode an effect keeps in its settings, which its family offers as a
+/// style of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StyleMode {
+    RadialBlur(RadialBlurMode),
+    Glow(GlowStyle),
+}
+
+impl StyleMode {
+    /// The modes of `effect`, in the order its family's Style control lists
+    /// them; none for an effect without modes.
+    fn of_effect(effect: MaskEffect) -> &'static [Self] {
+        match effect {
+            MaskEffect::RadialBlur => &[
+                Self::RadialBlur(RadialBlurMode::ALL[0]),
+                Self::RadialBlur(RadialBlurMode::ALL[1]),
+            ],
+            MaskEffect::StyledGlow => &[
+                Self::Glow(GlowStyle::ALL[0]),
+                Self::Glow(GlowStyle::ALL[1]),
+                Self::Glow(GlowStyle::ALL[2]),
+            ],
+            _ => &[],
+        }
+    }
+
+    /// The mode `settings` keep for `effect`.
+    fn of_settings(effect: MaskEffect, settings: &MaskEffectSettings) -> Option<Self> {
+        match effect {
+            MaskEffect::RadialBlur => Some(Self::RadialBlur(settings.radial_blur.mode)),
+            MaskEffect::StyledGlow => Some(Self::Glow(settings.styled_glow.style)),
+            _ => None,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::RadialBlur(mode) => mode.label(),
+            Self::Glow(style) => style.label(),
+        }
+    }
+
+    fn apply(self, settings: &mut MaskEffectSettings) {
+        match self {
+            Self::RadialBlur(mode) => settings.radial_blur.mode = mode,
+            Self::Glow(style) => settings.styled_glow.style = style,
+        }
+    }
 }
 
 impl EffectStyle {
+    /// The Glow in `style`.
+    pub const fn glow(style: GlowStyle) -> Self {
+        Self {
+            effect: MaskEffect::StyledGlow,
+            mode: Some(StyleMode::Glow(style)),
+        }
+    }
+
     pub const fn effect(self) -> MaskEffect {
         self.effect
     }
 
     /// The style's name on its family's Style control.
     pub const fn label(self) -> &'static str {
-        match (self.effect, self.radial_mode) {
+        match (self.effect, self.mode) {
             (MaskEffect::Blur, _) => "Soft",
             (_, Some(mode)) => mode.label(),
             (effect, None) => effect.label(),
@@ -59,32 +119,33 @@ impl EffectStyle {
     pub fn of(component: &EffectComponent) -> Self {
         Self {
             effect: component.effect,
-            radial_mode: (component.effect == MaskEffect::RadialBlur)
-                .then_some(component.settings.radial_blur.mode),
+            mode: StyleMode::of_settings(component.effect, &component.settings),
         }
     }
 }
 
 impl EffectFamily {
     /// The family's styles, in the order its Style control lists them: its
-    /// effects in the picker's order ([`MaskEffect::ALL`]), Radial Blur as
-    /// Zoom and then Spin. A tile adds the first whose effect the list lacks,
-    /// which shows that effect at its starting settings.
+    /// effects in the picker's order ([`MaskEffect::ALL`]), an effect with
+    /// modes once per mode (Radial Blur as Zoom and then Spin). A tile adds
+    /// the first whose effect the list lacks, which shows that effect at its
+    /// starting settings in that mode.
     pub fn styles(self) -> impl Iterator<Item = EffectStyle> {
         MaskEffect::ALL
             .into_iter()
             .filter(move |effect| effect.family() == Some(self))
             .flat_map(|effect| {
-                let modes: &[Option<RadialBlurMode>] = match effect {
-                    MaskEffect::RadialBlur => {
-                        &[Some(RadialBlurMode::ALL[0]), Some(RadialBlurMode::ALL[1])]
-                    }
-                    _ => &[None],
-                };
-                modes.iter().map(move |&radial_mode| EffectStyle {
-                    effect,
-                    radial_mode,
-                })
+                let modes = StyleMode::of_effect(effect);
+                let modeless = modes
+                    .is_empty()
+                    .then_some(EffectStyle { effect, mode: None });
+                modes
+                    .iter()
+                    .map(move |&mode| EffectStyle {
+                        effect,
+                        mode: Some(mode),
+                    })
+                    .chain(modeless)
             })
     }
 
@@ -118,13 +179,13 @@ impl EffectFamily {
 
     /// The styles a list of `components` can still take: those whose effect
     /// it lacks, as it holds each effect at most once. Effects switched off
-    /// for good ([`MaskEffect::is_disabled`]) are never offered.
+    /// for good or replaced ([`MaskEffect::is_offered`]) are never offered.
     pub fn styles_to_add(
         self,
         components: &[EffectComponent],
     ) -> impl Iterator<Item = EffectStyle> + '_ {
         self.styles().filter(move |style| {
-            !style.effect.is_disabled()
+            style.effect.is_offered()
                 && !components
                     .iter()
                     .any(|component| component.effect == style.effect)
@@ -140,7 +201,7 @@ impl EffectFamily {
     ) -> impl Iterator<Item = EffectStyle> + 'a {
         self.styles().filter(move |style| {
             style.effect == component.effect
-                || (!style.effect.is_disabled()
+                || (style.effect.is_offered()
                     && !components.iter().any(|other| other.effect == style.effect))
         })
     }
@@ -149,7 +210,8 @@ impl EffectFamily {
 impl EffectComponent {
     /// Shows `style` instead: the effect it names at its starting settings,
     /// with every value whose field the current effect's settings share,
-    /// within the new effect's ranges. The component stays enabled or not.
+    /// within the new effect's ranges, in the style's mode. The component
+    /// stays enabled or not.
     pub fn set_style(&mut self, style: EffectStyle) {
         if style.effect != self.effect {
             let mut settings = MaskEffectSettings::initial(style.effect);
@@ -176,8 +238,8 @@ impl EffectComponent {
             self.effect = style.effect;
             self.settings = settings;
         }
-        if let Some(mode) = style.radial_mode {
-            self.settings.radial_blur.mode = mode;
+        if let Some(mode) = style.mode {
+            mode.apply(&mut self.settings);
         }
     }
 }

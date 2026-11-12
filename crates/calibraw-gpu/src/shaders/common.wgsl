@@ -186,7 +186,9 @@ struct EffectsUniforms {
     presence: vec4<f32>,
     // Sharpening amount, radius, detail, masking.
     sharpen: vec4<f32>,
-    // Radius of the shared Glow diffusion, reserved, reserved, reserved.
+    // Radius of the shared Glow diffusion; then for the Glow with styles, 1
+    // when its near pyramid and when its full-image map are ready to be read
+    // (styled_glow.wgsl); reserved.
     glow_diffusion: vec4<f32>,
     // The frame and calibration of Vignette effects: the output width and height, two reserved,
     // then the rows of the homography from normalized source to output position (0–1 across

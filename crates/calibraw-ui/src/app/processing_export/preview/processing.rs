@@ -1,5 +1,6 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::MaskEffect;
 
 impl CalibRawApp {
     pub(in crate::app) fn interactive_detail_mask_edit(&self) -> bool {
@@ -278,9 +279,16 @@ impl CalibRawApp {
         // Decided before the crop renders, which can make it current.
         let defer_fitted = self.defer_background_preview_processing();
         let following_drag = self.interactive_following();
+        let preview_masks = self.preview_mask_stack();
+        // A crop shares the fitted preview's Glow map, which the fitted
+        // preview builds in its output stage: it waits for it.
+        let crop_waits_for_fitted = zoomed
+            && !defer_fitted
+            && self.preview.pending_stage.is_some()
+            && preview_masks.has_active(MaskEffect::StyledGlow);
         // The reduced preview follows a drag in the sharp one's place, which
         // keeps what it owes until the drag ends.
-        if zoomed && !following_drag {
+        if zoomed && !following_drag && !crop_waits_for_fitted {
             self.drain_zoomed_processing(frame);
         }
         if following_drag {
@@ -294,7 +302,6 @@ impl CalibRawApp {
         }
         // The fitted preview follows while zoomed too: panning can expose any
         // part of it.
-        let preview_masks = self.preview_mask_stack();
         let preview_source = self.develop.loaded_raw.clone();
         self.drain_pending_stages(
             |preview| preview.pending_stage,
@@ -429,6 +436,21 @@ impl CalibRawApp {
                         pending.min(ProcessingStage::Tone)
                     }),
             );
+        }
+        if stage == ProcessingStage::Output
+            && preview_masks.has_active(MaskEffect::StyledGlow)
+            && self
+                .preview
+                .detail
+                .as_ref()
+                .is_some_and(|detail| detail.revision == self.preview.revision)
+        {
+            // The crop shares the Glow map this render rebuilt; a crop
+            // rendered before it, during a drag the fitted preview waited
+            // for, renders again with it.
+            self.preview
+                .detail_pending_stage
+                .get_or_insert(ProcessingStage::Output);
         }
         self.preview.pending_stage = match stage {
             ProcessingStage::Raw => Some(ProcessingStage::Tone),

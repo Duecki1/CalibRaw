@@ -394,7 +394,7 @@ pub(super) fn pack_effect_params(
         full_height,
         ..
     } = ctx.tile;
-    // Self-illuminating Glow masks emit into the shared Glow diffusion, which
+    // Glowing Area masks emit into the shared Glow diffusion, which
     // spreads as far as the widest of them.
     let glow_diffusion_radius = mask_data
         .iter()

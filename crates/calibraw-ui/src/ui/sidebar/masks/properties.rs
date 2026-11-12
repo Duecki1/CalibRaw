@@ -350,6 +350,20 @@ impl Sidebar {
                 &mut component.enabled,
                 remove,
             ),
+            MaskEffect::StyledGlow => mask_effects::glow::show(
+                ui,
+                &mut component.settings.styled_glow,
+                &mut component.enabled,
+                remove,
+                style.as_deref_mut(),
+            ),
+            effect if effect.is_legacy() => mask_effects::legacy::show(
+                ui,
+                effect,
+                &mut component.enabled,
+                remove,
+                style.as_deref_mut(),
+            ),
             MaskEffect::Vignette => mask_effects::vignette::show(
                 ui,
                 &mut component.settings.vignette,

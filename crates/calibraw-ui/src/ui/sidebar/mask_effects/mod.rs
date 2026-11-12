@@ -1,7 +1,9 @@
 mod controls;
 pub(super) mod fog;
 mod generated;
+pub(super) mod glow;
 mod instances;
+pub(super) mod legacy;
 pub(super) mod light_rays;
 mod picker;
 pub(super) mod radial_blur;
@@ -29,6 +31,7 @@ use crate::pipeline::{
 /// the styles it may take, and the one picked this frame.
 pub(in crate::ui::sidebar) struct StyleChoice {
     current: EffectStyle,
+    /// What the card may switch to, its replacement for a legacy effect.
     offered: Vec<EffectStyle>,
     pub(in crate::ui::sidebar) picked: Option<EffectStyle>,
 }
@@ -36,11 +39,23 @@ pub(in crate::ui::sidebar) struct StyleChoice {
 impl StyleChoice {
     /// The choice for `component` in its list `components`; `None` for an
     /// effect without kin. Other effects of its family that the list holds
-    /// are not offered, as a list holds each effect at most once.
+    /// are not offered, as a list holds each effect at most once. A legacy
+    /// effect is offered only its replacement, which its card's Replace with
+    /// new picks ([`legacy::show`]).
     pub(in crate::ui::sidebar) fn of(
         component: &EffectComponent,
         components: &[EffectComponent],
     ) -> Option<Self> {
+        if let Some(replacement) = component.effect.replacement() {
+            let listed = components
+                .iter()
+                .any(|other| other.effect == replacement.effect());
+            return Some(Self {
+                current: EffectStyle::of(component),
+                offered: (!listed).then_some(replacement).into_iter().collect(),
+                picked: None,
+            });
+        }
         let family = component.effect.family()?;
         family.has_styles().then(|| Self {
             current: EffectStyle::of(component),
@@ -115,7 +130,8 @@ fn styled_effect_card<Settings>(
 where
     Settings: EffectSettings,
 {
-    let body = |ui: &mut Ui, settings: &mut Settings| {
+    let mut reset = false;
+    let changed = effect_card_frame(ui, effect, enabled, remove, Some(&mut reset), |ui| {
         if let Some(style) = style {
             style_control(ui, effect, style);
         }
@@ -123,9 +139,31 @@ where
             ui.weak(tr("Experimental"));
         }
         body(ui, settings)
-    };
+    });
+    changed
+        | apply_card_action(
+            if reset {
+                super::adjustment_cards::CardAction::Reset
+            } else {
+                super::adjustment_cards::CardAction::None
+            },
+            settings,
+        )
+}
+
+/// An effect card: its title, then its switch, Remove and, given `reset`,
+/// a Reset that sets it, in the header (in the shared footer on portrait
+/// screens), and `body`, collapsible. Returns whether the switch or `body`
+/// changed anything.
+fn effect_card_frame(
+    ui: &mut Ui,
+    effect: MaskEffect,
+    enabled: &mut bool,
+    remove: &mut bool,
+    mut reset: Option<&mut bool>,
+    body: impl FnOnce(&mut Ui) -> bool,
+) -> bool {
     let mut changed = false;
-    let mut reset = false;
     let revealed = ui
         .ctx()
         .data_mut(|data| data.remove_temp::<bool>(effect_card_reveal_id(effect)))
@@ -137,7 +175,11 @@ where
                 match super::Sidebar::take_pending_vertical_effect_action(ui.ctx(), effect.label())
                 {
                     super::adjustment_cards::EffectCardAction::None => {}
-                    super::adjustment_cards::EffectCardAction::Reset => reset = true,
+                    super::adjustment_cards::EffectCardAction::Reset => {
+                        if let Some(reset) = &mut reset {
+                            **reset = true;
+                        }
+                    }
                     super::adjustment_cards::EffectCardAction::Toggle => {
                         *enabled = !*enabled;
                         changed = true;
@@ -145,8 +187,13 @@ where
                     super::adjustment_cards::EffectCardAction::Remove => *remove = true,
                 }
                 if !*remove {
-                    ui.add_enabled_ui(*enabled, |ui| changed |= body(ui, settings));
-                    super::Sidebar::register_vertical_effect_actions(ui, effect.label(), *enabled);
+                    ui.add_enabled_ui(*enabled, |ui| changed |= body(ui));
+                    super::Sidebar::register_vertical_effect_actions(
+                        ui,
+                        effect.label(),
+                        *enabled,
+                        reset.is_some(),
+                    );
                 }
             } else {
                 let mut header_clicked = false;
@@ -163,13 +210,17 @@ where
                     let buttons = ui
                         .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let size = egui::vec2(26.0, 26.0);
-                            let reset_button = moduwu_design::ghost_icon_button(
-                                ui,
-                                egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                                size,
-                                &tr_fmt("Reset {title}", &[("title", &tr(effect.label()))]),
-                            );
-                            reset = reset_button.clicked();
+                            let mut rects = Vec::with_capacity(3);
+                            if let Some(reset) = &mut reset {
+                                let reset_button = moduwu_design::ghost_icon_button(
+                                    ui,
+                                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                                    size,
+                                    &tr_fmt("Reset {title}", &[("title", &tr(effect.label()))]),
+                                );
+                                **reset = reset_button.clicked();
+                                rects.push(reset_button.rect);
+                            }
                             let remove_button = moduwu_design::ghost_icon_button(
                                 ui,
                                 egui_phosphor::regular::TRASH,
@@ -180,7 +231,9 @@ where
                             let switch =
                                 moduwu_design::toggle_switch(ui, enabled, tr(effect.label()));
                             changed |= switch.changed();
-                            [switch.rect, remove_button.rect, reset_button.rect]
+                            rects.push(remove_button.rect);
+                            rects.push(switch.rect);
+                            rects
                         })
                         .inner;
                     header_clicked =
@@ -201,7 +254,7 @@ where
                     note_open_effect_card(&ctx, effect);
                 }
                 header.body_unindented(|ui| {
-                    ui.add_enabled_ui(*enabled, |ui| changed |= body(ui, settings));
+                    ui.add_enabled_ui(*enabled, |ui| changed |= body(ui));
                 });
             }
         });
@@ -218,14 +271,6 @@ where
     );
     moduwu_design::card_gap(ui);
     changed
-        | apply_card_action(
-            if reset {
-                super::adjustment_cards::CardAction::Reset
-            } else {
-                super::adjustment_cards::CardAction::None
-            },
-            settings,
-        )
 }
 
 /// The scroll-into-view target of `effect`'s card
@@ -286,9 +331,8 @@ where
 
 /// Effects that once were Effects-card sliders. The cards offer them as
 /// quick-add buttons ([`add_effect_controls`]).
-pub(super) const FINISH_EFFECTS: [MaskEffect; 4] = [
-    MaskEffect::Glow,
-    MaskEffect::Halation,
+pub(super) const FINISH_EFFECTS: [MaskEffect; 3] = [
+    MaskEffect::StyledGlow,
     MaskEffect::Grain,
     MaskEffect::Vignette,
 ];

@@ -1,6 +1,7 @@
 //! Rendering tiles and streaming them to the encoder in row bands.
 
 use super::*;
+use crate::pipeline::ExportTile;
 
 pub(super) fn render_export_output<W: Write>(
     context: ExportContext<'_>,
@@ -285,6 +286,50 @@ where
         plan.tile_count()
     ));
 
+    let tile_inputs = ExportTileInputs {
+        pipeline: &tile_pipeline,
+        device,
+        queue,
+        raw,
+        exposure,
+        masks,
+        remove,
+        look,
+        geometry,
+    };
+    // A Glow whose spread reaches past the export halo reads the whole image
+    // (styled_glow.rs): every tile adds its core to the Glow's full-image map
+    // before any tile renders. A single tile too, as its padding takes it past
+    // the image's edges.
+    if tile_pipeline
+        .begin_export_styled_glow(queue, device, &first_params)
+        .context("prepare the Glow's full-image map")?
+    {
+        if let Some(timing) = &gpu_timing {
+            timing.phase("Glow map prepass");
+        }
+        let glow_started = Instant::now();
+        for (index, tile) in plan.tiles.iter().copied().enumerate() {
+            ensure_export_not_cancelled(cancellation)?;
+            let params = tile_inputs
+                .upload(tile, index, &mut tile_scratch)?
+                .with_global_tone_histogram_bounds(
+                    tile.core_x,
+                    tile.core_y,
+                    tile.core_width,
+                    tile.core_height,
+                );
+            tile_inputs.load_scene(tile, index, &params, raw_stage_store.as_ref())?;
+            tile_pipeline.accumulate_export_styled_glow_tile(queue, device, &params);
+        }
+        tile_pipeline.finish_export_styled_glow(queue, device);
+        calibraw_core::diagnostics::record(format!(
+            "Glow full-image map prepass queued in {:.3}s across {} tiles",
+            glow_started.elapsed().as_secs_f64(),
+            plan.tile_count()
+        ));
+    }
+
     if let Some(timing) = &gpu_timing {
         timing.phase("final tiles");
     }
@@ -315,70 +360,9 @@ where
         {
             ensure_export_not_cancelled(cancellation)?;
             let global_index = band_start + absolute_index;
-            extract_padded_tile_into(raw, tile, &mut tile_scratch);
-            tile_pipeline
-                .upload_raw_tile(queue, &tile_scratch)
-                .with_context(|| format!("upload export tile {}", global_index + 1))?;
-            let mask_region = tile_mask_source_region(
-                masks,
-                tile.global_origin_x,
-                tile.global_origin_y,
-                tile.padded_width,
-                tile.padded_height,
-                raw.width,
-                raw.height,
-            );
-            let mask_extent =
-                mask_region_texture_extent(mask_region, tile_pipeline.mask_atlas_edge());
-            upload_mask_atlas(
-                &tile_pipeline,
-                queue,
-                masks,
-                raw.width,
-                raw.height,
-                mask_region,
-                raw.lens_geometry.as_deref(),
-            )?;
-
-            let params = GpuParams::new_for_tile(
-                exposure,
-                masks,
-                &tile_scratch,
-                tile.global_origin_x,
-                tile.global_origin_y,
-                raw.width,
-                raw.height,
-            )
-            .with_vignette_geometry(geometry)
-            .with_mask_uv_rect_and_extent(
-                mask_source_region_uv(mask_region, raw.width, raw.height),
-                mask_extent,
-            )
-            .with_look_lut(look);
-            match &raw_stage_store {
-                Some(store) => {
-                    store
-                        .write_tile(&tile_pipeline, queue, tile)
-                        .with_context(|| {
-                            format!("upload the RAW-stage scene of tile {}", global_index + 1)
-                        })?;
-                    tile_pipeline.dispatch_export_tile_from_scene(queue, device, &params);
-                }
-                None => tile_pipeline
-                    .dispatch_export_tile_with_remove(
-                        queue,
-                        device,
-                        &params,
-                        RemoveSceneContext::new(
-                            remove,
-                            raw,
-                            exposure,
-                            [tile.global_origin_x as f32, tile.global_origin_y as f32],
-                            [tile.padded_width as f32, tile.padded_height as f32],
-                        ),
-                    )
-                    .with_context(|| format!("apply Remove to export tile {}", global_index + 1))?,
-            }
+            let params = tile_inputs.upload(tile, global_index, &mut tile_scratch)?;
+            tile_inputs.load_scene(tile, global_index, &params, raw_stage_store.as_ref())?;
+            tile_pipeline.dispatch_export_tile_from_scene(queue, device, &params);
             let readback = tile_pipeline
                 .begin_display_linear_region_readback(
                     device,
@@ -438,6 +422,99 @@ where
         timing.finish();
     }
     Ok(())
+}
+
+/// What every export tile is rendered from, for the Glow map prepass and the
+/// final tiles alike.
+struct ExportTileInputs<'a> {
+    pipeline: &'a RawGpuPipeline,
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    raw: &'a LoadedRaw,
+    exposure: &'a ExposureParams,
+    masks: &'a MaskStack,
+    remove: &'a RemoveEditState,
+    look: Option<&'a ResolvedLook>,
+    geometry: GeometryTransform,
+}
+
+impl ExportTileInputs<'_> {
+    /// Uploads the RAW pixels and masks of `tile`, the `index`th, through
+    /// `scratch` and returns its parameters.
+    fn upload(&self, tile: ExportTile, index: usize, scratch: &mut LoadedRaw) -> Result<GpuParams> {
+        let (raw, masks) = (self.raw, self.masks);
+        extract_padded_tile_into(raw, tile, scratch);
+        self.pipeline
+            .upload_raw_tile(self.queue, scratch)
+            .with_context(|| format!("upload export tile {}", index + 1))?;
+        let mask_region = tile_mask_source_region(
+            masks,
+            tile.global_origin_x,
+            tile.global_origin_y,
+            tile.padded_width,
+            tile.padded_height,
+            raw.width,
+            raw.height,
+        );
+        let mask_extent = mask_region_texture_extent(mask_region, self.pipeline.mask_atlas_edge());
+        upload_mask_atlas(
+            self.pipeline,
+            self.queue,
+            masks,
+            raw.width,
+            raw.height,
+            mask_region,
+            raw.lens_geometry.as_deref(),
+        )?;
+        Ok(GpuParams::new_for_tile(
+            self.exposure,
+            masks,
+            scratch,
+            tile.global_origin_x,
+            tile.global_origin_y,
+            raw.width,
+            raw.height,
+        )
+        .with_vignette_geometry(self.geometry)
+        .with_mask_uv_rect_and_extent(
+            mask_source_region_uv(mask_region, raw.width, raw.height),
+            mask_extent,
+        )
+        .with_look_lut(self.look))
+    }
+
+    /// Puts the RAW-stage scene of `tile`, the `index`th, in the pipeline:
+    /// the one the tone prepass kept in `store`, or the RAW stage run again
+    /// with Remove.
+    fn load_scene(
+        &self,
+        tile: ExportTile,
+        index: usize,
+        params: &GpuParams,
+        store: Option<&RawStageStore<'_>>,
+    ) -> Result<()> {
+        match store {
+            Some(store) => store
+                .write_tile(self.pipeline, self.queue, tile)
+                .with_context(|| format!("upload the RAW-stage scene of tile {}", index + 1)),
+            None => self
+                .pipeline
+                .dispatch_stage_with_remove(
+                    self.queue,
+                    self.device,
+                    params,
+                    ProcessingStage::Raw,
+                    RemoveSceneContext::new(
+                        self.remove,
+                        self.raw,
+                        self.exposure,
+                        [tile.global_origin_x as f32, tile.global_origin_y as f32],
+                        [tile.padded_width as f32, tile.padded_height as f32],
+                    ),
+                )
+                .with_context(|| format!("apply Remove to export tile {}", index + 1)),
+        }
+    }
 }
 
 /// Stores the RAW-stage texels of tile `index`, which `readback` reads.

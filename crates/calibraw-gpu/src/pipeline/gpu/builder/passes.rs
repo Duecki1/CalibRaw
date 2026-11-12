@@ -112,6 +112,10 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// with the tone stage, or the export tone prepass. It comes last so that
     /// adding it kept earlier positions.
     pub(in crate::pipeline::gpu) scene_bake_accumulation_pass_index: usize,
+    /// The Glow's programs (`styled_glow`), which run before the creative
+    /// pass and are dispatched with bind groups of their own. They come last
+    /// so that adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) styled_glow_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -169,6 +173,7 @@ impl StageIndices {
         let contour_accumulate_pass_index = take(1);
         let scene_emission_pass_index = take(SCENE_EMISSION_PASSES);
         let scene_bake_accumulation_pass_index = take(1);
+        let styled_glow_pass_index = take(STYLED_GLOW_PASSES);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -212,6 +217,7 @@ impl StageIndices {
             contour_accumulate_pass_index,
             scene_emission_pass_index,
             scene_bake_accumulation_pass_index,
+            styled_glow_pass_index,
             pass_count,
         }
     }
@@ -785,6 +791,18 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         InputBoundPass::SceneBakeAccumulation,
         [working_workgroups, working_workgroups, 1],
     ));
+    ensure_planned(&passes, indices.styled_glow_pass_index, "Glow pyramids")?;
+    for (program, entry) in STYLED_GLOW_ENTRIES.into_iter().enumerate() {
+        // Dispatched by `styled_glow` with the bind groups and sizes of each
+        // level; the workgroups here are never used.
+        passes.push(assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            entry,
+            &layouts.bgl_styled_glow[program],
+            InputBoundPass::StyledGlow(program),
+            single_workgroup,
+        ));
+    }
 
     // These variants reuse the programs above with bind groups that read tex2:
     // the mask-blurred scene, or whatever else last wrote there.

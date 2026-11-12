@@ -464,10 +464,16 @@ pub mod glow {
         0,
         Some("How much the glow lights its surroundings, Fog, Smoke, Rain and wet ground. Only a self-illuminating Glow lights the scene."),
     );
-    pub const SELF_ILLUMINATING: ToggleSpec = ToggleSpec {
-        label: "Self-illuminating",
-        help: "The mask emits the glow color itself, so it also shows on dark surfaces. Turn off to let only bright areas inside the mask glow.",
-    };
+}
+
+/// Glow (styled_glow.rs). The meaning of each value is set there.
+pub mod styled_glow {
+    use super::*;
+
+    float_param!(AMOUNT, "Amount", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(RANGE, "Range", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(SPREAD, "Spread", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(WARMTH, "Warmth", -100.0, 100.0, 0.0, 0.5, 0, None);
 }
 
 pub mod light_rays {
@@ -805,6 +811,9 @@ pub mod grain {
     );
 }
 
+/// Halation (effects/legacy/halation.rs).
+///
+/// legacy: remove in v2.0.0
 pub mod halation {
     use super::*;
 

@@ -40,6 +40,10 @@ use scene::{
 };
 mod shader_manager;
 mod shaders;
+mod styled_glow;
+use styled_glow::{
+    styled_glow_layout_entries, STYLED_GLOW_ENTRIES, STYLED_GLOW_LAYOUT_LABELS, STYLED_GLOW_PASSES,
+};
 mod wait;
 
 use builder::*;
@@ -617,6 +621,8 @@ impl RawGpuPipeline {
     fn upload_params(&self, queue: &wgpu::Queue, params: &GpuParams) {
         self.upload_profile_tables(queue, &params.profile_color);
         self.prepare_effect_inputs(params);
+        let (styled_glow_near, styled_glow_map) = self.prepare_styled_glow(params);
+        let effects = params.effects_for_upload(styled_glow_near, styled_glow_map);
         let look_lut_uploaded = match self.prepare_look_lut(queue, params.look_lut()) {
             Ok(()) => true,
             Err(error) => {
@@ -649,9 +655,13 @@ impl RawGpuPipeline {
                     );
                     uploaded.scene_tone = scene_tone;
                 }
-                if bytemuck::bytes_of(&uploaded.effects) != params.effects_bytes() {
-                    queue.write_buffer(&self.effects_uniforms_buffer, 0, params.effects_bytes());
-                    uploaded.effects = params.effects;
+                if bytemuck::bytes_of(&uploaded.effects) != bytemuck::bytes_of(&effects) {
+                    queue.write_buffer(
+                        &self.effects_uniforms_buffer,
+                        0,
+                        bytemuck::bytes_of(&effects),
+                    );
+                    uploaded.effects = effects;
                 }
             }
             Err(_) => {
@@ -661,7 +671,11 @@ impl RawGpuPipeline {
                     0,
                     bytemuck::bytes_of(&scene_tone),
                 );
-                queue.write_buffer(&self.effects_uniforms_buffer, 0, params.effects_bytes());
+                queue.write_buffer(
+                    &self.effects_uniforms_buffer,
+                    0,
+                    bytemuck::bytes_of(&effects),
+                );
             }
         }
         queue.write_buffer(&self.mask_data_buffer, 0, params.mask_data_bytes());
@@ -1028,6 +1042,13 @@ impl RawGpuPipeline {
                 .store(true, Ordering::Release);
         }
         self.inherit_scene_bake(encoder, full_frame, params);
+        // The full frame builds its Glow map in its output stage whenever a
+        // Glow is active, whatever its spread.
+        if params.styled_glow_slots() > 0 {
+            if let Some(map) = full_frame.effect_inputs.styled_glow_map() {
+                self.effect_inputs.share_styled_glow_map(&map);
+            }
+        }
     }
 
     pub fn dispatch_stage_with_remove(
@@ -1176,18 +1197,6 @@ impl RawGpuPipeline {
             self.full_image_map_current(map)
                 .store(allocated, Ordering::Release);
         }
-    }
-
-    pub fn dispatch_export_tile_with_remove(
-        &self,
-        queue: &wgpu::Queue,
-        device: &wgpu::Device,
-        params: &GpuParams,
-        remove: RemoveSceneContext<'_>,
-    ) -> Result<()> {
-        self.dispatch_stage_with_remove(queue, device, params, ProcessingStage::Raw, remove)?;
-        self.dispatch_export_tile_from_scene(queue, device, params);
-        Ok(())
     }
 
     /// Bytes of one scene texel, in which [`Self::begin_scene_region_readback`]
@@ -1366,50 +1375,19 @@ impl RawGpuPipeline {
     fn encode_output_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
         self.output_revision
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        for map in FullImageMap::ALL {
-            if params.needs_full_image_map(map) {
-                self.ensure_full_image_map(encoder, map);
-            }
-        }
-        self.ensure_scene_bake(encoder, params);
+        self.ensure_output_inputs(encoder, params);
         if params.needs_scene_emission() {
             // Rebuilt for every render: it follows the emitters' settings and
             // masks, which change without a new tone result.
             let start = self.indices.scene_emission_pass_index;
             self.encode_pass_range(encoder, start, start + SCENE_EMISSION_PASSES);
         }
-        self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);
-        self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
         // Which of the two work textures holds the image. Each pass below that
         // transforms the image reads it from one and writes the other.
-        let mut image_in_tex2 = true;
+        let mut image_in_tex2 = self.encode_creative_input(encoder, params);
         if params.needs_intermediate_adjustment_passes() {
-            self.encode_pass(encoder, self.indices.adjustment_local_tone_pass_index);
-            if let Some(levels) = params.detail_pyramid_levels() {
-                let start = self.indices.detail_pyramid_start_index;
-                self.encode_pass_range(encoder, start, start + levels);
-            }
-            self.encode_pass(encoder, self.indices.adjustment_effects_pass_index);
-            self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
-            image_in_tex2 = false;
-            if params.needs_blur_passes() {
-                if params.needs_progressive_blur_passes() {
-                    self.encode_pass_range(
-                        encoder,
-                        self.indices.mask_blur_start_index,
-                        self.indices.mask_blur_end_index,
-                    );
-                } else {
-                    self.encode_pass(encoder, self.indices.mask_blur_start_index);
-                }
-                image_in_tex2 = true;
-            }
-            if params.needs_wet_surfaces_pass() {
-                self.encode_effects_pass(
-                    encoder,
-                    self.indices.wet_surfaces_pass_index,
-                    &mut image_in_tex2,
-                );
+            if params.styled_glow_slots() > 0 {
+                self.encode_styled_glow(encoder, params, image_in_tex2);
             }
             if params.needs_glow_passes() {
                 if image_in_tex2 {
@@ -1458,6 +1436,60 @@ impl RawGpuPipeline {
         self.output_image_in_tex2
             .store(image_in_tex2, Ordering::Release);
         self.encode_render_pass(encoder, image_in_tex2);
+    }
+
+    /// The full-image maps and the scene bake the output stage reads.
+    fn ensure_output_inputs(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+        for map in FullImageMap::ALL {
+            if params.needs_full_image_map(map) {
+                self.ensure_full_image_map(encoder, map);
+            }
+        }
+        self.ensure_scene_bake(encoder, params);
+    }
+
+    /// The output stage up to the creative pass's input: the scene
+    /// adjustments, and with intermediate passes the scene effects, the blurs
+    /// and Wet Surfaces. Returns whether the image ends in the second work
+    /// texture rather than the first.
+    fn encode_creative_input(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        params: &GpuParams,
+    ) -> bool {
+        self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);
+        self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
+        let mut image_in_tex2 = true;
+        if params.needs_intermediate_adjustment_passes() {
+            self.encode_pass(encoder, self.indices.adjustment_local_tone_pass_index);
+            if let Some(levels) = params.detail_pyramid_levels() {
+                let start = self.indices.detail_pyramid_start_index;
+                self.encode_pass_range(encoder, start, start + levels);
+            }
+            self.encode_pass(encoder, self.indices.adjustment_effects_pass_index);
+            self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
+            image_in_tex2 = false;
+            if params.needs_blur_passes() {
+                if params.needs_progressive_blur_passes() {
+                    self.encode_pass_range(
+                        encoder,
+                        self.indices.mask_blur_start_index,
+                        self.indices.mask_blur_end_index,
+                    );
+                } else {
+                    self.encode_pass(encoder, self.indices.mask_blur_start_index);
+                }
+                image_in_tex2 = true;
+            }
+            if params.needs_wet_surfaces_pass() {
+                self.encode_effects_pass(
+                    encoder,
+                    self.indices.wet_surfaces_pass_index,
+                    &mut image_in_tex2,
+                );
+            }
+        }
+        image_in_tex2
     }
 
     /// Encodes the display transform from the work texture holding the image.

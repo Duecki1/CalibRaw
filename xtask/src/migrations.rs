@@ -1,19 +1,27 @@
 //! `cargo xtask migrations`: lists the compatibility code for older files and
-//! fails once any of it is due for removal.
+//! the legacy effects, and fails once any of it is due for removal.
 //!
 //! Compatibility code is marked with `migration: remove in v` followed by a
-//! version, in a comment next to it. The command reports every marker under
-//! `crates/` and fails when the workspace version has reached one, or when a
-//! file in the core `migrations` folder has no marker.
+//! version, in a comment next to it, and a legacy effect (one a rebuilt effect
+//! replaced) with `legacy: remove in v`. The command reports every marker
+//! under `crates/` and fails when the workspace version has reached one, or
+//! when a file in the core `migrations` folder or a legacy effects folder has
+//! no marker.
 
 use crate::process::{display_relative, workspace_root};
 use crate::{Result, XtaskError};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MARKER: &str = "migration: remove in v";
+/// The markers, each a prefix followed by the version.
+const MARKERS: [&str; 2] = ["migration: remove in v", "legacy: remove in v"];
 const SCANNED_ROOT: &str = "crates";
-const MIGRATIONS_FOLDER: &str = "crates/calibraw-core/src/migrations";
+/// Folders whose every file except `mod.rs` needs a marker.
+const MARKED_FOLDERS: [&str; 3] = [
+    "crates/calibraw-core/src/migrations",
+    "crates/calibraw-core/src/pipeline/masks/effects/legacy",
+    "crates/calibraw-gpu/src/shaders/mask_effects/legacy",
+];
 
 type Version = [u32; 3];
 
@@ -40,15 +48,19 @@ pub(crate) fn run() -> Result<()> {
             Ok(markers) => markers,
             Err(line) => {
                 problems.push(format!(
-                    "{relative}:{line}: write the version as `{MARKER}MAJOR.MINOR.PATCH`"
+                    "{relative}:{line}: write the version as `{}MAJOR.MINOR.PATCH`",
+                    MARKERS[0]
                 ));
                 continue;
             }
         };
-        let in_migrations = file.starts_with(root.join(MIGRATIONS_FOLDER));
-        if in_migrations && markers.is_empty() && file.file_name() != Some("mod.rs".as_ref()) {
+        let marked_folder = MARKED_FOLDERS
+            .iter()
+            .any(|folder| file.starts_with(root.join(folder)));
+        if marked_folder && markers.is_empty() && file.file_name() != Some("mod.rs".as_ref()) {
             problems.push(format!(
-                "{relative}: a migration needs a `{MARKER}…` marker"
+                "{relative}: a migration or legacy effect needs a `{}…` or `{}…` marker",
+                MARKERS[0], MARKERS[1]
             ));
         }
         for marker in markers {
@@ -101,29 +113,32 @@ fn collect_sources(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// The markers in `source`. A marker is the prefix followed by a digit; any
-/// other text after the prefix is prose about markers. Errs with the line of
-/// a marker whose version cannot be read.
+/// The markers in `source`. A marker is one of [`MARKERS`] followed by a
+/// digit; any other text after the prefix is prose about markers. Errs with
+/// the line of a marker whose version cannot be read.
 fn markers(source: &str) -> std::result::Result<Vec<Marker>, usize> {
     let mut found = Vec::new();
     for (index, text) in source.lines().enumerate() {
-        let mut rest = text;
-        while let Some(start) = rest.find(MARKER) {
-            rest = &rest[start + MARKER.len()..];
-            if !rest.starts_with(|c: char| c.is_ascii_digit()) {
-                continue;
+        for marker in MARKERS {
+            let mut rest = text;
+            while let Some(start) = rest.find(marker) {
+                rest = &rest[start + marker.len()..];
+                if !rest.starts_with(|c: char| c.is_ascii_digit()) {
+                    continue;
+                }
+                let end = rest
+                    .find(|c: char| !c.is_ascii_digit() && c != '.')
+                    .unwrap_or(rest.len());
+                let version = rest[..end].trim_end_matches('.');
+                let remove_in = parse_version(version).ok_or(index + 1)?;
+                found.push(Marker {
+                    line: index + 1,
+                    remove_in,
+                });
             }
-            let end = rest
-                .find(|c: char| !c.is_ascii_digit() && c != '.')
-                .unwrap_or(rest.len());
-            let version = rest[..end].trim_end_matches('.');
-            let remove_in = parse_version(version).ok_or(index + 1)?;
-            found.push(Marker {
-                line: index + 1,
-                remove_in,
-            });
         }
     }
+    found.sort_by_key(|marker| marker.line);
     Ok(found)
 }
 

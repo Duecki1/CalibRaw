@@ -2,8 +2,9 @@
 //! them renders: scene depth and the scene map that every depth-reading effect
 //! shares, the scene shadow map, the image-light map that Fog, Smoke and Rain
 //! scatter, the contours and the light that Glow and Neon emit into the scene,
-//! the haze map Dehaze applies, the LUT the view pass applies, and the scene
-//! bake (`scene`), whose working image a pass of this pipeline accumulates.
+//! the haze map Dehaze applies, the LUT the view pass applies, the scene
+//! bake (`scene`), whose working image a pass of this pipeline accumulates,
+//! and the Glow's pyramids (`styled_glow`).
 //!
 //! Until then the passes that read them are bound to placeholders of one
 //! texel, so a pipeline whose edits never use these effects holds none of their
@@ -24,6 +25,9 @@ use super::scene::{
     air_light_layers, SceneAirLightKey, SceneAirLightRegion, SceneAirLightTarget,
     SceneAirLightUniform, SceneBakePrograms, SceneLightPrograms, SceneShadowLightsUniform,
     AIR_LIGHT_FORMAT,
+};
+use super::styled_glow::{
+    StyledGlowBindGroups, StyledGlowInputs, StyledGlowMap, StyledGlowSources, STYLED_GLOW_PASSES,
 };
 use super::*;
 
@@ -88,6 +92,9 @@ pub(super) enum InputBoundPass {
     SceneEmission(usize),
     /// Accumulation into the scene bake's working image.
     SceneBakeAccumulation,
+    /// One of the Glow's programs, in pass order. The pass list records the
+    /// bind group of its first dispatch; `styled_glow` dispatches every one.
+    StyledGlow(usize),
 }
 
 /// Bind groups of every [`InputBoundPass`].
@@ -102,6 +109,7 @@ struct InputBindGroups {
     contours: wgpu::BindGroup,
     scene_emission: [wgpu::BindGroup; SCENE_EMISSION_PASSES],
     scene_bake_accumulation: wgpu::BindGroup,
+    styled_glow: StyledGlowBindGroups,
 }
 
 impl InputBindGroups {
@@ -117,6 +125,7 @@ impl InputBindGroups {
             InputBoundPass::Contours => &self.contours,
             InputBoundPass::SceneEmission(index) => &self.scene_emission[index],
             InputBoundPass::SceneBakeAccumulation => &self.scene_bake_accumulation,
+            InputBoundPass::StyledGlow(program) => self.styled_glow.first(program),
         }
     }
 }
@@ -132,6 +141,7 @@ pub(super) struct InputBindingSources {
     pub(super) contour_layout: wgpu::BindGroupLayout,
     pub(super) scene_emission_layouts: [wgpu::BindGroupLayout; SCENE_EMISSION_PASSES],
     pub(super) scene_bake_accumulation_layout: wgpu::BindGroupLayout,
+    pub(super) styled_glow_layouts: [wgpu::BindGroupLayout; STYLED_GLOW_PASSES],
     pub(super) camera_uniforms: wgpu::Buffer,
     pub(super) mask_data: wgpu::Buffer,
     pub(super) tone_stats: wgpu::Buffer,
@@ -403,6 +413,7 @@ struct BoundInputs<'a> {
     look_lut: &'a LookLutInputs,
     scene_bake: SceneBakeBindings<'a>,
     air_light: &'a AirLightInputs,
+    styled_glow: &'a StyledGlowInputs,
 }
 
 /// This pipeline's air light (`scene::lights`, air_light.wgsl): a texture
@@ -646,6 +657,7 @@ fn scene_compare_sampler(device: &wgpu::Device) -> wgpu::Sampler {
 impl InputBindingSources {
     fn bind_groups(&self, device: &wgpu::Device, inputs: &BoundInputs<'_>) -> InputBindGroups {
         let haze = inputs.haze;
+        let (styled_glow_near, styled_glow_map) = inputs.styled_glow.creative_views();
         let scene_preparation = create_bind_group(
             device,
             "bg adjustment preparation",
@@ -698,6 +710,8 @@ impl InputBindingSources {
                     texture_binding(114, &inputs.air_light.view),
                     buffer_binding(115, &inputs.air_light.uniforms),
                     buffer_binding(20, &self.profile),
+                    texture_binding(118, styled_glow_near),
+                    texture_binding(119, styled_glow_map),
                 ],
             )
         };
@@ -902,6 +916,18 @@ impl InputBindingSources {
                     buffer_binding(85, inputs.scene_bake.uniforms),
                 ],
             ),
+            styled_glow: inputs.styled_glow.bind_groups(
+                device,
+                &StyledGlowSources {
+                    layouts: &self.styled_glow_layouts,
+                    camera_uniforms: &self.camera_uniforms,
+                    mask_data: &self.mask_data,
+                    tex1: &self.tex1,
+                    tex2: &self.tex2,
+                    mask: &self.mask,
+                    mask_sampler: &self.mask_sampler,
+                },
+            ),
         }
     }
 }
@@ -922,6 +948,7 @@ struct Allocated {
     bound_lights_revision: u64,
     /// This pipeline's air light, when an effect reads it.
     air_light: Option<AirLightInputs>,
+    styled_glow: StyledGlowInputs,
     bind_groups: InputBindGroups,
 }
 
@@ -958,6 +985,7 @@ impl EffectInputs {
         let scene_compare = scene_compare_sampler(device);
         let placeholder_scene_bake = PlaceholderSceneBake::new(device, &scene_compare);
         let placeholder_air_light = AirLightInputs::new(device, [1, 1], 1, None);
+        let styled_glow = StyledGlowInputs::new(device);
         let bind_groups = sources.bind_groups(
             device,
             &BoundInputs {
@@ -968,6 +996,7 @@ impl EffectInputs {
                 look_lut: &placeholder_look_lut,
                 scene_bake: placeholder_scene_bake.bindings(),
                 air_light: &placeholder_air_light,
+                styled_glow: &styled_glow,
             },
         );
         Self {
@@ -992,6 +1021,7 @@ impl EffectInputs {
                 scene_bake: None,
                 bound_lights_revision: 0,
                 air_light: None,
+                styled_glow,
                 bind_groups,
             }),
         }
@@ -1138,6 +1168,7 @@ impl EffectInputs {
                     .air_light
                     .as_ref()
                     .unwrap_or(&self.placeholder_air_light),
+                styled_glow: &allocated.styled_glow,
             },
         );
         allocated.bound_lights_revision = revision;
@@ -1212,6 +1243,62 @@ impl EffectInputs {
         let built =
             bake.encode_air_light(&self.device, encoder, programs, &target, region, air.built);
         air.built = built;
+    }
+
+    /// Allocates the Glow's near pyramid for `layers` slots of an image of
+    /// `image` pixels unless one that holds them exists.
+    pub(super) fn allocate_styled_glow_near(&self, image: [u32; 2], layers: u32) -> Result<()> {
+        let mut allocated = self.lock();
+        if allocated.styled_glow.near_fits(image, layers) {
+            return Ok(());
+        }
+        let result = allocated
+            .styled_glow
+            .allocate_near(&self.device, image, layers);
+        self.rebind(&mut allocated);
+        result
+    }
+
+    /// Allocates a Glow map of this pipeline's own, of `grid` cells for
+    /// `layers` slots, unless one that holds them exists.
+    pub(super) fn allocate_styled_glow_map(&self, grid: [u32; 2], layers: u32) -> Result<()> {
+        let mut allocated = self.lock();
+        if allocated.styled_glow.owned_map_fits(grid, layers) {
+            return Ok(());
+        }
+        let result = allocated
+            .styled_glow
+            .allocate_map(&self.device, grid, layers);
+        self.rebind(&mut allocated);
+        result
+    }
+
+    /// Shares `map`, the whole image's, with this view of part of it.
+    pub(super) fn share_styled_glow_map(&self, map: &Arc<StyledGlowMap>) {
+        let mut allocated = self.lock();
+        if allocated.styled_glow.share_map(map) {
+            self.rebind(&mut allocated);
+        }
+    }
+
+    /// The Glow map this pipeline builds or shares.
+    pub(super) fn styled_glow_map(&self) -> Option<Arc<StyledGlowMap>> {
+        self.lock().styled_glow.shared_map()
+    }
+
+    /// Whether the bound Glow map holds `layers` slots.
+    pub(super) fn styled_glow_map_holds(&self, layers: u32) -> bool {
+        self.lock().styled_glow.map_holds(layers)
+    }
+
+    /// Whether this pipeline builds the Glow map it binds.
+    pub(super) fn owns_styled_glow_map(&self) -> bool {
+        self.lock().styled_glow.owns_map()
+    }
+
+    /// The bind groups of the Glow's passes.
+    pub(super) fn styled_glow_bind_groups(&self) -> StyledGlowBindGroups {
+        self.lock().bind_groups.styled_glow.clone()
     }
 
     /// Shares `bake`, the whole image's, with this view of part of it.

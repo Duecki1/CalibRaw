@@ -213,10 +213,8 @@ fn effect_picker(
                 })
                 .filter(|family| family.category() == Some(category))
                 .filter_map(|family| {
-                    // Effects switched off for good are never offered.
-                    family
-                        .styles()
-                        .find(|style| !style.effect().is_disabled())?;
+                    // Effects switched off for good or replaced are never offered.
+                    family.styles().find(|style| style.effect().is_offered())?;
                     let to_add = family.styles_to_add(components).next();
                     let effect = to_add.map_or(family.first_effect(), |style| style.effect());
                     let added = to_add.is_none();
@@ -304,7 +302,8 @@ fn effect_icon(effect: MaskEffect) -> &'static str {
         MaskEffect::RadialBlur => regular::SPIRAL,
         MaskEffect::Sharpen => regular::TRIANGLE,
         MaskEffect::TiltShift => regular::ARROWS_IN_LINE_VERTICAL,
-        MaskEffect::Glow => regular::SUN,
+        MaskEffect::StyledGlow => regular::SUN,
+        MaskEffect::Glow => regular::SPARKLE,
         MaskEffect::LightRays => regular::SUN_HORIZON,
         MaskEffect::Neon => regular::LIGHTNING,
         MaskEffect::Relight => regular::LIGHTBULB,
@@ -316,6 +315,7 @@ fn effect_icon(effect: MaskEffect) -> &'static str {
         MaskEffect::WetSurfaces => regular::DROP,
         MaskEffect::Grain => regular::DOTS_NINE,
         MaskEffect::Halation => regular::CIRCLE_DASHED,
+        MaskEffect::LegacyHighlightGlow => regular::SUN_DIM,
         MaskEffect::Vignette => regular::VIGNETTE,
     }
 }

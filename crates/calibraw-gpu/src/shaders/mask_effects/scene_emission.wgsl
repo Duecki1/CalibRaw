@@ -1,5 +1,5 @@
 // Scene emission: effects that light the scene from an area of the image rather
-// than from a point. A self-illuminating Glow and Neon's lines reach the same
+// than from a point. A Glowing Area and Neon's lines reach the same
 // receivers as the scene lights of scene_lights.wgsl: surfaces, Fog, Smoke and
 // Rain's mist and drops, and highlights on wet ground. Particles and other drawn
 // light join as further emitters.

@@ -101,6 +101,10 @@ pub(super) const MASK_TILT_SHIFT: ShaderSource = wgsl!("mask_effects/tilt_shift.
 pub(super) const MASK_BLUR: ShaderSource = wgsl!("mask_effects/blur.wgsl");
 pub(super) const MASK_EDGE_GLOW: ShaderSource = wgsl!("mask_effects/edge_glow.wgsl");
 pub(super) const MASK_GLOW: ShaderSource = wgsl!("mask_effects/glow.wgsl");
+pub(super) const MASK_STYLED_GLOW: ShaderSource = wgsl!("mask_effects/styled_glow.wgsl");
+pub(super) const MASK_LEGACY_HIGHLIGHT_GLOW: ShaderSource =
+    wgsl!("mask_effects/legacy/highlight_glow.wgsl");
+pub(super) const MASK_LEGACY_HALATION: ShaderSource = wgsl!("mask_effects/legacy/halation.wgsl");
 pub(super) const MASK_NEON: ShaderSource = wgsl!("mask_effects/neon.wgsl");
 pub(super) const MASK_PIXELATE: ShaderSource = wgsl!("mask_effects/pixelate.wgsl");
 pub(super) const MASK_LIGHT_RAYS: ShaderSource = wgsl!("mask_effects/light_rays.wgsl");
@@ -131,6 +135,7 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         MASK_BLUR,
         MASK_EDGE_GLOW,
         MASK_GLOW,
+        MASK_STYLED_GLOW,
         MASK_NEON,
         MASK_PIXELATE,
         MASK_LIGHT_RAYS,
@@ -144,6 +149,9 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         MASK_RAIN,
         MASK_WET_SURFACES,
         MASK_FILM_FINISH,
+        // Legacy effects (mask_effects/legacy/), replaced by rebuilt ones.
+        MASK_LEGACY_HIGHLIGHT_GLOW,
+        MASK_LEGACY_HALATION,
     ],
     Some(effect_wgsl::registry_wgsl)
 );

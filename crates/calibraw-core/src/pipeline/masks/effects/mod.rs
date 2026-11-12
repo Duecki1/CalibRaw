@@ -14,9 +14,9 @@ mod families;
 mod fog;
 mod glow;
 mod grain;
-mod halation;
 mod instances;
 mod lanes;
+mod legacy;
 mod lens_blur;
 mod light_rays;
 mod motion_blur;
@@ -30,6 +30,7 @@ mod relight;
 mod settings;
 mod sharpen;
 mod smoke;
+mod styled_glow;
 mod tilt_shift;
 mod vignette;
 mod wet_surfaces;
@@ -40,9 +41,10 @@ pub use families::{EffectFamily, EffectStyle};
 pub use fog::FogEffectSettings;
 pub use glow::GlowEffectSettings;
 pub use grain::GrainEffectSettings;
-pub use halation::HalationEffectSettings;
 pub use instances::{EffectInstances, MAX_EFFECT_INSTANCES};
 pub use lanes::{ColorLane, EffectLanes, EffectOption, Lane, LaneName, PackContext, OPTION_COUNT};
+pub use legacy::halation::HalationEffectSettings;
+pub use legacy::highlight_glow::LegacyHighlightGlowEffectSettings;
 pub use lens_blur::LensBlurEffectSettings;
 pub use light_rays::{LightRaySource, LightRaysEffectSettings};
 pub use motion_blur::MotionBlurEffectSettings;
@@ -55,9 +57,14 @@ pub use relight::{RelightEffectSettings, RelightLight};
 pub use settings::{EffectControl, EffectControls, EffectDetails, EffectSettings};
 pub use sharpen::SharpenEffectSettings;
 pub use smoke::SmokeEffectSettings;
+pub use styled_glow::{GlowStyle, StyledGlowEffectSettings};
 pub use tilt_shift::TiltShiftEffectSettings;
 pub use vignette::VignetteEffectSettings;
 pub use wet_surfaces::WetSurfacesEffectSettings;
+
+// The legacy effects' settings modules, by their settings fields, as the
+// registry names them.
+use legacy::{halation, highlight_glow as legacy_highlight_glow};
 
 use crate::pipeline::processing::{
     CAPTURE_SHARPEN_SUPPORT, EDGE_GLOW_SUPPORT, FOCUS_BLUR_SUPPORT, GLOW_SUPPORT,
@@ -385,11 +392,11 @@ mask_effects! {
         reach: Creative(EDGE_GLOW_SUPPORT),
     }
     Glow {
-        label: "Glow",
-        description: "Spread colored light from bright pixels. The mask selects the highlights that emit light; their glow can extend beyond the selection. A self-illuminating Glow also lights the scene around it; Scene light sets how much.",
+        label: "Glowing Area",
+        description: "Make the mask emit colored light, so it glows even over dark surfaces. The glow extends beyond the selection and lights the scene around it; Scene light sets how much.",
         shader_id: 2,
         category: GlowAndLight,
-        family: Glow,
+        family: GlowingArea,
         settings: glow: GlowEffectSettings,
         passes: [CreativeLight],
         reach: Glow(GLOW_SUPPORT),
@@ -468,8 +475,8 @@ mask_effects! {
         reach: Pixel,
     }
     Halation {
-        label: "Halation",
-        description: "Give bright highlights a warm film halo inside the mask. Nearby highlights outside the selection can cast a halo into it. Use Fullscreen for a whole-image finish.",
+        label: "Halation (legacy)",
+        description: "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.",
         shader_id: 14,
         category: FilmAndFinish,
         family: Halation,
@@ -509,6 +516,26 @@ mask_effects! {
         reach: Pixel,
         scene: [Geometry, Image],
     }
+    StyledGlow {
+        label: "Glow",
+        description: "Let light spread from the bright parts of the mask: Bloom glows around highlights, Diffusion softens across tones, Halation adds a film's red halo around bright edges. Range sets which tones glow, Spread how far. The glow can extend beyond the selection.",
+        shader_id: 20,
+        category: GlowAndLight,
+        family: Glow,
+        settings: styled_glow: StyledGlowEffectSettings,
+        passes: [CreativeLight],
+        reach: Glow(GLOW_SUPPORT),
+    }
+    LegacyHighlightGlow {
+        label: "Glow (legacy)",
+        description: "The earlier Glow, which bloomed bright pixels inside the mask. Replace it with the new Glow.",
+        shader_id: 21,
+        category: GlowAndLight,
+        family: LegacyHighlightGlow,
+        settings: legacy_highlight_glow: LegacyHighlightGlowEffectSettings,
+        passes: [CreativeLight],
+        reach: Glow(GLOW_SUPPORT),
+    }
 }
 
 impl MaskEffect {
@@ -521,6 +548,7 @@ impl MaskEffect {
         Self::RadialBlur,
         Self::Sharpen,
         Self::TiltShift,
+        Self::StyledGlow,
         Self::Glow,
         Self::LightRays,
         Self::Neon,
@@ -530,10 +558,11 @@ impl MaskEffect {
         Self::Fog,
         Self::Smoke,
         Self::Grain,
-        Self::Halation,
         Self::Vignette,
         Self::Rain,
         Self::WetSurfaces,
+        Self::Halation,
+        Self::LegacyHighlightGlow,
     ];
 
     /// Switched off: never offered and never rendered (2026-11-07; Rain and Wet
@@ -542,6 +571,29 @@ impl MaskEffect {
     /// never compiled either: Rain's crashes the Adreno 830 shader compiler.
     pub const fn is_disabled(self) -> bool {
         matches!(self, Self::Rain | Self::WetSurfaces)
+    }
+
+    /// Replaced by a rebuilt effect (`legacy/`): edits that hold it render it
+    /// as before, but it is never offered, and its card offers only to switch
+    /// it, remove it or replace it with [`Self::replacement`].
+    pub const fn is_legacy(self) -> bool {
+        matches!(self, Self::Halation | Self::LegacyHighlightGlow)
+    }
+
+    /// Whether pickers, quick-add buttons and Style controls offer it: neither
+    /// switched off nor legacy.
+    pub const fn is_offered(self) -> bool {
+        !self.is_disabled() && !self.is_legacy()
+    }
+
+    /// The style of the rebuilt effect that replaces a legacy effect, which
+    /// its card's Replace with new switches it to.
+    pub const fn replacement(self) -> Option<EffectStyle> {
+        match self {
+            Self::Halation => Some(EffectStyle::glow(GlowStyle::Halation)),
+            Self::LegacyHighlightGlow => Some(EffectStyle::glow(GlowStyle::Bloom)),
+            _ => None,
+        }
     }
 
     /// Available, but its results are not yet reliable enough to present as finished.

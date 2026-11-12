@@ -488,6 +488,11 @@ fn shared_constants_and_effect_ids_match_rust() {
         SCENE_EMISSION_SURFACE_GRID_LONG
     );
     assert_eq!(constant("MEDIUM_CELLS"), MEDIUM_CELLS);
+    // The Glow map's sums are sized from this.
+    assert_eq!(
+        constant("STYLED_GLOW_MAP_LONG"),
+        super::styled_glow::STYLED_GLOW_MAP_LONG
+    );
     assert_eq!(
         constant("SCENE_EMISSION_LIGHT_ROWS"),
         scene_emission_light_rows(

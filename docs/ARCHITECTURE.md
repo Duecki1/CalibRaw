@@ -333,6 +333,16 @@ placement and the bake, not on the rest of the edit, and each is rebuilt when an
 them changes. While a control is dragged the light bake is built in a cheaper tier and
 rebuilt in the full one afterwards.
 
+The Glow (`styled_glow.wgsl`, `pipeline/gpu/styled_glow.rs`) spreads light up to a
+quarter of the image, past any export halo. Its near octaves come from a pyramid each
+pipeline builds from its own creative input, within the halo; its wide ones from a
+full-image map of what each Glow slot emits, averaged over a grid of the whole image.
+A pipeline that renders the whole image rebuilds the map in its output stage whenever a
+Glow is active, and zoomed views share it (`share_styled_glow_map`); the fitted preview
+then renders before the crop. An export builds it in a prepass over every tile after
+the tone prepass (`begin_export_styled_glow`), running each tile up to the creative
+input. The effect uniforms tell the shader whether each part is ready.
+
 Rain and Wet Surfaces do not run inside the creative pass: `apply_wet_surfaces`
 runs before it and `apply_weather_air` after it, so their result does not depend on
 the order of their cards and edits without them run the same passes as before. Each

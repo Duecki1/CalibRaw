@@ -38,7 +38,7 @@ fn glow_stage_mix(stage: u32) -> f32 {
     }
 }
 
-// Normalized diffusion of self-illuminating Glow emission. Alpha is unused.
+// Normalized diffusion of Glowing Area emission. Alpha is unused.
 fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
     let center = textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0);
     let stage_mix = glow_stage_mix(stage);
@@ -60,7 +60,7 @@ fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
     return mix(center, sum / max(sum_weight, 1e-6), stage_mix);
 }
 
-// Adds the diffused halo of self-illuminating Glow masks.
+// Adds the diffused halo of Glowing Area masks.
 fn apply_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     if !mask_glow_self_illuminating_active() {
         return rgb;
@@ -230,6 +230,7 @@ fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
     rgb = apply_local_creative_mask_effect_nodes(pos, rgb);
     rgb = apply_glow(pos, rgb);
     rgb = apply_mask_glow_cores(pos, rgb);
+    rgb = apply_styled_glow(pos, rgb);
     rgb = apply_light_rays(pos, rgb);
     textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
 }

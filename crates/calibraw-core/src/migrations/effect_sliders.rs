@@ -12,11 +12,12 @@
 //!
 //! Components render with their own algorithms, so a migrated edit resembles
 //! the saved one rather than matching it. Glow keeps its amount and radius as
-//! a neutral highlight Glow; its threshold has no component equivalent.
+//! a neutral highlight Glow (`LegacyHighlightGlow`); its threshold has no
+//! component equivalent.
 
 use crate::pipeline::{
-    effect_params, EffectComponent, EffectSettings, GlowEffectSettings, GrainEffectSettings,
-    HalationEffectSettings, MaskEffect, MaskEffectSettings, VignetteEffectSettings,
+    effect_params, EffectComponent, EffectSettings, GrainEffectSettings, HalationEffectSettings,
+    LegacyHighlightGlowEffectSettings, MaskEffect, MaskEffectSettings, VignetteEffectSettings,
     MAX_EFFECT_COMPONENTS,
 };
 use crate::sidecar::EditState;
@@ -142,14 +143,14 @@ impl GlobalSliders {
         if self.glow_amount.abs() > ACTIVE_EPSILON {
             use effect_params::glow;
             components.push(component(
-                MaskEffect::Glow,
+                MaskEffect::LegacyHighlightGlow,
                 MaskEffectSettings {
-                    glow: GlowEffectSettings {
+                    legacy_highlight_glow: LegacyHighlightGlowEffectSettings {
                         amount: glow::AMOUNT.clamp(self.glow_amount),
                         radius: glow::RADIUS.clamp(self.glow_radius),
                         // The Effects-card Glow kept the colour of its highlights.
                         color: [1.0; 3],
-                        ..GlowEffectSettings::initial()
+                        ..LegacyHighlightGlowEffectSettings::initial()
                     },
                     ..MaskEffectSettings::default()
                 },
@@ -274,7 +275,7 @@ mod tests {
         assert_eq!(
             effects,
             [
-                MaskEffect::Glow,
+                MaskEffect::LegacyHighlightGlow,
                 MaskEffect::Halation,
                 MaskEffect::Grain,
                 MaskEffect::Vignette
@@ -286,8 +287,9 @@ mod tests {
             .iter()
             .all(|component| component.enabled && component.is_active()));
 
-        let glow = global_effect(&edits, MaskEffect::Glow).settings.glow;
-        assert!(!glow.self_illuminating);
+        let glow = global_effect(&edits, MaskEffect::LegacyHighlightGlow)
+            .settings
+            .legacy_highlight_glow;
         assert_eq!(
             (glow.amount, glow.radius, glow.color),
             (20.0, 70.0, [1.0; 3])

@@ -18,12 +18,13 @@ pub use effects::{
     effect_lanes, params as effect_params, BlurEffectSettings, ColorLane, EdgeGlowEffectSettings,
     EffectControl, EffectControls, EffectDetails, EffectFamily, EffectInstances, EffectLanes,
     EffectOption, EffectPass, EffectReach, EffectSettings, EffectSettingsVisitor, EffectStyle,
-    FogEffectSettings, GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, Lane,
-    LaneName, LensBlurEffectSettings, LightRaySource, LightRaysEffectSettings, MaskEffect,
-    MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings,
-    PackContext, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode,
-    RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneNeed, SceneNeeds,
-    SharpenEffectSettings, SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
+    FogEffectSettings, GlowEffectSettings, GlowStyle, GrainEffectSettings, HalationEffectSettings,
+    Lane, LaneName, LegacyHighlightGlowEffectSettings, LensBlurEffectSettings, LightRaySource,
+    LightRaysEffectSettings, MaskEffect, MaskEffectCategory, MaskEffectSettings,
+    MotionBlurEffectSettings, NeonEffectSettings, PackContext, PixelateEffectSettings,
+    RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings, ReachGroup,
+    RelightEffectSettings, RelightLight, SceneNeed, SceneNeeds, SharpenEffectSettings,
+    SmokeEffectSettings, StyledGlowEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
     WetSurfacesEffectSettings, MAX_EFFECT_INSTANCES, OPTION_COUNT,
 };
 
@@ -432,6 +433,12 @@ impl MaskStack {
             .iter()
             .flat_map(|mask| &mask.components)
             .any(|component| component.kind == MaskKind::Person)
+    }
+
+    /// Whether an active global effect, or an active effect of an enabled,
+    /// visible mask, is `effect`.
+    pub fn has_active(&self, effect: MaskEffect) -> bool {
+        self.has_active_effect(|component| component.effect == effect)
     }
 
     /// An active effect asks for scene depth

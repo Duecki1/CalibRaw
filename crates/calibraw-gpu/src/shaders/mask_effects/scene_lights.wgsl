@@ -5,7 +5,7 @@
 // Emitters. `scene_light_at` turns an effect slot into a light: one of
 // Relight's point lights, and a Light Rays source as a point light at the
 // farthest surface. A new emitter is one more case there. Effects that emit
-// over an area of the image (a self-illuminating Glow, Neon) are lights of
+// over an area of the image (a Glowing Area, Neon) are lights of
 // scene_emission.wgsl, which receivers add through the same functions.
 // Receivers loop over the effect slots (`Common::mask_slot_count`), skip lights
 // that do not emit and weight each light by `scene_light_coverage`. Fog, Smoke

@@ -1,7 +1,8 @@
 //! `GpuParams`: edit parameters packed into the uniform layouts the WGSL stages read.
 
+use super::styled_glow::{is_styled_glow, styled_glow_near_top};
 use super::*;
-use crate::pipeline::effect_lanes::{glow, light_rays, neon, pixelate, relight};
+use crate::pipeline::effect_lanes::{glow, light_rays, neon, pixelate, relight, styled_glow};
 use crate::pipeline::{EffectOption, EffectPass, Lane};
 
 #[repr(C)]
@@ -234,7 +235,9 @@ pub(super) struct EffectsUniforms {
     pub(super) presence: [f32; 4],
     // Sharpening amount, radius, detail, masking.
     pub(super) sharpen: [f32; 4],
-    // Radius of the shared Glow diffusion, reserved, reserved, reserved.
+    // Radius of the shared Glow diffusion; then for the Glow with styles, 1
+    // when its near pyramid and when its full-image map are ready to be read
+    // (`effects_for_upload`); reserved.
     pub(super) glow_diffusion: [f32; 4],
     // The frame and calibration of Vignette effects: the output width and height, two reserved,
     // then the rows of the homography from normalized source to output position (0–1 across
@@ -405,10 +408,10 @@ impl GpuParams {
     }
 }
 
-/// An enabled Glow slot that emits into the shared Glow diffusion. Mirrors
-/// `mask_glow_self_illuminating` in `mask_effects/glow.wgsl`.
+/// An enabled Glowing Area slot, which emits into the shared Glow diffusion.
+/// Mirrors `mask_glow_self_illuminating_active` in `mask_effects/glow.wgsl`.
 pub(super) fn is_self_illuminating_glow(mask: &MaskData) -> bool {
-    mask.applies(MaskEffect::Glow) && mask.lane(glow::SELF_ILLUMINATING) > 0.5
+    mask.applies(MaskEffect::Glow)
 }
 
 /// A Glow slot that lights the scene. Mirrors `mask_glow_lights_scene` in
@@ -710,6 +713,20 @@ impl GpuParams {
 
     /// The scene and tone uniforms, with the LUT switched off when the
     /// pipeline could not upload it.
+    /// The effect uniforms as uploaded: whether the Glow's near pyramid and
+    /// full-image map are ready, which the pipeline knows once it has
+    /// allocated them (`prepare_styled_glow`).
+    pub(super) fn effects_for_upload(
+        &self,
+        styled_glow_near: bool,
+        styled_glow_map: bool,
+    ) -> EffectsUniforms {
+        let mut effects = self.effects;
+        effects.glow_diffusion[1] = f32::from(u8::from(styled_glow_near));
+        effects.glow_diffusion[2] = f32::from(u8::from(styled_glow_map));
+        effects
+    }
+
     pub(super) fn scene_tone_for_upload(&self, look_lut_uploaded: bool) -> SceneToneUniforms {
         let mut scene_tone = self.scene_tone;
         if !look_lut_uploaded {
@@ -900,6 +917,38 @@ impl GpuParams {
 
     pub(super) fn needs_glow_passes(&self) -> bool {
         self.mask_slots().iter().any(is_self_illuminating_glow)
+    }
+
+    /// The Glow-with-styles slots, each a layer of its pyramids
+    /// (`styled_glow`).
+    pub(super) fn styled_glow_slots(&self) -> usize {
+        self.mask_slots()
+            .iter()
+            .filter(|mask| is_styled_glow(mask))
+            .count()
+    }
+
+    /// Whether a Glow's spread reaches past the near pyramid at this
+    /// pipeline's resolution, so it reads the full-image map, which an export
+    /// then builds in a prepass. The near pyramid's reach is a share of the
+    /// image that shrinks as the resolution grows.
+    pub(super) fn needs_styled_glow_map(&self) -> bool {
+        let short_edge = self.camera.full_width.min(self.camera.full_height);
+        let near_top = styled_glow_near_top(short_edge);
+        self.mask_slots()
+            .iter()
+            .filter(|mask| is_styled_glow(mask))
+            .any(|mask| mask.lane(styled_glow::WIDEST) > near_top)
+    }
+
+    /// Whether this pipeline renders the whole image rather than a crop or an
+    /// export tile.
+    pub(super) fn renders_whole_image(&self) -> bool {
+        let camera = &self.camera;
+        camera.tile_origin_x == 0
+            && camera.tile_origin_y == 0
+            && camera.width == camera.full_width
+            && camera.height == camera.full_height
     }
 
     /// Whether an active Pixelate effect reads the block cache. Mirrors

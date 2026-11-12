@@ -42,6 +42,10 @@
 //! - Every reader before schema 5 ignores the card switches and would show
 //!   and save a card that is off as on. Edits with a card off are written
 //!   with schema 5 too; presets never hold switch states.
+//! - Readers before the Glow with styles cannot decode it or the legacy
+//!   highlight Glow it replaced (`highlight_glow`). Edits with either are
+//!   written with the current schema too. A Glowing Area is written as the
+//!   Glow those readers know, without Self-illuminating, which they read as on.
 
 use super::effect_sliders::GlobalSliders;
 use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskRgbImage};
@@ -117,7 +121,8 @@ pub(crate) fn serialize_color_range<S: Serializer>(
 /// v1.2 can decode them, [`V2_SCHEMA_VERSION`] when readers up to v1.3 can,
 /// [`V3_SCHEMA_VERSION`] when readers up to v1.4 can, [`V4_SCHEMA_VERSION`]
 /// when readers of the 8-bit depth map can, otherwise `current`: for scene
-/// depth, for Relight's and Fog's scene controls and for cards switched off.
+/// depth, for Relight's and Fog's scene controls, for cards switched off and
+/// for the Glow with styles and the legacy highlight Glow.
 pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     let masks = &edits.masks;
     let uses_effect = |effects: &[MaskEffect]| {
@@ -138,7 +143,12 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
             .as_ref()
             .is_some_and(|refinement| !refinement.enabled);
     if masks.scene_depth.is_some()
-        || uses_effect(&[MaskEffect::Relight, MaskEffect::Fog])
+        || uses_effect(&[
+            MaskEffect::Relight,
+            MaskEffect::Fog,
+            MaskEffect::StyledGlow,
+            MaskEffect::LegacyHighlightGlow,
+        ])
         || cards_off
     {
         return current;

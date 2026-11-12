@@ -237,7 +237,7 @@ impl Sidebar {
         moduwu_design::section_separator(ui);
         let added_effect = mask_effects::add_effect_controls(
             ui,
-            &[MaskEffect::Sharpen, MaskEffect::Halation],
+            &[MaskEffect::Sharpen],
             effect_components,
             mask_effects::PhotoTiles::HIDDEN,
         )
