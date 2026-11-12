@@ -53,6 +53,7 @@ impl CalibRawApp {
             geometry: self.develop.geometry.sanitized(),
             camera_profile,
             look_lut: self.develop.look_lut.clone(),
+            camera_look: self.develop.camera_look.clone(),
             subject_refinement: (!masks.subject_refinement.is_empty())
                 .then(|| masks.subject_refinement.clone()),
             masks,

@@ -9,6 +9,7 @@
 //! render the hovered LUT once its table is read, and saved edits, history
 //! and export never contain it.
 use super::*;
+use crate::app::camera_match::CAMERA_MATCH_CARD_TITLE;
 use crate::app::hover_preview::HoverPreview;
 use crate::app::preview_visibility::PreviewVisibility;
 use crate::i18n::{tr, tr_fmt};
@@ -136,15 +137,22 @@ impl LutState {
     }
 }
 
-/// Whether both render the same LUT at the same amount.
+/// Whether both render the same LUT at the same amount and exposure.
 fn same_look(left: Option<&ResolvedLook>, right: Option<&ResolvedLook>) -> bool {
     match (left, right) {
         (None, None) => true,
         (Some(left), Some(right)) => {
-            Arc::ptr_eq(&left.lut, &right.lut) && left.amount == right.amount
+            Arc::ptr_eq(&left.lut, &right.lut)
+                && left.amount == right.amount
+                && left.exposure_ev == right.exposure_ev
         }
         _ => false,
     }
+}
+
+/// The scene exposure offset a look applies, 0 without one.
+fn look_exposure(look: Option<&ResolvedLook>) -> f32 {
+    look.map_or(0.0, |look| look.exposure_ev)
 }
 
 /// The notice for a LUT the library does not hold.
@@ -177,22 +185,24 @@ pub(in crate::app) fn resolve_look_for_export(
                 &[("name", &look.name), ("error", &error)],
             ),
         })?;
-    Ok(ResolvedLook {
-        lut,
-        amount: look.amount,
-    })
+    Ok(ResolvedLook::creative(lut, look.amount))
 }
 
 impl CalibRawApp {
-    /// The edit's LUT for an export of the open photo.
+    /// The edit's looks for an export of the open photo: its camera look
+    /// and its LUT, which must be in the library.
     pub(in crate::app) fn look_for_export(&self) -> Result<Option<ResolvedLook>, String> {
-        let Some(look) = &self.develop.look_lut else {
-            return Ok(None);
+        let creative = match &self.develop.look_lut {
+            None => None,
+            Some(look) => match self.creative_look() {
+                Some(resolved) => Some(resolved),
+                None => Some(resolve_look_for_export(self.luts.store().as_ref(), look)?),
+            },
         };
-        if let Some(resolved) = self.resolved_look() {
-            return Ok(Some(resolved));
-        }
-        resolve_look_for_export(self.luts.store().as_ref(), look).map(Some)
+        Ok(ResolvedLook::of_edit(
+            creative,
+            self.develop.camera_look.as_ref(),
+        ))
     }
 
     /// The override `choice` describes, with the preset and LUT it names
@@ -350,25 +360,27 @@ impl CalibRawApp {
     }
 
     /// The edit's LUT at its amount, once its table is read.
-    pub(crate) fn resolved_look(&self) -> Option<ResolvedLook> {
+    fn creative_look(&self) -> Option<ResolvedLook> {
         let look = self.develop.look_lut.as_ref()?;
         let lut = self.develop.look_lut_table.clone()?;
-        Some(ResolvedLook {
-            lut,
-            amount: look.amount,
-        })
+        Some(ResolvedLook::creative(lut, look.amount))
     }
 
-    /// The LUT the edited previews render: a hovered LUT once its table is
-    /// read, otherwise the edit's, unless the LUT card's preview eye hides it.
+    /// The looks the edited previews render: the camera look unless the
+    /// Camera match card's preview eye hides it, then a hovered LUT once its
+    /// table is read, otherwise the edit's, unless the LUT card's preview
+    /// eye hides it.
     pub(in crate::app) fn preview_look(&self) -> Option<ResolvedLook> {
-        if let Some(hovered) = self.hovered_look() {
-            return hovered;
-        }
-        if !PreviewVisibility::globally_visible(&self.egui_ctx, LOOK_LUT_CARD_TITLE) {
-            return None;
-        }
-        self.resolved_look()
+        let creative = match self.hovered_look() {
+            Some(hovered) => hovered,
+            None => PreviewVisibility::globally_visible(&self.egui_ctx, LOOK_LUT_CARD_TITLE)
+                .then(|| self.creative_look())
+                .flatten(),
+        };
+        let camera = self.develop.camera_look.as_ref().filter(|_| {
+            PreviewVisibility::globally_visible(&self.egui_ctx, CAMERA_MATCH_CARD_TITLE)
+        });
+        ResolvedLook::of_edit(creative, camera)
     }
 
     /// The look of the hovered row, at the edit's amount: `Some(None)` for
@@ -385,7 +397,7 @@ impl CalibRawApp {
             .look_lut
             .as_ref()
             .map_or(LookLut::DEFAULT_AMOUNT, |look| look.amount);
-        Some(Some(ResolvedLook { lut, amount }))
+        Some(Some(ResolvedLook::creative(lut, amount)))
     }
 
     /// Starts, switches or ends the LUT hover preview. Runs once per frame
@@ -447,15 +459,22 @@ impl CalibRawApp {
         }
     }
 
-    /// Brings the previews' LUT up to date, rendering the Output stage again
-    /// when it changed.
+    /// Brings the previews' looks up to date, rendering the Output stage
+    /// again when they changed, or from the Tone stage, which measures the
+    /// profiled scene, when a camera look's exposure changed.
     pub(in crate::app) fn sync_preview_look(&mut self) {
         let look = self.preview_look();
         if same_look(look.as_ref(), self.develop.target_look.as_ref()) {
             return;
         }
+        let exposure_changed =
+            look_exposure(look.as_ref()) != look_exposure(self.develop.target_look.as_ref());
         self.develop.target_look = look;
-        self.queue_preview_processing(ProcessingStage::Output);
+        self.queue_preview_processing(if exposure_changed {
+            ProcessingStage::Tone
+        } else {
+            ProcessingStage::Output
+        });
     }
 
     /// Asks for `.cube` files to add to the library. With `apply`, the first

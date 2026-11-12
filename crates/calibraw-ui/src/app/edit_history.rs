@@ -4,6 +4,7 @@ use super::{
 };
 use crate::i18n::tr;
 use crate::luts::LookLut;
+use crate::pipeline::camera_look::CameraLook;
 use crate::pipeline::{
     ExposureParams, GeometryTransform, ManualLensCorrection, MaskGeometry, MaskStack,
     ProcessingStage, RemoveEditState,
@@ -113,6 +114,29 @@ impl MaskSelection {
     }
 }
 
+/// The looks an edit renders through the look-LUT stage: its LUT and its
+/// camera look.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct EditLooks<'a> {
+    lut: Option<&'a LookLut>,
+    camera: Option<&'a CameraLook>,
+}
+
+impl<'a> EditLooks<'a> {
+    /// An edit without a LUT or camera look.
+    pub(super) const NONE: EditLooks<'static> = EditLooks {
+        lut: None,
+        camera: None,
+    };
+
+    pub(super) fn of(develop: &'a super::DevelopState) -> Self {
+        Self {
+            lut: develop.look_lut.as_ref(),
+            camera: develop.camera_look.as_ref(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct EditSnapshot {
     exposure: ExposureParams,
@@ -121,6 +145,7 @@ struct EditSnapshot {
     mask_selection: MaskSelection,
     lens: LensEditState,
     look_lut: Option<LookLut>,
+    camera_look: Option<CameraLook>,
     remove: Arc<RemoveEditState>,
 }
 
@@ -130,7 +155,7 @@ impl EditSnapshot {
         geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
-        look_lut: Option<&LookLut>,
+        looks: EditLooks<'_>,
     ) -> Self {
         let mut contents = masks.clone();
         contents.selected_mask = None;
@@ -142,7 +167,8 @@ impl EditSnapshot {
             mask_selection: MaskSelection::capture(masks, &contents),
             masks: contents,
             lens: LensEditState::capture(lens),
-            look_lut: look_lut.cloned(),
+            look_lut: looks.lut.cloned(),
+            camera_look: looks.camera.cloned(),
             remove: Arc::new(RemoveEditState::default()),
         }
     }
@@ -153,7 +179,7 @@ impl EditSnapshot {
         geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
-        look_lut: Option<&LookLut>,
+        looks: EditLooks<'_>,
         mask_contents_match: bool,
     ) -> Self {
         let contents = if mask_contents_match {
@@ -170,8 +196,16 @@ impl EditSnapshot {
             mask_selection: MaskSelection::capture(masks, &contents),
             masks: contents,
             lens: LensEditState::capture(lens),
-            look_lut: look_lut.cloned(),
+            look_lut: looks.lut.cloned(),
+            camera_look: looks.camera.cloned(),
             remove: Arc::clone(&self.remove),
+        }
+    }
+
+    fn looks(&self) -> EditLooks<'_> {
+        EditLooks {
+            lut: self.look_lut.as_ref(),
+            camera: self.camera_look.as_ref(),
         }
     }
 
@@ -204,12 +238,12 @@ impl EditHistory {
         geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
-        look_lut: Option<&LookLut>,
+        looks: EditLooks<'_>,
     ) -> Self {
         Self {
             undo: VecDeque::new(),
             redo: VecDeque::new(),
-            current: EditSnapshot::capture(exposure, geometry, masks, lens, look_lut),
+            current: EditSnapshot::capture(exposure, geometry, masks, lens, looks),
             interaction_pending: false,
             mask_interaction_pending: false,
             change_observed: false,
@@ -232,12 +266,12 @@ impl EditHistory {
         geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
-        look_lut: Option<&LookLut>,
+        looks: EditLooks<'_>,
         remove: &Arc<RemoveEditState>,
     ) {
         self.undo.clear();
         self.redo.clear();
-        self.current = EditSnapshot::capture(exposure, geometry, masks, lens, look_lut);
+        self.current = EditSnapshot::capture(exposure, geometry, masks, lens, looks);
         self.current.remove = Arc::clone(remove);
         self.interaction_pending = false;
         self.mask_interaction_pending = false;
@@ -269,7 +303,7 @@ impl EditHistory {
         geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
-        look_lut: Option<&LookLut>,
+        looks: EditLooks<'_>,
         interaction_active: bool,
     ) {
         self.current.remember_selection(masks);
@@ -287,7 +321,7 @@ impl EditHistory {
         if !self.interaction_pending || interaction_active {
             return;
         }
-        self.commit_current_state(exposure, geometry, masks, lens, look_lut);
+        self.commit_current_state(exposure, geometry, masks, lens, looks);
     }
 
     fn commit_current_state(
@@ -296,7 +330,7 @@ impl EditHistory {
         geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
-        look_lut: Option<&LookLut>,
+        looks: EditLooks<'_>,
     ) {
         let mask_change_pending = self.mask_interaction_pending || self.mask_change_observed;
         self.change_observed = false;
@@ -317,7 +351,7 @@ impl EditHistory {
             && self.current.geometry == geometry
             && mask_contents_match
             && self.current.lens.matches(lens)
-            && self.current.look_lut.as_ref() == look_lut
+            && self.current.looks() == looks
         {
             self.current.remember_selection(masks);
             self.interaction_pending = false;
@@ -330,7 +364,7 @@ impl EditHistory {
             geometry,
             masks,
             lens,
-            look_lut,
+            looks,
             mask_contents_match,
         );
         let previous = std::mem::replace(&mut self.current, next);
@@ -347,16 +381,16 @@ impl EditHistory {
         geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
-        look_lut: Option<&LookLut>,
+        looks: EditLooks<'_>,
         remove: &Arc<RemoveEditState>,
     ) {
-        self.commit_current_state(exposure, geometry, masks, lens, look_lut);
+        self.commit_current_state(exposure, geometry, masks, lens, looks);
         if Arc::ptr_eq(&self.current.remove, remove) {
             return;
         }
         let mut next = self
             .current
-            .capture_successor(exposure, geometry, masks, lens, look_lut, true);
+            .capture_successor(exposure, geometry, masks, lens, looks, true);
         next.remove = Arc::clone(remove);
         let previous = std::mem::replace(&mut self.current, next);
         Self::push_bounded(&mut self.undo, previous);
@@ -386,9 +420,9 @@ impl EditHistory {
         geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
-        look_lut: Option<&LookLut>,
+        looks: EditLooks<'_>,
     ) -> Option<(EditSnapshot, bool, bool)> {
-        self.commit_current_state(exposure, geometry, masks, lens, look_lut);
+        self.commit_current_state(exposure, geometry, masks, lens, looks);
         let target = self.undo.pop_back()?;
         let masks_changed = !Arc::ptr_eq(&target.masks, &self.current.masks);
         let remove_changed = !Arc::ptr_eq(&target.remove, &self.current.remove);
@@ -404,9 +438,9 @@ impl EditHistory {
         geometry: GeometryTransform,
         masks: &MaskStack,
         lens: &LensCorrectionState,
-        look_lut: Option<&LookLut>,
+        looks: EditLooks<'_>,
     ) -> Option<(EditSnapshot, bool, bool)> {
-        self.commit_current_state(exposure, geometry, masks, lens, look_lut);
+        self.commit_current_state(exposure, geometry, masks, lens, looks);
         let target = self.redo.pop_back()?;
         let masks_changed = !Arc::ptr_eq(&target.masks, &self.current.masks);
         let remove_changed = !Arc::ptr_eq(&target.remove, &self.current.remove);
@@ -440,7 +474,7 @@ impl CalibRawApp {
             self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
-            self.develop.look_lut.as_ref(),
+            EditLooks::of(&self.develop),
             &self.inpaint.edits,
         );
         self.note_mask_source_changed();
@@ -486,7 +520,7 @@ impl CalibRawApp {
             self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
-            self.develop.look_lut.as_ref(),
+            EditLooks::of(&self.develop),
             &self.inpaint.edits,
         );
     }
@@ -498,7 +532,7 @@ impl CalibRawApp {
             self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
-            self.develop.look_lut.as_ref(),
+            EditLooks::of(&self.develop),
             interaction_active,
         );
     }
@@ -510,7 +544,7 @@ impl CalibRawApp {
             self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
-            self.develop.look_lut.as_ref(),
+            EditLooks::of(&self.develop),
             false,
         );
     }
@@ -530,7 +564,7 @@ impl CalibRawApp {
             self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
-            self.develop.look_lut.as_ref(),
+            EditLooks::of(&self.develop),
         );
         if let Some((snapshot, masks_changed, remove_changed)) = snapshot {
             self.apply_edit_snapshot(snapshot, masks_changed, remove_changed);
@@ -545,7 +579,7 @@ impl CalibRawApp {
             self.develop.geometry,
             &self.masks.stack,
             &self.develop.lens_correction,
-            self.develop.look_lut.as_ref(),
+            EditLooks::of(&self.develop),
         );
         if let Some((snapshot, masks_changed, remove_changed)) = snapshot {
             self.apply_edit_snapshot(snapshot, masks_changed, remove_changed);
@@ -588,6 +622,7 @@ impl CalibRawApp {
     ) {
         let lens_changed = !snapshot.lens.matches(&self.develop.lens_correction);
         let look_lut_changed = snapshot.look_lut != self.develop.look_lut;
+        let camera_look_changed = snapshot.camera_look != self.develop.camera_look;
         let geometry_changed = snapshot.geometry != self.develop.geometry;
         let ai_denoise_changed =
             snapshot.exposure.ai_denoise_enabled != self.develop.exposure.ai_denoise_enabled;
@@ -624,6 +659,9 @@ impl CalibRawApp {
         snapshot.lens.apply_to(&mut self.develop.lens_correction);
         if look_lut_changed {
             self.install_look_lut(snapshot.look_lut.clone());
+        }
+        if camera_look_changed {
+            self.install_camera_look(snapshot.camera_look.clone());
         }
         if geometry_changed {
             self.develop.geometry = snapshot.geometry;

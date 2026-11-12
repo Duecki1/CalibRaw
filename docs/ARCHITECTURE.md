@@ -13,7 +13,7 @@ background work follows. Update it in the change that alters a boundary.
 | `calibraw-ai` | AI configuration and device capabilities (`config`), ONNX Runtime loading, its WebGPU plugin and the automatic packages (`runtime/`), where sessions run (GPU if they fit in free memory, else CPU), CPU memory admission, CPU fallback, GPU failure handling and platform and provider quirks (`placement/`), the model table, downloads and installation (`registry/`), the session slot (`slot`), the job worker (`jobs`), model-specific pre/postprocessing (`models/`) | `calibraw-core`, `calibraw-gpu` (denoise/remove render paths) | UI crates, egui/eframe |
 | `calibraw-ffi` | C ABI and the Android JNI bridge: storage, pickers, export publishing, notifications, replay encoder | `calibraw-core` (sidecar types), jni, android-activity | processing crates, UI crates, egui/eframe |
 | `calibraw-ui` (lib `calibraw`) | Application coordination (`app/`), views (`ui/`), presentation-independent services (`services/`), preview presentation, platform capabilities and OS services (`platform/`) | all crates above, eframe/egui, `moduwu-design`; in `platform/`, the OS crates (`calibraw-ffi`, `rfd`, `trash`, `zbus`, `windows-sys`, `objc2` AppKit bindings, Discord IPC, loggers) | — |
-| `calibraw-cli` | Headless develop export and white-balance diagnostics | `calibraw-core`, `calibraw-gpu` | UI crates, egui/eframe |
+| `calibraw-cli` | Headless develop export, white-balance and Camera match diagnostics | `calibraw-core`, `calibraw-gpu` | UI crates, egui/eframe |
 | `xtask` | Repository tooling: architecture checks, line counts, baselines, Android build helpers, icons | std and tooling crates | product crates |
 | `moduwu-design` (separate repository) | Reusable egui tokens, themes, controls, frames and responsive helpers | egui | any CalibRaw crate |
 
@@ -85,6 +85,16 @@ change that establishes a boundary, not in advance.
   `DecodedRawCache` entry therefore serves every camera-profile request; only
   a decode with the embedded matrix alone, which did not read the RAW's
   calibration signature, cannot serve requests that match DCPs.
+- Camera match (`pipeline/camera_look/` in `calibraw-core`) is a look fitted
+  so the canonical render matches the RAW's embedded JPEG: a scene exposure
+  offset, a tone curve, a matrix and a residual grid. It renders through the
+  look-LUT stage like a creative LUT and needs no pass of its own: the curve,
+  matrix and residual are baked into a 33³ table (composed on the CPU with the
+  edit's LUT when there is one, `CameraLook::resolved`), and the offset rides
+  on `ResolvedLook::exposure_ev`, added where the profile's default exposure
+  is packed. Fitting renders the photo, so callers pass a render closure and
+  the fit stays in `calibraw-core`. The look belongs to the photo: presets
+  and pastes never carry it, and a reset keeps it.
 - Calibration (the hue and saturation of the primaries) is folded into the
   camera transform whenever a stage's camera uniforms are packed
   (`pack_camera_params`), after white balance, so like a camera profile it
@@ -136,6 +146,7 @@ job records the value it started with.
 | Job | Queue | Cancellation | Document change | Failure / disconnect |
 |---|---|---|---|---|
 | Document load | single receiver; a new load replaces it | the replaced receiver is dropped and its result discarded | the load installs the new document and bumps `document_generation` | notice or unsupported-file dialog; a disconnected worker is reported |
+| Camera match fit | runs inside the document load for a photo without a sidecar while the setting is on, and inside a camera-profile reload of a photo with a look; by hand, in the `ForegroundOperation` slot | the load's own; by hand, the slot's `AtomicBool` is not checked mid-fit (under a second on desktop) and a cancelled result is discarded | a fit inside the load installs with it, before the new-photo preset and before the start settles; by hand, applied only if `document_id` equals the current `document_generation` | inside the load, no look and a diagnostics line; by hand, error dialog |
 | Neighbour prefetch (desktop) | one thread after each interactive load; prepares the library neighbours into `DecodedRawCache` | `AtomicBool` checked between steps; a new load or a profile-settings change cancels it | results only fill caches; an open of a photo being prefetched waits for that decode | ignored; the open reports its own failure |
 | Preview rebuild / detail | single receiver each; latest request wins | replaced receiver discards the stale result; `PreviewState::revision` rejects outdated detail renders. The zoomed crop's worker (`DetailRebuild`) also holds an `AtomicBool`, set when the view moves (`note_preview_motion`): it checks it every few rows it resamples (`build_region_proxy_until`) and ends with `Cancelled`; the next crop starts once that is reported and the view has settled. A finished crop is not installed while a drag is followed by the reduced preview | receivers cleared with the preview (`drop_detail_rebuild` also sets the flag) | disconnect clears the pending state |
 | Reduced preview warm-up | one receiver in `InteractiveState`, started when the editor is quiet and the GPU is slow | none; short | the result is used only while its source is still the fitted proxy or the zoomed crop's raw (`Arc::ptr_eq`); the graph is dropped when that changes (the fitted proxy, or the zoomed crop's raw), when an export starts, or when the GPU is no longer slow | a dead worker is an error dialog; a graph the budget cannot hold is skipped with a diagnostics line; neither is retried for that proxy |
@@ -177,6 +188,7 @@ GPU readbacks wait on one-slot channels.
 | out-of-memory records | `calibraw_ai::placement::out_of_memory` | AI jobs, also under the model runtime slot; Settings when GPU AI is switched | which models ran out of GPU memory and when they may retry; a leaf lock, never held while a session is created or run |
 | AI settings (`RwLock`) | `calibraw_ai::config` | the UI thread writes at startup and on Settings changes; AI jobs read | runtime source and model root; never held across a load or download |
 | effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates the image-light map, haze map, contour grid or scene emission textures, and the scene bake and its light bake (`calibraw_gpu::pipeline::gpu::scene`, shared by `Arc` with views of part of the image), the first time an effect reads them, and the LUT texture when a LUT is uploaded, and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
+| camera look bakes | each fitted `CameraLook`, shared by its clones | the UI thread, document loads, exports and thumbnail workers | the baked table (`OnceLock`) and the last composition with a creative LUT; a leaf lock, never held while a table is computed |
 | LUT cache | `calibraw_core::luts::LutStore`, shared by its clones | the UI thread, document loads, batch export and thumbnail workers | the recently parsed LUTs; a leaf lock, never held while a file is read or parsed |
 | `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
 | Lensfun lock (`DATABASE`) | `calibraw_core::pipeline::lensfun` | every lens correction and lens catalog | Lensfun keeps unsynchronized global state, so one thread at a time loads, looks up and configures; the database loads once and stays; a configured correction's pixel passes run without it. A leaf lock |

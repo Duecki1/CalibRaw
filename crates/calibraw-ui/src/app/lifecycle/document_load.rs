@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::camera_look::CameraLook;
 use crate::pipeline::FilmSettlement;
 use crate::sidecar::SidecarStart;
 use std::sync::RwLock;
@@ -89,6 +90,8 @@ pub(super) struct DocumentLoadJob {
     pub(super) camera_profiles: CameraProfileSettings,
     /// Reads the edit's LUT; `None` without a LUT library.
     pub(super) luts: Option<crate::luts::LutStore>,
+    /// Fit a camera look to photos that open without a sidecar.
+    pub(super) camera_match: bool,
     pub(super) automatic_lens: AutomaticLensCorrection,
     pub(super) ai_denoise_result_path: Option<PathBuf>,
     pub(super) people_analysis_path: Option<PathBuf>,
@@ -117,6 +120,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         fitted_viewport_pixels,
         camera_profiles,
         luts,
+        camera_match,
         automatic_lens,
         ai_denoise_result_path,
         people_analysis_path,
@@ -181,6 +185,22 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         )),
     }
     let source_path = source.persistent_path();
+    // Photos that already have a sidecar are never matched automatically;
+    // an unreadable one is replaced on save, but its edits were not this
+    // version's to decide.
+    let automatic_camera_match =
+        camera_match && reload_edits.is_none() && matches!(loaded_sidecar, Ok(None));
+    let camera_look_refit = reload_edits
+        .as_ref()
+        .is_some_and(|edits| edits.camera_look.is_some());
+    // The embedded preview is read while the file is: for a fit as the photo
+    // opens, and for one by hand later when the file will be gone.
+    let camera_preview = decoded
+        .as_ref()
+        .ok()
+        .filter(|decoded| !decoded.original.is_display_referred_raster())
+        .filter(|_| automatic_camera_match || camera_look_refit || source_path.is_none())
+        .and_then(|_| crate::app::camera_match::read_camera_preview(&source.path));
     if let Some(copy) = source.disposable_copy() {
         remove_temporary_raw(copy);
     }
@@ -215,6 +235,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             use_adaptive_detail_defaults,
             starts_unedited,
             start,
+            mut camera_look,
         } = edits;
         if use_adaptive_detail_defaults {
             original_raw.apply_adaptive_detail_defaults(&mut exposure);
@@ -267,12 +288,11 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 }
             }
         });
-        let look = look_lut
+        let creative_look = look_lut
             .as_ref()
             .zip(look_lut_table.as_ref())
-            .map(|(look, table)| crate::luts::ResolvedLook {
-                lut: Arc::clone(table),
-                amount: look.amount,
+            .map(|(look, table)| {
+                crate::luts::ResolvedLook::creative(Arc::clone(table), look.amount)
             });
 
         let lens_state_saved = saved_lens.is_some();
@@ -325,6 +345,13 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         let people_analysis =
             load_people_analysis(people_analysis_path.as_deref(), &masks, &full_raw, &remove);
         prepare_highlight_analysis(&full_raw, &exposure);
+        let camera_fit = camera_preview.as_ref().filter(|_| {
+            (automatic_camera_match && starts_unedited || camera_look_refit)
+                && crate::app::camera_match::camera_match_applies(&full_raw, &exposure)
+        });
+        if camera_fit.is_some() {
+            prepare_highlight_analysis(&full_raw, &exposure.source_reference());
+        }
 
         let preview_raw = build_preview_proxy(
             &full_raw,
@@ -333,9 +360,13 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             geometry,
             masks.masks.len(),
         );
+        let initial_look = crate::luts::ResolvedLook::of_edit(
+            creative_look.clone(),
+            camera_look.as_ref().filter(|_| camera_fit.is_none()),
+        );
         let initial_params = GpuParams::new(&exposure, &masks, &preview_raw)
             .with_vignette_geometry(geometry)
-            .with_look_lut(look.as_ref());
+            .with_look_lut(initial_look.as_ref());
         let pipeline = create_preview_pipeline(
             &device,
             &queue,
@@ -344,6 +375,34 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             programs,
             masks.masks.len(),
         )?;
+        if let Some(preview) = camera_fit {
+            let fit_started = Instant::now();
+            let fitted = crate::app::camera_match::automatic_look(
+                &label,
+                crate::app::camera_match::fit_on_pipeline(
+                    &device,
+                    &queue,
+                    &pipeline,
+                    &preview_raw,
+                    &exposure,
+                    preview,
+                ),
+            );
+            calibraw_core::diagnostics::record(format!(
+                "Camera match finished in {:.3}s",
+                fit_started.elapsed().as_secs_f64()
+            ));
+            // A refit keeps the amount the photo had; a rejected one leaves
+            // no look, as a look of the old profile would no longer match.
+            let amount = camera_look.as_ref().map(CameraLook::amount);
+            camera_look = fitted.map(|mut look| {
+                if let Some(amount) = amount {
+                    look.set_amount(amount);
+                }
+                look
+            });
+        }
+        let look = crate::luts::ResolvedLook::of_edit(creative_look, camera_look.as_ref());
         let mask_source = if needs_canonical_mask_source(&masks) {
             Some(reconstruct_canonical_mask_source(
                 &pipeline,
@@ -389,6 +448,8 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             open_started.elapsed().as_secs_f64()
         ));
 
+        // Kept only where the file cannot be read again later.
+        let camera_preview = camera_preview.filter(|_| source_path.is_none());
         Ok(LoadedPreview {
             source_path,
             label: label.clone(),
@@ -413,6 +474,8 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             selected_camera_profile,
             look_lut,
             look_lut_table,
+            camera_look,
+            camera_preview,
             geometry,
             starts_unedited,
             start,
@@ -712,6 +775,7 @@ struct InitialEdits {
     starts_unedited: bool,
     /// `None` for a reload, which keeps the open photo's start.
     start: Option<DocumentStart>,
+    camera_look: Option<CameraLook>,
 }
 
 impl InitialEdits {
@@ -730,10 +794,12 @@ impl InitialEdits {
         match sidecar {
             // A sidecar without adjustments (written by a rating or a reset)
             // opens like a first import, so per-camera defaults still apply.
+            // It keeps the camera look such a sidecar may hold (a reset's).
             Ok(Some(loaded)) if !crate::sidecar::edit_state_has_adjustments(&loaded.edits) => {
                 Self {
                     editing_time_ms: loaded.editing_time_ms,
                     sidecar_needs_rewrite: loaded.migrated,
+                    camera_look: loaded.edits.camera_look,
                     ..Self::defaults(default_exposure, None)
                 }
             }
@@ -779,6 +845,7 @@ impl InitialEdits {
             masks: Arc::unwrap_or_clone(edits.masks),
             remove: Arc::unwrap_or_clone(edits.remove),
             look_lut: edits.look_lut,
+            camera_look: edits.camera_look,
             saved_lens: Some(edits.lens),
             ai_masks_need_update: edits.ai_masks_need_update,
             geometry: edits.geometry.sanitized(),
@@ -797,6 +864,7 @@ impl InitialEdits {
             masks: MaskStack::default(),
             remove: RemoveEditState::default(),
             look_lut: None,
+            camera_look: None,
             saved_lens: None,
             ai_masks_need_update: false,
             geometry: GeometryTransform::default(),

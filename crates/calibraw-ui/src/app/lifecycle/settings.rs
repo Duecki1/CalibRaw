@@ -252,6 +252,16 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    /// Whether photos that open without a sidecar are matched to their
+    /// camera's look; answers the setup question too.
+    pub(crate) fn set_camera_match_new_photos(&mut self, enabled: bool) {
+        if self.preferences.camera_match_new_photos == Some(enabled) {
+            return;
+        }
+        self.preferences.camera_match_new_photos = Some(enabled);
+        self.persist_performance_settings();
+    }
+
     pub(crate) fn set_missing_lens_profile_prompt(&mut self, prompt: bool) {
         if self.preferences.missing_lens_profile_prompt == prompt {
             return;
@@ -402,6 +412,7 @@ impl CalibRawApp {
                 .vignetting,
             missing_lens_profile_prompt: self.preferences.missing_lens_profile_prompt,
             new_photo_preset: self.preferences.new_photo_preset.clone(),
+            camera_match_new_photos: self.preferences.camera_match_new_photos,
             adjustment_copy_settings: self.preferences.adjustment_copy_settings,
             last_android_library_folder: self.library.android_folder().to_owned(),
             last_android_library_root: self.library.android_root().to_owned(),

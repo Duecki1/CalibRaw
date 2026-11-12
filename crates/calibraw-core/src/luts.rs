@@ -19,6 +19,7 @@ pub use library::{
 };
 
 use crate::fnv;
+use crate::pipeline::camera_look::CameraLook;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
@@ -109,4 +110,29 @@ pub struct ResolvedLook {
     pub lut: Arc<CubeLut>,
     /// 0–1, as [`LookLut::amount`].
     pub amount: f32,
+    /// Scene exposure in EV added to the camera profile's default exposure:
+    /// a camera look's offset at its amount
+    /// ([`CameraLook::applied_exposure_ev`]), 0 for a creative LUT alone.
+    pub exposure_ev: f32,
+}
+
+impl ResolvedLook {
+    /// An edit's own LUT at `amount`.
+    pub fn creative(lut: Arc<CubeLut>, amount: f32) -> Self {
+        Self {
+            lut,
+            amount,
+            exposure_ev: 0.0,
+        }
+    }
+
+    /// What an edit renders through the look-LUT stage: its camera look,
+    /// then its creative LUT ([`CameraLook::resolved`]). Without a camera
+    /// look, or with one at amount 0, the creative LUT alone, unchanged.
+    pub fn of_edit(creative: Option<Self>, camera: Option<&CameraLook>) -> Option<Self> {
+        match camera.filter(|camera| camera.amount() > 0.0) {
+            Some(camera) => Some(camera.resolved(creative.as_ref())),
+            None => creative,
+        }
+    }
 }

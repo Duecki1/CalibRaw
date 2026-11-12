@@ -1,3 +1,4 @@
+use super::camera_match::CameraMatchAction;
 use super::film_negative::FilmNegativeAction;
 use super::*;
 use crate::app::{AreaPicker, CameraProfileChoice, FILM_NEGATIVE_CARD_TITLE};
@@ -381,6 +382,7 @@ impl Sidebar {
         if layout == ScreenLayout::Vertical {
             match app.develop_ui.adjustment_section {
                 AdjustmentSection::Light => {
+                    Self::show_camera_match_card(ui, app, layout);
                     Self::show_camera_profile_selector(ui, app, frame);
                     Self::show_film_negative_card(ui, app, layout);
                     changed |= Self::show_basic(ui, &mut app.develop.exposure, false);
@@ -420,16 +422,18 @@ impl Sidebar {
                 AdjustmentSection::Effects => {
                     let mut added = None;
                     if app.develop_ui.effect_component.is_none() {
+                        let photo_tiles = mask_effects::PhotoTiles::for_photo(app);
                         let (presence_changed, presence_added) = Self::show_presence(
                             ui,
                             &mut app.develop.exposure,
                             &app.masks.stack.global_effects,
+                            photo_tiles,
                             false,
                         );
                         changed |= presence_changed;
                         added = presence_added;
                     }
-                    let added = Self::take_film_negative_pick(ui, app, layout, added);
+                    let added = Self::take_photo_pick(ui, app, layout, added);
                     Self::show_global_effects(ui, app, frame, layout, added);
                 }
                 AdjustmentSection::ColorMixer => {
@@ -453,7 +457,8 @@ impl Sidebar {
             }
         } else {
             let mut added = None;
-            // Ahead of the cards the user orders: it changes what they edit.
+            // Ahead of the cards the user orders: they change what those edit.
+            Self::show_camera_match_card(ui, app, layout);
             Self::show_film_negative_card(ui, app, layout);
             let order = app.preferences.develop_card_order.clone();
             for card in order.cards() {
@@ -498,10 +503,12 @@ impl Sidebar {
                         ai_denoise_request = request;
                     }
                     DevelopCard::Effects => {
+                        let photo_tiles = mask_effects::PhotoTiles::for_photo(app);
                         let (presence_changed, presence_added) = Self::show_presence(
                             ui,
                             &mut app.develop.exposure,
                             &app.masks.stack.global_effects,
+                            photo_tiles,
                             true,
                         );
                         changed |= presence_changed;
@@ -528,7 +535,7 @@ impl Sidebar {
                 }
             }
             // The effect cards follow every adjustment card, whatever their order.
-            let added = Self::take_film_negative_pick(ui, app, layout, added);
+            let added = Self::take_photo_pick(ui, app, layout, added);
             Self::show_global_effects(ui, app, frame, layout, added);
         }
 
@@ -584,18 +591,17 @@ impl Sidebar {
                 &effect_frame,
             )
         } else {
-            let (changed, film_picked) = Self::show_effect_components(
+            let photo_tiles = mask_effects::PhotoTiles::for_photo(app);
+            let (changed, photo_pick) = Self::show_effect_components(
                 ui,
                 &mut app.masks.stack.global_effects,
                 crate::app::EffectList::Global,
                 &mut app.develop_ui.effect_instances,
                 true,
-                mask_effects::FilmNegativeTile::for_film(&app.develop.exposure.film),
+                photo_tiles,
                 &effect_frame,
             );
-            if film_picked {
-                Self::start_film_negative(ui.ctx(), app, layout);
-            }
+            Self::take_photo_pick(ui, app, layout, photo_pick);
             changed
         };
         if changed {
@@ -622,17 +628,42 @@ impl Sidebar {
     }
 
     /// The effect of an Add effect `pick` of the global effects. The film
-    /// negative tile instead develops the photo as a negative.
-    fn take_film_negative_pick(
+    /// negative tile instead develops the photo as a negative, and the Camera
+    /// match tile fits the camera's look.
+    fn take_photo_pick(
         ui: &Ui,
         app: &mut CalibRawApp,
         layout: ScreenLayout,
         pick: Option<mask_effects::EffectPick>,
     ) -> Option<MaskEffect> {
-        if pick == Some(mask_effects::EffectPick::FilmNegative) {
-            Self::start_film_negative(ui.ctx(), app, layout);
+        match pick {
+            Some(mask_effects::EffectPick::FilmNegative) => {
+                Self::start_film_negative(ui.ctx(), app, layout);
+            }
+            Some(mask_effects::EffectPick::CameraMatch) => {
+                app.request_camera_match();
+                // Its card leads the Light section of the vertical layout.
+                if layout == ScreenLayout::Vertical {
+                    app.develop_ui.adjustment_section = AdjustmentSection::Light;
+                    app.develop_ui.effect_component = None;
+                }
+            }
+            Some(mask_effects::EffectPick::Effect(_)) | None => {}
         }
         pick.and_then(mask_effects::EffectPick::effect)
+    }
+
+    /// The Camera match card, while the photo has a camera look.
+    fn show_camera_match_card(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
+        let Some(amount) = app.develop.camera_look.as_ref().map(|look| look.amount()) else {
+            return;
+        };
+        let foldable = layout == ScreenLayout::Horizontal;
+        match Self::show_camera_match(ui, amount, foldable) {
+            Some(CameraMatchAction::Amount(amount)) => app.set_camera_look_amount(amount),
+            Some(CameraMatchAction::Remove) => app.remove_camera_look(),
+            None => {}
+        }
     }
 
     /// Develops the photo as a film negative and shows its card, which leads

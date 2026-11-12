@@ -241,6 +241,7 @@ impl CalibRawApp {
             Some(ForegroundOperationKind::AutoGeometry(kind)) => {
                 self.poll_auto_geometry_worker(kind)
             }
+            Some(ForegroundOperationKind::CameraMatch) => self.poll_camera_match_worker(),
             Some(ForegroundOperationKind::Ai(AiFeature::Remove)) | None => {}
         }
     }

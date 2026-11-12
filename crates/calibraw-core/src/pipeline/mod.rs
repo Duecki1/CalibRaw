@@ -4,6 +4,7 @@ pub use adjustment_groups::{AdjustmentGroup, AdjustmentGroupSet};
 pub mod alignment;
 pub mod basicadj;
 mod calibration;
+pub mod camera_look;
 mod chromatic_aberration;
 pub mod color_profile;
 mod display_raster;

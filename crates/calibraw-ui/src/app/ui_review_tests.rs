@@ -202,6 +202,7 @@ fn capture_review(root: &Path, output_dir: &Path) {
                 subject_mask_quality_chosen: true,
                 people_mask_quality_chosen: true,
                 scene_depth_quality_chosen: true,
+                camera_match_new_photos: Some(false),
                 tips_enabled: false,
                 auto_check_updates: false,
                 github_update_check_allowed: Some(false),

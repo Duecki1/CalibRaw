@@ -14,8 +14,13 @@ publish = false
 name = "calibraw-develop-export"
 path = "src/bin/calibraw-develop-export.rs"
 
+[[bin]]
+name = "calibraw-camera-match"
+path = "src/bin/calibraw-camera-match.rs"
+
 [dependencies]
 calibraw-core.workspace = true
 calibraw-gpu.workspace = true
 anyhow.workspace = true
 env_logger.workspace = true
+image.workspace = true

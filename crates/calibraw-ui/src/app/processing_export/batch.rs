@@ -181,10 +181,12 @@ fn prepare_desktop_library_export_item(
                 let use_adaptive = false;
                 (loaded.edits, requested, use_adaptive)
             }
-            // No sidecar, or one without adjustments: export like a first import.
-            Ok(_) => {
+            // No sidecar, or one without adjustments: export like a first import,
+            // with the camera look such a sidecar may keep.
+            Ok(loaded) => {
                 let mut edits = crate::sidecar::default_edit_state();
                 edits.exposure = default_exposure;
+                edits.camera_look = loaded.and_then(|loaded| loaded.edits.camera_look);
                 let requested = last_camera_profile
                     .and_then(|relative| camera_profile_folder.map(|root| root.join(relative)));
                 (edits, requested, true)
@@ -227,7 +229,7 @@ fn prepare_desktop_library_export_item(
         original_raw.apply_adaptive_detail_defaults(&mut edits.exposure);
     }
     context.export_override.apply(&mut edits);
-    let look = edits
+    let creative = edits
         .look_lut
         .as_ref()
         .map(|look| crate::app::luts::resolve_look_for_export(context.luts.as_ref(), look))
@@ -238,6 +240,7 @@ fn prepare_desktop_library_export_item(
                 &[("source", &job.source.display()), ("error", &error)],
             )
         })?;
+    let look = crate::luts::ResolvedLook::of_edit(creative, edits.camera_look.as_ref());
 
     if cancellation.load(Ordering::Acquire) {
         return Err("batch export cancelled".to_owned());

@@ -16,7 +16,7 @@ use controls::{effect_details, effect_position, pattern_seed, PositionSpace};
 pub(super) use generated::generated_card;
 pub(crate) use instances::InstanceSelection;
 pub(super) use picker::{
-    add_effect_button, add_effect_controls, effect_picker_popup, EffectPick, FilmNegativeTile,
+    add_effect_button, add_effect_controls, effect_picker_popup, EffectPick, PhotoTiles,
 };
 
 use super::{egui, MaskEffect, Ui};

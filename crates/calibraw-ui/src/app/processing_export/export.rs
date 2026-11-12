@@ -447,6 +447,7 @@ impl CalibRawApp {
                     geometry: self.develop.geometry,
                     masks: Arc::new(self.masks.stack.clone()),
                     look_lut: self.develop.look_lut.clone(),
+                    camera_look: self.develop.camera_look.clone(),
                     ..crate::sidecar::default_edit_state()
                 };
                 export_override.apply(&mut edits);
@@ -456,7 +457,10 @@ impl CalibRawApp {
                     .map(|look| {
                         crate::app::luts::resolve_look_for_export(self.luts.store().as_ref(), look)
                     })
-                    .transpose();
+                    .transpose()
+                    .map(|creative| {
+                        crate::luts::ResolvedLook::of_edit(creative, edits.camera_look.as_ref())
+                    });
                 (
                     edits.exposure,
                     edits.geometry,

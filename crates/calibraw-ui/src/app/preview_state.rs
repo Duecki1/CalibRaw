@@ -338,6 +338,11 @@ pub(crate) struct LoadedPreview {
     /// The edit's LUT, and its table when the LUT library holds it.
     pub(super) look_lut: Option<crate::luts::LookLut>,
     pub(super) look_lut_table: Option<Arc<crate::luts::CubeLut>>,
+    /// The camera look the photo opened with: its saved one, or one fitted
+    /// as it opened (`camera_match.rs`).
+    pub(super) camera_look: Option<crate::pipeline::camera_look::CameraLook>,
+    /// The embedded preview, kept when the file is not readable later.
+    pub(super) camera_preview: Option<Arc<crate::pipeline::RawThumbnail>>,
     pub(super) geometry: GeometryTransform,
     pub(super) starts_unedited: bool,
     /// The photo's start; `None` for a reload, which keeps the open photo's.

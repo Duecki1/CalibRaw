@@ -657,9 +657,26 @@ impl GpuParams {
         }
     }
 
-    /// Applies `look`'s LUT at its amount after tone mapping (look_lut.wgsl).
-    /// `None`, or an amount of 0, leaves the image as without a LUT.
+    /// Adds `ev` to the camera profile's default exposure, the scene
+    /// exposure a camera look offsets (`scene_source.wgsl`). An offset of 0
+    /// leaves the parameters unchanged.
+    pub fn with_profile_exposure_offset(mut self, ev: f32) -> Self {
+        if ev != 0.0 && ev.is_finite() {
+            let default_ev = f32::from_bits(self.camera.profile_flags[2]);
+            self.camera.profile_flags[2] = (default_ev + ev).to_bits();
+        }
+        self
+    }
+
+    /// Applies `look`'s LUT at its amount after tone mapping (look_lut.wgsl)
+    /// and its scene exposure offset, a camera look's, where the profile's
+    /// default exposure applies ([`Self::with_profile_exposure_offset`]).
+    /// `None`, or an amount of 0 without an offset, leaves the image as
+    /// without a LUT.
     pub fn with_look_lut(mut self, look: Option<&ResolvedLook>) -> Self {
+        if let Some(look) = look {
+            self = self.with_profile_exposure_offset(look.exposure_ev);
+        }
         let look = look.filter(|look| look.amount > 0.0);
         self.look_lut = look.map(|look| Arc::clone(&look.lut));
         let (uniform, domain_min, domain_scale) = match look {

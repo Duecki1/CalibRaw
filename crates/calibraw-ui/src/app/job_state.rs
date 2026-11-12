@@ -9,6 +9,8 @@ pub(crate) enum ForegroundOperationKind {
     LensCorrection,
     /// Automatic straightening or perspective correction.
     AutoGeometry(AutoGeometry),
+    /// A Camera match fit started by hand.
+    CameraMatch,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -80,6 +82,7 @@ pub(super) enum ForegroundOperationReceiver {
     AiDenoise(mpsc::Receiver<calibraw_ai::models::denoise::AiDenoiseEvent>),
     LensCorrection(mpsc::Receiver<LensCorrectionEvent>),
     AutoGeometry(mpsc::Receiver<AutoGeometryResult>),
+    CameraMatch(mpsc::Receiver<Result<crate::pipeline::camera_look::CameraLook, String>>),
 }
 
 pub(super) enum ForegroundOperationContext {
@@ -104,6 +107,7 @@ pub(super) enum ForegroundOperationContext {
     AutoGeometry {
         geometry: GeometryTransform,
     },
+    CameraMatch,
 }
 
 pub(crate) struct ForegroundOperation {

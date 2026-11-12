@@ -99,6 +99,7 @@ impl Sidebar {
 }
 
 mod ai_update;
+mod camera_match;
 mod carousel;
 mod crop;
 mod develop;

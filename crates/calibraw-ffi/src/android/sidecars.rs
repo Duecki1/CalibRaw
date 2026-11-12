@@ -222,17 +222,24 @@ fn reset_android_adjustments_impl(
         .unwrap_or_default();
     let review = metadata.review;
     let editing_time_ms = editing_time_override_ms.unwrap_or(metadata.editing_time_ms);
-    if review == calibraw_core::sidecar::PhotoReview::default() && editing_time_ms == 0 {
+    // An unreadable edit state has no camera look to keep.
+    let previous = load_android(app, raw_uri, display_name).ok().flatten();
+    let edits =
+        calibraw_core::sidecar::reset_edit_state(previous.as_ref().map(|loaded| &loaded.edits));
+    if review == calibraw_core::sidecar::PhotoReview::default()
+        && editing_time_ms == 0
+        && edits.camera_look.is_none()
+    {
         return remove_raw_sidecar(app, raw_uri, display_name);
     }
-    // Reset, the photo is back at a start: the defaults.
-    let start = calibraw_core::sidecar::EditFingerprint::of_defaults()
-        .map_err(|error| error.to_string())?;
+    // Reset, the photo is back at a start: the defaults with its camera look.
+    let start =
+        calibraw_core::sidecar::EditFingerprint::of(&edits).map_err(|error| error.to_string())?;
     save_android_with_review_and_editing_time(
         app,
         raw_uri,
         display_name,
-        calibraw_core::sidecar::default_edit_state(),
+        edits,
         review,
         editing_time_ms,
         calibraw_core::sidecar::SidecarStart::Set(start),

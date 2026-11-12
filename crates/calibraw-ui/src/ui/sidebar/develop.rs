@@ -750,6 +750,7 @@ impl Sidebar {
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         global_effects: &[crate::pipeline::EffectComponent],
+        photo_tiles: mask_effects::PhotoTiles,
         foldable: bool,
     ) -> (bool, Option<mask_effects::EffectPick>) {
         let mut changed = false;
@@ -773,7 +774,7 @@ impl Sidebar {
                 ui,
                 &mask_effects::FINISH_EFFECTS,
                 global_effects,
-                mask_effects::FilmNegativeTile::for_film(&exposure.film),
+                photo_tiles,
             );
         });
         changed |= action.apply(exposure, AdjustmentGroup::Effects);

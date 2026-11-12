@@ -20,6 +20,7 @@
 //! manual corrections apply. What else the app prepares before an export is not
 //! covered: LUTs and the source images of range, depth and AI masks.
 
+use calibraw_core::luts::ResolvedLook;
 use calibraw_core::sidecar::{self, EditState};
 use calibraw_gpu::pipeline::{
     apply_lens_correction, build_proxy, spawn_tiled_export, CfaKind, CompactPixelMap,
@@ -338,6 +339,8 @@ fn render(
             .unwrap_or_else(|error| panic!("{}: lens correction: {error:#}", path.display())),
         None => raw,
     };
+    // As the app renders an edit's camera look; the cases name no LUT.
+    let look = ResolvedLook::of_edit(None, edits.camera_look.as_ref());
     let receiver = spawn_tiled_export(
         ExportFormat::Png,
         TiledExportJob {
@@ -348,7 +351,7 @@ fn render(
             exposure: edits.exposure,
             masks: Arc::unwrap_or_clone(edits.masks),
             remove: Arc::unwrap_or_clone(edits.remove),
-            look: None,
+            look,
             files: ExportFiles::Single(ExportTarget::File(path.to_path_buf())),
             tile_spec,
             settings: ExportSettings {

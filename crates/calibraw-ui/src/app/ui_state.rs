@@ -30,6 +30,9 @@ pub(crate) struct PreferencesState {
     /// Ask about manual correction when automatic correction finds no profile.
     pub(crate) missing_lens_profile_prompt: bool,
     pub(crate) new_photo_preset: Option<PathBuf>,
+    /// Match photos that open without a sidecar to their camera's look;
+    /// `None` until the setup question is answered, which counts as off.
+    pub(crate) camera_match_new_photos: Option<bool>,
     pub(crate) export_name_template: String,
     pub(crate) discord_rich_presence: bool,
     pub(crate) hdd_mode: bool,
@@ -59,6 +62,8 @@ pub(crate) enum OnboardingStep {
     Preview,
     AiQuality,
     CopyPaste,
+    /// Whether new photos are matched to their camera's look.
+    CameraMatch,
     ExportNames,
     /// Desktop only: Android imports profiles from Settings.
     CameraProfiles,

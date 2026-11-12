@@ -37,6 +37,9 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             app.preferences.subject_mask_quality_chosen = true;
             app.preferences.people_mask_quality_chosen = true;
             app.preferences.scene_depth_quality_chosen = true;
+            // Leaving the question as shown answers it.
+            app.preferences.camera_match_new_photos =
+                Some(app.preferences.camera_match_new_photos == Some(true));
             app.ui.onboarding_step = None;
             if !app.persist_performance_settings() {
                 app.report_error(
@@ -63,6 +66,7 @@ fn show_step_body(
         OnboardingStep::Preview => show_preview(ui, app),
         OnboardingStep::AiQuality => show_ai_quality(ui, app),
         OnboardingStep::CopyPaste => show_copy_paste(ui, app),
+        OnboardingStep::CameraMatch => show_camera_match(ui, app),
         OnboardingStep::ExportNames => show_export_names(ui, app),
         OnboardingStep::CameraProfiles => show_camera_profiles(ui, app),
         OnboardingStep::Discord => show_discord(ui, app),
@@ -253,6 +257,20 @@ fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     }
 }
 
+fn show_camera_match(ui: &mut egui::Ui, app: &mut CalibRawApp) {
+    let mut enabled = app.preferences.camera_match_new_photos == Some(true);
+    if moduwu_design::toggle_with_help(
+        ui,
+        &mut enabled,
+        tr("Match new photos to the camera's look"),
+        tr("Adjusts each photo that opens without saved edits to look like the JPEG your camera made. Photos with saved edits are never changed, and the look can be removed from any photo."),
+    )
+    .changed()
+    {
+        app.set_camera_match_new_photos(enabled);
+    }
+}
+
 fn show_export_names(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     crate::ui::settings::export_name_template_controls(ui, app, "onboarding-export-name-template");
 }
@@ -370,6 +388,7 @@ impl OnboardingStep {
         Self::Preview,
         Self::AiQuality,
         Self::CopyPaste,
+        Self::CameraMatch,
         Self::ExportNames,
         Self::CameraProfiles,
         Self::Discord,
@@ -390,8 +409,11 @@ impl OnboardingStep {
         };
 
     /// Steps added after setup first shipped, shown alone to users who
-    /// finished an earlier setup.
-    const CATCH_UP: &'static [Self] = &[Self::AiQuality];
+    /// finished an earlier setup and have not answered them: the AI quality
+    /// choices, the Camera match question, or both.
+    const CATCH_UP_QUALITY: &'static [Self] = &[Self::AiQuality];
+    const CATCH_UP_CAMERA_MATCH: &'static [Self] = &[Self::CameraMatch];
+    const CATCH_UP_BOTH: &'static [Self] = &[Self::AiQuality, Self::CameraMatch];
 
     /// The steps a user still has to go through, empty when none.
     pub(crate) fn pending(app: &CalibRawApp) -> &'static [Self] {
@@ -411,25 +433,36 @@ impl OnboardingStep {
         Self::pending_with(
             app.preferences.onboarding_completed,
             quality_choices_outstanding,
+            app.preferences.camera_match_new_photos.is_none(),
             app.caps().has_folders(),
             crate::platform::discord::presence_supported(),
         )
     }
 
     /// `quality_choices_outstanding`: setup has an AI-quality choice this
-    /// device offers that the user has not made.
+    /// device offers that the user has not made. `camera_match_outstanding`:
+    /// the Camera match question has not been answered.
     fn pending_with(
         onboarding_completed: bool,
         quality_choices_outstanding: bool,
+        camera_match_outstanding: bool,
         camera_profile_folders: bool,
         discord_supported: bool,
     ) -> &'static [Self] {
-        match (onboarding_completed, quality_choices_outstanding) {
-            (false, _) if !camera_profile_folders => Self::ALL_WITHOUT_CAMERA_PROFILES,
-            (false, _) if discord_supported => Self::ALL,
-            (false, _) => Self::ALL_WITHOUT_DISCORD,
-            (true, true) => Self::CATCH_UP,
-            (true, false) => &[],
+        if !onboarding_completed {
+            return if !camera_profile_folders {
+                Self::ALL_WITHOUT_CAMERA_PROFILES
+            } else if discord_supported {
+                Self::ALL
+            } else {
+                Self::ALL_WITHOUT_DISCORD
+            };
+        }
+        match (quality_choices_outstanding, camera_match_outstanding) {
+            (true, true) => Self::CATCH_UP_BOTH,
+            (true, false) => Self::CATCH_UP_QUALITY,
+            (false, true) => Self::CATCH_UP_CAMERA_MATCH,
+            (false, false) => &[],
         }
     }
 
@@ -457,6 +490,7 @@ impl OnboardingStep {
             Self::Preview => tr("Preview setup"),
             Self::AiQuality => tr("AI model quality"),
             Self::CopyPaste => tr("Copy & paste setup"),
+            Self::CameraMatch => tr("Camera match"),
             Self::ExportNames => tr("Export file names"),
             Self::CameraProfiles => tr("Camera profiles"),
             Self::Discord => tr("Discord Rich Presence"),
@@ -477,6 +511,7 @@ impl OnboardingStep {
             Self::CopyPaste => {
                 tr("Choose which edit categories are included when copying and pasting adjustments.")
             }
+            Self::CameraMatch => tr("Match new photos to the camera's look?"),
             Self::ExportNames => {
                 tr("Choose how CalibRaw names exported files. You can combine source details with your own text.")
             }

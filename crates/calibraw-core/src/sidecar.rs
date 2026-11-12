@@ -1,5 +1,6 @@
 use crate::file_ops::write_atomically;
 use crate::luts::LookLut;
+use crate::pipeline::camera_look::CameraLook;
 use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
     lensfun_catalog, DisparityMap, ExposureParams, GeometryTransform, LensCorrection,
@@ -199,6 +200,11 @@ pub struct EditState {
     pub camera_profile: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look_lut: Option<LookLut>,
+    /// The look fitted to the camera's own JPEG (Camera match). It belongs
+    /// to this photo: presets, copy and paste and Replace pastes never move
+    /// or clear it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera_look: Option<CameraLook>,
     pub masks: Arc<MaskStack>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_refinement: Option<SubjectRefinement>,
@@ -219,6 +225,7 @@ pub fn default_edit_state() -> EditState {
         geometry: GeometryTransform::default(),
         camera_profile: None,
         look_lut: None,
+        camera_look: None,
         masks: Arc::new(MaskStack::default()),
         subject_refinement: None,
         lens: LensEditState::default(),
@@ -227,6 +234,19 @@ pub fn default_edit_state() -> EditState {
     }
 }
 
+/// The edits a reset leaves the photo with: the defaults, keeping the camera
+/// look of `previous`, which is part of how the photo starts rather than an
+/// edit of it.
+pub fn reset_edit_state(previous: Option<&EditState>) -> EditState {
+    EditState {
+        camera_look: previous.and_then(|edits| edits.camera_look.clone()),
+        ..default_edit_state()
+    }
+}
+
+/// Whether `edits` hold anything the user edited. The camera look is part of
+/// how a photo starts, so a sidecar holding only that opens like a first
+/// import that keeps it.
 pub fn edit_state_has_adjustments(edits: &EditState) -> bool {
     let default = default_edit_state();
     edits.exposure != default.exposure

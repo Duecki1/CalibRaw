@@ -221,7 +221,7 @@ impl Sidebar {
             ui,
             &[MaskEffect::Sharpen, MaskEffect::Halation],
             effect_components,
-            mask_effects::FilmNegativeTile::Hidden,
+            mask_effects::PhotoTiles::HIDDEN,
         )
         .and_then(mask_effects::EffectPick::effect);
         LocalAdjustmentResponse {

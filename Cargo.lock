@@ -658,6 +658,7 @@ dependencies = [
  "calibraw-core",
  "calibraw-gpu",
  "env_logger",
+ "image",
 ]
 
 [[package]]

@@ -178,8 +178,8 @@ impl Sidebar {
     /// The cards of `components`, then an Add effect button. Draw them below
     /// every other card, so the button ends the sidebar and effects added
     /// from the Effects card ([`mask_effects::add_effect_controls`]) join them
-    /// there. Returns whether a setting changed and whether the button's
-    /// `film_negative` tile was picked.
+    /// there. Returns whether a setting changed and the button's photo-wide
+    /// tile that was picked, if any (`photo_tiles`).
     #[allow(clippy::too_many_arguments)]
     pub(in crate::ui::sidebar) fn show_effect_components(
         ui: &mut Ui,
@@ -187,9 +187,9 @@ impl Sidebar {
         list: crate::app::EffectList,
         instances: &mut crate::app::SelectedInstances,
         is_fullscreen_mask: bool,
-        film_negative: mask_effects::FilmNegativeTile,
+        photo_tiles: mask_effects::PhotoTiles,
         frame: &mask_effects::EffectFrame,
-    ) -> (bool, bool) {
+    ) -> (bool, Option<mask_effects::EffectPick>) {
         let mut changed = false;
         let mut remove = None;
         let room = Self::effect_list_has_room(components);
@@ -216,17 +216,14 @@ impl Sidebar {
             components.remove(index);
             changed = true;
         }
-        let picked = mask_effects::add_effect_button(ui, components, film_negative);
+        let picked = mask_effects::add_effect_button(ui, components, photo_tiles);
         if let Some(effect) = picked.and_then(mask_effects::EffectPick::effect) {
             components.push(crate::pipeline::EffectComponent::new(effect));
             mask_effects::reveal_effect_card(ui.ctx(), effect);
             changed = true;
         }
         moduwu_design::card_gap(ui);
-        (
-            changed,
-            picked == Some(mask_effects::EffectPick::FilmNegative),
-        )
+        (changed, picked.filter(|pick| pick.effect().is_none()))
     }
 
     #[allow(clippy::too_many_arguments)]

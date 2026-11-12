@@ -103,15 +103,14 @@ pub(crate) struct SavedEditsSettings {
 }
 
 impl SavedEditsSettings {
-    /// The edit's LUT, or `None` when it has none or the library does not
-    /// hold it.
+    /// The edit's camera look and LUT; without the LUT when the library
+    /// does not hold it.
     fn look(&self, edits: &EditState) -> Option<ResolvedLook> {
-        let look = edits.look_lut.as_ref()?;
-        let lut = self.luts.as_ref()?.load(look.id).ok()?;
-        Some(ResolvedLook {
-            lut,
-            amount: look.amount,
-        })
+        let creative = edits.look_lut.as_ref().and_then(|look| {
+            let lut = self.luts.as_ref()?.load(look.id).ok()?;
+            Some(ResolvedLook::creative(lut, look.amount))
+        });
+        ResolvedLook::of_edit(creative, edits.camera_look.as_ref())
     }
 }
 

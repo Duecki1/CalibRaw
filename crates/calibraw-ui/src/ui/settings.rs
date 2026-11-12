@@ -813,6 +813,17 @@ impl Settings {
                 choice.and_then(|path| path.file_name().map(std::path::PathBuf::from)),
             );
         }
+        let mut camera_match = app.preferences.camera_match_new_photos == Some(true);
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut camera_match,
+            tr("Match new photos to the camera's look"),
+            tr("Adjusts each photo that opens without saved edits to look like the JPEG your camera made. Photos with saved edits are never changed, and the look can be removed from any photo."),
+        )
+        .changed()
+        {
+            app.set_camera_match_new_photos(camera_match);
+        }
     }
 
     fn show_lens_correction_card(ui: &mut Ui, app: &mut CalibRawApp) {

@@ -213,18 +213,16 @@ fn reset_desktop_adjustments_impl(
     let metadata = load_sidecar_metadata(raw_path).map_err(|error| error.to_string())?;
     let review = metadata.review;
     let editing_time_ms = editing_time_override_ms.unwrap_or(metadata.editing_time_ms);
-    if review == PhotoReview::default() && editing_time_ms == 0 {
+    // An unreadable edit state has no camera look to keep.
+    let previous = load_desktop(raw_path).ok().flatten();
+    let edits = reset_edit_state(previous.as_ref().map(|loaded| &loaded.edits));
+    if review == PhotoReview::default() && editing_time_ms == 0 && edits.camera_look.is_none() {
         return remove_desktop_edits(raw_path);
     }
-    // Reset, the photo is back at a start: the defaults.
-    let start = EditFingerprint::of_defaults().map_err(|error| error.to_string())?;
-    save_desktop_with_editing_time(
-        raw_path,
-        default_edit_state(),
-        editing_time_ms,
-        SidecarStart::Set(start),
-    )
-    .map_err(|error| error.to_string())?;
+    // Reset, the photo is back at a start: the defaults with its camera look.
+    let start = EditFingerprint::of(&edits).map_err(|error| error.to_string())?;
+    save_desktop_with_editing_time(raw_path, edits, editing_time_ms, SidecarStart::Set(start))
+        .map_err(|error| error.to_string())?;
     invalidate_developed_thumbnail_cache(raw_path)?;
     Ok(true)
 }

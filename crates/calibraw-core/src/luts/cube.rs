@@ -79,6 +79,45 @@ pub struct CubeLut {
 }
 
 impl CubeLut {
+    /// A LUT over `[0, 1]` from a computed table (`size³` entries, red index
+    /// fastest), such as a baked camera look. Its id is the fingerprint of
+    /// the entries' little-endian bytes, so equal tables share an id.
+    pub fn from_lattice(
+        title: Option<String>,
+        size: u32,
+        table: Vec<[f32; 3]>,
+    ) -> Result<Self, CubeLutError> {
+        if !(MIN_LUT_SIZE..=MAX_LUT_SIZE).contains(&size) {
+            return Err(CubeLutError::SizeOutOfRange(size));
+        }
+        let expected = (size as usize).pow(3);
+        if table.len() != expected {
+            return Err(CubeLutError::WrongEntryCount {
+                expected,
+                found: table.len(),
+            });
+        }
+        if let Some(index) = table
+            .iter()
+            .position(|entry| entry.iter().any(|v| !v.is_finite()))
+        {
+            return Err(CubeLutError::NonFinite(index + 1));
+        }
+        let bytes: Vec<u8> = table
+            .iter()
+            .flatten()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        Ok(Self {
+            id: LutId::of_bytes(&bytes),
+            title,
+            size,
+            domain_min: [0.0; 3],
+            domain_max: [1.0; 3],
+            table: table.into_boxed_slice(),
+        })
+    }
+
     pub fn id(&self) -> LutId {
         self.id
     }

@@ -434,6 +434,16 @@ starting the UI. Build it with `cargo build -p calibraw-cli --bin calibraw-wb-di
 then run `target/debug/calibraw-wb-diagnostics RAW [--dcp PROFILE]
 [--temperature K] [--tint T]`.
 
+`calibraw-camera-match` fits the Camera match look of every RAW in the given
+folders against its embedded preview, as the editor does, and prints the
+held-out CIEDE2000 (mean and 90th percentile) after each model stage, the
+alignment, folded cells of the baked tables and the guard's verdict. `--dump
+DIRECTORY` also writes the camera preview, the canonical render and the matched
+render of each photo. It neither reads nor writes sidecars. Run it in release:
+`cargo run --release -p calibraw-cli --bin calibraw-camera-match -- FOLDER`.
+The guard's thresholds in `pipeline/camera_look/fit.rs` were set from its
+numbers; measure again before changing them.
+
 The workspace crates are application-internal and explicitly set
 `publish = false`; their package manifests intentionally retain repository
 assets and build-time native contracts rather than pretending to be isolated

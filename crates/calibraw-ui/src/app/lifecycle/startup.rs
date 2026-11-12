@@ -71,7 +71,13 @@ impl CalibRawApp {
         let geometry = GeometryTransform::default();
         let masks = MaskStack::default();
         let lens_correction = LensCorrectionState::default();
-        let edit_history = EditHistory::new(&exposure, geometry, &masks, &lens_correction, None);
+        let edit_history = EditHistory::new(
+            &exposure,
+            geometry,
+            &masks,
+            &lens_correction,
+            crate::app::edit_history::EditLooks::NONE,
+        );
         let manual_runtime = if caps.configurable_ai_runtime {
             Self::load_onnx_runtime_selection(performance_settings_path.as_deref())
         } else {
@@ -101,6 +107,9 @@ impl CalibRawApp {
                 selected_camera_profile: None,
                 look_lut: None,
                 look_lut_table: None,
+                camera_look: None,
+                camera_preview: None,
+                camera_match_requested: false,
                 target_look: None,
                 target_profile_color: None,
                 profile_preview: Default::default(),
@@ -331,6 +340,7 @@ impl CalibRawApp {
                 },
                 missing_lens_profile_prompt: performance.missing_lens_profile_prompt,
                 new_photo_preset: performance.new_photo_preset.clone(),
+                camera_match_new_photos: performance.camera_match_new_photos,
                 export_name_template: performance.export_name_template.clone(),
                 discord_rich_presence: performance.discord_rich_presence,
                 hdd_mode: performance.hdd_mode,

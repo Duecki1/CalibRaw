@@ -216,6 +216,7 @@ impl CalibRawApp {
             fitted_viewport_pixels: self.preview.fitted_viewport_pixels,
             camera_profiles: self.camera_profile_settings(),
             luts: self.luts.store(),
+            camera_match: self.preferences.camera_match_new_photos == Some(true),
             automatic_lens: self.preferences.automatic_lens_correction,
             ai_denoise_result_path: self.ai_denoise_result_path_for_target(&source.sidecar_target),
             people_analysis_path: self.people_analysis_path_for_target(&source.sidecar_target),
@@ -306,6 +307,9 @@ impl CalibRawApp {
         self.develop.current_path = None;
         self.develop.current_label = None;
         self.develop.selected_camera_profile = None;
+        self.develop.camera_look = None;
+        self.develop.camera_preview = None;
+        self.develop.camera_match_requested = false;
         self.install_loaded_look_lut(None, None);
         self.develop.image_status = tr_fmt("Loading {label}…", &[("label", &label)]);
         self.preview.original_exposure = initial_exposure;
@@ -398,6 +402,8 @@ impl CalibRawApp {
                 self.develop.current_path = loaded.source_path;
                 self.develop.current_label = Some(loaded.label.clone());
                 self.develop.selected_camera_profile = loaded.selected_camera_profile.clone();
+                self.develop.camera_look = loaded.camera_look;
+                self.develop.camera_preview = loaded.camera_preview;
                 self.install_loaded_look_lut(loaded.look_lut, loaded.look_lut_table);
                 self.develop.original_raw = Some(loaded.original_raw);
                 self.develop.loaded_raw = Some(loaded.full_raw);

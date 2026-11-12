@@ -543,7 +543,7 @@ impl Sidebar {
                         crate::app::EffectList::Mask(mask_index),
                         &mut app.develop_ui.effect_instances,
                         fullscreen,
-                        mask_effects::FilmNegativeTile::Hidden,
+                        mask_effects::PhotoTiles::HIDDEN,
                         &effect_frame,
                     )
                     .0;

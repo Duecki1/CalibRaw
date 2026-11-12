@@ -184,16 +184,17 @@ impl Sidebar {
                     }
                 }
                 let selected_before = app.develop_ui.effect_component;
+                let photo_tiles = mask_effects::PhotoTiles::for_photo(app);
                 let picked = Self::show_mobile_effect_tabs(
                     ui,
                     &mut app.masks.stack.global_effects,
                     &mut app.develop_ui.effect_component,
-                    mask_effects::FilmNegativeTile::for_film(&app.develop.exposure.film),
+                    photo_tiles,
                     tab_height,
                     show_labels,
                 );
-                let added = Self::take_film_negative_pick(ui, app, ScreenLayout::Vertical, picked)
-                    .is_some();
+                let added =
+                    Self::take_photo_pick(ui, app, ScreenLayout::Vertical, picked).is_some();
                 if added || selected_before != app.develop_ui.effect_component {
                     app.develop_ui.cancel_point_color_preview();
                     app.develop_ui.cancel_area_picker();
@@ -260,7 +261,7 @@ impl Sidebar {
                         ui,
                         &mut mask.effect_components,
                         &mut app.develop_ui.mask_effect_component,
-                        mask_effects::FilmNegativeTile::Hidden,
+                        mask_effects::PhotoTiles::HIDDEN,
                         tab_height,
                         show_labels,
                     )
@@ -295,7 +296,7 @@ impl Sidebar {
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,
         selection: &mut Option<MaskEffect>,
-        film_negative: mask_effects::FilmNegativeTile,
+        photo_tiles: mask_effects::PhotoTiles,
         tab_height: f32,
         show_labels: bool,
     ) -> Option<mask_effects::EffectPick> {
@@ -342,7 +343,7 @@ impl Sidebar {
                 )
             })
             .inner;
-        let picked = mask_effects::effect_picker_popup(&response, components, film_negative);
+        let picked = mask_effects::effect_picker_popup(&response, components, photo_tiles);
         if let Some(effect) = picked.and_then(mask_effects::EffectPick::effect) {
             components.push(crate::pipeline::EffectComponent::new(effect));
             *selection = Some(effect);

@@ -138,6 +138,11 @@ pub(crate) struct PerformanceSettings {
     pub missing_lens_profile_prompt: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_photo_preset: Option<PathBuf>,
+    /// Match photos that open without a sidecar to their camera's look.
+    /// Missing until the setup question is answered, so existing users are
+    /// asked once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera_match_new_photos: Option<bool>,
     pub adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings,
     /// The media-library folder open last; media-library storage only.
     pub(crate) last_android_library_folder: String,
@@ -363,6 +368,7 @@ impl Default for PerformanceSettings {
             automatic_lens_vignetting: false,
             missing_lens_profile_prompt: true,
             new_photo_preset: None,
+            camera_match_new_photos: None,
             adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings::default(),
             last_android_library_folder: String::new(),
             last_android_library_root: String::new(),

@@ -2,7 +2,7 @@
 //! every effect as an icon tile under its category.
 
 use super::{add_effect_buttons, effect_description, egui, MaskEffect, Ui};
-use crate::app::FILM_NEGATIVE_CARD_TITLE;
+use crate::app::{CalibRawApp, CAMERA_MATCH_CARD_TITLE, FILM_NEGATIVE_CARD_TITLE};
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{
     effect_places, EffectComponent, FilmSource, MaskEffectCategory, MAX_EFFECT_COMPONENTS,
@@ -18,36 +18,67 @@ pub(in crate::ui::sidebar) enum EffectPick {
     Effect(MaskEffect),
     /// Develops the photo as the positive of a scanned film negative. It is
     /// not an effect, but people look for it among them; only photo-wide
-    /// pickers offer it ([`FilmNegativeTile`]).
+    /// pickers offer it ([`PhotoTiles`]).
     FilmNegative,
+    /// Fits the photo's look to its camera's own JPEG preview, which only
+    /// photo-wide pickers offer too.
+    CameraMatch,
 }
 
 impl EffectPick {
     pub(in crate::ui::sidebar) const fn effect(self) -> Option<MaskEffect> {
         match self {
             Self::Effect(effect) => Some(effect),
-            Self::FilmNegative => None,
+            Self::FilmNegative | Self::CameraMatch => None,
         }
     }
 }
 
-/// Whether a picker shows the [`EffectPick::FilmNegative`] tile.
+/// How a picker shows a tile that changes the whole photo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::ui::sidebar) enum FilmNegativeTile {
-    /// Mask pickers: a mask cannot develop part of a photo as a negative.
+pub(in crate::ui::sidebar) enum PhotoTile {
+    /// Mask pickers, which cannot change part of a photo so, and photos the
+    /// tile does not apply to.
     Hidden,
     Offered,
-    /// The photo is developed as a negative already.
+    /// The photo has it already.
     Added,
 }
 
-impl FilmNegativeTile {
-    /// The tile of a photo-wide picker for a photo read as `film`.
-    pub(in crate::ui::sidebar) fn for_film(film: &FilmSource) -> Self {
+/// The tiles of a picker that change the whole photo rather than add an
+/// effect: [`EffectPick::FilmNegative`] and [`EffectPick::CameraMatch`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui::sidebar) struct PhotoTiles {
+    pub(in crate::ui::sidebar) film_negative: PhotoTile,
+    pub(in crate::ui::sidebar) camera_match: PhotoTile,
+}
+
+impl PhotoTiles {
+    /// The tiles of a mask's picker: none.
+    pub(in crate::ui::sidebar) const HIDDEN: Self = Self {
+        film_negative: PhotoTile::Hidden,
+        camera_match: PhotoTile::Hidden,
+    };
+
+    /// The tiles of a photo-wide picker for the open photo.
+    pub(in crate::ui::sidebar) fn for_photo(app: &CalibRawApp) -> Self {
+        Self {
+            film_negative: Self::film_negative(&app.develop.exposure.film),
+            camera_match: if app.develop.camera_look.is_some() {
+                PhotoTile::Added
+            } else if app.camera_match_offered() {
+                PhotoTile::Offered
+            } else {
+                PhotoTile::Hidden
+            },
+        }
+    }
+
+    fn film_negative(film: &FilmSource) -> PhotoTile {
         if film.is_positive() {
-            Self::Offered
+            PhotoTile::Offered
         } else {
-            Self::Added
+            PhotoTile::Added
         }
     }
 }
@@ -59,11 +90,11 @@ pub(in crate::ui::sidebar) fn add_effect_controls(
     ui: &mut Ui,
     featured: &[MaskEffect],
     components: &[EffectComponent],
-    film_negative: FilmNegativeTile,
+    photo_tiles: PhotoTiles,
 ) -> Option<EffectPick> {
     let featured_added = add_effect_buttons(ui, featured, components).map(EffectPick::Effect);
     ui.add_space(moduwu_design::SPACE_XS);
-    let picked = add_effect_button(ui, components, film_negative);
+    let picked = add_effect_button(ui, components, photo_tiles);
     featured_added.or(picked)
 }
 
@@ -72,7 +103,7 @@ pub(in crate::ui::sidebar) fn add_effect_controls(
 pub(in crate::ui::sidebar) fn add_effect_button(
     ui: &mut Ui,
     components: &[EffectComponent],
-    film_negative: FilmNegativeTile,
+    photo_tiles: PhotoTiles,
 ) -> Option<EffectPick> {
     let full = effect_places(components) >= MAX_EFFECT_COMPONENTS;
     let response = ui
@@ -87,7 +118,7 @@ pub(in crate::ui::sidebar) fn add_effect_button(
             "At most {max} effects can be added",
             &[("max", &MAX_EFFECT_COMPONENTS)],
         ));
-    effect_picker_popup(&response, components, film_negative)
+    effect_picker_popup(&response, components, photo_tiles)
 }
 
 /// Opens [`effect_picker`] when `button` is clicked, as wide as the button
@@ -96,13 +127,13 @@ pub(in crate::ui::sidebar) fn add_effect_button(
 pub(in crate::ui::sidebar) fn effect_picker_popup(
     button: &egui::Response,
     components: &[EffectComponent],
-    film_negative: FilmNegativeTile,
+    photo_tiles: PhotoTiles,
 ) -> Option<EffectPick> {
     moduwu_design::picker_popup(
         button,
         PICKER_MIN_WIDTH,
         moduwu_design::PickerPlacement::BelowOrAbove,
-        |ui| effect_picker(ui, components, film_negative),
+        |ui| effect_picker(ui, components, photo_tiles),
     )
 }
 
@@ -117,14 +148,14 @@ struct Tile {
 }
 
 /// Every effect as a tile under its category's heading, to add one to
-/// `components`; the film negative tile leads Film & Finish unless
-/// `film_negative` hides it. An effect already in `components` shows a check
+/// `components`; the film negative and Camera match tiles lead Film & Finish
+/// unless `photo_tiles` hides them. An effect already in `components` shows a check
 /// mark and is disabled; once `components` is full, every effect is
 /// disabled. Returns the clicked tile's pick.
 fn effect_picker(
     ui: &mut Ui,
     components: &[EffectComponent],
-    film_negative: FilmNegativeTile,
+    photo_tiles: PhotoTiles,
 ) -> Option<EffectPick> {
     let full = effect_places(components) >= MAX_EFFECT_COMPONENTS;
     let gap = moduwu_design::SPACE_XS;
@@ -138,18 +169,37 @@ fn effect_picker(
         }
         category_heading(ui, tr(category.label()));
         let mut tiles = Vec::new();
-        if category == MaskEffectCategory::FilmAndFinish
-            && film_negative != FilmNegativeTile::Hidden
-        {
-            let added = film_negative == FilmNegativeTile::Added;
-            tiles.push(Tile {
-                pick: EffectPick::FilmNegative,
-                label: super::super::adjustment_cards::card_title_text(FILM_NEGATIVE_CARD_TITLE),
-                icon: egui_phosphor::regular::FILM_STRIP,
-                help: Some(tr("Develop a scanned film negative as its positive.")),
-                added,
-                enabled: !added,
-            });
+        if category == MaskEffectCategory::FilmAndFinish {
+            let photo_wide = [
+                (
+                    photo_tiles.film_negative,
+                    EffectPick::FilmNegative,
+                    FILM_NEGATIVE_CARD_TITLE,
+                    egui_phosphor::regular::FILM_STRIP,
+                    tr("Develop a scanned film negative as its positive."),
+                ),
+                (
+                    photo_tiles.camera_match,
+                    EffectPick::CameraMatch,
+                    CAMERA_MATCH_CARD_TITLE,
+                    egui_phosphor::regular::CAMERA,
+                    tr("Match the colors and tones of the camera's own JPEG."),
+                ),
+            ];
+            for (state, pick, title, icon, help) in photo_wide {
+                if state == PhotoTile::Hidden {
+                    continue;
+                }
+                let added = state == PhotoTile::Added;
+                tiles.push(Tile {
+                    pick,
+                    label: super::super::adjustment_cards::card_title_text(title),
+                    icon,
+                    help: Some(help),
+                    added,
+                    enabled: !added,
+                });
+            }
         }
         tiles.extend(
             MaskEffect::ALL

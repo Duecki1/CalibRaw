@@ -133,6 +133,7 @@ pub(super) fn card_title_text(title: &'static str) -> &'static str {
         "Subject refinement" => tr("Subject refinement"),
         "Lens Corrections" => tr("Lens Corrections"),
         "Film negative" => tr("Film negative"),
+        "Camera match" => tr("Camera match"),
         "LUT" => tr("LUT"),
         _ => tr(title),
     }

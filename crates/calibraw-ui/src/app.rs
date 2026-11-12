@@ -298,6 +298,8 @@ pub(crate) fn format_usage_duration(duration: Duration) -> String {
 
 mod ai;
 mod background_tasks;
+pub(crate) mod camera_match;
+pub(crate) use camera_match::CAMERA_MATCH_CARD_TITLE;
 mod eframe_impl;
 mod error_dialogs;
 pub(crate) use error_dialogs::{ErrorDialogQueue, ErrorKind};

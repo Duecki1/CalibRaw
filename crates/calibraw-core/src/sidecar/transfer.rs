@@ -190,8 +190,8 @@ fn clear_copied_depth_images(masks: &mut MaskStack) {
 
 /// Applies the categories in `selection` from `source` to `destination`.
 ///
-/// Inpainting and the destination's scene depth always stay with the
-/// destination image. Copied masks that depend on image content are flagged
+/// Inpainting, the camera look and the destination's scene depth always stay
+/// with the destination image. Copied masks that depend on image content are flagged
 /// for regeneration through `ai_masks_need_update`.
 pub fn transfer_edits(
     destination: &mut EditState,
@@ -201,9 +201,11 @@ pub fn transfer_edits(
 ) {
     if mode == AdjustmentPasteMode::Replace {
         let remove = Arc::clone(&destination.remove);
+        let camera_look = destination.camera_look.take();
         let scene_depth = destination.masks.scene_depth.clone();
         *destination = default_edit_state();
         destination.remove = remove;
+        destination.camera_look = camera_look;
         let masks = Arc::make_mut(&mut destination.masks);
         masks.scene_depth = scene_depth;
     }
