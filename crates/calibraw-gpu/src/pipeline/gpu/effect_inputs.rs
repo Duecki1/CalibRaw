@@ -1318,6 +1318,11 @@ impl EffectInputs {
         self.lock().styled_glow.shared_map()
     }
 
+    /// The build of the Glow map this pipeline reads, if it binds one.
+    pub(super) fn styled_glow_map_build(&self) -> Option<u64> {
+        self.lock().styled_glow.map_revision()
+    }
+
     /// Whether the bound Glow map holds `layers` slots.
     pub(super) fn styled_glow_map_holds(&self, layers: u32) -> bool {
         self.lock().styled_glow.map_holds(layers)
@@ -1376,6 +1381,11 @@ impl EffectInputs {
     /// The Lens Blur map this pipeline builds or shares.
     pub(super) fn defocus_map(&self) -> Option<Arc<DefocusMap>> {
         self.lock().defocus.shared_map()
+    }
+
+    /// The build of the Lens Blur map this pipeline reads, if it binds one.
+    pub(super) fn defocus_map_build(&self) -> Option<u64> {
+        self.lock().defocus.map_revision()
     }
 
     /// Whether the bound Lens Blur map holds `layers` slots.

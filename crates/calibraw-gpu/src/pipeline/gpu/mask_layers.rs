@@ -10,6 +10,7 @@ impl RawGpuPipeline {
         values: &[u16],
     ) -> Result<()> {
         self.check_mask_layer(layer, "local-mask")?;
+        self.note_mask_layer_upload(layer);
         write_r16_mask_layer(
             queue,
             &self.mask_texture,
@@ -29,6 +30,7 @@ impl RawGpuPipeline {
         values: &[u16],
     ) -> Result<()> {
         self.check_mask_layer(layer, "local-mask")?;
+        self.note_mask_layer_upload(layer);
         if width == 0
             || height == 0
             || width > self.mask_atlas_edge
@@ -57,6 +59,7 @@ impl RawGpuPipeline {
         values: &[u16],
     ) -> Result<()> {
         self.check_mask_layer(layer, "full-image mask")?;
+        self.note_mask_layer_upload(layer);
         let edge = FULL_IMAGE_MASK_ATLAS_EDGE;
         write_r16_mask_layer(
             queue,

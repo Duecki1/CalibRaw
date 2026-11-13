@@ -427,7 +427,7 @@ impl GpuParams {
     }
 
     /// The mask slots the shaders read: the first `mask_counts[0]`.
-    fn mask_slots(&self) -> &[MaskData] {
+    pub(super) fn mask_slots(&self) -> &[MaskData] {
         let count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         &self.mask_data[..count]
     }

@@ -352,6 +352,9 @@ impl RawGpuPipeline {
             post_blur_pixelate_blocks_pass,
             post_blur_render_pass,
             output_image_in_tex2: AtomicBool::new(true),
+            output_resume: Mutex::new(OutputResume::new()),
+            tone_build: BuildRevision::new(),
+            inherited_tone: std::sync::atomic::AtomicU64::new(0),
             binned_finish_pass,
             passes,
             raw_texture: surfaces.raw_texture,
@@ -404,12 +407,14 @@ impl RawGpuPipeline {
             pipeline.indices.tone_stage_end,
         );
         pipeline.encode_tone_full_image_maps(&mut warmup, params);
-        pipeline.encode_output_stage(&mut warmup, params);
+        pipeline.encode_output_stage(&mut warmup, params, OutputStart::Scene);
         drop(warmup);
-        // Nothing ran: the maps the warmup encoded are not built.
+        // Nothing ran: the maps the warmup encoded are not built, and the
+        // output stage has not rendered.
         for current in &pipeline.full_image_maps_current {
             current.store(false, Ordering::Release);
         }
+        pipeline.forget_output();
         gpu_error_scopes.finish("create RAW GPU pipeline")?;
         let mut pipeline = pipeline;
         pipeline.setup_times = PipelineSetupTimes {

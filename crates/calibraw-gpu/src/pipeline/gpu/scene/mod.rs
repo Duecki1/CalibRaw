@@ -458,7 +458,7 @@ impl SceneBake {
 }
 
 /// Whether two depth results are the same one: the same pixel allocations.
-fn same_depth(a: &SceneDepth, b: &SceneDepth) -> bool {
+pub(in crate::pipeline::gpu) fn same_depth(a: &SceneDepth, b: &SceneDepth) -> bool {
     Arc::ptr_eq(a.disparity().values(), b.disparity().values())
         && Arc::ptr_eq(&a.sky().pixels, &b.sky().pixels)
         && Arc::ptr_eq(&a.normals().x().pixels, &b.normals().x().pixels)

@@ -283,6 +283,9 @@ pub(super) struct DefocusMap {
     fill_uniforms: Vec<wgpu::Buffer>,
     grid: [u32; 2],
     layers: u32,
+    /// Bumped each time the owner builds the map, which pipelines sharing it
+    /// then read anew (`output_parts`).
+    revision: BuildRevision,
     _reservation: Option<GpuBudgetReservation>,
 }
 
@@ -347,6 +350,7 @@ impl DefocusMap {
             fill_uniforms,
             grid,
             layers,
+            revision: BuildRevision::new(),
             _reservation: reservation,
         }
     }
@@ -787,6 +791,11 @@ impl DefocusInputs {
         self.map.clone()
     }
 
+    /// The build of the bound map, if any.
+    pub(super) fn map_revision(&self) -> Option<u64> {
+        self.map.as_ref().map(|map| map.revision.get())
+    }
+
     pub(super) fn owns_map(&self) -> bool {
         self.owns_map
     }
@@ -966,6 +975,9 @@ impl RawGpuPipeline {
             for dispatch in &groups.map_levels {
                 self.dispatch_defocus(encoder, dispatch, layers);
             }
+            if let Some(map) = self.effect_inputs.defocus_map() {
+                map.revision.bump();
+            }
         }
         encoder.clear_buffer(&groups.occupancy, 0, None);
         for dispatch in &groups.local {
@@ -1006,6 +1018,7 @@ impl RawGpuPipeline {
         device: &wgpu::Device,
         params: &GpuParams,
     ) -> Result<bool> {
+        self.forget_output();
         if !params.needs_defocus_map() {
             return Ok(false);
         }
@@ -1033,6 +1046,7 @@ impl RawGpuPipeline {
         params: &GpuParams,
     ) {
         self.upload_params(queue, params);
+        self.forget_output();
         let groups = self.effect_inputs.defocus_bind_groups();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw export Lens Blur map tile"),
@@ -1067,6 +1081,9 @@ impl RawGpuPipeline {
         let layers = defocus_layers(params);
         for dispatch in &groups.map_levels {
             self.dispatch_defocus(&mut encoder, dispatch, layers);
+        }
+        if let Some(map) = self.effect_inputs.defocus_map() {
+            map.revision.bump();
         }
         queue.submit(Some(encoder.finish()));
     }

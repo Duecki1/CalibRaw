@@ -263,7 +263,19 @@ batch is in flight (`PreviewDispatchGate`, opened by `on_submitted_work_done`),
 and edits made meanwhile only update the target parameters, so the next batch
 renders the newest ones. While a control is dragged zoomed in and only the
 Output stage changes, the fitted preview and the navigation proxy wait until
-the pointer lifts (`defer_background_preview_processing`). Where the dispatch
+the pointer lifts (`defer_background_preview_processing`). A preview graph
+renders its Output stage from the first of three parts that the change since
+its last render reaches (`pipeline/gpu/output_parts.rs`): Scene (scene
+adjustments, scene effects and the blurs, Lens Blur among them), Creative
+(scene emission, Glow, the creative pass, Rain's air) or View (the view node).
+It compares the uniforms as uploaded and the mask slots with the last render's,
+each value counted by the shaders that read it, and keeps the work texture
+holding each part's input; so a drag of a creative or view control does not
+run Lens Blur again, and the output is that of a whole render. Anything else
+that writes the work textures or changes what the stage reads without being a
+parameter (the RAW and tone stages, exports, a crop's newly inherited tone
+statistics) forgets the last render, and uploaded mask layers count for the
+first part whose active slots read them. Exports render every part. Where the dispatch
 gate's timings show the GPU takes more than about 45 ms for a batch of the
 preview that is shown (a device with little memory is assumed slow until it
 has timings) and the setting `interactive_preview_fallback` is on (on by

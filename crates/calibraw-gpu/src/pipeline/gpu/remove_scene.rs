@@ -111,6 +111,8 @@ impl RawGpuPipeline {
             source_origin,
             source_size,
         } = remove;
+        // The patches replace scene texels the output stage reads.
+        self.forget_output();
         if edits.is_empty() || source_size[0] <= 0.0 || source_size[1] <= 0.0 {
             return Ok(());
         }

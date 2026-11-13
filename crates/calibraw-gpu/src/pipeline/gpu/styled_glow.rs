@@ -369,6 +369,9 @@ pub(super) struct StyledGlowMap {
     line: LevelTexture,
     grid: [u32; 2],
     layers: u32,
+    /// Bumped each time the owner builds the map, which pipelines sharing it
+    /// then read anew (`output_parts`).
+    revision: BuildRevision,
     _reservation: Option<GpuBudgetReservation>,
 }
 
@@ -402,6 +405,7 @@ impl StyledGlowMap {
             line: LevelTexture::new(device, grid, 1, layers, "calibraw Glow streak line"),
             grid,
             layers,
+            revision: BuildRevision::new(),
             _reservation: reservation,
         }
     }
@@ -861,6 +865,11 @@ impl StyledGlowInputs {
         self.map.clone()
     }
 
+    /// The build of the bound map, if any.
+    pub(super) fn map_revision(&self) -> Option<u64> {
+        self.map.as_ref().map(|map| map.revision.get())
+    }
+
     /// Whether this pipeline builds the map it binds.
     pub(super) fn owns_map(&self) -> bool {
         self.owns_map
@@ -1047,6 +1056,9 @@ impl RawGpuPipeline {
             encoder.clear_buffer(&groups.map_cells, 0, None);
             self.dispatch_styled_glow(encoder, MAP_ACCUMULATE, &groups.map_accumulate[input]);
             self.encode_styled_glow_map_levels(encoder, &groups, params);
+            if let Some(map) = self.effect_inputs.styled_glow_map() {
+                map.revision.bump();
+            }
         }
     }
 
@@ -1113,6 +1125,7 @@ impl RawGpuPipeline {
         device: &wgpu::Device,
         params: &GpuParams,
     ) -> Result<bool> {
+        self.forget_output();
         if !params.needs_styled_glow_map() {
             return Ok(false);
         }
@@ -1140,6 +1153,7 @@ impl RawGpuPipeline {
         params: &GpuParams,
     ) {
         self.upload_params(queue, params);
+        self.forget_output();
         let groups = self.effect_inputs.styled_glow_bind_groups();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw export Glow map tile"),
@@ -1173,6 +1187,9 @@ impl RawGpuPipeline {
             label: Some("calibraw export Glow map levels"),
         });
         self.encode_styled_glow_map_levels(&mut encoder, &groups, params);
+        if let Some(map) = self.effect_inputs.styled_glow_map() {
+            map.revision.bump();
+        }
         queue.submit(Some(encoder.finish()));
     }
 }
