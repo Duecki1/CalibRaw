@@ -2100,5 +2100,8 @@
   "Color Fringe": "Renk saçağı",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Kenarlardaki renkleri kırmızı, yeşil ve mavi saçaklara ayırın. Lens bunları bir lens gibi görüntünün merkezinden dışa doğru iter; Kaydırma bunları Yön boyunca taşır. Prizma bunları gökkuşağı gibi yayar. Nerede görüneceğini maske denetler.",
   "Prism": "Prizma",
-  "Shift": "Kaydırma"
+  "Shift": "Kaydırma",
+  "Star": "Yıldız",
+  "Points": "Uçlar",
+  "Dispersion": "Dispersiyon"
 }

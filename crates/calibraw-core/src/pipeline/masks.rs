@@ -25,7 +25,7 @@ pub use effects::{
     LightShaftsMode, MaskEffect, MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings,
     NeonEffectSettings, PackContext, PixelateEffectSettings, RadialBlurEffectSettings,
     RadialBlurMode, RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneNeed,
-    SceneNeeds, SharpenEffectSettings, SmokeEffectSettings, StyledGlowEffectSettings,
+    SceneNeeds, SharpenEffectSettings, SmokeEffectSettings, StarPoints, StyledGlowEffectSettings,
     TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings,
     MAX_EFFECT_INSTANCES, OPTION_COUNT,
 };

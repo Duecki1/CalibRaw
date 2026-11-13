@@ -2100,5 +2100,8 @@
   "Color Fringe": "色にじみ",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "エッジの色を赤・緑・青のにじみに分けます。レンズはレンズのように画像の中心から外側へずらし、ずらしは方向に沿って動かします。プリズムで虹のように広げます。マスクで効果の範囲を指定します。",
   "Prism": "プリズム",
-  "Shift": "ずらし"
+  "Shift": "ずらし",
+  "Star": "スター",
+  "Points": "光条の数",
+  "Dispersion": "分散"
 }

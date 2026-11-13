@@ -1,11 +1,13 @@
 //! The Glow's card: its Style, then Amount, Range, Spread and Warmth, whose
 //! track runs yellow to red for Halation and cool to warm otherwise, as its
-//! tint does (styled_glow.rs in calibraw-core); Motion and Streak add their
-//! Direction and Softness.
+//! tint does (styled_glow.rs in calibraw-core), and Dispersion but for
+//! Motion; Star adds its Points, and Motion, Streak and Star their Direction
+//! and Softness.
 
 use super::{float_param_slider, styled_effect_card, StyleChoice};
+use crate::i18n::tr;
 use crate::pipeline::{
-    effect_params::styled_glow, GlowStyle, MaskEffect, StyledGlowEffectSettings,
+    effect_params::styled_glow, GlowStyle, MaskEffect, StarPoints, StyledGlowEffectSettings,
 };
 use crate::ui::components::adjustment_slider::{
     float_param_angle, gradient_float_param_slider, SliderGradient,
@@ -19,8 +21,11 @@ const HALATION_WARMTH: SliderGradient = SliderGradient::ChannelHue {
     right: Color32::from_rgb(220, 30, 15),
 };
 
-/// Its style is the Glow family's Bloom, Diffusion, Halation, Motion and
-/// Streak (`style`).
+/// The width Points' segments take where the card is wide enough.
+const POINTS_WIDTH: f32 = 160.0;
+
+/// Its style is the Glow family's Bloom, Diffusion, Halation, Motion, Streak
+/// and Star (`style`).
 pub(crate) fn show(
     ui: &mut Ui,
     settings: &mut StyledGlowEffectSettings,
@@ -41,12 +46,21 @@ pub(crate) fn show(
             changed |= float_param_slider(ui, &mut settings.spread, styled_glow::SPREAD);
             let warmth = match settings.style {
                 GlowStyle::Halation => HALATION_WARMTH,
-                GlowStyle::Bloom | GlowStyle::Diffusion | GlowStyle::Motion | GlowStyle::Streak => {
-                    SliderGradient::Temperature
-                }
+                GlowStyle::Bloom
+                | GlowStyle::Diffusion
+                | GlowStyle::Motion
+                | GlowStyle::Streak
+                | GlowStyle::Star => SliderGradient::Temperature,
             };
             changed |=
                 gradient_float_param_slider(ui, &mut settings.warmth, styled_glow::WARMTH, warmth);
+            if settings.style.disperses() {
+                changed |=
+                    float_param_slider(ui, &mut settings.dispersion, styled_glow::DISPERSION);
+            }
+            if settings.style == GlowStyle::Star {
+                changed |= star_points(ui, &mut settings.points);
+            }
             if settings.style.streaks() {
                 changed |= float_param_angle(ui, &mut settings.direction, styled_glow::DIRECTION);
                 changed |= float_param_slider(ui, &mut settings.softness, styled_glow::SOFTNESS);
@@ -54,4 +68,13 @@ pub(crate) fn show(
             changed
         },
     )
+}
+
+/// Star's Points: its rays, 4, 6 or 8.
+fn star_points(ui: &mut Ui, points: &mut StarPoints) -> bool {
+    let options = StarPoints::ALL.map(|option| (option, option.label()));
+    moduwu_design::form_row(ui, tr("Points"), POINTS_WIDTH, |ui, width| {
+        moduwu_design::segmented_control(ui, points, &options, width).changed()
+    })
+    .inner
 }

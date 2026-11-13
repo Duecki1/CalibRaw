@@ -2100,5 +2100,8 @@
   "Color Fringe": "Franjuri de culoare",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Desparte culorile de-a lungul marginilor în franjuri roșii, verzi și albastre. Obiectiv le împinge spre exterior din centrul imaginii, ca un obiectiv; Deplasare le mută pe Direcție. Prismă le întinde într-un curcubeu. Masca controlează unde apare rezultatul.",
   "Prism": "Prismă",
-  "Shift": "Deplasare"
+  "Shift": "Deplasare",
+  "Star": "Stea",
+  "Points": "Raze",
+  "Dispersion": "Dispersie"
 }

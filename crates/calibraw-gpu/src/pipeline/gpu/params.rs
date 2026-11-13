@@ -2,7 +2,8 @@
 
 use super::defocus::{defocus_reaches_map, is_defocus};
 use super::styled_glow::{
-    is_styled_glow, styled_glow_near_top, styled_glow_streaks, StyledGlowStreaks,
+    is_styled_glow, styled_glow_near_top, styled_glow_streaks, styled_glow_streaks_of,
+    StyledGlowStreaks,
 };
 use super::*;
 use crate::pipeline::effect_lanes::{
@@ -974,7 +975,9 @@ impl GpuParams {
     /// Whether a Glow reads the full-image map, which an export then builds
     /// in a prepass: its streaks always, its spread when it reaches past the
     /// near pyramid at this pipeline's resolution. The near pyramid's reach is
-    /// a share of the image that shrinks as the resolution grows.
+    /// a share of the image that shrinks as the resolution grows. Dispersion
+    /// widens red's profile by DISPERSION · log2(630 / 532) octaves
+    /// (styled_glow.wgsl), less than a quarter octave per unit.
     pub(super) fn needs_styled_glow_map(&self) -> bool {
         let short_edge = self.camera.full_width.min(self.camera.full_height);
         let near_top = styled_glow_near_top(short_edge);
@@ -982,19 +985,16 @@ impl GpuParams {
             .iter()
             .filter(|mask| is_styled_glow(mask))
             .any(|mask| {
-                styled_glow_streaks(mask) != StyledGlowStreaks::None
-                    || mask.lane(styled_glow::WIDEST) > near_top
+                styled_glow_streaks(mask).any()
+                    || mask.lane(styled_glow::REACH) + 0.25 * mask.lane(styled_glow::DISPERSION)
+                        > near_top
             })
     }
 
-    /// The streak passes the Glow slots need: both ways for any Streak.
+    /// The streak passes the Glow slots need: as many lines as the Star with
+    /// the most Points, both ways for any Streak or Star.
     pub(super) fn styled_glow_streaks(&self) -> StyledGlowStreaks {
-        self.mask_slots()
-            .iter()
-            .filter(|mask| is_styled_glow(mask))
-            .map(styled_glow_streaks)
-            .max()
-            .unwrap_or(StyledGlowStreaks::None)
+        styled_glow_streaks_of(self.mask_slots())
     }
 
     /// Whether this pipeline renders the whole image rather than a crop or an

@@ -2094,5 +2094,8 @@
   "Color Fringe": "색 번짐",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "가장자리의 색을 빨강, 초록, 파랑 번짐으로 나눕니다. Lens는 렌즈처럼 이미지 중심에서 바깥쪽으로 밀어내고, 이동은 방향을 따라 옮깁니다. 프리즘은 무지개처럼 펼칩니다. 마스크로 효과가 나타날 위치를 정합니다.",
   "Prism": "프리즘",
-  "Shift": "이동"
+  "Shift": "이동",
+  "Star": "별빛",
+  "Points": "빛줄기 수",
+  "Dispersion": "분산"
 }

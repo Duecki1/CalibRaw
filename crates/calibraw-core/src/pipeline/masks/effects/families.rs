@@ -71,6 +71,7 @@ impl StyleMode {
                 Self::Glow(GlowStyle::ALL[2]),
                 Self::Glow(GlowStyle::ALL[3]),
                 Self::Glow(GlowStyle::ALL[4]),
+                Self::Glow(GlowStyle::ALL[5]),
             ],
             MaskEffect::LightShafts => &[
                 Self::LightShafts(LightShaftsMode::ALL[0]),

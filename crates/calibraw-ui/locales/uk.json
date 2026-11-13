@@ -2100,5 +2100,8 @@
   "Color Fringe": "Кольорова облямівка",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Розділіть кольори на краях на червону, зелену й синю облямівки. Об’єктив відсуває їх від центру зображення, як об’єктив, а Зсув переміщує їх у напрямку. Призма розтягує їх у веселку. Маска визначає ділянку застосування ефекту.",
   "Prism": "Призма",
-  "Shift": "Зсув"
+  "Shift": "Зсув",
+  "Star": "Зірка",
+  "Points": "Промені",
+  "Dispersion": "Дисперсія"
 }

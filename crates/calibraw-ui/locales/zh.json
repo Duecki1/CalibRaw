@@ -2100,5 +2100,8 @@
   "Color Fringe": "色边",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "将边缘的颜色分离为红、绿、蓝色边。镜头像镜头一样将其从图像中心向外推开；偏移沿方向移动它们。棱镜将其展开成彩虹。蒙版控制效果出现的位置。",
   "Prism": "棱镜",
-  "Shift": "偏移"
+  "Shift": "偏移",
+  "Star": "星芒",
+  "Points": "星芒数",
+  "Dispersion": "色散"
 }

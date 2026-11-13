@@ -2093,5 +2093,8 @@
   "Color Fringe": "Colour Fringe",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Part the colours along edges into red, green and blue fringes, if you please. Lens draws them outward from the image's centre as a lens would; Shift moves them along the Direction. Prism spreads them into a rainbow. The mask determines where it shall appear.",
   "Prism": "Prism",
-  "Shift": "Shift"
+  "Shift": "Shift",
+  "Star": "Star",
+  "Points": "Points",
+  "Dispersion": "Dispersion"
 }

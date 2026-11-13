@@ -2100,5 +2100,8 @@
   "Color Fringe": "Farvefrynser",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Del farverne langs kanter op i røde, grønne og blå frynser. Objektiv skubber dem udad fra billedets midte, som et objektiv gør; Forskydning flytter dem langs Retning. Prisme spreder dem ud i en regnbue. Masken styrer, hvor effekten vises.",
   "Prism": "Prisme",
-  "Shift": "Forskydning"
+  "Shift": "Forskydning",
+  "Star": "Stjerne",
+  "Points": "Takker",
+  "Dispersion": "Dispersion"
 }

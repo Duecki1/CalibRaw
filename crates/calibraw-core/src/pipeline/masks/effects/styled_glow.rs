@@ -1,4 +1,4 @@
-//! Glow: light that spreads from the bright parts of the mask, in one of five
+//! Glow: light that spreads from the bright parts of the mask, in one of six
 //! styles (styled_glow.wgsl).
 //!
 //! The mask selects the pixels that emit; their light spreads past it. Every
@@ -24,14 +24,28 @@
 //!   Kawase's streak filter (DOUBLE-S.T.E.A.L, GDC 2003) that Blender's
 //!   Streaks glare also builds; Spread sets the length λ. Across the streak it
 //!   is a Gaussian whose deviation Softness sets.
+//! - Star spreads it along Points rays from each light, as a cross-screen
+//!   filter would: Points / 2 lines through the light, the first along
+//!   Direction and the rest turned evenly from it, each a Streak's kernel.
+//!   The lines share the light equally.
 //! - Every kernel holds unit energy, so spreading light farther does not add
 //!   to it.
 //! - Warmth tints the spread light: along the Planckian locus from cool to
 //!   warm, or from yellow to deep red for Halation.
+//! - Dispersion scales the kernel of each primary by its wavelength, as
+//!   diffraction does: red spreads wider and blue tighter, so Bloom,
+//!   Diffusion and Halation turn bluish at the core and red at the rim, and
+//!   rays of Streak and Star run from blue into red. Each primary's kernel
+//!   keeps unit energy, so the glow's colour as a whole stays the same; only
+//!   where it lands changes. Motion, a shutter drag, has no Dispersion.
 //!
 //! Scales are fractions of the image's shorter edge, so the look does not
 //! depend on the resolution. This module turns the controls into those
-//! quantities; the shader only integrates the profile and composites.
+//! quantities; the shader only integrates the profile and composites. The
+//! share of energy per octave is the one quantity the shader takes from the
+//! style itself (`styled_glow_profile_slope`), as the slot has no lane left.
+//! The wavelengths Dispersion scales by are the Rec.2020 primaries', the
+//! working space's, and are set there too.
 
 use super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
 use super::params::styled_glow::*;
@@ -53,15 +67,18 @@ pub enum GlowStyle {
     /// Light streaking both ways from highlights, as through an anamorphic
     /// lens.
     Streak,
+    /// Rays from highlights, as through a cross-screen star filter.
+    Star,
 }
 
 impl GlowStyle {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Bloom,
         Self::Diffusion,
         Self::Halation,
         Self::Motion,
         Self::Streak,
+        Self::Star,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -71,13 +88,20 @@ impl GlowStyle {
             Self::Halation => "Halation",
             Self::Motion => "Motion",
             Self::Streak => "Streak",
+            Self::Star => "Star",
         }
     }
 
     /// Whether light spreads in streaks along a Direction rather than all
     /// around, which the card's Direction and Softness set.
     pub const fn streaks(self) -> bool {
-        matches!(self, Self::Motion | Self::Streak)
+        matches!(self, Self::Motion | Self::Streak | Self::Star)
+    }
+
+    /// Whether the card's Dispersion applies: to every style but Motion,
+    /// whose streaks are a shutter drag, not light bent by optics.
+    pub const fn disperses(self) -> bool {
+        !matches!(self, Self::Motion)
     }
 
     /// `STYLE` lane value (`STYLED_GLOW_*` in styled_glow.wgsl).
@@ -88,6 +112,7 @@ impl GlowStyle {
             Self::Halation => 2.0,
             Self::Motion => 3.0,
             Self::Streak => 4.0,
+            Self::Star => 5.0,
         }
     }
 
@@ -99,6 +124,49 @@ impl GlowStyle {
     }
 }
 
+/// The rays of a Star glow, chosen with its card's Points control.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum StarPoints {
+    Four,
+    #[default]
+    Six,
+    Eight,
+}
+
+impl StarPoints {
+    pub const ALL: [Self; 3] = [Self::Four, Self::Six, Self::Eight];
+
+    /// The control's label: the number of rays.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Four => "4",
+            Self::Six => "6",
+            Self::Eight => "8",
+        }
+    }
+
+    /// The most lines through a light any Points has, which bounds the
+    /// streak passes a render runs.
+    pub const MOST_AXES: u32 = 4;
+
+    /// The lines through a light, each with a ray either way.
+    const fn axes(self) -> u32 {
+        match self {
+            Self::Four => 2,
+            Self::Six => 3,
+            Self::Eight => 4,
+        }
+    }
+}
+
+const _: () = {
+    let mut index = 0;
+    while index < StarPoints::ALL.len() {
+        assert!(StarPoints::ALL[index].axes() <= StarPoints::MOST_AXES);
+        index += 1;
+    }
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct StyledGlowEffectSettings {
@@ -107,10 +175,16 @@ pub struct StyledGlowEffectSettings {
     pub range: f32,
     pub spread: f32,
     pub warmth: f32,
-    /// Motion and Streak: the direction light streaks toward, in degrees.
+    /// Every style but Motion: how much wider red spreads than blue.
+    pub dispersion: f32,
+    /// Motion, Streak and Star: the direction light streaks toward (Star's
+    /// first ray), in degrees.
     pub direction: f32,
-    /// Motion and Streak: how far the streaks spread across their direction.
+    /// Motion, Streak and Star: how far the streaks spread across their
+    /// direction.
     pub softness: f32,
+    /// Star: its rays.
+    pub points: StarPoints,
 }
 
 impl Default for StyledGlowEffectSettings {
@@ -121,37 +195,45 @@ impl Default for StyledGlowEffectSettings {
             range: RANGE.default,
             spread: SPREAD.default,
             warmth: WARMTH.default,
+            dispersion: DISPERSION.default,
             direction: DIRECTION.default,
             softness: SOFTNESS.default,
+            points: StarPoints::default(),
         }
     }
 }
 
 effect_lanes! {
-    /// [`GlowStyle`] as 0 to 4.
+    /// [`GlowStyle`] as 0 to 5.
     STYLE = 0,
     /// The share of the emitted light that is spread (or, for Halation, the
     /// gain on the halo's luminance).
     STRENGTH = 1,
     /// The Range threshold: log2 of the luminance at the knee's middle.
     THRESHOLD = 2,
-    /// Bloom, Diffusion and Halation: log2 of the finest and the widest
-    /// Gaussian deviation of the spread profile, in shorter edges.
+    /// Bloom, Diffusion and Halation: log2 of the finest Gaussian deviation
+    /// of the spread profile, in shorter edges.
     FINEST = 3,
-    WIDEST = 4,
-    /// Energy per octave grows as 2^(SLOPE × octave) toward the widest.
-    SLOPE = 5,
+    /// How far light spreads, in shorter edges: for Bloom, Diffusion and
+    /// Halation log2 of the widest Gaussian deviation of the profile; for
+    /// Motion, Streak and Star the length λ over which a streak falls to 1/e.
+    /// One lane serves both, as no style uses both.
+    REACH = 4,
+    /// The exponent of wavelength by which each primary's kernel scales:
+    /// widths go as (λ / λ_green)^DISPERSION (styled_glow.wgsl), so 1 is
+    /// diffraction's. 0 for Motion.
+    DISPERSION = 5,
     /// The tint of the spread light, scene-linear Rec.2020.
     TINT = 6 (color),
-    /// Motion and Streak: the direction light streaks toward, in radians, in
-    /// the full image's pixels with y down (clockwise on screen), as Motion
-    /// Blur's Angle.
+    /// Motion, Streak and Star: the direction light streaks toward, in
+    /// radians, in the full image's pixels with y down (clockwise on screen),
+    /// as Motion Blur's Angle.
     DIRECTION = 9,
-    /// Motion and Streak: the length λ over which a streak falls to 1/e, in
+    /// Motion, Streak and Star: the lines through a light that streaks run
+    /// along, 1 but for Star, turned π / AXES apart from DIRECTION.
+    AXES = 10,
+    /// Motion, Streak and Star: the Gaussian deviation across a streak, in
     /// shorter edges.
-    LENGTH = 10,
-    /// Motion and Streak: the Gaussian deviation across a streak, in shorter
-    /// edges.
     SOFTNESS = 11,
 }
 
@@ -187,8 +269,13 @@ const STREAK_LENGTH_AT_FULL: f32 = 0.5;
 /// with the square of Softness, so low values keep streaks crisp. At 0 a
 /// streak is as thin as the full-image map holds it.
 const STREAK_SOFTNESS_AT_FULL: f32 = 0.04;
-/// Amount 100 adds the light that emits, spread along the streaks.
+/// Amount 100 adds the light that emits, spread along the streaks; a
+/// Star's lines share it.
 const STREAK_STRENGTH: f32 = 1.0;
+/// The exponent of wavelength at Dispersion 100 (the `DISPERSION` lane):
+/// red then spreads about twice as wide as green and blue about 0.6 times
+/// as wide. Dispersion 25 is diffraction's exponent of 1.
+const DISPERSION_AT_FULL: f32 = 4.0;
 
 impl StyledGlowEffectSettings {
     /// log2 of the widest Gaussian deviation of Bloom, Diffusion and
@@ -217,9 +304,11 @@ impl StyledGlowEffectSettings {
     fn tint(&self) -> [f32; 3] {
         let warmth = WARMTH.clamp(self.warmth) / 100.0;
         match self.style {
-            GlowStyle::Bloom | GlowStyle::Diffusion | GlowStyle::Motion | GlowStyle::Streak => {
-                warmth_tint(warmth)
-            }
+            GlowStyle::Bloom
+            | GlowStyle::Diffusion
+            | GlowStyle::Motion
+            | GlowStyle::Streak
+            | GlowStyle::Star => warmth_tint(warmth),
             GlowStyle::Halation => {
                 let (from, to, t) = if warmth < 0.0 {
                     (HALATION_ORANGE, HALATION_YELLOW, -warmth)
@@ -247,6 +336,7 @@ impl EffectSettings for StyledGlowEffectSettings {
             EffectControl::Slider(&mut self.range, RANGE),
             EffectControl::Slider(&mut self.spread, SPREAD),
             EffectControl::Slider(&mut self.warmth, WARMTH),
+            EffectControl::Slider(&mut self.dispersion, DISPERSION),
         ];
         if self.style.streaks() {
             controls.push(EffectControl::Angle(&mut self.direction, DIRECTION));
@@ -264,17 +354,28 @@ impl EffectSettings for StyledGlowEffectSettings {
             MIDDLE_GREY.log2() + RANGE_TOP_STOPS - RANGE_STOPS * range,
         );
         slot.set_color(lanes::TINT, self.tint());
-        let (strength, slope) = match self.style {
-            GlowStyle::Bloom => (BLOOM_STRENGTH, 0.0),
-            GlowStyle::Diffusion => (DIFFUSION_STRENGTH, 1.0),
-            GlowStyle::Halation => (HALATION_STRENGTH, 0.0),
-            GlowStyle::Motion | GlowStyle::Streak => {
+        if self.style.disperses() {
+            slot.set(
+                lanes::DISPERSION,
+                DISPERSION_AT_FULL * DISPERSION.clamp(self.dispersion) / 100.0,
+            );
+        }
+        let strength = match self.style {
+            GlowStyle::Bloom => BLOOM_STRENGTH,
+            GlowStyle::Diffusion => DIFFUSION_STRENGTH,
+            GlowStyle::Halation => HALATION_STRENGTH,
+            GlowStyle::Motion | GlowStyle::Streak | GlowStyle::Star => {
+                let axes = match self.style {
+                    GlowStyle::Star => self.points.axes(),
+                    _ => 1,
+                };
                 slot.set(lanes::STRENGTH, STREAK_STRENGTH * amount);
                 slot.set(
                     lanes::DIRECTION,
                     DIRECTION.clamp(self.direction).to_radians(),
                 );
-                slot.set(lanes::LENGTH, self.streak_length());
+                slot.set(lanes::AXES, axes as f32);
+                slot.set(lanes::REACH, self.streak_length());
                 slot.set(lanes::SOFTNESS, self.streak_softness());
                 return;
             }
@@ -284,7 +385,6 @@ impl EffectSettings for StyledGlowEffectSettings {
         let finest = FINEST_SCALE.log2().min(widest - 1.0);
         slot.set(lanes::STRENGTH, strength * amount);
         slot.set(lanes::FINEST, finest);
-        slot.set(lanes::WIDEST, widest);
-        slot.set(lanes::SLOPE, slope);
+        slot.set(lanes::REACH, widest);
     }
 }

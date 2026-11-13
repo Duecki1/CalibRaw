@@ -2100,5 +2100,8 @@
   "Color Fringe": "Frangia di colore",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Separa i colori lungo i bordi in frange rosse, verdi e blu. Obiettivo le allontana dal centro dell’immagine come un obiettivo; Spostamento le muove lungo la Direzione. Prisma le apre in un arcobaleno. La maschera controlla dove appare il risultato.",
   "Prism": "Prisma",
-  "Shift": "Spostamento"
+  "Shift": "Spostamento",
+  "Star": "Stella",
+  "Points": "Punte",
+  "Dispersion": "Dispersione"
 }

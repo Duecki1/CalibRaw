@@ -2098,5 +2098,8 @@
   "Color Fringe": "Barwna obwódka",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Rozdziel kolory na krawędziach na czerwone, zielone i niebieskie obwódki. Obiektyw odsuwa je od środka obrazu jak obiektyw, a Przesunięcie przesuwa je wzdłuż Kierunku. Pryzmat rozszczepia je w tęczę. Maska wskazuje, gdzie pojawi się efekt.",
   "Prism": "Pryzmat",
-  "Shift": "Przesunięcie"
+  "Shift": "Przesunięcie",
+  "Star": "Gwiazda",
+  "Points": "Ramiona",
+  "Dispersion": "Dyspersja"
 }

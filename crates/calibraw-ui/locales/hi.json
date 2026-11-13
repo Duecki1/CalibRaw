@@ -2100,5 +2100,8 @@
   "Color Fringe": "रंगीन किनारी",
   "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "किनारों के रंगों को लाल, हरी और नीली किनारियों में बाँटें। लेंस उन्हें लेंस की तरह छवि के केंद्र से बाहर की ओर ले जाता है; खिसकाव उन्हें दिशा के साथ खिसकाता है। प्रिज़्म उन्हें इंद्रधनुष में फैलाता है। मास्क से तय होता है कि प्रभाव कहाँ दिखे।",
   "Prism": "प्रिज़्म",
-  "Shift": "खिसकाव"
+  "Shift": "खिसकाव",
+  "Star": "तारा",
+  "Points": "किरणें",
+  "Dispersion": "वर्ण-विक्षेपण"
 }
