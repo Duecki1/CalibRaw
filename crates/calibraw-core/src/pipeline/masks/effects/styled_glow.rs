@@ -30,6 +30,11 @@
 //!   The lines share the light equally.
 //! - Every kernel holds unit energy, so spreading light farther does not add
 //!   to it.
+//! - Amount up to 100 sets how much of that light is spread (or moved, or
+//!   for Halation the halo's gain). Past 100 it brightens the spread light
+//!   beyond the light that emits, [`AMOUNT_BOOST_STOPS`] stops more at 200,
+//!   as Oniric's glow Exposure does; Diffusion then adds light as well as
+//!   moving it.
 //! - Warmth tints the spread light: along the Planckian locus from cool to
 //!   warm, or from yellow to deep red for Halation.
 //! - Dispersion scales the kernel of each primary by its wavelength, as
@@ -270,7 +275,8 @@ effect_lanes! {
     /// widths go as (λ / λ_green)^DISPERSION (styled_glow.wgsl), so 1 is
     /// diffraction's. 0 for Motion.
     DISPERSION = 5,
-    /// The tint of the spread light, scene-linear Rec.2020.
+    /// The tint of the spread light, scene-linear Rec.2020, times Amount's
+    /// boost past 100.
     TINT = 6 (color),
     /// Motion, Streak and Star: the direction light streaks toward, in
     /// radians, in the full image's pixels with y down (clockwise on screen),
@@ -292,6 +298,10 @@ effect_lanes! {
     /// image's pixels with y down, as DIRECTION.
     SPLIT_DIRECTION = 14,
 }
+
+/// Stops Amount 200 brightens the spread light by over Amount 100, evenly
+/// per stop between them.
+const AMOUNT_BOOST_STOPS: f32 = 4.0;
 
 /// Middle grey, the reference of the Range threshold.
 const MIDDLE_GREY: f32 = 0.18;
@@ -421,7 +431,14 @@ impl EffectSettings for StyledGlowEffectSettings {
             lanes::THRESHOLD,
             MIDDLE_GREY.log2() + RANGE_TOP_STOPS - RANGE_STOPS * range,
         );
-        slot.set_color(lanes::TINT, self.tint());
+        // Up to 100 Amount is the share of the light; past it, a gain on the
+        // tint, which multiplies only the spread light in every style.
+        let (amount, boost) = if amount > 1.0 {
+            (1.0, (AMOUNT_BOOST_STOPS * (amount - 1.0)).exp2())
+        } else {
+            (amount, 1.0)
+        };
+        slot.set_color(lanes::TINT, self.tint().map(|channel| channel * boost));
         let split = SPLIT.clamp(self.split) / 100.0;
         slot.set(lanes::SPLIT, SPLIT_AT_FULL * split * split);
         slot.set(lanes::SPLIT_MODE, self.split_mode.shader_value());

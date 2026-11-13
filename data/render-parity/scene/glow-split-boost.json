@@ -1,0 +1,23 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "StyledGlow",
+          "settings": {
+            "styled_glow": {
+              "style": "Bloom",
+              "amount": 170.0,
+              "range": 25.0,
+              "spread": 0.0,
+              "warmth": -13.0,
+              "split": 74.0,
+              "split_mode": "Shift",
+              "split_direction": 180.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

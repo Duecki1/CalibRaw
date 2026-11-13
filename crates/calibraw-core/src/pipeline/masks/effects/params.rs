@@ -497,7 +497,7 @@ pub mod glow {
 pub mod styled_glow {
     use super::*;
 
-    float_param!(AMOUNT, "Amount", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(AMOUNT, "Amount", 0.0, 200.0, 50.0, 0.5, 0, None);
     float_param!(RANGE, "Range", 0.0, 100.0, 50.0, 0.5, 0, None);
     float_param!(SPREAD, "Spread", 0.0, 100.0, 50.0, 0.5, 0, None);
     float_param!(WARMTH, "Warmth", -100.0, 100.0, 0.0, 0.5, 0, None);

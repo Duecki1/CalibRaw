@@ -78,7 +78,8 @@
 // Composite, with K*S the spread light and a the STRENGTH lane:
 // - Bloom:     C + a · tint · K*S
 // - Diffusion: C + a · (tint · K*S − S), which moves light without adding it
-//              (tint has luminance 1);
+//              (tint has luminance 1 until Amount passes 100, whose boost
+//              styled_glow.rs packs into the tint);
 // - Halation:  C + a · tint · max(Y(K*S) − Y(S), 0), the halo beyond bright
 //              edges, so a flat bright area takes no cast;
 // - Motion, Streak, Star: C + a · tint · streaks.
