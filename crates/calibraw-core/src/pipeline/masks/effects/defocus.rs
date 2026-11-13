@@ -135,11 +135,11 @@ effect_lanes! {
 /// and a 50 mm f/1.4 at 1.5 m 3.4%, so 100 is a fast portrait lens wide open
 /// and lower values cover ordinary primes. The radius is linear in Blur
 /// amount, as a lens's is in its aperture's diameter.
-pub const LARGEST_RADIUS: f32 = 0.04;
+const LARGEST_RADIUS: f32 = 0.04;
 /// The energy gain at Boost 100 of a light that clearly stands out: four
 /// stops, about what a lamp or the sun loses to clipping at a normal
 /// exposure.
-pub const LARGEST_BOOST: f32 = 16.0;
+const LARGEST_BOOST: f32 = 16.0;
 
 impl EffectSettings for DefocusEffectSettings {
     const LANES: &'static [LaneName] = lanes::ALL;

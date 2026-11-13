@@ -8,8 +8,8 @@
 //!   the first Blur stage blends. Every pipeline with a Lens Blur builds them
 //!   in its output stage, before the Blur passes.
 //! - Map: the sums, sources and slabs of bins 3 to 5 over a grid of the whole
-//!   image ([`DEFOCUS_MAP_LONG`] cells along its longer edge, halved per bin)
-//!   and the fill's coarser levels. A pipeline that renders the whole image
+//!   image ([`DEFOCUS_MAP_LONG`] cells along its longer edge, at most one per
+//!   pixel, halved per bin) and the fill's coarser levels. A pipeline that renders the whole image
 //!   builds it whenever a Lens Blur reaches those bins, so a zoomed view can
 //!   share it ([`EffectInputs::share_defocus_map`]); an export builds it once
 //!   in a prepass over its tiles ([`RawGpuPipeline::begin_export_defocus`]).
@@ -72,10 +72,10 @@ pub(super) const DEFOCUS_MAP_LONG: u32 = 768;
 /// 5 are written at twice their sources' resolution, so their rims, one
 /// source texel wide, are drawn smoothly.
 const MAP_SLAB_MIPS: [u32; MAP_BINS as usize] = [0, 0, 1];
-pub(super) const SOURCE_LAYERS: u32 = 4;
-pub(super) const SLAB_LAYERS: u32 = 7;
+pub(super) const SOURCE_LAYERS: u32 = 5;
+pub(super) const SLAB_LAYERS: u32 = 10;
 /// Vectors of a map cell's sums (`DEFOCUS_CELL_VECTORS`).
-pub(super) const CELL_VECTORS: u64 = 4;
+pub(super) const CELL_VECTORS: u64 = 5;
 const CELL_BYTES: u64 = 16;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -122,12 +122,14 @@ fn local_side(side: u32, first: u32, mips: u32) -> u32 {
     unit * (side.div_ceil(1 << (first + mips - 1)) + 1)
 }
 
-/// The map's grid for bin 3 (`defocus_map_grid` in defocus.wgsl).
+/// The map's grid for bin 3 (`defocus_map_grid` in defocus.wgsl): at most
+/// one cell per pixel along the longer edge (`defocus_map_long`), since a
+/// finer cell may hold no pixel's centre and the empty cells would show as a
+/// lattice in small whole-image renders.
 fn defocus_map_grid(params: &GpuParams) -> [u32; 2] {
-    full_image_grid(
-        [params.camera.full_width, params.camera.full_height],
-        DEFOCUS_MAP_LONG,
-    )
+    let full = [params.camera.full_width, params.camera.full_height];
+    let long = full[0].max(full[1]).clamp(1, DEFOCUS_MAP_LONG);
+    full_image_grid(full, long)
 }
 
 /// Blocks of occupancy flags per region (`defocus_occupancy_region`).
@@ -634,8 +636,8 @@ impl DefocusSources<'_> {
                 texels: mip_size(map.grid, bin as u32),
             })
             .collect();
-        for bin in 0..MAP_BINS as usize {
-            let mip = (MAP_SLAB_MIPS[bin] as usize).min(map.slabs.levels.len() - 1);
+        for (bin, &slab_mip) in MAP_SLAB_MIPS.iter().enumerate() {
+            let mip = (slab_mip as usize).min(map.slabs.levels.len() - 1);
             map_levels.push(DefocusDispatch {
                 program: GATHER,
                 bind_group: gather(

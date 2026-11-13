@@ -155,8 +155,7 @@ fn focus_range(ui: &mut Ui, settings: &mut DefocusEffectSettings) -> bool {
     let mut range = FocusRange::of(settings);
     let before = range;
     let label = tr("Focus range");
-    ui.label(label)
-        .on_hover_text(tr(defocus::FOCUS_RANGE_HELP));
+    ui.label(label).on_hover_text(tr(defocus::FOCUS_RANGE_HELP));
     let background = focus_track_background(ui.visuals(), range.ends());
     let response = feathered_range::feathered_range_track(ui, &mut range, label, background);
     settings.focus_near = range.near;
@@ -175,11 +174,11 @@ fn bokeh_shape(ui: &mut Ui, shape: &mut BokehShape) -> bool {
     let before = *shape;
     moduwu_design::form_combo_with_help(
         ui,
-        &tr("Bokeh shape"),
+        tr("Bokeh shape"),
         "lens-blur-bokeh-shape",
         tr(shape.label()),
         240.0,
-        &tr(defocus::BOKEH_SHAPE_HELP),
+        tr(defocus::BOKEH_SHAPE_HELP),
         |ui| {
             for option in BokehShape::ALL {
                 if ui

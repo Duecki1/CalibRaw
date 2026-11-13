@@ -47,7 +47,10 @@
 //
 // Fill. A blurred foreground reveals what it hides out to its radius. Behind
 // the focus range a wider slab always lies behind a narrower one and fills it
-// statistically; in front, light left over after every slab takes the
+// statistically. In front, light left over after every slab takes the mean
+// of what lies behind the front slabs that let it through, each over its own
+// disc (the bin's fill layer), as the layered renderers fill a layer's hidden
+// part from the layers behind it; where nothing behind lies within reach, the
 // non-front image's mean at the foreground's scale, from a pyramid
 // (`defocus_fill_*`).
 //
@@ -68,13 +71,15 @@ const DEFOCUS_LOCAL_BINS: u32 = 3u;
 const DEFOCUS_BIN_SOFTNESS: f32 = 0.1;
 // A bin's widest radius, in its starting radius: 2^(1 + DEFOCUS_BIN_SOFTNESS).
 const DEFOCUS_BIN_REACH: f32 = 2.144;
-// Layers per slot: four per bin of sources, seven of slabs (two per bin and
-// the fill).
-const DEFOCUS_SOURCE_LAYERS: u32 = 4u;
-const DEFOCUS_SLAB_LAYERS: u32 = 7u;
-const DEFOCUS_FILL_LAYER: u32 = 6u;
+// Layers per slot: five per bin of sources, ten of slabs (per bin its front
+// and back slab and the fill behind its front, then the fill pyramid).
+const DEFOCUS_SOURCE_LAYERS: u32 = 5u;
+const DEFOCUS_SLAB_LAYERS: u32 = 10u;
+const DEFOCUS_BIN_SLAB_LAYERS: u32 = 3u;
+const DEFOCUS_FILL_LAYER: u32 = 9u;
 // Cells of the full-image map along the longer edge (DEFOCUS_MAP_LONG in
-// defocus.rs); bin 3 lies at this grid, each further bin at half of it.
+// defocus.rs), at most one per pixel (`defocus_map_long`); bin 3 lies at this
+// grid, each further bin at half of it.
 const DEFOCUS_MAP_LONG: u32 = 768u;
 // Edges of the occupancy blocks: 16 pixels for the focus slab, 8 texels for a
 // bin at its level.
@@ -109,7 +114,13 @@ const DEFOCUS_PROMINENCE_STOPS: vec2<f32> = vec2<f32>(1.0, 3.0);
 // shorter edges so that it stays inside the export halo.
 const DEFOCUS_SURROUND: f32 = 0.75;
 const DEFOCUS_SURROUND_LIMIT: f32 = 0.0078125;
-// A fill level counts once its non-front weight reaches this share.
+// The least `shown` a slab's coverage is divided by: where less of the slab
+// lies within reach, its continuation behind nearer slabs fades out rather
+// than flipping between none and full from texel to texel.
+const DEFOCUS_LEAST_SHOWN: f32 = 0.05;
+// A fill counts in full once what it is the mean of covers this share of
+// its area: a pyramid level's non-front weight, or what lies behind the front
+// slabs over their discs.
 const DEFOCUS_FILL_WEIGHT: f32 = 0.2;
 
 // --- Bindings ---
@@ -223,9 +234,17 @@ fn defocus_map_slab_mip(bin: u32) -> u32 {
     return max(bin, DEFOCUS_LOCAL_BINS + 1u) - DEFOCUS_LOCAL_BINS - 1u;
 }
 
+// The map's cells along the longer edge for bin 3: no more than the image
+// has pixels, since a cell finer than a pixel may hold no pixel's centre and
+// the empty cells would show as a lattice (`defocus_map_long` in defocus.rs).
+fn defocus_map_long() -> u32 {
+    let long = max(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height);
+    return clamp(long, 1u, DEFOCUS_MAP_LONG);
+}
+
 // The map's grid of bin `bin` (3 to 5), as Common::full_image_grid halves it.
 fn defocus_map_grid(bin: u32) -> vec2<u32> {
-    return max(Common::full_image_grid(DEFOCUS_MAP_LONG) >> vec2<u32>(bin - DEFOCUS_LOCAL_BINS), vec2<u32>(1u));
+    return max(Common::full_image_grid(defocus_map_long()) >> vec2<u32>(bin - DEFOCUS_LOCAL_BINS), vec2<u32>(1u));
 }
 
 // --- Controls ---
@@ -406,6 +425,12 @@ fn defocus_visible(coc: f32, bin: u32, side: u32) -> f32 {
     return 1.0 - nearer;
 }
 
+// The share of a surface of circle `coc` that lies behind front bin `bin`:
+// all but its shares in front bins from `bin` on.
+fn defocus_behind(coc: f32, bin: u32) -> f32 {
+    return 1.0 - select(0.0, defocus_above(defocus_octave(coc), f32(bin)), coc < 0.0);
+}
+
 // The share of a surface of circle `coc` that lies no nearer than the focus
 // slab: all but its front bins' shares.
 fn defocus_focus_visible(coc: f32) -> f32 {
@@ -541,9 +566,11 @@ fn defocus_surround_radius(bin: u32) -> f32 {
 
 // What a bin's sources sum over a block of pixels: per side the boosted
 // premultiplied colour and coverage, the coverage-weighted |c| and position
-// in the block, and what the bin may show (`defocus_visible`). The position
-// places each source's disc at its pixels' centroid rather than the texel's
-// centre, so the rims of lines and edges stay smooth at any level.
+// in the block, what the bin may show (`defocus_visible`), and the unboosted
+// premultiplied colour and coverage of what lies behind its front
+// (`defocus_behind`). The position places each source's disc at its pixels'
+// centroid rather than the texel's centre, so the rims of lines and edges
+// stay smooth at any level.
 struct DefocusBinSums {
     front: vec4<f32>,
     back: vec4<f32>,
@@ -552,6 +579,7 @@ struct DefocusBinSums {
     // Position · α front (xy) and back (zw), in texels from the block's
     // centre.
     centroid: vec4<f32>,
+    behind: vec4<f32>,
 }
 
 fn defocus_add_surface(
@@ -564,6 +592,7 @@ fn defocus_add_surface(
 ) {
     (*sums).extra.z += surface.alpha * defocus_visible(surface.coc, bin, 0u);
     (*sums).extra.w += surface.alpha * defocus_visible(surface.coc, bin, 1u);
+    (*sums).behind += vec4<f32>(surface.premultiplied, surface.alpha) * defocus_behind(surface.coc, bin);
     let share = surface.alpha * defocus_bin_weight(surface.coc, bin);
     if share <= 0.0 || surface.coc == 0.0 {
         return;
@@ -603,7 +632,7 @@ fn defocus_add_pixel(
     }
 }
 
-// The four source layers of a bin from its sums over `count` pixels: means,
+// The five source layers of a bin from its sums over `count` pixels: means,
 // with |c| and the centroid per unit of coverage.
 fn defocus_store_sources(
     texel: vec2<i32>,
@@ -624,6 +653,7 @@ fn defocus_store_sources(
     textureStore(defocus_sources_out, texel, layer + 1u, sums.back * scale);
     textureStore(defocus_sources_out, texel, layer + 2u, vec4<f32>(coc, sums.extra.zw * scale));
     textureStore(defocus_sources_out, texel, layer + 3u, centroid);
+    textureStore(defocus_sources_out, texel, layer + 4u, sums.behind * scale);
 }
 
 // --- Occupancy ---
@@ -724,7 +754,7 @@ fn build_defocus_sources(@builtin(global_invocation_id) gid: vec3<u32>) {
     let index = defocus_slot(gid.z);
     let params = mask_effect_params(index);
     let surround = defocus_surround(vec2<f32>(first) + vec2<f32>(0.5 * f32(step)), defocus_surround_radius(bin));
-    var sums = DefocusBinSums(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
+    var sums = DefocusBinSums(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
     let centre = 0.5 * f32(step - 1);
     for (var y = 0; y < step; y = y + 1) {
         for (var x = 0; x < step; x = x + 1) {
@@ -746,7 +776,8 @@ var<workgroup> defocus_group_occupied: atomic<u32>;
 
 // The slabs of bin `defocus_pass.bin` from its sources: per texel and side,
 // the scatter of every source within the bin's reach, normalized by what
-// nearer slabs leave visible. Local bins read and write this pipeline's
+// nearer slabs leave visible; and the mean of what lies behind its front
+// over its nominal disc, which fills what the front slab reveals. Local bins read and write this pipeline's
 // textures at the bin's level. Map bins (3 to 5) read the map's sources at
 // mip `bin - 3` and write its slabs at mip `defocus_pass.mip`, which may be
 // finer than their sources, so their one-texel rims are drawn smoothly
@@ -807,9 +838,10 @@ fn gather_defocus(
         workgroupBarrier();
         if atomicLoad(&defocus_group_occupied) == 0u {
             if inside {
-                let out_layer = gid.z * DEFOCUS_SLAB_LAYERS + 2u * source_bin;
-                textureStore(defocus_slabs_out, vec2<i32>(gid.xy), out_layer, vec4<f32>(0.0));
-                textureStore(defocus_slabs_out, vec2<i32>(gid.xy), out_layer + 1u, vec4<f32>(0.0));
+                let out_layer = gid.z * DEFOCUS_SLAB_LAYERS + DEFOCUS_BIN_SLAB_LAYERS * source_bin;
+                for (var k = 0u; k < DEFOCUS_BIN_SLAB_LAYERS; k = k + 1u) {
+                    textureStore(defocus_slabs_out, vec2<i32>(gid.xy), out_layer + k, vec4<f32>(0.0));
+                }
             }
             return;
         }
@@ -838,10 +870,18 @@ fn gather_defocus(
     } else {
         uv_scale = 1.0 / vec2<f32>(defocus_map_grid(bin));
     }
+    // The bin's middle radius, which what a texel may show but holds no
+    // source of takes for `shown`, and over whose disc the fill is averaged.
     let nominal = 1.5 * start;
     var colour = array<vec3<f32>, 2>(vec3<f32>(0.0), vec3<f32>(0.0));
     var scattered = vec2<f32>(0.0);
-    var visible = vec2<f32>(0.0);
+    // What the scatter would reach if every texel showed the bin wherever
+    // nearer slabs leave it visible: each source's own kernel over its
+    // share, the nominal kernel over the rest of what the texel may show. A
+    // surface's interior thus has coverage 1 however its radius varies, and
+    // only its outline against what lies behind it is soft.
+    var shown = vec2<f32>(0.0);
+    var behind = vec4<f32>(0.0);
     var area = 0.0;
     for (var dy = -reach; dy <= reach; dy = dy + 1) {
         for (var dx = -reach; dx <= reach; dx = dx + 1) {
@@ -851,33 +891,42 @@ fn gather_defocus(
             let clamped = clamp(tap, vec2<i32>(0), source_size - vec2<i32>(1));
             let nominal_weight = smoothstep(nominal + 0.5, nominal - 0.5, length(grid_offset));
             area += nominal_weight;
+            if nominal_weight > 0.0 {
+                behind += nominal_weight * textureLoad(defocus_sources_tex, clamped, source_layer + 4u, mip);
+            }
             let extra = textureLoad(defocus_sources_tex, clamped, source_layer + 2u, mip);
-            visible += nominal_weight * extra.zw;
+            if extra.z + extra.w <= 0.0 { continue; }
             let front = textureLoad(defocus_sources_tex, clamped, source_layer, mip);
             let back = textureLoad(defocus_sources_tex, clamped, source_layer + 1u, mip);
-            if front.w + back.w <= 0.0 { continue; }
-            let centroid = textureLoad(defocus_sources_tex, clamped, source_layer + 3u, mip);
+            var centroid = vec4<f32>(0.0);
+            if front.w + back.w > 0.0 {
+                centroid = textureLoad(defocus_sources_tex, clamped, source_layer + 3u, mip);
+            }
             let point = defocus_point((vec2<f32>(tap) + origin) * uv_scale);
+            let nominal_spread = defocus_spread(aperture, grid_offset, nominal, point);
             for (var side = 0u; side < 2u; side = side + 1u) {
                 let source = select(front, back, side == 1u);
-                if source.w <= 0.0 { continue; }
-                let radius = max(extra[side] / texel, 0.5);
-                // From the source's centroid to the output texel.
-                let offset = grid_offset - select(centroid.xy, centroid.zw, side == 1u);
-                // The rim is one source texel wide: narrower, the rims of
-                // neighbouring sources of an extended light would show as
-                // rings at the sources' spacing.
-                let weight = defocus_spread(aperture, offset, radius, point);
-                if weight <= 0.0 { continue; }
-                colour[side] += weight * source.rgb;
-                scattered[side] += weight * source.w;
+                let may_show = extra[2u + side];
+                var weight = 0.0;
+                if source.w > 0.0 {
+                    let radius = max(extra[side] / texel, 0.5);
+                    // From the source's centroid to the output texel.
+                    let offset = grid_offset - select(centroid.xy, centroid.zw, side == 1u);
+                    // The rim is one source texel wide: narrower, the rims of
+                    // neighbouring sources of an extended light would show as
+                    // rings at the sources' spacing.
+                    weight = defocus_spread(aperture, offset, radius, point);
+                    colour[side] += weight * source.rgb;
+                    scattered[side] += weight * source.w;
+                }
+                shown[side] += weight * source.w + nominal_spread * max(may_show - source.w, 0.0);
             }
         }
     }
-    let out_layer = gid.z * DEFOCUS_SLAB_LAYERS + 2u * source_bin;
+    let out_layer = gid.z * DEFOCUS_SLAB_LAYERS + DEFOCUS_BIN_SLAB_LAYERS * source_bin;
+    textureStore(defocus_slabs_out, vec2<i32>(gid.xy), out_layer + 2u, behind / max(area, 1e-6));
     for (var side = 0u; side < 2u; side = side + 1u) {
-        let shown = visible[side] / max(area, 1e-6);
-        let coverage = clamp(scattered[side] / max(shown, 0.05), 0.0, 1.0);
+        let coverage = clamp(scattered[side] / max(shown[side], DEFOCUS_LEAST_SHOWN), 0.0, 1.0);
         let premultiplied = colour[side] * (coverage / max(scattered[side], 1e-9));
         textureStore(
             defocus_slabs_out,
@@ -961,8 +1010,8 @@ fn halve_defocus_fill(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 // --- Full-image map ---
 
-// Vectors per cell of the map's sums: front, back, extra, centroid.
-const DEFOCUS_CELL_VECTORS: u32 = 4u;
+// Vectors per cell of the map's sums: front, back, extra, centroid, behind.
+const DEFOCUS_CELL_VECTORS: u32 = 5u;
 
 // The map's cells per slot: bins 3 to 5 at their grids, then the fill at
 // bin 3's grid.
@@ -1006,7 +1055,7 @@ fn accumulate_defocus_map(@builtin(global_invocation_id) gid: vec3<u32>) {
     let params = mask_effect_params(index);
     let centre = 0.5 * vec2<f32>(vec2<i32>(span_x.x + span_x.y, span_y.x + span_y.y)) - vec2<f32>(origin);
     let surround = defocus_surround(centre, defocus_surround_radius(bin));
-    var sums = DefocusBinSums(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
+    var sums = DefocusBinSums(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
     var fill = vec4<f32>(0.0);
     // Cells are full / grid pixels wide; pixel centres at x + 0.5.
     let cell = vec2<f32>(
@@ -1030,6 +1079,7 @@ fn accumulate_defocus_map(@builtin(global_invocation_id) gid: vec3<u32>) {
     defocus_cells[sums_at + 1u] = defocus_cells[sums_at + 1u] + sums.back;
     defocus_cells[sums_at + 2u] = defocus_cells[sums_at + 2u] + sums.extra;
     defocus_cells[sums_at + 3u] = defocus_cells[sums_at + 3u] + sums.centroid;
+    defocus_cells[sums_at + 4u] = defocus_cells[sums_at + 4u] + sums.behind;
     if bin == DEFOCUS_LOCAL_BINS {
         let fill_cell = slot_offset + defocus_cell_offset(DEFOCUS_BINS) + gid.y * grid.x + gid.x;
         defocus_cells[fill_cell] = defocus_cells[fill_cell] + fill;
@@ -1055,6 +1105,7 @@ fn resolve_defocus_map(@builtin(global_invocation_id) gid: vec3<u32>) {
         defocus_cells[cell + 1u],
         defocus_cells[cell + 2u],
         defocus_cells[cell + 3u],
+        defocus_cells[cell + 4u],
     );
     let texel = vec2<i32>(gid.xy);
     let layer = (gid.z * DEFOCUS_LOCAL_BINS + bin - DEFOCUS_LOCAL_BINS) * DEFOCUS_SOURCE_LAYERS;
@@ -1072,10 +1123,11 @@ fn resolve_defocus_map(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 // --- Composite ---
 
-// Slab `bin` (local) on `side` at tile pixel `pos`, bilinear.
+// Layer `side` of local bin `bin` at tile pixel `pos`, bilinear: its front
+// slab (0), back slab (1) or the fill behind its front (2).
 fn defocus_local_slab(pos: vec2<i32>, layer: u32, bin: u32, side: u32) -> vec4<f32> {
     let level = defocus_local_level(bin);
-    return defocus_local_sample(pos, layer * DEFOCUS_SLAB_LAYERS + 2u * bin + side, level);
+    return defocus_local_sample(pos, layer * DEFOCUS_SLAB_LAYERS + DEFOCUS_BIN_SLAB_LAYERS * bin + side, level);
 }
 
 fn defocus_local_sample(pos: vec2<i32>, layer: u32, level: u32) -> vec4<f32> {
@@ -1091,9 +1143,10 @@ fn defocus_map_sample(pos: vec2<i32>, layer: u32, mip: u32) -> vec4<f32> {
 }
 
 // The focus slab at tile pixel `pos`: the scatter of its sources within the
-// widest radius any lies at around it, normalized by what the front slabs
-// leave visible. A source behind the pixel's own focus surface reaches it no
-// farther than that surface's radius.
+// widest radius any lies at around it, normalized as a bin's is
+// (`gather_defocus`), what holds no focus source taking that widest radius.
+// A source behind the pixel's own focus surface reaches it no farther than
+// that surface's radius.
 fn defocus_focus_slab(pos: vec2<i32>, layer: u32, aperture: DefocusAperture) -> vec4<f32> {
     let own = defocus_focus_source(pos, layer);
     // The widest radius in the blocks around.
@@ -1108,45 +1161,53 @@ fn defocus_focus_slab(pos: vec2<i32>, layer: u32, aperture: DefocusAperture) -> 
             widest = max(widest, atomicLoad(&defocus_occupancy[defocus_occupancy_index(layer, 0u, neighbour)]));
         }
     }
-    let reach = i32(ceil(min(f32(widest) / DEFOCUS_OCCUPANCY_SCALE, limit)));
+    let widest_radius = min(f32(widest) / DEFOCUS_OCCUPANCY_SCALE, limit);
+    let reach = i32(ceil(widest_radius));
     if reach == 0 {
-        let coverage = clamp(own.alpha / max(own.visible, 0.05), 0.0, 1.0);
+        let coverage = clamp(own.alpha / max(own.visible, DEFOCUS_LEAST_SHOWN), 0.0, 1.0);
         return vec4<f32>(own.premultiplied * (coverage / max(own.alpha, 1e-9)), select(0.0, coverage, own.alpha > 0.0));
     }
     let point = defocus_point(full_image_uv(pos));
     var colour = vec3<f32>(0.0);
     var scattered = 0.0;
-    var visible = 0.0;
-    var area = 0.0;
+    var shown = 0.0;
     for (var dy = -reach; dy <= reach; dy = dy + 1) {
         for (var dx = -reach; dx <= reach; dx = dx + 1) {
             let offset = vec2<f32>(f32(dx), f32(dy));
             let distance = length(offset);
             if distance > f32(reach) + 0.5 { continue; }
             let source = defocus_focus_source(pos + vec2<i32>(dx, dy), layer);
-            area += 1.0;
-            visible += source.visible;
-            if source.alpha <= 0.0 { continue; }
-            if own.alpha > 0.05
+            if source.visible <= 0.0 { continue; }
+            if source.alpha > 0.0
+                && own.alpha > 0.05
                 && source.depth < own.depth * (1.0 - DEFOCUS_DEPTH_TOLERANCE)
                 && distance > own.radius + 0.5 {
                 continue;
             }
+            let nominal_spread = defocus_focus_spread(aperture, offset, widest_radius, point);
             var weight = 0.0;
-            if source.radius < 0.5 {
-                weight = select(0.0, 1.0, dx == 0 && dy == 0);
-            } else {
-                weight = defocus_spread(aperture, -offset, source.radius, point);
+            if source.alpha > 0.0 {
+                weight = defocus_focus_spread(aperture, offset, source.radius, point);
+                colour += weight * source.premultiplied;
+                scattered += weight * source.alpha;
             }
-            colour += weight * source.premultiplied;
-            scattered += weight * source.alpha;
+            shown += weight * source.alpha + nominal_spread * max(source.visible - source.alpha, 0.0);
         }
     }
     if scattered <= 0.0 {
         return vec4<f32>(0.0);
     }
-    let coverage = clamp(scattered / max(visible / max(area, 1.0), 0.05), 0.0, 1.0);
+    let coverage = clamp(scattered / max(shown, DEFOCUS_LEAST_SHOWN), 0.0, 1.0);
     return vec4<f32>(colour * (coverage / scattered), coverage);
+}
+
+// What a focus source of `radius` pixels spreads over the pixel `offset`
+// pixels from it: its own pixel only below half a pixel.
+fn defocus_focus_spread(aperture: DefocusAperture, offset: vec2<f32>, radius: f32, point: vec2<f32>) -> f32 {
+    if radius < 0.5 {
+        return select(0.0, 1.0, all(offset == vec2<f32>(0.0)));
+    }
+    return defocus_spread(aperture, -offset, radius, point);
 }
 
 // The fill at tile pixel `pos` for a hole about `radius` pixels wide: the
@@ -1161,9 +1222,9 @@ fn defocus_fill(pos: vec2<i32>, layer: u32, radius: f32) -> vec3<f32> {
         if level - defocus_pass.levels.x < local_levels {
             last = defocus_local_sample(pos, fill_layer, level);
         } else if defocus_pass.map_ready != 0u {
-            // The map's cells are long / DEFOCUS_MAP_LONG pixels wide.
+            // The map's cells are long / defocus_map_long() pixels wide.
             let full = max(f32(max(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height)), 1.0);
-            let cell = full / f32(DEFOCUS_MAP_LONG);
+            let cell = full / f32(defocus_map_long());
             let map_levels = textureNumLevels(defocus_map_tex);
             let mip = min(u32(max(ceil(log2(max(f32(1u << level) / cell, 1.0))), 0.0)), map_levels - 1u);
             last = defocus_map_sample(pos, fill_layer, mip);
@@ -1177,7 +1238,9 @@ fn defocus_fill(pos: vec2<i32>, layer: u32, radius: f32) -> vec3<f32> {
 }
 
 // The slabs composited front to back with "over", then the fill for what
-// none covers.
+// none covers: the mean of what lies behind the front slabs, weighted by what
+// each shows, or where little lies behind them within their discs, the
+// non-front image's mean at their scale (`defocus_fill`).
 @compute @workgroup_size(8, 8, 1)
 fn composite_defocus(@builtin(global_invocation_id) gid: vec3<u32>) {
     let size = textureDimensions(defocus_result_out);
@@ -1189,23 +1252,34 @@ fn composite_defocus(@builtin(global_invocation_id) gid: vec3<u32>) {
     let aperture = defocus_aperture(params);
     var colour = vec3<f32>(0.0);
     var transmittance = 1.0;
-    // The front slabs' radius, weighted by what each shows, for the fill.
+    // The front slabs' radius and what lies behind each, weighted by what
+    // each shows, for the fill.
     var front_radius = 0.0;
     var front_shown = 0.0;
+    var behind = vec4<f32>(0.0);
     // Front bins, widest first.
     for (var step = 0u; step < DEFOCUS_BINS; step = step + 1u) {
         let bin = DEFOCUS_BINS - 1u - step;
         var slab = vec4<f32>(0.0);
+        var fill = vec4<f32>(0.0);
         if bin >= DEFOCUS_LOCAL_BINS {
             if defocus_pass.map_ready != 0u {
-                slab = defocus_map_sample(pos, layer * DEFOCUS_SLAB_LAYERS + 2u * (bin - DEFOCUS_LOCAL_BINS), defocus_map_slab_mip(bin));
+                let map_layer = layer * DEFOCUS_SLAB_LAYERS + DEFOCUS_BIN_SLAB_LAYERS * (bin - DEFOCUS_LOCAL_BINS);
+                slab = defocus_map_sample(pos, map_layer, defocus_map_slab_mip(bin));
+                if slab.w > 0.0 {
+                    fill = defocus_map_sample(pos, map_layer + 2u, defocus_map_slab_mip(bin));
+                }
             }
         } else {
             slab = defocus_local_slab(pos, layer, bin, 0u);
+            if slab.w > 0.0 {
+                fill = defocus_local_slab(pos, layer, bin, 2u);
+            }
         }
         let shown = transmittance * slab.w;
         front_radius += shown * 1.5 * defocus_bin_start(bin);
         front_shown += shown;
+        behind += shown * fill;
         colour += transmittance * slab.rgb;
         transmittance *= 1.0 - clamp(slab.w, 0.0, 1.0);
     }
@@ -1217,7 +1291,7 @@ fn composite_defocus(@builtin(global_invocation_id) gid: vec3<u32>) {
         var slab = vec4<f32>(0.0);
         if bin >= DEFOCUS_LOCAL_BINS {
             if defocus_pass.map_ready != 0u {
-                slab = defocus_map_sample(pos, layer * DEFOCUS_SLAB_LAYERS + 2u * (bin - DEFOCUS_LOCAL_BINS) + 1u, defocus_map_slab_mip(bin));
+                slab = defocus_map_sample(pos, layer * DEFOCUS_SLAB_LAYERS + DEFOCUS_BIN_SLAB_LAYERS * (bin - DEFOCUS_LOCAL_BINS) + 1u, defocus_map_slab_mip(bin));
             }
         } else {
             slab = defocus_local_slab(pos, layer, bin, 1u);
@@ -1226,8 +1300,16 @@ fn composite_defocus(@builtin(global_invocation_id) gid: vec3<u32>) {
         transmittance *= 1.0 - clamp(slab.w, 0.0, 1.0);
     }
     if transmittance > 1e-3 {
-        let radius = front_radius / max(front_shown, 1e-6) * defocus_short_pixels();
-        colour += transmittance * defocus_fill(pos, layer, radius);
+        // The share of the front slabs' discs that lies behind them, and how
+        // far it is trusted over the pyramid's mean.
+        let share = behind.w / max(front_shown, 1e-6);
+        let trust = clamp(share / DEFOCUS_FILL_WEIGHT, 0.0, 1.0);
+        var fill = behind.rgb / max(behind.w, 1e-6);
+        if trust < 1.0 {
+            let radius = front_radius / max(front_shown, 1e-6) * defocus_short_pixels();
+            fill = mix(defocus_fill(pos, layer, radius), fill, trust);
+        }
+        colour += transmittance * fill;
     }
     textureStore(defocus_result_out, pos, layer, vec4<f32>(colour, 1.0));
 }
