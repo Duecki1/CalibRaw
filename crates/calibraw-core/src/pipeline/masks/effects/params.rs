@@ -516,8 +516,21 @@ pub mod styled_glow {
         0,
         None
     );
+    /// The card's section with Core and, for Motion, Streak and Star,
+    /// Softness.
+    pub const GLOW_DETAILS: &str = "Glow details";
+    /// Help for Glow details without Softness.
+    pub const GLOW_DETAILS_HELP: &str =
+        "Core: lower it so the brightest glow keeps its color instead of burning to white.";
+    /// Help for Glow details with Softness.
+    pub const STREAK_DETAILS_HELP: &str = "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.";
     /// The card's section with Dispersion and Split.
     pub const COLOR_SEPARATION: &str = "Color separation";
+    /// Help for Color separation with Dispersion.
+    pub const COLOR_SEPARATION_HELP: &str = "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.";
+    /// Help for Color separation without Dispersion (Motion).
+    pub const SPLIT_HELP: &str =
+        "Split: moves the glow's red and blue apart; the photo stays in place.";
 }
 
 pub mod light_rays {

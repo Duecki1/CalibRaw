@@ -2108,5 +2108,10 @@
   "Split mode": "Modo de separación",
   "Split direction": "Dirección de separación",
   "Color separation": "Separación de color",
-  "Core": "Núcleo"
+  "Core": "Núcleo",
+  "Glow details": "Detalles del resplandor",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "Núcleo: bájalo para que el resplandor más intenso conserve su color en lugar de quemarse a blanco.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "Núcleo: bájalo para que el resplandor más intenso conserve su color en lugar de quemarse a blanco. Suavidad: el ancho de las estelas.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "Dispersión: el rojo del resplandor se extiende más que su azul, como la luz a través de un objetivo. Separación: separa el rojo y el azul del resplandor; la foto no se mueve.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "Separación: separa el rojo y el azul del resplandor; la foto no se mueve."
 }

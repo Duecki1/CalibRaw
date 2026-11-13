@@ -2108,5 +2108,10 @@
   "Split mode": "Ayrışma modu",
   "Split direction": "Ayrışma yönü",
   "Color separation": "Renk ayrışması",
-  "Core": "Çekirdek"
+  "Core": "Çekirdek",
+  "Glow details": "Parıltı ayrıntıları",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "Çekirdek: en parlak parıltının beyaza yanmak yerine rengini korması için düşürün.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "Çekirdek: en parlak parıltının beyaza yanmak yerine rengini korması için düşürün. Yumuşaklık: çizgilerin genişliği.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "Dispersiyon: parıltının kırmızısı, objektiften geçen ışık gibi mavisinden daha geniş yayılır. Ayrışma: parıltının kırmızısını ve mavisini birbirinden ayırır; fotoğraf yerinde kalır.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "Ayrışma: parıltının kırmızısını ve mavisini birbirinden ayırır; fotoğraf yerinde kalır."
 }

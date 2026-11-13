@@ -2102,5 +2102,10 @@
   "Split mode": "분리 방식",
   "Split direction": "분리 방향",
   "Color separation": "색 분리",
-  "Core": "코어"
+  "Core": "코어",
+  "Glow details": "글로우 세부 설정",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "코어: 낮추면 가장 밝은 글로우가 하얗게 날아가지 않고 색을 유지합니다.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "코어: 낮추면 가장 밝은 글로우가 하얗게 날아가지 않고 색을 유지합니다. Softness: 빛줄기의 폭입니다.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "분산: 렌즈를 통과한 빛처럼 글로우의 빨강이 파랑보다 넓게 퍼집니다. 분리: 글로우의 빨강과 파랑을 서로 떨어뜨립니다. 사진은 그대로입니다.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "분리: 글로우의 빨강과 파랑을 서로 떨어뜨립니다. 사진은 그대로입니다."
 }

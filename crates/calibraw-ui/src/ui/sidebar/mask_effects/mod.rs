@@ -15,7 +15,9 @@ pub(super) mod vignette;
 
 use crate::i18n::{tr, tr_fmt};
 pub(crate) use controls::EffectFrame;
-use controls::{effect_details, effect_position, pattern_seed, PositionSpace};
+use controls::{
+    effect_details, effect_details_with_help, effect_position, pattern_seed, PositionSpace,
+};
 pub(super) use generated::generated_card;
 pub(crate) use instances::InstanceSelection;
 pub(crate) use lens_blur::focus_range_adjusting;

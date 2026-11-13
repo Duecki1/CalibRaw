@@ -2108,5 +2108,10 @@
   "Split mode": "分離モード",
   "Split direction": "分離の方向",
   "Color separation": "色分離",
-  "Core": "コア"
+  "Core": "コア",
+  "Glow details": "グローの詳細",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "コア: 下げると、最も明るいグローが白飛びせずに色を保ちます。",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "コア: 下げると、最も明るいグローが白飛びせずに色を保ちます。柔らかさ: 光の筋の幅です。",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "分散: レンズを通る光のように、グローの赤が青より広がります。分離: グローの赤と青をずらします。写真は動きません。",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "分離: グローの赤と青をずらします。写真は動きません。"
 }

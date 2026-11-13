@@ -2108,5 +2108,10 @@
   "Split mode": "Aufspaltungsart",
   "Split direction": "Aufspaltungsrichtung",
   "Color separation": "Farbtrennung",
-  "Core": "Kern"
+  "Core": "Kern",
+  "Glow details": "Details des Leuchtens",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "Kern: verringern, damit das hellste Leuchten seine Farbe behält, statt weiß auszubrennen.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "Kern: verringern, damit das hellste Leuchten seine Farbe behält, statt weiß auszubrennen. Weichheit: wie breit die Streifen sind.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "Dispersion: Das Rot des Leuchtens streut weiter als sein Blau, wie Licht durch ein Objektiv. Aufspaltung: schiebt Rot und Blau des Leuchtens auseinander; das Foto bleibt an seinem Platz.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "Aufspaltung: schiebt Rot und Blau des Leuchtens auseinander; das Foto bleibt an seinem Platz."
 }

@@ -2108,5 +2108,10 @@
   "Split mode": "分离方式",
   "Split direction": "分离方向",
   "Color separation": "色彩分离",
-  "Core": "核心"
+  "Core": "核心",
+  "Glow details": "光晕细节",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "核心：调低后，最亮的光晕会保留颜色，而不会烧成白色。",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "核心：调低后，最亮的光晕会保留颜色，而不会烧成白色。柔和度：光芒的宽度。",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "色散：光晕的红色比蓝色扩散得更宽，如同光线穿过镜头。分离：将光晕的红色和蓝色错开；照片本身不动。",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "分离：将光晕的红色和蓝色错开；照片本身不动。"
 }

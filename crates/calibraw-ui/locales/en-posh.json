@@ -2101,5 +2101,10 @@
   "Split mode": "Split mode",
   "Split direction": "Split direction",
   "Color separation": "Colour separation",
-  "Core": "Core"
+  "Core": "Core",
+  "Glow details": "Glow details",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "Core: lower it so the brightest glow keeps its colour instead of burning to white.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "Core: lower it so the brightest glow keeps its colour instead of burning to white. Softness: how wide the streaks are.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photograph stays in place.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "Split: moves the glow's red and blue apart; the photograph stays in place."
 }

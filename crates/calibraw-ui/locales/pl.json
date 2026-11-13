@@ -2106,5 +2106,10 @@
   "Split mode": "Tryb rozszczepienia",
   "Split direction": "Kierunek rozszczepienia",
   "Color separation": "Rozdzielenie kolorów",
-  "Core": "Rdzeń"
+  "Core": "Rdzeń",
+  "Glow details": "Szczegóły poświaty",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "Rdzeń: zmniejsz, aby najjaśniejsza poświata zachowała kolor zamiast przepalić się do bieli.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "Rdzeń: zmniejsz, aby najjaśniejsza poświata zachowała kolor zamiast przepalić się do bieli. Miękkość: szerokość smug.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "Dyspersja: czerwień poświaty rozchodzi się szerzej niż błękit, jak światło w obiektywie. Rozszczepienie: rozsuwa czerwień i błękit poświaty; zdjęcie zostaje na miejscu.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "Rozszczepienie: rozsuwa czerwień i błękit poświaty; zdjęcie zostaje na miejscu."
 }

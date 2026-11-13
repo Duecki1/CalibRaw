@@ -1,11 +1,13 @@
-//! The Glow's card: its Style, then Amount, Core, Range, Spread and Warmth, whose
-//! track runs yellow to red for Halation and cool to warm otherwise, as its
-//! tint does (styled_glow.rs in calibraw-core); Star adds its Points, and
-//! Motion, Streak and Star their Direction and Softness. Color separation,
-//! collapsed, holds Dispersion (but for Motion) and Split with its mode and,
-//! for Shift, its direction.
+//! The Glow's card: its Style, then what most edits need: Amount, Range,
+//! Spread and Warmth, whose track runs yellow to red for Halation and cool to
+//! warm otherwise, as its tint does (styled_glow.rs in calibraw-core); Star
+//! adds its Points, and Motion, Streak and Star their Direction. Two
+//! collapsed sections hold the rest: Glow details has Core and, for the
+//! streaking styles, Softness; Color separation has Dispersion (but for
+//! Motion) and Split, whose mode and, for Shift, direction show once Split
+//! is above 0.
 
-use super::{effect_details, float_param_slider, styled_effect_card, StyleChoice};
+use super::{effect_details_with_help, float_param_slider, styled_effect_card, StyleChoice};
 use crate::i18n::tr;
 use crate::pipeline::{
     effect_params::styled_glow, GlowSplitMode, GlowStyle, MaskEffect, StarPoints,
@@ -45,7 +47,6 @@ pub(crate) fn show(
         style,
         |ui, settings| {
             let mut changed = float_param_slider(ui, &mut settings.amount, styled_glow::AMOUNT);
-            changed |= float_param_slider(ui, &mut settings.core, styled_glow::CORE);
             changed |= float_param_slider(ui, &mut settings.range, styled_glow::RANGE);
             changed |= float_param_slider(ui, &mut settings.spread, styled_glow::SPREAD);
             let warmth = match settings.style {
@@ -63,11 +64,9 @@ pub(crate) fn show(
             }
             if settings.style.streaks() {
                 changed |= float_param_angle(ui, &mut settings.direction, styled_glow::DIRECTION);
-                changed |= float_param_slider(ui, &mut settings.softness, styled_glow::SOFTNESS);
             }
-            changed |= effect_details(ui, tr(styled_glow::COLOR_SEPARATION), |ui| {
-                color_separation(ui, settings)
-            });
+            changed |= glow_details(ui, settings);
+            changed |= color_separation(ui, settings);
             changed
         },
     )
@@ -82,24 +81,65 @@ fn star_points(ui: &mut Ui, points: &mut StarPoints) -> bool {
     .inner
 }
 
-/// Dispersion, then Split with its mode and, for Shift, its direction.
-fn color_separation(ui: &mut Ui, settings: &mut StyledGlowEffectSettings) -> bool {
-    let mut changed = false;
-    if settings.style.disperses() {
-        changed |= float_param_slider(ui, &mut settings.dispersion, styled_glow::DISPERSION);
-    }
-    changed |= float_param_slider(ui, &mut settings.split, styled_glow::SPLIT);
-    let options = GlowSplitMode::ALL.map(|mode| (mode, tr(mode.label())));
-    changed |= moduwu_design::form_row(ui, tr("Split mode"), CHOICE_WIDTH, |ui, width| {
-        moduwu_design::segmented_control(ui, &mut settings.split_mode, &options, width).changed()
+/// Core, then Softness for the streaking styles.
+fn glow_details(ui: &mut Ui, settings: &mut StyledGlowEffectSettings) -> bool {
+    let streaks = settings.style.streaks();
+    let help = if streaks {
+        styled_glow::STREAK_DETAILS_HELP
+    } else {
+        styled_glow::GLOW_DETAILS_HELP
+    };
+    effect_details_with_help(ui, tr(styled_glow::GLOW_DETAILS), Some(tr(help)), |ui| {
+        let mut changed = float_param_slider(ui, &mut settings.core, styled_glow::CORE);
+        if streaks {
+            changed |= float_param_slider(ui, &mut settings.softness, styled_glow::SOFTNESS);
+        }
+        changed
     })
-    .inner;
-    if settings.split_mode == GlowSplitMode::Shift {
-        changed |= float_param_angle(
-            ui,
-            &mut settings.split_direction,
-            styled_glow::SPLIT_DIRECTION,
-        );
-    }
-    changed
+}
+
+/// Dispersion, then Split with, once it is above 0, its mode and, for Shift,
+/// its direction.
+fn color_separation(ui: &mut Ui, settings: &mut StyledGlowEffectSettings) -> bool {
+    let disperses = settings.style.disperses();
+    let help = if disperses {
+        styled_glow::COLOR_SEPARATION_HELP
+    } else {
+        styled_glow::SPLIT_HELP
+    };
+    effect_details_with_help(
+        ui,
+        tr(styled_glow::COLOR_SEPARATION),
+        Some(tr(help)),
+        |ui| {
+            let mut changed = false;
+            if disperses {
+                changed |=
+                    float_param_slider(ui, &mut settings.dispersion, styled_glow::DISPERSION);
+            }
+            changed |= float_param_slider(ui, &mut settings.split, styled_glow::SPLIT);
+            if settings.split > 0.0 {
+                let options = GlowSplitMode::ALL.map(|mode| (mode, tr(mode.label())));
+                changed |=
+                    moduwu_design::form_row(ui, tr("Split mode"), CHOICE_WIDTH, |ui, width| {
+                        moduwu_design::segmented_control(
+                            ui,
+                            &mut settings.split_mode,
+                            &options,
+                            width,
+                        )
+                        .changed()
+                    })
+                    .inner;
+                if settings.split_mode == GlowSplitMode::Shift {
+                    changed |= float_param_angle(
+                        ui,
+                        &mut settings.split_direction,
+                        styled_glow::SPLIT_DIRECTION,
+                    );
+                }
+            }
+            changed
+        },
+    )
 }

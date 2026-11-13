@@ -2108,5 +2108,10 @@
   "Split mode": "Modalità di separazione",
   "Split direction": "Direzione di separazione",
   "Color separation": "Separazione dei colori",
-  "Core": "Nucleo"
+  "Core": "Nucleo",
+  "Glow details": "Dettagli bagliore",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "Nucleo: abbassalo perché il bagliore più intenso mantenga il suo colore invece di bruciarsi in bianco.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "Nucleo: abbassalo perché il bagliore più intenso mantenga il suo colore invece di bruciarsi in bianco. Morbidezza: la larghezza delle scie.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "Dispersione: il rosso del bagliore si allarga più del blu, come la luce attraverso un obiettivo. Separazione: allontana il rosso e il blu del bagliore; la foto resta ferma.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "Separazione: allontana il rosso e il blu del bagliore; la foto resta ferma."
 }

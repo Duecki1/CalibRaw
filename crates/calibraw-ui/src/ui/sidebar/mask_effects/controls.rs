@@ -8,12 +8,25 @@ use std::sync::Arc;
 
 /// Keep the detail sliders full-width even in narrow portrait cards.
 pub(super) fn effect_details(ui: &mut Ui, label: &str, body: impl FnOnce(&mut Ui) -> bool) -> bool {
+    effect_details_with_help(ui, label, None, body)
+}
+
+/// [`effect_details`] with `help` as its heading's tooltip, for sections
+/// whose sliders need explaining: dragged controls take no tooltip.
+pub(super) fn effect_details_with_help(
+    ui: &mut Ui,
+    label: &str,
+    help: Option<&str>,
+    body: impl FnOnce(&mut Ui) -> bool,
+) -> bool {
     ui.add_space(moduwu_design::SPACE_XS);
-    egui::CollapsingHeader::new(label)
+    let section = egui::CollapsingHeader::new(label)
         .default_open(false)
-        .show_unindented(ui, body)
-        .body_returned
-        .unwrap_or(false)
+        .show_unindented(ui, body);
+    if let Some(help) = help {
+        section.header_response.on_hover_text(help);
+    }
+    section.body_returned.unwrap_or(false)
 }
 
 /// A random-pattern seed: a Shuffle button and the exact number, so a look

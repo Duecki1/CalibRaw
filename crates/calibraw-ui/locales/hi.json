@@ -2108,5 +2108,10 @@
   "Split mode": "विभाजन मोड",
   "Split direction": "विभाजन दिशा",
   "Color separation": "रंग पृथक्करण",
-  "Core": "कोर"
+  "Core": "कोर",
+  "Glow details": "चमक का विवरण",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "कोर: इसे घटाएँ ताकि सबसे तेज़ चमक सफ़ेद होकर जलने के बजाय अपना रंग बनाए रखे।",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "कोर: इसे घटाएँ ताकि सबसे तेज़ चमक सफ़ेद होकर जलने के बजाय अपना रंग बनाए रखे। नरमी: धारियाँ कितनी चौड़ी हैं।",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "वर्ण-विक्षेपण: चमक का लाल उसके नीले से अधिक फैलता है, जैसे लेंस से गुज़रता प्रकाश। विभाजन: चमक के लाल और नीले को अलग करता है; फ़ोटो अपनी जगह रहती है।",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "विभाजन: चमक के लाल और नीले को अलग करता है; फ़ोटो अपनी जगह रहती है।"
 }

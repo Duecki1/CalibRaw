@@ -2108,5 +2108,10 @@
   "Split mode": "Mod de separare",
   "Split direction": "Direcția separării",
   "Color separation": "Separarea culorilor",
-  "Core": "Miez"
+  "Core": "Miez",
+  "Glow details": "Detalii strălucire",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "Miez: reduceți-l ca strălucirea cea mai puternică să își păstreze culoarea în loc să ardă în alb.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "Miez: reduceți-l ca strălucirea cea mai puternică să își păstreze culoarea în loc să ardă în alb. Finețe: lățimea dârelor.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "Dispersie: roșul strălucirii se întinde mai larg decât albastrul, ca lumina printr-un obiectiv. Separare: depărtează roșul și albastrul strălucirii; fotografia rămâne pe loc.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "Separare: depărtează roșul și albastrul strălucirii; fotografia rămâne pe loc."
 }

@@ -2108,5 +2108,10 @@
   "Split mode": "Mode de séparation",
   "Split direction": "Direction de séparation",
   "Color separation": "Séparation des couleurs",
-  "Core": "Cœur"
+  "Core": "Cœur",
+  "Glow details": "Détails de la lueur",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "Cœur : baissez-le pour que la lueur la plus vive garde sa couleur au lieu de brûler en blanc.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "Cœur : baissez-le pour que la lueur la plus vive garde sa couleur au lieu de brûler en blanc. Douceur : la largeur des traînées.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "Dispersion : le rouge de la lueur s'étale plus que son bleu, comme la lumière à travers un objectif. Séparation : écarte le rouge et le bleu de la lueur ; la photo reste en place.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "Séparation : écarte le rouge et le bleu de la lueur ; la photo reste en place."
 }

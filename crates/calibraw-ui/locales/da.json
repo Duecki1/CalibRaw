@@ -2108,5 +2108,10 @@
   "Split mode": "Opdelingstype",
   "Split direction": "Opdelingsretning",
   "Color separation": "Farveadskillelse",
-  "Core": "Kerne"
+  "Core": "Kerne",
+  "Glow details": "Glødedetaljer",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "Kerne: sænk den, så den klareste glød beholder sin farve i stedet for at brænde ud til hvidt.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "Kerne: sænk den, så den klareste glød beholder sin farve i stedet for at brænde ud til hvidt. Blødhed: hvor brede striberne er.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "Dispersion: glødens rødt spredes bredere end dets blåt, som lys gennem en linse. Opdeling: flytter glødens rødt og blåt fra hinanden; fotoet bliver på plads.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "Opdeling: flytter glødens rødt og blåt fra hinanden; fotoet bliver på plads."
 }

@@ -2108,5 +2108,10 @@
   "Split mode": "Режим розщеплення",
   "Split direction": "Напрямок розщеплення",
   "Color separation": "Розділення кольорів",
-  "Core": "Ядро"
+  "Core": "Ядро",
+  "Glow details": "Параметри сяйва",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white.": "Ядро: зменште, щоб найяскравіше сяйво зберігало колір, а не вигоряло в білий.",
+  "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.": "Ядро: зменште, щоб найяскравіше сяйво зберігало колір, а не вигоряло в білий. М’якість: ширина смуг.",
+  "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.": "Дисперсія: червоний сяйва розходиться ширше за синій, як світло в об’єктиві. Розщеплення: розсуває червоний і синій сяйва; знімок лишається на місці.",
+  "Split: moves the glow's red and blue apart; the photo stays in place.": "Розщеплення: розсуває червоний і синій сяйва; знімок лишається на місці."
 }
