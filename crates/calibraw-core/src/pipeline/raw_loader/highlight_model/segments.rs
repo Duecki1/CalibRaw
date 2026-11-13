@@ -20,7 +20,7 @@
 //! is held per model cell, each cell taking the segment most of its segment blocks belong to.
 
 use super::super::{CfaKind, LoadedRaw};
-use super::{other_channels, CLIP_DETECTION};
+use super::{other_channels, SensorSaturation};
 use rayon::prelude::*;
 
 /// Edge of a block in photosites.
@@ -276,7 +276,7 @@ impl LoadedRaw {
             })
             .collect();
         let blocks = self.highlight_blocks(black_point, pixels, cells, &near_clipping);
-        let clip_root = (CLIP_DETECTION * clip_threshold).cbrt();
+        let clip_root = (SensorSaturation::CLIP_DETECTION * clip_threshold).cbrt();
         std::array::from_fn(|colour| self.colour_segments(&blocks, colour, cells, clip_root))
     }
 

@@ -114,7 +114,11 @@ pub(super) fn pack_camera_params(
             highlight_method,
             highlight_cells[0] as f32,
             highlight_cells[1] as f32,
-            0.0,
+            if binned_clipping(raw).is_some() {
+                1.0
+            } else {
+                0.0
+            },
         ],
         noise_shot: canonicalize_greens(
             std::array::from_fn(|channel| {

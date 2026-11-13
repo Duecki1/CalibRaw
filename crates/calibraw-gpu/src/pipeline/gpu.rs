@@ -529,6 +529,7 @@ pub struct RawGpuPipeline {
     _xtrans_homogeneity: Option<wgpu::Texture>,
     rgb_source_texture: wgpu::Texture,
     binned_ai_texture: wgpu::Texture,
+    binned_clipping_texture: wgpu::Texture,
     scene_texture: wgpu::Texture,
     scene_format: wgpu::TextureFormat,
     has_ai_scene: bool,
@@ -813,6 +814,16 @@ impl RawGpuPipeline {
         match self.layout {
             PixelLayout::Raster => return Ok(()),
             PixelLayout::Binned => {
+                // Without clipped photosites the texture keeps the last
+                // view's content, which `highlight_options.w` disables.
+                if let Some(clipping) = binned_clipping(raw) {
+                    upload_binned_clipping_texture(
+                        queue,
+                        &self.binned_clipping_texture,
+                        raw,
+                        clipping,
+                    )?;
+                }
                 if self.has_ai_cfa {
                     let ai_rgb = raw
                         .binned_sensor

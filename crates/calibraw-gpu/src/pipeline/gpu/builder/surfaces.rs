@@ -71,6 +71,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) highlight_work_b: wgpu::Texture,
     pub(in crate::pipeline::gpu) rgb_source_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) binned_ai_texture: wgpu::Texture,
+    pub(in crate::pipeline::gpu) binned_clipping_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) scene_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) display_linear_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) out_texture: wgpu::Texture,
@@ -87,6 +88,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) highlight_work_b_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) rgb_source_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) binned_ai_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) binned_clipping_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) scene_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) tex1_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) tex2_view: wgpu::TextureView,
@@ -166,6 +168,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     let rgb_source_texture = create_rgb_source_texture(device, queue, raw, demosaic_format)?;
     let binned_ai_texture =
         create_binned_ai_texture(device, queue, raw, ai_binned, demosaic_format)?;
+    let binned_clipping_texture = create_binned_clipping_texture(device, queue, raw)?;
     let scene_texture = create_demosaic_texture(
         device,
         size,
@@ -243,6 +246,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     let highlight_work_b_view = default_texture_view(&highlight_work_b);
     let rgb_source_view = default_texture_view(&rgb_source_texture);
     let binned_ai_view = default_texture_view(&binned_ai_texture);
+    let binned_clipping_view = default_texture_view(&binned_clipping_texture);
     let scene_view = default_texture_view(&scene_texture);
     let tex1_view = default_texture_view(&tex1);
     let tex2_view = default_texture_view(&tex2);
@@ -288,6 +292,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             highlight_work_b,
             rgb_source_texture,
             binned_ai_texture,
+            binned_clipping_texture,
             scene_texture,
             display_linear_texture,
             out_texture,
@@ -304,6 +309,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             highlight_work_b_view,
             rgb_source_view,
             binned_ai_view,
+            binned_clipping_view,
             scene_view,
             tex1_view,
             tex2_view,

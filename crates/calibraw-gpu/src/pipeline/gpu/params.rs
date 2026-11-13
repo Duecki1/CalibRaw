@@ -28,7 +28,8 @@ pub(super) struct CameraUniforms {
     pub(super) padding_0: u32,
     pub(super) padding_1: u32,
     /// [`HighlightReconstructionMethod::shader_value`], then the cells across and down the
-    /// highlight model the pipeline uploaded (0 without one); the fourth value is unused.
+    /// highlight model the pipeline uploaded (0 without one), then 1 when the source is a
+    /// binned view with clipped photosites, whose clipping texture the pipeline uploaded.
     pub(super) highlight_options: [f32; 4],
     pub(super) noise_shot: [f32; 4],
     pub(super) noise_read: [f32; 4],

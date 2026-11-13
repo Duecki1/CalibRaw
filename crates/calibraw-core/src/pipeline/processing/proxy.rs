@@ -205,11 +205,13 @@ fn build_raster_region_proxy(
 
 fn crop_binned(raw: &LoadedRaw, binned: &BinnedSensor, region: [u32; 4]) -> LoadedRaw {
     let [x, y, width, height] = region;
-    let crop = |rgb: &[f32]| crop_rgb(rgb, raw.width, region);
+    let cropped = binned
+        .try_map_planes(|rgb| Some(crop_rgb(rgb, raw.width, region)))
+        .expect("cropping never gives up");
     binned_with_metadata(
         raw,
         [width, height],
-        BinnedSensor::new(crop(binned.rgb()), binned.ai_rgb().map(crop)),
+        cropped,
         crop_ai_denoised(raw, x, y, width, height),
         is_whole_image(raw, region),
     )
@@ -231,12 +233,8 @@ fn build_binned_region_proxy(
     }
     let output = reduced_size(region_width, region_height, max_edge);
     let [width, height] = output;
-    let average = |rgb: &[f32]| average_rgb_region(rgb, raw.width, region, output, cancel);
-    let rgb = average(binned.rgb())?;
-    let ai_rgb = match binned.ai_rgb() {
-        Some(ai) => Some(average(ai)?),
-        None => None,
-    };
+    let averaged =
+        binned.try_map_planes(|rgb| average_rgb_region(rgb, raw.width, region, output, cancel))?;
     Some(LoadedRaw {
         noise_profile: raw
             .noise_profile
@@ -244,7 +242,7 @@ fn build_binned_region_proxy(
         ..binned_with_metadata(
             raw,
             output,
-            BinnedSensor::new(rgb, ai_rgb),
+            averaged,
             proxy_ai_denoised(raw, x, y, region_width, region_height, width, height),
             is_whole_image(raw, region),
         )
@@ -313,11 +311,13 @@ pub(super) fn extract_padded_binned_tile(
     binned: &BinnedSensor,
     tile: ExportTile,
 ) -> LoadedRaw {
-    let pad = |rgb: &[f32]| padded_rgb(rgb, [raw.width, raw.height], tile);
+    let padded = binned
+        .try_map_planes(|rgb| Some(padded_rgb(rgb, [raw.width, raw.height], tile)))
+        .expect("padding never gives up");
     binned_with_metadata(
         raw,
         [tile.padded_width, tile.padded_height],
-        BinnedSensor::new(pad(binned.rgb()), binned.ai_rgb().map(pad)),
+        padded,
         padded_tile_ai_denoised(raw, tile),
         false,
     )

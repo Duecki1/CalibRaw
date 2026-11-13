@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::{LensShadingMap, PixelLayout, TONE_GUIDE_CELL_SIZE};
+use crate::pipeline::{BinnedClipping, LensShadingMap, PixelLayout, TONE_GUIDE_CELL_SIZE};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -353,6 +353,14 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
                 "binned AI-denoise texture",
                 GpuResourceResidency::Persistent,
                 full(work_format)?,
+            );
+        }
+        if input.layout == PixelLayout::Binned {
+            push_entry(
+                &mut entries,
+                "binned clipping texture",
+                GpuResourceResidency::Persistent,
+                full(BINNED_CLIPPING_FORMAT)?,
             );
         }
     }
@@ -756,6 +764,84 @@ pub(super) fn create_binned_ai_texture(
         format,
         "calibraw binned AI-denoise source",
     )
+}
+
+/// Where the photosites behind a binned view clipped (`BinnedClipping`), per
+/// pixel: the clipped share of red, green and blue in rgb, and the mean
+/// normalized value of the clipped photosites of all three in a (0 where
+/// none clipped). Half floats keep shares to 1/2048 and values near the clip
+/// level to 0.05%.
+pub(super) const BINNED_CLIPPING_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The clipping texture of a binned view (`binned_clipping_tex` in
+/// highlights.wgsl), or a 1x1 placeholder for other sources. A binned
+/// pipeline always gets the full size, since the views a reusable one
+/// receives later ([`RawGpuPipeline::upload_raw_tile`]) may clip where its
+/// first did not; `highlight_options.w` says whether the content applies.
+pub(super) fn create_binned_clipping_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    raw: &LoadedRaw,
+) -> Result<wgpu::Texture> {
+    let binned = raw.pixel_layout() == PixelLayout::Binned;
+    let texture = create_processing_texture(
+        device,
+        if binned {
+            texture_size(raw.width, raw.height)
+        } else {
+            texture_size(1, 1)
+        },
+        BINNED_CLIPPING_FORMAT,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        "calibraw binned clipping",
+    );
+    if let Some(clipping) = binned_clipping(raw) {
+        upload_binned_clipping_texture(queue, &texture, raw, clipping)?;
+    }
+    Ok(texture)
+}
+
+/// The clipping record of a binned view, `None` for other sources and views
+/// without clipped photosites.
+pub(super) fn binned_clipping(raw: &LoadedRaw) -> Option<&BinnedClipping> {
+    raw.binned_sensor
+        .as_ref()
+        .and_then(crate::pipeline::BinnedSensor::clipping)
+}
+
+/// Packs `clipping` into `texture` ([`BINNED_CLIPPING_FORMAT`]). The clipped
+/// photosites of all three colours share one mean: they pile up at the
+/// sensor's saturation, so the colours' means differ by far less than the
+/// half-float step.
+pub(super) fn upload_binned_clipping_texture(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    raw: &LoadedRaw,
+    clipping: &BinnedClipping,
+) -> Result<()> {
+    let expected = raw.width as usize * raw.height as usize * 3;
+    let (shares, values) = (clipping.shares(), clipping.clipped_values());
+    anyhow::ensure!(
+        shares.len() == expected && values.len() == expected,
+        "binned clipping has {} and {} values, expected {expected}",
+        shares.len(),
+        values.len()
+    );
+    write_packed_rows(queue, texture, raw, 8, |index| {
+        let share = [
+            shares[index * 3],
+            shares[index * 3 + 1],
+            shares[index * 3 + 2],
+        ];
+        let share_sum: f32 = share.iter().sum();
+        let value_sum = values[index * 3] + values[index * 3 + 1] + values[index * 3 + 2];
+        let mean = if share_sum > 0.0 {
+            value_sum / share_sum
+        } else {
+            0.0
+        };
+        [share[0], share[1], share[2], mean].map(|value| half::f16::from_f32(value).to_bits())
+    })
 }
 
 /// A texture the size of `raw` holding `rgb`, or a 1x1 placeholder without.
@@ -1194,7 +1280,10 @@ pub(super) fn validate_raw(raw: &LoadedRaw) -> Result<()> {
             .ok_or_else(|| anyhow!("binned RGB element count overflows"))?;
         let valid =
             |rgb: &[f32]| rgb.len() == expected && rgb.iter().all(|value| value.is_finite());
-        if !valid(binned.rgb()) || !binned.ai_rgb().is_none_or(valid) {
+        let clipping_valid = binned
+            .clipping()
+            .is_none_or(|clipping| valid(clipping.shares()) && valid(clipping.clipped_values()));
+        if !valid(binned.rgb()) || !binned.ai_rgb().is_none_or(valid) || !clipping_valid {
             return Err(anyhow!("binned sensor payload is invalid"));
         }
     } else if raw.is_pre_demosaiced_raster() {

@@ -18,6 +18,13 @@
 @group(0) @binding(11) var binned_sensor_tex: texture_2d<f32>;
 @group(0) @binding(12) var binned_ai_tex: texture_2d<f32>;
 @group(0) @binding(10) var binned_camera_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
+// Where the photosites behind a binned source clipped (BinnedClipping in
+// Rust): per pixel, the share of red, green and blue photosites at or above
+// 0.987 of the sensor's saturation in rgb, and the mean normalized sensor
+// value of those photosites, at black point 0, in a. Its content applies only
+// while camera_uniforms.highlight_options.w is 1; a 1x1 placeholder for other
+// sources.
+@group(0) @binding(15) var binned_clipping_tex: texture_2d<f32>;
 
 // The highlight model (HighlightModel in Rust) on a grid of
 // camera_uniforms.highlight_options.yz cells over the full image, cell (i, j)
@@ -365,6 +372,12 @@ fn binned_sensor_at(pos: vec2<i32>) -> vec3<f32> {
     } else if ai_weight > 0.0 {
         samples = mix(samples, textureLoad(binned_ai_tex, p, 0).rgb, ai_weight);
     }
+    return binned_apply_black_point(samples);
+}
+
+// Normalized sensor values of a binned source, at black point 0, with the
+// black point applied as binned_sensor_at applies it.
+fn binned_apply_black_point(samples: vec3<f32>) -> vec3<f32> {
     let black = Common::camera_uniforms.black_levels.rgb;
     let white = max(Common::camera_uniforms.white_levels.rgb, black + 1.0);
     let range = white - black;
@@ -376,6 +389,42 @@ fn binned_sensor_at(pos: vec2<i32>) -> vec3<f32> {
     return clamp((samples - offset) / (1.0 - offset), vec3<f32>(-1.0), vec3<f32>(4.0));
 }
 
+// A binned pixel's colours split by clipping, in normalized sensor units
+// with the black point applied: a `share` of each colour's photosites
+// clipped, at mean `clipped`; the others average `unclipped`.
+struct BinnedSplit {
+    share: vec3<f32>,
+    clipped: vec3<f32>,
+    unclipped: vec3<f32>,
+}
+
+// The split of the binned pixel at `p`, whose colours are `sensor`
+// (binned_sensor_at), for reconstruction that treats a photosite at or above
+// `level` as clipped.
+//
+// The clipping texture was measured at 0.987 of the sensor's saturation, the
+// guided level at the default black point and highlight clip. Other levels
+// are approximated: clipped photosites whose mean lies below `level` count as
+// unclipped, and a colour whose unclipped photosites average `level` or more
+// counts as clipped throughout. Without the texture every colour is either
+// unclipped or clipped throughout, by its mean.
+fn binned_split(p: vec2<i32>, sensor: vec3<f32>, level: f32) -> BinnedSplit {
+    var share = vec3<f32>(0.0);
+    var clipped = sensor;
+    if Common::camera_uniforms.highlight_options.w >= 0.5 {
+        let texel = textureLoad(binned_clipping_tex, p, 0);
+        clipped = binned_apply_black_point(vec3<f32>(texel.a));
+        share = select(vec3<f32>(0.0), clamp(texel.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), clipped >= vec3<f32>(level));
+    }
+    let kept = 1.0 - share;
+    var unclipped = select(clipped, (sensor - share * clipped) / max(kept, vec3<f32>(1e-6)), kept > vec3<f32>(1e-3));
+    let whole = unclipped >= vec3<f32>(level);
+    share = select(share, vec3<f32>(1.0), whole);
+    clipped = select(clipped, sensor, whole);
+    unclipped = select(unclipped, sensor, whole);
+    return BinnedSplit(share, clipped, unclipped);
+}
+
 // White-balanced camera RGB of a binned source, the units of
 // RawSampling::raw_camera_at. The Rust side gives wb.g the mean multiplier of
 // the greens a binned green averages.
@@ -383,69 +432,99 @@ fn binned_camera_at(pos: vec2<i32>) -> vec3<f32> {
     return binned_sensor_at(pos) * Common::camera_uniforms.wb.rgb;
 }
 
-// LCh reconstruction of a binned pixel: lch_reconstructed_cfa_at with the
-// pixel's own colours as the 2x2 block, which one clipped colour marks.
-fn binned_lch_rgb(sensor: vec3<f32>, camera: vec3<f32>) -> vec3<f32> {
-    if !any(sensor >= vec3<f32>(RawSampling::shared_highlight_sensor_clip())) {
+// LCh reconstruction of a binned pixel: lch_reconstructed_cfa_at over the
+// pixel's 2x2 blocks, of which a block holding a clipped photosite is
+// rebuilt. The largest clipped share is taken as the share of such blocks.
+// A colour clipped in a share of them holds its clipped mean there and its
+// unclipped mean in the rest; the other blocks keep their colour.
+fn binned_lch_rgb(pos: vec2<i32>, sensor: vec3<f32>, camera: vec3<f32>) -> vec3<f32> {
+    let split = binned_split(Common::clamp_pos(pos), sensor, RawSampling::shared_highlight_sensor_clip());
+    let affected = max(split.share.r, max(split.share.g, split.share.b));
+    if affected <= 0.0 {
         return camera;
     }
-    let recovered = lch_recovered_rgb(camera.r, camera.g, camera.g, camera.b);
+    let wb = Common::camera_uniforms.wb.rgb;
+    let block = (split.share * split.clipped * wb + (affected - split.share) * split.unclipped * wb) / affected;
+    let recovered = lch_recovered_rgb(block.r, block.g, block.g, block.b);
     let strength = clamp(Common::camera_uniforms.highlight_reconstruction, 0.0, 1.0);
-    return mix(camera, max(recovered, vec3<f32>(0.0)), strength);
+    let rebuilt = mix(block, max(recovered, vec3<f32>(0.0)), strength);
+    // With every block rebuilt the pixel is the rebuilt block, without the
+    // rounding of adding a difference.
+    return select(camera + affected * (rebuilt - block), rebuilt, affected >= 1.0);
 }
 
-// Guided reconstruction of a binned pixel: guided_cfa_at with the pixel's own
-// colours as the known ones.
+// Guided reconstruction of a binned pixel: guided_cfa_at over the pixel's
+// photosites. Only the clipped share of a colour is rebuilt, from the means
+// of the other colours' unclipped photosites where they did not clip there
+// too (binned_guided_color); the unclipped share keeps its recorded mean.
 fn binned_guided_rgb(pos: vec2<i32>, sensor: vec3<f32>, camera: vec3<f32>) -> vec3<f32> {
-    let clipped = sensor >= vec3<f32>(0.987 * max(Common::camera_uniforms.highlight_clip, 0.01));
-    if !any(clipped) {
+    let p = Common::clamp_pos(pos);
+    let split = binned_split(p, sensor, 0.987 * max(Common::camera_uniforms.highlight_clip, 0.01));
+    if !any(split.share > vec3<f32>(0.0)) {
         return camera;
     }
-    let cell = highlight_cell_at(Common::clamp_pos(pos));
+    let wb = Common::camera_uniforms.wb.rgb;
+    let cell = highlight_cell_at(p);
     let clip_levels = highlight_clip_levels();
     let white = max(clip_levels.r, max(clip_levels.g, clip_levels.b));
     let recorded = max(camera, vec3<f32>(0.0));
-    // One call per colour, the other colours' clipping passed as swizzles: the
-    // Adreno 830 Vulkan compiler crashes on a bool vector indexed at run time.
+    let known = max(split.unclipped * wb, vec3<f32>(0.0));
+    let clipped = split.clipped * wb;
+    // One call per colour with the shares as floats: the Adreno 830 Vulkan
+    // compiler crashes on a bool vector indexed at run time.
     var output = camera;
-    if clipped.r {
-        output.r = binned_guided_color(0u, camera.r, recorded, clipped.gb, cell, clip_levels, white);
+    if split.share.r > 0.0 {
+        output.r = binned_guided_color(0u, camera.r, clipped.r, split.share, known, recorded, cell, clip_levels, white);
     }
-    if clipped.g {
-        output.g = binned_guided_color(1u, camera.g, recorded, clipped.rb, cell, clip_levels, white);
+    if split.share.g > 0.0 {
+        output.g = binned_guided_color(1u, camera.g, clipped.g, split.share, known, recorded, cell, clip_levels, white);
     }
-    if clipped.b {
-        output.b = binned_guided_color(2u, camera.b, recorded, clipped.rg, cell, clip_levels, white);
+    if split.share.b > 0.0 {
+        output.b = binned_guided_color(2u, camera.b, clipped.b, split.share, known, recorded, cell, clip_levels, white);
     }
     return output;
 }
 
-// Clipped `color` of a binned pixel at level `camera_value`, from `recorded`,
-// the pixel's colours, of which the other two (highlight_other_colors) clipped
-// as `others_clipped` says.
+// `color` of a binned pixel whose mean is `camera_value`, with a `share` of
+// each colour's photosites clipped, those of `color` at mean `clipped_value`.
+// `known` holds the colours' unclipped means and `recorded` their means over
+// all photosites, the floor's inputs as in guided_cfa_at.
+//
+// The estimate blends the cases of guided_cfa_at by how often the other
+// colours clipped where `color` did. Clipped areas are taken as nested, as
+// light falling off from a bright spot clips the colour with the least
+// headroom over the widest area and the others inside it: of the photosites
+// where `color` clipped, a share min(1, share_a / share_color) also clipped
+// in colour a, and the colour clipped in the smaller share clipped only where
+// the other did. Shares of 0 or 1 select one case exactly.
 fn binned_guided_color(
     color: u32,
     camera_value: f32,
+    clipped_value: f32,
+    share: vec3<f32>,
+    known: vec3<f32>,
     recorded: vec3<f32>,
-    others_clipped: vec2<bool>,
     cell: HighlightCell,
     clip_levels: vec3<f32>,
     white: f32,
 ) -> f32 {
     let others = highlight_other_colors(color);
-    let a = recorded[others.x];
-    let b = recorded[others.y];
+    let share_a = share[others.x];
+    let share_b = share[others.y];
+    let own_share = share[color];
+    let with_a = min(share_a / own_share, 1.0);
+    let with_b = min(share_b / own_share, 1.0);
+    let with_both = min(with_a, with_b);
     let chroma = cell.chroma[color];
-    let lower_bound = highlight_floor(a, b, chroma, others_clipped.x, others_clipped.y);
-    var estimate = white;
-    if !others_clipped.x && !others_clipped.y {
-        estimate = highlight_two_known(a, b, chroma);
-    } else if !others_clipped.x {
-        estimate = highlight_one_known(a, others.x, color, cell, clip_levels, white);
-    } else if !others_clipped.y {
-        estimate = highlight_one_known(b, others.y, color, cell, clip_levels, white);
-    }
-    return max(camera_value, max(estimate, lower_bound));
+    let estimate = (1.0 - max(with_a, with_b)) * highlight_two_known(known[others.x], known[others.y], chroma)
+        + (with_b - with_both) * highlight_one_known(known[others.x], others.x, color, cell, clip_levels, white)
+        + (with_a - with_both) * highlight_one_known(known[others.y], others.y, color, cell, clip_levels, white)
+        + with_both * white;
+    let lower_bound = highlight_floor(recorded[others.x], recorded[others.y], chroma, share_a > 0.0, share_b > 0.0);
+    let rebuilt = max(clipped_value, max(estimate, lower_bound));
+    // A fully clipped colour takes the rebuilt value as it is, without the
+    // rounding of adding a difference.
+    return select(camera_value + own_share * (rebuilt - clipped_value), rebuilt, own_share >= 1.0);
 }
 
 // highlight_reconstruct for a binned source, which holds every colour at
@@ -461,7 +540,7 @@ fn binned_highlight_reconstruct(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sensor = binned_sensor_at(pos);
     var output = sensor * Common::camera_uniforms.wb.rgb;
     if method >= 0.5 && method < 1.5 {
-        output = binned_lch_rgb(sensor, output);
+        output = binned_lch_rgb(pos, sensor, output);
     } else if method >= 1.5 {
         output = binned_guided_rgb(pos, sensor, output);
     }

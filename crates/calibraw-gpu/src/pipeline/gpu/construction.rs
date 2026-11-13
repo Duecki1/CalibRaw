@@ -368,6 +368,7 @@ impl RawGpuPipeline {
             _tex2: surfaces.tex2,
             rgb_source_texture: surfaces.rgb_source_texture,
             binned_ai_texture: surfaces.binned_ai_texture,
+            binned_clipping_texture: surfaces.binned_clipping_texture,
             _xtrans_homogeneity: surfaces.xtrans_homogeneity,
             scene_texture: surfaces.scene_texture,
             scene_format: geometry.demosaic_format,

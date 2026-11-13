@@ -100,8 +100,8 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    // Highlight reconstruction of a binned source: its RGB source and
-    // AI-denoised RGB in, camera RGB out (highlights.wgsl).
+    // Highlight reconstruction of a binned source: its RGB source,
+    // AI-denoised RGB and clipping in, camera RGB out (highlights.wgsl).
     let bgl_binned_highlights =
         reused_layout(plan.binned_highlight_pass_index).unwrap_or_else(|| {
             create_bind_group_layout(
@@ -114,6 +114,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_entry(12, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(13, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(14, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(15, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });

@@ -29,8 +29,6 @@ use segments::ColourSegments;
 /// Target edge of a model cell in photosites: a multiple of the Bayer and X-Trans periods, so
 /// every cell holds each colour.
 const CELL_EDGE: u32 = 12;
-/// The share of the clip level a clipped sample must reach, as in `RawSampling::is_raw_clipped`.
-const CLIP_DETECTION: f32 = 0.987;
 /// A cell without clipping tells the colours of a highlight from this share of the clip level
 /// up, and with full weight from [`DONOR_FULL`].
 const DONOR_START: f32 = 0.2;
@@ -363,7 +361,7 @@ impl LoadedRaw {
         }
         let cells = HighlightModel::grid_for([self.width, self.height]);
         let [cells_x, cells_y] = cells.map(|count| count as usize);
-        let detection = CLIP_DETECTION * clip_threshold;
+        let detection = SensorSaturation::CLIP_DETECTION * clip_threshold;
         let column_cell: Vec<usize> = (0..width).map(|x| x * cells_x / width).collect();
         let samples: Vec<CellSamples> = (0..cells_y)
             .into_par_iter()

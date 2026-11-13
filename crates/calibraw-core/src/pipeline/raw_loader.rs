@@ -33,7 +33,7 @@ mod profile_color;
 mod sensor_samples;
 mod sensor_saturation;
 mod white_balance;
-pub use binned_sensor::BinnedSensor;
+pub use binned_sensor::{BinnedClipping, BinnedSensor};
 pub use compact_pixel_map::*;
 pub use highlight_model::*;
 pub use profile_color::{ProfileColor, ProfileColorSource};
