@@ -166,7 +166,7 @@ fn save_merged(
     let mut temporary = tempfile::Builder::new()
         .prefix(".calibraw-merge-")
         .suffix(".tmp")
-        .tempfile_in(parent)?;
+        .tempfile_in(calibraw_core::file_ops::staging_directory(parent))?;
     merged.write_tiff(temporary.as_file_mut())?;
     calibraw_core::file_ops::sync_file(temporary.as_file())?;
     anyhow::ensure!(!cancelled.load(Ordering::Relaxed), tr("Merge cancelled"));

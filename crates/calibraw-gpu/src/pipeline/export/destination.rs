@@ -190,11 +190,14 @@ fn file_name(path: &Path) -> Result<&str> {
         .context("export path has no valid file name")
 }
 
-/// A new unique `.<name>.<pid>.<nonce>.<id>.part` path in `directory`, after
-/// removing day-old parts that earlier interrupted exports of `name` left.
+/// A new unique `.<name>.<pid>.<nonce>.<id>.part` path to stage a file for
+/// `directory` (see [`calibraw_core::file_ops::staging_directory`]), after
+/// removing day-old parts that earlier interrupted exports of `name` left there.
 fn temporary_export_path(directory: &Path, name: &str) -> Result<PathBuf> {
     fs::create_dir_all(directory)
         .with_context(|| format!("create export directory {}", directory.display()))?;
+    let directory = calibraw_core::file_ops::staging_directory(directory);
+    let directory = directory.as_path();
     cleanup_stale_export_parts(directory, name);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
