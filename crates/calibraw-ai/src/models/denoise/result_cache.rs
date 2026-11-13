@@ -77,6 +77,9 @@ pub fn load_saved_result(path: &Path, raw: &LoadedRaw) -> Result<Option<AiDenois
         actual_payload.as_ref() == manifest.payload_sha256,
         "AI-denoise result scene checksum does not match"
     );
+    if manifest.version == SATURATION_LIMITED_VERSION && raw.cfa_kind == CfaKind::Bayer {
+        restore_samples_above_white(raw, &mut payload);
+    }
     match raw.cfa_kind {
         CfaKind::Bayer => AiDenoisedImage::new_bayer_cfa(raw.width, raw.height, payload),
         CfaKind::XTrans => AiDenoisedImage::new(raw.width, raw.height, payload),
@@ -103,6 +106,7 @@ pub fn save_result(
     let payload = bytemuck::cast_slice(image.payload());
     let payload_sha256 = digest_cancelable(payload, Some(cancellation))?;
     let manifest = ResultCacheManifest {
+        version: RESULT_FILE_VERSION,
         width: raw.width,
         height: raw.height,
         cfa_kind: cfa_cache_code(raw.cfa_kind),
@@ -144,8 +148,32 @@ pub fn save_result(
     .with_context(|| format!("write AI-denoise result {}", path.display()))
 }
 
+/// The result version that limited Bayer samples to the white level.
+///
+/// migration: remove in v2.0.0, with `restore_samples_above_white`; version 2 results are then
+/// rejected as stale and denoised again. Listed in `calibraw_core`'s `migrations`.
+const SATURATION_LIMITED_VERSION: u32 = 2;
+
+/// Gives a version 2 Bayer result back the samples it limited to the white level.
+///
+/// `infer_bayer` keeps a sample's recorded code wherever it lies above `CLIP_THRESHOLD` of the
+/// white level, so a recorded code above the white level is exactly what the current writer
+/// stores there; version 2 stored the white level instead, which hid samples of sensors that
+/// saturate above it from highlight reconstruction. Every other sample is unchanged.
+fn restore_samples_above_white(raw: &LoadedRaw, payload: &mut [u16]) {
+    for (index, stored) in payload.iter_mut().enumerate() {
+        let recorded = raw.raw_pixels[index];
+        let white = raw.white_levels[raw.color_indices[index] as usize]
+            .max(raw.black_levels_per_pixel[index] + 1.0);
+        if f32::from(recorded) > white {
+            *stored = recorded;
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ResultCacheManifest {
+    version: u32,
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) cfa_kind: u32,
@@ -158,7 +186,7 @@ impl ResultCacheManifest {
     fn encode(self) -> [u8; RESULT_FILE_HEADER_BYTES] {
         let mut bytes = [0u8; RESULT_FILE_HEADER_BYTES];
         bytes[0..8].copy_from_slice(&RESULT_FILE_MAGIC);
-        bytes[8..12].copy_from_slice(&RESULT_FILE_VERSION.to_le_bytes());
+        bytes[8..12].copy_from_slice(&self.version.to_le_bytes());
         bytes[12..16].copy_from_slice(&self.width.to_le_bytes());
         bytes[16..20].copy_from_slice(&self.height.to_le_bytes());
         bytes[20..24].copy_from_slice(&self.cfa_kind.to_le_bytes());
@@ -178,10 +206,11 @@ impl ResultCacheManifest {
         };
         let version = read_u32(8);
         anyhow::ensure!(
-            version == RESULT_FILE_VERSION,
+            version == RESULT_FILE_VERSION || version == SATURATION_LIMITED_VERSION,
             "AI-denoise result format version {version} is stale"
         );
         Ok(Self {
+            version,
             width: read_u32(12),
             height: read_u32(16),
             cfa_kind: read_u32(20),

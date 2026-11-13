@@ -29,6 +29,9 @@
 //!   CUDA and Windows DirectML), removed from the model folder on desktop
 //!   start-up (`calibraw-ai`, `runtime/package.rs`, which lists them, and
 //!   `calibraw-ui`, `app/ai/models.rs`).
+//! - Saved AI-denoise results of version 2, whose Bayer samples above the
+//!   white level are restored from the RAW when they are loaded
+//!   (`calibraw-ai`, `models/denoise/result_cache.rs`).
 //! - The Lensfun 0.3.4 database Android copied into app data, removed on
 //!   start-up (`calibraw-ui`, `app/lifecycle/startup.rs`).
 //! - Depth Anything V2 Small, the depth model before Distill-Any-Depth

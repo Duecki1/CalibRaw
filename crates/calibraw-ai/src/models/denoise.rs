@@ -62,7 +62,8 @@ const OVERLAP: usize = match AiModel::RawNindBayer.spec().input {
 const CORE_EDGE: usize = TILE_EDGE - 2 * OVERLAP;
 const MAX_MODEL_ABS: f32 = 60_000.0;
 const RESULT_FILE_MAGIC: [u8; 8] = *b"CALIBRAW";
-const RESULT_FILE_VERSION: u32 = 2;
+/// Version 3 keeps Bayer samples above the white level; version 2 limited them to it.
+const RESULT_FILE_VERSION: u32 = 3;
 const RESULT_FILE_MANIFEST: &str = "manifest.bin";
 const RESULT_FILE_PAYLOAD: &str = "denoised-pixels.bin";
 const RESULT_FILE_HEADER_BYTES: usize = 96;
