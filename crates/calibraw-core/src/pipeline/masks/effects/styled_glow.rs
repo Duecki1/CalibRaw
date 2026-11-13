@@ -38,6 +38,15 @@
 //!   rays of Streak and Star run from blue into red. Each primary's kernel
 //!   keeps unit energy, so the glow's colour as a whole stays the same; only
 //!   where it lands changes. Motion, a shutter drag, has no Dispersion.
+//! - Split moves the spread light's red one way and its blue the other, as
+//!   Oniric's Chromatic Aberration (formerly Light Dispersion) splits a
+//!   glow's channels, while the photo stays in place: Shift moves red along
+//!   Split direction and blue against it everywhere, Lens moves red outward
+//!   from the full image's centre and blue inward by a shift that grows with
+//!   the distance and is Split's at the corners, as Color Fringe's styles
+//!   do. Green stays. The split light is read from the full-image map, so
+//!   it may move farther than an export tile's halo; it is as fine as the
+//!   map, about a 512th of the shorter edge.
 //!
 //! Scales are fractions of the image's shorter edge, so the look does not
 //! depend on the resolution. This module turns the controls into those
@@ -167,6 +176,36 @@ const _: () = {
     }
 };
 
+/// How Split moves the glow's red and blue apart, chosen on the card.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum GlowSplitMode {
+    /// Outward from the image's centre, as a lens's lateral chromatic
+    /// aberration.
+    Lens,
+    /// Along Split direction everywhere, an RGB split.
+    #[default]
+    Shift,
+}
+
+impl GlowSplitMode {
+    pub const ALL: [Self; 2] = [Self::Lens, Self::Shift];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Lens => "Lens",
+            Self::Shift => "Shift",
+        }
+    }
+
+    /// `SPLIT_MODE` lane value (`STYLED_GLOW_SPLIT_*` in styled_glow.wgsl).
+    const fn shader_value(self) -> f32 {
+        match self {
+            Self::Lens => 1.0,
+            Self::Shift => 0.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct StyledGlowEffectSettings {
@@ -185,6 +224,11 @@ pub struct StyledGlowEffectSettings {
     pub softness: f32,
     /// Star: its rays.
     pub points: StarPoints,
+    /// How far the spread light's red and blue move apart.
+    pub split: f32,
+    pub split_mode: GlowSplitMode,
+    /// Split's Shift: the direction red moves toward, in degrees.
+    pub split_direction: f32,
 }
 
 impl Default for StyledGlowEffectSettings {
@@ -199,6 +243,9 @@ impl Default for StyledGlowEffectSettings {
             direction: DIRECTION.default,
             softness: SOFTNESS.default,
             points: StarPoints::default(),
+            split: SPLIT.default,
+            split_mode: GlowSplitMode::default(),
+            split_direction: SPLIT_DIRECTION.default,
         }
     }
 }
@@ -235,6 +282,15 @@ effect_lanes! {
     /// Motion, Streak and Star: the Gaussian deviation across a streak, in
     /// shorter edges.
     SOFTNESS = 11,
+    /// How far Split moves red, and blue the other way, in the full image's
+    /// shorter edges: everywhere for Shift, at the corners for Lens. 0
+    /// without Split.
+    SPLIT = 12,
+    /// [`GlowSplitMode`]: 1 for Lens, 0 for Shift.
+    SPLIT_MODE = 13,
+    /// Split's Shift: the direction red moves toward, in radians, in the full
+    /// image's pixels with y down, as DIRECTION.
+    SPLIT_DIRECTION = 14,
 }
 
 /// Middle grey, the reference of the Range threshold.
@@ -276,6 +332,10 @@ const STREAK_STRENGTH: f32 = 1.0;
 /// red then spreads about twice as wide as green and blue about 0.6 times
 /// as wide. Dispersion 25 is diffraction's exponent of 1.
 const DISPERSION_AT_FULL: f32 = 4.0;
+/// Split 100 moves red and blue this share of the shorter edge, about the
+/// split of Oniric's samples; the shift grows with the square of Split, so
+/// low values give a fine fringe.
+const SPLIT_AT_FULL: f32 = 0.15;
 
 impl StyledGlowEffectSettings {
     /// log2 of the widest Gaussian deviation of Bloom, Diffusion and
@@ -336,13 +396,21 @@ impl EffectSettings for StyledGlowEffectSettings {
             EffectControl::Slider(&mut self.range, RANGE),
             EffectControl::Slider(&mut self.spread, SPREAD),
             EffectControl::Slider(&mut self.warmth, WARMTH),
-            EffectControl::Slider(&mut self.dispersion, DISPERSION),
         ];
         if self.style.streaks() {
             controls.push(EffectControl::Angle(&mut self.direction, DIRECTION));
             controls.push(EffectControl::Slider(&mut self.softness, SOFTNESS));
         }
-        EffectControls::new(controls)
+        let mut separation = Vec::new();
+        if self.style.disperses() {
+            separation.push(EffectControl::Slider(&mut self.dispersion, DISPERSION));
+        }
+        separation.push(EffectControl::Slider(&mut self.split, SPLIT));
+        separation.push(EffectControl::Angle(
+            &mut self.split_direction,
+            SPLIT_DIRECTION,
+        ));
+        EffectControls::new(controls).details(COLOR_SEPARATION, separation)
     }
 
     fn pack(&self, slot: &mut EffectLanes, _: &PackContext) {
@@ -354,6 +422,13 @@ impl EffectSettings for StyledGlowEffectSettings {
             MIDDLE_GREY.log2() + RANGE_TOP_STOPS - RANGE_STOPS * range,
         );
         slot.set_color(lanes::TINT, self.tint());
+        let split = SPLIT.clamp(self.split) / 100.0;
+        slot.set(lanes::SPLIT, SPLIT_AT_FULL * split * split);
+        slot.set(lanes::SPLIT_MODE, self.split_mode.shader_value());
+        slot.set(
+            lanes::SPLIT_DIRECTION,
+            SPLIT_DIRECTION.clamp(self.split_direction).to_radians(),
+        );
         if self.style.disperses() {
             slot.set(
                 lanes::DISPERSION,

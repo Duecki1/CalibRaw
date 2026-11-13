@@ -2096,5 +2096,9 @@
   "Shift": "Shift",
   "Star": "Star",
   "Points": "Points",
-  "Dispersion": "Dispersion"
+  "Dispersion": "Dispersion",
+  "Split": "Split",
+  "Split mode": "Split mode",
+  "Split direction": "Split direction",
+  "Color separation": "Colour separation"
 }

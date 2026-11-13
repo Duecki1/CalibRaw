@@ -2103,5 +2103,9 @@
   "Shift": "Desplazamiento",
   "Star": "Estrella",
   "Points": "Puntas",
-  "Dispersion": "Dispersión"
+  "Dispersion": "Dispersión",
+  "Split": "Separación",
+  "Split mode": "Modo de separación",
+  "Split direction": "Dirección de separación",
+  "Color separation": "Separación de color"
 }

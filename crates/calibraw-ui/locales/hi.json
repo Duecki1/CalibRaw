@@ -2103,5 +2103,9 @@
   "Shift": "खिसकाव",
   "Star": "तारा",
   "Points": "किरणें",
-  "Dispersion": "वर्ण-विक्षेपण"
+  "Dispersion": "वर्ण-विक्षेपण",
+  "Split": "विभाजन",
+  "Split mode": "विभाजन मोड",
+  "Split direction": "विभाजन दिशा",
+  "Color separation": "रंग पृथक्करण"
 }

@@ -2103,5 +2103,9 @@
   "Shift": "Зсув",
   "Star": "Зірка",
   "Points": "Промені",
-  "Dispersion": "Дисперсія"
+  "Dispersion": "Дисперсія",
+  "Split": "Розщеплення",
+  "Split mode": "Режим розщеплення",
+  "Split direction": "Напрямок розщеплення",
+  "Color separation": "Розділення кольорів"
 }

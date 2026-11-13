@@ -2103,5 +2103,9 @@
   "Shift": "Forskydning",
   "Star": "Stjerne",
   "Points": "Takker",
-  "Dispersion": "Dispersion"
+  "Dispersion": "Dispersion",
+  "Split": "Opdeling",
+  "Split mode": "Opdelingstype",
+  "Split direction": "Opdelingsretning",
+  "Color separation": "Farveadskillelse"
 }

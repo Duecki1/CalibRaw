@@ -2103,5 +2103,9 @@
   "Shift": "偏移",
   "Star": "星芒",
   "Points": "星芒數",
-  "Dispersion": "色散"
+  "Dispersion": "色散",
+  "Split": "分離",
+  "Split mode": "分離方式",
+  "Split direction": "分離方向",
+  "Color separation": "色彩分離"
 }

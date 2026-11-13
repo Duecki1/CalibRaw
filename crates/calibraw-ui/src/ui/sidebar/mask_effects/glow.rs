@@ -1,13 +1,15 @@
 //! The Glow's card: its Style, then Amount, Range, Spread and Warmth, whose
 //! track runs yellow to red for Halation and cool to warm otherwise, as its
-//! tint does (styled_glow.rs in calibraw-core), and Dispersion but for
-//! Motion; Star adds its Points, and Motion, Streak and Star their Direction
-//! and Softness.
+//! tint does (styled_glow.rs in calibraw-core); Star adds its Points, and
+//! Motion, Streak and Star their Direction and Softness. Color separation,
+//! collapsed, holds Dispersion (but for Motion) and Split with its mode and,
+//! for Shift, its direction.
 
-use super::{float_param_slider, styled_effect_card, StyleChoice};
+use super::{effect_details, float_param_slider, styled_effect_card, StyleChoice};
 use crate::i18n::tr;
 use crate::pipeline::{
-    effect_params::styled_glow, GlowStyle, MaskEffect, StarPoints, StyledGlowEffectSettings,
+    effect_params::styled_glow, GlowSplitMode, GlowStyle, MaskEffect, StarPoints,
+    StyledGlowEffectSettings,
 };
 use crate::ui::components::adjustment_slider::{
     float_param_angle, gradient_float_param_slider, SliderGradient,
@@ -21,8 +23,9 @@ const HALATION_WARMTH: SliderGradient = SliderGradient::ChannelHue {
     right: Color32::from_rgb(220, 30, 15),
 };
 
-/// The width Points' segments take where the card is wide enough.
-const POINTS_WIDTH: f32 = 160.0;
+/// The width Points' and Split's segments take where the card is wide
+/// enough.
+const CHOICE_WIDTH: f32 = 160.0;
 
 /// Its style is the Glow family's Bloom, Diffusion, Halation, Motion, Streak
 /// and Star (`style`).
@@ -54,10 +57,6 @@ pub(crate) fn show(
             };
             changed |=
                 gradient_float_param_slider(ui, &mut settings.warmth, styled_glow::WARMTH, warmth);
-            if settings.style.disperses() {
-                changed |=
-                    float_param_slider(ui, &mut settings.dispersion, styled_glow::DISPERSION);
-            }
             if settings.style == GlowStyle::Star {
                 changed |= star_points(ui, &mut settings.points);
             }
@@ -65,6 +64,9 @@ pub(crate) fn show(
                 changed |= float_param_angle(ui, &mut settings.direction, styled_glow::DIRECTION);
                 changed |= float_param_slider(ui, &mut settings.softness, styled_glow::SOFTNESS);
             }
+            changed |= effect_details(ui, tr(styled_glow::COLOR_SEPARATION), |ui| {
+                color_separation(ui, settings)
+            });
             changed
         },
     )
@@ -73,8 +75,30 @@ pub(crate) fn show(
 /// Star's Points: its rays, 4, 6 or 8.
 fn star_points(ui: &mut Ui, points: &mut StarPoints) -> bool {
     let options = StarPoints::ALL.map(|option| (option, option.label()));
-    moduwu_design::form_row(ui, tr("Points"), POINTS_WIDTH, |ui, width| {
+    moduwu_design::form_row(ui, tr("Points"), CHOICE_WIDTH, |ui, width| {
         moduwu_design::segmented_control(ui, points, &options, width).changed()
     })
     .inner
+}
+
+/// Dispersion, then Split with its mode and, for Shift, its direction.
+fn color_separation(ui: &mut Ui, settings: &mut StyledGlowEffectSettings) -> bool {
+    let mut changed = false;
+    if settings.style.disperses() {
+        changed |= float_param_slider(ui, &mut settings.dispersion, styled_glow::DISPERSION);
+    }
+    changed |= float_param_slider(ui, &mut settings.split, styled_glow::SPLIT);
+    let options = GlowSplitMode::ALL.map(|mode| (mode, tr(mode.label())));
+    changed |= moduwu_design::form_row(ui, tr("Split mode"), CHOICE_WIDTH, |ui, width| {
+        moduwu_design::segmented_control(ui, &mut settings.split_mode, &options, width).changed()
+    })
+    .inner;
+    if settings.split_mode == GlowSplitMode::Shift {
+        changed |= float_param_angle(
+            ui,
+            &mut settings.split_direction,
+            styled_glow::SPLIT_DIRECTION,
+        );
+    }
+    changed
 }

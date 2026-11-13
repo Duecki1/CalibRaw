@@ -2103,5 +2103,9 @@
   "Shift": "Décalage",
   "Star": "Étoile",
   "Points": "Branches",
-  "Dispersion": "Dispersion"
+  "Dispersion": "Dispersion",
+  "Split": "Séparation",
+  "Split mode": "Mode de séparation",
+  "Split direction": "Direction de séparation",
+  "Color separation": "Séparation des couleurs"
 }

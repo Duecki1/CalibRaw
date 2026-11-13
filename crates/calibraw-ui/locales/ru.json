@@ -2103,5 +2103,9 @@
   "Shift": "Сдвиг",
   "Star": "Звезда",
   "Points": "Лучи",
-  "Dispersion": "Дисперсия"
+  "Dispersion": "Дисперсия",
+  "Split": "Расщепление",
+  "Split mode": "Режим расщепления",
+  "Split direction": "Направление расщепления",
+  "Color separation": "Разделение цветов"
 }

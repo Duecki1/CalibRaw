@@ -18,7 +18,7 @@ fn effect_mask_data(
     instance: usize,
     instance_count: usize,
 ) -> MaskData {
-    let [adjust_0, adjust_1, adjust_2] = lanes.rows();
+    let [adjust_0, adjust_1, adjust_2, adjust_3] = lanes.rows();
     // Both fit in INSTANCE_BITS: an effect has at most MAX_EFFECT_INSTANCES.
     let instances = instance as u32 | ((instance_count as u32 - 1) << INSTANCE_BITS);
     MaskData {
@@ -31,6 +31,7 @@ fn effect_mask_data(
         adjust_0,
         adjust_1,
         adjust_2,
+        adjust_3,
         effect_options: lanes.options(),
         ..MaskData::zeroed()
     }
@@ -209,6 +210,7 @@ pub(super) fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
             effect_params::adjustment::CLARITY.clamp(adjustment.clarity),
             effect_params::adjustment::DEHAZE.clamp(adjustment.dehaze),
         ],
+        adjust_3: [0.0; 4],
         effect_options: [0.0; 4],
         curves: pack_local_point_curve(&adjustment.tone_curve),
         grade_shadows: pack_color_grade_wheel(adjustment.color_grading.shadows),

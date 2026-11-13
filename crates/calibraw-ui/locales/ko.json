@@ -2097,5 +2097,9 @@
   "Shift": "이동",
   "Star": "별빛",
   "Points": "빛줄기 수",
-  "Dispersion": "분산"
+  "Dispersion": "분산",
+  "Split": "분리",
+  "Split mode": "분리 방식",
+  "Split direction": "분리 방향",
+  "Color separation": "색 분리"
 }

@@ -72,7 +72,7 @@ pub use masks::{
     EdgeGlowEffectSettings, EffectComponent, EffectControl, EffectControls, EffectDetails,
     EffectFamily, EffectInstances, EffectLanes, EffectOption, EffectPass, EffectReach,
     EffectSettings, EffectSettingsVisitor, EffectStyle, FogEffectSettings, GlowEffectSettings,
-    GlowStyle, GrainEffectSettings, HalationEffectSettings, Lane, LaneName,
+    GlowSplitMode, GlowStyle, GrainEffectSettings, HalationEffectSettings, Lane, LaneName,
     LegacyHighlightGlowEffectSettings, LensBlurEffectSettings, LightRaysEffectSettings,
     LightShaftSource, LightShaftsEffectSettings, LightShaftsMode, LocalAdjustments, LocalMask,
     MaskCombineMode, MaskCommon, MaskComponent, MaskEffect, MaskEffectCategory, MaskEffectSettings,

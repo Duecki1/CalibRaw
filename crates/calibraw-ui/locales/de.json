@@ -2103,5 +2103,9 @@
   "Shift": "Versatz",
   "Star": "Stern",
   "Points": "Zacken",
-  "Dispersion": "Dispersion"
+  "Dispersion": "Dispersion",
+  "Split": "Aufspaltung",
+  "Split mode": "Aufspaltungsart",
+  "Split direction": "Aufspaltungsrichtung",
+  "Color separation": "Farbtrennung"
 }

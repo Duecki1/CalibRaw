@@ -2103,5 +2103,9 @@
   "Shift": "Deplasare",
   "Star": "Stea",
   "Points": "Raze",
-  "Dispersion": "Dispersie"
+  "Dispersion": "Dispersie",
+  "Split": "Separare",
+  "Split mode": "Mod de separare",
+  "Split direction": "Direcția separării",
+  "Color separation": "Separarea culorilor"
 }

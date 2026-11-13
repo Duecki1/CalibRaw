@@ -2103,5 +2103,9 @@
   "Shift": "ずらし",
   "Star": "スター",
   "Points": "光条の数",
-  "Dispersion": "分散"
+  "Dispersion": "分散",
+  "Split": "分離",
+  "Split mode": "分離モード",
+  "Split direction": "分離の方向",
+  "Color separation": "色分離"
 }

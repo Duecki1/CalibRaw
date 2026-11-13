@@ -8,6 +8,8 @@ struct MaskData {
     adjust_0_field: vec4<f32>,
     adjust_1_field: vec4<f32>,
     adjust_2_field: vec4<f32>,
+    // Effect slots' lanes 12 to 15.
+    adjust_3_field: vec4<f32>,
     effect_options: vec4<f32>,
     curves: array<vec4<f32>, 9>,
     grade_shadows: vec4<f32>,

@@ -2,8 +2,8 @@
 
 use super::defocus::{defocus_reaches_map, is_defocus};
 use super::styled_glow::{
-    is_styled_glow, styled_glow_near_top, styled_glow_streaks, styled_glow_streaks_of,
-    StyledGlowStreaks,
+    is_styled_glow, styled_glow_near_top, styled_glow_splits_spread, styled_glow_streaks,
+    styled_glow_streaks_of, StyledGlowStreaks,
 };
 use super::*;
 use crate::pipeline::effect_lanes::{
@@ -271,6 +271,8 @@ pub(super) struct MaskData {
     pub(super) adjust_0: [f32; 4],
     pub(super) adjust_1: [f32; 4],
     pub(super) adjust_2: [f32; 4],
+    /// Effect slots' lanes 12 to 15; unused by adjustment slots.
+    pub(super) adjust_3: [f32; 4],
     // Per-slot switches of effect slots (`effect_lanes::options` in calibraw-core).
     pub(super) effect_options: [f32; 4],
     pub(super) curves: [[f32; 4]; LOCAL_POINT_CURVE_BLOCKS],
@@ -292,7 +294,7 @@ pub(super) struct MaskData {
     pub(super) point_color_meta: [u32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<MaskData>() == 1_488);
+const _: () = assert!(std::mem::size_of::<MaskData>() == 1_504);
 
 impl MaskData {
     /// The slot's [`MaskEffect::shader_id`] (`Common::mask_effect_id`).
@@ -345,17 +347,19 @@ impl MaskData {
         let row = match lane.index() / 4 {
             0 => &self.adjust_0,
             1 => &self.adjust_1,
-            _ => &self.adjust_2,
+            2 => &self.adjust_2,
+            _ => &self.adjust_3,
         };
         row[lane.index() % 4]
     }
 
     pub(super) fn set_lane(&mut self, lane: Lane, value: f32) {
-        // `Lane::new` keeps every lane below 12.
+        // `Lane::new` keeps every lane below 16.
         let row = match lane.index() / 4 {
             0 => &mut self.adjust_0,
             1 => &mut self.adjust_1,
-            _ => &mut self.adjust_2,
+            2 => &mut self.adjust_2,
+            _ => &mut self.adjust_3,
         };
         row[lane.index() % 4] = value;
     }
@@ -973,7 +977,7 @@ impl GpuParams {
     }
 
     /// Whether a Glow reads the full-image map, which an export then builds
-    /// in a prepass: its streaks always, its spread when it reaches past the
+    /// in a prepass: its streaks and Split always, its spread when it reaches past the
     /// near pyramid at this pipeline's resolution. The near pyramid's reach is
     /// a share of the image that shrinks as the resolution grows. Dispersion
     /// widens red's profile by DISPERSION · log2(630 / 532) octaves
@@ -986,9 +990,16 @@ impl GpuParams {
             .filter(|mask| is_styled_glow(mask))
             .any(|mask| {
                 styled_glow_streaks(mask).any()
+                    || mask.lane(styled_glow::SPLIT) > 0.0
                     || mask.lane(styled_glow::REACH) + 0.25 * mask.lane(styled_glow::DISPERSION)
                         > near_top
             })
+    }
+
+    /// Whether a Bloom, Diffusion or Halation slot splits, so the map's
+    /// passes build its split spread.
+    pub(super) fn styled_glow_splits_spread(&self) -> bool {
+        styled_glow_splits_spread(self.mask_slots())
     }
 
     /// The streak passes the Glow slots need: as many lines as the Star with

@@ -296,6 +296,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 adjust_0,
                 adjust_1,
                 adjust_2,
+                adjust_3,
                 effect_options,
                 curves,
                 grade_shadows,

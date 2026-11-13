@@ -2101,5 +2101,9 @@
   "Shift": "Przesunięcie",
   "Star": "Gwiazda",
   "Points": "Ramiona",
-  "Dispersion": "Dyspersja"
+  "Dispersion": "Dyspersja",
+  "Split": "Rozszczepienie",
+  "Split mode": "Tryb rozszczepienia",
+  "Split direction": "Kierunek rozszczepienia",
+  "Color separation": "Rozdzielenie kolorów"
 }

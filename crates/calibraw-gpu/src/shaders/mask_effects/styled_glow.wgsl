@@ -57,6 +57,20 @@
 // Each kernel keeps unit energy. The working space is Rec.2020, whose
 // primaries are the spectral lines at 630, 532 and 467 nm.
 //
+// Split. The spread light's red is read from p − D, its blue from p + D and
+// its green at p, so red moves by D and blue by −D while the photo stays; D
+// points along SPLIT_DIRECTION (Shift), or away from the full image's centre
+// and grows with the distance to it, SPLIT shorter edges at the corners
+// (Lens), as Color Fringe's D. D may reach farther than an export tile's
+// halo, so a split glow reads the full-image map alone, at every channel's
+// position. Streaks are the map's anyway. For Bloom, Diffusion and Halation
+// `build_styled_glow_split` spreads the map once on its own grid, each
+// channel by its primary's kernel from the map's mips (the first taking the
+// profile's octaves finer than its own), into the slot's streak layer, which
+// it does not otherwise use; a pixel then reads that layer at each channel's
+// position. Its B-spline read adds about 0.6 of a cell's deviation to the
+// finest octaves. Without the map the glow is not split.
+//
 // Edges. Levels clamp at the tile and image edges: light beyond the frame
 // continues the edge, so Diffusion does not darken the borders and streaks
 // do not fade toward them.
@@ -83,6 +97,8 @@ const STYLED_GLOW_DIFFUSION_SLOPE: f32 = 1.0;
 // log2(λ / λ_green) of the Rec.2020 primaries, 630, 532 and 467 nm.
 const STYLED_GLOW_PRIMARY_OCTAVES: vec3<f32> = vec3<f32>(0.24392558, 0.0, -0.18800370);
 const STYLED_GLOW_PI: f32 = 3.141592653589793;
+// SPLIT_MODE values (GlowSplitMode in styled_glow.rs).
+const STYLED_GLOW_SPLIT_LENS: f32 = 1.0;
 // Most taps on either side of the Gaussian across a streak; Softness 100
 // needs about 3 deviations of 20 cells on a 3:2 photo.
 const STYLED_GLOW_ACROSS_TAPS: i32 = 64;
@@ -523,8 +539,13 @@ fn styled_glow_near_at(pos: vec2<i32>, layer: u32, level: u32) -> vec3<f32> {
 
 // Map mip `mip` at tile pixel `pos`.
 fn styled_glow_map_at(pos: vec2<i32>, layer: u32, mip: u32) -> vec3<f32> {
+    return styled_glow_map_at_uv(full_image_uv(pos), layer, mip);
+}
+
+// Map mip `mip` at the full image's `uv`.
+fn styled_glow_map_at_uv(uv: vec2<f32>, layer: u32, mip: u32) -> vec3<f32> {
     let size = vec2<f32>(textureDimensions(styled_glow_map_tex, mip));
-    let taps = styled_glow_bspline_taps(full_image_uv(pos) * size - vec2<f32>(0.5), size);
+    let taps = styled_glow_bspline_taps(uv * size - vec2<f32>(0.5), size);
     let sampler_ = SceneAdjustments::local_mask_sampler;
     let lod = f32(mip);
     let low_row = textureSampleLevel(styled_glow_map_tex, sampler_, taps.low, layer, lod).rgb * taps.low_weight.x
@@ -569,22 +590,28 @@ fn styled_glow_profile_slope(params: MaskEffectParams) -> f32 {
 // the kernel of each primary, whose profile Dispersion moves by `shift`
 // octaves (`styled_glow_profile_shift`).
 fn styled_glow_profile_mass(lower: f32, upper: f32, shift: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    return vec3<f32>(
+        styled_glow_profile_share(lower, upper, shift.r, params),
+        styled_glow_profile_share(lower, upper, shift.g, params),
+        styled_glow_profile_share(lower, upper, shift.b, params),
+    );
+}
+
+// The share of one primary's profile, moved by `shift` octaves, between log2
+// deviations `lower` and `upper`.
+fn styled_glow_profile_share(lower: f32, upper: f32, shift: f32, params: MaskEffectParams) -> f32 {
     let finest = mask_effect_lane(params, STYLED_GLOW_FINEST_LANE);
     let widest = mask_effect_lane(params, STYLED_GLOW_REACH_LANE);
     let slope = styled_glow_profile_slope(params);
     let total = styled_glow_profile_below(widest, finest, widest, slope);
-    if total <= 0.0 { return vec3<f32>(0.0); }
-    var mass = vec3<f32>(0.0);
-    for (var channel = 0; channel < 3; channel = channel + 1) {
-        // A profile moved up by `shift` holds between the bounds what the
-        // unmoved one holds between the bounds moved down by it.
-        mass[channel] = max(
-            styled_glow_profile_below(upper - shift[channel], finest, widest, slope)
-                - styled_glow_profile_below(lower - shift[channel], finest, widest, slope),
-            0.0,
-        ) / total;
-    }
-    return mass;
+    if total <= 0.0 { return 0.0; }
+    // A profile moved up by `shift` holds between the bounds what the unmoved
+    // one holds between the bounds moved down by it.
+    return max(
+        styled_glow_profile_below(upper - shift, finest, widest, slope)
+            - styled_glow_profile_below(lower - shift, finest, widest, slope),
+        0.0,
+    ) / total;
 }
 
 // How many octaves Dispersion moves each primary's profile.
@@ -668,6 +695,92 @@ fn styled_glow_spread_at(pos: vec2<i32>, layer: u32, params: MaskEffectParams) -
     return spread;
 }
 
+// K*S of `layer` at the full image's `uv` from the map alone, spread by one
+// primary's kernel, whose profile Dispersion moves by `shift` octaves: each
+// mip weighed by the profile's energy over the octaves nearest its
+// deviation, the first taking all finer ones.
+fn styled_glow_map_spread_at(uv: vec2<f32>, layer: u32, shift: f32, params: MaskEffectParams) -> vec3<f32> {
+    let map_levels = textureNumLevels(styled_glow_map_tex);
+    var spread = vec3<f32>(0.0);
+    var lower = -STYLED_GLOW_UNBOUNDED;
+    for (var mip = 0u; mip < map_levels; mip = mip + 1u) {
+        var upper = STYLED_GLOW_UNBOUNDED;
+        if mip + 1u < map_levels {
+            upper = 0.5 * (styled_glow_map_deviation(mip) + styled_glow_map_deviation(mip + 1u));
+        }
+        let weight = styled_glow_profile_share(lower, upper, shift, params);
+        if weight > 1e-5 {
+            spread += weight * styled_glow_map_at_uv(uv, layer, mip);
+        }
+        lower = upper;
+    }
+    return spread;
+}
+
+// Whether a slot spreads all around (Bloom, Diffusion, Halation) and splits,
+// so `build_styled_glow_split` fills its streak layer.
+fn styled_glow_splits_spread(params: MaskEffectParams) -> bool {
+    return !styled_glow_streaks(params) && mask_effect_lane(params, STYLED_GLOW_SPLIT_LANE) > 0.0;
+}
+
+// The split spread of the Bloom, Diffusion and Halation slots that split,
+// per map cell, into their streak layers: each channel spread by its own
+// primary's kernel (`styled_glow_spread_colour`), or for Halation the
+// luminance each kernel spreads (`styled_glow_spread_luminance`). Reads the
+// map's layers at every mip; writes the streak layers at mip 0.
+@compute @workgroup_size(8, 8, 1)
+fn build_styled_glow_split(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let size = textureDimensions(styled_glow_level_out);
+    if any(gid.xy >= size) { return; }
+    let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(size);
+    let layers = styled_glow_layer_count(textureNumLayers(styled_glow_level_out));
+    for (var layer = 0u; layer < layers; layer = layer + 1u) {
+        let params = mask_effect_params(styled_glow_slot(layer));
+        if !styled_glow_splits_spread(params) { continue; }
+        let shift = styled_glow_profile_shift(params);
+        let spread = StyledGlowSpread(
+            styled_glow_map_spread_at(uv, layer, shift.r, params),
+            styled_glow_map_spread_at(uv, layer, shift.g, params),
+            styled_glow_map_spread_at(uv, layer, shift.b, params),
+        );
+        var value = styled_glow_spread_colour(spread);
+        if mask_effect_lane(params, STYLED_GLOW_STYLE_LANE) == STYLED_GLOW_HALATION {
+            value = styled_glow_spread_luminance(spread);
+        }
+        textureStore(styled_glow_level_out, vec2<i32>(gid.xy), layer, vec4<f32>(value, 0.0));
+    }
+}
+
+// The streak layer of `layer` at the full image's `uv` for red, `uv` − D,
+// and for blue, `uv` + D: each channel where its light comes from.
+fn styled_glow_split_read(uv: vec2<f32>, split: vec2<f32>, layer: u32) -> vec3<f32> {
+    let streak_layer = styled_glow_streak_layer(layer);
+    return vec3<f32>(
+        styled_glow_map_at_uv(uv - split, streak_layer, 0u).r,
+        styled_glow_map_at_uv(uv, streak_layer, 0u).g,
+        styled_glow_map_at_uv(uv + split, streak_layer, 0u).b,
+    );
+}
+
+// Split's D at tile pixel `pos`, in the full image's uv; zero without Split
+// or without the map it reads.
+fn styled_glow_split(pos: vec2<i32>, params: MaskEffectParams) -> vec2<f32> {
+    let split = mask_effect_lane(params, STYLED_GLOW_SPLIT_LANE);
+    if split <= 0.0 || !styled_glow_map_ready() { return vec2<f32>(0.0); }
+    let full_size = max(
+        vec2<f32>(f32(Common::camera_uniforms.full_width), f32(Common::camera_uniforms.full_height)),
+        vec2<f32>(1.0),
+    );
+    let distance = split * min(full_size.x, full_size.y);
+    if mask_effect_lane(params, STYLED_GLOW_SPLIT_MODE_LANE) == STYLED_GLOW_SPLIT_LENS {
+        let from_center = full_image_uv(pos) * full_size - 0.5 * full_size;
+        let half_diagonal = max(0.5 * length(full_size), 1.0);
+        return from_center * (distance / half_diagonal) / full_size;
+    }
+    let angle = mask_effect_lane(params, STYLED_GLOW_SPLIT_DIRECTION_LANE);
+    return vec2<f32>(cos(angle), sin(angle)) * distance / full_size;
+}
+
 // --- Composite ---
 
 // Adds the light of every Glow slot to `rgb` at tile pixel `pos`. Runs after
@@ -685,25 +798,38 @@ fn apply_styled_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
         let strength = mask_effect_lane(params, STYLED_GLOW_STRENGTH_LANE);
         if strength <= 0.0 { continue; }
         let tint = mask_effect_color(params, STYLED_GLOW_TINT_LANE);
+        let split = styled_glow_split(pos, params);
+        let split_active = any(split != vec2<f32>(0.0));
         if styled_glow_streaks(params) {
             if styled_glow_map_ready() {
-                let streaks = styled_glow_map_at(pos, styled_glow_streak_layer(layer), 0u);
+                var streaks = styled_glow_map_at(pos, styled_glow_streak_layer(layer), 0u);
+                if split_active {
+                    streaks = styled_glow_split_read(full_image_uv(pos), split, layer);
+                }
                 result += strength * tint * streaks;
             }
             continue;
         }
         let source = styled_glow_source(input, pos, index, params);
-        let spread = styled_glow_spread_at(pos, layer, params);
+        // Each channel spread by its primary's kernel, and the luminance
+        // each kernel spreads.
+        var colour: vec3<f32>;
+        var luminance: vec3<f32>;
+        if split_active {
+            colour = styled_glow_split_read(full_image_uv(pos), split, layer);
+            luminance = colour;
+        } else {
+            let spread = styled_glow_spread_at(pos, layer, params);
+            colour = styled_glow_spread_colour(spread);
+            luminance = styled_glow_spread_luminance(spread);
+        }
         let style = mask_effect_lane(params, STYLED_GLOW_STYLE_LANE);
         if style == STYLED_GLOW_BLOOM {
-            result += strength * tint * styled_glow_spread_colour(spread);
+            result += strength * tint * colour;
         } else if style == STYLED_GLOW_DIFFUSION {
-            result += strength * (tint * styled_glow_spread_colour(spread) - source);
+            result += strength * (tint * colour - source);
         } else {
-            let halo = max(
-                styled_glow_spread_luminance(spread) - vec3<f32>(dot(source, Common::LUMA)),
-                vec3<f32>(0.0),
-            );
+            let halo = max(luminance - vec3<f32>(dot(source, Common::LUMA)), vec3<f32>(0.0));
             result += strength * halo * tint;
         }
     }

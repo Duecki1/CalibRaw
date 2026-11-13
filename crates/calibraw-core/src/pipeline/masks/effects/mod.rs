@@ -62,7 +62,7 @@ pub use relight::{RelightEffectSettings, RelightLight};
 pub use settings::{EffectControl, EffectControls, EffectDetails, EffectSettings};
 pub use sharpen::SharpenEffectSettings;
 pub use smoke::SmokeEffectSettings;
-pub use styled_glow::{GlowStyle, StarPoints, StyledGlowEffectSettings};
+pub use styled_glow::{GlowSplitMode, GlowStyle, StarPoints, StyledGlowEffectSettings};
 pub use tilt_shift::TiltShiftEffectSettings;
 pub use vignette::VignetteEffectSettings;
 pub use wet_surfaces::WetSurfacesEffectSettings;
