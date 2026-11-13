@@ -233,13 +233,6 @@ jobs:
           </plist>
           PLIST
 
-          dylibbundler \
-            -od \
-            -b \
-            -x "$executable" \
-            -d "$contents/Frameworks" \
-            -p '@executable_path/../Frameworks'
-
           {
             echo "CalibRaw macOS ${{ matrix.artifact_arch }} build"
             echo "Source revision: $(git rev-parse --verify HEAD)"
@@ -249,11 +242,21 @@ jobs:
             echo "Lensfun: $(pkg-config --modversion lensfun) ($(cat "$LENSFUN_PREFIX/share/calibraw/lensfun-revision"))"
           } > "$contents/Resources/BUILD-INFO.txt"
 
-          # Ad-hoc signatures are only applied to main and version-tag builds.
+          # dylibbundler ad-hoc signs the executable it rewrites, which seals the whole
+          # bundle: every file must be in place before it runs, or macOS reports the
+          # downloaded app as damaged.
+          dylibbundler \
+            -od \
+            -b \
+            -x "$executable" \
+            -d "$contents/Frameworks" \
+            -p '@executable_path/../Frameworks'
+
+          # Main and version-tag builds are signed again as a whole.
           if [[ "$GITHUB_REF" == "refs/heads/main" || "$GITHUB_REF" == refs/tags/v* ]]; then
             codesign --force --deep --sign - "$app_dir"
-            codesign --verify --deep --strict --verbose=2 "$app_dir"
           fi
+          codesign --verify --deep --strict --verbose=2 "$app_dir"
 
           file "$executable" | grep -q "${{ matrix.artifact_arch }}"
           test -n "$(find "$contents/Frameworks" -name '*.dylib' -print -quit)"

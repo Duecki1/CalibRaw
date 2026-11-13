@@ -9,10 +9,11 @@ static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
 /// Replaces `path` with the contents produced by `write`, so readers see
 /// either the previous file or the complete new one, never a partial write.
 ///
-/// The content is staged in a hidden sibling, flushed, and renamed over the
-/// destination. The staging file is removed on any failure. The parent
-/// directory must already exist; it is deliberately not created, because a
-/// missing folder (for example an unmounted volume) should fail the write.
+/// The content is staged in a hidden file in [`staging_directory`], flushed,
+/// and renamed over the destination. The staging file is removed on any
+/// failure. The parent directory must already exist; it is deliberately not
+/// created, because a missing folder (for example an unmounted volume) should
+/// fail the write.
 pub fn write_atomically<E>(
     path: &Path,
     write: impl FnOnce(&mut File) -> Result<(), E>,
@@ -67,7 +68,37 @@ fn staging_path(path: &Path) -> io::Result<PathBuf> {
         std::process::id(),
         NEXT_STAGING_ID.fetch_add(1, Ordering::Relaxed)
     ));
-    Ok(parent_directory(path).join(name))
+    Ok(staging_directory(parent_directory(path)).join(name))
+}
+
+/// Where to stage a file that will be moved into `directory`: the system
+/// temporary folder when it is on the same volume, so the move stays a
+/// rename, and otherwise `directory` itself.
+///
+/// Staging files have hidden names, which must stay out of synced folders:
+/// iCloud Drive sets the hidden flag (`UF_HIDDEN`) on a dot-named file there
+/// about a second after it appears, sometimes only after it was renamed, and
+/// the flag stays on the file under its final name, so Finder hides it.
+#[cfg(target_vendor = "apple")]
+pub fn staging_directory(directory: &Path) -> PathBuf {
+    use std::os::unix::fs::MetadataExt;
+
+    let temporary = std::env::temp_dir();
+    let same_volume = match (fs::metadata(&temporary), fs::metadata(directory)) {
+        (Ok(temporary), Ok(directory)) => temporary.dev() == directory.dev(),
+        _ => false,
+    };
+    if same_volume {
+        temporary
+    } else {
+        directory.to_path_buf()
+    }
+}
+
+/// Where to stage a file that will be moved into `directory`: beside it.
+#[cfg(not(target_vendor = "apple"))]
+pub fn staging_directory(directory: &Path) -> PathBuf {
+    directory.to_path_buf()
 }
 
 #[cfg(not(windows))]
@@ -119,7 +150,7 @@ pub fn move_file_to_free_name(
     }
 }
 
-/// Moves `source` to `destination` in the same directory, failing with
+/// Moves `source` to `destination` on the same volume, failing with
 /// [`io::ErrorKind::AlreadyExists`] instead of replacing an existing entry.
 ///
 /// Linking the new name fails atomically when the name is taken; removing the

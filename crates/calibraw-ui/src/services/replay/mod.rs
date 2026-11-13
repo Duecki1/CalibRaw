@@ -385,7 +385,7 @@ pub(crate) fn render_edit_replay(
     let temporary = tempfile::Builder::new()
         .prefix(".calibraw-edit-replay-")
         .suffix(".mp4")
-        .tempfile_in(parent)
+        .tempfile_in(calibraw_core::file_ops::staging_directory(parent))
         .map_err(|error| {
             tr_fmt(
                 "Could not create temporary replay output: {error}",

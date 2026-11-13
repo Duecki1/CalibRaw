@@ -17,15 +17,19 @@ fn cancelled_export_removes_temporary_output_before_publication() {
     let cancellation = AtomicBool::new(false);
 
     let targets = destinations.clone().map(ExportTarget::File);
+    let mut staged = Vec::new();
     let result = export_to_destinations(&targets, &cancellation, |outputs| {
         for output in outputs {
             std::fs::write(output.path, b"complete but not published")?;
+            staged.push(output.path.to_path_buf());
         }
         cancellation.store(true, Ordering::Release);
         Ok(())
     });
 
     assert!(result.is_err());
+    assert_eq!(staged.len(), destinations.len());
+    assert!(staged.iter().all(|path| !path.exists()));
     assert!(destinations.iter().all(|destination| !destination.exists()));
     assert!(std::fs::read_dir(&directory).unwrap().next().is_none());
     std::fs::remove_dir_all(directory).unwrap();
