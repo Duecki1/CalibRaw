@@ -1,0 +1,19 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "ColorFringe",
+          "settings": {
+            "color_fringe": {
+              "style": "Shift",
+              "amount": 100.0,
+              "prism": 100.0,
+              "direction": 30.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

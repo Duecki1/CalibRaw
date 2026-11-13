@@ -802,6 +802,14 @@ pub mod pixelate {
     );
 }
 
+pub mod color_fringe {
+    use super::*;
+
+    float_param!(AMOUNT, "Amount", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(PRISM, "Prism", 0.0, 100.0, 0.0, 0.5, 0, None);
+    float_param!(DIRECTION, "Direction", -180.0, 180.0, -45.0, 1.0, 0, None);
+}
+
 pub mod grain {
     use super::*;
 

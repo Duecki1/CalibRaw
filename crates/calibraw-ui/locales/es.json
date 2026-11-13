@@ -2096,5 +2096,9 @@
   "Focus range": "Rango de enfoque",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Las superficies a estas profundidades siguen nítidas; el desenfoque crece con la distancia al rango. El radio es el desenfoque en el extremo más desenfocado de la escena.",
   "Focus near": "Enfoque cercano",
-  "Focus far": "Enfoque lejano"
+  "Focus far": "Enfoque lejano",
+  "Color Fringe": "Franja de color",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Separa los colores de los bordes en franjas rojas, verdes y azules. Objetivo las aleja del centro de la imagen como un objetivo; Desplazamiento las mueve según la Dirección. Prisma las abre en un arcoíris. La máscara controla dónde aparece el resultado.",
+  "Prism": "Prisma",
+  "Shift": "Desplazamiento"
 }

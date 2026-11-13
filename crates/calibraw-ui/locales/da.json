@@ -2096,5 +2096,9 @@
   "Focus range": "Fokusområde",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Flader i disse dybder forbliver skarpe; sløringen vokser med afstanden til området. Radius er sløringen i scenens mest uskarpe ende.",
   "Focus near": "Fokus nær",
-  "Focus far": "Fokus fjern"
+  "Focus far": "Fokus fjern",
+  "Color Fringe": "Farvefrynser",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Del farverne langs kanter op i røde, grønne og blå frynser. Objektiv skubber dem udad fra billedets midte, som et objektiv gør; Forskydning flytter dem langs Retning. Prisme spreder dem ud i en regnbue. Masken styrer, hvor effekten vises.",
+  "Prism": "Prisme",
+  "Shift": "Forskydning"
 }

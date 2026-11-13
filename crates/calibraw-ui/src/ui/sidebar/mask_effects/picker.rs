@@ -309,6 +309,7 @@ fn effect_icon(effect: MaskEffect) -> &'static str {
         MaskEffect::Relight => regular::LIGHTBULB,
         MaskEffect::EdgeGlow => regular::SCRIBBLE,
         MaskEffect::Pixelate => regular::CHECKERBOARD,
+        MaskEffect::ColorFringe => regular::INTERSECT_THREE,
         MaskEffect::Fog => regular::CLOUD_FOG,
         MaskEffect::Smoke => regular::WIND,
         MaskEffect::Rain => regular::CLOUD_RAIN,

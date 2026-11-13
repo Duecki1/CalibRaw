@@ -2094,5 +2094,9 @@
   "Focus range": "Zakres ostrości",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Powierzchnie na tych głębokościach pozostają ostre; rozmycie rośnie wraz z odległością od zakresu. Promień to rozmycie na najbardziej nieostrym końcu sceny.",
   "Focus near": "Ostrość blisko",
-  "Focus far": "Ostrość daleko"
+  "Focus far": "Ostrość daleko",
+  "Color Fringe": "Barwna obwódka",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Rozdziel kolory na krawędziach na czerwone, zielone i niebieskie obwódki. Obiektyw odsuwa je od środka obrazu jak obiektyw, a Przesunięcie przesuwa je wzdłuż Kierunku. Pryzmat rozszczepia je w tęczę. Maska wskazuje, gdzie pojawi się efekt.",
+  "Prism": "Pryzmat",
+  "Shift": "Przesunięcie"
 }

@@ -19,7 +19,7 @@ use super::{
     TONE_STATS_SIZE_BYTES,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
-use crate::pipeline::{effect_lanes::options, MaskEffect, OPTION_COUNT};
+use crate::pipeline::{effect_lanes::options, MaskEffect, ReachGroup, OPTION_COUNT};
 use calibraw_core::pipeline::{
     CA_WINDOW_RADIUS, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT,
     HAZE_GUIDE_SUPPORT, MAX_LATERAL_SHIFT, MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
@@ -670,6 +670,20 @@ fn wet_surfaces_halo_matches_its_wgsl_reach() {
     assert_eq!(
         shared_u32_constant(&modules, "WET_DETAIL_REACH"),
         WET_SURFACES_SUPPORT
+    );
+}
+
+/// Color Fringe caps its shift at the reach its registry row reserves in the
+/// export halo.
+#[test]
+fn color_fringe_halo_matches_its_wgsl_reach() {
+    let modules = production_modules();
+    assert_eq!(
+        MaskEffect::ColorFringe.reach().group(),
+        Some((
+            ReachGroup::Creative,
+            shared_u32_constant(&modules, "COLOR_FRINGE_SUPPORT")
+        ))
     );
 }
 

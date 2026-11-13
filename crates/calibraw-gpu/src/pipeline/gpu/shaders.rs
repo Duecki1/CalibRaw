@@ -108,6 +108,7 @@ pub(super) const MASK_LEGACY_HIGHLIGHT_GLOW: ShaderSource =
 pub(super) const MASK_LEGACY_HALATION: ShaderSource = wgsl!("mask_effects/legacy/halation.wgsl");
 pub(super) const MASK_NEON: ShaderSource = wgsl!("mask_effects/neon.wgsl");
 pub(super) const MASK_PIXELATE: ShaderSource = wgsl!("mask_effects/pixelate.wgsl");
+pub(super) const MASK_COLOR_FRINGE: ShaderSource = wgsl!("mask_effects/color_fringe.wgsl");
 pub(super) const MASK_LEGACY_LIGHT_RAYS: ShaderSource =
     wgsl!("mask_effects/legacy/light_rays.wgsl");
 pub(super) const MASK_LIGHT_SHAFTS: ShaderSource = wgsl!("mask_effects/light_shafts.wgsl");
@@ -143,6 +144,7 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         MASK_STYLED_GLOW,
         MASK_NEON,
         MASK_PIXELATE,
+        MASK_COLOR_FRINGE,
         MASK_LEGACY_LIGHT_RAYS,
         MASK_LIGHT_SHAFTS,
         MASK_LIGHT_SHAFTS_FLAT,

@@ -2096,5 +2096,9 @@
   "Focus range": "Fokusbereich",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Flächen in diesen Tiefen bleiben scharf; die Unschärfe wächst mit dem Abstand zum Bereich. Der Radius ist die Unschärfe am unschärfsten Ende der Szene.",
   "Focus near": "Fokus nah",
-  "Focus far": "Fokus fern"
+  "Focus far": "Fokus fern",
+  "Color Fringe": "Farbsaum",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Teilt die Farben an Kanten in rote, grüne und blaue Säume auf. Objektiv schiebt sie wie ein Objektiv von der Bildmitte nach außen; Versatz verschiebt sie entlang der Richtung. Prisma fächert sie zu einem Regenbogen auf. Die Maske legt fest, wo der Effekt erscheint.",
+  "Prism": "Prisma",
+  "Shift": "Versatz"
 }

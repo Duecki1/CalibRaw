@@ -2096,5 +2096,9 @@
   "Focus range": "Диапазон фокуса",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Поверхности на этой глубине остаются резкими; размытие растёт с удалением от диапазона. Радиус — это размытие на самом нерезком краю сцены.",
   "Focus near": "Фокус: ближе",
-  "Focus far": "Фокус: дальше"
+  "Focus far": "Фокус: дальше",
+  "Color Fringe": "Цветная кайма",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Разделить цвета на краях на красную, зелёную и синюю каймы. Объектив сдвигает их от центра изображения наружу, как объектив; Сдвиг смещает их по направлению. Призма растягивает их в радугу. Маска определяет область эффекта.",
+  "Prism": "Призма",
+  "Shift": "Сдвиг"
 }

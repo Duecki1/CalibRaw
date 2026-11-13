@@ -4,12 +4,12 @@
 //! A family changes only how effects are offered. Each style is an effect of
 //! the registry (`mask_effects!`), with the modes an effect keeps in its
 //! settings (Radial Blur's Zoom and Spin, Glow's [`GlowStyle`]s, Light Rays'
-//! Scene and 2D) as styles of their own, so sidecars, presets, shader IDs and
-//! rendering stay those of the effects.
+//! Scene and 2D, Color Fringe's Lens and Shift) as styles of their own, so
+//! sidecars, presets, shader IDs and rendering stay those of the effects.
 
 use super::{
-    EffectControl, EffectSettings, EffectSettingsVisitor, GlowStyle, LightShaftsMode, MaskEffect,
-    MaskEffectCategory, MaskEffectSettings, RadialBlurMode,
+    ColorFringeStyle, EffectControl, EffectSettings, EffectSettingsVisitor, GlowStyle,
+    LightShaftsMode, MaskEffect, MaskEffectCategory, MaskEffectSettings, RadialBlurMode,
 };
 use crate::pipeline::EffectComponent;
 
@@ -26,6 +26,7 @@ pub enum EffectFamily {
     Neon,
     Relight,
     Pixelate,
+    ColorFringe,
     Atmosphere,
     Grain,
     Halation,
@@ -52,6 +53,7 @@ enum StyleMode {
     RadialBlur(RadialBlurMode),
     Glow(GlowStyle),
     LightShafts(LightShaftsMode),
+    ColorFringe(ColorFringeStyle),
 }
 
 impl StyleMode {
@@ -74,6 +76,10 @@ impl StyleMode {
                 Self::LightShafts(LightShaftsMode::ALL[0]),
                 Self::LightShafts(LightShaftsMode::ALL[1]),
             ],
+            MaskEffect::ColorFringe => &[
+                Self::ColorFringe(ColorFringeStyle::ALL[0]),
+                Self::ColorFringe(ColorFringeStyle::ALL[1]),
+            ],
             _ => &[],
         }
     }
@@ -84,6 +90,7 @@ impl StyleMode {
             MaskEffect::RadialBlur => Some(Self::RadialBlur(settings.radial_blur.mode)),
             MaskEffect::StyledGlow => Some(Self::Glow(settings.styled_glow.style)),
             MaskEffect::LightShafts => Some(Self::LightShafts(settings.light_shafts.mode)),
+            MaskEffect::ColorFringe => Some(Self::ColorFringe(settings.color_fringe.style)),
             _ => None,
         }
     }
@@ -93,6 +100,7 @@ impl StyleMode {
             Self::RadialBlur(mode) => mode.label(),
             Self::Glow(style) => style.label(),
             Self::LightShafts(mode) => mode.label(),
+            Self::ColorFringe(style) => style.label(),
         }
     }
 
@@ -101,6 +109,7 @@ impl StyleMode {
             Self::RadialBlur(mode) => settings.radial_blur.mode = mode,
             Self::Glow(style) => settings.styled_glow.style = style,
             Self::LightShafts(mode) => settings.light_shafts.mode = mode,
+            Self::ColorFringe(style) => settings.color_fringe.style = style,
         }
     }
 }

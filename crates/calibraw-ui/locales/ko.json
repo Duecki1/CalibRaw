@@ -2090,5 +2090,9 @@
   "Focus range": "초점 범위",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "이 깊이의 면은 선명하게 유지되고, 범위에서 멀어질수록 흐림이 커집니다. 반경은 장면에서 초점이 가장 많이 벗어난 끝의 흐림입니다.",
   "Focus near": "가까운 초점",
-  "Focus far": "먼 초점"
+  "Focus far": "먼 초점",
+  "Color Fringe": "색 번짐",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "가장자리의 색을 빨강, 초록, 파랑 번짐으로 나눕니다. Lens는 렌즈처럼 이미지 중심에서 바깥쪽으로 밀어내고, 이동은 방향을 따라 옮깁니다. 프리즘은 무지개처럼 펼칩니다. 마스크로 효과가 나타날 위치를 정합니다.",
+  "Prism": "프리즘",
+  "Shift": "이동"
 }

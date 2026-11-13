@@ -2096,5 +2096,9 @@
   "Focus range": "Odak aralığı",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Bu derinliklerdeki yüzeyler net kalır; bulanıklık aralığa olan uzaklıkla artar. Yarıçap, sahnenin en odak dışı ucundaki bulanıklıktır.",
   "Focus near": "Yakın odak",
-  "Focus far": "Uzak odak"
+  "Focus far": "Uzak odak",
+  "Color Fringe": "Renk saçağı",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Kenarlardaki renkleri kırmızı, yeşil ve mavi saçaklara ayırın. Lens bunları bir lens gibi görüntünün merkezinden dışa doğru iter; Kaydırma bunları Yön boyunca taşır. Prizma bunları gökkuşağı gibi yayar. Nerede görüneceğini maske denetler.",
+  "Prism": "Prizma",
+  "Shift": "Kaydırma"
 }

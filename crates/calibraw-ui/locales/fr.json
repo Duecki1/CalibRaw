@@ -2096,5 +2096,9 @@
   "Focus range": "Plage de netteté",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Les surfaces à ces profondeurs restent nettes ; le flou augmente avec la distance à la plage. Le rayon est le flou à l’extrémité la plus floue de la scène.",
   "Focus near": "Netteté proche",
-  "Focus far": "Netteté lointaine"
+  "Focus far": "Netteté lointaine",
+  "Color Fringe": "Frange colorée",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Séparez les couleurs le long des bords en franges rouges, vertes et bleues. Objectif les écarte du centre de l’image comme un objectif ; Décalage les déplace selon la Direction. Prisme les étale en arc-en-ciel. Le masque détermine où l’effet apparaît.",
+  "Prism": "Prisme",
+  "Shift": "Décalage"
 }

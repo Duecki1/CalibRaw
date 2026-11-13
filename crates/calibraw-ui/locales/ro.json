@@ -2096,5 +2096,9 @@
   "Focus range": "Interval de focalizare",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Suprafețele de la aceste adâncimi rămân clare; estomparea crește cu distanța față de interval. Raza este estomparea la capătul cel mai nefocalizat al scenei.",
   "Focus near": "Focalizare aproape",
-  "Focus far": "Focalizare departe"
+  "Focus far": "Focalizare departe",
+  "Color Fringe": "Franjuri de culoare",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Desparte culorile de-a lungul marginilor în franjuri roșii, verzi și albastre. Obiectiv le împinge spre exterior din centrul imaginii, ca un obiectiv; Deplasare le mută pe Direcție. Prismă le întinde într-un curcubeu. Masca controlează unde apare rezultatul.",
+  "Prism": "Prismă",
+  "Shift": "Deplasare"
 }

@@ -143,6 +143,7 @@ Apply effects to the whole photo or stack them on a local mask. The Effects card
 - **Halation:** Add warm halos around bright highlights, with radius, highlight threshold, and warmth controls. The halo appears only inside the mask, including light from nearby highlights outside it.
 - **Vignette:** Darken edges with negative amounts or brighten them with positive amounts. Adjust the falloff, shape, center, and highlight protection. Its center follows the cropped, rotated frame; the other position pads use the full image.
 - **Pixelate:** Turn selected areas into a mosaic with adjustable block size.
+- **Color Fringe:** Split edges into red, green and blue fringes, outward from the image center as a lens does (Lens) or along one direction (Shift). Prism spreads the three copies into a rainbow.
 
 ---
 

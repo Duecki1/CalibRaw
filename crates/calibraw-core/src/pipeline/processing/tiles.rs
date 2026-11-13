@@ -68,6 +68,15 @@ pub(crate) const MASK_BLUR_SUPPORT: u32 = 72;
 pub(crate) const FOCUS_BLUR_SUPPORT: u32 = 144;
 pub(crate) const EDGE_GLOW_SUPPORT: u32 = 48;
 pub(crate) const PIXELATE_SUPPORT: u32 = 96;
+/// Color Fringe's largest shift in native pixels (`COLOR_FRINGE_SUPPORT` in
+/// color_fringe.wgsl, which caps the shift there): its 1.5% of the shorter
+/// edge for shorter edges up to 9600 px.
+pub(crate) const COLOR_FRINGE_SUPPORT: u32 = 144;
+// The creative pass's per-slot effects read the same input, so the widest
+// reserves the group's reach in the largest halo.
+const CREATIVE_SUPPORT: u32 = COLOR_FRINGE_SUPPORT;
+const _: () =
+    assert!(EDGE_GLOW_SUPPORT <= CREATIVE_SUPPORT && PIXELATE_SUPPORT <= CREATIVE_SUPPORT);
 // Maximum footprint of the Glowing Area's diffusion, the Glow's near pyramid and
 // the legacy highlight Glow and Halation. These sample the same local_effects
 // input, so their support is not cumulative.
@@ -82,7 +91,7 @@ const EXPORT_CUMULATIVE_SUPPORT: u32 = HIGHLIGHT_RECONSTRUCTION_SUPPORT
     + NEON_SUPPORT
     + MASK_BLUR_SUPPORT
     + FOCUS_BLUR_SUPPORT
-    + PIXELATE_SUPPORT
+    + CREATIVE_SUPPORT
     + GLOW_SUPPORT
     + COLOR_MIXER_SUPPORT;
 

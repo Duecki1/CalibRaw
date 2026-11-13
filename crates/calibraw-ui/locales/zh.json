@@ -2096,5 +2096,9 @@
   "Focus range": "对焦范围",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "这些深度上的表面保持清晰；模糊随与范围的距离增大。半径是场景中最失焦一端的模糊。",
   "Focus near": "近端对焦",
-  "Focus far": "远端对焦"
+  "Focus far": "远端对焦",
+  "Color Fringe": "色边",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "将边缘的颜色分离为红、绿、蓝色边。镜头像镜头一样将其从图像中心向外推开；偏移沿方向移动它们。棱镜将其展开成彩虹。蒙版控制效果出现的位置。",
+  "Prism": "棱镜",
+  "Shift": "偏移"
 }

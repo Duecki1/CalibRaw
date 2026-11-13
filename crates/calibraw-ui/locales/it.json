@@ -2096,5 +2096,9 @@
   "Focus range": "Intervallo di fuoco",
   "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.": "Le superfici a queste profondità restano nitide; la sfocatura cresce con la distanza dall’intervallo. Il raggio è la sfocatura all’estremità più sfocata della scena.",
   "Focus near": "Fuoco vicino",
-  "Focus far": "Fuoco lontano"
+  "Focus far": "Fuoco lontano",
+  "Color Fringe": "Frangia di colore",
+  "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.": "Separa i colori lungo i bordi in frange rosse, verdi e blu. Obiettivo le allontana dal centro dell’immagine come un obiettivo; Spostamento le muove lungo la Direzione. Prisma le apre in un arcobaleno. La maschera controlla dove appare il risultato.",
+  "Prism": "Prisma",
+  "Shift": "Spostamento"
 }

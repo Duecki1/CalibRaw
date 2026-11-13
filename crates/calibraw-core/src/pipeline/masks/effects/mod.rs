@@ -9,6 +9,7 @@
 //! whether scene depth is generated.
 
 mod blur;
+mod color_fringe;
 mod defocus;
 mod edge_glow;
 mod families;
@@ -37,6 +38,7 @@ mod warmth;
 mod wet_surfaces;
 
 pub use blur::BlurEffectSettings;
+pub use color_fringe::{ColorFringeEffectSettings, ColorFringeStyle};
 pub use defocus::{BokehShape, DefocusEffectSettings};
 pub use edge_glow::EdgeGlowEffectSettings;
 pub use families::{EffectFamily, EffectStyle};
@@ -70,8 +72,8 @@ pub use wet_surfaces::WetSurfacesEffectSettings;
 use legacy::{halation, highlight_glow as legacy_highlight_glow, lens_blur, light_rays};
 
 use crate::pipeline::processing::{
-    CAPTURE_SHARPEN_SUPPORT, EDGE_GLOW_SUPPORT, FOCUS_BLUR_SUPPORT, GLOW_SUPPORT,
-    MASK_BLUR_SUPPORT, NEON_SUPPORT, PIXELATE_SUPPORT,
+    CAPTURE_SHARPEN_SUPPORT, COLOR_FRINGE_SUPPORT, EDGE_GLOW_SUPPORT, FOCUS_BLUR_SUPPORT,
+    GLOW_SUPPORT, MASK_BLUR_SUPPORT, NEON_SUPPORT, PIXELATE_SUPPORT,
 };
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -561,6 +563,16 @@ mask_effects! {
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
         scene: [Geometry],
     }
+    ColorFringe {
+        label: "Color Fringe",
+        description: "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.",
+        shader_id: 24,
+        category: Stylize,
+        family: ColorFringe,
+        settings: color_fringe: ColorFringeEffectSettings,
+        passes: [Creative],
+        reach: Creative(COLOR_FRINGE_SUPPORT),
+    }
 }
 
 impl MaskEffect {
@@ -580,6 +592,7 @@ impl MaskEffect {
         Self::Relight,
         Self::EdgeGlow,
         Self::Pixelate,
+        Self::ColorFringe,
         Self::Fog,
         Self::Smoke,
         Self::Grain,
