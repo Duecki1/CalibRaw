@@ -1,6 +1,6 @@
 # Preview performance plan
 
-Status: P1 implemented (uncommitted); the rest is a proposal. Written 2026-11-13 against `ecff3d7c`
+Status: P1 and P2 implemented (uncommitted); the rest is a proposal. Written 2026-11-13 against `ecff3d7c`
 (branch `EffectsRework4`, clean tree). Measured on a Pixel 7 Pro (Mali-G710)
 and an RTX 4070 Ti.
 
@@ -198,20 +198,39 @@ Glow, Light Shafts, Pixelate and the other creative effects run Creative + View
 (≈ 15-50 ms). Toggling an effect on or off, or moving an amount across zero,
 reruns everything once.
 
-### P2. Lens Blur Draft tier while dragging (output changes during drags only)
+### P2. Draft tier while dragging (output changes during drags only) — built
 
-The Draft/Final split the light bake already uses (`SceneLightQuality`): Draft
-while a control or handle is dragged, Final when idle and on export.
+Status: implemented 2026-11-13, uncommitted. Corrected from the first
+proposal: the map is **not** sized from the pipeline's long edge in Final. Its
+768 cells are a fixed share of the image, so a preview's map already has the
+export's cell size relative to the photo; a smaller grid in Final would make
+the preview coarser than the export, not closer to it.
 
-- Draft gathers every bin one level coarser: starting radius ≈ 4 texels
-  (2 for bin 0), so about a quarter of the taps over a quarter of the texels.
-- The map is sized from the pipeline's long edge (its 768 cells at a 6000 px
-  export are 8 px; at a 1280 px preview they are 1.7 px) and halved in Draft;
-  bin 4 is written at its source resolution in Draft.
-- Expected: map bins about 16× cheaper, local bins 4-16×; roughly
-  1754 → 100-150 ms at 1280 px, and the half-size fallback then scales too.
-  Numbers to confirm with P0.
-- Final, exports and parity: bit-identical.
+- The tier is the general `RenderTier` (renamed from `SceneLightQuality`):
+  Draft while a control, handle or the view is dragged, Final on release and in
+  exports. An effect opts in with `draft: true` in its registry row
+  (`MaskEffect::has_draft_tier`); the refine after a drag
+  (`GpuParams::uses_render_tier`) and the partial renders of P1 follow from it.
+  Lens Blur is the first such effect. The rule is in AGENTS.md.
+- Lens Blur's Draft gathers every local bin one level coarser and builds the
+  map at half its grid (`DRAFT_OCTAVES`); the pass uniforms tell the shader
+  the grid of the bound map, so a crop sharing the fitted preview's map reads
+  it at whichever tier built it, and renders again when it is rebuilt.
+- Final, exports and parity: unchanged (render parity passes; Final's levels
+  and grid are those of before).
+
+Measured on the Pixel 7 Pro, Lens Blur on, Exposure dragged:
+
+| Preview | Final | Draft |
+|---|---|---|
+| 1280×854 (sharp preview) | 1767 ms | 302 ms |
+| 640×427 (reduced drag preview) | 694 ms | 101 ms |
+
+Draft against Final on DSC09938 (1) at 1280 px: mean difference 0.5/255,
+0.6 % of pixels above 4/255, at most 19/255, along slightly defocused texture
+and the frame's edges. What remains at 1280 px is mostly the map accumulation
+(about 100 ms, reading every pixel once per map bin whatever the grid) and the
+gathers (about 145 ms): P3.
 
 ### P3. Exact Lens Blur savings (no output change)
 

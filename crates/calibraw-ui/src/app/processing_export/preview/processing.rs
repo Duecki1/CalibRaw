@@ -150,7 +150,7 @@ impl CalibRawApp {
         );
         let mapping_changed =
             detail.mask_source_region != mask_region || detail.mask_texture_extent != mask_extent;
-        let light_quality = self.sharp_scene_light_quality();
+        let render_tier = self.sharp_render_tier();
         let params = DetailPlacement {
             mask_region,
             mask_extent,
@@ -164,8 +164,8 @@ impl CalibRawApp {
             self.preview_profile_color(&detail.raw),
         )
         .with_look_lut(self.develop.target_look.as_ref())
-        .with_scene_light_quality(light_quality);
-        self.note_sharp_scene_lights(&params, light_quality);
+        .with_render_tier(render_tier);
+        self.note_sharp_render_tier(&params, render_tier);
 
         let full_frame_tone_pipeline = full_frame_tone_pipeline(
             self.preview.gpu_pipeline.as_ref(),
@@ -381,7 +381,7 @@ impl CalibRawApp {
             }
         }
 
-        let light_quality = self.sharp_scene_light_quality();
+        let render_tier = self.sharp_render_tier();
         let params = GpuParams::new_with_profile_color(
             &self.develop.target_exposure,
             preview_masks,
@@ -390,7 +390,7 @@ impl CalibRawApp {
         )
         .with_vignette_geometry(self.develop.geometry)
         .with_look_lut(self.develop.target_look.as_ref())
-        .with_scene_light_quality(light_quality);
+        .with_render_tier(render_tier);
         let Some(full_raw) = preview_source.as_ref() else {
             self.preview.pending_stage = None;
             return;
@@ -419,7 +419,7 @@ impl CalibRawApp {
             self.preview.pending_stage = None;
             return;
         }
-        self.note_sharp_scene_lights(&params, light_quality);
+        self.note_sharp_render_tier(&params, render_tier);
         if stage == ProcessingStage::Tone
             && self
                 .preview

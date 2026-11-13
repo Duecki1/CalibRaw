@@ -345,8 +345,15 @@ it reads in its registry row (`scene: [Geometry, LightBake, AirLight, Image]`), 
 
 The bake depends on the scene and the depth result, the light bake on the lights'
 placement and the bake, not on the rest of the edit, and each is rebuilt when any of
-them changes. While a control is dragged the light bake is built in a cheaper tier and
-rebuilt in the full one afterwards.
+them changes.
+
+Costly work has two tiers (`RenderTier`): previews render Draft while a control, a
+handle or the view is dragged, and render the Output stage again in Final once it is
+released (`refine_draft_render`); exports always render Final. Draft builds the light
+bake and the air light more coarsely, and gathers the effects whose registry row says
+`draft: true` (Lens Blur) more coarsely; it coarsens detail, never the look, and Final
+does not depend on it. A partial Output render counts the tier as read by the first
+part with an effect that has a Draft tier or reads the scene bake.
 
 The Glow (`styled_glow.wgsl`, `pipeline/gpu/styled_glow.rs`) spreads light up to a
 quarter of the image, past any export halo. Its near octaves come from a pyramid each

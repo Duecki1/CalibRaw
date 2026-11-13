@@ -34,7 +34,6 @@ mod preview_budget;
 mod readback;
 mod resources;
 mod scene;
-pub use scene::SceneLightQuality;
 use scene::{
     SceneBake, SceneBakeUniforms, SceneLightKind, SceneLightSet, SceneShadowLight,
     SCENE_BAKE_LAYERS, SCENE_SHADOW_LIGHTS, SCENE_WORKING_LONG_EDGE_MAX,

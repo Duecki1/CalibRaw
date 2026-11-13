@@ -99,7 +99,9 @@ pub trait EffectSettingsVisitor {
 /// - `passes`, where it runs ([`EffectPass`]); a `Creative` effect defines
 ///   `apply_<field>` in its shader, which the creative pass calls;
 /// - `reach`, how far around a pixel it reads ([`EffectReach`]);
-/// - optionally `scene`, what it reads of the scene bake ([`SceneNeed`]s).
+/// - optionally `scene`, what it reads of the scene bake ([`SceneNeed`]s);
+/// - optionally `draft: true`, for an effect that renders more coarsely in
+///   the Draft tier while a control is dragged ([`MaskEffect::has_draft_tier`]).
 ///
 /// Rows are in the order the settings serialize, which sidecars and presets
 /// keep.
@@ -114,7 +116,8 @@ macro_rules! mask_effects {
             settings: $field:ident: $settings:ty,
             passes: [$($pass:ident),+],
             reach: $reach:ident $(($pixels:expr))?
-            $(, scene: [$($need:ident),* $(,)?])? $(,)?
+            $(, scene: [$($need:ident),* $(,)?])?
+            $(, draft: $draft:literal)? $(,)?
         }
     )+) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
@@ -207,6 +210,17 @@ macro_rules! mask_effects {
                 match self {
                     Self::Adjustment => SceneNeeds::NONE,
                     $(Self::$variant => SceneNeeds::NONE $($(.with(SceneNeed::$need))*)?,)+
+                }
+            }
+
+            /// Whether the effect renders more coarsely in the Draft tier,
+            /// which previews use while a control is dragged, and in full
+            /// in the Final tier afterwards and in exports. Effects that read
+            /// the light bake follow its tier as well.
+            pub const fn has_draft_tier(self) -> bool {
+                match self {
+                    Self::Adjustment => false,
+                    $(Self::$variant => false $(|| $draft)?,)+
                 }
             }
 
@@ -562,6 +576,7 @@ mask_effects! {
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
         scene: [Geometry],
+        draft: true,
     }
     ColorFringe {
         label: "Color Fringe",

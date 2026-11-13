@@ -9,7 +9,14 @@
 //!   in its output stage, before the Blur passes.
 //! - Map: the sums, sources and slabs of bins 3 to 5 over a grid of the whole
 //!   image ([`DEFOCUS_MAP_LONG`] cells along its longer edge, at most one per
-//!   pixel, halved per bin) and the fill's coarser levels. A pipeline that renders the whole image
+//!   pixel, halved per bin) and the fill's coarser levels. The pass uniforms
+//!   tell the shader the grid of the map a pipeline binds.
+//!
+//! The Draft tier ([`RenderTier`]), while a control is dragged, gathers every
+//! local bin one level coarser and builds the map at half its grid: about a
+//! sixteenth of the taps for each, with rims one coarser texel wide. A
+//! pipeline reallocates its textures when its tier changes. Final, which
+//! exports always render, is unchanged. A pipeline that renders the whole image
 //!   builds it whenever a Lens Blur reaches those bins, so a zoomed view can
 //!   share it ([`EffectInputs::share_defocus_map`]); an export builds it once
 //!   in a prepass over its tiles ([`RawGpuPipeline::begin_export_defocus`]).
@@ -65,9 +72,12 @@ const MAP_BINS: u32 = 3;
 const BIN_SOFTNESS: f32 = 0.1;
 /// A bin's widest radius in its starting radius (`DEFOCUS_BIN_REACH`).
 const BIN_REACH: f32 = 2.144;
-/// Cells of the map along the image's longer edge for bin 3
-/// (`DEFOCUS_MAP_LONG` in defocus.wgsl).
-pub(super) const DEFOCUS_MAP_LONG: u32 = 768;
+/// Cells of the map along the image's longer edge for bin 3 in the Final
+/// tier ([`defocus_map_long`]; the pass uniforms tell the shader).
+const DEFOCUS_MAP_LONG: u32 = 768;
+/// How much coarser the Draft tier gathers, in octaves: each local bin's
+/// level and the map's grid.
+const DRAFT_OCTAVES: u32 = 1;
 /// The map's slab mip of each map bin (`defocus_map_slab_mip`): bins 4 and
 /// 5 are written at twice their sources' resolution, so their rims, one
 /// source texel wide, are drawn smoothly.
@@ -93,15 +103,20 @@ pub(super) fn defocus_reaches_map(mask: &MaskData, aspect: f32) -> bool {
 }
 
 /// The pipeline level of each local bin for an image whose shorter edge is
-/// `short` pixels: the level whose texel is a quarter of bin 0's starting
-/// radius and an eighth of the others', so every bin spans about 4 to 17
-/// texels (`defocus_local_level` in defocus.wgsl reads them from the pass
-/// uniforms, so they are decided here once).
-pub(super) fn defocus_levels(short: u32) -> [u32; LOCAL_BINS] {
+/// `short` pixels, in `tier`: in Final the level whose texel is a quarter of
+/// bin 0's starting radius and an eighth of the others', so every bin spans
+/// about 4 to 17 texels, in Draft one level above (`defocus_local_level` in
+/// defocus.wgsl reads them from the pass uniforms, so they are decided here
+/// once).
+pub(super) fn defocus_levels(short: u32, tier: RenderTier) -> [u32; LOCAL_BINS] {
     std::array::from_fn(|bin| {
         let start = DEFOCUS_FOCUS_RADIUS * (1u32 << bin) as f32 * short.max(1) as f32;
         let texel = start / if bin == 0 { 4.0 } else { 8.0 };
-        texel.log2().round().max(0.0) as u32
+        let level = texel.log2().round().max(0.0) as u32;
+        match tier {
+            RenderTier::Final => level,
+            RenderTier::Draft => level + DRAFT_OCTAVES,
+        }
     })
 }
 
@@ -122,14 +137,24 @@ fn local_side(side: u32, first: u32, mips: u32) -> u32 {
     unit * (side.div_ceil(1 << (first + mips - 1)) + 1)
 }
 
-/// The map's grid for bin 3 (`defocus_map_grid` in defocus.wgsl): at most
-/// one cell per pixel along the longer edge (`defocus_map_long`), since a
-/// finer cell may hold no pixel's centre and the empty cells would show as a
-/// lattice in small whole-image renders.
+/// The map's cells along the longer edge for bin 3: [`DEFOCUS_MAP_LONG`],
+/// at most one per pixel, since a finer cell may hold no pixel's centre and
+/// the empty cells would show as a lattice in small whole-image renders;
+/// half as many in the Draft tier.
+fn defocus_map_long(params: &GpuParams) -> u32 {
+    let full = params.camera.full_width.max(params.camera.full_height);
+    let long = full.clamp(1, DEFOCUS_MAP_LONG);
+    match params.render_tier() {
+        RenderTier::Final => long,
+        RenderTier::Draft => (long >> DRAFT_OCTAVES).max(1),
+    }
+}
+
+/// The map's grid for bin 3 (`defocus_map_grid` in defocus.wgsl), with
+/// [`defocus_map_long`] cells along the longer edge.
 fn defocus_map_grid(params: &GpuParams) -> [u32; 2] {
     let full = [params.camera.full_width, params.camera.full_height];
-    let long = full[0].max(full[1]).clamp(1, DEFOCUS_MAP_LONG);
-    full_image_grid(full, long)
+    full_image_grid(full, defocus_map_long(params))
 }
 
 /// Blocks of occupancy flags per region (`defocus_occupancy_region`).
@@ -144,7 +169,8 @@ struct DefocusPassUniform {
     bin: u32,
     mip: u32,
     map_ready: u32,
-    unused: u32,
+    /// The bound map's cells along the longer edge for bin 3.
+    map_long: u32,
     levels: [u32; 4],
 }
 
@@ -180,10 +206,10 @@ impl DefocusLocal {
         device: &wgpu::Device,
         image: [u32; 2],
         short: u32,
+        levels: [u32; LOCAL_BINS],
         layers: u32,
         reservation: Option<GpuBudgetReservation>,
     ) -> Self {
-        let levels = defocus_levels(short);
         let mips = local_mips(short, levels);
         let size = Self::level_size(image, levels, mips);
         Self {
@@ -239,13 +265,26 @@ impl DefocusLocal {
 
     /// Never read: the first Blur stage ignores a result of another size.
     fn placeholder(device: &wgpu::Device) -> Self {
-        Self::build(device, [1, 1], 1, 1, None)
+        Self::build(
+            device,
+            [1, 1],
+            1,
+            defocus_levels(1, RenderTier::Final),
+            1,
+            None,
+        )
     }
 
     /// Textures for `layers` Lens Blur slots over an image of `image`
-    /// pixels whose full image's shorter edge is `short` pixels.
-    fn reserved(device: &wgpu::Device, image: [u32; 2], short: u32, layers: u32) -> Result<Self> {
-        let levels = defocus_levels(short);
+    /// pixels whose full image's shorter edge is `short` pixels, gathered at
+    /// `levels`.
+    fn reserved(
+        device: &wgpu::Device,
+        image: [u32; 2],
+        short: u32,
+        levels: [u32; LOCAL_BINS],
+        layers: u32,
+    ) -> Result<Self> {
         let mips = local_mips(short, levels);
         let size = Self::level_size(image, levels, mips);
         let bytes = texture_bytes(image, 1, 2 * layers)
@@ -261,11 +300,18 @@ impl DefocusLocal {
             bytes,
             gpu_working_set_limit_bytes(),
         )?;
-        Ok(Self::build(device, image, short, layers, Some(reservation)))
+        Ok(Self::build(
+            device,
+            image,
+            short,
+            levels,
+            layers,
+            Some(reservation),
+        ))
     }
 
-    fn fits(&self, image: [u32; 2], short: u32, layers: u32) -> bool {
-        self.image == image && self.short == short && self.layers >= layers
+    fn fits(&self, image: [u32; 2], short: u32, levels: [u32; LOCAL_BINS], layers: u32) -> bool {
+        self.image == image && self.short == short && self.levels == levels && self.layers >= layers
     }
 
     fn mips(&self) -> u32 {
@@ -304,6 +350,7 @@ impl DefocusMap {
                     bytemuck::bytes_of(&DefocusPassUniform {
                         bin: LOCAL_BINS as u32 + bin,
                         mip: MAP_SLAB_MIPS[bin as usize],
+                        map_long: Self::long_of(grid),
                         ..Default::default()
                     }),
                     wgpu::BufferUsages::UNIFORM,
@@ -319,6 +366,7 @@ impl DefocusMap {
                     bytemuck::bytes_of(&DefocusPassUniform {
                         bin: LOCAL_BINS as u32,
                         mip,
+                        map_long: Self::long_of(grid),
                         ..Default::default()
                     }),
                     wgpu::BufferUsages::UNIFORM,
@@ -392,6 +440,12 @@ impl DefocusMap {
 
     fn fits(&self, grid: [u32; 2], layers: u32) -> bool {
         self.grid == grid && self.layers >= layers
+    }
+
+    /// The cells along the longer edge of a grid for bin 3, as
+    /// `full_image_grid` made it.
+    fn long_of(grid: [u32; 2]) -> u32 {
+        grid[0].max(grid[1])
     }
 }
 
@@ -682,14 +736,16 @@ impl DefocusLocal {
         Self::level_size(self.image, self.levels, self.mips())
     }
 
-    /// Writes the pass uniforms: the levels and whether the map is built.
-    fn write_uniforms(&self, queue: &wgpu::Queue, map_ready: bool) {
+    /// Writes the pass uniforms: the levels, whether the map is built and
+    /// its cells along the longer edge.
+    fn write_uniforms(&self, queue: &wgpu::Queue, map_ready: bool, map_long: u32) {
         let levels = [self.levels[0], self.levels[1], self.levels[2], 0];
         let map_ready = u32::from(map_ready);
         for (bin, buffer) in self.bin_uniforms.iter().enumerate() {
             let uniform = DefocusPassUniform {
                 bin: bin as u32,
                 map_ready,
+                map_long,
                 levels,
                 ..Default::default()
             };
@@ -699,6 +755,7 @@ impl DefocusLocal {
             let uniform = DefocusPassUniform {
                 mip: index as u32 + 1,
                 map_ready,
+                map_long,
                 levels,
                 ..Default::default()
             };
@@ -737,10 +794,16 @@ impl DefocusInputs {
         self.map.as_deref().unwrap_or(&self.placeholder_map)
     }
 
-    pub(super) fn local_fits(&self, image: [u32; 2], short: u32, layers: u32) -> bool {
+    pub(super) fn local_fits(
+        &self,
+        image: [u32; 2],
+        short: u32,
+        levels: [u32; LOCAL_BINS],
+        layers: u32,
+    ) -> bool {
         self.local
             .as_ref()
-            .is_some_and(|local| local.fits(image, short, layers))
+            .is_some_and(|local| local.fits(image, short, levels, layers))
     }
 
     /// Allocates the local textures, releasing the ones they replace first.
@@ -749,10 +812,13 @@ impl DefocusInputs {
         device: &wgpu::Device,
         image: [u32; 2],
         short: u32,
+        levels: [u32; LOCAL_BINS],
         layers: u32,
     ) -> Result<()> {
         self.local = None;
-        self.local = Some(DefocusLocal::reserved(device, image, short, layers)?);
+        self.local = Some(DefocusLocal::reserved(
+            device, image, short, levels, layers,
+        )?);
         Ok(())
     }
 
@@ -804,9 +870,15 @@ impl DefocusInputs {
         self.map.as_ref().is_some_and(|map| map.layers >= layers)
     }
 
-    pub(super) fn write_uniforms(&self, queue: &wgpu::Queue, map_ready: bool) {
+    /// Writes the local passes' uniforms, with the grid of the bound map, or
+    /// `map_long` while none is bound.
+    pub(super) fn write_uniforms(&self, queue: &wgpu::Queue, map_ready: bool, map_long: u32) {
         if let Some(local) = &self.local {
-            local.write_uniforms(queue, map_ready);
+            let map_long = self
+                .map
+                .as_ref()
+                .map_or(map_long, |map| DefocusMap::long_of(map.grid));
+            local.write_uniforms(queue, map_ready, map_long);
         }
     }
 
@@ -937,9 +1009,10 @@ impl RawGpuPipeline {
         }
         let image = [params.camera.width, params.camera.height];
         let short = params.camera.full_width.min(params.camera.full_height);
+        let levels = defocus_levels(short, params.render_tier());
         let local = match self
             .effect_inputs
-            .allocate_defocus_local(image, short, layers)
+            .allocate_defocus_local(image, short, levels, layers)
         {
             Ok(()) => true,
             Err(error) => {
@@ -954,7 +1027,8 @@ impl RawGpuPipeline {
             }
         }
         let map_ready = params.needs_defocus_map() && self.effect_inputs.defocus_map_holds(layers);
-        self.effect_inputs.write_defocus_uniforms(queue, map_ready);
+        self.effect_inputs
+            .write_defocus_uniforms(queue, map_ready, defocus_map_long(params));
         local
     }
 

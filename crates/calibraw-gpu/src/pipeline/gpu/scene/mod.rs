@@ -24,7 +24,7 @@ pub(super) mod lights;
 
 use super::{
     create_gpu_buffer, create_initialized_buffer, create_processing_texture_array,
-    gpu_working_set_limit_bytes, texture_size, GpuBudgetReservation,
+    gpu_working_set_limit_bytes, texture_size, GpuBudgetReservation, RenderTier,
 };
 use anyhow::Result;
 use calibraw_core::pipeline::{DisparityMap, MaskImage, SceneCamera, SceneDepth};
@@ -32,7 +32,6 @@ use camera::SceneCameraUniform;
 use std::sync::{Arc, Mutex};
 
 pub(super) use bake::SceneBakePrograms;
-pub use lights::SceneLightQuality;
 pub(super) use lights::{
     air_light_layers, SceneAirLightKey, SceneAirLightRegion, SceneAirLightTarget,
     SceneAirLightUniform, SceneLightKind, SceneLightPrograms, SceneLightSet, SceneShadowLight,
@@ -752,7 +751,7 @@ impl super::RawGpuPipeline {
                             encoder,
                             &bake,
                             programs.lights(),
-                            self.air_light_region(params.scene_light_quality()),
+                            self.air_light_region(params.render_tier()),
                         );
                     }
                 }
@@ -762,7 +761,7 @@ impl super::RawGpuPipeline {
     }
 
     /// The air light grid this pipeline needs: the texels its pixels read.
-    fn air_light_region(&self, quality: SceneLightQuality) -> SceneAirLightRegion {
+    fn air_light_region(&self, quality: RenderTier) -> SceneAirLightRegion {
         let uploaded = self
             .uploaded_stage_uniforms
             .lock()

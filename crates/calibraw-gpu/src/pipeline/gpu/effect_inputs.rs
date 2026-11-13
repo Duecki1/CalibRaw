@@ -22,7 +22,7 @@
 //! follow the allocation.
 
 use super::defocus::{
-    DefocusBindGroups, DefocusInputs, DefocusMap, DefocusSources, DEFOCUS_PASSES,
+    DefocusBindGroups, DefocusInputs, DefocusMap, DefocusSources, DEFOCUS_PASSES, LOCAL_BINS,
 };
 use super::scene::{
     air_light_layers, SceneAirLightKey, SceneAirLightRegion, SceneAirLightTarget,
@@ -1345,15 +1345,16 @@ impl EffectInputs {
         &self,
         image: [u32; 2],
         short: u32,
+        levels: [u32; LOCAL_BINS],
         layers: u32,
     ) -> Result<()> {
         let mut allocated = self.lock();
-        if allocated.defocus.local_fits(image, short, layers) {
+        if allocated.defocus.local_fits(image, short, levels, layers) {
             return Ok(());
         }
         let result = allocated
             .defocus
-            .allocate_local(&self.device, image, short, layers);
+            .allocate_local(&self.device, image, short, levels, layers);
         self.rebind(&mut allocated);
         result
     }
@@ -1399,8 +1400,17 @@ impl EffectInputs {
     }
 
     /// Writes Lens Blur's pass uniforms for this render.
-    pub(super) fn write_defocus_uniforms(&self, queue: &wgpu::Queue, map_ready: bool) {
-        self.lock().defocus.write_uniforms(queue, map_ready);
+    /// Writes Lens Blur's pass uniforms; `map_long` is the map grid's longer
+    /// edge while no map is bound.
+    pub(super) fn write_defocus_uniforms(
+        &self,
+        queue: &wgpu::Queue,
+        map_ready: bool,
+        map_long: u32,
+    ) {
+        self.lock()
+            .defocus
+            .write_uniforms(queue, map_ready, map_long);
     }
 
     /// The bind groups of Lens Blur's passes.

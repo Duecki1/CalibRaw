@@ -496,10 +496,6 @@ fn shared_constants_and_effect_ids_match_rust() {
     );
     // Lens Blur's textures and sums are sized from these.
     assert_eq!(
-        constant("DEFOCUS_MAP_LONG"),
-        super::defocus::DEFOCUS_MAP_LONG
-    );
-    assert_eq!(
         constant("DEFOCUS_LOCAL_BINS") as usize,
         super::defocus::LOCAL_BINS
     );

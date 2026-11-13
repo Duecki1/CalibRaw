@@ -23,10 +23,14 @@
 //!
 //! - the view node alone reads the global and mask colour mixer, colour
 //!   grading, hue rotation, brightness, point colours and the LUT
-//!   (view_transform.wgsl, look_lut.wgsl);
+//!   (view_transform.wgsl, look_lut.wgsl), and Vignette's frame in the
+//!   cropped output (film_finish.wgsl, the only caller of
+//!   `effect_output_uv`), which a crop or straighten changes;
 //! - a mask slot is read by the passes its effect runs in
 //!   ([`MaskEffect::passes`]), an adjustment's by the scene passes and the
 //!   view node;
+//! - the render tier ([`RenderTier`]) by the first part with an effect that
+//!   has a Draft tier or reads the scene bake, whose lights it builds;
 //! - everything else counts as read by the Scene part.
 //!
 //! Anything else that writes the work textures or changes what the output
@@ -36,7 +40,7 @@
 //! that reads them.
 
 use super::*;
-use crate::pipeline::EffectPass;
+use crate::pipeline::{EffectPass, SceneNeeds};
 use std::sync::atomic::AtomicU64;
 
 /// A part of the output stage, in pass order.
@@ -156,7 +160,9 @@ pub(super) struct OutputInputs {
     depth: Option<SceneDepth>,
     profile: Arc<ProfileColor>,
     highlight_model: Option<Arc<HighlightModel>>,
-    light_quality: SceneLightQuality,
+    render_tier: RenderTier,
+    /// The first part that reads `render_tier`, if any.
+    tier_part: Option<OutputPart>,
     /// The build of the Lens Blur map the Scene part reads, if any.
     defocus_map: Option<u64>,
     /// The build of the Glow map the Creative part reads, if any.
@@ -178,7 +184,8 @@ impl OutputInputs {
             depth: params.depth_result.clone(),
             profile: Arc::clone(&params.profile_color),
             highlight_model: params.highlight_model.clone(),
-            light_quality: params.scene_light_quality(),
+            render_tier: params.render_tier(),
+            tier_part: first_part_reading_tier(params.mask_slots()),
             defocus_map: maps.defocus,
             styled_glow_map: maps.styled_glow,
         }
@@ -196,13 +203,18 @@ impl OutputInputs {
 
     /// The first part whose inputs differ between these and `next`.
     fn first_changed_part(&self, next: &Self) -> OutputPart {
-        if !self.same_scene_inputs(next) {
+        let changed = if !self.same_scene_inputs(next) {
             OutputPart::Scene
         } else if !self.same_creative_inputs(next) {
             OutputPart::Creative
         } else {
             OutputPart::View
+        };
+        if self.render_tier == next.render_tier {
+            return changed;
         }
+        // Slots are equal unless the Scene part changed, which comes first.
+        next.tier_part.map_or(changed, |tier| tier.min(changed))
     }
 
     fn same_scene_inputs(&self, next: &Self) -> bool {
@@ -231,9 +243,10 @@ impl OutputInputs {
     /// Whether the Creative part's inputs are the same, given the Scene
     /// part's are.
     fn same_creative_inputs(&self, next: &Self) -> bool {
-        bytes_equal(&self.effects, &next.effects)
-            && self.light_quality == next.light_quality
-            && self.styled_glow_map == next.styled_glow_map
+        bytes_equal(
+            &effects_before_view(&self.effects),
+            &effects_before_view(&next.effects),
+        ) && self.styled_glow_map == next.styled_glow_map
             && self.slots.iter().zip(&next.slots[..]).all(|(slot, next)| {
                 OutputPart::of_slot(slot) == OutputPart::View
                     || bytes_equal(&slot_before_view(slot), &slot_before_view(next))
@@ -255,6 +268,23 @@ impl OutputInputs {
             .map(OutputPart::of_slot)
             .min()
     }
+}
+
+/// The first part whose result depends on the render tier: that of the
+/// first active slot whose effect has a Draft tier
+/// ([`MaskEffect::has_draft_tier`]) or reads the scene bake, whose lights the
+/// tier builds.
+fn first_part_reading_tier(slots: &[MaskData]) -> Option<OutputPart> {
+    slots
+        .iter()
+        .filter(|slot| {
+            slot.active_effect().is_some_and(MaskEffect::has_draft_tier)
+                || slot
+                    .scene_needs()
+                    .is_some_and(|needs| needs != SceneNeeds::NONE)
+        })
+        .map(OutputPart::of_slot)
+        .min()
 }
 
 /// The builds of the full-frame maps a pipeline reads, which change when the
@@ -392,12 +422,26 @@ fn scene_tone_before_view(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
     }
 }
 
-/// `effects` without what only the Creative part reads: the Glow's diffusion
-/// radius and which of its pyramids are ready.
+/// `effects` without what only the view node reads: Vignette's frame in the
+/// output and its fits (film_finish.wgsl).
+fn effects_before_view(effects: &EffectsUniforms) -> EffectsUniforms {
+    EffectsUniforms {
+        vignette_frame: [0.0; 4],
+        vignette_projection: [[0.0; 4]; 3],
+        vignette_dark_half_fit: [0.0; 4],
+        vignette_dark_full_fit: [0.0; 4],
+        vignette_light_half_fit: [0.0; 4],
+        vignette_light_full_fit: [0.0; 4],
+        ..*effects
+    }
+}
+
+/// `effects` without what only the Creative part and the view node read:
+/// also the Glow's diffusion radius and which of its pyramids are ready.
 fn effects_before_creative(effects: &EffectsUniforms) -> EffectsUniforms {
     EffectsUniforms {
         glow_diffusion: [0.0; 4],
-        ..*effects
+        ..effects_before_view(effects)
     }
 }
 

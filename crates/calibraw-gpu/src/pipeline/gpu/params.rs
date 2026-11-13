@@ -374,6 +374,18 @@ impl MaskData {
     }
 }
 
+/// How carefully the costly effects render: Draft while a control, a light's
+/// handle or the view is dragged, so a drag stays quick; Final when the
+/// preview is idle, and for every export. Draft builds the light bake and the
+/// air light more coarsely (`scene::lights`) and gathers Lens Blur one level
+/// coarser (`defocus`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum RenderTier {
+    #[default]
+    Final,
+    Draft,
+}
+
 #[derive(Clone, Debug)]
 pub struct GpuParams {
     pub(super) camera: CameraUniforms,
@@ -382,8 +394,8 @@ pub struct GpuParams {
     mask_data: Box<[MaskData]>,
     /// The depth result the scene bake is made from (`scene`).
     pub(super) depth_result: Option<SceneDepth>,
-    /// How carefully the light bake is built for this render.
-    scene_light_quality: SceneLightQuality,
+    /// How carefully the costly effects render.
+    render_tier: RenderTier,
     /// The LUT `scene_tone.look_lut` describes, uploaded with the parameters.
     look_lut: Option<Arc<CubeLut>>,
     /// The camera profile `camera` describes, whose tables the pipeline
@@ -679,7 +691,7 @@ impl GpuParams {
             effects: pack_effect_params(&context, &mask_data),
             mask_data,
             depth_result: masks.scene_depth.clone(),
-            scene_light_quality: SceneLightQuality::default(),
+            render_tier: RenderTier::default(),
             look_lut: None,
             profile_color: Arc::clone(profile_color),
         }
@@ -760,19 +772,25 @@ impl GpuParams {
         scene_tone
     }
 
-    /// Renders the light bake at `quality`: Draft while the user drags a
+    /// Renders the costly effects at `tier`: Draft while the user drags a
     /// control, a light or the view, Final otherwise (the default, and what
     /// exports use).
-    pub fn with_scene_light_quality(mut self, quality: SceneLightQuality) -> Self {
-        self.scene_light_quality = quality;
+    pub fn with_render_tier(mut self, tier: RenderTier) -> Self {
+        self.render_tier = tier;
         self
     }
 
-    /// Whether the render builds a light bake, whose tier
-    /// `with_scene_light_quality` sets: a Draft render of these parameters
+    /// Whether the render depends on its tier (`with_render_tier`): it
+    /// builds a light bake, or an active effect has a Draft tier
+    /// ([`MaskEffect::has_draft_tier`]). A Draft render of these parameters
     /// needs a Final one once the drag ends.
-    pub fn uses_scene_light_quality(&self) -> bool {
+    pub fn uses_render_tier(&self) -> bool {
         self.needs_light_bake()
+            || self
+                .mask_slots()
+                .iter()
+                .filter_map(MaskData::active_effect)
+                .any(MaskEffect::has_draft_tier)
     }
 
     /// Places Vignette effects in the output frame of `geometry`: the shaders map each source
@@ -1114,9 +1132,9 @@ impl GpuParams {
                 .any(|needs| needs.air_light)
     }
 
-    /// The light bake's tier.
-    pub(super) fn scene_light_quality(&self) -> SceneLightQuality {
-        self.scene_light_quality
+    /// The tier of the costly effects.
+    pub(super) fn render_tier(&self) -> RenderTier {
+        self.render_tier
     }
 
     /// The lights of the light bake in their channels
@@ -1169,7 +1187,7 @@ impl GpuParams {
         }
         SceneLightSet {
             lights,
-            quality: self.scene_light_quality,
+            quality: self.render_tier,
         }
     }
 

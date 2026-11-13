@@ -460,11 +460,11 @@ pub(crate) struct PreviewState {
     pub(crate) original_rendered_state: Option<(bool, u64)>,
     pub(crate) original_hold: Option<AndroidOriginalHold>,
     pub(crate) pending_stage: Option<ProcessingStage>,
-    /// A sharp preview (fitted or zoomed crop) was rendered with the light
-    /// bake's Draft tier while a control was dragged; its output stage is
-    /// rendered again in Final once the drag ends
-    /// (`refine_draft_scene_lights`).
-    pub(crate) draft_scene_lights: bool,
+    /// A sharp preview (fitted or zoomed crop) was rendered in the Draft tier
+    /// while a control was dragged; its output stage is rendered again in
+    /// Final once the drag ends
+    /// (`refine_draft_render`).
+    pub(crate) draft_rendered: bool,
     pub(crate) dispatch_gate: PreviewDispatchGate,
     pub(crate) lens_original_cache: Option<(PreviewQuality, Arc<LoadedRaw>)>,
     pub(crate) lens_corrected_cache: Option<(

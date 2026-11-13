@@ -77,10 +77,6 @@ const DEFOCUS_SOURCE_LAYERS: u32 = 5u;
 const DEFOCUS_SLAB_LAYERS: u32 = 10u;
 const DEFOCUS_BIN_SLAB_LAYERS: u32 = 3u;
 const DEFOCUS_FILL_LAYER: u32 = 9u;
-// Cells of the full-image map along the longer edge (DEFOCUS_MAP_LONG in
-// defocus.rs), at most one per pixel (`defocus_map_long`); bin 3 lies at this
-// grid, each further bin at half of it.
-const DEFOCUS_MAP_LONG: u32 = 768u;
 // Edges of the occupancy blocks: 16 pixels for the focus slab, 8 texels for a
 // bin at its level.
 const DEFOCUS_FOCUS_BLOCK: i32 = 16;
@@ -154,7 +150,8 @@ struct DefocusPass {
     mip: u32,
     // 1 when the full-image map is built.
     map_ready: u32,
-    unused: u32,
+    // The bound map's cells along the longer edge for bin 3 (`defocus_map_long`).
+    map_long: u32,
     // The pipeline level of each local bin (xyz).
     levels: vec4<u32>,
 }
@@ -234,12 +231,12 @@ fn defocus_map_slab_mip(bin: u32) -> u32 {
     return max(bin, DEFOCUS_LOCAL_BINS + 1u) - DEFOCUS_LOCAL_BINS - 1u;
 }
 
-// The map's cells along the longer edge for bin 3: no more than the image
-// has pixels, since a cell finer than a pixel may hold no pixel's centre and
-// the empty cells would show as a lattice (`defocus_map_long` in defocus.rs).
+// The map's cells along the longer edge for bin 3, each further bin at half
+// of it: DEFOCUS_MAP_LONG in defocus.rs, no more than the image has pixels,
+// halved in the Draft tier (`defocus_map_long` there). The pass uniforms carry
+// the grid of the map the pipeline binds, its own or a full frame's.
 fn defocus_map_long() -> u32 {
-    let long = max(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height);
-    return clamp(long, 1u, DEFOCUS_MAP_LONG);
+    return max(defocus_pass.map_long, 1u);
 }
 
 // The map's grid of bin `bin` (3 to 5), as Common::full_image_grid halves it.

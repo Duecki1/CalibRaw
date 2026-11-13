@@ -33,6 +33,8 @@ Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPM
 - Production shaders live in `.wgsl` files. Document colour spaces, coordinate systems, boundary handling and precision.
 - Rust/WGSL buffer layouts, bindings and shared IDs are verified by `layout_contract_tests`; change both sides and the test together.
 - Structural cleanup preserves pass order, clamps, negative/HDR handling, tile halos and cache behavior.
+- Previews render costly work in the Draft `RenderTier` while a control, handle or the view is dragged, and in Final once it is released; exports always render Final. An effect too slow for a drag gets a Draft path (`draft: true` in its registry row) that only coarsens detail, never the look, and leaves Final bit-identical; no effect gets a drag mode of its own.
+- A preview's Output stage starts at the first part a change reaches (`output_parts.rs`). Code that writes the work textures, or changes what the stage reads other than through `GpuParams`, calls `forget_output()`; a value read only by a later part is classified by the shaders that read it.
 
 ## UI
 

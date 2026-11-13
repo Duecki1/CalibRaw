@@ -23,6 +23,7 @@
 //! drawn: no surface lies in their direction, so no receiver reads them.
 
 use super::super::shader_manager::ShaderManager;
+use super::super::RenderTier;
 use super::super::{
     buffer_entry, create_bind_group, create_bind_group_layout, create_compute_pipeline,
     create_gpu_buffer, dispatch_compute, gpu_working_set_limit_bytes, shaders,
@@ -47,17 +48,8 @@ const VISIBILITY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// `SCENE_CUBE_MARGIN` in lights_common.wgsl.
 const CUBE_MARGIN: f32 = 0.1;
 
-/// How carefully the light bake and the air light are built (§4.4). Draft
-/// while a control, a light's handle or the view is dragged, so a drag stays
-/// quick; Final when the preview is idle, and for every export.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum SceneLightQuality {
-    #[default]
-    Final,
-    Draft,
-}
-
-impl SceneLightQuality {
+/// The light bake's and the air light's work per tier (§4.4).
+impl RenderTier {
     /// A cube face's edge in texels: 512 in Final, 256 in Draft and wherever
     /// the bake works at its reduced size.
     fn face_texels(self) -> u32 {
@@ -134,7 +126,7 @@ pub(in crate::pipeline::gpu) struct SceneShadowLight {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::pipeline::gpu) struct SceneLightSet {
     pub(in crate::pipeline::gpu) lights: [Option<SceneShadowLight>; SCENE_SHADOW_LIGHTS],
-    pub(in crate::pipeline::gpu) quality: SceneLightQuality,
+    pub(in crate::pipeline::gpu) quality: RenderTier,
 }
 
 /// `SceneShadowLight` in lights_common.wgsl.
@@ -253,7 +245,7 @@ pub(super) struct SceneLightBake {
 impl SceneLightBake {
     fn new(device: &wgpu::Device, size: [u32; 2], capacity: usize) -> Result<Self> {
         let [width, height] = size;
-        let face_texels = SceneLightQuality::Final.face_texels();
+        let face_texels = RenderTier::Final.face_texels();
         let texels = u64::from(width) * u64::from(height);
         let cube_layers = CUBE_FACES * capacity as u32;
         let groups = capacity.div_ceil(LIGHTS_PER_GROUP) as u32;
@@ -1106,7 +1098,7 @@ impl SceneAirLightRegion {
         origin: [u32; 2],
         size: [u32; 2],
         image: [u32; 2],
-        quality: SceneLightQuality,
+        quality: RenderTier,
     ) -> Self {
         let factor = quality.air_march()[0];
         let first = |pixel: u32| {
