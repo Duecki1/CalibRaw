@@ -235,7 +235,16 @@ Lensfun under threads still inside them.
 ## GPU resources
 
 `RawGpuPipeline` owns all textures and buffers of one processing graph and a
-`GpuBudgetReservation` (RAII) against the process-wide GPU working-set limit.
+`GpuBudgetReservation` (RAII) against the process-wide admission limit. On a
+computer there is none (the driver reports real OOM). On Android, whose GPUs
+share system memory and whose drivers may let the low-memory killer end the app
+instead of reporting OOM, two shares of device RAM apply: previews, export tiles
+and quality tiers are sized against the working-set budget (RAM / 8, 384 MiB to
+1.5 GiB), and allocations are admitted up to the larger admission limit (RAM / 4,
+at most 3 GiB), so effects that allocate beside open previews still fit.
+An effect whose resources do not fit is left out of the render, never drawn
+black (`unrendered.rs`): previews show an error dialog once per failure, while
+exports and the full-resolution preview fail rather than lack it.
 The LUT texture is sized by its LUT, so it is not part of that plan: it takes
 a reservation of its own when a LUT is first uploaded, and pipelines without a
 LUT reserve nothing for it.

@@ -494,6 +494,8 @@ fn render_full_resolution(job: &FullResolutionJob) -> anyhow::Result<FullResolut
             "full-resolution render cancelled"
         );
     }
+    // Shown in the fitted preview's place, it must not lack an effect.
+    pipeline.ensure_effects_rendered()?;
     let pixels = pipeline.read_output_region_blocking(
         &job.device,
         &job.queue,

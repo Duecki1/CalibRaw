@@ -276,6 +276,11 @@ struct DragLog {
 }
 
 impl InteractiveState {
+    /// The reduced graph's pipeline, while one exists.
+    pub(in crate::app) fn gpu(&self) -> Option<&RawGpuPipeline> {
+        self.graph.as_ref().map(|graph| graph.pipeline().gpu())
+    }
+
     /// An edit was queued for the fitted preview.
     pub(crate) fn note_edit(&mut self, stage: ProcessingStage) {
         self.edit = Some(self.edit.map_or(stage, |existing| existing.min(stage)));

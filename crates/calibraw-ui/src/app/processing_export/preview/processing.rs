@@ -231,6 +231,7 @@ impl CalibRawApp {
     /// Submits the pending work of every preview as one batch, once the
     /// previous batch has finished on the GPU (`PreviewDispatchGate`).
     pub(in crate::app) fn advance_preview_dispatch(&mut self, frame: &eframe::Frame) {
+        self.report_unrendered_effects();
         let render_state = frame.wgpu_render_state();
         if render_state
             .is_some_and(|render_state| !self.preview.dispatch_gate.poll_open(&render_state.device))
@@ -269,6 +270,41 @@ impl CalibRawApp {
                     batch,
                 );
             }
+        }
+    }
+
+    /// Shows an error for each effect a preview started to render without
+    /// because the GPU could not hold its resources (`UnrenderedEffect`); the
+    /// preview shows the photo without it.
+    fn report_unrendered_effects(&mut self) {
+        let pipelines = [
+            self.preview.pipeline(),
+            self.preview
+                .detail
+                .as_ref()
+                .map(|detail| detail.pipeline.gpu()),
+            self.preview
+                .navigation
+                .as_ref()
+                .map(|navigation| navigation.pipeline.gpu()),
+            self.preview.interactive.gpu(),
+        ];
+        let mut effects = Vec::new();
+        for pipeline in pipelines.into_iter().flatten() {
+            for effect in pipeline.take_unrendered_effects() {
+                if !effects.contains(&effect) {
+                    effects.push(effect);
+                }
+            }
+        }
+        for effect in effects {
+            self.report_error(
+                ErrorKind::GpuMemory,
+                tr_fmt(
+                    "{effect} is not shown in the preview: there is not enough GPU memory for it.",
+                    &[("effect", &tr(effect.label()))],
+                ),
+            );
         }
     }
 

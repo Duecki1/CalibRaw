@@ -343,7 +343,6 @@ impl StyledGlowNear {
         let reservation = GpuBudgetReservation::acquire_bytes(
             "Glow near pyramid",
             texture_bytes(size, STYLED_GLOW_NEAR_LEVELS, layers),
-            gpu_working_set_limit_bytes(),
         )?;
         Ok(Self::build(device, size, layers, Some(reservation)))
     }
@@ -427,7 +426,6 @@ impl StyledGlowMap {
             texture_bytes(grid, mip_levels(grid), 2 * layers)
                 + 2 * texture_bytes(grid, 1, layers)
                 + Self::cells_bytes(layers),
-            gpu_working_set_limit_bytes(),
         )?;
         Ok(Self::build(device, grid, layers, layers, Some(reservation)))
     }
@@ -1019,18 +1017,16 @@ impl RawGpuPipeline {
             return (false, false);
         }
         let image = [params.camera.width, params.camera.height];
-        let near = match self.effect_inputs.allocate_styled_glow_near(image, layers) {
-            Ok(()) => true,
-            Err(error) => {
-                log::error!("Glow renders without its near pyramid: {error:#}");
-                false
-            }
-        };
+        let near = self.note_effect_allocation(
+            EffectResource::GlowPyramid,
+            self.effect_inputs.allocate_styled_glow_near(image, layers),
+        );
         if params.renders_whole_image() {
             let grid = styled_glow_map_grid(Self::styled_glow_full_size(params));
-            if let Err(error) = self.effect_inputs.allocate_styled_glow_map(grid, layers) {
-                log::error!("Glow renders without its full-image map: {error:#}");
-            }
+            self.note_effect_allocation(
+                EffectResource::GlowMap,
+                self.effect_inputs.allocate_styled_glow_map(grid, layers),
+            );
         }
         let map =
             params.needs_styled_glow_map() && self.effect_inputs.styled_glow_map_holds(layers);

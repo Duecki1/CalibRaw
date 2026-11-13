@@ -34,6 +34,7 @@ mod preview_budget;
 mod readback;
 mod resources;
 mod scene;
+mod unrendered;
 use scene::{
     SceneBake, SceneBakeUniforms, SceneLightKind, SceneLightSet, SceneShadowLight,
     SCENE_BAKE_LAYERS, SCENE_SHADOW_LIGHTS, SCENE_WORKING_LONG_EDGE_MAX,
@@ -67,6 +68,8 @@ pub(crate) use readback::PendingSceneReadback;
 use readback::*;
 use resources::*;
 use shader_manager::ShaderManager;
+pub use unrendered::UnrenderedEffect;
+use unrendered::{EffectResource, UnrenderedEffects};
 pub use wait::GpuWait;
 pub(crate) use wait::SLOW_GPU_WAIT;
 use wait::{wait_for_submission, GpuWaitError};
@@ -117,11 +120,18 @@ const ANDROID_GPU_WORKING_SET_LIMIT_BYTES: u64 = 384 * 1024 * 1024;
 /// Upper bound of the RAM-scaled Android admission cap.
 #[cfg(target_os = "android")]
 const ANDROID_GPU_WORKING_SET_CEILING_BYTES: u64 = 1_536 * 1024 * 1024;
-/// Share of device RAM, as a divisor, the Android admission cap allows GPU
-/// pipelines to reserve. Android GPUs share system memory, and drivers may
-/// let the low-memory killer end the app instead of reporting OOM.
+/// Share of device RAM, as a divisor, of the Android working-set budget
+/// previews and export tiles are sized against.
 #[cfg(target_os = "android")]
 const ANDROID_GPU_WORKING_SET_RAM_DIVISOR: u64 = 8;
+/// Share of device RAM, as a divisor, GPU pipelines may reserve together on
+/// Android (`gpu_admission_limit_bytes`): 3 GiB of a 12 GiB phone, 1 GiB of a
+/// 4 GiB tablet.
+#[cfg(target_os = "android")]
+const ANDROID_GPU_ADMISSION_RAM_DIVISOR: u64 = 4;
+/// Upper bound of the Android admission limit.
+#[cfg(target_os = "android")]
+const ANDROID_GPU_ADMISSION_CEILING_BYTES: u64 = 3 * 1024 * 1024 * 1024;
 
 const COLOR_DENOISE_ENTRY_POINTS: [&str; 6] = [
     "color_denoise_scale_1",
@@ -512,6 +522,8 @@ pub struct RawGpuPipeline {
     /// writes the work textures outside the output stage, or changes what it
     /// reads other than through its parameters, forgets it.
     output_resume: Mutex<OutputResume>,
+    /// Effects whose resources could not be allocated (`unrendered`).
+    unrendered: Mutex<UnrenderedEffects>,
     /// This pipeline's tone statistics and full-image maps, built again by
     /// each tone stage; crops that inherit them compare it.
     tone_build: BuildRevision,

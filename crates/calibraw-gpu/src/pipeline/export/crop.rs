@@ -251,6 +251,8 @@ pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
     pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Raw);
     pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Tone);
     pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Output);
+    // An export must not lack an effect whose resources did not fit.
+    pipeline.ensure_effects_rendered()?;
     let mut rgb = pipeline.read_display_linear_region_blocking(
         &job.device,
         &job.queue,

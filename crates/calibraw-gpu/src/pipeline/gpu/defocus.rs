@@ -3,7 +3,8 @@
 //!
 //! - Local: the focus slab's sources per pixel, the sources and slabs of
 //!   bins 0 to 2 at their levels of this pipeline's image (one mip per level
-//!   from the first bin's, [`defocus_levels`]), the fill pyramid, the
+//!   from the first bin's, [`defocus_levels`]; the bins share one group of
+//!   source layers, each gathered right after its sources), the fill pyramid, the
 //!   occupancy flags that let empty blocks skip their gather, and the result
 //!   the first Blur stage blends. Every pipeline with a Lens Blur builds them
 //!   in its output stage, before the Blur passes.
@@ -128,6 +129,12 @@ fn local_mips(short: u32, levels: [u32; LOCAL_BINS]) -> u32 {
     fill_top - levels[0] + 1
 }
 
+/// The mips of the local sources: through the last bin's level, the only
+/// ones written (the fill pyramid above is in the slabs).
+fn source_mips(levels: [u32; LOCAL_BINS]) -> u32 {
+    levels[LOCAL_BINS - 1] - levels[0] + 1
+}
+
 /// The first mip's size of a local texture of `mips` levels from level
 /// `first` over an image side of `side` pixels: every mip must hold the
 /// texels of its full-image grid the image touches at any tile origin, one
@@ -223,8 +230,8 @@ impl DefocusLocal {
             sources: LevelTexture::new(
                 device,
                 size,
-                mips,
-                layers * LOCAL_BINS as u32 * SOURCE_LAYERS,
+                source_mips(levels),
+                layers * SOURCE_LAYERS,
                 "calibraw Lens Blur sources",
             ),
             slabs: LevelTexture::new(
@@ -288,18 +295,11 @@ impl DefocusLocal {
         let mips = local_mips(short, levels);
         let size = Self::level_size(image, levels, mips);
         let bytes = texture_bytes(image, 1, 2 * layers)
-            + texture_bytes(
-                size,
-                mips,
-                layers * (LOCAL_BINS as u32 * SOURCE_LAYERS + SLAB_LAYERS),
-            )
+            + texture_bytes(size, source_mips(levels), layers * SOURCE_LAYERS)
+            + texture_bytes(size, mips, layers * SLAB_LAYERS)
             + texture_bytes(image, 1, layers)
             + Self::occupancy_bytes(image, layers);
-        let reservation = GpuBudgetReservation::acquire_bytes(
-            "Lens Blur textures",
-            bytes,
-            gpu_working_set_limit_bytes(),
-        )?;
+        let reservation = GpuBudgetReservation::acquire_bytes("Lens Blur textures", bytes)?;
         Ok(Self::build(
             device,
             image,
@@ -430,11 +430,7 @@ impl DefocusMap {
                 layers * LOCAL_BINS as u32 * SOURCE_LAYERS,
             )
             + texture_bytes(grid, mips, layers * SLAB_LAYERS);
-        let reservation = GpuBudgetReservation::acquire_bytes(
-            "Lens Blur full-image map",
-            bytes,
-            gpu_working_set_limit_bytes(),
-        )?;
+        let reservation = GpuBudgetReservation::acquire_bytes("Lens Blur full-image map", bytes)?;
         Ok(Self::build(device, grid, layers, Some(reservation)))
     }
 
@@ -583,6 +579,8 @@ impl DefocusSources<'_> {
             ),
             texels: image,
         }];
+        // Each bin's gather right after its sources: the bins share their
+        // slot's source layers (`build_defocus_sources`).
         for bin in 0..LOCAL_BINS {
             let mip = (local.levels[bin] - local.levels[0]) as usize;
             local_dispatches.push(DefocusDispatch {
@@ -598,9 +596,6 @@ impl DefocusSources<'_> {
                 ),
                 texels: level_texels(local.levels[bin]),
             });
-        }
-        for bin in 0..LOCAL_BINS {
-            let mip = (local.levels[bin] - local.levels[0]) as usize;
             local_dispatches.push(DefocusDispatch {
                 program: GATHER,
                 bind_group: gather(
@@ -1010,21 +1005,17 @@ impl RawGpuPipeline {
         let image = [params.camera.width, params.camera.height];
         let short = params.camera.full_width.min(params.camera.full_height);
         let levels = defocus_levels(short, params.render_tier());
-        let local = match self
-            .effect_inputs
-            .allocate_defocus_local(image, short, levels, layers)
-        {
-            Ok(()) => true,
-            Err(error) => {
-                log::error!("Lens Blur renders without its textures: {error:#}");
-                false
-            }
-        };
+        let local = self.note_effect_allocation(
+            EffectResource::LensBlurTextures,
+            self.effect_inputs
+                .allocate_defocus_local(image, short, levels, layers),
+        );
         if params.renders_whole_image() && params.needs_defocus_map() {
             let grid = defocus_map_grid(params);
-            if let Err(error) = self.effect_inputs.allocate_defocus_map(grid, layers) {
-                log::error!("Lens Blur renders without its full-image map: {error:#}");
-            }
+            self.note_effect_allocation(
+                EffectResource::LensBlurMap,
+                self.effect_inputs.allocate_defocus_map(grid, layers),
+            );
         }
         let map_ready = params.needs_defocus_map() && self.effect_inputs.defocus_map_holds(layers);
         self.effect_inputs

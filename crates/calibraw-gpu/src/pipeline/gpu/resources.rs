@@ -154,7 +154,10 @@ pub(super) struct GpuBudgetReservation {
 }
 
 impl GpuBudgetReservation {
-    pub(super) fn acquire(plan: &GpuResourcePlan, limit: u64) -> Result<Self> {
+    /// Reserves `plan`'s resident bytes within the admission limit
+    /// ([`gpu_admission_limit_bytes`]).
+    pub(super) fn acquire(plan: &GpuResourcePlan) -> Result<Self> {
+        let limit = gpu_admission_limit_bytes();
         validate_gpu_resource_plan(plan, limit)?;
         let bytes = plan.persistent_gpu_bytes;
         reserve_gpu_bytes(&RESERVED_GPU_BYTES, limit, bytes).map_err(|used| {
@@ -171,8 +174,10 @@ impl GpuBudgetReservation {
 
 impl GpuBudgetReservation {
     /// Reserves `bytes` for `resource`, which is allocated after its pipeline
-    /// was built and is not part of the pipeline's plan.
-    pub(super) fn acquire_bytes(resource: &str, bytes: u64, limit: u64) -> Result<Self> {
+    /// was built and is not part of the pipeline's plan, within the admission
+    /// limit ([`gpu_admission_limit_bytes`]).
+    pub(super) fn acquire_bytes(resource: &str, bytes: u64) -> Result<Self> {
+        let limit = gpu_admission_limit_bytes();
         reserve_gpu_bytes(&RESERVED_GPU_BYTES, limit, bytes).map_err(|used| {
             anyhow!(
                 "GPU pipelines already reserve {:.1} MiB of resident resources; the {resource} needs another {:.1} MiB, exceeding the {:.1} MiB process budget",
@@ -617,6 +622,48 @@ pub(super) fn validate_gpu_resource_plan(plan: &GpuResourcePlan, limit: u64) -> 
     Ok(())
 }
 
+/// The resident GPU bytes every pipeline of the process may reserve together
+/// (`GpuBudgetReservation`). On Android it is a larger share of device RAM
+/// than the working-set budget previews and export tiles are sized against
+/// ([`gpu_working_set_limit_bytes`]), so effects that allocate beside open
+/// previews (Lens Blur, the Glow, the scene bake) and export tiles still fit,
+/// while previews keep their size; it stays below what the low-memory killer
+/// tolerates, as Android GPUs share system memory and drivers may let it end
+/// the app instead of reporting OOM.
+#[cfg(target_os = "android")]
+pub(super) fn gpu_admission_limit_bytes() -> u64 {
+    static LIMIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        let total_ram = calibraw_core::system_memory::total_memory_bytes();
+        let limit = android_admission_limit_bytes(total_ram);
+        log::info!(
+            "GPU admission limit {:.1} MiB",
+            limit as f64 / (1024.0 * 1024.0)
+        );
+        limit
+    })
+}
+
+/// No limit on a computer: real OOM is reported by the GPU error scopes.
+#[cfg(not(target_os = "android"))]
+pub(super) fn gpu_admission_limit_bytes() -> u64 {
+    u64::MAX
+}
+
+/// The Android admission limit for `total_ram_bytes` of device RAM: a fixed
+/// share, never below the working-set budget or above the ceiling.
+#[cfg(target_os = "android")]
+fn android_admission_limit_bytes(total_ram_bytes: Option<u64>) -> u64 {
+    let budget = android_working_set_limit_bytes(total_ram_bytes);
+    total_ram_bytes.map_or(budget, |ram| {
+        (ram / ANDROID_GPU_ADMISSION_RAM_DIVISOR)
+            .min(ANDROID_GPU_ADMISSION_CEILING_BYTES)
+            .max(budget)
+    })
+}
+
+/// The working-set budget previews, export tiles and quality tiers are sized
+/// against; allocations are admitted up to [`gpu_admission_limit_bytes`].
 #[cfg(target_os = "android")]
 pub(super) fn gpu_working_set_limit_bytes() -> u64 {
     // Previews are sized against the fixed 384 MiB budget and together reserve

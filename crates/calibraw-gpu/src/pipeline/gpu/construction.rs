@@ -245,8 +245,7 @@ impl RawGpuPipeline {
             ai_cfa: has_ai_cfa,
             cfa_kind: raw.cfa_kind,
         })?;
-        let gpu_budget_reservation =
-            GpuBudgetReservation::acquire(&resource_plan, gpu_working_set_limit_bytes())?;
+        let gpu_budget_reservation = GpuBudgetReservation::acquire(&resource_plan)?;
 
         let gpu_error_scopes = GpuErrorScopes::push(device);
 
@@ -353,6 +352,7 @@ impl RawGpuPipeline {
             post_blur_render_pass,
             output_image_in_tex2: AtomicBool::new(true),
             output_resume: Mutex::new(OutputResume::new()),
+            unrendered: Mutex::default(),
             tone_build: BuildRevision::new(),
             inherited_tone: std::sync::atomic::AtomicU64::new(0),
             binned_finish_pass,

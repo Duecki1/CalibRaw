@@ -236,6 +236,7 @@ fn apply_mask_focus_blurs(pos: vec2<i32>, source_rgb: vec3<f32>, diffused: vec3<
 
         var adjusted = source_rgb;
         if effect_id == MASK_EFFECT_DEFOCUS_ID {
+            if !defocus_result_ready(index) { continue; }
             adjusted = mask_defocus_at(pos, index);
         } else if effect_id == MASK_EFFECT_LENS_BLUR_ID {
             adjusted = mask_lens_blur_at(pos, params, mask);

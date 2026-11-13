@@ -234,6 +234,22 @@ gathers (about 145 ms): P3.
 
 ### P3. Exact Lens Blur savings (no output change)
 
+Done so far (2026-11-14, uncommitted), found on the phone: its 2555×1704
+high-DPI preview asked 1.3 GB for Lens Blur's local textures, above the
+Android budget, and the preview turned black.
+
+- Memory: the local bins share one group of five source layers per slot
+  (each bin's gather follows its sources) and the sources keep only the bins'
+  mips: 1.3 GB → about 0.79 GB at 2555×1704. Bit-identical on every parity
+  case in Final and Draft.
+- A Lens Blur whose textures are missing leaves the image unblurred
+  (`defocus_result_ready`), not black; effects that do not fit are reported
+  (`UnrenderedEffect`): an error dialog in previews, a failed export.
+- Android admits allocations up to RAM / 4 (at most 3 GiB) while previews and
+  export tiles keep being sized against RAM / 8.
+
+Still open:
+
 - Occupancy skip for map bins, as local bins have it (a skipped group writes
   zeros, and the composite reads a slab's fill only where the slab covers).
 - Cache the map: it depends on the blur input, the depth and Lens Blur's

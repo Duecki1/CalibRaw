@@ -379,11 +379,8 @@ impl LookLutInputs {
 
     /// A texture for `size`³ texels with its budget reservation.
     fn reserved(device: &wgpu::Device, size: u32) -> Result<Self> {
-        let reservation = GpuBudgetReservation::acquire_bytes(
-            "LUT texture",
-            look_lut_texture_bytes(size)?,
-            gpu_working_set_limit_bytes(),
-        )?;
+        let reservation =
+            GpuBudgetReservation::acquire_bytes("LUT texture", look_lut_texture_bytes(size)?)?;
         Ok(Self::new(device, size, Some(reservation)))
     }
 
@@ -1235,10 +1232,10 @@ impl EffectInputs {
         bake: &SceneBake,
         programs: &SceneLightPrograms,
         region: SceneAirLightRegion,
-    ) {
+    ) -> Result<()> {
         let groups = bake.air_light_groups();
         if groups == 0 {
-            return;
+            return Ok(());
         }
         let mut allocated = self.lock();
         let fits = allocated
@@ -1250,23 +1247,20 @@ impl EffectInputs {
             let reservation = GpuBudgetReservation::acquire_bytes(
                 "scene air light",
                 AirLightInputs::bytes(region.size, groups),
-                gpu_working_set_limit_bytes(),
             );
-            match reservation {
-                Ok(reservation) => {
-                    allocated.air_light = Some(AirLightInputs::new(
-                        &self.device,
-                        region.size,
-                        groups,
-                        Some(reservation),
-                    ));
-                }
-                Err(error) => log::error!("scene air light not allocated: {error:#}"),
-            }
+            let reservation = reservation.map(|reservation| {
+                allocated.air_light = Some(AirLightInputs::new(
+                    &self.device,
+                    region.size,
+                    groups,
+                    Some(reservation),
+                ));
+            });
             self.rebind(&mut allocated);
+            reservation?;
         }
         let Some(air) = allocated.air_light.as_mut() else {
-            return;
+            return Ok(());
         };
         let target = SceneAirLightTarget {
             texture: &air.texture,
@@ -1275,6 +1269,7 @@ impl EffectInputs {
         let built =
             bake.encode_air_light(&self.device, encoder, programs, &target, region, air.built);
         air.built = built;
+        Ok(())
     }
 
     /// Allocates the Glow's near pyramid for `layers` slots of an image of

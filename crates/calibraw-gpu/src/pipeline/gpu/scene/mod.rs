@@ -24,7 +24,7 @@ pub(super) mod lights;
 
 use super::{
     create_gpu_buffer, create_initialized_buffer, create_processing_texture_array,
-    gpu_working_set_limit_bytes, texture_size, GpuBudgetReservation, RenderTier,
+    gpu_working_set_limit_bytes, texture_size, EffectResource, GpuBudgetReservation, RenderTier,
 };
 use anyhow::Result;
 use calibraw_core::pipeline::{DisparityMap, MaskImage, SceneCamera, SceneDepth};
@@ -204,11 +204,7 @@ impl SceneBake {
             + texels * 8 * 4 / 3
             + texels * SCRATCH_TEXEL_BYTES
             + SCENE_FOCUS_BYTES;
-        let reservation = GpuBudgetReservation::acquire_bytes(
-            "scene bake",
-            bytes,
-            gpu_working_set_limit_bytes(),
-        )?;
+        let reservation = GpuBudgetReservation::acquire_bytes("scene bake", bytes)?;
         let layers = create_processing_texture_array(
             device,
             width,
@@ -495,11 +491,7 @@ impl SceneBakeInputs {
             .collect();
         let bytes =
             disparity.values.len() as u64 * 4 + sky.values.len() as u64 + normals.len() as u64;
-        let reservation = GpuBudgetReservation::acquire_bytes(
-            "scene depth inputs",
-            bytes,
-            gpu_working_set_limit_bytes(),
-        )?;
+        let reservation = GpuBudgetReservation::acquire_bytes("scene depth inputs", bytes)?;
         let texture =
             |[width, height]: [u32; 2], format, label, bytes_per_texel: u32, data: &[u8]| {
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -670,16 +662,23 @@ impl super::RawGpuPipeline {
         let bake = self
             .effect_inputs
             .allocate_scene_bake(size)
-            .inspect_err(|error| log::error!("scene bake not allocated: {error:#}"))
-            .ok()?;
-        match depth {
-            Some(depth) => bake
-                .upload_depth(self.effect_inputs.device(), queue, depth)
-                .inspect_err(|error| log::error!("scene depth not uploaded: {error:#}"))
-                .ok()?,
-            None => bake.clear_depth(queue),
+            .and_then(|bake| {
+                match depth {
+                    Some(depth) => bake.upload_depth(self.effect_inputs.device(), queue, depth)?,
+                    None => bake.clear_depth(queue),
+                }
+                Ok(bake)
+            });
+        match bake {
+            Ok(bake) => {
+                self.note_effect_allocation(EffectResource::SceneBake, Ok(()));
+                Some(bake)
+            }
+            Err(error) => {
+                self.note_effect_allocation(EffectResource::SceneBake, Err(error));
+                None
+            }
         }
-        Some(bake)
     }
 
     /// Uploads `params`' depth result to the bake: one this pipeline owns for
@@ -701,15 +700,19 @@ impl super::RawGpuPipeline {
                 .as_ref()
                 .filter(|_| params.needs_scene_geometry())
             {
-                if let Err(error) = bake.upload_depth(device, queue, depth) {
-                    log::error!("scene depth not uploaded: {error:#}");
-                }
+                self.note_effect_allocation(
+                    EffectResource::SceneBake,
+                    bake.upload_depth(device, queue, depth),
+                );
             }
             Some(bake)
         };
         if let Some(bake) = bake {
             if params.needs_light_bake() {
-                bake.prepare_lights(device, queue, &params.scene_light_set());
+                self.note_effect_allocation(
+                    EffectResource::LightBake,
+                    bake.prepare_lights(device, queue, &params.scene_light_set()),
+                );
             }
         }
     }
@@ -747,11 +750,14 @@ impl super::RawGpuPipeline {
                 Ok(programs) => {
                     bake.encode_lights(device, encoder, programs.lights());
                     if params.needs_air_light() {
-                        self.effect_inputs.encode_air_light(
-                            encoder,
-                            &bake,
-                            programs.lights(),
-                            self.air_light_region(params.render_tier()),
+                        self.note_effect_allocation(
+                            EffectResource::AirLight,
+                            self.effect_inputs.encode_air_light(
+                                encoder,
+                                &bake,
+                                programs.lights(),
+                                self.air_light_region(params.render_tier()),
+                            ),
                         );
                     }
                 }

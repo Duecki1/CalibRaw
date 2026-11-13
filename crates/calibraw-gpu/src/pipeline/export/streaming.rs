@@ -395,6 +395,10 @@ where
             let params = tile_inputs.upload(tile, global_index, &mut tile_scratch)?;
             tile_inputs.load_scene(tile, global_index, &params, raw_stage_store.as_ref())?;
             tile_pipeline.dispatch_export_tile_from_scene(queue, device, &params);
+            // An export must not lack an effect whose resources did not fit.
+            tile_pipeline
+                .ensure_effects_rendered()
+                .with_context(|| format!("render export tile {}", global_index + 1))?;
             let readback = tile_pipeline
                 .begin_display_linear_region_readback(
                     device,

@@ -192,6 +192,16 @@ fn defocus_layer_of(index: u32) -> u32 {
     return layer;
 }
 
+// Whether the result holds Lens Blur slot `index` at this pipeline's size. A
+// pipeline whose textures could not be allocated binds a 1x1 placeholder, and
+// its slots then leave the image unblurred (pipeline/gpu/unrendered.rs).
+fn defocus_result_ready(index: u32) -> bool {
+    let size = textureDimensions(defocus_result_tex);
+    return size.x == Common::camera_uniforms.width
+        && size.y == Common::camera_uniforms.height
+        && defocus_layer_of(index) < textureNumLayers(defocus_result_tex);
+}
+
 // The blurred image of Lens Blur slot `index` at tile pixel `pos`, for the
 // first Blur stage.
 fn mask_defocus_at(pos: vec2<i32>, index: u32) -> vec3<f32> {
@@ -736,11 +746,14 @@ fn defocus_focus_source(pos: vec2<i32>, layer: u32) -> DefocusFocusSource {
 // --- Bin sources ---
 
 // Sources of local bin `defocus_pass.bin` at its level: per texel, the mean
-// of the 2^level × 2^level pixels it covers on the full image's grid.
+// of the 2^level × 2^level pixels it covers on the full image's grid. The
+// local bins share one group of source layers per slot: each bin's gather
+// runs right after its sources are built (pipeline/gpu/defocus.rs), so a
+// full-resolution texture holds five layers per slot, not fifteen.
 @compute @workgroup_size(8, 8, 1)
 fn build_defocus_sources(@builtin(global_invocation_id) gid: vec3<u32>) {
     let size = textureDimensions(defocus_sources_out);
-    let capacity = textureNumLayers(defocus_sources_out) / (DEFOCUS_LOCAL_BINS * DEFOCUS_SOURCE_LAYERS);
+    let capacity = textureNumLayers(defocus_sources_out) / DEFOCUS_SOURCE_LAYERS;
     let layers = defocus_layer_count(capacity);
     if any(gid.xy >= size) || gid.z >= layers { return; }
     let bin = defocus_pass.bin;
@@ -759,7 +772,7 @@ fn build_defocus_sources(@builtin(global_invocation_id) gid: vec3<u32>) {
             defocus_add_pixel(&sums, first + vec2<i32>(x, y), position, index, params, bin, surround);
         }
     }
-    let layer = (gid.z * DEFOCUS_LOCAL_BINS + bin) * DEFOCUS_SOURCE_LAYERS;
+    let layer = gid.z * DEFOCUS_SOURCE_LAYERS;
     defocus_store_sources(vec2<i32>(gid.xy), layer, sums, f32(step * step));
     if sums.front.w + sums.back.w > 0.0 {
         let block = vec2<i32>(gid.xy) / DEFOCUS_BIN_BLOCK;
@@ -848,7 +861,10 @@ fn gather_defocus(
     let index = defocus_slot(gid.z);
     let params = mask_effect_params(index);
     let aperture = defocus_aperture(params);
-    let source_layer = (gid.z * DEFOCUS_LOCAL_BINS + source_bin) * DEFOCUS_SOURCE_LAYERS;
+    // Local bins share their slot's source layers (`build_defocus_sources`);
+    // the map keeps a group per bin.
+    let source_group = select(gid.z * DEFOCUS_LOCAL_BINS + source_bin, gid.z, local);
+    let source_layer = source_group * DEFOCUS_SOURCE_LAYERS;
     let source_size = vec2<i32>(textureDimensions(defocus_sources_tex, mip));
     // The output texel's centre in source texels (centres at integers).
     let here = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / fineness - vec2<f32>(0.5);

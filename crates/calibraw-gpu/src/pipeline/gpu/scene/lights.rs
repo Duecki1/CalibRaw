@@ -252,11 +252,7 @@ impl SceneLightBake {
         let bytes = u64::from(face_texels).pow(2) * 4 * u64::from(cube_layers)
             + texels * 4 * 5 / 4
             + texels * 4 * 2 * u64::from(groups);
-        let reservation = GpuBudgetReservation::acquire_bytes(
-            "scene light bake",
-            bytes,
-            gpu_working_set_limit_bytes(),
-        )?;
+        let reservation = GpuBudgetReservation::acquire_bytes("scene light bake", bytes)?;
         let cubes = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("calibraw scene shadow cubes"),
             size: wgpu::Extent3d {
@@ -623,15 +619,15 @@ impl SceneLightPrograms {
 impl SceneBake {
     /// Allocates the light bake on first use and uploads `set`'s lights for
     /// the next `encode_lights`. Nothing happens before a depth result is
-    /// uploaded.
+    /// uploaded. Fails when the light bake cannot be allocated.
     pub(super) fn prepare_lights(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         set: &SceneLightSet,
-    ) {
+    ) -> anyhow::Result<()> {
         let Some(camera) = self.camera() else {
-            return;
+            return Ok(());
         };
         let needed = set
             .lights
@@ -643,7 +639,7 @@ impl SceneBake {
             if let Some(lights) = guard.as_mut() {
                 lights.pending = None;
             }
-            return;
+            return Ok(());
         }
         if guard.as_ref().is_none_or(|bake| bake.capacity < needed) {
             // Room for every light of a group, so the array rarely grows.
@@ -655,14 +651,11 @@ impl SceneBake {
                     self.lights_revision
                         .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 }
-                Err(error) => {
-                    log::error!("scene light bake not allocated: {error:#}");
-                    return;
-                }
+                Err(error) => return Err(error),
             }
         }
         let Some(lights) = guard.as_mut() else {
-            return;
+            return Ok(());
         };
         let quality = set.quality;
         let face_texels = quality.face_texels().min(lights.face_texels);
@@ -711,6 +704,7 @@ impl SceneBake {
             uniform,
             camera,
         });
+        Ok(())
     }
 
     /// Encodes what of the light bake is outdated for the lights
