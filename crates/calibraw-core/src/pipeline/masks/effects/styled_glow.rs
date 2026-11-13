@@ -35,6 +35,13 @@
 //!   beyond the light that emits, [`AMOUNT_BOOST_STOPS`] stops more at 200,
 //!   as Oniric's glow Exposure does; Diffusion then adds light as well as
 //!   moving it.
+//! - Core, as Oniric's Core Opacity, sets how bright the glow's hottest light
+//!   may get: below 100 the light it adds rolls off softly under a limit,
+//!   which at 0 is the level where the view transform starts to turn a colour
+//!   white, so a bright glow keeps its colour instead of burning white. The
+//!   limit doubles by Core 50 and grows without bound toward 100. The
+//!   roll-off scales all channels alike, which keeps the hue
+//!   (styled_glow.wgsl).
 //! - Warmth tints the spread light: along the Planckian locus from cool to
 //!   warm, or from yellow to deep red for Halation.
 //! - Dispersion scales the kernel of each primary by its wavelength, as
@@ -216,6 +223,8 @@ impl GlowSplitMode {
 pub struct StyledGlowEffectSettings {
     pub style: GlowStyle,
     pub amount: f32,
+    /// How much of the glow's hottest light is kept.
+    pub core: f32,
     pub range: f32,
     pub spread: f32,
     pub warmth: f32,
@@ -241,6 +250,7 @@ impl Default for StyledGlowEffectSettings {
         Self {
             style: GlowStyle::Bloom,
             amount: AMOUNT.default,
+            core: CORE.default,
             range: RANGE.default,
             spread: SPREAD.default,
             warmth: WARMTH.default,
@@ -297,6 +307,9 @@ effect_lanes! {
     /// Split's Shift: the direction red moves toward, in radians, in the full
     /// image's pixels with y down, as DIRECTION.
     SPLIT_DIRECTION = 14,
+    /// Core as 0 to 1: the glow's light rolls off under a limit that grows
+    /// with it, without bound at 1, which leaves the glow as it is.
+    CORE = 15,
 }
 
 /// Stops Amount 200 brightens the spread light by over Amount 100, evenly
@@ -403,6 +416,7 @@ impl EffectSettings for StyledGlowEffectSettings {
     fn controls(&mut self) -> EffectControls<'_> {
         let mut controls = vec![
             EffectControl::Slider(&mut self.amount, AMOUNT),
+            EffectControl::Slider(&mut self.core, CORE),
             EffectControl::Slider(&mut self.range, RANGE),
             EffectControl::Slider(&mut self.spread, SPREAD),
             EffectControl::Slider(&mut self.warmth, WARMTH),
@@ -439,6 +453,7 @@ impl EffectSettings for StyledGlowEffectSettings {
             (amount, 1.0)
         };
         slot.set_color(lanes::TINT, self.tint().map(|channel| channel * boost));
+        slot.set(lanes::CORE, CORE.clamp(self.core) / 100.0);
         let split = SPLIT.clamp(self.split) / 100.0;
         slot.set(lanes::SPLIT, SPLIT_AT_FULL * split * split);
         slot.set(lanes::SPLIT_MODE, self.split_mode.shader_value());

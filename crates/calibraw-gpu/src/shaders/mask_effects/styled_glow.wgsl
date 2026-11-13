@@ -84,6 +84,19 @@
 //              edges, so a flat bright area takes no cast;
 // - Motion, Streak, Star: C + a · tint · streaks.
 // With Dispersion, K*S and Y(K*S) of each channel take that primary's kernel.
+//
+// Core (`styled_glow_core`). Below 1, the light a slot adds (a · tint · K*S,
+// the halo, the streaks; for Diffusion before S is taken away) rolls off
+// below a limit L = c · 2^(CORE / (1 − CORE)): c at CORE 0, twice it at 0.5,
+// eight times at 0.75, without bound at 1. Its brightest channel m past the
+// knee k = STYLED_GLOW_CORE_KNEE · L becomes L − (L − k)·e^(−(m − k)/(L − k)),
+// which leaves the knee with slope 1 and never reaches L. c is the scene value
+// the edit's sigmoid maps to the start of its path to white
+// (Tonemap::sigmoid_path_to_white), the display value of that start for the
+// other view transforms, so at CORE 0 a glow keeps its colour however bright.
+// All channels scale alike, so the hue holds. The sigmoid sees the photo
+// under the glow too, so where both are bright the sum may still roll off to
+// white.
 
 const STYLED_GLOW_BLOOM: f32 = 0.0;
 const STYLED_GLOW_DIFFUSION: f32 = 1.0;
@@ -100,6 +113,10 @@ const STYLED_GLOW_PRIMARY_OCTAVES: vec3<f32> = vec3<f32>(0.24392558, 0.0, -0.188
 const STYLED_GLOW_PI: f32 = 3.141592653589793;
 // SPLIT_MODE values (GlowSplitMode in styled_glow.rs).
 const STYLED_GLOW_SPLIT_LENS: f32 = 1.0;
+// Where Core's roll-off begins, as a share of the level it stays below: the
+// glow's outer half keeps its falloff, as Oniric counts the inner half of a
+// glow's falloff as its core.
+const STYLED_GLOW_CORE_KNEE: f32 = 0.5;
 // Most taps on either side of the Gaussian across a streak; Softness 100
 // needs about 3 deviations of 20 cells on a 3:2 photo.
 const STYLED_GLOW_ACROSS_TAPS: i32 = 64;
@@ -782,6 +799,43 @@ fn styled_glow_split(pos: vec2<i32>, params: MaskEffectParams) -> vec2<f32> {
     return vec2<f32>(cos(angle), sin(angle)) * distance / full_size;
 }
 
+// --- Core ---
+
+// Whether Core rolls off the slot's light.
+fn styled_glow_core_active(params: MaskEffectParams) -> bool {
+    return mask_effect_lane(params, STYLED_GLOW_CORE_LANE) < 1.0;
+}
+
+// The level Core keeps the glow below: the scene value at which the view
+// transform's path to white begins.
+fn styled_glow_core_ceiling() -> f32 {
+    if Common::camera_uniforms.view_transform_mode == Common::VIEW_TRANSFORM_SCENE_SIGMOID {
+        let curve = Tonemap::edit_sigmoid_curve();
+        if Tonemap::sigmoid_curve_is_valid(curve) {
+            return Tonemap::inverse_loglogistic_curve(
+                Tonemap::SIGMOID_PATH_TO_WHITE_START * curve.white_target,
+                curve,
+            );
+        }
+    }
+    return Tonemap::SIGMOID_PATH_TO_WHITE_START;
+}
+
+// The light `light` (non-negative) a slot adds, its core rolled off below
+// the limit CORE sets.
+fn styled_glow_core(light: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    if !styled_glow_core_active(params) { return light; }
+    let core = max(mask_effect_lane(params, STYLED_GLOW_CORE_LANE), 0.0);
+    // Infinite as CORE nears 1, which leaves the light as it is.
+    let limit = styled_glow_core_ceiling() * exp2(core / (1.0 - core));
+    let knee = STYLED_GLOW_CORE_KNEE * limit;
+    let brightest = max(light.r, max(light.g, light.b));
+    if !(limit > 0.0) || brightest <= knee { return light; }
+    let room = limit - knee;
+    let kept = limit - room * exp(-(brightest - knee) / room);
+    return light * (kept / brightest);
+}
+
 // --- Composite ---
 
 // Adds the light of every Glow slot to `rgb` at tile pixel `pos`. Runs after
@@ -807,7 +861,11 @@ fn apply_styled_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
                 if split_active {
                     streaks = styled_glow_split_read(full_image_uv(pos), split, layer);
                 }
-                result += strength * tint * streaks;
+                if styled_glow_core_active(params) {
+                    result += styled_glow_core(strength * tint * streaks, params);
+                } else {
+                    result += strength * tint * streaks;
+                }
             }
             continue;
         }
@@ -825,13 +883,28 @@ fn apply_styled_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
             luminance = styled_glow_spread_luminance(spread);
         }
         let style = mask_effect_lane(params, STYLED_GLOW_STYLE_LANE);
+        // Without Core each style adds its light as one expression, which the
+        // compiler may fuse into the sum (old edits render bit-identically).
+        let core = styled_glow_core_active(params);
         if style == STYLED_GLOW_BLOOM {
-            result += strength * tint * colour;
+            if core {
+                result += styled_glow_core(strength * tint * colour, params);
+            } else {
+                result += strength * tint * colour;
+            }
         } else if style == STYLED_GLOW_DIFFUSION {
-            result += strength * (tint * colour - source);
+            if core {
+                result += styled_glow_core(strength * tint * colour, params) - strength * source;
+            } else {
+                result += strength * (tint * colour - source);
+            }
         } else {
             let halo = max(luminance - vec3<f32>(dot(source, Common::LUMA)), vec3<f32>(0.0));
-            result += strength * halo * tint;
+            if core {
+                result += styled_glow_core(strength * halo * tint, params);
+            } else {
+                result += strength * halo * tint;
+            }
         }
     }
     return result;

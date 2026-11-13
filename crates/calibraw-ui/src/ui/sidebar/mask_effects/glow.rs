@@ -1,4 +1,4 @@
-//! The Glow's card: its Style, then Amount, Range, Spread and Warmth, whose
+//! The Glow's card: its Style, then Amount, Core, Range, Spread and Warmth, whose
 //! track runs yellow to red for Halation and cool to warm otherwise, as its
 //! tint does (styled_glow.rs in calibraw-core); Star adds its Points, and
 //! Motion, Streak and Star their Direction and Softness. Color separation,
@@ -45,6 +45,7 @@ pub(crate) fn show(
         style,
         |ui, settings| {
             let mut changed = float_param_slider(ui, &mut settings.amount, styled_glow::AMOUNT);
+            changed |= float_param_slider(ui, &mut settings.core, styled_glow::CORE);
             changed |= float_param_slider(ui, &mut settings.range, styled_glow::RANGE);
             changed |= float_param_slider(ui, &mut settings.spread, styled_glow::SPREAD);
             let warmth = match settings.style {
