@@ -3,11 +3,10 @@
     "masks": {
       "global_effects": [
         {
-          "effect": "LensBlur",
+          "effect": "Defocus",
           "settings": {
-            "lens_blur": {
-              "amount": 100.0,
-              "radius": 16.0,
+            "defocus": {
+              "blur_amount": 60.0,
               "highlight_boost": 40.0,
               "focus_by_depth": true,
               "focus_near": 20.0,

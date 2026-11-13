@@ -152,6 +152,7 @@ pub mod blur {
     );
 }
 
+/// The legacy Lens Blur (legacy/lens_blur.rs), as released in v1.4.1.
 pub mod lens_blur {
     use super::*;
 
@@ -205,6 +206,16 @@ pub mod lens_blur {
         0,
         Some("Makes bright out-of-focus highlights stand out."),
     );
+}
+
+/// Lens Blur (defocus.rs). The meaning of each value is set there.
+pub mod defocus {
+    use super::*;
+
+    float_param!(BLUR_AMOUNT, "Blur amount", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(BOOST, "Boost", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(BLADES, "Aperture blades", 3.0, 12.0, 6.0, 1.0, 0, None);
+    float_param!(ROTATION, "Bokeh rotation", -180.0, 180.0, 0.0, 1.0, 0, None);
 
     pub const FOCUS_BY_DEPTH: ToggleSpec = ToggleSpec {
         label: "Focus by depth",
@@ -218,7 +229,9 @@ pub mod lens_blur {
     float_param!(FOCUS_FAR, "Focus far", 0.0, 100.0, 20.0, 0.1, 1, None);
 
     /// Help for the focus range track, on its static label.
-    pub const FOCUS_RANGE_HELP: &str = "Surfaces at these depths stay sharp; blur grows with distance from the range. Radius is the blur at the scene's most out-of-focus end.";
+    pub const FOCUS_RANGE_HELP: &str = "Surfaces at these depths stay sharp; blur grows with distance from the range. Blur amount sets the blur at the scene's most out-of-focus end.";
+    /// Help for the Bokeh shape choice.
+    pub const BOKEH_SHAPE_HELP: &str = "The shape of out-of-focus lights: Circle as a modern lens, Bubble with a bright rim, Blades as a stopped-down aperture, Ring as a mirror lens, Cat's eye narrowing toward the corners as many fast lenses do.";
 }
 
 pub mod motion_blur {

@@ -3,7 +3,7 @@ use super::{
     StyleChoice,
 };
 use crate::i18n::tr;
-use crate::pipeline::{effect_params::lens_blur, LensBlurEffectSettings, MaskEffect};
+use crate::pipeline::{effect_params::defocus, BokehShape, DefocusEffectSettings, MaskEffect};
 use crate::ui::components::feathered_range::{
     self, EndEdit, FeatheredRange, RangeEdit, RangeHandle, RangePoints,
 };
@@ -24,7 +24,7 @@ struct FocusRange {
 }
 
 impl FocusRange {
-    fn of(settings: &LensBlurEffectSettings) -> Self {
+    fn of(settings: &DefocusEffectSettings) -> Self {
         Self {
             near: settings.focus_near,
             far: settings.focus_far,
@@ -33,10 +33,10 @@ impl FocusRange {
 
     /// The ends on the track, near first, as the shader reads them.
     fn ends(self) -> [f32; 2] {
-        LensBlurEffectSettings {
+        DefocusEffectSettings {
             focus_near: self.near,
             focus_far: self.far,
-            ..LensBlurEffectSettings::default()
+            ..DefocusEffectSettings::default()
         }
         .focus_range()
     }
@@ -44,7 +44,7 @@ impl FocusRange {
 
 /// A track place in stored units: percent, at the sliders' precision.
 fn stored_percent(place: f32) -> f32 {
-    feathered_range::round_to(place * 100.0, lens_blur::FOCUS_NEAR.decimals as i32)
+    feathered_range::round_to(place * 100.0, defocus::FOCUS_NEAR.decimals as i32)
 }
 
 /// The place an end's edit moves it to; a range without fades is only ever
@@ -72,10 +72,10 @@ impl FeatheredRange for FocusRange {
 
     fn set_points(&mut self, edit: RangeEdit) {
         if let Some(start) = edit.start {
-            self.near = lens_blur::FOCUS_NEAR.clamp(stored_percent(edited_place(start)));
+            self.near = defocus::FOCUS_NEAR.clamp(stored_percent(edited_place(start)));
         }
         if let Some(end) = edit.end {
-            self.far = lens_blur::FOCUS_FAR.clamp(stored_percent(edited_place(end)));
+            self.far = defocus::FOCUS_FAR.clamp(stored_percent(edited_place(end)));
         }
         // Rounding must not leave Near past Far; the end this step moved
         // yields, so an untouched end stays exact.
@@ -91,10 +91,10 @@ impl FeatheredRange for FocusRange {
     fn handle_text(&self, handle: RangeHandle) -> String {
         match handle {
             RangeHandle::Start | RangeHandle::StartFeather => {
-                format!("{} {:.1}", tr(lens_blur::FOCUS_NEAR.label), self.near)
+                format!("{} {:.1}", tr(defocus::FOCUS_NEAR.label), self.near)
             }
             RangeHandle::End | RangeHandle::EndFeather => {
-                format!("{} {:.1}", tr(lens_blur::FOCUS_FAR.label), self.far)
+                format!("{} {:.1}", tr(defocus::FOCUS_FAR.label), self.far)
             }
         }
     }
@@ -106,8 +106,8 @@ impl FeatheredRange for FocusRange {
     }
 
     fn reset(&mut self) {
-        self.near = lens_blur::FOCUS_NEAR.default;
-        self.far = lens_blur::FOCUS_FAR.default;
+        self.near = defocus::FOCUS_NEAR.default;
+        self.far = defocus::FOCUS_FAR.default;
     }
 }
 
@@ -151,12 +151,12 @@ pub(crate) fn focus_range_adjusting(ctx: &egui::Context) -> Option<[f32; 2]> {
         .map(|(_, range)| range)
 }
 
-fn focus_range(ui: &mut Ui, settings: &mut LensBlurEffectSettings) -> bool {
+fn focus_range(ui: &mut Ui, settings: &mut DefocusEffectSettings) -> bool {
     let mut range = FocusRange::of(settings);
     let before = range;
     let label = tr("Focus range");
     ui.label(label)
-        .on_hover_text(tr(lens_blur::FOCUS_RANGE_HELP));
+        .on_hover_text(tr(defocus::FOCUS_RANGE_HELP));
     let background = focus_track_background(ui.visuals(), range.ends());
     let response = feathered_range::feathered_range_track(ui, &mut range, label, background);
     settings.focus_near = range.near;
@@ -170,35 +170,62 @@ fn focus_range(ui: &mut Ui, settings: &mut LensBlurEffectSettings) -> bool {
     range != before
 }
 
-/// The card: the blur, Focus by depth with its focus range, then the
-/// aperture under its details.
+/// The Bokeh shape's choice, with what the shapes look like as its tooltip.
+fn bokeh_shape(ui: &mut Ui, shape: &mut BokehShape) -> bool {
+    let before = *shape;
+    moduwu_design::form_combo_with_help(
+        ui,
+        &tr("Bokeh shape"),
+        "lens-blur-bokeh-shape",
+        tr(shape.label()),
+        240.0,
+        &tr(defocus::BOKEH_SHAPE_HELP),
+        |ui| {
+            for option in BokehShape::ALL {
+                if ui
+                    .selectable_label(option == *shape, tr(option.label()))
+                    .clicked()
+                {
+                    *shape = option;
+                }
+            }
+        },
+    );
+    *shape != before
+}
+
+/// The card: the blur, the bokeh, Focus by depth with its focus range, then
+/// the Blades aperture under its details.
 pub(crate) fn show(
     ui: &mut Ui,
-    settings: &mut LensBlurEffectSettings,
+    settings: &mut DefocusEffectSettings,
     enabled: &mut bool,
     remove: &mut bool,
     style: Option<&mut StyleChoice>,
 ) -> bool {
     styled_effect_card(
         ui,
-        MaskEffect::LensBlur,
+        MaskEffect::Defocus,
         settings,
         enabled,
         remove,
         style,
         |ui, settings| {
-            let mut changed = float_param_slider(ui, &mut settings.amount, lens_blur::AMOUNT);
-            changed |= float_param_slider(ui, &mut settings.radius, lens_blur::RADIUS);
-            changed |= float_param_slider(ui, &mut settings.highlight_boost, lens_blur::HIGHLIGHTS);
-            changed |= effect_toggle(ui, &mut settings.focus_by_depth, lens_blur::FOCUS_BY_DEPTH);
+            let mut changed =
+                float_param_slider(ui, &mut settings.blur_amount, defocus::BLUR_AMOUNT);
+            changed |= bokeh_shape(ui, &mut settings.shape);
+            changed |= float_param_slider(ui, &mut settings.highlight_boost, defocus::BOOST);
+            changed |= effect_toggle(ui, &mut settings.focus_by_depth, defocus::FOCUS_BY_DEPTH);
             if settings.focus_by_depth {
                 changed |= focus_range(ui, settings);
             }
-            changed |= effect_details(ui, tr("Aperture details"), |ui| {
-                let mut changed = float_param_slider(ui, &mut settings.blades, lens_blur::BLADES);
-                changed |= float_param_angle(ui, &mut settings.rotation, lens_blur::ROTATION);
-                changed
-            });
+            if settings.shape == BokehShape::Blades {
+                changed |= effect_details(ui, tr("Aperture details"), |ui| {
+                    let mut changed = float_param_slider(ui, &mut settings.blades, defocus::BLADES);
+                    changed |= float_param_angle(ui, &mut settings.rotation, defocus::ROTATION);
+                    changed
+                });
+            }
             changed
         },
     )

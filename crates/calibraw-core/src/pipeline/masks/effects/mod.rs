@@ -9,6 +9,7 @@
 //! whether scene depth is generated.
 
 mod blur;
+mod defocus;
 mod edge_glow;
 mod families;
 mod fog;
@@ -17,7 +18,6 @@ mod grain;
 mod instances;
 mod lanes;
 mod legacy;
-mod lens_blur;
 mod light_shafts;
 mod motion_blur;
 mod neon;
@@ -37,6 +37,7 @@ mod warmth;
 mod wet_surfaces;
 
 pub use blur::BlurEffectSettings;
+pub use defocus::{BokehShape, DefocusEffectSettings};
 pub use edge_glow::EdgeGlowEffectSettings;
 pub use families::{EffectFamily, EffectStyle};
 pub use fog::FogEffectSettings;
@@ -46,8 +47,8 @@ pub use instances::{EffectInstances, MAX_EFFECT_INSTANCES};
 pub use lanes::{ColorLane, EffectLanes, EffectOption, Lane, LaneName, PackContext, OPTION_COUNT};
 pub use legacy::halation::HalationEffectSettings;
 pub use legacy::highlight_glow::LegacyHighlightGlowEffectSettings;
+pub use legacy::lens_blur::LensBlurEffectSettings;
 pub use legacy::light_rays::LightRaysEffectSettings;
-pub use lens_blur::LensBlurEffectSettings;
 pub use light_shafts::{LightShaftSource, LightShaftsEffectSettings, LightShaftsMode};
 pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
@@ -66,7 +67,7 @@ pub use wet_surfaces::WetSurfacesEffectSettings;
 
 // The legacy effects' settings modules, by their settings fields, as the
 // registry names them.
-use legacy::{halation, highlight_glow as legacy_highlight_glow, light_rays};
+use legacy::{halation, highlight_glow as legacy_highlight_glow, lens_blur, light_rays};
 
 use crate::pipeline::processing::{
     CAPTURE_SHARPEN_SUPPORT, EDGE_GLOW_SUPPORT, FOCUS_BLUR_SUPPORT, GLOW_SUPPORT,
@@ -334,15 +335,14 @@ mask_effects! {
         reach: MaskBlur(MASK_BLUR_SUPPORT),
     }
     LensBlur {
-        label: "Lens Blur",
-        description: "Defocus backgrounds with aperture-shaped bokeh. With Focus by depth, surfaces in the focus range stay sharp and blur grows with distance from it; scene depth is generated automatically. The mask controls where it blurs.",
+        label: "Lens Blur (legacy)",
+        description: "The earlier Lens Blur, which blurred the mask evenly with a polygon aperture. Replace it with the new Lens Blur.",
         shader_id: 7,
         category: BlurAndFocus,
-        family: Blur,
+        family: LegacyLensBlur,
         settings: lens_blur: LensBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
-        scene: [Geometry],
     }
     MotionBlur {
         label: "Motion Blur",
@@ -550,6 +550,17 @@ mask_effects! {
         reach: Pixel,
         scene: [AirLight],
     }
+    Defocus {
+        label: "Lens Blur",
+        description: "Defocus the photo as a fast lens would: surfaces in the focus range stay sharp, the rest falls out of focus with its distance from it, and lights become discs of the bokeh shape. Scene depth is generated automatically; with Focus by depth off the mask blurs evenly. The mask controls where it blurs.",
+        shader_id: 23,
+        category: BlurAndFocus,
+        family: Blur,
+        settings: defocus: DefocusEffectSettings,
+        passes: [Blur],
+        reach: FocusBlur(FOCUS_BLUR_SUPPORT),
+        scene: [Geometry],
+    }
 }
 
 impl MaskEffect {
@@ -557,7 +568,7 @@ impl MaskEffect {
     pub const ALL: [Self; Self::COUNT] = [
         Self::Adjustment,
         Self::Blur,
-        Self::LensBlur,
+        Self::Defocus,
         Self::MotionBlur,
         Self::RadialBlur,
         Self::Sharpen,
@@ -578,6 +589,7 @@ impl MaskEffect {
         Self::Halation,
         Self::LegacyHighlightGlow,
         Self::LightRays,
+        Self::LensBlur,
     ];
 
     /// Switched off: never offered and never rendered (2026-11-07; Rain and Wet
@@ -594,7 +606,7 @@ impl MaskEffect {
     pub const fn is_legacy(self) -> bool {
         matches!(
             self,
-            Self::Halation | Self::LegacyHighlightGlow | Self::LightRays
+            Self::Halation | Self::LegacyHighlightGlow | Self::LightRays | Self::LensBlur
         )
     }
 
@@ -611,6 +623,7 @@ impl MaskEffect {
             Self::Halation => Some(EffectStyle::glow(GlowStyle::Halation)),
             Self::LegacyHighlightGlow => Some(EffectStyle::glow(GlowStyle::Bloom)),
             Self::LightRays => Some(EffectStyle::light_shafts(LightShaftsMode::Flat)),
+            Self::LensBlur => Some(EffectStyle::plain(Self::Defocus)),
             _ => None,
         }
     }

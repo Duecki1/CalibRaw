@@ -4,7 +4,7 @@
 //! scatter, the contours and the light that Glow and Neon emit into the scene,
 //! the haze map Dehaze applies, the LUT the view pass applies, the scene
 //! bake (`scene`), whose working image a pass of this pipeline accumulates,
-//! and the Glow's pyramids (`styled_glow`).
+//! the Glow's pyramids (`styled_glow`) and Lens Blur's textures (`defocus`).
 //!
 //! Until then the passes that read them are bound to placeholders of one
 //! texel, so a pipeline whose edits never use these effects holds none of their
@@ -21,6 +21,9 @@
 //! pipeline takes their bind groups from [`EffectInputs::bind_group`], which
 //! follow the allocation.
 
+use super::defocus::{
+    DefocusBindGroups, DefocusInputs, DefocusMap, DefocusSources, DEFOCUS_PASSES,
+};
 use super::scene::{
     air_light_layers, SceneAirLightKey, SceneAirLightRegion, SceneAirLightTarget,
     SceneAirLightUniform, SceneBakePrograms, SceneLightPrograms, SceneShadowLightsUniform,
@@ -95,6 +98,9 @@ pub(super) enum InputBoundPass {
     /// One of the Glow's programs, in pass order. The pass list records the
     /// bind group of its first dispatch; `styled_glow` dispatches every one.
     StyledGlow(usize),
+    /// One of Lens Blur's programs, in pass order; `defocus` dispatches
+    /// every one with its own bind groups.
+    Defocus(usize),
 }
 
 /// Bind groups of every [`InputBoundPass`].
@@ -110,6 +116,7 @@ struct InputBindGroups {
     scene_emission: [wgpu::BindGroup; SCENE_EMISSION_PASSES],
     scene_bake_accumulation: wgpu::BindGroup,
     styled_glow: StyledGlowBindGroups,
+    defocus: DefocusBindGroups,
 }
 
 impl InputBindGroups {
@@ -126,6 +133,7 @@ impl InputBindGroups {
             InputBoundPass::SceneEmission(index) => &self.scene_emission[index],
             InputBoundPass::SceneBakeAccumulation => &self.scene_bake_accumulation,
             InputBoundPass::StyledGlow(program) => self.styled_glow.first(program),
+            InputBoundPass::Defocus(program) => self.defocus.first(program),
         }
     }
 }
@@ -142,6 +150,7 @@ pub(super) struct InputBindingSources {
     pub(super) scene_emission_layouts: [wgpu::BindGroupLayout; SCENE_EMISSION_PASSES],
     pub(super) scene_bake_accumulation_layout: wgpu::BindGroupLayout,
     pub(super) styled_glow_layouts: [wgpu::BindGroupLayout; STYLED_GLOW_PASSES],
+    pub(super) defocus_layouts: [wgpu::BindGroupLayout; DEFOCUS_PASSES],
     pub(super) camera_uniforms: wgpu::Buffer,
     pub(super) mask_data: wgpu::Buffer,
     pub(super) tone_stats: wgpu::Buffer,
@@ -414,6 +423,7 @@ struct BoundInputs<'a> {
     scene_bake: SceneBakeBindings<'a>,
     air_light: &'a AirLightInputs,
     styled_glow: &'a StyledGlowInputs,
+    defocus: &'a DefocusInputs,
 }
 
 /// This pipeline's air light (`scene::lights`, air_light.wgsl): a texture
@@ -658,6 +668,21 @@ impl InputBindingSources {
     fn bind_groups(&self, device: &wgpu::Device, inputs: &BoundInputs<'_>) -> InputBindGroups {
         let haze = inputs.haze;
         let (styled_glow_near, styled_glow_map) = inputs.styled_glow.creative_views();
+        let defocus = inputs.defocus.bind_groups(
+            device,
+            &DefocusSources {
+                layouts: &self.defocus_layouts,
+                camera_uniforms: &self.camera_uniforms,
+                mask_data: &self.mask_data,
+                profile: &self.profile,
+                scene: &self.scene,
+                tex1: &self.tex1,
+                mask: &self.mask,
+                mask_sampler: &self.mask_sampler,
+                scene_bake_uniforms: inputs.scene_bake.uniforms,
+                scene_bake_layers: inputs.scene_bake.layers,
+            },
+        );
         let scene_preparation = create_bind_group(
             device,
             "bg adjustment preparation",
@@ -712,6 +737,7 @@ impl InputBindingSources {
                     buffer_binding(20, &self.profile),
                     texture_binding(118, styled_glow_near),
                     texture_binding(119, styled_glow_map),
+                    texture_binding(124, &defocus.result),
                 ],
             )
         };
@@ -928,6 +954,7 @@ impl InputBindingSources {
                     mask_sampler: &self.mask_sampler,
                 },
             ),
+            defocus,
         }
     }
 }
@@ -949,6 +976,7 @@ struct Allocated {
     /// This pipeline's air light, when an effect reads it.
     air_light: Option<AirLightInputs>,
     styled_glow: StyledGlowInputs,
+    defocus: DefocusInputs,
     bind_groups: InputBindGroups,
 }
 
@@ -986,6 +1014,7 @@ impl EffectInputs {
         let placeholder_scene_bake = PlaceholderSceneBake::new(device, &scene_compare);
         let placeholder_air_light = AirLightInputs::new(device, [1, 1], 1, None);
         let styled_glow = StyledGlowInputs::new(device);
+        let defocus = DefocusInputs::new(device);
         let bind_groups = sources.bind_groups(
             device,
             &BoundInputs {
@@ -997,6 +1026,7 @@ impl EffectInputs {
                 scene_bake: placeholder_scene_bake.bindings(),
                 air_light: &placeholder_air_light,
                 styled_glow: &styled_glow,
+                defocus: &defocus,
             },
         );
         Self {
@@ -1022,6 +1052,7 @@ impl EffectInputs {
                 bound_lights_revision: 0,
                 air_light: None,
                 styled_glow,
+                defocus,
                 bind_groups,
             }),
         }
@@ -1169,6 +1200,7 @@ impl EffectInputs {
                     .as_ref()
                     .unwrap_or(&self.placeholder_air_light),
                 styled_glow: &allocated.styled_glow,
+                defocus: &allocated.defocus,
             },
         );
         allocated.bound_lights_revision = revision;
@@ -1299,6 +1331,71 @@ impl EffectInputs {
     /// The bind groups of the Glow's passes.
     pub(super) fn styled_glow_bind_groups(&self) -> StyledGlowBindGroups {
         self.lock().bind_groups.styled_glow.clone()
+    }
+
+    /// Allocates Lens Blur's local textures for `layers` slots of an image of
+    /// `image` pixels whose full image's shorter edge is `short` pixels,
+    /// unless ones that hold them exist.
+    pub(super) fn allocate_defocus_local(
+        &self,
+        image: [u32; 2],
+        short: u32,
+        layers: u32,
+    ) -> Result<()> {
+        let mut allocated = self.lock();
+        if allocated.defocus.local_fits(image, short, layers) {
+            return Ok(());
+        }
+        let result = allocated
+            .defocus
+            .allocate_local(&self.device, image, short, layers);
+        self.rebind(&mut allocated);
+        result
+    }
+
+    /// Allocates a Lens Blur map of this pipeline's own, of `grid` cells for
+    /// `layers` slots, unless one that holds them exists.
+    pub(super) fn allocate_defocus_map(&self, grid: [u32; 2], layers: u32) -> Result<()> {
+        let mut allocated = self.lock();
+        if allocated.defocus.owned_map_fits(grid, layers) {
+            return Ok(());
+        }
+        let result = allocated.defocus.allocate_map(&self.device, grid, layers);
+        self.rebind(&mut allocated);
+        result
+    }
+
+    /// Shares `map`, the whole image's, with this view of part of it.
+    pub(super) fn share_defocus_map(&self, map: &Arc<DefocusMap>) {
+        let mut allocated = self.lock();
+        if allocated.defocus.share_map(map) {
+            self.rebind(&mut allocated);
+        }
+    }
+
+    /// The Lens Blur map this pipeline builds or shares.
+    pub(super) fn defocus_map(&self) -> Option<Arc<DefocusMap>> {
+        self.lock().defocus.shared_map()
+    }
+
+    /// Whether the bound Lens Blur map holds `layers` slots.
+    pub(super) fn defocus_map_holds(&self, layers: u32) -> bool {
+        self.lock().defocus.map_holds(layers)
+    }
+
+    /// Whether this pipeline builds the Lens Blur map it binds.
+    pub(super) fn owns_defocus_map(&self) -> bool {
+        self.lock().defocus.owns_map()
+    }
+
+    /// Writes Lens Blur's pass uniforms for this render.
+    pub(super) fn write_defocus_uniforms(&self, queue: &wgpu::Queue, map_ready: bool) {
+        self.lock().defocus.write_uniforms(queue, map_ready);
+    }
+
+    /// The bind groups of Lens Blur's passes.
+    pub(super) fn defocus_bind_groups(&self) -> DefocusBindGroups {
+        self.lock().bind_groups.defocus.clone()
     }
 
     /// Shares `bake`, the whole image's, with this view of part of it.

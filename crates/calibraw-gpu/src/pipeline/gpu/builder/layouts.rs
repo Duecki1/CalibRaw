@@ -30,6 +30,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_glow_prepare: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_glow_blur: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_styled_glow: [wgpu::BindGroupLayout; STYLED_GLOW_PASSES],
+    pub(in crate::pipeline::gpu) bgl_defocus: [wgpu::BindGroupLayout; DEFOCUS_PASSES],
     pub(in crate::pipeline::gpu) bgl_pixelate_blocks: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_creative: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_render: wgpu::BindGroupLayout,
@@ -539,6 +540,9 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     // The Glow's near pyramid and full-image map (styled_glow.wgsl).
                     texture_array_entry(118, wgpu::TextureSampleType::Float { filterable: true }),
                     texture_array_entry(119, wgpu::TextureSampleType::Float { filterable: true }),
+                    // Lens Blur's result, which the first Blur stage blends
+                    // (defocus.wgsl).
+                    texture_array_entry(124, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });
@@ -779,6 +783,16 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             )
         })
     });
+    let defocus_entries = defocus_layout_entries();
+    let bgl_defocus = std::array::from_fn(|program| {
+        reused_layout(plan.defocus_pass_index + program).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                DEFOCUS_LAYOUT_LABELS[program],
+                &defocus_entries[program],
+            )
+        })
+    });
     BindGroupLayouts {
         bgl_scene_tone,
         bgl_effects,
@@ -807,6 +821,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_glow_prepare,
         bgl_glow_blur,
         bgl_styled_glow,
+        bgl_defocus,
         bgl_pixelate_blocks,
         bgl_adjust_creative,
         bgl_adjust_render,

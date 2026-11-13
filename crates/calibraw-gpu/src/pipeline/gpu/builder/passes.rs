@@ -116,6 +116,10 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// pass and are dispatched with bind groups of their own. They come last
     /// so that adding them kept earlier positions.
     pub(in crate::pipeline::gpu) styled_glow_pass_index: usize,
+    /// Lens Blur's programs (`defocus`), which run before the Blur passes
+    /// and are dispatched with bind groups of their own. They come last so
+    /// that adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) defocus_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -174,6 +178,7 @@ impl StageIndices {
         let scene_emission_pass_index = take(SCENE_EMISSION_PASSES);
         let scene_bake_accumulation_pass_index = take(1);
         let styled_glow_pass_index = take(STYLED_GLOW_PASSES);
+        let defocus_pass_index = take(DEFOCUS_PASSES);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -218,6 +223,7 @@ impl StageIndices {
             scene_emission_pass_index,
             scene_bake_accumulation_pass_index,
             styled_glow_pass_index,
+            defocus_pass_index,
             pass_count,
         }
     }
@@ -810,6 +816,19 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             entry,
             &layouts.bgl_styled_glow[program],
             InputBoundPass::StyledGlow(program),
+            single_workgroup,
+        ));
+    }
+
+    ensure_planned(&passes, indices.defocus_pass_index, "Lens Blur")?;
+    for (program, entry) in DEFOCUS_ENTRIES.into_iter().enumerate() {
+        // Dispatched by `defocus` with the bind groups and sizes of each
+        // bin and level; the workgroups here are never used.
+        passes.push(assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            entry,
+            &layouts.bgl_defocus[program],
+            InputBoundPass::Defocus(program),
             single_workgroup,
         ));
     }

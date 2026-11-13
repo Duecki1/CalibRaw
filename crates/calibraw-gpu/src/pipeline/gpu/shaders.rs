@@ -94,7 +94,8 @@ pub(super) const SCENE_LIGHTS_COMMON: ShaderSource = wgsl!("scene/lights_common.
 pub(super) const SCENE_GEOMETRY: ShaderSource = wgsl!("scene/geometry.wgsl");
 
 pub(super) const MASK_EFFECT_API: ShaderSource = wgsl!("mask_effects/effect_api.wgsl");
-pub(super) const MASK_LENS_BLUR: ShaderSource = wgsl!("mask_effects/lens_blur.wgsl");
+pub(super) const MASK_DEFOCUS: ShaderSource = wgsl!("mask_effects/defocus.wgsl");
+pub(super) const MASK_LEGACY_LENS_BLUR: ShaderSource = wgsl!("mask_effects/legacy/lens_blur.wgsl");
 pub(super) const MASK_MOTION_BLUR: ShaderSource = wgsl!("mask_effects/motion_blur.wgsl");
 pub(super) const MASK_RADIAL_BLUR: ShaderSource = wgsl!("mask_effects/radial_blur.wgsl");
 pub(super) const MASK_TILT_SHIFT: ShaderSource = wgsl!("mask_effects/tilt_shift.wgsl");
@@ -132,7 +133,7 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
     "creative_effects.wgsl",
     &[
         MASK_EFFECT_API,
-        MASK_LENS_BLUR,
+        MASK_DEFOCUS,
         MASK_MOTION_BLUR,
         MASK_RADIAL_BLUR,
         MASK_TILT_SHIFT,
@@ -158,6 +159,7 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         // Legacy effects (mask_effects/legacy/), replaced by rebuilt ones.
         MASK_LEGACY_HIGHLIGHT_GLOW,
         MASK_LEGACY_HALATION,
+        MASK_LEGACY_LENS_BLUR,
     ],
     Some(effect_wgsl::registry_wgsl)
 );

@@ -15,18 +15,18 @@ mod raster_cache;
 pub use content_dependencies::ContentDependencies;
 
 pub use effects::{
-    effect_lanes, params as effect_params, BlurEffectSettings, ColorLane, EdgeGlowEffectSettings,
-    EffectControl, EffectControls, EffectDetails, EffectFamily, EffectInstances, EffectLanes,
-    EffectOption, EffectPass, EffectReach, EffectSettings, EffectSettingsVisitor, EffectStyle,
-    FogEffectSettings, GlowEffectSettings, GlowStyle, GrainEffectSettings, HalationEffectSettings,
-    Lane, LaneName, LegacyHighlightGlowEffectSettings, LensBlurEffectSettings,
-    LightRaysEffectSettings, LightShaftSource, LightShaftsEffectSettings, LightShaftsMode,
-    MaskEffect, MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings,
-    NeonEffectSettings, PackContext, PixelateEffectSettings, RadialBlurEffectSettings,
-    RadialBlurMode, RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneNeed,
-    SceneNeeds, SharpenEffectSettings, SmokeEffectSettings, StyledGlowEffectSettings,
-    TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings,
-    MAX_EFFECT_INSTANCES, OPTION_COUNT,
+    effect_lanes, params as effect_params, BlurEffectSettings, BokehShape, ColorLane,
+    DefocusEffectSettings, EdgeGlowEffectSettings, EffectControl, EffectControls, EffectDetails,
+    EffectFamily, EffectInstances, EffectLanes, EffectOption, EffectPass, EffectReach,
+    EffectSettings, EffectSettingsVisitor, EffectStyle, FogEffectSettings, GlowEffectSettings,
+    GlowStyle, GrainEffectSettings, HalationEffectSettings, Lane, LaneName,
+    LegacyHighlightGlowEffectSettings, LensBlurEffectSettings, LightRaysEffectSettings,
+    LightShaftSource, LightShaftsEffectSettings, LightShaftsMode, MaskEffect, MaskEffectCategory,
+    MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings, PackContext,
+    PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings,
+    ReachGroup, RelightEffectSettings, RelightLight, SceneNeed, SceneNeeds, SharpenEffectSettings,
+    SmokeEffectSettings, StyledGlowEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
+    WetSurfacesEffectSettings, MAX_EFFECT_INSTANCES, OPTION_COUNT,
 };
 
 mod box_filter;

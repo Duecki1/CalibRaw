@@ -13,4 +13,5 @@
 
 pub(super) mod halation;
 pub(super) mod highlight_glow;
+pub(super) mod lens_blur;
 pub(super) mod light_rays;

@@ -1,5 +1,6 @@
 //! `GpuParams`: edit parameters packed into the uniform layouts the WGSL stages read.
 
+use super::defocus::{defocus_reaches_map, is_defocus};
 use super::styled_glow::{
     is_styled_glow, styled_glow_near_top, styled_glow_streaks, StyledGlowStreaks,
 };
@@ -324,7 +325,7 @@ impl MaskData {
         if effect == MaskEffect::LightShafts && self.option(options::LIGHT_SHAFTS_FLAT) > 0.5 {
             return Some(SceneNeeds::NONE);
         }
-        if effect == MaskEffect::LensBlur && self.option(options::LENS_BLUR_DEPTH) < 0.5 {
+        if effect == MaskEffect::Defocus && self.option(options::DEFOCUS_DEPTH) < 0.5 {
             return Some(SceneNeeds::NONE);
         }
         Some(effect.scene_needs())
@@ -944,6 +945,29 @@ impl GpuParams {
             .iter()
             .filter(|mask| is_styled_glow(mask))
             .count()
+    }
+
+    /// The Lens Blur slots, each a group of layers of its textures
+    /// (`defocus`).
+    pub(super) fn defocus_slots(&self) -> usize {
+        self.mask_slots()
+            .iter()
+            .filter(|mask| is_defocus(mask))
+            .count()
+    }
+
+    /// Whether a Lens Blur reaches the bins of its full-image map, which an
+    /// export then builds in a prepass.
+    pub(super) fn needs_defocus_map(&self) -> bool {
+        let (width, height) = (
+            self.camera.full_width.max(1),
+            self.camera.full_height.max(1),
+        );
+        let aspect = width.max(height) as f32 / width.min(height) as f32;
+        self.mask_slots()
+            .iter()
+            .filter(|mask| is_defocus(mask))
+            .any(|mask| defocus_reaches_map(mask, aspect))
     }
 
     /// Whether a Glow reads the full-image map, which an export then builds

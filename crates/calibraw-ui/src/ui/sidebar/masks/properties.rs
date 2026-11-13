@@ -312,9 +312,9 @@ impl Sidebar {
                 frame,
                 style.as_deref_mut(),
             ),
-            MaskEffect::LensBlur => mask_effects::lens_blur::show(
+            MaskEffect::Defocus => mask_effects::lens_blur::show(
                 ui,
-                &mut component.settings.lens_blur,
+                &mut component.settings.defocus,
                 &mut component.enabled,
                 remove,
                 style.as_deref_mut(),

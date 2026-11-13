@@ -1,0 +1,21 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "Defocus",
+          "settings": {
+            "defocus": {
+              "blur_amount": 30.0,
+              "shape": "Blades",
+              "highlight_boost": 60.0,
+              "focus_by_depth": false,
+              "blades": 6.0,
+              "rotation": 15.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

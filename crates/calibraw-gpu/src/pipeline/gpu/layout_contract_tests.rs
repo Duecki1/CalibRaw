@@ -493,6 +493,24 @@ fn shared_constants_and_effect_ids_match_rust() {
         constant("STYLED_GLOW_MAP_LONG"),
         super::styled_glow::STYLED_GLOW_MAP_LONG
     );
+    // Lens Blur's textures and sums are sized from these.
+    assert_eq!(
+        constant("DEFOCUS_MAP_LONG"),
+        super::defocus::DEFOCUS_MAP_LONG
+    );
+    assert_eq!(
+        constant("DEFOCUS_LOCAL_BINS") as usize,
+        super::defocus::LOCAL_BINS
+    );
+    assert_eq!(
+        constant("DEFOCUS_SOURCE_LAYERS"),
+        super::defocus::SOURCE_LAYERS
+    );
+    assert_eq!(constant("DEFOCUS_SLAB_LAYERS"), super::defocus::SLAB_LAYERS);
+    assert_eq!(
+        u64::from(constant("DEFOCUS_CELL_VECTORS")),
+        super::defocus::CELL_VECTORS
+    );
     assert_eq!(
         constant("SCENE_EMISSION_LIGHT_ROWS"),
         scene_emission_light_rows(

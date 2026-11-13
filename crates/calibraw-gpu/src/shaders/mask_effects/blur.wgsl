@@ -1,3 +1,15 @@
+// Match presence_reference_scale, retaining fractional radii and a true zero.
+// The bilinear footprint is contained in the existing 144-pixel blur halo.
+// `maximum` is in native pixels, so previews limit at the same share of the photo.
+fn mask_focus_blur_radius(reference_pixels: f32, maximum: f32) -> f32 {
+    let scale = Common::resolution_scale(0.55, 3.0);
+    return clamp(
+        reference_pixels * scale,
+        0.0,
+        maximum * Common::processing_per_source_pixel(),
+    );
+}
+
 // The mask a blur is confined to: its slot and its coverage at the pixel being
 // blurred, which is above zero.
 struct MaskBlurCoverage {
@@ -133,8 +145,9 @@ fn mask_blur_stage_amount(pos: vec2<i32>, stage: u32) -> f32 {
 }
 
 // What the focus-blur loop reads of a slot before it blurs: the effect's Amount,
-// 0 to 1, and how far it blurs in reference pixels (Lens Blur's and Tilt-Shift's
-// Radius, Motion Blur's Distance, Radial Blur's Strength). Zero for any other effect.
+// 0 to 1, and how far it blurs (the legacy Lens Blur's and Tilt-Shift's Radius,
+// Motion Blur's Distance, Radial Blur's Strength in reference pixels; Lens Blur's
+// largest radius, which it blends at full strength). Zero for any other effect.
 struct MaskFocusBlur {
     amount: f32,
     size: f32,
@@ -147,6 +160,9 @@ fn mask_focus_blur(effect_id: u32, params: MaskEffectParams) -> MaskFocusBlur {
                 mask_effect_percent(params, LENS_BLUR_AMOUNT_LANE),
                 mask_effect_lane(params, LENS_BLUR_RADIUS_LANE),
             );
+        }
+        case MASK_EFFECT_DEFOCUS_ID: {
+            return MaskFocusBlur(1.0, mask_effect_lane(params, DEFOCUS_RADIUS_LANE));
         }
         case MASK_EFFECT_MOTION_BLUR_ID: {
             return MaskFocusBlur(
@@ -196,11 +212,13 @@ fn apply_mask_blur_stage(
     return rgb;
 }
 
-// The focus blurs (Lens Blur, Motion Blur, Radial Blur, Tilt-Shift) of the
-// first stage, over `diffused`, the stage's diffused image, each blurring
-// the neighbourhood of `source_rgb`, the stage's input. Only the first stage's program calls this:
-// Lens Blur reads the scene bake, which only that program binds (the creative
-// layout), and WGSL checks the bindings of every function a program calls.
+// The focus blurs (Lens Blur, Motion Blur, Radial Blur, Tilt-Shift and the
+// legacy Lens Blur) of the first stage, over `diffused`, the stage's diffused
+// image, each blurring the neighbourhood of `source_rgb`, the stage's input.
+// Only the first stage's program calls this: Lens Blur reads its result, which
+// its own passes made from that input (defocus.wgsl) and only that program
+// binds (the creative layout), and WGSL checks the bindings of every function
+// a program calls.
 fn apply_mask_focus_blurs(pos: vec2<i32>, source_rgb: vec3<f32>, diffused: vec3<f32>) -> vec3<f32> {
     var rgb = diffused;
     let count = Common::mask_slot_count();
@@ -217,7 +235,9 @@ fn apply_mask_focus_blurs(pos: vec2<i32>, source_rgb: vec3<f32>, diffused: vec3<
         let mask = MaskBlurCoverage(index, coverage);
 
         var adjusted = source_rgb;
-        if effect_id == MASK_EFFECT_LENS_BLUR_ID {
+        if effect_id == MASK_EFFECT_DEFOCUS_ID {
+            adjusted = mask_defocus_at(pos, index);
+        } else if effect_id == MASK_EFFECT_LENS_BLUR_ID {
             adjusted = mask_lens_blur_at(pos, params, mask);
         } else if effect_id == MASK_EFFECT_MOTION_BLUR_ID {
             adjusted = mask_motion_blur_at(pos, params, mask);

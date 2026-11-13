@@ -297,6 +297,38 @@ where
         look,
         geometry,
     };
+    // A Lens Blur whose discs reach past the export halo reads the whole
+    // image (defocus.rs): every tile adds its core to Lens Blur's full-image
+    // map before any tile renders. It comes before the Glow's, whose tiles
+    // render Lens Blur from it.
+    if tile_pipeline
+        .begin_export_defocus(queue, device, &first_params)
+        .context("prepare Lens Blur's full-image map")?
+    {
+        if let Some(timing) = &gpu_timing {
+            timing.phase("Lens Blur map prepass");
+        }
+        let defocus_started = Instant::now();
+        for (index, tile) in plan.tiles.iter().copied().enumerate() {
+            ensure_export_not_cancelled(cancellation)?;
+            let params = tile_inputs
+                .upload(tile, index, &mut tile_scratch)?
+                .with_global_tone_histogram_bounds(
+                    tile.core_x,
+                    tile.core_y,
+                    tile.core_width,
+                    tile.core_height,
+                );
+            tile_inputs.load_scene(tile, index, &params, raw_stage_store.as_ref())?;
+            tile_pipeline.accumulate_export_defocus_tile(queue, device, &params);
+        }
+        tile_pipeline.finish_export_defocus(queue, device, &first_params);
+        calibraw_core::diagnostics::record(format!(
+            "Lens Blur full-image map prepass queued in {:.3}s across {} tiles",
+            defocus_started.elapsed().as_secs_f64(),
+            plan.tile_count()
+        ));
+    }
     // A Glow whose spread reaches past the export halo reads the whole image
     // (styled_glow.rs): every tile adds its core to the Glow's full-image map
     // before any tile renders. A single tile too, as its padding takes it past

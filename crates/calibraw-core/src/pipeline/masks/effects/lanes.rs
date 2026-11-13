@@ -68,7 +68,7 @@ pub mod options {
     use super::EffectOption;
 
     /// Lens Blur: 1 when the blur follows scene depth (Focus by depth).
-    pub const LENS_BLUR_DEPTH: EffectOption = EffectOption::new(0);
+    pub const DEFOCUS_DEPTH: EffectOption = EffectOption::new(0);
     /// Light Rays: 1 in its 2D style (`LightShaftsMode::Flat`).
     pub const LIGHT_SHAFTS_FLAT: EffectOption = EffectOption::new(2);
     /// Rain: 1 when streaks and mist follow scene depth.
@@ -78,7 +78,7 @@ pub mod options {
 
     /// Every option as (name, index), for the shaders.
     pub const ALL: [(&str, usize); 4] = [
-        ("LENS_BLUR_DEPTH", LENS_BLUR_DEPTH.index()),
+        ("DEFOCUS_DEPTH", DEFOCUS_DEPTH.index()),
         ("LIGHT_SHAFTS_FLAT", LIGHT_SHAFTS_FLAT.index()),
         ("RAIN_DEPTH", RAIN_DEPTH.index()),
         ("MEDIUM_IMAGE_LIGHTS", MEDIUM_IMAGE_LIGHTS.index()),

@@ -663,6 +663,7 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
         scene_emission_layouts: layouts.bgl_scene_emission.clone(),
         scene_bake_accumulation_layout: layouts.bgl_scene_bake_accumulation.clone(),
         styled_glow_layouts: layouts.bgl_styled_glow.clone(),
+        defocus_layouts: layouts.bgl_defocus.clone(),
         camera_uniforms: buffers.camera_uniforms_buffer.clone(),
         mask_data: buffers.mask_data_buffer.clone(),
         tone_stats: buffers.tone_stats_buffer.clone(),

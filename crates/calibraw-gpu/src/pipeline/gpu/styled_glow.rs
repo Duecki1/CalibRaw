@@ -110,12 +110,16 @@ pub(super) fn styled_glow_near_top(short_edge: u32) -> f32 {
 
 /// The map's grid for a whole image of `full` pixels, as
 /// `Common::full_image_grid(STYLED_GLOW_MAP_LONG)` gives it.
-pub(super) fn styled_glow_map_grid([width, height]: [u32; 2]) -> [u32; 2] {
+pub(super) fn styled_glow_map_grid(full: [u32; 2]) -> [u32; 2] {
+    full_image_grid(full, STYLED_GLOW_MAP_LONG)
+}
+
+/// A grid over a whole image of `full` pixels with `long` cells along its
+/// longer edge, as `Common::full_image_grid` gives it.
+pub(super) fn full_image_grid([width, height]: [u32; 2], long_cells: u32) -> [u32; 2] {
     let (width, height) = (width.max(1) as f32, height.max(1) as f32);
     let long = width.max(height);
-    let cells = |side: f32| {
-        ((STYLED_GLOW_MAP_LONG as f32 * side / long).round() as u32).clamp(1, STYLED_GLOW_MAP_LONG)
-    };
+    let cells = |side: f32| ((long_cells as f32 * side / long).round() as u32).clamp(1, long_cells);
     [cells(width), cells(height)]
 }
 
@@ -129,16 +133,16 @@ fn near_size([width, height]: [u32; 2]) -> [u32; 2] {
     [first(width), first(height)]
 }
 
-fn mip_levels([width, height]: [u32; 2]) -> u32 {
+pub(super) fn mip_levels([width, height]: [u32; 2]) -> u32 {
     32 - width.max(height).max(1).leading_zeros()
 }
 
-fn mip_size([width, height]: [u32; 2], mip: u32) -> [u32; 2] {
+pub(super) fn mip_size([width, height]: [u32; 2], mip: u32) -> [u32; 2] {
     [(width >> mip).max(1), (height >> mip).max(1)]
 }
 
 /// The bytes of a texture of `size` with `mips` levels and `layers` layers.
-fn texture_bytes(size: [u32; 2], mips: u32, layers: u32) -> u64 {
+pub(super) fn texture_bytes(size: [u32; 2], mips: u32, layers: u32) -> u64 {
     (0..mips)
         .map(|mip| {
             let [width, height] = mip_size(size, mip);
@@ -149,15 +153,21 @@ fn texture_bytes(size: [u32; 2], mips: u32, layers: u32) -> u64 {
 }
 
 /// A texture array with `mips` levels, its view of every level and a view of
-/// each level alone.
-struct LevelTexture {
+/// each level alone (the Glow's pyramids, Lens Blur's textures in defocus.rs).
+pub(super) struct LevelTexture {
     texture: wgpu::Texture,
-    all: wgpu::TextureView,
-    levels: Vec<wgpu::TextureView>,
+    pub(super) all: wgpu::TextureView,
+    pub(super) levels: Vec<wgpu::TextureView>,
 }
 
 impl LevelTexture {
-    fn new(device: &wgpu::Device, size: [u32; 2], mips: u32, layers: u32, label: &str) -> Self {
+    pub(super) fn new(
+        device: &wgpu::Device,
+        size: [u32; 2],
+        mips: u32,
+        layers: u32,
+        label: &str,
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {

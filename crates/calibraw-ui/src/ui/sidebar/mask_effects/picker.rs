@@ -297,7 +297,7 @@ fn effect_icon(effect: MaskEffect) -> &'static str {
     match effect {
         MaskEffect::Adjustment => regular::SLIDERS_HORIZONTAL,
         MaskEffect::Blur => regular::DROP_HALF,
-        MaskEffect::LensBlur => regular::APERTURE,
+        MaskEffect::Defocus | MaskEffect::LensBlur => regular::APERTURE,
         MaskEffect::MotionBlur => regular::ARROW_FAT_LINES_RIGHT,
         MaskEffect::RadialBlur => regular::SPIRAL,
         MaskEffect::Sharpen => regular::TRIANGLE,

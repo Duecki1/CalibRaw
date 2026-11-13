@@ -38,9 +38,11 @@ use scene::{
     SceneBake, SceneBakeUniforms, SceneLightKind, SceneLightSet, SceneShadowLight,
     SCENE_BAKE_LAYERS, SCENE_SHADOW_LIGHTS, SCENE_WORKING_LONG_EDGE_MAX,
 };
+mod defocus;
 mod shader_manager;
 mod shaders;
 mod styled_glow;
+use defocus::{defocus_layout_entries, DEFOCUS_ENTRIES, DEFOCUS_LAYOUT_LABELS, DEFOCUS_PASSES};
 use styled_glow::{
     styled_glow_layout_entries, STYLED_GLOW_ENTRIES, STYLED_GLOW_LAYOUT_LABELS, STYLED_GLOW_PASSES,
 };
@@ -622,6 +624,7 @@ impl RawGpuPipeline {
         self.upload_profile_tables(queue, &params.profile_color);
         self.prepare_effect_inputs(params);
         let (styled_glow_near, styled_glow_map) = self.prepare_styled_glow(params);
+        self.prepare_defocus(queue, params);
         let effects = params.effects_for_upload(styled_glow_near, styled_glow_map);
         let look_lut_uploaded = match self.prepare_look_lut(queue, params.look_lut()) {
             Ok(()) => true,
@@ -1049,6 +1052,12 @@ impl RawGpuPipeline {
                 self.effect_inputs.share_styled_glow_map(&map);
             }
         }
+        // And its Lens Blur map, whenever a Lens Blur reaches it.
+        if params.needs_defocus_map() {
+            if let Some(map) = full_frame.effect_inputs.defocus_map() {
+                self.effect_inputs.share_defocus_map(&map);
+            }
+        }
     }
 
     pub fn dispatch_stage_with_remove(
@@ -1457,39 +1466,53 @@ impl RawGpuPipeline {
         encoder: &mut wgpu::CommandEncoder,
         params: &GpuParams,
     ) -> bool {
-        self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);
-        self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
-        let mut image_in_tex2 = true;
-        if params.needs_intermediate_adjustment_passes() {
-            self.encode_pass(encoder, self.indices.adjustment_local_tone_pass_index);
-            if let Some(levels) = params.detail_pyramid_levels() {
-                let start = self.indices.detail_pyramid_start_index;
-                self.encode_pass_range(encoder, start, start + levels);
+        if !self.encode_blur_input(encoder, params) {
+            return true;
+        }
+        let mut image_in_tex2 = false;
+        if params.needs_blur_passes() {
+            if params.defocus_slots() > 0 {
+                self.encode_defocus(encoder, params);
             }
-            self.encode_pass(encoder, self.indices.adjustment_effects_pass_index);
-            self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
-            image_in_tex2 = false;
-            if params.needs_blur_passes() {
-                if params.needs_progressive_blur_passes() {
-                    self.encode_pass_range(
-                        encoder,
-                        self.indices.mask_blur_start_index,
-                        self.indices.mask_blur_end_index,
-                    );
-                } else {
-                    self.encode_pass(encoder, self.indices.mask_blur_start_index);
-                }
-                image_in_tex2 = true;
-            }
-            if params.needs_wet_surfaces_pass() {
-                self.encode_effects_pass(
+            if params.needs_progressive_blur_passes() {
+                self.encode_pass_range(
                     encoder,
-                    self.indices.wet_surfaces_pass_index,
-                    &mut image_in_tex2,
+                    self.indices.mask_blur_start_index,
+                    self.indices.mask_blur_end_index,
                 );
+            } else {
+                self.encode_pass(encoder, self.indices.mask_blur_start_index);
             }
+            image_in_tex2 = true;
+        }
+        if params.needs_wet_surfaces_pass() {
+            self.encode_effects_pass(
+                encoder,
+                self.indices.wet_surfaces_pass_index,
+                &mut image_in_tex2,
+            );
         }
         image_in_tex2
+    }
+
+    /// The output stage up to the first Blur stage's input: the scene
+    /// adjustments, and with intermediate passes the scene effects, which
+    /// leave the image in the first work texture. Returns whether the
+    /// intermediate passes ran; without them the image is in the second.
+    fn encode_blur_input(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) -> bool {
+        self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);
+        self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
+        if !params.needs_intermediate_adjustment_passes() {
+            return false;
+        }
+        self.encode_pass(encoder, self.indices.adjustment_local_tone_pass_index);
+        if let Some(levels) = params.detail_pyramid_levels() {
+            let start = self.indices.detail_pyramid_start_index;
+            self.encode_pass_range(encoder, start, start + levels);
+        }
+        self.encode_pass(encoder, self.indices.adjustment_effects_pass_index);
+        self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
+        true
     }
 
     /// Encodes the display transform from the work texture holding the image.

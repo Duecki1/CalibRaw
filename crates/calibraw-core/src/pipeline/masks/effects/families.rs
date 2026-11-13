@@ -34,6 +34,7 @@ pub enum EffectFamily {
     WetSurfaces,
     LegacyHighlightGlow,
     LegacyLightRays,
+    LegacyLensBlur,
 }
 
 /// One way a family's effect can look: an effect, and the mode its settings
@@ -111,6 +112,11 @@ impl EffectStyle {
             effect: MaskEffect::StyledGlow,
             mode: Some(StyleMode::Glow(style)),
         }
+    }
+
+    /// `effect`, which has no modes.
+    pub const fn plain(effect: MaskEffect) -> Self {
+        Self { effect, mode: None }
     }
 
     /// Light Rays in `mode`.
