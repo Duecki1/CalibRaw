@@ -395,7 +395,8 @@ fn apply_capture_sharpening_at(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn prepare_scene_node(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn prepare_scene_node(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
 
@@ -419,7 +420,8 @@ fn prepare_scene_node(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn apply_scene_tone_node(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn apply_scene_tone_node(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = adjustment_base_at(pos);
@@ -430,7 +432,8 @@ fn apply_scene_tone_node(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn apply_local_scene_tone_node(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn apply_local_scene_tone_node(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = adjustment_base_at(pos);

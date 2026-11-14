@@ -99,7 +99,8 @@ fn pixelate_block_size_in_use(block_size: i32) -> bool {
 // One invocation per cache texel: each computes one block mean of a block size
 // that an active Pixelate effect uses. Reads the creative pass's input.
 @compute @workgroup_size(8, 8, 1)
-fn prepare_pixelate_blocks(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn prepare_pixelate_blocks(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let index = i32(gid.y) * i32(Common::camera_uniforms.width) + i32(gid.x);
     let stride = pixelate_cache_stride();

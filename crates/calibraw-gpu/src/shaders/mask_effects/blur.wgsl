@@ -318,26 +318,31 @@ fn store_first_mask_blur_stage(gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_mask_blur_0(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_mask_blur_0(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_first_mask_blur_stage(gid);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_mask_blur_1(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_mask_blur_1(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_mask_blur_stage(gid, 1u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_mask_blur_2(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_mask_blur_2(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_mask_blur_stage(gid, 2u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_mask_blur_3(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_mask_blur_3(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_mask_blur_stage(gid, 3u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_mask_blur_4(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_mask_blur_4(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_mask_blur_stage(gid, 4u);
 }

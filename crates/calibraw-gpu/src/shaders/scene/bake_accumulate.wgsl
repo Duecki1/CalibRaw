@@ -10,7 +10,8 @@
 // every texel has one writer at a time and the sums equal the whole image's
 // in any tiling; the bake then resolves them (bake_depth.wgsl).
 @compute @workgroup_size(8, 8, 1)
-fn accumulate_scene_working_image(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn accumulate_scene_working_image(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = Bake::scene_bake.size.xy;
     if gid.x >= size.x || gid.y >= size.y { return; }
     let span_x = Common::full_image_grid_pixel_span(gid.x, size.x, Common::camera_uniforms.full_width);

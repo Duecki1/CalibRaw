@@ -397,6 +397,12 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             GpuResourceResidency::Persistent,
             full(XTRANS_HOMOGENEITY_FORMAT)?,
         );
+        push_entry(
+            &mut entries,
+            "X-Trans completed state",
+            GpuResourceResidency::Persistent,
+            full(work_format)?,
+        );
     }
 
     let tone_width = input.width.div_ceil(input.tone_scale);
@@ -1234,6 +1240,19 @@ pub(super) fn create_compute_pipeline(
     })
 }
 
+thread_local! {
+    /// The passes this thread encoded with [`dispatch_compute`].
+    static UNTRACKED_DISPATCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many passes this thread has encoded with [`dispatch_compute`], which
+/// tells a `WorkEncoder` whether work it does not track joined its chunk.
+pub(super) fn untracked_dispatches() -> u64 {
+    UNTRACKED_DISPATCHES.get()
+}
+
+/// Encodes a compute pass outside the processing pipeline's stages, whose
+/// passes go through `WorkEncoder::dispatch` (work.rs).
 pub(super) fn dispatch_compute(
     encoder: &mut wgpu::CommandEncoder,
     label: &str,
@@ -1241,6 +1260,7 @@ pub(super) fn dispatch_compute(
     bind_groups: &[&wgpu::BindGroup],
     workgroups: [u32; 3],
 ) {
+    UNTRACKED_DISPATCHES.set(UNTRACKED_DISPATCHES.get().wrapping_add(1));
     let timestamps = crate::stage_timing::next_pass(label);
     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
         label: Some(label),

@@ -27,7 +27,8 @@ fn tone_guide_origin_cell() -> vec2<i32> {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn tone_guide_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn tone_guide_prepare(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let guide_size = textureDimensions(tone_guide_write);
     if gid.x >= guide_size.x || gid.y >= guide_size.y { return; }
 
@@ -133,7 +134,8 @@ fn tone_bilateral_guide(pos: vec2<i32>, axis: vec2<i32>) -> f32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn tone_guide_horizontal(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn tone_guide_horizontal(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let guide_size = textureDimensions(tone_guide_write);
     if gid.x >= guide_size.x || gid.y >= guide_size.y { return; }
     let pos = vec2<i32>(gid.xy);
@@ -142,7 +144,8 @@ fn tone_guide_horizontal(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn tone_guide_vertical(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn tone_guide_vertical(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let guide_size = textureDimensions(tone_guide_write);
     if gid.x >= guide_size.x || gid.y >= guide_size.y { return; }
     let pos = vec2<i32>(gid.xy);
@@ -151,7 +154,8 @@ fn tone_guide_vertical(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(1, 1, 1)
-fn tone_reduce_histogram(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn tone_reduce_histogram(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if any(gid != vec3<u32>(0u)) { return; }
 
     var total = 0u;
@@ -249,7 +253,8 @@ fn image_light_cell_index(cell: vec2<u32>) -> u32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn accumulate_image_lights(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn accumulate_image_lights(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = Common::image_light_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let span_x = Common::full_image_grid_pixel_span(
@@ -317,7 +322,8 @@ fn image_light_surroundings_ev(cell: vec2<i32>, grid: vec2<i32>) -> f32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn resolve_image_lights(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn resolve_image_lights(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = Common::image_light_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let median = tone_stats_out.percentiles_0_field.z;
@@ -400,7 +406,8 @@ fn image_light_sigmas() -> vec2<f32> {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn blur_image_lights_horizontal(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn blur_image_lights_horizontal(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = Common::image_light_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let pos = vec2<i32>(gid.xy);
@@ -414,7 +421,8 @@ fn blur_image_lights_horizontal(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn blur_image_lights_vertical(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn blur_image_lights_vertical(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = Common::image_light_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let pos = vec2<i32>(gid.xy);
@@ -441,7 +449,8 @@ fn contour_luminance_at(pos: vec2<i32>) -> f32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn accumulate_contours(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn accumulate_contours(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = Common::contour_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let span_x = Common::full_image_grid_pixel_span(

@@ -1026,7 +1026,7 @@ impl RawGpuPipeline {
     /// Encodes Lens Blur from the first Blur stage's input in the first work
     /// texture: for a pipeline that renders the whole image and owns its map,
     /// the map first, then the local passes and the composite.
-    pub(super) fn encode_defocus(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    pub(super) fn encode_defocus(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         let groups = self.effect_inputs.defocus_bind_groups();
         let layers = defocus_layers(params);
         if params.renders_whole_image()
@@ -1052,25 +1052,23 @@ impl RawGpuPipeline {
 
     fn dispatch_defocus(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut WorkEncoder<'_>,
         dispatch: &DefocusDispatch,
         layers: u32,
     ) {
         let pass = &self.passes[self.indices.defocus_pass_index + dispatch.program];
-        dispatch_compute(
+        self.dispatch_pass(
             encoder,
             &pass.pipeline.entry,
             pass.pipeline.get(),
-            &[
-                &dispatch.bind_group,
-                &self.scene_tone_bind_group,
-                &self.effects_bind_group,
-            ],
+            &dispatch.bind_group,
             [
                 dispatch.texels[0].div_ceil(WORKGROUP_EDGE),
                 dispatch.texels[1].div_ceil(WORKGROUP_EDGE),
                 layers.max(1),
             ],
+            pass.pipeline.work,
+            0,
         );
     }
 
@@ -1092,11 +1090,9 @@ impl RawGpuPipeline {
             .allocate_defocus_map(grid, defocus_layers(params))
             .context("allocate Lens Blur's full-image map")?;
         let groups = self.effect_inputs.defocus_bind_groups();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw export Lens Blur map clear"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw export Lens Blur map clear");
         encoder.clear_buffer(&groups.map_cells, 0, None);
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
         Ok(true)
     }
 
@@ -1113,9 +1109,7 @@ impl RawGpuPipeline {
         self.upload_params(queue, params);
         self.forget_output();
         let groups = self.effect_inputs.defocus_bind_groups();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw export Lens Blur map tile"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw export Lens Blur map tile");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Export Lens Blur map"));
         self.encode_pass_range(
             &mut encoder,
@@ -1129,7 +1123,7 @@ impl RawGpuPipeline {
         for dispatch in &groups.map_accumulate {
             self.dispatch_defocus(&mut encoder, dispatch, layers);
         }
-        stage_timing::submit(queue, encoder, timing);
+        encoder.submit(timing);
     }
 
     /// Resolves the Lens Blur map every tile added to and gathers its bins
@@ -1141,9 +1135,7 @@ impl RawGpuPipeline {
         params: &GpuParams,
     ) {
         let groups = self.effect_inputs.defocus_bind_groups();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw export Lens Blur map levels"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw export Lens Blur map levels");
         let layers = defocus_layers(params);
         for dispatch in &groups.map_levels {
             self.dispatch_defocus(&mut encoder, dispatch, layers);
@@ -1151,6 +1143,6 @@ impl RawGpuPipeline {
         if let Some(map) = self.effect_inputs.defocus_map() {
             map.revision.bump();
         }
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
     }
 }

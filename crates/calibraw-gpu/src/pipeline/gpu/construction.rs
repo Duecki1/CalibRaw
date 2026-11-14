@@ -270,7 +270,15 @@ impl RawGpuPipeline {
             geometry.work_format,
             geometry.tone_format,
         );
-        let groups = create_bind_groups(device, &layouts, &buffers, &surfaces, raw.cfa_kind);
+        let dispatch_bands = DispatchBands::new(device, raw.height);
+        let groups = create_bind_groups(
+            device,
+            &layouts,
+            &buffers,
+            &surfaces,
+            &dispatch_bands,
+            raw.cfa_kind,
+        );
         let effect_inputs =
             EffectInputs::new(device, input_binding_sources(&layouts, &buffers, &surfaces));
 
@@ -331,6 +339,8 @@ impl RawGpuPipeline {
             scene_tone_uniforms_buffer: buffers.scene_tone_uniforms_buffer,
             effects_uniforms_buffer: buffers.effects_uniforms_buffer,
             scene_tone_bind_group: groups.scene_tone_bind_group,
+            dispatch_bands,
+            paced_submissions: AtomicBool::new(false),
             effects_bind_group: groups.effects_bind_group,
             remove_composite_pipeline,
             remove_composite_bind_group,
@@ -382,6 +392,7 @@ impl RawGpuPipeline {
             binned_ai_texture: surfaces.binned_ai_texture,
             binned_clipping_texture: surfaces.binned_clipping_texture,
             _xtrans_homogeneity: surfaces.xtrans_homogeneity,
+            _xtrans_complete: surfaces.xtrans_complete,
             scene_texture: surfaces.scene_texture,
             scene_format: geometry.demosaic_format,
             has_ai_scene,
@@ -406,9 +417,7 @@ impl RawGpuPipeline {
         pipeline.prepare_effect_inputs(params);
         // Compile only the programs used by these edits, within the constructor's
         // error scopes. The encoder is discarded: warming needs no GPU execution.
-        let mut warmup = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw active program warmup"),
-        });
+        let mut warmup = WorkEncoder::discarded(device, "calibraw active program warmup");
         pipeline.encode_raw_stage(&mut warmup, params);
         pipeline.encode_pass_range(
             &mut warmup,

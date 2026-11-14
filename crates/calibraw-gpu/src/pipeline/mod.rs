@@ -3,6 +3,7 @@ pub use calibraw_core::pipeline::*;
 mod export;
 pub mod focus_stack;
 mod gpu;
+pub(crate) use gpu::in_flight_summary;
 mod gpu_cache;
 pub mod hdr;
 mod raw_merge;

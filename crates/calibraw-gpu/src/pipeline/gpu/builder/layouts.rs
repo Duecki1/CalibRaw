@@ -14,6 +14,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_dual_detail: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl4: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_state: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_xtrans_complete: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_homogeneity: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_accumulate: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_smoothing: wgpu::BindGroupLayout,
@@ -64,7 +65,11 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
     let bgl_scene_tone = program_template
         .map(|template| template.pipelines[0].get_bind_group_layout(1))
         .unwrap_or_else(|| {
-            create_bind_group_layout(device, "bgl scene-tone uniforms", &[buffer_entry(0)])
+            create_bind_group_layout(
+                device,
+                "bgl scene-tone uniforms",
+                &[buffer_entry(0), dispatch_band_entry(1)],
+            )
         });
     let bgl_effects = program_template
         .map(|template| template.pipelines[0].get_bind_group_layout(2))
@@ -272,6 +277,14 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         plan.demosaic_start_index,
         "bgl X-Trans Markesteijn state",
         &[state_output],
+    );
+    let bgl_xtrans_complete = xtrans_layout(
+        plan.demosaic_start_index + XTRANS_COMPLETE_PASSES[0],
+        "bgl X-Trans Markesteijn completed state",
+        &[
+            state_output,
+            storage_texture_entry(32, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
+        ],
     );
     let bgl_xtrans_homogeneity = xtrans_layout(
         plan.demosaic_start_index + XTRANS_HOMOGENEITY_PASS,
@@ -806,6 +819,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_dual_detail,
         bgl4,
         bgl_xtrans_state,
+        bgl_xtrans_complete,
         bgl_xtrans_homogeneity,
         bgl_xtrans_accumulate,
         bgl_xtrans_smoothing,

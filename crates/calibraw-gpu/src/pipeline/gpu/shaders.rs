@@ -419,3 +419,70 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 27] = [
     entry("scene visibility", SCENE_VISIBILITY, false, None),
     entry("scene air light", SCENE_AIR_LIGHT, false, None),
 ];
+
+/// The shaders whose entry points the processing pipeline dispatches through
+/// `WorkEncoder` (work.rs).
+const WORK_SHADERS: [ShaderSource; 17] = [
+    HIGHLIGHTS,
+    BAYER_RCD_P1,
+    BAYER_RCD_P2,
+    BAYER_RCD_P3,
+    BAYER_RCD_P4,
+    DUAL_DEMOSAIC_DETAIL,
+    XTRANS_DEMOSAIC,
+    XTRANS_FINISH,
+    RASTER_FINISH,
+    COLOR_DENOISE,
+    CHROMATIC_ABERRATION,
+    TONE_ANALYSIS,
+    HAZE_ANALYSIS,
+    SCENE_ADJUSTMENTS,
+    CREATIVE_EFFECTS,
+    VIEW_TRANSFORM,
+    SCENE_BAKE_ACCUMULATE,
+];
+
+/// The parameter an entry point names its invocation when it adds the
+/// dispatch band's first row to it (`dispatch_id` in common.wgsl), in
+/// workgroups 8 invocations high.
+const BANDED_INVOCATION: &str = "@builtin(global_invocation_id) dispatch_gid: vec3<u32>";
+const BANDED_WORKGROUPS: [&str; 2] = ["@workgroup_size(8, 8, 1)", "@workgroup_size(8, 8)"];
+
+/// Whether `entry` may be dispatched in bands of workgroup rows: its shader
+/// declares it with [`BANDED_INVOCATION`] and 8x8 workgroups.
+pub(super) fn entry_reads_dispatch_band(entry: &str) -> bool {
+    static BANDED: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    BANDED
+        .get_or_init(|| {
+            let mut banded = std::collections::HashSet::new();
+            for source in WORK_SHADERS {
+                let text = source.module_text();
+                let mut lines = text.lines().peekable();
+                while let Some(line) = lines.next() {
+                    if !BANDED_WORKGROUPS.iter().any(|size| line.contains(size)) {
+                        continue;
+                    }
+                    let Some(name) = lines
+                        .peek()
+                        .and_then(|declaration| declaration.strip_prefix("fn "))
+                        .and_then(|rest| rest.split('(').next())
+                    else {
+                        continue;
+                    };
+                    // The parameters are on the declaration's line or the
+                    // ones after it, up to the body.
+                    let declared: String = text
+                        .split_once(&format!("fn {name}("))
+                        .and_then(|(_, rest)| rest.split_once('{'))
+                        .map(|(parameters, _)| parameters.to_owned())
+                        .unwrap_or_default();
+                    if declared.contains(BANDED_INVOCATION) {
+                        banded.insert(name.to_owned());
+                    }
+                }
+            }
+            banded
+        })
+        .contains(entry)
+}

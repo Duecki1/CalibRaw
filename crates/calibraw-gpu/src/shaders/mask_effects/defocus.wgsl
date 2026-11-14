@@ -691,7 +691,8 @@ fn defocus_occupancy_index(layer: u32, region: u32, block: vec2<i32>) -> u32 {
 // colour and coverage in the slot's first layer; |c| in pipeline pixels, what
 // the focus slab may show and depth in its second.
 @compute @workgroup_size(8, 8, 1)
-fn prepare_defocus(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn prepare_defocus(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(defocus_focus_out);
     let layers = defocus_layer_count(textureNumLayers(defocus_focus_out) / 2u);
     if any(gid.xy >= size) || gid.z >= layers { return; }
@@ -751,7 +752,8 @@ fn defocus_focus_source(pos: vec2<i32>, layer: u32) -> DefocusFocusSource {
 // runs right after its sources are built (pipeline/gpu/defocus.rs), so a
 // full-resolution texture holds five layers per slot, not fifteen.
 @compute @workgroup_size(8, 8, 1)
-fn build_defocus_sources(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_defocus_sources(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(defocus_sources_out);
     let capacity = textureNumLayers(defocus_sources_out) / DEFOCUS_SOURCE_LAYERS;
     let layers = defocus_layer_count(capacity);
@@ -794,10 +796,13 @@ var<workgroup> defocus_group_occupied: atomic<u32>;
 // rather than by the composite's bilinear upsampling.
 @compute @workgroup_size(8, 8, 1)
 fn gather_defocus(
-    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(global_invocation_id) dispatch_gid: vec3<u32>,
     @builtin(local_invocation_index) local_index: u32,
-    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(workgroup_id) dispatch_group: vec3<u32>,
 ) {
+    let gid = Common::dispatch_id(dispatch_gid);
+    // Workgroups are 8 invocations high.
+    let group = Common::dispatch_group(dispatch_group, 8u);
     let bin = defocus_pass.bin;
     let local = bin < DEFOCUS_LOCAL_BINS;
     let size = vec2<i32>(textureDimensions(defocus_slabs_out));
@@ -955,7 +960,8 @@ fn gather_defocus(
 // The fill's first level, at the first local bin's level: per texel the mean
 // premultiplied colour of what lies behind the front slabs, and its share.
 @compute @workgroup_size(8, 8, 1)
-fn build_defocus_fill(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_defocus_fill(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(defocus_slabs_out);
     let capacity = textureNumLayers(defocus_slabs_out) / DEFOCUS_SLAB_LAYERS;
     let layers = defocus_layer_count(capacity);
@@ -997,7 +1003,8 @@ fn defocus_fill_pixel(pos: vec2<i32>, index: u32, params: MaskEffectParams) -> v
 // texels its texel covers on the full image's grid. Local fills sit at
 // `level_0 + mip`; the map's at the map grid's mips.
 @compute @workgroup_size(8, 8, 1)
-fn halve_defocus_fill(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn halve_defocus_fill(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(defocus_slabs_out);
     let capacity = textureNumLayers(defocus_slabs_out) / DEFOCUS_SLAB_LAYERS;
     let layers = defocus_layer_count(capacity);
@@ -1047,7 +1054,8 @@ fn defocus_cells_per_slot() -> u32 {
 // add the fill's. Export tiles add only their cores, one tile after another,
 // so the sums equal the whole image's in any tiling.
 @compute @workgroup_size(8, 8, 1)
-fn accumulate_defocus_map(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn accumulate_defocus_map(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let bin = defocus_pass.bin;
     let grid = defocus_map_grid(bin);
     let capacity = arrayLength(&defocus_cells) / max(defocus_cells_per_slot(), 1u);
@@ -1102,7 +1110,8 @@ fn accumulate_defocus_map(@builtin(global_invocation_id) gid: vec3<u32>) {
 // The map's sources of bin `defocus_pass.bin` (at mip `bin - 3`) from its
 // sums, and for bin 3 the fill's first level.
 @compute @workgroup_size(8, 8, 1)
-fn resolve_defocus_map(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn resolve_defocus_map(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let bin = defocus_pass.bin;
     let grid = defocus_map_grid(bin);
     let capacity = textureNumLayers(defocus_sources_out) / (DEFOCUS_LOCAL_BINS * DEFOCUS_SOURCE_LAYERS);
@@ -1255,7 +1264,8 @@ fn defocus_fill(pos: vec2<i32>, layer: u32, radius: f32) -> vec3<f32> {
 // each shows, or where little lies behind them within their discs, the
 // non-front image's mean at their scale (`defocus_fill`).
 @compute @workgroup_size(8, 8, 1)
-fn composite_defocus(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn composite_defocus(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(defocus_result_out);
     let layers = defocus_layer_count(textureNumLayers(defocus_result_out));
     if any(gid.xy >= size) || gid.z >= layers { return; }

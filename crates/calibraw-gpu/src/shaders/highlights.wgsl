@@ -338,7 +338,8 @@ fn lens_shading_gains(pos: vec2<i32>) -> vec4<f32> {
 // lens shading gain. Clip detection and the highlight model thus see the
 // sensor values: a corner brightened by vignetting correction is not clipped.
 @compute @workgroup_size(8, 8, 1)
-fn highlight_reconstruct(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn highlight_reconstruct(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let method = Common::camera_uniforms.highlight_options.x;
@@ -533,7 +534,8 @@ fn binned_guided_color(
 // demosaic finish passes write. The raster finish program then adds sensor
 // denoise on the way into the scene.
 @compute @workgroup_size(8, 8, 1)
-fn binned_highlight_reconstruct(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn binned_highlight_reconstruct(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let method = Common::camera_uniforms.highlight_options.x;

@@ -731,7 +731,7 @@ impl super::RawGpuPipeline {
     /// image is outdated; others bake only what their bake's owner filled.
     pub(super) fn ensure_scene_bake(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut super::WorkEncoder<'_>,
         params: &super::GpuParams,
     ) {
         if !params.needs_scene_bake() {
@@ -748,16 +748,21 @@ impl super::RawGpuPipeline {
             let device = self.effect_inputs.device();
             match self.effect_inputs.scene_programs() {
                 Ok(programs) => {
-                    bake.encode_lights(device, encoder, programs.lights());
+                    encoder.untracked(|encoder| {
+                        bake.encode_lights(device, encoder, programs.lights())
+                    });
                     if params.needs_air_light() {
+                        let region = self.air_light_region(params.render_tier());
                         self.note_effect_allocation(
                             EffectResource::AirLight,
-                            self.effect_inputs.encode_air_light(
-                                encoder,
-                                &bake,
-                                programs.lights(),
-                                self.air_light_region(params.render_tier()),
-                            ),
+                            encoder.untracked(|encoder| {
+                                self.effect_inputs.encode_air_light(
+                                    encoder,
+                                    &bake,
+                                    programs.lights(),
+                                    region,
+                                )
+                            }),
                         );
                     }
                 }
@@ -788,17 +793,17 @@ impl super::RawGpuPipeline {
     /// image.
     pub(super) fn accumulate_scene_working_image(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut super::WorkEncoder<'_>,
         bake: &SceneBake,
     ) {
         bake.begin_accumulation(encoder);
         self.encode_pass(encoder, self.indices.scene_bake_accumulation_pass_index);
     }
 
-    pub(super) fn encode_scene_bake(&self, encoder: &mut wgpu::CommandEncoder, bake: &SceneBake) {
+    pub(super) fn encode_scene_bake(&self, encoder: &mut super::WorkEncoder<'_>, bake: &SceneBake) {
         let device = self.effect_inputs.device();
         match self.effect_inputs.scene_programs() {
-            Ok(programs) => bake.encode(device, encoder, &programs),
+            Ok(programs) => encoder.untracked(|encoder| bake.encode(device, encoder, &programs)),
             Err(error) => log::error!("scene bake programs did not compile: {error:#}"),
         }
     }
@@ -807,7 +812,7 @@ impl super::RawGpuPipeline {
     /// of it, first bringing it up to date.
     pub(super) fn inherit_scene_bake(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut super::WorkEncoder<'_>,
         full_frame: &Self,
         params: &super::GpuParams,
     ) {

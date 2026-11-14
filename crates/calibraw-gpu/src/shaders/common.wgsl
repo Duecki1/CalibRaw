@@ -210,6 +210,31 @@ struct EffectsUniforms {
 @group(1) @binding(0) var<uniform> scene_tone_uniforms: SceneToneUniforms;
 @group(2) @binding(0) var<uniform> effects_uniforms: EffectsUniforms;
 
+// The band of rows a dispatch covers. A pass that would run too long as one
+// GPU submission is dispatched in several, each over the workgroup rows that
+// start at `origin.y` (invocation rows, a multiple of the workgroup height);
+// a pass dispatched whole has origin 0 (`work.rs`). Entry points take their
+// invocation through `dispatch_id`, so a pass computes the same texels
+// whatever its bands.
+struct DispatchBand {
+    // x, z and w are reserved.
+    origin: vec4<u32>,
+}
+
+@group(1) @binding(1) var<uniform> dispatch_band: DispatchBand;
+
+// The invocation in the pass's whole dispatch of `id`, a band's
+// `global_invocation_id`.
+fn dispatch_id(id: vec3<u32>) -> vec3<u32> {
+    return vec3<u32>(id.x, id.y + dispatch_band.origin.y, id.z);
+}
+
+// The workgroup in the pass's whole dispatch of `group`, a band's
+// `workgroup_id`, for workgroups `group_height` invocations high.
+fn dispatch_group(group: vec3<u32>, group_height: u32) -> vec3<u32> {
+    return vec3<u32>(group.x, group.y + dispatch_band.origin.y / group_height, group.z);
+}
+
 @group(0) @binding(33) var<storage, read> mask_data: array<MaskData>;
 
 

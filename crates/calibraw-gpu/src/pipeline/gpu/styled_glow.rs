@@ -1038,7 +1038,7 @@ impl RawGpuPipeline {
     /// the whole image, the full-image map.
     pub(super) fn encode_styled_glow(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut WorkEncoder<'_>,
         params: &GpuParams,
         image_in_tex2: bool,
     ) {
@@ -1062,7 +1062,7 @@ impl RawGpuPipeline {
     /// streaks and the split spreads of `params`' Glow slots.
     fn encode_styled_glow_map_levels(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut WorkEncoder<'_>,
         groups: &StyledGlowBindGroups,
         params: &GpuParams,
     ) {
@@ -1090,25 +1090,23 @@ impl RawGpuPipeline {
 
     fn dispatch_styled_glow(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut WorkEncoder<'_>,
         program: usize,
         dispatch: &StyledGlowDispatch,
     ) {
         let pass = &self.passes[self.indices.styled_glow_pass_index + program];
-        dispatch_compute(
+        self.dispatch_pass(
             encoder,
             &pass.pipeline.entry,
             pass.pipeline.get(),
-            &[
-                &dispatch.bind_group,
-                &self.scene_tone_bind_group,
-                &self.effects_bind_group,
-            ],
+            &dispatch.bind_group,
             [
                 dispatch.texels[0].div_ceil(WORKGROUP_EDGE),
                 dispatch.texels[1].div_ceil(WORKGROUP_EDGE),
                 1,
             ],
+            pass.pipeline.work,
+            0,
         );
     }
 
@@ -1130,11 +1128,9 @@ impl RawGpuPipeline {
             .allocate_styled_glow_map(grid, styled_glow_layers(params))
             .context("allocate the Glow's full-image map")?;
         let groups = self.effect_inputs.styled_glow_bind_groups();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw export Glow map clear"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw export Glow map clear");
         encoder.clear_buffer(&groups.map_cells, 0, None);
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
         Ok(true)
     }
 
@@ -1151,9 +1147,7 @@ impl RawGpuPipeline {
         self.upload_params(queue, params);
         self.forget_output();
         let groups = self.effect_inputs.styled_glow_bind_groups();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw export Glow map tile"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw export Glow map tile");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Export Glow map"));
         self.encode_pass_range(
             &mut encoder,
@@ -1167,7 +1161,7 @@ impl RawGpuPipeline {
             MAP_ACCUMULATE,
             &groups.map_accumulate[usize::from(image_in_tex2)],
         );
-        stage_timing::submit(queue, encoder, timing);
+        encoder.submit(timing);
     }
 
     /// Resolves the Glow map every tile added to and builds its levels and
@@ -1179,13 +1173,11 @@ impl RawGpuPipeline {
         params: &GpuParams,
     ) {
         let groups = self.effect_inputs.styled_glow_bind_groups();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw export Glow map levels"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw export Glow map levels");
         self.encode_styled_glow_map_levels(&mut encoder, &groups, params);
         if let Some(map) = self.effect_inputs.styled_glow_map() {
             map.revision.bump();
         }
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
     }
 }

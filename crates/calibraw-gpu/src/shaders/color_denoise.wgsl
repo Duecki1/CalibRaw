@@ -132,42 +132,48 @@ fn color_denoise_apply(pos: vec2<i32>, radius: i32, scale: i32) -> vec3<f32> {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn color_denoise_scale_1(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn color_denoise_scale_1(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(color_denoise_write, pos, vec4<f32>(color_denoise_apply(pos, 1, 0), 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn color_denoise_scale_2(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn color_denoise_scale_2(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(color_denoise_write, pos, vec4<f32>(color_denoise_apply(pos, 2, 1), 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn color_denoise_scale_4(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn color_denoise_scale_4(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(color_denoise_write, pos, vec4<f32>(color_denoise_apply(pos, 4, 2), 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn color_denoise_scale_8(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn color_denoise_scale_8(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(color_denoise_write, pos, vec4<f32>(color_denoise_apply(pos, 8, 3), 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn color_denoise_scale_16(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn color_denoise_scale_16(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(color_denoise_write, pos, vec4<f32>(color_denoise_apply(pos, 16, 4), 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn color_denoise_scale_32(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn color_denoise_scale_32(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(color_denoise_write, pos, vec4<f32>(color_denoise_apply(pos, 32, 5), 1.0));

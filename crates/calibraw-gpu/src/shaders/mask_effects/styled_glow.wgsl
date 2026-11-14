@@ -211,7 +211,8 @@ fn styled_glow_near_origin(level: u32) -> vec2<i32> {
 // Level 1 from the creative input: per texel, the 4 × 4 pixels around its
 // centre weighted 1 3 3 1 on each axis.
 @compute @workgroup_size(8, 8, 1)
-fn build_styled_glow_near_first(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_styled_glow_near_first(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(styled_glow_level_out);
     if any(gid.xy >= size) { return; }
     let layers = styled_glow_layer_count(textureNumLayers(styled_glow_level_out));
@@ -256,7 +257,8 @@ fn styled_glow_halve(centre: vec2<f32>, layer: u32) -> vec4<f32> {
 
 // Near level `styled_glow_level.x` (2 to 4) from the one before.
 @compute @workgroup_size(8, 8, 1)
-fn build_styled_glow_near_level(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_styled_glow_near_level(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(styled_glow_level_out);
     if any(gid.xy >= size) { return; }
     let level = styled_glow_level.x;
@@ -287,7 +289,8 @@ fn styled_glow_cell_index(cell: vec2<u32>, layer: u32) -> u32 {
 // whose centres it covers. Export tiles add only their cores, one tile after
 // another, so the sums equal the whole image's in any tiling.
 @compute @workgroup_size(8, 8, 1)
-fn accumulate_styled_glow_map(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn accumulate_styled_glow_map(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = styled_glow_map_grid();
     if any(gid.xy >= grid) { return; }
     let span_x = Common::full_image_grid_pixel_span(gid.x, grid.x, Common::camera_uniforms.full_width);
@@ -321,7 +324,8 @@ fn accumulate_styled_glow_map(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 // The map's first level: each cell's mean S.
 @compute @workgroup_size(8, 8, 1)
-fn resolve_styled_glow_map(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn resolve_styled_glow_map(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(styled_glow_level_out);
     if any(gid.xy >= size) { return; }
     let layers = styled_glow_layer_count(textureNumLayers(styled_glow_level_out));
@@ -335,7 +339,8 @@ fn resolve_styled_glow_map(@builtin(global_invocation_id) gid: vec3<u32>) {
 // Map level `styled_glow_level.x` from the one before. Sizes halve and round
 // down, so texel centres are placed through the levels' common uv.
 @compute @workgroup_size(8, 8, 1)
-fn build_styled_glow_map_level(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_styled_glow_map_level(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(styled_glow_level_out);
     if any(gid.xy >= size) { return; }
     let parent = vec2<f32>(textureDimensions(styled_glow_parent_tex));
@@ -408,7 +413,8 @@ fn styled_glow_parent_at(cell: vec2<f32>, layer: u32) -> vec4<f32> {
 // line by a Gaussian of the SOFTNESS deviation and scaled by the line's
 // share of the light, into the streak layers, one per Glow slot.
 @compute @workgroup_size(8, 8, 1)
-fn blur_styled_glow_streak_across(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn blur_styled_glow_streak_across(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(styled_glow_level_out);
     if any(gid.xy >= size) { return; }
     let grid = vec2<f32>(size);
@@ -449,7 +455,8 @@ fn blur_styled_glow_streak_across(@builtin(global_invocation_id) gid: vec3<u32>)
 // weighted a^(j·spacing) per channel, a primary's λ scaled by Dispersion, and
 // normalized. Motion slots take no pass toward −d and are copied.
 @compute @workgroup_size(8, 8, 1)
-fn build_styled_glow_streak(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_styled_glow_streak(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(styled_glow_level_out);
     if any(gid.xy >= size) { return; }
     let grid = vec2<f32>(size);
@@ -490,7 +497,8 @@ fn build_styled_glow_streak(@builtin(global_invocation_id) gid: vec3<u32>) {
 // that line keeps its sum, so its streaks reach the streak layers whichever
 // texture holds the sum.
 @compute @workgroup_size(8, 8, 1)
-fn add_styled_glow_streak(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn add_styled_glow_streak(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(styled_glow_level_out);
     if any(gid.xy >= size) { return; }
     let cell = vec2<i32>(gid.xy);
@@ -747,7 +755,8 @@ fn styled_glow_splits_spread(params: MaskEffectParams) -> bool {
 // luminance each kernel spreads (`styled_glow_spread_luminance`). Reads the
 // map's layers at every mip; writes the streak layers at mip 0.
 @compute @workgroup_size(8, 8, 1)
-fn build_styled_glow_split(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_styled_glow_split(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(styled_glow_level_out);
     if any(gid.xy >= size) { return; }
     let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(size);

@@ -165,6 +165,9 @@ where
         )
         .context("create reusable full-quality export pipeline")?
     };
+    // The export runs on its own thread: it waits between chunks of GPU work,
+    // so the UI's frames are not queued behind whole tiles.
+    tile_pipeline.pace_submissions(true);
     let setup = tile_pipeline.setup_times();
     calibraw_core::diagnostics::record(format!(
         "Full-quality export pipeline prepared in {:.3}s (resources {:.3}s, shader modules {:.3}s, program compilation {:.3}s); padded_tile={}x{} viewport-local mask_atlas={}x{} R16F",

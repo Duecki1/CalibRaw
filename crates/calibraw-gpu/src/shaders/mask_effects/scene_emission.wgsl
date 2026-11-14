@@ -163,7 +163,8 @@ fn scene_emission_depth_at(uv: vec2<f32>) -> f32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_scene_emission(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_scene_emission(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = scene_emission_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let samples = SCENE_EMISSION_SUBSAMPLES;
@@ -252,7 +253,8 @@ fn scene_emission_cell_extent(grid: vec2<u32>) -> f32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_scene_emission_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_scene_emission_surfaces(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = scene_emission_surface_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let camera = scene_light_camera();
@@ -303,7 +305,8 @@ fn build_scene_emission_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) 
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_scene_emission_volume(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_scene_emission_volume(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = scene_emission_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(grid);

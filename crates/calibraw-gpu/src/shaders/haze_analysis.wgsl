@@ -166,7 +166,8 @@ fn haze_box_edge(grid: vec2<u32>) -> i32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn accumulate_haze(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn accumulate_haze(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = Haze::haze_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let span_x = Common::full_image_grid_pixel_span(
@@ -464,7 +465,8 @@ fn resolve_haze_airlight(@builtin(local_invocation_index) thread: u32) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn resolve_haze_transmission(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn resolve_haze_transmission(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = vec2<i32>(Haze::haze_grid());
     let cell = vec2<i32>(gid.xy);
     if any(cell >= grid) { return; }
@@ -489,7 +491,8 @@ fn resolve_haze_transmission(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn haze_guide_coefficients(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn haze_guide_coefficients(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = vec2<i32>(Haze::haze_grid());
     let cell = vec2<i32>(gid.xy);
     if any(cell >= grid) { return; }
@@ -530,7 +533,8 @@ fn haze_guide_coefficients(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn smooth_haze_coefficients(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn smooth_haze_coefficients(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = vec2<i32>(Haze::haze_grid());
     let cell = vec2<i32>(gid.xy);
     if any(cell >= grid) { return; }

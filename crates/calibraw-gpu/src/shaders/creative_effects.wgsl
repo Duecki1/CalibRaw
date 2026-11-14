@@ -129,42 +129,50 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_0(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_0(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 0u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_1(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_1(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 1u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_2(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_2(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 2u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_3(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_3(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 3u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_4(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_4(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 4u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_5(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_5(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 5u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_6(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_6(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 6u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn apply_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn apply_scene_effects_node(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::adjustment_base_at(pos);
@@ -176,14 +184,16 @@ fn apply_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn copy_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn copy_scene_effects_node(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(SceneAdjustments::local_effects_out, pos, vec4<f32>(SceneAdjustments::adjustment_base_at(pos), 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn prepare_glow_source(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn prepare_glow_source(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(mask_glow_source_at(pos), 0.0));
@@ -196,32 +206,38 @@ fn store_glow_stage(gid: vec3<u32>, stage: u32) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_glow_0(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_glow_0(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_glow_stage(gid, 0u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_glow_1(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_glow_1(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_glow_stage(gid, 1u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_glow_2(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_glow_2(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_glow_stage(gid, 2u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_glow_3(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_glow_3(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_glow_stage(gid, 3u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_glow_4(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_glow_4(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_glow_stage(gid, 4u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn apply_creative_effects(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
@@ -265,7 +281,8 @@ fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
 // statistics and the scene a few pixels around (wet_detail), so export tiles match
 // the preview with a small halo (WET_SURFACES_SUPPORT in tiles.rs).
 @compute @workgroup_size(8, 8, 1)
-fn apply_wet_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn apply_wet_surfaces(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
@@ -281,7 +298,8 @@ fn apply_wet_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn apply_weather_air(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn apply_weather_air(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);

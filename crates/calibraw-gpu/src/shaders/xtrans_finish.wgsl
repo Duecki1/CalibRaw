@@ -153,14 +153,16 @@ override fn NoiseCaFinish::finish_reference_at(pos: vec2<i32>) -> vec3<f32> {
 // Pass 1 of dual demosaicing (dual_demosaic.wgsl), with Markesteijn as the
 // reference.
 @compute @workgroup_size(8, 8, 1)
-fn xtrans_dual_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn xtrans_dual_prepare(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     Dual::dual_store_prepared(pos, xt_high(pos), false);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn xtrans_demosaic_finish(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn xtrans_demosaic_finish(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let reference = xt_high(pos);

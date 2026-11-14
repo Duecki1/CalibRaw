@@ -149,18 +149,14 @@ pub(crate) fn next_pass(label: &str) -> Option<PassTimestamps> {
     })
 }
 
-/// Submits `encoder`, whose passes `timing` timed, and records their times
-/// once the GPU ran them.
-pub(crate) fn submit(
-    queue: &wgpu::Queue,
-    mut encoder: wgpu::CommandEncoder,
+/// Copies the timestamps of the passes `timing` timed into a buffer the CPU
+/// can read, in `encoder`, which must be submitted after the passes. Call
+/// [`PendingStageTiming::report`] once it is.
+pub(crate) fn resolve(
     timing: Option<StageTiming>,
-) {
-    let pending = timing.and_then(|timing| timing.finish(&mut encoder));
-    queue.submit(Some(encoder.finish()));
-    if let Some(pending) = pending {
-        pending.report();
-    }
+    encoder: &mut wgpu::CommandEncoder,
+) -> Option<PendingStageTiming> {
+    timing.and_then(|timing| timing.finish(encoder))
 }
 
 pub(crate) struct PassTimestamps {
@@ -232,7 +228,7 @@ impl Drop for StageTiming {
     }
 }
 
-struct PendingStageTiming {
+pub(crate) struct PendingStageTiming {
     name: String,
     passes: Vec<String>,
     untimed: u32,
@@ -245,7 +241,7 @@ struct PendingStageTiming {
 impl PendingStageTiming {
     /// Records the times once the submitted stage finished; the device's next
     /// poll or submission runs the callback.
-    fn report(self) {
+    pub(crate) fn report(self) {
         let buffer = self.readback.clone();
         self.readback
             .slice(..)

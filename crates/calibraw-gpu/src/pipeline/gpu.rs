@@ -49,6 +49,9 @@ use styled_glow::{
     styled_glow_layout_entries, STYLED_GLOW_ENTRIES, STYLED_GLOW_LAYOUT_LABELS, STYLED_GLOW_PASSES,
 };
 mod wait;
+mod work;
+pub(crate) use work::in_flight_summary;
+use work::{dispatch_band_entry, DispatchBands, PassDispatch, PassWork, WorkEncoder};
 
 use builder::*;
 pub use clipping::PreviewClippingGpu;
@@ -204,6 +207,8 @@ struct ComputeProgram {
     shader: wgpu::ShaderModule,
     layouts: [wgpu::BindGroupLayout; 3],
     entry: String,
+    /// How the program's dispatches are measured and cut (`work`).
+    work: PassWork,
     cache: Option<Arc<PersistentGpuPipelineCache>>,
     compiled: OnceLock<wgpu::ComputePipeline>,
     demosaic_variants: [OnceLock<wgpu::ComputePipeline>; DEMOSAIC_VARIANT_COUNT - 1],
@@ -490,6 +495,11 @@ pub struct RawGpuPipeline {
     scene_tone_uniforms_buffer: wgpu::Buffer,
     effects_uniforms_buffer: wgpu::Buffer,
     scene_tone_bind_group: wgpu::BindGroup,
+    /// The band origins bound with the scene-tone uniforms (`work`).
+    dispatch_bands: DispatchBands,
+    /// Whether this pipeline's stages wait for the GPU between chunks
+    /// ([`Self::pace_submissions`]).
+    paced_submissions: AtomicBool,
     effects_bind_group: wgpu::BindGroup,
     remove_composite_pipeline: wgpu::ComputePipeline,
     remove_composite_bind_group: wgpu::BindGroup,
@@ -569,6 +579,7 @@ pub struct RawGpuPipeline {
     _tex1: wgpu::Texture,
     _tex2: wgpu::Texture,
     _xtrans_homogeneity: Option<wgpu::Texture>,
+    _xtrans_complete: Option<wgpu::Texture>,
     rgb_source_texture: wgpu::Texture,
     binned_ai_texture: wgpu::Texture,
     binned_clipping_texture: wgpu::Texture,
@@ -821,15 +832,13 @@ impl RawGpuPipeline {
 
     pub fn recompute(&self, queue: &wgpu::Queue, device: &wgpu::Device, params: &GpuParams) {
         self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw complete recompute encoder"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw complete recompute encoder");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Recompute"));
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
         self.encode_raw_stage(&mut encoder, params);
         self.encode_tone_stage(&mut encoder, params);
         self.encode_output_stage(&mut encoder, params, OutputStart::Scene);
-        stage_timing::submit(queue, encoder, timing);
+        encoder.submit(timing);
     }
 
     /// Renders `stage` of `params`. The output stage starts at the first of
@@ -844,9 +853,7 @@ impl RawGpuPipeline {
         stage: ProcessingStage,
     ) {
         let uploaded = self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some(stage.label()),
-        });
+        let mut encoder = self.work(device, queue, stage.label());
 
         match stage {
             ProcessingStage::Raw | ProcessingStage::Tone => {
@@ -858,7 +865,7 @@ impl RawGpuPipeline {
                     encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
                     self.encode_tone_stage(&mut encoder, params);
                 }
-                stage_timing::submit(queue, encoder, timing);
+                encoder.submit(timing);
             }
             ProcessingStage::Output => {
                 let inputs = OutputInputs::new(params, &uploaded, self.shared_map_builds());
@@ -869,14 +876,14 @@ impl RawGpuPipeline {
                 // After encoding, which rebuilt the maps this pipeline owns.
                 let inputs = inputs.with_map_builds(self.shared_map_builds());
                 self.lock_output_resume().record(inputs, textures);
-                stage_timing::submit(queue, encoder, timing);
+                encoder.submit(timing);
             }
         }
     }
 
     /// Encodes the tone stage: the tone statistics and guide, and the
     /// full-image maps `params` reads. Every later stage reads them anew.
-    fn encode_tone_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_tone_stage(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         self.forget_output();
         self.tone_build.bump();
         self.encode_pass_range(
@@ -1005,9 +1012,7 @@ impl RawGpuPipeline {
 
     pub fn begin_export_tone_analysis(&self, queue: &wgpu::Queue, device: &wgpu::Device) {
         self.forget_output();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw export tone histogram clear"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw export tone histogram clear");
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
         for map in FullImageMap::ALL {
             if let Some(resources) = self.effect_inputs.full_image_map(map) {
@@ -1017,7 +1022,7 @@ impl RawGpuPipeline {
         if let Some(bake) = self.effect_inputs.scene_bake() {
             bake.outdate_scene();
         }
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
         for map in FullImageMap::ALL {
             self.full_image_map_current(map)
                 .store(false, Ordering::Release);
@@ -1118,7 +1123,7 @@ impl RawGpuPipeline {
 
     /// Builds `map` from this pipeline's whole image, after the tone
     /// statistics it is resolved against.
-    fn encode_full_image_map(&self, encoder: &mut wgpu::CommandEncoder, map: FullImageMap) {
+    fn encode_full_image_map(&self, encoder: &mut WorkEncoder<'_>, map: FullImageMap) {
         self.effect_inputs.allocate_full_image_map(map);
         if let Some(resources) = self.effect_inputs.full_image_map(map) {
             encoder.clear_buffer(&resources.cells, 0, None);
@@ -1133,7 +1138,7 @@ impl RawGpuPipeline {
     /// Full-image maps for a new tone result: built when an effect reads
     /// them, otherwise left for `ensure_full_image_map`, which most edits
     /// never need.
-    fn encode_tone_full_image_maps(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_tone_full_image_maps(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         self.outdate_scene_bake();
         for map in FullImageMap::ALL {
             if params.needs_full_image_map(map) {
@@ -1147,7 +1152,7 @@ impl RawGpuPipeline {
 
     /// Builds `map` if the current tone result has none yet. The scene and
     /// tone statistics it reads stay valid until the next raw or tone stage.
-    fn ensure_full_image_map(&self, encoder: &mut wgpu::CommandEncoder, map: FullImageMap) {
+    fn ensure_full_image_map(&self, encoder: &mut WorkEncoder<'_>, map: FullImageMap) {
         if !self.full_image_map_current(map).load(Ordering::Acquire) {
             self.encode_full_image_map(encoder, map);
         }
@@ -1157,7 +1162,7 @@ impl RawGpuPipeline {
     /// zoomed view sees the lights and haze outside its region.
     fn inherit_full_image_maps(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut WorkEncoder<'_>,
         full_frame: &Self,
         params: &GpuParams,
     ) {
@@ -1247,9 +1252,11 @@ impl RawGpuPipeline {
         self.forget_output();
         self.inherited_tone
             .store(full_frame.tone_build.get(), Ordering::Release);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw crop tone guide with full-frame statistics"),
-        });
+        let mut encoder = self.work(
+            device,
+            queue,
+            "calibraw crop tone guide with full-frame statistics",
+        );
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
         encoder.copy_buffer_to_buffer(
             &full_frame.tone_stats_buffer,
@@ -1264,7 +1271,7 @@ impl RawGpuPipeline {
             self.indices.tone_prepare_pass_index,
             self.indices.tone_reduce_pass_index,
         );
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
     }
 
     pub fn inherit_tone_statistics(
@@ -1283,9 +1290,7 @@ impl RawGpuPipeline {
         if self.inherited_tone.swap(tone, Ordering::AcqRel) != tone {
             self.forget_output();
         }
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw inherit full-frame tone statistics"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw inherit full-frame tone statistics");
         encoder.copy_buffer_to_buffer(
             &full_frame.tone_stats_buffer,
             0,
@@ -1294,7 +1299,7 @@ impl RawGpuPipeline {
             TONE_STATS_SIZE_BYTES,
         );
         self.inherit_full_image_maps(&mut encoder, full_frame, params);
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
     }
 
     pub fn accumulate_export_tone_tile_with_remove(
@@ -1306,9 +1311,7 @@ impl RawGpuPipeline {
     ) -> Result<()> {
         self.dispatch_stage_with_remove(queue, device, params, ProcessingStage::Raw, remove)?;
         self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw Remove-aware export tone tile"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw Remove-aware export tone tile");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Export tone"));
         self.encode_pass(&mut encoder, self.indices.tone_prepare_pass_index);
         // Each tile adds its core to the shared full-image maps. Without a
@@ -1327,16 +1330,14 @@ impl RawGpuPipeline {
                 self.accumulate_scene_working_image(&mut encoder, &bake);
             }
         }
-        stage_timing::submit(queue, encoder, timing);
+        encoder.submit(timing);
         Ok(())
     }
 
     pub fn finish_export_tone_analysis(&self, queue: &wgpu::Queue, device: &wgpu::Device) {
         self.forget_output();
         self.tone_build.bump();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw export tone histogram reduction"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw export tone histogram reduction");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Export tone reduce"));
         self.encode_pass(&mut encoder, self.indices.tone_reduce_pass_index);
         // Tiles accumulated a map only if an effect reads it, which allocated
@@ -1354,7 +1355,7 @@ impl RawGpuPipeline {
         if let Some(bake) = self.effect_inputs.scene_bake() {
             self.encode_scene_bake(&mut encoder, &bake);
         }
-        stage_timing::submit(queue, encoder, timing);
+        encoder.submit(timing);
         // Resolved from every tile's accumulation; tiles must not rebuild them
         // from their own region.
         for (map, allocated) in FullImageMap::ALL.into_iter().zip(allocated) {
@@ -1439,9 +1440,7 @@ impl RawGpuPipeline {
         params: &GpuParams,
     ) {
         self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw Remove-aware tiled export encoder"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw Remove-aware tiled export encoder");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Export tile"));
         self.forget_output();
         self.encode_pass_range(
@@ -1450,10 +1449,10 @@ impl RawGpuPipeline {
             self.indices.tone_reduce_pass_index,
         );
         self.encode_output_stage(&mut encoder, params, OutputStart::Scene);
-        stage_timing::submit(queue, encoder, timing);
+        encoder.submit(timing);
     }
 
-    fn encode_raw_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_raw_stage(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         self.forget_output();
         if self.layout == PixelLayout::Raster {
             self.encode_pass(encoder, self.indices.raster_finish_pass_index);
@@ -1488,7 +1487,7 @@ impl RawGpuPipeline {
     }
 
     /// Reconstructs a mosaic's highlights and demosaics it into the scene.
-    fn encode_demosaic(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_demosaic(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         self.encode_pass(encoder, self.indices.highlight_pass_index);
         self.encode_pass_range(
             encoder,
@@ -1503,22 +1502,20 @@ impl RawGpuPipeline {
             );
         }
         let finish = &self.passes[self.indices.demosaic_finish_index];
-        dispatch_compute(
+        self.dispatch_pass(
             encoder,
             "calibraw demosaic finish",
             finish.pipeline.for_demosaic_params(&params.camera),
-            &[
-                &self.pass_bind_group(finish),
-                &self.scene_tone_bind_group,
-                &self.effects_bind_group,
-            ],
+            &self.pass_bind_group(finish),
             finish.workgroups,
+            finish.pipeline.work,
+            demosaic_variant_for(&params.camera) as u64,
         );
     }
 
     /// Moves red and blue onto green and removes colour fringes in the scene
     /// when Chromatic Aberration is on.
-    fn encode_chromatic_aberration(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_chromatic_aberration(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         if params.needs_chromatic_aberration_passes() {
             self.encode_pass(
                 encoder,
@@ -1529,7 +1526,7 @@ impl RawGpuPipeline {
     }
 
     /// Filters the scene's colour noise in place when Color denoise is on.
-    fn encode_color_denoise(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_color_denoise(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         if params.camera.chroma_denoise > 1e-6 {
             self.encode_pass_range(
                 encoder,
@@ -1544,7 +1541,7 @@ impl RawGpuPipeline {
     /// part's input is afterwards.
     fn encode_output_stage(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut WorkEncoder<'_>,
         params: &GpuParams,
         start: OutputStart,
     ) -> OutputTextures {
@@ -1588,7 +1585,7 @@ impl RawGpuPipeline {
     /// the other; the Glow passes write the other and display_linear.
     fn encode_creative_part(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut WorkEncoder<'_>,
         params: &GpuParams,
         creative_input_in_tex2: bool,
     ) -> OutputTextures {
@@ -1651,7 +1648,7 @@ impl RawGpuPipeline {
     }
 
     /// The full-image maps and the scene bake the output stage reads.
-    fn ensure_output_inputs(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn ensure_output_inputs(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         for map in FullImageMap::ALL {
             if params.needs_full_image_map(map) {
                 self.ensure_full_image_map(encoder, map);
@@ -1664,11 +1661,7 @@ impl RawGpuPipeline {
     /// adjustments, and with intermediate passes the scene effects, the blurs
     /// and Wet Surfaces. Returns whether the image ends in the second work
     /// texture rather than the first.
-    fn encode_creative_input(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        params: &GpuParams,
-    ) -> bool {
+    fn encode_creative_input(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) -> bool {
         let mut image_in_tex2 = self.encode_scene_adjustments(encoder, params);
         if !params.needs_intermediate_adjustment_passes() {
             return image_in_tex2;
@@ -1706,11 +1699,7 @@ impl RawGpuPipeline {
     /// pass left out would have copied its input unchanged, so the image is
     /// the same wherever it ends. Returns whether that is the second work
     /// texture.
-    fn encode_scene_adjustments(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        params: &GpuParams,
-    ) -> bool {
+    fn encode_scene_adjustments(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) -> bool {
         self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);
         self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
         if !params.needs_intermediate_adjustment_passes() {
@@ -1736,14 +1725,14 @@ impl RawGpuPipeline {
 
     /// Puts the image in the first work texture, where the first Blur stage
     /// and Lens Blur's passes read it.
-    fn encode_blur_stage_input(&self, encoder: &mut wgpu::CommandEncoder, image_in_tex2: bool) {
+    fn encode_blur_stage_input(&self, encoder: &mut WorkEncoder<'_>, image_in_tex2: bool) {
         if image_in_tex2 {
             self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
         }
     }
 
     /// Encodes the display transform from the work texture holding the image.
-    fn encode_render_pass(&self, encoder: &mut wgpu::CommandEncoder, image_in_tex2: bool) {
+    fn encode_render_pass(&self, encoder: &mut WorkEncoder<'_>, image_in_tex2: bool) {
         if image_in_tex2 {
             self.encode_pass(encoder, self.indices.adjustment_render_pass_index);
         } else {
@@ -1759,7 +1748,7 @@ impl RawGpuPipeline {
     /// image into the other.
     fn encode_effects_pass(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut WorkEncoder<'_>,
         index: usize,
         image_in_tex2: &mut bool,
     ) {
@@ -1769,49 +1758,105 @@ impl RawGpuPipeline {
         } else {
             InputBoundPass::EffectsFromTex1
         };
-        let effect_program = self.effect_program(pass);
-        dispatch_compute(
+        self.dispatch_program(
             encoder,
+            pass,
             &pass.pipeline.entry,
-            effect_program
-                .as_ref()
-                .unwrap_or_else(|| pass.pipeline.get()),
-            &[
-                &self.effect_inputs.bind_group(input),
-                &self.scene_tone_bind_group,
-                &self.effects_bind_group,
-            ],
-            pass.workgroups,
+            &self.effect_inputs.bind_group(input),
         );
         *image_in_tex2 = !*image_in_tex2;
     }
 
-    fn encode_pass(&self, encoder: &mut wgpu::CommandEncoder, index: usize) {
+    fn encode_pass(&self, encoder: &mut WorkEncoder<'_>, index: usize) {
         let pass = &self.passes[index];
         self.encode_bound_pass(encoder, pass, &pass.pipeline.entry);
     }
 
-    fn encode_bound_pass(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        pass_record: &Pass,
-        label: &str,
-    ) {
+    fn encode_bound_pass(&self, encoder: &mut WorkEncoder<'_>, pass_record: &Pass, label: &str) {
         let bind_group = self.pass_bind_group(pass_record);
-        let effect_program = self.effect_program(pass_record);
-        dispatch_compute(
+        self.dispatch_program(encoder, pass_record, label, &bind_group);
+    }
+
+    /// Encodes `pass` over `bind_group` with the program for the effects
+    /// last uploaded ([`Self::effect_program`]).
+    fn dispatch_program(
+        &self,
+        encoder: &mut WorkEncoder<'_>,
+        pass: &Pass,
+        label: &str,
+        bind_group: &wgpu::BindGroup,
+    ) {
+        let effect_program = self.effect_program(pass);
+        // Each effect set's program has its own cost; 0 is the program with
+        // every effect.
+        let variant = match &effect_program {
+            Some(_) => 1 + u64::from(self.uploaded_effects.load(Ordering::Acquire)),
+            None => 0,
+        };
+        self.dispatch_pass(
             encoder,
             label,
             effect_program
                 .as_ref()
-                .unwrap_or_else(|| pass_record.pipeline.get()),
-            &[
-                &bind_group,
+                .unwrap_or_else(|| pass.pipeline.get()),
+            bind_group,
+            pass.workgroups,
+            pass.pipeline.work,
+            variant,
+        );
+    }
+
+    /// Encodes one pass of this pipeline: `bind_group` in group 0, the
+    /// scene-tone uniforms with the dispatch band in 1, the effects uniforms
+    /// in 2.
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_pass(
+        &self,
+        encoder: &mut WorkEncoder<'_>,
+        label: &str,
+        pipeline: &wgpu::ComputePipeline,
+        bind_group: &wgpu::BindGroup,
+        workgroups: [u32; 3],
+        work: PassWork,
+        variant: u64,
+    ) {
+        encoder.dispatch(PassDispatch {
+            label,
+            pipeline,
+            bind_groups: [
+                bind_group,
                 &self.scene_tone_bind_group,
                 &self.effects_bind_group,
             ],
-            pass_record.workgroups,
-        );
+            workgroups,
+            bands: &self.dispatch_bands,
+            work,
+            variant,
+        });
+    }
+
+    /// A stage's work, whose chunks go to `queue` as they close and the last
+    /// one with `WorkEncoder::submit`.
+    fn work<'a>(
+        &self,
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        label: &'static str,
+    ) -> WorkEncoder<'a> {
+        WorkEncoder::new(
+            device,
+            queue,
+            label,
+            self.paced_submissions.load(Ordering::Acquire),
+        )
+    }
+
+    /// Makes this pipeline's stages wait for the GPU whenever a tenth of a
+    /// second of their work is outstanding, so that the UI's frames reach
+    /// the GPU in between. For pipelines rendered on a worker thread (an
+    /// export's tiles); the UI thread must not wait.
+    pub fn pace_submissions(&self, paced: bool) {
+        self.paced_submissions.store(paced, Ordering::Release);
     }
 
     /// The program of `pass` that holds only the effects of the parameters
@@ -1831,7 +1876,7 @@ impl RawGpuPipeline {
         }
     }
 
-    fn encode_pass_range(&self, encoder: &mut wgpu::CommandEncoder, start: usize, end: usize) {
+    fn encode_pass_range(&self, encoder: &mut WorkEncoder<'_>, start: usize, end: usize) {
         for index in start..end {
             self.encode_pass(encoder, index);
         }

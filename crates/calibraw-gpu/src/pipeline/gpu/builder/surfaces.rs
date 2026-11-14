@@ -105,6 +105,10 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     /// Markesteijn's homogeneity map, allocated for X-Trans only.
     pub(in crate::pipeline::gpu) xtrans_homogeneity: Option<wgpu::Texture>,
     pub(in crate::pipeline::gpu) xtrans_homogeneity_view: Option<wgpu::TextureView>,
+    /// The other texture of Markesteijn's completed buffers 0-3, allocated
+    /// for X-Trans only.
+    pub(in crate::pipeline::gpu) xtrans_complete: Option<wgpu::Texture>,
+    pub(in crate::pipeline::gpu) xtrans_complete_view: Option<wgpu::TextureView>,
 }
 
 pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
@@ -238,6 +242,15 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         )
     });
     let xtrans_homogeneity_view = xtrans_homogeneity.as_ref().map(default_texture_view);
+    let xtrans_complete = matches!(raw.cfa_kind, CfaKind::XTrans).then(|| {
+        create_float_work_texture(
+            device,
+            size,
+            highlight_work_format,
+            "calibraw X-Trans Markesteijn completed state",
+        )
+    });
+    let xtrans_complete_view = xtrans_complete.as_ref().map(default_texture_view);
 
     let out_view = default_texture_view(&out_texture);
     let display_linear_view = default_texture_view(&display_linear_texture);
@@ -325,6 +338,8 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             mask_sampler,
             xtrans_homogeneity,
             xtrans_homogeneity_view,
+            xtrans_complete,
+            xtrans_complete_view,
         },
         has_ai_scene,
     ))
