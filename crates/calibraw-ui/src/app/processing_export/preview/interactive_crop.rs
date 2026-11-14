@@ -20,7 +20,7 @@ impl CalibRawApp {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         register: impl FnOnce(RawGpuPipeline) -> PreviewPipeline,
-        sharp: &PreviewDetail,
+        sharp: &PreviewDetail<CropPipeline>,
         reduced: &Arc<LoadedRaw>,
     ) -> anyhow::Result<PreviewDetail> {
         let full_raw = self

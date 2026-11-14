@@ -84,7 +84,10 @@ impl CalibRawApp {
             (&mut state.base, self.preview.gpu_pipeline.as_ref()),
             (
                 &mut state.detail,
-                self.preview.detail.as_ref().map(|detail| &detail.pipeline),
+                self.preview
+                    .detail
+                    .as_ref()
+                    .and_then(|detail| detail.pipeline.presented()),
             ),
         ] {
             let (Some(cached), Some(presented)) = (cached.as_mut(), presented) else {
@@ -138,7 +141,7 @@ impl CalibRawApp {
                 .detail
                 .as_ref()
                 .filter(|detail| detail.revision == self.preview.revision)
-                .map(|detail| &detail.pipeline),
+                .and_then(|detail| detail.pipeline.presented()),
             state.shadows,
             state.highlights,
         );

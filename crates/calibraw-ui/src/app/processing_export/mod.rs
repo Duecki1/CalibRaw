@@ -8,6 +8,7 @@ mod carousel;
 mod export;
 mod lens;
 mod preview;
+pub(in crate::app) use preview::DetailRender;
 mod replay;
 
 pub(super) use carousel::SlidePublish;

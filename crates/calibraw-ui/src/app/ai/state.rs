@@ -257,12 +257,15 @@ impl CalibRawApp {
 
     pub(crate) fn finish_mask_geometry_interaction(&mut self) {
         let layer = self.masks.interaction_dirty_layer.take();
+        // A crop whose graph a worker is rendering gets its masks then.
         let should_refine = self.preview.detail.as_ref().is_some_and(|detail| {
-            detail.mask_texture_extent
-                != crate::pipeline::mask_region_texture_extent(
-                    detail.mask_source_region,
-                    detail.pipeline.gpu().mask_atlas_edge(),
-                )
+            detail.pipeline.gpu().is_some_and(|gpu| {
+                detail.mask_texture_extent
+                    != crate::pipeline::mask_region_texture_extent(
+                        detail.mask_source_region,
+                        gpu.mask_atlas_edge(),
+                    )
+            })
         });
         let should_commit = self.masks.interaction_has_uncommitted_change || should_refine;
         self.masks.interaction_last_upload = None;

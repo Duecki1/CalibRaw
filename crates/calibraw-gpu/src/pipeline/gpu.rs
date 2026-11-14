@@ -907,6 +907,27 @@ impl RawGpuPipeline {
         &self.out_view
     }
 
+    /// Copies the output ([`Self::output_view`]) into `destination`, an
+    /// `Rgba8Unorm` texture of this pipeline's size made with `COPY_DST`: a
+    /// presentation layer that shows only completed renders keeps the copy
+    /// while the next render runs. Queued after the work submitted so far.
+    pub fn copy_output_to(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        destination: &wgpu::Texture,
+    ) {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("calibraw copy output to presentation"),
+        });
+        encoder.copy_texture_to_texture(
+            self.out_texture.as_image_copy(),
+            destination.as_image_copy(),
+            self.out_texture.size(),
+        );
+        queue.submit(Some(encoder.finish()));
+    }
+
     pub fn recompute(&self, queue: &wgpu::Queue, device: &wgpu::Device, params: &GpuParams) {
         self.upload_params(queue, params);
         let mut encoder = self.work(device, queue, "calibraw complete recompute encoder");
@@ -1325,6 +1346,22 @@ impl RawGpuPipeline {
         params: &GpuParams,
         full_frame: &Self,
     ) {
+        self.inherit_full_frame_tone(queue, device, params, full_frame);
+        self.dispatch_inherited_tone_guide(queue, device);
+    }
+
+    /// The first half of [`Self::dispatch_tone_guide_with_inherited_statistics`]:
+    /// copies `full_frame`'s tone statistics and full-image maps into this
+    /// crop, building a map `full_frame` lacks. It reads and may encode work on
+    /// `full_frame`, so it runs on the thread that renders `full_frame`. Call
+    /// after this crop's RAW stage, which writes none of what it copies.
+    pub fn inherit_full_frame_tone(
+        &self,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+        params: &GpuParams,
+        full_frame: &Self,
+    ) {
         self.upload_params(queue, params);
         self.forget_output();
         self.inherited_tone
@@ -1332,7 +1369,7 @@ impl RawGpuPipeline {
         let mut encoder = self.work(
             device,
             queue,
-            "calibraw crop tone guide with full-frame statistics",
+            "calibraw crop inherits full-frame statistics",
         );
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
         encoder.copy_buffer_to_buffer(
@@ -1343,6 +1380,22 @@ impl RawGpuPipeline {
             TONE_STATS_SIZE_BYTES,
         );
         self.inherit_full_image_maps(&mut encoder, full_frame, params);
+        encoder.submit(None);
+    }
+
+    /// The second half of [`Self::dispatch_tone_guide_with_inherited_statistics`]:
+    /// the tone guide passes, which read what [`Self::inherit_full_frame_tone`]
+    /// copied and the parameters it uploaded. Call it next, with nothing
+    /// encoded on this crop in between; it uploads nothing, because uploading
+    /// again after the inheritance could upload other Glow inputs than the
+    /// passes read when they ran in one go. Touches only this crop, so a
+    /// worker thread may run it.
+    pub fn dispatch_inherited_tone_guide(&self, queue: &wgpu::Queue, device: &wgpu::Device) {
+        let mut encoder = self.work(
+            device,
+            queue,
+            "calibraw crop tone guide with full-frame statistics",
+        );
         self.encode_pass_range(
             &mut encoder,
             self.indices.tone_prepare_pass_index,

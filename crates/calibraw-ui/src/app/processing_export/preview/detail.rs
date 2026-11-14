@@ -1,3 +1,4 @@
+use super::detail_render::{self, DetailRenderJob};
 use super::*;
 use crate::i18n::{tr, tr_fmt};
 
@@ -167,15 +168,28 @@ impl CalibRawApp {
         let Some(event) = event else {
             return;
         };
-        self.preview.detail_rebuild = None;
-        let PreviewDetailRebuildEvent::Finished(result) = event else {
-            // Cancelled because the view moved on: the next crop is requested
-            // once it settles.
-            calibraw_core::diagnostics::record(
-                "Zoom detail cancelled: the view moved on before it was ready",
-            );
-            self.egui_ctx.request_repaint();
+        let Some(rebuild) = self.preview.detail_rebuild.take() else {
             return;
+        };
+        let result = match event {
+            PreviewDetailRebuildEvent::Finished(result) => result,
+            PreviewDetailRebuildEvent::Cancelled => {
+                // Cancelled because the view moved on: the next crop is
+                // requested once it settles.
+                calibraw_core::diagnostics::record(
+                    "Zoom detail cancelled: the view moved on before it was ready",
+                );
+                self.egui_ctx.request_repaint();
+                return;
+            }
+            PreviewDetailRebuildEvent::RawRendered(result) => {
+                self.continue_detail_render(frame, rebuild, result);
+                return;
+            }
+            PreviewDetailRebuildEvent::Rendered(result) => {
+                self.install_rendered_detail(frame, result);
+                return;
+            }
         };
         let prepared = match result {
             Ok(prepared) => prepared,
@@ -230,28 +244,7 @@ impl CalibRawApp {
             self.egui_ctx.request_repaint();
             return;
         }
-        let installed_at = Instant::now();
-        if self.install_prepared_preview_detail(frame, prepared) {
-            calibraw_core::diagnostics::record(format!(
-                "Zoom detail installed in {:.3}s: {}",
-                installed_at.elapsed().as_secs_f64(),
-                self.preview.detail.as_ref().map_or_else(
-                    || tr("no texture").to_owned(),
-                    |detail| tr_fmt(
-                        "texture {width}x{height} for source crop {source_size}",
-                        &[
-                            ("width", &detail.pipeline.gpu().width),
-                            ("height", &detail.pipeline.gpu().height),
-                            ("source_size", &format!("{:?}", detail.source_size))
-                        ]
-                    )
-                )
-            ));
-            self.preview.detail_pending_stage = None;
-            if self.preview.original_requested {
-                self.preview.original_rendered_state = None;
-            }
-        } else {
+        if !self.start_detail_render(frame, rebuild, prepared) {
             // Avoid a tight allocation/retry loop after a transient GPU failure.
             self.retry_preview_detail_later();
         }
@@ -266,14 +259,17 @@ impl CalibRawApp {
             .request_repaint_after(Duration::from_secs(1) + zoom_detail_idle_delay());
     }
 
-    fn install_prepared_preview_detail(
+    /// Starts rendering `prepared` on a worker (`detail_render`), which the
+    /// crop being followed by `rebuild` then waits for; `false`, after
+    /// reporting why where it matters, if it could not start.
+    fn start_detail_render(
         &mut self,
         frame: &eframe::Frame,
+        rebuild: DetailRebuild,
         prepared: PreparedPreviewDetail,
     ) -> bool {
         let preview_masks = self.preview_mask_stack();
-        let preview_source = self.develop.loaded_raw.clone();
-        let Some(full_raw) = preview_source.as_ref().map(Arc::clone) else {
+        let Some(full_raw) = self.develop.loaded_raw.clone() else {
             return false;
         };
         let Some(render_state) = frame.wgpu_render_state() else {
@@ -291,13 +287,12 @@ impl CalibRawApp {
             processing_halo,
             ..
         } = prepared;
-        let ([virtual_origin_x, virtual_origin_y], [virtual_full_width, virtual_full_height]) =
-            detail_virtual_frame(
-                [detail_raw.width, detail_raw.height],
-                [full_raw.width, full_raw.height],
-                source_origin,
-                source_size,
-            );
+        let (virtual_origin, virtual_full_size) = detail_virtual_frame(
+            [detail_raw.width, detail_raw.height],
+            [full_raw.width, full_raw.height],
+            source_origin,
+            source_size,
+        );
         let interactive = self.interactive_detail_mask_edit();
         let mask_region = detail_mask_update_region(
             &preview_masks,
@@ -312,8 +307,8 @@ impl CalibRawApp {
             full_raw.prime_highlight_model(&self.develop.target_exposure);
         }
         let placement = DetailPlacement {
-            virtual_origin: [virtual_origin_x, virtual_origin_y],
-            virtual_full_size: [virtual_full_width, virtual_full_height],
+            virtual_origin,
+            virtual_full_size,
             full_size: [full_raw.width, full_raw.height],
             mask_region,
             mask_extent,
@@ -330,204 +325,40 @@ impl CalibRawApp {
             .with_look_lut(self.develop.target_look.as_ref())
             .with_render_tier(render_tier);
         self.note_sharp_render_tier(&params, render_tier);
-        let full_frame_tone_pipeline = full_frame_tone_pipeline(
-            self.preview.gpu_pipeline.as_ref(),
-            self.preview.navigation.as_ref(),
-            self.preview.pending_stage,
-        );
-        let required_mask_layers = preview_masks.masks.len().max(1);
-        if let Some(detail) = self.preview.detail.as_mut().filter(|detail| {
-            detail.pipeline.gpu().width == detail_raw.width
-                && detail.pipeline.gpu().height == detail_raw.height
-                && detail.pipeline.gpu().pixel_layout() == detail_raw.pixel_layout()
-                && detail
-                    .pipeline
-                    .gpu()
-                    .tone_guide_supports_origin(virtual_origin_x, virtual_origin_y)
-                && detail.pipeline.gpu().mask_layer_capacity() >= required_mask_layers
-        }) {
-            if let Err(error) = detail
-                .pipeline
-                .gpu()
-                .upload_raw_tile(&render_state.queue, &detail_raw)
-            {
-                self.report_error(
-                    ErrorKind::Preview,
-                    tr_fmt(
-                        "Could not update the zoomed preview crop: {error}",
-                        &[("error", &format!("{error:#}"))],
-                    ),
-                );
-                return false;
-            }
-            if let Err(error) = Self::upload_detail_masks(
-                detail.pipeline.gpu(),
-                &render_state.queue,
-                &preview_masks,
-                &full_raw,
-                mask_region,
-                mask_extent,
-                None,
-            ) {
-                self.report_error(ErrorKind::Preview, error);
-                return false;
-            }
-            if let Err(error) = detail.pipeline.gpu().dispatch_stage_with_remove(
-                &render_state.queue,
-                &render_state.device,
-                &params,
-                ProcessingStage::Raw,
-                detail_remove_scene(
-                    &self.inpaint.edits,
-                    &full_raw,
-                    &self.develop.target_exposure,
-                    source_origin,
-                    source_size,
-                ),
-            ) {
-                self.report_error(
-                    ErrorKind::Preview,
-                    tr_fmt(
-                        "Could not apply Remove to zoomed preview: {error}",
-                        &[("error", &format!("{error:#}"))],
-                    ),
-                );
-                return false;
-            }
-            if let Some(full_frame) = full_frame_tone_pipeline {
-                detail
-                    .pipeline
-                    .gpu()
-                    .dispatch_tone_guide_with_inherited_statistics(
-                        &render_state.queue,
-                        &render_state.device,
-                        &params,
-                        full_frame,
-                    );
-            } else {
-                detail.pipeline.gpu().dispatch_stage(
-                    &render_state.queue,
-                    &render_state.device,
-                    &params,
-                    ProcessingStage::Tone,
-                );
-            }
-            detail.pipeline.gpu().dispatch_stage(
-                &render_state.queue,
-                &render_state.device,
-                &params,
-                ProcessingStage::Output,
-            );
-            detail.uv_rect = visible;
-            detail.texture_uv_rect = texture_uv_rect;
-            detail.revision = revision;
-            detail.raw = detail_raw;
-            detail.source_origin = source_origin;
-            detail.source_size = source_size;
-            detail.processing_halo = processing_halo;
-            detail.full_source_size = [full_raw.width, full_raw.height];
-            detail.mask_source_region = mask_region;
-            detail.mask_texture_extent = mask_extent;
-            detail.virtual_origin = [virtual_origin_x, virtual_origin_y];
-            detail.virtual_full_size = [virtual_full_width, virtual_full_height];
-            self.masks.detail_dirty_layers.fill(false);
-            self.egui_ctx.request_repaint();
-            return true;
-        }
 
-        // On mobile the fitted graph and one detail graph share the budget.
-        // Release an incompatible cached graph only once its replacement is
-        // ready to upload, keeping the fitted image available on failure.
-        if self.caps().constrained_memory() {
+        // The current crop's graph is refilled when it fits; the canvas keeps
+        // painting its last render meanwhile.
+        let required_mask_layers = preview_masks.masks.len().max(1);
+        let reused = self
+            .preview
+            .detail
+            .as_mut()
+            .filter(|detail| {
+                detail.pipeline.gpu().is_some_and(|gpu| {
+                    gpu.width == detail_raw.width
+                        && gpu.height == detail_raw.height
+                        && gpu.pixel_layout() == detail_raw.pixel_layout()
+                        && gpu.tone_guide_supports_origin(virtual_origin[0], virtual_origin[1])
+                        && gpu.mask_layer_capacity() >= required_mask_layers
+                })
+            })
+            .and_then(|detail| detail.pipeline.lend());
+        // On mobile the fitted graph and one detail graph share the budget:
+        // release an incompatible graph before its replacement is built.
+        if reused.is_none() && self.caps().constrained_memory() {
             if let Some(old) = self.preview.detail.take() {
                 old.pipeline.free_now(&mut render_state.renderer.write());
             }
         }
-        let Some(program_template) = self.preview.pipeline() else {
+        let template = self
+            .preview
+            .pipeline()
+            .map(RawGpuPipeline::program_template);
+        let Some(template) = template else {
             return false;
         };
-        let pipeline = match RawGpuPipeline::new(
-            &render_state.device,
-            &render_state.queue,
-            &detail_raw,
-            &params,
-            detail_pipeline_options(preview_masks.masks.len())
-                .profile_preview(crate::app::lifecycle::reserves_profile_preview(&detail_raw))
-                .programs(&program_template.program_template()),
-        ) {
-            Ok(pipeline) => pipeline,
-            Err(error) => {
-                self.report_error(
-                    ErrorKind::Preview,
-                    tr_fmt(
-                        "Could not render the zoomed preview: {error}",
-                        &[("error", &format!("{error:#}"))],
-                    ),
-                );
-                return false;
-            }
-        };
-        if let Err(error) = Self::upload_detail_masks(
-            &pipeline,
-            &render_state.queue,
-            &preview_masks,
-            &full_raw,
-            mask_region,
-            mask_extent,
-            None,
-        ) {
-            self.report_error(ErrorKind::Preview, error);
-            return false;
-        }
-        if let Err(error) = pipeline.dispatch_stage_with_remove(
-            &render_state.queue,
-            &render_state.device,
-            &params,
-            ProcessingStage::Raw,
-            detail_remove_scene(
-                &self.inpaint.edits,
-                &full_raw,
-                &self.develop.target_exposure,
-                source_origin,
-                source_size,
-            ),
-        ) {
-            self.report_error(
-                ErrorKind::Preview,
-                tr_fmt(
-                    "Could not apply Remove to zoomed preview: {error}",
-                    &[("error", &format!("{error:#}"))],
-                ),
-            );
-            return false;
-        }
-        if let Some(full_frame) = full_frame_tone_pipeline {
-            pipeline.dispatch_tone_guide_with_inherited_statistics(
-                &render_state.queue,
-                &render_state.device,
-                &params,
-                full_frame,
-            );
-        } else {
-            pipeline.dispatch_stage(
-                &render_state.queue,
-                &render_state.device,
-                &params,
-                ProcessingStage::Tone,
-            );
-        }
-        pipeline.dispatch_stage(
-            &render_state.queue,
-            &render_state.device,
-            &params,
-            ProcessingStage::Output,
-        );
-
-        self.preview.detail = None;
-        let pipeline = self.present_pipeline(pipeline, render_state);
-
-        self.preview.detail = Some(PreviewDetail {
-            pipeline,
+        let crop = PreviewDetail {
+            pipeline: (),
             uv_rect: visible,
             texture_uv_rect,
             revision,
@@ -538,12 +369,179 @@ impl CalibRawApp {
             full_source_size: [full_raw.width, full_raw.height],
             mask_source_region: mask_region,
             mask_texture_extent: mask_extent,
-            virtual_origin: [virtual_origin_x, virtual_origin_y],
-            virtual_full_size: [virtual_full_width, virtual_full_height],
-        });
+            virtual_origin,
+            virtual_full_size,
+        };
+        let job = DetailRenderJob {
+            device: render_state.device.clone(),
+            queue: render_state.queue.clone(),
+            reused,
+            template,
+            profile_preview: crate::app::lifecycle::reserves_profile_preview(&crop.raw),
+            full_raw,
+            masks: preview_masks,
+            params,
+            remove: Arc::clone(&self.inpaint.edits),
+            exposure: self.develop.target_exposure,
+            crop,
+            started: Instant::now(),
+        };
+        // The job uploads every mask layer.
         self.masks.detail_dirty_layers.fill(false);
+        match detail_render::spawn_raw_stage(job, self.egui_ctx.clone()) {
+            Ok(receiver) => {
+                self.preview.detail_rebuild = Some(rebuild.continued(receiver));
+                true
+            }
+            Err(error) => {
+                self.drop_lent_detail_graph();
+                self.report_error(ErrorKind::Preview, error);
+                false
+            }
+        }
+    }
+
+    /// The RAW stage of a crop has rendered: the UI thread adds the full
+    /// frame's statistics and maps, which only it may read, and the worker
+    /// renders the rest.
+    fn continue_detail_render(
+        &mut self,
+        frame: &eframe::Frame,
+        rebuild: DetailRebuild,
+        result: Result<Box<DetailRender>, String>,
+    ) {
+        let mut render = match result {
+            Ok(render) => render,
+            Err(error) => {
+                self.detail_render_failed(error);
+                return;
+            }
+        };
+        if !self.detail_render_wanted(render.job()) {
+            return;
+        }
+        let Some(render_state) = frame.wgpu_render_state() else {
+            self.drop_lent_detail_graph();
+            return;
+        };
+        let full_frame = full_frame_tone_pipeline(
+            self.preview.gpu_pipeline.as_ref(),
+            self.preview.navigation.as_ref(),
+            self.preview.pending_stage,
+        );
+        if let Some(full_frame) = full_frame {
+            render.gpu().inherit_full_frame_tone(
+                &render_state.queue,
+                &render_state.device,
+                &render.job().params,
+                full_frame,
+            );
+            render.note_inherited();
+        }
+        match detail_render::spawn_remaining_stages(*render, self.egui_ctx.clone()) {
+            Ok(receiver) => self.preview.detail_rebuild = Some(rebuild.continued(receiver)),
+            Err(error) => self.detail_render_failed(error),
+        }
+    }
+
+    /// A worker has rendered a crop and the GPU has run it: the crop's graph
+    /// returns, its output becomes the shown picture and the crop replaces
+    /// the previous one, all in this frame.
+    fn install_rendered_detail(
+        &mut self,
+        frame: &eframe::Frame,
+        result: Result<Box<DetailRender>, String>,
+    ) {
+        let render = match result {
+            Ok(render) => render,
+            Err(error) => {
+                self.detail_render_failed(error);
+                return;
+            }
+        };
+        if !self.detail_render_wanted(render.job()) {
+            return;
+        }
+        let Some(render_state) = frame.wgpu_render_state() else {
+            self.drop_lent_detail_graph();
+            return;
+        };
+        let (gpu, job) = render.into_parts();
+        let size = [gpu.width, gpu.height];
+        // The replaced crop's copy is kept when it fits; the new picture goes
+        // into it before this frame paints it.
+        let shown = match self.preview.detail.take() {
+            Some(old) if old.pipeline.size() == size => old.pipeline.into_shown(),
+            _ => ShownTexture::new(
+                size,
+                &render_state.device,
+                &mut render_state.renderer.write(),
+                &self.preview.retired_textures,
+            ),
+        };
+        let pipeline = CropPipeline::new(self.present_pipeline(gpu, render_state), shown);
+        pipeline.show_completed(&render_state.device, &render_state.queue);
+        calibraw_core::diagnostics::record(format!(
+            "Zoom detail installed in {:.3}s: texture {}x{} for source crop {:?}",
+            job.started.elapsed().as_secs_f64(),
+            size[0],
+            size[1],
+            job.crop.source_size,
+        ));
+        self.preview.detail = Some(job.crop.with_pipeline(pipeline));
+        self.preview.detail_pending_stage = None;
+        if self.preview.original_requested {
+            self.preview.original_rendered_state = None;
+        }
         self.egui_ctx.request_repaint();
-        true
+    }
+
+    /// Whether a crop a worker renders for `job` is still worth finishing;
+    /// if not, its graph goes and a crop that lent it is dropped. The rules
+    /// are the ones a prepared crop is discarded by.
+    fn detail_render_wanted(&mut self, job: &DetailRenderJob) -> bool {
+        let source_is_current = self
+            .develop
+            .loaded_raw
+            .as_ref()
+            .is_some_and(|raw| Arc::ptr_eq(raw, &job.full_raw));
+        let visible = job.crop.uv_rect;
+        let on_screen = (0..2).all(|axis| {
+            visible.max[axis] > self.preview.visible_uv.min[axis]
+                && visible.min[axis] < self.preview.visible_uv.max[axis]
+        });
+        let wanted = self.preview.zoom > DETAIL_ZOOM_START
+            && self.ui.active_tab == AppTab::Develop
+            && source_is_current
+            && on_screen
+            && !self.ai_job_may_use_gpu();
+        if !wanted {
+            calibraw_core::diagnostics::record(format!(
+                "Zoom detail render dropped as outdated (zoom {:.2}, revision {} vs {})",
+                self.preview.zoom, job.crop.revision, self.preview.revision
+            ));
+            self.drop_lent_detail_graph();
+            self.egui_ctx.request_repaint();
+        }
+        wanted
+    }
+
+    fn detail_render_failed(&mut self, error: String) {
+        self.drop_lent_detail_graph();
+        self.retry_preview_detail_later();
+        self.report_error(ErrorKind::Preview, error);
+    }
+
+    /// Drops the crop whose graph a worker took and will not give back.
+    fn drop_lent_detail_graph(&mut self) {
+        if self
+            .preview
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail.pipeline.gpu().is_none())
+        {
+            self.preview.detail = None;
+        }
     }
 }
 
@@ -632,7 +630,41 @@ fn detail_remove_scene<'a>(
     )
 }
 
-impl PreviewDetail {
+impl<P> PreviewDetail<P> {
+    /// The same crop with `pipeline` as its graph.
+    pub(super) fn with_pipeline<Q>(self, pipeline: Q) -> PreviewDetail<Q> {
+        let Self {
+            pipeline: _,
+            uv_rect,
+            texture_uv_rect,
+            revision,
+            raw,
+            source_origin,
+            source_size,
+            mask_source_region,
+            mask_texture_extent,
+            virtual_origin,
+            virtual_full_size,
+            full_source_size,
+            processing_halo,
+        } = self;
+        PreviewDetail {
+            pipeline,
+            uv_rect,
+            texture_uv_rect,
+            revision,
+            raw,
+            source_origin,
+            source_size,
+            mask_source_region,
+            mask_texture_extent,
+            virtual_origin,
+            virtual_full_size,
+            full_source_size,
+            processing_halo,
+        }
+    }
+
     pub(super) fn placement(&self) -> DetailPlacement {
         DetailPlacement {
             virtual_origin: self.virtual_origin,

@@ -140,3 +140,70 @@ impl PreviewPipeline {
         drop(gpu);
     }
 }
+
+/// A copy of a pipeline's output that the UI paints instead of the output
+/// itself, refreshed only when a render has completed
+/// ([`ShownTexture::show`]). A worker can then render into the pipeline while
+/// the canvas keeps the last complete picture, never a half-written one.
+pub(crate) struct ShownTexture {
+    texture: wgpu::Texture,
+    registration: RegisteredTexture,
+}
+
+impl ShownTexture {
+    /// An empty copy of `size` pixels, registered with the renderer. Call on
+    /// the UI thread.
+    pub(crate) fn new(
+        size: [u32; 2],
+        device: &wgpu::Device,
+        renderer: &mut egui_wgpu::Renderer,
+        retirement: &TextureRetirement,
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("calibraw shown preview"),
+            size: wgpu::Extent3d {
+                width: size[0].max(1),
+                height: size[1].max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            // The format of `RawGpuPipeline::output_view`.
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let registration = RegisteredTexture::register(&view, device, renderer, retirement);
+        Self {
+            texture,
+            registration,
+        }
+    }
+
+    pub(crate) fn size(&self) -> [u32; 2] {
+        [self.texture.width(), self.texture.height()]
+    }
+
+    pub(crate) fn texture(&self) -> egui::TextureId {
+        self.registration.id()
+    }
+
+    /// Copies `gpu`'s output, which must be this copy's size, once the work
+    /// queued so far has run: what the canvas paints from then on.
+    pub(crate) fn show(&self, gpu: &RawGpuPipeline, device: &wgpu::Device, queue: &wgpu::Queue) {
+        debug_assert_eq!(self.size(), [gpu.width, gpu.height]);
+        gpu.copy_output_to(device, queue, &self.texture);
+    }
+
+    /// Releases the registration now (see [`RegisteredTexture::free_now`]).
+    pub(crate) fn free_now(self, renderer: &mut egui_wgpu::Renderer) {
+        let Self {
+            texture,
+            registration,
+        } = self;
+        registration.free_now(renderer);
+        drop(texture);
+    }
+}

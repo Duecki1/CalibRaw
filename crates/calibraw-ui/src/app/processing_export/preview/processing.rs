@@ -108,7 +108,12 @@ impl CalibRawApp {
         else {
             return;
         };
-        if detail.pipeline.gpu().mask_layer_capacity() < preview_masks.masks.len().max(1) {
+        // A worker is rendering the next crop with the graph: what is
+        // pending waits for the crop it installs.
+        let Some(gpu) = detail.pipeline.gpu() else {
+            return;
+        };
+        if gpu.mask_layer_capacity() < preview_masks.masks.len().max(1) {
             if let Some(detail) = self.preview.detail.as_mut() {
                 detail.revision = self.preview.revision.wrapping_sub(1);
             }
@@ -143,11 +148,8 @@ impl CalibRawApp {
             Some(detail.mask_source_region),
             interactive,
         );
-        let mask_extent = detail_mask_texture_extent(
-            mask_region,
-            detail.pipeline.gpu().mask_atlas_edge(),
-            interactive,
-        );
+        let mask_extent =
+            detail_mask_texture_extent(mask_region, gpu.mask_atlas_edge(), interactive);
         let mapping_changed =
             detail.mask_source_region != mask_region || detail.mask_texture_extent != mask_extent;
         let render_tier = self.sharp_render_tier();
@@ -175,12 +177,15 @@ impl CalibRawApp {
         let Some(detail) = self.preview.detail.as_mut() else {
             return;
         };
+        let Some(gpu) = detail.pipeline.gpu() else {
+            return;
+        };
         if mapping_changed
             || (stage == ProcessingStage::Output
                 && self.masks.detail_dirty_layers.iter().any(|dirty| *dirty))
         {
             if let Err(error) = Self::upload_detail_masks(
-                detail.pipeline.gpu(),
+                gpu,
                 &render_state.queue,
                 &preview_masks,
                 full_raw,
@@ -198,7 +203,7 @@ impl CalibRawApp {
         }
 
         if let Err(error) = dispatch_detail_stage(
-            detail.pipeline.gpu(),
+            gpu,
             &render_state.queue,
             &render_state.device,
             &params,
@@ -215,6 +220,12 @@ impl CalibRawApp {
             );
             self.preview.detail_pending_stage = None;
             return;
+        }
+        if stage == ProcessingStage::Output {
+            // The crop is complete: the canvas paints it from now on.
+            detail
+                .pipeline
+                .show_completed(&render_state.device, &render_state.queue);
         }
         self.preview.detail_pending_stage = match stage {
             ProcessingStage::Raw => Some(ProcessingStage::Tone),
@@ -282,7 +293,7 @@ impl CalibRawApp {
             self.preview
                 .detail
                 .as_ref()
-                .map(|detail| detail.pipeline.gpu()),
+                .and_then(|detail| detail.pipeline.gpu()),
             self.preview
                 .navigation
                 .as_ref()
