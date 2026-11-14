@@ -123,8 +123,11 @@ pub fn request_headless_device(
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some(request.label),
         // Timestamp queries when stage timing was requested, so a headless
-        // export installed with `stage_timing::install` can be timed.
-        required_features: crate::stage_timing::device_features(&adapter),
+        // export installed with `stage_timing::install` can be timed, and the
+        // driver's pipeline cache where it has one, for
+        // `PersistentGpuPipelineCache`.
+        required_features: crate::stage_timing::device_features(&adapter)
+            | (adapter.features() & wgpu::Features::PIPELINE_CACHE),
         required_limits,
         ..Default::default()
     }))

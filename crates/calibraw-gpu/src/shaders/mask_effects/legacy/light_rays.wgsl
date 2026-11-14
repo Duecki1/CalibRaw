@@ -14,7 +14,7 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     let output_uv = full_image_uv(pos);
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, MASK_EFFECT_LIGHT_RAYS_ID) { continue; }
         let params = mask_effect_params(index);
         let amount = clamp(mask_effect_lane(params, LIGHT_RAYS_AMOUNT_LANE) / 100.0, 0.0, 1.0);

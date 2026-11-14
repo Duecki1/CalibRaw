@@ -83,7 +83,7 @@ fn pixelate_is_active(params: MaskEffectParams) -> bool {
 fn pixelate_block_size_in_use(block_size: i32) -> bool {
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, MASK_EFFECT_PIXELATE_ID) {
             continue;
         }

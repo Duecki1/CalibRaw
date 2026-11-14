@@ -82,7 +82,7 @@ fn scene_light_none() -> SceneLight {
 // farthest surface, where rays come from (`light_shafts_source`, and the legacy
 // one below), confined to its mask as its rays are.
 fn scene_light_at(index: u32) -> SceneLight {
-    let state = Common::mask_data[index].metadata;
+    let state = Common::mask_metadata(index);
     if !Common::mask_slot_active(state) { return scene_light_none(); }
     let effect_id = Common::mask_effect_id(state);
     let params = mask_effect_params(index);
@@ -96,7 +96,7 @@ fn scene_light_at(index: u32) -> SceneLight {
         let source = mask_effect_lane_pair(params, RELIGHT_SOURCE_X_LANE) / 100.0;
         let z = Camera::scene_light_frame_depth(camera, control, relief_scale);
         var confined = SCENE_LIGHT_UNCONFINED;
-        if Common::mask_data[index].point_color_meta.z != 0xffffffffu {
+        if Common::mask_point_color_meta(index).z != 0xffffffffu {
             confined = index;
         }
         return SceneLight(
@@ -123,7 +123,7 @@ fn scene_light_at(index: u32) -> SceneLight {
         let z = Camera::scene_frame_depth(camera, 1.0, 1.0);
         // Its light acts only where its mask covers, as its shafts do.
         var confined = SCENE_LIGHT_UNCONFINED;
-        if Common::mask_data[index].point_color_meta.z != 0xffffffffu {
+        if Common::mask_point_color_meta(index).z != 0xffffffffu {
             confined = index;
         }
         return SceneLight(

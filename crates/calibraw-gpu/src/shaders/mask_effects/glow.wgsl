@@ -8,7 +8,7 @@
 fn mask_glow_self_illuminating_active() -> bool {
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        if Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_GLOW_ID) {
+        if Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_GLOW_ID) {
             return true;
         }
     }
@@ -21,7 +21,7 @@ fn mask_glow_source_at(pos: vec2<i32>) -> vec3<f32> {
     var emission = vec3<f32>(0.0);
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, MASK_EFFECT_GLOW_ID) { continue; }
         let params = mask_effect_params(index);
         let weight = SceneAdjustments::local_mask_weight(pos, index);
@@ -40,7 +40,7 @@ fn mask_glow_area_cores(pos: vec2<i32>) -> vec3<f32> {
     var self_lit = vec3<f32>(0.0);
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index += 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, MASK_EFFECT_GLOW_ID) { continue; }
         let params = mask_effect_params(index);
         let amount = mask_effect_percent(params, GLOW_AMOUNT_LANE);

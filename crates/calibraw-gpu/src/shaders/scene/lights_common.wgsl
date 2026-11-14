@@ -75,17 +75,14 @@ fn scene_shadow_light_active(light: SceneShadowLight) -> bool {
 // orthonormal basis serves, as drawing and reading use this one.
 fn scene_cube_basis(face: u32) -> mat3x3<f32> {
     let sign = select(-1.0, 1.0, face % 2u == 0u);
-    switch face / 2u {
-        case 0u: {
-            return mat3x3<f32>(vec3<f32>(0.0, 0.0, -sign), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(sign, 0.0, 0.0));
-        }
-        case 1u: {
-            return mat3x3<f32>(vec3<f32>(sign, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, sign, 0.0));
-        }
-        default: {
-            return mat3x3<f32>(vec3<f32>(sign, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, sign));
-        }
+    let axis = face / 2u;
+    if axis == 0u {
+        return mat3x3<f32>(vec3<f32>(0.0, 0.0, -sign), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(sign, 0.0, 0.0));
     }
+    if axis == 1u {
+        return mat3x3<f32>(vec3<f32>(sign, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, sign, 0.0));
+    }
+    return mat3x3<f32>(vec3<f32>(sign, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, sign));
 }
 
 // The face that owns direction `v` from the light: its largest component.

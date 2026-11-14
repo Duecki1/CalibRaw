@@ -282,6 +282,9 @@ impl ComputeProgram {
                 },
                 cache: self.cache.as_ref().map(|cache| cache.raw()),
             });
+        if let Some(cache) = &self.cache {
+            cache.note_compiled();
+        }
         log::debug!(
             "GPU program {} {constants:?} compiled in {:.3}s",
             self.entry,
@@ -342,6 +345,9 @@ pub struct PipelineOptions<'a> {
     pub mask_layers: Option<usize>,
     /// Compiled programs to reuse; they must match the CFA layout and quality.
     pub programs: Option<&'a RawGpuProgramTemplate>,
+    /// The persistent cache programs compile with when no `programs` are
+    /// reused, whose cache is used instead.
+    pub pipeline_cache: Option<&'a Arc<PersistentGpuPipelineCache>>,
     /// Reserve [`PREVIEWED_PROFILE_BYTES`] for the tables of other camera
     /// profiles, so parameters with another profile of the same photo
     /// ([`GpuParams::new_with_profile_color`]) render without a rebuild.
@@ -355,6 +361,7 @@ impl<'a> PipelineOptions<'a> {
             mask_atlas_edge: None,
             mask_layers: None,
             programs: None,
+            pipeline_cache: None,
             profile_preview: false,
         }
     }
@@ -374,6 +381,12 @@ impl<'a> PipelineOptions<'a> {
     #[must_use]
     pub const fn programs(mut self, template: &'a RawGpuProgramTemplate) -> Self {
         self.programs = Some(template);
+        self
+    }
+
+    #[must_use]
+    pub const fn pipeline_cache(mut self, cache: &'a Arc<PersistentGpuPipelineCache>) -> Self {
+        self.pipeline_cache = Some(cache);
         self
     }
 
@@ -430,10 +443,11 @@ impl RawGpuProgramTemplate {
     }
 
     /// Saves the programs compiled so far to the persistent pipeline cache the
-    /// template compiles with, if it has one, so the next launch loads them.
+    /// template compiles with, if it has one and a program compiled since its
+    /// last save, so the next launch loads them.
     pub fn persist_pipeline_cache(&self) -> Result<()> {
         if let Some(cache) = &self.pipeline_cache {
-            cache.persist()?;
+            cache.persist_if_changed()?;
         }
         Ok(())
     }
@@ -446,15 +460,78 @@ impl RawGpuProgramTemplate {
     }
 }
 
+/// The compiled programs background work (exports, crops, merges) shares: the
+/// template the app compiles at startup, and one per other sensor layout or
+/// quality, kept from the first pipeline built for it
+/// ([`RawGpuPipeline::new_reusing`]).
 #[derive(Default)]
 pub struct GpuProgramPrewarm {
     result: Mutex<Option<std::result::Result<Arc<RawGpuProgramTemplate>, String>>>,
     ready: Condvar,
+    /// The persistent cache of a prewarm without startup programs.
+    pipeline_cache: Option<Arc<PersistentGpuPipelineCache>>,
+    /// Templates the startup one does not fit.
+    kept: Mutex<Vec<Arc<RawGpuProgramTemplate>>>,
+    /// Held while a pipeline is built without a template, so two jobs that
+    /// start together compile its programs once.
+    building: Mutex<()>,
 }
 
 impl GpuProgramPrewarm {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A prewarm without startup programs, whose pipelines compile with `cache`.
+    pub fn without_startup_programs(cache: Option<Arc<PersistentGpuPipelineCache>>) -> Self {
+        let prewarm = Self {
+            pipeline_cache: cache,
+            ..Self::default()
+        };
+        if let Ok(mut slot) = prewarm.result.lock() {
+            *slot = Some(Err("no programs were compiled at startup".to_owned()));
+        }
+        prewarm
+    }
+
+    /// The programs a pipeline of `quality` for `raw` can be built from, once
+    /// the startup programs are published.
+    fn template_for(
+        &self,
+        raw: &LoadedRaw,
+        quality: ProcessingQuality,
+    ) -> Option<Arc<RawGpuProgramTemplate>> {
+        if let Some(template) = self
+            .wait()
+            .ok()
+            .filter(|template| template.fits(raw, quality))
+        {
+            return Some(template);
+        }
+        self.kept
+            .lock()
+            .ok()?
+            .iter()
+            .find(|template| template.fits(raw, quality))
+            .cloned()
+    }
+
+    /// The persistent cache pipelines built without a template compile with.
+    fn pipeline_cache(&self) -> Option<Arc<PersistentGpuPipelineCache>> {
+        self.pipeline_cache.clone().or_else(|| {
+            self.wait()
+                .ok()
+                .and_then(|template| template.pipeline_cache.clone())
+        })
+    }
+
+    /// Saves the programs compiled so far to the persistent pipeline cache, if
+    /// one compiled since its last save.
+    pub fn persist_pipeline_cache(&self) -> Result<()> {
+        if let Some(cache) = self.pipeline_cache() {
+            cache.persist_if_changed()?;
+        }
+        Ok(())
     }
 
     pub fn publish(&self, result: std::result::Result<RawGpuProgramTemplate, String>) {

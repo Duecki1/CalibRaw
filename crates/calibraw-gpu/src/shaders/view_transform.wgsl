@@ -190,9 +190,9 @@ fn apply_local_hue_rotations(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> 
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if state.x == 0u || Common::mask_effect_id(state) != 0u || (state.w & 4u) == 0u { continue; }
-        let degrees = Common::mask_data[index].grade_options.z;
+        let degrees = Common::mask_grade_options(index).z;
         if abs(degrees) < 1e-7 { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
@@ -291,17 +291,17 @@ fn apply_local_color_grading(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> 
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if state.x == 0u || Common::mask_effect_id(state) != 0u || (state.w & 2u) == 0u { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
         let adjusted = apply_color_grading_wheels(
             rgb,
-            Common::mask_data[index].grade_shadows,
-            Common::mask_data[index].grade_midtones,
-            Common::mask_data[index].grade_highlights,
-            Common::mask_data[index].grade_global,
-            Common::mask_data[index].grade_options,
+            Common::mask_grade_shadows(index),
+            Common::mask_grade_midtones(index),
+            Common::mask_grade_highlights(index),
+            Common::mask_grade_global(index),
+            Common::mask_grade_options(index),
         );
         rgb = mix(rgb, adjusted, weight);
     }
@@ -522,9 +522,9 @@ fn apply_local_point_colors(pos: vec2<i32>, input_rgb: vec3<f32>, guided_delta: 
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if state.x == 0u || Common::mask_effect_id(state) != 0u { continue; }
-        let color_count = min(Common::mask_data[index].point_color_meta.x, 8u);
+        let color_count = min(Common::mask_point_color_meta(index).x, 8u);
         if color_count == 0u { continue; }
         let mask_weight = SceneAdjustments::local_mask_weight(pos, index);
         if mask_weight <= 1e-5 { continue; }
@@ -532,7 +532,7 @@ fn apply_local_point_colors(pos: vec2<i32>, input_rgb: vec3<f32>, guided_delta: 
         let selection_sample = point_color_hsl(max(rgb + guided_delta, vec3<f32>(0.0)));
         var color_delta = vec3<f32>(0.0);
         for (var color_index = 0u; color_index < color_count; color_index = color_index + 1u) {
-            let point = Common::mask_data[index].point_colors[color_index];
+            let point = Common::mask_point_colors(index, color_index);
             let weight = point_color_weight(selection_sample, point);
             if weight <= 1e-5 { continue; }
             let adjusted = apply_point_color_values(rgb, sample, point.shifts.xyz);
@@ -550,12 +550,12 @@ fn local_point_color_visualization(pos: vec2<i32>, selection_sample: vec3<f32>) 
     if (Common::scene_tone_uniforms.point_color_meta.w & 2u) == 0u { return 0.0; }
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
-        let color_meta = Common::mask_data[index].point_color_meta;
+        let state = Common::mask_metadata(index);
+        let color_meta = Common::mask_point_color_meta(index);
         let selected = color_meta.y;
         if selected == 0u || selected > color_meta.x || state.x == 0u || Common::mask_effect_id(state) != 0u { continue; }
         let mask_weight = SceneAdjustments::local_mask_weight(pos, index);
-        return mask_weight * point_color_weight(selection_sample, Common::mask_data[index].point_colors[selected - 1u]);
+        return mask_weight * point_color_weight(selection_sample, Common::mask_point_colors(index, selected - 1u));
     }
     return 0.0;
 }
@@ -564,7 +564,7 @@ fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if state.x == 0u || Common::mask_effect_id(state) != 0u || (state.w & 1u) == 0u { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
@@ -572,12 +572,12 @@ fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         let adjusted = apply_color_mixer_values(
             pos,
             rgb,
-            Common::mask_data[index].hsl_hue_0_field,
-            Common::mask_data[index].hsl_hue_1_field,
-            Common::mask_data[index].hsl_saturation_0_field,
-            Common::mask_data[index].hsl_saturation_1_field,
-            Common::mask_data[index].hsl_luminance_0_field,
-            Common::mask_data[index].hsl_luminance_1_field,
+            Common::mask_hsl_hue_0_field(index),
+            Common::mask_hsl_hue_1_field(index),
+            Common::mask_hsl_saturation_0_field(index),
+            Common::mask_hsl_saturation_1_field(index),
+            Common::mask_hsl_luminance_0_field(index),
+            Common::mask_hsl_luminance_1_field(index),
         );
         rgb = mix(rgb, adjusted, weight);
     }
@@ -587,17 +587,19 @@ fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
 fn apply_view_transform(scene_rgb: vec3<f32>) -> vec3<f32> {
     let view_input = Color::gamut_project_nonnegative_rec2020(scene_rgb);
 
-    switch Common::camera_uniforms.view_transform_mode {
-        case Common::VIEW_TRANSFORM_SCENE_SIGMOID: {
-            return Tonemap::apply_sigmoid_view_transform(view_input);
-        }
-        case Common::VIEW_TRANSFORM_DISPLAY_RETONE: {
-            return Tonemap::apply_display_retone(view_input);
-        }
-        case Common::VIEW_TRANSFORM_PASSTHROUGH, default: {
-            return view_input;
-        }
+    // Comparisons, not `switch` (see common.wgsl).
+    let mode = Common::camera_uniforms.view_transform_mode;
+    if mode == Common::VIEW_TRANSFORM_SCENE_SIGMOID {
+        return Tonemap::apply_sigmoid_view_transform(view_input);
     }
+    if mode == Common::VIEW_TRANSFORM_DISPLAY_RETONE {
+        return Tonemap::apply_display_retone(view_input);
+    }
+    if mode == Common::VIEW_TRANSFORM_PASSTHROUGH {
+        return view_input;
+    }
+    // A mode this shader does not know passes through as well.
+    return view_input;
 }
 
 // The display-referred tone after the global Blacks: each mask's Blacks in
@@ -610,10 +612,10 @@ fn apply_local_display_tone(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var brightness = Common::scene_tone_uniforms.grade_options.w / 100.0;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, 0u) { continue; }
-        let blacks = Common::mask_data[index].adjust_1_field.y;
-        let mask_brightness = Common::mask_data[index].grade_options.w;
+        let blacks = Common::mask_adjust_1_field(index).y;
+        let mask_brightness = Common::mask_grade_options(index).w;
         if abs(blacks) < 1e-7 && abs(mask_brightness) < 1e-7 { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }

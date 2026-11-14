@@ -161,7 +161,7 @@ fn styled_glow_map_ready() -> bool {
 fn styled_glow_layer_count(capacity: u32) -> u32 {
     var layers = 0u;
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        if Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_STYLED_GLOW_ID) {
+        if Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_STYLED_GLOW_ID) {
             layers = layers + 1u;
         }
     }
@@ -172,7 +172,7 @@ fn styled_glow_layer_count(capacity: u32) -> u32 {
 fn styled_glow_slot(layer: u32) -> u32 {
     var seen = 0u;
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        if !Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_STYLED_GLOW_ID) {
+        if !Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_STYLED_GLOW_ID) {
             continue;
         }
         if seen == layer { return index; }

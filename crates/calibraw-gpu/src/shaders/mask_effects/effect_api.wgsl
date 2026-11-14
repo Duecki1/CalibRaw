@@ -41,13 +41,13 @@ struct MaskEffectParams {
 
 fn mask_effect_params(index: u32) -> MaskEffectParams {
     return MaskEffectParams(
-        Common::mask_data[index].adjust_0_field,
-        Common::mask_data[index].adjust_1_field,
-        Common::mask_data[index].adjust_2_field,
-        Common::mask_data[index].adjust_3_field,
-        Common::mask_data[index].effect_options,
+        Common::mask_adjust_0_field(index),
+        Common::mask_adjust_1_field(index),
+        Common::mask_adjust_2_field(index),
+        Common::mask_adjust_3_field(index),
+        Common::mask_effect_options(index),
         index,
-        Common::mask_data[index].metadata.z,
+        Common::mask_metadata(index).z,
     );
 }
 
@@ -68,7 +68,7 @@ fn mask_effect_instance(params: MaskEffectParams) -> u32 {
 // The light bake's channel of the slot's light plus one, or 0 when the bake
 // holds none for it (common.wgsl, MASK_SCENE_BAKE_LIGHT_BITS).
 fn mask_effect_scene_bake_light(params: MaskEffectParams) -> u32 {
-    return Common::mask_data[params.slot].metadata.w & Common::MASK_SCENE_BAKE_LIGHT_BITS;
+    return Common::mask_metadata(params.slot).w & Common::MASK_SCENE_BAKE_LIGHT_BITS;
 }
 
 // The instances of the slot's card.

@@ -43,30 +43,34 @@ pub(super) fn registry_wgsl() -> String {
     let creative: Vec<MaskEffect> = effects()
         .filter(|effect| effect.runs_in(EffectPass::Creative))
         .collect();
-    let ids = creative
-        .iter()
-        .map(|effect| format!("{}u", effect.shader_id()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    wgsl.push_str("fn is_creative_slot_effect(effect_id: u32) -> bool {\n    switch effect_id {\n");
-    if !creative.is_empty() {
-        wgsl.push_str(&format!("        case {ids}: {{ return true; }}\n"));
-    }
-    wgsl.push_str("        default: { return false; }\n    }\n}\n");
+    // Comparisons, not `switch`, which Adreno runs several times slower in
+    // the creative pass's loop over the slots (common.wgsl).
+    let is_creative = if creative.is_empty() {
+        "false".to_owned()
+    } else {
+        creative
+            .iter()
+            .map(|effect| format!("effect_id == {}u", effect.shader_id()))
+            .collect::<Vec<_>>()
+            .join(" || ")
+    };
+    wgsl.push_str(&format!(
+        "fn is_creative_slot_effect(effect_id: u32) -> bool {{\n    return {is_creative};\n}}\n"
+    ));
     wgsl.push_str(
         "fn apply_creative_slot_effect(\n    effect_id: u32,\n    pos: vec2<i32>,\n    \
-         rgb: vec3<f32>,\n    params: MaskEffectParams,\n) -> vec3<f32> {\n    switch effect_id {\n",
+         rgb: vec3<f32>,\n    params: MaskEffectParams,\n) -> vec3<f32> {\n",
     );
     for effect in &creative {
         // Compiled only into programs of an effect set that holds the effect
         // (effect_programs.rs).
         wgsl.push_str(&format!(
-            "#ifdef {}\n        case {}u: {{ return apply_{}(pos, rgb, params); }}\n#endif\n",
+            "#ifdef {}\n    if effect_id == {}u {{ return apply_{}(pos, rgb, params); }}\n#endif\n",
             effect_def(*effect),
             effect.shader_id(),
             effect.shader_name()
         ));
     }
-    wgsl.push_str("        default: { return rgb; }\n    }\n}\n");
+    wgsl.push_str("    return rgb;\n}\n");
     wgsl
 }

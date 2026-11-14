@@ -520,10 +520,6 @@ impl CalibRawApp {
         ) else {
             return;
         };
-        // The export reuses the prewarmed programs only for Bayer photos (`run_export_worker`).
-        if raw.cfa_kind != crate::pipeline::CfaKind::Bayer {
-            return;
-        }
         let key = (Arc::as_ptr(raw) as usize, self.edit_commit_revision());
         if self.export.programs_compiled_for == Some(key) {
             return;
@@ -540,14 +536,11 @@ impl CalibRawApp {
         let spawned = std::thread::Builder::new()
             .name("calibraw-export-program-compile".to_owned())
             .spawn(move || {
-                let Ok(template) = prewarm.wait() else {
-                    return;
-                };
                 let started = std::time::Instant::now();
                 let result = crate::pipeline::compile_export_programs(
                     &device,
                     &queue,
-                    &template,
+                    &prewarm,
                     &raw,
                     crate::pipeline::ExportProgramEdits {
                         exposure: &exposure,

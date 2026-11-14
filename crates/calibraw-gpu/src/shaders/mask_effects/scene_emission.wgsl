@@ -87,7 +87,7 @@ fn scene_emission_surface_grid() -> vec2<u32> {
 // pixel, so receivers skip reading the maps when nothing emits.
 fn scene_emission_present() -> bool {
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if Common::mask_slot_applies(state, MASK_EFFECT_GLOW_ID)
             && mask_glow_lights_scene(mask_effect_params(index)) {
             return true;
@@ -103,7 +103,7 @@ fn scene_emission_present() -> bool {
 // The radiance the slot at `index` emits at full-image `uv` where its mask is
 // full; none for a slot that emits nothing.
 fn scene_emission_slot_at(index: u32, uv: vec2<f32>) -> vec3<f32> {
-    let state = Common::mask_data[index].metadata;
+    let state = Common::mask_metadata(index);
     if Common::mask_slot_applies(state, MASK_EFFECT_GLOW_ID) {
         return mask_glow_scene_emission(mask_effect_params(index));
     }

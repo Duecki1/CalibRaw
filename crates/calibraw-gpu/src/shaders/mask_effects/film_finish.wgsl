@@ -199,7 +199,7 @@ fn apply_film_finish_modules(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> 
     for (var stage = 0u; stage < 2u; stage += 1u) {
         let effect_kind = select(MASK_EFFECT_VIGNETTE_ID, MASK_EFFECT_GRAIN_ID, stage == 1u);
         for (var index = 0u; index < count; index += 1u) {
-            let state = Common::mask_data[index].metadata;
+            let state = Common::mask_metadata(index);
             if !Common::mask_slot_applies(state, effect_kind) { continue; }
             let weight = SceneAdjustments::local_mask_weight(pos, index);
             if weight <= 1e-6 { continue; }

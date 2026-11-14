@@ -101,14 +101,18 @@ impl<T: Copy> CompactPixelMap<T> {
         let storage_width = self.storage_width.max(1) as usize;
         let storage_y = (y % self.storage_height.max(1)) as usize;
         let start = storage_y * storage_width;
-        let pattern = &self.values[start..start + storage_width];
-        let mut remaining = self.width as usize;
-        while remaining >= pattern.len() {
-            output.extend_from_slice(pattern);
-            remaining -= pattern.len();
-        }
-        if remaining > 0 {
-            output.extend_from_slice(&pattern[..remaining]);
+        let width = self.width as usize;
+        let pattern = &self.values[start..start + storage_width.min(width)];
+        // The row repeats `pattern`; copying what is written so far doubles it
+        // in a few copies where a short CFA pattern would take one per period.
+        // Every copy starts at the row's start and its length is a whole number
+        // of periods, so the phase carries on.
+        let row_start = output.len();
+        output.extend_from_slice(pattern);
+        while output.len() - row_start < width {
+            let written = output.len() - row_start;
+            let copied = written.min(width - written);
+            output.extend_from_within(row_start..row_start + copied);
         }
     }
 }
@@ -157,6 +161,11 @@ impl<T: Copy + PartialEq> CompactPixelMap<T> {
 
     /// The `width` by `height` region at the origin. Positions outside the map
     /// take their [`reflect_index`] mirror, as the samples of a padded tile do.
+    ///
+    /// A repeating map gives a repeating region when the mirrored positions
+    /// keep the storage period, as inside the map, for a uniform map and for a
+    /// Bayer mosaic's even period; otherwise the region is dense. Either way
+    /// every position holds the value the per-pixel lookup would give.
     pub fn subregion_reflected(
         &self,
         origin_x: i64,
@@ -164,38 +173,71 @@ impl<T: Copy + PartialEq> CompactPixelMap<T> {
         width: u32,
         height: u32,
     ) -> Self {
-        let source_width = self.width.max(1) as i64;
-        let source_height = self.height.max(1) as i64;
-        let fully_inside = origin_x >= 0
-            && origin_y >= 0
-            && origin_x + i64::from(width) <= source_width
-            && origin_y + i64::from(height) <= source_height;
-        let repeating = self.storage_width < self.width || self.storage_height < self.height;
+        if width == 0 || height == 0 {
+            return Self::dense(width, height, Vec::new());
+        }
+        let storage_width = self.storage_width.max(1) as usize;
+        let storage_height = self.storage_height.max(1) as usize;
+        // The storage column and row of every region column and row; the value
+        // at (x, y) is `values[rows[y] * storage_width + columns[x]]`, which is
+        // what `Index` gives for the mirrored position, dense or repeating.
+        let columns: Vec<usize> = (0..width)
+            .map(|x| {
+                reflect_index(origin_x + i64::from(x), self.width.max(1) as usize) % storage_width
+            })
+            .collect();
+        let rows: Vec<usize> = (0..height)
+            .map(|y| {
+                reflect_index(origin_y + i64::from(y), self.height.max(1) as usize) % storage_height
+            })
+            .collect();
 
-        if fully_inside && repeating {
-            let pattern_width = self.storage_width.min(width.max(1));
-            let pattern_height = self.storage_height.min(height.max(1));
-            let mut pattern = Vec::with_capacity((pattern_width * pattern_height) as usize);
-            for y in 0..pattern_height {
-                for x in 0..pattern_width {
-                    let source_x = (origin_x + i64::from(x)) as u32;
-                    let source_y = (origin_y + i64::from(y)) as u32;
-                    pattern.push(self[(source_y * self.width + source_x) as usize]);
+        let repeating = self.storage_width < self.width || self.storage_height < self.height;
+        if repeating {
+            let pattern_width = storage_width.min(width.max(1) as usize);
+            let pattern_height = storage_height.min(height.max(1) as usize);
+            if has_period(&columns, pattern_width) && has_period(&rows, pattern_height) {
+                let mut pattern = Vec::with_capacity(pattern_width * pattern_height);
+                for &row in rows.iter().take(pattern_height) {
+                    let storage_row = &self.values[row * storage_width..][..storage_width];
+                    pattern.extend(columns[..pattern_width].iter().map(|&x| storage_row[x]));
                 }
+                return Self::repeating(
+                    width,
+                    height,
+                    pattern_width as u32,
+                    pattern_height as u32,
+                    pattern,
+                );
             }
-            return Self::repeating(width, height, pattern_width, pattern_height, pattern);
         }
 
-        let mut values = Vec::with_capacity((width as usize).saturating_mul(height as usize));
-        for y in 0..height {
-            let source_y = reflect_index(origin_y + i64::from(y), source_height as usize);
-            for x in 0..width {
-                let source_x = reflect_index(origin_x + i64::from(x), source_width as usize);
-                values.push(self[source_y * self.width as usize + source_x]);
+        // Rows that read the same storage row are equal, so each storage row
+        // is gathered once and copied for the others.
+        let region_width = width as usize;
+        let mut values = Vec::with_capacity(region_width.saturating_mul(height as usize));
+        let mut first_use = vec![usize::MAX; storage_height];
+        for (y, &row) in rows.iter().enumerate() {
+            let earlier = first_use[row];
+            if earlier != usize::MAX {
+                let start = earlier * region_width;
+                values.extend_from_within(start..start + region_width);
+                continue;
             }
+            first_use[row] = y;
+            let storage_row = &self.values[row * storage_width..][..storage_width];
+            values.extend(columns.iter().map(|&x| storage_row[x]));
         }
         Self::dense(width, height, values)
     }
+}
+
+/// Whether `indices` repeats every `period` entries.
+fn has_period(indices: &[usize], period: usize) -> bool {
+    indices
+        .iter()
+        .zip(indices.iter().skip(period))
+        .all(|(first, later)| first == later)
 }
 
 /// The position inside `0..length` that `index` mirrors to, reflecting about

@@ -161,7 +161,7 @@ struct DefocusPass {
 fn defocus_layer_count(capacity: u32) -> u32 {
     var layers = 0u;
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        if Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_DEFOCUS_ID) {
+        if Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_DEFOCUS_ID) {
             layers = layers + 1u;
         }
     }
@@ -172,7 +172,7 @@ fn defocus_layer_count(capacity: u32) -> u32 {
 fn defocus_slot(layer: u32) -> u32 {
     var seen = 0u;
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        if !Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_DEFOCUS_ID) {
+        if !Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_DEFOCUS_ID) {
             continue;
         }
         if seen == layer { return index; }
@@ -185,7 +185,7 @@ fn defocus_slot(layer: u32) -> u32 {
 fn defocus_layer_of(index: u32) -> u32 {
     var layer = 0u;
     for (var other = 0u; other < index; other = other + 1u) {
-        if Common::mask_slot_applies(Common::mask_data[other].metadata, MASK_EFFECT_DEFOCUS_ID) {
+        if Common::mask_slot_applies(Common::mask_metadata(other), MASK_EFFECT_DEFOCUS_ID) {
             layer = layer + 1u;
         }
     }
@@ -222,11 +222,9 @@ fn defocus_bin_start(bin: u32) -> f32 {
 
 // The pipeline level of local bin `bin`.
 fn defocus_local_level(bin: u32) -> u32 {
-    switch bin {
-        case 0u: { return defocus_pass.levels.x; }
-        case 1u: { return defocus_pass.levels.y; }
-        default: { return defocus_pass.levels.z; }
-    }
+    if bin == 0u { return defocus_pass.levels.x; }
+    if bin == 1u { return defocus_pass.levels.y; }
+    return defocus_pass.levels.z;
 }
 
 // The first texel of pipeline level `level` in this tile, on the full image's
@@ -784,6 +782,46 @@ fn build_defocus_sources(@builtin(global_invocation_id) dispatch_gid: vec3<u32>)
 
 // --- Gather ---
 
+// What one side (front or back) of a source texel adds to an output texel.
+struct DefocusScatter {
+    // Its colour times its kernel weight.
+    colour: vec3<f32>,
+    // Its coverage times its kernel weight.
+    scattered: f32,
+    // What the scatter would reach (see `shown` in `gather_defocus`).
+    shown: f32,
+}
+
+// `source` is the side's premultiplied colour and coverage, `coc` its circle
+// of confusion in shorter edges, `may_show` what the texel may show of the
+// bin on this side, `centroid` the source's centroid in the texel, and
+// `grid_offset` the output texel from the source texel's centre.
+fn defocus_side_scatter(
+    source: vec4<f32>,
+    coc: f32,
+    may_show: f32,
+    centroid: vec2<f32>,
+    aperture: DefocusAperture,
+    grid_offset: vec2<f32>,
+    texel: f32,
+    point: vec2<f32>,
+    nominal_spread: f32,
+) -> DefocusScatter {
+    var weight = 0.0;
+    if source.w > 0.0 {
+        let radius = max(coc / texel, 0.5);
+        // From the source's centroid to the output texel. The rim is one
+        // source texel wide: narrower, the rims of neighbouring sources of
+        // an extended light would show as rings at the sources' spacing.
+        weight = defocus_spread(aperture, grid_offset - centroid, radius, point);
+    }
+    return DefocusScatter(
+        weight * source.rgb,
+        weight * source.w,
+        weight * source.w + nominal_spread * max(may_show - source.w, 0.0),
+    );
+}
+
 var<workgroup> defocus_group_occupied: atomic<u32>;
 
 // The slabs of bin `defocus_pass.bin` from its sources: per texel and side,
@@ -891,7 +929,10 @@ fn gather_defocus(
     // The bin's middle radius, which what a texel may show but holds no
     // source of takes for `shown`, and over whose disc the fill is averaged.
     let nominal = 1.5 * start;
-    var colour = array<vec3<f32>, 2>(vec3<f32>(0.0), vec3<f32>(0.0));
+    // Front and back are kept in variables of their own, without an array or
+    // a computed component index, which Adreno's compiler runs far slower.
+    var colour_front = vec3<f32>(0.0);
+    var colour_back = vec3<f32>(0.0);
     var scattered = vec2<f32>(0.0);
     // What the scatter would reach if every texel showed the bin wherever
     // nearer slabs leave it visible: each source's own kernel over its
@@ -922,37 +963,40 @@ fn gather_defocus(
             }
             let point = defocus_point((vec2<f32>(tap) + origin) * uv_scale);
             let nominal_spread = defocus_spread(aperture, grid_offset, nominal, point);
-            for (var side = 0u; side < 2u; side = side + 1u) {
-                let source = select(front, back, side == 1u);
-                let may_show = extra[2u + side];
-                var weight = 0.0;
-                if source.w > 0.0 {
-                    let radius = max(extra[side] / texel, 0.5);
-                    // From the source's centroid to the output texel.
-                    let offset = grid_offset - select(centroid.xy, centroid.zw, side == 1u);
-                    // The rim is one source texel wide: narrower, the rims of
-                    // neighbouring sources of an extended light would show as
-                    // rings at the sources' spacing.
-                    weight = defocus_spread(aperture, offset, radius, point);
-                    colour[side] += weight * source.rgb;
-                    scattered[side] += weight * source.w;
-                }
-                shown[side] += weight * source.w + nominal_spread * max(may_show - source.w, 0.0);
-            }
+            let front_scatter = defocus_side_scatter(
+                front, extra.x, extra.z, centroid.xy, aperture, grid_offset, texel, point, nominal_spread,
+            );
+            let back_scatter = defocus_side_scatter(
+                back, extra.y, extra.w, centroid.zw, aperture, grid_offset, texel, point, nominal_spread,
+            );
+            colour_front += front_scatter.colour;
+            colour_back += back_scatter.colour;
+            scattered += vec2<f32>(front_scatter.scattered, back_scatter.scattered);
+            shown += vec2<f32>(front_scatter.shown, back_scatter.shown);
         }
     }
     let out_layer = gid.z * DEFOCUS_SLAB_LAYERS + DEFOCUS_BIN_SLAB_LAYERS * source_bin;
     textureStore(defocus_slabs_out, vec2<i32>(gid.xy), out_layer + 2u, behind / max(area, 1e-6));
-    for (var side = 0u; side < 2u; side = side + 1u) {
-        let coverage = clamp(scattered[side] / max(shown[side], DEFOCUS_LEAST_SHOWN), 0.0, 1.0);
-        let premultiplied = colour[side] * (coverage / max(scattered[side], 1e-9));
-        textureStore(
-            defocus_slabs_out,
-            vec2<i32>(gid.xy),
-            out_layer + side,
-            select(vec4<f32>(0.0), vec4<f32>(premultiplied, coverage), scattered[side] > 0.0),
-        );
-    }
+    textureStore(
+        defocus_slabs_out,
+        vec2<i32>(gid.xy),
+        out_layer,
+        defocus_slab(colour_front, scattered.x, shown.x),
+    );
+    textureStore(
+        defocus_slabs_out,
+        vec2<i32>(gid.xy),
+        out_layer + 1u,
+        defocus_slab(colour_back, scattered.y, shown.y),
+    );
+}
+
+// A slab texel: the scattered colour, premultiplied by the coverage that
+// `scattered` is of `shown`.
+fn defocus_slab(colour: vec3<f32>, scattered: f32, shown: f32) -> vec4<f32> {
+    let coverage = clamp(scattered / max(shown, DEFOCUS_LEAST_SHOWN), 0.0, 1.0);
+    let premultiplied = colour * (coverage / max(scattered, 1e-9));
+    return select(vec4<f32>(0.0), vec4<f32>(premultiplied, coverage), scattered > 0.0);
 }
 
 // --- Fill ---

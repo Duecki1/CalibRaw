@@ -158,9 +158,10 @@ impl RawGpuPipeline {
             device,
             queue,
             program_template: options.programs,
-            pipeline_cache: options
-                .programs
-                .and_then(|template| template.pipeline_cache.clone()),
+            pipeline_cache: match options.programs {
+                Some(template) => template.pipeline_cache.clone(),
+                None => options.pipeline_cache.cloned(),
+            },
             raw,
             params,
             quality: options.quality,
@@ -174,6 +175,61 @@ impl RawGpuPipeline {
                 },
             },
         })
+    }
+
+    /// [`Self::new`] with the programs `prewarm` holds for `raw`, which waits
+    /// for the app's startup programs. Without ones that fit, the pipeline
+    /// compiles its own with the prewarm's persistent cache, and the prewarm
+    /// keeps them for the next pipeline of this sensor layout and quality.
+    pub fn new_reusing(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        raw: &LoadedRaw,
+        params: &GpuParams,
+        options: PipelineOptions<'_>,
+        prewarm: Option<&GpuProgramPrewarm>,
+    ) -> Result<Self> {
+        let Some(prewarm) = prewarm else {
+            return Self::new(device, queue, raw, params, options);
+        };
+        let reuse = |template: &RawGpuProgramTemplate| {
+            Self::new(device, queue, raw, params, options.programs(template))
+                .inspect_err(|error| {
+                    calibraw_core::diagnostics::record(format!(
+                        "Compiled GPU programs could not be reused ({error:#}); compiling programs"
+                    ));
+                })
+                .ok()
+        };
+        if let Some(pipeline) = prewarm
+            .template_for(raw, options.quality)
+            .and_then(|template| reuse(&template))
+        {
+            return Ok(pipeline);
+        }
+        // A poisoned lock only means another build panicked; this one still runs.
+        let _building = prewarm.building.lock();
+        if let Some(pipeline) = prewarm
+            .template_for(raw, options.quality)
+            .and_then(|template| reuse(&template))
+        {
+            return Ok(pipeline);
+        }
+        let cache = prewarm.pipeline_cache();
+        let options = match &cache {
+            Some(cache) => options.pipeline_cache(cache),
+            None => options,
+        };
+        let pipeline = Self::new(device, queue, raw, params, options)?;
+        if let Ok(mut kept) = prewarm.kept.lock() {
+            if !kept
+                .iter()
+                .any(|template| template.fits(raw, options.quality))
+            {
+                kept.push(Arc::new(pipeline.program_template()));
+            }
+        }
+        Ok(pipeline)
     }
 
     fn new_internal(build: RawGpuPipelineBuild<'_>) -> Result<Self> {

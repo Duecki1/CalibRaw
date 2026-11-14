@@ -87,7 +87,7 @@ fn light_shafts_flat_path_energy(
     spread: f32,
     softness: f32,
 ) -> f32 {
-    if Common::mask_data[mask_index].point_color_meta.z == 0xffffffffu { return 1.0; }
+    if Common::mask_point_color_meta(mask_index).z == 0xffffffffu { return 1.0; }
     let radial_pixels = (output_uv - source_uv) * full_size;
     let radial_length = length(radial_pixels);
     let path = source_uv - output_uv;

@@ -46,7 +46,7 @@ where
         queue,
         events,
         cancellation,
-        program_template,
+        program_prewarm,
         memory,
     } = context;
     let ExportRequest {
@@ -125,46 +125,15 @@ where
         [raw.width, raw.height],
         [first.padded_width, first.padded_height],
     );
-    let tile_pipeline = if let Some(template) = program_template {
-        match RawGpuPipeline::new(
-            device,
-            queue,
-            &first_raw,
-            &first_params,
-            PipelineOptions::new(ProcessingQuality::High)
-                .mask_atlas_edge(export_mask_edge)
-                .programs(template),
-        ) {
-            Ok(pipeline) => {
-                calibraw_core::diagnostics::record(
-                    "Full-quality export reused startup-precompiled GPU programs",
-                );
-                pipeline
-            }
-            Err(reuse_error) => {
-                calibraw_core::diagnostics::record(format!(
-                    "Full-quality export program reuse unavailable ({reuse_error:#}); compiling programs"
-                ));
-                RawGpuPipeline::new(
-                    device,
-                    queue,
-                    &first_raw,
-                    &first_params,
-                    PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(export_mask_edge),
-                )
-                .context("create reusable full-quality export pipeline")?
-            }
-        }
-    } else {
-        RawGpuPipeline::new(
-            device,
-            queue,
-            &first_raw,
-            &first_params,
-            PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(export_mask_edge),
-        )
-        .context("create reusable full-quality export pipeline")?
-    };
+    let tile_pipeline = RawGpuPipeline::new_reusing(
+        device,
+        queue,
+        &first_raw,
+        &first_params,
+        PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(export_mask_edge),
+        program_prewarm,
+    )
+    .context("create reusable full-quality export pipeline")?;
     // The export runs on its own thread: it waits between chunks of GPU work,
     // so the UI's frames are not queued behind whole tiles.
     tile_pipeline.pace_submissions(true);
@@ -194,6 +163,7 @@ where
         )
         .context("upload full-image masks")?;
 
+    let clock = ExportClock::default();
     let tone_analysis_started = Instant::now();
     if let Some(timing) = &gpu_timing {
         timing.phase("tone prepass");
@@ -221,10 +191,14 @@ where
     for (index, tile) in plan.tiles.iter().copied().enumerate() {
         ensure_export_not_cancelled(cancellation)?;
         if index != 0 {
-            extract_padded_tile_into(raw, tile, &mut tile_scratch);
+            clock.time("tile extraction", || {
+                extract_padded_tile_into(raw, tile, &mut tile_scratch);
+            });
         }
-        tile_pipeline
-            .upload_raw_tile(queue, &tile_scratch)
+        clock
+            .time("RAW upload", || {
+                tile_pipeline.upload_raw_tile(queue, &tile_scratch)
+            })
             .with_context(|| format!("upload tone-analysis tile {}", index + 1))?;
         let tone_params = GpuParams::new_for_tile(
             exposure,
@@ -243,19 +217,21 @@ where
             tile.core_width,
             tile.core_height,
         );
-        tile_pipeline
-            .accumulate_export_tone_tile_with_remove(
-                queue,
-                device,
-                &tone_params,
-                RemoveSceneContext::new(
-                    remove,
-                    raw,
-                    exposure,
-                    [tile.global_origin_x as f32, tile.global_origin_y as f32],
-                    [tile.padded_width as f32, tile.padded_height as f32],
-                ),
-            )
+        clock
+            .time("tone prepass passes", || {
+                tile_pipeline.accumulate_export_tone_tile_with_remove(
+                    queue,
+                    device,
+                    &tone_params,
+                    RemoveSceneContext::new(
+                        remove,
+                        raw,
+                        exposure,
+                        [tile.global_origin_x as f32, tile.global_origin_y as f32],
+                        [tile.padded_width as f32, tile.padded_height as f32],
+                    ),
+                )
+            })
             .with_context(|| format!("apply Remove to tone-analysis tile {}", index + 1))?;
         if let Some(store) = &mut raw_stage_store {
             let region = store.owned_region(tile);
@@ -266,21 +242,25 @@ where
             if let Some((previous, previous_index, readback)) =
                 pending_scene.replace((tile, index, readback))
             {
-                store_raw_stage_tile(
-                    store,
-                    device,
-                    &mut watch_gpu,
-                    previous,
-                    previous_index,
-                    readback,
-                )?;
+                clock.time("kept scene readback", || {
+                    store_raw_stage_tile(
+                        store,
+                        device,
+                        &mut watch_gpu,
+                        previous,
+                        previous_index,
+                        readback,
+                    )
+                })?;
             }
         }
     }
     if let (Some(store), Some((tile, index, readback))) =
         (&mut raw_stage_store, pending_scene.take())
     {
-        store_raw_stage_tile(store, device, &mut watch_gpu, tile, index, readback)?;
+        clock.time("kept scene readback", || {
+            store_raw_stage_tile(store, device, &mut watch_gpu, tile, index, readback)
+        })?;
     }
     tile_pipeline.finish_export_tone_analysis(queue, device);
     calibraw_core::diagnostics::record(format!(
@@ -299,6 +279,8 @@ where
         remove,
         look,
         geometry,
+        raw_stage_kept: raw_stage_store.is_some(),
+        clock: &clock,
     };
     // A Lens Blur whose discs reach past the export halo reads the whole
     // image (defocus.rs): every tile adds its core to Lens Blur's full-image
@@ -323,7 +305,9 @@ where
                     tile.core_height,
                 );
             tile_inputs.load_scene(tile, index, &params, raw_stage_store.as_ref())?;
-            tile_pipeline.accumulate_export_defocus_tile(queue, device, &params);
+            clock.time("Lens Blur map passes", || {
+                tile_pipeline.accumulate_export_defocus_tile(queue, device, &params);
+            });
         }
         tile_pipeline.finish_export_defocus(queue, device, &first_params);
         calibraw_core::diagnostics::record(format!(
@@ -355,7 +339,9 @@ where
                     tile.core_height,
                 );
             tile_inputs.load_scene(tile, index, &params, raw_stage_store.as_ref())?;
-            tile_pipeline.accumulate_export_styled_glow_tile(queue, device, &params);
+            clock.time("Glow map passes", || {
+                tile_pipeline.accumulate_export_styled_glow_tile(queue, device, &params);
+            });
         }
         tile_pipeline.finish_export_styled_glow(queue, device, &first_params);
         calibraw_core::diagnostics::record(format!(
@@ -386,7 +372,7 @@ where
         let mut band = Vec::new();
         band.try_reserve_exact(band_values)
             .context("reserve bounded export source band")?;
-        band.resize(band_values, 0.0f32);
+        clock.time("band allocation", || band.resize(band_values, 0.0f32));
         let mut pending_readback = None;
         for (absolute_index, tile) in plan.tiles[band_start..tile_index]
             .iter()
@@ -397,7 +383,9 @@ where
             let global_index = band_start + absolute_index;
             let params = tile_inputs.upload(tile, global_index, &mut tile_scratch)?;
             tile_inputs.load_scene(tile, global_index, &params, raw_stage_store.as_ref())?;
-            tile_pipeline.dispatch_export_tile_from_scene(queue, device, &params);
+            clock.time("final passes", || {
+                tile_pipeline.dispatch_export_tile_from_scene(queue, device, &params);
+            });
             // An export must not lack an effect whose resources did not fit.
             tile_pipeline
                 .ensure_effects_rendered()
@@ -415,10 +403,14 @@ where
 
             let previous = pending_readback.replace((tile, global_index, readback));
             if let Some((previous_tile, previous_index, previous_readback)) = previous {
-                let rgb = previous_readback
-                    .finish(device, GpuWait::Watched(&mut watch_gpu))
+                let rgb = clock
+                    .time("tile readback", || {
+                        previous_readback.finish(device, GpuWait::Watched(&mut watch_gpu))
+                    })
                     .with_context(|| format!("read export tile {}", previous_index + 1))?;
-                stitch_linear_tile_into_band(&mut band, raw.width, band_y, previous_tile, &rgb)?;
+                clock.time("tile stitching", || {
+                    stitch_linear_tile_into_band(&mut band, raw.width, band_y, previous_tile, &rgb)
+                })?;
                 report_completed_export_tile(
                     events,
                     &mut completed_tiles,
@@ -430,10 +422,14 @@ where
         }
 
         if let Some((last_tile, last_index, last_readback)) = pending_readback.take() {
-            let rgb = last_readback
-                .finish(device, GpuWait::Watched(&mut watch_gpu))
+            let rgb = clock
+                .time("tile readback", || {
+                    last_readback.finish(device, GpuWait::Watched(&mut watch_gpu))
+                })
                 .with_context(|| format!("read export tile {}", last_index + 1))?;
-            stitch_linear_tile_into_band(&mut band, raw.width, band_y, last_tile, &rgb)?;
+            clock.time("tile stitching", || {
+                stitch_linear_tile_into_band(&mut band, raw.width, band_y, last_tile, &rgb)
+            })?;
             report_completed_export_tile(
                 events,
                 &mut completed_tiles,
@@ -454,13 +450,46 @@ where
                 .checked_add(source_row_values)
                 .context("source export row end overflow")?;
             let source_y = band_y + local_y;
-            row_sink(source_y, &band[start..end])?;
+            clock.time("output rows", || row_sink(source_y, &band[start..end]))?;
         }
     }
+    clock.record();
     if let Some(timing) = gpu_timing {
         timing.finish();
     }
     Ok(())
+}
+
+/// The wall time the export thread spent per kind of work, for the
+/// diagnostics: what an export costs besides its GPU passes.
+#[derive(Default)]
+struct ExportClock {
+    spent: std::cell::RefCell<Vec<(&'static str, Duration)>>,
+}
+
+impl ExportClock {
+    fn time<T>(&self, work: &'static str, run: impl FnOnce() -> T) -> T {
+        let started = Instant::now();
+        let result = run();
+        let elapsed = started.elapsed();
+        let mut spent = self.spent.borrow_mut();
+        match spent.iter_mut().find(|(name, _)| *name == work) {
+            Some((_, total)) => *total += elapsed,
+            None => spent.push((work, elapsed)),
+        }
+        result
+    }
+
+    fn record(&self) {
+        let mut spent = self.spent.borrow().clone();
+        spent.sort_by_key(|(_, total)| std::cmp::Reverse(*total));
+        let listed = spent
+            .iter()
+            .map(|(name, total)| format!("{name} {:.3}", total.as_secs_f64()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        calibraw_core::diagnostics::record(format!("Export thread time in seconds: {listed}"));
+    }
 }
 
 /// What every export tile is rendered from, for the Glow map prepass and the
@@ -475,17 +504,29 @@ struct ExportTileInputs<'a> {
     remove: &'a RemoveEditState,
     look: Option<&'a ResolvedLook>,
     geometry: GeometryTransform,
+    /// Whether the tone prepass kept every tile's RAW-stage scene: the RAW
+    /// stage, the only reader of the RAW tile's textures, then does not run
+    /// again, so the tile is not uploaded.
+    raw_stage_kept: bool,
+    clock: &'a ExportClock,
 }
 
 impl ExportTileInputs<'_> {
-    /// Uploads the RAW pixels and masks of `tile`, the `index`th, through
-    /// `scratch` and returns its parameters.
+    /// Uploads the RAW pixels (unless the RAW-stage scene is kept) and masks
+    /// of `tile`, the `index`th, through `scratch` and returns its parameters.
     fn upload(&self, tile: ExportTile, index: usize, scratch: &mut LoadedRaw) -> Result<GpuParams> {
         let (raw, masks) = (self.raw, self.masks);
-        extract_padded_tile_into(raw, tile, scratch);
-        self.pipeline
-            .upload_raw_tile(self.queue, scratch)
-            .with_context(|| format!("upload export tile {}", index + 1))?;
+        // The tile is extracted either way: its parameters come from it.
+        self.clock.time("tile extraction", || {
+            extract_padded_tile_into(raw, tile, scratch);
+        });
+        if !self.raw_stage_kept {
+            self.clock
+                .time("RAW upload", || {
+                    self.pipeline.upload_raw_tile(self.queue, scratch)
+                })
+                .with_context(|| format!("upload export tile {}", index + 1))?;
+        }
         let mask_region = tile_mask_source_region(
             masks,
             tile.global_origin_x,
@@ -511,16 +552,18 @@ impl ExportTileInputs<'_> {
             mask_extent,
         )
         .with_look_lut(self.look);
-        upload_mask_atlas(
-            self.pipeline,
-            self.queue,
-            masks,
-            &params,
-            raw.width,
-            raw.height,
-            mask_region,
-            raw.lens_geometry.as_deref(),
-        )?;
+        self.clock.time("mask upload", || {
+            upload_mask_atlas(
+                self.pipeline,
+                self.queue,
+                masks,
+                &params,
+                raw.width,
+                raw.height,
+                mask_region,
+                raw.lens_geometry.as_deref(),
+            )
+        })?;
         Ok(params)
     }
 
@@ -535,24 +578,29 @@ impl ExportTileInputs<'_> {
         store: Option<&RawStageStore<'_>>,
     ) -> Result<()> {
         match store {
-            Some(store) => store
-                .write_tile(self.pipeline, self.queue, tile)
+            Some(store) => self
+                .clock
+                .time("kept scene upload", || {
+                    store.write_tile(self.pipeline, self.queue, tile)
+                })
                 .with_context(|| format!("upload the RAW-stage scene of tile {}", index + 1)),
             None => self
-                .pipeline
-                .dispatch_stage_with_remove(
-                    self.queue,
-                    self.device,
-                    params,
-                    ProcessingStage::Raw,
-                    RemoveSceneContext::new(
-                        self.remove,
-                        self.raw,
-                        self.exposure,
-                        [tile.global_origin_x as f32, tile.global_origin_y as f32],
-                        [tile.padded_width as f32, tile.padded_height as f32],
-                    ),
-                )
+                .clock
+                .time("RAW stage", || {
+                    self.pipeline.dispatch_stage_with_remove(
+                        self.queue,
+                        self.device,
+                        params,
+                        ProcessingStage::Raw,
+                        RemoveSceneContext::new(
+                            self.remove,
+                            self.raw,
+                            self.exposure,
+                            [tile.global_origin_x as f32, tile.global_origin_y as f32],
+                            [tile.padded_width as f32, tile.padded_height as f32],
+                        ),
+                    )
+                })
                 .with_context(|| format!("apply Remove to export tile {}", index + 1)),
         }
     }

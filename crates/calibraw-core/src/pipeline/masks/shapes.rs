@@ -19,10 +19,35 @@ pub(super) fn rasterize_radial(
     let ry = (radius[1].abs() * image_height.max(1) as f32).max(1.0);
     let inner = (1.0 - feather.clamp(0.0, 1.0) * 0.98).clamp(0.0, 0.995);
 
-    out.par_chunks_mut(row_stride)
+    // At `distance >= 1`, outside the ellipse, the coverage is exactly 0, which
+    // `out` holds already; only pixels inside the ellipse's bounding box, with
+    // a percent to spare, are evaluated. Its half extents, in image pixels:
+    let half_width = (rx * cos_r).hypot(ry * sin_r) * 1.01;
+    let half_height = (rx * sin_r).hypot(ry * cos_r) * 1.01;
+    let image_size = [image_width.max(1) as f32, image_height.max(1) as f32];
+    let bounds = space.pixels_within_uv(
+        [
+            center[0] - half_width / image_size[0],
+            center[0] + half_width / image_size[0],
+        ],
+        [
+            center[1] - half_height / image_size[1],
+            center[1] + half_height / image_size[1],
+        ],
+    );
+    let (columns, rows) = bounds.unwrap_or((0..width as usize, 0..height as usize));
+
+    out[rows.start * row_stride..rows.end * row_stride]
+        .par_chunks_mut(row_stride)
         .enumerate()
-        .for_each(|(y, row)| {
-            for (x, value) in row.iter_mut().enumerate() {
+        .for_each(|(row_in_bounds, row)| {
+            let y = rows.start + row_in_bounds;
+            for (x, value) in row
+                .iter_mut()
+                .enumerate()
+                .skip(columns.start)
+                .take(columns.len())
+            {
                 let [u, v] = space.shape_uv(x, y);
                 let dy = (v - center[1]) * image_height.max(1) as f32;
                 let dx = (u - center[0]) * image_width.max(1) as f32;

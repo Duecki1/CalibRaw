@@ -188,7 +188,7 @@ fn no_handle_arguments() {
 
 #[test]
 fn shared_uniform_and_mask_structs_match_rust_layouts() {
-    let contracts: [(&str, RustLayout); 5] = [
+    let contracts: [(&str, RustLayout); 4] = [
         (
             "CameraUniforms",
             rust_layout!(CameraUniforms {
@@ -294,34 +294,6 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
             }),
         ),
         (
-            "MaskData",
-            rust_layout!(MaskData {
-                metadata,
-                adjust_0,
-                adjust_1,
-                adjust_2,
-                adjust_3,
-                effect_options,
-                curves,
-                grade_shadows,
-                grade_midtones,
-                grade_highlights,
-                grade_global,
-                grade_options,
-                curves_red,
-                curves_green,
-                curves_blue,
-                hsl_hue_0,
-                hsl_hue_1,
-                hsl_saturation_0,
-                hsl_saturation_1,
-                hsl_luminance_0,
-                hsl_luminance_1,
-                point_colors,
-                point_color_meta,
-            }),
-        ),
-        (
             "PointColor",
             rust_layout!(PackedPointColor {
                 sample_range,
@@ -349,6 +321,64 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
     assert_eq!(checked, expected, "every contract struct reaches a module");
 }
 
+/// The mask slot table is read as rows of 16 bytes (`mask_rows` in
+/// common.wgsl): the slot's row count and the first row of each member the
+/// accessors read must match the Rust `MaskData`.
+#[test]
+fn mask_slot_rows_match_the_rust_layout() {
+    const ROW_BYTES: usize = 16;
+    let (size, fields) = rust_layout!(MaskData {
+        metadata,
+        adjust_0,
+        adjust_1,
+        adjust_2,
+        adjust_3,
+        effect_options,
+        curves,
+        grade_shadows,
+        grade_midtones,
+        grade_highlights,
+        grade_global,
+        grade_options,
+        curves_red,
+        curves_green,
+        curves_blue,
+        hsl_hue_0,
+        hsl_hue_1,
+        hsl_saturation_0,
+        hsl_saturation_1,
+        hsl_luminance_0,
+        hsl_luminance_1,
+        point_colors,
+        point_color_meta,
+    });
+    let modules = production_modules();
+    let mut seen = BTreeSet::new();
+    for (context, module) in &modules {
+        if let Some(rows) = u32_constant(module, "MASK_SLOT_ROWS") {
+            assert_eq!(rows as usize * ROW_BYTES, size, "{context}: MASK_SLOT_ROWS");
+            seen.insert("MASK_SLOT_ROWS".to_owned());
+        }
+        for (field, offset, _) in &fields {
+            let name = format!("MASK_ROW_{}", field.to_uppercase());
+            if let Some(row) = u32_constant(module, &name) {
+                assert_eq!(row as usize * ROW_BYTES, *offset, "{context}: {name}");
+                seen.insert(name);
+            }
+        }
+    }
+    assert_eq!(
+        seen.len(),
+        fields.len() + 1,
+        "every row constant reaches a module: {seen:?}"
+    );
+    assert_eq!(
+        std::mem::size_of::<PackedPointColor>(),
+        5 * ROW_BYTES,
+        "mask_point_colors reads five rows per point colour"
+    );
+}
+
 #[test]
 fn shared_buffer_bindings_match_the_rust_bind_group_layouts() {
     // (global, group, binding, address space) as bound by `create_bind_group_layouts`.
@@ -357,7 +387,7 @@ fn shared_buffer_bindings_match_the_rust_bind_group_layouts() {
         ("scene_tone_uniforms", 1, 0, naga::AddressSpace::Uniform),
         ("effects_uniforms", 2, 0, naga::AddressSpace::Uniform),
         (
-            "mask_data",
+            "mask_rows",
             0,
             33,
             naga::AddressSpace::Storage {

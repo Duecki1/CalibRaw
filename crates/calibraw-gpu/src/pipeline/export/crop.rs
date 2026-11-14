@@ -169,32 +169,14 @@ fn create_crop_pipeline(
     params: &GpuParams,
     mask_edge: u32,
 ) -> Result<RawGpuPipeline> {
-    let build = || {
-        RawGpuPipeline::new(
-            &job.device,
-            &job.queue,
-            raw,
-            params,
-            PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(mask_edge),
-        )
-    };
-    let template = job
-        .program_prewarm
-        .as_deref()
-        .and_then(|prewarm| prewarm.wait().ok());
-    match template.as_deref() {
-        Some(template) => RawGpuPipeline::new(
-            &job.device,
-            &job.queue,
-            raw,
-            params,
-            PipelineOptions::new(ProcessingQuality::High)
-                .mask_atlas_edge(mask_edge)
-                .programs(template),
-        )
-        .or_else(|_| build()),
-        None => build(),
-    }
+    RawGpuPipeline::new_reusing(
+        &job.device,
+        &job.queue,
+        raw,
+        params,
+        PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(mask_edge),
+        job.program_prewarm.as_deref(),
+    )
 }
 
 pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {

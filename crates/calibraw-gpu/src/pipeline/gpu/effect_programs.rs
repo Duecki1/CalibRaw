@@ -329,6 +329,9 @@ impl ProgramVariants {
             .and(pipeline);
         match result {
             Ok(pipeline) => {
+                if let Some(cache) = &self.cache {
+                    cache.note_compiled();
+                }
                 log::debug!(
                     "GPU program {} for effect set {:#x} compiled in {:.3}s",
                     self.entry,
@@ -356,7 +359,7 @@ impl ProgramVariants {
     /// set's from the persistent cache.
     fn persist_cache(&self) {
         if let Some(cache) = &self.cache {
-            if let Err(error) = cache.persist() {
+            if let Err(error) = cache.persist_if_changed() {
                 log::warn!("could not save the GPU pipeline cache: {error:#}");
             }
         }

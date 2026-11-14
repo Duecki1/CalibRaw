@@ -66,7 +66,7 @@ fn light_shafts_source(index: u32, params: MaskEffectParams) -> SceneLight {
     if !Lights::scene_shadow_light_active(baked) { return scene_light_none(); }
     // Its light acts only where its mask covers, as its rays do.
     var confined = SCENE_LIGHT_UNCONFINED;
-    if Common::mask_data[index].point_color_meta.z != 0xffffffffu {
+    if Common::mask_point_color_meta(index).z != 0xffffffffu {
         confined = index;
     }
     return SceneLight(
@@ -131,7 +131,7 @@ fn apply_light_shafts(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var near = vec3<f32>(0.0);
     var far = vec3<f32>(0.0);
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, MASK_EFFECT_LIGHT_SHAFTS_ID) { continue; }
         let params = mask_effect_params(index);
         if light_shafts_is_flat(params) {

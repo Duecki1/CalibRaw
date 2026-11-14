@@ -74,7 +74,7 @@ fn local_mask_texture_uv(region_uv: vec2<f32>) -> vec2<f32> {
 // (`MaskEffect::reads_full_image_mask`). Coverage at the frame's edge extends
 // beyond it. Effects without a mask layer cover every position fully.
 fn full_image_mask_weight(uv: vec2<f32>, index: u32) -> f32 {
-    let layer = Common::mask_data[index].point_color_meta.z;
+    let layer = Common::mask_point_color_meta(index).z;
     if layer == 0xffffffffu { return 1.0; }
     let atlas_size = vec2<f32>(textureDimensions(full_image_mask_tex));
     let half_texel = vec2<f32>(0.5) / atlas_size;
@@ -94,7 +94,7 @@ fn local_mask_weight(pos: vec2<i32>, index: u32) -> f32 {
 // Mask coverage at a tile pixel position that may lie between pixel centers.
 // Effects without a mask layer (global effects) cover every position fully.
 fn local_mask_weight_at(pos: vec2<f32>, index: u32) -> f32 {
-    let layer = Common::mask_data[index].point_color_meta.z;
+    let layer = Common::mask_point_color_meta(index).z;
     if layer == 0xffffffffu { return 1.0; }
     let uv = local_mask_uv(pos);
     if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) {
@@ -113,9 +113,9 @@ fn apply_local_exposure_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, 0u) { continue; }
-        let value = clamp(Common::mask_data[index].adjust_0_field.x, -5.0, 5.0);
+        let value = clamp(Common::mask_adjust_0_field(index).x, -5.0, 5.0);
         if abs(value) <= 1e-7 { continue; }
         let weight = local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
@@ -131,9 +131,9 @@ fn dehaze_amount_at(pos: vec2<i32>) -> f32 {
     var amount = BasicAdjustments::perceptual_control(Common::effects_uniforms.presence.z);
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, 0u) { continue; }
-        let value = Common::mask_data[index].adjust_2_field.w;
+        let value = Common::mask_adjust_2_field(index).w;
         if abs(value) <= 1e-7 { continue; }
         let weight = local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
@@ -199,10 +199,10 @@ fn bilateral_log_luminance(
 }
 
 fn local_curve_block(mask_index: u32, curve: u32, block: u32) -> vec4<f32> {
-    if curve == 1u { return Common::mask_data[mask_index].curves_red[block]; }
-    if curve == 2u { return Common::mask_data[mask_index].curves_green[block]; }
-    if curve == 3u { return Common::mask_data[mask_index].curves_blue[block]; }
-    return Common::mask_data[mask_index].curves[block];
+    if curve == 1u { return Common::mask_curves_red(mask_index, block); }
+    if curve == 2u { return Common::mask_curves_green(mask_index, block); }
+    if curve == 3u { return Common::mask_curves_blue(mask_index, block); }
+    return Common::mask_curves(mask_index, block);
 }
 
 fn local_curve_point(mask_index: u32, curve: u32, index: u32) -> vec2<f32> {
@@ -294,7 +294,7 @@ fn apply_local_scene_channel_curve(mask_index: u32, curve: u32, value: f32) -> f
 
 fn apply_local_curves_for_mask(mask_index: u32, input_rgb: vec3<f32>) -> vec3<f32> {
     var adjusted = input_rgb;
-    let state = Common::mask_data[mask_index].metadata;
+    let state = Common::mask_metadata(mask_index);
     if (state.z & 1u) != 0u {
         let luminance = max(dot(adjusted, Common::LUMA), 0.0);
         let encoded_black = local_curve_value(mask_index, 0u, 0.0);
@@ -326,7 +326,7 @@ fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f3
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, 0u) { continue; }
         let weight = local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
@@ -335,7 +335,7 @@ fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f3
             rgb,
             pos,
             0.0,
-            Common::mask_data[index].adjust_0_field.w,
+            Common::mask_adjust_0_field(index).w,
             0.0,
             0.0,
             weight,
@@ -344,16 +344,16 @@ fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f3
         var adjusted = Tonemap::apply_local_basic_tone_values(
             rgb,
             pos,
-            Common::mask_data[index].adjust_0_field.z,
+            Common::mask_adjust_0_field(index).z,
             0.0,
-            Common::mask_data[index].adjust_1_field.x,
+            Common::mask_adjust_1_field(index).x,
             0.0,
         );
-        adjusted = Tonemap::apply_mask_contrast_value(adjusted, Common::mask_data[index].adjust_0_field.y);
+        adjusted = Tonemap::apply_mask_contrast_value(adjusted, Common::mask_adjust_0_field(index).y);
         adjusted = BasicAdjustments::apply_temperature_tint_values(
             adjusted,
-            Common::mask_data[index].adjust_1_field.z,
-            Common::mask_data[index].adjust_1_field.w,
+            Common::mask_adjust_1_field(index).z,
+            Common::mask_adjust_1_field(index).w,
         );
         adjusted = apply_local_curves_for_mask(index, adjusted);
         rgb = mix(rgb, adjusted, weight);
@@ -377,12 +377,12 @@ fn apply_capture_sharpening_at(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32
     var sharpened = false;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if state.x == 0u || state.y == 0u
             || Common::mask_effect_id(state) != DetailCapture::MASK_EFFECT_SHARPEN_ID {
             continue;
         }
-        let settings = DetailCapture::capture_sharpening(Common::mask_data[index].adjust_0_field);
+        let settings = DetailCapture::capture_sharpening(Common::mask_adjust_0_field(index));
         if settings.amount < 1e-6 { continue; }
         let weight = local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }

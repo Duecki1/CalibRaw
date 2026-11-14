@@ -3,34 +3,35 @@ const MAX_RENDER_MASK_SLOTS: u32 = 428u;
 
 // Naga reserves trailing numeric suffixes when rewriting composable modules.
 // Exported struct member names must therefore not end in a digit.
-struct MaskData {
-    metadata: vec4<u32>,
-    adjust_0_field: vec4<f32>,
-    adjust_1_field: vec4<f32>,
-    adjust_2_field: vec4<f32>,
-    // Effect slots' lanes 12 to 15.
-    adjust_3_field: vec4<f32>,
-    effect_options: vec4<f32>,
-    curves: array<vec4<f32>, 9>,
-    grade_shadows: vec4<f32>,
-    grade_midtones: vec4<f32>,
-    grade_highlights: vec4<f32>,
-    grade_global: vec4<f32>,
-    // View node options (Rust `pack_view_options`): colour grading's blending
-    // and balance, hue rotation in degrees, Brightness (-100 to 100).
-    grade_options: vec4<f32>,
-    curves_red: array<vec4<f32>, 9>,
-    curves_green: array<vec4<f32>, 9>,
-    curves_blue: array<vec4<f32>, 9>,
-    hsl_hue_0_field: vec4<f32>,
-    hsl_hue_1_field: vec4<f32>,
-    hsl_saturation_0_field: vec4<f32>,
-    hsl_saturation_1_field: vec4<f32>,
-    hsl_luminance_0_field: vec4<f32>,
-    hsl_luminance_1_field: vec4<f32>,
-    point_colors: array<PointColor, 8>,
-    point_color_meta: vec4<u32>,
-}
+
+// A mask slot (Rust `MaskData`), 94 rows of 16 bytes in the mask slot table
+// (`mask_rows` below). Its members in order, each a row unless an array:
+//   metadata: vec4<u32>,
+//   adjust_0_field: vec4<f32>,
+//   adjust_1_field: vec4<f32>,
+//   adjust_2_field: vec4<f32>,
+//   // Effect slots' lanes 12 to 15.
+//   adjust_3_field: vec4<f32>,
+//   effect_options: vec4<f32>,
+//   curves: array<vec4<f32>, 9>,
+//   grade_shadows: vec4<f32>,
+//   grade_midtones: vec4<f32>,
+//   grade_highlights: vec4<f32>,
+//   grade_global: vec4<f32>,
+//   // View node options (Rust `pack_view_options`): colour grading's blending
+//   // and balance, hue rotation in degrees, Brightness (-100 to 100).
+//   grade_options: vec4<f32>,
+//   curves_red: array<vec4<f32>, 9>,
+//   curves_green: array<vec4<f32>, 9>,
+//   curves_blue: array<vec4<f32>, 9>,
+//   hsl_hue_0_field: vec4<f32>,
+//   hsl_hue_1_field: vec4<f32>,
+//   hsl_saturation_0_field: vec4<f32>,
+//   hsl_saturation_1_field: vec4<f32>,
+//   hsl_luminance_0_field: vec4<f32>,
+//   hsl_luminance_1_field: vec4<f32>,
+//   point_colors: array<PointColor, 8>,
+//   point_color_meta: vec4<u32>,
 
 // `CameraUniforms.view_transform_mode` (Rust `ViewTransformMode`).
 // A developed raster at the reference tone curve keeps its rendered values.
@@ -50,7 +51,7 @@ fn mask_effect_id(metadata: vec4<u32>) -> u32 {
     return metadata.w >> MASK_EFFECT_ID_SHIFT;
 }
 
-// Mask slots in use, the bound of every loop over `mask_data`.
+// Mask slots in use, the bound of every loop over the mask slot table.
 fn mask_slot_count() -> u32 {
     return min(scene_tone_uniforms.mask_counts.x, MAX_RENDER_MASK_SLOTS);
 }
@@ -235,7 +236,157 @@ fn dispatch_group(group: vec3<u32>, group_height: u32) -> vec3<u32> {
     return vec3<u32>(group.x, group.y + dispatch_band.origin.y / group_height, group.z);
 }
 
-@group(0) @binding(33) var<storage, read> mask_data: array<MaskData>;
+// Shaders compare instead of using `switch`. Adreno's compiler (measured on
+// an Adreno 830) runs a pass with a `switch` in a per-pixel loop several times
+// slower: the creative pass with one Glow took 73 ms per megapixel-sized
+// preview with the dispatch as a `switch` and 19 ms with comparisons.
+
+// The mask slot table: slot `index` is the MASK_SLOT_ROWS rows of 16 bytes
+// from row `index * MASK_SLOT_ROWS`, laid out as `MaskData` (Rust `MaskData`).
+// It is bound as rows and read through the `mask_*` accessors below, one row
+// per read. Bound as `array<MaskData>`, Adreno took about 30 ns for every
+// read of one field of the 1504-byte slot (measured on an Adreno 830), which
+// made each loop over the slots cost 25 ms per megapixel.
+@group(0) @binding(33) var<storage, read> mask_rows: array<vec4<u32>>;
+
+// The rows of a slot (`MaskData`) and the first row of each member the
+// accessors read; `layout_contract_tests` checks them against the struct.
+const MASK_SLOT_ROWS: u32 = 94u;
+const MASK_ROW_METADATA: u32 = 0u;
+const MASK_ROW_ADJUST_0: u32 = 1u;
+const MASK_ROW_ADJUST_1: u32 = 2u;
+const MASK_ROW_ADJUST_2: u32 = 3u;
+const MASK_ROW_ADJUST_3: u32 = 4u;
+const MASK_ROW_EFFECT_OPTIONS: u32 = 5u;
+const MASK_ROW_CURVES: u32 = 6u;
+const MASK_ROW_GRADE_SHADOWS: u32 = 15u;
+const MASK_ROW_GRADE_MIDTONES: u32 = 16u;
+const MASK_ROW_GRADE_HIGHLIGHTS: u32 = 17u;
+const MASK_ROW_GRADE_GLOBAL: u32 = 18u;
+const MASK_ROW_GRADE_OPTIONS: u32 = 19u;
+const MASK_ROW_CURVES_RED: u32 = 20u;
+const MASK_ROW_CURVES_GREEN: u32 = 29u;
+const MASK_ROW_CURVES_BLUE: u32 = 38u;
+const MASK_ROW_HSL_HUE_0: u32 = 47u;
+const MASK_ROW_HSL_HUE_1: u32 = 48u;
+const MASK_ROW_HSL_SATURATION_0: u32 = 49u;
+const MASK_ROW_HSL_SATURATION_1: u32 = 50u;
+const MASK_ROW_HSL_LUMINANCE_0: u32 = 51u;
+const MASK_ROW_HSL_LUMINANCE_1: u32 = 52u;
+const MASK_ROW_POINT_COLORS: u32 = 53u;
+const MASK_ROW_POINT_COLOR_META: u32 = 93u;
+
+fn mask_row(index: u32, row: u32) -> vec4<u32> {
+    return mask_rows[index * MASK_SLOT_ROWS + row];
+}
+
+fn mask_row_f32(index: u32, row: u32) -> vec4<f32> {
+    return bitcast<vec4<f32>>(mask_row(index, row));
+}
+
+fn mask_metadata(index: u32) -> vec4<u32> {
+    return mask_row(index, MASK_ROW_METADATA);
+}
+
+fn mask_adjust_0_field(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_ADJUST_0);
+}
+
+fn mask_adjust_1_field(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_ADJUST_1);
+}
+
+fn mask_adjust_2_field(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_ADJUST_2);
+}
+
+fn mask_adjust_3_field(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_ADJUST_3);
+}
+
+fn mask_effect_options(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_EFFECT_OPTIONS);
+}
+
+fn mask_grade_shadows(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_GRADE_SHADOWS);
+}
+
+fn mask_grade_midtones(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_GRADE_MIDTONES);
+}
+
+fn mask_grade_highlights(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_GRADE_HIGHLIGHTS);
+}
+
+fn mask_grade_global(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_GRADE_GLOBAL);
+}
+
+fn mask_grade_options(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_GRADE_OPTIONS);
+}
+
+fn mask_hsl_hue_0_field(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_HSL_HUE_0);
+}
+
+fn mask_hsl_hue_1_field(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_HSL_HUE_1);
+}
+
+fn mask_hsl_saturation_0_field(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_HSL_SATURATION_0);
+}
+
+fn mask_hsl_saturation_1_field(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_HSL_SATURATION_1);
+}
+
+fn mask_hsl_luminance_0_field(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_HSL_LUMINANCE_0);
+}
+
+fn mask_hsl_luminance_1_field(index: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_HSL_LUMINANCE_1);
+}
+
+fn mask_point_color_meta(index: u32) -> vec4<u32> {
+    return mask_row(index, MASK_ROW_POINT_COLOR_META);
+}
+
+// Block `block` of the slot's `curves`.
+fn mask_curves(index: u32, block: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_CURVES + block);
+}
+
+// Block `block` of the slot's `curves_red`.
+fn mask_curves_red(index: u32, block: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_CURVES_RED + block);
+}
+
+// Block `block` of the slot's `curves_green`.
+fn mask_curves_green(index: u32, block: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_CURVES_GREEN + block);
+}
+
+// Block `block` of the slot's `curves_blue`.
+fn mask_curves_blue(index: u32, block: u32) -> vec4<f32> {
+    return mask_row_f32(index, MASK_ROW_CURVES_BLUE + block);
+}
+
+// Point colour `color` of the slot's `point_colors`.
+fn mask_point_colors(index: u32, color: u32) -> PointColor {
+    let row = MASK_ROW_POINT_COLORS + color * 5u;
+    return PointColor(
+        mask_row_f32(index, row),
+        mask_row_f32(index, row + 1u),
+        mask_row_f32(index, row + 2u),
+        mask_row_f32(index, row + 3u),
+        mask_row_f32(index, row + 4u),
+    );
+}
 
 
 @group(0) @binding(1) var raw_tex: texture_2d<u32>;

@@ -18,11 +18,12 @@ fn glow_work_at(pos: vec2<i32>) -> vec3<f32> {
 fn glow_stage_step(stage: u32) -> i32 {
     // The 96-pixel maximum support is mirrored by GLOW_SUPPORT in processing.rs.
     var reference_step = 1.0;
-    switch stage {
-        case 2u: { reference_step = 2.0; }
-        case 3u: { reference_step = 4.0; }
-        case 4u: { reference_step = 8.0; }
-        default: {}
+    if stage == 2u {
+        reference_step = 2.0;
+    } else if stage == 3u {
+        reference_step = 4.0;
+    } else if stage == 4u {
+        reference_step = 8.0;
     }
     let scale = Common::resolution_scale(0.45, 3.0);
     return max(i32(round(reference_step * scale)), 1);
@@ -30,13 +31,11 @@ fn glow_stage_step(stage: u32) -> i32 {
 
 fn glow_stage_mix(stage: u32) -> f32 {
     let radius = clamp(Common::effects_uniforms.glow_diffusion.x / 100.0, 0.0, 1.0);
-    switch stage {
-        case 0u: { return 1.0; }
-        case 1u: { return smoothstep(0.0, 0.20, radius); }
-        case 2u: { return smoothstep(0.15, 0.45, radius); }
-        case 3u: { return smoothstep(0.40, 0.75, radius); }
-        default: { return smoothstep(0.70, 1.0, radius); }
-    }
+    if stage == 0u { return 1.0; }
+    if stage == 1u { return smoothstep(0.0, 0.20, radius); }
+    if stage == 2u { return smoothstep(0.15, 0.45, radius); }
+    if stage == 3u { return smoothstep(0.40, 0.75, radius); }
+    return smoothstep(0.70, 1.0, radius);
 }
 
 // Normalized diffusion of Glowing Area emission. Alpha is unused.
@@ -80,9 +79,9 @@ fn apply_local_scene_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, 0u) { continue; }
-        let local = Common::mask_data[index].adjust_2_field;
+        let local = Common::mask_adjust_2_field(index);
         if max(abs(local.x), max(abs(local.y), abs(local.z))) <= 1e-7 {
             continue;
         }
@@ -100,7 +99,7 @@ fn apply_local_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, MASK_EFFECT_NEON_ID) { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
@@ -116,7 +115,7 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_active(state) { continue; }
         let effect_id = Common::mask_effect_id(state);
         if !is_creative_slot_effect(effect_id) { continue; }
@@ -287,7 +286,7 @@ fn apply_wet_surfaces(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        if !Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_WET_SURFACES_ID) {
+        if !Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_WET_SURFACES_ID) {
             continue;
         }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
@@ -304,7 +303,7 @@ fn apply_weather_air(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_active(state) { continue; }
         let effect_id = Common::mask_effect_id(state);
         if effect_id != MASK_EFFECT_WET_SURFACES_ID { continue; }
@@ -313,7 +312,7 @@ fn apply_weather_air(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
         rgb += wet_glints(pos, mask_effect_params(index)) * weight;
     }
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        if !Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_RAIN_ID) {
+        if !Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_RAIN_ID) {
             continue;
         }
         let weight = SceneAdjustments::local_mask_weight(pos, index);

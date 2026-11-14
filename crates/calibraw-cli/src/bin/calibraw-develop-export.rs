@@ -3,9 +3,13 @@ use calibraw_cli::pipeline::{
     crop_raw, effect_params, export_mask_atlas_edge, load_raw_file, load_raw_file_with_dcp,
     spawn_tiled_export, DemosaicMode, DenoiseQuality, EffectComponent, ExportEvent, ExportFiles,
     ExportFormat, ExportMetadata, ExportSettings, ExportTarget, ExposureParams, GeometryTransform,
-    LoadedRaw, MaskEffect, MaskStack, TileSpec, TiledExportJob, GLOBAL_TEMPERATURE_LIMIT,
-    GLOBAL_TINT_OFFSET_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
+    GpuProgramPrewarm, LoadedRaw, MaskEffect, MaskStack, PersistentGpuPipelineCache,
+    RemoveEditState, TileSpec, TiledExportJob, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
+    HUE_ROTATION_LIMIT_DEGREES,
 };
+use calibraw_core::luts::ResolvedLook;
+use calibraw_core::pipeline::apply_lens_correction;
+use calibraw_core::sidecar;
 use calibraw_gpu::{
     request_headless_device, wgpu, HeadlessAdapter, HeadlessDevice, HeadlessDeviceError,
     HeadlessDeviceRequest,
@@ -22,6 +26,8 @@ struct Args {
     suite_only: Vec<String>,
     skip_existing: bool,
     dcp: Option<PathBuf>,
+    sidecar: Option<PathBuf>,
+    program_cache: Option<PathBuf>,
     crop: Option<[u32; 4]>,
     report_detail_defaults: bool,
     adjustments: Vec<(String, f32)>,
@@ -29,6 +35,9 @@ struct Args {
 
 fn main() {
     env_logger::init();
+    if env::var_os("CALIBRAW_GPU_STAGE_TIMING").is_some_and(|value| value == "1") {
+        calibraw_gpu::stage_timing::request();
+    }
     if let Err(error) = run() {
         eprintln!("calibraw-develop-export: {error:#}");
         std::process::exit(2);
@@ -63,6 +72,10 @@ fn run() -> Result<()> {
     if let Some([x, y, width, height]) = args.crop {
         raw = crop_raw(&raw, x, y, width, height);
     }
+    let saved = match &args.sidecar {
+        Some(path) => Some(saved_edits(path, &mut raw)?),
+        None => None,
+    };
 
     let HeadlessDevice {
         device,
@@ -87,6 +100,19 @@ fn run() -> Result<()> {
         HeadlessDeviceError::Device(error) => anyhow!("request a wgpu device: {error}"),
     })?;
 
+    calibraw_gpu::stage_timing::install(&device, &queue);
+    // As the app compiles: with its persistent program cache.
+    let program_prewarm = match &args.program_cache {
+        Some(directory) => {
+            let cache =
+                PersistentGpuPipelineCache::load_or_create(&device, &adapter_info, directory)
+                    .context("open the program cache")?
+                    .map(|(cache, _)| cache);
+            Some(Arc::new(GpuProgramPrewarm::without_startup_programs(cache)))
+        }
+        None => None,
+    };
+
     let raw = Arc::new(raw);
     let metadata = ExportMetadata::from_raw(
         &raw,
@@ -106,6 +132,7 @@ fn run() -> Result<()> {
         settings: &settings,
         metadata: &metadata,
         backend: adapter_info.backend,
+        program_prewarm,
     };
 
     if let Some(directory) = &args.suite_output {
@@ -125,22 +152,69 @@ fn run() -> Result<()> {
             if let Some((name, value)) = adjustment {
                 set_adjustment(&raw, &mut exposure, &mut masks, name, *value)?;
             }
-            exporter.export_one(Arc::clone(&raw), exposure, masks, &output)?;
+            exporter.export_one(
+                Arc::clone(&raw),
+                Edit {
+                    exposure,
+                    masks,
+                    geometry: GeometryTransform::default(),
+                    remove: RemoveEditState::default(),
+                    look: None,
+                },
+                &output,
+            )?;
         }
         return Ok(());
     }
 
-    let mut exposure = adaptive_exposure;
-    let mut masks = MaskStack::default();
+    let mut edit = match saved {
+        Some(edit) => edit,
+        None => Edit {
+            exposure: adaptive_exposure,
+            masks: MaskStack::default(),
+            geometry: GeometryTransform::default(),
+            remove: RemoveEditState::default(),
+            look: None,
+        },
+    };
     for (name, value) in &args.adjustments {
-        set_adjustment(&raw, &mut exposure, &mut masks, name, *value)?;
+        set_adjustment(&raw, &mut edit.exposure, &mut edit.masks, name, *value)?;
     }
     exporter.export_one(
         raw,
-        exposure,
-        masks,
+        edit,
         args.output.as_deref().context("missing output path")?,
     )
+}
+
+/// What one export renders.
+struct Edit {
+    exposure: ExposureParams,
+    masks: MaskStack,
+    geometry: GeometryTransform,
+    remove: RemoveEditState,
+    look: Option<ResolvedLook>,
+}
+
+/// The edit a CalibRaw sidecar stores, as the app renders it: with the cards
+/// that are switched off at rest, and `raw` replaced by its lens-corrected
+/// image when the edit asks for one. A creative LUT is not loaded.
+fn saved_edits(path: &Path, raw: &mut LoadedRaw) -> Result<Edit> {
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let edits = sidecar::decode(&bytes)
+        .map_err(|error| anyhow!("decode {}: {error}", path.display()))?
+        .edits
+        .into_applied();
+    if let Some(correction) = edits.lens.requested_correction(raw) {
+        *raw = apply_lens_correction(raw, &correction).context("apply the lens correction")?;
+    }
+    Ok(Edit {
+        exposure: edits.exposure,
+        geometry: edits.geometry.sanitized(),
+        look: ResolvedLook::of_edit(None, edits.camera_look.as_ref()),
+        masks: Arc::unwrap_or_clone(edits.masks),
+        remove: Arc::unwrap_or_clone(edits.remove),
+    })
 }
 
 struct ExportHarness<'a> {
@@ -149,16 +223,11 @@ struct ExportHarness<'a> {
     settings: &'a ExportSettings,
     metadata: &'a ExportMetadata,
     backend: wgpu::Backend,
+    program_prewarm: Option<Arc<GpuProgramPrewarm>>,
 }
 
 impl ExportHarness<'_> {
-    fn export_one(
-        &self,
-        raw: Arc<calibraw_cli::pipeline::LoadedRaw>,
-        exposure: ExposureParams,
-        masks: MaskStack,
-        output: &Path,
-    ) -> Result<()> {
+    fn export_one(&self, raw: Arc<LoadedRaw>, edit: Edit, output: &Path) -> Result<()> {
         let source_dimensions = (self.metadata.source_width, self.metadata.source_height);
         let format = output_format(output)?;
         let receiver = spawn_tiled_export(
@@ -167,17 +236,17 @@ impl ExportHarness<'_> {
                 device: self.device.clone(),
                 queue: self.queue.clone(),
                 raw,
-                geometry: GeometryTransform::default(),
-                exposure,
-                masks,
-                remove: calibraw_cli::pipeline::RemoveEditState::default(),
-                look: None,
+                geometry: edit.geometry,
+                exposure: edit.exposure,
+                masks: edit.masks,
+                remove: edit.remove,
+                look: edit.look,
                 files: ExportFiles::Single(ExportTarget::File(output.to_owned())),
                 tile_spec: TileSpec::default(),
                 settings: self.settings.clone(),
                 metadata: self.metadata.clone(),
                 cancellation: Arc::new(AtomicBool::new(false)),
-                program_prewarm: None,
+                program_prewarm: self.program_prewarm.clone(),
             },
         );
 
@@ -197,6 +266,7 @@ impl ExportHarness<'_> {
                 }
             }
         }
+        // The worker saved the programs it compiled to the program cache.
         let output = finished.context("export worker exited without a completion event")?;
         println!(
             "wrote {} ({}x{}, sRGB {}, {:?})",
@@ -341,6 +411,8 @@ fn parse_args() -> Result<Args> {
     let mut suite_only = Vec::new();
     let mut skip_existing = false;
     let mut dcp = None;
+    let mut sidecar = None;
+    let mut program_cache = None;
     let mut crop = None;
     let mut report_detail_defaults = false;
     let mut adjustments = Vec::new();
@@ -355,6 +427,10 @@ fn parse_args() -> Result<Args> {
             "--only" => suite_only.push(next_value(&mut values, "--only")?),
             "--skip-existing" => skip_existing = true,
             "--dcp" => dcp = Some(PathBuf::from(next_value(&mut values, "--dcp")?)),
+            "--sidecar" => sidecar = Some(PathBuf::from(next_value(&mut values, "--sidecar")?)),
+            "--program-cache" => {
+                program_cache = Some(PathBuf::from(next_value(&mut values, "--program-cache")?))
+            }
             "--crop" => crop = Some(parse_crop(&next_value(&mut values, "--crop")?)?),
             "--report-detail-defaults" => report_detail_defaults = true,
             "--adjust" => {
@@ -382,6 +458,9 @@ fn parse_args() -> Result<Args> {
     if suite_output.is_some() && !adjustments.is_empty() {
         bail!("--adjust cannot be combined with --suite-output");
     }
+    if suite_output.is_some() && sidecar.is_some() {
+        bail!("--sidecar cannot be combined with --suite-output");
+    }
     if suite_output.is_none() && !suite_only.is_empty() {
         bail!("--only requires --suite-output");
     }
@@ -406,6 +485,8 @@ fn parse_args() -> Result<Args> {
         suite_only,
         skip_existing,
         dcp,
+        sidecar,
+        program_cache,
         crop,
         report_detail_defaults,
         adjustments,
@@ -453,6 +534,7 @@ fn print_help() {
         "Headless CalibRaw Develop export\n\n",
         "Usage:\n",
         "  calibraw-develop-export --input FILE --output FILE.png|FILE.jxl [--dcp PROFILE.dcp]\n",
+        "    [--sidecar FILE.calibraw] [--program-cache DIRECTORY]\n",
         "    [--crop X,Y,WIDTH,HEIGHT] [--report-detail-defaults]\n",
         "    [--adjust NAME=VALUE]...\n\n",
         "  calibraw-develop-export --input FILE --suite-output DIRECTORY [--dcp PROFILE.dcp]\n",
@@ -464,6 +546,10 @@ fn print_help() {
         "(0 Reference, 1 frequency-domain chroma, 2 dual), dual_threshold,\n",
         "frequency_chroma and chromatic_aberration (0 to 100). The suite\n",
         "exports isolated endpoints matching the standard\n",
-        "Reference comparison set. Lens profile correction is not applied by this tool."
+        "Reference comparison set. --sidecar exports the edit a CalibRaw\n",
+        "sidecar stores (without its creative LUT); adjustments apply on top of it.\n",
+        "Without it, lens profile correction is not applied. --program-cache keeps\n",
+        "compiled GPU programs in a directory, as the app does. CALIBRAW_GPU_STAGE_TIMING=1\n",
+        "records the GPU time of every pass."
     ));
 }

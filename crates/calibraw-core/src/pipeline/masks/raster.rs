@@ -651,6 +651,31 @@ impl MaskRasterSpace<'_> {
         )
     }
 
+    /// The raster columns and rows whose pixel centres can have a
+    /// [`Self::shape_uv`] inside `u` by `v` (closed UV intervals), with two
+    /// pixels to spare for rounding; every other pixel's UV lies outside.
+    /// `None` when corrected UVs place each pixel on its own, or for a
+    /// non-finite interval.
+    pub(super) fn pixels_within_uv(
+        self,
+        u: [f32; 2],
+        v: [f32; 2],
+    ) -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)> {
+        if self.corrected_uv.is_some() || !u.iter().chain(&v).all(|value| value.is_finite()) {
+            return None;
+        }
+        // `shape_uv` puts pixel `i` at `(i + 0.5) / extent`.
+        let axis = |interval: [f32; 2], extent: u32| {
+            let extent_f = extent as f64;
+            let first = (f64::from(interval[0]) * extent_f - 0.5).floor() - 2.0;
+            let last = (f64::from(interval[1]) * extent_f - 0.5).ceil() + 2.0;
+            let start = first.clamp(0.0, extent_f) as usize;
+            let end = (last + 1.0).clamp(0.0, extent_f) as usize;
+            start..end.max(start)
+        };
+        Some((axis(u, self.raster[0]), axis(v, self.raster[1])))
+    }
+
     fn isotropic_extent(self) -> Option<[u32; 2]> {
         let [width, height] = self.raster;
         let [image_width, image_height] = self.image;

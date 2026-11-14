@@ -26,7 +26,7 @@ fn legacy_highlight_glow_emission(pos: vec2<i32>) -> vec3<f32> {
     let scale = Common::resolution_scale(0.45, 3.0);
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index += 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, MASK_EFFECT_LEGACY_HIGHLIGHT_GLOW_ID) { continue; }
         let params = mask_effect_params(index);
         let amount = mask_effect_percent(params, LEGACY_HIGHLIGHT_GLOW_AMOUNT_LANE);
