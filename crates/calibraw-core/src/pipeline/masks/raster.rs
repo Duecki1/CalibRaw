@@ -33,6 +33,7 @@ pub(super) fn corrected_region_uv(
         region[3].max(1) as f32 / full[1] as f32,
     ];
     let last = full.map(|value| value.saturating_sub(1) as f32);
+    let corrected_positions = lens.corrected_positions(full[0], full[1]);
     (0..extent[0] as usize * extent[1] as usize)
         .into_par_iter()
         .map(|index| {
@@ -46,12 +47,8 @@ pub(super) fn corrected_region_uv(
             ];
             // Match the UI's UV-to-lens convention, which uses the last pixel
             // coordinate rather than full extent or a half-pixel offset.
-            let corrected = lens.corrected_position_for_raster(
-                native_uv[0] * last[0],
-                native_uv[1] * last[1],
-                full[0],
-                full[1],
-            );
+            let corrected =
+                corrected_positions.position(native_uv[0] * last[0], native_uv[1] * last[1]);
             std::array::from_fn(|axis| {
                 let uv = if last[axis] > 0.0 {
                     corrected[axis] / last[axis]

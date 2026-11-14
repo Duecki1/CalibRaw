@@ -1,6 +1,8 @@
 //! `LensGeometryMap`: sampled lens-correction displacement between source and corrected images.
 
 use super::*;
+use rayon::prelude::*;
+use std::sync::Mutex;
 
 #[derive(Clone, Debug)]
 pub struct LensGeometryMap {
@@ -9,7 +11,55 @@ pub struct LensGeometryMap {
     pub(super) grid_width: u32,
     pub(super) grid_height: u32,
     coordinates: Arc<[[f32; 2]]>,
+    /// The inversions [`Self::corrected_positions`] samples, built
+    /// on first use for one raster size and shared by every clone.
+    corrected_grid: Arc<Mutex<Option<Arc<CorrectedPositions>>>>,
 }
+
+/// Corrected positions of a raster at grid points about
+/// [`CORRECTED_GRID_SPACING`] raster pixels apart, the first and last on the
+/// raster's first and last pixel: inverted like
+/// [`LensGeometryMap::corrected_position_for_raster`], but past the raster's
+/// edges too ([`LensGeometryMap::corrected_position_extended`]).
+#[derive(Debug)]
+pub struct CorrectedPositions {
+    raster: [u32; 2],
+    columns: usize,
+    rows: usize,
+    positions: Vec<[f32; 2]>,
+}
+
+impl CorrectedPositions {
+    /// The corrected position of raster position `(source_x, source_y)`,
+    /// bilinear between the grid's exact inversions.
+    pub fn position(&self, source_x: f32, source_y: f32) -> [f32; 2] {
+        if !source_x.is_finite() || !source_y.is_finite() {
+            return [source_x, source_y];
+        }
+        let max = self.raster.map(|extent| extent.saturating_sub(1) as f32);
+        // The exact inversion clamps its target to the raster as well.
+        let axis = |value: f32, max: f32, points: usize| {
+            if points <= 1 || max <= 0.0 {
+                return (0, 0, 0.0);
+            }
+            let position = value.clamp(0.0, max) / max * (points - 1) as f32;
+            let lower = (position.floor() as usize).min(points - 2);
+            (lower, lower + 1, position - lower as f32)
+        };
+        let (x0, x1, tx) = axis(source_x, max[0], self.columns);
+        let (y0, y1, ty) = axis(source_y, max[1], self.rows);
+        let load = |x: usize, y: usize| self.positions[y * self.columns + x];
+        let (a, b, c, d) = (load(x0, y0), load(x1, y0), load(x0, y1), load(x1, y1));
+        std::array::from_fn(|axis| {
+            lerp(lerp(a[axis], b[axis], tx), lerp(c[axis], d[axis], tx), ty).clamp(0.0, max[axis])
+        })
+    }
+}
+
+/// Raster pixels between the points of a [`CorrectedPositions`] grid. The
+/// inverse is smooth between the forward grid's points, so interpolating it
+/// at this spacing stays far below a pixel off the exact inversion.
+const CORRECTED_GRID_SPACING: u32 = 8;
 
 impl LensGeometryMap {
     pub fn new(
@@ -36,6 +86,7 @@ impl LensGeometryMap {
             grid_width,
             grid_height,
             coordinates: coordinates.into(),
+            corrected_grid: Arc::default(),
         })
     }
 
@@ -175,6 +226,151 @@ impl LensGeometryMap {
             estimate = next;
         }
         best
+    }
+
+    /// [`Self::corrected_position_for_raster`] for a `raster_width` ×
+    /// `raster_height` raster, interpolated between exact inversions on a grid
+    /// ([`CorrectedPositions::position`]): many times cheaper per position,
+    /// for callers that invert every pixel of a raster, such as lens-corrected
+    /// mask shapes. Built once per raster size and shared by every clone.
+    pub fn corrected_positions(
+        &self,
+        raster_width: u32,
+        raster_height: u32,
+    ) -> Arc<CorrectedPositions> {
+        self.corrected_grid([raster_width, raster_height])
+    }
+
+    /// The grid of exact inversions for `raster`, built if this map has none
+    /// for that size yet.
+    fn corrected_grid(&self, raster: [u32; 2]) -> Arc<CorrectedPositions> {
+        let lock = || {
+            self.corrected_grid
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        if let Some(grid) = lock().as_ref().filter(|grid| grid.raster == raster) {
+            return Arc::clone(grid);
+        }
+        let points = |extent: u32| {
+            (extent.saturating_sub(1).div_ceil(CORRECTED_GRID_SPACING) as usize + 1).max(2)
+        };
+        let (columns, rows) = (points(raster[0]), points(raster[1]));
+        let max = raster.map(|extent| extent.saturating_sub(1) as f32);
+        let coordinate = |index: usize, points: usize, max: f32| {
+            if index + 1 == points {
+                max
+            } else {
+                index as f32 * max / (points - 1) as f32
+            }
+        };
+        // Built without the lock held; two callers at once may both build it.
+        let positions = (0..columns * rows)
+            .into_par_iter()
+            .map(|index| {
+                self.corrected_position_extended(
+                    [
+                        coordinate(index % columns, columns, max[0]),
+                        coordinate(index / columns, rows, max[1]),
+                    ],
+                    raster,
+                )
+            })
+            .collect();
+        let grid = Arc::new(CorrectedPositions {
+            raster,
+            columns,
+            rows,
+            positions,
+        });
+        *lock() = Some(Arc::clone(&grid));
+        grid
+    }
+
+    /// The corrected position of raster position `target` for a grid point
+    /// of [`CorrectedPositions`]: [`Self::corrected_position_for_raster`]'s
+    /// Newton inversion, but of the map continued past the raster's edges
+    /// ([`Self::source_position_extended`]) and with no clamp on the estimate.
+    /// A position near an edge whose correction lies just past it then keeps
+    /// its true value instead of the edge, so interpolating towards it stays
+    /// smooth; [`CorrectedPositions::position`] clamps what it interpolates.
+    fn corrected_position_extended(&self, target: [f32; 2], raster: [u32; 2]) -> [f32; 2] {
+        let forward = |position: [f32; 2]| {
+            let scale = |value: f32, from: u32, to: u32| {
+                scale_pixel_coordinate(value, from.max(1), to.max(1))
+            };
+            let mapped = self.source_position_extended(
+                scale(position[0], raster[0], self.width),
+                scale(position[1], raster[1], self.height),
+            );
+            [
+                scale(mapped[0], self.width, raster[0]),
+                scale(mapped[1], self.height, raster[1]),
+            ]
+        };
+        let mut estimate = target;
+        let mut best = target;
+        let mut best_error = f32::INFINITY;
+        for _ in 0..20 {
+            let mapped = forward(estimate);
+            let error = [mapped[0] - target[0], mapped[1] - target[1]];
+            let residual = error[0].abs().max(error[1].abs());
+            if !residual.is_finite() {
+                break;
+            }
+            if residual < best_error {
+                best_error = residual;
+                best = estimate;
+            }
+            if residual < 1e-3 {
+                break;
+            }
+            let step = 0.5_f32;
+            let mapped_x = forward([estimate[0] + step, estimate[1]]);
+            let mapped_y = forward([estimate[0], estimate[1] + step]);
+            let j00 = (mapped_x[0] - mapped[0]) / step;
+            let j10 = (mapped_x[1] - mapped[1]) / step;
+            let j01 = (mapped_y[0] - mapped[0]) / step;
+            let j11 = (mapped_y[1] - mapped[1]) / step;
+            let determinant = j00 * j11 - j01 * j10;
+            let correction = if determinant.is_finite() && determinant.abs() > 1e-5 {
+                [
+                    (j11 * error[0] - j01 * error[1]) / determinant,
+                    (-j10 * error[0] + j00 * error[1]) / determinant,
+                ]
+            } else {
+                error
+            };
+            if !correction[0].is_finite() || !correction[1].is_finite() {
+                break;
+            }
+            estimate = [
+                estimate[0] - correction[0].clamp(-64.0, 64.0),
+                estimate[1] - correction[1].clamp(-64.0, 64.0),
+            ];
+        }
+        best
+    }
+
+    /// [`Self::source_position`] continued linearly past the map's edges by
+    /// its outermost cells, where that one holds the edge value.
+    fn source_position_extended(&self, x: f32, y: f32) -> [f32; 2] {
+        if !x.is_finite() || !y.is_finite() {
+            return [x, y];
+        }
+        let axis = |value: f32, extent: u32, points: u32| {
+            if extent <= 1 {
+                return (0, 0, 0.0);
+            }
+            let position = value / (extent - 1) as f32 * (points - 1) as f32;
+            let lower = (position.floor().max(0.0) as u32).min(points - 2);
+            (lower, lower + 1, position - lower as f32)
+        };
+        let (x0, x1, tx) = axis(x, self.width, self.grid_width);
+        let (y0, y1, ty) = axis(y, self.height, self.grid_height);
+        let load = |px: u32, py: u32| self.coordinates[(py * self.grid_width + px) as usize];
+        let (a, b, c, d) = (load(x0, y0), load(x1, y0), load(x0, y1), load(x1, y1));
+        std::array::from_fn(|axis| lerp(lerp(a[axis], b[axis], tx), lerp(c[axis], d[axis], tx), ty))
     }
 
     fn source_position(&self, x: f32, y: f32) -> [f32; 2] {
