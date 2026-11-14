@@ -225,15 +225,30 @@ fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
+    // Each effect below is compiled only into the programs of an effect set
+    // that holds it (effect_programs.rs). Without an active slot of its
+    // effect, each call leaves `rgb` as it is.
     // Light that Glow and Neon cast on the surfaces lands first, so every
     // creative effect sees the lit scene whatever the order of the cards.
+#ifdef EFFECTS_SCENE_EMISSION
     rgb = apply_scene_emission_light(pos, rgb);
+#endif
     rgb = apply_local_creative_mask_effect_nodes(pos, rgb);
+#ifdef EFFECT_GLOW
     rgb = apply_glow(pos, rgb);
+#endif
+#ifdef EFFECTS_GLOW_CORES
     rgb = apply_mask_glow_cores(pos, rgb);
+#endif
+#ifdef EFFECT_STYLED_GLOW
     rgb = apply_styled_glow(pos, rgb);
+#endif
+#ifdef EFFECT_LIGHT_RAYS
     rgb = apply_light_rays(pos, rgb);
+#endif
+#ifdef EFFECT_LIGHT_SHAFTS
     rgb = apply_light_shafts(pos, rgb);
+#endif
     textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
 }
 

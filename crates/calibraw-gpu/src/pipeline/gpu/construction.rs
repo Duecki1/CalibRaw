@@ -295,6 +295,7 @@ impl RawGpuPipeline {
             &groups,
             &shaders,
             raw.cfa_kind,
+            geometry.work_format,
             geometry.image_workgroups,
             geometry.tone_workgroups,
         )?;
@@ -339,7 +340,15 @@ impl RawGpuPipeline {
                 scene_tone: params.scene_tone,
                 effects: params.effects,
             }),
+            uploaded_effects: std::sync::atomic::AtomicU32::new(
+                EffectSet::of_slots(params.mask_slots()).bits(),
+            ),
+            effect_readiness: match quality {
+                ProcessingQuality::Preview => Readiness::WhenReady,
+                ProcessingQuality::High => Readiness::Wait,
+            },
             mask_data_buffer: buffers.mask_data_buffer,
+            uploaded_mask_slots: Mutex::new(params.mask_slots().to_vec()),
             tone_histogram_buffer: buffers.tone_histogram_buffer,
             tone_stats_buffer: buffers.tone_stats_buffer,
             profile_buffer: buffers.profile_buffer,

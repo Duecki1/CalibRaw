@@ -1123,7 +1123,8 @@ impl RawGpuPipeline {
             self.indices.tone_reduce_pass_index,
         );
         self.ensure_output_inputs(&mut encoder, params);
-        self.encode_blur_input(&mut encoder, params);
+        let image_in_tex2 = self.encode_scene_adjustments(&mut encoder, params);
+        self.encode_blur_stage_input(&mut encoder, image_in_tex2);
         let layers = defocus_layers(params);
         for dispatch in &groups.map_accumulate {
             self.dispatch_defocus(&mut encoder, dispatch, layers);

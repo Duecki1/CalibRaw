@@ -154,34 +154,46 @@ struct MaskFocusBlur {
 }
 
 fn mask_focus_blur(effect_id: u32, params: MaskEffectParams) -> MaskFocusBlur {
+    // Each focus blur is compiled only into the programs of an effect set
+    // that holds it (effect_programs.rs).
     switch effect_id {
+#ifdef EFFECT_LENS_BLUR
         case MASK_EFFECT_LENS_BLUR_ID: {
             return MaskFocusBlur(
                 mask_effect_percent(params, LENS_BLUR_AMOUNT_LANE),
                 mask_effect_lane(params, LENS_BLUR_RADIUS_LANE),
             );
         }
+#endif
+#ifdef EFFECT_DEFOCUS
         case MASK_EFFECT_DEFOCUS_ID: {
             return MaskFocusBlur(1.0, mask_effect_lane(params, DEFOCUS_RADIUS_LANE));
         }
+#endif
+#ifdef EFFECT_MOTION_BLUR
         case MASK_EFFECT_MOTION_BLUR_ID: {
             return MaskFocusBlur(
                 mask_effect_percent(params, MOTION_BLUR_AMOUNT_LANE),
                 mask_effect_lane(params, MOTION_BLUR_DISTANCE_LANE),
             );
         }
+#endif
+#ifdef EFFECT_RADIAL_BLUR
         case MASK_EFFECT_RADIAL_BLUR_ID: {
             return MaskFocusBlur(
                 mask_effect_percent(params, RADIAL_BLUR_AMOUNT_LANE),
                 mask_effect_lane(params, RADIAL_BLUR_STRENGTH_LANE),
             );
         }
+#endif
+#ifdef EFFECT_TILT_SHIFT
         case MASK_EFFECT_TILT_SHIFT_ID: {
             return MaskFocusBlur(
                 mask_effect_percent(params, TILT_SHIFT_AMOUNT_LANE),
                 mask_effect_lane(params, TILT_SHIFT_RADIUS_LANE),
             );
         }
+#endif
         default: {
             return MaskFocusBlur(0.0, 0.0);
         }
@@ -234,21 +246,36 @@ fn apply_mask_focus_blurs(pos: vec2<i32>, source_rgb: vec3<f32>, diffused: vec3<
         if amount <= 1e-6 { continue; }
         let mask = MaskBlurCoverage(index, coverage);
 
+        // The IDs differ, so at most one of these blocks runs.
         var adjusted = source_rgb;
+#ifdef EFFECT_DEFOCUS
         if effect_id == MASK_EFFECT_DEFOCUS_ID {
             if !defocus_result_ready(index) { continue; }
             adjusted = mask_defocus_at(pos, index);
-        } else if effect_id == MASK_EFFECT_LENS_BLUR_ID {
+        }
+#endif
+#ifdef EFFECT_LENS_BLUR
+        if effect_id == MASK_EFFECT_LENS_BLUR_ID {
             adjusted = mask_lens_blur_at(pos, params, mask);
-        } else if effect_id == MASK_EFFECT_MOTION_BLUR_ID {
+        }
+#endif
+#ifdef EFFECT_MOTION_BLUR
+        if effect_id == MASK_EFFECT_MOTION_BLUR_ID {
             adjusted = mask_motion_blur_at(pos, params, mask);
-        } else if effect_id == MASK_EFFECT_RADIAL_BLUR_ID {
+        }
+#endif
+#ifdef EFFECT_RADIAL_BLUR
+        if effect_id == MASK_EFFECT_RADIAL_BLUR_ID {
             adjusted = mask_radial_blur_at(pos, params, mask);
-        } else if effect_id == MASK_EFFECT_TILT_SHIFT_ID {
+        }
+#endif
+#ifdef EFFECT_TILT_SHIFT
+        if effect_id == MASK_EFFECT_TILT_SHIFT_ID {
             let defocus = mask_tilt_shift_weight(pos, params);
             if defocus <= 1e-6 { continue; }
             adjusted = mask_tilt_shift_at(pos, blur.size * defocus, mask);
         }
+#endif
         rgb = mix(rgb, adjusted, amount);
     }
     return rgb;

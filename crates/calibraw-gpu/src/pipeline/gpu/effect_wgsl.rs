@@ -7,10 +7,12 @@
 //! - `<NAME>_<LANE>_LANE` for every lane an effect packs, and `<OPTION>_OPTION`;
 //! - `is_creative_slot_effect(id)` and `apply_creative_slot_effect(id, pos, rgb,
 //!   params)`, which calls `apply_<name>(pos, rgb, params)` of each effect that
-//!   runs in [`EffectPass::Creative`].
+//!   runs in [`EffectPass::Creative`] and that the program's effect set holds
+//!   (`#ifdef EFFECT_<NAME>`, effect_programs.rs).
 //!
 //! `<NAME>` is [`MaskEffect::shader_name`] in upper case.
 
+use super::effect_programs::effect_def;
 use crate::pipeline::{effect_lanes::options, EffectPass, MaskEffect};
 
 /// The registry's WGSL.
@@ -56,8 +58,11 @@ pub(super) fn registry_wgsl() -> String {
          rgb: vec3<f32>,\n    params: MaskEffectParams,\n) -> vec3<f32> {\n    switch effect_id {\n",
     );
     for effect in &creative {
+        // Compiled only into programs of an effect set that holds the effect
+        // (effect_programs.rs).
         wgsl.push_str(&format!(
-            "        case {}u: {{ return apply_{}(pos, rgb, params); }}\n",
+            "#ifdef {}\n        case {}u: {{ return apply_{}(pos, rgb, params); }}\n#endif\n",
+            effect_def(*effect),
             effect.shader_id(),
             effect.shader_name()
         ));

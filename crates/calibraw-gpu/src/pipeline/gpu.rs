@@ -26,6 +26,7 @@ mod builder;
 mod clipping;
 mod construction;
 mod effect_inputs;
+mod effect_programs;
 mod geometry_resample;
 mod histogram;
 mod mask_layers;
@@ -55,6 +56,7 @@ use effect_inputs::{
     EffectInputs, FullImageMap, InputBindingSources, InputBoundPass, HAZE_PASSES,
     SCENE_EMISSION_PASSES,
 };
+use effect_programs::{EffectModules, EffectPrograms, EffectSet, Readiness};
 pub(crate) use geometry_resample::{resample_geometry, GeometryResampleJob};
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 use output_parts::{
@@ -205,6 +207,9 @@ struct ComputeProgram {
     cache: Option<Arc<PersistentGpuPipelineCache>>,
     compiled: OnceLock<wgpu::ComputePipeline>,
     demosaic_variants: [OnceLock<wgpu::ComputePipeline>; DEMOSAIC_VARIANT_COUNT - 1],
+    /// The program per effect set, for a program that dispatches effects
+    /// (`effect_programs`); `compiled` holds every effect.
+    effects: Option<EffectPrograms>,
 }
 
 impl ComputeProgram {
@@ -490,7 +495,18 @@ pub struct RawGpuPipeline {
     remove_composite_bind_group: wgpu::BindGroup,
     remove_composite_params_buffer: wgpu::Buffer,
     uploaded_stage_uniforms: Mutex<UploadedStageUniforms>,
+    /// The effects of the active slots of the parameters last uploaded
+    /// ([`EffectSet::bits`]), which choose the programs of the passes that
+    /// dispatch effects (`effect_programs`).
+    uploaded_effects: std::sync::atomic::AtomicU32,
+    /// Whether a render waits for the program of its effect set. A preview
+    /// takes it once a worker has compiled it, so no edit stalls on a
+    /// compile. A full-quality graph, which an export renders every tile
+    /// with, compiles it while it is built.
+    effect_readiness: Readiness,
     mask_data_buffer: wgpu::Buffer,
+    /// The slots at the start of `mask_data_buffer`, as last uploaded.
+    uploaded_mask_slots: Mutex<Vec<MaskData>>,
     tone_histogram_buffer: wgpu::Buffer,
     tone_stats_buffer: wgpu::Buffer,
     /// The camera profile's tables (`ProfileGpuData`), and room for more.
@@ -711,7 +727,11 @@ impl RawGpuPipeline {
                 );
             }
         }
-        queue.write_buffer(&self.mask_data_buffer, 0, params.mask_data_bytes());
+        self.upload_mask_slots(queue, params.mask_slots());
+        self.uploaded_effects.store(
+            EffectSet::of_slots(params.mask_slots()).bits(),
+            Ordering::Release,
+        );
         // After the camera uniforms, which tell whether this pipeline renders
         // the whole image.
         self.upload_scene_bake_depth(queue, params);
@@ -720,6 +740,34 @@ impl RawGpuPipeline {
             scene_tone,
             effects,
         }
+    }
+
+    /// Uploads `slots`, the mask slots in use, unless the buffer already
+    /// starts with them. The shaders read only the slots in use
+    /// (`mask_slot_count` in common.wgsl), so the rest of the table stays as
+    /// it was.
+    fn upload_mask_slots(&self, queue: &wgpu::Queue, slots: &[MaskData]) {
+        if slots.is_empty() {
+            return;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(slots);
+        // The record is replaced in one step below, so a panic elsewhere
+        // cannot leave it half written.
+        let mut uploaded = self
+            .uploaded_mask_slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if uploaded
+            .get(..slots.len())
+            .is_some_and(|held| bytemuck::cast_slice::<MaskData, u8>(held) == bytes)
+        {
+            return;
+        }
+        queue.write_buffer(&self.mask_data_buffer, 0, bytes);
+        if uploaded.len() < slots.len() {
+            uploaded.resize(slots.len(), MaskData::zeroed());
+        }
+        uploaded[..slots.len()].copy_from_slice(slots);
     }
 
     pub fn tone_guide_supports_origin(&self, origin_x: i32, origin_y: i32) -> bool {
@@ -1621,11 +1669,12 @@ impl RawGpuPipeline {
         encoder: &mut wgpu::CommandEncoder,
         params: &GpuParams,
     ) -> bool {
-        if !self.encode_blur_input(encoder, params) {
-            return true;
+        let mut image_in_tex2 = self.encode_scene_adjustments(encoder, params);
+        if !params.needs_intermediate_adjustment_passes() {
+            return image_in_tex2;
         }
-        let mut image_in_tex2 = false;
         if params.needs_blur_passes() {
+            self.encode_blur_stage_input(encoder, image_in_tex2);
             if params.defocus_slots() > 0 {
                 self.encode_defocus(encoder, params);
             }
@@ -1650,24 +1699,47 @@ impl RawGpuPipeline {
         image_in_tex2
     }
 
-    /// The output stage up to the first Blur stage's input: the scene
-    /// adjustments, and with intermediate passes the scene effects, which
-    /// leave the image in the first work texture. Returns whether the
-    /// intermediate passes ran; without them the image is in the second.
-    fn encode_blur_input(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) -> bool {
+    /// The output stage up to the scene effects: scene preparation and tone
+    /// into the second work texture, then only the passes `params` give work
+    /// to. The mask tone pass moves the image to the first work texture and
+    /// the scene effects pass, which reads it there, back to the second. A
+    /// pass left out would have copied its input unchanged, so the image is
+    /// the same wherever it ends. Returns whether that is the second work
+    /// texture.
+    fn encode_scene_adjustments(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        params: &GpuParams,
+    ) -> bool {
         self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);
         self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
         if !params.needs_intermediate_adjustment_passes() {
+            return true;
+        }
+        let scene_effects = params.needs_scene_effects_pass();
+        if !scene_effects && !params.needs_local_tone_pass() {
+            return true;
+        }
+        // Without mask tone it copies, which the scene effects pass needs:
+        // it and the detail pyramid read the first work texture.
+        self.encode_pass(encoder, self.indices.adjustment_local_tone_pass_index);
+        if !scene_effects {
             return false;
         }
-        self.encode_pass(encoder, self.indices.adjustment_local_tone_pass_index);
         if let Some(levels) = params.detail_pyramid_levels() {
             let start = self.indices.detail_pyramid_start_index;
             self.encode_pass_range(encoder, start, start + levels);
         }
         self.encode_pass(encoder, self.indices.adjustment_effects_pass_index);
-        self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
         true
+    }
+
+    /// Puts the image in the first work texture, where the first Blur stage
+    /// and Lens Blur's passes read it.
+    fn encode_blur_stage_input(&self, encoder: &mut wgpu::CommandEncoder, image_in_tex2: bool) {
+        if image_in_tex2 {
+            self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
+        }
     }
 
     /// Encodes the display transform from the work texture holding the image.
@@ -1697,10 +1769,13 @@ impl RawGpuPipeline {
         } else {
             InputBoundPass::EffectsFromTex1
         };
+        let effect_program = self.effect_program(pass);
         dispatch_compute(
             encoder,
             &pass.pipeline.entry,
-            pass.pipeline.get(),
+            effect_program
+                .as_ref()
+                .unwrap_or_else(|| pass.pipeline.get()),
             &[
                 &self.effect_inputs.bind_group(input),
                 &self.scene_tone_bind_group,
@@ -1723,10 +1798,13 @@ impl RawGpuPipeline {
         label: &str,
     ) {
         let bind_group = self.pass_bind_group(pass_record);
+        let effect_program = self.effect_program(pass_record);
         dispatch_compute(
             encoder,
             label,
-            pass_record.pipeline.get(),
+            effect_program
+                .as_ref()
+                .unwrap_or_else(|| pass_record.pipeline.get()),
             &[
                 &bind_group,
                 &self.scene_tone_bind_group,
@@ -1734,6 +1812,16 @@ impl RawGpuPipeline {
             ],
             pass_record.workgroups,
         );
+    }
+
+    /// The program of `pass` that holds only the effects of the parameters
+    /// last uploaded, for a pass that dispatches effects; `None` to encode
+    /// the pass's own program, which holds every effect (`effect_programs`).
+    /// Both compute the same image.
+    fn effect_program(&self, pass: &Pass) -> Option<wgpu::ComputePipeline> {
+        let effects = pass.pipeline.effects.as_ref()?;
+        let set = EffectSet::from_bits(self.uploaded_effects.load(Ordering::Acquire));
+        effects.program(set, self.effect_readiness)
     }
 
     fn pass_bind_group(&self, pass_record: &Pass) -> wgpu::BindGroup {

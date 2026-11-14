@@ -870,6 +870,15 @@ impl GpuParams {
         self.scene_tone.mask_counts[2] = pack(max_u, max_v);
     }
 
+    /// Whether a render may sample `layer` of the mask atlas: an enabled
+    /// slot is masked by it. The shaders test a slot before they read its
+    /// mask, so the layers of the other masks need no upload.
+    pub fn reads_mask_layer(&self, layer: usize) -> bool {
+        self.mask_slots()
+            .iter()
+            .any(|slot| slot.metadata[0] != 0 && slot.point_color_meta[2] as usize == layer)
+    }
+
     pub(super) fn uses_ai_denoise(&self) -> bool {
         self.camera.ai_denoise_enabled != 0
     }
@@ -943,6 +952,37 @@ impl GpuParams {
             tone || white_balance || curves || presence_or_saturation
         });
         global_effects || local_effects
+    }
+
+    /// Whether the mask tone pass (`apply_local_scene_tone_node`) changes the
+    /// image: it applies every active adjustment slot, and copies its input
+    /// without one.
+    pub(super) fn needs_local_tone_pass(&self) -> bool {
+        self.mask_slots()
+            .iter()
+            .any(|mask| mask.applies(MaskEffect::Adjustment))
+    }
+
+    /// Whether the scene effects pass (`apply_scene_effects_node`) changes
+    /// the image: global Saturation, Vibrance, Texture or Clarity, an
+    /// adjustment slot with one of them, or Neon. Mirrors what its shader
+    /// skips; without any it copies its input.
+    pub(super) fn needs_scene_effects_pass(&self) -> bool {
+        let [global_texture, global_clarity, ..] = self.effects.presence;
+        let set = |value: f32| value != 0.0;
+        set(self.scene_tone.saturation)
+            || set(self.scene_tone.vibrance)
+            || set(global_texture)
+            || set(global_clarity)
+            || self.mask_slots().iter().any(|mask| {
+                if mask.applies(MaskEffect::Neon) {
+                    return true;
+                }
+                let [saturation, texture, clarity, _dehaze] = mask.adjust_2;
+                // `apply_local_scene_effect_nodes` skips a slot at or below 1e-7.
+                mask.applies(MaskEffect::Adjustment)
+                    && saturation.abs().max(texture.abs()).max(clarity.abs()) > 1e-7
+            })
     }
 
     /// Whether the creative pass (`apply_creative_effects`) changes the image:

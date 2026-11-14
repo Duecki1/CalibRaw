@@ -236,6 +236,7 @@ pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         &pipeline,
         &job.queue,
         &job.masks,
+        &params,
         job.raw.width,
         job.raw.height,
         mask_region,

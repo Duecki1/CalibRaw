@@ -322,6 +322,7 @@ impl MaskStack {
     }
 
     /// Like `rasterize_layer_region`, returning IEEE binary16 coverage bits.
+    /// For several layers of one region, crop once with [`Self::region`].
     pub fn rasterize_layer_region_f16(
         &self,
         layer: usize,
@@ -330,10 +331,8 @@ impl MaskStack {
         full_size: [u32; 2],
         lens: Option<&LensGeometryMap>,
     ) -> Vec<u16> {
-        self.rasterize_layer_region_coverage(layer, extent, region, full_size, lens)
-            .into_par_iter()
-            .map(|value| f16::from_f32(value).to_bits())
-            .collect()
+        self.region(region, full_size)
+            .rasterize_layer_f16(layer, extent, lens)
     }
 
     fn rasterize_layer_region_coverage(
@@ -344,10 +343,16 @@ impl MaskStack {
         full_size: [u32; 2],
         lens: Option<&LensGeometryMap>,
     ) -> Vec<f32> {
-        if extent.contains(&0) {
-            return Vec::new();
-        }
-        let cropped = if region == [0, 0, full_size[0], full_size[1]] {
+        self.region(region, full_size)
+            .rasterize_layer_coverage(layer, extent, lens)
+    }
+
+    /// The masks cropped to the native region `[x, y, width, height]` of an
+    /// image of `full_size` pixels, to rasterize its layers from. Cropping
+    /// copies every mask, so callers that rasterize several layers of one
+    /// region keep the result.
+    pub fn region(&self, region: [u32; 4], full_size: [u32; 2]) -> MaskRegion<'_> {
+        let masks = if region == [0, 0, full_size[0], full_size[1]] {
             std::borrow::Cow::Borrowed(self)
         } else {
             std::borrow::Cow::Owned(self.cropped_for_region(
@@ -359,24 +364,11 @@ impl MaskStack {
                 full_size[1],
             ))
         };
-        let needs_corrected_uv = cropped.masks.get(layer).is_some_and(|mask| {
-            mask.components
-                .iter()
-                .any(|component| component.enabled && uses_corrected_uv(&component.geometry))
-        });
-        let corrected_uv = lens.filter(|_| needs_corrected_uv).map(|lens| {
-            raster_cache::corrected_uv(extent, region, full_size, lens, || {
-                corrected_region_uv(extent, region, full_size, lens)
-            })
-        });
-        cropped.rasterize_layer_coverage_with_sampling(
-            layer,
-            extent[0],
-            extent[1],
-            region[2].max(1),
-            region[3].max(1),
-            corrected_uv.as_deref().map(Vec::as_slice),
-        )
+        MaskRegion {
+            masks,
+            region,
+            full_size,
+        }
     }
 
     /// Rasterize one component of a native region, including the component's
@@ -481,5 +473,61 @@ impl MaskStack {
             .into_iter()
             .map(|value| (value.clamp(0.0, 1.0) * opacity * 255.0 + 0.5) as u8)
             .collect()
+    }
+}
+
+/// A mask stack cropped to a region of the image ([`MaskStack::region`]).
+pub struct MaskRegion<'a> {
+    masks: std::borrow::Cow<'a, MaskStack>,
+    /// The native region `[x, y, width, height]`.
+    region: [u32; 4],
+    full_size: [u32; 2],
+}
+
+impl MaskRegion<'_> {
+    /// Coverage of `layer` over the region in `extent` pixels, as IEEE
+    /// binary16 bits. Radial and linear shapes use corrected full-image UVs
+    /// when a lens is supplied; composition, inversion and mask opacity match
+    /// `MaskStack::rasterize_layer`.
+    pub fn rasterize_layer_f16(
+        &self,
+        layer: usize,
+        extent: [u32; 2],
+        lens: Option<&LensGeometryMap>,
+    ) -> Vec<u16> {
+        self.rasterize_layer_coverage(layer, extent, lens)
+            .into_par_iter()
+            .map(|value| f16::from_f32(value).to_bits())
+            .collect()
+    }
+
+    fn rasterize_layer_coverage(
+        &self,
+        layer: usize,
+        extent: [u32; 2],
+        lens: Option<&LensGeometryMap>,
+    ) -> Vec<f32> {
+        if extent.contains(&0) {
+            return Vec::new();
+        }
+        let (region, full_size) = (self.region, self.full_size);
+        let needs_corrected_uv = self.masks.masks.get(layer).is_some_and(|mask| {
+            mask.components
+                .iter()
+                .any(|component| component.enabled && uses_corrected_uv(&component.geometry))
+        });
+        let corrected_uv = lens.filter(|_| needs_corrected_uv).map(|lens| {
+            raster_cache::corrected_uv(extent, region, full_size, lens, || {
+                corrected_region_uv(extent, region, full_size, lens)
+            })
+        });
+        self.masks.rasterize_layer_coverage_with_sampling(
+            layer,
+            extent[0],
+            extent[1],
+            region[2].max(1),
+            region[3].max(1),
+            corrected_uv.as_deref().map(Vec::as_slice),
+        )
     }
 }

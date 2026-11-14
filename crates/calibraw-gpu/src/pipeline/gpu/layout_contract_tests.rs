@@ -8,15 +8,15 @@
 //! offset and size are therefore compared explicitly.
 
 use super::{
-    processing_work_format, scene_emission_light_rows, shader_manager::ShaderManager, shaders,
-    work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
-    ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, ViewTransformMode,
-    CONTOUR_BRIGHTNESS_BINS, CONTOUR_CELL_BYTES, CONTOUR_CONTRAST_BINS, CONTOUR_GRID_LONG,
-    FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE, HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG,
-    IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MASK_SCENE_BAKE_LIGHT_BITS,
-    MAX_RENDER_MASK_SLOTS, MEDIUM_CELLS, SCENE_EMISSION_GRID_LONG,
-    SCENE_EMISSION_SURFACE_GRID_LONG, SCENE_SHADOW_LIGHTS, TONE_HISTOGRAM_BIN_COUNT,
-    TONE_STATS_SIZE_BYTES,
+    effect_programs::EffectSet, processing_work_format, scene_emission_light_rows,
+    shader_manager::ShaderManager, shaders, work_shader_source, CameraUniforms, CfaKind,
+    EffectsUniforms, MaskData, PackedPointColor, ProcessingQuality, RemoveCompositeParams,
+    SceneToneUniforms, ViewTransformMode, CONTOUR_BRIGHTNESS_BINS, CONTOUR_CELL_BYTES,
+    CONTOUR_CONTRAST_BINS, CONTOUR_GRID_LONG, FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE,
+    HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG, IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG,
+    MASK_EFFECT_ID_SHIFT, MASK_SCENE_BAKE_LIGHT_BITS, MAX_RENDER_MASK_SLOTS, MEDIUM_CELLS,
+    SCENE_EMISSION_GRID_LONG, SCENE_EMISSION_SURFACE_GRID_LONG, SCENE_SHADOW_LIGHTS,
+    TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::{effect_lanes::options, MaskEffect, ReachGroup, OPTION_COUNT};
@@ -143,7 +143,11 @@ fn production_modules() -> Vec<(String, naga::Module)> {
                     std::borrow::Cow::Borrowed(module_text.as_ref())
                 };
                 let module = manager
-                    .compose_naga_module(text.as_ref(), shader.source.file_name)
+                    .compose_naga_module(
+                        text.as_ref(),
+                        shader.source.file_name,
+                        EffectSet::all().shader_defs(),
+                    )
                     .unwrap_or_else(|error| panic!("{} did not compose: {error:#}", shader.label));
                 modules.push((
                     format!("{} ({quality:?}, {cfa_kind:?})", shader.label),

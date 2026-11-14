@@ -41,6 +41,7 @@ mod range_filters;
 mod raster;
 mod shapes;
 pub use brush::*;
+pub use layers::MaskRegion;
 use probability::*;
 use range_filters::*;
 use raster::*;

@@ -276,6 +276,9 @@ struct PassAssembler<'a> {
     pipeline_cache: Option<&'a Arc<PersistentGpuPipelineCache>>,
     bgl_scene_tone: &'a wgpu::BindGroupLayout,
     bgl_effects: &'a wgpu::BindGroupLayout,
+    /// The modules of the programs compiled per effect set
+    /// (`effect_programs`), shared by the programs assembled here.
+    effect_modules: Arc<EffectModules>,
     next_program_index: usize,
 }
 
@@ -294,14 +297,22 @@ impl PassAssembler<'_> {
             template.pipelines[program_index].clone()
         } else {
             let shader = shader.expect("shader module exists without a program template");
+            let layouts = [
+                bgl.clone(),
+                self.bgl_scene_tone.clone(),
+                self.bgl_effects.clone(),
+            ];
             Arc::new(ComputeProgram {
                 device: self.device.clone(),
                 shader: shader.clone(),
-                layouts: [
-                    bgl.clone(),
-                    self.bgl_scene_tone.clone(),
-                    self.bgl_effects.clone(),
-                ],
+                effects: EffectPrograms::for_entry(
+                    self.device,
+                    layouts.clone(),
+                    entry,
+                    self.pipeline_cache.cloned(),
+                    &self.effect_modules,
+                ),
+                layouts,
                 entry: entry.to_owned(),
                 cache: self.pipeline_cache.cloned(),
                 compiled: OnceLock::new(),
@@ -325,6 +336,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     groups: &BindGroups,
     shaders: &ShaderSet,
     cfa_kind: CfaKind,
+    work_format: wgpu::TextureFormat,
     image_workgroups: [u32; 3],
     tone_workgroups: [u32; 3],
 ) -> Result<AssembledPasses> {
@@ -334,6 +346,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         pipeline_cache,
         bgl_scene_tone: &layouts.bgl_scene_tone,
         bgl_effects: &layouts.bgl_effects,
+        effect_modules: EffectModules::new(device, work_format, cfa_kind),
         next_program_index: 0,
     };
     let single_workgroup = [1, 1, 1];

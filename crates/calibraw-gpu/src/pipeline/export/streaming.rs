@@ -493,16 +493,7 @@ impl ExportTileInputs<'_> {
             raw.height,
         );
         let mask_extent = mask_region_texture_extent(mask_region, self.pipeline.mask_atlas_edge());
-        upload_mask_atlas(
-            self.pipeline,
-            self.queue,
-            masks,
-            raw.width,
-            raw.height,
-            mask_region,
-            raw.lens_geometry.as_deref(),
-        )?;
-        Ok(GpuParams::new_for_tile(
+        let params = GpuParams::new_for_tile(
             self.exposure,
             masks,
             scratch,
@@ -516,7 +507,18 @@ impl ExportTileInputs<'_> {
             mask_source_region_uv(mask_region, raw.width, raw.height),
             mask_extent,
         )
-        .with_look_lut(self.look))
+        .with_look_lut(self.look);
+        upload_mask_atlas(
+            self.pipeline,
+            self.queue,
+            masks,
+            &params,
+            raw.width,
+            raw.height,
+            mask_region,
+            raw.lens_geometry.as_deref(),
+        )?;
+        Ok(params)
     }
 
     /// Puts the RAW-stage scene of `tile`, the `index`th, in the pipeline:
@@ -717,10 +719,14 @@ pub(super) fn tile_mask_source_region(
     [x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32]
 }
 
+/// Rasterizes `region` of the masks a render of `params` reads
+/// ([`GpuParams::reads_mask_layer`]) and uploads them to the mask atlas.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn upload_mask_atlas(
     pipeline: &RawGpuPipeline,
     queue: &wgpu::Queue,
     masks: &MaskStack,
+    params: &GpuParams,
     image_width: u32,
     image_height: u32,
     region: [u32; 4],
@@ -728,14 +734,14 @@ pub(super) fn upload_mask_atlas(
 ) -> Result<()> {
     let edge = pipeline.mask_atlas_edge();
     let extent = mask_region_texture_extent(region, edge);
-    for layer in 0..masks.masks.len().min(MAX_LOCAL_MASKS) {
-        let bytes = masks.rasterize_layer_region_f16(
-            layer,
-            extent,
-            region,
-            [image_width, image_height],
-            lens_geometry,
-        );
+    let layers = masks.masks.len().min(MAX_LOCAL_MASKS);
+    if !(0..layers).any(|layer| params.reads_mask_layer(layer)) {
+        return Ok(());
+    }
+    // Cropped once for every layer.
+    let cropped = masks.region(region, [image_width, image_height]);
+    for layer in (0..layers).filter(|layer| params.reads_mask_layer(*layer)) {
+        let bytes = cropped.rasterize_layer_f16(layer, extent, lens_geometry);
         pipeline
             .update_mask_layer_region(queue, layer, extent[0], extent[1], &bytes)
             .with_context(|| format!("upload local-mask layer {}", layer + 1))?;

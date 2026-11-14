@@ -22,10 +22,13 @@
 //! What each part reads is decided by which shaders read a value:
 //!
 //! - the view node alone reads the global and mask colour mixer, colour
-//!   grading, hue rotation, brightness, point colours and the LUT
+//!   grading, hue rotation, brightness, Blacks, point colours and the LUT
 //!   (view_transform.wgsl, look_lut.wgsl), and Vignette's frame in the
 //!   cropped output (film_finish.wgsl, the only caller of
 //!   `effect_output_uv`), which a crop or straighten changes;
+//! - the view node reads the display tone curve (Contrast and the curve's
+//!   shape, `sigmoid_*` in tonemap.wgsl); before it only the Glow's core
+//!   does, in the creative pass (styled_glow.wgsl);
 //! - a mask slot is read by the passes its effect runs in
 //!   ([`MaskEffect::passes`]), an adjustment's by the scene passes and the
 //!   view node;
@@ -121,6 +124,8 @@ pub(super) struct OutputTextures {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SceneShape {
     intermediate: bool,
+    local_tone: bool,
+    scene_effects: bool,
     detail_levels: Option<usize>,
     blur: bool,
     progressive_blur: bool,
@@ -135,6 +140,8 @@ impl SceneShape {
     fn of(params: &GpuParams) -> Self {
         Self {
             intermediate: params.needs_intermediate_adjustment_passes(),
+            local_tone: params.needs_local_tone_pass(),
+            scene_effects: params.needs_scene_effects_pass(),
             detail_levels: params.detail_pyramid_levels(),
             blur: params.needs_blur_passes(),
             progressive_blur: params.needs_progressive_blur_passes(),
@@ -220,8 +227,8 @@ impl OutputInputs {
     fn same_scene_inputs(&self, next: &Self) -> bool {
         bytes_equal(&self.camera, &next.camera)
             && bytes_equal(
-                &scene_tone_before_view(&self.scene_tone),
-                &scene_tone_before_view(&next.scene_tone),
+                &scene_tone_before_creative(&self.scene_tone),
+                &scene_tone_before_creative(&next.scene_tone),
             )
             && bytes_equal(
                 &effects_before_creative(&self.effects),
@@ -246,7 +253,12 @@ impl OutputInputs {
         bytes_equal(
             &effects_before_view(&self.effects),
             &effects_before_view(&next.effects),
-        ) && self.styled_glow_map == next.styled_glow_map
+        ) && (!next.slots.iter().any(styled_glow::is_styled_glow)
+            || bytes_equal(
+                &scene_tone_before_view(&self.scene_tone),
+                &scene_tone_before_view(&next.scene_tone),
+            ))
+            && self.styled_glow_map == next.styled_glow_map
             && self.slots.iter().zip(&next.slots[..]).all(|(slot, next)| {
                 OutputPart::of_slot(slot) == OutputPart::View
                     || bytes_equal(&slot_before_view(slot), &slot_before_view(next))
@@ -399,9 +411,14 @@ fn same_depth_result(a: Option<&SceneDepth>, b: Option<&SceneDepth>) -> bool {
     }
 }
 
-/// `scene_tone` without what only the view node reads.
+/// `scene_tone` without what only the view node reads. Blacks is the fourth
+/// lane of `basic_tone`: the scene tone pass takes it as an unused argument
+/// (`apply_local_basic_tone_values_with_low_strength` in tonemap.wgsl), and
+/// the view node applies it as a display toe.
 fn scene_tone_before_view(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
+    let [highlights, shadows, whites, _blacks] = scene_tone.basic_tone;
     SceneToneUniforms {
+        basic_tone: [highlights, shadows, whites, 0.0],
         hsl_hue_0: [0.0; 4],
         hsl_hue_1: [0.0; 4],
         hsl_saturation_0: [0.0; 4],
@@ -419,6 +436,19 @@ fn scene_tone_before_view(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
         look_lut_domain_min: [0.0; 4],
         look_lut_domain_scale: [0.0; 4],
         ..*scene_tone
+    }
+}
+
+/// `scene_tone` without what only the Creative part and the view node read:
+/// also the display tone curve, which the Glow's core reads in the creative
+/// pass (`styled_glow_core_ceiling`) and nothing reads before it.
+fn scene_tone_before_creative(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
+    SceneToneUniforms {
+        sigmoid_curve: [0.0; 4],
+        sigmoid_power: [0.0; 4],
+        reference_sigmoid_curve: [0.0; 4],
+        reference_sigmoid_power: [0.0; 4],
+        ..scene_tone_before_view(scene_tone)
     }
 }
 
@@ -446,10 +476,18 @@ fn effects_before_creative(effects: &EffectsUniforms) -> EffectsUniforms {
 }
 
 /// A mask slot without what only the view node reads: an adjustment's colour
-/// mixer, grading, hue rotation, brightness and point colours. Its mask layer
-/// (`point_color_meta`) stays.
+/// mixer, grading, hue rotation, brightness, Blacks and point colours. Its
+/// mask layer (`point_color_meta`) stays.
 fn slot_before_view(slot: &MaskData) -> MaskData {
+    // Blacks is the second lane of an adjustment's `adjust_1`
+    // (`apply_local_display_tone` in view_transform.wgsl); an effect slot
+    // keeps its own lanes there.
+    let mut adjust_1 = slot.adjust_1;
+    if slot.effect_id() == MaskEffect::Adjustment.shader_id() {
+        adjust_1[1] = 0.0;
+    }
     MaskData {
+        adjust_1,
         grade_shadows: [0.0; 4],
         grade_midtones: [0.0; 4],
         grade_highlights: [0.0; 4],
