@@ -689,8 +689,8 @@ impl super::RawGpuPipeline {
             return;
         }
         let device = self.effect_inputs.device();
-        let bake = if self.renders_whole_image() {
-            self.own_scene_bake(queue, params)
+        if self.renders_whole_image() {
+            self.own_scene_bake(queue, params);
         } else {
             let Some(bake) = self.effect_inputs.scene_bake() else {
                 return;
@@ -705,15 +705,25 @@ impl super::RawGpuPipeline {
                     bake.upload_depth(device, queue, depth),
                 );
             }
-            Some(bake)
-        };
-        if let Some(bake) = bake {
-            if params.needs_light_bake() {
-                self.note_effect_allocation(
-                    EffectResource::LightBake,
-                    bake.prepare_lights(device, queue, &params.scene_light_set()),
-                );
-            }
+        }
+    }
+
+    /// Uploads the lights of `params` to the bake ([`Self::upload_scene_bake_depth`]
+    /// allocated or shared it), in their render tier. Only for renders that
+    /// run a part reading them (`prepare_tiered_effects`).
+    pub(super) fn prepare_scene_lights(&self, queue: &wgpu::Queue, params: &super::GpuParams) {
+        if !params.needs_light_bake() {
+            return;
+        }
+        if let Some(bake) = self.effect_inputs.scene_bake() {
+            self.note_effect_allocation(
+                EffectResource::LightBake,
+                bake.prepare_lights(
+                    self.effect_inputs.device(),
+                    queue,
+                    &params.scene_light_set(),
+                ),
+            );
         }
     }
 
@@ -751,8 +761,13 @@ impl super::RawGpuPipeline {
                     encoder.untracked(|encoder| {
                         bake.encode_lights(device, encoder, programs.lights())
                     });
-                    if params.needs_air_light() {
-                        let region = self.air_light_region(params.render_tier());
+                    // In the tier of the lights it is lit by, which the last
+                    // render that read them prepared.
+                    if let Some(tier) = bake
+                        .prepared_lights_tier()
+                        .filter(|_| params.needs_air_light())
+                    {
+                        let region = self.air_light_region(tier);
                         self.note_effect_allocation(
                             EffectResource::AirLight,
                             encoder.untracked(|encoder| {

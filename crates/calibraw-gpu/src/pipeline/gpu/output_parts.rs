@@ -32,9 +32,19 @@
 //! - a mask slot is read by the passes its effect runs in
 //!   ([`MaskEffect::passes`]), an adjustment's by the scene passes and the
 //!   view node;
-//! - the render tier ([`RenderTier`]) by the first part with an effect that
-//!   has a Draft tier or reads the scene bake, whose lights it builds;
+//! - the render tier ([`RenderTier`]) by the parts with an effect that has a
+//!   Draft tier or reads the scene bake, whose lights it builds;
 //! - everything else counts as read by the Scene part.
+//!
+//! The tier differs from the other inputs: a part rendered Final stays while
+//! the tier is Draft, as Draft only makes a drag quicker and shows the same
+//! look with less detail, and a part rendered Draft renders again once the
+//! tier is Final. A drag of a View or Creative control therefore leaves a
+//! Final Lens Blur as it is, and needs no Final render of it on release. Lens
+//! Blur's resources and the scene lights, which the tier sizes, are prepared
+//! only by renders that run the parts reading them
+//! ([`RawGpuPipeline::prepare_tiered_effects`]), so a part that stays keeps
+//! what it was rendered from.
 //!
 //! Anything else that writes the work textures or changes what the output
 //! stage reads without being a parameter (the RAW and tone stages, exports,
@@ -55,6 +65,8 @@ pub(super) enum OutputPart {
 }
 
 impl OutputPart {
+    const ALL: [Self; 3] = [Self::Scene, Self::Creative, Self::View];
+
     const fn of_pass(pass: EffectPass) -> Self {
         match pass {
             EffectPass::CaptureSharpening
@@ -99,6 +111,15 @@ pub(super) enum OutputStart {
 }
 
 impl OutputStart {
+    /// The part the render starts at.
+    pub(super) const fn part(self) -> OutputPart {
+        match self {
+            Self::Scene => OutputPart::Scene,
+            Self::Creative { .. } => OutputPart::Creative,
+            Self::View { .. } => OutputPart::View,
+        }
+    }
+
     /// How `stage_timing` names the render: "Output", or the part it starts at.
     pub(super) const fn timing_label(self) -> &'static str {
         match self {
@@ -168,8 +189,8 @@ pub(super) struct OutputInputs {
     profile: Arc<ProfileColor>,
     highlight_model: Option<Arc<HighlightModel>>,
     render_tier: RenderTier,
-    /// The first part that reads `render_tier`, if any.
-    tier_part: Option<OutputPart>,
+    /// The parts that read `render_tier`, by [`OutputPart`].
+    tier_parts: [bool; OutputPart::ALL.len()],
     /// The build of the Lens Blur map the Scene part reads, if any.
     defocus_map: Option<u64>,
     /// The build of the Glow map the Creative part reads, if any.
@@ -192,7 +213,7 @@ impl OutputInputs {
             profile: Arc::clone(&params.profile_color),
             highlight_model: params.highlight_model.clone(),
             render_tier: params.render_tier(),
-            tier_part: first_part_reading_tier(params.mask_slots()),
+            tier_parts: parts_reading_tier(params.mask_slots()),
             defocus_map: maps.defocus,
             styled_glow_map: maps.styled_glow,
         }
@@ -208,20 +229,26 @@ impl OutputInputs {
         }
     }
 
-    /// The first part whose inputs differ between these and `next`.
+    /// The first part whose inputs other than the render tier differ between
+    /// these and `next`.
     fn first_changed_part(&self, next: &Self) -> OutputPart {
-        let changed = if !self.same_scene_inputs(next) {
+        if !self.same_scene_inputs(next) {
             OutputPart::Scene
         } else if !self.same_creative_inputs(next) {
             OutputPart::Creative
         } else {
             OutputPart::View
-        };
-        if self.render_tier == next.render_tier {
-            return changed;
         }
-        // Slots are equal unless the Scene part changed, which comes first.
-        next.tier_part.map_or(changed, |tier| tier.min(changed))
+    }
+
+    /// The first part that reads the render tier and was rendered more
+    /// coarsely than these inputs ask: Draft when they ask for Final.
+    fn first_part_to_refine(&self, rendered: &PartTiers) -> Option<OutputPart> {
+        OutputPart::ALL.into_iter().find(|part| {
+            self.tier_parts[*part as usize]
+                && rendered[*part as usize] == RenderTier::Draft
+                && self.render_tier == RenderTier::Final
+        })
     }
 
     fn same_scene_inputs(&self, next: &Self) -> bool {
@@ -282,22 +309,28 @@ impl OutputInputs {
     }
 }
 
-/// The first part whose result depends on the render tier: that of the
-/// first active slot whose effect has a Draft tier
-/// ([`MaskEffect::has_draft_tier`]) or reads the scene bake, whose lights the
-/// tier builds.
-fn first_part_reading_tier(slots: &[MaskData]) -> Option<OutputPart> {
-    slots
-        .iter()
-        .filter(|slot| {
-            slot.active_effect().is_some_and(MaskEffect::has_draft_tier)
-                || slot
-                    .scene_needs()
-                    .is_some_and(|needs| needs != SceneNeeds::NONE)
-        })
-        .map(OutputPart::of_slot)
-        .min()
+/// The parts whose result depends on the render tier: those an active slot
+/// runs in whose effect has a Draft tier ([`MaskEffect::has_draft_tier`]) or
+/// reads the scene bake, whose lights the tier builds.
+fn parts_reading_tier(slots: &[MaskData]) -> [bool; OutputPart::ALL.len()] {
+    let mut parts = [false; OutputPart::ALL.len()];
+    for effect in slots.iter().filter_map(|slot| {
+        let effect = slot.active_effect()?;
+        let reads_tier = effect.has_draft_tier()
+            || slot
+                .scene_needs()
+                .is_some_and(|needs| needs != SceneNeeds::NONE);
+        reads_tier.then_some(effect)
+    }) {
+        for pass in effect.passes() {
+            parts[OutputPart::of_pass(*pass) as usize] = true;
+        }
+    }
+    parts
 }
+
+/// The tier each part's result was rendered in, by [`OutputPart`].
+type PartTiers = [RenderTier; OutputPart::ALL.len()];
 
 /// The builds of the full-frame maps a pipeline reads, which change when the
 /// pipeline that owns them renders, without this one's parameters changing.
@@ -309,7 +342,7 @@ pub(super) struct SharedMapBuilds {
 
 /// The last preview render of the output stage, to start the next one from.
 pub(super) struct OutputResume {
-    last: Option<(OutputInputs, OutputTextures)>,
+    last: Option<LastRender>,
     /// Mask layers uploaded since `last` rendered.
     dirty_layers: [bool; MAX_LOCAL_MASKS],
 }
@@ -324,13 +357,23 @@ impl OutputResume {
 
     /// Where a render of `next` starts.
     pub(super) fn start(&self, next: &OutputInputs) -> OutputStart {
-        let Some((last, textures)) = &self.last else {
+        let Some(LastRender {
+            inputs: last,
+            textures,
+            tiers,
+        }) = &self.last
+        else {
             return OutputStart::Scene;
         };
-        let changed = last.first_changed_part(next);
-        let part = next
-            .first_part_reading(&self.dirty_layers)
-            .map_or(changed, |masked| masked.min(changed));
+        let part = [
+            Some(last.first_changed_part(next)),
+            next.first_part_reading(&self.dirty_layers),
+            next.first_part_to_refine(tiers),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(OutputPart::Scene);
         match part {
             OutputPart::Scene => OutputStart::Scene,
             OutputPart::Creative => match textures.creative_input_in_tex2 {
@@ -344,10 +387,25 @@ impl OutputResume {
         }
     }
 
-    /// Remembers a render of `inputs` that left its parts' inputs in
-    /// `textures`.
-    pub(super) fn record(&mut self, inputs: OutputInputs, textures: OutputTextures) {
-        self.last = Some((inputs, textures));
+    /// Remembers a render of `inputs` from `start` that left its parts'
+    /// inputs in `textures`. The parts before `start` keep the tier they were
+    /// rendered in.
+    pub(super) fn record(
+        &mut self,
+        inputs: OutputInputs,
+        start: OutputStart,
+        textures: OutputTextures,
+    ) {
+        let kept = self.last.as_ref().map(|last| last.tiers);
+        let tiers = OutputPart::ALL.map(|part| match kept {
+            Some(kept) if part < start.part() => kept[part as usize],
+            _ => inputs.render_tier,
+        });
+        self.last = Some(LastRender {
+            inputs,
+            textures,
+            tiers,
+        });
         self.dirty_layers = [false; MAX_LOCAL_MASKS];
     }
 
@@ -365,6 +423,14 @@ impl OutputResume {
             None => self.forget(),
         }
     }
+}
+
+/// The last preview render of the output stage.
+struct LastRender {
+    inputs: OutputInputs,
+    textures: OutputTextures,
+    /// The tier each part's result was rendered in.
+    tiers: PartTiers,
 }
 
 /// A build of something other pipelines read: a number no other build of any

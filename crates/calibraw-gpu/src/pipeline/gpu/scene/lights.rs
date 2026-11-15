@@ -707,6 +707,15 @@ impl SceneBake {
         Ok(())
     }
 
+    /// The tier of the lights `prepare_lights` last uploaded, if it uploaded
+    /// any.
+    pub(in crate::pipeline::gpu) fn prepared_lights_tier(&self) -> Option<RenderTier> {
+        self.lock_lights()
+            .as_ref()
+            .and_then(|lights| lights.pending)
+            .map(|pending| pending.set.quality)
+    }
+
     /// Encodes what of the light bake is outdated for the lights
     /// `prepare_lights` uploaded (module docs). It encodes nothing while the
     /// scene bake is not baked.

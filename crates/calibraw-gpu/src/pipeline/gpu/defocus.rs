@@ -1107,6 +1107,7 @@ impl RawGpuPipeline {
         params: &GpuParams,
     ) {
         self.upload_params(queue, params);
+        self.prepare_tiered_effects(queue, params, OutputPart::Scene);
         self.forget_output();
         let groups = self.effect_inputs.defocus_bind_groups();
         let mut encoder = self.work(device, queue, "calibraw export Lens Blur map tile");

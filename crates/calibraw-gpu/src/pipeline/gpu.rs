@@ -63,7 +63,8 @@ use effect_programs::{EffectModules, EffectPrograms, EffectSet, Readiness};
 pub(crate) use geometry_resample::{resample_geometry, GeometryResampleJob};
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 use output_parts::{
-    BuildRevision, OutputInputs, OutputResume, OutputStart, OutputTextures, SharedMapBuilds,
+    BuildRevision, OutputInputs, OutputPart, OutputResume, OutputStart, OutputTextures,
+    SharedMapBuilds,
 };
 pub(crate) use preview_budget::{
     gpu_working_set_is_limited, scale_with_mobile_export_tile, ExportTileShape,
@@ -751,14 +752,29 @@ struct RawGpuPipelineBuild<'a> {
 }
 
 impl RawGpuPipeline {
+    /// Prepares what the render tier sizes, for a render of `params` from
+    /// `start`: Lens Blur's textures and map when it runs the Scene part,
+    /// the scene lights when it runs a part that may read them (the Scene or
+    /// the Creative part). A part a render leaves as it is keeps what it was
+    /// rendered from, in its own tier (`output_parts`). Call after
+    /// `upload_params`.
+    fn prepare_tiered_effects(&self, queue: &wgpu::Queue, params: &GpuParams, start: OutputPart) {
+        if start == OutputPart::Scene {
+            self.prepare_defocus(queue, params);
+        }
+        if start <= OutputPart::Creative {
+            self.prepare_scene_lights(queue, params);
+        }
+    }
+
     /// Uploads `params` and returns the uniforms as uploaded, which the
     /// pipeline adjusts to what it holds (`effects_for_upload`,
-    /// `scene_tone_for_upload`, `without_highlight_model`).
+    /// `scene_tone_for_upload`, `without_highlight_model`). What the render
+    /// tier sizes is prepared by `prepare_tiered_effects`.
     fn upload_params(&self, queue: &wgpu::Queue, params: &GpuParams) -> UploadedStageUniforms {
         self.upload_profile_tables(queue, &params.profile_color);
         self.prepare_effect_inputs(params);
         let (styled_glow_near, styled_glow_map) = self.prepare_styled_glow(params);
-        self.prepare_defocus(queue, params);
         let effects = params.effects_for_upload(styled_glow_near, styled_glow_map);
         let look_lut_uploaded = match self.prepare_look_lut(queue, params.look_lut()) {
             Ok(()) => true,
@@ -930,6 +946,7 @@ impl RawGpuPipeline {
 
     pub fn recompute(&self, queue: &wgpu::Queue, device: &wgpu::Device, params: &GpuParams) {
         self.upload_params(queue, params);
+        self.prepare_tiered_effects(queue, params, OutputPart::Scene);
         let mut encoder = self.work(device, queue, "calibraw complete recompute encoder");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Recompute"));
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
@@ -967,13 +984,21 @@ impl RawGpuPipeline {
             }
             ProcessingStage::Output => {
                 let inputs = OutputInputs::new(params, &uploaded, self.shared_map_builds());
-                let start = self.lock_output_resume().start(&inputs);
+                let mut start = self.lock_output_resume().start(&inputs);
+                self.prepare_tiered_effects(queue, params, start.part());
+                // An allocation whose outcome changed forgets the last
+                // render, which then starts earlier and prepares more.
+                let restart = self.lock_output_resume().start(&inputs);
+                if restart.part() < start.part() {
+                    self.prepare_tiered_effects(queue, params, restart.part());
+                    start = restart;
+                }
                 let timing =
                     stage_timing::begin(device, || self.timed_stage_name(start.timing_label()));
                 let textures = self.encode_output_stage(&mut encoder, params, start);
                 // After encoding, which rebuilt the maps this pipeline owns.
                 let inputs = inputs.with_map_builds(self.shared_map_builds());
-                self.lock_output_resume().record(inputs, textures);
+                self.lock_output_resume().record(inputs, start, textures);
                 encoder.submit(timing);
             }
         }
@@ -1570,6 +1595,7 @@ impl RawGpuPipeline {
         params: &GpuParams,
     ) {
         self.upload_params(queue, params);
+        self.prepare_tiered_effects(queue, params, OutputPart::Scene);
         let mut encoder = self.work(device, queue, "calibraw Remove-aware tiled export encoder");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Export tile"));
         self.forget_output();
