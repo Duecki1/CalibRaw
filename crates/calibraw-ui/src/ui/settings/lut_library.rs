@@ -7,8 +7,8 @@ use crate::i18n::{tr, tr_fmt};
 use eframe::egui::{self, Ui};
 
 impl Settings {
-    pub(super) fn show_luts_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
+    pub(super) fn show_luts(ui: &mut Ui, app: &mut CalibRawApp) {
+        moduwu_design::strong_with_help(
             ui,
             tr("LUTs"),
             tr("3D LUTs in the .cube format, for the LUT card in Develop and for batch exports. Imported files are copied into CalibRaw, so the originals can be moved or deleted."),

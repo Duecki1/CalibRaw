@@ -4,6 +4,7 @@
 
 use super::review::{take_review_key, ReviewKey};
 use super::*;
+use crate::app::{ShortcutAction, Shortcuts};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum GridKey {
@@ -41,69 +42,66 @@ const MOVES: [(egui::Key, GridStep); 8] = [
     (egui::Key::End, GridStep::Last),
 ];
 
-/// Takes this frame's first grid key press.
-pub(super) fn take_grid_key(ctx: &egui::Context) -> Option<GridKey> {
+/// The library actions a changeable shortcut starts.
+const PHOTO_SHORTCUTS: [(ShortcutAction, GridKey); 6] = [
+    (ShortcutAction::SelectAll, GridKey::SelectAll),
+    (
+        ShortcutAction::CopyAdjustments,
+        GridKey::Photo(PhotoKey::CopyAdjustments),
+    ),
+    (
+        ShortcutAction::ChooseAdjustmentsToCopy,
+        GridKey::Photo(PhotoKey::ChooseAdjustmentsToCopy),
+    ),
+    (
+        ShortcutAction::PasteAdjustments,
+        GridKey::Photo(PhotoKey::PasteAdjustments),
+    ),
+    (ShortcutAction::Export, GridKey::Photo(PhotoKey::Export)),
+    (ShortcutAction::Delete, GridKey::Photo(PhotoKey::Delete)),
+];
+
+/// Takes this frame's first grid key press: a changeable shortcut first,
+/// then the fixed movement keys, then a rating or flag key.
+pub(super) fn take_grid_key(ctx: &egui::Context, shortcuts: &Shortcuts) -> Option<GridKey> {
     use egui::{Key, Modifiers};
-    let command_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-    // `consume_key` ignores an extra Shift or Alt, so the forms with more
-    // modifiers come first.
-    let shortcuts = [
-        (
-            command_shift | Modifiers::ALT,
-            Key::C,
-            GridKey::Photo(PhotoKey::ChooseAdjustmentsToCopy),
-        ),
-        (
-            command_shift,
-            Key::C,
-            GridKey::Photo(PhotoKey::CopyAdjustments),
-        ),
-        (
-            command_shift,
-            Key::V,
-            GridKey::Photo(PhotoKey::PasteAdjustments),
-        ),
-        (command_shift, Key::E, GridKey::Photo(PhotoKey::Export)),
-        (Modifiers::COMMAND, Key::A, GridKey::SelectAll),
-    ]
-    .into_iter()
-    .chain(MOVES.into_iter().flat_map(|(key, step)| {
-        [
-            (Modifiers::SHIFT, key, GridKey::Move { step, extend: true }),
-            (
-                Modifiers::NONE,
-                key,
-                GridKey::Move {
-                    step,
-                    extend: false,
-                },
-            ),
-        ]
-    }))
-    .chain([
-        (Modifiers::NONE, Key::Space, GridKey::ToggleActive),
-        (Modifiers::NONE, Key::Enter, GridKey::Open),
-        (Modifiers::NONE, Key::Escape, GridKey::StopSelecting),
-        (
-            Modifiers::NONE,
-            Key::Delete,
-            GridKey::Photo(PhotoKey::Delete),
-        ),
-        (
-            Modifiers::NONE,
-            Key::Backspace,
-            GridKey::Photo(PhotoKey::Delete),
-        ),
-    ]);
+    let actions = PHOTO_SHORTCUTS.map(|(action, _)| action);
     let pressed = ctx.input_mut(|input| {
-        for (modifiers, key, command) in shortcuts {
+        if let Some(action) = shortcuts.take(input, &actions) {
+            return PHOTO_SHORTCUTS
+                .iter()
+                .find(|(candidate, _)| *candidate == action)
+                .map(|(_, key)| *key);
+        }
+        // `consume_key` ignores an extra Shift, so the Shift forms come first.
+        let fixed = MOVES
+            .into_iter()
+            .flat_map(|(key, step)| {
+                [
+                    (Modifiers::SHIFT, key, GridKey::Move { step, extend: true }),
+                    (
+                        Modifiers::NONE,
+                        key,
+                        GridKey::Move {
+                            step,
+                            extend: false,
+                        },
+                    ),
+                ]
+            })
+            .chain([
+                (Modifiers::NONE, Key::Space, GridKey::ToggleActive),
+                (Modifiers::NONE, Key::Enter, GridKey::Open),
+                (Modifiers::NONE, Key::Escape, GridKey::StopSelecting),
+            ]);
+        for (modifiers, key, command) in fixed {
             if input.consume_key(modifiers, key) {
                 return Some(command);
             }
         }
         None
     });
-    pressed.or_else(|| take_review_key(ctx).map(GridKey::Review))
+    pressed.or_else(|| take_review_key(ctx, shortcuts).map(GridKey::Review))
 }
 
 /// Carries out a grid key. `visible` and `placements` are the grid as

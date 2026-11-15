@@ -327,9 +327,12 @@ impl CalibRawApp {
         if !self.app_shortcuts_allowed(ctx) {
             return;
         }
-        let save = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
         let action = AppAction::SaveEdits;
-        if self.action_enabled(action) && ctx.input_mut(|input| input.consume_shortcut(&save)) {
+        let shortcuts = &self.preferences.shortcuts;
+        if self.action_enabled(action)
+            && ctx
+                .input_mut(|input| shortcuts.consume(input, crate::app::ShortcutAction::SaveEdits))
+        {
             self.dispatch_action(action);
         }
     }

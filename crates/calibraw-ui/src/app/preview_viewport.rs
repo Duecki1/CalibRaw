@@ -105,6 +105,7 @@ impl CalibRawApp {
             &mut viewport,
             self.preview.visible_uv,
             original_hold_tracking,
+            &self.preferences.shortcuts,
         );
         self.apply_preview_viewport_actions(actions);
 

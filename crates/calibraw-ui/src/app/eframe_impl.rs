@@ -292,9 +292,6 @@ impl CalibRawApp {
         self.show_foreground_operation_dialog(ctx);
         self.show_background_task_dialog(ctx);
         self.show_remove_progress_dialog(ctx);
-        if self.caps().is_desktop() {
-            crate::ui::shortcuts_dialog::show(ctx, self);
-        }
         self.show_tip_dialog(ctx);
     }
 
@@ -489,6 +486,7 @@ impl eframe::App for CalibRawApp {
                 };
                 egui::ScrollArea::vertical()
                     .scroll_source(settings_scroll_source)
+                    .animated(!Settings::section_settling(ui.ctx()))
                     .auto_shrink([false, false])
                     .show(ui, |ui| Settings::show(ui, self, layout));
             }

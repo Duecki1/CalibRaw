@@ -9,7 +9,7 @@ Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPM
 - Preserve behavior: features, interactions, numerical output and persisted formats (settings, presets, sidecars, edit history). Redesigns, algorithm changes and new features are separate changes.
 - Keep each change focused; do not mix broad formatting, file moves, API changes and numerical changes.
 - An extraction must remove duplication, serve a real additional caller, or establish ownership. Say which.
-- Delegate focused implementation and exploration tasks; keep architecture, ambiguous requirements, integration and final verification with the coordinator.
+- Never use subagents. Do all implementation, exploration, translation and verification yourself.
 - iOS is low priority, so most features can skip it. If supporting iOS would take much more code, ask whether it should get an implementation.
 
 ## Rust

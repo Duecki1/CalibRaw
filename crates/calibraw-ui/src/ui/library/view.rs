@@ -514,7 +514,7 @@ fn show_thumbnail_grid(
     let (mut placements, mut grid_height) = layout(&app.library.entries, &visible);
 
     if app.navigation_shortcuts_allowed(ui.ctx()) {
-        if let Some(key) = take_grid_key(ui.ctx()) {
+        if let Some(key) = take_grid_key(ui.ctx(), &app.preferences.shortcuts) {
             apply_grid_key(
                 app,
                 key,

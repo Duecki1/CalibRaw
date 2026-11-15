@@ -331,6 +331,7 @@ impl CalibRawApp {
                 show_develop_navigation_labels: performance.show_develop_navigation_labels,
                 close_other_cards: performance.close_other_cards,
                 develop_card_order: performance.develop_card_order.clone(),
+                shortcuts: performance.keyboard_shortcuts.clone(),
                 automatic_lens_correction: AutomaticLensCorrection {
                     enabled: performance.automatic_lens_correction,
                     corrections: LensfunCorrections {
@@ -384,7 +385,9 @@ impl CalibRawApp {
                 onboarding_step: None,
                 tip: None,
                 version_check: Default::default(),
-                shortcuts_dialog_open: false,
+                settings_section: Some(SettingsSection::General),
+                shortcut_recording: None,
+                shortcut_feedback: None,
                 settings_dialog: None,
                 numeric_keyboard: false,
                 review_feedback: None,

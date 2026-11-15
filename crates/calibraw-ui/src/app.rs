@@ -59,6 +59,8 @@ use worker::{model_download_progress, poll_ai_job, AiJobUpdate};
 mod decoded_raw_cache;
 mod develop_cards;
 pub(crate) use develop_cards::{DevelopCard, DevelopCardOrder};
+mod shortcuts;
+pub(crate) use shortcuts::{KeyBinding, ShortcutAction, ShortcutGroup, Shortcuts, MAX_BINDINGS};
 mod carousel;
 mod develop_state;
 mod effect_handles;
@@ -189,6 +191,10 @@ impl CalibRawApp {
             self.set_original_preview_requested(false);
             self.clear_android_original_hold();
             self.platform.release_free_memory();
+        }
+        if self.ui.active_tab == AppTab::Settings {
+            // A shortcut waiting for its keys is abandoned with the tab.
+            self.ui.shortcut_recording = None;
         }
         if self.ui.active_tab == AppTab::Library && tab != AppTab::Library {
             self.library.prepare_for_develop();

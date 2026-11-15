@@ -1,5 +1,6 @@
 use super::hover::BUTTON_HIGHLIGHT_RADIUS;
 use super::*;
+use crate::app::Shortcuts;
 use crate::i18n::{tr, tr_fmt};
 use crate::sidecar::{PhotoFlag, PhotoReview};
 use crate::ui::theme;
@@ -41,7 +42,7 @@ impl ReviewChange {
     }
 }
 
-/// A rating or flag key, as in Lightroom: 0–5, [ and ], P, X, U and `.
+/// A rating or flag key press.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReviewKey {
     pub(crate) change: ReviewChange,
@@ -49,62 +50,13 @@ pub(crate) struct ReviewKey {
     pub(crate) advance: bool,
 }
 
-/// Takes this frame's first rating or flag key press. Digits, brackets and
-/// the backtick also match by position, so they work with Shift held and on
-/// layouts that need Shift for digits; letters match the key's own label.
-pub(crate) fn take_review_key(ctx: &egui::Context) -> Option<ReviewKey> {
-    ctx.input_mut(|input| {
-        let position = input
-            .events
-            .iter()
-            .position(|event| review_key(event).is_some())?;
-        review_key(&input.events.remove(position))
-    })
-}
-
-fn review_key(event: &egui::Event) -> Option<ReviewKey> {
-    use egui::Key;
-    let egui::Event::Key {
-        key,
-        physical_key,
-        pressed: true,
-        repeat: false,
-        modifiers,
-    } = event
-    else {
-        return None;
-    };
-    if modifiers.command || modifiers.ctrl || modifiers.alt {
-        return None;
-    }
-    let at = |target: Key| *key == target || *physical_key == Some(target);
-    let digits = [
-        Key::Num0,
-        Key::Num1,
-        Key::Num2,
-        Key::Num3,
-        Key::Num4,
-        Key::Num5,
-    ];
-    let change = if let Some(rating) = digits.into_iter().position(at) {
-        ReviewChange::Rating(rating as u8)
-    } else if at(Key::OpenBracket) {
-        ReviewChange::StepRating(-1)
-    } else if at(Key::CloseBracket) {
-        ReviewChange::StepRating(1)
-    } else if at(Key::Backtick) {
-        ReviewChange::TogglePick
-    } else {
-        match key {
-            Key::P => ReviewChange::Flag(PhotoFlag::Picked),
-            Key::X => ReviewChange::Flag(PhotoFlag::Rejected),
-            Key::U => ReviewChange::Flag(PhotoFlag::Unflagged),
-            _ => return None,
-        }
-    };
+/// Takes this frame's first rating or flag key press, matched as
+/// [`Shortcuts::take_review`] describes.
+pub(crate) fn take_review_key(ctx: &egui::Context, shortcuts: &Shortcuts) -> Option<ReviewKey> {
+    let (action, advance) = ctx.input_mut(|input| shortcuts.take_review(input))?;
     Some(ReviewKey {
-        change,
-        advance: modifiers.shift,
+        change: action.review_change()?,
+        advance,
     })
 }
 

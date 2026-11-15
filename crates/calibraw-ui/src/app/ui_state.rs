@@ -26,6 +26,7 @@ pub(crate) struct PreferencesState {
     pub(crate) show_develop_navigation_labels: bool,
     pub(crate) close_other_cards: bool,
     pub(crate) develop_card_order: DevelopCardOrder,
+    pub(crate) shortcuts: Shortcuts,
     pub(crate) automatic_lens_correction: AutomaticLensCorrection,
     /// Ask about manual correction when automatic correction finds no profile.
     pub(crate) missing_lens_profile_prompt: bool,
@@ -80,6 +81,31 @@ pub(crate) enum SettingsDialog {
     Luts,
 }
 
+/// A foldable section of Settings, in the order they are shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsSection {
+    General,
+    Editing,
+    KeyboardShortcuts,
+    NewPhotos,
+    CopyPaste,
+    Export,
+    ColorProfiles,
+    Performance,
+    Ai,
+    Updates,
+    About,
+    Diagnostics,
+}
+
+/// Settings waits for the next key press to bind it to `action`, replacing
+/// its binding at `replace` or adding one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ShortcutRecording {
+    pub(crate) action: crate::app::ShortcutAction,
+    pub(crate) replace: Option<usize>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct UnsupportedFileDialog {
     pub(crate) label: String,
@@ -103,8 +129,12 @@ pub(crate) struct UiState {
     /// The feature tip offered and not yet answered.
     pub(in crate::app) tip: Option<ShownTip>,
     pub(in crate::app) version_check: version_update::VersionCheckState,
-    /// The keyboard shortcuts reference is open.
-    pub(crate) shortcuts_dialog_open: bool,
+    /// The Settings section that is open; opening one closes the others.
+    pub(crate) settings_section: Option<SettingsSection>,
+    /// The shortcut whose keys Settings is waiting for.
+    pub(crate) shortcut_recording: Option<ShortcutRecording>,
+    /// What the last recorded key did, shown under that shortcut's row.
+    pub(crate) shortcut_feedback: Option<(crate::app::ShortcutAction, String)>,
     /// The Settings dialog that is open, shown while Settings is.
     pub(crate) settings_dialog: Option<SettingsDialog>,
     pub(crate) thumbnail_cache_size: Option<Result<u64, String>>,

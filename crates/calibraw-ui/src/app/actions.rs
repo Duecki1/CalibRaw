@@ -63,8 +63,10 @@ impl CalibRawApp {
         self.ui.tip.is_some() || self.dialog_open(ctx)
     }
 
-    fn shortcuts_dialog_open(&self) -> bool {
-        self.ui.shortcuts_dialog_open
+    /// Settings is waiting for the keys of a new shortcut, which no other
+    /// shortcut may take.
+    fn shortcut_recording(&self) -> bool {
+        self.ui.active_tab == AppTab::Settings && self.ui.shortcut_recording.is_some()
     }
 
     /// Whether a dialog other than a feature tip is open; a tip waits for it.
@@ -74,7 +76,7 @@ impl CalibRawApp {
             || self.ui.missing_lens_profile_prompt.is_some()
             || self.ui.runtime_restart_prompt.is_some()
             || self.develop_ui.manual_lens_dialog.is_some()
-            || self.shortcuts_dialog_open()
+            || self.shortcut_recording()
             || (self.ui.active_tab == AppTab::Settings && self.ui.settings_dialog.is_some())
             || self.ui.version_check.dialog_open()
             || self.library.transient_dialog_open()

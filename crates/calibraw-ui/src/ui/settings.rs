@@ -1,6 +1,8 @@
 use crate::app::maximum_raw_cache_limit;
 use crate::app::OnnxRuntimeMode;
-use crate::app::{CalibRawApp, PreviewQuality, GITHUB_UPDATE_CHECKS_AVAILABLE, UPDATE_STORE_NAME};
+use crate::app::{
+    CalibRawApp, PreviewQuality, SettingsSection, GITHUB_UPDATE_CHECKS_AVAILABLE, UPDATE_STORE_NAME,
+};
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::CameraProfileMode;
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
@@ -17,8 +19,96 @@ const RUST_DEPENDENCY_LICENSES: &str =
 
 mod card_order;
 mod lut_library;
+mod shortcuts;
 
 pub(crate) struct Settings;
+
+/// How long the header of a section that just opened is kept in view: longer
+/// than the fold animation of the section that closes.
+const OPENING_SETTLE_SECONDS: f64 = 0.4;
+
+fn opening_id() -> egui::Id {
+    egui::Id::new("settings-section-opening")
+}
+
+/// The section that opened less than [`OPENING_SETTLE_SECONDS`] ago.
+fn opening(ctx: &egui::Context) -> Option<SettingsSection> {
+    let (section, until) =
+        ctx.data(|data| data.get_temp::<(SettingsSection, f64)>(opening_id()))?;
+    (ctx.input(|input| input.time) < until).then_some(section)
+}
+
+impl SettingsSection {
+    /// Every section, in the order Settings shows them: what is changed
+    /// often first, reference and troubleshooting last.
+    const ALL: [Self; 12] = [
+        Self::General,
+        Self::Editing,
+        Self::KeyboardShortcuts,
+        Self::NewPhotos,
+        Self::CopyPaste,
+        Self::Export,
+        Self::ColorProfiles,
+        Self::Performance,
+        Self::Ai,
+        Self::Updates,
+        Self::About,
+        Self::Diagnostics,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::General => tr("General"),
+            Self::Editing => tr("Editing"),
+            Self::KeyboardShortcuts => tr("Keyboard shortcuts"),
+            Self::NewPhotos => tr("New photos"),
+            Self::CopyPaste => tr("Copy & paste adjustments"),
+            Self::Export => tr("Export file names"),
+            Self::ColorProfiles => tr("Color profiles & LUTs"),
+            Self::Performance => tr("Performance"),
+            Self::Ai => tr("AI"),
+            Self::Updates => tr("Updates"),
+            Self::About => tr("About"),
+            Self::Diagnostics => tr("Diagnostics"),
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        use egui_phosphor::regular;
+        match self {
+            Self::General => regular::GEAR_SIX,
+            Self::Editing => regular::SLIDERS_HORIZONTAL,
+            Self::KeyboardShortcuts => regular::KEYBOARD,
+            Self::NewPhotos => regular::IMAGE,
+            Self::CopyPaste => regular::COPY,
+            Self::Export => regular::EXPORT,
+            Self::ColorProfiles => regular::PALETTE,
+            Self::Performance => regular::GAUGE,
+            Self::Ai => regular::SPARKLE,
+            Self::Updates => regular::ARROWS_CLOCKWISE,
+            Self::About => regular::INFO,
+            Self::Diagnostics => regular::BUG,
+        }
+    }
+
+    /// Keeps each section's fold state apart; never shown.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Editing => "editing",
+            Self::KeyboardShortcuts => "keyboard-shortcuts",
+            Self::NewPhotos => "new-photos",
+            Self::CopyPaste => "copy-paste",
+            Self::Export => "export",
+            Self::ColorProfiles => "color-profiles",
+            Self::Performance => "performance",
+            Self::Ai => "ai",
+            Self::Updates => "updates",
+            Self::About => "about",
+            Self::Diagnostics => "diagnostics",
+        }
+    }
+}
 
 /// A count setting as a standard slider. Dragging or typing edits a draft that
 /// is applied once the pointer is released and the value field loses focus,
@@ -110,8 +200,8 @@ pub(crate) fn subject_mask_quality_descriptions() -> String {
         .join("\n")
 }
 
-/// Subject-mask quality, in setup, in the AI card on desktop and in the
-/// interface card on Android. Locked while an AI mask is being generated.
+/// Subject-mask quality, in setup and in the AI section of Settings. Locked
+/// while an AI mask is being generated.
 pub(crate) fn subject_mask_quality_control(
     ui: &mut Ui,
     app: &mut CalibRawApp,
@@ -141,7 +231,7 @@ pub(crate) fn subject_mask_quality_control(
     app.set_subject_mask_quality(quality);
 }
 
-/// The interface language, in setup and in the appearance card of Settings.
+/// The interface language, in setup and in the General section of Settings.
 /// Chosen first in setup so the rest of setup already speaks it.
 pub(crate) fn language_control(ui: &mut Ui, app: &mut CalibRawApp, id_salt: &'static str) {
     let mut language = app.preferences.language;
@@ -316,6 +406,13 @@ pub(crate) fn export_name_template_controls(
 }
 
 impl Settings {
+    /// Whether a section is settling after opening. The Settings scroll area
+    /// must not animate meanwhile: an animated scroll lags a frame behind the
+    /// header it follows.
+    pub(crate) fn section_settling(ctx: &egui::Context) -> bool {
+        opening(ctx).is_some()
+    }
+
     pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
         let available_width = ui.available_width().max(1.0);
         let content_width = match layout {
@@ -350,76 +447,120 @@ impl Settings {
             });
         }
         moduwu_design::card_gap(ui);
+        Self::take_recorded_key(ui, app);
 
-        moduwu_design::content_card(ui, |ui| Self::show_usage_card(ui, app));
-
-        moduwu_design::card_gap(ui);
-
-        moduwu_design::content_card(ui, |ui| Self::show_appearance_card(ui, app));
-
-        moduwu_design::card_gap(ui);
-
-        moduwu_design::content_card(ui, |ui| Self::show_interface_card(ui, app));
-        Self::show_develop_card_order_dialog(ui.ctx(), app);
-
-        moduwu_design::card_gap(ui);
-        moduwu_design::content_card(ui, |ui| Self::show_adjustment_clipboard_card(ui, app));
-
-        moduwu_design::card_gap(ui);
-        moduwu_design::content_card(ui, |ui| Self::show_export_names_card(ui, app));
-
-        if app.presets.is_available() {
-            moduwu_design::card_gap(ui);
-            moduwu_design::content_card(ui, |ui| Self::show_new_photo_preset_card(ui, app));
+        for section in SettingsSection::ALL {
+            if !Self::section_shown(app, section) {
+                continue;
+            }
+            Self::section(ui, app, section, |ui, app| match section {
+                SettingsSection::General => Self::show_general_section(ui, app),
+                SettingsSection::Editing => Self::show_editing_section(ui, app),
+                SettingsSection::KeyboardShortcuts => Self::show_shortcuts_section(ui, app),
+                SettingsSection::NewPhotos => Self::show_new_photos_section(ui, app),
+                SettingsSection::CopyPaste => Self::show_adjustment_clipboard_section(ui, app),
+                SettingsSection::Export => Self::show_export_names_section(ui, app),
+                SettingsSection::ColorProfiles => Self::show_color_profiles_section(ui, app),
+                SettingsSection::Performance => Self::show_performance_section(ui, app),
+                SettingsSection::Ai => Self::show_ai_section(ui, app),
+                SettingsSection::Updates => Self::show_updates_section(ui, app),
+                SettingsSection::About => Self::show_about_section(ui, app),
+                SettingsSection::Diagnostics => Self::show_diagnostics_section(ui, app, layout),
+            });
         }
 
-        moduwu_design::card_gap(ui);
-        moduwu_design::content_card(ui, |ui| Self::show_lens_correction_card(ui, app));
-
-        moduwu_design::card_gap(ui);
-        moduwu_design::content_card(ui, |ui| Self::show_raw_color_profiles_card(ui, app));
-
+        // Dialogs opened from the sections, drawn whether or not their
+        // section is open.
+        Self::show_develop_card_order_dialog(ui.ctx(), app);
         if app.luts.is_available() || app.luts.failure().is_some() {
-            moduwu_design::card_gap(ui);
-            moduwu_design::content_card(ui, |ui| Self::show_luts_card(ui, app));
             Self::show_lut_library_dialog(ui.ctx(), app);
             Self::show_lut_rename_dialog(ui.ctx(), app);
             Self::show_lut_remove_confirmation(ui.ctx(), app);
         }
+    }
 
-        if app.caps().configurable_ai_runtime {
-            moduwu_design::card_gap(ui);
-            moduwu_design::content_card(ui, |ui| Self::show_ai_models_card(ui, app));
+    /// Whether this platform and build have anything to show in `section`.
+    fn section_shown(app: &CalibRawApp, section: SettingsSection) -> bool {
+        match section {
+            // Keyboards are a desktop matter.
+            SettingsSection::KeyboardShortcuts => app.caps().is_desktop(),
+            _ => true,
         }
-
-        moduwu_design::card_gap(ui);
-        moduwu_design::content_card(ui, |ui| Self::show_updates_card(ui, app));
-
-        moduwu_design::card_gap(ui);
-        moduwu_design::content_card(ui, |ui| Self::show_legal_card(ui, app));
-
-        moduwu_design::card_gap(ui);
-        moduwu_design::content_card(ui, |ui| Self::show_diagnostics_card(ui, app, layout));
     }
 
-    fn show_usage_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
-            ui,
-            tr("Usage"),
-            tr("Shows the accumulated time CalibRaw has been running across sessions."),
-        );
-        ui.strong(crate::app::format_usage_duration(app.app_usage_duration()));
-        ui.small(tr("Total app use"));
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_secs(1));
+    /// One foldable section card. Only one section is open at a time:
+    /// opening one closes the one that was open.
+    fn section(
+        ui: &mut Ui,
+        app: &mut CalibRawApp,
+        section: SettingsSection,
+        body: impl FnOnce(&mut Ui, &mut CalibRawApp),
+    ) {
+        let open = app.ui.settings_section == Some(section);
+        let mut header_rect = None;
+        moduwu_design::content_card(ui, |ui| {
+            ui.push_id(section.key(), |ui| {
+                // Reserve the button height before laying out the title, as
+                // the Develop cards do.
+                ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(26.0);
+                let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    ui.make_persistent_id("open"),
+                    open,
+                );
+                state.set_open(open);
+                let ctx = ui.ctx().clone();
+                let mut header_clicked = false;
+                let mut header = state.show_header(ui, |ui| {
+                    let available = ui.available_rect_before_wrap();
+                    ui.label(
+                        egui::RichText::new(section.icon())
+                            .size(16.0)
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                    ui.add_space(moduwu_design::SPACE_XS);
+                    ui.strong(section.label());
+                    let response = ui
+                        .interact(available, ui.id().with("header"), egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::CollapsingHeader,
+                            ui.is_enabled(),
+                            open,
+                            section.label(),
+                        )
+                    });
+                    header_clicked = response.clicked();
+                    header_rect = Some(available);
+                });
+                // The built-in arrow toggles the state itself.
+                let now_open = header.is_open() != header_clicked;
+                header.set_open(now_open);
+                if now_open != open {
+                    app.ui.settings_section = now_open.then_some(section);
+                    if now_open {
+                        let until = ctx.input(|input| input.time) + OPENING_SETTLE_SECONDS;
+                        ctx.data_mut(|data| data.insert_temp(opening_id(), (section, until)));
+                    }
+                }
+                header.body_unindented(|ui| {
+                    ui.add_space(moduwu_design::SPACE_XS);
+                    body(ui, app);
+                });
+            });
+        });
+        // Keeps the header of a section that just opened in view while the
+        // one above it folds.
+        if let Some(rect) = header_rect.filter(|_| opening(ui.ctx()) == Some(section)) {
+            ui.scroll_to_rect(rect, None);
+            ui.ctx().request_repaint();
+        }
+        moduwu_design::card_gap(ui);
     }
 
-    fn show_appearance_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
-            ui,
-            tr("Appearance"),
-            tr("Choose the design used across every screen and the canvas color shown around the photo. Changes are saved and applied immediately."),
-        );
+    fn show_general_section(ui: &mut Ui, app: &mut CalibRawApp) {
+        language_control(ui, app, "settings-language");
 
         let mut design = app.preferences.ui_design;
         moduwu_design::form_combo_with_help(
@@ -466,39 +607,7 @@ impl Settings {
             app.set_preview_backdrop(backdrop);
         }
 
-        language_control(ui, app, "settings-language");
-    }
-
-    fn show_interface_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
-            ui,
-            tr("Interface"),
-            tr("Configure preview resolution, brush behavior, and library resource use."),
-        );
-
-        if moduwu_design::toggle_with_help(
-            ui,
-            &mut app.preferences.show_develop_navigation_labels,
-            tr("Show Develop navigation labels"),
-            tr("Shows a short name below each icon in the Develop navigation bars. Turn this off for a quieter, more compact interface."),
-        )
-        .changed()
-        {
-            app.persist_performance_settings();
-        }
-
-        if moduwu_design::toggle_with_help(
-            ui,
-            &mut app.preferences.close_other_cards,
-            tr("Close other cards when opening a card"),
-            tr("Opening an Edit card in the sidebar closes the others. Mask Properties stays as it is."),
-        )
-        .changed()
-        {
-            app.persist_performance_settings();
-        }
-
-        Self::show_develop_card_order(ui, app);
+        moduwu_design::section_separator(ui);
 
         let mut tips_enabled = app.preferences.tips.enabled;
         if moduwu_design::toggle_with_help(
@@ -540,7 +649,46 @@ impl Settings {
                 );
             }
         }
+    }
 
+    fn show_editing_section(ui: &mut Ui, app: &mut CalibRawApp) {
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut app.preferences.show_develop_navigation_labels,
+            tr("Show Develop navigation labels"),
+            tr("Shows a short name below each icon in the Develop navigation bars. Turn this off for a quieter, more compact interface."),
+        )
+        .changed()
+        {
+            app.persist_performance_settings();
+        }
+
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut app.preferences.close_other_cards,
+            tr("Close other cards when opening a card"),
+            tr("Opening an Edit card in the sidebar closes the others. Mask Properties stays as it is."),
+        )
+        .changed()
+        {
+            app.persist_performance_settings();
+        }
+
+        Self::show_develop_card_order(ui, app);
+
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut app.preferences.image_relative_brush_size,
+            tr("Keep brush size fixed to the image"),
+            tr("When enabled, the brush keeps the same image footprint at every zoom level. When disabled, it keeps the same on-screen footprint."),
+        )
+        .changed()
+        {
+            app.persist_performance_settings();
+        }
+    }
+
+    fn show_performance_section(ui: &mut Ui, app: &mut CalibRawApp) {
         let previous_quality = app.preview.quality;
         let quality_help = if app.caps().constrained_memory() {
             tr("Controls how many pixels the preview renders compared with the screen pixels it covers: Low 50%, Medium 75%, High 90%, and Max 100%, one rendered pixel per screen pixel. Zoom detail uses the same density. A device with little GPU memory may render fewer pixels than asked.")
@@ -597,40 +745,6 @@ impl Settings {
             crate::graphics_backend::support().filter(|support| support.available.len() > 1)
         {
             Self::show_graphics_backend(ui, app, &support);
-        }
-        // Without a configurable AI runtime there is no AI models card to hold
-        // these controls.
-        if !app.caps().configurable_ai_runtime {
-            if app.caps().gpu_ai == crate::platform::GpuAi::Experimental
-                && calibraw_ai::gpu_ai_memory_sufficient()
-            {
-                let mut acceleration = app.ai.gpu_acceleration;
-                if moduwu_design::toggle_with_help(
-                    ui,
-                    &mut acceleration,
-                    tr("Use the GPU for AI (experimental)"),
-                    tr("Lets AI masks and AI denoise run on the GPU. Experimental: on some devices it is slower than the CPU or fails. A model that does not fit in free memory still runs on the CPU."),
-                )
-                .changed()
-                {
-                    app.set_ai_gpu_acceleration(acceleration);
-                }
-            }
-            subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
-            people_mask_quality_control(ui, app, "settings-people-mask-quality");
-            scene_depth_quality_control(ui, app, "settings-scene-depth-quality");
-        }
-
-        moduwu_design::section_separator(ui);
-        if moduwu_design::toggle_with_help(
-            ui,
-            &mut app.preferences.image_relative_brush_size,
-            tr("Keep brush size fixed to the image"),
-            tr("When enabled, the brush keeps the same image footprint at every zoom level. When disabled, it keeps the same on-screen footprint."),
-        )
-            .changed()
-        {
-            app.persist_performance_settings();
         }
 
         moduwu_design::section_separator(ui);
@@ -765,10 +879,9 @@ impl Settings {
         }
     }
 
-    fn show_adjustment_clipboard_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
+    fn show_adjustment_clipboard_section(ui: &mut Ui, app: &mut CalibRawApp) {
+        Self::description(
             ui,
-            tr("Copy & paste adjustments"),
             tr("Choose which categories Library > Copy Adjustments stores for later pasting. The selection is remembered across restarts."),
         );
 
@@ -835,13 +948,30 @@ impl Settings {
         }
     }
 
-    fn show_new_photo_preset_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
+    fn show_new_photos_section(ui: &mut Ui, app: &mut CalibRawApp) {
+        Self::description(
             ui,
-            tr("New photos"),
-            tr("Choose a preset that is applied when you open a photo that has no saved edits. Photos you have already edited keep their edits, and the preset can be undone like any other edit."),
+            tr("Applied when you open a photo that has no saved edits. Photos you have already edited keep their edits."),
         );
+        if app.presets.is_available() {
+            Self::show_new_photo_preset(ui, app);
+        }
+        let mut camera_match = app.camera_match_enabled();
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut camera_match,
+            tr("Match new photos to the camera's look"),
+            tr("Adjusts each photo that opens without saved edits to look like the JPEG your camera made. Photos with saved edits are never changed, and the look can be removed from any photo."),
+        )
+        .changed()
+        {
+            app.set_camera_match_new_photos(camera_match);
+        }
+        moduwu_design::section_separator(ui);
+        Self::show_lens_correction(ui, app);
+    }
 
+    fn show_new_photo_preset(ui: &mut Ui, app: &mut CalibRawApp) {
         let current = app
             .new_photo_preset_path()
             .filter(|path| app.presets.get(path).is_some());
@@ -873,26 +1003,9 @@ impl Settings {
                 choice.and_then(|path| path.file_name().map(std::path::PathBuf::from)),
             );
         }
-        let mut camera_match = app.camera_match_enabled();
-        if moduwu_design::toggle_with_help(
-            ui,
-            &mut camera_match,
-            tr("Match new photos to the camera's look"),
-            tr("Adjusts each photo that opens without saved edits to look like the JPEG your camera made. Photos with saved edits are never changed, and the look can be removed from any photo."),
-        )
-        .changed()
-        {
-            app.set_camera_match_new_photos(camera_match);
-        }
     }
 
-    fn show_lens_correction_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
-            ui,
-            tr("Lens correction"),
-            tr("Choose what happens when you open a photo that has no saved edits. Photos you have already edited keep their own lens settings, and you can always change them in the Lens Corrections card."),
-        );
-
+    fn show_lens_correction(ui: &mut Ui, app: &mut CalibRawApp) {
         let previous = app.preferences.automatic_lens_correction;
         let mut automatic = previous;
         let mut missing_profile_prompt = app.preferences.missing_lens_profile_prompt;
@@ -930,22 +1043,28 @@ impl Settings {
         app.set_missing_lens_profile_prompt(missing_profile_prompt);
     }
 
-    fn show_export_names_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
+    fn show_export_names_section(ui: &mut Ui, app: &mut CalibRawApp) {
+        Self::description(
             ui,
-            tr("Export file names"),
             tr("Build export file names from the original name, dates, and capture metadata. The selected image format adds its extension automatically."),
         );
         export_name_template_controls(ui, app, "settings-export-name-template");
     }
 
-    fn show_raw_color_profiles_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
+    fn show_color_profiles_section(ui: &mut Ui, app: &mut CalibRawApp) {
+        Self::show_raw_color_profiles(ui, app);
+        if app.luts.is_available() || app.luts.failure().is_some() {
+            moduwu_design::section_separator(ui);
+            Self::show_luts(ui, app);
+        }
+    }
+
+    fn show_raw_color_profiles(ui: &mut Ui, app: &mut CalibRawApp) {
+        moduwu_design::strong_with_help(
             ui,
             tr("RAW color profiles"),
             tr("Choose how CalibRaw builds the camera-to-working color transform and whether it applies DCP color-rendering stages."),
         );
-
         let previous_mode = app.preferences.camera_profile_mode;
         let mut mode = previous_mode;
         let profile_mode_help = match mode {
@@ -1138,22 +1257,29 @@ impl Settings {
         }
     }
 
-    fn show_ai_models_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
-            ui,
-            tr("AI models"),
-            tr("Configure local inference acceleration, Subject mask quality, and the trusted ONNX Runtime library used by AI tools."),
-        );
-        let mut acceleration = app.ai.gpu_acceleration;
-        if moduwu_design::toggle_with_help(
-            ui,
-            &mut acceleration,
-            tr("Use GPU acceleration when available"),
-            tr("Allows AI masks and AI denoise to use a supported GPU execution provider. A model that does not fit in free GPU memory runs on the CPU, and CPU fallback remains automatic. Turn this off if GPU inference causes driver errors, instability, or incorrect results."),
-        )
-            .changed()
+    fn show_ai_section(ui: &mut Ui, app: &mut CalibRawApp) {
+        // A configurable runtime offers GPU AI as a setting; elsewhere it is
+        // experimental and offered only with enough memory.
+        let gpu_toggle = if app.caps().configurable_ai_runtime {
+            Some((
+                tr("Use GPU acceleration when available"),
+                tr("Allows AI masks and AI denoise to use a supported GPU execution provider. A model that does not fit in free GPU memory runs on the CPU, and CPU fallback remains automatic. Turn this off if GPU inference causes driver errors, instability, or incorrect results."),
+            ))
+        } else if app.caps().gpu_ai == crate::platform::GpuAi::Experimental
+            && calibraw_ai::gpu_ai_memory_sufficient()
         {
-            app.set_ai_gpu_acceleration(acceleration);
+            Some((
+                tr("Use the GPU for AI (experimental)"),
+                tr("Lets AI masks and AI denoise run on the GPU. Experimental: on some devices it is slower than the CPU or fails. A model that does not fit in free memory still runs on the CPU."),
+            ))
+        } else {
+            None
+        };
+        if let Some((label, help)) = gpu_toggle {
+            let mut acceleration = app.ai.gpu_acceleration;
+            if moduwu_design::toggle_with_help(ui, &mut acceleration, label, help).changed() {
+                app.set_ai_gpu_acceleration(acceleration);
+            }
         }
         let statuses = calibraw_ai::ai_session_statuses();
         let mut in_use: Vec<String> = statuses.iter().map(|status| status.label()).collect();
@@ -1175,7 +1301,13 @@ impl Settings {
         people_mask_quality_control(ui, app, "settings-people-mask-quality");
         scene_depth_quality_control(ui, app, "settings-scene-depth-quality");
 
-        moduwu_design::section_separator(ui);
+        if app.caps().configurable_ai_runtime {
+            moduwu_design::section_separator(ui);
+            Self::show_onnx_runtime(ui, app);
+        }
+    }
+
+    fn show_onnx_runtime(ui: &mut Ui, app: &mut CalibRawApp) {
         let bundled_runtime = calibraw_ai::runtime::bundled_onnx_runtime_path();
         let automatic_help = if bundled_runtime.is_some() {
             tr("Recommended. Use the ONNX Runtime included with CalibRaw, with CPU AI fallback and no runtime download.")
@@ -1286,12 +1418,7 @@ impl Settings {
         }
     }
 
-    fn show_updates_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
-            ui,
-            tr("Updates"),
-            tr("View the installed version and optionally ask GitHub for CalibRaw's latest stable release."),
-        );
+    fn show_updates_section(ui: &mut Ui, app: &mut CalibRawApp) {
         ui.strong(format!("CalibRaw {}", env!("CARGO_PKG_VERSION")));
         if !GITHUB_UPDATE_CHECKS_AVAILABLE {
             ui.small(tr_fmt(
@@ -1369,13 +1496,20 @@ impl Settings {
         ui.small(status);
     }
 
-    fn show_legal_card(ui: &mut Ui, app: &mut CalibRawApp) {
-        moduwu_design::heading_with_help(
+    fn show_about_section(ui: &mut Ui, app: &mut CalibRawApp) {
+        ui.strong(format!("CalibRaw {}", env!("CARGO_PKG_VERSION")));
+        moduwu_design::property_row(ui, tr("Total app use"), |ui| {
+            ui.label(crate::app::format_usage_duration(app.app_usage_duration()));
+        });
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(1));
+
+        moduwu_design::section_separator(ui);
+        moduwu_design::strong_with_help(
             ui,
             tr("Legal & attributions"),
             tr("Adapted code, bundled data, native libraries, optional AI models, Rust crates, fonts, and icons retain their listed upstream terms and notices."),
         );
-        ui.strong(format!("CalibRaw {}", env!("CARGO_PKG_VERSION")));
         ui.label("Copyright (C) 2026 Duecki and CalibRaw contributors");
         ui.label(tr_fmt(
             "Licensed under {license}.",
@@ -1416,10 +1550,9 @@ impl Settings {
             .show(ui, |ui| Self::legal_text(ui, RUST_DEPENDENCY_LICENSES, 18));
     }
 
-    fn show_diagnostics_card(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
-        moduwu_design::heading_with_help(
+    fn show_diagnostics_section(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
+        Self::description(
             ui,
-            tr("Diagnostics"),
             tr("For comparisons, open the same RAW and run an export on each device, then copy the log. It includes platform, GPU/backend, RAW calibration, fingerprints, and timing information."),
         );
 
@@ -1466,6 +1599,19 @@ impl Settings {
                         .desired_width(f32::INFINITY),
                 );
             });
+    }
+
+    /// The line under a section's header that says what its settings apply
+    /// to; Settings may keep descriptions.
+    fn description(ui: &mut Ui, text: &str) {
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(text)
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            )
+            .wrap(),
+        );
     }
 
     fn legal_text(ui: &mut Ui, text: &str, rows: usize) {

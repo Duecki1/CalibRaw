@@ -604,27 +604,24 @@ impl CalibRawApp {
         if self.ui.active_tab != AppTab::Develop || !self.edit_history_shortcuts_allowed(ctx) {
             return;
         }
-        let redo_shift_z = egui::KeyboardShortcut::new(
-            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-            egui::Key::Z,
-        );
-        let redo_y = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
-        let undo = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
-
-        let redo = AppAction::RedoEdit;
-        let redo_requested = self.action_enabled(redo)
-            && (ctx.input_mut(|input| input.consume_shortcut(&redo_shift_z))
-                || ctx.input_mut(|input| input.consume_shortcut(&redo_y)));
-        if redo_requested {
-            self.dispatch_action(redo);
-            return;
-        }
-
-        let undo_action = AppAction::UndoEdit;
-        if self.action_enabled(undo_action) && ctx.input_mut(|input| input.consume_shortcut(&undo))
-        {
-            self.dispatch_action(undo_action);
-        }
+        use crate::app::ShortcutAction;
+        // Only an enabled action takes its press, as before shortcuts could
+        // be changed.
+        let actions: Vec<ShortcutAction> = [
+            (ShortcutAction::Redo, AppAction::RedoEdit),
+            (ShortcutAction::Undo, AppAction::UndoEdit),
+        ]
+        .into_iter()
+        .filter(|(_, action)| self.action_enabled(*action))
+        .map(|(shortcut, _)| shortcut)
+        .collect();
+        let shortcuts = &self.preferences.shortcuts;
+        let action = match ctx.input_mut(|input| shortcuts.take(input, &actions)) {
+            Some(ShortcutAction::Redo) => AppAction::RedoEdit,
+            Some(ShortcutAction::Undo) => AppAction::UndoEdit,
+            _ => return,
+        };
+        self.dispatch_action(action);
     }
 
     fn apply_edit_snapshot(

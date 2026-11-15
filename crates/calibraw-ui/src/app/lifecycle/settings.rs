@@ -58,6 +58,76 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    /// Applies `edit` to the keyboard shortcuts and saves them if it changed
+    /// them. Any shortcut waiting for its keys stops waiting.
+    fn edit_shortcuts<R>(&mut self, edit: impl FnOnce(&mut crate::app::Shortcuts) -> R) -> R {
+        self.ui.shortcut_recording = None;
+        let before = self.preferences.shortcuts.clone();
+        let result = edit(&mut self.preferences.shortcuts);
+        if self.preferences.shortcuts != before {
+            self.persist_performance_settings();
+        }
+        result
+    }
+
+    /// Binds the key press `binding` as `recording` asked. A shortcut that
+    /// answered the same press loses it, which the row of the recorded
+    /// shortcut then says.
+    pub(crate) fn record_shortcut(
+        &mut self,
+        recording: crate::app::ShortcutRecording,
+        binding: crate::app::KeyBinding,
+    ) {
+        let action = recording.action;
+        let result =
+            self.edit_shortcuts(|shortcuts| shortcuts.assign(action, recording.replace, binding));
+        self.ui.shortcut_feedback = match result {
+            Ok(taken) if taken.is_empty() => None,
+            Ok(taken) => Some((
+                action,
+                crate::i18n::tr_fmt(
+                    "{shortcut} no longer does: {actions}",
+                    &[
+                        ("shortcut", &binding.label()),
+                        (
+                            "actions",
+                            &taken
+                                .iter()
+                                .map(|taken| taken.label())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        ),
+                    ],
+                ),
+            )),
+            Err(refusal) => Some((action, refusal.message().to_owned())),
+        };
+    }
+
+    pub(crate) fn start_shortcut_recording(&mut self, recording: crate::app::ShortcutRecording) {
+        self.ui.shortcut_feedback = None;
+        self.ui.shortcut_recording = Some(recording);
+    }
+
+    pub(crate) fn cancel_shortcut_recording(&mut self) {
+        self.ui.shortcut_recording = None;
+    }
+
+    pub(crate) fn remove_shortcut(&mut self, action: crate::app::ShortcutAction, index: usize) {
+        self.ui.shortcut_feedback = None;
+        self.edit_shortcuts(|shortcuts| shortcuts.remove(action, index));
+    }
+
+    pub(crate) fn reset_shortcut(&mut self, action: crate::app::ShortcutAction) {
+        self.ui.shortcut_feedback = None;
+        self.edit_shortcuts(|shortcuts| shortcuts.reset(action));
+    }
+
+    pub(crate) fn reset_all_shortcuts(&mut self) {
+        self.ui.shortcut_feedback = None;
+        self.edit_shortcuts(crate::app::Shortcuts::reset_all);
+    }
+
     pub(crate) fn preview_backdrop_color(&self) -> egui::Color32 {
         self.preferences
             .preview_backdrop
@@ -381,6 +451,7 @@ impl CalibRawApp {
             show_develop_navigation_labels: self.preferences.show_develop_navigation_labels,
             close_other_cards: self.preferences.close_other_cards,
             develop_card_order: self.preferences.develop_card_order.clone(),
+            keyboard_shortcuts: self.preferences.shortcuts.clone(),
             export_name_template: self.preferences.export_name_template.clone(),
             export_format: self.export.format,
             export_watermark: self.export.watermark.saved(),

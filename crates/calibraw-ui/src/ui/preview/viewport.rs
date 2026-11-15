@@ -4,7 +4,7 @@
 //! the phases, so the app state each phase reads matches the frame order.
 
 use super::*;
-use crate::app::{KeptView, PreviewUvRect, PreviewViewportAction};
+use crate::app::{KeptView, PreviewUvRect, PreviewViewportAction, ShortcutAction, Shortcuts};
 use crate::i18n::tr;
 
 /// The preview area after the backdrop is painted.
@@ -519,13 +519,14 @@ impl Preview {
         viewport: &mut PreviewViewport,
         visible_uv: PreviewUvRect,
         original_hold_tracking: bool,
+        shortcuts: &Shortcuts,
     ) -> Vec<PreviewViewportAction> {
         let mut actions = Vec::new();
         if !viewport.touch_navigation && viewport.response.hovered() {
             Self::zoom_at_pointer(ui, viewport);
         }
         if !viewport.touch_navigation {
-            Self::zoom_with_keyboard(ui, viewport);
+            Self::zoom_with_keyboard(ui, viewport, shortcuts);
         }
         Self::pan(ui, viewport, original_hold_tracking);
         viewport.fit_gesture = !viewport.area_picker_canvas
@@ -579,11 +580,12 @@ impl Preview {
         }
     }
 
-    /// Ctrl/Cmd +/- step the zoom, Ctrl/Cmd 1 shows 100% (1:1) and Ctrl/Cmd 0
-    /// fits. Steps and 100% keep the pointer's pixel in place when the pointer
-    /// is over the preview, otherwise the preview's centre.
-    fn zoom_with_keyboard(ui: &Ui, viewport: &mut PreviewViewport) {
-        let Some(zoom) = ui.input_mut(keyboard_zoom) else {
+    /// The zoom shortcuts (Ctrl/Cmd +/-, 1 and 0 by default) step the zoom,
+    /// show 100% (1:1) and fit. Steps and 100% keep the pointer's pixel in
+    /// place when the pointer is over the preview, otherwise the preview's
+    /// centre.
+    fn zoom_with_keyboard(ui: &Ui, viewport: &mut PreviewViewport, shortcuts: &Shortcuts) {
+        let Some(zoom) = ui.input_mut(|input| keyboard_zoom(input, shortcuts)) else {
             return;
         };
         let anchor = ui
@@ -871,20 +873,24 @@ pub(super) enum KeyboardZoom {
     Native,
 }
 
-/// Consumes the preview zoom shortcuts: Ctrl/Cmd +/- (egui's interface-zoom
-/// shortcuts, which CalibRaw disables), Ctrl/Cmd 0 and Ctrl/Cmd 1.
-pub(super) fn keyboard_zoom(input: &mut egui::InputState) -> Option<KeyboardZoom> {
-    use egui::gui_zoom::kb_shortcuts::{ZOOM_IN, ZOOM_IN_SECONDARY, ZOOM_OUT};
+/// Consumes the preview zoom shortcuts. By default they are Ctrl/Cmd +/-
+/// (egui's interface-zoom shortcuts, which CalibRaw disables), Ctrl/Cmd 0
+/// and Ctrl/Cmd 1.
+pub(super) fn keyboard_zoom(
+    input: &mut egui::InputState,
+    shortcuts: &Shortcuts,
+) -> Option<KeyboardZoom> {
     const STEP: f32 = 1.25;
 
-    if input.consume_shortcut(&ZOOM_FIT_SHORTCUT) {
+    if shortcuts.consume(input, ShortcutAction::ZoomFit) {
         return Some(KeyboardZoom::Fit);
     }
-    if input.consume_shortcut(&ZOOM_NATIVE_SHORTCUT) {
+    if shortcuts.consume(input, ShortcutAction::ZoomNative) {
         return Some(KeyboardZoom::Native);
     }
-    let zoom_in = input.consume_shortcut(&ZOOM_IN) | input.consume_shortcut(&ZOOM_IN_SECONDARY);
-    match (zoom_in, input.consume_shortcut(&ZOOM_OUT)) {
+    // Zoom in and out pressed in one frame cancel out.
+    let zoom_in = shortcuts.consume(input, ShortcutAction::ZoomIn);
+    match (zoom_in, shortcuts.consume(input, ShortcutAction::ZoomOut)) {
         (true, false) => Some(KeyboardZoom::Step(STEP)),
         (false, true) => Some(KeyboardZoom::Step(STEP.recip())),
         _ => None,

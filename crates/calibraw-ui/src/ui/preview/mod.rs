@@ -22,12 +22,6 @@ pub(crate) const MAX_PREVIEW_ZOOM: f32 = 32.0;
 pub(crate) fn zoom_is_fit(zoom: f32) -> bool {
     (zoom - 1.0).abs() <= 0.0005
 }
-/// Fits the photo to the preview.
-pub(crate) const ZOOM_FIT_SHORTCUT: egui::KeyboardShortcut =
-    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Num0);
-/// 100%: one photo pixel per physical screen pixel.
-pub(crate) const ZOOM_NATIVE_SHORTCUT: egui::KeyboardShortcut =
-    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Num1);
 
 /// Borrow the active lens geometry; tools can clone the Arc before editing state.
 pub(super) fn loaded_lens_geometry(app: &CalibRawApp) -> Option<&Arc<LensGeometryMap>> {

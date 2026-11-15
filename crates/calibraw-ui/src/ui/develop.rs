@@ -1,4 +1,4 @@
-use crate::app::CalibRawApp;
+use crate::app::{CalibRawApp, ShortcutAction};
 use crate::i18n::{tr, tr_fmt};
 use crate::ui::library::photo_actions_menu;
 use crate::ui::library::{
@@ -38,9 +38,10 @@ fn open_adjacent_photo(app: &mut CalibRawApp, forward: bool, frame: &eframe::Fra
 }
 
 impl Develop {
-    /// ← and → open the previous and next photo; rating and flag keys
-    /// change the open photo, and with Shift also open the next one. J shows
-    /// or hides both clipping indicators, and B switches to the next preview
+    /// The previous and next photo keys (← and → by default) open those
+    /// photos; rating and flag keys change the open photo, and with Shift also
+    /// open the next one. The clipping key (J) shows or hides both clipping
+    /// indicators, and the backdrop key (B) switches to the next preview
     /// background.
     pub(crate) fn handle_shortcuts(
         context: &egui::Context,
@@ -51,7 +52,7 @@ impl Develop {
             return;
         }
 
-        if let Some(key) = take_review_key(context) {
+        if let Some(key) = take_review_key(context, &app.preferences.shortcuts) {
             if let Some(asset) = current_photo_asset(app) {
                 app.review_photos_from_keyboard(vec![asset], key.change);
                 if key.advance {
@@ -61,27 +62,31 @@ impl Develop {
             return;
         }
 
-        let clipping = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::J);
-        if context.input_mut(|input| input.consume_shortcut(&clipping)) {
-            let state = &mut app.preview.clipping;
-            let show = !(state.shadows || state.highlights);
-            state.shadows = show;
-            state.highlights = show;
-            return;
-        }
-
-        let backdrop = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::B);
-        if context.input_mut(|input| input.consume_shortcut(&backdrop)) {
-            app.set_preview_backdrop(app.preferences.preview_backdrop.next());
-            return;
-        }
-
-        let previous = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::ArrowLeft);
-        let next = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::ArrowRight);
-        if context.input_mut(|input| input.consume_shortcut(&previous)) {
-            open_adjacent_photo(app, false, frame);
-        } else if context.input_mut(|input| input.consume_shortcut(&next)) {
-            open_adjacent_photo(app, true, frame);
+        let shortcuts = &app.preferences.shortcuts;
+        let pressed = context.input_mut(|input| {
+            shortcuts.take(
+                input,
+                &[
+                    ShortcutAction::ToggleClipping,
+                    ShortcutAction::NextPreviewBackground,
+                    ShortcutAction::PreviousPhoto,
+                    ShortcutAction::NextPhoto,
+                ],
+            )
+        });
+        match pressed {
+            Some(ShortcutAction::ToggleClipping) => {
+                let state = &mut app.preview.clipping;
+                let show = !(state.shadows || state.highlights);
+                state.shadows = show;
+                state.highlights = show;
+            }
+            Some(ShortcutAction::NextPreviewBackground) => {
+                app.set_preview_backdrop(app.preferences.preview_backdrop.next());
+            }
+            Some(ShortcutAction::PreviousPhoto) => open_adjacent_photo(app, false, frame),
+            Some(ShortcutAction::NextPhoto) => open_adjacent_photo(app, true, frame),
+            _ => {}
         }
     }
 

@@ -483,16 +483,23 @@ impl TopBar {
                  Fit and 100%, or double-tap the photo to switch between them.")
                     .to_owned()
             } else {
-                let ctx = ui.ctx();
-                tr_fmt(
-                    "Preview zoom. 100% shows one photo pixel per screen pixel. Click the value \
-                     for Fit and 100%, or press {fit} and {native}. Double-click the photo to switch \
-                     between them.",
-                    &[
-                        ("fit", &ctx.format_shortcut(&crate::ui::preview::ZOOM_FIT_SHORTCUT)),
-                        ("native", &ctx.format_shortcut(&crate::ui::preview::ZOOM_NATIVE_SHORTCUT)),
-                    ],
-                )
+                let shortcuts = &app.preferences.shortcuts;
+                match (
+                    shortcuts.label(crate::app::ShortcutAction::ZoomFit),
+                    shortcuts.label(crate::app::ShortcutAction::ZoomNative),
+                ) {
+                    (Some(fit), Some(native)) => tr_fmt(
+                        "Preview zoom. 100% shows one photo pixel per screen pixel. Click the value \
+                         for Fit and 100%, or press {fit} and {native}. Double-click the photo to switch \
+                         between them.",
+                        &[("fit", &fit), ("native", &native)],
+                    ),
+                    _ => tr(
+                        "Preview zoom. 100% shows one photo pixel per screen pixel. Click the value \
+                         for Fit and 100%. Double-click the photo to switch between them.",
+                    )
+                    .to_owned(),
+                }
             };
             icon_response.union(readout_response).on_hover_text(help);
         });
@@ -622,17 +629,6 @@ impl TopBar {
             }
 
             app.show_background_tasks(ui);
-            if app.ui.active_tab == AppTab::Settings
-                && moduwu_design::ghost_icon_button(
-                    ui,
-                    egui_phosphor::regular::KEYBOARD,
-                    moduwu_design::toolbar_icon_size(),
-                    tr("Keyboard shortcuts"),
-                )
-                .clicked()
-            {
-                app.ui.shortcuts_dialog_open = true;
-            }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 // As wide as three tab buttons and their gaps, which the Library
                 // sidebar edge aligns with.
@@ -664,8 +660,21 @@ impl TopBar {
                     let search_width = if compact { 142.0 } else { 210.0 };
                     let focus_search = app.app_shortcuts_allowed(ui.ctx())
                         && ui.input(|input| {
-                            input.modifiers.command && input.key_pressed(egui::Key::F)
+                            app.preferences
+                                .shortcuts
+                                .pressed(input, crate::app::ShortcutAction::SearchFilenames)
                         });
+                    let search_help = match app
+                        .preferences
+                        .shortcuts
+                        .label(crate::app::ShortcutAction::SearchFilenames)
+                    {
+                        Some(shortcut) => tr_fmt(
+                            "Filter by filename. Separate names with commas and press Enter to select every match ({shortcut}).",
+                            &[("shortcut", &shortcut)],
+                        ),
+                        None => tr("Filter by filename. Separate names with commas and press Enter to select every match.").to_owned(),
+                    };
                     let search_response = ui
                         .add_sized(
                             [search_width, moduwu_design::CONTROL_HEIGHT],
@@ -677,9 +686,7 @@ impl TopBar {
                                 ),
                             ),
                         )
-                        .on_hover_text(
-                            tr("Filter by filename. Separate names with commas and press Enter to select every match (Ctrl/Cmd+F)."),
-                        );
+                        .on_hover_text(search_help);
                     if focus_search {
                         search_response.request_focus();
                     }

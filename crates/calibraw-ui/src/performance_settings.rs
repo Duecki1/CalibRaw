@@ -69,6 +69,9 @@ pub(crate) struct PerformanceSettings {
     pub close_other_cards: bool,
     /// The Develop cards of the sidebar layout, in the order shown.
     pub develop_card_order: crate::app::DevelopCardOrder,
+    /// Keyboard shortcuts changed from their defaults, by action.
+    #[serde(skip_serializing_if = "crate::app::Shortcuts::is_default")]
+    pub keyboard_shortcuts: crate::app::Shortcuts,
     pub export_name_template: String,
     #[serde(with = "export_format_serde")]
     pub export_format: ExportFormat,
@@ -332,6 +335,7 @@ impl Default for PerformanceSettings {
             show_develop_navigation_labels: true,
             close_other_cards: true,
             develop_card_order: crate::app::DevelopCardOrder::default(),
+            keyboard_shortcuts: crate::app::Shortcuts::default(),
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
             export_format: ExportFormat::Jpeg,
             export_watermark: SavedWatermark::default(),
