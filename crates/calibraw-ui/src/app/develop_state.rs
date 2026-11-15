@@ -476,14 +476,15 @@ pub(crate) struct DevelopState {
     /// The table of `look_lut` once read; `None` while it is read or when the
     /// LUT library does not hold it (`luts.rs`).
     pub(crate) look_lut_table: Option<Arc<crate::luts::CubeLut>>,
-    /// The look fitted to the camera's own JPEG (`camera_match.rs`).
-    pub(crate) camera_look: Option<crate::pipeline::camera_look::CameraLook>,
+    /// Camera match: off, or on with the look fitted to this photo's own
+    /// embedded preview or waiting for it (`camera_match.rs`).
+    pub(crate) camera_match: crate::pipeline::camera_look::CameraMatch,
     /// The open photo's embedded preview, kept when its file is not readable
     /// later (an Android import), so a Camera match by hand can compare
     /// with it.
     pub(crate) camera_preview: Option<Arc<crate::pipeline::RawThumbnail>>,
-    /// A Camera match by hand waits for the next frame to start.
-    pub(crate) camera_match_requested: bool,
+    /// A Camera match waiting for the next frame to start.
+    pub(crate) camera_match_requested: Option<crate::app::camera_match::CameraMatchRequest>,
     /// The LUT the previews render, kept like `target_exposure`.
     pub(crate) target_look: Option<crate::luts::ResolvedLook>,
     /// Another camera profile's colour the shown previews render instead of

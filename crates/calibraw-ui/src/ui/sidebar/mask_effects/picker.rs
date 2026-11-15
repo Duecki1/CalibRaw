@@ -64,7 +64,7 @@ impl PhotoTiles {
     pub(in crate::ui::sidebar) fn for_photo(app: &CalibRawApp) -> Self {
         Self {
             film_negative: Self::film_negative(&app.develop.exposure.film),
-            camera_match: if app.develop.camera_look.is_some() {
+            camera_match: if !app.develop.camera_match.is_off() {
                 PhotoTile::Added
             } else if app.camera_match_offered() {
                 PhotoTile::Offered

@@ -4,7 +4,7 @@ use super::{
 };
 use crate::i18n::tr;
 use crate::luts::LookLut;
-use crate::pipeline::camera_look::CameraLook;
+use crate::pipeline::camera_look::{CameraLook, CameraMatch};
 use crate::pipeline::{
     ExposureParams, GeometryTransform, ManualLensCorrection, MaskGeometry, MaskStack,
     ProcessingStage, RemoveEditState,
@@ -119,20 +119,20 @@ impl MaskSelection {
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct EditLooks<'a> {
     lut: Option<&'a LookLut>,
-    camera: Option<&'a CameraLook>,
+    camera: &'a CameraMatch,
 }
 
 impl<'a> EditLooks<'a> {
-    /// An edit without a LUT or camera look.
+    /// An edit without a LUT or Camera match.
     pub(super) const NONE: EditLooks<'static> = EditLooks {
         lut: None,
-        camera: None,
+        camera: &CameraMatch::Off,
     };
 
     pub(super) fn of(develop: &'a super::DevelopState) -> Self {
         Self {
             lut: develop.look_lut.as_ref(),
-            camera: develop.camera_look.as_ref(),
+            camera: &develop.camera_match,
         }
     }
 }
@@ -145,7 +145,7 @@ struct EditSnapshot {
     mask_selection: MaskSelection,
     lens: LensEditState,
     look_lut: Option<LookLut>,
-    camera_look: Option<CameraLook>,
+    camera_match: CameraMatch,
     remove: Arc<RemoveEditState>,
 }
 
@@ -168,7 +168,7 @@ impl EditSnapshot {
             masks: contents,
             lens: LensEditState::capture(lens),
             look_lut: looks.lut.cloned(),
-            camera_look: looks.camera.cloned(),
+            camera_match: looks.camera.clone(),
             remove: Arc::new(RemoveEditState::default()),
         }
     }
@@ -197,7 +197,7 @@ impl EditSnapshot {
             masks: contents,
             lens: LensEditState::capture(lens),
             look_lut: looks.lut.cloned(),
-            camera_look: looks.camera.cloned(),
+            camera_match: looks.camera.clone(),
             remove: Arc::clone(&self.remove),
         }
     }
@@ -205,7 +205,7 @@ impl EditSnapshot {
     fn looks(&self) -> EditLooks<'_> {
         EditLooks {
             lut: self.look_lut.as_ref(),
-            camera: self.camera_look.as_ref(),
+            camera: &self.camera_match,
         }
     }
 
@@ -278,6 +278,21 @@ impl EditHistory {
         self.change_observed = false;
         self.mask_change_observed = false;
         self.restoring_snapshot = false;
+    }
+
+    /// Gives every state of the history that waits for a Camera match fit
+    /// the fit's outcome (`CameraMatch::resolved`): the fit belongs to the
+    /// photo rather than to one step, so undo and redo never bring the wait
+    /// back.
+    pub(super) fn resolve_pending_camera_match(&mut self, fitted: Option<&CameraLook>) {
+        let snapshots = self
+            .undo
+            .iter_mut()
+            .chain(self.redo.iter_mut())
+            .chain(std::iter::once(&mut self.current));
+        for snapshot in snapshots {
+            snapshot.camera_match = std::mem::take(&mut snapshot.camera_match).resolved(fitted);
+        }
     }
 
     fn note_change(&mut self) {
@@ -620,7 +635,7 @@ impl CalibRawApp {
     ) {
         let lens_changed = !snapshot.lens.matches(&self.develop.lens_correction);
         let look_lut_changed = snapshot.look_lut != self.develop.look_lut;
-        let camera_look_changed = snapshot.camera_look != self.develop.camera_look;
+        let camera_match_changed = snapshot.camera_match != self.develop.camera_match;
         let geometry_changed = snapshot.geometry != self.develop.geometry;
         let ai_denoise_changed =
             snapshot.exposure.ai_denoise_enabled != self.develop.exposure.ai_denoise_enabled;
@@ -658,8 +673,8 @@ impl CalibRawApp {
         if look_lut_changed {
             self.install_look_lut(snapshot.look_lut.clone());
         }
-        if camera_look_changed {
-            self.install_camera_look(snapshot.camera_look.clone());
+        if camera_match_changed {
+            self.install_camera_match(snapshot.camera_match.clone());
         }
         if geometry_changed {
             self.develop.geometry = snapshot.geometry;

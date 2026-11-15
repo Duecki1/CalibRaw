@@ -25,14 +25,13 @@ pub(super) fn reset_asset_adjustments(
 ) -> Result<bool, String> {
     match &asset.locator {
         LibraryLocator::Desktop(path) => {
-            if app.develop.current_path.as_deref() == Some(path.as_path()) {
-                crate::sidecar::reset_desktop_adjustments_with_editing_time(
-                    path,
-                    app.raw_editing_time_ms(),
-                )
-            } else {
-                crate::sidecar::reset_desktop_adjustments(path)
-            }
+            let editing_time_ms = (app.develop.current_path.as_deref() == Some(path.as_path()))
+                .then(|| app.raw_editing_time_ms());
+            crate::sidecar::reset_desktop_adjustments(
+                path,
+                editing_time_ms,
+                app.camera_match_enabled(),
+            )
         }
         LibraryLocator::Android { uri } => {
             app.reset_android_library_adjustments(uri, &asset.display_name)?;

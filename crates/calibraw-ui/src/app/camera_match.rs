@@ -1,19 +1,31 @@
 //! Camera match: the look fitted so the photo renders as its camera's own
 //! JPEG preview does (`calibraw_core::pipeline::camera_look`).
 //!
-//! A photo that opens without a sidecar while the setting is on is fitted on
+//! A look is fitted to one photo's own embedded preview and never moves to
+//! another photo ([`CameraMatch`]). The setting is on unless the user turned
+//! it off. A photo that opens without a sidecar while it is on is fitted on
 //! the document-load worker, before the new-photo preset applies and before
-//! the photo's start settles, so the look is part of how the photo starts
-//! and Reset keeps it. Changing the camera profile fits the look again. The
-//! Camera match tile fits it by hand as a foreground job.
+//! the photo's start settles, so the look is part of how the photo starts.
 //!
-//! An automatic fit the guard rejects leaves no look and a diagnostics line;
-//! a fit started by hand reports its failure in the error dialog.
+//! A reset, and a paste with the Camera match category, set only whether
+//! Camera match is on and its amount: a photo they turn on without a look of
+//! its own waits for a fit ([`CameraMatch::Pending`]), which runs as a
+//! foreground job while the photo is open and as it opens otherwise. The fit
+//! fills in the pending match everywhere it is recorded, the open photo and
+//! its edit history, as the photo's own fact rather than a new step.
+//! Changing the camera profile fits the look again. The Camera match tile
+//! fits it by hand.
+//!
+//! A fit the guard rejects, or a photo without a usable embedded preview,
+//! leaves a pending match off with a diagnostics line; a fit started by hand
+//! reports it in the error dialog. A fit that cannot run is reported either
+//! way, and a pending match then stays pending.
 
 use super::*;
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::camera_look::{
-    fit_camera_look, CameraLook, CameraLookFit, CameraLookFitError, FitStage, FitVerdict,
+    fit_camera_look, CameraLook, CameraLookFit, CameraLookFitError, CameraMatch, FitStage,
+    FitVerdict,
 };
 use crate::pipeline::{load_raw_embedded_thumbnail, RawThumbnail};
 
@@ -116,18 +128,37 @@ fn fit_summary(fit: &CameraLookFit) -> String {
     )
 }
 
-/// A fit started by hand: its look, or why there is none.
-type ManualFitResult = Result<CameraLook, String>;
+/// Why a fit runs on the open photo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CameraMatchRequest {
+    /// The Camera match tile: every reason it leaves no look is reported.
+    ByHand,
+    /// A match a reset or a paste turned on ([`CameraMatch::Pending`]): a
+    /// photo without a look to match turns it off without a report, as a
+    /// first open would leave it.
+    Pending,
+}
 
-/// Renders on a graph of its own and fits, for a fit started by hand.
-fn run_manual_fit(
+/// How a fit on the open photo ended.
+pub(in crate::app) enum OpenPhotoFit {
+    Fitted(CameraLook),
+    /// The photo has no look to match (no usable embedded preview, a preview
+    /// of another picture, or a fit the guard rejects), with the message a
+    /// fit by hand shows.
+    NotMatched(String),
+    /// The fit could not run.
+    Failed(String),
+}
+
+/// Renders on a graph of its own and fits, for a fit on the open photo.
+fn run_open_photo_fit(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     full_raw: &LoadedRaw,
     exposure: &ExposureParams,
     preview: &RawThumbnail,
     template: Option<&RawGpuProgramTemplate>,
-) -> ManualFitResult {
+) -> OpenPhotoFit {
     let reference = exposure.source_reference();
     if full_raw.uses_highlight_model(&reference) {
         full_raw.prime_highlight_model(&reference);
@@ -150,28 +181,37 @@ fn run_manual_fit(
         options = options.programs(template);
     }
     let params = GpuParams::new(&reference, &MaskStack::default(), raw);
-    let pipeline = RawGpuPipeline::new(device, queue, raw, &params, options)
-        .map_err(|error| prepare_failed_message(&format!("{error:#}")))?;
-    let fit = fit_on_pipeline(device, queue, &pipeline, raw, exposure, preview)
-        .map_err(|error| fit_error_message(&error))?;
+    let pipeline = match RawGpuPipeline::new(device, queue, raw, &params, options) {
+        Ok(pipeline) => pipeline,
+        Err(error) => return OpenPhotoFit::Failed(prepare_failed_message(&format!("{error:#}"))),
+    };
+    let fit = match fit_on_pipeline(device, queue, &pipeline, raw, exposure, preview) {
+        Ok(fit) => fit,
+        Err(error) => return fit_error_outcome(&error),
+    };
     calibraw_core::diagnostics::record(format!(
-        "Camera match started by hand: {}",
+        "Camera match of the open photo: {}",
         fit_summary(&fit)
     ));
     match (fit.verdict, fit.look) {
-        (FitVerdict::Rejected, _) | (_, None) => Err(not_matched_message()),
-        (_, Some(look)) => Ok(look),
+        (FitVerdict::Rejected, _) | (_, None) => OpenPhotoFit::NotMatched(not_matched_message()),
+        (_, Some(look)) => OpenPhotoFit::Fitted(look),
     }
 }
 
-fn fit_error_message(error: &CameraLookFitError) -> String {
+fn fit_error_outcome(error: &CameraLookFitError) -> OpenPhotoFit {
     match error {
-        CameraLookFitError::PreviewTooSmall { .. } => no_preview_message(),
-        CameraLookFitError::Alignment { .. } | CameraLookFitError::TooFewSamples { .. } => {
-            tr("The photo's embedded preview does not show the same picture as the RAW.").to_owned()
+        CameraLookFitError::PreviewTooSmall { .. } => {
+            OpenPhotoFit::NotMatched(no_preview_message())
         }
-        CameraLookFitError::Render(error) => prepare_failed_message(error),
-        CameraLookFitError::Solve => not_matched_message(),
+        CameraLookFitError::Alignment { .. } | CameraLookFitError::TooFewSamples { .. } => {
+            OpenPhotoFit::NotMatched(
+                tr("The photo's embedded preview does not show the same picture as the RAW.")
+                    .to_owned(),
+            )
+        }
+        CameraLookFitError::Render(error) => OpenPhotoFit::Failed(prepare_failed_message(error)),
+        CameraLookFitError::Solve => OpenPhotoFit::NotMatched(not_matched_message()),
     }
 }
 
@@ -191,6 +231,28 @@ fn prepare_failed_message(error: &dyn std::fmt::Display) -> String {
 }
 
 impl CalibRawApp {
+    /// Whether photos are matched to their camera's look: on unless the user
+    /// turned it off, also before the setup question is answered.
+    pub(crate) fn camera_match_enabled(&self) -> bool {
+        self.preferences.camera_match_new_photos != Some(false)
+    }
+
+    /// Gives the open photo the Camera match a first open gives it, for a
+    /// reset of its adjustments: with Camera match on, at the default
+    /// amount, its own look or a fit when it has none; with it off, or for a
+    /// photo it does not apply to, none. Part of the reset's edit.
+    pub(in crate::app) fn reset_camera_match(&mut self) {
+        let next = if self.camera_match_enabled() && self.camera_match_offered() {
+            self.develop
+                .camera_match
+                .clone()
+                .with_amount(CameraLook::DEFAULT_AMOUNT)
+        } else {
+            CameraMatch::Off
+        };
+        self.install_camera_match(next);
+    }
+
     /// Whether the open photo can be matched to its camera, so the Camera
     /// match tile is offered.
     pub(crate) fn camera_match_offered(&self) -> bool {
@@ -200,56 +262,91 @@ impl CalibRawApp {
             .is_some_and(|raw| camera_match_applies(raw, &self.develop.exposure))
     }
 
-    /// Makes `look` the open photo's camera look and renders it.
-    pub(in crate::app) fn install_camera_look(&mut self, look: Option<CameraLook>) {
-        self.develop.camera_look = look;
+    /// Makes `state` the open photo's Camera match and renders it; a pending
+    /// one is fitted next.
+    pub(in crate::app) fn install_camera_match(&mut self, state: CameraMatch) {
+        let pending = state.is_pending();
+        self.develop.camera_match = state;
         self.sync_preview_look();
+        if pending && !self.foreground_operation_is(ForegroundOperationKind::CameraMatch) {
+            self.request_camera_match_for(CameraMatchRequest::Pending);
+        }
     }
 
-    fn set_camera_look(&mut self, look: Option<CameraLook>) {
-        if self.develop.camera_look == look {
+    fn set_camera_match(&mut self, state: CameraMatch) {
+        if self.develop.camera_match == state {
             return;
         }
-        self.install_camera_look(look);
+        self.install_camera_match(state);
         self.note_edit_changed();
     }
 
-    /// Sets the amount of the camera look, 0–1.
-    pub(crate) fn set_camera_look_amount(&mut self, amount: f32) {
-        if let Some(look) = &self.develop.camera_look {
-            let mut look = look.clone();
-            look.set_amount(amount);
-            self.set_camera_look(Some(look));
+    /// Sets the amount of Camera match, 0–1, while it is on.
+    pub(crate) fn set_camera_match_amount(&mut self, amount: f32) {
+        if !self.develop.camera_match.is_off() {
+            let state = self.develop.camera_match.clone().with_amount(amount);
+            self.set_camera_match(state);
         }
     }
 
-    /// Removes the camera look as a change of the edit.
-    pub(crate) fn remove_camera_look(&mut self) {
-        self.set_camera_look(None);
+    /// Turns Camera match off as a change of the edit.
+    pub(crate) fn remove_camera_match(&mut self) {
+        self.set_camera_match(CameraMatch::Off);
+    }
+
+    /// Fills in the pending match of the open photo and of its edit history
+    /// with the outcome of its fit (`CameraMatch::resolved`) and saves it.
+    /// Not a step of its own: the fit is a fact of the photo.
+    fn resolve_pending_camera_match(&mut self, fitted: Option<&CameraLook>) {
+        self.develop.camera_match = std::mem::take(&mut self.develop.camera_match).resolved(fitted);
+        self.persistence
+            .history
+            .resolve_pending_camera_match(fitted);
+        self.sync_preview_look();
+        self.queue_explicit_sidecar_save();
     }
 
     /// Asks for a fit by hand, which the next frame starts.
     pub(crate) fn request_camera_match(&mut self) {
-        self.develop.camera_match_requested = true;
+        self.request_camera_match_for(CameraMatchRequest::ByHand);
+    }
+
+    fn request_camera_match_for(&mut self, request: CameraMatchRequest) {
+        self.develop.camera_match_requested = Some(request);
         self.egui_ctx.request_repaint();
     }
 
-    /// Starts the fit [`Self::request_camera_match`] asked for.
+    /// Starts the fit [`Self::request_camera_match`] or a pending match asked
+    /// for.
     pub(in crate::app) fn start_requested_camera_match(&mut self, frame: &eframe::Frame) {
-        if !std::mem::take(&mut self.develop.camera_match_requested) {
-            return;
-        }
-        if self.foreground_operation_active() || self.lens_correction_busy() {
-            self.ui.notice =
-                Some(tr("Finish or cancel the current editing operation first.").to_owned());
-            return;
-        }
-        let (Some(full_raw), true) = (
-            self.develop.loaded_raw.as_ref().map(Arc::clone),
-            self.camera_match_offered(),
-        ) else {
+        let Some(request) = self.develop.camera_match_requested.take() else {
             return;
         };
+        if self.foreground_operation_active() || self.lens_correction_busy() {
+            match request {
+                CameraMatchRequest::ByHand => {
+                    self.ui.notice = Some(
+                        tr("Finish or cancel the current editing operation first.").to_owned(),
+                    );
+                }
+                // Started once the other operation has ended.
+                CameraMatchRequest::Pending => self.develop.camera_match_requested = Some(request),
+            }
+            return;
+        }
+        if request == CameraMatchRequest::Pending && !self.develop.camera_match.is_pending() {
+            return;
+        }
+        let Some(full_raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {
+            return;
+        };
+        if !self.camera_match_offered() {
+            // A rendered photo or a negative has no look to match.
+            if request == CameraMatchRequest::Pending {
+                self.resolve_pending_camera_match(None);
+            }
+            return;
+        }
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
                 ErrorKind::CameraMatch,
@@ -276,7 +373,7 @@ impl CalibRawApp {
                 let preview =
                     kept_preview.or_else(|| path.as_deref().and_then(read_camera_preview));
                 let result = match preview {
-                    Some(preview) => run_manual_fit(
+                    Some(preview) => run_open_photo_fit(
                         &device,
                         &queue,
                         &full_raw,
@@ -284,7 +381,7 @@ impl CalibRawApp {
                         &preview,
                         template.as_ref(),
                     ),
-                    None => Err(no_preview_message()),
+                    None => OpenPhotoFit::NotMatched(no_preview_message()),
                 };
                 let _ = sender.send(result);
                 repaint.request_repaint();
@@ -300,7 +397,7 @@ impl CalibRawApp {
                     )),
                     cancelling: false,
                     receiver: ForegroundOperationReceiver::CameraMatch(receiver),
-                    context: ForegroundOperationContext::CameraMatch,
+                    context: ForegroundOperationContext::CameraMatch(request),
                 });
             }
             Err(error) => self.report_error(
@@ -324,10 +421,14 @@ impl CalibRawApp {
             self.foreground_operation = Some(operation);
             return;
         };
+        let ForegroundOperationContext::CameraMatch(request) = operation.context else {
+            self.foreground_operation = Some(operation);
+            return;
+        };
         let (events, disconnected) = drain_worker_events(Some(receiver), |_| true);
-        let result: ManualFitResult = match events.into_iter().next() {
+        let result = match events.into_iter().next() {
             Some(result) => result,
-            None if disconnected => Err(tr_fmt(
+            None if disconnected => OpenPhotoFit::Failed(tr_fmt(
                 "The {action} worker stopped unexpectedly.",
                 &[("action", &tr(CAMERA_MATCH_CARD_TITLE))],
             )),
@@ -339,9 +440,25 @@ impl CalibRawApp {
         if !operation.accepts_result(self.persistence.document_generation) {
             return;
         }
-        match result {
-            Ok(look) => self.set_camera_look(Some(look)),
-            Err(error) => self.report_error(ErrorKind::CameraMatch, error),
+        match (result, request) {
+            (OpenPhotoFit::Fitted(look), CameraMatchRequest::ByHand) => {
+                self.set_camera_match(CameraMatch::Fitted(look));
+            }
+            (OpenPhotoFit::Fitted(look), CameraMatchRequest::Pending) => {
+                self.resolve_pending_camera_match(Some(&look));
+            }
+            // As a first open leaves such a photo.
+            (OpenPhotoFit::NotMatched(reason), CameraMatchRequest::Pending) => {
+                calibraw_core::diagnostics::record(format!(
+                    "Camera match turned on without a look to match: {reason}"
+                ));
+                self.resolve_pending_camera_match(None);
+            }
+            // A pending match stays pending, so the photo is fitted when it
+            // next opens.
+            (OpenPhotoFit::NotMatched(error) | OpenPhotoFit::Failed(error), _) => {
+                self.report_error(ErrorKind::CameraMatch, error);
+            }
         }
         self.egui_ctx.request_repaint();
     }

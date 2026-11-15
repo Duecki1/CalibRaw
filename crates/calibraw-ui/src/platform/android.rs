@@ -450,16 +450,15 @@ impl Platform for AndroidPlatform {
         raw_uri: &str,
         display_name: &str,
         editing_time_ms: Option<u64>,
+        camera_match: bool,
     ) -> Result<(), String> {
-        match editing_time_ms {
-            Some(editing_time_ms) => calibraw_ffi::reset_android_adjustments_with_editing_time(
-                &self.app,
-                raw_uri,
-                display_name,
-                editing_time_ms,
-            ),
-            None => calibraw_ffi::reset_android_adjustments(&self.app, raw_uri, display_name),
-        }
+        calibraw_ffi::reset_android_adjustments(
+            &self.app,
+            raw_uri,
+            display_name,
+            editing_time_ms,
+            camera_match,
+        )
     }
 
     fn materialize_raw_sidecar(

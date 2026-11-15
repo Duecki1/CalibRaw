@@ -450,7 +450,7 @@ impl CalibRawApp {
                     geometry: self.develop.geometry,
                     masks: Arc::new(self.masks.stack.clone()),
                     look_lut: self.develop.look_lut.clone(),
-                    camera_look: self.develop.camera_look.clone(),
+                    camera_match: self.develop.camera_match.clone(),
                     lens: crate::sidecar::LensEditState {
                         enabled: self.develop.lens_correction.enabled,
                         ..crate::sidecar::LensEditState::default()
@@ -467,7 +467,7 @@ impl CalibRawApp {
                     })
                     .transpose()
                     .map(|creative| {
-                        crate::luts::ResolvedLook::of_edit(creative, edits.camera_look.as_ref())
+                        crate::luts::ResolvedLook::of_edit(creative, edits.camera_match.look())
                     });
                 (
                     edits.exposure,
@@ -983,8 +983,8 @@ impl CalibRawApp {
     }
 
     /// Restores the adjustments a first open of this photo starts with,
-    /// including its camera- and ISO-dependent noise reduction, and removes
-    /// its LUT.
+    /// including its camera- and ISO-dependent noise reduction and its
+    /// Camera match (`reset_camera_match`), and removes its LUT.
     pub(crate) fn reset_develop_adjustments(&mut self) {
         let mut exposure = self.new_image_exposure();
         if let Some(raw) = self.develop.original_raw.as_deref() {
@@ -992,6 +992,7 @@ impl CalibRawApp {
         }
         self.select_look_lut(None);
         self.develop.exposure = exposure;
+        self.reset_camera_match();
         self.develop_ui.point_color = Default::default();
         self.develop_ui.cancel_area_picker();
         self.mark_pipeline_dirty();

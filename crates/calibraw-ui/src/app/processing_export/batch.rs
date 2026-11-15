@@ -183,11 +183,13 @@ fn prepare_desktop_library_export_item(
                 (loaded.edits, requested, use_adaptive)
             }
             // No sidecar, or one without adjustments: export like a first import,
-            // with the camera look such a sidecar may keep.
+            // with the Camera match such a sidecar may keep.
             Ok(loaded) => {
                 let mut edits = crate::sidecar::default_edit_state();
                 edits.exposure = default_exposure;
-                edits.camera_look = loaded.and_then(|loaded| loaded.edits.camera_look);
+                edits.camera_match = loaded
+                    .map(|loaded| loaded.edits.camera_match)
+                    .unwrap_or_default();
                 let requested = last_camera_profile
                     .and_then(|relative| camera_profile_folder.map(|root| root.join(relative)));
                 (edits, requested, true)
@@ -246,8 +248,8 @@ fn prepare_desktop_library_export_item(
     let look = crate::luts::ResolvedLook::of_edit(
         creative,
         edits
-            .camera_look
-            .as_ref()
+            .camera_match
+            .look()
             .filter(|_| edits.exposure.card_on(CardSwitch::CameraMatch)),
     );
 

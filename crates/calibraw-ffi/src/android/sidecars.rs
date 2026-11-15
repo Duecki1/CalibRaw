@@ -194,28 +194,16 @@ fn remove_unused_companion(
     }
 }
 
+/// Resets the edits of a media-library RAW to those a first open gives it
+/// (`reset_edit_state`; `camera_match`: whether Camera match is on). The
+/// editing time is `editing_time_override_ms` when given, else the
+/// sidecar's.
 pub fn reset_android_adjustments(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
-) -> Result<(), String> {
-    reset_android_adjustments_impl(app, raw_uri, display_name, None)
-}
-
-pub fn reset_android_adjustments_with_editing_time(
-    app: &AndroidApp,
-    raw_uri: &str,
-    display_name: &str,
-    editing_time_ms: u64,
-) -> Result<(), String> {
-    reset_android_adjustments_impl(app, raw_uri, display_name, Some(editing_time_ms))
-}
-
-fn reset_android_adjustments_impl(
-    app: &AndroidApp,
-    raw_uri: &str,
-    display_name: &str,
     editing_time_override_ms: Option<u64>,
+    camera_match: bool,
 ) -> Result<(), String> {
     let metadata = load_android_sidecar_metadata(app, raw_uri, display_name)
         .map_err(|error| error.to_string())?
@@ -224,11 +212,13 @@ fn reset_android_adjustments_impl(
     let editing_time_ms = editing_time_override_ms.unwrap_or(metadata.editing_time_ms);
     // An unreadable edit state has no camera look to keep.
     let previous = load_android(app, raw_uri, display_name).ok().flatten();
-    let edits =
-        calibraw_core::sidecar::reset_edit_state(previous.as_ref().map(|loaded| &loaded.edits));
+    let edits = calibraw_core::sidecar::reset_edit_state(
+        previous.as_ref().map(|loaded| &loaded.edits),
+        camera_match,
+    );
     if review == calibraw_core::sidecar::PhotoReview::default()
         && editing_time_ms == 0
-        && edits.camera_look.is_none()
+        && edits.camera_match.is_off()
     {
         return remove_raw_sidecar(app, raw_uri, display_name);
     }

@@ -51,6 +51,7 @@ pub(crate) fn show_selection_controls(
             selection.raw_processing,
             selection.camera_profile,
             selection.lut,
+            selection.camera_match,
             selection.masks,
             selection.ai_masks,
             selection.geometry,
@@ -169,6 +170,16 @@ fn show_additional_selection(
                     .clicked()
             {
                 selection.raw_processing = !selection.raw_processing;
+            }
+            // A camera look is fitted to one photo, so presets leave it out.
+            if purpose == SelectionPurpose::Copy
+                && moduwu_design::chip(ui, tr("Camera match"), selection.camera_match)
+                    .on_hover_text(tr(
+                        "Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview.",
+                    ))
+                    .clicked()
+            {
+                selection.camera_match = !selection.camera_match;
             }
             for (included, label, help) in [
                 (

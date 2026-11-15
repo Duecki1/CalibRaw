@@ -1943,18 +1943,17 @@ impl RawGpuPipeline {
         bind_group: &wgpu::BindGroup,
     ) {
         let effect_program = self.effect_program(pass);
-        // Each effect set's program has its own cost; 0 is the program with
-        // every effect.
-        let variant = match &effect_program {
-            Some(_) => 1 + u64::from(self.uploaded_effects.load(Ordering::Acquire)),
-            None => 0,
-        };
+        // Each program has its own cost: 1 + the effects it holds, 0 for the
+        // program with every effect.
+        let variant = effect_program
+            .as_ref()
+            .map_or(0, |(_, held)| 1 + u64::from(held.bits()));
         self.dispatch_pass(
             encoder,
             label,
             effect_program
                 .as_ref()
-                .unwrap_or_else(|| pass.pipeline.get()),
+                .map_or_else(|| pass.pipeline.get(), |(program, _)| program),
             bind_group,
             pass.workgroups,
             pass.pipeline.work,
@@ -2016,10 +2015,10 @@ impl RawGpuPipeline {
     }
 
     /// The program of `pass` that holds only the effects of the parameters
-    /// last uploaded, for a pass that dispatches effects; `None` to encode
-    /// the pass's own program, which holds every effect (`effect_programs`).
-    /// Both compute the same image.
-    fn effect_program(&self, pass: &Pass) -> Option<wgpu::ComputePipeline> {
+    /// last uploaded, for a pass that dispatches effects, with the effects it
+    /// holds; `None` to encode the pass's own program, which holds every
+    /// effect (`effect_programs`). Both compute the same image.
+    fn effect_program(&self, pass: &Pass) -> Option<(wgpu::ComputePipeline, EffectSet)> {
         let effects = pass.pipeline.effects.as_ref()?;
         let set = EffectSet::from_bits(self.uploaded_effects.load(Ordering::Acquire));
         effects.program(set, self.effect_readiness)

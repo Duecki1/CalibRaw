@@ -965,8 +965,8 @@ impl GpuParams {
 
     /// Whether the scene effects pass (`apply_scene_effects_node`) changes
     /// the image: global Saturation, Vibrance, Texture or Clarity, an
-    /// adjustment slot with one of them, or Neon. Mirrors what its shader
-    /// skips; without any it copies its input.
+    /// adjustment slot with one of them, or an effect that runs in it (Neon).
+    /// Mirrors what its shader skips; without any it copies its input.
     pub(super) fn needs_scene_effects_pass(&self) -> bool {
         let [global_texture, global_clarity, ..] = self.effects.presence;
         let set = |value: f32| value != 0.0;
@@ -975,7 +975,7 @@ impl GpuParams {
             || set(global_texture)
             || set(global_clarity)
             || self.mask_slots().iter().any(|mask| {
-                if mask.applies(MaskEffect::Neon) {
+                if mask.runs_in(EffectPass::SceneEffects) {
                     return true;
                 }
                 let [saturation, texture, clarity, _dehaze] = mask.adjust_2;

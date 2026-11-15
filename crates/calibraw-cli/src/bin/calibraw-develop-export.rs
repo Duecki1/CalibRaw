@@ -211,7 +211,7 @@ fn saved_edits(path: &Path, raw: &mut LoadedRaw) -> Result<Edit> {
     Ok(Edit {
         exposure: edits.exposure,
         geometry: edits.geometry.sanitized(),
-        look: ResolvedLook::of_edit(None, edits.camera_look.as_ref()),
+        look: ResolvedLook::of_edit(None, edits.camera_match.look()),
         masks: Arc::unwrap_or_clone(edits.masks),
         remove: Arc::unwrap_or_clone(edits.remove),
     })

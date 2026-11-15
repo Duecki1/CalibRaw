@@ -37,9 +37,8 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             app.preferences.subject_mask_quality_chosen = true;
             app.preferences.people_mask_quality_chosen = true;
             app.preferences.scene_depth_quality_chosen = true;
-            // Leaving the question as shown answers it.
-            app.preferences.camera_match_new_photos =
-                Some(app.preferences.camera_match_new_photos == Some(true));
+            // Leaving the question as shown (on unless turned off) answers it.
+            app.preferences.camera_match_new_photos = Some(app.camera_match_enabled());
             app.ui.onboarding_step = None;
             if !app.persist_performance_settings() {
                 app.report_error(
@@ -233,6 +232,13 @@ fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     .changed();
     changed |= moduwu_design::toggle_with_help(
         ui,
+        &mut settings.camera_match,
+        tr("Camera match"),
+        tr("Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview."),
+    )
+    .changed();
+    changed |= moduwu_design::toggle_with_help(
+        ui,
         &mut settings.masks,
         tr("Manual masks"),
         tr("Brush, linear, radial, and fullscreen mask components with their local edits."),
@@ -258,7 +264,7 @@ fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 }
 
 fn show_camera_match(ui: &mut egui::Ui, app: &mut CalibRawApp) {
-    let mut enabled = app.preferences.camera_match_new_photos == Some(true);
+    let mut enabled = app.camera_match_enabled();
     if moduwu_design::toggle_with_help(
         ui,
         &mut enabled,

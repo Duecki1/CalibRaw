@@ -465,7 +465,9 @@ impl Platform for IosPlatform {
         uri: &str,
         name: &str,
         editing_time_ms: Option<u64>,
+        _camera_match: bool,
     ) -> Result<(), String> {
+        // The iOS library reset starts every photo without a camera look.
         self.state
             .library
             .reset_adjustments(uri, name, editing_time_ms)

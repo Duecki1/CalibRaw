@@ -173,8 +173,33 @@ picture, so it is not part of a speed change.
 
 ## 5. Checks
 
-Filled in as the steps are built.
+The byte-for-byte comparison of each step before and after was not
+recorded while steps 1 to 4 were built. What has been checked since:
+
+- 2026-11-15, desktop (Linux, Vulkan): every render-parity case and format
+  fixture passes against the goldens without blessing, after steps 1 to 4
+  and after the tier change in section 6.
+- Contract checks (`layout_contract_tests.rs`) keep the shortcuts in step with
+  the shaders:
+  - `inputs_left_out_of_a_part_are_not_read_by_it`: what `output_parts.rs`
+    leaves out of a part's comparison is read by no entry point of that
+    part (lanes inside a member, Blacks, are kept by hand);
+  - `every_effect_def_is_dispatched`: every `#ifdef EFFECT_<NAME>` is in a
+    set some per-set program compiles (step 2);
+  - `banded_entry_points_offset_their_invocations`: banded passes reach
+    their invocation and workgroup only through `dispatch_id` and
+    `dispatch_group`.
 
 ## 6. Bugs and wrong maths found on the way
 
-Filled in as they are found.
+- **Lens Blur rendered twice per drag of an unrelated control** (fixed
+  2026-11-15). A change of tier restarted the output stage at the first part
+  that reads it, so dragging a View or Creative control with Lens Blur on
+  rendered Lens Blur in Draft on the first frame and in Final on release, and
+  reallocated its textures both times. Each part now keeps the tier it was
+  rendered in (`output_parts.rs`), and the tier-sized resources are prepared
+  only by renders that run their readers (`prepare_tiered_effects`).
+- **Shortcuts kept in step by hand** (fixed 2026-11-15): the scene effects
+  pass named Neon instead of the effects of its pass, and the first Blur
+  stage's per-set program listed its focus blurs by hand. Both follow the
+  effect registry now.

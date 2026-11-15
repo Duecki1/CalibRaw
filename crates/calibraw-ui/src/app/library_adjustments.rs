@@ -71,7 +71,7 @@ impl EditTransfer<'_> {
             }
         }
         let exposure = &mut destination.exposure;
-        match photo {
+        let settlement = match photo {
             TransferDestination::Open(raw) => {
                 exposure.white_balance = raw.resolve_white_balance(exposure.white_balance);
                 exposure.settle_film(raw, destination.geometry)
@@ -82,7 +82,21 @@ impl EditTransfer<'_> {
             }
             // Resolved when the photo is opened.
             TransferDestination::Closed { raster: false } => FilmSettlement::Unchanged,
+        };
+        // A camera look matches a camera RAW developed as a positive; a
+        // rendered photo or a film negative takes no pasted one.
+        let camera_match_applies = match photo {
+            TransferDestination::Open(raw) => {
+                crate::app::camera_match::camera_match_applies(raw, &destination.exposure)
+            }
+            TransferDestination::Closed { raster } => {
+                !raster && destination.exposure.film.is_positive()
+            }
+        };
+        if self.selection().camera_match && !camera_match_applies {
+            destination.camera_match = crate::pipeline::camera_look::CameraMatch::Off;
         }
+        settlement
     }
 }
 
@@ -169,6 +183,7 @@ impl CalibRawApp {
         let camera_profile_category_changed = selection.camera_profile || replacing;
         let look_lut_changed =
             (selection.lut || replacing) && merged.look_lut != self.develop.look_lut;
+        let camera_match_changed = merged.camera_match != self.develop.camera_match;
         let pipeline_adjustments_changed =
             adjustments_changed || geometry_changed || camera_profile_category_changed;
         let masks_changed = selection.includes_masks() || replacing;
@@ -212,6 +227,10 @@ impl CalibRawApp {
         }
         if look_lut_changed {
             self.install_look_lut(merged.look_lut.clone());
+            self.note_edit_changed();
+        }
+        if camera_match_changed {
+            self.install_camera_match(merged.camera_match.clone());
             self.note_edit_changed();
         }
         if pipeline_adjustments_changed {
@@ -342,11 +361,27 @@ impl CalibRawApp {
             self.finish_mask_geometry_interaction();
             self.commit_edit_history_now();
             if persisted.is_none() && !self.can_undo_edit() {
-                return Ok(crate::sidecar::default_edit_state());
+                // Untouched, with the Camera match it opened with.
+                return Ok(SidecarEditState {
+                    camera_match: self.develop.camera_match.clone(),
+                    ..crate::sidecar::default_edit_state()
+                });
             }
             return Ok(self.capture_sidecar_edit_state());
         }
-        Ok(persisted.unwrap_or_else(crate::sidecar::default_edit_state))
+        Ok(persisted.unwrap_or_else(|| self.first_open_edit_state(asset)))
+    }
+
+    /// The edits of a photo without a sidecar, as its first open would give
+    /// them: the defaults, with Camera match pending at the default amount
+    /// while the setting is on and the photo is not a rendered one, so a copy
+    /// carries it and a paste or preset keeps it.
+    fn first_open_edit_state(&self, asset: &crate::ui::library::LibraryAsset) -> SidecarEditState {
+        let mut edits = crate::sidecar::default_edit_state();
+        if self.camera_match_enabled() && !library_asset_is_raster(asset) {
+            edits.camera_match = crate::pipeline::camera_look::CameraMatch::PENDING_DEFAULT;
+        }
+        edits
     }
 
     fn save_library_asset_edit_state(

@@ -111,8 +111,8 @@ impl SavedEditsSettings {
             Some(ResolvedLook::creative(lut, look.amount))
         });
         let camera = edits
-            .camera_look
-            .as_ref()
+            .camera_match
+            .look()
             .filter(|_| edits.exposure.card_on(CardSwitch::CameraMatch));
         ResolvedLook::of_edit(creative, camera)
     }

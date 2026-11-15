@@ -27,7 +27,7 @@ use crate::pipeline::{EffectPass, MaskEffect};
 use anyhow::{Context, Result};
 use naga_oil::compose::ShaderDefValue;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 
 /// A set of effects, one bit per [`MaskEffect::shader_id`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -122,9 +122,13 @@ pub(super) fn effect_def(effect: MaskEffect) -> String {
 /// - the creative pass: the per-slot effects the registry dispatches
 ///   (effect_wgsl.rs), the effects it calls after them, and Neon, whose scene
 ///   light shares Glow's def;
-/// - the first Blur stage: the focus blurs (`mask_focus_blur` and
-///   `apply_mask_focus_blurs` in blur.wgsl). Blur itself runs in every stage.
-fn dispatched_effects(entry: &str) -> Option<EffectSet> {
+/// - the first Blur stage: the effects of the Blur pass but Blur itself, the
+///   focus blurs (`mask_focus_blur` and `apply_mask_focus_blurs` in
+///   blur.wgsl). Blur runs in every stage and has no `#ifdef`.
+///
+/// `every_effect_def_is_dispatched` (layout_contract_tests.rs) checks that
+/// every `EFFECT_<NAME>` the shaders test is in one of these sets.
+pub(super) fn dispatched_effects(entry: &str) -> Option<EffectSet> {
     match entry {
         "apply_creative_effects" => Some(EffectSet::from_effects(
             MaskEffect::ALL.into_iter().filter(|effect| {
@@ -133,13 +137,11 @@ fn dispatched_effects(entry: &str) -> Option<EffectSet> {
                     || *effect == MaskEffect::Neon
             }),
         )),
-        "diffuse_mask_blur_0" => Some(EffectSet::from_effects([
-            MaskEffect::Defocus,
-            MaskEffect::LensBlur,
-            MaskEffect::MotionBlur,
-            MaskEffect::RadialBlur,
-            MaskEffect::TiltShift,
-        ])),
+        "diffuse_mask_blur_0" => {
+            Some(EffectSet::from_effects(MaskEffect::ALL.into_iter().filter(
+                |effect| effect.runs_in(EffectPass::Blur) && *effect != MaskEffect::Blur,
+            )))
+        }
         _ => None,
     }
 }
@@ -252,15 +254,17 @@ impl EffectPrograms {
         })))
     }
 
-    /// The program for an edit whose active effects are `set`, or `None` to
-    /// render with the program that holds every effect: when the edit uses
-    /// every effect the program dispatches, when the set's program failed to
-    /// compile, and with [`Readiness::WhenReady`] until it is compiled.
+    /// The program for an edit whose active effects are `set`, with the set
+    /// of the effects it holds (`set` among those this program dispatches),
+    /// or `None` to render with the program that holds every effect: when
+    /// the edit uses every effect the program dispatches, when the set's
+    /// program failed to compile, and with [`Readiness::WhenReady`] until it
+    /// is compiled.
     pub(super) fn program(
         &self,
         set: EffectSet,
         readiness: Readiness,
-    ) -> Option<wgpu::ComputePipeline> {
+    ) -> Option<(wgpu::ComputePipeline, EffectSet)> {
         let variants = &self.0;
         let key = set.intersection(variants.dispatched);
         if key == variants.dispatched {
@@ -275,20 +279,18 @@ impl EffectPrograms {
             let new = !programs.contains_key(&key);
             (Arc::clone(programs.entry(key).or_default()), new)
         };
-        match readiness {
-            // Waits for a worker that is compiling the same set.
+        let program = match readiness {
+            // Waits for the worker if it is compiling the same set.
             Readiness::Wait => cell.get_or_init(|| variants.compile(key)).clone(),
             Readiness::WhenReady => {
                 if new {
                     let variants = Arc::clone(variants);
                     let worker = Arc::clone(&cell);
-                    let spawned = std::thread::Builder::new()
-                        .name("calibraw-effect-program".to_owned())
-                        .spawn(move || {
-                            worker.get_or_init(|| variants.compile(key));
-                            variants.persist_cache();
-                        });
-                    if let Err(error) = spawned {
+                    let queued = queue_compile(Box::new(move || {
+                        worker.get_or_init(|| variants.compile(key));
+                        variants.persist_cache();
+                    }));
+                    if let Err(error) = queued {
                         // The set renders with every effect, as before.
                         log::error!("could not start an effect program compile: {error}");
                         cell.get_or_init(|| None);
@@ -296,6 +298,61 @@ impl EffectPrograms {
                 }
                 cell.get().cloned().flatten()
             }
+        };
+        program.map(|program| (program, key))
+    }
+}
+
+/// A preview's compile of an effect set's program ([`Readiness::WhenReady`]).
+type CompileJob = Box<dyn FnOnce() + Send>;
+
+/// Compiles waiting to run, oldest first.
+static COMPILE_JOBS: Mutex<Vec<CompileJob>> = Mutex::new(Vec::new());
+static COMPILE_QUEUED: Condvar = Condvar::new();
+
+/// Queues `job` for the thread that compiles previews' effect programs,
+/// started on first use. One thread runs them one at a time, newest first:
+/// a burst of edits does not compile many programs side by side (each a
+/// driver compile, slow on phones), and the set the edit shows now comes
+/// before sets it has since left.
+fn queue_compile(job: CompileJob) -> Result<(), String> {
+    static WORKER: OnceLock<Result<(), String>> = OnceLock::new();
+    WORKER
+        .get_or_init(|| {
+            std::thread::Builder::new()
+                .name("calibraw-effect-programs".to_owned())
+                .spawn(run_compile_jobs)
+                .map(drop)
+                .map_err(|error| error.to_string())
+        })
+        .clone()?;
+    // Jobs are added and taken whole, so a panic elsewhere leaves the list
+    // usable.
+    COMPILE_JOBS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(job);
+    COMPILE_QUEUED.notify_one();
+    Ok(())
+}
+
+fn run_compile_jobs() {
+    loop {
+        let job = {
+            let mut jobs = COMPILE_JOBS.lock().unwrap_or_else(PoisonError::into_inner);
+            loop {
+                if let Some(job) = jobs.pop() {
+                    break job;
+                }
+                jobs = COMPILE_QUEUED
+                    .wait(jobs)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+        };
+        // A panic leaves that set's cell empty, so a render that waits for
+        // it compiles it again; the thread goes on with the next job.
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).is_err() {
+            log::error!("an effect program compile panicked");
         }
     }
 }

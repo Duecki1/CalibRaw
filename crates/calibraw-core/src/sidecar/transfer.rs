@@ -1,6 +1,7 @@
 //! Moving selected edit categories from one edit state to another. Adjustment
 //! paste and presets both go through [`transfer_edits`].
 use super::{default_edit_state, EditState};
+use crate::pipeline::camera_look::CameraMatch;
 use crate::pipeline::{
     AdjustmentGroup, AdjustmentGroupSet, MaskGeometry, MaskKind, MaskStack, SubjectRefinement,
 };
@@ -25,6 +26,9 @@ pub struct AdjustmentCopySettings {
     pub lens_correction: bool,
     #[serde(default = "default_true")]
     pub lut: bool,
+    /// Camera match: whether it is on, and its amount.
+    #[serde(default = "default_true")]
+    pub camera_match: bool,
 }
 
 const fn default_true() -> bool {
@@ -41,6 +45,7 @@ impl Default for AdjustmentCopySettings {
             ai_masks: true,
             lens_correction: false,
             lut: true,
+            camera_match: true,
         }
     }
 }
@@ -73,6 +78,15 @@ pub struct EditSelection {
     pub ai_masks: bool,
     pub lens_correction: bool,
     pub lut: bool,
+    /// Camera match: on at the source's amount, with the destination's own
+    /// look (`CameraMatch::with_amount`), or off as the source is. Copy and
+    /// paste only; presets leave it out, so preset files never name it.
+    #[serde(skip_serializing_if = "is_false")]
+    pub camera_match: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl EditSelection {
@@ -106,6 +120,7 @@ impl From<AdjustmentCopySettings> for EditSelection {
             ai_masks: settings.ai_masks,
             lens_correction: settings.lens_correction,
             lut: settings.lut,
+            camera_match: settings.camera_match,
         }
     }
 }
@@ -195,8 +210,9 @@ fn clear_copied_depth_images(masks: &mut MaskStack) {
 
 /// Applies the categories in `selection` from `source` to `destination`.
 ///
-/// Inpainting, the camera look, the destination's scene depth and its card
-/// switches always stay with the destination image. Copied masks that depend on image content are flagged
+/// Inpainting, the destination's scene depth, its card switches and its
+/// fitted camera look always stay with the destination image; Camera match
+/// moves only as on or off and its amount. Copied masks that depend on image content are flagged
 /// for regeneration through `ai_masks_need_update`.
 pub fn transfer_edits(
     destination: &mut EditState,
@@ -206,11 +222,11 @@ pub fn transfer_edits(
 ) {
     if mode == AdjustmentPasteMode::Replace {
         let remove = Arc::clone(&destination.remove);
-        let camera_look = destination.camera_look.take();
+        let camera_match = std::mem::take(&mut destination.camera_match);
         let scene_depth = destination.masks.scene_depth.clone();
         *destination = default_edit_state();
         destination.remove = remove;
-        destination.camera_look = camera_look;
+        destination.camera_match = camera_match;
         let masks = Arc::make_mut(&mut destination.masks);
         masks.scene_depth = scene_depth;
     }
@@ -250,6 +266,12 @@ pub fn transfer_edits(
     }
     if selection.lut {
         destination.look_lut = source.look_lut.clone();
+    }
+    if selection.camera_match {
+        destination.camera_match = match source.camera_match.component() {
+            Some(amount) => std::mem::take(&mut destination.camera_match).with_amount(amount),
+            None => CameraMatch::Off,
+        };
     }
     if selection.includes_masks() {
         let previous_ai_masks_need_update = destination.ai_masks_need_update;

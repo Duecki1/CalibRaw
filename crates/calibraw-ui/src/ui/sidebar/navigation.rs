@@ -662,24 +662,25 @@ impl Sidebar {
         pick.and_then(mask_effects::EffectPick::effect)
     }
 
-    /// The Camera match card, while the photo has a camera look.
+    /// The Camera match card, while Camera match is on (fitted, or waiting
+    /// for its fit).
     fn show_camera_match_card(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
-        let Some(amount) = app.develop.camera_look.as_ref().map(|look| look.amount()) else {
+        let Some(amount) = app.develop.camera_match.component() else {
             return;
         };
         let foldable = layout == ScreenLayout::Horizontal;
         let on = app.develop.exposure.card_on(CardSwitch::CameraMatch);
         match Self::show_camera_match(ui, amount, on, foldable) {
-            Some(CameraMatchAction::Amount(amount)) => app.set_camera_look_amount(amount),
+            Some(CameraMatchAction::Amount(amount)) => app.set_camera_match_amount(amount),
             // A look fitted later starts on.
             Some(CameraMatchAction::Remove) => {
                 app.set_card_on(CardSwitch::CameraMatch, true);
-                app.remove_camera_look();
+                app.remove_camera_match();
             }
             Some(CameraMatchAction::Toggle) => app.set_card_on(CardSwitch::CameraMatch, !on),
             Some(CameraMatchAction::Reset) => {
                 app.set_card_on(CardSwitch::CameraMatch, true);
-                app.set_camera_look_amount(
+                app.set_camera_match_amount(
                     crate::pipeline::camera_look::CameraLook::DEFAULT_AMOUNT,
                 );
             }

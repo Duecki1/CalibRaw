@@ -207,8 +207,8 @@ impl CalibRawApp {
         Ok(ResolvedLook::of_edit(
             creative,
             self.develop
-                .camera_look
-                .as_ref()
+                .camera_match
+                .look()
                 .filter(|_| exposure.card_on(CardSwitch::CameraMatch)),
         ))
     }
@@ -387,8 +387,8 @@ impl CalibRawApp {
         };
         let camera = self
             .develop
-            .camera_look
-            .as_ref()
+            .camera_match
+            .look()
             .filter(|_| exposure.card_on(CardSwitch::CameraMatch));
         ResolvedLook::of_edit(creative, camera)
     }

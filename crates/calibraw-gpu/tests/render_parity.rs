@@ -342,7 +342,7 @@ fn render(
         None => raw,
     };
     // As the app renders an edit's camera look; the cases name no LUT.
-    let look = ResolvedLook::of_edit(None, edits.camera_look.as_ref());
+    let look = ResolvedLook::of_edit(None, edits.camera_match.look());
     let receiver = spawn_tiled_export(
         ExportFormat::Png,
         TiledExportJob {

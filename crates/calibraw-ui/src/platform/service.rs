@@ -502,11 +502,15 @@ pub(crate) trait Platform: Send + Sync {
             "media-library sidecars",
         ))))
     }
+    /// Resets a media-library photo's edits to those a first open gives it;
+    /// `camera_match`: whether Camera match is on, which keeps its camera
+    /// look (`reset_edit_state`).
     fn reset_adjustments(
         &self,
         _raw_uri: &str,
         _display_name: &str,
         _editing_time_ms: Option<u64>,
+        _camera_match: bool,
     ) -> Result<(), String> {
         Err(unavailable("media-library sidecars"))
     }

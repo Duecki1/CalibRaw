@@ -751,6 +751,13 @@ impl Settings {
         .changed();
         changed |= moduwu_design::toggle_with_help(
             ui,
+            &mut settings.camera_match,
+            tr("Camera match"),
+            tr("Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview. Enabled by default."),
+        )
+        .changed();
+        changed |= moduwu_design::toggle_with_help(
+            ui,
             &mut settings.masks,
             tr("Normal masks"),
             tr("Brush, radial-gradient, and linear-gradient mask components, including local adjustments. Mixed groups are split so disabling this never copies their manual components."),
@@ -813,7 +820,7 @@ impl Settings {
                 choice.and_then(|path| path.file_name().map(std::path::PathBuf::from)),
             );
         }
-        let mut camera_match = app.preferences.camera_match_new_photos == Some(true);
+        let mut camera_match = app.camera_match_enabled();
         if moduwu_design::toggle_with_help(
             ui,
             &mut camera_match,

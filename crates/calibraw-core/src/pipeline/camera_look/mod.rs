@@ -18,6 +18,7 @@
 //! returns sRGB-encoded values in `[0, 1]`.
 
 mod bake;
+mod camera_match;
 mod delta_e;
 mod fit;
 mod image;
@@ -25,6 +26,7 @@ mod solve;
 
 use bake::BakeCache;
 pub use bake::{BakeCheck, BAKED_LUT_SIZE};
+pub use camera_match::CameraMatch;
 pub use delta_e::{ciede2000, linear_srgb_to_lab};
 pub use fit::{
     fit_camera_look, CameraLookFit, CameraLookFitError, FitAlignment, FitStage, FitVerdict,

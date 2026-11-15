@@ -481,7 +481,7 @@ fn same_depth_result(a: Option<&SceneDepth>, b: Option<&SceneDepth>) -> bool {
 /// lane of `basic_tone`: the scene tone pass takes it as an unused argument
 /// (`apply_local_basic_tone_values_with_low_strength` in tonemap.wgsl), and
 /// the view node applies it as a display toe.
-fn scene_tone_before_view(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
+pub(super) fn scene_tone_before_view(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
     let [highlights, shadows, whites, _blacks] = scene_tone.basic_tone;
     SceneToneUniforms {
         basic_tone: [highlights, shadows, whites, 0.0],
@@ -508,7 +508,7 @@ fn scene_tone_before_view(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
 /// `scene_tone` without what only the Creative part and the view node read:
 /// also the display tone curve, which the Glow's core reads in the creative
 /// pass (`styled_glow_core_ceiling`) and nothing reads before it.
-fn scene_tone_before_creative(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
+pub(super) fn scene_tone_before_creative(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
     SceneToneUniforms {
         sigmoid_curve: [0.0; 4],
         sigmoid_power: [0.0; 4],
@@ -520,7 +520,7 @@ fn scene_tone_before_creative(scene_tone: &SceneToneUniforms) -> SceneToneUnifor
 
 /// `effects` without what only the view node reads: Vignette's frame in the
 /// output and its fits (film_finish.wgsl).
-fn effects_before_view(effects: &EffectsUniforms) -> EffectsUniforms {
+pub(super) fn effects_before_view(effects: &EffectsUniforms) -> EffectsUniforms {
     EffectsUniforms {
         vignette_frame: [0.0; 4],
         vignette_projection: [[0.0; 4]; 3],
@@ -534,7 +534,7 @@ fn effects_before_view(effects: &EffectsUniforms) -> EffectsUniforms {
 
 /// `effects` without what only the Creative part and the view node read:
 /// also the Glow's diffusion radius and which of its pyramids are ready.
-fn effects_before_creative(effects: &EffectsUniforms) -> EffectsUniforms {
+pub(super) fn effects_before_creative(effects: &EffectsUniforms) -> EffectsUniforms {
     EffectsUniforms {
         glow_diffusion: [0.0; 4],
         ..effects_before_view(effects)
@@ -544,7 +544,7 @@ fn effects_before_creative(effects: &EffectsUniforms) -> EffectsUniforms {
 /// A mask slot without what only the view node reads: an adjustment's colour
 /// mixer, grading, hue rotation, brightness, Blacks and point colours. Its
 /// mask layer (`point_color_meta`) stays.
-fn slot_before_view(slot: &MaskData) -> MaskData {
+pub(super) fn slot_before_view(slot: &MaskData) -> MaskData {
     // Blacks is the second lane of an adjustment's `adjust_1`
     // (`apply_local_display_tone` in view_transform.wgsl); an effect slot
     // keeps its own lanes there.
