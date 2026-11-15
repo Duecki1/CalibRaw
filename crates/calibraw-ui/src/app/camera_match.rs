@@ -150,8 +150,9 @@ pub(in crate::app) enum OpenPhotoFit {
     Failed(String),
 }
 
-/// Renders on a graph of its own and fits, for a fit on the open photo.
-fn run_open_photo_fit(
+/// Renders on a graph of its own and fits: for a fit on the open photo, and
+/// for a batch export, which has no graph of its own until it exports.
+pub(in crate::app) fn run_open_photo_fit(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     full_raw: &LoadedRaw,
@@ -185,17 +186,49 @@ fn run_open_photo_fit(
         Ok(pipeline) => pipeline,
         Err(error) => return OpenPhotoFit::Failed(prepare_failed_message(&format!("{error:#}"))),
     };
-    let fit = match fit_on_pipeline(device, queue, &pipeline, raw, exposure, preview) {
+    fit_outcome(fit_on_pipeline(
+        device, queue, &pipeline, raw, exposure, preview,
+    ))
+}
+
+/// How a fit ended, as a fit started by hand reports it.
+pub(in crate::app) fn fit_outcome(
+    result: Result<CameraLookFit, CameraLookFitError>,
+) -> OpenPhotoFit {
+    let fit = match result {
         Ok(fit) => fit,
         Err(error) => return fit_error_outcome(&error),
     };
-    calibraw_core::diagnostics::record(format!(
-        "Camera match of the open photo: {}",
-        fit_summary(&fit)
-    ));
+    calibraw_core::diagnostics::record(format!("Camera match: {}", fit_summary(&fit)));
     match (fit.verdict, fit.look) {
         (FitVerdict::Rejected, _) | (_, None) => OpenPhotoFit::NotMatched(not_matched_message()),
         (_, Some(look)) => OpenPhotoFit::Fitted(look),
+    }
+}
+
+/// The Camera match a pending `state` renders with outside the editor (a
+/// batch export, an edited thumbnail), from `fit`, the outcome of fitting the
+/// photo there; `fit` is `None` for a photo that cannot be fitted (no
+/// embedded preview, not a camera RAW developed as a positive). As opening
+/// the photo would, a photo without a look to match renders without one; a
+/// fit that could not run is an error, so nothing renders without the look.
+/// The result is not saved: the photo keeps its pending match, which its next
+/// open fits and saves. Other states are returned as they are.
+pub(in crate::app) fn settle_pending_camera_match(
+    state: CameraMatch,
+    fit: Option<OpenPhotoFit>,
+    label: &str,
+) -> Result<CameraMatch, String> {
+    match fit {
+        Some(OpenPhotoFit::Fitted(look)) => Ok(state.resolved(Some(&look))),
+        Some(OpenPhotoFit::Failed(error)) => Err(error),
+        Some(OpenPhotoFit::NotMatched(reason)) => {
+            calibraw_core::diagnostics::record(format!(
+                "Camera match for {label} left no look: {reason}"
+            ));
+            Ok(state.resolved(None))
+        }
+        None => Ok(state.resolved(None)),
     }
 }
 
