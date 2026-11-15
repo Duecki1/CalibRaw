@@ -729,6 +729,15 @@ pub(super) fn processing_work_format(quality: ProcessingQuality) -> wgpu::Textur
     }
 }
 
+/// Whether Bayer demosaicing stores its RCD reference once per pixel in
+/// highlight work A (pass4.wgsl `RCD_STORED_REFERENCE`) instead of having the
+/// finish passes recompute it at every tap. Only a 32-bit work format holds
+/// the reference exactly; there highlight work A is free once RCD has run, so
+/// storing it costs no memory. Previews recompute it.
+pub(super) fn stores_rcd_reference(work_format: wgpu::TextureFormat) -> bool {
+    work_format == wgpu::TextureFormat::Rgba32Float
+}
+
 pub(super) fn work_shader_source(
     source: &str,
     format: wgpu::TextureFormat,

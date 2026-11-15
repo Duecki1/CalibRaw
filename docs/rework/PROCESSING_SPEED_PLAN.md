@@ -203,3 +203,86 @@ recorded while steps 1 to 4 were built. What has been checked since:
   pass named Neon instead of the effects of its pass, and the first Blur
   stage's per-set program listed its focus blurs by hand. Both follow the
   effect registry now.
+
+## 7. Per-set programs never narrowed (fixed 2026-11-15)
+
+Step 2's programs held every effect all along: `ShaderManager::register`
+gave each composable module every effect def, and naga_oil adds an imported
+module's defs to the importing shader's, so every set compiled every
+`#ifdef EFFECT_*`. Modules are now registered without defs.
+
+Adreno 830 (S25 Ultra), export creative pass, 24 tiles of 1940 px:
+
+| Creative effects | All-effects program | Set's program |
+| --- | --- | --- |
+| Glow (DSC08062) | 3766 ms | 156 ms |
+| Glow (UWU05122) | 6873 ms | 224 ms |
+| Fog / Relight | 5183 / 5683 ms | 632 / 466 ms |
+| Glow + Relight / Glow + Fog | 10.9 / 12.2 s | 1.5 / 1.9 s |
+| Fog + Relight | 7.4 s | 20.5 s |
+
+Two or more per-slot creative effects (`EffectPass::Creative`, in the slot
+loop) compile far worse on Adreno, also with a `switch`, so such sets keep
+the all-effects program (`has_several_creative_slot_effects`). DSC08062
+export on the S25: 29.8 s → 21.4 s, first tile 17.9 s → 12.2 s without a
+program cache. Desktop parity and a DSC08062 export byte-identical; the S25
+export of DSC08062 is byte-identical too.
+
+Open, measured on the S25 (export of DSC08062 after the fix: tone prepass
+2.7 s, Lens Blur map 1.5 s, Glow map 4.8 s, final tiles 5.2 s):
+
+- **Several per-slot creative effects** (Fog + Relight: 7.4 s): run each
+  run of same-effect slots as its own pass. Exact in exports (32-bit work
+  textures); previews would need 32-bit intermediates or accept f16
+  rounding. Needs a decision.
+- **Demosaic finish**: done, see 7.1. Previews still recompute the
+  reference (2/3 of a zoomed preview's RAW stage); storing it there needs
+  a 32-bit texture of its own (+16 B/px), which would shrink budget-bound
+  phone and tablet previews and raise what a desktop full-resolution
+  preview needs. Needs a decision.
+- **The RAW stage runs once per prepass on a computer**: a desktop export
+  of DSC08062 demosaics every tile four times (tone, Lens Blur map, Glow
+  map, final tiles: 70 stages each), the S25 once (24 stages in the later
+  passes). Worth finding out why before the other prepass work.
+- **Lens Blur in the Glow map prepass** (4.2 s): the map adds only the
+  tile core, so the composite (1.9 s, almost all the focus-slab gather) and
+  gathers could run over the core alone: about 1.2 s. Dispatch bands offset
+  rows only; needs an x origin.
+- **Lens Blur twice per export** (Glow prepass and final tiles, 4.1 s
+  each): keep the pre-creative image of each padded tile in RAM (~720 MB
+  for this photo on a phone). Saves time after "Preparing", not during.
+- `accumulate_defocus_map` (1.1 s) computes each pixel's surfaces once per
+  map bin (3x); see 4.1.
+- Fitted previews on the S25 (703 px) are dominated by `gather_defocus`
+  (125 ms) and were not slow; opening is slow at larger previews (tablet,
+  desktop) where the creative pass and Lens Blur scale with pixels.
+
+### 7.1 Stored RCD reference (2026-11-15)
+
+The Bayer finish passes read the RCD reference (`rcd_reference_at`, about
+35 texture reads) at every tap: once at the pixel, 4 more for the
+false-colour guard or 173 for frequency chroma, up to 48 for sensor
+denoise, and once in the dual prepare pass. Full-quality graphs now store it once per pixel
+(pass4.wgsl `bayer_rcd_reference`, override `RCD_STORED_REFERENCE`) in
+highlight work A. That texture is 32-bit there and free once RCD has run,
+so the stored value is exact and costs no memory. Dual demosaicing's
+prepared image moves from highlight work A to tex1, which nothing reads
+after the reference pass. Previews (f16) keep computing it, so their
+output, memory and preview sizes are unchanged (`stores_rcd_reference`).
+
+Exports are byte-identical: DSC08062 on the desktop with the Reference,
+Frequency-domain chroma and Dual modes, with and without luminance denoise;
+DSC08062 and UWU05122 on the S25. Every render-parity output is
+pixel-identical to the one before the change.
+
+| DSC08062 export | Before | After |
+| --- | --- | --- |
+| Desktop: demosaic finish per pass | 137 ms | 12 ms + 14 ms reference |
+| Desktop: first tile (warm) | 3.06 s | 2.10 s |
+| S25: demosaic finish (tone prepass) | 1180 ms | 115 ms + 90–100 ms reference |
+| S25: tone prepass | 2.5–2.7 s | 1.6–1.7 s |
+| S25: first tile (program cache) | 11.8–11.9 s | 10.1–10.5 s |
+
+UWU05122 on the S25: tone prepass 2.5 → 1.6 s. Runs on the S25 slow down
+by up to 50% in every stage when they follow another export (heat), so
+compare runs made in alternating order.

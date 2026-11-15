@@ -13,6 +13,13 @@
 //! an active slot its code leaves the colour as it is, so a set's program and
 //! the program with every effect compute the same image.
 //!
+//! A set with two or more of the creative pass's per-slot effects
+//! (`EffectPass::Creative`, called in its loop over the slots) renders with
+//! the program that holds every effect: Adreno compiles such a set's loop far
+//! worse than the program with every effect (measured on an Adreno 830:
+//! Fog and Relight 20.5 s against 7.4 s per export, while Glow alone went
+//! from 6.9 s to 0.22 s and Glow with Relight from 10.9 s to 1.5 s).
+//!
 //! [`EffectPrograms`] keeps a program per set for as long as the programs it
 //! belongs to live: pipelines built from one template share them. A preview
 //! renders with the program that holds every effect until a set's program is
@@ -79,6 +86,16 @@ impl EffectSet {
 
     const fn intersection(self, other: Self) -> Self {
         Self(self.0 & other.0)
+    }
+
+    /// Whether the set holds two or more per-slot creative effects, which
+    /// render with the program that holds every effect (module docs).
+    fn has_several_creative_slot_effects(self) -> bool {
+        MaskEffect::ALL
+            .into_iter()
+            .filter(|effect| effect.runs_in(EffectPass::Creative) && self.contains(*effect))
+            .nth(1)
+            .is_some()
     }
 
     /// The shader defs of the set: [`effect_def`] of each effect, and the
@@ -257,7 +274,8 @@ impl EffectPrograms {
     /// The program for an edit whose active effects are `set`, with the set
     /// of the effects it holds (`set` among those this program dispatches),
     /// or `None` to render with the program that holds every effect: when
-    /// the edit uses every effect the program dispatches, when the set's
+    /// the edit uses every effect the program dispatches or several
+    /// per-slot creative effects (module docs), when the set's
     /// program failed to compile, and with [`Readiness::WhenReady`] until it
     /// is compiled.
     pub(super) fn program(
@@ -267,7 +285,7 @@ impl EffectPrograms {
     ) -> Option<(wgpu::ComputePipeline, EffectSet)> {
         let variants = &self.0;
         let key = set.intersection(variants.dispatched);
-        if key == variants.dispatched {
+        if key == variants.dispatched || key.has_several_creative_slot_effects() {
             return None;
         }
         let (cell, new) = {

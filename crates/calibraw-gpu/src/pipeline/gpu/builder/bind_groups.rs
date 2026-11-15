@@ -10,6 +10,7 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg1: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg2: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg3: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_rcd_reference: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_dual_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_dual_detail: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg4: wgpu::BindGroup,
@@ -51,6 +52,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     surfaces: &PipelineSurfaces,
     dispatch_bands: &DispatchBands,
     cfa_kind: CfaKind,
+    stores_rcd_reference: bool,
 ) -> BindGroups {
     let PipelineBuffers {
         camera_uniforms_buffer,
@@ -177,11 +179,42 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         ],
     );
 
+    // A stored RCD reference (`stores_rcd_reference`) goes to highlight work
+    // A, which only binned sources and AI scenes use, and those skip
+    // demosaicing. Its pass reads RCD's planes in tex2 and tex1, which nothing
+    // reads after it.
+    let bg_rcd_reference = create_bind_group(
+        device,
+        "bg RCD reference",
+        &layouts.bgl_rcd_reference,
+        &[
+            buffer_binding(0, camera_uniforms_buffer),
+            texture_binding(1, raw_view),
+            texture_binding(2, color_view),
+            texture_binding(19, black_view),
+            texture_binding(3, reconstructed_raw_view),
+            texture_binding(7, tex2_view),
+            texture_binding(9, tex1_view),
+            texture_binding(47, highlight_work_a_view),
+        ],
+    );
+
     // Scratch textures the reference demosaic no longer needs by the dual
     // passes: the prepared interpolation, then the smoothed one with its mask.
+    // With a stored reference RCD's planes are free, so the interpolation
+    // takes tex1 and leaves the reference in highlight work A.
     let (dual_prepared_view, dual_low_view) = match cfa_kind {
+        CfaKind::Bayer if stores_rcd_reference => (tex1_view, highlight_work_b_view),
         CfaKind::Bayer => (highlight_work_a_view, highlight_work_b_view),
         CfaKind::XTrans => (tex1_view, tex2_view),
+    };
+    // What the Bayer finish passes bind as the stored reference. Programs
+    // that recompute it never read the binding, so they get tex2, which they
+    // only read.
+    let rcd_reference_view = if stores_rcd_reference {
+        highlight_work_a_view
+    } else {
+        tex2_view
     };
 
     let mut dual_prepare_entries = vec![
@@ -192,9 +225,19 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         texture_binding(3, reconstructed_raw_view),
         texture_binding(20, dual_prepared_view),
     ];
+    // The interpolation is written to tex1 with a stored reference, and that
+    // program does not read RCD's planes, so tex2 stands in for tex1.
+    let rcd_chroma_view = if stores_rcd_reference {
+        tex2_view
+    } else {
+        tex1_view
+    };
     match cfa_kind {
-        CfaKind::Bayer => dual_prepare_entries
-            .extend([texture_binding(7, tex2_view), texture_binding(9, tex1_view)]),
+        CfaKind::Bayer => dual_prepare_entries.extend([
+            texture_binding(7, tex2_view),
+            texture_binding(9, rcd_chroma_view),
+            texture_binding(46, rcd_reference_view),
+        ]),
         CfaKind::XTrans => dual_prepare_entries.push(texture_binding(26, highlight_work_b_view)),
     }
     let bg_dual_prepare = create_bind_group(
@@ -231,6 +274,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             texture_binding(7, tex2_view),
             texture_binding(9, tex1_view),
             texture_binding(23, dual_low_view),
+            texture_binding(46, rcd_reference_view),
             texture_binding(10, scene_view),
         ],
     );
@@ -634,6 +678,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg1,
         bg2,
         bg3,
+        bg_rcd_reference,
         bg_dual_prepare,
         bg_dual_detail,
         bg4,
