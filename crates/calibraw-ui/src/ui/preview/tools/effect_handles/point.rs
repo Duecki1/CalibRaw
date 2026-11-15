@@ -38,7 +38,7 @@ struct PointSpec {
 impl PointSpec {
     /// The handle of `instance` of the effect; `count` instances are shown.
     fn of(handle: &EffectHandle, instance: usize, count: usize) -> Option<Self> {
-        use effect_params::{light_rays, radial_blur, relight, vignette};
+        use effect_params::{light_shafts, radial_blur, relight, vignette};
         let settings = &handle.settings;
         // Several lights or sources are told apart by number.
         let numbered = |single: &'static str, several: &'static str| {
@@ -60,13 +60,13 @@ impl PointSpec {
                     name: numbered("Relight light", "Light {number}"),
                 }
             }
-            MaskEffect::LightRays => {
-                let source = settings.light_rays.sources.get(instance)?;
+            MaskEffect::LightShafts => {
+                let source = settings.light_shafts.sources.get(instance)?;
                 Self {
                     frame: Frame::Source,
                     position: source.source,
-                    specs: [light_rays::SOURCE_X, light_rays::SOURCE_Y],
-                    light: Some(source.color),
+                    specs: [light_shafts::SOURCE_X, light_shafts::SOURCE_Y],
+                    light: Some(source.swatch()),
                     depth: None,
                     name: numbered("Light Rays source", "Source {number}"),
                 }

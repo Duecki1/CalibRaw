@@ -17,6 +17,11 @@ impl SensorSaturation {
     /// Photosites saturate at the white level.
     pub const AT_WHITE: Self = Self(1.0);
 
+    /// The share of a clip level a sample must reach for guided highlight reconstruction to
+    /// treat it as clipped, as in `RawSampling::is_raw_clipped` (raw_sampling.wgsl) and
+    /// `binned_guided_rgb` (highlights.wgsl).
+    pub const CLIP_DETECTION: f32 = 0.987;
+
     /// Saturation at `level` normalized units. Levels that are not finite or lie below the
     /// white level are taken as the white level.
     pub fn new(level: f32) -> Self {

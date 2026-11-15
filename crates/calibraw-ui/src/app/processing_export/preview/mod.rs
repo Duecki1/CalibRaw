@@ -358,12 +358,14 @@ pub(in crate::app) fn zoom_detail_idle_delay() -> Duration {
 }
 
 mod detail;
+mod detail_render;
 mod interactive_crop;
 mod navigation;
 mod processing;
 mod rebuild;
 mod state;
 use detail::{detail_virtual_frame, DetailPlacement};
+pub(in crate::app) use detail_render::DetailRender;
 use processing::dispatch_detail_stage;
 use state::full_frame_tone_pipeline;
 

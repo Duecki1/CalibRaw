@@ -818,6 +818,8 @@ impl Preview {
             Self::paint_tool_hint(ui, app, layout.visible_rect);
         }
 
+        Self::paint_focus_depth_overlay(ui, app, layout);
+
         // Effect controls go last: drawn over the mask overlay, and their
         // handles sit above the canvas response, so they take the pointer and
         // scroll.

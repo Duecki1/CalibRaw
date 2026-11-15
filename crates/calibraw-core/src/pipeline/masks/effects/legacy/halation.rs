@@ -1,6 +1,11 @@
-use super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
-use super::params::halation::*;
-use super::settings::{EffectControl, EffectControls, EffectSettings};
+//! Halation: a warm film halo around highlights inside the mask, which the
+//! Glow's Halation style replaces (mask_effects/legacy/halation.wgsl).
+//!
+//! legacy: remove in v2.0.0
+
+use super::super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
+use super::super::params::halation::*;
+use super::super::settings::{EffectControl, EffectControls, EffectSettings};
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]

@@ -5,6 +5,8 @@ pub mod alignment;
 pub mod basicadj;
 mod calibration;
 pub mod camera_look;
+mod card_switches;
+pub use card_switches::{CardSwitch, CardSwitches};
 mod chromatic_aberration;
 pub mod color_profile;
 mod display_raster;
@@ -65,18 +67,21 @@ pub use masks::{
     effect_lanes, effect_params, effect_places, ellipse_outline_points, export_mask_atlas_edge,
     export_mask_atlas_edge_limit, lightness_to_luminance, luminance_range_weight,
     luminance_to_lightness, mask_atlas_edge, path_outline_points, rasterize_brush_dabs,
-    BlurEffectSettings, BrushDab, BrushMode, ColorLane, ContentDependencies, DepthRangeSettings,
+    BlurEffectSettings, BokehShape, BrushDab, BrushMode, ColorFringeEffectSettings,
+    ColorFringeStyle, ColorLane, ContentDependencies, DefocusEffectSettings, DepthRangeSettings,
     EdgeGlowEffectSettings, EffectComponent, EffectControl, EffectControls, EffectDetails,
-    EffectInstances, EffectLanes, EffectOption, EffectPass, EffectReach, EffectSettings,
-    EffectSettingsVisitor, FogEffectSettings, GlowEffectSettings, GrainEffectSettings,
-    HalationEffectSettings, Lane, LaneName, LensBlurEffectSettings, LightRaySource,
-    LightRaysEffectSettings, LocalAdjustments, LocalMask, MaskCombineMode, MaskCommon,
-    MaskComponent, MaskEffect, MaskEffectCategory, MaskEffectSettings, MaskGeometry, MaskImage,
-    MaskKind, MaskRgbImage, MaskStack, MotionBlurEffectSettings, NeonEffectSettings, ObjectStroke,
-    PackContext, PathPoint, PersonPart, PixelateEffectSettings, RadialBlurEffectSettings,
-    RadialBlurMode, RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneNeed,
-    SceneNeeds, SceneNormals, SharpenEffectSettings, SmokeEffectSettings, SubjectRefinement,
-    TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings,
+    EffectFamily, EffectInstances, EffectLanes, EffectOption, EffectPass, EffectReach,
+    EffectSettings, EffectSettingsVisitor, EffectStyle, FogEffectSettings, GlowEffectSettings,
+    GlowSplitMode, GlowStyle, GrainEffectSettings, HalationEffectSettings, Lane, LaneName,
+    LegacyHighlightGlowEffectSettings, LensBlurEffectSettings, LightRaysEffectSettings,
+    LightShaftSource, LightShaftsEffectSettings, LightShaftsMode, LocalAdjustments, LocalMask,
+    MaskCombineMode, MaskCommon, MaskComponent, MaskEffect, MaskEffectCategory, MaskEffectSettings,
+    MaskGeometry, MaskImage, MaskKind, MaskRegion, MaskRgbImage, MaskStack,
+    MotionBlurEffectSettings, NeonEffectSettings, ObjectStroke, PackContext, PathPoint, PersonPart,
+    PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings,
+    ReachGroup, RelightEffectSettings, RelightLight, SceneNeed, SceneNeeds, SceneNormals,
+    SharpenEffectSettings, SmokeEffectSettings, StarPoints, StyledGlowEffectSettings,
+    SubjectRefinement, TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings,
     DEFAULT_COLOR_TOLERANCE, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS,
     MAX_EFFECT_INSTANCES, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_MASK_PEOPLE, MAX_PATH_POINTS,
     OPTION_COUNT,
@@ -96,10 +101,10 @@ pub use raw_loader::{
     load_raw_display_dimensions, load_raw_display_metadata, load_raw_embedded_thumbnail,
     load_raw_file, load_raw_file_with_dcp, load_raw_file_with_profile_config,
     load_raw_file_with_profile_selection, load_raw_thumbnail,
-    load_raw_thumbnail_with_display_metadata, reflect_index, AiDenoisedImage, BinnedSensor,
-    CameraProfileCandidate, CameraProfileMode, CfaKind, CompactPixelMap, HighlightModel, LoadedRaw,
-    PixelLayout, ProfileColor, ProfileColorSource, RawDisplayMetadata, RawThumbnail, SensorSamples,
-    SensorSaturation, WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
+    load_raw_thumbnail_with_display_metadata, reflect_index, AiDenoisedImage, BinnedClipping,
+    BinnedSensor, CameraProfileCandidate, CameraProfileMode, CfaKind, CompactPixelMap,
+    HighlightModel, LoadedRaw, PixelLayout, ProfileColor, ProfileColorSource, RawDisplayMetadata,
+    RawThumbnail, SensorSamples, SensorSaturation, WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
 };
 pub use raw_loader::{
     invalidate_dcp_profile_index, prewarm_dcp_profile_index, profiles_share_style,

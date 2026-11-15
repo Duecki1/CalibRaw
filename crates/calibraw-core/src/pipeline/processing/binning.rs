@@ -1,7 +1,9 @@
 //! Binning of a sensor mosaic to co-sited RGB ([`BinnedSensor`]) for reduced
 //! proxies.
 
-use crate::pipeline::{AiDenoisedImage, BinnedSensor, CfaKind, LoadedRaw};
+use crate::pipeline::{
+    AiDenoisedImage, BinnedClipping, BinnedSensor, CfaKind, LoadedRaw, SensorSaturation,
+};
 use rayon::prelude::*;
 use std::ops::{Range, RangeInclusive};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,8 +40,8 @@ pub(super) struct BinnedMosaic {
 /// them ([`green_guidance`], [`guide_by_green`]): they follow green's detail
 /// as a demosaic does, so detail finer than their own photosite spacing does
 /// not alias either. An AI-denoised Bayer mosaic is binned alongside with the
-/// same weights. `None` once `cancel` is set, which is checked every
-/// [`BAND_ROWS`] rows.
+/// same weights, and so is where photosites clipped ([`BinnedClipping`]).
+/// `None` once `cancel` is set, which is checked every [`BAND_ROWS`] rows.
 pub(super) fn bin_mosaic(
     raw: &LoadedRaw,
     [x, y, region_width, region_height]: [u32; 4],
@@ -71,9 +73,12 @@ pub(super) fn bin_mosaic(
         *sx -= decoded.start;
     }
     let ai_image = raw.ai_denoised_image();
+    let clip_level = SensorSaturation::CLIP_DETECTION * raw.sensor_saturation.level();
+    let tapped_rows = row_span(y, height, scale_y, radius_y, raw.height);
     let binning = Binning {
         raw,
         ai_mosaic: ai_image.as_ref().and_then(AiDenoisedImage::bayer_cfa),
+        clip_level: may_reach(raw, tapped_rows, decoded.clone(), clip_level).then_some(clip_level),
         span: (span_start - decoded.start) as usize..(span_end - decoded.start) as usize,
         decoded,
         column_taps,
@@ -124,8 +129,17 @@ pub(super) fn bin_mosaic(
     let [red, green, blue] = inverse_counts.map(|sum| (sum / pixels) as f32);
     let mut planes = planes.into_iter();
     let rgb = planes.next()?;
+    let ai_rgb = binning.ai_mosaic.and_then(|_| planes.next());
+    let clipping = match (planes.next(), planes.next()) {
+        // The scan before binning only bounds the levels, so a region can
+        // still turn out to have no clipped photosite.
+        (Some(shares), Some(clipped_values)) if shares.iter().any(|share| *share > 0.0) => {
+            Some(BinnedClipping::new(shares, clipped_values))
+        }
+        _ => None,
+    };
     Some(BinnedMosaic {
-        sensor: BinnedSensor::new(rgb, planes.next()),
+        sensor: BinnedSensor::new(rgb, ai_rgb, clipping),
         variance_scale: [red, green, blue, green],
     })
 }
@@ -153,6 +167,57 @@ fn triangle_taps(origin: u32, index: u32, scale: f64, radius: f64, limit: u32) -
             (weight > 0.0).then_some((position, weight as f32))
         })
         .collect()
+}
+
+/// The source rows the row taps of `height` output rows reach.
+fn row_span(origin: u32, height: u32, scale: f64, radius: f64, limit: u32) -> Range<u32> {
+    let first = triangle_taps(origin, 0, scale, radius, limit)
+        .first()
+        .map_or(0, |&(row, _)| row);
+    let last = triangle_taps(origin, height.saturating_sub(1), scale, radius, limit)
+        .last()
+        .map_or(0, |&(row, _)| row);
+    first..last + 1
+}
+
+/// Whether a photosite of `rows` and `columns` of `raw`'s mosaic may reach
+/// `level` in normalized sensor units. It compares codes against the lowest
+/// code any photosite could reach the level at, over the channels' white
+/// levels and the extremes of the black levels, so it never misses one.
+fn may_reach(raw: &LoadedRaw, rows: Range<u32>, columns: Range<u32>, level: f32) -> bool {
+    let (_, _, blacks) = raw.black_levels_per_pixel.storage_parts();
+    let (lowest_black, highest_black) = blacks
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), &black| {
+            (low.min(black), high.max(black))
+        });
+    if !lowest_black.is_finite() || !highest_black.is_finite() {
+        return true;
+    }
+    // A photosite reaches the level at code `level * white + (1 - level) *
+    // black`, linear in its black level, so the extremes bound it.
+    let lowest_code = raw
+        .white_levels
+        .iter()
+        .flat_map(|&white| {
+            [lowest_black, highest_black]
+                .map(|black| level * white.max(black + 1.0) + (1.0 - level) * black)
+        })
+        .fold(f32::INFINITY, f32::min);
+    // An integer threshold keeps the scan a plain comparison of codes.
+    let lowest_code = lowest_code.ceil().max(0.0);
+    if lowest_code > f32::from(u16::MAX) {
+        return false;
+    }
+    let lowest_code = lowest_code as u16;
+    let width = raw.width as usize;
+    let samples: &[u16] = &raw.raw_pixels;
+    rows.into_par_iter().any(|y| {
+        let start = y as usize * width;
+        samples[start + columns.start as usize..start + columns.end as usize]
+            .iter()
+            .any(|&code| code >= lowest_code)
+    })
 }
 
 /// Whether red and blue are binned as differences from green, and if so
@@ -186,6 +251,9 @@ fn green_guidance(raw: &LoadedRaw) -> Option<[f32; 3]> {
 struct Binning<'a> {
     raw: &'a LoadedRaw,
     ai_mosaic: Option<&'a [u16]>,
+    /// The normalized level photosites clip at ([`BinnedClipping`]), when
+    /// the region may hold one that reaches it.
+    clip_level: Option<f32>,
     /// The source columns decoded for every row. Decoded rows and column
     /// taps count their columns from its start.
     decoded: Range<u32>,
@@ -200,10 +268,10 @@ struct Binning<'a> {
 }
 
 impl Binning<'_> {
-    /// The planes binned: the sensor and, when there is one, the AI-denoised
-    /// mosaic.
+    /// The planes binned: the sensor, the AI-denoised mosaic when there is
+    /// one, then the two of [`BinnedClipping`] when photosites may clip.
     fn plane_count(&self) -> usize {
-        1 + usize::from(self.ai_mosaic.is_some())
+        1 + usize::from(self.ai_mosaic.is_some()) + 2 * usize::from(self.clip_level.is_some())
     }
 
     /// Bins the band of output rows from `first_py` into `planes`, each
@@ -274,10 +342,13 @@ impl Binning<'_> {
 }
 
 /// A source row of a mosaic over the decoded columns ([`Binning::decoded`]):
-/// each photosite's colour, then a plane of values for each binned plane.
+/// each photosite's colour, then a plane of values for each binned plane,
+/// then each photosite's normalized value where it clipped and 0 elsewhere
+/// (empty without a clip level or a clipped photosite in the row).
 struct SensorRow {
     colors: Vec<u8>,
     planes: Vec<Vec<f32>>,
+    clipped: Vec<f32>,
 }
 
 /// Buffers [`SensorRow::decode`] reuses from row to row.
@@ -312,15 +383,26 @@ impl SensorRow {
                 .collect()
         };
         let sensor: &[u16] = &raw.raw_pixels;
+        let planes: Vec<Vec<f32>> = std::iter::once(sensor)
+            .chain(binning.ai_mosaic)
+            .map(normalize)
+            .collect();
+        // Taken from the recorded values before guidance turns red and blue
+        // into differences from green.
+        let clipped = match (binning.clip_level, planes.first()) {
+            (Some(level), Some(values)) if values.iter().any(|&value| value >= level) => values
+                .iter()
+                .map(|&value| if value >= level { value } else { 0.0 })
+                .collect(),
+            _ => Vec::new(),
+        };
         Self {
             colors: columns
                 .clone()
                 .map(|x| CFA_CHANNEL_COLOR[channel_at(x)])
                 .collect(),
-            planes: std::iter::once(sensor)
-                .chain(binning.ai_mosaic)
-                .map(normalize)
-                .collect(),
+            planes,
+            clipped,
         }
     }
 }
@@ -341,7 +423,7 @@ fn guide_by_green(
     columns: Range<usize>,
     green_scale: [f32; 3],
 ) {
-    let SensorRow { colors, planes } = row;
+    let SensorRow { colors, planes, .. } = row;
     for (plane, values) in planes.iter_mut().enumerate() {
         let green_beside = |row: Option<&SensorRow>, x: usize| {
             row.filter(|row| row.colors[x] == GREEN)
@@ -393,6 +475,10 @@ struct RowSums {
     weights: Vec<[f32; 3]>,
     /// Σw².
     squares: Vec<[f32; 3]>,
+    /// Σw over clipped photosites, empty while no row read clipped.
+    clipped_weights: Vec<[f32; 3]>,
+    /// Σw·value over clipped photosites, empty while no row read clipped.
+    clipped_values: Vec<[f32; 3]>,
 }
 
 impl RowSums {
@@ -407,14 +493,26 @@ impl RowSums {
     ) {
         let pixels = column_taps.len();
         let planes = source.first().map_or(0, |row| row.planes.len());
-        for sums in [&mut self.values, &mut self.weights, &mut self.squares] {
+        let clipping = source.iter().any(|row| !row.clipped.is_empty());
+        for sums in [
+            &mut self.values,
+            &mut self.weights,
+            &mut self.squares,
+            &mut self.clipped_weights,
+            &mut self.clipped_values,
+        ] {
             sums.clear();
         }
         self.values.resize(pixels * planes, [0.0; 3]);
         self.weights.resize(pixels, [0.0; 3]);
         self.squares.resize(pixels, [0.0; 3]);
+        if clipping {
+            self.clipped_weights.resize(pixels, [0.0; 3]);
+            self.clipped_values.resize(pixels, [0.0; 3]);
+        }
         for &(y, weight_y) in row_taps {
             let row = &source[(y - first_row) as usize];
+            let row_clipped = !row.clipped.is_empty();
             for (px, taps) in column_taps.iter().enumerate() {
                 for &(x, weight_x) in taps {
                     let x = x as usize;
@@ -425,21 +523,49 @@ impl RowSums {
                     }
                     self.weights[px][color] += weight;
                     self.squares[px][color] += weight * weight;
+                    if row_clipped && row.clipped[x] > 0.0 {
+                        self.clipped_weights[px][color] += weight;
+                        self.clipped_values[px][color] += weight * row.clipped[x];
+                    }
                 }
             }
         }
     }
 
     /// Writes each plane's means as interleaved RGB from `offset` of its
-    /// output in `planes`. Guided red and blue are differences from green,
-    /// so green is added back to them. The window holds every colour of a
-    /// Bayer or X-Trans mosaic ([`min_binning_radius`]); one a malformed CFA
-    /// map leaves out adds nothing.
+    /// output in `planes`, followed by the two planes of [`BinnedClipping`]
+    /// when photosites may clip. Guided red and blue are differences from
+    /// green, so green is added back to them. The window holds every colour
+    /// of a Bayer or X-Trans mosaic ([`min_binning_radius`]); one a malformed
+    /// CFA map leaves out adds nothing.
     fn write_row(&self, guidance: Option<[f32; 3]>, planes: &mut [&mut [f32]], offset: usize) {
         let pixels = self.weights.len();
         let green_scale = guidance.unwrap_or_default();
         let green = usize::from(GREEN);
-        for (plane, output) in planes.iter_mut().enumerate() {
+        let value_planes = self.values.len() / pixels.max(1);
+        let (value_outputs, clipping_outputs) = planes.split_at_mut(value_planes.min(planes.len()));
+        if let [shares, clipped_values] = clipping_outputs {
+            for (px, weights) in self.weights.iter().enumerate() {
+                // Empty sums: no row the pixel reads clipped.
+                let clipped = self
+                    .clipped_weights
+                    .get(px)
+                    .zip(self.clipped_values.get(px));
+                for (color, &weight) in weights.iter().enumerate() {
+                    let destination = offset + px * 3 + color;
+                    let (share, value) = match clipped {
+                        Some((clipped_weights, clipped_sums)) if weight > 0.0 => (
+                            clipped_weights[color] / weight,
+                            clipped_sums[color] / weight,
+                        ),
+                        _ => (0.0, 0.0),
+                    };
+                    shares[destination] = share;
+                    clipped_values[destination] = value;
+                }
+            }
+        }
+        for (plane, output) in value_outputs.iter_mut().enumerate() {
             let values = &self.values[plane * pixels..(plane + 1) * pixels];
             for (px, (sums, weights)) in values.iter().zip(&self.weights).enumerate() {
                 let mean = |color: usize| {

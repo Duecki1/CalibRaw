@@ -24,7 +24,8 @@ impl ExportOverride {
     }
 
     /// Applies the preset, then the LUT, to `edits`. The photo keeps its own
-    /// AI denoise setting.
+    /// AI denoise setting and card switches, except that the export's LUT
+    /// shows on every photo, whatever its LUT card's switch.
     pub(crate) fn apply(&self, edits: &mut SidecarEditState) {
         if let Some(preset) = &self.preset {
             let ai_denoise_enabled = edits.exposure.ai_denoise_enabled;
@@ -33,6 +34,9 @@ impl ExportOverride {
         }
         if let Some(look_lut) = &self.look_lut {
             edits.look_lut = Some(look_lut.clone());
+            edits
+                .exposure
+                .set_card_on(crate::pipeline::CardSwitch::Lut, true);
         }
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::{LensShadingMap, PixelLayout, TONE_GUIDE_CELL_SIZE};
+use crate::pipeline::{BinnedClipping, LensShadingMap, PixelLayout, TONE_GUIDE_CELL_SIZE};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -154,7 +154,10 @@ pub(super) struct GpuBudgetReservation {
 }
 
 impl GpuBudgetReservation {
-    pub(super) fn acquire(plan: &GpuResourcePlan, limit: u64) -> Result<Self> {
+    /// Reserves `plan`'s resident bytes within the admission limit
+    /// ([`gpu_admission_limit_bytes`]).
+    pub(super) fn acquire(plan: &GpuResourcePlan) -> Result<Self> {
+        let limit = gpu_admission_limit_bytes();
         validate_gpu_resource_plan(plan, limit)?;
         let bytes = plan.persistent_gpu_bytes;
         reserve_gpu_bytes(&RESERVED_GPU_BYTES, limit, bytes).map_err(|used| {
@@ -171,8 +174,10 @@ impl GpuBudgetReservation {
 
 impl GpuBudgetReservation {
     /// Reserves `bytes` for `resource`, which is allocated after its pipeline
-    /// was built and is not part of the pipeline's plan.
-    pub(super) fn acquire_bytes(resource: &str, bytes: u64, limit: u64) -> Result<Self> {
+    /// was built and is not part of the pipeline's plan, within the admission
+    /// limit ([`gpu_admission_limit_bytes`]).
+    pub(super) fn acquire_bytes(resource: &str, bytes: u64) -> Result<Self> {
+        let limit = gpu_admission_limit_bytes();
         reserve_gpu_bytes(&RESERVED_GPU_BYTES, limit, bytes).map_err(|used| {
             anyhow!(
                 "GPU pipelines already reserve {:.1} MiB of resident resources; the {resource} needs another {:.1} MiB, exceeding the {:.1} MiB process budget",
@@ -355,6 +360,14 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
                 full(work_format)?,
             );
         }
+        if input.layout == PixelLayout::Binned {
+            push_entry(
+                &mut entries,
+                "binned clipping texture",
+                GpuResourceResidency::Persistent,
+                full(BINNED_CLIPPING_FORMAT)?,
+            );
+        }
     }
     for name in [
         "highlight work A",
@@ -383,6 +396,12 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             "X-Trans homogeneity map",
             GpuResourceResidency::Persistent,
             full(XTRANS_HOMOGENEITY_FORMAT)?,
+        );
+        push_entry(
+            &mut entries,
+            "X-Trans completed state",
+            GpuResourceResidency::Persistent,
+            full(work_format)?,
         );
     }
 
@@ -609,6 +628,48 @@ pub(super) fn validate_gpu_resource_plan(plan: &GpuResourcePlan, limit: u64) -> 
     Ok(())
 }
 
+/// The resident GPU bytes every pipeline of the process may reserve together
+/// (`GpuBudgetReservation`). On Android it is a larger share of device RAM
+/// than the working-set budget previews and export tiles are sized against
+/// ([`gpu_working_set_limit_bytes`]), so effects that allocate beside open
+/// previews (Lens Blur, the Glow, the scene bake) and export tiles still fit,
+/// while previews keep their size; it stays below what the low-memory killer
+/// tolerates, as Android GPUs share system memory and drivers may let it end
+/// the app instead of reporting OOM.
+#[cfg(target_os = "android")]
+pub(super) fn gpu_admission_limit_bytes() -> u64 {
+    static LIMIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        let total_ram = calibraw_core::system_memory::total_memory_bytes();
+        let limit = android_admission_limit_bytes(total_ram);
+        log::info!(
+            "GPU admission limit {:.1} MiB",
+            limit as f64 / (1024.0 * 1024.0)
+        );
+        limit
+    })
+}
+
+/// No limit on a computer: real OOM is reported by the GPU error scopes.
+#[cfg(not(target_os = "android"))]
+pub(super) fn gpu_admission_limit_bytes() -> u64 {
+    u64::MAX
+}
+
+/// The Android admission limit for `total_ram_bytes` of device RAM: a fixed
+/// share, never below the working-set budget or above the ceiling.
+#[cfg(target_os = "android")]
+fn android_admission_limit_bytes(total_ram_bytes: Option<u64>) -> u64 {
+    let budget = android_working_set_limit_bytes(total_ram_bytes);
+    total_ram_bytes.map_or(budget, |ram| {
+        (ram / ANDROID_GPU_ADMISSION_RAM_DIVISOR)
+            .min(ANDROID_GPU_ADMISSION_CEILING_BYTES)
+            .max(budget)
+    })
+}
+
+/// The working-set budget previews, export tiles and quality tiers are sized
+/// against; allocations are admitted up to [`gpu_admission_limit_bytes`].
 #[cfg(target_os = "android")]
 pub(super) fn gpu_working_set_limit_bytes() -> u64 {
     // Previews are sized against the fixed 384 MiB budget and together reserve
@@ -756,6 +817,84 @@ pub(super) fn create_binned_ai_texture(
         format,
         "calibraw binned AI-denoise source",
     )
+}
+
+/// Where the photosites behind a binned view clipped (`BinnedClipping`), per
+/// pixel: the clipped share of red, green and blue in rgb, and the mean
+/// normalized value of the clipped photosites of all three in a (0 where
+/// none clipped). Half floats keep shares to 1/2048 and values near the clip
+/// level to 0.05%.
+pub(super) const BINNED_CLIPPING_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The clipping texture of a binned view (`binned_clipping_tex` in
+/// highlights.wgsl), or a 1x1 placeholder for other sources. A binned
+/// pipeline always gets the full size, since the views a reusable one
+/// receives later ([`RawGpuPipeline::upload_raw_tile`]) may clip where its
+/// first did not; `highlight_options.w` says whether the content applies.
+pub(super) fn create_binned_clipping_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    raw: &LoadedRaw,
+) -> Result<wgpu::Texture> {
+    let binned = raw.pixel_layout() == PixelLayout::Binned;
+    let texture = create_processing_texture(
+        device,
+        if binned {
+            texture_size(raw.width, raw.height)
+        } else {
+            texture_size(1, 1)
+        },
+        BINNED_CLIPPING_FORMAT,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        "calibraw binned clipping",
+    );
+    if let Some(clipping) = binned_clipping(raw) {
+        upload_binned_clipping_texture(queue, &texture, raw, clipping)?;
+    }
+    Ok(texture)
+}
+
+/// The clipping record of a binned view, `None` for other sources and views
+/// without clipped photosites.
+pub(super) fn binned_clipping(raw: &LoadedRaw) -> Option<&BinnedClipping> {
+    raw.binned_sensor
+        .as_ref()
+        .and_then(crate::pipeline::BinnedSensor::clipping)
+}
+
+/// Packs `clipping` into `texture` ([`BINNED_CLIPPING_FORMAT`]). The clipped
+/// photosites of all three colours share one mean: they pile up at the
+/// sensor's saturation, so the colours' means differ by far less than the
+/// half-float step.
+pub(super) fn upload_binned_clipping_texture(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    raw: &LoadedRaw,
+    clipping: &BinnedClipping,
+) -> Result<()> {
+    let expected = raw.width as usize * raw.height as usize * 3;
+    let (shares, values) = (clipping.shares(), clipping.clipped_values());
+    anyhow::ensure!(
+        shares.len() == expected && values.len() == expected,
+        "binned clipping has {} and {} values, expected {expected}",
+        shares.len(),
+        values.len()
+    );
+    write_packed_rows(queue, texture, raw, 8, |index| {
+        let share = [
+            shares[index * 3],
+            shares[index * 3 + 1],
+            shares[index * 3 + 2],
+        ];
+        let share_sum: f32 = share.iter().sum();
+        let value_sum = values[index * 3] + values[index * 3 + 1] + values[index * 3 + 2];
+        let mean = if share_sum > 0.0 {
+            value_sum / share_sum
+        } else {
+            0.0
+        };
+        [share[0], share[1], share[2], mean].map(|value| half::f16::from_f32(value).to_bits())
+    })
 }
 
 /// A texture the size of `raw` holding `rgb`, or a 1x1 placeholder without.
@@ -1101,6 +1240,19 @@ pub(super) fn create_compute_pipeline(
     })
 }
 
+thread_local! {
+    /// The passes this thread encoded with [`dispatch_compute`].
+    static UNTRACKED_DISPATCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many passes this thread has encoded with [`dispatch_compute`], which
+/// tells a `WorkEncoder` whether work it does not track joined its chunk.
+pub(super) fn untracked_dispatches() -> u64 {
+    UNTRACKED_DISPATCHES.get()
+}
+
+/// Encodes a compute pass outside the processing pipeline's stages, whose
+/// passes go through `WorkEncoder::dispatch` (work.rs).
 pub(super) fn dispatch_compute(
     encoder: &mut wgpu::CommandEncoder,
     label: &str,
@@ -1108,6 +1260,7 @@ pub(super) fn dispatch_compute(
     bind_groups: &[&wgpu::BindGroup],
     workgroups: [u32; 3],
 ) {
+    UNTRACKED_DISPATCHES.set(UNTRACKED_DISPATCHES.get().wrapping_add(1));
     let timestamps = crate::stage_timing::next_pass(label);
     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
         label: Some(label),
@@ -1194,7 +1347,10 @@ pub(super) fn validate_raw(raw: &LoadedRaw) -> Result<()> {
             .ok_or_else(|| anyhow!("binned RGB element count overflows"))?;
         let valid =
             |rgb: &[f32]| rgb.len() == expected && rgb.iter().all(|value| value.is_finite());
-        if !valid(binned.rgb()) || !binned.ai_rgb().is_none_or(valid) {
+        let clipping_valid = binned
+            .clipping()
+            .is_none_or(|clipping| valid(clipping.shares()) && valid(clipping.clipped_values()));
+        if !valid(binned.rgb()) || !binned.ai_rgb().is_none_or(valid) || !clipping_valid {
             return Err(anyhow!("binned sensor payload is invalid"));
         }
     } else if raw.is_pre_demosaiced_raster() {

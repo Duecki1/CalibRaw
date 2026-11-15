@@ -234,17 +234,14 @@ impl CalibRawApp {
         extent: [u32; 2],
         dirty_layers: Option<&[bool; MAX_LOCAL_MASKS]>,
     ) -> Result<(), String> {
+        // Cropped once for every layer.
+        let cropped = masks.region(region, [full_raw.width, full_raw.height]);
         for layer in 0..masks.masks.len().min(pipeline.mask_layer_capacity()) {
             if dirty_layers.is_some_and(|dirty| !dirty[layer]) {
                 continue;
             }
-            let bytes = masks.rasterize_layer_region_f16(
-                layer,
-                extent,
-                region,
-                [full_raw.width, full_raw.height],
-                full_raw.lens_geometry.as_deref(),
-            );
+            let bytes =
+                cropped.rasterize_layer_f16(layer, extent, full_raw.lens_geometry.as_deref());
             pipeline
                 .update_mask_layer_region(queue, layer, extent[0], extent[1], &bytes)
                 .map_err(|error| {

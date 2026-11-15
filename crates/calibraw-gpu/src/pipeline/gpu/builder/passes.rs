@@ -17,20 +17,24 @@ pub(in crate::pipeline::gpu) const DETAIL_PYRAMID_TEXTURE_LEVELS: usize = 5;
 /// The X-Trans demosaic passes (xtrans_demosaic.wgsl) in order. The bind
 /// group at the same position of `BindGroups::bg_xtrans_markesteijn` chooses
 /// the states each one reads and writes.
-pub(in crate::pipeline::gpu) const XTRANS_MARKESTEIJN_ENTRIES: [&str; 9] = [
+pub(in crate::pipeline::gpu) const XTRANS_MARKESTEIJN_ENTRIES: [&str; 11] = [
     "xtrans_markesteijn_green",
     "xtrans_markesteijn_other",
     "xtrans_markesteijn_recalculate",
     "xtrans_markesteijn_other",
     "xtrans_markesteijn_recalculate",
     "xtrans_markesteijn_other",
+    "xtrans_markesteijn_complete",
+    "xtrans_markesteijn_complete",
     "xtrans_markesteijn_homogeneity",
     "xtrans_markesteijn_accumulate",
     "xtrans_markesteijn_smooth",
 ];
-pub(in crate::pipeline::gpu) const XTRANS_HOMOGENEITY_PASS: usize = 6;
-pub(in crate::pipeline::gpu) const XTRANS_ACCUMULATE_PASS: usize = 7;
-pub(in crate::pipeline::gpu) const XTRANS_SMOOTHING_PASS: usize = 8;
+/// The two passes that complete a state, lo then hi.
+pub(in crate::pipeline::gpu) const XTRANS_COMPLETE_PASSES: [usize; 2] = [6, 7];
+pub(in crate::pipeline::gpu) const XTRANS_HOMOGENEITY_PASS: usize = 8;
+pub(in crate::pipeline::gpu) const XTRANS_ACCUMULATE_PASS: usize = 9;
+pub(in crate::pipeline::gpu) const XTRANS_SMOOTHING_PASS: usize = 10;
 
 /// Where every program sits in the pass list. Program templates share
 /// compiled programs by position, so bind group layouts, pass assembly and
@@ -112,6 +116,14 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// with the tone stage, or the export tone prepass. It comes last so that
     /// adding it kept earlier positions.
     pub(in crate::pipeline::gpu) scene_bake_accumulation_pass_index: usize,
+    /// The Glow's programs (`styled_glow`), which run before the creative
+    /// pass and are dispatched with bind groups of their own. They come last
+    /// so that adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) styled_glow_pass_index: usize,
+    /// Lens Blur's programs (`defocus`), which run before the Blur passes
+    /// and are dispatched with bind groups of their own. They come last so
+    /// that adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) defocus_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -169,6 +181,8 @@ impl StageIndices {
         let contour_accumulate_pass_index = take(1);
         let scene_emission_pass_index = take(SCENE_EMISSION_PASSES);
         let scene_bake_accumulation_pass_index = take(1);
+        let styled_glow_pass_index = take(STYLED_GLOW_PASSES);
+        let defocus_pass_index = take(DEFOCUS_PASSES);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -212,6 +226,8 @@ impl StageIndices {
             contour_accumulate_pass_index,
             scene_emission_pass_index,
             scene_bake_accumulation_pass_index,
+            styled_glow_pass_index,
+            defocus_pass_index,
             pass_count,
         }
     }
@@ -264,6 +280,9 @@ struct PassAssembler<'a> {
     pipeline_cache: Option<&'a Arc<PersistentGpuPipelineCache>>,
     bgl_scene_tone: &'a wgpu::BindGroupLayout,
     bgl_effects: &'a wgpu::BindGroupLayout,
+    /// The modules of the programs compiled per effect set
+    /// (`effect_programs`), shared by the programs assembled here.
+    effect_modules: Arc<EffectModules>,
     next_program_index: usize,
 }
 
@@ -282,14 +301,23 @@ impl PassAssembler<'_> {
             template.pipelines[program_index].clone()
         } else {
             let shader = shader.expect("shader module exists without a program template");
+            let layouts = [
+                bgl.clone(),
+                self.bgl_scene_tone.clone(),
+                self.bgl_effects.clone(),
+            ];
             Arc::new(ComputeProgram {
                 device: self.device.clone(),
                 shader: shader.clone(),
-                layouts: [
-                    bgl.clone(),
-                    self.bgl_scene_tone.clone(),
-                    self.bgl_effects.clone(),
-                ],
+                effects: EffectPrograms::for_entry(
+                    self.device,
+                    layouts.clone(),
+                    entry,
+                    self.pipeline_cache.cloned(),
+                    &self.effect_modules,
+                ),
+                layouts,
+                work: PassWork::for_entry(entry),
                 entry: entry.to_owned(),
                 cache: self.pipeline_cache.cloned(),
                 compiled: OnceLock::new(),
@@ -313,6 +341,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     groups: &BindGroups,
     shaders: &ShaderSet,
     cfa_kind: CfaKind,
+    work_format: wgpu::TextureFormat,
     image_workgroups: [u32; 3],
     tone_workgroups: [u32; 3],
 ) -> Result<AssembledPasses> {
@@ -322,6 +351,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         pipeline_cache,
         bgl_scene_tone: &layouts.bgl_scene_tone,
         bgl_effects: &layouts.bgl_effects,
+        effect_modules: EffectModules::new(device, work_format, cfa_kind),
         next_program_index: 0,
     };
     let single_workgroup = [1, 1, 1];
@@ -373,6 +403,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
                 .enumerate()
             {
                 let layout = match pass {
+                    pass if XTRANS_COMPLETE_PASSES.contains(&pass) => &layouts.bgl_xtrans_complete,
                     XTRANS_HOMOGENEITY_PASS => &layouts.bgl_xtrans_homogeneity,
                     XTRANS_ACCUMULATE_PASS => &layouts.bgl_xtrans_accumulate,
                     XTRANS_SMOOTHING_PASS => &layouts.bgl_xtrans_smoothing,
@@ -543,10 +574,20 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         ),
     ]);
     ensure_planned(&passes, indices.mask_blur_start_index, "mask Blur")?;
-    for (step, bind_group) in groups.bg_mask_blur.iter().enumerate() {
+    // The first step also runs the focus blurs, and Lens Blur reads the scene
+    // bake there, so it binds the scene's inputs as the creative pass does.
+    // It reads tex1 and writes tex2, as that pass's bind group from tex1.
+    passes.push(assembler.make_pass(
+        shaders.creative_effects_module.as_ref(),
+        "diffuse_mask_blur_0",
+        &layouts.bgl_adjust_creative,
+        InputBoundPass::EffectsFromTex1,
+        image_workgroups,
+    ));
+    for (index, bind_group) in groups.bg_mask_blur.iter().enumerate() {
         passes.push(assembler.make_pass(
             shaders.creative_effects_module.as_ref(),
-            &format!("diffuse_mask_blur_{step}"),
+            &format!("diffuse_mask_blur_{}", index + 1),
             &layouts.bgl_mask_blur,
             bind_group.clone(),
             image_workgroups,
@@ -785,6 +826,31 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         InputBoundPass::SceneBakeAccumulation,
         [working_workgroups, working_workgroups, 1],
     ));
+    ensure_planned(&passes, indices.styled_glow_pass_index, "Glow pyramids")?;
+    for (program, entry) in STYLED_GLOW_ENTRIES.into_iter().enumerate() {
+        // Dispatched by `styled_glow` with the bind groups and sizes of each
+        // level; the workgroups here are never used.
+        passes.push(assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            entry,
+            &layouts.bgl_styled_glow[program],
+            InputBoundPass::StyledGlow(program),
+            single_workgroup,
+        ));
+    }
+
+    ensure_planned(&passes, indices.defocus_pass_index, "Lens Blur")?;
+    for (program, entry) in DEFOCUS_ENTRIES.into_iter().enumerate() {
+        // Dispatched by `defocus` with the bind groups and sizes of each
+        // bin and level; the workgroups here are never used.
+        passes.push(assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            entry,
+            &layouts.bgl_defocus[program],
+            InputBoundPass::Defocus(program),
+            single_workgroup,
+        ));
+    }
 
     // These variants reuse the programs above with bind groups that read tex2:
     // the mask-blurred scene, or whatever else last wrote there.

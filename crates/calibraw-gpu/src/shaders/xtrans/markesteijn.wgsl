@@ -15,11 +15,14 @@
 //
 // What a dispatch hands on, a "state", is the green and the other colour of
 // every red or blue photosite in four buffers: x, y, z and w of two textures.
-// Red and blue of green photosites follow from it and are recomputed where
-// they are read:
+// Red and blue of green photosites follow from it:
 //   - a solitary green (four red or blue neighbours) from the greens of the
 //     photosites 1 and 2 pixels away along each axis;
 //   - a green in a 2x2 block from two red or blue photosites of its hexagon.
+// The steps that build a state recompute them where they read them. Before
+// the homogeneity test, which reads every candidate of 25 pixels per pixel,
+// each state is completed once: the red and blue of green photosites are
+// stored where the state's textures held nothing for them (`mark_complete_*`).
 // Positions are tile-local pixels. Channels are white-balanced camera RGB
 // with sensor white 1; samples below black count as 0, as in darktable.
 
@@ -44,15 +47,6 @@ const MARK_ORTH = array<i32, 12>(1, 0, 0, 1, -1, 0, 0, -1, 1, 0, 0, 1);
 const MARK_PATT = array<array<i32, 16>, 2>(
     array<i32, 16>(0, 1, 0, -1, 2, 0, -1, 0, 1, 1, 1, -1, 0, 0, 0, 0),
     array<i32, 16>(0, 1, 0, -2, 1, 0, -2, 0, 1, 1, -2, -2, 1, -1, -1, 1),
-);
-
-// The directions darktable differentiates candidate d along (`dir[d & 3]`), as
-// (column, row).
-const MARK_DIRECTIONS = array<vec2<i32>, 4>(
-    vec2<i32>(1, 0),
-    vec2<i32>(0, 1),
-    vec2<i32>(1, 1),
-    vec2<i32>(-1, 1),
 );
 
 struct MarkRgb {
@@ -343,19 +337,30 @@ fn mark_block_red_blue(state: u32, pos: vec2<i32>) -> MarkRedBlue {
     return MarkRedBlue(red, blue);
 }
 
-// The four candidates of `state` at any photosite.
-fn mark_rgb(state: u32, pos: vec2<i32>) -> MarkRgb {
-    if !mark_is_green(pos) {
-        return mark_red_blue_rgb(state, pos);
-    }
-    let green = vec4<f32>(mark_sample(pos));
-    var red_blue: MarkRedBlue;
+// Red and blue of the four candidates of `state` at a green photosite.
+fn mark_green_red_blue(state: u32, pos: vec2<i32>) -> MarkRedBlue {
     if mark_is_solitary(pos) {
-        red_blue = mark_solitary_red_blue(state, pos);
-    } else {
-        red_blue = mark_block_red_blue(state, pos);
+        return mark_solitary_red_blue(state, pos);
     }
-    return MarkRgb(red_blue.red, green, red_blue.blue);
+    return mark_block_red_blue(state, pos);
+}
+
+// The four candidates of a completed state at any photosite. Its green
+// texture holds the greens of red and blue photosites and the reds of green
+// ones; its other texture the other colour of red and blue photosites and
+// the blues of green ones. Bound as `state`'s green and other textures.
+fn mark_complete_rgb(state: u32, pos: vec2<i32>) -> MarkRgb {
+    let own = vec4<f32>(mark_sample(pos));
+    let first = mark_state_green(state, pos);
+    let second = mark_state_other(state, pos);
+    let color = mark_color(pos);
+    if color == 1u {
+        return MarkRgb(first, own, second);
+    }
+    if color == 0u {
+        return MarkRgb(own, first, second);
+    }
+    return MarkRgb(second, first, own);
 }
 
 // Candidate `n` of `state` at any photosite.
@@ -392,37 +397,41 @@ fn mark_refined_green(pos: vec2<i32>) -> vec4<f32> {
     return greens;
 }
 
-// darktable's perceptual space for the homogeneity test: BT.2020 YPbPr.
+// darktable's perceptual space for the homogeneity test: BT.2020 YPbPr, of
+// a completed state.
 fn mark_ypbpr(state: u32, pos: vec2<i32>) -> MarkYpbpr {
-    let rgb = mark_rgb(state, pos);
+    let rgb = mark_complete_rgb(state, pos);
     let y = 0.2627 * rgb.red + 0.6780 * rgb.green + 0.0593 * rgb.blue;
     return MarkYpbpr(y, (rgb.blue - y) * 0.56433, (rgb.red - y) * 0.67815);
 }
 
-fn mark_window_index(offset: vec2<i32>) -> i32 {
-    return (offset.y + 2) * 5 + offset.x + 2;
+// The squared YPbPr second difference of the four candidates of `state`, a
+// completed state, along `direction` at `pos`, whose YPbPr is `center`.
+fn mark_second_difference(
+    center: MarkYpbpr,
+    state: u32,
+    pos: vec2<i32>,
+    direction: vec2<i32>,
+) -> vec4<f32> {
+    let plus = mark_ypbpr(state, pos + direction);
+    let minus = mark_ypbpr(state, pos - direction);
+    let y = 2.0 * center.y - plus.y - minus.y;
+    let pb = 2.0 * center.pb - plus.pb - minus.pb;
+    let pr = 2.0 * center.pr - plus.pr - minus.pr;
+    return y * y + pb * pb + pr * pr;
 }
 
-// The squared YPbPr second derivative of the four candidates of `state` along
-// their directions, at the 3x3 pixels around `pos` in row order.
-fn mark_derivatives(state: u32, pos: vec2<i32>) -> array<vec4<f32>, 9> {
-    var window: array<MarkYpbpr, 25>;
-    for (var i = 0; i < 25; i = i + 1) {
-        window[i] = mark_ypbpr(state, pos + vec2<i32>(i % 5 - 2, i / 5 - 2));
-    }
-    var directions = MARK_DIRECTIONS;
-    var derivatives: array<vec4<f32>, 9>;
-    for (var q = 0; q < 9; q = q + 1) {
-        let offset = vec2<i32>(q % 3 - 1, q / 3 - 1);
-        let c = mark_window_index(offset);
-        for (var n = 0; n < 4; n = n + 1) {
-            let plus = mark_window_index(offset + directions[n]);
-            let minus = mark_window_index(offset - directions[n]);
-            let y = 2.0 * window[c].y[n] - window[plus].y[n] - window[minus].y[n];
-            let pb = 2.0 * window[c].pb[n] - window[plus].pb[n] - window[minus].pb[n];
-            let pr = 2.0 * window[c].pr[n] - window[plus].pr[n] - window[minus].pr[n];
-            derivatives[q][n] = y * y + pb * pb + pr * pr;
-        }
-    }
-    return derivatives;
+// The squared YPbPr second derivative at `pos` of the four candidates of
+// `state`, a completed state, each along the direction darktable
+// differentiates it (`dir[d & 3]`): horizontal, vertical and both diagonals.
+// Written without arrays or computed component indices, which Adreno's
+// compiler turns into code a thousand times slower.
+fn mark_derivative(state: u32, pos: vec2<i32>) -> vec4<f32> {
+    let center = mark_ypbpr(state, pos);
+    return vec4<f32>(
+        mark_second_difference(center, state, pos, vec2<i32>(1, 0)).x,
+        mark_second_difference(center, state, pos, vec2<i32>(0, 1)).y,
+        mark_second_difference(center, state, pos, vec2<i32>(1, 1)).z,
+        mark_second_difference(center, state, pos, vec2<i32>(-1, 1)).w,
+    );
 }

@@ -5,7 +5,7 @@ use std::f32::consts::TAU;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use super::{LensGeometryMap, SceneDepth};
+use super::{AdjustmentGroupSet, LensGeometryMap, SceneDepth};
 use crate::color_math::{linear_srgb_to_oklab, srgb_decode_signed};
 
 mod content_dependencies;
@@ -15,16 +15,19 @@ mod raster_cache;
 pub use content_dependencies::ContentDependencies;
 
 pub use effects::{
-    effect_lanes, params as effect_params, BlurEffectSettings, ColorLane, EdgeGlowEffectSettings,
-    EffectControl, EffectControls, EffectDetails, EffectInstances, EffectLanes, EffectOption,
-    EffectPass, EffectReach, EffectSettings, EffectSettingsVisitor, FogEffectSettings,
-    GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, Lane, LaneName,
-    LensBlurEffectSettings, LightRaySource, LightRaysEffectSettings, MaskEffect,
-    MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings,
-    PackContext, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode,
-    RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneNeed, SceneNeeds,
-    SharpenEffectSettings, SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
-    WetSurfacesEffectSettings, MAX_EFFECT_INSTANCES, OPTION_COUNT,
+    effect_lanes, params as effect_params, BlurEffectSettings, BokehShape,
+    ColorFringeEffectSettings, ColorFringeStyle, ColorLane, DefocusEffectSettings,
+    EdgeGlowEffectSettings, EffectControl, EffectControls, EffectDetails, EffectFamily,
+    EffectInstances, EffectLanes, EffectOption, EffectPass, EffectReach, EffectSettings,
+    EffectSettingsVisitor, EffectStyle, FogEffectSettings, GlowEffectSettings, GlowSplitMode,
+    GlowStyle, GrainEffectSettings, HalationEffectSettings, Lane, LaneName,
+    LegacyHighlightGlowEffectSettings, LensBlurEffectSettings, LightRaysEffectSettings,
+    LightShaftSource, LightShaftsEffectSettings, LightShaftsMode, MaskEffect, MaskEffectCategory,
+    MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings, PackContext,
+    PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings,
+    ReachGroup, RelightEffectSettings, RelightLight, SceneNeed, SceneNeeds, SharpenEffectSettings,
+    SmokeEffectSettings, StarPoints, StyledGlowEffectSettings, TiltShiftEffectSettings,
+    VignetteEffectSettings, WetSurfacesEffectSettings, MAX_EFFECT_INSTANCES, OPTION_COUNT,
 };
 
 mod box_filter;
@@ -38,6 +41,7 @@ mod range_filters;
 mod raster;
 mod shapes;
 pub use brush::*;
+pub use layers::MaskRegion;
 use probability::*;
 use range_filters::*;
 use raster::*;
@@ -266,6 +270,11 @@ pub struct LocalMask {
     pub opacity: f32,
     pub components: Vec<MaskComponent>,
     pub adjustments: LocalAdjustments,
+    /// The adjustment cards switched off: their settings stay in
+    /// `adjustments` and render at rest ([`MaskStack::apply_card_switches`]).
+    /// Left out of files while every card is on, as files without it mean.
+    #[serde(default, skip_serializing_if = "super::card_switches::no_groups")]
+    pub cards_off: AdjustmentGroupSet,
 }
 
 impl Deref for LocalMask {
@@ -293,6 +302,7 @@ impl LocalMask {
             opacity: 1.0,
             components: vec![MaskComponent::new(kind, MaskCombineMode::Add)],
             adjustments: LocalAdjustments::default(),
+            cards_off: AdjustmentGroupSet::EMPTY,
         }
     }
 
@@ -426,6 +436,12 @@ impl MaskStack {
             .iter()
             .flat_map(|mask| &mask.components)
             .any(|component| component.kind == MaskKind::Person)
+    }
+
+    /// Whether an active global effect, or an active effect of an enabled,
+    /// visible mask, is `effect`.
+    pub fn has_active(&self, effect: MaskEffect) -> bool {
+        self.has_active_effect(|component| component.effect == effect)
     }
 
     /// An active effect asks for scene depth

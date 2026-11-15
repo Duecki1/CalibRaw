@@ -42,6 +42,12 @@ pub fn install_gpu_device_lost_handler(device: &wgpu::Device) {
         }
         log::error!("the GPU device was lost: {message}");
         calibraw_core::diagnostics::record(format!("GPU device lost: {message}"));
+        if let Some(work) = crate::pipeline::in_flight_summary() {
+            log::error!("GPU work in flight when the device was lost: {work}");
+            calibraw_core::diagnostics::record(format!(
+                "GPU work in flight when the device was lost: {work}"
+            ));
+        }
         *DEVICE_LOST
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(message);

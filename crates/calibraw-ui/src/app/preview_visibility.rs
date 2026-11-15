@@ -1,17 +1,30 @@
-//! Session-only eye controls. Saved edits, history, export and mask sources never
-//! contain this state. Only the Develop preview reads projected copies.
+//! What the Develop preview renders of the open edit: its saved card
+//! switches applied (`card_switches` in calibraw-core), as every renderer
+//! applies them, plus the preview-only aids on top: a hovered preset, the
+//! Point Color range visualization and the forced mask overlay.
 use super::*;
-use std::collections::HashSet;
+use crate::pipeline::{AdjustmentGroupSet, CardSwitch, CardSwitches};
+
+/// The card switches of the open edit, to notice when one changes: by a
+/// switch, a reset, an undo or a paste.
+#[derive(Clone, Default, PartialEq)]
+struct SwitchState {
+    develop: CardSwitches,
+    lens: bool,
+    masks: Vec<AdjustmentGroupSet>,
+    subject_refinement: bool,
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct PreviewVisibility {
-    hidden: HashSet<(Option<usize>, &'static str)>,
     scope: Option<usize>,
     force_mask_overlay: bool,
     pending: bool,
     rebuild_required: bool,
     masks: Option<Arc<MaskStack>>,
-    mask_names: Vec<String>,
+    /// `None` until the open edit's switches are first seen, which needs no
+    /// render of its own.
+    switches: Option<SwitchState>,
 }
 
 impl PreviewVisibility {
@@ -33,6 +46,8 @@ impl PreviewVisibility {
         state.masks = None;
         state.write(ctx);
     }
+    /// The mask whose cards the sidebar draws, which their footer actions
+    /// on portrait screens belong to; `None` for the photo-wide cards.
     pub(crate) fn set_mask_scope(ctx: &egui::Context, scope: Option<usize>) {
         let mut state = Self::read(ctx);
         state.scope = scope;
@@ -50,38 +65,14 @@ impl PreviewVisibility {
         state.write(ctx);
         ctx.request_repaint();
     }
-    pub(crate) fn visible(ctx: &egui::Context, title: &'static str) -> bool {
-        let state = Self::read(ctx);
-        !state.hidden.contains(&(state.scope, title))
-    }
-    /// Whether the photo-wide card `title` is shown, whichever mask is in scope.
-    pub(in crate::app) fn globally_visible(ctx: &egui::Context, title: &'static str) -> bool {
-        !Self::read(ctx).hidden.contains(&(None, title))
-    }
-    pub(crate) fn toggle(ctx: &egui::Context, title: &'static str) {
-        let mut state = Self::read(ctx);
-        let key = (state.scope, title);
-        if !state.hidden.remove(&key) {
-            state.hidden.insert(key);
-        }
-        state.pending = true;
-        state.masks = None;
-        state.write(ctx);
-        ctx.request_repaint();
-    }
     /// Re-renders the preview after an input of the projection other than
-    /// the eye controls changed, such as a hovered preset.
+    /// the card switches changed, such as a hovered preset.
     pub(in crate::app) fn refresh_projection(ctx: &egui::Context) {
         let mut state = Self::read(ctx);
         state.pending = true;
         state.masks = None;
         state.write(ctx);
         ctx.request_repaint();
-    }
-    pub(crate) fn show(ctx: &egui::Context, title: &'static str) {
-        if !Self::visible(ctx, title) {
-            Self::toggle(ctx, title);
-        }
     }
     pub(in crate::app) fn requires_rebuild(ctx: &egui::Context) -> bool {
         Self::read(ctx).rebuild_required
@@ -91,74 +82,54 @@ impl PreviewVisibility {
         state.rebuild_required = false;
         state.write(ctx);
     }
-    pub(crate) fn invalidate_masks(ctx: &egui::Context, masks: &MaskStack) {
+    /// Forgets what the preview knew of the previous edit once another is
+    /// installed and rendered, such as an opened photo's.
+    pub(in crate::app) fn edit_installed(ctx: &egui::Context) {
         let mut state = Self::read(ctx);
-        let names: Vec<_> = masks.masks.iter().map(|mask| mask.name.clone()).collect();
-        if state.mask_names != names {
-            // Structural edits must never transfer an eye state to a different mask.
-            state.hidden.retain(|(scope, _)| scope.is_none());
-            state.mask_names = names;
-        }
         state.masks = None;
+        state.switches = None;
         state.write(ctx);
-    }
-    fn group(title: &str) -> Option<crate::pipeline::AdjustmentGroup> {
-        use crate::pipeline::AdjustmentGroup;
-        Some(match title {
-            "Light" => AdjustmentGroup::Light,
-            "Tone Curve" => AdjustmentGroup::ToneCurve,
-            "Color" => AdjustmentGroup::Color,
-            "Color Grading" => AdjustmentGroup::ColorGrading,
-            "Detail" => AdjustmentGroup::Detail,
-            "Effects" => AdjustmentGroup::Effects,
-            "Color Mixer" => AdjustmentGroup::ColorMixer,
-            "Calibration" => AdjustmentGroup::Calibration,
-            _ => return None,
-        })
-    }
-    fn exposure(&self, saved: ExposureParams) -> ExposureParams {
-        let mut preview = saved;
-        for (scope, title) in &self.hidden {
-            if scope.is_none() {
-                if *title == super::FILM_NEGATIVE_CARD_TITLE {
-                    preview.film = crate::pipeline::FilmSource::Positive;
-                } else if let Some(group) = Self::group(title) {
-                    preview.reset_group(group);
-                    if group == crate::pipeline::AdjustmentGroup::Detail {
-                        preview.sharpen_amount = 0.0;
-                    }
-                }
-            }
-        }
-        preview
-    }
-    fn project_masks(&self, saved: &MaskStack) -> MaskStack {
-        let mut preview = saved.clone();
-        for (scope, title) in &self.hidden {
-            let Some(index) = *scope else {
-                continue;
-            };
-            if *title == "Subject refinement" {
-                preview.subject_refinement.clear();
-            } else if let Some(mask) = preview.masks.get_mut(index) {
-                if let Some(group) = Self::group(title) {
-                    mask.adjustments.reset_group(group);
-                } else {
-                    mask.enabled = false;
-                }
-            }
-        }
-        preview
     }
 }
 
 impl CalibRawApp {
+    /// Switches the photo-wide `card` on or off. Like any edit it is saved
+    /// and an undo step; the preview follows (`sync_preview_visibility`).
+    pub(crate) fn set_card_on(&mut self, card: CardSwitch, on: bool) {
+        if self.develop.exposure.set_card_on(card, on) {
+            self.mark_pipeline_dirty();
+        }
+    }
+
+    /// The open edit's masks as they render: their switched-off cards at
+    /// rest, without the preview's aids.
+    pub(in crate::app) fn applied_masks(&self) -> MaskStack {
+        let mut masks = self.masks.stack.clone();
+        masks.apply_card_switches();
+        masks
+    }
+
+    fn card_switch_state(&self) -> SwitchState {
+        SwitchState {
+            develop: self.develop.exposure.cards_off,
+            lens: self.develop.lens_correction.enabled,
+            masks: self
+                .masks
+                .stack
+                .masks
+                .iter()
+                .map(|mask| mask.cards_off)
+                .collect(),
+            subject_refinement: self.masks.stack.subject_refinement.enabled,
+        }
+    }
+
     pub(in crate::app) fn preview_exposure(&self) -> ExposureParams {
         let mut exposure = self.develop.exposure;
         if let Some(preset) = self.previewed_preset() {
             preset.preview_adjustments_on(&mut exposure);
         }
-        let mut exposure = PreviewVisibility::read(&self.egui_ctx).exposure(exposure);
+        let mut exposure = exposure.applied(self.develop.lens_correction.enabled);
         exposure.point_color_visualize = (self.ui.sidebar_tab == SidebarTab::Adjustments
             && self.develop_ui.point_color_tab
             && self.develop_ui.point_color.visualize_range
@@ -172,14 +143,11 @@ impl CalibRawApp {
         if let Some(masks) = state.masks {
             return masks;
         }
-        let mut masks = match self.previewed_preset() {
-            Some(preset) => {
-                let mut with_preset = self.masks.stack.clone();
-                preset.preview_masks_on(&mut with_preset);
-                state.project_masks(&with_preset)
-            }
-            None => state.project_masks(&self.masks.stack),
-        };
+        let mut masks = self.masks.stack.clone();
+        if let Some(preset) = self.previewed_preset() {
+            preset.preview_masks_on(&mut masks);
+        }
+        masks.apply_card_switches();
         if self.ui.sidebar_tab == SidebarTab::Masks
             && self.develop_ui.mask_point_color_tab
             && self.develop_ui.mask_point_color.visualize_range
@@ -199,6 +167,18 @@ impl CalibRawApp {
     }
     pub(in crate::app) fn sync_preview_visibility(&mut self) {
         let mut state = PreviewVisibility::read(&self.egui_ctx);
+        let switches = self.card_switch_state();
+        match &state.switches {
+            Some(seen) if *seen == switches => {}
+            seen => {
+                // A switch reaches far: AI denoise, the film negative and
+                // mask layers. The first look at an edit renders nothing.
+                state.pending |= seen.is_some();
+                state.masks = None;
+                state.switches = Some(switches);
+                state.clone().write(&self.egui_ctx);
+            }
+        }
         let exposure = self.preview_exposure();
         if !state.pending {
             // Range visualization is a preview aid, never an edit or history entry.

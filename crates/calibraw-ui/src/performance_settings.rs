@@ -138,9 +138,9 @@ pub(crate) struct PerformanceSettings {
     pub missing_lens_profile_prompt: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_photo_preset: Option<PathBuf>,
-    /// Match photos that open without a sidecar to their camera's look.
-    /// Missing until the setup question is answered, so existing users are
-    /// asked once.
+    /// Match photos that open without a sidecar to their camera's look. On
+    /// unless set to false; missing until the setup question is answered, so
+    /// existing users are asked once.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub camera_match_new_photos: Option<bool>,
     pub adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings,

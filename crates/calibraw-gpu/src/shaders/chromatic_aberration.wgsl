@@ -162,7 +162,8 @@ fn ca_green_laplacian(pos: vec2<i32>) -> f32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn chromatic_aberration_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn chromatic_aberration_prepare(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = ca_texel(pos).rgb;
@@ -290,7 +291,8 @@ fn ca_log_ratio(value: f32, green: f32) -> f32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn chromatic_aberration_fringes(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn chromatic_aberration_fringes(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let center = ca_texel(pos);

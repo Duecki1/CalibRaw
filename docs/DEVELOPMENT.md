@@ -169,8 +169,11 @@ An effect is one row in the `mask_effects!` table
 and a settings module beside it that implements `EffectSettings`: its starting point,
 when it is active, its controls (specs in `effects/params.rs`), its lanes
 (`effect_lanes!`) and how it packs them. The row says where it runs (`EffectPass`), how
-far around a pixel it reads (`EffectReach`, the export-tile halo) and what it reads of
-the scene bake (`scene: [...]`, `SceneNeed`). Sidecar validation, scene depth generation,
+far around a pixel it reads (`EffectReach`, the export-tile halo), what it reads of
+the scene bake (`scene: [...]`, `SceneNeed`) and its `family` (`EffectFamily`): effects
+of one kind share a picker tile and switch between each other with their card's Style
+control, which keeps the values whose fields they share. An effect without kin names a
+family of its own; a new one is added to `EffectFamily`. Sidecar validation, scene depth generation,
 the GPU's passes and maps, the shader constants and the card follow from the row and the
 settings.
 
@@ -190,7 +193,7 @@ inputs only, adds its case to `scene_emission_slot_at` and `scene_emission_prese
 (`scene_emission.wgsl`) and to `GpuParams::needs_scene_emission`, and keeps its mask in
 the full-image atlas (`MaskEffect::reads_full_image_mask`); Fog, Smoke, Rain, Wet Surfaces and the
 surfaces then receive its light. Effects with passes of their
-own (the blurs, Glow, Light Rays, Rain, Wet Surfaces, the light bake) also need
+own (the blurs, Glow, the legacy Light Rays, Rain, Wet Surfaces, the light bake) also need
 those passes and their `GpuParams::needs_*` checks, and read their slots by lane name
 too (`mask_effect_params`).
 
@@ -206,9 +209,26 @@ combine them works in the slot of the first (`mask_effect_instance` in
 
 Its card is drawn from its controls. An effect with a position pad, a range track or a
 control that shows only sometimes draws its own card in
-`calibraw-ui/src/ui/sidebar/mask_effects/`, chosen in `show_effect_component_settings`.
-Its icon goes in the picker's `effect_icon`, and its label, description, control labels
-and details title in the locale catalogs.
+`calibraw-ui/src/ui/sidebar/mask_effects/`, chosen in `show_effect_component_settings`;
+in a family with several styles it passes on the card's `StyleChoice`. Its icon goes in
+the picker's `effect_icon` (a family's tile shows its first effect's), and its label,
+description, control labels and details title in the locale catalogs.
+
+#### Legacy effects
+
+An effect that a rebuilt effect replaces becomes legacy (`MaskEffect::is_legacy`): its
+settings move to `effects/legacy/` in calibraw-core and its shader to
+`shaders/mask_effects/legacy/` in calibraw-gpu, each file marked `legacy: remove in
+vX.Y.Z` with the version the migration rule in AGENTS.md gives user files; `cargo xtask
+migrations` requires the marker in those folders and reports it when due. Old edits
+render exactly as before, so their parity cases pass without blessing. A legacy effect
+is never offered (pickers and Style controls ask `MaskEffect::is_offered`, and
+quick-add lists leave it out); a photo that holds one shows a card with its name, its
+switch, Remove and Replace with new, which switches it to the style
+`MaskEffect::replacement` names, keeping the values they share. When a legacy look was
+one setting of an effect that stays (the highlight Glow was a Glow with
+Self-illuminating off), a migration turns it into the legacy effect on decode, so the
+current effect keeps no field for it (`migrations/highlight_glow.rs`).
 
 ### Render parity and format fixtures
 

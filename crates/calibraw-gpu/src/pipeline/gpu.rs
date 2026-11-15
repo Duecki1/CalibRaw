@@ -26,21 +26,32 @@ mod builder;
 mod clipping;
 mod construction;
 mod effect_inputs;
+mod effect_programs;
 mod geometry_resample;
 mod histogram;
 mod mask_layers;
+mod output_parts;
 mod preview_budget;
 mod readback;
 mod resources;
 mod scene;
-pub use scene::SceneLightQuality;
+mod unrendered;
 use scene::{
     SceneBake, SceneBakeUniforms, SceneLightKind, SceneLightSet, SceneShadowLight,
     SCENE_BAKE_LAYERS, SCENE_SHADOW_LIGHTS, SCENE_WORKING_LONG_EDGE_MAX,
 };
+mod defocus;
 mod shader_manager;
 mod shaders;
+mod styled_glow;
+use defocus::{defocus_layout_entries, DEFOCUS_ENTRIES, DEFOCUS_LAYOUT_LABELS, DEFOCUS_PASSES};
+use styled_glow::{
+    styled_glow_layout_entries, STYLED_GLOW_ENTRIES, STYLED_GLOW_LAYOUT_LABELS, STYLED_GLOW_PASSES,
+};
 mod wait;
+mod work;
+pub(crate) use work::in_flight_summary;
+use work::{dispatch_band_entry, DispatchBands, PassDispatch, PassWork, WorkEncoder};
 
 use builder::*;
 pub use clipping::PreviewClippingGpu;
@@ -48,8 +59,13 @@ use effect_inputs::{
     EffectInputs, FullImageMap, InputBindingSources, InputBoundPass, HAZE_PASSES,
     SCENE_EMISSION_PASSES,
 };
+use effect_programs::{EffectModules, EffectPrograms, EffectSet, Readiness};
 pub(crate) use geometry_resample::{resample_geometry, GeometryResampleJob};
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
+use output_parts::{
+    BuildRevision, OutputInputs, OutputPart, OutputResume, OutputStart, OutputTextures,
+    SharedMapBuilds,
+};
 pub(crate) use preview_budget::{
     gpu_working_set_is_limited, scale_with_mobile_export_tile, ExportTileShape,
 };
@@ -58,6 +74,8 @@ pub(crate) use readback::PendingSceneReadback;
 use readback::*;
 use resources::*;
 use shader_manager::ShaderManager;
+pub use unrendered::UnrenderedEffect;
+use unrendered::{EffectResource, UnrenderedEffects};
 pub use wait::GpuWait;
 pub(crate) use wait::SLOW_GPU_WAIT;
 use wait::{wait_for_submission, GpuWaitError};
@@ -108,11 +126,18 @@ const ANDROID_GPU_WORKING_SET_LIMIT_BYTES: u64 = 384 * 1024 * 1024;
 /// Upper bound of the RAM-scaled Android admission cap.
 #[cfg(target_os = "android")]
 const ANDROID_GPU_WORKING_SET_CEILING_BYTES: u64 = 1_536 * 1024 * 1024;
-/// Share of device RAM, as a divisor, the Android admission cap allows GPU
-/// pipelines to reserve. Android GPUs share system memory, and drivers may
-/// let the low-memory killer end the app instead of reporting OOM.
+/// Share of device RAM, as a divisor, of the Android working-set budget
+/// previews and export tiles are sized against.
 #[cfg(target_os = "android")]
 const ANDROID_GPU_WORKING_SET_RAM_DIVISOR: u64 = 8;
+/// Share of device RAM, as a divisor, GPU pipelines may reserve together on
+/// Android (`gpu_admission_limit_bytes`): 3 GiB of a 12 GiB phone, 1 GiB of a
+/// 4 GiB tablet.
+#[cfg(target_os = "android")]
+const ANDROID_GPU_ADMISSION_RAM_DIVISOR: u64 = 4;
+/// Upper bound of the Android admission limit.
+#[cfg(target_os = "android")]
+const ANDROID_GPU_ADMISSION_CEILING_BYTES: u64 = 3 * 1024 * 1024 * 1024;
 
 const COLOR_DENOISE_ENTRY_POINTS: [&str; 6] = [
     "color_denoise_scale_1",
@@ -183,9 +208,14 @@ struct ComputeProgram {
     shader: wgpu::ShaderModule,
     layouts: [wgpu::BindGroupLayout; 3],
     entry: String,
+    /// How the program's dispatches are measured and cut (`work`).
+    work: PassWork,
     cache: Option<Arc<PersistentGpuPipelineCache>>,
     compiled: OnceLock<wgpu::ComputePipeline>,
     demosaic_variants: [OnceLock<wgpu::ComputePipeline>; DEMOSAIC_VARIANT_COUNT - 1],
+    /// The program per effect set, for a program that dispatches effects
+    /// (`effect_programs`); `compiled` holds every effect.
+    effects: Option<EffectPrograms>,
 }
 
 impl ComputeProgram {
@@ -253,6 +283,9 @@ impl ComputeProgram {
                 },
                 cache: self.cache.as_ref().map(|cache| cache.raw()),
             });
+        if let Some(cache) = &self.cache {
+            cache.note_compiled();
+        }
         log::debug!(
             "GPU program {} {constants:?} compiled in {:.3}s",
             self.entry,
@@ -313,6 +346,9 @@ pub struct PipelineOptions<'a> {
     pub mask_layers: Option<usize>,
     /// Compiled programs to reuse; they must match the CFA layout and quality.
     pub programs: Option<&'a RawGpuProgramTemplate>,
+    /// The persistent cache programs compile with when no `programs` are
+    /// reused, whose cache is used instead.
+    pub pipeline_cache: Option<&'a Arc<PersistentGpuPipelineCache>>,
     /// Reserve [`PREVIEWED_PROFILE_BYTES`] for the tables of other camera
     /// profiles, so parameters with another profile of the same photo
     /// ([`GpuParams::new_with_profile_color`]) render without a rebuild.
@@ -326,6 +362,7 @@ impl<'a> PipelineOptions<'a> {
             mask_atlas_edge: None,
             mask_layers: None,
             programs: None,
+            pipeline_cache: None,
             profile_preview: false,
         }
     }
@@ -345,6 +382,12 @@ impl<'a> PipelineOptions<'a> {
     #[must_use]
     pub const fn programs(mut self, template: &'a RawGpuProgramTemplate) -> Self {
         self.programs = Some(template);
+        self
+    }
+
+    #[must_use]
+    pub const fn pipeline_cache(mut self, cache: &'a Arc<PersistentGpuPipelineCache>) -> Self {
+        self.pipeline_cache = Some(cache);
         self
     }
 
@@ -401,10 +444,11 @@ impl RawGpuProgramTemplate {
     }
 
     /// Saves the programs compiled so far to the persistent pipeline cache the
-    /// template compiles with, if it has one, so the next launch loads them.
+    /// template compiles with, if it has one and a program compiled since its
+    /// last save, so the next launch loads them.
     pub fn persist_pipeline_cache(&self) -> Result<()> {
         if let Some(cache) = &self.pipeline_cache {
-            cache.persist()?;
+            cache.persist_if_changed()?;
         }
         Ok(())
     }
@@ -417,15 +461,78 @@ impl RawGpuProgramTemplate {
     }
 }
 
+/// The compiled programs background work (exports, crops, merges) shares: the
+/// template the app compiles at startup, and one per other sensor layout or
+/// quality, kept from the first pipeline built for it
+/// ([`RawGpuPipeline::new_reusing`]).
 #[derive(Default)]
 pub struct GpuProgramPrewarm {
     result: Mutex<Option<std::result::Result<Arc<RawGpuProgramTemplate>, String>>>,
     ready: Condvar,
+    /// The persistent cache of a prewarm without startup programs.
+    pipeline_cache: Option<Arc<PersistentGpuPipelineCache>>,
+    /// Templates the startup one does not fit.
+    kept: Mutex<Vec<Arc<RawGpuProgramTemplate>>>,
+    /// Held while a pipeline is built without a template, so two jobs that
+    /// start together compile its programs once.
+    building: Mutex<()>,
 }
 
 impl GpuProgramPrewarm {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A prewarm without startup programs, whose pipelines compile with `cache`.
+    pub fn without_startup_programs(cache: Option<Arc<PersistentGpuPipelineCache>>) -> Self {
+        let prewarm = Self {
+            pipeline_cache: cache,
+            ..Self::default()
+        };
+        if let Ok(mut slot) = prewarm.result.lock() {
+            *slot = Some(Err("no programs were compiled at startup".to_owned()));
+        }
+        prewarm
+    }
+
+    /// The programs a pipeline of `quality` for `raw` can be built from, once
+    /// the startup programs are published.
+    fn template_for(
+        &self,
+        raw: &LoadedRaw,
+        quality: ProcessingQuality,
+    ) -> Option<Arc<RawGpuProgramTemplate>> {
+        if let Some(template) = self
+            .wait()
+            .ok()
+            .filter(|template| template.fits(raw, quality))
+        {
+            return Some(template);
+        }
+        self.kept
+            .lock()
+            .ok()?
+            .iter()
+            .find(|template| template.fits(raw, quality))
+            .cloned()
+    }
+
+    /// The persistent cache pipelines built without a template compile with.
+    fn pipeline_cache(&self) -> Option<Arc<PersistentGpuPipelineCache>> {
+        self.pipeline_cache.clone().or_else(|| {
+            self.wait()
+                .ok()
+                .and_then(|template| template.pipeline_cache.clone())
+        })
+    }
+
+    /// Saves the programs compiled so far to the persistent pipeline cache, if
+    /// one compiled since its last save.
+    pub fn persist_pipeline_cache(&self) -> Result<()> {
+        if let Some(cache) = self.pipeline_cache() {
+            cache.persist_if_changed()?;
+        }
+        Ok(())
     }
 
     pub fn publish(&self, result: std::result::Result<RawGpuProgramTemplate, String>) {
@@ -466,12 +573,28 @@ pub struct RawGpuPipeline {
     scene_tone_uniforms_buffer: wgpu::Buffer,
     effects_uniforms_buffer: wgpu::Buffer,
     scene_tone_bind_group: wgpu::BindGroup,
+    /// The band origins bound with the scene-tone uniforms (`work`).
+    dispatch_bands: DispatchBands,
+    /// Whether this pipeline's stages wait for the GPU between chunks
+    /// ([`Self::pace_submissions`]).
+    paced_submissions: AtomicBool,
     effects_bind_group: wgpu::BindGroup,
     remove_composite_pipeline: wgpu::ComputePipeline,
     remove_composite_bind_group: wgpu::BindGroup,
     remove_composite_params_buffer: wgpu::Buffer,
     uploaded_stage_uniforms: Mutex<UploadedStageUniforms>,
+    /// The effects of the active slots of the parameters last uploaded
+    /// ([`EffectSet::bits`]), which choose the programs of the passes that
+    /// dispatch effects (`effect_programs`).
+    uploaded_effects: std::sync::atomic::AtomicU32,
+    /// Whether a render waits for the program of its effect set. A preview
+    /// takes it once a worker has compiled it, so no edit stalls on a
+    /// compile. A full-quality graph, which an export renders every tile
+    /// with, compiles it while it is built.
+    effect_readiness: Readiness,
     mask_data_buffer: wgpu::Buffer,
+    /// The slots at the start of `mask_data_buffer`, as last uploaded.
+    uploaded_mask_slots: Mutex<Vec<MaskData>>,
     tone_histogram_buffer: wgpu::Buffer,
     tone_stats_buffer: wgpu::Buffer,
     /// The camera profile's tables (`ProfileGpuData`), and room for more.
@@ -498,6 +621,19 @@ pub struct RawGpuPipeline {
     /// texture, which the render pass then read; otherwise it read the first
     /// (`post_blur_render_pass`). Point colour samples render from the same one.
     output_image_in_tex2: AtomicBool,
+    /// The last preview render of the output stage, which the next starts
+    /// after the parts it shares with (`output_parts`). Every method that
+    /// writes the work textures outside the output stage, or changes what it
+    /// reads other than through its parameters, forgets it.
+    output_resume: Mutex<OutputResume>,
+    /// Effects whose resources could not be allocated (`unrendered`).
+    unrendered: Mutex<UnrenderedEffects>,
+    /// This pipeline's tone statistics and full-image maps, built again by
+    /// each tone stage; crops that inherit them compare it.
+    tone_build: BuildRevision,
+    /// The full frame's `tone_build` this pipeline last inherited; 0 before
+    /// any.
+    inherited_tone: std::sync::atomic::AtomicU64,
     /// The raster finish program reading camera RGB from highlight work A: a
     /// binned source's reconstruction, or an X-Trans photo's AI-denoised scene.
     binned_finish_pass: Pass,
@@ -521,8 +657,10 @@ pub struct RawGpuPipeline {
     _tex1: wgpu::Texture,
     _tex2: wgpu::Texture,
     _xtrans_homogeneity: Option<wgpu::Texture>,
+    _xtrans_complete: Option<wgpu::Texture>,
     rgb_source_texture: wgpu::Texture,
     binned_ai_texture: wgpu::Texture,
+    binned_clipping_texture: wgpu::Texture,
     scene_texture: wgpu::Texture,
     scene_format: wgpu::TextureFormat,
     has_ai_scene: bool,
@@ -614,9 +752,30 @@ struct RawGpuPipelineBuild<'a> {
 }
 
 impl RawGpuPipeline {
-    fn upload_params(&self, queue: &wgpu::Queue, params: &GpuParams) {
+    /// Prepares what the render tier sizes, for a render of `params` from
+    /// `start`: Lens Blur's textures and map when it runs the Scene part,
+    /// the scene lights when it runs a part that may read them (the Scene or
+    /// the Creative part). A part a render leaves as it is keeps what it was
+    /// rendered from, in its own tier (`output_parts`). Call after
+    /// `upload_params`.
+    fn prepare_tiered_effects(&self, queue: &wgpu::Queue, params: &GpuParams, start: OutputPart) {
+        if start == OutputPart::Scene {
+            self.prepare_defocus(queue, params);
+        }
+        if start <= OutputPart::Creative {
+            self.prepare_scene_lights(queue, params);
+        }
+    }
+
+    /// Uploads `params` and returns the uniforms as uploaded, which the
+    /// pipeline adjusts to what it holds (`effects_for_upload`,
+    /// `scene_tone_for_upload`, `without_highlight_model`). What the render
+    /// tier sizes is prepared by `prepare_tiered_effects`.
+    fn upload_params(&self, queue: &wgpu::Queue, params: &GpuParams) -> UploadedStageUniforms {
         self.upload_profile_tables(queue, &params.profile_color);
         self.prepare_effect_inputs(params);
+        let (styled_glow_near, styled_glow_map) = self.prepare_styled_glow(params);
+        let effects = params.effects_for_upload(styled_glow_near, styled_glow_map);
         let look_lut_uploaded = match self.prepare_look_lut(queue, params.look_lut()) {
             Ok(()) => true,
             Err(error) => {
@@ -649,9 +808,13 @@ impl RawGpuPipeline {
                     );
                     uploaded.scene_tone = scene_tone;
                 }
-                if bytemuck::bytes_of(&uploaded.effects) != params.effects_bytes() {
-                    queue.write_buffer(&self.effects_uniforms_buffer, 0, params.effects_bytes());
-                    uploaded.effects = params.effects;
+                if bytemuck::bytes_of(&uploaded.effects) != bytemuck::bytes_of(&effects) {
+                    queue.write_buffer(
+                        &self.effects_uniforms_buffer,
+                        0,
+                        bytemuck::bytes_of(&effects),
+                    );
+                    uploaded.effects = effects;
                 }
             }
             Err(_) => {
@@ -661,13 +824,54 @@ impl RawGpuPipeline {
                     0,
                     bytemuck::bytes_of(&scene_tone),
                 );
-                queue.write_buffer(&self.effects_uniforms_buffer, 0, params.effects_bytes());
+                queue.write_buffer(
+                    &self.effects_uniforms_buffer,
+                    0,
+                    bytemuck::bytes_of(&effects),
+                );
             }
         }
-        queue.write_buffer(&self.mask_data_buffer, 0, params.mask_data_bytes());
+        self.upload_mask_slots(queue, params.mask_slots());
+        self.uploaded_effects.store(
+            EffectSet::of_slots(params.mask_slots()).bits(),
+            Ordering::Release,
+        );
         // After the camera uniforms, which tell whether this pipeline renders
         // the whole image.
         self.upload_scene_bake_depth(queue, params);
+        UploadedStageUniforms {
+            camera,
+            scene_tone,
+            effects,
+        }
+    }
+
+    /// Uploads `slots`, the mask slots in use, unless the buffer already
+    /// starts with them. The shaders read only the slots in use
+    /// (`mask_slot_count` in common.wgsl), so the rest of the table stays as
+    /// it was.
+    fn upload_mask_slots(&self, queue: &wgpu::Queue, slots: &[MaskData]) {
+        if slots.is_empty() {
+            return;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(slots);
+        // The record is replaced in one step below, so a panic elsewhere
+        // cannot leave it half written.
+        let mut uploaded = self
+            .uploaded_mask_slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if uploaded
+            .get(..slots.len())
+            .is_some_and(|held| bytemuck::cast_slice::<MaskData, u8>(held) == bytes)
+        {
+            return;
+        }
+        queue.write_buffer(&self.mask_data_buffer, 0, bytes);
+        if uploaded.len() < slots.len() {
+            uploaded.resize(slots.len(), MaskData::zeroed());
+        }
+        uploaded[..slots.len()].copy_from_slice(slots);
     }
 
     pub fn tone_guide_supports_origin(&self, origin_x: i32, origin_y: i32) -> bool {
@@ -719,24 +923,43 @@ impl RawGpuPipeline {
         &self.out_view
     }
 
+    /// Copies the output ([`Self::output_view`]) into `destination`, an
+    /// `Rgba8Unorm` texture of this pipeline's size made with `COPY_DST`: a
+    /// presentation layer that shows only completed renders keeps the copy
+    /// while the next render runs. Queued after the work submitted so far.
+    pub fn copy_output_to(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        destination: &wgpu::Texture,
+    ) {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("calibraw copy output to presentation"),
+        });
+        encoder.copy_texture_to_texture(
+            self.out_texture.as_image_copy(),
+            destination.as_image_copy(),
+            self.out_texture.size(),
+        );
+        queue.submit(Some(encoder.finish()));
+    }
+
     pub fn recompute(&self, queue: &wgpu::Queue, device: &wgpu::Device, params: &GpuParams) {
         self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw complete recompute encoder"),
-        });
+        self.prepare_tiered_effects(queue, params, OutputPart::Scene);
+        let mut encoder = self.work(device, queue, "calibraw complete recompute encoder");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Recompute"));
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
         self.encode_raw_stage(&mut encoder, params);
-        self.encode_pass_range(
-            &mut encoder,
-            self.indices.tone_prepare_pass_index,
-            self.indices.tone_stage_end,
-        );
-        self.encode_tone_full_image_maps(&mut encoder, params);
-        self.encode_output_stage(&mut encoder, params);
-        stage_timing::submit(queue, encoder, timing);
+        self.encode_tone_stage(&mut encoder, params);
+        self.encode_output_stage(&mut encoder, params, OutputStart::Scene);
+        encoder.submit(timing);
     }
 
+    /// Renders `stage` of `params`. The output stage starts at the first of
+    /// its parts that what changed since this pipeline's last output render
+    /// reaches (`output_parts`), so a pipeline must be given every stage an
+    /// edit affects, as `affected_stage` names them.
     pub fn dispatch_stage(
         &self,
         queue: &wgpu::Queue,
@@ -744,27 +967,83 @@ impl RawGpuPipeline {
         params: &GpuParams,
         stage: ProcessingStage,
     ) {
-        self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some(stage.label()),
-        });
-        let timing = stage_timing::begin(device, || self.timed_stage_name(&format!("{stage:?}")));
+        let uploaded = self.upload_params(queue, params);
+        let mut encoder = self.work(device, queue, stage.label());
 
         match stage {
-            ProcessingStage::Raw => self.encode_raw_stage(&mut encoder, params),
-            ProcessingStage::Tone => {
-                encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
-                self.encode_pass_range(
-                    &mut encoder,
-                    self.indices.tone_prepare_pass_index,
-                    self.indices.tone_stage_end,
-                );
-                self.encode_tone_full_image_maps(&mut encoder, params);
+            ProcessingStage::Raw | ProcessingStage::Tone => {
+                let timing =
+                    stage_timing::begin(device, || self.timed_stage_name(&format!("{stage:?}")));
+                if stage == ProcessingStage::Raw {
+                    self.encode_raw_stage(&mut encoder, params);
+                } else {
+                    encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
+                    self.encode_tone_stage(&mut encoder, params);
+                }
+                encoder.submit(timing);
             }
-            ProcessingStage::Output => self.encode_output_stage(&mut encoder, params),
+            ProcessingStage::Output => {
+                let inputs = OutputInputs::new(params, &uploaded, self.shared_map_builds());
+                let mut start = self.lock_output_resume().start(&inputs);
+                self.prepare_tiered_effects(queue, params, start.part());
+                // An allocation whose outcome changed forgets the last
+                // render, which then starts earlier and prepares more.
+                let restart = self.lock_output_resume().start(&inputs);
+                if restart.part() < start.part() {
+                    self.prepare_tiered_effects(queue, params, restart.part());
+                    start = restart;
+                }
+                let timing =
+                    stage_timing::begin(device, || self.timed_stage_name(start.timing_label()));
+                let textures = self.encode_output_stage(&mut encoder, params, start);
+                // After encoding, which rebuilt the maps this pipeline owns.
+                let inputs = inputs.with_map_builds(self.shared_map_builds());
+                self.lock_output_resume().record(inputs, start, textures);
+                encoder.submit(timing);
+            }
         }
+    }
 
-        stage_timing::submit(queue, encoder, timing);
+    /// Encodes the tone stage: the tone statistics and guide, and the
+    /// full-image maps `params` reads. Every later stage reads them anew.
+    fn encode_tone_stage(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
+        self.forget_output();
+        self.tone_build.bump();
+        self.encode_pass_range(
+            encoder,
+            self.indices.tone_prepare_pass_index,
+            self.indices.tone_stage_end,
+        );
+        self.encode_tone_full_image_maps(encoder, params);
+    }
+
+    fn lock_output_resume(&self) -> std::sync::MutexGuard<'_, OutputResume> {
+        // The state is replaced whole by each method, so a panic elsewhere
+        // cannot leave it half written.
+        self.output_resume
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Forgets the last output render, whose results something other than
+    /// the output stage overwrote or outdated: the next starts at the Scene
+    /// part.
+    fn forget_output(&self) {
+        self.lock_output_resume().forget();
+    }
+
+    /// Notes an upload of mask `layer` (`mask_layers`), which the next output
+    /// render reads from the first part that reads it.
+    fn note_mask_layer_upload(&self, layer: usize) {
+        self.lock_output_resume().note_mask_layer(layer);
+    }
+
+    /// The builds of the Lens Blur and Glow maps this pipeline reads.
+    fn shared_map_builds(&self) -> SharedMapBuilds {
+        SharedMapBuilds {
+            defocus: self.effect_inputs.defocus_map_build(),
+            styled_glow: self.effect_inputs.styled_glow_map_build(),
+        }
     }
 
     /// How `stage_timing` names a stage of this pipeline: "Output 652x978".
@@ -783,6 +1062,7 @@ impl RawGpuPipeline {
             ));
         }
         validate_raw(raw)?;
+        self.forget_output();
         anyhow::ensure!(
             raw.pixel_layout() == self.layout,
             "reusable {:?} pipeline received a {:?} tile",
@@ -796,6 +1076,16 @@ impl RawGpuPipeline {
         match self.layout {
             PixelLayout::Raster => return Ok(()),
             PixelLayout::Binned => {
+                // Without clipped photosites the texture keeps the last
+                // view's content, which `highlight_options.w` disables.
+                if let Some(clipping) = binned_clipping(raw) {
+                    upload_binned_clipping_texture(
+                        queue,
+                        &self.binned_clipping_texture,
+                        raw,
+                        clipping,
+                    )?;
+                }
                 if self.has_ai_cfa {
                     let ai_rgb = raw
                         .binned_sensor
@@ -844,9 +1134,8 @@ impl RawGpuPipeline {
     }
 
     pub fn begin_export_tone_analysis(&self, queue: &wgpu::Queue, device: &wgpu::Device) {
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw export tone histogram clear"),
-        });
+        self.forget_output();
+        let mut encoder = self.work(device, queue, "calibraw export tone histogram clear");
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
         for map in FullImageMap::ALL {
             if let Some(resources) = self.effect_inputs.full_image_map(map) {
@@ -856,7 +1145,7 @@ impl RawGpuPipeline {
         if let Some(bake) = self.effect_inputs.scene_bake() {
             bake.outdate_scene();
         }
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
         for map in FullImageMap::ALL {
             self.full_image_map_current(map)
                 .store(false, Ordering::Release);
@@ -957,7 +1246,7 @@ impl RawGpuPipeline {
 
     /// Builds `map` from this pipeline's whole image, after the tone
     /// statistics it is resolved against.
-    fn encode_full_image_map(&self, encoder: &mut wgpu::CommandEncoder, map: FullImageMap) {
+    fn encode_full_image_map(&self, encoder: &mut WorkEncoder<'_>, map: FullImageMap) {
         self.effect_inputs.allocate_full_image_map(map);
         if let Some(resources) = self.effect_inputs.full_image_map(map) {
             encoder.clear_buffer(&resources.cells, 0, None);
@@ -972,7 +1261,7 @@ impl RawGpuPipeline {
     /// Full-image maps for a new tone result: built when an effect reads
     /// them, otherwise left for `ensure_full_image_map`, which most edits
     /// never need.
-    fn encode_tone_full_image_maps(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_tone_full_image_maps(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         self.outdate_scene_bake();
         for map in FullImageMap::ALL {
             if params.needs_full_image_map(map) {
@@ -986,7 +1275,7 @@ impl RawGpuPipeline {
 
     /// Builds `map` if the current tone result has none yet. The scene and
     /// tone statistics it reads stay valid until the next raw or tone stage.
-    fn ensure_full_image_map(&self, encoder: &mut wgpu::CommandEncoder, map: FullImageMap) {
+    fn ensure_full_image_map(&self, encoder: &mut WorkEncoder<'_>, map: FullImageMap) {
         if !self.full_image_map_current(map).load(Ordering::Acquire) {
             self.encode_full_image_map(encoder, map);
         }
@@ -996,7 +1285,7 @@ impl RawGpuPipeline {
     /// zoomed view sees the lights and haze outside its region.
     fn inherit_full_image_maps(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut WorkEncoder<'_>,
         full_frame: &Self,
         params: &GpuParams,
     ) {
@@ -1028,6 +1317,19 @@ impl RawGpuPipeline {
                 .store(true, Ordering::Release);
         }
         self.inherit_scene_bake(encoder, full_frame, params);
+        // The full frame builds its Glow map in its output stage whenever a
+        // Glow is active, whatever its spread.
+        if params.styled_glow_slots() > 0 {
+            if let Some(map) = full_frame.effect_inputs.styled_glow_map() {
+                self.effect_inputs.share_styled_glow_map(&map);
+            }
+        }
+        // And its Lens Blur map, whenever a Lens Blur reaches it.
+        if params.needs_defocus_map() {
+            if let Some(map) = full_frame.effect_inputs.defocus_map() {
+                self.effect_inputs.share_defocus_map(&map);
+            }
+        }
     }
 
     pub fn dispatch_stage_with_remove(
@@ -1069,10 +1371,31 @@ impl RawGpuPipeline {
         params: &GpuParams,
         full_frame: &Self,
     ) {
+        self.inherit_full_frame_tone(queue, device, params, full_frame);
+        self.dispatch_inherited_tone_guide(queue, device);
+    }
+
+    /// The first half of [`Self::dispatch_tone_guide_with_inherited_statistics`]:
+    /// copies `full_frame`'s tone statistics and full-image maps into this
+    /// crop, building a map `full_frame` lacks. It reads and may encode work on
+    /// `full_frame`, so it runs on the thread that renders `full_frame`. Call
+    /// after this crop's RAW stage, which writes none of what it copies.
+    pub fn inherit_full_frame_tone(
+        &self,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+        params: &GpuParams,
+        full_frame: &Self,
+    ) {
         self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw crop tone guide with full-frame statistics"),
-        });
+        self.forget_output();
+        self.inherited_tone
+            .store(full_frame.tone_build.get(), Ordering::Release);
+        let mut encoder = self.work(
+            device,
+            queue,
+            "calibraw crop inherits full-frame statistics",
+        );
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
         encoder.copy_buffer_to_buffer(
             &full_frame.tone_stats_buffer,
@@ -1082,12 +1405,28 @@ impl RawGpuPipeline {
             TONE_STATS_SIZE_BYTES,
         );
         self.inherit_full_image_maps(&mut encoder, full_frame, params);
+        encoder.submit(None);
+    }
+
+    /// The second half of [`Self::dispatch_tone_guide_with_inherited_statistics`]:
+    /// the tone guide passes, which read what [`Self::inherit_full_frame_tone`]
+    /// copied and the parameters it uploaded. Call it next, with nothing
+    /// encoded on this crop in between; it uploads nothing, because uploading
+    /// again after the inheritance could upload other Glow inputs than the
+    /// passes read when they ran in one go. Touches only this crop, so a
+    /// worker thread may run it.
+    pub fn dispatch_inherited_tone_guide(&self, queue: &wgpu::Queue, device: &wgpu::Device) {
+        let mut encoder = self.work(
+            device,
+            queue,
+            "calibraw crop tone guide with full-frame statistics",
+        );
         self.encode_pass_range(
             &mut encoder,
             self.indices.tone_prepare_pass_index,
             self.indices.tone_reduce_pass_index,
         );
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
     }
 
     pub fn inherit_tone_statistics(
@@ -1100,9 +1439,13 @@ impl RawGpuPipeline {
         // New scene depth outdates the scene map, so it is uploaded before
         // the map is inherited rather than after.
         self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw inherit full-frame tone statistics"),
-        });
+        // Statistics and maps of a tone stage the full frame rendered since
+        // the last inheritance change what every part of the output reads.
+        let tone = full_frame.tone_build.get();
+        if self.inherited_tone.swap(tone, Ordering::AcqRel) != tone {
+            self.forget_output();
+        }
+        let mut encoder = self.work(device, queue, "calibraw inherit full-frame tone statistics");
         encoder.copy_buffer_to_buffer(
             &full_frame.tone_stats_buffer,
             0,
@@ -1111,7 +1454,7 @@ impl RawGpuPipeline {
             TONE_STATS_SIZE_BYTES,
         );
         self.inherit_full_image_maps(&mut encoder, full_frame, params);
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
     }
 
     pub fn accumulate_export_tone_tile_with_remove(
@@ -1123,9 +1466,7 @@ impl RawGpuPipeline {
     ) -> Result<()> {
         self.dispatch_stage_with_remove(queue, device, params, ProcessingStage::Raw, remove)?;
         self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw Remove-aware export tone tile"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw Remove-aware export tone tile");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Export tone"));
         self.encode_pass(&mut encoder, self.indices.tone_prepare_pass_index);
         // Each tile adds its core to the shared full-image maps. Without a
@@ -1144,14 +1485,14 @@ impl RawGpuPipeline {
                 self.accumulate_scene_working_image(&mut encoder, &bake);
             }
         }
-        stage_timing::submit(queue, encoder, timing);
+        encoder.submit(timing);
         Ok(())
     }
 
     pub fn finish_export_tone_analysis(&self, queue: &wgpu::Queue, device: &wgpu::Device) {
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw export tone histogram reduction"),
-        });
+        self.forget_output();
+        self.tone_build.bump();
+        let mut encoder = self.work(device, queue, "calibraw export tone histogram reduction");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Export tone reduce"));
         self.encode_pass(&mut encoder, self.indices.tone_reduce_pass_index);
         // Tiles accumulated a map only if an effect reads it, which allocated
@@ -1169,25 +1510,13 @@ impl RawGpuPipeline {
         if let Some(bake) = self.effect_inputs.scene_bake() {
             self.encode_scene_bake(&mut encoder, &bake);
         }
-        stage_timing::submit(queue, encoder, timing);
+        encoder.submit(timing);
         // Resolved from every tile's accumulation; tiles must not rebuild them
         // from their own region.
         for (map, allocated) in FullImageMap::ALL.into_iter().zip(allocated) {
             self.full_image_map_current(map)
                 .store(allocated, Ordering::Release);
         }
-    }
-
-    pub fn dispatch_export_tile_with_remove(
-        &self,
-        queue: &wgpu::Queue,
-        device: &wgpu::Device,
-        params: &GpuParams,
-        remove: RemoveSceneContext<'_>,
-    ) -> Result<()> {
-        self.dispatch_stage_with_remove(queue, device, params, ProcessingStage::Raw, remove)?;
-        self.dispatch_export_tile_from_scene(queue, device, params);
-        Ok(())
     }
 
     /// Bytes of one scene texel, in which [`Self::begin_scene_region_readback`]
@@ -1224,6 +1553,7 @@ impl RawGpuPipeline {
             self.width,
             self.height
         );
+        self.forget_output();
         let row_bytes = u64::from(width) * u64::from(self.scene_texel_bytes());
         let required = u64::from(bytes_per_row) * u64::from(height - 1) + row_bytes;
         anyhow::ensure!(
@@ -1265,20 +1595,21 @@ impl RawGpuPipeline {
         params: &GpuParams,
     ) {
         self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw Remove-aware tiled export encoder"),
-        });
+        self.prepare_tiered_effects(queue, params, OutputPart::Scene);
+        let mut encoder = self.work(device, queue, "calibraw Remove-aware tiled export encoder");
         let timing = stage_timing::begin(device, || self.timed_stage_name("Export tile"));
+        self.forget_output();
         self.encode_pass_range(
             &mut encoder,
             self.indices.tone_prepare_pass_index,
             self.indices.tone_reduce_pass_index,
         );
-        self.encode_output_stage(&mut encoder, params);
-        stage_timing::submit(queue, encoder, timing);
+        self.encode_output_stage(&mut encoder, params, OutputStart::Scene);
+        encoder.submit(timing);
     }
 
-    fn encode_raw_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_raw_stage(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
+        self.forget_output();
         if self.layout == PixelLayout::Raster {
             self.encode_pass(encoder, self.indices.raster_finish_pass_index);
             self.encode_chromatic_aberration(encoder, params);
@@ -1312,7 +1643,7 @@ impl RawGpuPipeline {
     }
 
     /// Reconstructs a mosaic's highlights and demosaics it into the scene.
-    fn encode_demosaic(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_demosaic(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         self.encode_pass(encoder, self.indices.highlight_pass_index);
         self.encode_pass_range(
             encoder,
@@ -1327,22 +1658,20 @@ impl RawGpuPipeline {
             );
         }
         let finish = &self.passes[self.indices.demosaic_finish_index];
-        dispatch_compute(
+        self.dispatch_pass(
             encoder,
             "calibraw demosaic finish",
             finish.pipeline.for_demosaic_params(&params.camera),
-            &[
-                &self.pass_bind_group(finish),
-                &self.scene_tone_bind_group,
-                &self.effects_bind_group,
-            ],
+            &self.pass_bind_group(finish),
             finish.workgroups,
+            finish.pipeline.work,
+            demosaic_variant_for(&params.camera) as u64,
         );
     }
 
     /// Moves red and blue onto green and removes colour fringes in the scene
     /// when Chromatic Aberration is on.
-    fn encode_chromatic_aberration(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_chromatic_aberration(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         if params.needs_chromatic_aberration_passes() {
             self.encode_pass(
                 encoder,
@@ -1353,7 +1682,7 @@ impl RawGpuPipeline {
     }
 
     /// Filters the scene's colour noise in place when Color denoise is on.
-    fn encode_color_denoise(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    fn encode_color_denoise(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         if params.camera.chroma_denoise > 1e-6 {
             self.encode_pass_range(
                 encoder,
@@ -1363,53 +1692,64 @@ impl RawGpuPipeline {
         }
     }
 
-    fn encode_output_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+    /// Encodes the output stage from `start` ([`OutputStart`]): the parts
+    /// before it are left as the last render made them. Returns where each
+    /// part's input is afterwards.
+    fn encode_output_stage(
+        &self,
+        encoder: &mut WorkEncoder<'_>,
+        params: &GpuParams,
+        start: OutputStart,
+    ) -> OutputTextures {
         self.output_revision
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        for map in FullImageMap::ALL {
-            if params.needs_full_image_map(map) {
-                self.ensure_full_image_map(encoder, map);
-            }
-        }
-        self.ensure_scene_bake(encoder, params);
-        if params.needs_scene_emission() {
-            // Rebuilt for every render: it follows the emitters' settings and
-            // masks, which change without a new tone result.
-            let start = self.indices.scene_emission_pass_index;
-            self.encode_pass_range(encoder, start, start + SCENE_EMISSION_PASSES);
-        }
-        self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);
-        self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
-        // Which of the two work textures holds the image. Each pass below that
-        // transforms the image reads it from one and writes the other.
-        let mut image_in_tex2 = true;
-        if params.needs_intermediate_adjustment_passes() {
-            self.encode_pass(encoder, self.indices.adjustment_local_tone_pass_index);
-            if let Some(levels) = params.detail_pyramid_levels() {
-                let start = self.indices.detail_pyramid_start_index;
-                self.encode_pass_range(encoder, start, start + levels);
-            }
-            self.encode_pass(encoder, self.indices.adjustment_effects_pass_index);
-            self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
-            image_in_tex2 = false;
-            if params.needs_blur_passes() {
-                if params.needs_progressive_blur_passes() {
-                    self.encode_pass_range(
-                        encoder,
-                        self.indices.mask_blur_start_index,
-                        self.indices.mask_blur_end_index,
-                    );
-                } else {
-                    self.encode_pass(encoder, self.indices.mask_blur_start_index);
+        self.ensure_output_inputs(encoder, params);
+        let textures = match start {
+            OutputStart::View {
+                input_in_tex2,
+                creative_input_in_tex2,
+            } => OutputTextures {
+                creative_input_in_tex2,
+                view_input_in_tex2: input_in_tex2,
+            },
+            OutputStart::Scene | OutputStart::Creative { .. } => {
+                if params.needs_scene_emission() {
+                    // Rebuilt for every render that reaches the Creative part:
+                    // it follows the emitters' settings and masks, which change
+                    // without a new tone result. Wet Surfaces, in the Scene
+                    // part, reads it too.
+                    let start = self.indices.scene_emission_pass_index;
+                    self.encode_pass_range(encoder, start, start + SCENE_EMISSION_PASSES);
                 }
-                image_in_tex2 = true;
+                let creative_input_in_tex2 = match start {
+                    OutputStart::Creative { input_in_tex2 } => input_in_tex2,
+                    _ => self.encode_creative_input(encoder, params),
+                };
+                self.encode_creative_part(encoder, params, creative_input_in_tex2)
             }
-            if params.needs_wet_surfaces_pass() {
-                self.encode_effects_pass(
-                    encoder,
-                    self.indices.wet_surfaces_pass_index,
-                    &mut image_in_tex2,
-                );
+        };
+        self.output_image_in_tex2
+            .store(textures.view_input_in_tex2, Ordering::Release);
+        self.encode_render_pass(encoder, textures.view_input_in_tex2);
+        textures
+    }
+
+    /// The Creative part of the output stage from the creative input, in the
+    /// second work texture when `creative_input_in_tex2`: the Glow passes,
+    /// Pixelate's blocks, the creative pass and the pass after it. Each pass
+    /// that transforms the image reads it from one work texture and writes
+    /// the other; the Glow passes write the other and display_linear.
+    fn encode_creative_part(
+        &self,
+        encoder: &mut WorkEncoder<'_>,
+        params: &GpuParams,
+        creative_input_in_tex2: bool,
+    ) -> OutputTextures {
+        let mut image_in_tex2 = creative_input_in_tex2;
+        let mut creative_input_intact = true;
+        if params.needs_intermediate_adjustment_passes() {
+            if params.styled_glow_slots() > 0 {
+                self.encode_styled_glow(encoder, params, image_in_tex2);
             }
             if params.needs_glow_passes() {
                 if image_in_tex2 {
@@ -1440,28 +1780,115 @@ impl RawGpuPipeline {
                     self.encode_pass(encoder, self.indices.pixelate_blocks_pass_index);
                 }
             }
-            if params.needs_creative_pass() {
-                self.encode_effects_pass(
-                    encoder,
+            for (needed, index) in [
+                (
+                    params.needs_creative_pass(),
                     self.indices.adjustment_creative_pass_index,
-                    &mut image_in_tex2,
-                );
-            }
-            if params.needs_weather_air_pass() {
-                self.encode_effects_pass(
-                    encoder,
+                ),
+                (
+                    params.needs_weather_air_pass(),
                     self.indices.weather_air_pass_index,
-                    &mut image_in_tex2,
-                );
+                ),
+            ] {
+                if needed {
+                    self.encode_effects_pass(encoder, index, &mut image_in_tex2);
+                    // The pass wrote the texture the image is now in.
+                    creative_input_intact &= image_in_tex2 != creative_input_in_tex2;
+                }
             }
         }
-        self.output_image_in_tex2
-            .store(image_in_tex2, Ordering::Release);
-        self.encode_render_pass(encoder, image_in_tex2);
+        OutputTextures {
+            creative_input_in_tex2: creative_input_intact.then_some(creative_input_in_tex2),
+            view_input_in_tex2: image_in_tex2,
+        }
+    }
+
+    /// The full-image maps and the scene bake the output stage reads.
+    fn ensure_output_inputs(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
+        for map in FullImageMap::ALL {
+            if params.needs_full_image_map(map) {
+                self.ensure_full_image_map(encoder, map);
+            }
+        }
+        self.ensure_scene_bake(encoder, params);
+    }
+
+    /// The output stage up to the creative pass's input: the scene
+    /// adjustments, and with intermediate passes the scene effects, the blurs
+    /// and Wet Surfaces. Returns whether the image ends in the second work
+    /// texture rather than the first.
+    fn encode_creative_input(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) -> bool {
+        let mut image_in_tex2 = self.encode_scene_adjustments(encoder, params);
+        if !params.needs_intermediate_adjustment_passes() {
+            return image_in_tex2;
+        }
+        if params.needs_blur_passes() {
+            self.encode_blur_stage_input(encoder, image_in_tex2);
+            if params.defocus_slots() > 0 {
+                self.encode_defocus(encoder, params);
+            }
+            if params.needs_progressive_blur_passes() {
+                self.encode_pass_range(
+                    encoder,
+                    self.indices.mask_blur_start_index,
+                    self.indices.mask_blur_end_index,
+                );
+            } else {
+                self.encode_pass(encoder, self.indices.mask_blur_start_index);
+            }
+            image_in_tex2 = true;
+        }
+        if params.needs_wet_surfaces_pass() {
+            self.encode_effects_pass(
+                encoder,
+                self.indices.wet_surfaces_pass_index,
+                &mut image_in_tex2,
+            );
+        }
+        image_in_tex2
+    }
+
+    /// The output stage up to the scene effects: scene preparation and tone
+    /// into the second work texture, then only the passes `params` give work
+    /// to. The mask tone pass moves the image to the first work texture and
+    /// the scene effects pass, which reads it there, back to the second. A
+    /// pass left out would have copied its input unchanged, so the image is
+    /// the same wherever it ends. Returns whether that is the second work
+    /// texture.
+    fn encode_scene_adjustments(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) -> bool {
+        self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);
+        self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
+        if !params.needs_intermediate_adjustment_passes() {
+            return true;
+        }
+        let scene_effects = params.needs_scene_effects_pass();
+        if !scene_effects && !params.needs_local_tone_pass() {
+            return true;
+        }
+        // Without mask tone it copies, which the scene effects pass needs:
+        // it and the detail pyramid read the first work texture.
+        self.encode_pass(encoder, self.indices.adjustment_local_tone_pass_index);
+        if !scene_effects {
+            return false;
+        }
+        if let Some(levels) = params.detail_pyramid_levels() {
+            let start = self.indices.detail_pyramid_start_index;
+            self.encode_pass_range(encoder, start, start + levels);
+        }
+        self.encode_pass(encoder, self.indices.adjustment_effects_pass_index);
+        true
+    }
+
+    /// Puts the image in the first work texture, where the first Blur stage
+    /// and Lens Blur's passes read it.
+    fn encode_blur_stage_input(&self, encoder: &mut WorkEncoder<'_>, image_in_tex2: bool) {
+        if image_in_tex2 {
+            self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
+        }
     }
 
     /// Encodes the display transform from the work texture holding the image.
-    fn encode_render_pass(&self, encoder: &mut wgpu::CommandEncoder, image_in_tex2: bool) {
+    fn encode_render_pass(&self, encoder: &mut WorkEncoder<'_>, image_in_tex2: bool) {
         if image_in_tex2 {
             self.encode_pass(encoder, self.indices.adjustment_render_pass_index);
         } else {
@@ -1477,7 +1904,7 @@ impl RawGpuPipeline {
     /// image into the other.
     fn encode_effects_pass(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut WorkEncoder<'_>,
         index: usize,
         image_in_tex2: &mut bool,
     ) {
@@ -1487,43 +1914,114 @@ impl RawGpuPipeline {
         } else {
             InputBoundPass::EffectsFromTex1
         };
-        dispatch_compute(
+        self.dispatch_program(
             encoder,
+            pass,
             &pass.pipeline.entry,
-            pass.pipeline.get(),
-            &[
-                &self.effect_inputs.bind_group(input),
-                &self.scene_tone_bind_group,
-                &self.effects_bind_group,
-            ],
-            pass.workgroups,
+            &self.effect_inputs.bind_group(input),
         );
         *image_in_tex2 = !*image_in_tex2;
     }
 
-    fn encode_pass(&self, encoder: &mut wgpu::CommandEncoder, index: usize) {
+    fn encode_pass(&self, encoder: &mut WorkEncoder<'_>, index: usize) {
         let pass = &self.passes[index];
         self.encode_bound_pass(encoder, pass, &pass.pipeline.entry);
     }
 
-    fn encode_bound_pass(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        pass_record: &Pass,
-        label: &str,
-    ) {
+    fn encode_bound_pass(&self, encoder: &mut WorkEncoder<'_>, pass_record: &Pass, label: &str) {
         let bind_group = self.pass_bind_group(pass_record);
-        dispatch_compute(
+        self.dispatch_program(encoder, pass_record, label, &bind_group);
+    }
+
+    /// Encodes `pass` over `bind_group` with the program for the effects
+    /// last uploaded ([`Self::effect_program`]).
+    fn dispatch_program(
+        &self,
+        encoder: &mut WorkEncoder<'_>,
+        pass: &Pass,
+        label: &str,
+        bind_group: &wgpu::BindGroup,
+    ) {
+        let effect_program = self.effect_program(pass);
+        // Each program has its own cost: 1 + the effects it holds, 0 for the
+        // program with every effect.
+        let variant = effect_program
+            .as_ref()
+            .map_or(0, |(_, held)| 1 + u64::from(held.bits()));
+        self.dispatch_pass(
             encoder,
             label,
-            pass_record.pipeline.get(),
-            &[
-                &bind_group,
+            effect_program
+                .as_ref()
+                .map_or_else(|| pass.pipeline.get(), |(program, _)| program),
+            bind_group,
+            pass.workgroups,
+            pass.pipeline.work,
+            variant,
+        );
+    }
+
+    /// Encodes one pass of this pipeline: `bind_group` in group 0, the
+    /// scene-tone uniforms with the dispatch band in 1, the effects uniforms
+    /// in 2.
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_pass(
+        &self,
+        encoder: &mut WorkEncoder<'_>,
+        label: &str,
+        pipeline: &wgpu::ComputePipeline,
+        bind_group: &wgpu::BindGroup,
+        workgroups: [u32; 3],
+        work: PassWork,
+        variant: u64,
+    ) {
+        encoder.dispatch(PassDispatch {
+            label,
+            pipeline,
+            bind_groups: [
+                bind_group,
                 &self.scene_tone_bind_group,
                 &self.effects_bind_group,
             ],
-            pass_record.workgroups,
-        );
+            workgroups,
+            bands: &self.dispatch_bands,
+            work,
+            variant,
+        });
+    }
+
+    /// A stage's work, whose chunks go to `queue` as they close and the last
+    /// one with `WorkEncoder::submit`.
+    fn work<'a>(
+        &self,
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        label: &'static str,
+    ) -> WorkEncoder<'a> {
+        WorkEncoder::new(
+            device,
+            queue,
+            label,
+            self.paced_submissions.load(Ordering::Acquire),
+        )
+    }
+
+    /// Makes this pipeline's stages wait for the GPU whenever a tenth of a
+    /// second of their work is outstanding, so that the UI's frames reach
+    /// the GPU in between. For pipelines rendered on a worker thread (an
+    /// export's tiles); the UI thread must not wait.
+    pub fn pace_submissions(&self, paced: bool) {
+        self.paced_submissions.store(paced, Ordering::Release);
+    }
+
+    /// The program of `pass` that holds only the effects of the parameters
+    /// last uploaded, for a pass that dispatches effects, with the effects it
+    /// holds; `None` to encode the pass's own program, which holds every
+    /// effect (`effect_programs`). Both compute the same image.
+    fn effect_program(&self, pass: &Pass) -> Option<(wgpu::ComputePipeline, EffectSet)> {
+        let effects = pass.pipeline.effects.as_ref()?;
+        let set = EffectSet::from_bits(self.uploaded_effects.load(Ordering::Acquire));
+        effects.program(set, self.effect_readiness)
     }
 
     fn pass_bind_group(&self, pass_record: &Pass) -> wgpu::BindGroup {
@@ -1533,7 +2031,7 @@ impl RawGpuPipeline {
         }
     }
 
-    fn encode_pass_range(&self, encoder: &mut wgpu::CommandEncoder, start: usize, end: usize) {
+    fn encode_pass_range(&self, encoder: &mut WorkEncoder<'_>, start: usize, end: usize) {
         for index in start..end {
             self.encode_pass(encoder, index);
         }

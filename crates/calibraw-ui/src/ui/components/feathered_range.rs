@@ -3,8 +3,10 @@
 //! starts to fade in, where it is full, where it starts to fade out and where
 //! it ends. Solid handles on the top line mark full strength and move their
 //! end with its feather unchanged; hollow handles on the bottom line mark
-//! where each fade begins and change its feather. The handles are the only
-//! editor: the keyboard and screen-reader actions move the selected one.
+//! where each fade begins and change its feather; a range without fades
+//! (`FeatheredRange::HAS_FEATHERS`) has only the solid ones. The handles are
+//! the only editor: the keyboard and screen-reader actions move the selected
+//! one.
 //! Models only convert the points to and from what they store.
 
 use eframe::egui::{self, pos2, vec2, Pos2, Rect, Response, Sense, Stroke, Ui};
@@ -227,6 +229,9 @@ pub(crate) trait FeatheredRange: Copy + PartialEq + Send + Sync + 'static {
     /// Whether the range ends with a fade-out; fog only fades in, so its end
     /// handles are hidden and fixed at 1.
     const HAS_END: bool = true;
+    /// Whether the ends fade; a focus range has hard ends, so its hollow
+    /// handles are hidden and each fade lies on its full-strength point.
+    const HAS_FEATHERS: bool = true;
     /// Where the handles are on the track.
     fn points(&self) -> RangePoints;
     /// The points this model can hold, given that `moved` was dragged to its
@@ -254,6 +259,7 @@ fn handles<R: FeatheredRange>() -> impl Iterator<Item = RangeHandle> {
     RangeHandle::ALL
         .into_iter()
         .filter(|handle| R::HAS_END || !handle.is_end_side())
+        .filter(|handle| R::HAS_FEATHERS || !handle.is_feather())
 }
 
 /// Track fraction moved by an arrow key, and with Shift held.
@@ -354,6 +360,10 @@ impl HandleDrag {
             points.full_to = 1.0;
             points.fade_out = 1.0;
             changes[1] = None;
+        }
+        if !R::HAS_FEATHERS {
+            points.fade_in = points.full_from;
+            points.fade_out = points.full_to;
         }
         self.points = range.constrain(points, self.handle);
         range.set_points(RangeEdit::new(self.points, changes));

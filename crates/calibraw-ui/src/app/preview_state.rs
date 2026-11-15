@@ -295,8 +295,11 @@ pub(crate) struct PreviewNavigation {
     pub(super) raw: Arc<LoadedRaw>,
 }
 
-pub(crate) struct PreviewDetail {
-    pub pipeline: PreviewPipeline,
+/// A crop of the photo rendered at the density it is shown, with where it
+/// sits. `P` holds its graph: the reduced crop's `PreviewPipeline`, painted as
+/// it renders on the UI thread, or the sharp crop's [`CropPipeline`].
+pub(crate) struct PreviewDetail<P = PreviewPipeline> {
+    pub pipeline: P,
     pub uv_rect: PreviewUvRect,
     pub texture_uv_rect: PreviewUvRect,
     pub revision: u64,
@@ -311,6 +314,73 @@ pub(crate) struct PreviewDetail {
     pub(super) processing_halo: u32,
 }
 
+/// The sharp crop's graph and the picture the canvas paints of it. A worker
+/// renders each new crop (`detail_render`), holding the graph meanwhile, so
+/// the canvas paints a copy of the last completed render instead of the
+/// graph's output, which the worker may be half way through writing.
+pub(crate) struct CropPipeline {
+    /// `None` while a worker renders the next crop with it, or once it was
+    /// released for that crop's new graph (`free_graph_now`).
+    gpu: Option<PreviewPipeline>,
+    shown: ShownTexture,
+}
+
+impl CropPipeline {
+    /// `gpu`, whose output has completed, with `shown` holding it.
+    pub(crate) fn new(gpu: PreviewPipeline, shown: ShownTexture) -> Self {
+        Self {
+            gpu: Some(gpu),
+            shown,
+        }
+    }
+
+    /// The graph, unless a worker is rendering with it.
+    pub(crate) fn gpu(&self) -> Option<&RawGpuPipeline> {
+        self.gpu.as_ref().map(PreviewPipeline::gpu)
+    }
+
+    /// The graph with its output's registration, unless a worker has it.
+    pub(crate) fn presented(&self) -> Option<&PreviewPipeline> {
+        self.gpu.as_ref()
+    }
+
+    /// The graph's size in pixels, which the shown copy has too.
+    pub(crate) fn size(&self) -> [u32; 2] {
+        self.shown.size()
+    }
+
+    /// What the canvas paints: the last completed render.
+    pub(crate) fn texture(&self) -> egui::TextureId {
+        self.shown.texture()
+    }
+
+    /// Paints the graph's output from now on. Call once a render queued on
+    /// this thread has written it: the copy runs after that work.
+    pub(crate) fn show_completed(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if let Some(gpu) = self.gpu() {
+            self.shown.show(gpu, device, queue);
+        }
+    }
+
+    /// Hands the graph to a worker; the last completed render stays shown.
+    pub(crate) fn lend(&mut self) -> Option<RawGpuPipeline> {
+        self.gpu.take().map(PreviewPipeline::into_gpu)
+    }
+
+    /// Releases the graph now and keeps painting its last completed render,
+    /// until the crop that needed its memory replaces this one.
+    pub(crate) fn free_graph_now(&mut self, renderer: &mut eframe::egui_wgpu::Renderer) {
+        if let Some(gpu) = self.gpu.take() {
+            gpu.free_now(renderer);
+        }
+    }
+
+    /// The shown copy, to keep for a graph of the same size.
+    pub(crate) fn into_shown(self) -> ShownTexture {
+        self.shown
+    }
+}
+
 pub(crate) struct LoadedPreview {
     pub(super) source_path: Option<PathBuf>,
     pub(super) label: String,
@@ -319,8 +389,10 @@ pub(crate) struct LoadedPreview {
     pub(super) preview_raw: Arc<LoadedRaw>,
     pub(super) pipeline: RawGpuPipeline,
     pub(super) review: crate::sidecar::PhotoReview,
-    pub(super) rendered_exposure: ExposureParams,
-    pub(super) rendered_masks: MaskStack,
+    /// The edit as stored; the preview renders it with its card switches
+    /// applied.
+    pub(super) exposure: ExposureParams,
+    pub(super) masks: MaskStack,
     pub(super) remove: RemoveEditState,
     pub(super) ai_masks_need_update: bool,
     pub(super) mask_source: Option<MaskRgbImage>,
@@ -338,9 +410,9 @@ pub(crate) struct LoadedPreview {
     /// The edit's LUT, and its table when the LUT library holds it.
     pub(super) look_lut: Option<crate::luts::LookLut>,
     pub(super) look_lut_table: Option<Arc<crate::luts::CubeLut>>,
-    /// The camera look the photo opened with: its saved one, or one fitted
+    /// The Camera match the photo opened with: its saved one, or one fitted
     /// as it opened (`camera_match.rs`).
-    pub(super) camera_look: Option<crate::pipeline::camera_look::CameraLook>,
+    pub(super) camera_match: crate::pipeline::camera_look::CameraMatch,
     /// The embedded preview, kept when the file is not readable later.
     pub(super) camera_preview: Option<Arc<crate::pipeline::RawThumbnail>>,
     pub(super) geometry: GeometryTransform,
@@ -377,9 +449,14 @@ pub(crate) enum PreviewDetailRebuildEvent {
     Finished(Result<PreparedPreviewDetail, String>),
     /// The worker stopped early because its crop was no longer wanted.
     Cancelled,
+    /// A render worker built the crop's graph and rendered its RAW stage
+    /// (`detail_render`); the UI thread adds the full frame's statistics.
+    RawRendered(Result<Box<super::processing_export::DetailRender>, String>),
+    /// A render worker finished the crop and the GPU has run it.
+    Rendered(Result<Box<super::processing_export::DetailRender>, String>),
 }
 
-/// A zoomed crop being prepared on a worker.
+/// A zoomed crop being prepared, then rendered, on a worker.
 pub(crate) struct DetailRebuild {
     pub(crate) receiver: mpsc::Receiver<PreviewDetailRebuildEvent>,
     cancel: Arc<AtomicBool>,
@@ -398,6 +475,15 @@ impl DetailRebuild {
     fn cancel(&self) {
         self.cancel
             .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// The same crop, now followed through `receiver`: the next step of its
+    /// rendering.
+    pub(crate) fn continued(self, receiver: mpsc::Receiver<PreviewDetailRebuildEvent>) -> Self {
+        Self {
+            receiver,
+            cancel: self.cancel,
+        }
     }
 }
 
@@ -434,7 +520,7 @@ pub(crate) struct PreviewState {
     /// the new one, once its 100% zoom is known. See `reset_view_keeping`.
     pub(crate) pending_view: Option<KeptView>,
     pub(crate) revision: u64,
-    pub(crate) detail: Option<PreviewDetail>,
+    pub(crate) detail: Option<PreviewDetail<CropPipeline>>,
     pub(crate) navigation: Option<PreviewNavigation>,
     pub(crate) detail_pending_stage: Option<ProcessingStage>,
     pub(crate) navigation_pending_stage: Option<ProcessingStage>,
@@ -458,11 +544,11 @@ pub(crate) struct PreviewState {
     pub(crate) original_rendered_state: Option<(bool, u64)>,
     pub(crate) original_hold: Option<AndroidOriginalHold>,
     pub(crate) pending_stage: Option<ProcessingStage>,
-    /// A sharp preview (fitted or zoomed crop) was rendered with the light
-    /// bake's Draft tier while a control was dragged; its output stage is
-    /// rendered again in Final once the drag ends
-    /// (`refine_draft_scene_lights`).
-    pub(crate) draft_scene_lights: bool,
+    /// A sharp preview (fitted or zoomed crop) was rendered in the Draft tier
+    /// while a control was dragged; its output stage is rendered again in
+    /// Final once the drag ends
+    /// (`refine_draft_render`).
+    pub(crate) draft_rendered: bool,
     pub(crate) dispatch_gate: PreviewDispatchGate,
     pub(crate) lens_original_cache: Option<(PreviewQuality, Arc<LoadedRaw>)>,
     pub(crate) lens_corrected_cache: Option<(
@@ -510,6 +596,15 @@ impl PreviewState {
         self.cancel_detail_rebuild();
         self.detail_rebuild = None;
         self.detail_block = None;
+        // A crop without its graph (lent to the worker, or released for the
+        // worker's new one) gets no graph back any more.
+        if self
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail.pipeline.gpu().is_none())
+        {
+            self.detail = None;
+        }
     }
 
     /// Fits the whole image in the view again and stops view motion. Bumping

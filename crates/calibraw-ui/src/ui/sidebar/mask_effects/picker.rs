@@ -1,5 +1,5 @@
 //! Adding effects: the Add effect button and the picker it opens, which shows
-//! every effect as an icon tile under its category.
+//! every effect family as an icon tile under its category.
 
 use super::{add_effect_buttons, effect_description, egui, MaskEffect, Ui};
 use crate::app::{CalibRawApp, CAMERA_MATCH_CARD_TITLE, FILM_NEGATIVE_CARD_TITLE};
@@ -64,7 +64,7 @@ impl PhotoTiles {
     pub(in crate::ui::sidebar) fn for_photo(app: &CalibRawApp) -> Self {
         Self {
             film_negative: Self::film_negative(&app.develop.exposure.film),
-            camera_match: if app.develop.camera_look.is_some() {
+            camera_match: if !app.develop.camera_match.is_off() {
                 PhotoTile::Added
             } else if app.camera_match_offered() {
                 PhotoTile::Offered
@@ -147,11 +147,12 @@ struct Tile {
     enabled: bool,
 }
 
-/// Every effect as a tile under its category's heading, to add one to
-/// `components`; the film negative and Camera match tiles lead Film & Finish
-/// unless `photo_tiles` hides them. An effect already in `components` shows a check
-/// mark and is disabled; once `components` is full, every effect is
-/// disabled. Returns the clicked tile's pick.
+/// Every effect family as a tile under its category's heading, to add one of
+/// its effects to `components`: the first style whose effect `components`
+/// lacks; the film negative and Camera match tiles lead Film & Finish unless
+/// `photo_tiles` hides them. A family whose every effect `components` holds
+/// shows a check mark and is disabled; once `components` is full, every
+/// family is disabled. Returns the clicked tile's pick.
 fn effect_picker(
     ui: &mut Ui,
     components: &[EffectComponent],
@@ -204,20 +205,27 @@ fn effect_picker(
         tiles.extend(
             MaskEffect::ALL
                 .into_iter()
-                .filter(|effect| effect.category() == Some(category))
-                .filter(|effect| !effect.is_disabled())
-                .map(|effect| {
-                    let added = components
-                        .iter()
-                        .any(|component| component.effect == effect);
-                    Tile {
+                // Each family once, where its first effect is listed.
+                .filter_map(|effect| {
+                    effect
+                        .family()
+                        .filter(|family| family.first_effect() == effect)
+                })
+                .filter(|family| family.category() == Some(category))
+                .filter_map(|family| {
+                    // Effects switched off for good or replaced are never offered.
+                    family.styles().find(|style| style.effect().is_offered())?;
+                    let to_add = family.styles_to_add(components).next();
+                    let effect = to_add.map_or(family.first_effect(), |style| style.effect());
+                    let added = to_add.is_none();
+                    Some(Tile {
                         pick: EffectPick::Effect(effect),
-                        label: tr(effect.label()),
-                        icon: effect_icon(effect),
+                        label: tr(family.label()),
+                        icon: effect_icon(family.first_effect()),
                         help: effect_description(effect),
                         added,
                         enabled: !added && !full,
-                    }
+                    })
                 }),
         );
         for row in tiles.chunks(TILES_PER_ROW) {
@@ -289,23 +297,26 @@ fn effect_icon(effect: MaskEffect) -> &'static str {
     match effect {
         MaskEffect::Adjustment => regular::SLIDERS_HORIZONTAL,
         MaskEffect::Blur => regular::DROP_HALF,
-        MaskEffect::LensBlur => regular::APERTURE,
+        MaskEffect::Defocus | MaskEffect::LensBlur => regular::APERTURE,
         MaskEffect::MotionBlur => regular::ARROW_FAT_LINES_RIGHT,
         MaskEffect::RadialBlur => regular::SPIRAL,
         MaskEffect::Sharpen => regular::TRIANGLE,
         MaskEffect::TiltShift => regular::ARROWS_IN_LINE_VERTICAL,
-        MaskEffect::Glow => regular::SUN,
-        MaskEffect::LightRays => regular::SUN_HORIZON,
+        MaskEffect::StyledGlow => regular::SUN,
+        MaskEffect::Glow => regular::SPARKLE,
+        MaskEffect::LightShafts | MaskEffect::LightRays => regular::SUN_HORIZON,
         MaskEffect::Neon => regular::LIGHTNING,
         MaskEffect::Relight => regular::LIGHTBULB,
         MaskEffect::EdgeGlow => regular::SCRIBBLE,
         MaskEffect::Pixelate => regular::CHECKERBOARD,
+        MaskEffect::ColorFringe => regular::INTERSECT_THREE,
         MaskEffect::Fog => regular::CLOUD_FOG,
         MaskEffect::Smoke => regular::WIND,
         MaskEffect::Rain => regular::CLOUD_RAIN,
         MaskEffect::WetSurfaces => regular::DROP,
         MaskEffect::Grain => regular::DOTS_NINE,
         MaskEffect::Halation => regular::CIRCLE_DASHED,
+        MaskEffect::LegacyHighlightGlow => regular::SUN_DIM,
         MaskEffect::Vignette => regular::VIGNETTE,
     }
 }

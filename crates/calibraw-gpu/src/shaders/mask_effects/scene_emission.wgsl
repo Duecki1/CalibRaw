@@ -1,5 +1,5 @@
 // Scene emission: effects that light the scene from an area of the image rather
-// than from a point. A self-illuminating Glow and Neon's lines reach the same
+// than from a point. A Glowing Area and Neon's lines reach the same
 // receivers as the scene lights of scene_lights.wgsl: surfaces, Fog, Smoke and
 // Rain's mist and drops, and highlights on wet ground. Particles and other drawn
 // light join as further emitters.
@@ -87,7 +87,7 @@ fn scene_emission_surface_grid() -> vec2<u32> {
 // pixel, so receivers skip reading the maps when nothing emits.
 fn scene_emission_present() -> bool {
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if Common::mask_slot_applies(state, MASK_EFFECT_GLOW_ID)
             && mask_glow_lights_scene(mask_effect_params(index)) {
             return true;
@@ -103,7 +103,7 @@ fn scene_emission_present() -> bool {
 // The radiance the slot at `index` emits at full-image `uv` where its mask is
 // full; none for a slot that emits nothing.
 fn scene_emission_slot_at(index: u32, uv: vec2<f32>) -> vec3<f32> {
-    let state = Common::mask_data[index].metadata;
+    let state = Common::mask_metadata(index);
     if Common::mask_slot_applies(state, MASK_EFFECT_GLOW_ID) {
         return mask_glow_scene_emission(mask_effect_params(index));
     }
@@ -163,7 +163,8 @@ fn scene_emission_depth_at(uv: vec2<f32>) -> f32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_scene_emission(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_scene_emission(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = scene_emission_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let samples = SCENE_EMISSION_SUBSAMPLES;
@@ -252,7 +253,8 @@ fn scene_emission_cell_extent(grid: vec2<u32>) -> f32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_scene_emission_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_scene_emission_surfaces(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = scene_emission_surface_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let camera = scene_light_camera();
@@ -303,7 +305,8 @@ fn build_scene_emission_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) 
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_scene_emission_volume(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_scene_emission_volume(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     let grid = scene_emission_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
     let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(grid);

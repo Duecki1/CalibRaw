@@ -95,6 +95,17 @@ change that establishes a boundary, not in advance.
   is packed. Fitting renders the photo, so callers pass a render closure and
   the fit stays in `calibraw-core`. The look belongs to the photo: presets
   and pastes never carry it, and a reset keeps it.
+- A sidebar card's switch turns its edits off without clearing them
+  (`pipeline/card_switches.rs` in `calibraw-core`). The states are part of
+  the edit, so they are saved, undone and compared (edit fingerprints, the
+  edited badge) like any value, but presets and pastes never carry them.
+  Every renderer draws the edit through the same projection: preview, export,
+  batch export, edited thumbnails, Edit Replay and render parity apply
+  `ExposureParams::applied`, `MaskStack::apply_card_switches` and the LUT and
+  Camera match switches (`EditState::into_applied` for a whole edit). Mask
+  sources develop the stored edit, as they do in the editor. The Lens
+  Corrections card's switch is `LensEditState::enabled`, which also gates its
+  chromatic aberration removal; effects and masks keep their own `enabled`.
 - Calibration (the hue and saturation of the primaries) is folded into the
   camera transform whenever a stage's camera uniforms are packed
   (`pack_camera_params`), after white balance, so like a camera profile it
@@ -224,7 +235,16 @@ Lensfun under threads still inside them.
 ## GPU resources
 
 `RawGpuPipeline` owns all textures and buffers of one processing graph and a
-`GpuBudgetReservation` (RAII) against the process-wide GPU working-set limit.
+`GpuBudgetReservation` (RAII) against the process-wide admission limit. On a
+computer there is none (the driver reports real OOM). On Android, whose GPUs
+share system memory and whose drivers may let the low-memory killer end the app
+instead of reporting OOM, two shares of device RAM apply: previews, export tiles
+and quality tiers are sized against the working-set budget (RAM / 8, 384 MiB to
+1.5 GiB), and allocations are admitted up to the larger admission limit (RAM / 4,
+at most 3 GiB), so effects that allocate beside open previews still fit.
+An effect whose resources do not fit is left out of the render, never drawn
+black (`unrendered.rs`): previews show an error dialog once per failure, while
+exports and the full-resolution preview fail rather than lack it.
 The LUT texture is sized by its LUT, so it is not part of that plan: it takes
 a reservation of its own when a LUT is first uploaded, and pipelines without a
 LUT reserve nothing for it.
@@ -252,7 +272,19 @@ batch is in flight (`PreviewDispatchGate`, opened by `on_submitted_work_done`),
 and edits made meanwhile only update the target parameters, so the next batch
 renders the newest ones. While a control is dragged zoomed in and only the
 Output stage changes, the fitted preview and the navigation proxy wait until
-the pointer lifts (`defer_background_preview_processing`). Where the dispatch
+the pointer lifts (`defer_background_preview_processing`). A preview graph
+renders its Output stage from the first of three parts that the change since
+its last render reaches (`pipeline/gpu/output_parts.rs`): Scene (scene
+adjustments, scene effects and the blurs, Lens Blur among them), Creative
+(scene emission, Glow, the creative pass, Rain's air) or View (the view node).
+It compares the uniforms as uploaded and the mask slots with the last render's,
+each value counted by the shaders that read it, and keeps the work texture
+holding each part's input; so a drag of a creative or view control does not
+run Lens Blur again, and the output is that of a whole render. Anything else
+that writes the work textures or changes what the stage reads without being a
+parameter (the RAW and tone stages, exports, a crop's newly inherited tone
+statistics) forgets the last render, and uploaded mask layers count for the
+first part whose active slots read them. Exports render every part. Where the dispatch
 gate's timings show the GPU takes more than about 45 ms for a batch of the
 preview that is shown (a device with little memory is assumed slow until it
 has timings) and the setting `interactive_preview_fallback` is on (on by
@@ -301,9 +333,12 @@ it reads in its registry row (`scene: [Geometry, LightBake, AirLight, Image]`), 
   defines the control depth sliders use.
 - **The light bake** (`scene/lights.rs`, `lights_common.wgsl`) holds a shadow cube per
   light, each surface's visibility of it and, for the air, the share of each light that
-  reaches a view ray. `scene_lights.wgsl` turns Relight's lights and Light Rays' sources
-  into lights in that frame (a flat plane without depth) and receivers read them:
-  `medium.wgsl` is what Fog, Smoke and Rain's mist share to scatter them.
+  reaches a view ray, past what blocks it by the light's Penetration.
+  `scene_lights.wgsl` turns Relight's lights and Light Rays' sources into lights in
+  that frame (a flat plane without depth) and receivers read them: `medium.wgsl` is
+  what Fog, Smoke and Rain's mist share to scatter them, and Light Rays draws the
+  light the air scatters along each view ray from that share (`light_shafts.wgsl`);
+  its 2D style draws without depth (`light_shafts_flat.wgsl`).
 - `scene_environment.wgsl` is the scene's light as effects receive it: its ambient
   level, the photo's coarse colour and the light sources in the photo.
 - `scene_emission.wgsl` makes effects that emit over an area (a self-illuminating
@@ -319,8 +354,32 @@ it reads in its registry row (`scene: [Geometry, LightBake, AirLight, Image]`), 
 
 The bake depends on the scene and the depth result, the light bake on the lights'
 placement and the bake, not on the rest of the edit, and each is rebuilt when any of
-them changes. While a control is dragged the light bake is built in a cheaper tier and
-rebuilt in the full one afterwards.
+them changes.
+
+Costly work has two tiers (`RenderTier`): previews render Draft while a control, a
+handle or the view is dragged, and render the Output stage again in Final once it is
+released (`refine_draft_render`); exports always render Final. Draft builds the light
+bake and the air light more coarsely, and gathers the effects whose registry row says
+`draft: true` (Lens Blur) more coarsely; it coarsens detail, never the look, and Final
+does not depend on it. A partial Output render counts the tier as read by the parts
+with an effect that has a Draft tier or reads the scene bake: such a part keeps a
+Final result through a Draft render it does not otherwise need, and renders again
+when a Final render finds a Draft result in it. Lens Blur's resources and the scene
+lights are prepared in the tier only by renders that run a part reading them
+(`prepare_tiered_effects`), so a part kept keeps what it was rendered from.
+
+The Glow (`styled_glow.wgsl`, `pipeline/gpu/styled_glow.rs`) spreads light up to a
+quarter of the image, past any export halo. Its near octaves come from a pyramid each
+pipeline builds from its own creative input, within the halo; its wide ones from a
+full-image map of what each Glow slot emits, averaged over a grid of the whole image.
+A pipeline that renders the whole image rebuilds the map in its output stage whenever a
+Glow is active, and zoomed views share it (`share_styled_glow_map`); the fitted preview
+then renders before the crop. An export builds it in a prepass over every tile after
+the tone prepass (`begin_export_styled_glow`), running each tile up to the creative
+input. The effect uniforms tell the shader whether each part is ready. Motion and
+Streak build their streaks from the map alone, in passes after its levels, and keep
+them in the map texture's second set of layers, so they are shared and exported with
+it.
 
 Rain and Wet Surfaces do not run inside the creative pass: `apply_wet_surfaces`
 runs before it and `apply_weather_air` after it, so their result does not depend on

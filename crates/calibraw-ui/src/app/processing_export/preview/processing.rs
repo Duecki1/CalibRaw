@@ -1,5 +1,6 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::MaskEffect;
 
 impl CalibRawApp {
     pub(in crate::app) fn interactive_detail_mask_edit(&self) -> bool {
@@ -107,7 +108,12 @@ impl CalibRawApp {
         else {
             return;
         };
-        if detail.pipeline.gpu().mask_layer_capacity() < preview_masks.masks.len().max(1) {
+        // A worker is rendering the next crop with the graph: what is
+        // pending waits for the crop it installs.
+        let Some(gpu) = detail.pipeline.gpu() else {
+            return;
+        };
+        if gpu.mask_layer_capacity() < preview_masks.masks.len().max(1) {
             if let Some(detail) = self.preview.detail.as_mut() {
                 detail.revision = self.preview.revision.wrapping_sub(1);
             }
@@ -142,14 +148,11 @@ impl CalibRawApp {
             Some(detail.mask_source_region),
             interactive,
         );
-        let mask_extent = detail_mask_texture_extent(
-            mask_region,
-            detail.pipeline.gpu().mask_atlas_edge(),
-            interactive,
-        );
+        let mask_extent =
+            detail_mask_texture_extent(mask_region, gpu.mask_atlas_edge(), interactive);
         let mapping_changed =
             detail.mask_source_region != mask_region || detail.mask_texture_extent != mask_extent;
-        let light_quality = self.sharp_scene_light_quality();
+        let render_tier = self.sharp_render_tier();
         let params = DetailPlacement {
             mask_region,
             mask_extent,
@@ -163,8 +166,8 @@ impl CalibRawApp {
             self.preview_profile_color(&detail.raw),
         )
         .with_look_lut(self.develop.target_look.as_ref())
-        .with_scene_light_quality(light_quality);
-        self.note_sharp_scene_lights(&params, light_quality);
+        .with_render_tier(render_tier);
+        self.note_sharp_render_tier(&params, render_tier);
 
         let full_frame_tone_pipeline = full_frame_tone_pipeline(
             self.preview.gpu_pipeline.as_ref(),
@@ -174,12 +177,15 @@ impl CalibRawApp {
         let Some(detail) = self.preview.detail.as_mut() else {
             return;
         };
+        let Some(gpu) = detail.pipeline.gpu() else {
+            return;
+        };
         if mapping_changed
             || (stage == ProcessingStage::Output
                 && self.masks.detail_dirty_layers.iter().any(|dirty| *dirty))
         {
             if let Err(error) = Self::upload_detail_masks(
-                detail.pipeline.gpu(),
+                gpu,
                 &render_state.queue,
                 &preview_masks,
                 full_raw,
@@ -197,7 +203,7 @@ impl CalibRawApp {
         }
 
         if let Err(error) = dispatch_detail_stage(
-            detail.pipeline.gpu(),
+            gpu,
             &render_state.queue,
             &render_state.device,
             &params,
@@ -215,6 +221,12 @@ impl CalibRawApp {
             self.preview.detail_pending_stage = None;
             return;
         }
+        if stage == ProcessingStage::Output {
+            // The crop is complete: the canvas paints it from now on.
+            detail
+                .pipeline
+                .show_completed(&render_state.device, &render_state.queue);
+        }
         self.preview.detail_pending_stage = match stage {
             ProcessingStage::Raw => Some(ProcessingStage::Tone),
             ProcessingStage::Tone => Some(ProcessingStage::Output),
@@ -230,6 +242,7 @@ impl CalibRawApp {
     /// Submits the pending work of every preview as one batch, once the
     /// previous batch has finished on the GPU (`PreviewDispatchGate`).
     pub(in crate::app) fn advance_preview_dispatch(&mut self, frame: &eframe::Frame) {
+        self.report_unrendered_effects();
         let render_state = frame.wgpu_render_state();
         if render_state
             .is_some_and(|render_state| !self.preview.dispatch_gate.poll_open(&render_state.device))
@@ -271,6 +284,41 @@ impl CalibRawApp {
         }
     }
 
+    /// Shows an error for each effect a preview started to render without
+    /// because the GPU could not hold its resources (`UnrenderedEffect`); the
+    /// preview shows the photo without it.
+    fn report_unrendered_effects(&mut self) {
+        let pipelines = [
+            self.preview.pipeline(),
+            self.preview
+                .detail
+                .as_ref()
+                .and_then(|detail| detail.pipeline.gpu()),
+            self.preview
+                .navigation
+                .as_ref()
+                .map(|navigation| navigation.pipeline.gpu()),
+            self.preview.interactive.gpu(),
+        ];
+        let mut effects = Vec::new();
+        for pipeline in pipelines.into_iter().flatten() {
+            for effect in pipeline.take_unrendered_effects() {
+                if !effects.contains(&effect) {
+                    effects.push(effect);
+                }
+            }
+        }
+        for effect in effects {
+            self.report_error(
+                ErrorKind::GpuMemory,
+                tr_fmt(
+                    "{effect} is not shown in the preview: there is not enough GPU memory for it.",
+                    &[("effect", &tr(effect.label()))],
+                ),
+            );
+        }
+    }
+
     /// Renders every pending stage of the zoomed crop and the fitted
     /// preview, so each batch ends in a displayed update.
     fn advance_processing(&mut self, frame: &eframe::Frame) {
@@ -278,9 +326,16 @@ impl CalibRawApp {
         // Decided before the crop renders, which can make it current.
         let defer_fitted = self.defer_background_preview_processing();
         let following_drag = self.interactive_following();
+        let preview_masks = self.preview_mask_stack();
+        // A crop shares the fitted preview's Glow map, which the fitted
+        // preview builds in its output stage: it waits for it.
+        let crop_waits_for_fitted = zoomed
+            && !defer_fitted
+            && self.preview.pending_stage.is_some()
+            && preview_masks.has_active(MaskEffect::StyledGlow);
         // The reduced preview follows a drag in the sharp one's place, which
         // keeps what it owes until the drag ends.
-        if zoomed && !following_drag {
+        if zoomed && !following_drag && !crop_waits_for_fitted {
             self.drain_zoomed_processing(frame);
         }
         if following_drag {
@@ -294,7 +349,6 @@ impl CalibRawApp {
         }
         // The fitted preview follows while zoomed too: panning can expose any
         // part of it.
-        let preview_masks = self.preview_mask_stack();
         let preview_source = self.develop.loaded_raw.clone();
         self.drain_pending_stages(
             |preview| preview.pending_stage,
@@ -374,7 +428,7 @@ impl CalibRawApp {
             }
         }
 
-        let light_quality = self.sharp_scene_light_quality();
+        let render_tier = self.sharp_render_tier();
         let params = GpuParams::new_with_profile_color(
             &self.develop.target_exposure,
             preview_masks,
@@ -383,7 +437,7 @@ impl CalibRawApp {
         )
         .with_vignette_geometry(self.develop.geometry)
         .with_look_lut(self.develop.target_look.as_ref())
-        .with_scene_light_quality(light_quality);
+        .with_render_tier(render_tier);
         let Some(full_raw) = preview_source.as_ref() else {
             self.preview.pending_stage = None;
             return;
@@ -412,7 +466,7 @@ impl CalibRawApp {
             self.preview.pending_stage = None;
             return;
         }
-        self.note_sharp_scene_lights(&params, light_quality);
+        self.note_sharp_render_tier(&params, render_tier);
         if stage == ProcessingStage::Tone
             && self
                 .preview
@@ -429,6 +483,21 @@ impl CalibRawApp {
                         pending.min(ProcessingStage::Tone)
                     }),
             );
+        }
+        if stage == ProcessingStage::Output
+            && preview_masks.has_active(MaskEffect::StyledGlow)
+            && self
+                .preview
+                .detail
+                .as_ref()
+                .is_some_and(|detail| detail.revision == self.preview.revision)
+        {
+            // The crop shares the Glow map this render rebuilt; a crop
+            // rendered before it, during a drag the fitted preview waited
+            // for, renders again with it.
+            self.preview
+                .detail_pending_stage
+                .get_or_insert(ProcessingStage::Output);
         }
         self.preview.pending_stage = match stage {
             ProcessingStage::Raw => Some(ProcessingStage::Tone),

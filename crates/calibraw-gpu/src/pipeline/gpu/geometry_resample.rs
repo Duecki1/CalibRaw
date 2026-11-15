@@ -228,7 +228,6 @@ impl<'a> Resampler<'a> {
                 + cell_bytes * 2
                 + band_pixels * (ACCUMULATOR_BYTES + RGB_BYTES * 3)
                 + lens_bytes,
-            gpu_working_set_limit_bytes(),
         )?;
 
         let scopes = GpuErrorScopes::push(device);

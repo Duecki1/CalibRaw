@@ -8,12 +8,14 @@ use super::{
     CalibRawApp, ErrorKind,
 };
 use crate::i18n::tr_fmt;
-use crate::luts::{LutStore, ResolvedLook};
+use crate::luts::{LookLut, LutStore, ResolvedLook};
+use crate::pipeline::camera_look::CameraMatch;
+use crate::pipeline::ExposureParams;
 use crate::pipeline::{
     apply_lens_correction, build_proxy, load_raw_file_with_profile_selection,
-    transform_thumbnail_geometry_with_lens, CameraProfileMode, GpuParams, GpuProgramPrewarm,
-    LoadedRaw, MaskStack, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RawThumbnail,
-    RemoveSceneContext,
+    transform_thumbnail_geometry_with_lens, CameraProfileMode, CardSwitch, GpuParams,
+    GpuProgramPrewarm, LoadedRaw, MaskStack, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate,
+    RawThumbnail, RemoveSceneContext,
 };
 use crate::platform::Platform;
 use crate::sidecar::{EditState, SidecarError};
@@ -103,15 +105,32 @@ pub(crate) struct SavedEditsSettings {
 }
 
 impl SavedEditsSettings {
-    /// The edit's camera look and LUT; without the LUT when the library
-    /// does not hold it.
-    fn look(&self, edits: &EditState) -> Option<ResolvedLook> {
-        let creative = edits.look_lut.as_ref().and_then(|look| {
+    /// The camera look and LUT of an edit with `exposure` while their cards
+    /// are on; without the LUT when the library does not hold it.
+    fn look(
+        &self,
+        exposure: &ExposureParams,
+        look_lut: Option<&LookLut>,
+        camera_match: &CameraMatch,
+    ) -> Option<ResolvedLook> {
+        let creative = applied_lut(exposure, look_lut).and_then(|look| {
             let lut = self.luts.as_ref()?.load(look.id).ok()?;
             Some(ResolvedLook::creative(lut, look.amount))
         });
-        ResolvedLook::of_edit(creative, edits.camera_look.as_ref())
+        let camera = camera_match
+            .look()
+            .filter(|_| exposure.card_on(CardSwitch::CameraMatch));
+        ResolvedLook::of_edit(creative, camera)
     }
+}
+
+/// The LUT an edit with `exposure` renders: none while the LUT card is
+/// switched off.
+fn applied_lut<'a>(
+    exposure: &ExposureParams,
+    look_lut: Option<&'a LookLut>,
+) -> Option<&'a LookLut> {
+    look_lut.filter(|_| exposure.card_on(CardSwitch::Lut))
 }
 
 /// Where a photo, its sidecar and its developed thumbnail live.
@@ -157,20 +176,23 @@ impl EditedPhoto {
         }
     }
 
-    /// Decodes the photo with the camera profile `edits` name.
+    /// Decodes the photo with the camera profile `edits` name, with its
+    /// embedded preview when `camera_preview` (a pending Camera match fits
+    /// it); a media-library photo is readable only while it decodes.
     fn decode(
         &self,
         platform: &dyn Platform,
         settings: &SavedEditsSettings,
         edits: &EditState,
-    ) -> Result<LoadedRaw, String> {
+        camera_preview: bool,
+    ) -> Result<(LoadedRaw, Option<Arc<RawThumbnail>>), String> {
         let profile_folder = settings.camera_profile_folder.as_deref();
         let requested_profile = edits
             .camera_profile
             .as_ref()
             .and_then(|relative| profile_folder.map(|root| root.join(relative)));
         let decode = |path: &Path| {
-            load_raw_file_with_profile_selection(
+            let raw = load_raw_file_with_profile_selection(
                 path,
                 settings.camera_profile_mode,
                 profile_folder,
@@ -181,7 +203,11 @@ impl EditedPhoto {
                     "could not decode edited RAW {path}: {error}",
                     &[("path", &self.label()), ("error", &format!("{error:#}"))],
                 )
-            })
+            })?;
+            let preview = camera_preview
+                .then(|| crate::app::camera_match::read_camera_preview(path))
+                .flatten();
+            Ok((raw, preview))
         };
         match self {
             Self::File(path) => decode(path),
@@ -273,27 +299,30 @@ impl EditedRenderJob<'_> {
         if self.cancelled() {
             return Ok(EditedRender::Cancelled);
         }
-        let raw = {
+        let fits_camera_match =
+            edits.camera_match.is_pending() && edits.exposure.card_on(CardSwitch::CameraMatch);
+        let (raw, camera_preview) = {
             // The gate guards no data, so a poisoned one is usable.
             let _decoding = self
                 .decode_gate
                 .read()
                 .unwrap_or_else(PoisonError::into_inner);
-            self.photo.decode(self.platform, self.settings, &edits)?
+            self.photo
+                .decode(self.platform, self.settings, &edits, fits_camera_match)?
         };
         if self.cancelled() {
             return Ok(EditedRender::Cancelled);
         }
-        let look = self.settings.look(&edits);
-        let complete = edits.look_lut.is_none() || look.is_some();
-        let thumbnail = render_saved_edits(
-            self.gpu,
-            raw,
+        let (thumbnail, complete) = render_saved_edits(SavedEditsRender {
+            gpu: self.gpu,
+            settings: self.settings,
+            full_raw: raw,
             edits,
-            look.as_ref(),
-            self.maximum_edge,
-            self.lens_correction,
-        )?;
+            camera_preview: camera_preview.as_deref(),
+            label: &self.photo.label(),
+            maximum_edge: self.maximum_edge,
+            lens_correction: self.lens_correction,
+        })?;
         let current = !complete
             || self
                 .photo
@@ -306,26 +335,50 @@ impl EditedRenderJob<'_> {
     }
 }
 
-/// `full_raw` rendered with `edits` as the editor's fitted preview shows them,
-/// fitted into `maximum_edge`, and without their lens correction unless
-/// `lens_correction`. `look` is the edit's LUT, `None` when the library does
-/// not hold it.
-fn render_saved_edits(
-    gpu: &SavedEditsGpu,
+/// A photo to render with its saved edits ([`render_saved_edits`]).
+struct SavedEditsRender<'a> {
+    gpu: &'a SavedEditsGpu,
+    settings: &'a SavedEditsSettings,
     full_raw: LoadedRaw,
     edits: EditState,
-    look: Option<&ResolvedLook>,
+    /// The embedded preview a pending Camera match is fitted to.
+    camera_preview: Option<&'a RawThumbnail>,
+    /// The photo, for diagnostics.
+    label: &'a str,
+    /// The long edge the result is fitted into.
     maximum_edge: u32,
+    /// Whether the saved lens correction applies.
     lens_correction: bool,
-) -> Result<RawThumbnail, String> {
+}
+
+/// The photo rendered with its edits as the editor's fitted preview shows
+/// them, fitted into `maximum_edge`, and without their lens correction unless
+/// `lens_correction`. A pending Camera match is fitted first, as opening the
+/// photo would fit it. Also returns whether the render is complete: false
+/// without the edit's LUT, which the library does not hold.
+fn render_saved_edits(render: SavedEditsRender<'_>) -> Result<(RawThumbnail, bool), String> {
+    let SavedEditsRender {
+        gpu,
+        settings,
+        full_raw,
+        edits,
+        camera_preview,
+        label,
+        maximum_edge,
+        lens_correction,
+    } = render;
     let EditState {
         mut exposure,
         geometry,
         masks,
         remove,
         lens,
+        look_lut,
+        mut camera_match,
         ..
     } = edits;
+    let mut look = settings.look(&exposure, look_lut.as_ref(), &camera_match);
+    let complete = applied_lut(&exposure, look_lut.as_ref()).is_none() || look.is_some();
     // As the editor opens a photo: lens correction resamples the whole
     // mosaic, which a reduced proxy no longer holds, so it comes first.
     let requested = lens_correction
@@ -345,8 +398,18 @@ fn render_saved_edits(
     // A film negative the Library marked renders as its estimate; opening the
     // photo saves one.
     exposure.settle_film(&full_raw, geometry);
-    if full_raw.uses_highlight_model(&exposure) {
-        full_raw.prime_highlight_model(&exposure);
+    // The edit as it renders, with its switched-off cards at rest. Mask
+    // sources develop it as stored, as the editor's do.
+    let rendered = exposure.applied(lens.enabled);
+    if full_raw.uses_highlight_model(&rendered) {
+        full_raw.prime_highlight_model(&rendered);
+    }
+    // The fit renders the edit's canonical development.
+    let camera_preview = camera_preview
+        .filter(|_| crate::app::camera_match::camera_match_applies(&full_raw, &exposure));
+    let reference = exposure.source_reference();
+    if camera_preview.is_some() && full_raw.uses_highlight_model(&reference) {
+        full_raw.prime_highlight_model(&reference);
     }
     let full_raw = Arc::new(full_raw);
     // The photo renders at the size it is shown at; effects that reach
@@ -364,12 +427,31 @@ fn render_saved_edits(
     };
 
     let mut masks = Arc::unwrap_or_clone(masks);
-    let params = |masks: &MaskStack| {
-        GpuParams::new(&exposure, masks, &preview_raw)
+    let params = |masks: &MaskStack, look: Option<&ResolvedLook>| {
+        GpuParams::new(&rendered, masks, &preview_raw)
             .with_vignette_geometry(geometry)
             .with_look_lut(look)
     };
-    let pipeline = gpu.pipeline(&preview_raw, &params(&masks), masks.masks.len())?;
+    let pipeline = gpu.pipeline(
+        &preview_raw,
+        &params(&masks, look.as_ref()),
+        masks.masks.len(),
+    )?;
+    if camera_match.is_pending() && exposure.card_on(CardSwitch::CameraMatch) {
+        let fit = camera_preview.map(|preview| {
+            crate::app::camera_match::fit_outcome(crate::app::camera_match::fit_on_pipeline(
+                &gpu.device,
+                &gpu.queue,
+                &pipeline,
+                &preview_raw,
+                &exposure,
+                preview,
+            ))
+        });
+        camera_match =
+            crate::app::camera_match::settle_pending_camera_match(camera_match, fit, label)?;
+        look = settings.look(&exposure, look_lut.as_ref(), &camera_match);
+    }
     if masks_have_missing_range_sources(&masks) {
         reconstruct_canonical_mask_source(
             &pipeline,
@@ -381,13 +463,14 @@ fn render_saved_edits(
             &mut masks,
         )?;
     }
+    masks.apply_card_switches();
     CalibRawApp::upload_preview_masks(&pipeline, &gpu.queue, &masks, &preview_raw)?;
     pipeline
         .recompute_with_remove(
             &gpu.queue,
             &gpu.device,
-            &params(&masks),
-            RemoveSceneContext::full_frame(&remove, &full_raw, &exposure),
+            &params(&masks, look.as_ref()),
+            RemoveSceneContext::full_frame(&remove, &full_raw, &rendered),
         )
         .map_err(|error| {
             tr_fmt(
@@ -404,11 +487,12 @@ fn render_saved_edits(
                 &[("error", &format!("{error:#}"))],
             )
         })?;
-    Ok(transform_thumbnail_geometry_with_lens(
+    let thumbnail = transform_thumbnail_geometry_with_lens(
         &thumbnail,
         geometry,
         preview_raw.lens_geometry.as_deref(),
-    ))
+    );
+    Ok((thumbnail, complete))
 }
 
 impl CalibRawApp {

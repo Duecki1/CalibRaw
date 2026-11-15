@@ -194,6 +194,9 @@ impl ExposureParams {
             point_color_visualize: _,
             color_grading,
             calibration,
+            // Switch states stay with their photo: presets and pastes never
+            // carry them (`card_switches`).
+            cards_off: _,
         } = *source;
 
         match section {

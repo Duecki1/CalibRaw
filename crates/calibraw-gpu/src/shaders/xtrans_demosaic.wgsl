@@ -5,8 +5,8 @@
 // Copyright (C) 2026 CalibRaw contributors (WGSL adaptation).
 //
 // The dispatches of Markesteijn 3-pass (xtrans/markesteijn.wgsl), in order:
-// green; other; recalculate, other; recalculate, other; homogeneity;
-// accumulate; smoothing. Each writes every pixel of its output.
+// green; other; recalculate, other; recalculate, other; complete, complete;
+// homogeneity; accumulate; smoothing. Each writes every pixel of its output.
 
 #import calibraw::common as Common
 #import calibraw::cfa_linear as CfaLinear
@@ -17,6 +17,9 @@
 // other colours (other passes) of red and blue photosites, the accumulated
 // result or the smoothed one.
 @group(0) @binding(24) var mark_state_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
+// The other texture of a completed state (`Mark::mark_complete_rgb`), which
+// the complete pass writes next to the green one in `mark_state_write`.
+@group(0) @binding(32) var mark_complete_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 // Homogeneity counts, 4 bits per candidate: buffers 0-3 in bits 0-15, 4-7 in
 // bits 16-31.
 @group(0) @binding(25) var mark_homogeneity_write: texture_storage_2d<r32uint, write>;
@@ -34,7 +37,8 @@ fn mark_in_tile(gid: vec3<u32>) -> bool {
 
 // Greens of buffers 0-3; green photosites store their sample.
 @compute @workgroup_size(8, 8, 1)
-fn xtrans_markesteijn_green(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn xtrans_markesteijn_green(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if !mark_in_tile(gid) { return; }
     let pos = vec2<i32>(gid.xy);
     var greens = vec4<f32>(Mark::mark_sample(pos));
@@ -46,7 +50,8 @@ fn xtrans_markesteijn_green(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 // Other colours of the state whose greens are bound as lo; 0 at greens.
 @compute @workgroup_size(8, 8, 1)
-fn xtrans_markesteijn_other(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn xtrans_markesteijn_other(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if !mark_in_tile(gid) { return; }
     let pos = vec2<i32>(gid.xy);
     var other = vec4<f32>(0.0);
@@ -58,7 +63,8 @@ fn xtrans_markesteijn_other(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 // Greens of the next state of buffers 4-7 from the state bound as lo.
 @compute @workgroup_size(8, 8, 1)
-fn xtrans_markesteijn_recalculate(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn xtrans_markesteijn_recalculate(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if !mark_in_tile(gid) { return; }
     let pos = vec2<i32>(gid.xy);
     var greens = vec4<f32>(Mark::mark_sample(pos));
@@ -66,6 +72,24 @@ fn xtrans_markesteijn_recalculate(@builtin(global_invocation_id) gid: vec3<u32>)
         greens = Mark::mark_refined_green(pos);
     }
     textureStore(mark_state_write, pos, greens);
+}
+
+// Completes the state bound as lo: red and blue photosites keep their
+// greens and other colour, green photosites get their reds and blues.
+@compute @workgroup_size(8, 8, 1)
+fn xtrans_markesteijn_complete(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
+    if !mark_in_tile(gid) { return; }
+    let pos = vec2<i32>(gid.xy);
+    var first = Mark::mark_state_green(Mark::MARK_LO, pos);
+    var second = Mark::mark_state_other(Mark::MARK_LO, pos);
+    if Mark::mark_is_green(pos) {
+        let red_blue = Mark::mark_green_red_blue(Mark::MARK_LO, pos);
+        first = red_blue.red;
+        second = red_blue.blue;
+    }
+    textureStore(mark_state_write, pos, first);
+    textureStore(mark_complete_write, pos, second);
 }
 
 fn mark_pack_counts(counts: vec4<u32>) -> u32 {
@@ -78,20 +102,27 @@ fn mark_unpack_counts(packed: u32) -> vec4<u32> {
 
 // darktable's homogeneity map: for each candidate, how many of the 3x3
 // pixels around this one have a derivative at most 8 times the smallest
-// derivative here.
+// derivative here. Reads the completed states.
 @compute @workgroup_size(8, 8, 1)
-fn xtrans_markesteijn_homogeneity(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn xtrans_markesteijn_homogeneity(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if !mark_in_tile(gid) { return; }
     let pos = vec2<i32>(gid.xy);
-    var lo = Mark::mark_derivatives(Mark::MARK_LO, pos);
-    var hi = Mark::mark_derivatives(Mark::MARK_HI, pos);
-    let smallest = min(lo[4], hi[4]);
+    let smallest = min(
+        Mark::mark_derivative(Mark::MARK_LO, pos),
+        Mark::mark_derivative(Mark::MARK_HI, pos),
+    );
     let threshold = vec4<f32>(8.0 * min(min(smallest.x, smallest.y), min(smallest.z, smallest.w)));
     var lo_count = vec4<u32>(0u);
     var hi_count = vec4<u32>(0u);
-    for (var q = 0; q < 9; q = q + 1) {
-        lo_count += select(vec4<u32>(0u), vec4<u32>(1u), lo[q] <= threshold);
-        hi_count += select(vec4<u32>(0u), vec4<u32>(1u), hi[q] <= threshold);
+    for (var dy = -1; dy <= 1; dy = dy + 1) {
+        for (var dx = -1; dx <= 1; dx = dx + 1) {
+            let at = pos + vec2<i32>(dx, dy);
+            let lo = Mark::mark_derivative(Mark::MARK_LO, at);
+            let hi = Mark::mark_derivative(Mark::MARK_HI, at);
+            lo_count += select(vec4<u32>(0u), vec4<u32>(1u), lo <= threshold);
+            hi_count += select(vec4<u32>(0u), vec4<u32>(1u), hi <= threshold);
+        }
     }
     let packed = mark_pack_counts(lo_count) | (mark_pack_counts(hi_count) << 16u);
     textureStore(mark_homogeneity_write, pos, vec4<u32>(packed, 0u, 0u, 0u));
@@ -111,7 +142,8 @@ fn mark_near_image_border(pos: vec2<i32>) -> bool {
 // eighth of the best, after dropping the less homogeneous of each pair of
 // buffers d and d + 4.
 @compute @workgroup_size(8, 8, 1)
-fn xtrans_markesteijn_accumulate(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn xtrans_markesteijn_accumulate(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if !mark_in_tile(gid) { return; }
     let pos = vec2<i32>(gid.xy);
     if mark_near_image_border(pos) {
@@ -137,8 +169,8 @@ fn xtrans_markesteijn_accumulate(@builtin(global_invocation_id) gid: vec3<u32>) 
     let keep_hi = select(hi, vec4<u32>(0u), hi < lo);
     let use_lo = select(vec4<f32>(0.0), vec4<f32>(1.0), keep_lo >= vec4<u32>(best));
     let use_hi = select(vec4<f32>(0.0), vec4<f32>(1.0), keep_hi >= vec4<u32>(best));
-    let lo_rgb = Mark::mark_rgb(Mark::MARK_LO, pos);
-    let hi_rgb = Mark::mark_rgb(Mark::MARK_HI, pos);
+    let lo_rgb = Mark::mark_complete_rgb(Mark::MARK_LO, pos);
+    let hi_rgb = Mark::mark_complete_rgb(Mark::MARK_HI, pos);
     let sum = vec3<f32>(
         dot(lo_rgb.red, use_lo) + dot(hi_rgb.red, use_hi),
         dot(lo_rgb.green, use_lo) + dot(hi_rgb.green, use_hi),
@@ -157,7 +189,8 @@ fn xtrans_markesteijn_accumulate(@builtin(global_invocation_id) gid: vec3<u32>) 
 // smooths after dual demosaicing; here every finish mode reads the smoothed
 // result.
 @compute @workgroup_size(8, 8, 1)
-fn xtrans_markesteijn_smooth(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn xtrans_markesteijn_smooth(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if !mark_in_tile(gid) { return; }
     let pos = vec2<i32>(gid.xy);
     if CfaLinear::cfa_on_border(pos) {

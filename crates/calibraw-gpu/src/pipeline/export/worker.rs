@@ -17,6 +17,18 @@ pub fn spawn_tiled_export(
             record_export_worker_started(format, &job);
             let result = run_export_worker(format, &job, &worker_sender);
             record_export_worker_finished(format, worker_started, &result);
+            // Programs the export compiled reach the next launch too, whether
+            // or not the app compiled them ahead.
+            if let Some(prewarm) = &job.program_prewarm {
+                if let Err(error) = prewarm.persist_pipeline_cache() {
+                    log::warn!("could not save the GPU pipeline cache: {error:#}");
+                }
+            }
+            // The job holds GPU objects (device, queue and the shared compiled
+            // programs). Release them before reporting the end, so a receiver
+            // that exits the process or drops the device after `Finished` never
+            // races this thread's GPU teardown.
+            drop(job);
             let _ = worker_sender.send(ExportEvent::Finished(
                 result.map_err(|error| format!("{error:#}")),
             ));
@@ -81,9 +93,6 @@ fn run_export_worker(
     job: &TiledExportJob,
     events: &mpsc::Sender<ExportEvent>,
 ) -> Result<PathBuf> {
-    let program_template = (job.raw.cfa_kind == CfaKind::Bayer)
-        .then(|| await_export_program_template(job.program_prewarm.as_deref()))
-        .flatten();
     let geometry = job.geometry.sanitized();
     let (targets, window) = match &job.files {
         ExportFiles::Single(target) => {
@@ -132,7 +141,7 @@ fn run_export_worker(
             queue: &job.queue,
             events,
             cancellation: &job.cancellation,
-            program_template: program_template.as_deref(),
+            program_prewarm: job.program_prewarm.as_deref(),
             memory: &memory,
         };
         let request = ExportRequest {
@@ -241,28 +250,6 @@ pub(super) fn ensure_export_not_cancelled(cancellation: &AtomicBool) -> Result<(
     Ok(())
 }
 
-fn await_export_program_template(
-    prewarm: Option<&GpuProgramPrewarm>,
-) -> Option<Arc<RawGpuProgramTemplate>> {
-    let prewarm = prewarm?;
-    let wait_started = Instant::now();
-    match prewarm.wait() {
-        Ok(template) => {
-            calibraw_core::diagnostics::record(format!(
-                "Full-quality export program prewarm available after {:.3}s wait",
-                wait_started.elapsed().as_secs_f64()
-            ));
-            Some(template)
-        }
-        Err(error) => {
-            calibraw_core::diagnostics::record(format!(
-                "Full-quality export program prewarm unavailable: {error}"
-            ));
-            None
-        }
-    }
-}
-
 /// The edits an export renders, for [`compile_export_programs`].
 pub struct ExportProgramEdits<'a> {
     pub exposure: &'a ExposureParams,
@@ -271,15 +258,15 @@ pub struct ExportProgramEdits<'a> {
     pub look: Option<&'a ResolvedLook>,
 }
 
-/// Compiles into `template` the programs exporting `raw` with `edits` uses (its effects,
-/// colour denoise and demosaic variant), so the export reusing the template does not wait for
-/// them, and saves them to the template's persistent pipeline cache. It renders nothing: it
-/// builds a 64 px tile's graph from the template, whose construction compiles what the edits
-/// select. Blocks for as long as compiling takes; call it off the UI thread.
+/// Compiles into the programs `prewarm` shares those exporting `raw` with `edits` uses (its
+/// effects, colour denoise and demosaic variant), so the export does not wait for them, and
+/// saves them to the persistent pipeline cache. It renders nothing: it builds a 64 px tile's
+/// graph, whose construction compiles what the edits select. Blocks for as long as compiling
+/// takes; call it off the UI thread.
 pub fn compile_export_programs(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    template: &RawGpuProgramTemplate,
+    prewarm: &GpuProgramPrewarm,
     raw: &LoadedRaw,
     edits: ExportProgramEdits<'_>,
 ) -> Result<()> {
@@ -309,16 +296,15 @@ pub fn compile_export_programs(
     )
     .with_vignette_geometry(geometry)
     .with_look_lut(look);
-    RawGpuPipeline::new(
+    RawGpuPipeline::new_reusing(
         device,
         queue,
         &tile_raw,
         &params,
-        PipelineOptions::new(ProcessingQuality::High)
-            .mask_atlas_edge(64)
-            .programs(template),
+        PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(64),
+        Some(prewarm),
     )
     .context("compile the export programs")?;
-    template.persist_pipeline_cache()?;
+    prewarm.persist_pipeline_cache()?;
     Ok(())
 }

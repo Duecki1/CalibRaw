@@ -242,8 +242,11 @@ pub(super) fn infer_bayer(
         let cfa = raw.color_indices[index] as usize;
         let black = raw.black_levels_per_pixel[index];
         let white = raw.white_levels[cfa].max(black + 1.0);
-        let original =
-            ((f32::from(raw.raw_pixels[index]) - black) / (white - black)).clamp(0.0, 1.0);
+        // Not limited to the white level: a sensor can saturate above it
+        // (`SensorSaturation`), and highlight reconstruction finds clipped
+        // samples at that level in this mosaic. Above `CLIP_THRESHOLD` the
+        // source weight is 1, so such samples keep their recorded code.
+        let original = ((f32::from(raw.raw_pixels[index]) - black) / (white - black)).max(0.0);
         let distance = clip_distance[index];
         let proximity = if distance <= CLIP_CORE_RADIUS {
             1.0

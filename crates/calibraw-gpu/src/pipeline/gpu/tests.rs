@@ -1,15 +1,16 @@
 use super::{
-    processing_work_format, shader_manager::ShaderManager, shaders, work_shader_source, GpuParams,
-    PipelineOptions, ProcessingQuality, RawGpuPipeline, COLOR_DENOISE_ENTRY_POINTS,
-    DETAIL_PYRAMID_LEVELS,
+    effect_programs::EffectSet, processing_work_format, shader_manager::ShaderManager, shaders,
+    work_shader_source, GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline,
+    COLOR_DENOISE_ENTRY_POINTS, DETAIL_PYRAMID_LEVELS,
 };
 use crate::pipeline::{
-    build_proxy, CameraProfile, CfaKind, CompactPixelMap, ExposureParams, LoadedRaw, MaskStack,
-    ProxySpec, SensorSaturation,
+    build_proxy, CameraProfile, CfaKind, CompactPixelMap, ExposureParams, LoadedRaw, MaskEffect,
+    MaskStack, ProxySpec, SensorSaturation,
 };
 
-/// Composes `shader` the way production does for `quality` and validates it.
-fn validate_shader(shader: shaders::EntryShader, quality: ProcessingQuality) {
+/// Composes `shader` the way production does for `quality` with the effects
+/// of `effects` and validates it.
+fn validate_shader(shader: shaders::EntryShader, quality: ProcessingQuality, effects: EffectSet) {
     let format = processing_work_format(quality);
     let mut manager = ShaderManager::new(format, shader.sensor.unwrap_or(CfaKind::Bayer)).unwrap();
     let module_text = shader.source.module_text();
@@ -19,27 +20,57 @@ fn validate_shader(shader: shaders::EntryShader, quality: ProcessingQuality) {
         std::borrow::Cow::Borrowed(module_text.as_ref())
     };
     let module = manager
-        .compose_naga_module(text.as_ref(), shader.source.file_name)
-        .unwrap_or_else(|error| panic!("{} did not compose: {error:#}", shader.label));
+        .compose_naga_module(
+            text.as_ref(),
+            shader.source.file_name,
+            effects.shader_defs(),
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "{} did not compose with effects {:#x}: {error:#}",
+                shader.label,
+                effects.bits()
+            )
+        });
     naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
     )
     .validate(&module)
-    .unwrap_or_else(|error| panic!("{} did not validate: {error}", shader.label));
+    .unwrap_or_else(|error| {
+        panic!(
+            "{} did not validate with effects {:#x}: {error}",
+            shader.label,
+            effects.bits()
+        )
+    });
 }
 
 #[test]
 fn compute_shaders_validate() {
     for shader in shaders::ALL_ENTRY_SHADERS {
-        validate_shader(shader, ProcessingQuality::Preview);
+        validate_shader(shader, ProcessingQuality::Preview, EffectSet::all());
+    }
+    // The programs compiled per effect set (`effect_programs`): no effect,
+    // and each effect alone.
+    validate_shader(
+        shaders::CREATIVE_EFFECTS_ENTRY,
+        ProcessingQuality::Preview,
+        EffectSet::from_effects([]),
+    );
+    for effect in MaskEffect::ALL {
+        validate_shader(
+            shaders::CREATIVE_EFFECTS_ENTRY,
+            ProcessingQuality::Preview,
+            EffectSet::from_effects([effect]),
+        );
     }
 }
 
 #[test]
 fn high_quality_shaders_validate() {
     for shader in shaders::ALL_ENTRY_SHADERS {
-        validate_shader(shader, ProcessingQuality::High);
+        validate_shader(shader, ProcessingQuality::High, EffectSet::all());
     }
 }
 

@@ -115,4 +115,4 @@ mod single_open_cards;
 mod watermark;
 
 pub(crate) use export::{export_settings_controls, ExportControlsChange};
-pub(crate) use mask_effects::effect_card_open;
+pub(crate) use mask_effects::{effect_card_open, focus_range_adjusting};

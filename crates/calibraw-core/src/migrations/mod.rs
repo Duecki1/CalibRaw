@@ -29,6 +29,9 @@
 //!   CUDA and Windows DirectML), removed from the model folder on desktop
 //!   start-up (`calibraw-ai`, `runtime/package.rs`, which lists them, and
 //!   `calibraw-ui`, `app/ai/models.rs`).
+//! - Saved AI-denoise results of version 2, whose Bayer samples above the
+//!   white level are restored from the RAW when they are loaded
+//!   (`calibraw-ai`, `models/denoise/result_cache.rs`).
 //! - The Lensfun 0.3.4 database Android copied into app data, removed on
 //!   start-up (`calibraw-ui`, `app/lifecycle/startup.rs`).
 //! - Depth Anything V2 Small, the depth model before Distill-Any-Depth
@@ -49,6 +52,7 @@ pub(crate) mod depth_range_feather;
 pub mod desktop_model_folder;
 pub(crate) mod edit_fingerprints;
 mod effect_sliders;
+mod highlight_glow;
 pub(crate) mod older_readers;
 pub mod onnx_runtime_selection;
 pub(crate) mod point_curve_slots;
@@ -60,16 +64,19 @@ pub(crate) use effect_sliders::LegacyEffectSliders;
 pub(crate) use scene_depth_layout::LegacySceneDepth;
 
 use crate::sidecar::EditState;
+use highlight_glow::LegacyHighlightGlows;
 use scene_depth_controls::LegacySceneControls;
 use serde::{Deserialize, Deserializer};
 
 /// What older layouts kept in a serialized `edits` object besides what the
-/// edit decodes: the Effects-card sliders and Relight's old scene controls.
-/// Read in the same pass as a document's header.
+/// edit decodes: the Effects-card sliders, Relight's old scene controls and
+/// the Self-illuminating switch of Glows. Read in the same pass as a
+/// document's header.
 #[derive(Debug, Default)]
 pub(crate) struct LegacyEdits {
     sliders: LegacyEffectSliders,
     scene_controls: LegacySceneControls,
+    highlight_glows: LegacyHighlightGlows,
 }
 
 impl<'de> Deserialize<'de> for LegacyEdits {
@@ -80,6 +87,7 @@ impl<'de> Deserialize<'de> for LegacyEdits {
         Ok(Self {
             sliders: LegacyEffectSliders::deserialize(&edits).map_err(read)?,
             scene_controls: LegacySceneControls::deserialize(&edits).map_err(read)?,
+            highlight_glows: LegacyHighlightGlows::deserialize(&edits).map_err(read)?,
         })
     }
 }
@@ -99,8 +107,10 @@ impl LegacyEdits {
 /// Returns whether the edits changed, so the file can be saved again in the
 /// current layout.
 pub(crate) fn migrate_edits(edits: &mut EditState, legacy: LegacyEdits) -> bool {
+    // Before the sliders, which then find the highlight Glows they would add.
+    let highlight_glows = legacy.highlight_glows.migrate(edits);
     let effects = legacy.sliders.migrate(edits);
     let scene_controls = legacy.scene_controls.migrate(edits);
     let names = component_names::migrate(edits);
-    effects || scene_controls || names
+    highlight_glows || effects || scene_controls || names
 }

@@ -169,32 +169,14 @@ fn create_crop_pipeline(
     params: &GpuParams,
     mask_edge: u32,
 ) -> Result<RawGpuPipeline> {
-    let build = || {
-        RawGpuPipeline::new(
-            &job.device,
-            &job.queue,
-            raw,
-            params,
-            PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(mask_edge),
-        )
-    };
-    let template = job
-        .program_prewarm
-        .as_deref()
-        .and_then(|prewarm| prewarm.wait().ok());
-    match template.as_deref() {
-        Some(template) => RawGpuPipeline::new(
-            &job.device,
-            &job.queue,
-            raw,
-            params,
-            PipelineOptions::new(ProcessingQuality::High)
-                .mask_atlas_edge(mask_edge)
-                .programs(template),
-        )
-        .or_else(|_| build()),
-        None => build(),
-    }
+    RawGpuPipeline::new_reusing(
+        &job.device,
+        &job.queue,
+        raw,
+        params,
+        PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(mask_edge),
+        job.program_prewarm.as_deref(),
+    )
 }
 
 pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
@@ -236,6 +218,7 @@ pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         &pipeline,
         &job.queue,
         &job.masks,
+        &params,
         job.raw.width,
         job.raw.height,
         mask_region,
@@ -251,6 +234,8 @@ pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
     pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Raw);
     pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Tone);
     pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Output);
+    // An export must not lack an effect whose resources did not fit.
+    pipeline.ensure_effects_rendered()?;
     let mut rgb = pipeline.read_display_linear_region_blocking(
         &job.device,
         &job.queue,

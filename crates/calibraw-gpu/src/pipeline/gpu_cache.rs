@@ -3,7 +3,10 @@ use std::{
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use crate::gpu_errors::GpuErrorScopes;
@@ -14,6 +17,9 @@ const CALIBRAW_PIPELINE_CACHE_SCHEMA: &str = "wgpu29-v1";
 pub struct PersistentGpuPipelineCache {
     cache: wgpu::PipelineCache,
     path: Arc<PathBuf>,
+    /// Whether a program compiled with the cache since it was last saved,
+    /// shared by every clone.
+    unsaved: Arc<AtomicBool>,
 }
 
 impl PersistentGpuPipelineCache {
@@ -60,6 +66,7 @@ impl PersistentGpuPipelineCache {
             Arc::new(Self {
                 cache,
                 path: Arc::new(path),
+                unsaved: Arc::new(AtomicBool::new(false)),
             }),
             loaded_bytes,
         )))
@@ -71,6 +78,21 @@ impl PersistentGpuPipelineCache {
 
     pub fn path(&self) -> &Path {
         self.path.as_path()
+    }
+
+    /// Notes that a program was compiled with [`Self::raw`]; call it once the
+    /// pipeline exists, so a save that sees the note includes it.
+    pub(crate) fn note_compiled(&self) {
+        self.unsaved.store(true, Ordering::Release);
+    }
+
+    /// [`Self::persist`] if a program compiled since the last save; `Ok(0)`
+    /// otherwise, as the saved file holds everything already.
+    pub fn persist_if_changed(&self) -> Result<usize> {
+        if !self.unsaved.swap(false, Ordering::AcqRel) {
+            return Ok(0);
+        }
+        self.persist().inspect_err(|_| self.note_compiled())
     }
 
     pub fn persist(&self) -> Result<usize> {

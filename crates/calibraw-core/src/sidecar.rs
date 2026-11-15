@@ -1,9 +1,9 @@
 use crate::file_ops::write_atomically;
 use crate::luts::LookLut;
-use crate::pipeline::camera_look::CameraLook;
+use crate::pipeline::camera_look::{CameraLook, CameraMatch};
 use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
-    lensfun_catalog, DisparityMap, ExposureParams, GeometryTransform, LensCorrection,
+    lensfun_catalog, CardSwitch, DisparityMap, ExposureParams, GeometryTransform, LensCorrection,
     LensfunCorrections, LensfunLens, LoadedRaw, ManualLensCorrection, MaskGeometry, MaskImage,
     MaskKind, MaskStack, RemoveEditState, SceneCamera, SceneDepth, SceneNormals, SubjectRefinement,
     WhiteBalance, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
@@ -200,11 +200,12 @@ pub struct EditState {
     pub camera_profile: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look_lut: Option<LookLut>,
-    /// The look fitted to the camera's own JPEG (Camera match). It belongs
-    /// to this photo: presets, copy and paste and Replace pastes never move
-    /// or clear it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub camera_look: Option<CameraLook>,
+    /// Camera match: off, or on with the look fitted to this photo's own
+    /// embedded preview or a fit to come. Presets never change it; a paste
+    /// with its category sets whether it is on and its amount
+    /// (`transfer_edits`).
+    #[serde(flatten)]
+    pub camera_match: CameraMatch,
     pub masks: Arc<MaskStack>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_refinement: Option<SubjectRefinement>,
@@ -213,6 +214,36 @@ pub struct EditState {
     pub remove: Arc<RemoveEditState>,
     #[serde(default)]
     pub ai_masks_need_update: bool,
+}
+
+impl EditState {
+    /// The edit as it renders, with every card that is switched off at rest
+    /// (`pipeline::card_switches`): its settings, mask cards and subject
+    /// refinement, and the LUT and camera look while their cards are off.
+    /// Renderers draw this; saving, history and comparisons keep the edit.
+    /// Mask sources develop the edit as stored (`ExposureParams::source_reference`),
+    /// so they are made before this is taken.
+    pub fn into_applied(mut self) -> Self {
+        let stored = self.exposure;
+        self.exposure = stored.applied(self.lens.enabled);
+        if !stored.card_on(CardSwitch::Lut) {
+            self.look_lut = None;
+        }
+        if !stored.card_on(CardSwitch::CameraMatch) {
+            self.camera_match = CameraMatch::Off;
+        }
+        if self.masks.has_cards_off() {
+            Arc::make_mut(&mut self.masks).apply_card_switches();
+        }
+        if self
+            .subject_refinement
+            .as_ref()
+            .is_some_and(|refinement| !refinement.enabled)
+        {
+            self.subject_refinement = None;
+        }
+        self
+    }
 }
 
 fn arc_remove_is_empty(remove: &Arc<RemoveEditState>) -> bool {
@@ -225,7 +256,7 @@ pub fn default_edit_state() -> EditState {
         geometry: GeometryTransform::default(),
         camera_profile: None,
         look_lut: None,
-        camera_look: None,
+        camera_match: CameraMatch::Off,
         masks: Arc::new(MaskStack::default()),
         subject_refinement: None,
         lens: LensEditState::default(),
@@ -234,12 +265,21 @@ pub fn default_edit_state() -> EditState {
     }
 }
 
-/// The edits a reset leaves the photo with: the defaults, keeping the camera
-/// look of `previous`, which is part of how the photo starts rather than an
-/// edit of it.
-pub fn reset_edit_state(previous: Option<&EditState>) -> EditState {
+/// The edits a reset leaves the photo with: the defaults a first open gives
+/// it. With Camera match on (`camera_match`) that includes Camera match at
+/// its default amount: the look `previous` holds, or a fit when the photo is
+/// next open; with it off, none.
+pub fn reset_edit_state(previous: Option<&EditState>, camera_match: bool) -> EditState {
+    let camera_match = if camera_match {
+        previous
+            .map(|edits| edits.camera_match.clone())
+            .unwrap_or_default()
+            .with_amount(CameraLook::DEFAULT_AMOUNT)
+    } else {
+        CameraMatch::Off
+    };
     EditState {
-        camera_look: previous.and_then(|edits| edits.camera_look.clone()),
+        camera_match,
         ..default_edit_state()
     }
 }

@@ -16,12 +16,14 @@
 //! - a group's visibility, when one of its cubes or a light's Size changes.
 //!
 //! Amount, colour, reach, Ambient and the shadow strength are applied per
-//! pixel and rebuild nothing.
+//! pixel and rebuild nothing. A light's reach and Penetration (how far its
+//! light continues behind what blocks it) rebuild only the air light.
 //!
 //! Faces that see no part of the scene (`face_sees_scene`) are cleared but not
 //! drawn: no surface lies in their direction, so no receiver reads them.
 
 use super::super::shader_manager::ShaderManager;
+use super::super::RenderTier;
 use super::super::{
     buffer_entry, create_bind_group, create_bind_group_layout, create_compute_pipeline,
     create_gpu_buffer, dispatch_compute, gpu_working_set_limit_bytes, shaders,
@@ -46,17 +48,8 @@ const VISIBILITY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// `SCENE_CUBE_MARGIN` in lights_common.wgsl.
 const CUBE_MARGIN: f32 = 0.1;
 
-/// How carefully the light bake and the air light are built (§4.4). Draft
-/// while a control, a light's handle or the view is dragged, so a drag stays
-/// quick; Final when the preview is idle, and for every export.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum SceneLightQuality {
-    #[default]
-    Final,
-    Draft,
-}
-
-impl SceneLightQuality {
+/// The light bake's and the air light's work per tier (§4.4).
+impl RenderTier {
     /// A cube face's edge in texels: 512 in Final, 256 in Draft and wherever
     /// the bake works at its reduced size.
     fn face_texels(self) -> u32 {
@@ -97,9 +90,13 @@ impl SceneLightQuality {
 pub(in crate::pipeline::gpu) enum SceneLightKind {
     /// A Relight light, placed by its card.
     Relight,
-    /// A Light Rays source: a point light at the farthest surface, with a
-    /// reach that follows the rays' Length.
+    /// A legacy Light Rays source: a point light at the farthest surface,
+    /// with a reach that follows the rays' Length.
     LightRays,
+    /// A Light Rays source: a point light at the farthest surface whose
+    /// reach is its Length, and that passes behind objects by its
+    /// Penetration.
+    LightShafts,
 }
 
 /// One light of the bake as its effect places it: `light_position` in
@@ -119,6 +116,9 @@ pub(in crate::pipeline::gpu) struct SceneShadowLight {
     /// surface at which the falloff has halved. For Light Rays, its Length in
     /// percent.
     pub(in crate::pipeline::gpu) reach: f32,
+    /// Penetration in [0, 1]: 0, a hard shadow, for every light but Light
+    /// Rays'.
+    pub(in crate::pipeline::gpu) penetration: f32,
 }
 
 /// What the light bake is built from besides the scene bake: the lights in
@@ -126,7 +126,7 @@ pub(in crate::pipeline::gpu) struct SceneShadowLight {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::pipeline::gpu) struct SceneLightSet {
     pub(in crate::pipeline::gpu) lights: [Option<SceneShadowLight>; SCENE_SHADOW_LIGHTS],
-    pub(in crate::pipeline::gpu) quality: SceneLightQuality,
+    pub(in crate::pipeline::gpu) quality: RenderTier,
 }
 
 /// `SceneShadowLight` in lights_common.wgsl.
@@ -179,6 +179,24 @@ fn rays_reach(camera: &SceneCamera, length: f32) -> f32 {
         .max(1e-3)
 }
 
+/// The falloff's half distance of a Light Rays source with Length `length`
+/// (percent) in frame units: shorter edges at the source, which lies at the
+/// farthest surface, `z = 1 + R`.
+fn shafts_reach(camera: &SceneCamera, length: f32) -> f32 {
+    let length = (length / 100.0).clamp(0.0, 2.0);
+    (length * 2.0 * camera.focal_tan * (1.0 + camera.frame_relief)).max(1e-3)
+}
+
+/// The distance behind a blocker over which a light with Penetration
+/// `penetration` (in [0, 1]) falls to 1/e, in frame units
+/// (`scene_cube_air_visibility` in lights_common.wgsl): the scene's depth
+/// range `R` at 100, growing with the square of Penetration so that low
+/// values stay close to a hard shadow. 0 is a hard shadow.
+fn penetration_depth(camera: &SceneCamera, penetration: f32) -> f32 {
+    let penetration = penetration.clamp(0.0, 1.0);
+    penetration * penetration * camera.frame_relief
+}
+
 /// Lights uploaded for the next encode.
 #[derive(Clone, Copy)]
 struct PendingLights {
@@ -227,18 +245,14 @@ pub(super) struct SceneLightBake {
 impl SceneLightBake {
     fn new(device: &wgpu::Device, size: [u32; 2], capacity: usize) -> Result<Self> {
         let [width, height] = size;
-        let face_texels = SceneLightQuality::Final.face_texels();
+        let face_texels = RenderTier::Final.face_texels();
         let texels = u64::from(width) * u64::from(height);
         let cube_layers = CUBE_FACES * capacity as u32;
         let groups = capacity.div_ceil(LIGHTS_PER_GROUP) as u32;
         let bytes = u64::from(face_texels).pow(2) * 4 * u64::from(cube_layers)
             + texels * 4 * 5 / 4
             + texels * 4 * 2 * u64::from(groups);
-        let reservation = GpuBudgetReservation::acquire_bytes(
-            "scene light bake",
-            bytes,
-            gpu_working_set_limit_bytes(),
-        )?;
+        let reservation = GpuBudgetReservation::acquire_bytes("scene light bake", bytes)?;
         let cubes = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("calibraw scene shadow cubes"),
             size: wgpu::Extent3d {
@@ -605,15 +619,15 @@ impl SceneLightPrograms {
 impl SceneBake {
     /// Allocates the light bake on first use and uploads `set`'s lights for
     /// the next `encode_lights`. Nothing happens before a depth result is
-    /// uploaded.
+    /// uploaded. Fails when the light bake cannot be allocated.
     pub(super) fn prepare_lights(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         set: &SceneLightSet,
-    ) {
+    ) -> anyhow::Result<()> {
         let Some(camera) = self.camera() else {
-            return;
+            return Ok(());
         };
         let needed = set
             .lights
@@ -625,7 +639,7 @@ impl SceneBake {
             if let Some(lights) = guard.as_mut() {
                 lights.pending = None;
             }
-            return;
+            return Ok(());
         }
         if guard.as_ref().is_none_or(|bake| bake.capacity < needed) {
             // Room for every light of a group, so the array rarely grows.
@@ -637,14 +651,11 @@ impl SceneBake {
                     self.lights_revision
                         .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 }
-                Err(error) => {
-                    log::error!("scene light bake not allocated: {error:#}");
-                    return;
-                }
+                Err(error) => return Err(error),
             }
         }
         let Some(lights) = guard.as_mut() else {
-            return;
+            return Ok(());
         };
         let quality = set.quality;
         let face_texels = quality.face_texels().min(lights.face_texels);
@@ -669,6 +680,7 @@ impl SceneBake {
             let reach = match light.kind {
                 SceneLightKind::Relight => light_reach(&camera, light.reach),
                 SceneLightKind::LightRays => rays_reach(&camera, light.reach),
+                SceneLightKind::LightShafts => shafts_reach(&camera, light.reach),
             };
             uniform.lights[channel] = SceneShadowLightUniform {
                 position: [position[0], position[1], position[2], light.relief_scale],
@@ -678,7 +690,12 @@ impl SceneBake {
                     (CUBE_FACES as usize * channel) as f32,
                     mesh_level as f32,
                 ],
-                air: [reach, 0.0, 0.0, 0.0],
+                air: [
+                    reach,
+                    penetration_depth(&camera, light.penetration),
+                    0.0,
+                    0.0,
+                ],
             };
         }
         queue.write_buffer(&lights.uniforms, 0, bytemuck::bytes_of(&uniform));
@@ -687,6 +704,16 @@ impl SceneBake {
             uniform,
             camera,
         });
+        Ok(())
+    }
+
+    /// The tier of the lights `prepare_lights` last uploaded, if it uploaded
+    /// any.
+    pub(in crate::pipeline::gpu) fn prepared_lights_tier(&self) -> Option<RenderTier> {
+        self.lock_lights()
+            .as_ref()
+            .and_then(|lights| lights.pending)
+            .map(|pending| pending.set.quality)
     }
 
     /// Encodes what of the light bake is outdated for the lights
@@ -1074,7 +1101,7 @@ impl SceneAirLightRegion {
         origin: [u32; 2],
         size: [u32; 2],
         image: [u32; 2],
-        quality: SceneLightQuality,
+        quality: RenderTier,
     ) -> Self {
         let factor = quality.air_march()[0];
         let first = |pixel: u32| {
@@ -1098,10 +1125,11 @@ impl SceneAirLightRegion {
 }
 
 /// What a pipeline's air light was built from: the scene bake, each light's
-/// cube and reach, the region and the march.
+/// cube, reach and penetration (`SceneShadowLight.air`), the region and the
+/// march.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::pipeline::gpu) struct SceneAirLightKey {
-    cubes: [Option<(CubeKey, f32)>; SCENE_SHADOW_LIGHTS],
+    cubes: [Option<(CubeKey, [f32; 4])>; SCENE_SHADOW_LIGHTS],
     region: SceneAirLightRegion,
     march: [u32; 3],
 }
@@ -1153,7 +1181,7 @@ impl SceneBake {
             cubes: std::array::from_fn(|channel| {
                 lights.cubes_built[channel]
                     .filter(|_| pending.set.lights[channel].is_some())
-                    .map(|cube| (cube, pending.uniform.lights[channel].air[0]))
+                    .map(|cube| (cube, pending.uniform.lights[channel].air))
             }),
             region,
             march,

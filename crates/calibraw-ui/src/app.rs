@@ -331,7 +331,7 @@ mod preview_viewport;
 pub(crate) use full_resolution::FullResolutionState;
 pub(crate) use interactive_preview::{shown_pipeline, InteractiveState};
 pub(crate) use preview_dispatch_gate::{Batch, PreviewDispatchGate};
-pub(crate) use preview_texture::{PreviewPipeline, TextureRetirement};
+pub(crate) use preview_texture::{PreviewPipeline, ShownTexture, TextureRetirement};
 pub(crate) use preview_viewport::PreviewViewportAction;
 mod geometry;
 mod processing_export;

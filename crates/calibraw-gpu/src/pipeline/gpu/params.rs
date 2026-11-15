@@ -1,8 +1,15 @@
 //! `GpuParams`: edit parameters packed into the uniform layouts the WGSL stages read.
 
+use super::defocus::{defocus_reaches_map, is_defocus};
+use super::styled_glow::{
+    is_styled_glow, styled_glow_near_top, styled_glow_splits_spread, styled_glow_streaks,
+    styled_glow_streaks_of, StyledGlowStreaks,
+};
 use super::*;
-use crate::pipeline::effect_lanes::{glow, light_rays, neon, pixelate, relight};
-use crate::pipeline::{EffectOption, EffectPass, Lane};
+use crate::pipeline::effect_lanes::{
+    glow, light_rays, light_shafts, neon, options, pixelate, relight, styled_glow,
+};
+use crate::pipeline::{EffectOption, EffectPass, Lane, SceneNeeds};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -22,7 +29,8 @@ pub(super) struct CameraUniforms {
     pub(super) padding_0: u32,
     pub(super) padding_1: u32,
     /// [`HighlightReconstructionMethod::shader_value`], then the cells across and down the
-    /// highlight model the pipeline uploaded (0 without one); the fourth value is unused.
+    /// highlight model the pipeline uploaded (0 without one), then 1 when the source is a
+    /// binned view with clipped photosites, whose clipping texture the pipeline uploaded.
     pub(super) highlight_options: [f32; 4],
     pub(super) noise_shot: [f32; 4],
     pub(super) noise_read: [f32; 4],
@@ -234,7 +242,9 @@ pub(super) struct EffectsUniforms {
     pub(super) presence: [f32; 4],
     // Sharpening amount, radius, detail, masking.
     pub(super) sharpen: [f32; 4],
-    // Radius of the shared Glow diffusion, reserved, reserved, reserved.
+    // Radius of the shared Glow diffusion; then for the Glow with styles, 1
+    // when its near pyramid and when its full-image map are ready to be read
+    // (`effects_for_upload`); reserved.
     pub(super) glow_diffusion: [f32; 4],
     // The frame and calibration of Vignette effects: the output width and height, two reserved,
     // then the rows of the homography from normalized source to output position (0–1 across
@@ -261,6 +271,8 @@ pub(super) struct MaskData {
     pub(super) adjust_0: [f32; 4],
     pub(super) adjust_1: [f32; 4],
     pub(super) adjust_2: [f32; 4],
+    /// Effect slots' lanes 12 to 15; unused by adjustment slots.
+    pub(super) adjust_3: [f32; 4],
     // Per-slot switches of effect slots (`effect_lanes::options` in calibraw-core).
     pub(super) effect_options: [f32; 4],
     pub(super) curves: [[f32; 4]; LOCAL_POINT_CURVE_BLOCKS],
@@ -282,7 +294,7 @@ pub(super) struct MaskData {
     pub(super) point_color_meta: [u32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<MaskData>() == 1_488);
+const _: () = assert!(std::mem::size_of::<MaskData>() == 1_504);
 
 impl MaskData {
     /// The slot's [`MaskEffect::shader_id`] (`Common::mask_effect_id`).
@@ -309,6 +321,20 @@ impl MaskData {
             .flatten()
     }
 
+    /// What the slot's active effect reads of the scene bake: its registry
+    /// row's needs, none for Light Rays' 2D style, which draws without depth,
+    /// or for a Lens Blur that blurs evenly (Focus by depth off).
+    pub(super) fn scene_needs(&self) -> Option<SceneNeeds> {
+        let effect = self.active_effect()?;
+        if effect == MaskEffect::LightShafts && self.option(options::LIGHT_SHAFTS_FLAT) > 0.5 {
+            return Some(SceneNeeds::NONE);
+        }
+        if effect == MaskEffect::Defocus && self.option(options::DEFOCUS_DEPTH) < 0.5 {
+            return Some(SceneNeeds::NONE);
+        }
+        Some(effect.scene_needs())
+    }
+
     /// Whether the slot is active and its effect runs in `pass`.
     pub(super) fn runs_in(&self, pass: EffectPass) -> bool {
         self.active_effect()
@@ -321,17 +347,19 @@ impl MaskData {
         let row = match lane.index() / 4 {
             0 => &self.adjust_0,
             1 => &self.adjust_1,
-            _ => &self.adjust_2,
+            2 => &self.adjust_2,
+            _ => &self.adjust_3,
         };
         row[lane.index() % 4]
     }
 
     pub(super) fn set_lane(&mut self, lane: Lane, value: f32) {
-        // `Lane::new` keeps every lane below 12.
+        // `Lane::new` keeps every lane below 16.
         let row = match lane.index() / 4 {
             0 => &mut self.adjust_0,
             1 => &mut self.adjust_1,
-            _ => &mut self.adjust_2,
+            2 => &mut self.adjust_2,
+            _ => &mut self.adjust_3,
         };
         row[lane.index() % 4] = value;
     }
@@ -346,6 +374,18 @@ impl MaskData {
     }
 }
 
+/// How carefully the costly effects render: Draft while a control, a light's
+/// handle or the view is dragged, so a drag stays quick; Final when the
+/// preview is idle, and for every export. Draft builds the light bake and the
+/// air light more coarsely (`scene::lights`) and gathers Lens Blur one level
+/// coarser (`defocus`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum RenderTier {
+    #[default]
+    Final,
+    Draft,
+}
+
 #[derive(Clone, Debug)]
 pub struct GpuParams {
     pub(super) camera: CameraUniforms,
@@ -354,8 +394,8 @@ pub struct GpuParams {
     mask_data: Box<[MaskData]>,
     /// The depth result the scene bake is made from (`scene`).
     pub(super) depth_result: Option<SceneDepth>,
-    /// How carefully the light bake is built for this render.
-    scene_light_quality: SceneLightQuality,
+    /// How carefully the costly effects render.
+    render_tier: RenderTier,
     /// The LUT `scene_tone.look_lut` describes, uploaded with the parameters.
     look_lut: Option<Arc<CubeLut>>,
     /// The camera profile `camera` describes, whose tables the pipeline
@@ -399,16 +439,16 @@ impl GpuParams {
     }
 
     /// The mask slots the shaders read: the first `mask_counts[0]`.
-    fn mask_slots(&self) -> &[MaskData] {
+    pub(super) fn mask_slots(&self) -> &[MaskData] {
         let count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         &self.mask_data[..count]
     }
 }
 
-/// An enabled Glow slot that emits into the shared Glow diffusion. Mirrors
-/// `mask_glow_self_illuminating` in `mask_effects/glow.wgsl`.
+/// An enabled Glowing Area slot, which emits into the shared Glow diffusion.
+/// Mirrors `mask_glow_self_illuminating_active` in `mask_effects/glow.wgsl`.
 pub(super) fn is_self_illuminating_glow(mask: &MaskData) -> bool {
-    mask.applies(MaskEffect::Glow) && mask.lane(glow::SELF_ILLUMINATING) > 0.5
+    mask.applies(MaskEffect::Glow)
 }
 
 /// A Glow slot that lights the scene. Mirrors `mask_glow_lights_scene` in
@@ -651,7 +691,7 @@ impl GpuParams {
             effects: pack_effect_params(&context, &mask_data),
             mask_data,
             depth_result: masks.scene_depth.clone(),
-            scene_light_quality: SceneLightQuality::default(),
+            render_tier: RenderTier::default(),
             look_lut: None,
             profile_color: Arc::clone(profile_color),
         }
@@ -710,6 +750,20 @@ impl GpuParams {
 
     /// The scene and tone uniforms, with the LUT switched off when the
     /// pipeline could not upload it.
+    /// The effect uniforms as uploaded: whether the Glow's near pyramid and
+    /// full-image map are ready, which the pipeline knows once it has
+    /// allocated them (`prepare_styled_glow`).
+    pub(super) fn effects_for_upload(
+        &self,
+        styled_glow_near: bool,
+        styled_glow_map: bool,
+    ) -> EffectsUniforms {
+        let mut effects = self.effects;
+        effects.glow_diffusion[1] = f32::from(u8::from(styled_glow_near));
+        effects.glow_diffusion[2] = f32::from(u8::from(styled_glow_map));
+        effects
+    }
+
     pub(super) fn scene_tone_for_upload(&self, look_lut_uploaded: bool) -> SceneToneUniforms {
         let mut scene_tone = self.scene_tone;
         if !look_lut_uploaded {
@@ -718,19 +772,25 @@ impl GpuParams {
         scene_tone
     }
 
-    /// Renders the light bake at `quality`: Draft while the user drags a
+    /// Renders the costly effects at `tier`: Draft while the user drags a
     /// control, a light or the view, Final otherwise (the default, and what
     /// exports use).
-    pub fn with_scene_light_quality(mut self, quality: SceneLightQuality) -> Self {
-        self.scene_light_quality = quality;
+    pub fn with_render_tier(mut self, tier: RenderTier) -> Self {
+        self.render_tier = tier;
         self
     }
 
-    /// Whether the render builds a light bake, whose tier
-    /// `with_scene_light_quality` sets: a Draft render of these parameters
+    /// Whether the render depends on its tier (`with_render_tier`): it
+    /// builds a light bake, or an active effect has a Draft tier
+    /// ([`MaskEffect::has_draft_tier`]). A Draft render of these parameters
     /// needs a Final one once the drag ends.
-    pub fn uses_scene_light_quality(&self) -> bool {
+    pub fn uses_render_tier(&self) -> bool {
         self.needs_light_bake()
+            || self
+                .mask_slots()
+                .iter()
+                .filter_map(MaskData::active_effect)
+                .any(MaskEffect::has_draft_tier)
     }
 
     /// Places Vignette effects in the output frame of `geometry`: the shaders map each source
@@ -810,6 +870,15 @@ impl GpuParams {
         self.scene_tone.mask_counts[2] = pack(max_u, max_v);
     }
 
+    /// Whether a render may sample `layer` of the mask atlas: an enabled
+    /// slot is masked by it. The shaders test a slot before they read its
+    /// mask, so the layers of the other masks need no upload.
+    pub fn reads_mask_layer(&self, layer: usize) -> bool {
+        self.mask_slots()
+            .iter()
+            .any(|slot| slot.metadata[0] != 0 && slot.point_color_meta[2] as usize == layer)
+    }
+
     pub(super) fn uses_ai_denoise(&self) -> bool {
         self.camera.ai_denoise_enabled != 0
     }
@@ -885,6 +954,37 @@ impl GpuParams {
         global_effects || local_effects
     }
 
+    /// Whether the mask tone pass (`apply_local_scene_tone_node`) changes the
+    /// image: it applies every active adjustment slot, and copies its input
+    /// without one.
+    pub(super) fn needs_local_tone_pass(&self) -> bool {
+        self.mask_slots()
+            .iter()
+            .any(|mask| mask.applies(MaskEffect::Adjustment))
+    }
+
+    /// Whether the scene effects pass (`apply_scene_effects_node`) changes
+    /// the image: global Saturation, Vibrance, Texture or Clarity, an
+    /// adjustment slot with one of them, or an effect that runs in it (Neon).
+    /// Mirrors what its shader skips; without any it copies its input.
+    pub(super) fn needs_scene_effects_pass(&self) -> bool {
+        let [global_texture, global_clarity, ..] = self.effects.presence;
+        let set = |value: f32| value != 0.0;
+        set(self.scene_tone.saturation)
+            || set(self.scene_tone.vibrance)
+            || set(global_texture)
+            || set(global_clarity)
+            || self.mask_slots().iter().any(|mask| {
+                if mask.runs_in(EffectPass::SceneEffects) {
+                    return true;
+                }
+                let [saturation, texture, clarity, _dehaze] = mask.adjust_2;
+                // `apply_local_scene_effect_nodes` skips a slot at or below 1e-7.
+                mask.applies(MaskEffect::Adjustment)
+                    && saturation.abs().max(texture.abs()).max(clarity.abs()) > 1e-7
+            })
+    }
+
     /// Whether the creative pass (`apply_creative_effects`) changes the image:
     /// a slot effect that runs in it, Glow or Light Rays, or light that Glow and
     /// Neon cast on the scene. Without any it copies its input unchanged, and the
@@ -900,6 +1000,80 @@ impl GpuParams {
 
     pub(super) fn needs_glow_passes(&self) -> bool {
         self.mask_slots().iter().any(is_self_illuminating_glow)
+    }
+
+    /// The Glow-with-styles slots, each a layer of its pyramids
+    /// (`styled_glow`).
+    pub(super) fn styled_glow_slots(&self) -> usize {
+        self.mask_slots()
+            .iter()
+            .filter(|mask| is_styled_glow(mask))
+            .count()
+    }
+
+    /// The Lens Blur slots, each a group of layers of its textures
+    /// (`defocus`).
+    pub(super) fn defocus_slots(&self) -> usize {
+        self.mask_slots()
+            .iter()
+            .filter(|mask| is_defocus(mask))
+            .count()
+    }
+
+    /// Whether a Lens Blur reaches the bins of its full-image map, which an
+    /// export then builds in a prepass.
+    pub(super) fn needs_defocus_map(&self) -> bool {
+        let (width, height) = (
+            self.camera.full_width.max(1),
+            self.camera.full_height.max(1),
+        );
+        let aspect = width.max(height) as f32 / width.min(height) as f32;
+        self.mask_slots()
+            .iter()
+            .filter(|mask| is_defocus(mask))
+            .any(|mask| defocus_reaches_map(mask, aspect))
+    }
+
+    /// Whether a Glow reads the full-image map, which an export then builds
+    /// in a prepass: its streaks and Split always, its spread when it reaches past the
+    /// near pyramid at this pipeline's resolution. The near pyramid's reach is
+    /// a share of the image that shrinks as the resolution grows. Dispersion
+    /// widens red's profile by DISPERSION · log2(630 / 532) octaves
+    /// (styled_glow.wgsl), less than a quarter octave per unit.
+    pub(super) fn needs_styled_glow_map(&self) -> bool {
+        let short_edge = self.camera.full_width.min(self.camera.full_height);
+        let near_top = styled_glow_near_top(short_edge);
+        self.mask_slots()
+            .iter()
+            .filter(|mask| is_styled_glow(mask))
+            .any(|mask| {
+                styled_glow_streaks(mask).any()
+                    || mask.lane(styled_glow::SPLIT) > 0.0
+                    || mask.lane(styled_glow::REACH) + 0.25 * mask.lane(styled_glow::DISPERSION)
+                        > near_top
+            })
+    }
+
+    /// Whether a Bloom, Diffusion or Halation slot splits, so the map's
+    /// passes build its split spread.
+    pub(super) fn styled_glow_splits_spread(&self) -> bool {
+        styled_glow_splits_spread(self.mask_slots())
+    }
+
+    /// The streak passes the Glow slots need: as many lines as the Star with
+    /// the most Points, both ways for any Streak or Star.
+    pub(super) fn styled_glow_streaks(&self) -> StyledGlowStreaks {
+        styled_glow_streaks_of(self.mask_slots())
+    }
+
+    /// Whether this pipeline renders the whole image rather than a crop or an
+    /// export tile.
+    pub(super) fn renders_whole_image(&self) -> bool {
+        let camera = &self.camera;
+        camera.tile_origin_x == 0
+            && camera.tile_origin_y == 0
+            && camera.width == camera.full_width
+            && camera.height == camera.full_height
     }
 
     /// Whether an active Pixelate effect reads the block cache. Mirrors
@@ -946,24 +1120,24 @@ impl GpuParams {
     }
 
     /// Whether an active effect reads the scene bake's geometry
-    /// ([`MaskEffect::scene_needs`]), which needs a depth result.
+    /// ([`MaskData::scene_needs`]), which needs a depth result.
     pub(super) fn needs_scene_geometry(&self) -> bool {
         self.depth_result.is_some()
             && (self.needs_scene_emission()
                 || self
                     .mask_slots()
                     .iter()
-                    .filter_map(MaskData::active_effect)
-                    .any(|effect| effect.scene_needs().geometry))
+                    .filter_map(MaskData::scene_needs)
+                    .any(|needs| needs.geometry))
     }
 
     /// Whether an active effect reads the scene bake's working image
-    /// ([`MaskEffect::scene_needs`]), which exists without a depth result.
+    /// ([`MaskData::scene_needs`]), which exists without a depth result.
     pub(super) fn needs_scene_image(&self) -> bool {
         self.mask_slots()
             .iter()
-            .filter_map(MaskData::active_effect)
-            .any(|effect| effect.scene_needs().image)
+            .filter_map(MaskData::scene_needs)
+            .any(|needs| needs.image)
     }
 
     /// Whether an active effect reads the scene bake: its working image, and
@@ -979,8 +1153,8 @@ impl GpuParams {
             && self
                 .mask_slots()
                 .iter()
-                .filter_map(MaskData::active_effect)
-                .any(|effect| effect.scene_needs().light_bake)
+                .filter_map(MaskData::scene_needs)
+                .any(|needs| needs.light_bake)
             && self
                 .mask_slots()
                 .iter()
@@ -994,13 +1168,13 @@ impl GpuParams {
             && self
                 .mask_slots()
                 .iter()
-                .filter_map(MaskData::active_effect)
-                .any(|effect| effect.scene_needs().air_light)
+                .filter_map(MaskData::scene_needs)
+                .any(|needs| needs.air_light)
     }
 
-    /// The light bake's tier.
-    pub(super) fn scene_light_quality(&self) -> SceneLightQuality {
-        self.scene_light_quality
+    /// The tier of the costly effects.
+    pub(super) fn render_tier(&self) -> RenderTier {
+        self.render_tier
     }
 
     /// The lights of the light bake in their channels
@@ -1023,6 +1197,21 @@ impl GpuParams {
                     relief_scale: 1.0,
                     size: 0.0,
                     reach: mask.lane(light_rays::LENGTH),
+                    penetration: 0.0,
+                }
+            } else if mask.applies(MaskEffect::LightShafts) {
+                // A point light at the farthest surface (control depth 100).
+                SceneShadowLight {
+                    kind: SceneLightKind::LightShafts,
+                    source: [
+                        mask.lane(light_shafts::SOURCE_X),
+                        mask.lane(light_shafts::SOURCE_Y),
+                    ],
+                    light_depth: 100.0,
+                    relief_scale: 1.0,
+                    size: 0.0,
+                    reach: mask.lane(light_shafts::LENGTH),
+                    penetration: mask.percent(light_shafts::PENETRATION),
                 }
             } else {
                 SceneShadowLight {
@@ -1032,12 +1221,13 @@ impl GpuParams {
                     relief_scale: mask.lane(relight::RELIEF_SCALE) / 100.0,
                     size: mask.percent(relight::SIZE),
                     reach: mask.lane(relight::REACH),
+                    penetration: 0.0,
                 }
             });
         }
         SceneLightSet {
             lights,
-            quality: self.scene_light_quality,
+            quality: self.render_tier,
         }
     }
 

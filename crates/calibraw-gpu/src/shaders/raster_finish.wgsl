@@ -22,7 +22,8 @@ override fn NoiseCaFinish::finish_reference_at(pos: vec2<i32>) -> vec3<f32> {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn raster_finish(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn raster_finish(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let gains = Common::scene_neutral_gains();

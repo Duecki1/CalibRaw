@@ -629,11 +629,10 @@ impl RawGpuPipeline {
         sample_params.scene_tone.point_color_meta[2] = if after_global { 2 } else { 1 };
         self.upload_params(queue, &sample_params);
         let render = |label| {
-            let mut encoder = device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+            let mut encoder = self.work(device, queue, label);
             let image_in_tex2 = self.output_image_in_tex2.load(Ordering::Acquire);
             self.encode_render_pass(&mut encoder, image_in_tex2);
-            queue.submit(Some(encoder.finish()));
+            encoder.submit(None);
         };
         render("calibraw point color sample");
         let result = read_float_texture_pixel_blocking(
@@ -789,11 +788,9 @@ impl RawGpuPipeline {
             ));
         }
         self.upload_params(queue, params);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw camera scene readback encoder"),
-        });
+        let mut encoder = self.work(device, queue, "calibraw camera scene readback encoder");
         self.encode_raw_stage(&mut encoder, params);
-        queue.submit(Some(encoder.finish()));
+        encoder.submit(None);
         self.read_scene_texture_blocking(device, queue, GpuWait::Limited)
     }
 }

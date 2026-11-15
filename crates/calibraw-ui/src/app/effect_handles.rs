@@ -67,7 +67,7 @@ impl SelectedInstances {
 /// Effects with on-canvas controls.
 pub(crate) const EFFECTS_WITH_HANDLES: [MaskEffect; 5] = [
     MaskEffect::Relight,
-    MaskEffect::LightRays,
+    MaskEffect::LightShafts,
     MaskEffect::RadialBlur,
     MaskEffect::TiltShift,
     MaskEffect::Vignette,
@@ -261,7 +261,7 @@ fn apply_edit(
     instance: usize,
     edit: EffectHandleEdit,
 ) {
-    use effect_params::{light_rays, radial_blur, relight, tilt_shift, vignette};
+    use effect_params::{light_shafts, radial_blur, relight, tilt_shift, vignette};
     use EffectHandleEdit::{Angle, Depth, Feather, FocusWidth, Position, Select};
     let place =
         |slot: &mut [f32; 2], specs: [effect_params::FloatParamSpec; 2], position: [f32; 2]| {
@@ -283,11 +283,11 @@ fn apply_edit(
                 light.light_depth = relight::LIGHT_DEPTH.clamp(depth);
             }
         }
-        (MaskEffect::LightRays, Position(position)) => {
-            if let Some(source) = settings.light_rays.sources.get_mut(instance) {
+        (MaskEffect::LightShafts, Position(position)) => {
+            if let Some(source) = settings.light_shafts.sources.get_mut(instance) {
                 place(
                     &mut source.source,
-                    [light_rays::SOURCE_X, light_rays::SOURCE_Y],
+                    [light_shafts::SOURCE_X, light_shafts::SOURCE_Y],
                     position,
                 );
             }

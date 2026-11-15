@@ -67,9 +67,12 @@ impl CalibRawApp {
         let was_current =
             self.detach_current_android_document_for_library_action(raw_uri, display_name);
         let editing_time_ms = was_current.then(|| self.raw_editing_time_ms());
-        let result = self
-            .platform
-            .reset_adjustments(raw_uri, display_name, editing_time_ms);
+        let result = self.platform.reset_adjustments(
+            raw_uri,
+            display_name,
+            editing_time_ms,
+            self.camera_match_enabled(),
+        );
         if was_current && result.is_ok() {
             self.reload_android_library_document_after_reset(raw_uri, display_name);
         }

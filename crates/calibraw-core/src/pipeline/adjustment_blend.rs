@@ -93,6 +93,7 @@ impl ExposureParams {
             point_color_visualize: _,
             color_grading,
             calibration,
+            cards_off: _,
         } = *self;
         Self {
             black_point: black_point.blend(target.black_point, amount),
@@ -145,6 +146,7 @@ impl ExposureParams {
             point_color_visualize: target.point_color_visualize,
             color_grading: color_grading.blend(target.color_grading, amount),
             calibration: calibration.blend(target.calibration, amount),
+            cards_off: target.cards_off,
         }
     }
 }

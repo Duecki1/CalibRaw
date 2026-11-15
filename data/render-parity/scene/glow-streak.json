@@ -1,0 +1,22 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "StyledGlow",
+          "settings": {
+            "styled_glow": {
+              "style": "Streak",
+              "amount": 100.0,
+              "range": 60.0,
+              "spread": 60.0,
+              "warmth": 20.0,
+              "direction": -15.0,
+              "softness": 70.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

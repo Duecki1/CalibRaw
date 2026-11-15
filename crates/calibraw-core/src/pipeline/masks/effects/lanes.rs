@@ -1,6 +1,6 @@
 //! The parameters of an effect slot as its shader reads them.
 //!
-//! An effect packs up to twelve values into lanes 0..12 and per-slot switches
+//! An effect packs up to sixteen values into lanes 0..16 and per-slot switches
 //! into four options (`MaskEffectParams` in mask_effects/effect_api.wgsl). Each
 //! effect names its lanes with [`effect_lanes!`] in its settings module;
 //! calibraw-gpu writes those names into the shaders as `<EFFECT>_<NAME>_LANE`
@@ -9,8 +9,8 @@
 //! except Sharpen's: its slot has the layout of the Detail card's sharpening,
 //! which detail_capture.wgsl reads by position (sharpen.rs).
 
-/// Lanes in an effect slot: `adjust_0`..`adjust_2` of `MaskData`, four each.
-const LANE_COUNT: usize = 12;
+/// Lanes in an effect slot: `adjust_0`..`adjust_3` of `MaskData`, four each.
+const LANE_COUNT: usize = 16;
 /// Per-slot switches (`effect_options` of `MaskData`).
 pub const OPTION_COUNT: usize = 4;
 
@@ -67,13 +67,19 @@ impl EffectOption {
 pub mod options {
     use super::EffectOption;
 
+    /// Lens Blur: 1 when the blur follows scene depth (Focus by depth).
+    pub const DEFOCUS_DEPTH: EffectOption = EffectOption::new(0);
+    /// Light Rays: 1 in its 2D style (`LightShaftsMode::Flat`).
+    pub const LIGHT_SHAFTS_FLAT: EffectOption = EffectOption::new(2);
     /// Rain: 1 when streaks and mist follow scene depth.
     pub const RAIN_DEPTH: EffectOption = EffectOption::new(1);
     /// Fog, Smoke and Rain: 1 when Image lights is on.
     pub const MEDIUM_IMAGE_LIGHTS: EffectOption = EffectOption::new(3);
 
     /// Every option as (name, index), for the shaders.
-    pub const ALL: [(&str, usize); 2] = [
+    pub const ALL: [(&str, usize); 4] = [
+        ("DEFOCUS_DEPTH", DEFOCUS_DEPTH.index()),
+        ("LIGHT_SHAFTS_FLAT", LIGHT_SHAFTS_FLAT.index()),
         ("RAIN_DEPTH", RAIN_DEPTH.index()),
         ("MEDIUM_IMAGE_LIGHTS", MEDIUM_IMAGE_LIGHTS.index()),
     ];
@@ -170,8 +176,8 @@ impl EffectLanes {
         self.set_option(option, f32::from(u8::from(on)));
     }
 
-    /// The lanes in rows of four, as `adjust_0`..`adjust_2`.
-    pub fn rows(&self) -> [[f32; 4]; 3] {
+    /// The lanes in rows of four, as `adjust_0`..`adjust_3`.
+    pub fn rows(&self) -> [[f32; 4]; 4] {
         let row = |start: usize| {
             [
                 self.lanes[start],
@@ -180,7 +186,7 @@ impl EffectLanes {
                 self.lanes[start + 3],
             ]
         };
-        [row(0), row(4), row(8)]
+        [row(0), row(4), row(8), row(12)]
     }
 
     pub fn options(&self) -> [f32; OPTION_COUNT] {

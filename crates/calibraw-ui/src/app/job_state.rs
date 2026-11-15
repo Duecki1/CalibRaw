@@ -82,7 +82,7 @@ pub(super) enum ForegroundOperationReceiver {
     AiDenoise(mpsc::Receiver<calibraw_ai::models::denoise::AiDenoiseEvent>),
     LensCorrection(mpsc::Receiver<LensCorrectionEvent>),
     AutoGeometry(mpsc::Receiver<AutoGeometryResult>),
-    CameraMatch(mpsc::Receiver<Result<crate::pipeline::camera_look::CameraLook, String>>),
+    CameraMatch(mpsc::Receiver<super::camera_match::OpenPhotoFit>),
 }
 
 pub(super) enum ForegroundOperationContext {
@@ -107,7 +107,8 @@ pub(super) enum ForegroundOperationContext {
     AutoGeometry {
         geometry: GeometryTransform,
     },
-    CameraMatch,
+    /// Why the fit runs, which decides what is reported.
+    CameraMatch(super::camera_match::CameraMatchRequest),
 }
 
 pub(crate) struct ForegroundOperation {

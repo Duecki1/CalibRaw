@@ -9,6 +9,7 @@
 #import calibraw::scene::camera as Camera
 #import calibraw::scene::bake_common as Bake
 #import calibraw::scene::geometry as Geometry
+#import calibraw::scene::lights_common as Lights
 
 fn glow_work_at(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0).xyz;
@@ -17,11 +18,12 @@ fn glow_work_at(pos: vec2<i32>) -> vec3<f32> {
 fn glow_stage_step(stage: u32) -> i32 {
     // The 96-pixel maximum support is mirrored by GLOW_SUPPORT in processing.rs.
     var reference_step = 1.0;
-    switch stage {
-        case 2u: { reference_step = 2.0; }
-        case 3u: { reference_step = 4.0; }
-        case 4u: { reference_step = 8.0; }
-        default: {}
+    if stage == 2u {
+        reference_step = 2.0;
+    } else if stage == 3u {
+        reference_step = 4.0;
+    } else if stage == 4u {
+        reference_step = 8.0;
     }
     let scale = Common::resolution_scale(0.45, 3.0);
     return max(i32(round(reference_step * scale)), 1);
@@ -29,16 +31,14 @@ fn glow_stage_step(stage: u32) -> i32 {
 
 fn glow_stage_mix(stage: u32) -> f32 {
     let radius = clamp(Common::effects_uniforms.glow_diffusion.x / 100.0, 0.0, 1.0);
-    switch stage {
-        case 0u: { return 1.0; }
-        case 1u: { return smoothstep(0.0, 0.20, radius); }
-        case 2u: { return smoothstep(0.15, 0.45, radius); }
-        case 3u: { return smoothstep(0.40, 0.75, radius); }
-        default: { return smoothstep(0.70, 1.0, radius); }
-    }
+    if stage == 0u { return 1.0; }
+    if stage == 1u { return smoothstep(0.0, 0.20, radius); }
+    if stage == 2u { return smoothstep(0.15, 0.45, radius); }
+    if stage == 3u { return smoothstep(0.40, 0.75, radius); }
+    return smoothstep(0.70, 1.0, radius);
 }
 
-// Normalized diffusion of self-illuminating Glow emission. Alpha is unused.
+// Normalized diffusion of Glowing Area emission. Alpha is unused.
 fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
     let center = textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0);
     let stage_mix = glow_stage_mix(stage);
@@ -60,7 +60,7 @@ fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
     return mix(center, sum / max(sum_weight, 1e-6), stage_mix);
 }
 
-// Adds the diffused halo of self-illuminating Glow masks.
+// Adds the diffused halo of Glowing Area masks.
 fn apply_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     if !mask_glow_self_illuminating_active() {
         return rgb;
@@ -79,9 +79,9 @@ fn apply_local_scene_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, 0u) { continue; }
-        let local = Common::mask_data[index].adjust_2_field;
+        let local = Common::mask_adjust_2_field(index);
         if max(abs(local.x), max(abs(local.y), abs(local.z))) <= 1e-7 {
             continue;
         }
@@ -99,7 +99,7 @@ fn apply_local_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, MASK_EFFECT_NEON_ID) { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
@@ -115,7 +115,7 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_active(state) { continue; }
         let effect_id = Common::mask_effect_id(state);
         if !is_creative_slot_effect(effect_id) { continue; }
@@ -128,42 +128,50 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_0(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_0(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 0u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_1(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_1(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 1u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_2(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_2(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 2u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_3(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_3(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 3u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_4(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_4(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 4u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_5(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_5(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 5u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn build_detail_level_6(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn build_detail_level_6(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     DetailScaleSpace::store_detail_pyramid_level(gid, 6u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn apply_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn apply_scene_effects_node(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::adjustment_base_at(pos);
@@ -175,14 +183,16 @@ fn apply_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn copy_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn copy_scene_effects_node(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(SceneAdjustments::local_effects_out, pos, vec4<f32>(SceneAdjustments::adjustment_base_at(pos), 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn prepare_glow_source(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn prepare_glow_source(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(mask_glow_source_at(pos), 0.0));
@@ -195,42 +205,65 @@ fn store_glow_stage(gid: vec3<u32>, stage: u32) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_glow_0(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_glow_0(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_glow_stage(gid, 0u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_glow_1(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_glow_1(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_glow_stage(gid, 1u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_glow_2(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_glow_2(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_glow_stage(gid, 2u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_glow_3(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_glow_3(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_glow_stage(gid, 3u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_glow_4(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_glow_4(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_glow_stage(gid, 4u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn apply_creative_effects(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
+    // Each effect below is compiled only into the programs of an effect set
+    // that holds it (effect_programs.rs). Without an active slot of its
+    // effect, each call leaves `rgb` as it is.
     // Light that Glow and Neon cast on the surfaces lands first, so every
     // creative effect sees the lit scene whatever the order of the cards.
+#ifdef EFFECTS_SCENE_EMISSION
     rgb = apply_scene_emission_light(pos, rgb);
+#endif
     rgb = apply_local_creative_mask_effect_nodes(pos, rgb);
+#ifdef EFFECT_GLOW
     rgb = apply_glow(pos, rgb);
+#endif
+#ifdef EFFECTS_GLOW_CORES
     rgb = apply_mask_glow_cores(pos, rgb);
+#endif
+#ifdef EFFECT_STYLED_GLOW
+    rgb = apply_styled_glow(pos, rgb);
+#endif
+#ifdef EFFECT_LIGHT_RAYS
     rgb = apply_light_rays(pos, rgb);
+#endif
+#ifdef EFFECT_LIGHT_SHAFTS
+    rgb = apply_light_shafts(pos, rgb);
+#endif
     textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
 }
 
@@ -247,12 +280,13 @@ fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
 // statistics and the scene a few pixels around (wet_detail), so export tiles match
 // the preview with a small halo (WET_SURFACES_SUPPORT in tiles.rs).
 @compute @workgroup_size(8, 8, 1)
-fn apply_wet_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn apply_wet_surfaces(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        if !Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_WET_SURFACES_ID) {
+        if !Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_WET_SURFACES_ID) {
             continue;
         }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
@@ -263,12 +297,13 @@ fn apply_wet_surfaces(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn apply_weather_air(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn apply_weather_air(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_active(state) { continue; }
         let effect_id = Common::mask_effect_id(state);
         if effect_id != MASK_EFFECT_WET_SURFACES_ID { continue; }
@@ -277,7 +312,7 @@ fn apply_weather_air(@builtin(global_invocation_id) gid: vec3<u32>) {
         rgb += wet_glints(pos, mask_effect_params(index)) * weight;
     }
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        if !Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_RAIN_ID) {
+        if !Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_RAIN_ID) {
             continue;
         }
         let weight = SceneAdjustments::local_mask_weight(pos, index);

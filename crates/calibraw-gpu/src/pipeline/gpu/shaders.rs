@@ -94,16 +94,26 @@ pub(super) const SCENE_LIGHTS_COMMON: ShaderSource = wgsl!("scene/lights_common.
 pub(super) const SCENE_GEOMETRY: ShaderSource = wgsl!("scene/geometry.wgsl");
 
 pub(super) const MASK_EFFECT_API: ShaderSource = wgsl!("mask_effects/effect_api.wgsl");
-pub(super) const MASK_LENS_BLUR: ShaderSource = wgsl!("mask_effects/lens_blur.wgsl");
+pub(super) const MASK_DEFOCUS: ShaderSource = wgsl!("mask_effects/defocus.wgsl");
+pub(super) const MASK_LEGACY_LENS_BLUR: ShaderSource = wgsl!("mask_effects/legacy/lens_blur.wgsl");
 pub(super) const MASK_MOTION_BLUR: ShaderSource = wgsl!("mask_effects/motion_blur.wgsl");
 pub(super) const MASK_RADIAL_BLUR: ShaderSource = wgsl!("mask_effects/radial_blur.wgsl");
 pub(super) const MASK_TILT_SHIFT: ShaderSource = wgsl!("mask_effects/tilt_shift.wgsl");
 pub(super) const MASK_BLUR: ShaderSource = wgsl!("mask_effects/blur.wgsl");
 pub(super) const MASK_EDGE_GLOW: ShaderSource = wgsl!("mask_effects/edge_glow.wgsl");
 pub(super) const MASK_GLOW: ShaderSource = wgsl!("mask_effects/glow.wgsl");
+pub(super) const MASK_STYLED_GLOW: ShaderSource = wgsl!("mask_effects/styled_glow.wgsl");
+pub(super) const MASK_LEGACY_HIGHLIGHT_GLOW: ShaderSource =
+    wgsl!("mask_effects/legacy/highlight_glow.wgsl");
+pub(super) const MASK_LEGACY_HALATION: ShaderSource = wgsl!("mask_effects/legacy/halation.wgsl");
 pub(super) const MASK_NEON: ShaderSource = wgsl!("mask_effects/neon.wgsl");
 pub(super) const MASK_PIXELATE: ShaderSource = wgsl!("mask_effects/pixelate.wgsl");
-pub(super) const MASK_LIGHT_RAYS: ShaderSource = wgsl!("mask_effects/light_rays.wgsl");
+pub(super) const MASK_COLOR_FRINGE: ShaderSource = wgsl!("mask_effects/color_fringe.wgsl");
+pub(super) const MASK_LEGACY_LIGHT_RAYS: ShaderSource =
+    wgsl!("mask_effects/legacy/light_rays.wgsl");
+pub(super) const MASK_LIGHT_SHAFTS: ShaderSource = wgsl!("mask_effects/light_shafts.wgsl");
+pub(super) const MASK_LIGHT_SHAFTS_FLAT: ShaderSource =
+    wgsl!("mask_effects/light_shafts_flat.wgsl");
 pub(super) const MASK_SCENE_ENVIRONMENT: ShaderSource =
     wgsl!("mask_effects/scene_environment.wgsl");
 pub(super) const MASK_SCENE_LIGHTS: ShaderSource = wgsl!("mask_effects/scene_lights.wgsl");
@@ -124,16 +134,20 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
     "creative_effects.wgsl",
     &[
         MASK_EFFECT_API,
-        MASK_LENS_BLUR,
+        MASK_DEFOCUS,
         MASK_MOTION_BLUR,
         MASK_RADIAL_BLUR,
         MASK_TILT_SHIFT,
         MASK_BLUR,
         MASK_EDGE_GLOW,
         MASK_GLOW,
+        MASK_STYLED_GLOW,
         MASK_NEON,
         MASK_PIXELATE,
-        MASK_LIGHT_RAYS,
+        MASK_COLOR_FRINGE,
+        MASK_LEGACY_LIGHT_RAYS,
+        MASK_LIGHT_SHAFTS,
+        MASK_LIGHT_SHAFTS_FLAT,
         MASK_SCENE_ENVIRONMENT,
         MASK_SCENE_LIGHTS,
         MASK_SCENE_EMISSION,
@@ -144,6 +158,10 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         MASK_RAIN,
         MASK_WET_SURFACES,
         MASK_FILM_FINISH,
+        // Legacy effects (mask_effects/legacy/), replaced by rebuilt ones.
+        MASK_LEGACY_HIGHLIGHT_GLOW,
+        MASK_LEGACY_HALATION,
+        MASK_LEGACY_LENS_BLUR,
     ],
     Some(effect_wgsl::registry_wgsl)
 );
@@ -401,3 +419,70 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 27] = [
     entry("scene visibility", SCENE_VISIBILITY, false, None),
     entry("scene air light", SCENE_AIR_LIGHT, false, None),
 ];
+
+/// The shaders whose entry points the processing pipeline dispatches through
+/// `WorkEncoder` (work.rs).
+const WORK_SHADERS: [ShaderSource; 17] = [
+    HIGHLIGHTS,
+    BAYER_RCD_P1,
+    BAYER_RCD_P2,
+    BAYER_RCD_P3,
+    BAYER_RCD_P4,
+    DUAL_DEMOSAIC_DETAIL,
+    XTRANS_DEMOSAIC,
+    XTRANS_FINISH,
+    RASTER_FINISH,
+    COLOR_DENOISE,
+    CHROMATIC_ABERRATION,
+    TONE_ANALYSIS,
+    HAZE_ANALYSIS,
+    SCENE_ADJUSTMENTS,
+    CREATIVE_EFFECTS,
+    VIEW_TRANSFORM,
+    SCENE_BAKE_ACCUMULATE,
+];
+
+/// The parameter an entry point names its invocation when it adds the
+/// dispatch band's first row to it (`dispatch_id` in common.wgsl), in
+/// workgroups 8 invocations high.
+const BANDED_INVOCATION: &str = "@builtin(global_invocation_id) dispatch_gid: vec3<u32>";
+const BANDED_WORKGROUPS: [&str; 2] = ["@workgroup_size(8, 8, 1)", "@workgroup_size(8, 8)"];
+
+/// Whether `entry` may be dispatched in bands of workgroup rows: its shader
+/// declares it with [`BANDED_INVOCATION`] and 8x8 workgroups.
+pub(super) fn entry_reads_dispatch_band(entry: &str) -> bool {
+    static BANDED: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    BANDED
+        .get_or_init(|| {
+            let mut banded = std::collections::HashSet::new();
+            for source in WORK_SHADERS {
+                let text = source.module_text();
+                let mut lines = text.lines().peekable();
+                while let Some(line) = lines.next() {
+                    if !BANDED_WORKGROUPS.iter().any(|size| line.contains(size)) {
+                        continue;
+                    }
+                    let Some(name) = lines
+                        .peek()
+                        .and_then(|declaration| declaration.strip_prefix("fn "))
+                        .and_then(|rest| rest.split('(').next())
+                    else {
+                        continue;
+                    };
+                    // The parameters are on the declaration's line or the
+                    // ones after it, up to the body.
+                    let declared: String = text
+                        .split_once(&format!("fn {name}("))
+                        .and_then(|(_, rest)| rest.split_once('{'))
+                        .map(|(parameters, _)| parameters.to_owned())
+                        .unwrap_or_default();
+                    if declared.contains(BANDED_INVOCATION) {
+                        banded.insert(name.to_owned());
+                    }
+                }
+            }
+            banded
+        })
+        .contains(entry)
+}

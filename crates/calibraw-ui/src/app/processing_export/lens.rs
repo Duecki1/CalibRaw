@@ -45,16 +45,9 @@ impl CalibRawApp {
             self.develop.lens_correction_dirty = false;
             return;
         };
-        let lens = &mut self.develop.lens_correction;
-        if lens.enabled && lens.manual.is_none() && lens.selected_lens().is_none() {
-            self.develop.lens_correction_dirty = false;
-            lens.enabled = false;
-            lens.applied = false;
-            lens.catalog.status =
-                tr("Select a lens profile before enabling correction.").to_owned();
-            return;
-        }
-        let selection = lens.requested_correction();
+        // Switched on without a profile, the card removes chromatic
+        // aberration alone and the photo keeps its geometry.
+        let selection = self.develop.lens_correction.requested_correction();
 
         if let Some(restored_masks) = self.persistence.lens_restore_masks.take() {
             self.masks.stack = restored_masks;

@@ -434,11 +434,14 @@ impl CalibRawApp {
         let Some(render_state) = frame.wgpu_render_state() else {
             return Err(tr("eframe is not running with the wgpu backend.").to_owned());
         };
+        // The edit as it renders, with its switched-off cards at rest.
         let (exposure, geometry, masks, look) = match export_override {
             None => (
-                self.develop.exposure,
+                self.develop
+                    .exposure
+                    .applied(self.develop.lens_correction.enabled),
                 self.develop.geometry,
-                self.masks.stack.clone(),
+                self.applied_masks(),
                 self.look_for_export(),
             ),
             Some(export_override) => {
@@ -447,10 +450,15 @@ impl CalibRawApp {
                     geometry: self.develop.geometry,
                     masks: Arc::new(self.masks.stack.clone()),
                     look_lut: self.develop.look_lut.clone(),
-                    camera_look: self.develop.camera_look.clone(),
+                    camera_match: self.develop.camera_match.clone(),
+                    lens: crate::sidecar::LensEditState {
+                        enabled: self.develop.lens_correction.enabled,
+                        ..crate::sidecar::LensEditState::default()
+                    },
                     ..crate::sidecar::default_edit_state()
                 };
                 export_override.apply(&mut edits);
+                let edits = edits.into_applied();
                 let look = edits
                     .look_lut
                     .as_ref()
@@ -459,7 +467,7 @@ impl CalibRawApp {
                     })
                     .transpose()
                     .map(|creative| {
-                        crate::luts::ResolvedLook::of_edit(creative, edits.camera_look.as_ref())
+                        crate::luts::ResolvedLook::of_edit(creative, edits.camera_match.look())
                     });
                 (
                     edits.exposure,
@@ -512,10 +520,6 @@ impl CalibRawApp {
         ) else {
             return;
         };
-        // The export reuses the prewarmed programs only for Bayer photos (`run_export_worker`).
-        if raw.cfa_kind != crate::pipeline::CfaKind::Bayer {
-            return;
-        }
         let key = (Arc::as_ptr(raw) as usize, self.edit_commit_revision());
         if self.export.programs_compiled_for == Some(key) {
             return;
@@ -532,14 +536,11 @@ impl CalibRawApp {
         let spawned = std::thread::Builder::new()
             .name("calibraw-export-program-compile".to_owned())
             .spawn(move || {
-                let Ok(template) = prewarm.wait() else {
-                    return;
-                };
                 let started = std::time::Instant::now();
                 let result = crate::pipeline::compile_export_programs(
                     &device,
                     &queue,
-                    &template,
+                    &prewarm,
                     &raw,
                     crate::pipeline::ExportProgramEdits {
                         exposure: &exposure,
@@ -982,8 +983,8 @@ impl CalibRawApp {
     }
 
     /// Restores the adjustments a first open of this photo starts with,
-    /// including its camera- and ISO-dependent noise reduction, and removes
-    /// its LUT.
+    /// including its camera- and ISO-dependent noise reduction and its
+    /// Camera match (`reset_camera_match`), and removes its LUT.
     pub(crate) fn reset_develop_adjustments(&mut self) {
         let mut exposure = self.new_image_exposure();
         if let Some(raw) = self.develop.original_raw.as_deref() {
@@ -991,6 +992,7 @@ impl CalibRawApp {
         }
         self.select_look_lut(None);
         self.develop.exposure = exposure;
+        self.reset_camera_match();
         self.develop_ui.point_color = Default::default();
         self.develop_ui.cancel_area_picker();
         self.mark_pipeline_dirty();

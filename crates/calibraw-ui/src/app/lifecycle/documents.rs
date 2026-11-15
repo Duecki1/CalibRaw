@@ -216,7 +216,7 @@ impl CalibRawApp {
             fitted_viewport_pixels: self.preview.fitted_viewport_pixels,
             camera_profiles: self.camera_profile_settings(),
             luts: self.luts.store(),
-            camera_match: self.preferences.camera_match_new_photos == Some(true),
+            camera_match: self.camera_match_enabled(),
             automatic_lens: self.preferences.automatic_lens_correction,
             ai_denoise_result_path: self.ai_denoise_result_path_for_target(&source.sidecar_target),
             people_analysis_path: self.people_analysis_path_for_target(&source.sidecar_target),
@@ -307,9 +307,9 @@ impl CalibRawApp {
         self.develop.current_path = None;
         self.develop.current_label = None;
         self.develop.selected_camera_profile = None;
-        self.develop.camera_look = None;
+        self.develop.camera_match = crate::pipeline::camera_look::CameraMatch::Off;
         self.develop.camera_preview = None;
-        self.develop.camera_match_requested = false;
+        self.develop.camera_match_requested = None;
         self.install_loaded_look_lut(None, None);
         self.develop.image_status = tr_fmt("Loading {label}…", &[("label", &label)]);
         self.preview.original_exposure = initial_exposure;
@@ -402,7 +402,7 @@ impl CalibRawApp {
                 self.develop.current_path = loaded.source_path;
                 self.develop.current_label = Some(loaded.label.clone());
                 self.develop.selected_camera_profile = loaded.selected_camera_profile.clone();
-                self.develop.camera_look = loaded.camera_look;
+                self.develop.camera_match = loaded.camera_match;
                 self.develop.camera_preview = loaded.camera_preview;
                 self.install_loaded_look_lut(loaded.look_lut, loaded.look_lut_table);
                 self.develop.original_raw = Some(loaded.original_raw);
@@ -413,14 +413,14 @@ impl CalibRawApp {
                 self.preview.gpu_pipeline =
                     Some(self.present_pipeline(loaded.pipeline, render_state));
                 self.develop.review = loaded.review;
-                self.develop.exposure = loaded.rendered_exposure;
+                self.develop.exposure = loaded.exposure;
                 self.develop.geometry = loaded.geometry.sanitized();
                 self.develop_ui.crop_constraint_reference = None;
                 self.develop_ui.set_crop_tool(CropTool::Crop);
                 self.develop_ui.perspective_guides.clear();
                 self.develop.geometry_revision = 0;
                 self.export.carousel.reset_for_new_photo();
-                self.masks.stack = loaded.rendered_masks;
+                self.masks.stack = loaded.masks;
                 self.install_remove_edits(Arc::new(loaded.remove));
                 self.ai.update_needed = loaded.ai_masks_need_update;
                 self.rehydrate_restored_mask_state();
@@ -473,7 +473,8 @@ impl CalibRawApp {
                         self.preview.lens_corrected_cache = None;
                     }
                 }
-                self.develop.target_exposure = loaded.rendered_exposure;
+                // The open worker rendered the edit with its switches applied.
+                self.develop.target_exposure = self.preview_exposure();
                 self.preview.pending_stage = None;
                 match loaded.sidecar_warning {
                     Some(warning) if warning != sidecar_migrated_notice() => {
@@ -482,10 +483,7 @@ impl CalibRawApp {
                     warning => self.ui.notice = warning,
                 }
                 self.report_camera_profile_limit();
-                crate::app::preview_visibility::PreviewVisibility::invalidate_masks(
-                    &self.egui_ctx,
-                    &self.masks.stack,
-                );
+                crate::app::preview_visibility::PreviewVisibility::edit_installed(&self.egui_ctx);
                 self.reset_edit_history();
                 if let Some(start) = loaded.start {
                     self.persistence.document_start = start;

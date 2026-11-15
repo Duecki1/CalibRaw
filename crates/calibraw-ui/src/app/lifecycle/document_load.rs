@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::i18n::{tr, tr_fmt};
-use crate::pipeline::camera_look::CameraLook;
-use crate::pipeline::FilmSettlement;
+use crate::pipeline::camera_look::{CameraLook, CameraMatch};
+use crate::pipeline::{CardSwitch, FilmSettlement};
 use crate::sidecar::SidecarStart;
 use std::sync::RwLock;
 
@@ -190,16 +190,22 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
     // version's to decide.
     let automatic_camera_match =
         camera_match && reload_edits.is_none() && matches!(loaded_sidecar, Ok(None));
-    let camera_look_refit = reload_edits
-        .as_ref()
-        .is_some_and(|edits| edits.camera_look.is_some());
+    // Fitted whatever the setting: a match a reset or a paste turned on, and,
+    // after a change of camera profile, the photo's match, whose look no
+    // longer matches.
+    let saved_pending_match = reload_edits.is_none()
+        && matches!(&loaded_sidecar, Ok(Some(loaded)) if loaded.edits.camera_match.is_pending());
+    let camera_match_refit = saved_pending_match
+        || reload_edits
+            .as_ref()
+            .is_some_and(|edits| !edits.camera_match.is_off());
     // The embedded preview is read while the file is: for a fit as the photo
     // opens, and for one by hand later when the file will be gone.
     let camera_preview = decoded
         .as_ref()
         .ok()
         .filter(|decoded| !decoded.original.is_display_referred_raster())
-        .filter(|_| automatic_camera_match || camera_look_refit || source_path.is_none())
+        .filter(|_| automatic_camera_match || camera_match_refit || source_path.is_none())
         .and_then(|_| crate::app::camera_match::read_camera_preview(&source.path));
     if let Some(copy) = source.disposable_copy() {
         remove_temporary_raw(copy);
@@ -235,7 +241,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             use_adaptive_detail_defaults,
             starts_unedited,
             start,
-            mut camera_look,
+            mut camera_match,
         } = edits;
         if use_adaptive_detail_defaults {
             original_raw.apply_adaptive_detail_defaults(&mut exposure);
@@ -344,9 +350,28 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         restore_ai_denoise_result(&full_raw, &exposure, ai_denoise_result_path.as_deref())?;
         let people_analysis =
             load_people_analysis(people_analysis_path.as_deref(), &masks, &full_raw, &remove);
-        prepare_highlight_analysis(&full_raw, &exposure);
+        // The preview shows the edit with its switched-off cards at rest, as
+        // every renderer does; the document keeps the edit as stored.
+        let rendered_exposure = exposure.applied(lens_correction.enabled);
+        let rendered_look = |creative: Option<crate::luts::ResolvedLook>,
+                             camera: Option<&CameraLook>| {
+            crate::luts::ResolvedLook::of_edit(
+                creative.filter(|_| exposure.card_on(CardSwitch::Lut)),
+                camera.filter(|_| exposure.card_on(CardSwitch::CameraMatch)),
+            )
+        };
+        prepare_highlight_analysis(&full_raw, &rendered_exposure);
+        // A first open matches at the default amount, a refit at the amount
+        // the photo had; either way the photo is fitted anew.
+        if automatic_camera_match && starts_unedited {
+            camera_match = CameraMatch::PENDING_DEFAULT;
+        } else if camera_match_refit {
+            camera_match = camera_match
+                .component()
+                .map_or(CameraMatch::Off, |amount| CameraMatch::Pending { amount });
+        }
         let camera_fit = camera_preview.as_ref().filter(|_| {
-            (automatic_camera_match && starts_unedited || camera_look_refit)
+            camera_match.is_pending()
                 && crate::app::camera_match::camera_match_applies(&full_raw, &exposure)
         });
         if camera_fit.is_some() {
@@ -360,11 +385,8 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             geometry,
             masks.masks.len(),
         );
-        let initial_look = crate::luts::ResolvedLook::of_edit(
-            creative_look.clone(),
-            camera_look.as_ref().filter(|_| camera_fit.is_none()),
-        );
-        let initial_params = GpuParams::new(&exposure, &masks, &preview_raw)
+        let initial_look = rendered_look(creative_look.clone(), camera_match.look());
+        let initial_params = GpuParams::new(&rendered_exposure, &masks, &preview_raw)
             .with_vignette_geometry(geometry)
             .with_look_lut(initial_look.as_ref());
         let pipeline = create_preview_pipeline(
@@ -375,7 +397,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             programs,
             masks.masks.len(),
         )?;
-        if let Some(preview) = camera_fit {
+        let fitted = camera_fit.and_then(|preview| {
             let fit_started = Instant::now();
             let fitted = crate::app::camera_match::automatic_look(
                 &label,
@@ -392,17 +414,16 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 "Camera match finished in {:.3}s",
                 fit_started.elapsed().as_secs_f64()
             ));
-            // A refit keeps the amount the photo had; a rejected one leaves
-            // no look, as a look of the old profile would no longer match.
-            let amount = camera_look.as_ref().map(CameraLook::amount);
-            camera_look = fitted.map(|mut look| {
-                if let Some(amount) = amount {
-                    look.set_amount(amount);
-                }
-                look
-            });
-        }
-        let look = crate::luts::ResolvedLook::of_edit(creative_look, camera_look.as_ref());
+            fitted
+        });
+        // A photo without a look to match (no usable preview, a rendered
+        // photo, a negative, a fit the guard rejects) is left without one; a
+        // refit the guard rejects too, as the old profile's look no longer
+        // matches.
+        camera_match = camera_match.resolved(fitted.as_ref());
+        // The sidecar still says pending.
+        sidecar_needs_rewrite |= saved_pending_match;
+        let look = rendered_look(creative_look, camera_match.look());
         let mask_source = if needs_canonical_mask_source(&masks) {
             Some(reconstruct_canonical_mask_source(
                 &pipeline,
@@ -416,13 +437,19 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         } else {
             None
         };
+        let switched_masks = masks.has_cards_off().then(|| {
+            let mut switched = masks.clone();
+            switched.apply_card_switches();
+            switched
+        });
+        let rendered_masks = switched_masks.as_ref().unwrap_or(&masks);
         let mask_upload_started = Instant::now();
-        CalibRawApp::upload_preview_masks(&pipeline, &queue, &masks, &preview_raw)?;
+        CalibRawApp::upload_preview_masks(&pipeline, &queue, rendered_masks, &preview_raw)?;
         calibraw_core::diagnostics::record(format!(
             "Preview masks rasterized/uploaded in {:.3}s",
             mask_upload_started.elapsed().as_secs_f64()
         ));
-        let params = GpuParams::new(&exposure, &masks, &preview_raw)
+        let params = GpuParams::new(&rendered_exposure, rendered_masks, &preview_raw)
             .with_vignette_geometry(geometry)
             .with_look_lut(look.as_ref());
         let render_started = Instant::now();
@@ -431,7 +458,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 &queue,
                 &device,
                 &params,
-                RemoveSceneContext::full_frame(&remove, &full_raw, &exposure),
+                RemoveSceneContext::full_frame(&remove, &full_raw, &rendered_exposure),
             )
             .map_err(|error| {
                 tr_fmt(
@@ -458,8 +485,8 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             preview_raw,
             pipeline,
             review,
-            rendered_exposure: exposure,
-            rendered_masks: masks,
+            exposure,
+            masks,
             remove,
             ai_masks_need_update,
             mask_source,
@@ -474,7 +501,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             selected_camera_profile,
             look_lut,
             look_lut_table,
-            camera_look,
+            camera_match,
             camera_preview,
             geometry,
             starts_unedited,
@@ -542,19 +569,21 @@ pub(super) fn prepare_ahead_of_open(
             .original
             .apply_adaptive_detail_defaults(&mut exposure);
     }
-    let (_, full_raw) =
+    let (lens_correction, full_raw) =
         apply_saved_lens_correction(&decoded, saved_lens, context.automatic_lens, &mut None);
     if cancelled() {
         return Ok(());
     }
 
+    // As the open renders it, with its switched-off cards at rest.
+    let rendered = exposure.applied(lens_correction.enabled);
     // With AI denoise the analysis reads the denoised image, which only the
     // open installs.
     if !exposure.ai_denoise_enabled {
-        prepare_highlight_analysis(&full_raw, &exposure);
+        prepare_highlight_analysis(&full_raw, &rendered);
     }
     if let Some(template) = &context.program_template {
-        template.compile_for_params(&GpuParams::new(&exposure, &MaskStack::default(), &full_raw));
+        template.compile_for_params(&GpuParams::new(&rendered, &MaskStack::default(), &full_raw));
     }
     Ok(())
 }
@@ -775,7 +804,7 @@ struct InitialEdits {
     starts_unedited: bool,
     /// `None` for a reload, which keeps the open photo's start.
     start: Option<DocumentStart>,
-    camera_look: Option<CameraLook>,
+    camera_match: CameraMatch,
 }
 
 impl InitialEdits {
@@ -794,12 +823,12 @@ impl InitialEdits {
         match sidecar {
             // A sidecar without adjustments (written by a rating or a reset)
             // opens like a first import, so per-camera defaults still apply.
-            // It keeps the camera look such a sidecar may hold (a reset's).
+            // It keeps the Camera match such a sidecar may hold (a reset's).
             Ok(Some(loaded)) if !crate::sidecar::edit_state_has_adjustments(&loaded.edits) => {
                 Self {
                     editing_time_ms: loaded.editing_time_ms,
                     sidecar_needs_rewrite: loaded.migrated,
-                    camera_look: loaded.edits.camera_look,
+                    camera_match: loaded.edits.camera_match,
                     ..Self::defaults(default_exposure, None)
                 }
             }
@@ -845,7 +874,7 @@ impl InitialEdits {
             masks: Arc::unwrap_or_clone(edits.masks),
             remove: Arc::unwrap_or_clone(edits.remove),
             look_lut: edits.look_lut,
-            camera_look: edits.camera_look,
+            camera_match: edits.camera_match,
             saved_lens: Some(edits.lens),
             ai_masks_need_update: edits.ai_masks_need_update,
             geometry: edits.geometry.sanitized(),
@@ -864,7 +893,7 @@ impl InitialEdits {
             masks: MaskStack::default(),
             remove: RemoveEditState::default(),
             look_lut: None,
-            camera_look: None,
+            camera_match: CameraMatch::Off,
             saved_lens: None,
             ai_masks_need_update: false,
             geometry: GeometryTransform::default(),
@@ -913,11 +942,14 @@ fn apply_saved_lens_correction(
         lens_started.elapsed().as_secs_f64()
     ));
     if let Some(saved) = saved_lens {
+        let wants_profile = saved.manual.is_none() && !saved.model.is_empty();
         lens_correction.corrections = saved.corrections();
         lens_correction.selected_maker = saved.maker;
         lens_correction.selected_model = saved.model;
-        lens_correction.enabled = saved.enabled && lens_correction.catalog.available;
-        if saved.enabled && !lens_correction.catalog.available {
+        // The card's switch, which also gates chromatic aberration removal;
+        // a profile without the catalog is not applied (`requested_correction`).
+        lens_correction.enabled = saved.enabled;
+        if saved.enabled && wants_profile && !lens_correction.catalog.available {
             append_notice(
                 sidecar_warning,
                 tr("The saved lens correction is unavailable in this build."),
@@ -926,10 +958,7 @@ fn apply_saved_lens_correction(
     }
     let selection = lens_correction.requested_correction();
     let full_raw = match selection {
-        None => {
-            lens_correction.enabled = false;
-            Arc::clone(original_raw)
-        }
+        None => Arc::clone(original_raw),
         Some(selection) => {
             let apply_started = Instant::now();
             match decoded

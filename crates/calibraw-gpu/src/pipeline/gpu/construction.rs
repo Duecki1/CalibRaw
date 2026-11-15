@@ -158,9 +158,10 @@ impl RawGpuPipeline {
             device,
             queue,
             program_template: options.programs,
-            pipeline_cache: options
-                .programs
-                .and_then(|template| template.pipeline_cache.clone()),
+            pipeline_cache: match options.programs {
+                Some(template) => template.pipeline_cache.clone(),
+                None => options.pipeline_cache.cloned(),
+            },
             raw,
             params,
             quality: options.quality,
@@ -174,6 +175,61 @@ impl RawGpuPipeline {
                 },
             },
         })
+    }
+
+    /// [`Self::new`] with the programs `prewarm` holds for `raw`, which waits
+    /// for the app's startup programs. Without ones that fit, the pipeline
+    /// compiles its own with the prewarm's persistent cache, and the prewarm
+    /// keeps them for the next pipeline of this sensor layout and quality.
+    pub fn new_reusing(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        raw: &LoadedRaw,
+        params: &GpuParams,
+        options: PipelineOptions<'_>,
+        prewarm: Option<&GpuProgramPrewarm>,
+    ) -> Result<Self> {
+        let Some(prewarm) = prewarm else {
+            return Self::new(device, queue, raw, params, options);
+        };
+        let reuse = |template: &RawGpuProgramTemplate| {
+            Self::new(device, queue, raw, params, options.programs(template))
+                .inspect_err(|error| {
+                    calibraw_core::diagnostics::record(format!(
+                        "Compiled GPU programs could not be reused ({error:#}); compiling programs"
+                    ));
+                })
+                .ok()
+        };
+        if let Some(pipeline) = prewarm
+            .template_for(raw, options.quality)
+            .and_then(|template| reuse(&template))
+        {
+            return Ok(pipeline);
+        }
+        // A poisoned lock only means another build panicked; this one still runs.
+        let _building = prewarm.building.lock();
+        if let Some(pipeline) = prewarm
+            .template_for(raw, options.quality)
+            .and_then(|template| reuse(&template))
+        {
+            return Ok(pipeline);
+        }
+        let cache = prewarm.pipeline_cache();
+        let options = match &cache {
+            Some(cache) => options.pipeline_cache(cache),
+            None => options,
+        };
+        let pipeline = Self::new(device, queue, raw, params, options)?;
+        if let Ok(mut kept) = prewarm.kept.lock() {
+            if !kept
+                .iter()
+                .any(|template| template.fits(raw, options.quality))
+            {
+                kept.push(Arc::new(pipeline.program_template()));
+            }
+        }
+        Ok(pipeline)
     }
 
     fn new_internal(build: RawGpuPipelineBuild<'_>) -> Result<Self> {
@@ -245,8 +301,7 @@ impl RawGpuPipeline {
             ai_cfa: has_ai_cfa,
             cfa_kind: raw.cfa_kind,
         })?;
-        let gpu_budget_reservation =
-            GpuBudgetReservation::acquire(&resource_plan, gpu_working_set_limit_bytes())?;
+        let gpu_budget_reservation = GpuBudgetReservation::acquire(&resource_plan)?;
 
         let gpu_error_scopes = GpuErrorScopes::push(device);
 
@@ -271,7 +326,15 @@ impl RawGpuPipeline {
             geometry.work_format,
             geometry.tone_format,
         );
-        let groups = create_bind_groups(device, &layouts, &buffers, &surfaces, raw.cfa_kind);
+        let dispatch_bands = DispatchBands::new(device, raw.height);
+        let groups = create_bind_groups(
+            device,
+            &layouts,
+            &buffers,
+            &surfaces,
+            &dispatch_bands,
+            raw.cfa_kind,
+        );
         let effect_inputs =
             EffectInputs::new(device, input_binding_sources(&layouts, &buffers, &surfaces));
 
@@ -296,6 +359,7 @@ impl RawGpuPipeline {
             &groups,
             &shaders,
             raw.cfa_kind,
+            geometry.work_format,
             geometry.image_workgroups,
             geometry.tone_workgroups,
         )?;
@@ -331,6 +395,8 @@ impl RawGpuPipeline {
             scene_tone_uniforms_buffer: buffers.scene_tone_uniforms_buffer,
             effects_uniforms_buffer: buffers.effects_uniforms_buffer,
             scene_tone_bind_group: groups.scene_tone_bind_group,
+            dispatch_bands,
+            paced_submissions: AtomicBool::new(false),
             effects_bind_group: groups.effects_bind_group,
             remove_composite_pipeline,
             remove_composite_bind_group,
@@ -340,7 +406,15 @@ impl RawGpuPipeline {
                 scene_tone: params.scene_tone,
                 effects: params.effects,
             }),
+            uploaded_effects: std::sync::atomic::AtomicU32::new(
+                EffectSet::of_slots(params.mask_slots()).bits(),
+            ),
+            effect_readiness: match quality {
+                ProcessingQuality::Preview => Readiness::WhenReady,
+                ProcessingQuality::High => Readiness::Wait,
+            },
             mask_data_buffer: buffers.mask_data_buffer,
+            uploaded_mask_slots: Mutex::new(params.mask_slots().to_vec()),
             tone_histogram_buffer: buffers.tone_histogram_buffer,
             tone_stats_buffer: buffers.tone_stats_buffer,
             profile_buffer: buffers.profile_buffer,
@@ -352,6 +426,10 @@ impl RawGpuPipeline {
             post_blur_pixelate_blocks_pass,
             post_blur_render_pass,
             output_image_in_tex2: AtomicBool::new(true),
+            output_resume: Mutex::new(OutputResume::new()),
+            unrendered: Mutex::default(),
+            tone_build: BuildRevision::new(),
+            inherited_tone: std::sync::atomic::AtomicU64::new(0),
             binned_finish_pass,
             passes,
             raw_texture: surfaces.raw_texture,
@@ -368,7 +446,9 @@ impl RawGpuPipeline {
             _tex2: surfaces.tex2,
             rgb_source_texture: surfaces.rgb_source_texture,
             binned_ai_texture: surfaces.binned_ai_texture,
+            binned_clipping_texture: surfaces.binned_clipping_texture,
             _xtrans_homogeneity: surfaces.xtrans_homogeneity,
+            _xtrans_complete: surfaces.xtrans_complete,
             scene_texture: surfaces.scene_texture,
             scene_format: geometry.demosaic_format,
             has_ai_scene,
@@ -393,9 +473,7 @@ impl RawGpuPipeline {
         pipeline.prepare_effect_inputs(params);
         // Compile only the programs used by these edits, within the constructor's
         // error scopes. The encoder is discarded: warming needs no GPU execution.
-        let mut warmup = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw active program warmup"),
-        });
+        let mut warmup = WorkEncoder::discarded(device, "calibraw active program warmup");
         pipeline.encode_raw_stage(&mut warmup, params);
         pipeline.encode_pass_range(
             &mut warmup,
@@ -403,12 +481,14 @@ impl RawGpuPipeline {
             pipeline.indices.tone_stage_end,
         );
         pipeline.encode_tone_full_image_maps(&mut warmup, params);
-        pipeline.encode_output_stage(&mut warmup, params);
+        pipeline.encode_output_stage(&mut warmup, params, OutputStart::Scene);
         drop(warmup);
-        // Nothing ran: the maps the warmup encoded are not built.
+        // Nothing ran: the maps the warmup encoded are not built, and the
+        // output stage has not rendered.
         for current in &pipeline.full_image_maps_current {
             current.store(false, Ordering::Release);
         }
+        pipeline.forget_output();
         gpu_error_scopes.finish("create RAW GPU pipeline")?;
         let mut pipeline = pipeline;
         pipeline.setup_times = PipelineSetupTimes {

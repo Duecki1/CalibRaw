@@ -9,15 +9,17 @@
 //! whether scene depth is generated.
 
 mod blur;
+mod color_fringe;
+mod defocus;
 mod edge_glow;
+mod families;
 mod fog;
 mod glow;
 mod grain;
-mod halation;
 mod instances;
 mod lanes;
-mod lens_blur;
-mod light_rays;
+mod legacy;
+mod light_shafts;
 mod motion_blur;
 mod neon;
 pub mod params;
@@ -29,20 +31,27 @@ mod relight;
 mod settings;
 mod sharpen;
 mod smoke;
+mod styled_glow;
 mod tilt_shift;
 mod vignette;
+mod warmth;
 mod wet_surfaces;
 
 pub use blur::BlurEffectSettings;
+pub use color_fringe::{ColorFringeEffectSettings, ColorFringeStyle};
+pub use defocus::{BokehShape, DefocusEffectSettings};
 pub use edge_glow::EdgeGlowEffectSettings;
+pub use families::{EffectFamily, EffectStyle};
 pub use fog::FogEffectSettings;
 pub use glow::GlowEffectSettings;
 pub use grain::GrainEffectSettings;
-pub use halation::HalationEffectSettings;
 pub use instances::{EffectInstances, MAX_EFFECT_INSTANCES};
 pub use lanes::{ColorLane, EffectLanes, EffectOption, Lane, LaneName, PackContext, OPTION_COUNT};
-pub use lens_blur::LensBlurEffectSettings;
-pub use light_rays::{LightRaySource, LightRaysEffectSettings};
+pub use legacy::halation::HalationEffectSettings;
+pub use legacy::highlight_glow::LegacyHighlightGlowEffectSettings;
+pub use legacy::lens_blur::LensBlurEffectSettings;
+pub use legacy::light_rays::LightRaysEffectSettings;
+pub use light_shafts::{LightShaftSource, LightShaftsEffectSettings, LightShaftsMode};
 pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
 pub use passes::{EffectPass, EffectReach, ReachGroup, SceneNeed, SceneNeeds};
@@ -53,13 +62,18 @@ pub use relight::{RelightEffectSettings, RelightLight};
 pub use settings::{EffectControl, EffectControls, EffectDetails, EffectSettings};
 pub use sharpen::SharpenEffectSettings;
 pub use smoke::SmokeEffectSettings;
+pub use styled_glow::{GlowSplitMode, GlowStyle, StarPoints, StyledGlowEffectSettings};
 pub use tilt_shift::TiltShiftEffectSettings;
 pub use vignette::VignetteEffectSettings;
 pub use wet_surfaces::WetSurfacesEffectSettings;
 
+// The legacy effects' settings modules, by their settings fields, as the
+// registry names them.
+use legacy::{halation, highlight_glow as legacy_highlight_glow, lens_blur, light_rays};
+
 use crate::pipeline::processing::{
-    CAPTURE_SHARPEN_SUPPORT, EDGE_GLOW_SUPPORT, FOCUS_BLUR_SUPPORT, GLOW_SUPPORT,
-    MASK_BLUR_SUPPORT, NEON_SUPPORT, PIXELATE_SUPPORT,
+    CAPTURE_SHARPEN_SUPPORT, COLOR_FRINGE_SUPPORT, EDGE_GLOW_SUPPORT, FOCUS_BLUR_SUPPORT,
+    GLOW_SUPPORT, MASK_BLUR_SUPPORT, NEON_SUPPORT, PIXELATE_SUPPORT,
 };
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -79,11 +93,15 @@ pub trait EffectSettingsVisitor {
 /// - `label`, and `description` for the tooltip of its card's title;
 /// - `shader_id`, its ID in the shaders (`MASK_EFFECT_<VARIANT>_ID`);
 /// - `category`, its place in the picker;
+/// - `family`, the picker tile and card it shares with effects of the same
+///   kind ([`EffectFamily`]), whose Style control switches between them;
 /// - `settings`, the field of [`MaskEffectSettings`] and its type;
 /// - `passes`, where it runs ([`EffectPass`]); a `Creative` effect defines
 ///   `apply_<field>` in its shader, which the creative pass calls;
 /// - `reach`, how far around a pixel it reads ([`EffectReach`]);
-/// - optionally `scene`, what it reads of the scene bake ([`SceneNeed`]s).
+/// - optionally `scene`, what it reads of the scene bake ([`SceneNeed`]s);
+/// - optionally `draft: true`, for an effect that renders more coarsely in
+///   the Draft tier while a control is dragged ([`MaskEffect::has_draft_tier`]).
 ///
 /// Rows are in the order the settings serialize, which sidecars and presets
 /// keep.
@@ -94,10 +112,12 @@ macro_rules! mask_effects {
             description: $description:literal,
             shader_id: $id:literal,
             category: $category:ident,
+            family: $family:ident,
             settings: $field:ident: $settings:ty,
             passes: [$($pass:ident),+],
             reach: $reach:ident $(($pixels:expr))?
-            $(, scene: [$($need:ident),* $(,)?])? $(,)?
+            $(, scene: [$($need:ident),* $(,)?])?
+            $(, draft: $draft:literal)? $(,)?
         }
     )+) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
@@ -129,6 +149,15 @@ macro_rules! mask_effects {
                 match self {
                     Self::Adjustment => None,
                     $(Self::$variant => Some(MaskEffectCategory::$category),)+
+                }
+            }
+
+            /// The family whose tile and Style control offer the effect;
+            /// none for an adjustment.
+            pub const fn family(self) -> Option<EffectFamily> {
+                match self {
+                    Self::Adjustment => None,
+                    $(Self::$variant => Some(EffectFamily::$family),)+
                 }
             }
 
@@ -181,6 +210,17 @@ macro_rules! mask_effects {
                 match self {
                     Self::Adjustment => SceneNeeds::NONE,
                     $(Self::$variant => SceneNeeds::NONE $($(.with(SceneNeed::$need))*)?,)+
+                }
+            }
+
+            /// Whether the effect renders more coarsely in the Draft tier,
+            /// which previews use while a control is dragged, and in full
+            /// in the Final tier afterwards and in exports. Effects that read
+            /// the light bake follow its tier as well.
+            pub const fn has_draft_tier(self) -> bool {
+                match self {
+                    Self::Adjustment => false,
+                    $(Self::$variant => false $(|| $draft)?,)+
                 }
             }
 
@@ -261,6 +301,30 @@ macro_rules! mask_effects {
                 }
             }
 
+            /// `effect`'s settings as their serialized fields; `None` for an
+            /// adjustment.
+            fn fields(&self, effect: MaskEffect) -> Option<serde_json::Value> {
+                match effect {
+                    MaskEffect::Adjustment => None,
+                    $(MaskEffect::$variant => serde_json::to_value(self.$field).ok(),)+
+                }
+            }
+
+            /// Sets `effect`'s settings from serialized `fields`; false, and
+            /// nothing set, when they do not decode.
+            fn set_fields(&mut self, effect: MaskEffect, fields: serde_json::Value) -> bool {
+                match effect {
+                    MaskEffect::Adjustment => false,
+                    $(MaskEffect::$variant => match serde_json::from_value(fields) {
+                        Ok(settings) => {
+                            self.$field = settings;
+                            true
+                        }
+                        Err(_) => false,
+                    },)+
+                }
+            }
+
             /// Every effect's controls, in serialized order.
             pub fn all_controls(&mut self) -> impl Iterator<Item = (MaskEffect, EffectControls<'_>)> {
                 [$((MaskEffect::$variant, self.$field.controls()),)+].into_iter()
@@ -281,15 +345,17 @@ mask_effects! {
         description: "Soften distracting detail. The mask controls where the blurred image is blended in.",
         shader_id: 4,
         category: BlurAndFocus,
+        family: Blur,
         settings: blur: BlurEffectSettings,
         passes: [Blur],
         reach: MaskBlur(MASK_BLUR_SUPPORT),
     }
     LensBlur {
-        label: "Lens Blur",
-        description: "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.",
+        label: "Lens Blur (legacy)",
+        description: "The earlier Lens Blur, which blurred the mask evenly with a polygon aperture. Replace it with the new Lens Blur.",
         shader_id: 7,
         category: BlurAndFocus,
+        family: LegacyLensBlur,
         settings: lens_blur: LensBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
@@ -299,6 +365,7 @@ mask_effects! {
         description: "Add directional movement. Distance sets the trail length; the mask controls where the blur appears.",
         shader_id: 8,
         category: BlurAndFocus,
+        family: Blur,
         settings: motion_blur: MotionBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
@@ -308,6 +375,7 @@ mask_effects! {
         description: "Zoom toward a center or spin around it. Position is relative to the full image; the mask controls the blend.",
         shader_id: 9,
         category: BlurAndFocus,
+        family: Blur,
         settings: radial_blur: RadialBlurEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
@@ -317,6 +385,7 @@ mask_effects! {
         description: "Keep a band in focus and soften its surroundings. Position is relative to the full image. Use a Fullscreen mask for an uninterrupted focus transition.",
         shader_id: 10,
         category: BlurAndFocus,
+        family: Blur,
         settings: tilt_shift: TiltShiftEffectSettings,
         passes: [Blur],
         reach: FocusBlur(FOCUS_BLUR_SUPPORT),
@@ -326,6 +395,7 @@ mask_effects! {
         description: "Sharpen fine detail inside the mask with its own radius, detail and masking. It adds to the Detail card's sharpening.",
         shader_id: 17,
         category: BlurAndFocus,
+        family: Sharpen,
         settings: sharpen: SharpenEffectSettings,
         passes: [CaptureSharpening],
         reach: CaptureSharpening(CAPTURE_SHARPEN_SUPPORT),
@@ -335,24 +405,27 @@ mask_effects! {
         description: "Light up image contours with a soft halo. Both the outlines and their glow stay inside the mask.",
         shader_id: 5,
         category: Stylize,
+        family: Neon,
         settings: edge_glow: EdgeGlowEffectSettings,
         passes: [Creative],
         reach: Creative(EDGE_GLOW_SUPPORT),
     }
     Glow {
-        label: "Glow",
-        description: "Spread colored light from bright pixels. The mask selects the highlights that emit light; their glow can extend beyond the selection. A self-illuminating Glow also lights the scene around it; Scene light sets how much.",
+        label: "Glowing Area",
+        description: "Make the mask emit colored light, so it glows even over dark surfaces. The glow extends beyond the selection and lights the scene around it; Scene light sets how much.",
         shader_id: 2,
         category: GlowAndLight,
+        family: GlowingArea,
         settings: glow: GlowEffectSettings,
         passes: [CreativeLight],
         reach: Glow(GLOW_SUPPORT),
     }
     LightRays {
-        label: "Light Rays",
-        description: "Place the source relative to the full image, then paint its openings. The light shafts shine through the mask and show only inside it.",
+        label: "Light Rays (legacy)",
+        description: "The earlier Light Rays, which drew shafts through openings painted with the mask. Replace it with the new Light Rays.",
         shader_id: 3,
         category: GlowAndLight,
+        family: LegacyLightRays,
         settings: light_rays: LightRaysEffectSettings,
         passes: [CreativeLight],
         reach: Pixel,
@@ -362,6 +435,7 @@ mask_effects! {
         description: "Add a light that shapes the scene in depth. Position it like Light Rays; scene depth is generated automatically. Turn on Shadows to let nearer objects block the light. The sky and anything the depth map places at its far limit stay unlit. The mask controls where the light falls.",
         shader_id: 16,
         category: GlowAndLight,
+        family: Relight,
         settings: relight: RelightEffectSettings,
         passes: [Creative],
         reach: Pixel,
@@ -372,6 +446,7 @@ mask_effects! {
         description: "Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask. Scene light lets the lines light their surroundings.",
         shader_id: 1,
         category: GlowAndLight,
+        family: Neon,
         settings: neon: NeonEffectSettings,
         passes: [SceneEffects],
         reach: SceneEffects(NEON_SUPPORT),
@@ -381,6 +456,7 @@ mask_effects! {
         description: "Create a graphic mosaic. Block size sets the tile scale; the mask controls where the result appears.",
         shader_id: 6,
         category: Stylize,
+        family: Pixelate,
         settings: pixelate: PixelateEffectSettings,
         passes: [Creative],
         reach: Creative(PIXELATE_SUPPORT),
@@ -390,6 +466,7 @@ mask_effects! {
         description: "Add atmospheric haze through the mask. Scene depth builds fog with distance; turn it off for an even-distance veil.",
         shader_id: 11,
         category: Texture,
+        family: Atmosphere,
         settings: fog: FogEffectSettings,
         passes: [Creative],
         reach: Pixel,
@@ -400,6 +477,7 @@ mask_effects! {
         description: "Layer drifting plumes through the mask. The pattern stays anchored to the full image as you edit the selection.",
         shader_id: 12,
         category: Texture,
+        family: Atmosphere,
         settings: smoke: SmokeEffectSettings,
         passes: [Creative],
         reach: Pixel,
@@ -410,15 +488,17 @@ mask_effects! {
         description: "Add photographic texture. Grain stays anchored to the image; the mask controls its local strength.",
         shader_id: 13,
         category: FilmAndFinish,
+        family: Grain,
         settings: grain: GrainEffectSettings,
         passes: [DisplayFinish],
         reach: Pixel,
     }
     Halation {
-        label: "Halation",
-        description: "Give bright highlights a warm film halo inside the mask. Nearby highlights outside the selection can cast a halo into it. Use Fullscreen for a whole-image finish.",
+        label: "Halation (legacy)",
+        description: "The earlier Halation, a warm film halo inside the mask. Replace it with the new Glow's Halation style.",
         shader_id: 14,
         category: FilmAndFinish,
+        family: Halation,
         settings: halation: HalationEffectSettings,
         passes: [Creative],
         reach: Glow(GLOW_SUPPORT),
@@ -428,6 +508,7 @@ mask_effects! {
         description: "Darken edges with negative amounts or brighten them with positive amounts. The center follows the cropped, rotated frame; the mask controls the blend.",
         shader_id: 15,
         category: FilmAndFinish,
+        family: Vignette,
         settings: vignette: VignetteEffectSettings,
         passes: [DisplayFinish],
         reach: Pixel,
@@ -437,6 +518,7 @@ mask_effects! {
         description: "Add falling rain and its mist. Drops pass behind nearer objects, catch Relight, Light Rays, Glow, Neon and the photo's own lights, and show best against dark areas. The mask controls where it falls.",
         shader_id: 18,
         category: Texture,
+        family: Rain,
         settings: rain: RainEffectSettings,
         passes: [AfterCreative],
         reach: Pixel,
@@ -447,10 +529,64 @@ mask_effects! {
         description: "Darken surfaces as water does and let the ground reflect the photo, with standing puddles on smooth ground. The ground is found in scene depth, which is generated automatically; a Rain effect ripples the puddles. The mask controls where it applies.",
         shader_id: 19,
         category: Texture,
+        family: WetSurfaces,
         settings: wet_surfaces: WetSurfacesEffectSettings,
         passes: [BeforeCreative, AfterCreative],
         reach: Pixel,
         scene: [Geometry, Image],
+    }
+    StyledGlow {
+        label: "Glow",
+        description: "Let light spread from the bright parts of the mask: Bloom glows around highlights, Diffusion softens across tones, Halation adds a film's red halo around bright edges. Range sets which tones glow, Spread how far. The glow can extend beyond the selection.",
+        shader_id: 20,
+        category: GlowAndLight,
+        family: Glow,
+        settings: styled_glow: StyledGlowEffectSettings,
+        passes: [CreativeLight],
+        reach: Glow(GLOW_SUPPORT),
+    }
+    LegacyHighlightGlow {
+        label: "Glow (legacy)",
+        description: "The earlier Glow, which bloomed bright pixels inside the mask. Replace it with the new Glow.",
+        shader_id: 21,
+        category: GlowAndLight,
+        family: LegacyHighlightGlow,
+        settings: legacy_highlight_glow: LegacyHighlightGlowEffectSettings,
+        passes: [CreativeLight],
+        reach: Glow(GLOW_SUPPORT),
+    }
+    LightShafts {
+        label: "Light Rays",
+        description: "Add shafts of light from each source, placed relative to the full image, also beyond the frame. Scene lets the light shine through the air so trees, window frames and other objects cut its rays; scene depth is generated automatically. 2D draws rays through openings painted with the mask, without depth. Penetration lets light pass what blocks it. The rays show only inside the mask.",
+        shader_id: 22,
+        category: GlowAndLight,
+        family: LightRays,
+        settings: light_shafts: LightShaftsEffectSettings,
+        passes: [CreativeLight],
+        reach: Pixel,
+        scene: [AirLight],
+    }
+    Defocus {
+        label: "Lens Blur",
+        description: "Defocus the photo as a fast lens would: surfaces in the focus range stay sharp, the rest falls out of focus with its distance from it, and lights become discs of the bokeh shape. Scene depth is generated automatically; with Focus by depth off the mask blurs evenly. The mask controls where it blurs.",
+        shader_id: 23,
+        category: BlurAndFocus,
+        family: Blur,
+        settings: defocus: DefocusEffectSettings,
+        passes: [Blur],
+        reach: FocusBlur(FOCUS_BLUR_SUPPORT),
+        scene: [Geometry],
+        draft: true,
+    }
+    ColorFringe {
+        label: "Color Fringe",
+        description: "Split the colors along edges into red, green and blue fringes. Lens moves them outward from the image center as a lens does; Shift moves them along Direction. Prism spreads them into a rainbow. The mask controls where it appears.",
+        shader_id: 24,
+        category: Stylize,
+        family: ColorFringe,
+        settings: color_fringe: ColorFringeEffectSettings,
+        passes: [Creative],
+        reach: Creative(COLOR_FRINGE_SUPPORT),
     }
 }
 
@@ -459,24 +595,29 @@ impl MaskEffect {
     pub const ALL: [Self; Self::COUNT] = [
         Self::Adjustment,
         Self::Blur,
-        Self::LensBlur,
+        Self::Defocus,
         Self::MotionBlur,
         Self::RadialBlur,
         Self::Sharpen,
         Self::TiltShift,
+        Self::StyledGlow,
         Self::Glow,
-        Self::LightRays,
+        Self::LightShafts,
         Self::Neon,
         Self::Relight,
         Self::EdgeGlow,
         Self::Pixelate,
+        Self::ColorFringe,
         Self::Fog,
         Self::Smoke,
         Self::Grain,
-        Self::Halation,
         Self::Vignette,
         Self::Rain,
         Self::WetSurfaces,
+        Self::Halation,
+        Self::LegacyHighlightGlow,
+        Self::LightRays,
+        Self::LensBlur,
     ];
 
     /// Switched off: never offered and never rendered (2026-11-07; Rain and Wet
@@ -485,6 +626,34 @@ impl MaskEffect {
     /// never compiled either: Rain's crashes the Adreno 830 shader compiler.
     pub const fn is_disabled(self) -> bool {
         matches!(self, Self::Rain | Self::WetSurfaces)
+    }
+
+    /// Replaced by a rebuilt effect (`legacy/`): edits that hold it render it
+    /// as before, but it is never offered, and its card offers only to switch
+    /// it, remove it or replace it with [`Self::replacement`].
+    pub const fn is_legacy(self) -> bool {
+        matches!(
+            self,
+            Self::Halation | Self::LegacyHighlightGlow | Self::LightRays | Self::LensBlur
+        )
+    }
+
+    /// Whether pickers, quick-add buttons and Style controls offer it: neither
+    /// switched off nor legacy.
+    pub const fn is_offered(self) -> bool {
+        !self.is_disabled() && !self.is_legacy()
+    }
+
+    /// The style of the rebuilt effect that replaces a legacy effect, which
+    /// its card's Replace with new switches it to.
+    pub const fn replacement(self) -> Option<EffectStyle> {
+        match self {
+            Self::Halation => Some(EffectStyle::glow(GlowStyle::Halation)),
+            Self::LegacyHighlightGlow => Some(EffectStyle::glow(GlowStyle::Bloom)),
+            Self::LightRays => Some(EffectStyle::light_shafts(LightShaftsMode::Flat)),
+            Self::LensBlur => Some(EffectStyle::plain(Self::Defocus)),
+            _ => None,
+        }
     }
 
     /// Available, but its results are not yet reliable enough to present as finished.
@@ -497,13 +666,16 @@ impl MaskEffect {
     }
 
     /// Whether the effect reads its mask beyond an export tile or zoomed
-    /// view, from the full-image mask atlas: Light Rays shapes rays from
-    /// openings anywhere in the frame, and Glow and Neon light the scene from
+    /// view, from the full-image mask atlas: Light Rays' 2D style and the
+    /// legacy Light Rays shape rays from openings anywhere in the frame, and Glow and Neon light the scene from
     /// wherever they emit (scene_emission.wgsl). Their masks
     /// are kept there whatever their settings, so changing one needs no new
     /// mask upload.
     pub const fn reads_full_image_mask(self) -> bool {
-        matches!(self, Self::LightRays | Self::Glow | Self::Neon)
+        matches!(
+            self,
+            Self::LightShafts | Self::LightRays | Self::Glow | Self::Neon
+        )
     }
 }
 

@@ -1,6 +1,14 @@
-use super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
-use super::params::lens_blur::*;
-use super::settings::{EffectControl, EffectControls, EffectSettings};
+//! Lens Blur as released in v1.4.1, before the rebuilt Lens Blur
+//! (defocus.rs) replaced it: a gather over an aperture polygon of up to 544
+//! taps that blurs the mask evenly (mask_effects/legacy/lens_blur.wgsl).
+//! The depth fields added after v1.4.1 shipped in no release; edits that
+//! hold them decode here without them.
+//!
+//! legacy: remove in v2.0.0
+
+use super::super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
+use super::super::params::lens_blur::*;
+use super::super::settings::{EffectControl, EffectControls, EffectSettings};
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]

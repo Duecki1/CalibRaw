@@ -24,7 +24,7 @@ pub(super) mod lights;
 
 use super::{
     create_gpu_buffer, create_initialized_buffer, create_processing_texture_array,
-    gpu_working_set_limit_bytes, texture_size, GpuBudgetReservation,
+    gpu_working_set_limit_bytes, texture_size, EffectResource, GpuBudgetReservation, RenderTier,
 };
 use anyhow::Result;
 use calibraw_core::pipeline::{DisparityMap, MaskImage, SceneCamera, SceneDepth};
@@ -32,7 +32,6 @@ use camera::SceneCameraUniform;
 use std::sync::{Arc, Mutex};
 
 pub(super) use bake::SceneBakePrograms;
-pub use lights::SceneLightQuality;
 pub(super) use lights::{
     air_light_layers, SceneAirLightKey, SceneAirLightRegion, SceneAirLightTarget,
     SceneAirLightUniform, SceneLightKind, SceneLightPrograms, SceneLightSet, SceneShadowLight,
@@ -205,11 +204,7 @@ impl SceneBake {
             + texels * 8 * 4 / 3
             + texels * SCRATCH_TEXEL_BYTES
             + SCENE_FOCUS_BYTES;
-        let reservation = GpuBudgetReservation::acquire_bytes(
-            "scene bake",
-            bytes,
-            gpu_working_set_limit_bytes(),
-        )?;
+        let reservation = GpuBudgetReservation::acquire_bytes("scene bake", bytes)?;
         let layers = create_processing_texture_array(
             device,
             width,
@@ -458,7 +453,7 @@ impl SceneBake {
 }
 
 /// Whether two depth results are the same one: the same pixel allocations.
-fn same_depth(a: &SceneDepth, b: &SceneDepth) -> bool {
+pub(in crate::pipeline::gpu) fn same_depth(a: &SceneDepth, b: &SceneDepth) -> bool {
     Arc::ptr_eq(a.disparity().values(), b.disparity().values())
         && Arc::ptr_eq(&a.sky().pixels, &b.sky().pixels)
         && Arc::ptr_eq(&a.normals().x().pixels, &b.normals().x().pixels)
@@ -496,11 +491,7 @@ impl SceneBakeInputs {
             .collect();
         let bytes =
             disparity.values.len() as u64 * 4 + sky.values.len() as u64 + normals.len() as u64;
-        let reservation = GpuBudgetReservation::acquire_bytes(
-            "scene depth inputs",
-            bytes,
-            gpu_working_set_limit_bytes(),
-        )?;
+        let reservation = GpuBudgetReservation::acquire_bytes("scene depth inputs", bytes)?;
         let texture =
             |[width, height]: [u32; 2], format, label, bytes_per_texel: u32, data: &[u8]| {
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -671,16 +662,23 @@ impl super::RawGpuPipeline {
         let bake = self
             .effect_inputs
             .allocate_scene_bake(size)
-            .inspect_err(|error| log::error!("scene bake not allocated: {error:#}"))
-            .ok()?;
-        match depth {
-            Some(depth) => bake
-                .upload_depth(self.effect_inputs.device(), queue, depth)
-                .inspect_err(|error| log::error!("scene depth not uploaded: {error:#}"))
-                .ok()?,
-            None => bake.clear_depth(queue),
+            .and_then(|bake| {
+                match depth {
+                    Some(depth) => bake.upload_depth(self.effect_inputs.device(), queue, depth)?,
+                    None => bake.clear_depth(queue),
+                }
+                Ok(bake)
+            });
+        match bake {
+            Ok(bake) => {
+                self.note_effect_allocation(EffectResource::SceneBake, Ok(()));
+                Some(bake)
+            }
+            Err(error) => {
+                self.note_effect_allocation(EffectResource::SceneBake, Err(error));
+                None
+            }
         }
-        Some(bake)
     }
 
     /// Uploads `params`' depth result to the bake: one this pipeline owns for
@@ -691,8 +689,8 @@ impl super::RawGpuPipeline {
             return;
         }
         let device = self.effect_inputs.device();
-        let bake = if self.renders_whole_image() {
-            self.own_scene_bake(queue, params)
+        if self.renders_whole_image() {
+            self.own_scene_bake(queue, params);
         } else {
             let Some(bake) = self.effect_inputs.scene_bake() else {
                 return;
@@ -702,16 +700,30 @@ impl super::RawGpuPipeline {
                 .as_ref()
                 .filter(|_| params.needs_scene_geometry())
             {
-                if let Err(error) = bake.upload_depth(device, queue, depth) {
-                    log::error!("scene depth not uploaded: {error:#}");
-                }
+                self.note_effect_allocation(
+                    EffectResource::SceneBake,
+                    bake.upload_depth(device, queue, depth),
+                );
             }
-            Some(bake)
-        };
-        if let Some(bake) = bake {
-            if params.needs_light_bake() {
-                bake.prepare_lights(device, queue, &params.scene_light_set());
-            }
+        }
+    }
+
+    /// Uploads the lights of `params` to the bake ([`Self::upload_scene_bake_depth`]
+    /// allocated or shared it), in their render tier. Only for renders that
+    /// run a part reading them (`prepare_tiered_effects`).
+    pub(super) fn prepare_scene_lights(&self, queue: &wgpu::Queue, params: &super::GpuParams) {
+        if !params.needs_light_bake() {
+            return;
+        }
+        if let Some(bake) = self.effect_inputs.scene_bake() {
+            self.note_effect_allocation(
+                EffectResource::LightBake,
+                bake.prepare_lights(
+                    self.effect_inputs.device(),
+                    queue,
+                    &params.scene_light_set(),
+                ),
+            );
         }
     }
 
@@ -729,7 +741,7 @@ impl super::RawGpuPipeline {
     /// image is outdated; others bake only what their bake's owner filled.
     pub(super) fn ensure_scene_bake(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut super::WorkEncoder<'_>,
         params: &super::GpuParams,
     ) {
         if !params.needs_scene_bake() {
@@ -746,13 +758,26 @@ impl super::RawGpuPipeline {
             let device = self.effect_inputs.device();
             match self.effect_inputs.scene_programs() {
                 Ok(programs) => {
-                    bake.encode_lights(device, encoder, programs.lights());
-                    if params.needs_air_light() {
-                        self.effect_inputs.encode_air_light(
-                            encoder,
-                            &bake,
-                            programs.lights(),
-                            self.air_light_region(params.scene_light_quality()),
+                    encoder.untracked(|encoder| {
+                        bake.encode_lights(device, encoder, programs.lights())
+                    });
+                    // In the tier of the lights it is lit by, which the last
+                    // render that read them prepared.
+                    if let Some(tier) = bake
+                        .prepared_lights_tier()
+                        .filter(|_| params.needs_air_light())
+                    {
+                        let region = self.air_light_region(tier);
+                        self.note_effect_allocation(
+                            EffectResource::AirLight,
+                            encoder.untracked(|encoder| {
+                                self.effect_inputs.encode_air_light(
+                                    encoder,
+                                    &bake,
+                                    programs.lights(),
+                                    region,
+                                )
+                            }),
                         );
                     }
                 }
@@ -762,7 +787,7 @@ impl super::RawGpuPipeline {
     }
 
     /// The air light grid this pipeline needs: the texels its pixels read.
-    fn air_light_region(&self, quality: SceneLightQuality) -> SceneAirLightRegion {
+    fn air_light_region(&self, quality: RenderTier) -> SceneAirLightRegion {
         let uploaded = self
             .uploaded_stage_uniforms
             .lock()
@@ -783,17 +808,17 @@ impl super::RawGpuPipeline {
     /// image.
     pub(super) fn accumulate_scene_working_image(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut super::WorkEncoder<'_>,
         bake: &SceneBake,
     ) {
         bake.begin_accumulation(encoder);
         self.encode_pass(encoder, self.indices.scene_bake_accumulation_pass_index);
     }
 
-    pub(super) fn encode_scene_bake(&self, encoder: &mut wgpu::CommandEncoder, bake: &SceneBake) {
+    pub(super) fn encode_scene_bake(&self, encoder: &mut super::WorkEncoder<'_>, bake: &SceneBake) {
         let device = self.effect_inputs.device();
         match self.effect_inputs.scene_programs() {
-            Ok(programs) => bake.encode(device, encoder, &programs),
+            Ok(programs) => encoder.untracked(|encoder| bake.encode(device, encoder, &programs)),
             Err(error) => log::error!("scene bake programs did not compile: {error:#}"),
         }
     }
@@ -802,7 +827,7 @@ impl super::RawGpuPipeline {
     /// of it, first bringing it up to date.
     pub(super) fn inherit_scene_bake(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut super::WorkEncoder<'_>,
         full_frame: &Self,
         params: &super::GpuParams,
     ) {

@@ -24,7 +24,8 @@
 // --- Controls ---
 
 // An effect slot's packed parameters. Lane n is component n % 4 of `primary`,
-// `secondary` or `tertiary` for n / 4 = 0, 1, 2; a colour takes three lanes.
+// `secondary`, `tertiary` or `quaternary` for n / 4 = 0, 1, 2, 3; a colour takes
+// three lanes.
 // `options` holds per-slot switches (`<NAME>_OPTION`). `slot` is the slot's index
 // and `instances` its instance and its card's instance count
 // (`mask_effect_instance`).
@@ -32,6 +33,7 @@ struct MaskEffectParams {
     primary: vec4<f32>,
     secondary: vec4<f32>,
     tertiary: vec4<f32>,
+    quaternary: vec4<f32>,
     options: vec4<f32>,
     slot: u32,
     instances: u32,
@@ -39,12 +41,13 @@ struct MaskEffectParams {
 
 fn mask_effect_params(index: u32) -> MaskEffectParams {
     return MaskEffectParams(
-        Common::mask_data[index].adjust_0_field,
-        Common::mask_data[index].adjust_1_field,
-        Common::mask_data[index].adjust_2_field,
-        Common::mask_data[index].effect_options,
+        Common::mask_adjust_0_field(index),
+        Common::mask_adjust_1_field(index),
+        Common::mask_adjust_2_field(index),
+        Common::mask_adjust_3_field(index),
+        Common::mask_effect_options(index),
         index,
-        Common::mask_data[index].metadata.z,
+        Common::mask_metadata(index).z,
     );
 }
 
@@ -65,7 +68,7 @@ fn mask_effect_instance(params: MaskEffectParams) -> u32 {
 // The light bake's channel of the slot's light plus one, or 0 when the bake
 // holds none for it (common.wgsl, MASK_SCENE_BAKE_LIGHT_BITS).
 fn mask_effect_scene_bake_light(params: MaskEffectParams) -> u32 {
-    return Common::mask_data[params.slot].metadata.w & Common::MASK_SCENE_BAKE_LIGHT_BITS;
+    return Common::mask_metadata(params.slot).w & Common::MASK_SCENE_BAKE_LIGHT_BITS;
 }
 
 // The instances of the slot's card.
@@ -80,7 +83,11 @@ fn mask_effect_instance_params(params: MaskEffectParams, instance: u32) -> MaskE
 
 fn mask_effect_lane(params: MaskEffectParams, lane: u32) -> f32 {
     let row = select(
-        select(params.tertiary, params.secondary, lane < 8u),
+        select(
+            select(params.quaternary, params.tertiary, lane < 12u),
+            params.secondary,
+            lane < 8u,
+        ),
         params.primary,
         lane < 4u,
     );

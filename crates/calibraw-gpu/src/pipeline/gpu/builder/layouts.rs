@@ -14,6 +14,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_dual_detail: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl4: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_state: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_xtrans_complete: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_homogeneity: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_accumulate: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_smoothing: wgpu::BindGroupLayout,
@@ -29,6 +30,8 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_mask_blur: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_glow_prepare: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_glow_blur: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_styled_glow: [wgpu::BindGroupLayout; STYLED_GLOW_PASSES],
+    pub(in crate::pipeline::gpu) bgl_defocus: [wgpu::BindGroupLayout; DEFOCUS_PASSES],
     pub(in crate::pipeline::gpu) bgl_pixelate_blocks: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_creative: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_render: wgpu::BindGroupLayout,
@@ -62,7 +65,11 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
     let bgl_scene_tone = program_template
         .map(|template| template.pipelines[0].get_bind_group_layout(1))
         .unwrap_or_else(|| {
-            create_bind_group_layout(device, "bgl scene-tone uniforms", &[buffer_entry(0)])
+            create_bind_group_layout(
+                device,
+                "bgl scene-tone uniforms",
+                &[buffer_entry(0), dispatch_band_entry(1)],
+            )
         });
     let bgl_effects = program_template
         .map(|template| template.pipelines[0].get_bind_group_layout(2))
@@ -98,8 +105,8 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    // Highlight reconstruction of a binned source: its RGB source and
-    // AI-denoised RGB in, camera RGB out (highlights.wgsl).
+    // Highlight reconstruction of a binned source: its RGB source,
+    // AI-denoised RGB and clipping in, camera RGB out (highlights.wgsl).
     let bgl_binned_highlights =
         reused_layout(plan.binned_highlight_pass_index).unwrap_or_else(|| {
             create_bind_group_layout(
@@ -112,6 +119,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_entry(12, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(13, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(14, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(15, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });
@@ -269,6 +277,14 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         plan.demosaic_start_index,
         "bgl X-Trans Markesteijn state",
         &[state_output],
+    );
+    let bgl_xtrans_complete = xtrans_layout(
+        plan.demosaic_start_index + XTRANS_COMPLETE_PASSES[0],
+        "bgl X-Trans Markesteijn completed state",
+        &[
+            state_output,
+            storage_texture_entry(32, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
+        ],
     );
     let bgl_xtrans_homogeneity = xtrans_layout(
         plan.demosaic_start_index + XTRANS_HOMOGENEITY_PASS,
@@ -438,7 +454,8 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             )
         });
 
-    let bgl_mask_blur = reused_layout(plan.mask_blur_start_index).unwrap_or_else(|| {
+    // The steps after the first; the first binds the creative layout.
+    let bgl_mask_blur = reused_layout(plan.mask_blur_start_index + 1).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl mask Blur diffusion",
@@ -534,6 +551,12 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_array_entry(114, wgpu::TextureSampleType::Float { filterable: false }),
                     buffer_entry(115),
                     storage_buffer_entry(20, true),
+                    // The Glow's near pyramid and full-image map (styled_glow.wgsl).
+                    texture_array_entry(118, wgpu::TextureSampleType::Float { filterable: true }),
+                    texture_array_entry(119, wgpu::TextureSampleType::Float { filterable: true }),
+                    // Lens Blur's result, which the first Blur stage blends
+                    // (defocus.wgsl).
+                    texture_array_entry(124, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });
@@ -764,6 +787,26 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                 ],
             )
         });
+    let styled_glow_entries = styled_glow_layout_entries();
+    let bgl_styled_glow = std::array::from_fn(|program| {
+        reused_layout(plan.styled_glow_pass_index + program).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                STYLED_GLOW_LAYOUT_LABELS[program],
+                &styled_glow_entries[program],
+            )
+        })
+    });
+    let defocus_entries = defocus_layout_entries();
+    let bgl_defocus = std::array::from_fn(|program| {
+        reused_layout(plan.defocus_pass_index + program).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                DEFOCUS_LAYOUT_LABELS[program],
+                &defocus_entries[program],
+            )
+        })
+    });
     BindGroupLayouts {
         bgl_scene_tone,
         bgl_effects,
@@ -776,6 +819,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_dual_detail,
         bgl4,
         bgl_xtrans_state,
+        bgl_xtrans_complete,
         bgl_xtrans_homogeneity,
         bgl_xtrans_accumulate,
         bgl_xtrans_smoothing,
@@ -791,6 +835,8 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_mask_blur,
         bgl_glow_prepare,
         bgl_glow_blur,
+        bgl_styled_glow,
+        bgl_defocus,
         bgl_pixelate_blocks,
         bgl_adjust_creative,
         bgl_adjust_render,

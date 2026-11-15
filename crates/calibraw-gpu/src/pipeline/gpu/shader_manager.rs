@@ -1,11 +1,13 @@
+use super::effect_programs::EffectSet;
 use super::shaders::{ShaderSource, COMPOSABLE_MODULES};
 use super::{work_shader_source, CfaKind};
 use anyhow::{anyhow, Context, Result};
 use naga_oil::compose::{
-    ComposableModuleDescriptor, Composer, ComposerError, NagaModuleDescriptor, ShaderLanguage,
-    ShaderType,
+    ComposableModuleDescriptor, Composer, ComposerError, NagaModuleDescriptor, ShaderDefValue,
+    ShaderLanguage, ShaderType,
 };
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 const SHADER_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/shaders/");
 
@@ -58,6 +60,8 @@ impl ShaderManager {
         Ok(manager)
     }
 
+    /// Registers a module with every effect (`effect_programs`), whatever
+    /// the shader that imports it is composed with.
     fn register(&mut self, import_path: &str, file_name: &str, source: &str) -> Result<()> {
         let file_path = format!("{SHADER_ROOT}{file_name}");
         let result = self
@@ -67,6 +71,7 @@ impl ShaderManager {
                 file_path: &file_path,
                 language: ShaderLanguage::Wgsl,
                 as_name: Some(import_path.to_owned()),
+                shader_defs: EffectSet::all().shader_defs(),
                 ..Default::default()
             });
         match result {
@@ -75,17 +80,21 @@ impl ShaderManager {
         }
     }
 
+    /// Composes an entry shader with `shader_defs`, which decide the effects
+    /// the creative effects module compiles: [`EffectSet::shader_defs`] of
+    /// [`EffectSet::all`] for every effect.
     pub(super) fn compose_naga_module(
         &mut self,
         source: &str,
         file_name: &str,
+        shader_defs: HashMap<String, ShaderDefValue>,
     ) -> Result<wgpu::naga::Module> {
         let file_path = format!("{SHADER_ROOT}{file_name}");
         let result = self.composer.make_naga_module(NagaModuleDescriptor {
             source,
             file_path: &file_path,
             shader_type: ShaderType::Wgsl,
-            shader_defs: Default::default(),
+            shader_defs,
             additional_imports: &[],
         });
         match result {
@@ -94,6 +103,7 @@ impl ShaderManager {
         }
     }
 
+    /// Creates the module of an entry shader with every effect.
     pub(super) fn create_shader_module(
         &mut self,
         device: &wgpu::Device,
@@ -101,9 +111,28 @@ impl ShaderManager {
         source: &str,
         file_name: &str,
     ) -> Result<wgpu::ShaderModule> {
+        self.create_shader_module_with_defs(
+            device,
+            label,
+            source,
+            file_name,
+            EffectSet::all().shader_defs(),
+        )
+    }
+
+    /// Creates the module of an entry shader composed with `shader_defs`
+    /// ([`Self::compose_naga_module`]).
+    pub(super) fn create_shader_module_with_defs(
+        &mut self,
+        device: &wgpu::Device,
+        label: &'static str,
+        source: &str,
+        file_name: &str,
+        shader_defs: HashMap<String, ShaderDefValue>,
+    ) -> Result<wgpu::ShaderModule> {
         let started = std::time::Instant::now();
         let module = self
-            .compose_naga_module(source, file_name)
+            .compose_naga_module(source, file_name, shader_defs)
             .with_context(|| format!("compose {label}"))?;
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),

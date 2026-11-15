@@ -1,0 +1,24 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "StyledGlow",
+          "settings": {
+            "styled_glow": {
+              "style": "Star",
+              "amount": 100.0,
+              "range": 60.0,
+              "spread": 70.0,
+              "warmth": 0.0,
+              "dispersion": 60.0,
+              "direction": -30.0,
+              "softness": 10.0,
+              "points": "Four"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

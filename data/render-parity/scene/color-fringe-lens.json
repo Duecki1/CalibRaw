@@ -1,0 +1,18 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "ColorFringe",
+          "settings": {
+            "color_fringe": {
+              "style": "Lens",
+              "amount": 100.0,
+              "prism": 0.0
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,5 +1,6 @@
 use super::{
-    effect_card, effect_color, effect_details, effect_toggle, float_param_slider, pattern_seed,
+    effect_color, effect_details, effect_toggle, float_param_slider, pattern_seed,
+    styled_effect_card, StyleChoice,
 };
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::effect_params::{fog, IMAGE_LIGHTS};
@@ -167,13 +168,15 @@ pub(crate) fn show(
     settings: &mut FogEffectSettings,
     enabled: &mut bool,
     remove: &mut bool,
+    style: Option<&mut StyleChoice>,
 ) -> bool {
-    effect_card(
+    styled_effect_card(
         ui,
         MaskEffect::Fog,
         settings,
         enabled,
         remove,
+        style,
         |ui, settings| {
             let mut changed = float_param_slider(ui, &mut settings.amount, fog::AMOUNT);
             changed |= float_param_slider(ui, &mut settings.density, fog::DENSITY);

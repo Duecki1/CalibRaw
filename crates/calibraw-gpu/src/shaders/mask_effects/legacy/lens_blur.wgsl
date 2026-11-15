@@ -1,17 +1,12 @@
+// The legacy Lens Blur, as released in v1.4.1 (legacy/lens_blur.rs in
+// calibraw-core): a gather over an aperture polygon in tile pixels, from the
+// first mask Blur stage (blur.wgsl `apply_mask_focus_blurs`), on
+// scene-linear Rec.2020 that may be negative or above 1. The mask blurs
+// evenly. Kept so that old edits render as they did.
+//
+// legacy: remove in v2.0.0
 
 const MASK_LENS_BLUR_PI: f32 = 3.14159265;
-
-// Match presence_reference_scale, retaining fractional radii and a true zero.
-// The bilinear footprint is contained in the existing 144-pixel blur halo.
-// `maximum` is in native pixels, so previews limit at the same share of the photo.
-fn mask_focus_blur_radius(reference_pixels: f32, maximum: f32) -> f32 {
-    let scale = Common::resolution_scale(0.55, 3.0);
-    return clamp(
-        reference_pixels * scale,
-        0.0,
-        maximum * Common::processing_per_source_pixel(),
-    );
-}
 
 fn mask_lens_blur_at(pos: vec2<i32>, params: MaskEffectParams, mask: MaskBlurCoverage) -> vec3<f32> {
     let radius = mask_focus_blur_radius(mask_effect_lane(params, LENS_BLUR_RADIUS_LANE), 144.0);

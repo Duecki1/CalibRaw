@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::i18n::tr;
-use crate::pipeline::SceneLightQuality;
+use crate::pipeline::RenderTier;
 use anyhow::Context as _;
 
 impl CalibRawApp {
@@ -20,7 +20,7 @@ impl CalibRawApp {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         register: impl FnOnce(RawGpuPipeline) -> PreviewPipeline,
-        sharp: &PreviewDetail,
+        sharp: &PreviewDetail<CropPipeline>,
         reduced: &Arc<LoadedRaw>,
     ) -> anyhow::Result<PreviewDetail> {
         let full_raw = self
@@ -62,7 +62,7 @@ impl CalibRawApp {
                 &reduced.profile_color,
             )
             .with_look_lut(self.develop.target_look.as_ref())
-            .with_scene_light_quality(SceneLightQuality::Draft);
+            .with_render_tier(RenderTier::Draft);
         let pipeline = RawGpuPipeline::new(
             device,
             queue,
@@ -124,7 +124,7 @@ impl CalibRawApp {
                 &reduced.raw.profile_color,
             )
             .with_look_lut(self.develop.target_look.as_ref())
-            .with_scene_light_quality(SceneLightQuality::Draft);
+            .with_render_tier(RenderTier::Draft);
         let full_frame = full_frame_tone_pipeline(
             self.preview.gpu_pipeline.as_ref(),
             self.preview.navigation.as_ref(),

@@ -86,9 +86,13 @@ impl CalibRawApp {
             queue: render_state.queue.clone(),
             raw,
             original_exposure: self.preview.original_exposure,
-            final_exposure: self.develop.exposure,
+            // The edit as it renders, with its switched-off cards at rest.
+            final_exposure: self
+                .develop
+                .exposure
+                .applied(self.develop.lens_correction.enabled),
             final_geometry: self.develop.geometry,
-            final_masks: self.masks.stack.clone(),
+            final_masks: self.applied_masks(),
             final_remove: self.inpaint.edits.as_ref().clone(),
             final_look,
             gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),

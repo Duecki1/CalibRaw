@@ -3,6 +3,7 @@ pub use calibraw_core::pipeline::*;
 mod export;
 pub mod focus_stack;
 mod gpu;
+pub(crate) use gpu::in_flight_summary;
 mod gpu_cache;
 pub mod hdr;
 mod raw_merge;
@@ -26,6 +27,7 @@ pub use gpu::{
     preview_mask_layer_capacity, GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, GpuWait,
     MobilePreviewRole, PipelineOptions, PipelineSetupTimes, PreviewClippingGpu, PreviewHistogram,
     PreviewHistogramGpu, PreviewResourceShape, ProcessingQuality, RawGpuPipeline,
-    RawGpuProgramTemplate, RemoveSceneContext, SceneLightQuality, PREVIEWED_PROFILE_BYTES,
+    RawGpuProgramTemplate, RemoveSceneContext, RenderTier, UnrenderedEffect,
+    PREVIEWED_PROFILE_BYTES,
 };
 pub use gpu_cache::PersistentGpuPipelineCache;

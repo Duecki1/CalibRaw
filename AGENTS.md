@@ -26,12 +26,15 @@ Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPM
 - Code that reads sidecars, presets or settings saved in an older layout lives in `crates/calibraw-core/src/migrations/`, one file per layout change, and runs when the file is decoded, so the current model keeps no legacy fields or branches. Compatibility code that cannot be separated stays next to the code it adapts and is listed in `migrations/mod.rs`.
 - Mark every migration with a comment `migration: remove in vX.Y.Z`, the first version allowed to drop it. User files (sidecars, presets, settings): the next major version after the release that ships it. App-data cleanup: two minor versions later. Deleting a migration deletes its tests and old-layout fixtures and is noted in the release notes.
 - Report a migrated sidecar through `LoadedSidecar::migrated`, so it is saved again in the current layout.
+- An effect a rebuilt one replaces becomes legacy: it moves to `effects/legacy/` in calibraw-core and `shaders/mask_effects/legacy/` in calibraw-gpu, marked `legacy: remove in vX.Y.Z` by the same rule as user files, and keeps rendering old edits bit-identically ([Legacy effects](docs/DEVELOPMENT.md#legacy-effects)).
 
 ## WGSL and GPU
 
 - Production shaders live in `.wgsl` files. Document colour spaces, coordinate systems, boundary handling and precision.
 - Rust/WGSL buffer layouts, bindings and shared IDs are verified by `layout_contract_tests`; change both sides and the test together.
 - Structural cleanup preserves pass order, clamps, negative/HDR handling, tile halos and cache behavior.
+- Previews render costly work in the Draft `RenderTier` while a control, handle or the view is dragged, and in Final once it is released; exports always render Final. An effect too slow for a drag gets a Draft path (`draft: true` in its registry row) that only coarsens detail, never the look, and leaves Final bit-identical; no effect gets a drag mode of its own.
+- A preview's Output stage starts at the first part a change reaches (`output_parts.rs`). Code that writes the work textures, or changes what the stage reads other than through `GpuParams`, calls `forget_output()`; a value read only by a later part is classified by the shaders that read it.
 
 ## UI
 

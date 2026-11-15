@@ -1,11 +1,17 @@
-use super::instances::{mirrored_position, EffectInstances};
-use super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
-use super::params::light_rays::*;
-use super::settings::{EffectControl, EffectControls, EffectSettings};
+//! Light Rays as it was before the rebuilt Light Rays (light_shafts.rs)
+//! replaced it: procedural shafts drawn in 2D from each source through the
+//! openings the mask paints, shown only where the mask covers
+//! (mask_effects/legacy/light_rays.wgsl). Each source is also a scene light
+//! that media scatter (`scene_light_at` in scene_lights.wgsl).
+//!
+//! legacy: remove in v2.0.0
 
-/// Light shafts from one or more sources through the openings the mask
-/// paints, shown only where the mask covers. The sources share the look of
-/// their rays.
+use super::super::instances::EffectInstances;
+use super::super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
+use super::super::params::light_rays::*;
+use super::super::settings::{EffectControl, EffectControls, EffectSettings};
+
+/// The sources share the look of their rays.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct LightRaysEffectSettings {
@@ -57,14 +63,6 @@ impl LightRaySource {
     fn is_active(&self) -> bool {
         self.amount.abs() > 1e-6 && self.length > 1e-6
     }
-
-    /// A copy of this source placed across the frame from it.
-    pub fn mirrored(&self) -> Self {
-        Self {
-            source: mirrored_position(self.source, [SOURCE_X, SOURCE_Y]),
-            ..*self
-        }
-    }
 }
 
 effect_lanes! {
@@ -94,6 +92,7 @@ impl EffectSettings for LightRaysEffectSettings {
         self.sources.count()
     }
 
+    /// Validates saved values; its card shows none of them.
     fn controls(&mut self) -> EffectControls<'_> {
         let mut shown = Vec::new();
         for source in self.sources.as_mut_slice() {

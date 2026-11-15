@@ -4,8 +4,8 @@ use super::{
     mask_atlas_edge, mask_region_texture_extent, mask_source_region_uv, required_export_tile_halo,
     CfaKind, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm, GpuWait,
     LensGeometryMap, LoadedRaw, MaskStack, NativeRect, PipelineOptions, ProcessingQuality,
-    ProcessingStage, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveEditState,
-    RemoveSceneContext, SrgbOutputTransform, TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
+    ProcessingStage, ProxySpec, RawGpuPipeline, RemoveEditState, RemoveSceneContext,
+    SrgbOutputTransform, TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
     MIN_EXPORT_TILE_HALO, SLOW_GPU_WAIT, TONE_GUIDE_CELL_SIZE,
 };
 use super::{
@@ -138,7 +138,7 @@ struct ExportContext<'a> {
     queue: &'a wgpu::Queue,
     events: &'a mpsc::Sender<ExportEvent>,
     cancellation: &'a AtomicBool,
-    program_template: Option<&'a RawGpuProgramTemplate>,
+    program_prewarm: Option<&'a GpuProgramPrewarm>,
     /// The RAM the export may hold its intermediates in.
     memory: &'a IntermediateMemory,
 }

@@ -33,7 +33,9 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_detail_pyramid: [wgpu::BindGroup; DETAIL_PYRAMID_LEVELS],
     pub(in crate::pipeline::gpu) bg_adjust_effects: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_effects_copy: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_mask_blur: [wgpu::BindGroup; MASK_BLUR_STEPS],
+    /// The mask Blur steps after the first, which binds the scene's inputs
+    /// (`InputBoundPass::EffectsFromTex1`).
+    pub(in crate::pipeline::gpu) bg_mask_blur: [wgpu::BindGroup; MASK_BLUR_STEPS - 1],
     pub(in crate::pipeline::gpu) bg_glow_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_glow_blur: [wgpu::BindGroup; GLOW_BLUR_STEPS],
     pub(in crate::pipeline::gpu) bg_glow_prepare_after_blur: wgpu::BindGroup,
@@ -47,6 +49,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     layouts: &BindGroupLayouts,
     buffers: &PipelineBuffers,
     surfaces: &PipelineSurfaces,
+    dispatch_bands: &DispatchBands,
     cfa_kind: CfaKind,
 ) -> BindGroups {
     let PipelineBuffers {
@@ -66,6 +69,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         highlight_work_b_view,
         rgb_source_view,
         binned_ai_view,
+        binned_clipping_view,
         scene_view,
         tex1_view,
         tex2_view,
@@ -79,6 +83,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         mask_view,
         mask_sampler,
         xtrans_homogeneity_view,
+        xtrans_complete_view,
         ..
     } = surfaces;
 
@@ -86,7 +91,10 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         device,
         "bg scene-tone uniforms",
         &layouts.bgl_scene_tone,
-        &[buffer_binding(0, scene_tone_uniforms_buffer)],
+        &[
+            buffer_binding(0, scene_tone_uniforms_buffer),
+            dispatch_bands.binding(1),
+        ],
     );
     let effects_bind_group = create_bind_group(
         device,
@@ -119,6 +127,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             texture_binding(10, highlight_work_a_view),
             texture_binding(11, rgb_source_view),
             texture_binding(12, binned_ai_view),
+            texture_binding(15, binned_clipping_view),
             texture_binding(13, lens_shading_view),
             texture_binding(14, highlight_model_view),
         ],
@@ -232,7 +241,10 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     // result goes to highlight work A and the smoothed one lands in highlight
     // work B. Passes that read one state bind it as lo and hi; the green and
     // smoothing passes read none and bind tex2 and tex1 throughout.
-    let bg_xtrans_markesteijn = xtrans_homogeneity_view.as_ref().map(|homogeneity_view| {
+    let xtrans_views = xtrans_homogeneity_view
+        .as_ref()
+        .zip(xtrans_complete_view.as_ref());
+    let bg_xtrans_markesteijn = xtrans_views.map(|(homogeneity_view, complete_view)| {
         let pass = |label: &str,
                     layout: &wgpu::BindGroupLayout,
                     states: [&wgpu::TextureView; 4],
@@ -296,19 +308,45 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                 [scene_view; 4],
                 &[texture_binding(24, highlight_work_b_view)],
             ),
+            // Buffers 0-3 complete into highlight work A and the completed
+            // state's own texture, which frees tex1 and tex2 for buffers 4-7.
+            pass(
+                "bg X-Trans completed buffers 0-3",
+                &layouts.bgl_xtrans_complete,
+                [tex1_view, tex2_view, tex1_view, tex2_view],
+                &[
+                    texture_binding(24, highlight_work_a_view),
+                    texture_binding(32, complete_view),
+                ],
+            ),
+            pass(
+                "bg X-Trans completed buffers 4-7",
+                &layouts.bgl_xtrans_complete,
+                [
+                    scene_view,
+                    highlight_work_b_view,
+                    scene_view,
+                    highlight_work_b_view,
+                ],
+                &[
+                    texture_binding(24, tex1_view),
+                    texture_binding(32, tex2_view),
+                ],
+            ),
             pass(
                 "bg X-Trans homogeneity",
                 &layouts.bgl_xtrans_homogeneity,
-                [tex1_view, tex2_view, scene_view, highlight_work_b_view],
+                [highlight_work_a_view, complete_view, tex1_view, tex2_view],
                 &[texture_binding(25, homogeneity_view)],
             ),
+            // The result goes to the scene, which buffers 4-7 no longer use.
             pass(
                 "bg X-Trans accumulate",
                 &layouts.bgl_xtrans_accumulate,
-                [tex1_view, tex2_view, scene_view, highlight_work_b_view],
+                [highlight_work_a_view, complete_view, tex1_view, tex2_view],
                 &[
                     texture_binding(31, homogeneity_view),
-                    texture_binding(24, highlight_work_a_view),
+                    texture_binding(24, scene_view),
                 ],
             ),
             pass(
@@ -316,7 +354,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                 &layouts.bgl_xtrans_smoothing,
                 [tex1_view; 4],
                 &[
-                    texture_binding(26, highlight_work_a_view),
+                    texture_binding(26, scene_view),
                     texture_binding(24, highlight_work_b_view),
                 ],
             ),
@@ -502,13 +540,12 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                 ],
             )
         };
-    // Step 0 reads the effects output in tex1; later steps alternate between
-    // tex2 and display_linear.
-    let bg_mask_blur = std::array::from_fn(|step| {
-        let (read_view, write_view) = match step {
-            0 => (tex1_view, tex2_view),
-            _ => ping_pong(step - 1, tex2_view, display_linear_view),
-        };
+    // Step 0 reads the effects output in tex1 and writes tex2 with the
+    // scene's inputs (`InputBoundPass::EffectsFromTex1`); later steps
+    // alternate between tex2 and display_linear.
+    let bg_mask_blur = std::array::from_fn(|index| {
+        let step = index + 1;
+        let (read_view, write_view) = ping_pong(index, tex2_view, display_linear_view);
         make_mask_blur_bind_group(
             &format!("bg mask Blur diffusion {step}"),
             read_view,
@@ -661,6 +698,8 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
         contour_layout: layouts.bgl_contour_accumulate.clone(),
         scene_emission_layouts: layouts.bgl_scene_emission.clone(),
         scene_bake_accumulation_layout: layouts.bgl_scene_bake_accumulation.clone(),
+        styled_glow_layouts: layouts.bgl_styled_glow.clone(),
+        defocus_layouts: layouts.bgl_defocus.clone(),
         camera_uniforms: buffers.camera_uniforms_buffer.clone(),
         mask_data: buffers.mask_data_buffer.clone(),
         tone_stats: buffers.tone_stats_buffer.clone(),

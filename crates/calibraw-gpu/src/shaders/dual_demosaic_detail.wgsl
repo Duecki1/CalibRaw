@@ -13,7 +13,8 @@
 @group(0) @binding(22) var dual_low_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 
 @compute @workgroup_size(8, 8, 1)
-fn dual_smooth_detail(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn dual_smooth_detail(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     textureStore(

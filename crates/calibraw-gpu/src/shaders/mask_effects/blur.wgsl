@@ -1,3 +1,15 @@
+// Match presence_reference_scale, retaining fractional radii and a true zero.
+// The bilinear footprint is contained in the existing 144-pixel blur halo.
+// `maximum` is in native pixels, so previews limit at the same share of the photo.
+fn mask_focus_blur_radius(reference_pixels: f32, maximum: f32) -> f32 {
+    let scale = Common::resolution_scale(0.55, 3.0);
+    return clamp(
+        reference_pixels * scale,
+        0.0,
+        maximum * Common::processing_per_source_pixel(),
+    );
+}
+
 // The mask a blur is confined to: its slot and its coverage at the pixel being
 // blurred, which is above zero.
 struct MaskBlurCoverage {
@@ -37,24 +49,23 @@ const MASK_BLUR_STAGE_COUNT: u32 = 5u;
 
 fn mask_blur_stage_step(stage: u32) -> i32 {
     var reference_step = 1.0;
-    switch stage {
-        case 2u: { reference_step = 2.0; }
-        case 3u: { reference_step = 3.0; }
-        case 4u: { reference_step = 5.0; }
-        default: {}
+    if stage == 2u {
+        reference_step = 2.0;
+    } else if stage == 3u {
+        reference_step = 3.0;
+    } else if stage == 4u {
+        reference_step = 5.0;
     }
     return SceneAdjustments::presence_step(reference_step, 15);
 }
 
 fn mask_blur_stage_mix(radius: f32, stage: u32) -> f32 {
     let normalized_radius = clamp(radius / 16.0, 0.0, 1.0);
-    switch stage {
-        case 0u: { return smoothstep(0.0, 0.12, normalized_radius); }
-        case 1u: { return smoothstep(0.08, 0.30, normalized_radius); }
-        case 2u: { return smoothstep(0.22, 0.50, normalized_radius); }
-        case 3u: { return smoothstep(0.42, 0.75, normalized_radius); }
-        default: { return smoothstep(0.68, 1.0, normalized_radius); }
-    }
+    if stage == 0u { return smoothstep(0.0, 0.12, normalized_radius); }
+    if stage == 1u { return smoothstep(0.08, 0.30, normalized_radius); }
+    if stage == 2u { return smoothstep(0.22, 0.50, normalized_radius); }
+    if stage == 3u { return smoothstep(0.42, 0.75, normalized_radius); }
+    return smoothstep(0.68, 1.0, normalized_radius);
 }
 
 fn mask_blur_stage_mix_sum(radius: f32) -> f32 {
@@ -108,7 +119,7 @@ fn mask_blur_stage_amount(pos: vec2<i32>, stage: u32) -> f32 {
     var retained_source = 1.0;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_applies(state, MASK_EFFECT_BLUR_ID) {
             continue;
         }
@@ -133,43 +144,55 @@ fn mask_blur_stage_amount(pos: vec2<i32>, stage: u32) -> f32 {
 }
 
 // What the focus-blur loop reads of a slot before it blurs: the effect's Amount,
-// 0 to 1, and how far it blurs in reference pixels (Lens Blur's and Tilt-Shift's
-// Radius, Motion Blur's Distance, Radial Blur's Strength). Zero for any other effect.
+// 0 to 1, and how far it blurs (the legacy Lens Blur's and Tilt-Shift's Radius,
+// Motion Blur's Distance, Radial Blur's Strength in reference pixels; Lens Blur's
+// largest radius, which it blends at full strength). Zero for any other effect.
 struct MaskFocusBlur {
     amount: f32,
     size: f32,
 }
 
 fn mask_focus_blur(effect_id: u32, params: MaskEffectParams) -> MaskFocusBlur {
-    switch effect_id {
-        case MASK_EFFECT_LENS_BLUR_ID: {
-            return MaskFocusBlur(
-                mask_effect_percent(params, LENS_BLUR_AMOUNT_LANE),
-                mask_effect_lane(params, LENS_BLUR_RADIUS_LANE),
-            );
-        }
-        case MASK_EFFECT_MOTION_BLUR_ID: {
-            return MaskFocusBlur(
-                mask_effect_percent(params, MOTION_BLUR_AMOUNT_LANE),
-                mask_effect_lane(params, MOTION_BLUR_DISTANCE_LANE),
-            );
-        }
-        case MASK_EFFECT_RADIAL_BLUR_ID: {
-            return MaskFocusBlur(
-                mask_effect_percent(params, RADIAL_BLUR_AMOUNT_LANE),
-                mask_effect_lane(params, RADIAL_BLUR_STRENGTH_LANE),
-            );
-        }
-        case MASK_EFFECT_TILT_SHIFT_ID: {
-            return MaskFocusBlur(
-                mask_effect_percent(params, TILT_SHIFT_AMOUNT_LANE),
-                mask_effect_lane(params, TILT_SHIFT_RADIUS_LANE),
-            );
-        }
-        default: {
-            return MaskFocusBlur(0.0, 0.0);
-        }
+    // Each focus blur is compiled only into the programs of an effect set
+    // that holds it (effect_programs.rs).
+#ifdef EFFECT_LENS_BLUR
+    if effect_id == MASK_EFFECT_LENS_BLUR_ID {
+        return MaskFocusBlur(
+            mask_effect_percent(params, LENS_BLUR_AMOUNT_LANE),
+            mask_effect_lane(params, LENS_BLUR_RADIUS_LANE),
+        );
     }
+#endif
+#ifdef EFFECT_DEFOCUS
+    if effect_id == MASK_EFFECT_DEFOCUS_ID {
+        return MaskFocusBlur(1.0, mask_effect_lane(params, DEFOCUS_RADIUS_LANE));
+    }
+#endif
+#ifdef EFFECT_MOTION_BLUR
+    if effect_id == MASK_EFFECT_MOTION_BLUR_ID {
+        return MaskFocusBlur(
+            mask_effect_percent(params, MOTION_BLUR_AMOUNT_LANE),
+            mask_effect_lane(params, MOTION_BLUR_DISTANCE_LANE),
+        );
+    }
+#endif
+#ifdef EFFECT_RADIAL_BLUR
+    if effect_id == MASK_EFFECT_RADIAL_BLUR_ID {
+        return MaskFocusBlur(
+            mask_effect_percent(params, RADIAL_BLUR_AMOUNT_LANE),
+            mask_effect_lane(params, RADIAL_BLUR_STRENGTH_LANE),
+        );
+    }
+#endif
+#ifdef EFFECT_TILT_SHIFT
+    if effect_id == MASK_EFFECT_TILT_SHIFT_ID {
+        return MaskFocusBlur(
+            mask_effect_percent(params, TILT_SHIFT_AMOUNT_LANE),
+            mask_effect_lane(params, TILT_SHIFT_RADIUS_LANE),
+        );
+    }
+#endif
+    return MaskFocusBlur(0.0, 0.0);
 }
 
 // `stored_amount` is the amount the previous stage stored at `pos` (unused
@@ -193,13 +216,21 @@ fn apply_mask_blur_stage(
             combined_amount,
         );
     }
+    return rgb;
+}
 
-    if stage != 0u {
-        return rgb;
-    }
+// The focus blurs (Lens Blur, Motion Blur, Radial Blur, Tilt-Shift and the
+// legacy Lens Blur) of the first stage, over `diffused`, the stage's diffused
+// image, each blurring the neighbourhood of `source_rgb`, the stage's input.
+// Only the first stage's program calls this: Lens Blur reads its result, which
+// its own passes made from that input (defocus.wgsl) and only that program
+// binds (the creative layout), and WGSL checks the bindings of every function
+// a program calls.
+fn apply_mask_focus_blurs(pos: vec2<i32>, source_rgb: vec3<f32>, diffused: vec3<f32>) -> vec3<f32> {
+    var rgb = diffused;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
+        let state = Common::mask_metadata(index);
         if !Common::mask_slot_active(state) { continue; }
         let effect_id = Common::mask_effect_id(state);
         let params = mask_effect_params(index);
@@ -210,61 +241,103 @@ fn apply_mask_blur_stage(
         if amount <= 1e-6 { continue; }
         let mask = MaskBlurCoverage(index, coverage);
 
+        // The IDs differ, so at most one of these blocks runs.
         var adjusted = source_rgb;
+#ifdef EFFECT_DEFOCUS
+        if effect_id == MASK_EFFECT_DEFOCUS_ID {
+            if !defocus_result_ready(index) { continue; }
+            adjusted = mask_defocus_at(pos, index);
+        }
+#endif
+#ifdef EFFECT_LENS_BLUR
         if effect_id == MASK_EFFECT_LENS_BLUR_ID {
             adjusted = mask_lens_blur_at(pos, params, mask);
-        } else if effect_id == MASK_EFFECT_MOTION_BLUR_ID {
+        }
+#endif
+#ifdef EFFECT_MOTION_BLUR
+        if effect_id == MASK_EFFECT_MOTION_BLUR_ID {
             adjusted = mask_motion_blur_at(pos, params, mask);
-        } else if effect_id == MASK_EFFECT_RADIAL_BLUR_ID {
+        }
+#endif
+#ifdef EFFECT_RADIAL_BLUR
+        if effect_id == MASK_EFFECT_RADIAL_BLUR_ID {
             adjusted = mask_radial_blur_at(pos, params, mask);
-        } else if effect_id == MASK_EFFECT_TILT_SHIFT_ID {
+        }
+#endif
+#ifdef EFFECT_TILT_SHIFT
+        if effect_id == MASK_EFFECT_TILT_SHIFT_ID {
             let defocus = mask_tilt_shift_weight(pos, params);
             if defocus <= 1e-6 { continue; }
             adjusted = mask_tilt_shift_at(pos, blur.size * defocus, mask);
         }
+#endif
         rgb = mix(rgb, adjusted, amount);
     }
     return rgb;
 }
 
+fn mask_blur_stage_in_bounds(gid: vec3<u32>) -> bool {
+    return gid.x < Common::camera_uniforms.width && gid.y < Common::camera_uniforms.height;
+}
+
+// The next stage's amount at `pos`, for its taps (`mask_blur_diffused_at`).
+// Nothing after the stages reads alpha.
+fn mask_blur_next_amount(pos: vec2<i32>, stage: u32) -> f32 {
+    if stage + 1u < MASK_BLUR_STAGE_COUNT {
+        return mask_blur_stage_amount(pos, stage + 1u);
+    }
+    return 1.0;
+}
+
 fn store_mask_blur_stage(gid: vec3<u32>, stage: u32) {
-    if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
+    if !mask_blur_stage_in_bounds(gid) { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let source = SceneAdjustments::local_effects_rgba_at(pos);
-    // The next stage's amount here, for its taps (`mask_blur_diffused_at`).
-    // Nothing after the stages reads alpha.
-    var next_amount = 1.0;
-    if stage + 1u < MASK_BLUR_STAGE_COUNT {
-        next_amount = mask_blur_stage_amount(pos, stage + 1u);
-    }
     textureStore(
         SceneAdjustments::creative_effects_out,
         pos,
-        vec4<f32>(apply_mask_blur_stage(pos, source.xyz, source.w, stage), next_amount),
+        vec4<f32>(apply_mask_blur_stage(pos, source.xyz, source.w, stage), mask_blur_next_amount(pos, stage)),
+    );
+}
+
+fn store_first_mask_blur_stage(gid: vec3<u32>) {
+    if !mask_blur_stage_in_bounds(gid) { return; }
+    let pos = vec2<i32>(i32(gid.x), i32(gid.y));
+    let source = SceneAdjustments::local_effects_rgba_at(pos);
+    let diffused = apply_mask_blur_stage(pos, source.xyz, source.w, 0u);
+    textureStore(
+        SceneAdjustments::creative_effects_out,
+        pos,
+        vec4<f32>(apply_mask_focus_blurs(pos, source.xyz, diffused), mask_blur_next_amount(pos, 0u)),
     );
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_mask_blur_0(@builtin(global_invocation_id) gid: vec3<u32>) {
-    store_mask_blur_stage(gid, 0u);
+fn diffuse_mask_blur_0(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
+    store_first_mask_blur_stage(gid);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_mask_blur_1(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_mask_blur_1(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_mask_blur_stage(gid, 1u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_mask_blur_2(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_mask_blur_2(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_mask_blur_stage(gid, 2u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_mask_blur_3(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_mask_blur_3(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_mask_blur_stage(gid, 3u);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn diffuse_mask_blur_4(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn diffuse_mask_blur_4(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     store_mask_blur_stage(gid, 4u);
 }

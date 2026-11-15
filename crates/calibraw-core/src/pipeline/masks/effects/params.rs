@@ -152,6 +152,7 @@ pub mod blur {
     );
 }
 
+/// The legacy Lens Blur (legacy/lens_blur.rs), as released in v1.4.1.
 pub mod lens_blur {
     use super::*;
 
@@ -205,6 +206,32 @@ pub mod lens_blur {
         0,
         Some("Makes bright out-of-focus highlights stand out."),
     );
+}
+
+/// Lens Blur (defocus.rs). The meaning of each value is set there.
+pub mod defocus {
+    use super::*;
+
+    float_param!(BLUR_AMOUNT, "Blur amount", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(BOOST, "Boost", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(BLADES, "Aperture blades", 3.0, 12.0, 6.0, 1.0, 0, None);
+    float_param!(ROTATION, "Bokeh rotation", -180.0, 180.0, 0.0, 1.0, 0, None);
+
+    pub const FOCUS_BY_DEPTH: ToggleSpec = ToggleSpec {
+        label: "Focus by depth",
+        help: "Generate and use shared scene depth so surfaces inside the focus range stay sharp and blur grows with their distance from it. Turn off to blur the mask evenly; the focus range is preserved.",
+    };
+
+    // The focus range's two ends, in control depth: 0 is the nearest surface
+    // and 100 the farthest, even in the log of distance between them, as
+    // Relight's Light depth.
+    float_param!(FOCUS_NEAR, "Focus near", 0.0, 100.0, 0.0, 0.1, 1, None);
+    float_param!(FOCUS_FAR, "Focus far", 0.0, 100.0, 20.0, 0.1, 1, None);
+
+    /// Help for the focus range track, on its static label.
+    pub const FOCUS_RANGE_HELP: &str = "Surfaces at these depths stay sharp; blur grows with distance from the range. Blur amount sets the blur at the scene's most out-of-focus end.";
+    /// Help for the Bokeh shape choice.
+    pub const BOKEH_SHAPE_HELP: &str = "The shape of out-of-focus lights: Circle as a modern lens, Bubble with a bright rim, Blades as a stopped-down aperture, Ring as a mirror lens, Cat's eye narrowing toward the corners as many fast lenses do.";
 }
 
 pub mod motion_blur {
@@ -464,10 +491,46 @@ pub mod glow {
         0,
         Some("How much the glow lights its surroundings, Fog, Smoke, Rain and wet ground. Only a self-illuminating Glow lights the scene."),
     );
-    pub const SELF_ILLUMINATING: ToggleSpec = ToggleSpec {
-        label: "Self-illuminating",
-        help: "The mask emits the glow color itself, so it also shows on dark surfaces. Turn off to let only bright areas inside the mask glow.",
-    };
+}
+
+/// Glow (styled_glow.rs). The meaning of each value is set there.
+pub mod styled_glow {
+    use super::*;
+
+    float_param!(AMOUNT, "Amount", 0.0, 200.0, 50.0, 0.5, 0, None);
+    float_param!(CORE, "Core", 0.0, 100.0, 100.0, 0.5, 0, None);
+    float_param!(RANGE, "Range", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(SPREAD, "Spread", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(WARMTH, "Warmth", -100.0, 100.0, 0.0, 0.5, 0, None);
+    float_param!(DISPERSION, "Dispersion", 0.0, 100.0, 0.0, 0.5, 0, None);
+    float_param!(DIRECTION, "Direction", -180.0, 180.0, 0.0, 1.0, 0, None);
+    float_param!(SOFTNESS, "Softness", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(SPLIT, "Split", 0.0, 100.0, 0.0, 0.5, 0, None);
+    float_param!(
+        SPLIT_DIRECTION,
+        "Split direction",
+        -180.0,
+        180.0,
+        180.0,
+        1.0,
+        0,
+        None
+    );
+    /// The card's section with Core and, for Motion, Streak and Star,
+    /// Softness.
+    pub const GLOW_DETAILS: &str = "Glow details";
+    /// Help for Glow details without Softness.
+    pub const GLOW_DETAILS_HELP: &str =
+        "Core: lower it so the brightest glow keeps its color instead of burning to white.";
+    /// Help for Glow details with Softness.
+    pub const STREAK_DETAILS_HELP: &str = "Core: lower it so the brightest glow keeps its color instead of burning to white. Softness: how wide the streaks are.";
+    /// The card's section with Dispersion and Split.
+    pub const COLOR_SEPARATION: &str = "Color separation";
+    /// Help for Color separation with Dispersion.
+    pub const COLOR_SEPARATION_HELP: &str = "Dispersion: the glow's red spreads wider than its blue, as light through a lens does. Split: moves the glow's red and blue apart; the photo stays in place.";
+    /// Help for Color separation without Dispersion (Motion).
+    pub const SPLIT_HELP: &str =
+        "Split: moves the glow's red and blue apart; the photo stays in place.";
 }
 
 pub mod light_rays {
@@ -558,6 +621,23 @@ pub mod light_rays {
         [1.0, 0.85, 0.62],
         "Choose the color emitted by the Light Rays effect.",
     );
+}
+
+/// Light Rays (light_shafts.rs). The meaning of each value is set there.
+pub mod light_shafts {
+    use super::*;
+
+    float_param!(AMOUNT, "Amount", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(LENGTH, "Length", 0.0, 200.0, 100.0, 1.0, 0, None);
+    float_param!(SOURCE_X, "Source X", -50.0, 150.0, 50.0, 1.0, 0, None);
+    float_param!(SOURCE_Y, "Source Y", -50.0, 150.0, 20.0, 1.0, 0, None);
+    float_param!(WARMTH, "Warmth", -100.0, 100.0, 20.0, 0.5, 0, None);
+    float_param!(PENETRATION, "Penetration", 0.0, 100.0, 0.0, 0.5, 0, None);
+    // The 2D style's ray look, from the legacy Light Rays.
+    float_param!(SPREAD, "Spread", 0.0, 45.0, 8.0, 0.25, 1, None);
+    float_param!(RAY_COUNT, "Ray Count", 4.0, 96.0, 32.0, 1.0, 0, None);
+    float_param!(VARIATION, "Variation", 0.0, 100.0, 65.0, 0.5, 0, None);
+    float_param!(SOFTNESS, "Softness", 0.0, 100.0, 60.0, 0.5, 0, None);
 }
 
 pub mod relight {
@@ -750,6 +830,14 @@ pub mod pixelate {
     );
 }
 
+pub mod color_fringe {
+    use super::*;
+
+    float_param!(AMOUNT, "Amount", 0.0, 100.0, 50.0, 0.5, 0, None);
+    float_param!(PRISM, "Prism", 0.0, 100.0, 0.0, 0.5, 0, None);
+    float_param!(DIRECTION, "Direction", -180.0, 180.0, -45.0, 1.0, 0, None);
+}
+
 pub mod grain {
     use super::*;
 
@@ -805,6 +893,9 @@ pub mod grain {
     );
 }
 
+/// Halation (effects/legacy/halation.rs).
+///
+/// legacy: remove in v2.0.0
 pub mod halation {
     use super::*;
 

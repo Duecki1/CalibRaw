@@ -195,28 +195,22 @@ fn create_backup_copy(path: &Path) -> Result<PathBuf, SidecarError> {
     }
 }
 
-pub fn reset_desktop_adjustments(raw_path: &Path) -> Result<bool, String> {
-    reset_desktop_adjustments_impl(raw_path, None)
-}
-
-pub fn reset_desktop_adjustments_with_editing_time(
-    raw_path: &Path,
-    editing_time_ms: u64,
-) -> Result<bool, String> {
-    reset_desktop_adjustments_impl(raw_path, Some(editing_time_ms))
-}
-
-fn reset_desktop_adjustments_impl(
+/// Resets the edits of the RAW at `raw_path` to those a first open gives it
+/// ([`reset_edit_state`]; `camera_match`: whether Camera match is on). The
+/// editing time is `editing_time_override_ms` when given, else the
+/// sidecar's. Returns whether a sidecar remains.
+pub fn reset_desktop_adjustments(
     raw_path: &Path,
     editing_time_override_ms: Option<u64>,
+    camera_match: bool,
 ) -> Result<bool, String> {
     let metadata = load_sidecar_metadata(raw_path).map_err(|error| error.to_string())?;
     let review = metadata.review;
     let editing_time_ms = editing_time_override_ms.unwrap_or(metadata.editing_time_ms);
     // An unreadable edit state has no camera look to keep.
     let previous = load_desktop(raw_path).ok().flatten();
-    let edits = reset_edit_state(previous.as_ref().map(|loaded| &loaded.edits));
-    if review == PhotoReview::default() && editing_time_ms == 0 && edits.camera_look.is_none() {
+    let edits = reset_edit_state(previous.as_ref().map(|loaded| &loaded.edits), camera_match);
+    if review == PhotoReview::default() && editing_time_ms == 0 && edits.camera_match.is_off() {
         return remove_desktop_edits(raw_path);
     }
     // Reset, the photo is back at a start: the defaults with its camera look.

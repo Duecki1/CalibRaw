@@ -69,14 +69,13 @@ fn profile_hsv_to_rgb(hsv: vec3<f32>) -> vec3<f32> {
     let p = hsv.z * (1.0 - hsv.y);
     let q = hsv.z * (1.0 - hsv.y * f);
     let t = hsv.z * (1.0 - hsv.y * (1.0 - f));
-    switch sector {
-        case 0: { return vec3<f32>(hsv.z, t, p); }
-        case 1: { return vec3<f32>(q, hsv.z, p); }
-        case 2: { return vec3<f32>(p, hsv.z, t); }
-        case 3: { return vec3<f32>(p, q, hsv.z); }
-        case 4: { return vec3<f32>(t, p, hsv.z); }
-        default: { return vec3<f32>(hsv.z, p, q); }
-    }
+    // Comparisons, not `switch` (see common.wgsl).
+    if sector == 0 { return vec3<f32>(hsv.z, t, p); }
+    if sector == 1 { return vec3<f32>(q, hsv.z, p); }
+    if sector == 2 { return vec3<f32>(p, hsv.z, t); }
+    if sector == 3 { return vec3<f32>(p, q, hsv.z); }
+    if sector == 4 { return vec3<f32>(t, p, hsv.z); }
+    return vec3<f32>(hsv.z, p, q);
 }
 
 fn profile_map_index(map_info: vec4<u32>, h: u32, s: u32, v: u32) -> u32 {

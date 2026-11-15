@@ -1,5 +1,7 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::camera_look::CameraMatch;
+use crate::pipeline::CardSwitch;
 use crate::pipeline::FilmSettlement;
 
 use super::export::{ai_denoise_phase, run_export_item};
@@ -49,6 +51,9 @@ struct DesktopLibraryExportContext {
     camera_profile_folder: Option<PathBuf>,
     last_camera_profile: Option<PathBuf>,
     default_exposure: ExposureParams,
+    /// Whether photos without a sidecar get Camera match, as their first
+    /// open would give it.
+    camera_match: bool,
     export_override: ExportOverride,
     luts: Option<crate::luts::LutStore>,
     decode_gate: Arc<std::sync::RwLock<()>>,
@@ -182,11 +187,16 @@ fn prepare_desktop_library_export_item(
                 (loaded.edits, requested, use_adaptive)
             }
             // No sidecar, or one without adjustments: export like a first import,
-            // with the camera look such a sidecar may keep.
+            // with the Camera match such a sidecar may keep, or the one a
+            // first open fits.
             Ok(loaded) => {
                 let mut edits = crate::sidecar::default_edit_state();
                 edits.exposure = default_exposure;
-                edits.camera_look = loaded.and_then(|loaded| loaded.edits.camera_look);
+                edits.camera_match = match loaded {
+                    Some(loaded) => loaded.edits.camera_match,
+                    None if context.camera_match => CameraMatch::PENDING_DEFAULT,
+                    None => CameraMatch::Off,
+                };
                 let requested = last_camera_profile
                     .and_then(|relative| camera_profile_folder.map(|root| root.join(relative)));
                 (edits, requested, true)
@@ -229,18 +239,6 @@ fn prepare_desktop_library_export_item(
         original_raw.apply_adaptive_detail_defaults(&mut edits.exposure);
     }
     context.export_override.apply(&mut edits);
-    let creative = edits
-        .look_lut
-        .as_ref()
-        .map(|look| crate::app::luts::resolve_look_for_export(context.luts.as_ref(), look))
-        .transpose()
-        .map_err(|error| {
-            tr_fmt(
-                "{source}: {error}",
-                &[("source", &job.source.display()), ("error", &error)],
-            )
-        })?;
-    let look = crate::luts::ResolvedLook::of_edit(creative, edits.camera_look.as_ref());
 
     if cancellation.load(Ordering::Acquire) {
         return Err("batch export cancelled".to_owned());
@@ -261,13 +259,63 @@ fn prepare_desktop_library_export_item(
         None => Arc::clone(&original_raw),
     };
     // A film negative the Library marked exports as its estimate, as opening
-    // the photo would settle it.
-    if edits.exposure.settle_film(&raw, edits.geometry) == FilmSettlement::NotFound {
+    // the photo would settle it, unless its card is switched off.
+    if edits.exposure.settle_film(&raw, edits.geometry) == FilmSettlement::NotFound
+        && edits.exposure.card_on(CardSwitch::FilmNegative)
+    {
         return Err(tr_fmt(
             "{source}: no film negative was found to invert",
             &[("source", &job.source.display())],
         ));
     }
+    // A pending Camera match is fitted as opening the photo would fit it.
+    if edits.camera_match.is_pending() && edits.exposure.card_on(CardSwitch::CameraMatch) {
+        let fit = crate::app::camera_match::camera_match_applies(&raw, &edits.exposure)
+            .then(|| crate::app::camera_match::read_camera_preview(&job.source))
+            .flatten()
+            .map(|preview| {
+                crate::app::camera_match::run_open_photo_fit(
+                    device,
+                    queue,
+                    &raw,
+                    &edits.exposure,
+                    &preview,
+                    None,
+                )
+            });
+        let label = job.source.display().to_string();
+        edits.camera_match = crate::app::camera_match::settle_pending_camera_match(
+            std::mem::take(&mut edits.camera_match),
+            fit,
+            &label,
+        )
+        .map_err(|error| {
+            tr_fmt(
+                "{source}: {error}",
+                &[("source", &label), ("error", &error)],
+            )
+        })?;
+    }
+    let lut_on = edits.exposure.card_on(CardSwitch::Lut);
+    let creative = edits
+        .look_lut
+        .as_ref()
+        .filter(|_| lut_on)
+        .map(|look| crate::app::luts::resolve_look_for_export(context.luts.as_ref(), look))
+        .transpose()
+        .map_err(|error| {
+            tr_fmt(
+                "{source}: {error}",
+                &[("source", &job.source.display()), ("error", &error)],
+            )
+        })?;
+    let look = crate::luts::ResolvedLook::of_edit(
+        creative,
+        edits
+            .camera_match
+            .look()
+            .filter(|_| edits.exposure.card_on(CardSwitch::CameraMatch)),
+    );
 
     let remove = Arc::unwrap_or_clone(edits.remove);
     let mut masks = Arc::unwrap_or_clone(edits.masks);
@@ -313,6 +361,11 @@ fn prepare_desktop_library_export_item(
         })?;
     }
 
+    // The edit as it renders, with its switched-off cards at rest. Mask
+    // sources above develop it as stored, as the editor's do.
+    let exposure = edits.exposure.applied(edits.lens.enabled);
+    masks.apply_card_switches();
+
     if cancellation.load(Ordering::Acquire) {
         return Err("batch export cancelled".to_owned());
     }
@@ -328,7 +381,7 @@ fn prepare_desktop_library_export_item(
         source: PreparedExportSource {
             raw,
             geometry: edits.geometry.sanitized(),
-            exposure: edits.exposure,
+            exposure,
             masks,
             remove,
             look,
@@ -789,6 +842,7 @@ impl CalibRawApp {
                 camera_profile_folder: self.preferences.camera_profile_folder.clone(),
                 last_camera_profile: self.preferences.last_camera_profile.clone(),
                 default_exposure: self.new_image_exposure(),
+                camera_match: self.camera_match_enabled(),
                 export_override: export_override.clone(),
                 luts: self.luts.store(),
                 decode_gate: self.library.decode_gate(),

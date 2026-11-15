@@ -340,7 +340,7 @@ fn wet_water(pos: vec2<i32>, pixel: WetPixel, position: vec3<f32>, params: MaskE
 fn wet_rain_strength() -> f32 {
     var strength = 0.0;
     for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
-        if !Common::mask_slot_applies(Common::mask_data[index].metadata, MASK_EFFECT_RAIN_ID) {
+        if !Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_RAIN_ID) {
             continue;
         }
         let params = mask_effect_params(index);

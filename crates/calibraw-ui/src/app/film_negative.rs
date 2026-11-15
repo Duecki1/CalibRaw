@@ -5,8 +5,8 @@ use super::*;
 use crate::i18n::tr;
 use crate::pipeline::{FilmNegative, FilmSource, FilmStock};
 
-/// Title of the Develop card of a film negative. Its eye shows the scan as it
-/// is (`PreviewVisibility`).
+/// Title of the Develop card of a film negative. Switched off, the scan
+/// develops as it is (`ExposureParams::applied`).
 pub(crate) const FILM_NEGATIVE_CARD_TITLE: &str = "Film negative";
 
 impl CalibRawApp {

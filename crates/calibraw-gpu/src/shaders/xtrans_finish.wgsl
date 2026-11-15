@@ -22,14 +22,12 @@ fn xt_uv(rgb: vec3<f32>) -> vec2<f32> {
 
 fn xt_phase6(offset: i32) -> vec2<f32> {
     let phase = ((offset % 6) + 6) % 6;
-    switch phase {
-        case 0: { return vec2<f32>( 1.0,  0.0); }
-        case 1: { return vec2<f32>( 0.5,  0.8660254); }
-        case 2: { return vec2<f32>(-0.5,  0.8660254); }
-        case 3: { return vec2<f32>(-1.0,  0.0); }
-        case 4: { return vec2<f32>(-0.5, -0.8660254); }
-        default: { return vec2<f32>(0.5, -0.8660254); }
-    }
+    if phase == 0 { return vec2<f32>( 1.0,  0.0); }
+    if phase == 1 { return vec2<f32>( 0.5,  0.8660254); }
+    if phase == 2 { return vec2<f32>(-0.5,  0.8660254); }
+    if phase == 3 { return vec2<f32>(-1.0,  0.0); }
+    if phase == 4 { return vec2<f32>(-0.5, -0.8660254); }
+    return vec2<f32>(0.5, -0.8660254);
 }
 
 fn xt_complex_mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
@@ -153,14 +151,16 @@ override fn NoiseCaFinish::finish_reference_at(pos: vec2<i32>) -> vec3<f32> {
 // Pass 1 of dual demosaicing (dual_demosaic.wgsl), with Markesteijn as the
 // reference.
 @compute @workgroup_size(8, 8, 1)
-fn xtrans_dual_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn xtrans_dual_prepare(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     Dual::dual_store_prepared(pos, xt_high(pos), false);
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn xtrans_demosaic_finish(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn xtrans_demosaic_finish(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let reference = xt_high(pos);

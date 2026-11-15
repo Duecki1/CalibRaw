@@ -169,7 +169,7 @@ impl CalibRawApp {
                 && !detail.needs_native_refinement(&requested)
                 && detail_covers_view(
                     detail.uv_rect,
-                    [detail.pipeline.gpu().width, detail.pipeline.gpu().height],
+                    detail.pipeline.size(),
                     detail.source_size,
                     self.preview.visible_uv,
                     &requested,
@@ -326,11 +326,14 @@ impl CalibRawApp {
                 ));
             }
         }
-        if let Some(detail) = self
+        // A crop whose graph a worker is rendering is recomputed once it is
+        // installed, which forgets `original_rendered_state`.
+        if let Some((detail, gpu)) = self
             .preview
             .detail
             .as_ref()
             .filter(|detail| detail.revision == self.preview.revision)
+            .and_then(|detail| detail.pipeline.gpu().map(|gpu| (detail, gpu)))
         {
             let mut params = GpuParams::new_for_tile_with_profile_color(
                 exposure,
@@ -353,12 +356,9 @@ impl CalibRawApp {
                 );
             }
             if self.preview.original_requested {
-                detail
-                    .pipeline
-                    .gpu()
-                    .recompute(&render_state.queue, &render_state.device, &params);
+                gpu.recompute(&render_state.queue, &render_state.device, &params);
             } else if let Some(full_raw) = preview_source.as_ref() {
-                if let Err(error) = detail.pipeline.gpu().recompute_with_remove(
+                if let Err(error) = gpu.recompute_with_remove(
                     &render_state.queue,
                     &render_state.device,
                     &params,
@@ -379,6 +379,9 @@ impl CalibRawApp {
                     ));
                 }
             }
+            detail
+                .pipeline
+                .show_completed(&render_state.device, &render_state.queue);
         }
         for error in remove_errors {
             self.report_error(ErrorKind::Preview, error);
