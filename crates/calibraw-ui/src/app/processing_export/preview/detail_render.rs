@@ -52,6 +52,16 @@ pub(in crate::app) struct DetailRenderJob {
     /// The crop without its graph: placement, revision and source.
     pub crop: PreviewDetail<()>,
     pub started: Instant,
+    /// Set once the UI thread forgot the crop (`DetailRebuild::dropped_flag`):
+    /// its result goes nowhere, so the steps not yet started are skipped and
+    /// the graph is released as soon as the worker ends.
+    pub dropped: Arc<AtomicBool>,
+}
+
+impl DetailRenderJob {
+    fn dropped(&self) -> bool {
+        self.dropped.load(Ordering::Acquire)
+    }
 }
 
 /// A crop whose graph a worker has rendered, on its way back to the UI
@@ -141,6 +151,11 @@ fn spawn_render(
 
 /// Step 1: the graph, its masks and its RAW stage.
 fn render_raw_stage(mut job: DetailRenderJob) -> Result<DetailRender, String> {
+    // Nothing receives the result of a dropped crop: the message is never
+    // shown, and no graph is built for it.
+    if job.dropped() {
+        return Err("zoomed crop dropped".to_owned());
+    }
     let gpu = match job.reused.take() {
         Some(gpu) => {
             gpu.upload_raw_tile(&job.queue, &job.crop.raw)
@@ -211,6 +226,10 @@ fn render_remaining_stages(render: DetailRender) -> DetailRender {
         job,
         inherited,
     } = &render;
+    // A dropped crop's render is never received; the graph goes with it.
+    if job.dropped() {
+        return render;
+    }
     gpu.pace_submissions(true);
     if *inherited {
         gpu.dispatch_inherited_tone_guide(&job.queue, &job.device);

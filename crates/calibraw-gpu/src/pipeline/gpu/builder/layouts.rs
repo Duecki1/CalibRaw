@@ -10,6 +10,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl1: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl2: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl3: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_rcd_reference: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_dual_prepare: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_dual_detail: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl4: wgpu::BindGroupLayout,
@@ -180,13 +181,37 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
+    // Reads RCD's planes and writes the reference (pass4.wgsl
+    // `bayer_rcd_reference`). X-Trans pipelines never dispatch it.
+    let bgl_rcd_reference = (matches!(cfa_kind, CfaKind::Bayer)
+        .then(|| reused_layout(plan.rcd_reference_pass_index))
+        .flatten())
+    .unwrap_or_else(|| {
+        create_bind_group_layout(
+            device,
+            "bgl RCD reference",
+            &[
+                common_entries[0],
+                common_entries[1],
+                common_entries[2],
+                common_entries[3],
+                texture_entry(3, wgpu::TextureSampleType::Float { filterable: false }),
+                texture_entry(7, wgpu::TextureSampleType::Float { filterable: false }),
+                texture_entry(9, wgpu::TextureSampleType::Float { filterable: false }),
+                storage_texture_entry(47, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
+            ],
+        )
+    });
+
     // The prepare pass reads the CFA and the sensor's reference demosaic:
-    // RCD's planes for Bayer, the Markesteijn result for X-Trans.
+    // RCD's planes or its stored reference for Bayer, the Markesteijn result
+    // for X-Trans.
     let bgl_dual_prepare = reused_layout(plan.demosaic_dual_start_index).unwrap_or_else(|| {
         let reference_entries = match cfa_kind {
             CfaKind::Bayer => vec![
                 texture_entry(7, wgpu::TextureSampleType::Float { filterable: false }),
                 texture_entry(9, wgpu::TextureSampleType::Float { filterable: false }),
+                texture_entry(46, wgpu::TextureSampleType::Float { filterable: false }),
             ],
             CfaKind::XTrans => vec![texture_entry(
                 26,
@@ -240,6 +265,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                 texture_entry(7, wgpu::TextureSampleType::Float { filterable: false }),
                 texture_entry(9, wgpu::TextureSampleType::Float { filterable: false }),
                 texture_entry(23, wgpu::TextureSampleType::Float { filterable: false }),
+                texture_entry(46, wgpu::TextureSampleType::Float { filterable: false }),
                 storage_texture_entry(10, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
             ],
         )
@@ -818,6 +844,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_dual_prepare,
         bgl_dual_detail,
         bgl4,
+        bgl_rcd_reference,
         bgl_xtrans_state,
         bgl_xtrans_complete,
         bgl_xtrans_homogeneity,

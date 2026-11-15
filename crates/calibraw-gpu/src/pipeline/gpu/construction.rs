@@ -334,6 +334,7 @@ impl RawGpuPipeline {
             &surfaces,
             &dispatch_bands,
             raw.cfa_kind,
+            stores_rcd_reference(geometry.work_format),
         );
         let effect_inputs =
             EffectInputs::new(device, input_binding_sources(&layouts, &buffers, &surfaces));

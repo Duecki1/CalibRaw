@@ -27,7 +27,7 @@ use crate::pipeline::camera_look::{
     fit_camera_look, CameraLook, CameraLookFit, CameraLookFitError, CameraMatch, FitStage,
     FitVerdict,
 };
-use crate::pipeline::{load_raw_embedded_thumbnail, RawThumbnail};
+use crate::pipeline::{load_raw_embedded_thumbnail, CardSwitch, RawThumbnail};
 
 /// The title of the Camera match card, which its preview eye is keyed by.
 pub(crate) const CAMERA_MATCH_CARD_TITLE: &str = "Camera match";
@@ -293,6 +293,16 @@ impl CalibRawApp {
             .original_raw
             .as_deref()
             .is_some_and(|raw| camera_match_applies(raw, &self.develop.exposure))
+    }
+
+    /// Whether the open photo's Camera match renders and waits for a fit
+    /// that is running or about to start: an export of the photo waits for
+    /// it, as it renders with the look the fit gives.
+    pub(in crate::app) fn camera_match_fit_awaited(&self) -> bool {
+        self.develop.camera_match.is_pending()
+            && self.develop.exposure.card_on(CardSwitch::CameraMatch)
+            && (self.develop.camera_match_requested.is_some()
+                || self.foreground_operation_is(ForegroundOperationKind::CameraMatch))
     }
 
     /// Makes `state` the open photo's Camera match and renders it; a pending

@@ -387,6 +387,7 @@ impl CalibRawApp {
             exposure: self.develop.target_exposure,
             crop,
             started: Instant::now(),
+            dropped: rebuild.dropped_flag(),
         };
         // The job renders every stage and uploads every mask layer of the edit
         // as it is now. What changes while it runs is queued again and

@@ -3,6 +3,7 @@ use super::*;
 use super::batch::batch_export_overall_fraction;
 use super::preview::DETAIL_ZOOM_START;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::CardSwitch;
 
 mod ai_denoise;
 mod task_view;
@@ -204,6 +205,7 @@ impl CalibRawApp {
             && self.export.task.is_none()
             && !self.export.publish_pending
             && self.develop.load_receiver.is_none()
+            && !self.camera_match_fit_awaited()
     }
 
     pub(super) fn templated_export_stem(&self) -> Option<String> {
@@ -424,8 +426,17 @@ impl CalibRawApp {
             || self.export.publish_pending
             || self.develop.load_receiver.is_some()
             || self.inpaint_processing()
+            || self.camera_match_fit_awaited()
         {
             return Ok(None);
+        }
+        // A pending Camera match whose fit could not run has no look yet:
+        // the export fails rather than render without it, as a batch export
+        // does. An export override never changes the match.
+        if self.develop.camera_match.is_pending()
+            && self.develop.exposure.card_on(CardSwitch::CameraMatch)
+        {
+            return Err(tr("Camera match failed").to_owned());
         }
 
         let Some(raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {

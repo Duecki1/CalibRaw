@@ -12,12 +12,23 @@
 @group(0) @binding(7) var tex2_read: texture_2d<f32>;
 @group(0) @binding(9) var tex3_read: texture_2d<f32>;
 @group(0) @binding(10) var scene_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
+// The RCD reference of every pixel (`rcd_reference_at`), stored by
+// `bayer_rcd_reference` for the passes after it. It is written in the work
+// format, which is 32-bit float where it is stored (`RCD_STORED_REFERENCE`),
+// so a stored value equals the computed one exactly.
+@group(0) @binding(46) var rcd_reference_read: texture_2d<f32>;
+@group(0) @binding(47) var rcd_reference_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 
 const RCD_MARGIN: i32 = 9;
 // Specialize the selected algorithm before driver compilation. The dynamic
 // fallback keeps every algorithm in one shader for validation.
 override BAYER_DEMOSAIC_MODE: u32 = 3u;
 override BAYER_SENSOR_DENOISE: bool = true;
+// Whether `bayer_rcd_reference` ran and the passes after it read the stored
+// reference instead of recomputing it: about 53 times per finished pixel, each
+// about 35 texture reads (false-colour guard 4, frequency chroma 173, sensor
+// denoise up to 48). Set for 32-bit work formats only.
+override RCD_STORED_REFERENCE: bool = false;
 
 fn rcd_has_reference_margin(pos: vec2<i32>) -> bool {
     return pos.x >= RCD_MARGIN && pos.y >= RCD_MARGIN
@@ -178,6 +189,16 @@ fn rcd_reference_at(pos: vec2<i32>) -> vec3<f32> {
     return vec3<f32>(r, g, b);
 }
 
+// The reference at `pos`, which may lie outside the image: the edge pixel's
+// there. Outside the image `rcd_reference_at` takes PPG at the clamped
+// position, as it does at that edge pixel, so both paths agree.
+fn reference_at(pos: vec2<i32>) -> vec3<f32> {
+    if RCD_STORED_REFERENCE {
+        return textureLoad(rcd_reference_read, Common::clamp_pos(pos), 0).rgb;
+    }
+    return rcd_reference_at(Common::clamp_pos(pos));
+}
+
 fn bayer_uv(rgb: vec3<f32>) -> vec2<f32> {
     let y = dot(rgb, vec3<f32>(0.2627, 0.6780, 0.0593));
     return vec2<f32>(0.56433 * (rgb.b - y), 0.67815 * (rgb.r - y));
@@ -205,10 +226,10 @@ fn bayer_median5(a: f32, b: f32, c: f32, d: f32, e: f32) -> f32 {
 
 fn bayer_reference_false_color_guard(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     let uv0 = bayer_uv(rgb);
-    let uvn = bayer_uv(rcd_reference_at(Common::clamp_pos(pos + vec2<i32>(0, -1))));
-    let uvs = bayer_uv(rcd_reference_at(Common::clamp_pos(pos + vec2<i32>(0,  1))));
-    let uvw = bayer_uv(rcd_reference_at(Common::clamp_pos(pos + vec2<i32>(-1, 0))));
-    let uve = bayer_uv(rcd_reference_at(Common::clamp_pos(pos + vec2<i32>( 1, 0))));
+    let uvn = bayer_uv(reference_at(pos + vec2<i32>(0, -1)));
+    let uvs = bayer_uv(reference_at(pos + vec2<i32>(0,  1)));
+    let uvw = bayer_uv(reference_at(pos + vec2<i32>(-1, 0)));
+    let uve = bayer_uv(reference_at(pos + vec2<i32>( 1, 0)));
     let median = vec2<f32>(
         bayer_median5(uv0.x, uvn.x, uvs.x, uvw.x, uve.x),
         bayer_median5(uv0.y, uvn.y, uvs.y, uvw.y, uve.y),
@@ -237,7 +258,7 @@ fn frequency_chroma_at(pos: vec2<i32>, center: vec3<f32>) -> vec3<f32> {
         for (var dx = -6; dx <= 6; dx = dx + 1) {
             let weight = wy * f32(7 - abs(dx));
             let px = bayer_phase2(dx);
-            let uv = bayer_uv(rcd_reference_at(pos + vec2<i32>(dx, dy)));
+            let uv = bayer_uv(reference_at(pos + vec2<i32>(dx, dy)));
             let delta = uv - center_opponents;
             carrier_x += weight * px * delta;
             carrier_y += weight * py * delta;
@@ -248,10 +269,10 @@ fn frequency_chroma_at(pos: vec2<i32>, center: vec3<f32>) -> vec3<f32> {
 
     let carrier_alias = (carrier_x + carrier_y + carrier_xy)
         / max(3.0 * carrier_weight, 1e-6);
-    let n = rcd_reference_at(pos + vec2<i32>(0, -1));
-    let s = rcd_reference_at(pos + vec2<i32>(0,  1));
-    let w = rcd_reference_at(pos + vec2<i32>(-1, 0));
-    let e = rcd_reference_at(pos + vec2<i32>( 1, 0));
+    let n = reference_at(pos + vec2<i32>(0, -1));
+    let s = reference_at(pos + vec2<i32>(0,  1));
+    let w = reference_at(pos + vec2<i32>(-1, 0));
+    let e = reference_at(pos + vec2<i32>( 1, 0));
     let center_signal = dot(center, vec3<f32>(0.2627, 0.6780, 0.0593));
     let luma_high = abs(4.0 * center_signal
         - dot(n + s + w + e, vec3<f32>(0.2627, 0.6780, 0.0593)));
@@ -262,7 +283,17 @@ fn frequency_chroma_at(pos: vec2<i32>, center: vec3<f32>) -> vec3<f32> {
 }
 
 override fn NoiseCaFinish::finish_reference_at(pos: vec2<i32>) -> vec3<f32> {
-    return rcd_reference_at(Common::clamp_pos(pos));
+    return reference_at(pos);
+}
+
+// Stores the reference of every pixel for the passes after it, when
+// `RCD_STORED_REFERENCE` is set; it does not run otherwise.
+@compute @workgroup_size(8, 8, 1)
+fn bayer_rcd_reference(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
+    if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
+    let pos = vec2<i32>(i32(gid.x), i32(gid.y));
+    textureStore(rcd_reference_write, pos, vec4<f32>(rcd_reference_at(pos), 1.0));
 }
 
 // Pass 1 of dual demosaicing (dual_demosaic.wgsl), with RCD as the reference.
@@ -271,7 +302,7 @@ fn bayer_dual_prepare(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
     let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
-    Dual::dual_store_prepared(pos, rcd_reference_at(pos), true);
+    Dual::dual_store_prepared(pos, reference_at(pos), true);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -279,7 +310,7 @@ fn bayer_rcd_output(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
     let gid = Common::dispatch_id(dispatch_gid);
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
-    let reference = rcd_reference_at(pos);
+    let reference = reference_at(pos);
     var camera_rgb = reference;
     let demosaic_mode = select(f32(BAYER_DEMOSAIC_MODE), Common::camera_uniforms.demosaic_mode, BAYER_DEMOSAIC_MODE == 3u);
     if demosaic_mode >= 1.5 {

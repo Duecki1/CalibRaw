@@ -460,6 +460,14 @@ pub(crate) enum PreviewDetailRebuildEvent {
 pub(crate) struct DetailRebuild {
     pub(crate) receiver: mpsc::Receiver<PreviewDetailRebuildEvent>,
     cancel: Arc<AtomicBool>,
+    /// Set when the crop is forgotten unfinished (`drop_detail_rebuild`):
+    /// nothing receives its render any more, so its render worker skips the
+    /// steps it has not started (`detail_render`).
+    dropped: Arc<AtomicBool>,
+    /// A render worker has the crop (`continued`). It renders the edit as it
+    /// was when the render started, so what changes meanwhile waits for the
+    /// crop it installs rather than going into the crop shown until then.
+    rendering: bool,
 }
 
 impl DetailRebuild {
@@ -467,7 +475,12 @@ impl DetailRebuild {
         receiver: mpsc::Receiver<PreviewDetailRebuildEvent>,
         cancel: Arc<AtomicBool>,
     ) -> Self {
-        Self { receiver, cancel }
+        Self {
+            receiver,
+            cancel,
+            dropped: Arc::new(AtomicBool::new(false)),
+            rendering: false,
+        }
     }
 
     /// Asks the worker to stop. It reports `Cancelled` once it has, which is
@@ -477,13 +490,25 @@ impl DetailRebuild {
             .store(true, std::sync::atomic::Ordering::Release);
     }
 
-    /// The same crop, now followed through `receiver`: the next step of its
-    /// rendering.
+    /// The same crop, now rendered by a worker followed through `receiver`:
+    /// the next step of its rendering.
     pub(crate) fn continued(self, receiver: mpsc::Receiver<PreviewDetailRebuildEvent>) -> Self {
         Self {
             receiver,
-            cancel: self.cancel,
+            rendering: true,
+            ..self
         }
+    }
+
+    /// Whether a render worker has the crop, which the edit's changes then
+    /// wait for.
+    pub(crate) const fn rendering(&self) -> bool {
+        self.rendering
+    }
+
+    /// The flag a render worker reads to learn that its crop was dropped.
+    pub(crate) fn dropped_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.dropped)
     }
 }
 
@@ -594,7 +619,11 @@ impl PreviewState {
     /// are gone.
     pub(crate) fn drop_detail_rebuild(&mut self) {
         self.cancel_detail_rebuild();
-        self.detail_rebuild = None;
+        if let Some(rebuild) = self.detail_rebuild.take() {
+            rebuild
+                .dropped
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
         self.detail_block = None;
         // A crop without its graph (lent to the worker, or released for the
         // worker's new one) gets no graph back any more.

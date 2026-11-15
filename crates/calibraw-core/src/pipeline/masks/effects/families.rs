@@ -7,6 +7,7 @@
 //! Scene and 2D, Color Fringe's Lens and Shift) as styles of their own, so
 //! sidecars, presets, shader IDs and rendering stay those of the effects.
 
+use super::warmth::nearest_warmth;
 use super::{
     ColorFringeStyle, EffectControl, EffectSettings, EffectSettingsVisitor, GlowStyle,
     LightShaftsMode, MaskEffect, MaskEffectCategory, MaskEffectSettings, RadialBlurMode,
@@ -251,12 +252,20 @@ impl EffectComponent {
         if style.effect != self.effect {
             let mut settings = MaskEffectSettings::initial(style.effect);
             if let (
-                Some(serde_json::Value::Object(current)),
+                Some(serde_json::Value::Object(mut current)),
                 Some(serde_json::Value::Object(mut fields)),
             ) = (
                 self.settings.fields(self.effect),
                 settings.fields(style.effect),
             ) {
+                translate_replaced_fields(self.effect, style.effect, &mut current);
+                // Further instances (Light Rays' sources) are left out of the
+                // fields of settings that have none, so they are carried
+                // whatever the new settings start with; an effect without
+                // instances ignores them.
+                if let Some(additional) = current.remove("additional") {
+                    fields.insert("additional".to_owned(), additional);
+                }
                 for (name, value) in current {
                     if let Some(field) = fields.get_mut(&name) {
                         if same_shape(field, &value) {
@@ -277,6 +286,64 @@ impl EffectComponent {
             mode.apply(&mut self.settings);
         }
     }
+}
+
+/// Renames or converts the values of a legacy effect (`current`) that its
+/// replacement holds under another name or with another meaning, so Replace
+/// with new keeps about the old look, not the same one.
+fn translate_replaced_fields(
+    from: MaskEffect,
+    to: MaskEffect,
+    current: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    match (from, to) {
+        (MaskEffect::LegacyHighlightGlow, MaskEffect::StyledGlow) => {
+            // Source brightness brightened the source; the Glow's Core rolls
+            // its brightest light off, so it starts off.
+            current.remove("core");
+            if let Some(radius) = current.remove("radius") {
+                current.insert("spread".to_owned(), radius);
+            }
+            // The glow was tinted 72% of the way toward the picked colour
+            // (legacy/highlight_glow.wgsl).
+            if let Some(warmth) = current
+                .remove("color")
+                .and_then(|color| color_warmth(&color, 0.72))
+            {
+                current.insert("warmth".to_owned(), warmth);
+            }
+        }
+        (MaskEffect::LightRays, MaskEffect::LightShafts) => {
+            // Each source's colour becomes its warmth.
+            source_color_to_warmth(current);
+            if let Some(serde_json::Value::Array(additional)) = current.get_mut("additional") {
+                for source in additional {
+                    if let serde_json::Value::Object(source) = source {
+                        source_color_to_warmth(source);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn source_color_to_warmth(source: &mut serde_json::Map<String, serde_json::Value>) {
+    if let Some(warmth) = source
+        .remove("color")
+        .and_then(|color| color_warmth(&color, 1.0))
+    {
+        source.insert("warmth".to_owned(), warmth);
+    }
+}
+
+/// The Warmth value (-100 to 100) nearest a saved display colour applied
+/// `strength` of the way from white.
+fn color_warmth(color: &serde_json::Value, strength: f32) -> Option<serde_json::Value> {
+    let color: [f32; 3] = serde_json::from_value(color.clone()).ok()?;
+    let tinted = color.map(|channel| 1.0 + strength * (channel - 1.0));
+    let warmth = (nearest_warmth(tinted) * 100.0).round();
+    serde_json::to_value(warmth).ok()
 }
 
 /// Whether `value` can stand for `field`: both numbers, both booleans, both

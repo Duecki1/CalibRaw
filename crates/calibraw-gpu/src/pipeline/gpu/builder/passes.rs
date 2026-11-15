@@ -124,6 +124,11 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// and are dispatched with bind groups of their own. They come last so
     /// that adding them kept earlier positions.
     pub(in crate::pipeline::gpu) defocus_pass_index: usize,
+    /// Bayer only (X-Trans plans no pass here): stores the RCD reference
+    /// between the RCD passes and dual demosaicing when the work format
+    /// holds it exactly ([`stores_rcd_reference`]). It comes last so that
+    /// adding it kept earlier positions.
+    pub(in crate::pipeline::gpu) rcd_reference_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -183,6 +188,7 @@ impl StageIndices {
         let scene_bake_accumulation_pass_index = take(1);
         let styled_glow_pass_index = take(STYLED_GLOW_PASSES);
         let defocus_pass_index = take(DEFOCUS_PASSES);
+        let rcd_reference_pass_index = take(usize::from(matches!(cfa_kind, CfaKind::Bayer)));
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -228,6 +234,7 @@ impl StageIndices {
             scene_bake_accumulation_pass_index,
             styled_glow_pass_index,
             defocus_pass_index,
+            rcd_reference_pass_index,
             pass_count,
         }
     }
@@ -283,6 +290,9 @@ struct PassAssembler<'a> {
     /// The modules of the programs compiled per effect set
     /// (`effect_programs`), shared by the programs assembled here.
     effect_modules: Arc<EffectModules>,
+    /// Whether the Bayer finish passes read the stored RCD reference
+    /// ([`stores_rcd_reference`]).
+    stores_rcd_reference: bool,
     next_program_index: usize,
 }
 
@@ -318,6 +328,7 @@ impl PassAssembler<'_> {
                 ),
                 layouts,
                 work: PassWork::for_entry(entry),
+                constants: program_constants(entry, self.stores_rcd_reference),
                 entry: entry.to_owned(),
                 cache: self.pipeline_cache.cloned(),
                 compiled: OnceLock::new(),
@@ -329,6 +340,20 @@ impl PassAssembler<'_> {
             bindings: bindings.into(),
             workgroups,
         }
+    }
+}
+
+/// The override constants every compilation of `entry` takes, before those of
+/// its variant ([`ComputeProgram::compile`]).
+fn program_constants(entry: &str, stores_rcd_reference: bool) -> Vec<(&'static str, f64)> {
+    match entry {
+        "bayer_dual_prepare" | "bayer_rcd_output" => {
+            vec![(
+                "RCD_STORED_REFERENCE",
+                f64::from(u8::from(stores_rcd_reference)),
+            )]
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -352,6 +377,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         bgl_scene_tone: &layouts.bgl_scene_tone,
         bgl_effects: &layouts.bgl_effects,
         effect_modules: EffectModules::new(device, work_format, cfa_kind),
+        stores_rcd_reference: stores_rcd_reference(work_format),
         next_program_index: 0,
     };
     let single_workgroup = [1, 1, 1];
@@ -849,6 +875,17 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             &layouts.bgl_defocus[program],
             InputBoundPass::Defocus(program),
             single_workgroup,
+        ));
+    }
+
+    ensure_planned(&passes, indices.rcd_reference_pass_index, "RCD reference")?;
+    if matches!(cfa_kind, CfaKind::Bayer) {
+        passes.push(assembler.make_pass(
+            shaders.bayer_rcd_p4_module.as_ref(),
+            "bayer_rcd_reference",
+            &layouts.bgl_rcd_reference,
+            groups.bg_rcd_reference.clone(),
+            image_workgroups,
         ));
     }
 

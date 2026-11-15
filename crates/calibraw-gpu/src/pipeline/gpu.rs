@@ -208,6 +208,8 @@ struct ComputeProgram {
     shader: wgpu::ShaderModule,
     layouts: [wgpu::BindGroupLayout; 3],
     entry: String,
+    /// Override constants every compilation takes, before its variant's.
+    constants: Vec<(&'static str, f64)>,
     /// How the program's dispatches are measured and cut (`work`).
     work: PassWork,
     cache: Option<Arc<PersistentGpuPipelineCache>>,
@@ -261,8 +263,15 @@ impl ComputeProgram {
             .get_or_init(|| self.compile(&demosaic_variant_constants(variant)))
     }
 
-    fn compile(&self, constants: &[(&str, f64)]) -> wgpu::ComputePipeline {
+    /// Compiles the program with its own constants and `variant`'s.
+    fn compile(&self, variant: &[(&str, f64)]) -> wgpu::ComputePipeline {
         let started = std::time::Instant::now();
+        let constants: Vec<(&str, f64)> = self
+            .constants
+            .iter()
+            .copied()
+            .chain(variant.iter().copied())
+            .collect();
         let layout = self
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -278,7 +287,7 @@ impl ComputeProgram {
                 module: &self.shader,
                 entry_point: Some(&self.entry),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants,
+                    constants: &constants,
                     ..Default::default()
                 },
                 cache: self.cache.as_ref().map(|cache| cache.raw()),
@@ -425,7 +434,7 @@ impl RawGpuProgramTemplate {
         for program in self
             .pipelines
             .iter()
-            .filter(|program| !program.serves_disabled_effect())
+            .filter(|program| !program.serves_disabled_effect() && self.dispatches(program))
         {
             program.get();
         }
@@ -434,6 +443,14 @@ impl RawGpuProgramTemplate {
                 program.demosaic_variant(variant);
             }
         }
+    }
+
+    /// Whether pipelines built from these programs dispatch `program`: the
+    /// RCD reference pass runs only where the work format stores the
+    /// reference ([`stores_rcd_reference`]).
+    fn dispatches(&self, program: &ComputeProgram) -> bool {
+        program.entry != "bayer_rcd_reference"
+            || stores_rcd_reference(processing_work_format(self.processing_quality))
     }
 
     /// Compiles the demosaic variant that rendering `params` selects.
@@ -1650,6 +1667,9 @@ impl RawGpuPipeline {
             self.indices.demosaic_start_index,
             self.indices.demosaic_dual_start_index,
         );
+        if matches!(self.cfa_kind, CfaKind::Bayer) && stores_rcd_reference(self.scene_format) {
+            self.encode_pass(encoder, self.indices.rcd_reference_pass_index);
+        }
         if params.needs_dual_demosaic_passes() {
             self.encode_pass_range(
                 encoder,

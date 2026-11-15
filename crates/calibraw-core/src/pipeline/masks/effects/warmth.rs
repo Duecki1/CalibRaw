@@ -24,6 +24,31 @@ pub(super) fn warmth_swatch(warmth: f32) -> [f32; 3] {
     linear.map(|value| srgb_encode(value / peak))
 }
 
+/// The Warmth (in [-1, 1]) whose swatch is nearest in hue to `color`, a
+/// picked display colour (sRGB encoded); its brightness is ignored. For a
+/// legacy effect whose colour a Warmth replaced, so its replacement keeps
+/// about the same light: a colour far from the Planckian locus (a green)
+/// gets the nearest warmth, not its own hue. Searched in steps of 0.01.
+pub(super) fn nearest_warmth(color: [f32; 3]) -> f32 {
+    fn hue(rgb: [f32; 3]) -> [f32; 3] {
+        let rgb = rgb.map(|value| value.max(0.0));
+        let peak = rgb.into_iter().fold(f32::MIN_POSITIVE, f32::max);
+        rgb.map(|value| value / peak)
+    }
+    let target = hue(color);
+    let distance = |warmth: f32| {
+        hue(warmth_swatch(warmth))
+            .iter()
+            .zip(target)
+            .map(|(swatch, target)| (swatch - target).powi(2))
+            .sum::<f32>()
+    };
+    (-100..=100)
+        .map(|step| step as f32 / 100.0)
+        .min_by(|a, b| distance(*a).total_cmp(&distance(*b)))
+        .unwrap_or(0.0)
+}
+
 /// The colour of a blackbody at `kelvin` relative to one at
 /// [`NEUTRAL_KELVIN`], scene-linear Rec.2020 with luminance 1, so a tint at
 /// the neutral temperature is exactly white.

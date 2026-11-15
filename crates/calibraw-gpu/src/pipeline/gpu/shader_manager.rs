@@ -60,8 +60,10 @@ impl ShaderManager {
         Ok(manager)
     }
 
-    /// Registers a module with every effect (`effect_programs`), whatever
-    /// the shader that imports it is composed with.
+    /// Registers a module without shader defs: naga_oil adds a module's own
+    /// defs to those of every shader that imports it, so defs given here
+    /// would hold every effect in a program composed for an effect set
+    /// (`effect_programs`). The importing shader's defs decide.
     fn register(&mut self, import_path: &str, file_name: &str, source: &str) -> Result<()> {
         let file_path = format!("{SHADER_ROOT}{file_name}");
         let result = self
@@ -71,7 +73,6 @@ impl ShaderManager {
                 file_path: &file_path,
                 language: ShaderLanguage::Wgsl,
                 as_name: Some(import_path.to_owned()),
-                shader_defs: EffectSet::all().shader_defs(),
                 ..Default::default()
             });
         match result {
