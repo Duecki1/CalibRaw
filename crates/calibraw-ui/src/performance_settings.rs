@@ -117,6 +117,9 @@ pub(crate) struct PerformanceSettings {
     pub experimental_gpu_ai: bool,
     /// Where the AI runtime is configurable.
     pub onnx_runtime_mode: crate::app::OnnxRuntimeMode,
+    /// Read before the window opens (`load_graphics_backend`).
+    #[serde(deserialize_with = "crate::graphics_backend::deserialize_lenient")]
+    pub graphics_backend: crate::graphics_backend::GraphicsBackend,
     /// Where Discord can be reached.
     pub discord_rich_presence: bool,
     /// Serialize photo file reads for libraries on rotational disks; folder
@@ -354,6 +357,7 @@ impl Default for PerformanceSettings {
             ai_gpu_acceleration: true,
             experimental_gpu_ai: false,
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::default(),
+            graphics_backend: crate::graphics_backend::GraphicsBackend::default(),
             discord_rich_presence: false,
             hdd_mode: false,
             camera_profile_mode: CameraProfileMode::default(),
@@ -483,38 +487,66 @@ impl PerformanceSettings {
     }
 }
 
-pub(crate) fn load(path: Option<&Path>) -> PerformanceSettings {
-    let Some(path) = path else {
-        return PerformanceSettings::default();
-    };
+/// The settings file's bytes, or `None` when there is none or it cannot be read.
+fn read_settings_bytes(path: &Path) -> Option<Vec<u8>> {
     match std::fs::metadata(path) {
         Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_SETTINGS_BYTES => {}
-        Ok(_) => return PerformanceSettings::default(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return PerformanceSettings::default()
-        }
+        Ok(_) => return None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
         Err(error) => {
             log::warn!(
                 "could not inspect performance settings {}: {error}",
                 path.display()
             );
-            return PerformanceSettings::default();
+            return None;
         }
     }
-    match std::fs::read(path)
-        .map_err(|error| error.to_string())
-        .and_then(|bytes| {
-            serde_json::from_slice::<PerformanceSettings>(&bytes).map_err(|error| error.to_string())
-        }) {
-        Ok(settings) => settings.sanitized(),
-        Err(error) => {
+    std::fs::read(path)
+        .map_err(|error| {
             log::warn!(
                 "could not load performance settings {}: {error}",
                 path.display()
             );
+        })
+        .ok()
+}
+
+pub(crate) fn load(path: Option<&Path>) -> PerformanceSettings {
+    let Some(bytes) = path.and_then(read_settings_bytes) else {
+        return PerformanceSettings::default();
+    };
+    match serde_json::from_slice::<PerformanceSettings>(&bytes) {
+        Ok(settings) => settings.sanitized(),
+        Err(error) => {
+            if let Some(path) = path {
+                log::warn!(
+                    "could not load performance settings {}: {error}",
+                    path.display()
+                );
+            }
             PerformanceSettings::default()
         }
     }
+}
+
+/// The saved graphics backend, read alone because the window's adapter is
+/// chosen before the app loads its settings. Anything unreadable is left to
+/// `load` to report and counts as Automatic.
+pub(crate) fn load_graphics_backend(
+    path: Option<&Path>,
+) -> crate::graphics_backend::GraphicsBackend {
+    #[derive(Deserialize)]
+    struct GraphicsSettings {
+        #[serde(
+            default,
+            deserialize_with = "crate::graphics_backend::deserialize_lenient"
+        )]
+        graphics_backend: crate::graphics_backend::GraphicsBackend,
+    }
+    path.and_then(read_settings_bytes)
+        .and_then(|bytes| serde_json::from_slice::<GraphicsSettings>(&bytes).ok())
+        .map(|settings| settings.graphics_backend)
+        .unwrap_or_default()
 }
 
 pub(crate) fn save(path: Option<&Path>, settings: PerformanceSettings) -> Result<(), String> {

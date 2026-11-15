@@ -87,7 +87,10 @@ fn run_desktop() -> eframe::Result {
     if std::env::var_os("CALIBRAW_GPU_STAGE_TIMING").is_some_and(|value| value == "1") {
         calibraw_gpu::stage_timing::request();
     }
-    let mut options = crate::native_options(PlatformCaps::DESKTOP);
+    let graphics_backend = crate::performance_settings::load_graphics_backend(
+        super::performance_settings_path().as_deref(),
+    );
+    let mut options = crate::native_options(PlatformCaps::DESKTOP, graphics_backend);
     // wgpu initializes every enabled backend before any adapter is chosen, and
     // WGL initialization ends the process without an error on some drivers (seen
     // on a Radeon 780M + RTX 4060 laptop). Windows needs no GL adapter to show the

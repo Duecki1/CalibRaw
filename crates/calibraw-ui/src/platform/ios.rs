@@ -667,7 +667,11 @@ pub(crate) fn main() -> eframe::Result {
         std::fs::create_dir_all(directory)
             .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     }
-    let mut options = crate::native_options(PlatformCaps::IOS);
+    // Metal is iOS's only backend, so there is no choice to read.
+    let mut options = crate::native_options(
+        PlatformCaps::IOS,
+        crate::graphics_backend::GraphicsBackend::Automatic,
+    );
     options.run_and_return = false;
     options.viewport = eframe::egui::ViewportBuilder::default().with_maximized(true);
     eframe::run_native(

@@ -9,6 +9,7 @@ pub mod file_ops {
 }
 
 pub(crate) mod export_naming;
+pub(crate) mod graphics_backend;
 pub(crate) mod i18n;
 pub(crate) mod performance_settings;
 pub(crate) mod platform;
@@ -73,27 +74,33 @@ fn memory_budget_thresholds(memory: platform::MemoryClass) -> eframe::wgpu::Memo
 /// Index of the adapter the editor window runs on, from the `(backend, device
 /// type)` of each adapter that can draw to it, in enumeration order.
 ///
-/// Picks as wgpu's `request_adapter` would, among `processing` backends only, so
-/// a software Vulkan adapter wins over a GL hardware one. When no processing
-/// adapter exists it picks among the rest, so the window can still open and say
-/// the driver is unsupported (`app::create_app`).
+/// Picks as wgpu's `request_adapter` would, among the `preferred` backend's
+/// adapters when it is a processing backend with one, else among `processing`
+/// backends, so a software Vulkan adapter wins over a GL hardware one. When no
+/// processing adapter exists it picks among the rest, so the window can still
+/// open and say the driver is unsupported (`app::create_app`).
 fn editor_adapter_index(
     adapters: &[(eframe::wgpu::Backend, eframe::wgpu::DeviceType)],
     processing: eframe::wgpu::Backends,
+    preferred: Option<eframe::wgpu::Backend>,
     power_preference: eframe::wgpu::PowerPreference,
 ) -> Option<usize> {
-    let best = |for_processing: bool| {
+    let processes =
+        |backend: eframe::wgpu::Backend| processing.contains(eframe::wgpu::Backends::from(backend));
+    let best = |accept: &dyn Fn(eframe::wgpu::Backend) -> bool| {
         adapters
             .iter()
             .enumerate()
-            .filter(|(_, (backend, _))| {
-                processing.contains(eframe::wgpu::Backends::from(*backend)) == for_processing
-            })
+            .filter(|(_, (backend, _))| accept(*backend))
             // `min_by_key` keeps the first of equal ranks, like wgpu's stable sort.
             .min_by_key(|(_, (_, device_type))| adapter_rank(*device_type, power_preference))
             .map(|(index, _)| index)
     };
-    best(true).or_else(|| best(false))
+    preferred
+        .filter(|preferred| processes(*preferred))
+        .and_then(|preferred| best(&|backend| backend == preferred))
+        .or_else(|| best(&processes))
+        .or_else(|| best(&|backend| !processes(backend)))
 }
 
 /// The order wgpu-core 29's `Instance::request_adapter` prefers device types
@@ -114,8 +121,12 @@ fn adapter_rank(
     }
 }
 
-/// Options for the editor window; each platform's entry point adds its own.
-fn native_options(caps: platform::PlatformCaps) -> eframe::NativeOptions {
+/// Options for the editor window, which runs on `graphics_backend` where it can;
+/// each platform's entry point adds its own.
+fn native_options(
+    caps: platform::PlatformCaps,
+    graphics_backend: graphics_backend::GraphicsBackend,
+) -> eframe::NativeOptions {
     let mut options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
@@ -138,13 +149,18 @@ fn native_options(caps: platform::PlatformCaps) -> eframe::NativeOptions {
                     (info.backend, info.device_type)
                 })
                 .collect();
-            editor_adapter_index(
+            let processing = calibraw_gpu::processing_backends();
+            let automatic = editor_adapter_index(&kinds, processing, None, power_preference);
+            let chosen = editor_adapter_index(
                 &kinds,
-                calibraw_gpu::processing_backends(),
+                processing,
+                graphics_backend.backend(),
                 power_preference,
-            )
-            .map(|index| drawable[index].clone())
-            .ok_or_else(|| "no graphics adapter can draw to this window".to_owned())
+            );
+            graphics_backend::record_support(&kinds, processing, automatic, chosen);
+            chosen
+                .map(|index| drawable[index].clone())
+                .ok_or_else(|| "no graphics adapter can draw to this window".to_owned())
         }));
         setup.device_descriptor = std::sync::Arc::new(|adapter| {
             let info = adapter.get_info();

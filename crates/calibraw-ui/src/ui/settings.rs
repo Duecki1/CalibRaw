@@ -592,6 +592,12 @@ impl Settings {
         {
             app.persist_performance_settings();
         }
+        // Only a machine with more than one usable backend has a choice.
+        if let Some(support) =
+            crate::graphics_backend::support().filter(|support| support.available.len() > 1)
+        {
+            Self::show_graphics_backend(ui, app, &support);
+        }
         // Without a configurable AI runtime there is no AI models card to hold
         // these controls.
         if !app.caps().configurable_ai_runtime {
@@ -710,6 +716,53 @@ impl Settings {
             }
             ui.label(egui::RichText::new(cache_size).color(ui.visuals().weak_text_color()));
         });
+    }
+
+    /// The graphics backend for the next start, among those `support` found.
+    fn show_graphics_backend(
+        ui: &mut Ui,
+        app: &mut CalibRawApp,
+        support: &crate::graphics_backend::BackendSupport,
+    ) {
+        use crate::graphics_backend::GraphicsBackend;
+        let automatic_label = match support.automatic.and_then(GraphicsBackend::api_name) {
+            Some(api) => tr_fmt("Automatic ({api})", &[("api", &api)]),
+            None => tr("Automatic").to_owned(),
+        };
+        let label = |choice: GraphicsBackend| {
+            choice
+                .api_name()
+                .map_or_else(|| automatic_label.clone(), str::to_owned)
+        };
+        // A saved backend this machine no longer offers runs as Automatic.
+        let saved = app.preferences.graphics_backend;
+        let shown = if support.available.contains(&saved) {
+            saved
+        } else {
+            GraphicsBackend::Automatic
+        };
+        let mut choice = shown;
+        moduwu_design::form_combo_with_help(
+            ui,
+            tr("Graphics backend"),
+            "settings-graphics-backend",
+            label(choice),
+            160.0,
+            tr("The graphics API CalibRaw draws its window and processes photos with. Automatic picks the best one for this device. Try another if the preview shows errors or CalibRaw is unstable. Takes effect after a restart."),
+            |ui| {
+                for option in std::iter::once(GraphicsBackend::Automatic)
+                    .chain(support.available.iter().copied())
+                {
+                    ui.selectable_value(&mut choice, option, label(option));
+                }
+            },
+        );
+        if choice != shown {
+            app.set_graphics_backend(choice);
+        }
+        if support.resolve(choice) != support.active {
+            ui.small(tr("Restart CalibRaw to switch the graphics backend."));
+        }
     }
 
     fn show_adjustment_clipboard_card(ui: &mut Ui, app: &mut CalibRawApp) {

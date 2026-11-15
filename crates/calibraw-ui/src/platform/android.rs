@@ -35,7 +35,12 @@ pub fn android_main(android_app: AndroidApp) {
         Ok(false) => {}
         Err(error) => log::warn!("{error}"),
     }
-    let mut options = crate::native_options(PlatformCaps::ANDROID);
+    let settings_path = calibraw_ffi::performance_settings_path(&android_app)
+        .map_err(|error| log::warn!("{error}"))
+        .ok();
+    let graphics_backend =
+        crate::performance_settings::load_graphics_backend(settings_path.as_deref());
+    let mut options = crate::native_options(PlatformCaps::ANDROID, graphics_backend);
     options.wgpu_options.surface = eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY;
     options.android_app = Some(android_app.clone());
     options.viewport = eframe::egui::ViewportBuilder::default();

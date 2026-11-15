@@ -23,6 +23,19 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
+    /// Saves `backend` for the next start; the running device stays as it is.
+    pub(crate) fn set_graphics_backend(
+        &mut self,
+        backend: crate::graphics_backend::GraphicsBackend,
+    ) {
+        if self.preferences.graphics_backend == backend {
+            return;
+        }
+        self.preferences.graphics_backend = backend;
+        self.persist_performance_settings();
+        self.egui_ctx.request_repaint();
+    }
+
     pub(crate) fn set_language(&mut self, language: crate::i18n::LanguageChoice) {
         if self.preferences.language == language {
             return;
@@ -392,6 +405,7 @@ impl CalibRawApp {
             experimental_gpu_ai: self.caps().gpu_ai == GpuAi::Experimental
                 && self.ai.gpu_acceleration,
             onnx_runtime_mode: self.ai.runtime_mode,
+            graphics_backend: self.preferences.graphics_backend,
             discord_rich_presence: self.preferences.discord_rich_presence,
             hdd_mode: self.preferences.hdd_mode,
             camera_profile_mode: self.preferences.camera_profile_mode,

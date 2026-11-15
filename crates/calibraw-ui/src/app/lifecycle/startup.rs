@@ -344,6 +344,7 @@ impl CalibRawApp {
                 export_name_template: performance.export_name_template.clone(),
                 discord_rich_presence: performance.discord_rich_presence,
                 hdd_mode: performance.hdd_mode,
+                graphics_backend: performance.graphics_backend,
                 ui_design: performance.ui_design,
                 preview_backdrop: performance.preview_backdrop,
                 language: performance.language,

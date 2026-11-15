@@ -67,7 +67,7 @@ CalibRaw processes photos on the GPU through Vulkan, Direct3D 12 or Metal. OpenG
 | **Windows** | Direct3D 12 or Vulkan. Without either, Windows' software renderer (WARP) is used. |
 | **macOS** | Metal. |
 
-Set `WGPU_BACKEND` (for example `vulkan`) to choose the graphics API yourself.
+Where more than one graphics API works, such as Direct3D 12 and Vulkan on Windows, Settings > Interface > Graphics backend chooses one; it applies from the next start. `WGPU_BACKEND` (for example `vulkan`) limits which APIs CalibRaw may use and takes precedence.
 
 ---
 

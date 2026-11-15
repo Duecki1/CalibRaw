@@ -36,6 +36,8 @@ pub(crate) struct PreferencesState {
     pub(crate) export_name_template: String,
     pub(crate) discord_rich_presence: bool,
     pub(crate) hdd_mode: bool,
+    /// The saved choice, which the editor's device follows from the next start.
+    pub(crate) graphics_backend: crate::graphics_backend::GraphicsBackend,
     pub(crate) ui_design: UiDesign,
     pub(crate) preview_backdrop: PreviewBackdrop,
     pub(crate) language: crate::i18n::LanguageChoice,
