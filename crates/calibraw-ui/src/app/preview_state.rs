@@ -319,7 +319,8 @@ pub(crate) struct PreviewDetail<P = PreviewPipeline> {
 /// the canvas paints a copy of the last completed render instead of the
 /// graph's output, which the worker may be half way through writing.
 pub(crate) struct CropPipeline {
-    /// `None` while a worker renders the next crop with it.
+    /// `None` while a worker renders the next crop with it, or once it was
+    /// released for that crop's new graph (`free_graph_now`).
     gpu: Option<PreviewPipeline>,
     shown: ShownTexture,
 }
@@ -366,18 +367,17 @@ impl CropPipeline {
         self.gpu.take().map(PreviewPipeline::into_gpu)
     }
 
+    /// Releases the graph now and keeps painting its last completed render,
+    /// until the crop that needed its memory replaces this one.
+    pub(crate) fn free_graph_now(&mut self, renderer: &mut eframe::egui_wgpu::Renderer) {
+        if let Some(gpu) = self.gpu.take() {
+            gpu.free_now(renderer);
+        }
+    }
+
     /// The shown copy, to keep for a graph of the same size.
     pub(crate) fn into_shown(self) -> ShownTexture {
         self.shown
-    }
-
-    /// Releases the graph and the copy now (`RegisteredTexture::free_now`).
-    pub(crate) fn free_now(self, renderer: &mut eframe::egui_wgpu::Renderer) {
-        let Self { gpu, shown } = self;
-        if let Some(gpu) = gpu {
-            gpu.free_now(renderer);
-        }
-        shown.free_now(renderer);
     }
 }
 
@@ -596,7 +596,8 @@ impl PreviewState {
         self.cancel_detail_rebuild();
         self.detail_rebuild = None;
         self.detail_block = None;
-        // A crop whose graph a worker was rendering with gets it back no more.
+        // A crop without its graph (lent to the worker, or released for the
+        // worker's new one) gets no graph back any more.
         if self
             .detail
             .as_ref()

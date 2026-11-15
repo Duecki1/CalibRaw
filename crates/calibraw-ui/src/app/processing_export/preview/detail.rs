@@ -344,10 +344,12 @@ impl CalibRawApp {
             })
             .and_then(|detail| detail.pipeline.lend());
         // On mobile the fitted graph and one detail graph share the budget:
-        // release an incompatible graph before its replacement is built.
+        // release an incompatible graph before its replacement is built. Its
+        // last render stays on the canvas until the new crop is installed.
         if reused.is_none() && self.caps().constrained_memory() {
-            if let Some(old) = self.preview.detail.take() {
-                old.pipeline.free_now(&mut render_state.renderer.write());
+            if let Some(old) = self.preview.detail.as_mut() {
+                old.pipeline
+                    .free_graph_now(&mut render_state.renderer.write());
             }
         }
         let template = self
@@ -386,8 +388,11 @@ impl CalibRawApp {
             crop,
             started: Instant::now(),
         };
-        // The job uploads every mask layer.
+        // The job renders every stage and uploads every mask layer of the edit
+        // as it is now. What changes while it runs is queued again and
+        // rendered once the crop is installed.
         self.masks.detail_dirty_layers.fill(false);
+        self.preview.detail_pending_stage = None;
         match detail_render::spawn_raw_stage(job, self.egui_ctx.clone()) {
             Ok(receiver) => {
                 self.preview.detail_rebuild = Some(rebuild.continued(receiver));
@@ -489,7 +494,6 @@ impl CalibRawApp {
             job.crop.source_size,
         ));
         self.preview.detail = Some(job.crop.with_pipeline(pipeline));
-        self.preview.detail_pending_stage = None;
         if self.preview.original_requested {
             self.preview.original_rendered_state = None;
         }
@@ -532,7 +536,8 @@ impl CalibRawApp {
         self.report_error(ErrorKind::Preview, error);
     }
 
-    /// Drops the crop whose graph a worker took and will not give back.
+    /// Drops the crop that has no graph (lent to the worker, or released for
+    /// the worker's new one) and will get none back.
     fn drop_lent_detail_graph(&mut self) {
         if self
             .preview

@@ -196,14 +196,4 @@ impl ShownTexture {
         debug_assert_eq!(self.size(), [gpu.width, gpu.height]);
         gpu.copy_output_to(device, queue, &self.texture);
     }
-
-    /// Releases the registration now (see [`RegisteredTexture::free_now`]).
-    pub(crate) fn free_now(self, renderer: &mut egui_wgpu::Renderer) {
-        let Self {
-            texture,
-            registration,
-        } = self;
-        registration.free_now(renderer);
-        drop(texture);
-    }
 }

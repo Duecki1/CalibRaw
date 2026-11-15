@@ -405,20 +405,24 @@ impl CalibRawApp {
                     && self.sharp_crop_covers_view()))
     }
 
-    /// Whether the sharp crop is there to be reduced: it belongs to this view
-    /// and is not being replaced. A drag already followed keeps it, whatever a
-    /// control changed about what the crop would need (the border its filters
-    /// reach); it is refreshed once the drag ends.
+    /// Whether the sharp crop is there to be reduced: it covers the part of
+    /// the photo in view. It need not be the crop this view would get
+    /// (`preview_detail_is_current`): one prepared for a view since moved,
+    /// coarser than the zoom asks for, with a smaller border than the edit
+    /// needs, or about to be replaced by a crop a worker renders, still shows
+    /// everything a drag changes. The replacement waits for the end of the
+    /// drag (`poll_preview_detail_rebuild_worker`), so the crop stays put
+    /// under the reduced one, and is refreshed after. A drag already followed
+    /// keeps it wherever the view goes.
     fn sharp_crop_covers_view(&self) -> bool {
-        self.preview.detail_rebuild.is_none()
-            && if self.preview.interactive.phase == DragPhase::Idle {
-                self.preview_detail_is_current()
-            } else {
-                self.preview
-                    .detail
-                    .as_ref()
-                    .is_some_and(|detail| detail.revision == self.preview.revision)
-            }
+        self.preview.detail.as_ref().is_some_and(|detail| {
+            detail.revision == self.preview.revision
+                && (self.preview.interactive.phase != DragPhase::Idle
+                    || (0..2).all(|axis| {
+                        detail.uv_rect.min[axis] <= self.preview.visible_uv.min[axis] + 1e-6
+                            && detail.uv_rect.max[axis] >= self.preview.visible_uv.max[axis] - 1e-6
+                    }))
+        })
     }
 
     /// Whether the sharp preview has every edit queued so far rendered. It
@@ -498,7 +502,11 @@ impl CalibRawApp {
             self.caps().constrained_memory(),
         );
         self.preview.interactive.slow = slow;
-        self.maintain_interactive_graph(frame, usable && slow);
+        // A crop a worker is replacing keeps the reduced graph it has, but
+        // gets none built: the replacement would need its own.
+        let replacing_crop = self.preview.zoomed_in() && self.preview.detail_rebuild.is_some();
+        let keep_or_build = !replacing_crop || self.preview.interactive.graph.is_some();
+        self.maintain_interactive_graph(frame, usable && slow && keep_or_build);
 
         let eligible = usable && slow && self.preview.interactive.graph.is_some();
         // The GPU has finished what it was given, too, so the sharp picture
