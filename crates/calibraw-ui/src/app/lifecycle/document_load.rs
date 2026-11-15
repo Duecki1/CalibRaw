@@ -321,7 +321,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             && automatic_lens.enabled
             && lens_correction.catalog.available
             && lens_correction.catalog.auto_match.is_none()
-            && !original_raw.is_display_referred_raster();
+            && is_camera_raw_source(&original_raw, &label);
         if let crate::sidecar::SidecarTarget::Android {
             raw_uri,
             display_name,
@@ -1223,4 +1223,14 @@ fn create_preview_pipeline(
         pipeline_started.elapsed().as_secs_f64()
     ));
     Ok(pipeline)
+}
+
+/// Whether `raw` came from a camera RAW, the only source the missing lens
+/// profile prompt is for. Sensor mosaics always do; a camera-linear raster
+/// does only when `label` (the file name) names a camera RAW such as a linear
+/// DNG, since rendered TIFFs and other rasters can carry camera colour too.
+fn is_camera_raw_source(raw: &LoadedRaw, label: &str) -> bool {
+    !raw.is_pre_demosaiced_raster()
+        || (raw.is_camera_linear_raster()
+            && crate::pipeline::is_camera_raw_path(std::path::Path::new(label)))
 }

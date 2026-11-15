@@ -89,7 +89,8 @@ pub struct LookLut {
 }
 
 impl LookLut {
-    pub const DEFAULT_AMOUNT: f32 = 1.0;
+    /// The amount a newly chosen LUT starts at.
+    pub const DEFAULT_AMOUNT: f32 = 0.15;
 
     pub fn new(entry: &LutEntry) -> Self {
         Self {
@@ -100,8 +101,9 @@ impl LookLut {
     }
 }
 
+/// Sidecars and presets saved before LUTs had an amount applied them in full.
 const fn full_amount() -> f32 {
-    LookLut::DEFAULT_AMOUNT
+    1.0
 }
 
 /// A LUT loaded for rendering, with the amount an edit applies it at.
