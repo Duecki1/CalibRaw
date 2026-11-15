@@ -100,6 +100,18 @@ impl CalibRawApp {
         let Some(stage) = self.preview.detail_pending_stage else {
             return;
         };
+        // A worker is rendering the next crop from the edit as it was when it
+        // started: what is pending waits for the crop it installs, also when
+        // the shown crop kept its graph, or the new crop would replace that
+        // render with the older edit.
+        if self
+            .preview
+            .detail_rebuild
+            .as_ref()
+            .is_some_and(DetailRebuild::rendering)
+        {
+            return;
+        }
         let Some(detail) = self
             .preview
             .detail

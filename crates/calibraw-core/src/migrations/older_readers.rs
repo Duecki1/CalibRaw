@@ -122,7 +122,8 @@ pub(crate) fn serialize_color_range<S: Serializer>(
 /// [`V3_SCHEMA_VERSION`] when readers up to v1.4 can, [`V4_SCHEMA_VERSION`]
 /// when readers of the 8-bit depth map can, otherwise `current`: for scene
 /// depth, for Relight's and Fog's scene controls, for cards switched off and
-/// for the Glow with styles and the legacy highlight Glow.
+/// for the effects no earlier reader knows: the Glow with styles, the legacy
+/// highlight Glow, Light Shafts, Lens Blur (`Defocus`) and Color Fringe.
 pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
     let masks = &edits.masks;
     let uses_effect = |effects: &[MaskEffect]| {
@@ -148,6 +149,9 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
             MaskEffect::Fog,
             MaskEffect::StyledGlow,
             MaskEffect::LegacyHighlightGlow,
+            MaskEffect::LightShafts,
+            MaskEffect::Defocus,
+            MaskEffect::ColorFringe,
         ])
         || cards_off
     {
