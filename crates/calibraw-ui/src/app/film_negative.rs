@@ -98,6 +98,11 @@ impl CalibRawApp {
             return;
         }
         self.develop.exposure.film = film;
+        // A negative cannot be matched to its camera (`camera_match_applies`),
+        // so its match is turned off with the change rather than left stale.
+        if self.develop.exposure.film.negative().is_some() {
+            self.remove_camera_match();
+        }
         // Mask sources develop the positive (`ExposureParams::source_reference`),
         // so the masks drawn from them are out of date.
         self.masks.source_cache = None;
