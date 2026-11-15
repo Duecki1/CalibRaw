@@ -173,6 +173,7 @@ mod tests {
             camera_model: String::new(),
             lens_make: String::new(),
             lens_model: String::new(),
+            makernote_lens_model: String::new(),
             focal_length: 0.0,
             aperture: 0.0,
             focus_distance: 0.0,

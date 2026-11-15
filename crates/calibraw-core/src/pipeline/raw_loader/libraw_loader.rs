@@ -748,6 +748,7 @@ fn loaded_raw_from_context(
         camera_model: c_array_to_string(&iparams.model),
         lens_make: c_array_to_string(&lens.LensMake),
         lens_model: c_array_to_string(&lens.Lens),
+        makernote_lens_model: String::new(),
         focal_length: finite_positive_or_zero(other.focal_len),
         aperture: finite_positive_or_zero(other.aperture),
         focus_distance: 0.0,
@@ -787,6 +788,12 @@ fn loaded_raw_from_context(
         highlight_source_identity: Default::default(),
         highlight_reference_source: true,
     };
+    let makernote_lens = super::makernote_lens::from_libraw_id(
+        &loaded.camera_make,
+        lens.makernotes.LensID,
+        loaded.focal_length,
+    );
+    super::makernote_lens::record(&mut loaded, makernote_lens);
     loaded.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&loaded);
     Ok(loaded)
 }

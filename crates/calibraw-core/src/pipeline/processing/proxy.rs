@@ -37,6 +37,7 @@ fn raster_with_metadata(
     output.camera_model = raw.camera_model.clone();
     output.lens_make = raw.lens_make.clone();
     output.lens_model = raw.lens_model.clone();
+    output.makernote_lens_model = raw.makernote_lens_model.clone();
     output.focal_length = raw.focal_length;
     output.aperture = raw.aperture;
     output.focus_distance = raw.focus_distance;

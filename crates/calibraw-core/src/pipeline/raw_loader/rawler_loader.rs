@@ -16,7 +16,7 @@ use gain_map::BayerGainMaps;
 use rawler::decoders::{
     Decoder, FormatHint, Orientation, RawDecodeParams, RawMetadata, WellKnownIFD,
 };
-use rawler::formats::tiff::{Entry, IFD};
+use rawler::formats::tiff::{Entry, Value, IFD};
 use rawler::imgop::develop::RawDevelop;
 use rawler::imgop::xyz::{FlatColorMatrix, Illuminant};
 use rawler::rawimage::{RawImage, RawImageData, RawPhotometricInterpretation};
@@ -580,6 +580,23 @@ fn capture_metadata(path: &Path, md: &RawMetadata) -> CaptureMetadata {
     capture
 }
 
+/// Names the lens of a Pentax DNG from the maker note it carries in
+/// `DNGPrivateData`, which Rawler's DNG decoder does not read.
+fn record_pentax_dng_lens(loaded: &mut LoadedRaw, root: &IFD) {
+    if !loaded.makernote_lens_model.is_empty() {
+        return;
+    }
+    let name = root
+        .get_entry(DngTag::DNGPrivateData)
+        .and_then(|entry| match &entry.value {
+            Value::Byte(data) | Value::Undefined(data) => {
+                super::makernote_lens::from_pentax_dng_private_data(data, loaded.focal_length)
+            }
+            _ => None,
+        });
+    super::makernote_lens::record(loaded, name);
+}
+
 fn metadata(decoder: &dyn Decoder, source: &RawSource) -> RawMetadata {
     decoder
         .raw_metadata(source, &RawDecodeParams::default())
@@ -711,6 +728,7 @@ fn adapt(
         camera_model: image.model.clone(),
         lens_make: md.exif.lens_make.clone().unwrap_or_default(),
         lens_model: md.exif.lens_model.clone().unwrap_or_default(),
+        makernote_lens_model: String::new(),
         focal_length: positive(md.exif.focal_length),
         aperture: positive(md.exif.fnumber),
         focus_distance: positive(md.exif.subject_distance),
@@ -738,6 +756,8 @@ fn adapt(
         highlight_source_identity: Default::default(),
         highlight_reference_source: true,
     };
+    // Rawler's PEF and ORF decoders resolve the maker note's lens ID.
+    super::makernote_lens::record(&mut loaded, md.lens.as_ref());
     match &image.photometric {
         RawPhotometricInterpretation::Cfa(config) => {
             ensure!(image.cpp == 1, "unsupported multi-channel CFA");
@@ -938,6 +958,7 @@ pub(super) fn load_raw_file_with_profile_selection(
             source: selection.source,
         };
         let mut loaded = adapt(image, input.geometry, gain_maps, color, md, path, chosen)?;
+        record_pentax_dng_lens(&mut loaded, &input.root);
         loaded.available_camera_profiles = selection.candidates;
         crate::diagnostics::record("RAW decode completed through Rawler backend");
         Ok(loaded)
@@ -1056,6 +1077,7 @@ pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result
             source: Some(profile_path.to_owned()),
         };
         let mut loaded = adapt(image, input.geometry, gain_maps, color, md, path, chosen)?;
+        record_pentax_dng_lens(&mut loaded, &input.root);
         loaded.available_camera_profiles = vec![CameraProfileCandidate {
             path: profile_path.to_owned(),
             name,

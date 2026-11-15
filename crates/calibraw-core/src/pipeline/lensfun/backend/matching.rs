@@ -77,25 +77,106 @@ pub(super) fn sort_and_deduplicate_lenses(lenses: &mut Vec<LensfunLens>) {
     });
 }
 
-/// Picks the profile for the RAW's lens. `catalog` lists the profiles that
-/// fit the camera, or every profile when the camera is unknown.
+/// The lens name a match is looked up by, with the capture's focal length.
+struct LensQuery<'a> {
+    make: &'a str,
+    model: &'a str,
+    focal_length: f32,
+}
+
+/// Picks the profile for the RAW's lens: by its EXIF name, then by the name
+/// its maker note's lens ID gives, then, for a camera with a built-in lens
+/// that names none, by the camera. `catalog` lists the profiles that fit the
+/// camera, or every profile when the camera is unknown.
 pub(super) fn find_auto_lens(
     database: &Database,
     camera: Option<*const lfCamera>,
     raw: &LoadedRaw,
     catalog: &[LensfunLens],
 ) -> Option<LensfunLens> {
-    if raw.lens_model.trim().is_empty() {
+    let exif = LensQuery {
+        make: &raw.lens_make,
+        model: &raw.lens_model,
+        focal_length: raw.focal_length,
+    };
+    if let Some(found) = find_named_lens(database, camera, &exif, catalog) {
+        return Some(found);
+    }
+    let makernote = raw.makernote_lens_model.trim();
+    if !makernote.is_empty() && makernote != raw.lens_model.trim() {
+        let query = LensQuery {
+            make: "",
+            model: makernote,
+            focal_length: raw.focal_length,
+        };
+        if let Some(found) = find_named_lens(database, camera, &query, catalog) {
+            return Some(found);
+        }
+    }
+    let camera = camera?;
+    if raw.lens_model.trim().is_empty() && makernote.is_empty() && is_own_body(camera, raw) {
+        return built_in_lens(database, camera, &exif, catalog);
+    }
+    None
+}
+
+/// Whether `camera` is the RAW's body rather than a loose match to another of
+/// its series, such as a Galaxy S7 for a Galaxy S24 Ultra. Makers are left
+/// out, since Lensfun files a Minolta DiMAGE A200 under Konica Minolta.
+fn is_own_body(camera: *const lfCamera, raw: &LoadedRaw) -> bool {
+    let Some((maker, model)) = camera_name(camera) else {
+        return false;
+    };
+    let without_maker =
+        |model: &str| canonical_lens_model(model, &[maker.as_str(), raw.camera_make.as_str()]);
+    without_maker(&model) == without_maker(&raw.camera_model)
+}
+
+/// The standard profile of a camera with a built-in lens. Lensfun gives such
+/// a camera a mount of its own, with the lens alone (`X100V & compatibles
+/// (Standard)`) and with each converter (`…, with WCL-X100`); a camera whose
+/// mount fits several lenses names none.
+fn built_in_lens(
+    database: &Database,
+    camera: *const lfCamera,
+    query: &LensQuery<'_>,
+    catalog: &[LensfunLens],
+) -> Option<LensfunLens> {
+    let names = ProfileNames::load(database);
+    let mut standard = catalog.iter().filter(|candidate| {
+        !names
+            .models(candidate)
+            .into_iter()
+            .any(|model| model.to_lowercase().contains(", with "))
+    });
+    let first = standard.next()?;
+    if standard.any(|other| !same_lens(first, other))
+        || !profile_supports_capture(database, Some(camera), query, first)
+    {
+        return None;
+    }
+    Some(first.clone())
+}
+
+/// Picks the profile for the lens `raw` names; `catalog` as for
+/// [`find_auto_lens`].
+fn find_named_lens(
+    database: &Database,
+    camera: Option<*const lfCamera>,
+    raw: &LensQuery<'_>,
+    catalog: &[LensfunLens],
+) -> Option<LensfunLens> {
+    if raw.model.trim().is_empty() {
         return None;
     }
 
     let mut candidates = if let Some(camera) = camera {
-        let maker = if raw.lens_make.trim().is_empty() {
+        let maker = if raw.make.trim().is_empty() {
             None
         } else {
-            CString::new(raw.lens_make.trim()).ok()
+            CString::new(raw.make.trim()).ok()
         };
-        let model = CString::new(raw.lens_model.trim()).ok()?;
+        let model = CString::new(raw.model.trim()).ok()?;
         let list = OwnedPointerList {
             pointer: unsafe {
                 lf_db_find_lenses(
@@ -161,7 +242,12 @@ impl ProfileNames {
                 continue;
             };
             // SAFETY: `pointer_list` returns only non-null lenses the database owns.
-            let variants = multilingual_variants(unsafe { (*pointer).Model });
+            let mut variants = multilingual_variants(unsafe { (*pointer).Model });
+            let alternatives = variants
+                .iter()
+                .flat_map(|variant| suffix_alternatives(variant))
+                .collect::<Vec<_>>();
+            variants.extend(alternatives);
             let models = names.entry(profile_key(&lens)).or_default();
             for variant in variants {
                 if !models.contains(&variant) {
@@ -187,6 +273,31 @@ impl ProfileNames {
     }
 }
 
+/// The names a profile covering several versions stands for when its last
+/// word lists them: `smc Pentax-DA 18-55mm f/3.5-5.6 AL II/L/WR` gives
+/// `… AL II`, `… AL L` and `… AL WR`. Only words of letters are read so, which
+/// leaves apertures (`f/2.8`) and model codes (`A047Z/E`) alone.
+fn suffix_alternatives(model: &str) -> Vec<String> {
+    let Some((prefix, last)) = model.trim_end().rsplit_once(' ') else {
+        return Vec::new();
+    };
+    let parts = last.split('/').collect::<Vec<_>>();
+    if parts.len() < 2
+        || !parts.iter().all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphabetic())
+        })
+    {
+        return Vec::new();
+    }
+    parts
+        .into_iter()
+        .map(|part| format!("{prefix} {part}"))
+        .collect()
+}
+
 fn profile_key(lens: &LensfunLens) -> (String, String) {
     (lens.maker.to_lowercase(), lens.model.to_lowercase())
 }
@@ -202,14 +313,14 @@ fn same_lens(left: &LensfunLens, right: &LensfunLens) -> bool {
 fn ranked_match(
     database: &Database,
     camera: Option<*const lfCamera>,
-    raw: &LoadedRaw,
+    raw: &LensQuery<'_>,
     names: &ProfileNames,
     candidates: Vec<LensfunLens>,
 ) -> Option<LensfunLens> {
     let mut ranked = candidates
         .into_iter()
         .filter_map(|candidate| {
-            if !maker_is_compatible(&raw.lens_make, &raw.lens_model, &candidate.maker)
+            if !maker_is_compatible(raw.make, raw.model, &candidate.maker)
                 || !profile_supports_capture(database, camera, raw, &candidate)
             {
                 return None;
@@ -257,13 +368,13 @@ fn ranked_match(
 fn optics_match(
     database: &Database,
     camera: Option<*const lfCamera>,
-    raw: &LoadedRaw,
+    raw: &LensQuery<'_>,
     names: &ProfileNames,
     catalog: &[LensfunLens],
 ) -> Option<LensfunLens> {
-    let optics = lens_optics(&raw.lens_model)?;
-    let raw_maker_words = tokenized(&raw.lens_make);
-    let raw_words = lens_words(&raw.lens_model)
+    let optics = lens_optics(raw.model)?;
+    let raw_maker_words = tokenized(raw.make);
+    let raw_words = lens_words(raw.model)
         .into_iter()
         .filter(|word| !raw_maker_words.contains(word))
         .collect::<Vec<_>>();
@@ -304,7 +415,7 @@ fn optics_match(
     let mut best: Option<(usize, &LensfunLens)> = None;
     let mut tied = false;
     for candidate in catalog {
-        if !maker_is_compatible(&raw.lens_make, &raw.lens_model, &candidate.maker) {
+        if !maker_is_compatible(raw.make, raw.model, &candidate.maker) {
             continue;
         }
         let Some(added) = names
@@ -444,19 +555,19 @@ fn version_numerals(words: &[String]) -> Vec<&str> {
 }
 
 /// Whether `model`, one name of a profile by `maker`, is the RAW's lens name.
-fn lens_metadata_is_exact(raw: &LoadedRaw, maker: &str, model: &str) -> bool {
-    if !maker_is_compatible(&raw.lens_make, &raw.lens_model, maker) {
+fn lens_metadata_is_exact(raw: &LensQuery<'_>, maker: &str, model: &str) -> bool {
+    if !maker_is_compatible(raw.make, raw.model, maker) {
         return false;
     }
-    canonical_lens_model(&raw.lens_model, &[raw.lens_make.as_str(), maker])
-        == canonical_lens_model(model, &[maker, raw.lens_make.as_str()])
+    canonical_lens_model(raw.model, &[raw.make, maker])
+        == canonical_lens_model(model, &[maker, raw.make])
 }
 
 /// How well `model`, one name of a profile by `maker`, matches the RAW's lens
 /// name, from 0.78 to 1; `None` when it does not.
-fn automatic_match_score(raw: &LoadedRaw, maker: &str, model: &str) -> Option<f32> {
-    let raw_model = canonical_lens_model(&raw.lens_model, &[raw.lens_make.as_str(), maker]);
-    let candidate_model = canonical_lens_model(model, &[maker, raw.lens_make.as_str()]);
+fn automatic_match_score(raw: &LensQuery<'_>, maker: &str, model: &str) -> Option<f32> {
+    let raw_model = canonical_lens_model(raw.model, &[raw.make, maker]);
+    let candidate_model = canonical_lens_model(model, &[maker, raw.make]);
     if raw_model.is_empty() || candidate_model.is_empty() {
         return None;
     }
@@ -464,7 +575,7 @@ fn automatic_match_score(raw: &LoadedRaw, maker: &str, model: &str) -> Option<f3
         return Some(1.0);
     }
 
-    let raw_codes = lens_model_codes(&raw.lens_model);
+    let raw_codes = lens_model_codes(raw.model);
     let candidate_codes = lens_model_codes(model);
     if raw_codes
         .iter()
@@ -479,8 +590,8 @@ fn automatic_match_score(raw: &LoadedRaw, maker: &str, model: &str) -> Option<f3
         return Some(0.96);
     }
 
-    let raw_tokens = lens_tokens(&raw.lens_model, &raw.lens_make, maker);
-    let candidate_tokens = lens_tokens(model, maker, &raw.lens_make);
+    let raw_tokens = lens_tokens(raw.model, raw.make, maker);
+    let candidate_tokens = lens_tokens(model, maker, raw.make);
     if raw_tokens.is_empty() || candidate_tokens.is_empty() {
         return None;
     }
@@ -506,7 +617,7 @@ fn automatic_match_score(raw: &LoadedRaw, maker: &str, model: &str) -> Option<f3
 fn profile_supports_capture(
     database: &Database,
     camera: Option<*const lfCamera>,
-    raw: &LoadedRaw,
+    raw: &LensQuery<'_>,
     candidate: &LensfunLens,
 ) -> bool {
     if camera.is_none() {

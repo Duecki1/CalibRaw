@@ -130,6 +130,7 @@ fn highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         camera_model: "Highlight consistency".to_owned(),
         lens_make: String::new(),
         lens_model: String::new(),
+        makernote_lens_model: String::new(),
         focal_length: 0.0,
         aperture: 0.0,
         focus_distance: 0.0,

@@ -421,6 +421,12 @@ pub struct LoadedRaw {
     pub camera_model: String,
     pub lens_make: String,
     pub lens_model: String,
+    /// The lens the maker note's lens ID names (Pentax, Olympus and OM
+    /// Digital), or empty. It also fills an empty `lens_model`; lens matching
+    /// tries it after `lens_model`, since a body can name a lens by a newer
+    /// version than Lensfun files its profile under. Crops, proxies and tiles
+    /// keep their source's.
+    pub makernote_lens_model: String,
     pub focal_length: f32,
     pub aperture: f32,
     pub focus_distance: f32,
@@ -495,6 +501,7 @@ impl LoadedRaw {
             camera_model: self.camera_model.clone(),
             lens_make: self.lens_make.clone(),
             lens_model: self.lens_model.clone(),
+            makernote_lens_model: self.makernote_lens_model.clone(),
             focal_length: self.focal_length,
             aperture: self.aperture,
             focus_distance: self.focus_distance,
@@ -546,6 +553,7 @@ impl LoadedRaw {
             camera_model: String::new(),
             lens_make: String::new(),
             lens_model: String::new(),
+            makernote_lens_model: String::new(),
             focal_length: 0.0,
             aperture: 0.0,
             focus_distance: 0.0,
@@ -1099,5 +1107,7 @@ pub fn prewarm_dcp_profile_index(_folder: &Path) {}
 
 #[cfg(libraw_available)]
 mod libraw_loader;
+#[cfg(libraw_available)]
+mod makernote_lens;
 #[cfg(libraw_available)]
 mod rawler_loader;
