@@ -295,10 +295,8 @@ impl ShortcutAction {
             Self::ChooseAdjustmentsToCopy => {
                 &const {
                     [KeyBinding {
-                        command: true,
-                        shift: true,
                         alt: true,
-                        key: Key::C,
+                        ..KeyBinding::command_shift(Key::C)
                     }]
                 }
             }
@@ -368,14 +366,124 @@ impl ShortcutAction {
     }
 }
 
-/// A key with the modifiers that must be held. `command` is egui's
-/// `COMMAND`: Ctrl, or Cmd on macOS.
+/// What a binding waits for: a key, or a mouse side button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Trigger {
+    Key(egui::Key),
+    Mouse(SideButton),
+}
+
+/// The extra mouse buttons, usually on the side of the mouse. The other
+/// buttons belong to the canvas, the grid and the menus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SideButton {
+    /// egui's `Extra1`.
+    Back,
+    /// egui's `Extra2`.
+    Forward,
+}
+
+impl SideButton {
+    const fn of(button: egui::PointerButton) -> Option<Self> {
+        match button {
+            egui::PointerButton::Extra1 => Some(Self::Back),
+            egui::PointerButton::Extra2 => Some(Self::Forward),
+            _ => None,
+        }
+    }
+
+    /// The name both the settings and the settings file use.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Back => "MouseBack",
+            Self::Forward => "MouseForward",
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Back => "Mouse Back",
+            Self::Forward => "Mouse Forward",
+        }
+    }
+}
+
+/// One press read from this frame's input events.
+#[derive(Clone, Copy, Debug)]
+struct Press {
+    trigger: Trigger,
+    /// Where the key sits, for keys that also match by position.
+    physical_key: Option<egui::Key>,
+    modifiers: egui::Modifiers,
+    repeat: bool,
+}
+
+/// The press `event` is, if it is one. `held` is the modifiers held this
+/// frame. A modifier key on its own is no press: it arrives as a key event
+/// before the key it modifies. egui-winit sends Cmd/Ctrl with C, X or V as
+/// Copy, Cut and Paste instead of key events, so those count as the keys.
+fn press_of(event: &egui::Event, held: egui::Modifiers) -> Option<Press> {
+    use egui::Key;
+    let key = |key| Press {
+        trigger: Trigger::Key(key),
+        physical_key: None,
+        modifiers: held,
+        repeat: false,
+    };
+    match event {
+        egui::Event::Key {
+            key,
+            physical_key,
+            pressed: true,
+            repeat,
+            modifiers,
+        } if !is_modifier(*key) => Some(Press {
+            trigger: Trigger::Key(*key),
+            physical_key: *physical_key,
+            modifiers: *modifiers,
+            repeat: *repeat,
+        }),
+        egui::Event::Copy => Some(key(Key::C)),
+        egui::Event::Cut => Some(key(Key::X)),
+        egui::Event::Paste(_) => Some(key(Key::V)),
+        egui::Event::PointerButton {
+            button,
+            pressed: true,
+            modifiers,
+            ..
+        } => SideButton::of(*button).map(|button| Press {
+            trigger: Trigger::Mouse(button),
+            physical_key: None,
+            modifiers: *modifiers,
+            repeat: false,
+        }),
+        _ => None,
+    }
+}
+
+fn is_modifier(key: egui::Key) -> bool {
+    use egui::Key;
+    matches!(
+        key,
+        Key::ShiftLeft
+            | Key::ShiftRight
+            | Key::ControlLeft
+            | Key::ControlRight
+            | Key::AltLeft
+            | Key::AltRight
+            | Key::SuperLeft
+            | Key::SuperRight
+    )
+}
+
+/// A key or mouse side button with the modifiers that must be held.
+/// `command` is egui's `COMMAND`: Ctrl, or Cmd on macOS.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct KeyBinding {
     command: bool,
     shift: bool,
     alt: bool,
-    key: egui::Key,
+    trigger: Trigger,
 }
 
 impl KeyBinding {
@@ -384,7 +492,7 @@ impl KeyBinding {
             command: false,
             shift: false,
             alt: false,
-            key,
+            trigger: Trigger::Key(key),
         }
     }
 
@@ -402,19 +510,31 @@ impl KeyBinding {
         }
     }
 
-    /// The binding a key press records, or `None` for a press that cannot
-    /// be one: Ctrl without Cmd on macOS, which egui's `COMMAND` does not
-    /// cover.
-    pub(crate) fn from_press(key: egui::Key, modifiers: egui::Modifiers) -> Option<Self> {
-        if modifiers.ctrl && !modifiers.command {
+    /// Takes this frame's first press, for recording a binding: a key with
+    /// the modifiers held, or a mouse side button. Returns `None` when there
+    /// is none, or for Ctrl without Cmd on macOS, which egui's `COMMAND` does
+    /// not cover.
+    pub(crate) fn take_press(input: &mut egui::InputState) -> Option<Self> {
+        let held = input.modifiers;
+        let index = input
+            .events
+            .iter()
+            .position(|event| press_of(event, held).is_some_and(|press| !press.repeat))?;
+        let press = press_of(&input.events.remove(index), held)?;
+        if press.modifiers.ctrl && !press.modifiers.command {
             return None;
         }
         Some(Self {
-            command: modifiers.command,
-            shift: modifiers.shift,
-            alt: modifiers.alt,
-            key,
+            command: press.modifiers.command,
+            shift: press.modifiers.shift,
+            alt: press.modifiers.alt,
+            trigger: press.trigger,
         })
+    }
+
+    /// Escape without modifiers, which cancels recording.
+    pub(crate) fn is_escape(self) -> bool {
+        self == Self::plain(egui::Key::Escape)
     }
 
     fn modifiers(self) -> egui::Modifiers {
@@ -430,44 +550,77 @@ impl KeyBinding {
         u8::from(self.command) + u8::from(self.shift) + u8::from(self.alt)
     }
 
-    /// The binding as the settings show it, e.g. `Ctrl+Shift+Z`.
-    pub(crate) fn label(self) -> String {
-        let mut label = String::new();
-        for (held, name) in [
-            (self.command, crate::platform::PRIMARY_MODIFIER_NAME),
-            (self.alt, "Alt"),
-            (self.shift, "Shift"),
-        ] {
-            if held {
-                label.push_str(name);
-                label.push('+');
-            }
-        }
-        label.push_str(key_label(self.key));
-        label
+    /// Whether `press` answers this binding. As with egui's `consume_key`,
+    /// an extra Shift or Alt is ignored.
+    fn matches(self, press: &Press) -> bool {
+        press.trigger == self.trigger && press.modifiers.matches_logically(self.modifiers())
     }
 
-    /// The binding as the settings file stores it, e.g. `Command+Shift+Z`.
-    fn stored(self) -> String {
-        let mut stored = String::new();
+    /// Whether `press` is this rating or flag binding, with or without
+    /// Shift. A key that is not a letter also matches by position.
+    fn matches_review(self, press: &Press) -> bool {
+        if press.repeat || press.modifiers.command || press.modifiers.ctrl || press.modifiers.alt {
+            return false;
+        }
+        match (self.trigger, press.trigger) {
+            (Trigger::Key(bound), Trigger::Key(pressed)) => {
+                pressed == bound || (!is_letter(bound) && press.physical_key == Some(bound))
+            }
+            (bound, pressed) => bound == pressed,
+        }
+    }
+
+    fn modifier_prefix(self, command_name: &str) -> String {
+        let mut prefix = String::new();
         for (held, name) in [
-            (self.command, "Command"),
+            (self.command, command_name),
             (self.alt, "Alt"),
             (self.shift, "Shift"),
         ] {
             if held {
-                stored.push_str(name);
-                stored.push('+');
+                prefix.push_str(name);
+                prefix.push('+');
             }
         }
-        stored.push_str(self.key.name());
-        stored
+        prefix
+    }
+
+    /// The binding as the settings show it, e.g. `Ctrl+Shift+Z`.
+    pub(crate) fn label(self) -> String {
+        let trigger = match self.trigger {
+            Trigger::Key(key) => key_label(key),
+            Trigger::Mouse(button) => button.label(),
+        };
+        self.modifier_prefix(crate::platform::PRIMARY_MODIFIER_NAME) + trigger
+    }
+
+    /// The binding as the settings file stores it, e.g. `Command+Shift+Z`
+    /// or `Alt+MouseBack`.
+    fn stored(self) -> String {
+        let trigger = match self.trigger {
+            Trigger::Key(key) => key.name(),
+            Trigger::Mouse(button) => button.name(),
+        };
+        self.modifier_prefix("Command") + trigger
     }
 
     fn from_stored(stored: &str) -> Option<Self> {
-        // The key comes last; its name can itself be "+" only as "Plus".
-        let (modifiers, key) = stored.rsplit_once('+').unwrap_or(("", stored));
-        let mut binding = Self::plain(egui::Key::from_name(key)?);
+        // The trigger comes last; a "+" key is stored as "Plus".
+        let (modifiers, trigger) = stored.rsplit_once('+').unwrap_or(("", stored));
+        let trigger = [SideButton::Back, SideButton::Forward]
+            .into_iter()
+            .find(|button| button.name() == trigger)
+            .map(Trigger::Mouse)
+            .or_else(|| egui::Key::from_name(trigger).map(Trigger::Key))?;
+        if matches!(trigger, Trigger::Key(key) if is_modifier(key)) {
+            return None;
+        }
+        let mut binding = Self {
+            command: false,
+            shift: false,
+            alt: false,
+            trigger,
+        };
         for modifier in modifiers.split('+').filter(|part| !part.is_empty()) {
             match modifier {
                 "Command" => binding.command = true,
@@ -477,20 +630,6 @@ impl KeyBinding {
             }
         }
         Some(binding)
-    }
-
-    /// Whether a press with `modifiers` of `key` (`physical_key` where it
-    /// sits) is this rating or flag binding, with or without Shift.
-    fn matches_review(
-        self,
-        key: egui::Key,
-        physical_key: Option<egui::Key>,
-        modifiers: egui::Modifiers,
-    ) -> bool {
-        if modifiers.command || modifiers.ctrl || modifiers.alt {
-            return false;
-        }
-        key == self.key || (!is_letter(self.key) && physical_key == Some(self.key))
     }
 }
 
@@ -513,7 +652,7 @@ fn key_label(key: egui::Key) -> &'static str {
     }
 }
 
-/// Why a key press cannot become a binding.
+/// Why a press cannot become a binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BindingRefusal {
     /// The key belongs to a control that cannot be changed.
@@ -533,16 +672,19 @@ impl BindingRefusal {
 
 /// Whether `binding` belongs to a fixed control where `scope` works: Escape
 /// and Tab everywhere, Space for panning, and the library grid's movement
-/// and opening keys.
+/// and opening keys. No mouse side button is fixed.
 fn reserved(binding: KeyBinding, scope: Scope) -> bool {
     use egui::Key;
-    if matches!(binding.key, Key::Escape | Key::Tab) {
+    let Trigger::Key(key) = binding.trigger else {
+        return false;
+    };
+    if matches!(key, Key::Escape | Key::Tab) {
         return true;
     }
     if binding.command || binding.alt {
         return false;
     }
-    match binding.key {
+    match key {
         Key::Space => true,
         Key::ArrowLeft
         | Key::ArrowRight
@@ -558,14 +700,14 @@ fn reserved(binding: KeyBinding, scope: Scope) -> bool {
 }
 
 /// Whether `a` bound to `a_action` and `b` bound to `b_action` would answer
-/// the same press. A rating or flag key also takes the press with Shift.
+/// the same press. A rating or flag binding also takes the press with Shift.
 fn collide(
     a_action: ShortcutAction,
     a: KeyBinding,
     b_action: ShortcutAction,
     b: KeyBinding,
 ) -> bool {
-    if a.key != b.key || !a_action.scope().overlaps(b_action.scope()) {
+    if a.trigger != b.trigger || !a_action.scope().overlaps(b_action.scope()) {
         return false;
     }
     if a == b {
@@ -680,9 +822,11 @@ impl Shortcuts {
         self.changed.clear();
     }
 
-    /// Consumes this frame's first press of one of `actions`' bindings and
-    /// returns its action. Bindings with more modifiers are tried first, as
-    /// a press matches a binding that lacks its Shift or Alt.
+    /// Consumes this frame's presses of the first of `actions`' bindings that
+    /// was pressed and returns its action. Bindings with more modifiers are
+    /// tried first, as a press matches a binding that lacks its Shift or Alt.
+    /// Like egui's `consume_key`, every matching press is consumed,
+    /// key repeats included.
     pub(crate) fn take(
         &self,
         input: &mut egui::InputState,
@@ -697,10 +841,17 @@ impl Shortcuts {
             })
             .collect();
         candidates.sort_by_key(|(binding, _)| std::cmp::Reverse(binding.modifier_count()));
-        candidates
-            .into_iter()
-            .find(|(binding, _)| input.consume_key(binding.modifiers(), binding.key))
-            .map(|(_, action)| action)
+        let held = input.modifiers;
+        let (binding, action) = candidates.into_iter().find(|(binding, _)| {
+            input
+                .events
+                .iter()
+                .any(|event| press_of(event, held).is_some_and(|press| binding.matches(&press)))
+        })?;
+        input
+            .events
+            .retain(|event| !press_of(event, held).is_some_and(|press| binding.matches(&press)));
+        Some(action)
     }
 
     /// Consumes a press of `action`'s bindings.
@@ -711,44 +862,34 @@ impl Shortcuts {
     /// Whether `action`'s bindings were pressed this frame, leaving the press
     /// for others.
     pub(crate) fn pressed(&self, input: &egui::InputState, action: ShortcutAction) -> bool {
+        let held = input.modifiers;
         self.bindings(action).iter().any(|binding| {
-            input.events.iter().any(|event| {
-                matches!(
-                    event,
-                    egui::Event::Key { key, pressed: true, modifiers, .. }
-                        if *key == binding.key && modifiers.matches_logically(binding.modifiers())
-                )
-            })
+            input
+                .events
+                .iter()
+                .any(|event| press_of(event, held).is_some_and(|press| binding.matches(&press)))
         })
     }
 
-    /// Takes this frame's first rating or flag key press: its action, and
+    /// Takes this frame's first rating or flag press: its action, and
     /// whether Shift was held.
     pub(crate) fn take_review(
         &self,
         input: &mut egui::InputState,
     ) -> Option<(ShortcutAction, bool)> {
-        let found = input.events.iter().enumerate().find_map(|(index, event)| {
-            let egui::Event::Key {
-                key,
-                physical_key,
-                pressed: true,
-                repeat: false,
-                modifiers,
-            } = event
-            else {
-                return None;
-            };
-            ShortcutAction::REVIEW
-                .into_iter()
-                .find(|&action| {
-                    self.bindings(action)
-                        .iter()
-                        .any(|binding| binding.matches_review(*key, *physical_key, *modifiers))
-                })
-                .map(|action| (index, action, modifiers.shift))
-        });
-        let (index, action, shift) = found?;
+        let held = input.modifiers;
+        let (index, action, shift) =
+            input.events.iter().enumerate().find_map(|(index, event)| {
+                let press = press_of(event, held)?;
+                ShortcutAction::REVIEW
+                    .into_iter()
+                    .find(|&action| {
+                        self.bindings(action)
+                            .iter()
+                            .any(|binding| binding.matches_review(&press))
+                    })
+                    .map(|action| (index, action, press.modifiers.shift))
+            })?;
         input.events.remove(index);
         Some((action, shift))
     }

@@ -213,31 +213,12 @@ impl Settings {
             app.cancel_shortcut_recording();
             return;
         }
-        let press = ui.input_mut(|input| {
-            let index = input.events.iter().position(|event| {
-                matches!(
-                    event,
-                    egui::Event::Key {
-                        pressed: true,
-                        repeat: false,
-                        ..
-                    }
-                )
-            })?;
-            match input.events.remove(index) {
-                egui::Event::Key { key, modifiers, .. } => Some((key, modifiers)),
-                _ => None,
-            }
-        });
-        let Some((key, modifiers)) = press else {
+        let Some(binding) = ui.input_mut(KeyBinding::take_press) else {
             return;
         };
-        if key == egui::Key::Escape {
+        if binding.is_escape() {
             app.cancel_shortcut_recording();
-            return;
-        }
-        // Ctrl alone on macOS cannot be a binding; keep waiting.
-        if let Some(binding) = KeyBinding::from_press(key, modifiers) {
+        } else {
             app.record_shortcut(recording, binding);
         }
     }
