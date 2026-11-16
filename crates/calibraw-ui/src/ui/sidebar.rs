@@ -103,6 +103,7 @@ impl Sidebar {
 mod ai_update;
 mod camera_match;
 mod carousel;
+mod context_bar;
 mod crop;
 mod develop;
 mod export;
@@ -116,5 +117,6 @@ mod portrait_fill;
 mod single_open_cards;
 mod watermark;
 
+pub(crate) use context_bar::ContextBar;
 pub(crate) use export::{export_settings_controls, ExportControlsChange};
 pub(crate) use mask_effects::{effect_card_open, focus_range_adjusting};

@@ -109,9 +109,10 @@ impl Sidebar {
         ctx.data(|data| data.get_temp(egui::Id::new("develop-histogram-overlay-rect")))
     }
 
-    /// The part of the preview a curve overlay may take: the exposed canvas
-    /// below the histogram overlay.
-    pub(super) fn curve_overlay_region(ctx: &egui::Context) -> Option<egui::Rect> {
+    /// The part of the preview overlays from the panel may take (the tone
+    /// curve, the mask quick controls): the exposed canvas below the
+    /// histogram overlay, as last laid out.
+    pub(super) fn photo_overlay_region(ctx: &egui::Context) -> Option<egui::Rect> {
         let mut region = crate::ui::preview::exposed_canvas(ctx)?;
         if let Some(histogram) = Self::histogram_overlay_rect(ctx) {
             region.min.y = region.min.y.max(histogram.bottom());

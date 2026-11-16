@@ -12,33 +12,41 @@ impl Sidebar {
         app.note_geometry_changed();
     }
 
-    pub(super) fn show_crop(ui: &mut Ui, app: &mut CalibRawApp, _layout: ScreenLayout) {
+    /// The crop panel. The portrait layout picks the ratio in the context bar
+    /// ([`Self::show_crop_aspect_bar`]), so its card only holds a custom
+    /// ratio's terms.
+    pub(super) fn show_crop(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
         let source_dimensions = app.source_dimensions().unwrap_or((1, 1));
 
         let before = app.develop.geometry;
         if app.develop_ui.crop_constraint_reference.is_none() {
             app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
         }
-        moduwu_design::section_card(ui, tr("Aspect ratio"), |ui| {
-            let previous_aspect = app.develop.geometry.aspect_ratio;
-            let (output_width, output_height) = app
-                .develop
-                .geometry
-                .crop_pixel_dimensions(source_dimensions.0, source_dimensions.1);
-            Self::show_aspect_ratio_picker(
-                ui,
-                &mut app.develop.geometry.aspect_ratio,
-                output_height > output_width,
-            );
-            if app.develop.geometry.aspect_ratio != previous_aspect {
-                app.develop
-                    .geometry
-                    .conform_crop_to_aspect(source_dimensions.0, source_dimensions.1);
-                app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
+        match layout {
+            ScreenLayout::Horizontal => {
+                moduwu_design::section_card(ui, tr("Aspect ratio"), |ui| {
+                    Self::edit_aspect_ratio(app, |ratio, crop_is_portrait| {
+                        Self::show_aspect_chips(ui, ratio, crop_is_portrait);
+                        Self::show_aspect_orientation(ui, ratio);
+                        Self::show_custom_aspect_terms(ui, ratio);
+                    });
+                });
+                moduwu_design::card_gap(ui);
             }
-        });
-
-        moduwu_design::card_gap(ui);
+            ScreenLayout::Vertical => {
+                if matches!(
+                    app.develop.geometry.aspect_ratio,
+                    CropAspectRatio::Custom { .. }
+                ) {
+                    moduwu_design::section_card(ui, tr("Aspect ratio"), |ui| {
+                        Self::edit_aspect_ratio(app, |ratio, _| {
+                            Self::show_custom_aspect_terms(ui, ratio);
+                        });
+                    });
+                    moduwu_design::card_gap(ui);
+                }
+            }
+        }
         moduwu_design::section_card(ui, tr("Rotate & flip"), |ui| {
             let size = moduwu_design::toolbar_icon_size();
             ui.horizontal_wrapped(|ui| {
@@ -239,19 +247,89 @@ impl Sidebar {
         }
     }
 
-    /// Ratio chips, the orientation of a non-square ratio and the terms of a
-    /// custom one. `crop_is_portrait` orients a ratio picked while none is
-    /// fixed.
-    fn show_aspect_ratio_picker(ui: &mut Ui, ratio: &mut CropAspectRatio, crop_is_portrait: bool) {
-        moduwu_design::action_row(ui, |ui| {
-            for choice in AspectChoice::ALL {
-                if moduwu_design::chip(ui, choice.label(), AspectChoice::of(*ratio) == choice)
-                    .clicked()
-                {
-                    *ratio = choice.pick(*ratio, crop_is_portrait);
-                }
-            }
+    /// The portrait context bar's row: the ratio chips, scrolling sideways,
+    /// and the orientation of a non-square ratio pinned at its end.
+    pub(super) fn show_crop_aspect_bar(ui: &mut Ui, app: &mut CalibRawApp) {
+        let changed = Self::edit_aspect_ratio(app, |ratio, crop_is_portrait| {
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(portrait) = is_portrait(*ratio) {
+                        if moduwu_design::ghost_icon_toggle_button(
+                            ui,
+                            egui_phosphor::regular::DEVICE_ROTATE,
+                            portrait,
+                            moduwu_design::toolbar_icon_size(),
+                            if portrait {
+                                tr("Portrait")
+                            } else {
+                                tr("Landscape")
+                            },
+                        )
+                        .clicked()
+                        {
+                            *ratio = ratio.transposed();
+                        }
+                    }
+                    // Fills the rest of the row, chips from its left edge.
+                    egui::ScrollArea::horizontal()
+                        .id_salt("portrait-crop-aspect-chips")
+                        .auto_shrink([false, false])
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                        .show(ui, |ui| {
+                            let layout = egui::Layout::left_to_right(egui::Align::Center);
+                            ui.with_layout(layout, |ui| {
+                                ui.spacing_mut().item_spacing.x = moduwu_design::SPACE_SM;
+                                Self::aspect_chip_items(ui, ratio, crop_is_portrait);
+                            });
+                        });
+                });
+            });
         });
+        if changed {
+            app.note_geometry_changed();
+        }
+    }
+
+    /// Lets `edit` change the crop's aspect ratio, given whether the crop is
+    /// currently portrait, and conforms the crop to a changed one. Returns
+    /// whether the ratio changed; the caller notes the geometry change.
+    fn edit_aspect_ratio(
+        app: &mut CalibRawApp,
+        edit: impl FnOnce(&mut CropAspectRatio, bool),
+    ) -> bool {
+        let (source_width, source_height) = app.source_dimensions().unwrap_or((1, 1));
+        let geometry = &mut app.develop.geometry;
+        let previous = geometry.aspect_ratio;
+        let (output_width, output_height) =
+            geometry.crop_pixel_dimensions(source_width, source_height);
+        edit(&mut geometry.aspect_ratio, output_height > output_width);
+        if geometry.aspect_ratio == previous {
+            return false;
+        }
+        geometry.conform_crop_to_aspect(source_width, source_height);
+        app.develop_ui.crop_constraint_reference = Some(geometry.crop);
+        true
+    }
+
+    /// The ratio chips, wrapping across the card. `crop_is_portrait` orients
+    /// a ratio picked while none is fixed.
+    fn show_aspect_chips(ui: &mut Ui, ratio: &mut CropAspectRatio, crop_is_portrait: bool) {
+        moduwu_design::action_row(ui, |ui| {
+            Self::aspect_chip_items(ui, ratio, crop_is_portrait);
+        });
+    }
+
+    fn aspect_chip_items(ui: &mut Ui, ratio: &mut CropAspectRatio, crop_is_portrait: bool) {
+        for choice in AspectChoice::ALL {
+            if moduwu_design::chip(ui, choice.label(), AspectChoice::of(*ratio) == choice).clicked()
+            {
+                *ratio = choice.pick(*ratio, crop_is_portrait);
+            }
+        }
+    }
+
+    /// The orientation of a non-square ratio.
+    fn show_aspect_orientation(ui: &mut Ui, ratio: &mut CropAspectRatio) {
         if let Some(mut portrait) = is_portrait(*ratio) {
             let width = ui.available_width().max(1.0);
             if moduwu_design::segmented_control(
@@ -265,6 +343,10 @@ impl Sidebar {
                 *ratio = ratio.transposed();
             }
         }
+    }
+
+    /// The terms of a custom ratio.
+    fn show_custom_aspect_terms(ui: &mut Ui, ratio: &mut CropAspectRatio) {
         if let CropAspectRatio::Custom {
             mut width,
             mut height,

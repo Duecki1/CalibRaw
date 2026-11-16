@@ -1,8 +1,8 @@
+use super::quick_controls::{QuickControl, QuickValue};
 use super::*;
 use crate::app::{MaskPropertiesControls, MaskPropertyAction, PeopleChoices, PersonThumbnail};
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::PersonPart;
-use crate::pipeline::DEFAULT_COLOR_TOLERANCE;
 use crate::ui::components::luminance_range_slider::{luminance_range_slider, LuminanceRange};
 use std::collections::BTreeSet;
 
@@ -471,19 +471,21 @@ impl Sidebar {
     }
 
     /// The sub-mask card's body: the selected sub-mask's name, switches,
-    /// combine mode and opacity, then its kind's properties. Returns the
-    /// edits, in the order they apply; `controls` is the tool state at the
-    /// start of the frame.
+    /// combine mode and opacity, then its kind's properties except those
+    /// `on_photo` shows. Returns the edits, in the order they apply;
+    /// `controls` is the tool state at the start of the frame.
     pub(super) fn show_submask_properties(
         ui: &mut Ui,
         mask: &LocalMask,
         component_index: usize,
         controls: &MaskPropertiesControls,
         people: &PeopleChoices,
+        on_photo: &[QuickControl],
     ) -> Vec<MaskPropertyAction> {
         let mut edits = PropertyEdits {
             actions: Vec::new(),
             controls: *controls,
+            on_photo,
         };
         let Some(component) = mask.components.get(component_index) else {
             return edits.actions;
@@ -643,20 +645,11 @@ impl Sidebar {
         else {
             return;
         };
-        Self::brush_mode_selector(ui, edits, tr("Brush"), tr("Eraser"));
-        let mut size = *size;
-        if AdjustmentSlider::new(tr("Size"), &mut size, 0.0025..=0.25)
-            .decimals(3)
-            .step(0.0025)
-            .reset_to(0.055)
-            .show(ui)
-        {
-            edits.push(MaskPropertyAction::SetBrushSize(size));
+        if edits.in_panel(QuickControl::BrushMode) {
+            Self::brush_mode_selector(ui, edits, tr("Brush"), tr("Eraser"));
         }
-        if let Some(feather) = Self::mask_feather_edit(ui, tr("Feather"), *feather, 0.0..=1.0, 0.55)
-        {
-            edits.push(MaskPropertyAction::SetBrushFeather(feather));
-        }
+        edits.value_slider(ui, QuickValue::BrushSize, *size);
+        edits.value_slider(ui, QuickValue::BrushFeather, *feather);
         // Toggling opacity enables the stroke opacity slider in the same frame.
         let mut opacity_enabled = *opacity_enabled;
         if moduwu_design::toggle_with_help(
@@ -768,17 +761,11 @@ impl Sidebar {
         } else {
             tr("Paint through the middle of the object part you want to select.")
         });
-        ui.strong(tr("Selection brush"));
-        let mut brush_size = *brush_size;
-        if AdjustmentSlider::new(tr("Size"), &mut brush_size, 0.0025..=0.25)
-            .decimals(3)
-            .step(0.0025)
-            .reset_to(0.055)
-            .show(ui)
-        {
-            edits.push(MaskPropertyAction::SetObjectBrushSize(brush_size));
+        if edits.in_panel(QuickControl::Value(QuickValue::ObjectBrushSize)) {
+            ui.strong(tr("Selection brush"));
+            edits.value_slider(ui, QuickValue::ObjectBrushSize, *brush_size);
+            ui.add_space(moduwu_design::SPACE_XS);
         }
-        ui.add_space(moduwu_design::SPACE_XS);
         edits.grow(Self::mask_grow_edit(ui, *grow));
         edits.feather(Self::mask_feather_edit(
             ui,
@@ -868,15 +855,7 @@ impl Sidebar {
         } else {
             tr("Drag on the image to sample a color.")
         });
-        let mut tolerance = tolerance;
-        if AdjustmentSlider::new(tr("Tolerance"), &mut tolerance, 0.005..=1.0)
-            .decimals(3)
-            .step(0.005)
-            .reset_to(DEFAULT_COLOR_TOLERANCE)
-            .show(ui)
-        {
-            edits.push(MaskPropertyAction::SetColorTolerance(tolerance));
-        }
+        edits.value_slider(ui, QuickValue::ColorTolerance, tolerance);
         edits.grow(Self::mask_grow_edit(ui, grow));
     }
 
@@ -1048,20 +1027,13 @@ impl Sidebar {
         }
         let on = edits.controls.refinement_enabled;
         let action = Self::adjustment_card(ui, "Subject refinement", true, false, on, |ui| {
-            Self::brush_mode_selector(ui, edits, tr("Add subject"), tr("Subtract subject"));
-            let mut size = edits.controls.refinement_size;
-            if AdjustmentSlider::new(tr("Size"), &mut size, 0.0025..=0.25)
-                .decimals(3)
-                .step(0.0025)
-                .reset_to(0.035)
-                .show(ui)
-            {
-                edits.set_refinement_size(size);
+            if edits.in_panel(QuickControl::RefinementMode) {
+                Self::brush_mode_selector(ui, edits, tr("Add subject"), tr("Subtract subject"));
             }
-            let mut feather = edits.controls.refinement_feather;
-            if Self::mask_feather_slider(ui, tr("Feather"), &mut feather, 0.0..=1.0, 0.55) {
-                edits.set_refinement_feather(feather);
-            }
+            let size = edits.controls.refinement_size;
+            edits.value_slider(ui, QuickValue::RefinementSize, size);
+            let feather = edits.controls.refinement_feather;
+            edits.value_slider(ui, QuickValue::RefinementFeather, feather);
             let mut flow = edits.controls.refinement_flow;
             if AdjustmentSlider::new(tr("Flow / opacity"), &mut flow, 0.01..=1.0)
                 .decimals(2)
@@ -1122,12 +1094,34 @@ impl Sidebar {
 
 /// The panel's edits, plus a draft of the tool state so controls drawn later
 /// in the frame show earlier edits.
-struct PropertyEdits {
+struct PropertyEdits<'a> {
     actions: Vec<MaskPropertyAction>,
     controls: MaskPropertiesControls,
+    /// The controls the photo's quick controls show, which the panel leaves
+    /// out.
+    on_photo: &'a [QuickControl],
 }
 
-impl PropertyEdits {
+impl PropertyEdits<'_> {
+    fn in_panel(&self, control: QuickControl) -> bool {
+        !self.on_photo.contains(&control)
+    }
+
+    /// The slider of `value`, now `current`, unless the photo shows it.
+    fn value_slider(&mut self, ui: &mut Ui, value: QuickValue, current: f32) {
+        if !self.in_panel(QuickControl::Value(value)) {
+            return;
+        }
+        let mut edited = current;
+        if value.slider(&mut edited).show(ui) {
+            match value {
+                QuickValue::RefinementSize => self.set_refinement_size(edited),
+                QuickValue::RefinementFeather => self.set_refinement_feather(edited),
+                _ => self.push(value.action(edited)),
+            }
+        }
+    }
+
     fn push(&mut self, action: MaskPropertyAction) {
         self.actions.push(action);
     }

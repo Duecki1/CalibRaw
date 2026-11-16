@@ -1,18 +1,30 @@
 use crate::app::CalibRawApp;
-use crate::ui::{sidebar::Sidebar, top_bar::TopBar};
+use crate::ui::sidebar::{ContextBar, Sidebar};
+use crate::ui::top_bar::TopBar;
 use eframe::egui::{self, Rect, Sense, Ui};
 use moduwu_design::ScreenLayout;
 
 const HANDLE_HEIGHT: f32 = 24.0;
 const COLLAPSED_HEIGHT: f32 = 144.0;
+/// The photo height an expanded sheet always leaves below the top controls.
+const MIN_PHOTO_HEIGHT: f32 = 160.0;
 
-fn sheet_height(viewport_height: f32, requested: f32) -> f32 {
-    let maximum = (viewport_height * 0.65).max(1.0);
+/// The height of the sheet's handle and contents for a `requested` one, in a
+/// viewport of `viewport_height` of which `reserved` points are taken by the
+/// top controls and the context bar.
+fn sheet_height(viewport_height: f32, reserved: f32, requested: f32) -> f32 {
+    let maximum = (viewport_height * 0.65)
+        .min(viewport_height - reserved - MIN_PHOTO_HEIGHT)
+        .max(1.0);
     requested.clamp(COLLAPSED_HEIGHT.min(maximum), maximum)
 }
 
 /// The canvas owns the entire safe area. Tool surfaces never participate in
 /// its width/scale calculation, and gestures only start in the exposed image.
+///
+/// The tool sheet stacks, from its top: the resize handle, the current tab's
+/// context bar ([`ContextBar`]), and the tab's controls. The context bar
+/// stays when the sheet collapses, so the tab's selector is always at hand.
 pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
     // A phone held sideways puts the tools in a rail beside the photo.
     if app.caps().is_mobile() && ui.available_width() >= ui.available_height() {
@@ -23,6 +35,9 @@ pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
     let context = ui.ctx().clone();
     let top_height = moduwu_design::TOOLBAR_HEIGHT + 12.0;
     let top = Rect::from_min_size(canvas.min, egui::vec2(canvas.width(), top_height));
+    let bar = ContextBar::of(app);
+    let bar_height = bar.map_or(0.0, ContextBar::height);
+    let reserved = top_height + bar_height;
     let height_id = egui::Id::new("portrait-tool-sheet-height");
     let default_height = (canvas.height() * 0.45).max(360.0);
     // The stored height is the user's expanded size. A closed sidebar collapses
@@ -32,15 +47,15 @@ pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         .filter(|height| *height > COLLAPSED_HEIGHT + 1.0)
         .unwrap_or(default_height);
     let mut height = if app.develop_ui.sidebar_open {
-        sheet_height(canvas.height(), requested)
+        sheet_height(canvas.height(), reserved, requested)
     } else {
-        sheet_height(canvas.height(), COLLAPSED_HEIGHT)
+        sheet_height(canvas.height(), reserved, COLLAPSED_HEIGHT)
     };
 
     show_top_controls(&context, top, app, frame);
 
     let sheet = Rect::from_min_max(
-        egui::pos2(canvas.left(), canvas.bottom() - height),
+        egui::pos2(canvas.left(), canvas.bottom() - height - bar_height),
         canvas.max,
     );
     egui::Area::new(egui::Id::new("portrait-tool-sheet"))
@@ -67,7 +82,8 @@ pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
                 if let Some(pointer) = response.interact_pointer_pos() {
                     height = sheet_height(
                         canvas.height(),
-                        canvas.bottom() - pointer.y + HANDLE_HEIGHT * 0.5,
+                        reserved,
+                        canvas.bottom() - pointer.y + HANDLE_HEIGHT * 0.5 - bar_height,
                     );
                     app.develop_ui.sidebar_open = height > COLLAPSED_HEIGHT + 1.0;
                     context.data_mut(|data| data.insert_temp(height_id, height));
@@ -75,23 +91,28 @@ pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
             } else if response.clicked() {
                 app.develop_ui.sidebar_open = !app.develop_ui.sidebar_open;
                 height = if app.develop_ui.sidebar_open {
-                    sheet_height(canvas.height(), requested)
+                    sheet_height(canvas.height(), reserved, requested)
                 } else {
-                    sheet_height(canvas.height(), COLLAPSED_HEIGHT)
+                    sheet_height(canvas.height(), reserved, COLLAPSED_HEIGHT)
                 };
             }
-            let content = Rect::from_min_max(egui::pos2(sheet.left(), handle.bottom()), sheet.max);
+            let mut content_top = handle.bottom();
+            if let Some(bar) = bar {
+                let rect = Rect::from_min_size(
+                    egui::pos2(sheet.left(), content_top),
+                    egui::vec2(sheet.width(), bar_height),
+                );
+                let mut bar_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                bar_ui.set_clip_rect(rect);
+                Sidebar::show_context_bar(&mut bar_ui, app, frame, bar);
+                let stroke =
+                    egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
+                ui.painter().hline(rect.x_range(), rect.bottom(), stroke);
+                content_top = rect.bottom();
+            }
+            let content = Rect::from_min_max(egui::pos2(sheet.left(), content_top), sheet.max);
             let mut content_ui = ui.new_child(egui::UiBuilder::new().max_rect(content));
             content_ui.set_clip_rect(content);
-            if Sidebar::shows_mask_strip(app) && height > COLLAPSED_HEIGHT + 100.0 {
-                egui::Panel::top("portrait-mask-strip")
-                    .resizable(false)
-                    .exact_size(Sidebar::VERTICAL_MASK_STRIP_HEIGHT)
-                    .frame(egui::Frame::NONE)
-                    .show(&mut content_ui, |ui| {
-                        Sidebar::show_vertical_mask_strip(ui, app, frame)
-                    });
-            }
             Sidebar::show(&mut content_ui, app, ScreenLayout::Vertical, frame);
         });
 

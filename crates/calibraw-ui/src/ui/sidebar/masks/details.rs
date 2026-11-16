@@ -2,6 +2,7 @@ use super::super::adjustment_cards::CardAction;
 use super::adjustments::{
     apply_local_adjustment_response, LocalAdjustmentTabs, LocalAdjustmentTarget,
 };
+use super::quick_controls::QuickControl;
 use super::*;
 use crate::app::{
     apply_mask_property_actions, MaskPropertiesControls, MaskPropertyAction, MaskPropertyChanges,
@@ -406,6 +407,7 @@ impl Sidebar {
         controls: &mut MaskPropertiesControls,
         people: &crate::app::PeopleChoices,
         foldable: bool,
+        on_photo: &[QuickControl],
     ) -> MaskPropertyChanges {
         let mut group_actions = Vec::new();
         let group_on = mask.enabled;
@@ -421,8 +423,14 @@ impl Sidebar {
             .get(component_index)
             .is_some_and(|component| component.enabled);
         let submask_action = Self::submask_card(ui, submask_on, foldable, |ui| {
-            submask_actions =
-                Self::show_submask_properties(ui, mask, component_index, controls, people);
+            submask_actions = Self::show_submask_properties(
+                ui,
+                mask,
+                component_index,
+                controls,
+                people,
+                on_photo,
+            );
         });
         if matches!(submask_action, CardAction::Toggle) {
             submask_actions.push(MaskPropertyAction::SetComponentEnabled(!submask_on));
@@ -508,6 +516,24 @@ impl Sidebar {
                 mask.migrate_legacy_effect();
                 adjustments_changed |= mask.effect == MaskEffect::Adjustment;
             }
+            // The portrait layout keeps the drawing tool's settings on the
+            // photo, unless the tone curve takes it; the sheet then leaves
+            // them out.
+            let curve_on_photo = vertical_section == Some(MaskSection::ToneCurve)
+                && app.develop_ui.tone_curve_overlay.vertical;
+            let on_photo = match (orientation, mask.components.get(component_index)) {
+                (MaskStripOrientation::Vertical, Some(component)) if !curve_on_photo => {
+                    let on_photo = Self::quick_controls_on_photo(ui.ctx(), component, &controls);
+                    let actions =
+                        Self::show_quick_controls(ui.ctx(), on_photo, component, &controls);
+                    let changes =
+                        apply_mask_property_actions(mask, component_index, &mut controls, actions);
+                    geometry_changed |= changes.geometry;
+                    adjustments_changed |= changes.adjustments;
+                    on_photo
+                }
+                _ => &[],
+            };
             match orientation {
                 MaskStripOrientation::Horizontal => {
                     let changes = Self::show_mask_property_cards(
@@ -517,6 +543,7 @@ impl Sidebar {
                         &mut controls,
                         &people,
                         true,
+                        &[],
                     );
                     geometry_changed |= changes.geometry;
                     adjustments_changed |= changes.adjustments;
@@ -583,6 +610,7 @@ impl Sidebar {
                                 &mut controls,
                                 &people,
                                 false,
+                                on_photo,
                             );
                             geometry_changed |= changes.geometry;
                             adjustments_changed |= changes.adjustments;

@@ -294,7 +294,7 @@ impl Sidebar {
             32.0,
             CurveOverlay {
                 enabled: overlay,
-                region: Self::curve_overlay_region(ui.ctx()),
+                region: Self::photo_overlay_region(ui.ctx()),
             },
         );
         if curve_changed {

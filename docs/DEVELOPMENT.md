@@ -378,6 +378,12 @@ canvases, mask cards, and colour controls in their existing components.
 - Route user tab navigation through `activate_tab`, and sidebar/tool changes
   through `AppAction`. Background document loading and batch operations contain
   documented exceptions: interactive tab activation can cancel their AI work.
+- The portrait Develop layout keeps the tool sheet for controls. A tab's
+  selector (mask strip, crop ratios, retouch tools) goes in the context bar
+  at the top of the tool sheet (`sidebar::ContextBar`), and settings used while
+  drawing on the photo float over it (the mask quick controls, the tone curve
+  overlay) inside `Sidebar::photo_overlay_region`; the sheet leaves out what
+  the photo shows.
 - Keep serialized preference names stable when changing UI labels or helpers.
 - Do not add descriptive text to editing panels, cards, tool rows or the
   toolbar: no explanatory paragraphs under headings and no hint lines below

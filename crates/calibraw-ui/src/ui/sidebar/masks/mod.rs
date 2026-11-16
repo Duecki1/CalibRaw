@@ -240,5 +240,6 @@ mod details;
 mod kind_picker;
 mod menus;
 mod properties;
+mod quick_controls;
 mod strip;
 mod thumbnails;

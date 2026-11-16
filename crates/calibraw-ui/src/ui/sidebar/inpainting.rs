@@ -29,31 +29,35 @@ fn retouch_alignment_help(alignment: RetouchAlignment) -> &'static str {
 }
 
 impl Sidebar {
-    pub(crate) fn show_inpainting(
-        ui: &mut Ui,
-        app: &mut CalibRawApp,
-        _layout: ScreenLayout,
-        _frame: &eframe::Frame,
-    ) {
+    /// The Remove, Clone and Heal buttons across the row.
+    pub(super) fn show_inpaint_tool_row(ui: &mut Ui, app: &mut CalibRawApp) {
+        ui.horizontal(|ui| {
+            let spacing = ui.spacing().item_spacing.x;
+            let tool_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
+            for tool in InpaintTool::ALL {
+                if moduwu_design::segmented_button(
+                    ui,
+                    tool.label(),
+                    app.inpaint.tool == tool,
+                    tool_width,
+                )
+                .on_hover_text(inpaint_tool_help(tool))
+                .clicked()
+                {
+                    app.dispatch_action(AppAction::SelectInpaintTool(tool));
+                }
+            }
+        });
+    }
+
+    /// The Tool card: the tool row when `tool_row`, then a Clone or Heal
+    /// source's alignment and placement.
+    fn show_inpaint_tool_card(ui: &mut Ui, app: &mut CalibRawApp, tool_row: bool) {
         let tool_help = inpaint_tool_help(app.inpaint.tool);
         moduwu_design::section_card_with_help(ui, tr("Tool"), tool_help, |ui| {
-            ui.horizontal(|ui| {
-                let spacing = ui.spacing().item_spacing.x;
-                let tool_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
-                for tool in InpaintTool::ALL {
-                    if moduwu_design::segmented_button(
-                        ui,
-                        tool.label(),
-                        app.inpaint.tool == tool,
-                        tool_width,
-                    )
-                    .on_hover_text(inpaint_tool_help(tool))
-                    .clicked()
-                    {
-                        app.dispatch_action(AppAction::SelectInpaintTool(tool));
-                    }
-                }
-            });
+            if tool_row {
+                Self::show_inpaint_tool_row(ui, app);
+            }
 
             if app.inpaint.tool.retouch().is_some() {
                 let previous_alignment = app.inpaint.alignment;
@@ -113,8 +117,21 @@ impl Sidebar {
                 ));
             }
         });
+    }
 
-        moduwu_design::card_gap(ui);
+    /// The retouch panel. The portrait layout picks the tool in the context
+    /// bar, so its Tool card only appears for a tool with a source to set.
+    pub(crate) fn show_inpainting(
+        ui: &mut Ui,
+        app: &mut CalibRawApp,
+        layout: ScreenLayout,
+        _frame: &eframe::Frame,
+    ) {
+        let tool_row = layout == ScreenLayout::Horizontal;
+        if tool_row || app.inpaint.tool.retouch().is_some() {
+            Self::show_inpaint_tool_card(ui, app, tool_row);
+            moduwu_design::card_gap(ui);
+        }
         moduwu_design::section_card(ui, tr("Brush"), |ui| {
             ui.add_enabled_ui(!app.inpaint_processing(), |ui| {
                 AdjustmentSlider::new(tr("Size"), &mut app.inpaint.brush_size, 0.0025..=0.25)
