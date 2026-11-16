@@ -2135,5 +2135,7 @@
   "That key is used by a control that cannot be changed.": "Bu tuş, değiştirilemeyen bir kontrol tarafından kullanılıyor.",
   "Unflag": "İşareti kaldır",
   "{shortcut} no longer does: {actions}": "{shortcut} artık şunu yapmıyor: {actions}",
-  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Bu fırça alt maskesi dolu. Boyamaya devam etmek için başka bir fırça alt maskesi ekleyin."
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Bu fırça alt maskesi dolu. Boyamaya devam etmek için başka bir fırça alt maskesi ekleyin.",
+  "Remove hot pixels": "Sıcak pikselleri kaldır",
+  "Updating hot pixel removal…": "Sıcak piksel kaldırma güncelleniyor…"
 }

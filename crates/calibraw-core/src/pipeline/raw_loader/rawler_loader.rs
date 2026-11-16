@@ -337,7 +337,8 @@ fn validate_layout(input: &Input) -> Result<SampleDecoder> {
     // skipped with a diagnostic rather than block the decode.
     // Keep other unimplemented raw-stage corrections strict. Ignoring these
     // could change the interpretation of the sensor samples in less predictable
-    // ways, and CalibRaw deliberately does not maintain a private opcode parser.
+    // ways. A DNG with an OpcodeList1 decodes through LibRaw instead, whose
+    // loader repairs the bad pixels it lists (`libraw_loader::declared_defects`).
     for tag in [DngTag::OpcodeList1, DngTag::OpcodeList3] {
         ensure!(
             entry(raw, tag as u16).is_none(),

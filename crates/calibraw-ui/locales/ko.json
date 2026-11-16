@@ -2129,5 +2129,7 @@
   "That key is used by a control that cannot be changed.": "이 키는 변경할 수 없는 조작에 사용됩니다.",
   "Unflag": "플래그 해제",
   "{shortcut} no longer does: {actions}": "{shortcut}은(는) 더 이상 다음 작업을 하지 않습니다: {actions}",
-  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "이 브러시 하위 마스크가 가득 찼습니다. 계속 칠하려면 브러시 하위 마스크를 하나 더 추가하세요."
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "이 브러시 하위 마스크가 가득 찼습니다. 계속 칠하려면 브러시 하위 마스크를 하나 더 추가하세요.",
+  "Remove hot pixels": "핫 픽셀 제거",
+  "Updating hot pixel removal…": "핫 픽셀 제거 업데이트 중…"
 }

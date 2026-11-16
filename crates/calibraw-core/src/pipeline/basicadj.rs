@@ -334,6 +334,15 @@ pub struct ExposureParams {
     /// `[0, 1]`. Ignored unless `ai_denoise_enabled`; X-Trans always uses 1.
     #[serde(default = "default_ai_denoise_amount")]
     pub ai_denoise_amount: f32,
+    /// Repairs the hot pixels found in the mosaic before it is developed
+    /// ([`remove_hot_pixels`]); a Detail card setting. It changes the source
+    /// the edit develops rather than how it is developed, so renderers apply
+    /// it to the decode (`SourceCorrections`). Left out of files while off,
+    /// which stay as they were.
+    ///
+    /// [`remove_hot_pixels`]: super::remove_hot_pixels
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hot_pixel_removal: bool,
     pub demosaic_mode: DemosaicMode,
     pub dual_threshold: f32,
     pub frequency_chroma: f32,
@@ -458,6 +467,7 @@ impl Default for ExposureParams {
             denoise_quality: DenoiseQuality::default(),
             ai_denoise_enabled: false,
             ai_denoise_amount: default_ai_denoise_amount(),
+            hot_pixel_removal: false,
             demosaic_mode: DemosaicMode::Reference,
             dual_threshold: 20.0,
             frequency_chroma: 1.0,

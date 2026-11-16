@@ -15,17 +15,19 @@
 //! changed images before committing them. A failing case leaves its render and
 //! an amplified difference image in `target/tmp/render-parity/`.
 //!
-//! The edit is rendered as the export path receives it, after the lens
-//! correction the app applies first; the synthetic photos name no lens, so only
-//! manual corrections apply. What else the app prepares before an export is not
-//! covered: LUTs and the source images of range, depth and AI masks.
+//! The edit is rendered as the export path receives it, from the source the
+//! app prepares first (`SourceCorrections`): hot pixels repaired and the lens
+//! corrected, at the photo's full size before a binned input is binned. The
+//! synthetic photos name no lens, so only manual corrections apply. What else
+//! the app prepares before an export is not covered: LUTs and the source images
+//! of range, depth and AI masks.
 
 use calibraw_core::luts::ResolvedLook;
 use calibraw_core::sidecar::{self, EditState};
 use calibraw_gpu::pipeline::{
-    apply_lens_correction, build_proxy, spawn_tiled_export, CfaKind, CompactPixelMap,
-    ExportBitDepth, ExportEvent, ExportFiles, ExportFormat, ExportMetadata, ExportSettings,
-    ExportTarget, LoadedRaw, ProxySpec, TileSpec, TiledExportJob,
+    build_proxy, spawn_tiled_export, CfaKind, CompactPixelMap, ExportBitDepth, ExportEvent,
+    ExportFiles, ExportFormat, ExportMetadata, ExportSettings, ExportTarget, LoadedRaw, ProxySpec,
+    SourceCorrections, TileSpec, TiledExportJob,
 };
 use calibraw_gpu::{request_headless_device, wgpu, HeadlessAdapter, HeadlessDeviceRequest};
 use image::{ImageBuffer, Rgb, RgbImage};
@@ -143,7 +145,10 @@ fn rain_without_depth_does_not_depend_on_the_tile_size() {
         render(
             &gpu.device,
             &gpu.queue,
-            raw.clone(),
+            Input {
+                raw: raw.clone(),
+                binned: false,
+            },
             edits(&case),
             tile_spec,
             &path,
@@ -201,21 +206,54 @@ fn merge(base: &mut Value, changes: Value) {
     }
 }
 
+/// A case's synthetic photo ([`input`]).
+struct Input {
+    raw: LoadedRaw,
+    /// Developed at half its size, binned to RGB as a reduced preview's proxy
+    /// is, after the source corrections.
+    binned: bool,
+}
+
+/// Photosites of the `-hot` inputs that read far too bright, as `(x, y,
+/// level)`, the level a share of the range from black to white. Each lies
+/// where its four nearest photosites of its channel are darker than an eighth
+/// of it, so removal finds it, in the dark end and the middle of the exposure
+/// ramp, the colour patches, the gratings and the hue sweep, at and below
+/// saturation; two lie side by side, photosites of different colours. The
+/// last is on the left edge, which removal leaves alone.
+const HOT_PHOTOSITES: [(u32, u32, f32); 9] = [
+    (37, 9, 1.0),
+    (150, 30, 0.6),
+    (40, 20, 1.0),
+    (41, 20, 1.0),
+    (62, 52, 1.0),
+    (203, 118, 1.0),
+    (101, 153, 1.0),
+    (240, 182, 0.4),
+    (0, 100, 1.0),
+];
+
 /// The synthetic photo a case develops:
 /// - `scene`: the test scene as scene-linear Rec.2020, which skips the sensor
 ///   stages;
 /// - `bayer` and `xtrans`: the scene seen through an RGGB or X-Trans mosaic,
 ///   with black level, white balance, clipped highlights and noise;
-/// - `bayer-binned` and `xtrans-binned`: those mosaics at half their size,
-///   binned to RGB as a reduced preview's proxy is.
-fn input(name: &str) -> LoadedRaw {
+/// - `bayer-hot` and `xtrans-hot`: those mosaics with [`HOT_PHOTOSITES`];
+/// - `<mosaic>-binned`: a mosaic binned ([`Input::binned`]).
+fn input(name: &str) -> Input {
     if let Some(sensor) = name.strip_suffix("-binned") {
-        return build_proxy(
-            &input(sensor),
-            ProxySpec {
-                max_edge: WIDTH / 2,
-            },
-        );
+        return Input {
+            binned: true,
+            ..input(sensor)
+        };
+    }
+    if let Some(sensor) = name.strip_suffix("-hot") {
+        let mut raw = input(sensor).raw;
+        let samples = raw.raw_pixels.make_mut();
+        for (x, y, level) in HOT_PHOTOSITES {
+            samples[(y * WIDTH + x) as usize] = (BLACK + level * (WHITE - BLACK)).round() as u16;
+        }
+        return Input { raw, binned: false };
     }
     let scene: Vec<f32> = (0..HEIGHT)
         .flat_map(|y| (0..WIDTH).flat_map(move |x| scene(x, y)))
@@ -223,15 +261,19 @@ fn input(name: &str) -> LoadedRaw {
     let raster = LoadedRaw::from_scene_linear_rec2020(WIDTH, HEIGHT, scene.clone()).unwrap();
     // Colour indices: 0 red, 1 green, 2 blue, 3 the second Bayer green.
     let (cfa_kind, period, pattern) = match name {
-        "scene" => return raster,
+        "scene" => {
+            return Input {
+                raw: raster,
+                binned: false,
+            }
+        }
         "bayer" => (CfaKind::Bayer, 2, vec![0, 1, 3, 2]),
         "xtrans" => (CfaKind::XTrans, 6, XTRANS.concat()),
         _ => panic!(
-            "unknown input {name:?}; use scene, bayer, xtrans, bayer-binned or xtrans-binned"
+            "unknown input {name:?}; use scene, bayer or xtrans, each mosaic optionally \
+             with -hot and then -binned"
         ),
     };
-    const BLACK: f32 = 512.0;
-    const WHITE: f32 = 16383.0;
     // As-shot white balance: red and blue reach the sensor weaker than green.
     const WB: [f32; 4] = [2.1, 1.0, 1.6, 1.0];
     // Scene white lands at half the sensor's range, so the top of the
@@ -247,7 +289,7 @@ fn input(name: &str) -> LoadedRaw {
             (BLACK + (signal + noise).clamp(0.0, 1.0) * (WHITE - BLACK)).round() as u16
         })
         .collect::<Vec<_>>();
-    LoadedRaw {
+    let raw = LoadedRaw {
         cfa_kind,
         raw_pixels: pixels.into(),
         scene_linear_raster: None,
@@ -257,8 +299,13 @@ fn input(name: &str) -> LoadedRaw {
         black_levels_per_pixel: CompactPixelMap::repeating(WIDTH, HEIGHT, 1, 1, vec![BLACK]),
         white_levels: [WHITE; 4],
         ..raster
-    }
+    };
+    Input { raw, binned: false }
 }
+
+/// The black and white levels of the synthetic mosaics.
+const BLACK: f32 = 512.0;
+const WHITE: f32 = 16383.0;
 
 const XTRANS: [[u8; 6]; 6] = [
     [1, 1, 0, 1, 1, 2],
@@ -329,17 +376,30 @@ fn hash(x: u32, y: u32) -> f32 {
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    raw: LoadedRaw,
+    input: Input,
     edits: EditState,
     tile_spec: TileSpec,
     path: &Path,
 ) {
     // As the app renders an edit, with the cards that are switched off at rest.
     let edits = edits.into_applied();
-    let raw = match edits.lens.requested_correction(&raw) {
-        Some(correction) => apply_lens_correction(&raw, &correction)
-            .unwrap_or_else(|error| panic!("{}: lens correction: {error:#}", path.display())),
-        None => raw,
+    let corrections = SourceCorrections {
+        hot_pixels: edits.exposure.removes_hot_pixels(),
+        lens: edits.lens.requested_correction(&input.raw),
+    };
+    let raw = corrections
+        .apply(&input.raw)
+        .unwrap_or_else(|error| panic!("{}: lens correction: {error:#}", path.display()))
+        .unwrap_or(input.raw);
+    let raw = if input.binned {
+        build_proxy(
+            &raw,
+            ProxySpec {
+                max_edge: WIDTH / 2,
+            },
+        )
+    } else {
+        raw
     };
     // As the app renders an edit's camera look; the cases name no LUT.
     let look = ResolvedLook::of_edit(None, edits.camera_match.look());

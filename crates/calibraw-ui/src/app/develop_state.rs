@@ -425,11 +425,23 @@ pub(crate) enum LoadEvent {
     Finished(Result<LoadedPreview, LoadFailure>),
 }
 
+/// Whether hot pixel removal applies to `raw`: a raster has no photosites to
+/// repair.
+pub(super) fn hot_pixel_removal_applies(raw: &LoadedRaw) -> bool {
+    raw.pixel_layout() == crate::pipeline::PixelLayout::Mosaic
+}
+
+/// Whether the source `exposure` develops from `raw` has its hot pixels
+/// repaired.
+pub(super) fn source_removes_hot_pixels(exposure: &ExposureParams, raw: &LoadedRaw) -> bool {
+    exposure.removes_hot_pixels() && hot_pixel_removal_applies(raw)
+}
+
 pub(super) struct PreparedLensCorrection {
     pub(super) full_raw: Arc<LoadedRaw>,
     pub(super) preview_raw: Arc<LoadedRaw>,
     pub(super) applied_label: Option<String>,
-    pub(super) selection: Option<LensCorrection>,
+    pub(super) corrections: SourceCorrections,
     pub(super) preview_quality: PreviewQuality,
 }
 
@@ -470,6 +482,13 @@ pub(crate) struct DevelopState {
     pub(crate) geometry_revision: u64,
     pub(crate) lens_correction: LensCorrectionState,
     pub(crate) lens_correction_dirty: bool,
+    /// `loaded_raw` has its hot pixels repaired: the removal it was prepared
+    /// for, which the edit may since have changed until the lens-correction
+    /// task prepares it again (`hot_pixel_removal_stale`).
+    pub(crate) hot_pixels_removed: bool,
+    /// A hot pixel removal the source could not be prepared for, which is not
+    /// tried again until the edit asks for the other.
+    pub(crate) hot_pixels_failed: Option<bool>,
     pub(crate) selected_camera_profile: Option<PathBuf>,
     /// The edit's LUT.
     pub(crate) look_lut: Option<crate::luts::LookLut>,

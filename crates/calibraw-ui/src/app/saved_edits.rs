@@ -12,10 +12,9 @@ use crate::luts::{LookLut, LutStore, ResolvedLook};
 use crate::pipeline::camera_look::CameraMatch;
 use crate::pipeline::ExposureParams;
 use crate::pipeline::{
-    apply_lens_correction, build_proxy, load_raw_file_with_profile_selection,
-    transform_thumbnail_geometry_with_lens, CameraProfileMode, CardSwitch, GpuParams,
-    GpuProgramPrewarm, LoadedRaw, MaskStack, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate,
-    RawThumbnail, RemoveSceneContext,
+    build_proxy, load_raw_file_with_profile_selection, transform_thumbnail_geometry_with_lens,
+    CameraProfileMode, CardSwitch, GpuParams, GpuProgramPrewarm, LoadedRaw, MaskStack, ProxySpec,
+    RawGpuPipeline, RawGpuProgramTemplate, RawThumbnail, RemoveSceneContext, SourceCorrections,
 };
 use crate::platform::Platform;
 use crate::sidecar::{EditState, SidecarError};
@@ -273,9 +272,11 @@ pub(crate) struct EditedRenderJob<'a> {
     pub(crate) photo: &'a EditedPhoto,
     /// The long edge the result is fitted into.
     pub(crate) maximum_edge: u32,
-    /// Whether the saved lens correction applies. It resamples the whole
-    /// photo, so library thumbnails, too small to show it, leave it out.
-    pub(crate) lens_correction: bool,
+    /// Whether the saved source corrections apply: the lens correction, which
+    /// resamples the whole photo, and the hot pixel removal, which repairs
+    /// single photosites. Library thumbnails, too small to show either, leave
+    /// them out.
+    pub(crate) source_corrections: bool,
     pub(crate) gpu: &'a SavedEditsGpu,
     pub(crate) settings: &'a SavedEditsSettings,
     pub(crate) platform: &'a dyn Platform,
@@ -321,7 +322,7 @@ impl EditedRenderJob<'_> {
             camera_preview: camera_preview.as_deref(),
             label: &self.photo.label(),
             maximum_edge: self.maximum_edge,
-            lens_correction: self.lens_correction,
+            source_corrections: self.source_corrections,
         })?;
         let current = !complete
             || self
@@ -347,13 +348,13 @@ struct SavedEditsRender<'a> {
     label: &'a str,
     /// The long edge the result is fitted into.
     maximum_edge: u32,
-    /// Whether the saved lens correction applies.
-    lens_correction: bool,
+    /// Whether the saved source corrections apply.
+    source_corrections: bool,
 }
 
 /// The photo rendered with its edits as the editor's fitted preview shows
-/// them, fitted into `maximum_edge`, and without their lens correction unless
-/// `lens_correction`. A pending Camera match is fitted first, as opening the
+/// them, fitted into `maximum_edge`, and without their source corrections
+/// unless `source_corrections`. A pending Camera match is fitted first, as opening the
 /// photo would fit it. Also returns whether the render is complete: false
 /// without the edit's LUT, which the library does not hold.
 fn render_saved_edits(render: SavedEditsRender<'_>) -> Result<(RawThumbnail, bool), String> {
@@ -365,7 +366,7 @@ fn render_saved_edits(render: SavedEditsRender<'_>) -> Result<(RawThumbnail, boo
         camera_preview,
         label,
         maximum_edge,
-        lens_correction,
+        source_corrections,
     } = render;
     let EditState {
         mut exposure,
@@ -379,21 +380,30 @@ fn render_saved_edits(render: SavedEditsRender<'_>) -> Result<(RawThumbnail, boo
     } = edits;
     let mut look = settings.look(&exposure, look_lut.as_ref(), &camera_match);
     let complete = applied_lut(&exposure, look_lut.as_ref()).is_none() || look.is_some();
-    // As the editor opens a photo: lens correction resamples the whole
-    // mosaic, which a reduced proxy no longer holds, so it comes first.
-    let requested = lens_correction
-        .then(|| lens.requested_correction(&full_raw))
-        .flatten();
-    let full_raw = match requested {
-        Some(correction) => match apply_lens_correction(&full_raw, &correction) {
-            Ok(corrected) => corrected,
-            // The editor shows the photo uncorrected too when this fails.
-            Err(error) => {
-                log::warn!("could not apply the saved lens correction: {error:#}");
-                full_raw
+    // As the editor opens a photo: the source corrections change single
+    // photosites or resample the whole mosaic, which a reduced proxy no
+    // longer holds, so they come first.
+    let corrections = SourceCorrections {
+        hot_pixels: source_corrections && exposure.removes_hot_pixels(),
+        lens: source_corrections
+            .then(|| lens.requested_correction(&full_raw))
+            .flatten(),
+    };
+    let full_raw = match corrections.apply(&full_raw) {
+        Ok(corrected) => corrected.unwrap_or(full_raw),
+        // The editor shows the photo without the lens correction too when it
+        // fails, with its hot pixels still repaired.
+        Err(error) => {
+            log::warn!("could not apply the saved lens correction: {error:#}");
+            SourceCorrections {
+                lens: None,
+                ..corrections
             }
-        },
-        None => full_raw,
+            .apply(&full_raw)
+            .ok()
+            .flatten()
+            .unwrap_or(full_raw)
+        }
     };
     // A film negative the Library marked renders as its estimate; opening the
     // photo saves one.

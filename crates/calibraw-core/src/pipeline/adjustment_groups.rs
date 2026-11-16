@@ -168,6 +168,7 @@ impl ExposureParams {
             denoise_quality,
             ai_denoise_enabled,
             ai_denoise_amount,
+            hot_pixel_removal,
             demosaic_mode,
             dual_threshold,
             frequency_chroma,
@@ -236,6 +237,7 @@ impl ExposureParams {
                 self.denoise_quality = denoise_quality;
                 self.ai_denoise_enabled = ai_denoise_enabled;
                 self.ai_denoise_amount = ai_denoise_amount;
+                self.hot_pixel_removal = hot_pixel_removal;
                 self.sharpen_amount = sharpen_amount;
                 self.sharpen_radius = sharpen_radius;
                 self.sharpen_detail = sharpen_detail;

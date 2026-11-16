@@ -331,6 +331,8 @@ impl CalibRawApp {
         self.preview.reset_view();
         self.develop.lens_correction = LensCorrectionState::default();
         self.develop.lens_correction_dirty = false;
+        self.develop.hot_pixels_removed = false;
+        self.develop.hot_pixels_failed = None;
         self.preview.lens_original_cache = None;
         self.preview.lens_corrected_cache = None;
         self.reset_edit_history();
@@ -441,6 +443,8 @@ impl CalibRawApp {
                 self.masks.dirty_layers.fill(false);
                 self.develop.lens_correction = loaded.lens_correction;
                 self.develop.lens_correction_dirty = false;
+                self.develop.hot_pixels_removed = loaded.hot_pixels_removed;
+                self.develop.hot_pixels_failed = None;
                 self.ui.missing_lens_profile_prompt = None;
                 self.develop_ui.manual_lens_dialog = None;
                 if loaded.lens_profile_missing && !self.document_load_is_background() {
@@ -448,31 +452,9 @@ impl CalibRawApp {
                         self.prompt_for_missing_lens_profile(&raw);
                     }
                 }
-                if self.caps().constrained_memory() {
-                    if self.develop.lens_correction.applied {
-                        self.preview.lens_corrected_cache = match (
-                            self.develop.lens_correction.requested_correction(),
-                            self.develop.loaded_raw.as_ref(),
-                            self.develop.preview_raw.as_ref(),
-                        ) {
-                            (Some(selection), Some(full_raw), Some(preview_raw)) => Some((
-                                selection,
-                                self.preview.quality,
-                                Arc::clone(full_raw),
-                                Arc::clone(preview_raw),
-                            )),
-                            _ => None,
-                        };
-                        self.preview.lens_original_cache = None;
-                    } else {
-                        self.preview.lens_original_cache = self
-                            .develop
-                            .preview_raw
-                            .as_ref()
-                            .map(|raw| (self.preview.quality, Arc::clone(raw)));
-                        self.preview.lens_corrected_cache = None;
-                    }
-                }
+                self.preview.lens_original_cache = None;
+                self.preview.lens_corrected_cache = None;
+                self.keep_installed_source(self.preview.quality);
                 // The open worker rendered the edit with its switches applied.
                 self.develop.target_exposure = self.preview_exposure();
                 self.preview.pending_stage = None;

@@ -401,6 +401,8 @@ pub(crate) struct LoadedPreview {
     pub(super) lens_correction: LensCorrectionState,
     /// Automatic lens correction was due, but no profile matched the RAW.
     pub(super) lens_profile_missing: bool,
+    /// `full_raw` has its hot pixels repaired (`DevelopState::hot_pixels_removed`).
+    pub(super) hot_pixels_removed: bool,
     pub(super) sidecar_target: crate::sidecar::SidecarTarget,
     pub(super) document_generation: u64,
     pub(super) sidecar_warning: Option<String>,
@@ -575,13 +577,19 @@ pub(crate) struct PreviewState {
     /// (`refine_draft_render`).
     pub(crate) draft_rendered: bool,
     pub(crate) dispatch_gate: PreviewDispatchGate,
-    pub(crate) lens_original_cache: Option<(PreviewQuality, Arc<LoadedRaw>)>,
-    pub(crate) lens_corrected_cache: Option<(
-        LensCorrection,
-        PreviewQuality,
-        Arc<LoadedRaw>,
-        Arc<LoadedRaw>,
-    )>,
+    /// Where memory is constrained, the last source prepared without a lens
+    /// correction and the last one with one ([`Self::keep_prepared_source`]).
+    pub(crate) lens_original_cache: Option<PreparedSource>,
+    pub(crate) lens_corrected_cache: Option<PreparedSource>,
+}
+
+/// A source prepared from the decode for `corrections`, with its preview
+/// proxy at `quality`.
+pub(crate) struct PreparedSource {
+    pub(crate) corrections: SourceCorrections,
+    pub(crate) quality: PreviewQuality,
+    pub(crate) full_raw: Arc<LoadedRaw>,
+    pub(crate) preview_raw: Arc<LoadedRaw>,
 }
 
 /// A zoomed-in view carried from one document to the next, so a photo switched
@@ -634,6 +642,35 @@ impl PreviewState {
         {
             self.detail = None;
         }
+    }
+
+    /// Keeps the source just installed where memory is constrained: the last
+    /// one with a lens correction and the last one without, so switching the
+    /// correction back does not prepare and bin the photo again. One without
+    /// a lens correction is not kept while it repairs hot pixels, as it would
+    /// hold a second full mosaic beside the decode.
+    pub(crate) fn keep_prepared_source(&mut self, source: PreparedSource) {
+        if source.corrections.lens.is_some() {
+            self.lens_corrected_cache = Some(source);
+        } else {
+            self.lens_original_cache = (!source.corrections.hot_pixels).then_some(source);
+        }
+    }
+
+    /// The kept source and preview proxy for `corrections` at `quality`.
+    pub(crate) fn prepared_source(
+        &self,
+        corrections: &SourceCorrections,
+        quality: PreviewQuality,
+    ) -> Option<(Arc<LoadedRaw>, Arc<LoadedRaw>)> {
+        let kept = if corrections.lens.is_some() {
+            &self.lens_corrected_cache
+        } else {
+            &self.lens_original_cache
+        };
+        kept.as_ref()
+            .filter(|kept| kept.corrections == *corrections && kept.quality == quality)
+            .map(|kept| (Arc::clone(&kept.full_raw), Arc::clone(&kept.preview_raw)))
     }
 
     /// Fits the whole image in the view again and stops view motion. Bumping

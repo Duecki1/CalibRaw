@@ -142,7 +142,7 @@ impl LibraryState {
                 let render = EditedRenderJob {
                     photo: &photo,
                     maximum_edge: THUMBNAIL_EDGE,
-                    lens_correction: false,
+                    source_corrections: false,
                     gpu: &gpu,
                     settings: &settings,
                     platform: &*platform,

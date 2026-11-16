@@ -8,7 +8,7 @@ use calibraw_cli::pipeline::{
     HUE_ROTATION_LIMIT_DEGREES,
 };
 use calibraw_core::luts::ResolvedLook;
-use calibraw_core::pipeline::apply_lens_correction;
+use calibraw_core::pipeline::SourceCorrections;
 use calibraw_core::sidecar;
 use calibraw_gpu::{
     request_headless_device, wgpu, HeadlessAdapter, HeadlessDevice, HeadlessDeviceError,
@@ -197,16 +197,23 @@ struct Edit {
 }
 
 /// The edit a CalibRaw sidecar stores, as the app renders it: with the cards
-/// that are switched off at rest, and `raw` replaced by its lens-corrected
-/// image when the edit asks for one. A creative LUT is not loaded.
+/// that are switched off at rest, and `raw` replaced by the source the edit
+/// develops (`SourceCorrections`). A creative LUT is not loaded.
 fn saved_edits(path: &Path, raw: &mut LoadedRaw) -> Result<Edit> {
     let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
     let edits = sidecar::decode(&bytes)
         .map_err(|error| anyhow!("decode {}: {error}", path.display()))?
         .edits
         .into_applied();
-    if let Some(correction) = edits.lens.requested_correction(raw) {
-        *raw = apply_lens_correction(raw, &correction).context("apply the lens correction")?;
+    let corrections = SourceCorrections {
+        hot_pixels: edits.exposure.removes_hot_pixels(),
+        lens: edits.lens.requested_correction(raw),
+    };
+    if let Some(corrected) = corrections
+        .apply(raw)
+        .context("apply the lens correction")?
+    {
+        *raw = corrected;
     }
     Ok(Edit {
         exposure: edits.exposure,

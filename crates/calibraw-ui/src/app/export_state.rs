@@ -356,9 +356,15 @@ pub(super) struct ExportItemRequest {
     pub(super) settings: ExportSettings,
 }
 
+/// The lens-correction task prepares the source from the decode: its hot
+/// pixels repaired, then lens-corrected (`SourceCorrections`).
 pub(super) struct LensCorrectionTaskRequest {
     pub(super) original_raw: Arc<LoadedRaw>,
-    pub(super) selection: Option<LensCorrection>,
+    pub(super) corrections: SourceCorrections,
+    /// What the task is for: a changed lens correction, which it reports in
+    /// the Lens Corrections card, or the hot pixel removal alone, which keeps
+    /// the view.
+    pub(super) purpose: SourceTask,
     pub(super) preview_quality: PreviewQuality,
     pub(super) preview_proxy_edge: u32,
     pub(super) cached_raws: Option<(Arc<LoadedRaw>, Arc<LoadedRaw>)>,

@@ -595,10 +595,13 @@ impl Sidebar {
     /// whether the photo has an AI result that can be blended with the
     /// original: a Bayer RAW whose denoised mosaic is loaded.
     /// `ai_denoise` says whether the photo can be AI denoised.
+    /// The Detail card. `hot_pixels` offers hot pixel removal, which only a
+    /// sensor mosaic has photosites for.
     pub(super) fn show_detail(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         defaults: &ExposureParams,
+        hot_pixels: bool,
         ai_denoise: AiDenoiseOffer,
         ai_strength_available: bool,
         foldable: bool,
@@ -608,6 +611,15 @@ impl Sidebar {
         let ai_before = exposure.ai_denoise_enabled;
         let on = exposure.card_on(CardSwitch::Detail);
         let action = Self::adjustment_card(ui, "Detail", false, foldable, on, |ui| {
+            if hot_pixels {
+                changed |= moduwu_design::toggle_row(
+                    ui,
+                    &mut exposure.hot_pixel_removal,
+                    tr("Remove hot pixels"),
+                )
+                .changed();
+                moduwu_design::section_separator(ui);
+            }
             if ai_denoise != AiDenoiseOffer::Hidden {
                 let available = ai_denoise == AiDenoiseOffer::Available;
                 let mut ai_enabled = exposure.ai_denoise_enabled && available;

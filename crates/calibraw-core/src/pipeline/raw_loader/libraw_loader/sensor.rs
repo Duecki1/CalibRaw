@@ -234,6 +234,23 @@ pub(super) fn oriented_source_pos(
     }
 }
 
+/// The inverse of [`oriented_source_pos`]: the oriented position of
+/// active-area position `(x, y)` of a `width`×`height` area.
+pub(super) fn oriented_target_pos(
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    flip: i32,
+) -> (usize, usize) {
+    match flip {
+        3 => (width - 1 - x, height - 1 - y),
+        5 => (y, width - 1 - x),
+        6 => (height - 1 - y, x),
+        _ => (x, y),
+    }
+}
+
 pub(super) fn cdesc4(iparams: &ffi::libraw_iparams_t) -> [u8; 4] {
     [
         c_char_as_u8(iparams.cdesc[0]),

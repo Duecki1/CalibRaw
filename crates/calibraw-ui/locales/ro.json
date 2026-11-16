@@ -2135,5 +2135,7 @@
   "That key is used by a control that cannot be changed.": "Tasta este folosită de o comandă care nu poate fi schimbată.",
   "Unflag": "Elimină marcajul",
   "{shortcut} no longer does: {actions}": "{shortcut} nu mai execută: {actions}",
-  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Această submască de pensulă este plină. Adaugă încă o submască de pensulă pentru a continua să pictezi."
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Această submască de pensulă este plină. Adaugă încă o submască de pensulă pentru a continua să pictezi.",
+  "Remove hot pixels": "Elimină pixelii fierbinți",
+  "Updating hot pixel removal…": "Se actualizează eliminarea pixelilor fierbinți…"
 }

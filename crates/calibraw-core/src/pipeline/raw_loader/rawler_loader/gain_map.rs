@@ -11,6 +11,7 @@
 //! points, holding the edge values outside them.
 
 use super::{entry, Geometry};
+use crate::pipeline::raw_loader::dng_opcodes::{self, Reader};
 use crate::pipeline::LensShadingMap;
 use anyhow::{bail, ensure, Context, Result};
 use rawler::formats::tiff::{Value, IFD};
@@ -41,37 +42,6 @@ struct GainMap {
     gains: Vec<f32>,
 }
 
-/// Big-endian reader over an opcode list; the DNG specification stores
-/// opcode lists big-endian whatever the file's byte order.
-struct Reader<'a> {
-    bytes: &'a [u8],
-}
-
-impl<'a> Reader<'a> {
-    fn take(&mut self, len: usize) -> Result<&'a [u8]> {
-        ensure!(len <= self.bytes.len(), "truncated DNG opcode list");
-        let (taken, rest) = self.bytes.split_at(len);
-        self.bytes = rest;
-        Ok(taken)
-    }
-
-    fn array<const N: usize>(&mut self) -> Result<[u8; N]> {
-        Ok(self.take(N)?.try_into()?)
-    }
-
-    fn u32(&mut self) -> Result<u32> {
-        Ok(u32::from_be_bytes(self.array()?))
-    }
-
-    fn f32(&mut self) -> Result<f32> {
-        Ok(f32::from_be_bytes(self.array()?))
-    }
-
-    fn f64(&mut self) -> Result<f64> {
-        Ok(f64::from_be_bytes(self.array()?))
-    }
-}
-
 impl GainMap {
     fn parse(params: &[u8]) -> Result<Self> {
         ensure!(
@@ -80,7 +50,7 @@ impl GainMap {
             "invalid DNG GainMap parameter size {}",
             params.len()
         );
-        let mut reader = Reader { bytes: params };
+        let mut reader = Reader::new(params);
         let [top, left, bottom, right, plane, planes, row_pitch, col_pitch] =
             [(); 8].map(|()| reader.u32());
         let points = [reader.u32()? as usize, reader.u32()? as usize];
@@ -158,20 +128,13 @@ impl GainMap {
 
 /// Parses an opcode list into its GainMaps and the IDs of the other opcodes.
 fn parse_opcode_list(bytes: &[u8]) -> Result<(Vec<GainMap>, Vec<u32>)> {
-    let mut reader = Reader { bytes };
-    let count = reader.u32()?;
     let mut maps = Vec::new();
     let mut skipped = Vec::new();
-    for _ in 0..count {
-        let id = reader.u32()?;
-        let _version = reader.u32()?;
-        let _flags = reader.u32()?;
-        let size = reader.u32()? as usize;
-        let params = reader.take(size)?;
-        if id == GAIN_MAP_OPCODE {
-            maps.push(GainMap::parse(params)?);
+    for opcode in dng_opcodes::opcodes(bytes)? {
+        if opcode.id == GAIN_MAP_OPCODE {
+            maps.push(GainMap::parse(opcode.params)?);
         } else {
-            skipped.push(id);
+            skipped.push(opcode.id);
         }
     }
     Ok((maps, skipped))

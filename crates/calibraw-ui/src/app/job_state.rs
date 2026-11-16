@@ -85,6 +85,15 @@ pub(super) enum ForegroundOperationReceiver {
     CameraMatch(mpsc::Receiver<super::camera_match::OpenPhotoFit>),
 }
 
+/// Why the lens-correction task prepares the source again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SourceTask {
+    /// The lens correction changed, and perhaps the hot pixel removal too.
+    Lens,
+    /// Only the hot pixel removal changed, to `removed`.
+    HotPixels { removed: bool },
+}
+
 pub(super) enum ForegroundOperationContext {
     AiMask,
     Object {
@@ -101,7 +110,7 @@ pub(super) enum ForegroundOperationContext {
         not_kept: Option<String>,
     },
     AiDenoise,
-    LensCorrection,
+    LensCorrection(SourceTask),
     /// The geometry the estimate was made for; flips, skews and perspective change its
     /// meaning.
     AutoGeometry {

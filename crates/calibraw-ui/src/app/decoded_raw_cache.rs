@@ -2,9 +2,10 @@
 //! prefetch.
 //!
 //! An entry is one decoded file, together with what opening it derives from
-//! the decode alone: its Lensfun catalog and its most recent lens-corrected
-//! copy. The RAW a document renders from also keeps its full-resolution
-//! highlight analysis, so a revisit skips that work too.
+//! the decode alone: its Lensfun catalog and its most recently corrected copy
+//! (`SourceCorrections`: hot pixels repaired, lens corrected). The RAW a
+//! document renders from also keeps its full-resolution highlight analysis,
+//! so a revisit skips that work too.
 //!
 //! A camera profile changes only how the samples' colour is read, so one
 //! entry serves every camera-profile request: the decode itself for the
@@ -20,7 +21,7 @@
 
 use crate::i18n::tr;
 use crate::pipeline::{
-    lensfun_catalog, CameraProfileMode, LensCorrection, LensfunCatalog, LoadedRaw,
+    lensfun_catalog, CameraProfileMode, LensfunCatalog, LoadedRaw, SourceCorrections,
 };
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -68,8 +69,8 @@ pub(crate) struct DecodedRaw {
     original: Arc<LoadedRaw>,
     lens_catalog: OnceLock<LensfunCatalog>,
     /// Held while a correction runs, so a second request for the same
-    /// selection waits for it instead of correcting again.
-    lens_corrected: Mutex<Option<(LensCorrection, Arc<LoadedRaw>)>>,
+    /// corrections waits for it instead of correcting again.
+    corrected: Mutex<Option<(SourceCorrections, Arc<LoadedRaw>)>>,
     /// The decode with the camera profile of the latest other request.
     recolored: Mutex<Option<Recolored>>,
 }
@@ -78,8 +79,8 @@ pub(crate) struct DecodedRaw {
 struct Recolored {
     request: DecodeRequest,
     original: Arc<LoadedRaw>,
-    /// The latest lens-corrected copy of `original`.
-    lens_corrected: Option<(LensCorrection, Arc<LoadedRaw>)>,
+    /// The latest corrected copy of `original`.
+    corrected: Option<(SourceCorrections, Arc<LoadedRaw>)>,
 }
 
 impl DecodedRaw {
@@ -88,7 +89,7 @@ impl DecodedRaw {
             request,
             original: Arc::new(original),
             lens_catalog: OnceLock::new(),
-            lens_corrected: Mutex::new(None),
+            corrected: Mutex::new(None),
             recolored: Mutex::new(None),
         }
     }
@@ -129,21 +130,24 @@ impl DecodedRaw {
         *slot = Some(Recolored {
             request: request.clone(),
             original: Arc::clone(&original),
-            lens_corrected: None,
+            corrected: None,
         });
         Ok(original)
     }
 
-    /// The lens-corrected RAW for `selection` with the camera profile
-    /// `request` chooses. The correction itself is made once for the decode
-    /// ([`Self::lens_corrected`]); another profile shares its samples.
-    pub(crate) fn lens_corrected_for(
+    /// The RAW corrected by `corrections` with the camera profile `request`
+    /// chooses; the decode itself when they change nothing. The correction is
+    /// made once for the decode ([`Self::corrected`]); another profile shares
+    /// its samples.
+    pub(crate) fn corrected_for(
         &self,
         request: &DecodeRequest,
-        selection: &LensCorrection,
-        correct: impl FnOnce(&LoadedRaw) -> anyhow::Result<LoadedRaw>,
+        corrections: &SourceCorrections,
     ) -> anyhow::Result<Arc<LoadedRaw>> {
-        let corrected = self.lens_corrected(selection, correct)?;
+        if corrections.is_none() {
+            return self.original_for(request);
+        }
+        let corrected = self.corrected(corrections)?;
         if *request == self.request {
             return Ok(corrected);
         }
@@ -159,13 +163,13 @@ impl DecodedRaw {
             // Another request replaced the copy meanwhile.
             return Ok(Arc::new(corrected.with_profile_color_of(&original)));
         };
-        if let Some((cached_selection, corrected)) = &recolored.lens_corrected {
-            if cached_selection == selection {
+        if let Some((cached_corrections, corrected)) = &recolored.corrected {
+            if cached_corrections == corrections {
                 return Ok(Arc::clone(corrected));
             }
         }
         let recolored_corrected = Arc::new(corrected.with_profile_color_of(&original));
-        recolored.lens_corrected = Some((selection.clone(), Arc::clone(&recolored_corrected)));
+        recolored.corrected = Some((corrections.clone(), Arc::clone(&recolored_corrected)));
         Ok(recolored_corrected)
     }
 
@@ -176,21 +180,17 @@ impl DecodedRaw {
             .clone()
     }
 
-    /// The RAW corrected for `selection` by `correct`, reusing the last
-    /// correction when its selection matches. Failures are not kept.
-    pub(crate) fn lens_corrected(
-        &self,
-        selection: &LensCorrection,
-        correct: impl FnOnce(&LoadedRaw) -> anyhow::Result<LoadedRaw>,
-    ) -> anyhow::Result<Arc<LoadedRaw>> {
-        let mut slot = lock(&self.lens_corrected);
-        if let Some((cached_selection, corrected)) = slot.as_ref() {
-            if cached_selection == selection {
+    /// The decode corrected by `corrections`, reusing the last correction
+    /// when it was made for the same ones. Failures are not kept.
+    fn corrected(&self, corrections: &SourceCorrections) -> anyhow::Result<Arc<LoadedRaw>> {
+        let mut slot = lock(&self.corrected);
+        if let Some((cached_corrections, corrected)) = slot.as_ref() {
+            if cached_corrections == corrections {
                 return Ok(Arc::clone(corrected));
             }
         }
-        let corrected = Arc::new(correct(&self.original)?);
-        *slot = Some((selection.clone(), Arc::clone(&corrected)));
+        let corrected = corrections.apply_shared(&self.original)?;
+        *slot = Some((corrections.clone(), Arc::clone(&corrected)));
         Ok(corrected)
     }
 }

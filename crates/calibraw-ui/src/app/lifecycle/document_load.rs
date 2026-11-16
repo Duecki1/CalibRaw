@@ -302,8 +302,14 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             });
 
         let lens_state_saved = saved_lens.is_some();
-        let (lens_correction, full_raw) =
-            apply_saved_lens_correction(&decoded, saved_lens, automatic_lens, &mut sidecar_warning);
+        let hot_pixels_removed = source_removes_hot_pixels(&exposure, &original_raw);
+        let (lens_correction, full_raw) = apply_saved_source_corrections(
+            &decoded,
+            hot_pixels_removed,
+            saved_lens,
+            automatic_lens,
+            &mut sidecar_warning,
+        );
         // A film negative the Library marked is estimated from this photo as
         // the Film negative card's Auto would, and saved.
         match exposure.settle_film(&full_raw, geometry) {
@@ -493,6 +499,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             people_analysis,
             lens_correction,
             lens_profile_missing,
+            hot_pixels_removed,
             sidecar_target,
             document_generation,
             sidecar_warning,
@@ -569,8 +576,13 @@ pub(super) fn prepare_ahead_of_open(
             .original
             .apply_adaptive_detail_defaults(&mut exposure);
     }
-    let (lens_correction, full_raw) =
-        apply_saved_lens_correction(&decoded, saved_lens, context.automatic_lens, &mut None);
+    let (lens_correction, full_raw) = apply_saved_source_corrections(
+        &decoded,
+        source_removes_hot_pixels(&exposure, &decoded.original),
+        saved_lens,
+        context.automatic_lens,
+        &mut None,
+    );
     if cancelled() {
         return Ok(());
     }
@@ -923,18 +935,20 @@ fn record_edit_state(exposure: &ExposureParams, masks: &MaskStack) {
     ));
 }
 
-/// Restores the sidecar's lens selection and applies it at full resolution.
+/// Restores the sidecar's lens selection and applies it at full resolution,
+/// after repairing the hot pixels when `hot_pixels` (`SourceCorrections`).
 /// Photos without a saved lens state follow the automatic-correction setting.
 /// Returns the lens state and the RAW to develop, which is the original when
-/// correction is off or fails.
-fn apply_saved_lens_correction(
+/// neither correction applies, and keeps its hot pixels repaired when the lens
+/// correction fails.
+fn apply_saved_source_corrections(
     decoded: &RequestedDecode,
+    hot_pixels: bool,
     saved_lens: Option<crate::sidecar::LensEditState>,
     automatic_lens: AutomaticLensCorrection,
     sidecar_warning: &mut Option<String>,
 ) -> (LensCorrectionState, Arc<LoadedRaw>) {
     let lens_started = Instant::now();
-    let original_raw = &decoded.original;
     let mut lens_correction =
         LensCorrectionState::automatic(decoded.decoded.lens_catalog(), automatic_lens);
     calibraw_core::diagnostics::record(format!(
@@ -957,15 +971,29 @@ fn apply_saved_lens_correction(
         }
     }
     let selection = lens_correction.requested_correction();
+    let without_lens = SourceCorrections {
+        hot_pixels,
+        lens: None,
+    };
+    // Without a lens correction the corrections cannot fail.
+    let corrected_without_lens = || {
+        decoded
+            .decoded
+            .corrected_for(&decoded.request, &without_lens)
+            .unwrap_or_else(|_| Arc::clone(&decoded.original))
+    };
     let full_raw = match selection {
-        None => Arc::clone(original_raw),
+        None => corrected_without_lens(),
         Some(selection) => {
             let apply_started = Instant::now();
+            let corrections = SourceCorrections {
+                lens: Some(selection.clone()),
+                ..without_lens.clone()
+            };
             match decoded
                 .decoded
-                .lens_corrected_for(&decoded.request, &selection, |raw| {
-                    apply_lens_correction(raw, &selection)
-                }) {
+                .corrected_for(&decoded.request, &corrections)
+            {
                 Ok(corrected) => {
                     calibraw_core::diagnostics::record(format!(
                         "Lensfun full-resolution correction ready in {:.3}s",
@@ -996,7 +1024,7 @@ fn apply_saved_lens_correction(
                         sidecar_warning,
                         tr("The saved lens correction failed; the original geometry is shown."),
                     );
-                    Arc::clone(original_raw)
+                    corrected_without_lens()
                 }
             }
         }

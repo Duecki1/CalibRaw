@@ -239,9 +239,11 @@ images and JSON like code.
 `crates/calibraw-gpu/tests/render_parity.rs` exports every case in
 `data/render-parity/<input>/` and compares it with the PNG beside it. A case
 is a sidecar that lists only the fields it changes; `<input>` is one of the
-synthetic photos `scene`, `bayer` and `xtrans`, or `bayer-binned` and
-`xtrans-binned`, the mosaics reduced to half size as a preview proxy bins
-them. Cases render on the
+synthetic photos `scene`, `bayer` and `xtrans`; a mosaic with `-hot`
+(`bayer-hot`, `xtrans-hot`), seeded with hot photosites; and a mosaic with
+`-binned` (`bayer-binned`, `xtrans-binned`, `bayer-hot-binned`), reduced to
+half size as a preview proxy bins it, after the source corrections. Cases
+render on the
 machine's GPU, or wgpu's software adapter without one (lavapipe in CI). GPUs
 round differently, so the mean colour of every 8×8 square must stay within
 two 8-bit levels of the golden; single-pixel rounding averages out, a changed

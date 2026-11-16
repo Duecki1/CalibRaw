@@ -179,6 +179,13 @@ impl ExposureParams {
         }
         applied
     }
+
+    /// Whether the source this edit develops has its hot pixels repaired: its
+    /// `hot_pixel_removal` as [`Self::applied`] renders it, which the Detail
+    /// card's switch turns off and the Lens Corrections card's does not.
+    pub fn removes_hot_pixels(&self) -> bool {
+        self.applied(true).hot_pixel_removal
+    }
 }
 
 impl LocalMask {

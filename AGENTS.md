@@ -4,6 +4,9 @@ CalibRaw is a Rust, wgpu/WGSL and egui RAW editor for Linux, Android, Windows an
 Architecture, dependency rules and concurrency contracts: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
+# This Codebase is yours
+This codebase is yours. What it's for and how it's built are your call, and you are going to be the one that keeps building on it.
+
 ## Working rules
 
 - Preserve behavior: features, interactions, numerical output and persisted formats (settings, presets, sidecars, edit history). Redesigns, algorithm changes and new features are separate changes.

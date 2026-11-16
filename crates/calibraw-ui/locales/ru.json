@@ -2135,5 +2135,7 @@
   "That key is used by a control that cannot be changed.": "Эта клавиша занята элементом управления, который нельзя изменить.",
   "Unflag": "Снять флажок",
   "{shortcut} no longer does: {actions}": "{shortcut} больше не выполняет: {actions}",
-  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Эта подмаска кисти заполнена. Добавьте ещё одну подмаску кисти, чтобы продолжить рисование."
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Эта подмаска кисти заполнена. Добавьте ещё одну подмаску кисти, чтобы продолжить рисование.",
+  "Remove hot pixels": "Удалить горячие пиксели",
+  "Updating hot pixel removal…": "Обновление удаления горячих пикселей…"
 }

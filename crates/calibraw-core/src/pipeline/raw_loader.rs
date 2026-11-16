@@ -1106,6 +1106,8 @@ pub fn prewarm_dcp_profile_index(folder: &Path) {
 pub fn prewarm_dcp_profile_index(_folder: &Path) {}
 
 #[cfg(libraw_available)]
+mod dng_opcodes;
+#[cfg(libraw_available)]
 mod libraw_loader;
 #[cfg(libraw_available)]
 mod makernote_lens;

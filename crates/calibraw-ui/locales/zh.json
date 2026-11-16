@@ -2135,5 +2135,7 @@
   "That key is used by a control that cannot be changed.": "该键已被一个无法更改的控件占用。",
   "Unflag": "取消标记",
   "{shortcut} no longer does: {actions}": "{shortcut} 不再用于：{actions}",
-  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "此画笔子蒙版已满。请再添加一个画笔子蒙版以继续绘制。"
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "此画笔子蒙版已满。请再添加一个画笔子蒙版以继续绘制。",
+  "Remove hot pixels": "移除热像素",
+  "Updating hot pixel removal…": "正在更新热像素移除…"
 }

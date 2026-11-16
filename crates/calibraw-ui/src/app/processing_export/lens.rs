@@ -35,9 +35,26 @@ impl CalibRawApp {
         self.queue_pending_lens_correction(frame);
     }
 
+    /// Starts the task that prepares the source again when the lens correction
+    /// changed (`lens_correction_dirty`) or the source no longer has the hot
+    /// pixel removal the edit asks for, which an edit in the Detail card, an
+    /// undo, a paste, a preset or the card's switch changes.
     pub(in crate::app) fn queue_pending_lens_correction(&mut self, frame: &eframe::Frame) {
         self.poll_lens_correction_worker(frame);
-        if !self.develop.lens_correction_dirty || self.foreground_operation_active() {
+        let hot_pixels = self.requested_hot_pixel_removal();
+        if hot_pixels == self.develop.hot_pixels_removed {
+            self.develop.hot_pixels_failed = None;
+        }
+        let purpose = if self.develop.lens_correction_dirty {
+            SourceTask::Lens
+        } else if self.hot_pixel_removal_stale() {
+            SourceTask::HotPixels {
+                removed: hot_pixels,
+            }
+        } else {
+            return;
+        };
+        if self.foreground_operation_active() {
             return;
         }
 
@@ -47,36 +64,23 @@ impl CalibRawApp {
         };
         // Switched on without a profile, the card removes chromatic
         // aberration alone and the photo keeps its geometry.
-        let selection = self.develop.lens_correction.requested_correction();
+        let corrections = SourceCorrections {
+            hot_pixels,
+            lens: self.develop.lens_correction.requested_correction(),
+        };
 
         if let Some(restored_masks) = self.persistence.lens_restore_masks.take() {
             self.masks.stack = restored_masks;
             self.rehydrate_restored_mask_state();
         }
 
-        // Constrained memory keeps the last corrected and uncorrected
-        // previews, so toggling the correction does not decode again.
-        let cached_raws = if !self.caps().constrained_memory() {
-            None
+        // Constrained memory keeps the last sources prepared with and without
+        // a lens correction, so switching it does not prepare them again.
+        let cached_raws = if self.caps().constrained_memory() {
+            self.preview
+                .prepared_source(&corrections, self.preview.quality)
         } else {
-            match selection.as_ref() {
-                Some(requested) => self
-                    .preview
-                    .lens_corrected_cache
-                    .as_ref()
-                    .filter(|(cached, quality, _, _)| {
-                        cached == requested && *quality == self.preview.quality
-                    })
-                    .map(|(_, _, full_raw, preview_raw)| {
-                        (Arc::clone(full_raw), Arc::clone(preview_raw))
-                    }),
-                None => self
-                    .preview
-                    .lens_original_cache
-                    .as_ref()
-                    .filter(|(quality, _)| *quality == self.preview.quality)
-                    .map(|(_, preview_raw)| (Arc::clone(&original_raw), Arc::clone(preview_raw))),
-            }
+            None
         };
 
         let preview_proxy_edge = self.preview.quality.proxy_edge_for_fitted_source(
@@ -90,7 +94,8 @@ impl CalibRawApp {
         self.develop.lens_correction_dirty = false;
         self.start_lens_correction_task(LensCorrectionTaskRequest {
             original_raw,
-            selection,
+            corrections,
+            purpose,
             preview_quality: self.preview.quality,
             preview_proxy_edge,
             cached_raws,
@@ -102,29 +107,39 @@ impl CalibRawApp {
         request: LensCorrectionTaskRequest,
     ) {
         if self.foreground_operation_active() {
-            self.develop.lens_correction_dirty = true;
+            // A hot pixel removal is noticed again (`hot_pixel_removal_stale`).
+            if request.purpose == SourceTask::Lens {
+                self.develop.lens_correction_dirty = true;
+            }
             return;
         }
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_cancellation = Arc::clone(&cancellation);
-        let status_label = request
-            .selection
-            .as_ref()
-            .map(lens_correction_label)
-            .unwrap_or_else(|| tr("original geometry").to_owned());
-        self.develop.lens_correction.catalog.status = if request.selection.is_some() {
-            tr_fmt(
-                "Applying {status_label}…",
-                &[("status_label", &status_label)],
-            )
-        } else {
-            tr("Disabling lens correction…").to_owned()
+        let purpose = request.purpose;
+        let progress = match purpose {
+            SourceTask::Lens => {
+                let lens = request.corrections.lens.as_ref();
+                let status_label = lens
+                    .map(lens_correction_label)
+                    .unwrap_or_else(|| tr("original geometry").to_owned());
+                self.develop.lens_correction.catalog.status = if lens.is_some() {
+                    tr_fmt(
+                        "Applying {status_label}…",
+                        &[("status_label", &status_label)],
+                    )
+                } else {
+                    tr("Disabling lens correction…").to_owned()
+                };
+                ForegroundProgress::indeterminate(if lens.is_some() {
+                    tr("Applying lens profile…")
+                } else {
+                    tr("Restoring original geometry…")
+                })
+            }
+            SourceTask::HotPixels { .. } => {
+                ForegroundProgress::indeterminate(tr("Updating hot pixel removal…"))
+            }
         };
-        let progress = ForegroundProgress::indeterminate(if request.selection.is_some() {
-            tr("Applying lens profile…")
-        } else {
-            tr("Restoring original geometry…")
-        });
 
         let repaint = self.egui_ctx.clone();
         let (sender, receiver) = mpsc::channel();
@@ -136,26 +151,27 @@ impl CalibRawApp {
                     if worker_cancellation.load(Ordering::Acquire) {
                         return Err("foreground operation cancelled".to_owned());
                     }
-                    let applied_label = request.selection.as_ref().map(lens_correction_label);
+                    let applied_label =
+                        request.corrections.lens.as_ref().map(lens_correction_label);
                     let (full_raw, preview_raw) = if let Some(cached_raws) = request.cached_raws {
                         cached_raws
                     } else {
-                        let original_raw = Arc::clone(&request.original_raw);
-                        let full_raw = if let Some(selection) = request.selection.as_ref() {
-                            Arc::new(apply_lens_correction(&original_raw, selection).map_err(
-                                |error| {
-                                    tr_fmt(
-                                        "Could not apply {selection}: {error}",
-                                        &[
-                                            ("selection", &selection.label()),
-                                            ("error", &format!("{error:#}")),
-                                        ],
-                                    )
-                                },
-                            )?)
-                        } else {
-                            original_raw
-                        };
+                        let full_raw = request
+                            .corrections
+                            .apply_shared(&request.original_raw)
+                            .map_err(|error| {
+                                // Only the lens correction fails.
+                                let selection = request
+                                    .corrections
+                                    .lens
+                                    .as_ref()
+                                    .map(LensCorrection::label)
+                                    .unwrap_or_default();
+                                tr_fmt(
+                                    "Could not apply {selection}: {error}",
+                                    &[("selection", &selection), ("error", &format!("{error:#}"))],
+                                )
+                            })?;
                         if worker_cancellation.load(Ordering::Acquire) {
                             return Err("foreground operation cancelled".to_owned());
                         }
@@ -181,7 +197,7 @@ impl CalibRawApp {
                         full_raw,
                         preview_raw,
                         applied_label,
-                        selection: request.selection,
+                        corrections: request.corrections,
                         preview_quality: request.preview_quality,
                     })
                 })();
@@ -197,28 +213,95 @@ impl CalibRawApp {
                     progress,
                     cancelling: false,
                     receiver: ForegroundOperationReceiver::LensCorrection(receiver),
-                    context: ForegroundOperationContext::LensCorrection,
+                    context: ForegroundOperationContext::LensCorrection(purpose),
                 });
                 self.egui_ctx
                     .request_repaint_after(Duration::from_millis(50));
             }
             Err(error) => {
-                self.develop.lens_correction.enabled = self.develop.lens_correction.applied;
-                self.develop.lens_correction.catalog.status = tr_fmt(
+                let message = tr_fmt(
                     "Could not start lens correction: {error}",
                     &[("error", &error)],
                 );
-                self.report_error(
-                    ErrorKind::LensCorrection,
-                    self.develop.lens_correction.catalog.status.clone(),
-                );
+                if purpose == SourceTask::Lens {
+                    self.develop.lens_correction.enabled = self.develop.lens_correction.applied;
+                    self.develop.lens_correction.catalog.status = message.clone();
+                }
+                self.source_task_failed(purpose, message);
             }
         }
     }
 
+    /// Whether the source is being prepared again, or will be: for the lens
+    /// correction or for the hot pixel removal.
     pub(crate) fn lens_correction_busy(&self) -> bool {
         self.develop.lens_correction_dirty
+            || self.hot_pixel_removal_stale()
             || self.foreground_operation_is(ForegroundOperationKind::LensCorrection)
+    }
+
+    /// Whether the open photo's hot pixels can be repaired, which the Detail
+    /// card offers (`hot_pixel_removal_applies`).
+    pub(crate) fn hot_pixel_removal_available(&self) -> bool {
+        self.develop
+            .original_raw
+            .as_deref()
+            .is_some_and(hot_pixel_removal_applies)
+    }
+
+    /// Whether the edit asks for the photo's hot pixels repaired
+    /// (`source_removes_hot_pixels`).
+    fn requested_hot_pixel_removal(&self) -> bool {
+        self.develop
+            .original_raw
+            .as_deref()
+            .is_some_and(|raw| source_removes_hot_pixels(&self.develop.exposure, raw))
+    }
+
+    /// Whether the source must be prepared again for the edit's hot pixel
+    /// removal: the edit asks for the other than it was prepared with, which
+    /// has not failed to be prepared.
+    fn hot_pixel_removal_stale(&self) -> bool {
+        let requested = self.requested_hot_pixel_removal();
+        requested != self.develop.hot_pixels_removed
+            && self.develop.hot_pixels_failed != Some(requested)
+    }
+
+    /// Reports a source the task for `purpose` could not prepare or install.
+    /// A hot pixel removal is not tried again until the edit asks for the
+    /// other (`hot_pixel_removal_stale`).
+    fn source_task_failed(&mut self, purpose: SourceTask, message: String) {
+        match purpose {
+            SourceTask::Lens => self.report_error(ErrorKind::LensCorrection, message),
+            SourceTask::HotPixels { removed } => {
+                self.develop.hot_pixels_failed = Some(removed);
+                self.report_error(ErrorKind::Preview, message);
+            }
+        }
+    }
+
+    /// Where memory is constrained, keeps the installed source and its preview
+    /// proxy at `quality` (`PreviewState::keep_prepared_source`).
+    pub(in crate::app) fn keep_installed_source(&mut self, quality: PreviewQuality) {
+        if !self.caps().constrained_memory() {
+            return;
+        }
+        let (Some(full_raw), Some(preview_raw)) = (
+            self.develop.loaded_raw.clone(),
+            self.develop.preview_raw.clone(),
+        ) else {
+            return;
+        };
+        let lens = &self.develop.lens_correction;
+        self.preview.keep_prepared_source(PreparedSource {
+            corrections: SourceCorrections {
+                hot_pixels: self.develop.hot_pixels_removed,
+                lens: lens.applied.then(|| lens.requested_correction()).flatten(),
+            },
+            quality,
+            full_raw,
+            preview_raw,
+        });
     }
 
     pub(in crate::app) fn poll_lens_correction_worker(&mut self, frame: &eframe::Frame) {
@@ -259,28 +342,50 @@ impl CalibRawApp {
         if stale {
             return;
         }
+        // The task starts with its purpose as the context.
+        let purpose = match operation.context {
+            ForegroundOperationContext::LensCorrection(purpose) => purpose,
+            _ => SourceTask::Lens,
+        };
         let prepared = match result {
             Ok(prepared) => prepared,
             Err(error) => {
                 if !error.contains("cancelled") {
-                    self.develop.lens_correction.enabled = self.develop.lens_correction.applied;
-                    self.develop.lens_correction.catalog.status = error;
-                    self.report_error(
-                        ErrorKind::LensCorrection,
-                        tr("Lens correction failed; restored the previous preview.").to_owned(),
-                    );
+                    match purpose {
+                        SourceTask::Lens => {
+                            self.develop.lens_correction.enabled =
+                                self.develop.lens_correction.applied;
+                            self.develop.lens_correction.catalog.status = error;
+                            self.report_error(
+                                ErrorKind::LensCorrection,
+                                tr("Lens correction failed; restored the previous preview.")
+                                    .to_owned(),
+                            );
+                        }
+                        SourceTask::HotPixels { .. } => self.source_task_failed(purpose, error),
+                    }
                 }
                 return;
             }
         };
         operation.progress = ForegroundProgress::indeterminate(tr("Preparing GPU preview…"));
+        if let Err(message) = self.install_prepared_source(&operation, prepared, purpose, frame) {
+            self.source_task_failed(purpose, message);
+        }
+    }
 
+    /// Shows the source the task prepared for `purpose`. Fails when the
+    /// preview cannot show it, keeping the previous one; returns without
+    /// installing it when the document changed meanwhile.
+    fn install_prepared_source(
+        &mut self,
+        operation: &ForegroundOperation,
+        prepared: PreparedLensCorrection,
+        purpose: SourceTask,
+        frame: &eframe::Frame,
+    ) -> Result<(), String> {
         let Some(render_state) = frame.wgpu_render_state() else {
-            self.report_error(
-                ErrorKind::LensCorrection,
-                tr("eframe is not running with the wgpu backend.").to_owned(),
-            );
-            return;
+            return Err(tr("eframe is not running with the wgpu backend.").to_owned());
         };
         if prepared
             .full_raw
@@ -295,23 +400,16 @@ impl CalibRawApp {
         // building a second pipeline next to it.
         if self.caps().constrained_memory() {
             let Some(pipeline) = self.preview.pipeline() else {
-                self.report_error(
-                    ErrorKind::LensCorrection,
-                    tr("The preview pipeline is unavailable.").to_owned(),
-                );
-                return;
+                return Err(tr("The preview pipeline is unavailable.").to_owned());
             };
-            if let Err(error) = pipeline.upload_raw_tile(&render_state.queue, &prepared.preview_raw)
-            {
-                self.report_error(
-                    ErrorKind::LensCorrection,
+            pipeline
+                .upload_raw_tile(&render_state.queue, &prepared.preview_raw)
+                .map_err(|error| {
                     tr_fmt(
                         "Could not update the lens-corrected preview pixels: {error}",
                         &[("error", &format!("{error:#}"))],
-                    ),
-                );
-                return;
-            }
+                    )
+                })?;
             let params = GpuParams::new(
                 &self.preview_exposure(),
                 &self.preview_mask_stack(),
@@ -319,41 +417,34 @@ impl CalibRawApp {
             )
             .with_vignette_geometry(self.develop.geometry)
             .with_look_lut(self.preview_look().as_ref());
-            if let Err(error) = pipeline.recompute_with_remove(
-                &render_state.queue,
-                &render_state.device,
-                &params,
-                RemoveSceneContext::new(
-                    &self.inpaint.edits,
-                    &prepared.full_raw,
-                    &self.preview_exposure(),
-                    [0.0, 0.0],
-                    [
-                        prepared.full_raw.width as f32,
-                        prepared.full_raw.height as f32,
-                    ],
-                ),
-            ) {
-                self.report_error(
-                    ErrorKind::LensCorrection,
+            pipeline
+                .recompute_with_remove(
+                    &render_state.queue,
+                    &render_state.device,
+                    &params,
+                    RemoveSceneContext::new(
+                        &self.inpaint.edits,
+                        &prepared.full_raw,
+                        &self.preview_exposure(),
+                        [0.0, 0.0],
+                        [
+                            prepared.full_raw.width as f32,
+                            prepared.full_raw.height as f32,
+                        ],
+                    ),
+                )
+                .map_err(|error| {
                     tr_fmt(
                         "Could not apply Remove to lens preview: {error}",
                         &[("error", &format!("{error:#}"))],
-                    ),
-                );
-                return;
-            }
-            if let Some(selection) = prepared.selection.clone() {
-                self.preview.lens_corrected_cache = Some((
-                    selection,
-                    prepared.preview_quality,
-                    Arc::clone(&prepared.full_raw),
-                    Arc::clone(&prepared.preview_raw),
-                ));
-            } else {
-                self.preview.lens_original_cache =
-                    Some((prepared.preview_quality, Arc::clone(&prepared.preview_raw)));
-            }
+                    )
+                })?;
+            self.preview.keep_prepared_source(PreparedSource {
+                corrections: prepared.corrections.clone(),
+                quality: prepared.preview_quality,
+                full_raw: Arc::clone(&prepared.full_raw),
+                preview_raw: Arc::clone(&prepared.preview_raw),
+            });
         } else {
             let preview_masks = self.preview_mask_stack();
             let params = GpuParams::new(
@@ -363,7 +454,7 @@ impl CalibRawApp {
             )
             .with_vignette_geometry(self.develop.geometry)
             .with_look_lut(self.preview_look().as_ref());
-            let pipeline = match RawGpuPipeline::new(
+            let pipeline = RawGpuPipeline::new(
                 &render_state.device,
                 &render_state.queue,
                 &prepared.preview_raw,
@@ -371,86 +462,89 @@ impl CalibRawApp {
                 fitted_pipeline_options(preview_masks.masks.len()).profile_preview(
                     crate::app::lifecycle::reserves_profile_preview(&prepared.preview_raw),
                 ),
-            ) {
-                Ok(pipeline) => pipeline,
-                Err(error) => {
-                    self.report_error(
-                        ErrorKind::LensCorrection,
-                        tr_fmt(
-                            "Could not rebuild the corrected GPU preview: {error}",
-                            &[("error", &format!("{error:#}"))],
-                        ),
-                    );
-                    return;
-                }
-            };
-            if let Err(error) = Self::upload_preview_masks(
+            )
+            .map_err(|error| {
+                tr_fmt(
+                    "Could not rebuild the corrected GPU preview: {error}",
+                    &[("error", &format!("{error:#}"))],
+                )
+            })?;
+            Self::upload_preview_masks(
                 &pipeline,
                 &render_state.queue,
                 &preview_masks,
                 &prepared.preview_raw,
-            ) {
-                self.report_error(ErrorKind::LensCorrection, error);
-                return;
-            }
-            if let Err(error) = pipeline.recompute_with_remove(
-                &render_state.queue,
-                &render_state.device,
-                &params,
-                RemoveSceneContext::new(
-                    &self.inpaint.edits,
-                    &prepared.full_raw,
-                    &self.preview_exposure(),
-                    [0.0, 0.0],
-                    [
-                        prepared.full_raw.width as f32,
-                        prepared.full_raw.height as f32,
-                    ],
-                ),
-            ) {
-                self.report_error(
-                    ErrorKind::LensCorrection,
+            )?;
+            pipeline
+                .recompute_with_remove(
+                    &render_state.queue,
+                    &render_state.device,
+                    &params,
+                    RemoveSceneContext::new(
+                        &self.inpaint.edits,
+                        &prepared.full_raw,
+                        &self.preview_exposure(),
+                        [0.0, 0.0],
+                        [
+                            prepared.full_raw.width as f32,
+                            prepared.full_raw.height as f32,
+                        ],
+                    ),
+                )
+                .map_err(|error| {
                     tr_fmt(
                         "Could not apply Remove to corrected preview: {error}",
                         &[("error", &format!("{error:#}"))],
-                    ),
-                );
-                return;
-            }
+                    )
+                })?;
 
             if !operation.accepts_result(self.persistence.document_generation) {
-                return;
+                return Ok(());
             }
             self.take_preview_pipeline_and_release_textures();
             self.preview.gpu_pipeline = Some(self.present_pipeline(pipeline, render_state));
         }
 
         if !operation.accepts_result(self.persistence.document_generation) {
-            return;
+            return Ok(());
         }
 
-        self.rehydrate_restored_mask_state();
-        self.note_lens_correction_changed_for_masks();
+        match purpose {
+            SourceTask::Lens => {
+                self.rehydrate_restored_mask_state();
+                self.note_lens_correction_changed_for_masks();
+                self.preview.reset_view();
+                self.develop.lens_correction.applied = prepared.applied_label.is_some();
+                self.develop.lens_correction.catalog.status = prepared.applied_label.map_or_else(
+                    || tr("Lens correction disabled; using the original geometry.").to_owned(),
+                    |label| tr_fmt("Applied {label}", &[("label", &label)]),
+                );
+            }
+            SourceTask::HotPixels { .. } => {
+                // The geometry stays, and with it the view; what was shown of
+                // the previous source is made again from this one.
+                self.note_mask_source_changed();
+                self.discard_auxiliary_previews();
+                self.preview.drop_detail_rebuild();
+                self.preview.revision = self.preview.revision.wrapping_add(1);
+            }
+        }
         self.masks.dirty_layers = [false; MAX_LOCAL_MASKS];
         self.masks.detail_dirty_layers = [false; MAX_LOCAL_MASKS];
         self.masks.navigation_dirty_layers = [false; MAX_LOCAL_MASKS];
         self.develop.loaded_raw = Some(prepared.full_raw);
         self.develop.preview_raw = Some(prepared.preview_raw);
-        self.preview.reset_view();
+        self.develop.hot_pixels_removed = prepared.corrections.hot_pixels;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
         self.preview.detail_urgent = false;
         self.develop.target_exposure = self.preview_exposure();
         self.develop.target_look = self.preview_look();
         self.preview.pending_stage = None;
-        self.develop.lens_correction.applied = prepared.applied_label.is_some();
-        self.develop.lens_correction.catalog.status = prepared.applied_label.map_or_else(
-            || tr("Lens correction disabled; using the original geometry.").to_owned(),
-            |label| tr_fmt("Applied {label}", &[("label", &label)]),
-        );
         self.ui.notice = None;
         self.resume_persisted_ai_denoise(frame);
         self.egui_ctx.request_repaint();
+        Ok(())
     }
 }
 

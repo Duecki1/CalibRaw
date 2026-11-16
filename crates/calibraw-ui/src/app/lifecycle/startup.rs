@@ -118,6 +118,8 @@ impl CalibRawApp {
                 lens_correction,
                 target_exposure: exposure,
                 lens_correction_dirty: false,
+                hot_pixels_removed: false,
+                hot_pixels_failed: None,
                 load_receiver: None,
                 loading_label: None,
                 loading_view: None,

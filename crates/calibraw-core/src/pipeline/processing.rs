@@ -96,6 +96,9 @@ impl RawStageControls {
             denoise_quality,
             ai_denoise_enabled,
             ai_denoise_amount,
+            // Changes the source the stages read, which renderers prepare
+            // again (`SourceCorrections`), rather than a stage.
+            hot_pixel_removal: _,
             demosaic_mode,
             dual_threshold,
             frequency_chroma,

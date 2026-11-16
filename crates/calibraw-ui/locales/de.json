@@ -2135,5 +2135,7 @@
   "That key is used by a control that cannot be changed.": "Diese Taste wird von einem Bedienelement verwendet, das sich nicht ändern lässt.",
   "Unflag": "Markierung entfernen",
   "{shortcut} no longer does: {actions}": "{shortcut} löst nicht mehr aus: {actions}",
-  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Diese Pinsel-Untermaske ist voll. Füge eine weitere Pinsel-Untermaske hinzu, um weiterzumalen."
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Diese Pinsel-Untermaske ist voll. Füge eine weitere Pinsel-Untermaske hinzu, um weiterzumalen.",
+  "Remove hot pixels": "Hotpixel entfernen",
+  "Updating hot pixel removal…": "Hotpixel-Entfernung wird aktualisiert…"
 }

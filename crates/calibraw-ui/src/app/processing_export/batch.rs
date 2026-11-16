@@ -244,20 +244,20 @@ fn prepare_desktop_library_export_item(
         return Err("batch export cancelled".to_owned());
     }
 
-    let raw = match edits.lens.requested_correction(&original_raw) {
-        Some(correction) => Arc::new(apply_lens_correction(&original_raw, &correction).map_err(
-            |error| {
-                tr_fmt(
-                    "{source}: lens correction failed: {error}",
-                    &[
-                        ("source", &job.source.display()),
-                        ("error", &format!("{error:#}")),
-                    ],
-                )
-            },
-        )?),
-        None => Arc::clone(&original_raw),
+    let corrections = SourceCorrections {
+        hot_pixels: edits.exposure.removes_hot_pixels(),
+        lens: edits.lens.requested_correction(&original_raw),
     };
+    // Only the lens correction fails.
+    let raw = corrections.apply_shared(&original_raw).map_err(|error| {
+        tr_fmt(
+            "{source}: lens correction failed: {error}",
+            &[
+                ("source", &job.source.display()),
+                ("error", &format!("{error:#}")),
+            ],
+        )
+    })?;
     // A film negative the Library marked exports as its estimate, as opening
     // the photo would settle it, unless its card is switched off.
     if edits.exposure.settle_film(&raw, edits.geometry) == FilmSettlement::NotFound

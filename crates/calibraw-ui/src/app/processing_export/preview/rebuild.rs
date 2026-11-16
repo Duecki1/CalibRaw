@@ -475,27 +475,7 @@ impl CalibRawApp {
         self.preview.program_template = Some(pipeline.program_template());
         self.develop.preview_raw = Some(prepared.preview_raw);
         self.preview.gpu_pipeline = Some(self.present_pipeline(pipeline, render_state));
-        if self.caps().constrained_memory() {
-            if self.develop.lens_correction.applied {
-                if let (Some(selection), Some(full_raw), Some(preview_raw)) = (
-                    self.develop.lens_correction.requested_correction(),
-                    preview_source.as_ref(),
-                    self.develop.preview_raw.as_ref(),
-                ) {
-                    self.preview.lens_corrected_cache = Some((
-                        selection,
-                        prepared.quality,
-                        Arc::clone(full_raw),
-                        Arc::clone(preview_raw),
-                    ));
-                }
-            } else if !self.develop.lens_correction.applied {
-                if let Some(preview_raw) = self.develop.preview_raw.as_ref() {
-                    self.preview.lens_original_cache =
-                        Some((prepared.quality, Arc::clone(preview_raw)));
-                }
-            }
-        }
+        self.keep_installed_source(prepared.quality);
         self.develop.target_exposure = self.preview_exposure();
         self.develop.target_look = self.preview_look();
         self.preview.pending_stage = None;

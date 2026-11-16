@@ -18,6 +18,7 @@ use crate::pipeline::basicadj::{
     MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
 use crate::pipeline::color_profile::{DcpMatrixSet, DcpProfile};
+use crate::pipeline::sensor_defects::MosaicLayout;
 use anyhow::{anyhow, Context, Result};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -40,6 +41,7 @@ use std::os::windows::ffi::OsStrExt;
 mod camera_matrix;
 mod cct;
 mod dcp_index;
+mod declared_defects;
 mod profile_color_source;
 mod sensor;
 mod temperature_tint;
@@ -47,6 +49,7 @@ mod thumbnail;
 pub(super) use camera_matrix::*;
 use cct::*;
 pub(super) use dcp_index::*;
+use declared_defects::{repair_declared_defects, ActiveArea};
 use profile_color_source::LibRawColorInputs;
 pub use profile_color_source::ProfileColorSource;
 pub(super) use profile_color_source::{
@@ -679,10 +682,15 @@ fn loaded_raw_from_context(
     let cdesc = cdesc4(iparams);
     let cfa_map = canonical_cfa_map(cdesc)?;
     let physical_black_levels = black_levels(color.black, &color.cblack);
+    let active_area = ActiveArea {
+        origin: [crop_x as usize, crop_y as usize],
+        dimensions: [width as usize, height as usize],
+        flip: sizes.flip,
+    };
     // SAFETY: a non-null `raw_image` is the buffer `libraw_unpack` allocated:
     // `raw_height` rows of `raw_pitch` bytes (or `raw_width` samples when the
     // pitch is 0), owned by `ctx`, which outlives the copy. `raw` belongs to it.
-    let (width, height, raw_pixels, color_indices, black_levels_per_pixel) = unsafe {
+    let (width, height, mut raw_pixels, color_indices, black_levels_per_pixel) = unsafe {
         copy_active_pixels(ActivePixelCopy {
             raw: ctx.raw,
             raw_image: rawdata.raw_image,
@@ -698,6 +706,26 @@ fn loaded_raw_from_context(
             cblack: &color.cblack,
         })
     }?;
+    let black_levels = canonicalize_f32x4(physical_black_levels, cfa_map);
+    let linear_max = color.linear_max.map(normalize_libraw_linear_max);
+    let nominal_white_levels = canonicalize_f32x4(
+        white_levels(color.maximum, linear_max, physical_black_levels),
+        cfa_map,
+    );
+    // Before anything measures the mosaic; the nominal white levels only
+    // scale the repair's units.
+    repair_declared_defects(
+        raw,
+        &active_area,
+        &MosaicLayout::new(
+            width,
+            height,
+            &color_indices,
+            &black_levels_per_pixel,
+            nominal_white_levels,
+        ),
+        &mut raw_pixels,
+    );
     let physical_wb = white_balance(color.cam_mul, cdesc);
     let wb_coeffs = canonicalize_f32x4(physical_wb, cfa_map);
     let color_source = ProfileColorSource::new(
@@ -713,16 +741,8 @@ fn loaded_raw_from_context(
         })),
     );
     let profile_color = color_source.resolve(dcp_profile, profile_source)?;
-    let black_levels = canonicalize_f32x4(physical_black_levels, cfa_map);
-    let linear_max = color.linear_max.map(normalize_libraw_linear_max);
-    let white_levels = saturation_adjusted_white_levels(
-        canonicalize_f32x4(
-            white_levels(color.maximum, linear_max, physical_black_levels),
-            cfa_map,
-        ),
-        black_levels,
-        &raw_pixels,
-    );
+    let white_levels =
+        saturation_adjusted_white_levels(nominal_white_levels, black_levels, &raw_pixels);
     validate_sensor_levels(white_levels, black_levels, &raw_pixels)?;
     let sensor_saturation =
         sensor_saturation(white_levels, black_levels, color.maximum, &raw_pixels);

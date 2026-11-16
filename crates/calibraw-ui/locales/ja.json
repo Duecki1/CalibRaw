@@ -2135,5 +2135,7 @@
   "That key is used by a control that cannot be changed.": "このキーは変更できない操作で使用されています。",
   "Unflag": "フラグを解除",
   "{shortcut} no longer does: {actions}": "{shortcut}は次の操作に使われなくなりました：{actions}",
-  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "このブラシのサブマスクはいっぱいです。描き続けるには、ブラシのサブマスクをもう1つ追加してください。"
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "このブラシのサブマスクはいっぱいです。描き続けるには、ブラシのサブマスクをもう1つ追加してください。",
+  "Remove hot pixels": "ホットピクセルを除去",
+  "Updating hot pixel removal…": "ホットピクセル除去を更新中…"
 }
