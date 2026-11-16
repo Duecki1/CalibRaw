@@ -575,7 +575,7 @@ impl Preview {
             _ => return,
         };
         let painter = ui.painter_at(preview_rect);
-        let position = preview_rect.left_top() + egui::vec2(12.0, 12.0);
+        let position = crate::ui::sidebar::Sidebar::canvas_label_origin(ui.ctx(), preview_rect);
         painter.text(
             position,
             egui::Align2::LEFT_TOP,

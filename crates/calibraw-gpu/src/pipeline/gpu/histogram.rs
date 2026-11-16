@@ -3,7 +3,6 @@ use crate::pipeline::geometry::GeometryMapping;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 const HISTOGRAM_BYTES: u64 = 4 * 256 * std::mem::size_of::<u32>() as u64;
-const SAMPLE_EDGE: u32 = 256;
 const SHADER: &str = include_str!("../../shaders/preview_histogram.wgsl");
 
 #[derive(Clone, Debug)]
@@ -33,8 +32,12 @@ struct Sampling {
 }
 
 impl Sampling {
+    /// One sample per pixel of the `width` x `height` preview: a coarser grid
+    /// misses small clipped areas (lamps, speculars) that the per-pixel
+    /// clipping overlay marks, leaving the end bins empty. The cost matches
+    /// the clipping pass over the same texture.
     fn new(width: u32, height: u32, geometry: GeometryTransform) -> Self {
-        let extent = [width.clamp(1, SAMPLE_EDGE), height.clamp(1, SAMPLE_EDGE)];
+        let extent = [width.max(1), height.max(1)];
         let rows = GeometryMapping::new(geometry, width, height)
             .source_pixel_from_output_pixel(extent[0], extent[1])
             .rows();

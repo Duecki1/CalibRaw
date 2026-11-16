@@ -165,7 +165,7 @@ impl Preview {
         }
         let painter = ui.painter_at(preview_rect);
         painter.text(
-            preview_rect.left_top() + egui::vec2(12.0, 12.0),
+            crate::ui::sidebar::Sidebar::canvas_label_origin(ui.ctx(), preview_rect),
             egui::Align2::LEFT_TOP,
             tr("Click a color in the image"),
             egui::FontId::proportional(13.0),

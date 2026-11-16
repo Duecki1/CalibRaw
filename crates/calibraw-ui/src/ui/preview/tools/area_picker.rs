@@ -75,7 +75,7 @@ impl Preview {
             None => return,
         };
         painter.text(
-            visible_rect.left_top() + egui::vec2(12.0, 12.0),
+            crate::ui::sidebar::Sidebar::canvas_label_origin(ui.ctx(), visible_rect),
             egui::Align2::LEFT_TOP,
             hint,
             egui::FontId::proportional(13.0),

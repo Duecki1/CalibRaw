@@ -144,7 +144,7 @@ fn paint_rendered_source_pill(
         Color32::WHITE,
     );
     let pill = Rect::from_min_size(
-        canvas.left_top() + egui::vec2(12.0, 12.0),
+        crate::ui::sidebar::Sidebar::canvas_label_origin(painter.ctx(), canvas),
         text.size() + egui::vec2(16.0, 8.0),
     );
     painter.rect_filled(pill, 6.0, Color32::from_black_alpha(150));

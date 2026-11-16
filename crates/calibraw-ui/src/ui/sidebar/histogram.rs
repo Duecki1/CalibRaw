@@ -104,6 +104,23 @@ impl Sidebar {
         });
     }
 
+    /// Where a canvas label at the top left of `rect` starts: below the
+    /// histogram overlay while it covers that corner.
+    pub(crate) fn canvas_label_origin(ctx: &egui::Context, rect: egui::Rect) -> egui::Pos2 {
+        let origin = rect.left_top() + egui::vec2(12.0, 12.0);
+        let overlay = ctx.data(|data| {
+            data.get_temp::<egui::Rect>(egui::Id::new("develop-histogram-overlay-rect"))
+        });
+        match overlay {
+            Some(overlay)
+                if overlay.x_range().contains(origin.x) && overlay.bottom() > origin.y =>
+            {
+                egui::pos2(origin.x, overlay.bottom() + 8.0)
+            }
+            _ => origin,
+        }
+    }
+
     /// The histogram plot alone, translucent over the top left of the
     /// preview `canvas`, while it is switched on.
     pub(crate) fn show_histogram_overlay(
@@ -111,14 +128,18 @@ impl Sidebar {
         app: &mut CalibRawApp,
         canvas: egui::Rect,
     ) {
+        let placed = egui::Id::new("develop-histogram-overlay-rect");
+        ctx.data_mut(|data| data.remove::<egui::Rect>(placed));
         if !app.develop_ui.histogram_open || canvas.width() < 120.0 || canvas.height() < 120.0 {
             return;
         }
         let selected = Self::histogram_channel(ctx);
         let size = egui::vec2((canvas.width() - 16.0).clamp(100.0, 220.0), 64.0);
+        let origin = canvas.left_top() + egui::vec2(8.0, 8.0);
+        ctx.data_mut(|data| data.insert_temp(placed, egui::Rect::from_min_size(origin, size)));
         egui::Area::new(egui::Id::new("develop-histogram-overlay"))
             .order(egui::Order::Middle)
-            .fixed_pos(canvas.left_top() + egui::vec2(8.0, 8.0))
+            .fixed_pos(origin)
             .movable(false)
             .constrain(false)
             .interactable(false)
@@ -147,10 +168,13 @@ impl Sidebar {
                 let Some(histogram) = app.current_preview_histogram() else {
                     return;
                 };
+                // Scaled to the channels drawn, so a selected one fills the plot.
                 let peak = histogram
                     .channels
                     .iter()
-                    .flatten()
+                    .enumerate()
+                    .filter(|(channel, _)| selected.is_none_or(|selected| selected == *channel))
+                    .flat_map(|(_, bins)| bins)
                     .copied()
                     .max()
                     .unwrap_or(0)
@@ -167,10 +191,17 @@ impl Sidebar {
                     let points: Vec<_> = histogram.channels[channel]
                         .iter()
                         .enumerate()
-                        .map(|(bin, count)| {
+                        .map(|(bin, &count)| {
+                            // Any occupied bin stays visible, so a few clipped
+                            // pixels still reach the end of the plot.
+                            let height = if count == 0 {
+                                0.0
+                            } else {
+                                ((count as f32 / peak).sqrt() * plot.height()).max(1.5)
+                            };
                             egui::pos2(
                                 egui::lerp(plot.x_range(), bin as f32 / 255.0),
-                                plot.bottom() - (*count as f32 / peak).sqrt() * plot.height(),
+                                plot.bottom() - height,
                             )
                         })
                         .collect();
