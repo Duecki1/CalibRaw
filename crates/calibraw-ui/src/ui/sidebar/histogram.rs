@@ -50,62 +50,103 @@ impl Sidebar {
         }
     }
 
-    pub(super) fn show_histogram(ui: &mut Ui, app: &mut CalibRawApp) {
+    /// The channel the histogram is limited to (0 red, 1 green, 2 blue,
+    /// 3 luminance), or `None` for all of them.
+    fn histogram_channel(ctx: &egui::Context) -> Option<usize> {
+        ctx.data(|data| data.get_temp::<Option<usize>>(egui::Id::new("develop-histogram-channel")))
+            .flatten()
+    }
+
+    /// The channel buttons of the histogram, shown while it is open.
+    pub(crate) fn show_histogram_mode(ui: &mut Ui, app: &CalibRawApp) {
         if !app.develop_ui.histogram_open {
             return;
         }
-        let channel_id = egui::Id::new("develop-histogram-selected-channel");
-        let mut selected = ui
-            .ctx()
-            .data(|data| data.get_temp::<Option<usize>>(channel_id))
-            .flatten();
-        moduwu_design::content_card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(tr("Histogram")).strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    for (channel, label, name, color) in [
-                        (3, "L", tr("Luminance"), ui.visuals().text_color()),
-                        (2, "B", tr("Blue"), theme::CHANNEL_BLUE),
-                        (1, "G", tr("Green"), theme::CHANNEL_GREEN),
-                        (0, "R", tr("Red"), theme::CHANNEL_RED),
-                    ] {
-                        let active = selected == Some(channel);
-                        let color = if active {
-                            color
-                        } else {
-                            ui.visuals().weak_text_color()
-                        };
-                        if ui
-                            .selectable_label(active, egui::RichText::new(label).color(color))
-                            .on_hover_text(name)
-                            .clicked()
-                        {
-                            selected = if active { None } else { Some(channel) };
-                            ui.ctx()
-                                .data_mut(|data| data.insert_temp(channel_id, selected));
-                        }
-                    }
-                });
-            });
-            let height = if moduwu_design::is_compact_portrait(ui) {
-                72.0
-            } else {
-                104.0
-            };
-            let (rect, response) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), height),
-                egui::Sense::hover(),
-            );
-            app.preview.histogram.visible_this_frame |= ui.is_rect_visible(rect);
-            response.on_hover_text(tr("RGB and luminance of the developed image, including crop. Shadows are on the left, highlights on the right. Luminance uses linear sRGB weights on a display-encoded axis. The vertical scale is square-root compressed to reveal smaller peaks."));
-            let painter = ui.painter_at(rect);
-            painter.rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
-            let plot = rect.shrink(4.0);
-            let grid = egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
-            for fraction in [0.25, 0.5, 0.75] {
-                painter.vline(egui::lerp(plot.x_range(), fraction), plot.y_range(), grid);
+        let selected = Self::histogram_channel(ui.ctx());
+        let spacing = ui.spacing().item_spacing.x;
+        let button = egui::vec2(
+            ((ui.available_width() - spacing * 4.0) / 5.0).max(24.0),
+            30.0,
+        );
+        ui.horizontal(|ui| {
+            for (channel, label, name, color) in [
+                (
+                    None,
+                    tr("All"),
+                    tr("All channels"),
+                    ui.visuals().text_color(),
+                ),
+                (Some(0), "R", tr("Red"), theme::CHANNEL_RED),
+                (Some(1), "G", tr("Green"), theme::CHANNEL_GREEN),
+                (Some(2), "B", tr("Blue"), theme::CHANNEL_BLUE),
+                (Some(3), "L", tr("Luminance"), ui.visuals().text_color()),
+            ] {
+                let active = selected == channel;
+                // Dim in the channel's colour at rest, bright when selected.
+                let color = if active {
+                    color.lerp_to_gamma(egui::Color32::WHITE, 0.6)
+                } else {
+                    color.gamma_multiply(0.6)
+                };
+                if ui
+                    .add_sized(
+                        button,
+                        egui::Button::selectable(active, egui::RichText::new(label).color(color)),
+                    )
+                    .on_hover_text(name)
+                    .clicked()
+                {
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::new("develop-histogram-channel"), channel)
+                    });
+                }
             }
-            if let Some(histogram) = app.current_preview_histogram() {
+        });
+    }
+
+    /// The histogram plot alone, translucent over the top left of the
+    /// preview `canvas`, while it is switched on.
+    pub(crate) fn show_histogram_overlay(
+        ctx: &egui::Context,
+        app: &mut CalibRawApp,
+        canvas: egui::Rect,
+    ) {
+        if !app.develop_ui.histogram_open || canvas.width() < 120.0 || canvas.height() < 120.0 {
+            return;
+        }
+        let selected = Self::histogram_channel(ctx);
+        let size = egui::vec2((canvas.width() - 16.0).clamp(100.0, 220.0), 64.0);
+        egui::Area::new(egui::Id::new("develop-histogram-overlay"))
+            .order(egui::Order::Middle)
+            .fixed_pos(canvas.left_top() + egui::vec2(8.0, 8.0))
+            .movable(false)
+            .constrain(false)
+            .interactable(false)
+            .show(ctx, |ui| {
+                let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                app.preview.histogram.visible_this_frame |= ui.is_rect_visible(rect);
+                let painter = ui.painter_at(rect);
+                painter.rect_filled(
+                    rect,
+                    4.0,
+                    ui.visuals().extreme_bg_color.gamma_multiply(0.45),
+                );
+                let plot = rect.shrink(4.0);
+                let grid = egui::Stroke::new(
+                    1.0,
+                    ui.visuals()
+                        .widgets
+                        .noninteractive
+                        .bg_stroke
+                        .color
+                        .gamma_multiply(0.6),
+                );
+                for fraction in [0.25, 0.5, 0.75] {
+                    painter.vline(egui::lerp(plot.x_range(), fraction), plot.y_range(), grid);
+                }
+                let Some(histogram) = app.current_preview_histogram() else {
+                    return;
+                };
                 let peak = histogram
                     .channels
                     .iter()
@@ -147,38 +188,6 @@ impl Sidebar {
                     painter.add(egui::Shape::mesh(mesh));
                     painter.add(egui::Shape::line(points, egui::Stroke::new(1.0, color)));
                 }
-            } else {
-                let message = if app.preview.gpu_pipeline.is_none() {
-                    tr("Open an image to see its histogram")
-                } else if app.preview.histogram.error {
-                    tr("Histogram unavailable")
-                } else {
-                    tr("Updating histogram…")
-                };
-                painter.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    message,
-                    egui::FontId::proportional(12.0),
-                    ui.visuals().weak_text_color(),
-                );
-            }
-            let (axis, _) = ui
-                .allocate_exact_size(egui::vec2(ui.available_width(), 12.0), egui::Sense::hover());
-            for (value, fraction, align) in [
-                ("0", 0.0, egui::Align2::LEFT_CENTER),
-                ("128", 0.5, egui::Align2::CENTER_CENTER),
-                ("255", 1.0, egui::Align2::RIGHT_CENTER),
-            ] {
-                ui.painter().text(
-                    egui::pos2(egui::lerp(axis.x_range(), fraction), axis.center().y),
-                    align,
-                    value,
-                    egui::FontId::proportional(10.0),
-                    ui.visuals().weak_text_color(),
-                );
-            }
-        });
-        moduwu_design::card_gap(ui);
+            });
     }
 }

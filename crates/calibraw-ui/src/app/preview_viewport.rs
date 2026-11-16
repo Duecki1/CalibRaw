@@ -40,6 +40,11 @@ impl CalibRawApp {
         frame: &eframe::Frame,
         unobscured: Option<egui::Rect>,
     ) {
+        crate::ui::sidebar::Sidebar::show_histogram_overlay(
+            ui.ctx(),
+            self,
+            unobscured.unwrap_or_else(|| ui.available_rect_before_wrap()),
+        );
         let canvas = Preview::begin_canvas(ui, self.preview_backdrop_color(), unobscured);
         if self.preview_base_pipeline().is_none() && self.preview_is_preparing() {
             self.refresh_develop_loading_thumbnail(ui.ctx());

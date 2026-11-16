@@ -66,7 +66,7 @@ impl Sidebar {
         }
 
         Self::show_sidebar_header(ui, app);
-        Self::show_histogram(ui, app);
+        Self::show_histogram_mode(ui, app);
         Self::show_sidebar_content(ui, app, layout, frame);
     }
 
@@ -219,9 +219,6 @@ impl Sidebar {
                         |ui| {
                             ui.set_width(content_width);
                             ui.set_max_width(content_width);
-                            if layout == ScreenLayout::Vertical {
-                                Self::show_histogram(ui, app);
-                            }
                             match app.ui.sidebar_tab {
                                 SidebarTab::Adjustments => {
                                     Self::show_adjustments(ui, app, layout, frame)
