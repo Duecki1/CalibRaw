@@ -6,6 +6,8 @@ use crate::ui::components::point_color::PointColorUiState;
 /// Sidebar tab selections used by the local mask adjustment sections.
 pub(super) struct LocalAdjustmentTabs<'a> {
     pub(super) tone_curve: &'a mut ToneCurveTab,
+    /// The tone curve is drawn over the preview, for the layout shown.
+    pub(super) curve_overlay: &'a mut bool,
     pub(super) color_grade: &'a mut ColorGradeTab,
     pub(super) hsl_mixer_color: &'a mut HslMixerColor,
     pub(super) point_color: &'a mut PointColorUiState,
@@ -13,9 +15,16 @@ pub(super) struct LocalAdjustmentTabs<'a> {
 }
 
 impl<'a> LocalAdjustmentTabs<'a> {
-    pub(super) fn for_masks(develop_ui: &'a mut DevelopUiState) -> Self {
+    /// The selections of the mask cards; `vertical` for the portrait layout.
+    pub(super) fn for_masks(develop_ui: &'a mut DevelopUiState, vertical: bool) -> Self {
+        let overlay = &mut develop_ui.tone_curve_overlay;
         Self {
             tone_curve: &mut develop_ui.tone_curve_tab,
+            curve_overlay: if vertical {
+                &mut overlay.vertical
+            } else {
+                &mut overlay.sidebar
+            },
             color_grade: &mut develop_ui.color_grade_tab,
             hsl_mixer_color: &mut develop_ui.hsl_mixer_color,
             point_color: &mut develop_ui.mask_point_color,
@@ -131,9 +140,12 @@ impl Sidebar {
             // The Effects card also adds effects (`show_local_mask_effects`).
             MaskSection::Properties | MaskSection::Effects => false,
             MaskSection::Light => Self::show_local_mask_light(ui, adjustment),
-            MaskSection::ToneCurve => {
-                Self::show_local_mask_tone_curve(ui, adjustment, tabs.tone_curve)
-            }
+            MaskSection::ToneCurve => Self::show_local_mask_tone_curve(
+                ui,
+                adjustment,
+                tabs.tone_curve,
+                tabs.curve_overlay,
+            ),
             MaskSection::Color => Self::show_local_mask_color(ui, adjustment),
             MaskSection::ColorGrading => {
                 Self::show_local_mask_color_grading(ui, adjustment, tabs.color_grade)
@@ -261,6 +273,7 @@ impl Sidebar {
         ui: &mut Ui,
         adjustment: &mut crate::pipeline::LocalAdjustments,
         selected_tab: &mut ToneCurveTab,
+        overlay: &mut bool,
     ) -> bool {
         let brightness_changed = gradient_float_param_slider(
             ui,
@@ -279,6 +292,10 @@ impl Sidebar {
             },
             selected_tab,
             32.0,
+            CurveOverlay {
+                enabled: overlay,
+                region: Self::curve_overlay_region(ui.ctx()),
+            },
         );
         if curve_changed {
             adjustment.sanitize_tone_curves();

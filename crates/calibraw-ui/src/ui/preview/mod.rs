@@ -102,6 +102,21 @@ use transform::*;
 
 pub(crate) struct Preview;
 
+fn exposed_canvas_id() -> egui::Id {
+    egui::Id::new("preview-exposed-canvas")
+}
+
+/// Records the part of the preview canvas not covered by panels, so panels
+/// drawn before the preview in later frames can place overlays on it.
+pub(crate) fn remember_exposed_canvas(ctx: &egui::Context, rect: Rect) {
+    ctx.data_mut(|data| data.insert_temp(exposed_canvas_id(), rect));
+}
+
+/// The part of the preview canvas not covered by panels, as last laid out.
+pub(crate) fn exposed_canvas(ctx: &egui::Context) -> Option<Rect> {
+    ctx.data(|data| data.get_temp(exposed_canvas_id()))
+}
+
 /// Where the image sits on screen this frame, shared by the preview tools.
 #[derive(Clone, Copy)]
 pub(super) struct PreviewLayout {

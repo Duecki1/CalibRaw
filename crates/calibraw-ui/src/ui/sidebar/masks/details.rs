@@ -546,7 +546,7 @@ impl Sidebar {
                             label,
                             default_open,
                             true,
-                            LocalAdjustmentTabs::for_masks(&mut app.develop_ui),
+                            LocalAdjustmentTabs::for_masks(&mut app.develop_ui, false),
                         );
                         adjustments_changed |=
                             apply_local_adjustment_response(ui.ctx(), mask, response);
@@ -607,7 +607,7 @@ impl Sidebar {
                                 section_title,
                                 true,
                                 false,
-                                LocalAdjustmentTabs::for_masks(&mut app.develop_ui),
+                                LocalAdjustmentTabs::for_masks(&mut app.develop_ui, true),
                             );
                             adjustments_changed |=
                                 apply_local_adjustment_response(ui.ctx(), mask, response);

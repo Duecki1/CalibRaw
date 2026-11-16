@@ -520,8 +520,19 @@ pub(crate) struct DevelopState {
     pub(crate) neighbour_prefetch: crate::app::lifecycle::NeighbourPrefetch,
 }
 
+/// Whether the tone curve is drawn over the preview instead of in the panel,
+/// chosen per layout.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ToneCurveOverlay {
+    /// The portrait layout, whose panel covers much of the photo.
+    pub(crate) vertical: bool,
+    /// The sidebar layout.
+    pub(crate) sidebar: bool,
+}
+
 pub(crate) struct DevelopUiState {
     pub(crate) histogram_open: bool,
+    pub(crate) tone_curve_overlay: ToneCurveOverlay,
     pub(crate) reference: DevelopReferenceState,
     pub(crate) loading_thumbnail: DevelopLoadingThumbnailState,
     pub(crate) filmstrip_open: bool,

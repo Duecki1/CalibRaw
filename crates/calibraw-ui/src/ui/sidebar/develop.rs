@@ -305,6 +305,7 @@ impl Sidebar {
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         selected_tab: &mut ToneCurveTab,
+        overlay: &mut bool,
         foldable: bool,
     ) -> bool {
         let mut changed = false;
@@ -327,6 +328,10 @@ impl Sidebar {
                 },
                 selected_tab,
                 4.0,
+                CurveOverlay {
+                    enabled: overlay,
+                    region: Self::curve_overlay_region(ui.ctx()),
+                },
             );
         });
         changed |= action.apply(exposure, AdjustmentGroup::ToneCurve);

@@ -9,6 +9,44 @@ const CURVE_HEIGHT: f32 = 210.0;
 const POINT_RADIUS: f32 = 5.0;
 const PICK_RADIUS: f32 = 16.0;
 const MIN_POINT_X_GAP: f32 = 0.005;
+/// The overlay square's largest and smallest edge; below the smallest the
+/// curve stays in the panel.
+const OVERLAY_MAX_EDGE: f32 = 400.0;
+const OVERLAY_MIN_EDGE: f32 = 140.0;
+/// Space kept between the overlay and the edges of the free preview area.
+const OVERLAY_INSET: f32 = 16.0;
+
+/// Where the curve is drawn.
+#[derive(Clone, Copy, PartialEq)]
+enum Surface {
+    /// In the panel, on its own background.
+    Panel,
+    /// Over the preview without a background, as a square of this edge.
+    Overlay(f32),
+}
+
+/// The curve's placement over the preview, which the editor's toggle switches.
+pub(crate) struct CurveOverlay<'a> {
+    /// The curve is shown over the preview instead of in the panel.
+    pub(crate) enabled: &'a mut bool,
+    /// The part of the preview free for it, in screen points, as last laid
+    /// out; `None` before the preview has been shown.
+    pub(crate) region: Option<egui::Rect>,
+}
+
+impl CurveOverlay<'_> {
+    /// The square the curve takes, centred in the free region, while the
+    /// overlay is on and the region has room for it.
+    fn square(&self) -> Option<egui::Rect> {
+        if !*self.enabled {
+            return None;
+        }
+        let region = self.region?.shrink(OVERLAY_INSET);
+        let edge = region.width().min(region.height()).min(OVERLAY_MAX_EDGE);
+        (edge >= OVERLAY_MIN_EDGE)
+            .then(|| egui::Rect::from_center_size(region.center(), egui::Vec2::splat(edge)))
+    }
+}
 
 /// The curve point being dragged and its offset from the pointer, so it moves
 /// with the pointer instead of jumping onto it.
@@ -18,22 +56,27 @@ struct GrabbedPoint {
     offset: [f32; 2],
 }
 
-/// The curve editor. With `touch`, a drag that begins away from every point
-/// is left to the scroll area around the editor, so the panel scrolls.
-pub(crate) fn tone_curve_editor(
+/// The curve editor. With `touch` in the panel, a drag that begins away from
+/// every point is left to the scroll area around the editor, so the panel
+/// scrolls; over the preview the editor keeps it, so the photo does not pan.
+fn tone_curve_editor(
     ui: &mut Ui,
     curve: &mut PointCurve,
     curve_color: Color32,
     touch: bool,
+    surface: Surface,
 ) -> bool {
     curve.sanitize();
-    let width = ui.available_width().max(1.0);
-    let area_sense = if touch {
+    let size = match surface {
+        Surface::Panel => egui::vec2(ui.available_width().max(1.0), CURVE_HEIGHT),
+        Surface::Overlay(edge) => egui::Vec2::splat(edge),
+    };
+    let area_sense = if touch && surface == Surface::Panel {
         Sense::click()
     } else {
         Sense::click_and_drag()
     };
-    let (rect, area) = ui.allocate_exact_size(egui::vec2(width, CURVE_HEIGHT), area_sense);
+    let (rect, area) = ui.allocate_exact_size(size, area_sense);
     // Each point takes drags that begin within the radius a drag picks it
     // from. Its taps count as taps on the curve: a widget that takes drags
     // also takes the clicks on it, so the area beneath would miss them.
@@ -53,20 +96,30 @@ pub(crate) fn tone_curve_editor(
     let painter = ui.painter_at(rect);
     let overlay_painter = ui.painter().with_clip_rect(ui.clip_rect());
     let visuals = ui.visuals();
-
-    painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
-    painter.rect_stroke(
-        rect,
-        4.0,
-        Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color),
-        StrokeKind::Inside,
-    );
+    // Over the photo the lines are light and the curve has a dark outline, so
+    // both read on any image without a background hiding it.
+    let (frame, grid, diagonal) = match surface {
+        Surface::Panel => {
+            painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
+            (
+                visuals.widgets.noninteractive.bg_stroke.color,
+                visuals.faint_bg_color,
+                visuals.weak_text_color(),
+            )
+        }
+        Surface::Overlay(_) => (
+            Color32::from_white_alpha(90),
+            Color32::from_white_alpha(40),
+            Color32::from_white_alpha(60),
+        ),
+    };
+    painter.rect_stroke(rect, 4.0, Stroke::new(1.0, frame), StrokeKind::Inside);
 
     for step in 1..4 {
         let t = step as f32 / 4.0;
         let x = egui::lerp(rect.left()..=rect.right(), t);
         let y = egui::lerp(rect.bottom()..=rect.top(), t);
-        let grid = Stroke::new(1.0, visuals.faint_bg_color);
+        let grid = Stroke::new(1.0, grid);
         painter.line_segment(
             [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
             grid,
@@ -82,15 +135,23 @@ pub(crate) fn tone_curve_editor(
             Pos2::new(rect.left(), rect.bottom()),
             Pos2::new(rect.right(), rect.top()),
         ],
-        Stroke::new(1.0, visuals.weak_text_color()),
+        Stroke::new(1.0, diagonal),
     );
 
-    let mut previous = curve_to_screen(rect, [0.0, sample_curve(curve, 0.0)]);
-    for sample in 1..=128 {
-        let x = sample as f32 / 128.0;
-        let next = curve_to_screen(rect, [x, sample_curve(curve, x)]);
-        overlay_painter.line_segment([previous, next], Stroke::new(2.0, curve_color));
-        previous = next;
+    let line: Vec<Pos2> = (0..=128)
+        .map(|sample| {
+            let x = sample as f32 / 128.0;
+            curve_to_screen(rect, [x, sample_curve(curve, x)])
+        })
+        .collect();
+    if matches!(surface, Surface::Overlay(_)) {
+        overlay_painter.add(egui::Shape::line(
+            line.clone(),
+            Stroke::new(4.0, Color32::from_black_alpha(110)),
+        ));
+    }
+    for segment in line.windows(2) {
+        overlay_painter.line_segment([segment[0], segment[1]], Stroke::new(2.0, curve_color));
     }
 
     for point in curve.points.iter().take(curve.len as usize) {
@@ -324,52 +385,49 @@ pub(crate) fn tone_curve_channel_editor(
     mut curves: ToneCurveChannels<'_>,
     selected_tab: &mut ToneCurveTab,
     min_segment_width: f32,
+    overlay: CurveOverlay<'_>,
 ) -> bool {
     let mut changed = false;
     // Touch puts the channel tabs in a rail beside the curve.
     let touch = crate::platform::PlatformCaps::CURRENT.is_mobile();
 
-    if !touch {
-        ui.horizontal(|ui| {
-            let spacing = ui.spacing().item_spacing.x;
-            let segment_width =
-                ((ui.available_width() - moduwu_design::TOOLBAR_ICON_EDGE - spacing * 4.0)
-                    .max(min_segment_width))
-                    / 4.0;
-            for (tab, label, color) in tone_curve_tabs() {
-                let text = egui::RichText::new(label).color(color);
-                if moduwu_design::segmented_button(ui, text, *selected_tab == tab, segment_width)
-                    .on_hover_text(tone_curve_description(tab))
-                    .clicked()
-                {
-                    *selected_tab = tab;
-                }
-            }
-            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                if moduwu_design::ghost_icon_button(
-                    ui,
-                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                    moduwu_design::toolbar_icon_size(),
-                    tr("Reset the selected tone curve"),
-                )
-                .clicked()
-                {
-                    reset_selected_tone_curve(&mut curves, *selected_tab);
-                    changed = true;
-                }
+    if let Some(square) = overlay.square() {
+        // Only the controls stay in the panel; the curve is over the photo.
+        changed |= channel_row(
+            ui,
+            &mut curves,
+            selected_tab,
+            min_segment_width,
+            overlay.enabled,
+        );
+        let (curve, color) = selected_tone_curve(curves, *selected_tab);
+        egui::Area::new(ui.id().with("tone-curve-overlay"))
+            .order(egui::Order::Middle)
+            .fixed_pos(square.min)
+            .movable(false)
+            .constrain(false)
+            // A switched-off card disables its panel controls; the curve too.
+            .enabled(ui.is_enabled())
+            .show(ui.ctx(), |ui| {
+                changed |=
+                    tone_curve_editor(ui, curve, color, touch, Surface::Overlay(square.width()));
             });
-        });
-
-        {
-            let (curve, color) = selected_tone_curve(curves, *selected_tab);
-            changed |= tone_curve_editor(ui, curve, color, touch);
-        }
+    } else if !touch {
+        changed |= channel_row(
+            ui,
+            &mut curves,
+            selected_tab,
+            min_segment_width,
+            overlay.enabled,
+        );
+        let (curve, color) = selected_tone_curve(curves, *selected_tab);
+        changed |= tone_curve_editor(ui, curve, color, touch, Surface::Panel);
     } else {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 let control_height = moduwu_design::CONTROL_HEIGHT;
                 ui.spacing_mut().item_spacing.y =
-                    ((CURVE_HEIGHT - control_height * 5.0) / 4.0).max(0.0);
+                    ((CURVE_HEIGHT - control_height * 6.0) / 5.0).max(0.0);
 
                 for (tab, label, color) in tone_curve_tabs() {
                     let text = egui::RichText::new(label).color(color);
@@ -386,21 +444,12 @@ pub(crate) fn tone_curve_channel_editor(
                     }
                 }
 
-                if moduwu_design::ghost_icon_button(
-                    ui,
-                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                    moduwu_design::toolbar_icon_size(),
-                    tr("Reset the selected tone curve"),
-                )
-                .clicked()
-                {
-                    reset_selected_tone_curve(&mut curves, *selected_tab);
-                    changed = true;
-                }
+                changed |= reset_button(ui, &mut curves, *selected_tab);
+                overlay_toggle(ui, overlay.enabled);
             });
 
             let (curve, color) = selected_tone_curve(curves, *selected_tab);
-            changed |= tone_curve_editor(ui, curve, color, touch);
+            changed |= tone_curve_editor(ui, curve, color, touch, Surface::Panel);
         });
     }
 
@@ -419,6 +468,71 @@ pub(crate) fn tone_curve_channel_editor(
     }
 
     changed
+}
+
+/// The channel tabs in a row, then the reset and placement buttons.
+fn channel_row(
+    ui: &mut Ui,
+    curves: &mut ToneCurveChannels<'_>,
+    selected_tab: &mut ToneCurveTab,
+    min_segment_width: f32,
+    overlay: &mut bool,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let spacing = ui.spacing().item_spacing.x;
+        let segment_width =
+            ((ui.available_width() - moduwu_design::TOOLBAR_ICON_EDGE * 2.0 - spacing * 5.0)
+                .max(min_segment_width))
+                / 4.0;
+        for (tab, label, color) in tone_curve_tabs() {
+            let text = egui::RichText::new(label).color(color);
+            if moduwu_design::segmented_button(ui, text, *selected_tab == tab, segment_width)
+                .on_hover_text(tone_curve_description(tab))
+                .clicked()
+            {
+                *selected_tab = tab;
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            overlay_toggle(ui, overlay);
+            changed |= reset_button(ui, curves, *selected_tab);
+        });
+    });
+    changed
+}
+
+fn reset_button(
+    ui: &mut Ui,
+    curves: &mut ToneCurveChannels<'_>,
+    selected_tab: ToneCurveTab,
+) -> bool {
+    let clicked = moduwu_design::ghost_icon_button(
+        ui,
+        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+        moduwu_design::toolbar_icon_size(),
+        tr("Reset the selected tone curve"),
+    )
+    .clicked();
+    if clicked {
+        reset_selected_tone_curve(curves, selected_tab);
+    }
+    clicked
+}
+
+/// Switches the curve between the panel and the preview.
+fn overlay_toggle(ui: &mut Ui, overlay: &mut bool) {
+    if moduwu_design::ghost_icon_toggle_button(
+        ui,
+        egui_phosphor::regular::PICTURE_IN_PICTURE,
+        *overlay,
+        moduwu_design::toolbar_icon_size(),
+        tr("Curve over the photo"),
+    )
+    .clicked()
+    {
+        *overlay = !*overlay;
+    }
 }
 
 fn selected_tone_curve(

@@ -40,9 +40,13 @@ impl Sidebar {
         layout: ScreenLayout,
         frame: &eframe::Frame,
     ) {
+        let curve_overlay = app.develop_ui.tone_curve_overlay;
         Self::requesting_new_content(app, frame, |app| {
             Self::show_contents(ui, app, layout, frame);
         });
+        if app.develop_ui.tone_curve_overlay != curve_overlay {
+            app.persist_performance_settings();
+        }
     }
 
     fn show_contents(
@@ -391,6 +395,7 @@ impl Sidebar {
                         ui,
                         &mut app.develop.exposure,
                         &mut app.develop_ui.tone_curve_tab,
+                        &mut app.develop_ui.tone_curve_overlay.vertical,
                         false,
                     );
                 }
@@ -474,6 +479,7 @@ impl Sidebar {
                             ui,
                             &mut app.develop.exposure,
                             &mut app.develop_ui.tone_curve_tab,
+                            &mut app.develop_ui.tone_curve_overlay.sidebar,
                             true,
                         );
                     }

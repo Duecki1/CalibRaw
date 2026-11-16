@@ -104,14 +104,26 @@ impl Sidebar {
         });
     }
 
+    /// The histogram overlay's rect as last placed, while it is shown.
+    fn histogram_overlay_rect(ctx: &egui::Context) -> Option<egui::Rect> {
+        ctx.data(|data| data.get_temp(egui::Id::new("develop-histogram-overlay-rect")))
+    }
+
+    /// The part of the preview a curve overlay may take: the exposed canvas
+    /// below the histogram overlay.
+    pub(super) fn curve_overlay_region(ctx: &egui::Context) -> Option<egui::Rect> {
+        let mut region = crate::ui::preview::exposed_canvas(ctx)?;
+        if let Some(histogram) = Self::histogram_overlay_rect(ctx) {
+            region.min.y = region.min.y.max(histogram.bottom());
+        }
+        Some(region)
+    }
+
     /// Where a canvas label at the top left of `rect` starts: below the
     /// histogram overlay while it covers that corner.
     pub(crate) fn canvas_label_origin(ctx: &egui::Context, rect: egui::Rect) -> egui::Pos2 {
         let origin = rect.left_top() + egui::vec2(12.0, 12.0);
-        let overlay = ctx.data(|data| {
-            data.get_temp::<egui::Rect>(egui::Id::new("develop-histogram-overlay-rect"))
-        });
-        match overlay {
+        match Self::histogram_overlay_rect(ctx) {
             Some(overlay)
                 if overlay.x_range().contains(origin.x) && overlay.bottom() > origin.y =>
             {

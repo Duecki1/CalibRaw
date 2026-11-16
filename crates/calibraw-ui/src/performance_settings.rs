@@ -40,6 +40,10 @@ const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 #[serde(default)]
 pub(crate) struct PerformanceSettings {
     pub develop_histogram_open: bool,
+    /// Draw the tone curve over the preview in the portrait layout.
+    pub tone_curve_overlay_vertical: bool,
+    /// Draw the tone curve over the preview in the sidebar layout.
+    pub tone_curve_overlay_sidebar: bool,
     pub app_usage_ms: u64,
     pub version: u32,
     pub raw_cache_files: usize,
@@ -318,6 +322,8 @@ impl Default for PerformanceSettings {
     fn default() -> Self {
         Self {
             develop_histogram_open: false,
+            tone_curve_overlay_vertical: true,
+            tone_curve_overlay_sidebar: false,
             app_usage_ms: 0,
             version: SETTINGS_VERSION,
             raw_cache_files: crate::app::default_raw_cache_limit(),
