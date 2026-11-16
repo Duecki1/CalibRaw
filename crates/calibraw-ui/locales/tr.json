@@ -2134,5 +2134,6 @@
   "Reset {name} to its default": "{name} öğesini varsayılana sıfırla",
   "That key is used by a control that cannot be changed.": "Bu tuş, değiştirilemeyen bir kontrol tarafından kullanılıyor.",
   "Unflag": "İşareti kaldır",
-  "{shortcut} no longer does: {actions}": "{shortcut} artık şunu yapmıyor: {actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut} artık şunu yapmıyor: {actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Bu fırça alt maskesi dolu. Boyamaya devam etmek için başka bir fırça alt maskesi ekleyin."
 }

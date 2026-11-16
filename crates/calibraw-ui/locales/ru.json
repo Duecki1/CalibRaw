@@ -2134,5 +2134,6 @@
   "Reset {name} to its default": "Вернуть значение по умолчанию для «{name}»",
   "That key is used by a control that cannot be changed.": "Эта клавиша занята элементом управления, который нельзя изменить.",
   "Unflag": "Снять флажок",
-  "{shortcut} no longer does: {actions}": "{shortcut} больше не выполняет: {actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut} больше не выполняет: {actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Эта подмаска кисти заполнена. Добавьте ещё одну подмаску кисти, чтобы продолжить рисование."
 }

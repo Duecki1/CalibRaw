@@ -2134,5 +2134,6 @@
   "Reset {name} to its default": "{name} को डिफ़ॉल्ट पर रीसेट करें",
   "That key is used by a control that cannot be changed.": "यह कुंजी एक ऐसे नियंत्रण द्वारा उपयोग की जाती है जिसे बदला नहीं जा सकता।",
   "Unflag": "फ़्लैग हटाएँ",
-  "{shortcut} no longer does: {actions}": "{shortcut} अब यह नहीं करता: {actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut} अब यह नहीं करता: {actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "यह ब्रश सब-मास्क भर गया है। पेंट करना जारी रखने के लिए एक और ब्रश सब-मास्क जोड़ें।"
 }

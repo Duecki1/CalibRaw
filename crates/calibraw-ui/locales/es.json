@@ -2134,5 +2134,6 @@
   "Reset {name} to its default": "Restablecer {name} a su valor predeterminado",
   "That key is used by a control that cannot be changed.": "Esa tecla la usa un control que no se puede cambiar.",
   "Unflag": "Quitar marca",
-  "{shortcut} no longer does: {actions}": "{shortcut} ya no hace: {actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut} ya no hace: {actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Esta submáscara de pincel está llena. Añade otra submáscara de pincel para seguir pintando."
 }

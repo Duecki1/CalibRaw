@@ -2132,5 +2132,6 @@
   "Reset {name} to its default": "Przywróć domyślne: {name}",
   "That key is used by a control that cannot be changed.": "Tego klawisza używa element sterujący, którego nie można zmienić.",
   "Unflag": "Usuń flagę",
-  "{shortcut} no longer does: {actions}": "{shortcut} już nie wykonuje: {actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut} już nie wykonuje: {actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Ta maska podrzędna pędzla jest pełna. Dodaj kolejną maskę podrzędną pędzla, aby dalej malować."
 }

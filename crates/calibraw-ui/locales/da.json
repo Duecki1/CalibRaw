@@ -2134,5 +2134,6 @@
   "Reset {name} to its default": "Nulstil {name} til standard",
   "That key is used by a control that cannot be changed.": "Den tast bruges af et betjeningselement, der ikke kan ændres.",
   "Unflag": "Fjern flag",
-  "{shortcut} no longer does: {actions}": "{shortcut} gør ikke længere: {actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut} gør ikke længere: {actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Denne pensel-undermaske er fuld. Tilføj endnu en pensel-undermaske for at male videre."
 }

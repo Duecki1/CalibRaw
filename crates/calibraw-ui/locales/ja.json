@@ -2134,5 +2134,6 @@
   "Reset {name} to its default": "{name}を初期設定に戻す",
   "That key is used by a control that cannot be changed.": "このキーは変更できない操作で使用されています。",
   "Unflag": "フラグを解除",
-  "{shortcut} no longer does: {actions}": "{shortcut}は次の操作に使われなくなりました：{actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut}は次の操作に使われなくなりました：{actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "このブラシのサブマスクはいっぱいです。描き続けるには、ブラシのサブマスクをもう1つ追加してください。"
 }

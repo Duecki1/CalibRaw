@@ -3,6 +3,7 @@
 //! `apply_mask_tool_actions` applies them in order within the same frame.
 
 use super::*;
+use crate::i18n::tr;
 use crate::pipeline::{BrushDab, ObjectStroke, PathPoint, MAX_PATH_POINTS};
 use crate::ui::preview::{shortest_angle_delta, source_angle_from};
 use calibraw_core::color_math::{srgb_decode, srgb_encode};
@@ -10,7 +11,13 @@ use calibraw_core::color_math::{srgb_decode, srgb_encode};
 /// Upper bound on subject-refinement dabs shared by Subject and Background.
 const MAX_REFINEMENT_DABS: usize = 65_536;
 /// Upper bound on dabs in one brush component and on points in one object stroke.
-const MAX_STROKE_POINTS: usize = 8192;
+/// Every change re-rasterizes all of a component's dabs and each undo step keeps
+/// its own copy of them, so memory-constrained platforms get the lower bound.
+const MAX_STROKE_POINTS: usize = if PlatformCaps::CURRENT.constrained_memory() {
+    16_384
+} else {
+    32_768
+};
 
 /// Brush dabs sampled along the pointer path since the previous frame.
 /// Positions are normalized source coordinates.
@@ -191,7 +198,14 @@ impl CalibRawApp {
                     let Some(stroke) = stroke.as_ref() else {
                         return;
                     };
-                    let painted = paint_brush_dabs(geometry, brush_mode, stroke);
+                    let BrushPaint { painted, full } =
+                        paint_brush_dabs(geometry, brush_mode, stroke);
+                    if full {
+                        self.ui.notice = Some(
+                            tr("This brush sub-mask is full. Add another brush sub-mask to keep painting.")
+                                .to_owned(),
+                        );
+                    }
                     if painted {
                         self.masks.last_brush_point = Some(stroke.uv);
                     }
@@ -237,11 +251,19 @@ impl CalibRawApp {
     }
 }
 
+/// What one frame's brush samples did to a brush component.
+struct BrushPaint {
+    /// At least one dab was added.
+    painted: bool,
+    /// A sample was dropped because the component holds `MAX_STROKE_POINTS` dabs.
+    full: bool,
+}
+
 fn paint_brush_dabs(
     geometry: &mut MaskGeometry,
     brush_mode: BrushMode,
     stroke: &BrushStrokeSamples,
-) -> bool {
+) -> BrushPaint {
     let MaskGeometry::Brush {
         feather,
         opacity_enabled,
@@ -251,26 +273,27 @@ fn paint_brush_dabs(
         ..
     } = geometry
     else {
-        return false;
+        return BrushPaint {
+            painted: false,
+            full: false,
+        };
     };
     let opacity = brush_mode.dab_opacity(*opacity_enabled, *brush_opacity);
     if stroke.first && !stroke.samples.is_empty() && dabs.len() < MAX_STROKE_POINTS {
         stroke_starts.push(dabs.len());
     }
-    let mut changed = false;
-    for &center in &stroke.samples {
-        if dabs.len() >= MAX_STROKE_POINTS {
-            break;
-        }
-        dabs.push(BrushDab {
-            center,
-            opacity,
-            size: stroke.dab_size,
-            feather: *feather,
-        });
-        changed = true;
+    let room = MAX_STROKE_POINTS.saturating_sub(dabs.len());
+    let painted = room > 0 && !stroke.samples.is_empty();
+    dabs.extend(stroke.samples.iter().take(room).map(|&center| BrushDab {
+        center,
+        opacity,
+        size: stroke.dab_size,
+        feather: *feather,
+    }));
+    BrushPaint {
+        painted,
+        full: stroke.samples.len() > room,
     }
-    changed
 }
 
 fn drag_radial(

@@ -2134,5 +2134,6 @@
   "Reset {name} to its default": "Rétablir la valeur par défaut de {name}",
   "That key is used by a control that cannot be changed.": "Cette touche est utilisée par une commande qui ne peut pas être modifiée.",
   "Unflag": "Retirer le marqueur",
-  "{shortcut} no longer does: {actions}": "{shortcut} ne sert plus à : {actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut} ne sert plus à : {actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Ce sous-masque de pinceau est plein. Ajoutez un autre sous-masque de pinceau pour continuer à peindre."
 }

@@ -2127,5 +2127,6 @@
   "Reset {name} to its default": "Restore {name} to its default",
   "That key is used by a control that cannot be changed.": "That key is spoken for by a control that cannot be changed.",
   "Unflag": "Unflag",
-  "{shortcut} no longer does: {actions}": "{shortcut} no longer attends to: {actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut} no longer attends to: {actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "I'm afraid this brush sub-mask is quite full. Do add another brush sub-mask to carry on painting."
 }

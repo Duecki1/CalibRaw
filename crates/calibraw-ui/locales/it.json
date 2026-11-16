@@ -2134,5 +2134,6 @@
   "Reset {name} to its default": "Reimposta {name} al valore predefinito",
   "That key is used by a control that cannot be changed.": "Questo tasto è usato da un controllo che non si può modificare.",
   "Unflag": "Rimuovi contrassegno",
-  "{shortcut} no longer does: {actions}": "{shortcut} non esegue più: {actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut} non esegue più: {actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Questa sottomaschera pennello è piena. Aggiungi un'altra sottomaschera pennello per continuare a dipingere."
 }

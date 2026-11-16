@@ -2134,5 +2134,6 @@
   "Reset {name} to its default": "Відновити типове значення для «{name}»",
   "That key is used by a control that cannot be changed.": "Ця клавіша використовується елементом керування, який не можна змінити.",
   "Unflag": "Зняти позначку",
-  "{shortcut} no longer does: {actions}": "{shortcut} більше не виконує: {actions}"
+  "{shortcut} no longer does: {actions}": "{shortcut} більше не виконує: {actions}",
+  "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Ця підмаска пензля заповнена. Додайте ще одну підмаску пензля, щоб малювати далі."
 }
