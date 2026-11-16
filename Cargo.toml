@@ -27,12 +27,12 @@ android_build_tools_version = "35.0.0"
 android_compile_sdk = 36
 android_min_sdk = 26
 android_target_sdk = 36
-# LibRaw master commit (2026-10-13; reports itself as 0.22.0). Releases up to
+# LibRaw master commit (2026-11-08; reports itself as 0.23.0). Releases up to
 # 0.22.2 lack the Sony A7 V, A1 II, Canon EOS R50 V and Hasselblad X2D II 100C.
-libraw_revision = "830ac963b40223c6a25add5be65036fa8d56e2d6"
-# Lensfun master commit (2026-10-28; reports itself as 0.3.99). The last
+libraw_revision = "a9a14b1970d188c25dade81f8326ff00a6e33649"
+# Lensfun master commit (2026-11-04; reports itself as 0.3.99). The last
 # release, 0.3.4 from 2023, lacks the lens profiles added since.
-lensfun_revision = "bc5615d6278cb5fb75dd53e74015367453d5591d"
+lensfun_revision = "52cf1a7b0e82e07e0ecaa3391ee5106a6dd1ee54"
 android_use_legacy_packaging = false
 # The SDK CMake package that builds ONNX Runtime (1.30 needs CMake 3.28); the
 # other native dependencies keep AGP's 3.22.1.

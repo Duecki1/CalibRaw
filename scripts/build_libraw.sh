@@ -10,8 +10,8 @@ set -euo pipefail
 # Keep in sync with workspace.metadata.libraw_revision in Cargo.toml, the
 # Android pin in android/app/src/main/cpp/CMakeLists.txt and the Flatpak
 # manifest.
-LIBRAW_SOURCE_REVISION=830ac963b40223c6a25add5be65036fa8d56e2d6
-LIBRAW_ARCHIVE_SHA256=dd77deb5e7e290d2216ad8688ec4ac7dccdeea3def0927076a63a61d326e212a
+LIBRAW_SOURCE_REVISION=a9a14b1970d188c25dade81f8326ff00a6e33649
+LIBRAW_ARCHIVE_SHA256=453b1311b4825cc1946f114b5a0bcf0d4ad62a52c667dd5cc8b2b70e28342020
 
 prefix="${1:?usage: scripts/build_libraw.sh PREFIX [CONFIGURE_ARG...]}"
 shift
@@ -23,9 +23,9 @@ if [ "$workspace_revision" != "$LIBRAW_SOURCE_REVISION" ]; then
   exit 1
 fi
 
-# The pinned master commit reports version 0.22.0, which is older than the
-# 0.22.x releases, so this stamp rather than pkg-config identifies the source a
-# cached prefix was built from.
+# The pinned master commit reports version 0.23.0, which no release carries,
+# so this stamp rather than pkg-config identifies the source a cached prefix
+# was built from.
 stamp="$prefix/share/calibraw/libraw-revision"
 if [ -f "$prefix/lib/pkgconfig/libraw.pc" ] \
   && [ "$(cat "$stamp" 2>/dev/null || true)" = "$LIBRAW_SOURCE_REVISION" ]; then

@@ -40,16 +40,16 @@ if(NOT CMAKE_ANDROID_NDK)
     message(FATAL_ERROR "The active Android toolchain did not expose the NDK root")
 endif()
 
-# LibRaw master commit; it reports version 0.22.0, so Cargo.toml pins it by
+# LibRaw master commit; it reports version 0.23.0, so Cargo.toml pins it by
 # commit. Keep in sync with scripts/build_libraw.sh and the Flatpak manifest.
-set(CALIBRAW_LIBRAW_COMMIT 830ac963b40223c6a25add5be65036fa8d56e2d6)
+set(CALIBRAW_LIBRAW_COMMIT a9a14b1970d188c25dade81f8326ff00a6e33649)
 if(DEFINED CALIBRAW_LIBRAW_VERSION AND NOT CALIBRAW_LIBRAW_VERSION STREQUAL CALIBRAW_LIBRAW_COMMIT)
     message(FATAL_ERROR
         "Cargo.toml requests LibRaw ${CALIBRAW_LIBRAW_VERSION}, but this CMake pin is ${CALIBRAW_LIBRAW_COMMIT}")
 endif()
 # Lensfun master commit; it reports version 0.3.99, so Cargo.toml pins it by
 # commit. Keep in sync with scripts/build_lensfun.sh and the Flatpak manifest.
-set(CALIBRAW_LENSFUN_COMMIT bc5615d6278cb5fb75dd53e74015367453d5591d)
+set(CALIBRAW_LENSFUN_COMMIT 52cf1a7b0e82e07e0ecaa3391ee5106a6dd1ee54)
 if(DEFINED CALIBRAW_LENSFUN_VERSION AND NOT CALIBRAW_LENSFUN_VERSION STREQUAL CALIBRAW_LENSFUN_COMMIT)
     message(FATAL_ERROR
         "Cargo.toml requests Lensfun ${CALIBRAW_LENSFUN_VERSION}, but this CMake pin is ${CALIBRAW_LENSFUN_COMMIT}")
@@ -78,7 +78,7 @@ find_program(CALIBRAW_PKG_CONFIG_EXECUTABLE NAMES pkg-config REQUIRED)
 FetchContent_Declare(
     calibraw_libraw_source
     URL https://github.com/LibRaw/LibRaw/archive/${CALIBRAW_LIBRAW_COMMIT}.tar.gz
-    URL_HASH SHA256=dd77deb5e7e290d2216ad8688ec4ac7dccdeea3def0927076a63a61d326e212a
+    URL_HASH SHA256=453b1311b4825cc1946f114b5a0bcf0d4ad62a52c667dd5cc8b2b70e28342020
     SOURCE_SUBDIR _calibraw_do_not_add
 )
 FetchContent_Declare(
@@ -90,7 +90,7 @@ FetchContent_Declare(
 FetchContent_Declare(
     calibraw_lensfun_source
     URL https://github.com/lensfun/lensfun/archive/${CALIBRAW_LENSFUN_COMMIT}.tar.gz
-    URL_HASH SHA256=b56bff238bd9b8f6e517785de9361a11608f0d2afbfa9e21ce4a33d69d5c2046
+    URL_HASH SHA256=0f3dc5a6c1cdaa2e3f3fc2d1fe0955dfba1d35b7f3b16601c7bd2b50b95acbc9
     SOURCE_SUBDIR _calibraw_do_not_add
 )
 # GLib uses Meson. Fetch Meson's pinned source and invoke meson.py directly;

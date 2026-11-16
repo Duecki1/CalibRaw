@@ -141,7 +141,7 @@ above. The exact CalibRaw snapshot has SHA-256
 
 Release packages include the Lensfun profile database from the pinned Lensfun
 commit below. Lensfun licenses its database under
-[CC BY-SA 3.0](https://github.com/lensfun/lensfun/blob/bc5615d6278cb5fb75dd53e74015367453d5591d/data/COPYING.CC_BY-SA_3.0).
+[CC BY-SA 3.0](https://github.com/lensfun/lensfun/blob/52cf1a7b0e82e07e0ecaa3391ee5106a6dd1ee54/data/COPYING.CC_BY-SA_3.0).
 
 ## Optional AI models
 
@@ -206,11 +206,11 @@ The SkySeg model's upstream MIT notice is reproduced here:
 Depending on the platform, release artifacts link or bundle the following
 native components:
 
-- [LibRaw master at 830ac96](https://github.com/LibRaw/LibRaw/tree/830ac963b40223c6a25add5be65036fa8d56e2d6),
+- [LibRaw master at a9a14b1](https://github.com/LibRaw/LibRaw/tree/a9a14b1970d188c25dade81f8326ff00a6e33649),
   Copyright LibRaw LLC and other named contributors. LibRaw is dual-licensed
   under LGPL-2.1 and CDDL-1.0; CalibRaw uses the
-  [LGPL-2.1 option](https://github.com/LibRaw/LibRaw/blob/830ac963b40223c6a25add5be65036fa8d56e2d6/LICENSE.LGPL).
-- [Lensfun master at bc5615d](https://github.com/lensfun/lensfun/tree/bc5615d6278cb5fb75dd53e74015367453d5591d). The library
+  [LGPL-2.1 option](https://github.com/LibRaw/LibRaw/blob/a9a14b1970d188c25dade81f8326ff00a6e33649/LICENSE.LGPL).
+- [Lensfun master at 52cf1a7](https://github.com/lensfun/lensfun/tree/52cf1a7b0e82e07e0ecaa3391ee5106a6dd1ee54). The library
   is [LGPL-3.0](https://www.gnu.org/licenses/lgpl-3.0.html) and its separately
   packaged profile database is
   [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/legalcode).

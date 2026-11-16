@@ -51,8 +51,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://github.com/LibRaw/LibRaw/archive/830ac963b40223c6a25add5be65036fa8d56e2d6.tar.gz",
-                    "sha256": "dd77deb5e7e290d2216ad8688ec4ac7dccdeea3def0927076a63a61d326e212a"
+                    "url": "https://github.com/LibRaw/LibRaw/archive/a9a14b1970d188c25dade81f8326ff00a6e33649.tar.gz",
+                    "sha256": "453b1311b4825cc1946f114b5a0bcf0d4ad62a52c667dd5cc8b2b70e28342020"
                 },
                 {
                     "type": "script",
@@ -85,8 +85,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://github.com/lensfun/lensfun/archive/bc5615d6278cb5fb75dd53e74015367453d5591d.tar.gz",
-                    "sha256": "b56bff238bd9b8f6e517785de9361a11608f0d2afbfa9e21ce4a33d69d5c2046"
+                    "url": "https://github.com/lensfun/lensfun/archive/52cf1a7b0e82e07e0ecaa3391ee5106a6dd1ee54.tar.gz",
+                    "sha256": "0f3dc5a6c1cdaa2e3f3fc2d1fe0955dfba1d35b7f3b16601c7bd2b50b95acbc9"
                 }
             ]
         },

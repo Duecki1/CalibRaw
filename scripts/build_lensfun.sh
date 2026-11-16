@@ -10,8 +10,8 @@ set -euo pipefail
 # Keep in sync with workspace.metadata.lensfun_revision in Cargo.toml, the
 # Android pin in android/app/src/main/cpp/CMakeLists.txt and the Flatpak
 # manifest.
-LENSFUN_SOURCE_REVISION=bc5615d6278cb5fb75dd53e74015367453d5591d
-LENSFUN_ARCHIVE_SHA256=b56bff238bd9b8f6e517785de9361a11608f0d2afbfa9e21ce4a33d69d5c2046
+LENSFUN_SOURCE_REVISION=52cf1a7b0e82e07e0ecaa3391ee5106a6dd1ee54
+LENSFUN_ARCHIVE_SHA256=0f3dc5a6c1cdaa2e3f3fc2d1fe0955dfba1d35b7f3b16601c7bd2b50b95acbc9
 
 prefix="${1:?usage: scripts/build_lensfun.sh PREFIX [CMAKE_ARG...]}"
 shift
