@@ -1,6 +1,7 @@
 //! Painting mask overlays, coverage textures and tool hints over the preview.
 
 use super::*;
+use crate::app::CoverageKey;
 use crate::i18n::tr;
 
 impl Preview {
@@ -448,68 +449,58 @@ impl Preview {
             app.masks.interaction_dirty_layer,
             primary_down,
         );
-        let key = (
+        let key = CoverageKey {
             mask_index,
             component_index,
-            app.masks.overlay_revision,
+            revision: app.masks.overlay_revision,
             region,
-        );
+            full_size: [source_width, source_height],
+            corrected_space,
+        };
 
-        if app.masks.overlay_texture_key != Some(key) || app.masks.overlay_texture.is_none() {
-            let extent = [region.texture_width, region.texture_height];
-            let source_region = [
-                region.source_x,
-                region.source_y,
-                region.source_width,
-                region.source_height,
-            ];
-            let full_size = [source_width, source_height];
-            let rgba = if let Some(component_index) = component_index {
-                let coverage = app.masks.stack.rasterize_component_region(
-                    mask_index,
-                    component_index,
-                    extent,
-                    source_region,
-                    full_size,
-                    lens_geometry.as_deref(),
-                );
-                coverage_rgba(coverage, mask_component_color(component_index))
+        let ctx = ui.ctx();
+        app.masks.coverage.poll(ctx);
+        if !app.masks.coverage.has(key) {
+            // A shape being dragged or painted follows the pointer every
+            // frame; its region is small while the pointer is down
+            // (`mask_overlay_raster_region`). Radial, linear and fullscreen
+            // coverage is closed-form and quick at any size. Everything else
+            // samples images or rasterizes shapes, which at the canvas's
+            // resolution takes a phone hundreds of milliseconds, so it is
+            // drawn on a worker and the frame does not wait for it.
+            let live = app.masks.interaction_dirty_layer.is_some() && primary_down;
+            if live || corrected_space {
+                let image = draw_coverage(&app.masks.stack, key, lens_geometry.as_deref());
+                app.masks.coverage.set(ctx, key, image);
             } else {
-                group_coverage_rgba(
-                    &app.masks.stack,
-                    mask_index,
-                    extent,
-                    source_region,
-                    full_size,
-                    lens_geometry.as_deref(),
-                )
-            };
-            let image = egui::ColorImage::from_rgba_unmultiplied(
-                [
-                    region.texture_width as usize,
-                    region.texture_height as usize,
-                ],
-                &rgba,
-            );
-            if let Some(texture) = app.masks.overlay_texture.as_mut() {
-                texture.set(image, egui::TextureOptions::LINEAR);
-            } else {
-                app.masks.overlay_texture = Some(ui.ctx().load_texture(
-                    "selected-mask-coverage",
-                    image,
-                    egui::TextureOptions::LINEAR,
-                ));
+                // The stack's mask images are shared (`MaskImage::pixels`), so
+                // the worker's copy is cheap.
+                let masks = app.masks.stack.clone();
+                app.masks.coverage.request(ctx, key, move || {
+                    draw_coverage(&masks, key, lens_geometry.as_deref())
+                });
             }
-            app.masks.overlay_texture_key = Some(key);
         }
 
-        if let Some(texture) = &app.masks.overlay_texture {
+        // The texture on screen until the draw lands: the same coverage, of
+        // an older revision or region, painted over the region it covers.
+        if let Some((texture, shown)) = app
+            .masks
+            .coverage
+            .texture()
+            .filter(|(_, shown)| shown.same_target(key))
+        {
+            let lens = if shown.corrected_space {
+                None
+            } else {
+                loaded_lens_geometry(app).map(Arc::as_ref)
+            };
             paint_final_geometry_overlay_texture(
                 ui,
-                texture.id(),
-                layout.projection(app.develop.geometry, lens_geometry.as_deref()),
+                texture,
+                layout.projection(app.develop.geometry, lens),
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                overlay_source_uv(region, source_width, source_height),
+                overlay_source_uv(shown.region, shown.full_size[0], shown.full_size[1]),
             );
         }
     }
@@ -584,4 +575,46 @@ impl Preview {
             Color32::WHITE,
         );
     }
+}
+
+/// The coverage `key` asks for, drawn from `masks`.
+fn draw_coverage(
+    masks: &crate::pipeline::MaskStack,
+    key: CoverageKey,
+    lens: Option<&LensGeometryMap>,
+) -> egui::ColorImage {
+    let CoverageKey {
+        mask_index,
+        component_index,
+        region,
+        full_size,
+        ..
+    } = key;
+    let extent = [region.texture_width, region.texture_height];
+    let source_region = [
+        region.source_x,
+        region.source_y,
+        region.source_width,
+        region.source_height,
+    ];
+    let rgba = if let Some(component_index) = component_index {
+        let coverage = masks.rasterize_component_region(
+            mask_index,
+            component_index,
+            extent,
+            source_region,
+            full_size,
+            lens,
+        );
+        coverage_rgba(coverage, mask_component_color(component_index))
+    } else {
+        group_coverage_rgba(masks, mask_index, extent, source_region, full_size, lens)
+    };
+    egui::ColorImage::from_rgba_unmultiplied(
+        [
+            region.texture_width as usize,
+            region.texture_height as usize,
+        ],
+        &rgba,
+    )
 }

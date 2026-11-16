@@ -50,8 +50,7 @@ impl MaskState {
         self.interaction_last_upload = None;
         self.interaction_has_uncommitted_change = false;
         self.overlay_revision = self.overlay_revision.wrapping_add(1);
-        self.overlay_texture = None;
-        self.overlay_texture_key = None;
+        self.coverage.clear();
         self.overlay_blink = None;
         self.thumbnail_group_textures.clear();
         self.thumbnail_component_mask = None;

@@ -43,8 +43,7 @@ impl CalibRawApp {
         self.preview.detail_urgent = false;
         self.preview.zoom = 1.0;
         self.preview.center = [0.5, 0.5];
-        self.masks.overlay_texture = None;
-        self.masks.overlay_texture_key = None;
+        self.masks.coverage.clear();
         self.masks.thumbnail_group_textures.clear();
         self.masks.thumbnail_component_textures.clear();
         self.masks.thumbnail_component_mask = None;
