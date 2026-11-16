@@ -766,6 +766,11 @@ pub(crate) trait Platform: Send + Sync {
     fn share_exports(&self, _uris: &[String], _mime_type: &str) -> Result<(), String> {
         Err(unavailable("sharing several exports"))
     }
+    /// The replay size the platform encoder accepts for a canvas of at most
+    /// `width` x `height` (both even); never larger than the request.
+    fn replay_encoder_size(&self, width: u32, height: u32, _fps: u32) -> (u32, u32) {
+        (width, height)
+    }
     fn start_replay_encoder(
         &self,
         _path: &Path,

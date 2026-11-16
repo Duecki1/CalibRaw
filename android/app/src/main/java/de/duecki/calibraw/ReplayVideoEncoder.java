@@ -34,14 +34,7 @@ final class ReplayVideoEncoder implements AutoCloseable {
             throw new IllegalArgumentException("Replay requires positive even dimensions and FPS");
         }
         try {
-            MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
-            format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);
-            format.setInteger(MediaFormat.KEY_BIT_RATE, 8_000_000);
-            format.setInteger(MediaFormat.KEY_FRAME_RATE, fps);
-            format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
-            format.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT601_NTSC);
-            format.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED);
-            format.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO);
+            MediaFormat format = replayFormat(width, height, fps);
             String name = new MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(format);
             if (name == null) {
                 throw new IllegalStateException("No Android H.264 encoder supports this replay size: " + width + "x" + height);
@@ -55,6 +48,70 @@ final class ReplayVideoEncoder implements AutoCloseable {
             close();
             throw error;
         }
+    }
+
+    /** The format the encoder is configured with; {@link #supportedSize} probes the same one. */
+    private static MediaFormat replayFormat(int width, int height, int fps) {
+        MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
+        format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);
+        format.setInteger(MediaFormat.KEY_BIT_RATE, 8_000_000);
+        format.setInteger(MediaFormat.KEY_FRAME_RATE, fps);
+        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+        format.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT601_NTSC);
+        format.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED);
+        format.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO);
+        return format;
+    }
+
+    /**
+     * The replay size to encode for a canvas of at most width x height, packed as
+     * {@code (width << 32) | height}. Some encoders (MediaTek's report 16x16) only accept
+     * sizes on a coarser grid than 2x2, so 1920x1080 matches no encoder. In codec list
+     * order, the first H.264 encoder that accepts the size rounded down to its alignment
+     * wins; when none does, the requested size is returned unchanged and the constructor
+     * reports the failure.
+     */
+    static long supportedSize(int width, int height, int fps) {
+        for (MediaCodecInfo info : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
+            if (!info.isEncoder() || !supportsAvc(info)) {
+                continue;
+            }
+            MediaCodecInfo.CodecCapabilities capabilities =
+                    info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC);
+            MediaCodecInfo.VideoCapabilities video = capabilities.getVideoCapabilities();
+            if (video == null) {
+                continue;
+            }
+            int alignedWidth = alignDown(width, video.getWidthAlignment());
+            int alignedHeight = alignDown(height, video.getHeightAlignment());
+            if (alignedWidth > 0 && alignedHeight > 0
+                    && capabilities.isFormatSupported(replayFormat(alignedWidth, alignedHeight, fps))) {
+                return pack(alignedWidth, alignedHeight);
+            }
+        }
+        return pack(width, height);
+    }
+
+    private static boolean supportsAvc(MediaCodecInfo info) {
+        for (String type : info.getSupportedTypes()) {
+            if (type.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_AVC)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Rounds down to a multiple of the alignment, kept even for 4:2:0 chroma. */
+    private static int alignDown(int value, int alignment) {
+        int step = Math.max(alignment, 1);
+        if ((step & 1) != 0) {
+            step *= 2;
+        }
+        return value / step * step;
+    }
+
+    private static long pack(int width, int height) {
+        return ((long) width << 32) | (height & 0xffff_ffffL);
     }
 
     void writeFrame(byte[] yuv) throws Exception {

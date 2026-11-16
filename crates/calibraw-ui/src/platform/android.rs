@@ -693,6 +693,14 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::share_exports(&self.app, uris, mime_type)
     }
 
+    fn replay_encoder_size(&self, width: u32, height: u32, fps: u32) -> (u32, u32) {
+        calibraw_ffi::ReplayVideoEncoder::supported_size(&self.app, width, height, fps)
+            .unwrap_or_else(|error| {
+                log::warn!("{error}; keeping replay size {width}x{height}");
+                (width, height)
+            })
+    }
+
     fn start_replay_encoder(
         &self,
         path: &Path,

@@ -365,6 +365,10 @@ pub(crate) fn render_edit_replay(
 
     let (canvas_width, canvas_height) =
         replay_canvas_dimensions(final_still.width, final_still.height);
+    let (canvas_width, canvas_height) =
+        request
+            .platform
+            .replay_encoder_size(canvas_width, canvas_height, REPLAY_FPS);
     let original_canvas = fit_to_canvas(&rendered[0], canvas_width, canvas_height);
     let mut stage_canvases = rendered
         .iter()

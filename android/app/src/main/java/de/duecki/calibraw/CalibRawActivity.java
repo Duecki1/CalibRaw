@@ -38,6 +38,10 @@ public final class CalibRawActivity extends NativeActivity {
         return new ReplayVideoEncoder(path, width, height, fps);
     }
 
+    long supportedReplaySize(int width, int height, int fps) {
+        return ReplayVideoEncoder.supportedSize(width, height, fps);
+    }
+
     private static final String LOG_TAG = "CalibRaw";
     private static final int TABLET_SMALLEST_WIDTH_DP = 600;
     private static final int OPEN_RAW_DOCUMENT = 1001;
