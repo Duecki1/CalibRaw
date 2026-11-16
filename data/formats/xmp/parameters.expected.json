@@ -7,6 +7,7 @@
         "ai_denoise_enabled": false,
         "black_point": 0.0,
         "blacks": 0.0,
+        "blacks_response": "rgb",
         "ca_blue": 0.0,
         "ca_red": 0.0,
         "chroma_denoise": 0.5,
@@ -92,6 +93,7 @@
           "len": 2,
           "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
         },
+        "tone_curve_response": "rgb",
         "vibrance": 20.0,
         "vignette_amount": 0.0,
         "vignette_feather": 50.0,
@@ -155,6 +157,7 @@
           {
             "adjustments": {
               "blacks": 0.0,
+              "blacks_response": "rgb",
               "clarity": 0.0,
               "color_grading": {
                 "balance": 0.0,
@@ -181,6 +184,7 @@
                 }
               },
               "contrast": 0.0,
+              "contrast_response": "rgb",
               "dehaze": 0.0,
               "exposure": 0.4,
               "highlights": 0.0,
@@ -210,6 +214,7 @@
                 "len": 2,
                 "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
               },
+              "tone_curve_response": "rgb",
               "whites": 0.0
             },
             "adjustments_enabled": true,

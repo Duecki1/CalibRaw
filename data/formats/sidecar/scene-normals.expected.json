@@ -2,7 +2,7 @@
   "edited": true,
   "migrated": true,
   "saved": {
-    "edit_fingerprint": "e96bc51be1d65be4",
+    "edit_fingerprint": "cebfaa12393afdbc",
     "editing_time_ms": 61000,
     "edits": {
       "ai_masks_need_update": false,
@@ -11,6 +11,7 @@
         "ai_denoise_enabled": false,
         "black_point": 0.0,
         "blacks": 0.0,
+        "blacks_response": "rgb",
         "ca_blue": 0.0,
         "ca_red": 0.0,
         "chroma_denoise": 0.0,
@@ -96,6 +97,7 @@
           "len": 2,
           "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
         },
+        "tone_curve_response": "luminance",
         "vibrance": 12.0,
         "vignette_amount": 0.0,
         "vignette_feather": 50.0,

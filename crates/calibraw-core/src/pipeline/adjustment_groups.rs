@@ -158,6 +158,7 @@ impl ExposureParams {
             vibrance,
             brightness,
             tone_curve,
+            tone_curve_response,
             tone_curve_red,
             tone_curve_green,
             tone_curve_blue,
@@ -179,6 +180,7 @@ impl ExposureParams {
             shadows,
             whites,
             blacks,
+            blacks_response,
             texture,
             clarity,
             dehaze,
@@ -207,10 +209,12 @@ impl ExposureParams {
                 self.shadows = shadows;
                 self.whites = whites;
                 self.blacks = blacks;
+                self.blacks_response = blacks_response;
             }
             ExposureSection::Group(AdjustmentGroup::ToneCurve) => {
                 self.brightness = brightness;
                 self.tone_curve = tone_curve;
+                self.tone_curve_response = tone_curve_response;
                 self.tone_curve_red = tone_curve_red;
                 self.tone_curve_green = tone_curve_green;
                 self.tone_curve_blue = tone_curve_blue;
@@ -284,14 +288,17 @@ impl LocalAdjustments {
             AdjustmentGroup::Light => {
                 self.exposure = defaults.exposure;
                 self.contrast = defaults.contrast;
+                self.contrast_response = defaults.contrast_response;
                 self.highlights = defaults.highlights;
                 self.shadows = defaults.shadows;
                 self.whites = defaults.whites;
                 self.blacks = defaults.blacks;
+                self.blacks_response = defaults.blacks_response;
             }
             AdjustmentGroup::ToneCurve => {
                 self.brightness = defaults.brightness;
                 self.tone_curve = defaults.tone_curve;
+                self.tone_curve_response = defaults.tone_curve_response;
                 self.tone_curve_red = defaults.tone_curve_red;
                 self.tone_curve_green = defaults.tone_curve_green;
                 self.tone_curve_blue = defaults.tone_curve_blue;

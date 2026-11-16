@@ -1,5 +1,19 @@
 #import calibraw::common as Common
 
+// Linear Rec.2020 (D65) to the DNG SDK's ProPhoto RGB, Bradford-adapted to
+// the DNG PCS white (x = 0.3457, y = 0.3585). White maps to white exactly.
+const REC2020_TO_PROPHOTO: mat3x3<f32> = mat3x3<f32>(
+    vec3<f32>( 0.83515571,  0.05412894, -0.00234204),
+    vec3<f32>( 0.04884459,  0.92884833,  0.03633215),
+    vec3<f32>( 0.11599970,  0.01702272,  0.96600989),
+);
+
+const PROPHOTO_TO_REC2020: mat3x3<f32> = mat3x3<f32>(
+    vec3<f32>( 1.20070939, -0.07007339,  0.00554655),
+    vec3<f32>(-0.05754065,  1.08070269, -0.04078532),
+    vec3<f32>(-0.14316875, -0.01062930,  1.03523876),
+);
+
 fn cam_to_working(rgb: vec3<f32>) -> vec3<f32> {
     let r = dot(Common::camera_uniforms.cam_to_srgb_0_field.xyz, rgb);
     let g = dot(Common::camera_uniforms.cam_to_srgb_1_field.xyz, rgb);

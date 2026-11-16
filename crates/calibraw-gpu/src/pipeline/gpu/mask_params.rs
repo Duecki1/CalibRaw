@@ -190,7 +190,14 @@ pub(super) fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
             u32::from(adjustment_enabled),
             u32::from(!adjustment.is_neutral()),
             curve_flags,
-            u32::from(has_hsl) | (u32::from(has_grading) << 1) | (u32::from(has_hue) << 2),
+            u32::from(has_hsl)
+                | (u32::from(has_grading) << 1)
+                | (u32::from(has_hue) << 2)
+                | legacy_luminance_bits(
+                    adjustment.tone_curve_response,
+                    adjustment.contrast_response,
+                    adjustment.blacks_response,
+                ),
         ],
         adjust_0: [
             effect_params::adjustment::EXPOSURE.clamp(adjustment.exposure),

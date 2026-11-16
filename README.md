@@ -108,7 +108,7 @@ Where more than one graphics API works, such as Direct3D 12 and Vulkan on Window
 - **Point Color:** Sample a color in global or mask HSL controls, refine its Hue/Saturation/Luminance span, preview the selected range, and apply targeted shifts.
 - **8-Band Color Mixer:** Adjust Hue, Saturation, and Luminance across 8 individual color bands.
 - **3-Way Color Grading:** Dedicated Shadows, Midtones, Highlights, and Global color wheels mapped through Oklab color space.
-- **Tone Curves:** Luminance curve and individual Red, Green, and Blue splines with monotonic limits.
+- **Tone Curves:** Master curve applied to RGB with a hue lock, as Lightroom applies it, so contrast raises saturation, and individual Red, Green, and Blue splines with monotonic limits.
 - **Sigmoid Tone Mapping:** Provides smooth, film-like highlight compression without harsh clipping.
 
 ### Demosaicing & Corrections

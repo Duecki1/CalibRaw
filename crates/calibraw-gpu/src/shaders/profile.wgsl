@@ -3,20 +3,6 @@
 
 @group(0) @binding(20) var<storage, read> profile_data: array<vec4<f32>>;
 
-// Linear Rec.2020 (D65) to the DNG SDK's ProPhoto RGB, Bradford-adapted to
-// the DNG PCS white (x = 0.3457, y = 0.3585). White maps to white exactly.
-const REC2020_TO_PROPHOTO: mat3x3<f32> = mat3x3<f32>(
-    vec3<f32>( 0.83515571,  0.05412894, -0.00234204),
-    vec3<f32>( 0.04884459,  0.92884833,  0.03633215),
-    vec3<f32>( 0.11599970,  0.01702272,  0.96600989),
-);
-
-const PROPHOTO_TO_REC2020: mat3x3<f32> = mat3x3<f32>(
-    vec3<f32>( 1.20070939, -0.07007339,  0.00554655),
-    vec3<f32>(-0.05754065,  1.08070269, -0.04078532),
-    vec3<f32>(-0.14316875, -0.01062930,  1.03523876),
-);
-
 // Rec.2020 luminance expressed on ProPhoto components.
 const PROPHOTO_LUMA: vec3<f32> = vec3<f32>(0.26824590, 0.71517979, 0.01657431);
 
@@ -127,7 +113,7 @@ fn apply_profile_hsv_map(rgb_rec2020: vec3<f32>, map_info: vec4<u32>, encoding: 
     if map_info.x == 0u || map_info.y == 0u || map_info.z == 0u {
         return rgb_rec2020;
     }
-    let profile_signed = REC2020_TO_PROPHOTO * rgb_rec2020;
+    let profile_signed = Color::REC2020_TO_PROPHOTO * rgb_rec2020;
     let profile_linear = Color::gamut_project_nonnegative(profile_signed, dot(profile_signed, PROPHOTO_LUMA));
     let profile_headroom = max(
         1.0,
@@ -147,7 +133,7 @@ fn apply_profile_hsv_map(rgb_rec2020: vec3<f32>, map_info: vec4<u32>, encoding: 
     if encode_value {
         hsv.z = profile_srgb_decode_value(hsv.z);
     }
-    return PROPHOTO_TO_REC2020 * profile_hsv_to_rgb(hsv) * profile_headroom;
+    return Color::PROPHOTO_TO_REC2020 * profile_hsv_to_rgb(hsv) * profile_headroom;
 }
 
 fn apply_profile_hue_sat(rgb: vec3<f32>) -> vec3<f32> {
@@ -156,7 +142,7 @@ fn apply_profile_hue_sat(rgb: vec3<f32>) -> vec3<f32> {
         return apply_profile_hsv_map(rgb, Common::camera_uniforms.profile_hue_sat, Common::camera_uniforms.profile_flags.x);
     }
 
-    let profile_signed = REC2020_TO_PROPHOTO * rgb;
+    let profile_signed = Color::REC2020_TO_PROPHOTO * rgb;
     let profile_linear = Color::gamut_project_nonnegative(profile_signed, dot(profile_signed, PROPHOTO_LUMA));
     let profile_headroom = max(
         1.0,
@@ -181,7 +167,7 @@ fn apply_profile_hue_sat(rgb: vec3<f32>) -> vec3<f32> {
     if encode_value {
         hsv.z = profile_srgb_decode_value(hsv.z);
     }
-    return PROPHOTO_TO_REC2020 * profile_hsv_to_rgb(hsv) * profile_headroom;
+    return Color::PROPHOTO_TO_REC2020 * profile_hsv_to_rgb(hsv) * profile_headroom;
 }
 
 fn apply_camera_characterization(rgb: vec3<f32>) -> vec3<f32> {

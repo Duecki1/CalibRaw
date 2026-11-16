@@ -621,7 +621,9 @@ fn apply_local_display_tone(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         if weight <= 1e-5 { continue; }
         if abs(blacks) >= 1e-7 {
             let amount = Tonemap::basic_low_tone_control(blacks) * weight;
-            rgb = Tonemap::apply_display_blacks_toe_amount(rgb, amount);
+            // migration: remove in v2.0.0, with LEGACY_LUMINANCE_BLACKS.
+            let legacy_luminance = (state.w & Common::LEGACY_LUMINANCE_BLACKS) != 0u;
+            rgb = Tonemap::apply_display_blacks_toe_amount(rgb, amount, legacy_luminance);
         }
         brightness = brightness + mask_brightness / 100.0 * weight;
     }

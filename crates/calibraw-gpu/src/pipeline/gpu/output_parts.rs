@@ -480,11 +480,12 @@ fn same_depth_result(a: Option<&SceneDepth>, b: Option<&SceneDepth>) -> bool {
 /// `scene_tone` without what only the view node reads. Blacks is the fourth
 /// lane of `basic_tone`: the scene tone pass takes it as an unused argument
 /// (`apply_local_basic_tone_values_with_low_strength` in tonemap.wgsl), and
-/// the view node applies it as a display toe.
+/// the view node applies it as a display toe, with its response bit.
 pub(super) fn scene_tone_before_view(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
     let [highlights, shadows, whites, _blacks] = scene_tone.basic_tone;
     SceneToneUniforms {
         basic_tone: [highlights, shadows, whites, 0.0],
+        legacy_luminance_tone: scene_tone.legacy_luminance_tone & !LEGACY_LUMINANCE_BLACKS,
         hsl_hue_0: [0.0; 4],
         hsl_hue_1: [0.0; 4],
         hsl_saturation_0: [0.0; 4],
@@ -546,13 +547,16 @@ pub(super) fn effects_before_creative(effects: &EffectsUniforms) -> EffectsUnifo
 /// mask layer (`point_color_meta`) stays.
 pub(super) fn slot_before_view(slot: &MaskData) -> MaskData {
     // Blacks is the second lane of an adjustment's `adjust_1`
-    // (`apply_local_display_tone` in view_transform.wgsl); an effect slot
-    // keeps its own lanes there.
+    // (`apply_local_display_tone` in view_transform.wgsl), with its response
+    // bit in `metadata[3]`; an effect slot keeps its own lanes and bits there.
     let mut adjust_1 = slot.adjust_1;
+    let mut metadata = slot.metadata;
     if slot.effect_id() == MaskEffect::Adjustment.shader_id() {
         adjust_1[1] = 0.0;
+        metadata[3] &= !LEGACY_LUMINANCE_BLACKS;
     }
     MaskData {
+        metadata,
         adjust_1,
         grade_shadows: [0.0; 4],
         grade_midtones: [0.0; 4],

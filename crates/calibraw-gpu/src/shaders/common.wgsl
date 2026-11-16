@@ -47,6 +47,15 @@ const VIEW_TRANSFORM_DISPLAY_RETONE: u32 = 2u;
 const MASK_EFFECT_ID_SHIFT: u32 = 8u;
 const MASK_SCENE_BAKE_LIGHT_BITS: u32 = 0xfu;
 
+// Tone controls saved before the RGB response, which map the luminance and
+// scale RGB by its ratio (`ToneResponse::Luminance` in calibraw-core): bits
+// of `SceneToneUniforms::legacy_luminance_tone` for the edit's, and of an
+// adjustment slot's `metadata.w`, above its view flags, for the mask's.
+// migration: remove in v2.0.0, with the branches that read them.
+const LEGACY_LUMINANCE_TONE_CURVE: u32 = 8u;
+const LEGACY_LUMINANCE_CONTRAST: u32 = 16u;
+const LEGACY_LUMINANCE_BLACKS: u32 = 32u;
+
 fn mask_effect_id(metadata: vec4<u32>) -> u32 {
     return metadata.w >> MASK_EFFECT_ID_SHIFT;
 }
@@ -131,8 +140,10 @@ struct SceneToneUniforms {
     exposure: f32,
     saturation: f32,
     vibrance: f32,
-    // Keeps the next vector aligned.
-    _padding: u32,
+    // The edit's tone controls that render with the luminance response:
+    // LEGACY_LUMINANCE_TONE_CURVE, LEGACY_LUMINANCE_BLACKS.
+    // migration: remove in v2.0.0, with the bits.
+    legacy_luminance_tone: u32,
     basic_tone: vec4<f32>,
     // The edit's sigmoid: (white target, black target, log2 paper exposure, film fog)
     // and (film power, paper power, hue preservation, colour processing).

@@ -20,6 +20,7 @@ use super::{
     ViewTransformMode, CONTOUR_BRIGHTNESS_BINS, CONTOUR_CELL_BYTES, CONTOUR_CONTRAST_BINS,
     CONTOUR_GRID_LONG, FILM_MODE_MONOCHROME, FILM_MODE_POSITIVE, HAZE_AIRLIGHT_BYTES,
     HAZE_CELL_BYTES, HAZE_GRID_LONG, IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG,
+    LEGACY_LUMINANCE_BLACKS, LEGACY_LUMINANCE_CONTRAST, LEGACY_LUMINANCE_TONE_CURVE,
     MASK_EFFECT_ID_SHIFT, MASK_SCENE_BAKE_LIGHT_BITS, MAX_RENDER_MASK_SLOTS, MEDIUM_CELLS,
     SCENE_EMISSION_GRID_LONG, SCENE_EMISSION_SURFACE_GRID_LONG, SCENE_SHADOW_LIGHTS,
     TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
@@ -251,7 +252,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 exposure,
                 saturation,
                 vibrance,
-                _padding,
+                legacy_luminance_tone,
                 basic_tone,
                 sigmoid_curve,
                 sigmoid_power,
@@ -512,6 +513,20 @@ fn shared_constants_and_effect_ids_match_rust() {
     );
     assert_eq!(constant("FILM_MODE_POSITIVE"), FILM_MODE_POSITIVE);
     assert_eq!(constant("FILM_MODE_MONOCHROME"), FILM_MODE_MONOCHROME);
+    assert_eq!(
+        constant("LEGACY_LUMINANCE_TONE_CURVE"),
+        LEGACY_LUMINANCE_TONE_CURVE
+    );
+    assert_eq!(
+        constant("LEGACY_LUMINANCE_CONTRAST"),
+        LEGACY_LUMINANCE_CONTRAST
+    );
+    assert_eq!(constant("LEGACY_LUMINANCE_BLACKS"), LEGACY_LUMINANCE_BLACKS);
+    // An adjustment slot keeps them between its view flags and its effect ID.
+    const {
+        assert!(LEGACY_LUMINANCE_TONE_CURVE > 4);
+        assert!(LEGACY_LUMINANCE_BLACKS < 1 << MASK_EFFECT_ID_SHIFT);
+    }
     // The image-light grid buffer and textures are sized from these.
     assert_eq!(constant("IMAGE_LIGHT_GRID_LONG"), IMAGE_LIGHT_GRID_LONG);
     assert_eq!(constant("IMAGE_LIGHT_BANDS"), IMAGE_LIGHT_BANDS);

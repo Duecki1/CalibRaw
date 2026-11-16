@@ -4,6 +4,7 @@
 // Copyright (C) 2026 CalibRaw contributors (WGSL adaptation).
 
 #import calibraw::common as Common
+#import calibraw::color as Color
 #import calibraw::tone_common as ToneCommon
 
 @group(0) @binding(16) var<storage, read> tone_stats: ToneCommon::ToneStats;
@@ -212,13 +213,10 @@ fn apply_local_basic_tone(rgb: vec3<f32>, pos: vec2<i32>) -> vec3<f32> {
     );
 }
 
-fn apply_mask_contrast_value(rgb: vec3<f32>, value: f32) -> vec3<f32> {
-    let amount = clamp(value / 100.0, -1.0, 1.0);
-    if abs(amount) < 1e-6 {
-        return rgb;
-    }
-
-    let luminance = Common::safe_luma(rgb);
+// The gain a mask's Contrast `amount` (-1 to 1) gives a scene-linear
+// `luminance` (or channel) of at least 1e-6: an EV curve around the photo's
+// median, which protects the toe and the shoulder.
+fn mask_contrast_gain(luminance: f32, amount: f32) -> f32 {
     let scene_ev = log2(luminance / ToneCommon::SCENE_MIDDLE_GREY);
     let contrast_pivot_ev = tone_percentiles().p50_field + 0.12;
     let relative_ev = scene_ev - contrast_pivot_ev;
@@ -236,7 +234,31 @@ fn apply_mask_contrast_value(rgb: vec3<f32>, value: f32) -> vec3<f32> {
 
     let adjusted_ev = scene_ev + amount * signed_protected_shape;
     let adjusted_luminance = ToneCommon::SCENE_MIDDLE_GREY * exp2(adjusted_ev);
-    return rgb * clamp(adjusted_luminance / luminance, 0.0, 64.0);
+    return clamp(adjusted_luminance / luminance, 0.0, 64.0);
+}
+
+// A mask's Contrast, -100 to 100, on scene-linear Rec.2020: the gain goes to
+// the largest and the smallest ProPhoto channel (`hue_locked_tone`), so
+// contrast moves saturation with it as the global Contrast's per-channel
+// sigmoid does. Channels at or below 0 take the gain at 1e-6.
+fn apply_mask_contrast_value(rgb: vec3<f32>, value: f32, legacy_luminance: bool) -> vec3<f32> {
+    let amount = clamp(value / 100.0, -1.0, 1.0);
+    if abs(amount) < 1e-6 {
+        return rgb;
+    }
+    // migration: remove in v2.0.0, with LEGACY_LUMINANCE_CONTRAST. The
+    // luminance's gain scales every channel, keeping chromaticity.
+    if legacy_luminance {
+        return rgb * mask_contrast_gain(Common::safe_luma(rgb), amount);
+    }
+
+    let prophoto = Color::REC2020_TO_PROPHOTO * rgb;
+    let range = channel_range(prophoto);
+    let gains = vec2<f32>(
+        mask_contrast_gain(max(range.x, 1e-6), amount),
+        mask_contrast_gain(max(range.y, 1e-6), amount),
+    );
+    return Color::PROPHOTO_TO_REC2020 * hue_locked_tone(prophoto, range, range * gains);
 }
 
 // `curve` selects master (0), red (1), green (2) or blue (3); callers pass
@@ -523,10 +545,56 @@ fn apply_scene_channel_curve(curve: u32, value: f32) -> f32 {
     );
 }
 
+// The smallest and the largest channel of `rgb`.
+fn channel_range(rgb: vec3<f32>) -> vec2<f32> {
+    return vec2<f32>(min(rgb.r, min(rgb.g, rgb.b)), max(rgb.r, max(rgb.g, rgb.b)));
+}
+
+// Lightroom's RGB tone, as the DNG SDK's RefBaselineRGBTone
+// (dng_reference.cpp) applies a tone curve. `prophoto` is linear ProPhoto RGB
+// and `range` its smallest and largest channel (`channel_range`), which take
+// the tone function's values `toned_range`. The middle channel keeps its share
+// of the distance between them, (mid - min) / (max - min), the RGB hue, which
+// is the hue lock Lightroom's curves have; a function steeper than its
+// secant, such as a contrast curve in the midtones, spreads the channels
+// apart and raises saturation. A neutral pixel takes the largest channel's
+// value on every channel.
+fn hue_locked_tone(prophoto: vec3<f32>, range: vec2<f32>, toned_range: vec2<f32>) -> vec3<f32> {
+    let extent = range.y - range.x;
+    if extent <= 0.0 {
+        return vec3<f32>(toned_range.y);
+    }
+    // In [0, 1]: each channel's share of the extent, 1 for the largest.
+    let share = (prophoto - vec3<f32>(range.x)) / extent;
+    return vec3<f32>(toned_range.x) + share * (toned_range.y - toned_range.x);
+}
+
+// The master curve on scene-linear Rec.2020: its largest and smallest
+// ProPhoto channel go through the curve as a channel curve does
+// (`apply_scene_channel_curve`), and the middle one follows
+// (`hue_locked_tone`). A lifted black lifts every channel, so it stays
+// neutral; an inverted curve inverts the colours.
+fn apply_rgb_master_curve(rgb: vec3<f32>) -> vec3<f32> {
+    let prophoto = Color::REC2020_TO_PROPHOTO * rgb;
+    let range = channel_range(prophoto);
+    let toned_range = vec2<f32>(
+        apply_scene_channel_curve(0u, range.x),
+        apply_scene_channel_curve(0u, range.y),
+    );
+    return limit_scene_curve_rgb_ratio_preserving(
+        Color::PROPHOTO_TO_REC2020 * hue_locked_tone(prophoto, range, toned_range),
+    );
+}
+
 fn apply_point_tone_curve(rgb: vec3<f32>) -> vec3<f32> {
     if tone_curve_is_identity(0u) {
         return rgb;
     }
+    if (Common::scene_tone_uniforms.legacy_luminance_tone & Common::LEGACY_LUMINANCE_TONE_CURVE) == 0u {
+        return apply_rgb_master_curve(rgb);
+    }
+    // migration: remove in v2.0.0, with LEGACY_LUMINANCE_TONE_CURVE: the
+    // curve maps the luminance and scales the colour (`remap_scene_luminance`).
     let luminance = max(dot(rgb, Common::LUMA), 0.0);
     let encoded_black = point_curve_value(0u, 0.0);
     let black_luminance = scene_curve_decode(encoded_black);
@@ -564,8 +632,11 @@ const DISPLAY_BLACKS_CRUSH_BLACK_FRACTION: f32 = 0.80;
 const DISPLAY_BLACKS_CRUSH_STRETCH: f32 = 0.20;
 const DISPLAY_BLACKS_CRUSH_JOIN: f32 = 0.05;
 
-// Blacks scales display-linear RGB by a luminance gain, preserving channel
-// ratios.
+// Blacks is a gain of display-linear levels (`display_blacks_gain`), which
+// goes to the largest and the smallest ProPhoto channel of a colour
+// (`hue_locked_tone`), so crushing the blacks raises their saturation and
+// lifting them lowers it, as the global Contrast's per-channel sigmoid moves
+// saturation with contrast. Below, Y is the level the gain is taken at.
 //
 // Positive Blacks lifts by amount * 1.75 EV at black, decaying with
 // exp2(-Y / 0.035); the decay is slow enough to keep the remap monotonic. It
@@ -581,29 +652,23 @@ const DISPLAY_BLACKS_CRUSH_JOIN: f32 = 0.05;
 // the earlier rational toe. The encoded slope stays within
 // [1 + 0.80 * amount, 1 - 0.20 * amount], so the toe neither clips nor expands
 // shadow noise into speckles, without spatial denoising.
-fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32) -> vec3<f32> {
-    if abs(amount) < 1e-7 {
-        return rgb;
-    }
-
-    let luminance = dot(rgb, Common::LUMA);
-    if luminance <= 0.0 {
-        return rgb;
-    }
-
+//
+// `luminance` is a display-linear level at or above 0; a level of 0 takes
+// the limit of the gain, so a channel at black moves as the darkest ones do.
+fn display_blacks_gain(luminance: f32, amount: f32) -> f32 {
     if amount >= 0.0 {
         let hdr_guard = 1.0 - ToneCommon::tone_smoothstep(0.35, 1.0, luminance);
         if hdr_guard <= 0.0 {
-            return rgb;
+            return 1.0;
         }
         let weight = exp2(-luminance / DISPLAY_BLACKS_LIFT_DECAY);
-        return rgb * exp2(amount * DISPLAY_BLACKS_LIFT_EV * weight * hdr_guard);
+        return exp2(amount * DISPLAY_BLACKS_LIFT_EV * weight * hdr_guard);
     }
 
-    let encoded = pow(luminance, 1.0 / DISPLAY_BLACKS_ENCODING_GAMMA);
+    let encoded = select(0.0, pow(luminance, 1.0 / DISPLAY_BLACKS_ENCODING_GAMMA), luminance > 0.0);
     let end = pow(DISPLAY_BLACKS_CRUSH_END_LUMA, 1.0 / DISPLAY_BLACKS_ENCODING_GAMMA);
     if encoded >= end {
-        return rgb;
+        return 1.0;
     }
     // Approaches below_end - join for deep values and has zero slope at the
     // toe end, so the remap joins the identity smoothly.
@@ -615,11 +680,39 @@ fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32) -> vec3<f32> {
     // line > 0 here, so the denominator is positive.
     let darkening_fraction = DISPLAY_BLACKS_CRUSH_BLACK_FRACTION * line / length(vec2<f32>(toe, line));
     let encoded_ratio = 1.0 + amount * darkening_fraction;
-    return rgb * pow(encoded_ratio, DISPLAY_BLACKS_ENCODING_GAMMA);
+    return pow(encoded_ratio, DISPLAY_BLACKS_ENCODING_GAMMA);
 }
 
+// Blacks of `amount` (-1 to 1) on display-linear Rec.2020. Channels at or
+// below 0 take the gain at black.
+fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32, legacy_luminance: bool) -> vec3<f32> {
+    if abs(amount) < 1e-7 {
+        return rgb;
+    }
+    // migration: remove in v2.0.0, with LEGACY_LUMINANCE_BLACKS. The
+    // luminance's gain scales every channel, keeping chromaticity.
+    if legacy_luminance {
+        let luminance = dot(rgb, Common::LUMA);
+        if luminance <= 0.0 {
+            return rgb;
+        }
+        return rgb * display_blacks_gain(luminance, amount);
+    }
+
+    let prophoto = Color::REC2020_TO_PROPHOTO * rgb;
+    let range = channel_range(prophoto);
+    let gains = vec2<f32>(
+        display_blacks_gain(max(range.x, 0.0), amount),
+        display_blacks_gain(max(range.y, 0.0), amount),
+    );
+    return Color::PROPHOTO_TO_REC2020 * hue_locked_tone(prophoto, range, range * gains);
+}
+
+// The edit's Blacks, -100 to 100.
 fn apply_display_blacks_toe_value(rgb: vec3<f32>, value: f32) -> vec3<f32> {
-    return apply_display_blacks_toe_amount(rgb, basic_low_tone_control(value));
+    let legacy_luminance =
+        (Common::scene_tone_uniforms.legacy_luminance_tone & Common::LEGACY_LUMINANCE_BLACKS) != 0u;
+    return apply_display_blacks_toe_amount(rgb, basic_low_tone_control(value), legacy_luminance);
 }
 
 // Brightness: the odds of the lightness are multiplied by

@@ -34,6 +34,13 @@
 //!   (`calibraw-ai`, `models/denoise/result_cache.rs`).
 //! - The Lensfun 0.3.4 database Android copied into app data, removed on
 //!   start-up (`calibraw-ui`, `app/lifecycle/startup.rs`).
+//! - Tone controls that render with the luminance response
+//!   (`ToneResponse::Luminance`, `pipeline/basicadj.rs`), set by
+//!   `tone_responses`, and the shader branches that render it, chosen by
+//!   `legacy_luminance_tone` and an adjustment slot's `adjust_3`
+//!   (`calibraw-gpu`: `tonemap.wgsl`, `scene_adjustments.wgsl`,
+//!   `view_transform.wgsl`, `pipeline/gpu/stage_params.rs`,
+//!   `pipeline/gpu/mask_params.rs`).
 //! - Depth Anything V2 Small, the depth model before Distill-Any-Depth
 //!   Small, removed from the model folder on start-up (`calibraw-ui`,
 //!   `app/ai/models.rs`).
@@ -58,6 +65,7 @@ pub mod onnx_runtime_selection;
 pub(crate) mod point_curve_slots;
 mod scene_depth_controls;
 mod scene_depth_layout;
+mod tone_responses;
 pub(crate) mod white_balance_offsets;
 
 pub(crate) use effect_sliders::LegacyEffectSliders;
@@ -67,16 +75,18 @@ use crate::sidecar::EditState;
 use highlight_glow::LegacyHighlightGlows;
 use scene_depth_controls::LegacySceneControls;
 use serde::{Deserialize, Deserializer};
+use tone_responses::LegacyToneResponses;
 
 /// What older layouts kept in a serialized `edits` object besides what the
-/// edit decodes: the Effects-card sliders, Relight's old scene controls and
-/// the Self-illuminating switch of Glows. Read in the same pass as a
-/// document's header.
+/// edit decodes: the Effects-card sliders, Relight's old scene controls, the
+/// Self-illuminating switch of Glows, and which tone controls were saved
+/// without a response. Read in the same pass as a document's header.
 #[derive(Debug, Default)]
 pub(crate) struct LegacyEdits {
     sliders: LegacyEffectSliders,
     scene_controls: LegacySceneControls,
     highlight_glows: LegacyHighlightGlows,
+    tone_responses: LegacyToneResponses,
 }
 
 impl<'de> Deserialize<'de> for LegacyEdits {
@@ -88,6 +98,7 @@ impl<'de> Deserialize<'de> for LegacyEdits {
             sliders: LegacyEffectSliders::deserialize(&edits).map_err(read)?,
             scene_controls: LegacySceneControls::deserialize(&edits).map_err(read)?,
             highlight_glows: LegacyHighlightGlows::deserialize(&edits).map_err(read)?,
+            tone_responses: LegacyToneResponses::deserialize(&edits).map_err(read)?,
         })
     }
 }
@@ -107,10 +118,12 @@ impl LegacyEdits {
 /// Returns whether the edits changed, so the file can be saved again in the
 /// current layout.
 pub(crate) fn migrate_edits(edits: &mut EditState, legacy: LegacyEdits) -> bool {
+    // First, while every mask is where the document saved it.
+    let tone_responses = legacy.tone_responses.migrate(edits);
     // Before the sliders, which then find the highlight Glows they would add.
     let highlight_glows = legacy.highlight_glows.migrate(edits);
     let effects = legacy.sliders.migrate(edits);
     let scene_controls = legacy.scene_controls.migrate(edits);
     let names = component_names::migrate(edits);
-    highlight_glows || effects || scene_controls || names
+    highlight_glows || effects || scene_controls || names || tone_responses
 }

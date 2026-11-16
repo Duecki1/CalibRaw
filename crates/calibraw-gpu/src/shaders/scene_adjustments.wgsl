@@ -292,10 +292,28 @@ fn apply_local_scene_channel_curve(mask_index: u32, curve: u32, value: f32) -> f
     );
 }
 
+// A mask's master curve, applied as `Tonemap::apply_rgb_master_curve`
+// applies the edit's.
+fn apply_local_rgb_master_curve(mask_index: u32, rgb: vec3<f32>) -> vec3<f32> {
+    let prophoto = Color::REC2020_TO_PROPHOTO * rgb;
+    let range = Tonemap::channel_range(prophoto);
+    let toned_range = vec2<f32>(
+        apply_local_scene_channel_curve(mask_index, 0u, range.x),
+        apply_local_scene_channel_curve(mask_index, 0u, range.y),
+    );
+    return Tonemap::limit_scene_curve_rgb_ratio_preserving(
+        Color::PROPHOTO_TO_REC2020 * Tonemap::hue_locked_tone(prophoto, range, toned_range),
+    );
+}
+
 fn apply_local_curves_for_mask(mask_index: u32, input_rgb: vec3<f32>) -> vec3<f32> {
     var adjusted = input_rgb;
     let state = Common::mask_metadata(mask_index);
-    if (state.z & 1u) != 0u {
+    if (state.z & 1u) != 0u && (state.w & Common::LEGACY_LUMINANCE_TONE_CURVE) == 0u {
+        adjusted = apply_local_rgb_master_curve(mask_index, adjusted);
+    } else if (state.z & 1u) != 0u {
+        // migration: remove in v2.0.0, with LEGACY_LUMINANCE_TONE_CURVE: the
+        // curve maps the luminance and scales the colour.
         let luminance = max(dot(adjusted, Common::LUMA), 0.0);
         let encoded_black = local_curve_value(mask_index, 0u, 0.0);
         let black_luminance = Tonemap::scene_curve_decode(encoded_black);
@@ -349,7 +367,13 @@ fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f3
             Common::mask_adjust_1_field(index).x,
             0.0,
         );
-        adjusted = Tonemap::apply_mask_contrast_value(adjusted, Common::mask_adjust_0_field(index).y);
+        // migration: remove in v2.0.0, with LEGACY_LUMINANCE_CONTRAST.
+        let legacy_contrast = (state.w & Common::LEGACY_LUMINANCE_CONTRAST) != 0u;
+        adjusted = Tonemap::apply_mask_contrast_value(
+            adjusted,
+            Common::mask_adjust_0_field(index).y,
+            legacy_contrast,
+        );
         adjusted = BasicAdjustments::apply_temperature_tint_values(
             adjusted,
             Common::mask_adjust_1_field(index).z,

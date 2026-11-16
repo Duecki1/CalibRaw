@@ -2,6 +2,7 @@
   "edits": {
     "exposure": {
       "blacks": -20.0,
+      "blacks_response": "luminance",
       "contrast": 25.0,
       "exposure": 0.7,
       "highlights": -60.0,

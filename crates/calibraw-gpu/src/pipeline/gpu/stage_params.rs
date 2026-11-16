@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::pipeline::effect_lanes::glow;
+use crate::pipeline::ToneResponse;
 
 /// The camera uniforms, and the highlight model `highlight_options` describes: the pipeline
 /// uploads the model with the uniforms.
@@ -304,7 +305,11 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
         exposure: exposure.exposure,
         saturation: exposure.saturation,
         vibrance: exposure.vibrance,
-        _padding: 0,
+        legacy_luminance_tone: legacy_luminance_bits(
+            exposure.tone_curve_response,
+            ToneResponse::Rgb,
+            exposure.blacks_response,
+        ),
         basic_tone: [
             exposure.highlights,
             exposure.shadows,

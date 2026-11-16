@@ -106,6 +106,35 @@ impl Default for PointCurve {
     }
 }
 
+/// How a tone control (the master tone curve, Contrast of a mask, Blacks)
+/// treats a pixel's colour.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToneResponse {
+    /// As Lightroom and the DNG SDK (`RefBaselineRGBTone`) apply a tone
+    /// curve: the largest and smallest channel of linear ProPhoto RGB go
+    /// through the control's tone function and the middle channel keeps its
+    /// place between them, which locks the RGB hue. Contrast raises
+    /// saturation with it.
+    #[default]
+    Rgb,
+    /// The control maps the luminance and scales RGB by the same ratio,
+    /// keeping chromaticity: contrast leaves saturation as it was. Edits saved
+    /// before [`Self::Rgb`] render with it (`migrations/tone_responses.rs`),
+    /// which is never chosen for a new edit.
+    ///
+    /// migration: remove in v2.0.0, with the shader branches that read it.
+    Luminance,
+}
+
+impl ToneResponse {
+    /// Whether the control renders in [`Self::Luminance`], for the shader's
+    /// legacy flags.
+    pub const fn is_luminance(self) -> bool {
+        matches!(self, Self::Luminance)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ColorGradeWheel {
     pub hue: f32,
@@ -283,6 +312,11 @@ pub struct ExposureParams {
     #[serde(default, skip_serializing_if = "super::geometry::is_zero")]
     pub brightness: f32,
     pub tone_curve: PointCurve,
+    /// How [`Self::tone_curve`] treats colour; the red, green and blue
+    /// curves are per channel either way. Written in every file: one without
+    /// it was saved before [`ToneResponse::Rgb`] (`migrations/tone_responses.rs`).
+    #[serde(default)]
+    pub tone_curve_response: ToneResponse,
     pub tone_curve_red: PointCurve,
     pub tone_curve_green: PointCurve,
     pub tone_curve_blue: PointCurve,
@@ -322,6 +356,10 @@ pub struct ExposureParams {
     pub shadows: f32,
     pub whites: f32,
     pub blacks: f32,
+    /// How [`Self::blacks`] treats colour, written like
+    /// [`Self::tone_curve_response`].
+    #[serde(default)]
+    pub blacks_response: ToneResponse,
     pub texture: f32,
     pub clarity: f32,
     pub dehaze: f32,
@@ -409,6 +447,7 @@ impl Default for ExposureParams {
             vibrance: 0.0,
             brightness: 0.0,
             tone_curve: PointCurve::linear(),
+            tone_curve_response: ToneResponse::Rgb,
             tone_curve_red: PointCurve::linear(),
             tone_curve_green: PointCurve::linear(),
             tone_curve_blue: PointCurve::linear(),
@@ -430,6 +469,7 @@ impl Default for ExposureParams {
             shadows: 0.0,
             whites: 0.0,
             blacks: 0.0,
+            blacks_response: ToneResponse::Rgb,
             texture: 0.0,
             clarity: 0.0,
             dehaze: 0.0,

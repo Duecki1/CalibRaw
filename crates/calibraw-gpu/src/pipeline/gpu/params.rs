@@ -104,6 +104,34 @@ pub(super) const FILM_MODE_POSITIVE: u32 = 0;
 pub(super) const FILM_MODE_COLOR: u32 = 1;
 pub(super) const FILM_MODE_MONOCHROME: u32 = 2;
 
+/// Bits of the tone controls that render with [`ToneResponse::Luminance`]:
+/// in [`SceneToneUniforms::legacy_luminance_tone`] for the edit's, and in an
+/// adjustment slot's `metadata[3]`, above its view flags and below
+/// `MASK_EFFECT_ID_SHIFT`, for the mask's (`LEGACY_LUMINANCE_*` in
+/// common.wgsl). Contrast has the bit only in a mask: the edit's Contrast
+/// shapes the sigmoid, which is per channel.
+///
+/// migration: remove in v2.0.0, with [`ToneResponse::Luminance`].
+///
+/// [`ToneResponse::Luminance`]: crate::pipeline::ToneResponse::Luminance
+pub(super) const LEGACY_LUMINANCE_TONE_CURVE: u32 = 1 << 3;
+pub(super) const LEGACY_LUMINANCE_CONTRAST: u32 = 1 << 4;
+pub(super) const LEGACY_LUMINANCE_BLACKS: u32 = 1 << 5;
+
+/// The `LEGACY_LUMINANCE_*` bits of the controls set to
+/// [`ToneResponse::Luminance`](crate::pipeline::ToneResponse::Luminance).
+///
+/// migration: remove in v2.0.0, with the bits.
+pub(super) fn legacy_luminance_bits(
+    tone_curve: crate::pipeline::ToneResponse,
+    contrast: crate::pipeline::ToneResponse,
+    blacks: crate::pipeline::ToneResponse,
+) -> u32 {
+    (u32::from(tone_curve.is_luminance()) * LEGACY_LUMINANCE_TONE_CURVE)
+        | (u32::from(contrast.is_luminance()) * LEGACY_LUMINANCE_CONTRAST)
+        | (u32::from(blacks.is_luminance()) * LEGACY_LUMINANCE_BLACKS)
+}
+
 /// How `apply_view_node` maps graded RGB to display-linear RGB
 /// (`VIEW_TRANSFORM_*` in common.wgsl).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,8 +217,11 @@ pub(super) struct SceneToneUniforms {
     pub(super) exposure: f32,
     pub(super) saturation: f32,
     pub(super) vibrance: f32,
-    /// Keeps the next vector aligned (the shader's `_padding`).
-    pub(super) _padding: u32,
+    /// The edit's tone controls that render with the luminance response:
+    /// [`LEGACY_LUMINANCE_TONE_CURVE`] and [`LEGACY_LUMINANCE_BLACKS`].
+    ///
+    /// migration: remove in v2.0.0, with the bits.
+    pub(super) legacy_luminance_tone: u32,
     pub(super) basic_tone: [f32; 4],
     /// The edit's sigmoid: white target, black target, log2 paper exposure, film fog.
     pub(super) sigmoid_curve: [f32; 4],

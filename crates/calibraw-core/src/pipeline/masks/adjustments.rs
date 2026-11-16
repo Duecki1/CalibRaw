@@ -6,10 +6,21 @@ use super::*;
 pub struct LocalAdjustments {
     pub exposure: f32,
     pub contrast: f32,
+    /// How [`Self::contrast`] treats colour. Written in every file: masks
+    /// without it were saved before [`ToneResponse::Rgb`]
+    /// (`migrations/tone_responses.rs`).
+    ///
+    /// [`ToneResponse::Rgb`]: crate::pipeline::ToneResponse::Rgb
+    #[serde(default)]
+    pub contrast_response: crate::pipeline::ToneResponse,
     pub highlights: f32,
     pub shadows: f32,
     pub whites: f32,
     pub blacks: f32,
+    /// How [`Self::blacks`] treats colour, written like
+    /// [`Self::contrast_response`].
+    #[serde(default)]
+    pub blacks_response: crate::pipeline::ToneResponse,
     pub temperature: f32,
     pub tint: f32,
     #[serde(default)]
@@ -23,6 +34,10 @@ pub struct LocalAdjustments {
     #[serde(default, skip_serializing_if = "crate::pipeline::geometry::is_zero")]
     pub brightness: f32,
     pub tone_curve: crate::pipeline::PointCurve,
+    /// How [`Self::tone_curve`] treats colour, written like
+    /// [`Self::contrast_response`].
+    #[serde(default)]
+    pub tone_curve_response: crate::pipeline::ToneResponse,
     pub tone_curve_red: crate::pipeline::PointCurve,
     pub tone_curve_green: crate::pipeline::PointCurve,
     pub tone_curve_blue: crate::pipeline::PointCurve,
@@ -43,10 +58,12 @@ impl Default for LocalAdjustments {
         Self {
             exposure: adjustment::EXPOSURE.default,
             contrast: adjustment::CONTRAST.default,
+            contrast_response: crate::pipeline::ToneResponse::Rgb,
             highlights: adjustment::HIGHLIGHTS.default,
             shadows: adjustment::SHADOWS.default,
             whites: adjustment::WHITES.default,
             blacks: adjustment::BLACKS.default,
+            blacks_response: crate::pipeline::ToneResponse::Rgb,
             temperature: adjustment::TEMPERATURE.default,
             tint: adjustment::TINT.default,
             hue: adjustment::HUE.default,
@@ -56,6 +73,7 @@ impl Default for LocalAdjustments {
             dehaze: adjustment::DEHAZE.default,
             brightness: adjustment::BRIGHTNESS.default,
             tone_curve: crate::pipeline::PointCurve::linear(),
+            tone_curve_response: crate::pipeline::ToneResponse::Rgb,
             tone_curve_red: crate::pipeline::PointCurve::linear(),
             tone_curve_green: crate::pipeline::PointCurve::linear(),
             tone_curve_blue: crate::pipeline::PointCurve::linear(),
