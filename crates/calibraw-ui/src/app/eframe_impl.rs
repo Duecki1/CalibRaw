@@ -524,6 +524,7 @@ impl eframe::App for CalibRawApp {
         self.persist_performance_settings();
         self.flush_sidecar_on_exit();
         self.finish_library_review_saves_on_exit();
+        calibraw_core::diagnostics::mark_clean_exit();
     }
 }
 

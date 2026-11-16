@@ -66,7 +66,17 @@ fn record_export_worker_started(format: ExportFormat, job: &TiledExportJob) {
             job.tile_spec.core_edge,
             job.tile_spec.halo,
         )),
-        ExportFormat::Tiff | ExportFormat::JpegXl => {}
+        ExportFormat::Tiff | ExportFormat::JpegXl => {
+            calibraw_core::diagnostics::record(format!(
+                "{} export worker started: source={}x{} cfa={:?} requested_tile_core={} halo={}",
+                format.label(),
+                job.raw.width,
+                job.raw.height,
+                job.raw.cfa_kind,
+                job.tile_spec.core_edge,
+                job.tile_spec.halo,
+            ));
+        }
     }
 }
 
@@ -74,7 +84,7 @@ fn record_export_worker_finished(format: ExportFormat, started: Instant, result:
     let format_name = match format {
         ExportFormat::Png => "PNG",
         ExportFormat::Jpeg => "JPEG",
-        ExportFormat::Tiff | ExportFormat::JpegXl => return,
+        ExportFormat::Tiff | ExportFormat::JpegXl => format.label(),
     };
     match result {
         Ok(_) => calibraw_core::diagnostics::record(format!(

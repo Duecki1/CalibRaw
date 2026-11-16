@@ -464,6 +464,16 @@ impl CalibRawApp {
     /// The editor on `platform`, started from its saved settings.
     pub(crate) fn new(cc: &eframe::CreationContext<'_>, platform: Arc<dyn Platform>) -> Self {
         let caps = platform.caps();
+        // First, so the device and GPU details that follow reach the file too.
+        if let Some(directory) = platform
+            .performance_settings_path()
+            .ok()
+            .flatten()
+            .as_deref()
+            .and_then(std::path::Path::parent)
+        {
+            calibraw_core::diagnostics::persist_to(&directory.join("diagnostics"));
+        }
         let mut editor_gpu = None;
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
@@ -596,6 +606,7 @@ impl CalibRawApp {
         if let Some(activity) = interrupted_gpu_ai {
             app.handle_interrupted_gpu_ai(&activity);
         }
+        app.report_previous_session_end();
         app
     }
 }

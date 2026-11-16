@@ -48,6 +48,8 @@ pub fn install_gpu_device_lost_handler(device: &wgpu::Device) {
                 "GPU work in flight when the device was lost: {work}"
             ));
         }
+        // The app restarts once it notices; make sure this reaches the disk first.
+        calibraw_core::diagnostics::flush();
         *DEVICE_LOST
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(message);

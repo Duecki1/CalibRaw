@@ -190,6 +190,7 @@ where
     tile_pipeline.begin_export_tone_analysis(queue, device);
     for (index, tile) in plan.tiles.iter().copied().enumerate() {
         ensure_export_not_cancelled(cancellation)?;
+        trace_export_tile("tone prepass", index, &plan, tile);
         if index != 0 {
             clock.time("tile extraction", || {
                 extract_padded_tile_into(raw, tile, &mut tile_scratch);
@@ -296,6 +297,7 @@ where
         let defocus_started = Instant::now();
         for (index, tile) in plan.tiles.iter().copied().enumerate() {
             ensure_export_not_cancelled(cancellation)?;
+            trace_export_tile("Lens Blur map", index, &plan, tile);
             let params = tile_inputs
                 .upload(tile, index, &mut tile_scratch)?
                 .with_global_tone_histogram_bounds(
@@ -330,6 +332,7 @@ where
         let glow_started = Instant::now();
         for (index, tile) in plan.tiles.iter().copied().enumerate() {
             ensure_export_not_cancelled(cancellation)?;
+            trace_export_tile("Glow map", index, &plan, tile);
             let params = tile_inputs
                 .upload(tile, index, &mut tile_scratch)?
                 .with_global_tone_histogram_bounds(
@@ -381,6 +384,7 @@ where
         {
             ensure_export_not_cancelled(cancellation)?;
             let global_index = band_start + absolute_index;
+            trace_export_tile("final", global_index, &plan, tile);
             let params = tile_inputs.upload(tile, global_index, &mut tile_scratch)?;
             tile_inputs.load_scene(tile, global_index, &params, raw_stage_store.as_ref())?;
             clock.time("final passes", || {
@@ -604,6 +608,24 @@ impl ExportTileInputs<'_> {
                 .with_context(|| format!("apply Remove to export tile {}", index + 1)),
         }
     }
+}
+
+/// Notes in the diagnostics file that `stage` starts tile `index`, with the
+/// padded size the GPU renders it at. Written for every tile (`trace`, not
+/// `record`), so after a crash the last one shows what was running.
+fn trace_export_tile(
+    stage: &str,
+    index: usize,
+    plan: &TilePlan,
+    tile: crate::pipeline::ExportTile,
+) {
+    calibraw_core::diagnostics::trace(format!(
+        "Export step: {stage} tile {}/{} (padded {}x{} px)",
+        index + 1,
+        plan.tile_count(),
+        tile.padded_width,
+        tile.padded_height
+    ));
 }
 
 /// Stores the RAW-stage texels of tile `index`, which `readback` reads.

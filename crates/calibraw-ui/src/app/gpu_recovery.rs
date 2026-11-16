@@ -39,6 +39,28 @@ impl CalibRawApp {
         );
     }
 
+    /// Tells the user how the previous run ended when it ended abnormally for a
+    /// reason the log shows: a GPU reset nobody was told about, a panic, or an
+    /// export cut short. The full log is in Settings.
+    pub(in crate::app) fn report_previous_session_end(&mut self) {
+        let Some(previous) = calibraw_core::diagnostics::previous_session() else {
+            return;
+        };
+        if !previous.is_noteworthy() {
+            return;
+        }
+        let Some(cause) = previous.cause() else {
+            return;
+        };
+        self.report_error(
+            ErrorKind::PreviousSession,
+            tr_fmt(
+                "CalibRaw closed unexpectedly last time. {cause}. The events leading up to it are in Settings under Diagnostics; please include them when you report this.",
+                &[("cause", &cause)],
+            ),
+        );
+    }
+
     /// Saves and restarts after the GPU device was lost, usually a driver
     /// reset. Nothing can be drawn on a lost device, so the notice is a native
     /// dialog. Where the platform cannot restart CalibRaw, or this run already
@@ -83,6 +105,7 @@ impl CalibRawApp {
         // This loss has been reported; the next start must not find the record
         // of a job that is still running and report it again.
         calibraw_ai::end_gpu_job_records();
+        calibraw_core::diagnostics::mark_reported();
         if let Some(restart) = restart {
             if let Err(error) = restart() {
                 log::error!("could not restart CalibRaw after the GPU was lost: {error}");
