@@ -271,7 +271,10 @@ struct DragLog {
     edits: u32,
     /// The reduced preview followed some of it.
     reduced_used: bool,
-    /// How many batches of each kind had finished when it started.
+    /// The sharp preview's batch kind when it started. Zooming during the
+    /// drag does not change it, so both counts below are of the same kind.
+    sharp_batch: Batch,
+    /// How many reduced and `sharp_batch` batches had finished when it started.
     batches_before: [u64; 2],
 }
 
@@ -395,14 +398,21 @@ impl CalibRawApp {
             && !self.preview.clipping.shadows
             && !self.preview.clipping.highlights
             && !self.fitted_mask_capacity_stale()
-            // A mask being shaped has its own path; the reduced graph's masks
-            // are uploaded as a whole when a drag starts.
-            && self.masks.interaction_dirty_layer.is_none()
+            && (!self.preview.zoomed_in() || self.sharp_crop_covers_view())
+    }
+
+    /// Whether the masks let the reduced preview follow a drag now. A mask
+    /// being shaped has its own path, and the reduced graph's masks are
+    /// uploaded as a whole when a drag starts. Unlike `interactive_usable`,
+    /// this does not drop the graph: a mask edit lasts a frame or a drag,
+    /// and the edits made meanwhile leave the graph unsynced
+    /// (`InteractiveState::enter`), so its next drag renders everything.
+    fn interactive_masks_settled(&self) -> bool {
+        self.masks.interaction_dirty_layer.is_none()
             && !self.masks.dirty_layers.iter().any(|dirty| *dirty)
+            // The crop's own masks, which stay marked while it is absent.
             && (!self.preview.zoomed_in()
-                // The crop's own masks, which stay marked while it is absent.
-                || (!self.masks.detail_dirty_layers.iter().any(|dirty| *dirty)
-                    && self.sharp_crop_covers_view()))
+                || !self.masks.detail_dirty_layers.iter().any(|dirty| *dirty))
     }
 
     /// Whether the sharp crop is there to be reduced: it covers the part of
@@ -508,7 +518,10 @@ impl CalibRawApp {
         let keep_or_build = !replacing_crop || self.preview.interactive.graph.is_some();
         self.maintain_interactive_graph(frame, usable && slow && keep_or_build);
 
-        let eligible = usable && slow && self.preview.interactive.graph.is_some();
+        let eligible = usable
+            && slow
+            && self.interactive_masks_settled()
+            && self.preview.interactive.graph.is_some();
         // The GPU has finished what it was given, too, so the sharp picture
         // that replaces the reduced one is on the screen.
         let sharp_current = self.sharp_preview_rendered()
@@ -546,20 +559,27 @@ impl CalibRawApp {
     /// One line per control drag for the diagnostics, with the rates and
     /// timings that show what the reduced preview gains (or would).
     fn log_drag(&mut self, next: DragPhase, edit: bool, dragging_control: bool, now: Instant) {
-        let zoomed = self.preview.zoomed_in();
+        let zoomed_now = self.preview.zoomed_in();
         let gate = &self.preview.dispatch_gate;
         let state = &mut self.preview.interactive;
-        let sharp_batch = if zoomed { Batch::Detail } else { Batch::Fitted };
-        let batches = [
-            gate.completed(Batch::Interactive),
-            gate.completed(sharp_batch),
-        ];
+        let completed = |sharp_batch| {
+            [
+                gate.completed(Batch::Interactive),
+                gate.completed(sharp_batch),
+            ]
+        };
         if state.drag.is_none() && dragging_control && edit {
+            let sharp_batch = if zoomed_now {
+                Batch::Detail
+            } else {
+                Batch::Fitted
+            };
             state.drag = Some(DragLog {
                 started: now,
                 edits: 0,
                 reduced_used: false,
-                batches_before: batches,
+                sharp_batch,
+                batches_before: completed(sharp_batch),
             });
         }
         let Some(drag) = state.drag.as_mut() else {
@@ -570,9 +590,13 @@ impl CalibRawApp {
         if dragging_control {
             return;
         }
+        let sharp_batch = drag.sharp_batch;
+        let zoomed = sharp_batch == Batch::Detail;
+        let batches = completed(sharp_batch);
         let seconds = now.saturating_duration_since(drag.started).as_secs_f64();
-        let reduced = batches[0] - drag.batches_before[0];
-        let sharp = batches[1] - drag.batches_before[1];
+        // The totals only grow, and both reads are of the same kinds.
+        let reduced = batches[0].saturating_sub(drag.batches_before[0]);
+        let sharp = batches[1].saturating_sub(drag.batches_before[1]);
         calibraw_core::diagnostics::record(format!(
             "Control drag{}: {} edits over {seconds:.2}s, reduced preview {} ({:?} mode, GPU judged {}), {reduced} reduced and {sharp} {} GPU batches ({:.1} a second); median batch reduced {:?} ms, {} {:?} ms",
             if zoomed { " (zoomed in)" } else { "" },
