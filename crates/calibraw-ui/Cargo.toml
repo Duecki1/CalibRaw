@@ -72,6 +72,11 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "=5.16.0"
+# The versions winit uses, for the touchpad pinch it does not forward.
+raw-window-handle.workspace = true
+wayland-backend = { version = "0.3.15", features = ["client_system"] }
+wayland-client = "0.31.14"
+wayland-protocols = { version = "0.32.13", features = ["client", "unstable"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 calibraw-ffi.workspace = true

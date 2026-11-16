@@ -204,6 +204,9 @@ pub(crate) trait Platform: Send + Sync {
     fn attach_ui(&self, _request_repaint: Box<dyn Fn() + Send + Sync>) {}
     /// Disconnects the UI before it goes away; later callbacks wake nothing.
     fn detach_ui(&self) {}
+    /// Moves the input the window backend does not forward (the touchpad
+    /// pinch on Wayland), received since the last frame, into `events`.
+    fn take_input_events(&self, _events: &mut Vec<eframe::egui::Event>) {}
     /// Whether the app handles the system back gesture, or leaves it to the system.
     fn set_back_navigation_active(&self, _active: bool) {}
     fn take_back_request(&self) -> bool {

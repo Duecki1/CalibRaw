@@ -512,6 +512,10 @@ impl eframe::App for CalibRawApp {
         self.platform.set_back_navigation_active(handles_back);
     }
 
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.platform.take_input_events(&mut raw_input.events);
+    }
+
     fn on_exit(&mut self) {
         calibraw_ai::set_warm_ai_features(calibraw_ai::AiFeatureSet::EMPTY);
         calibraw_ai::end_gpu_job_records();

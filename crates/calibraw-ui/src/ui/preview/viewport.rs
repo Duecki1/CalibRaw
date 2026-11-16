@@ -178,6 +178,18 @@ impl PreviewViewport {
             zoomed_image_rect(self.outer_rect, self.base_size, self.zoom, self.center);
     }
 
+    /// Move the image by `delta` screen points, as a drag does.
+    fn pan_by(&mut self, delta: egui::Vec2) {
+        if delta == egui::Vec2::ZERO {
+            return;
+        }
+        let image_size = self.base_size * self.zoom;
+        self.center[0] -= delta.x / image_size.x.max(1.0);
+        self.center[1] -= delta.y / image_size.y.max(1.0);
+        clamp_preview_center(&mut self.center, self.outer_rect.size(), image_size);
+        self.moved = true;
+    }
+
     /// Zoom by `zoom_delta` about `previous`, moving that point to `current`.
     fn transform_about(&mut self, previous: Pos2, current: Pos2, zoom_delta: f32) -> bool {
         transform_preview_about_screen_points(
@@ -523,7 +535,7 @@ impl Preview {
     ) -> Vec<PreviewViewportAction> {
         let mut actions = Vec::new();
         if !viewport.touch_navigation && viewport.response.hovered() {
-            Self::zoom_at_pointer(ui, viewport);
+            Self::scroll_at_pointer(ui, viewport);
         }
         if !viewport.touch_navigation {
             Self::zoom_with_keyboard(ui, viewport, shortcuts);
@@ -568,9 +580,18 @@ impl Preview {
         actions
     }
 
-    fn zoom_at_pointer(ui: &Ui, viewport: &mut PreviewViewport) {
-        let (scroll_y, pinch_zoom) =
+    /// A mouse wheel zooms at the pointer and a touchpad's two-finger scroll
+    /// pans; a pinch or the zoom modifier with either zooms at the pointer.
+    fn scroll_at_pointer(ui: &Ui, viewport: &mut PreviewViewport) {
+        let scroll = super::scroll_source::frame_scroll(ui.ctx());
+        let (smooth_scroll_y, pinch_zoom) =
             ui.input(|input| (input.smooth_scroll_delta.y, input.zoom_delta()));
+        // egui's smoothed delta also carries the touchpad's scroll.
+        let scroll_y = if scroll.source == Some(super::scroll_source::ScrollSource::Touchpad) {
+            0.0
+        } else {
+            smooth_scroll_y
+        };
         if scroll_y.abs() > 0.01 || (pinch_zoom - 1.0).abs() > f32::EPSILON {
             let pointer = ui
                 .input(|input| input.pointer.hover_pos())
@@ -578,6 +599,7 @@ impl Preview {
             viewport.moved |=
                 viewport.transform_about(pointer, pointer, (scroll_y * 0.0018).exp() * pinch_zoom);
         }
+        viewport.pan_by(scroll.touchpad_pan);
     }
 
     /// The zoom shortcuts (Ctrl/Cmd +/-, 1 and 0 by default) step the zoom,
@@ -624,12 +646,7 @@ impl Preview {
         let pan_with_space =
             viewport.space_pan && response.dragged_by(egui::PointerButton::Primary);
         if pan_with_primary || pan_with_middle || pan_with_space {
-            let delta = ui.input(|input| input.pointer.delta());
-            let image_size = viewport.base_size * viewport.zoom;
-            viewport.center[0] -= delta.x / image_size.x.max(1.0);
-            viewport.center[1] -= delta.y / image_size.y.max(1.0);
-            clamp_preview_center(&mut viewport.center, viewport.outer_rect.size(), image_size);
-            viewport.moved |= delta.length_sq() > 0.0;
+            viewport.pan_by(ui.input(|input| input.pointer.delta()));
         }
     }
 

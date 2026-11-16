@@ -88,6 +88,7 @@ mod canvas;
 mod handles;
 mod interaction;
 mod overlays;
+mod scroll_source;
 mod tools;
 mod transform;
 mod viewport;

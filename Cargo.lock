@@ -757,6 +757,9 @@ dependencies = [
  "tempfile",
  "trash",
  "ureq",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "windows-sys 0.61.2",
  "zbus",
 ]

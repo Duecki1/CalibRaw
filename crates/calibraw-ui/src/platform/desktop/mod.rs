@@ -8,6 +8,8 @@ mod macos_menu;
 #[cfg(target_os = "windows")]
 mod nvidia_vrr;
 mod portal;
+#[cfg(target_os = "linux")]
+mod wayland_pinch;
 
 pub(crate) use entry::main;
 
@@ -20,11 +22,21 @@ use std::sync::Arc;
 /// that fails again right away does not restart CalibRaw in a loop.
 const RESTARTED_AFTER_GPU_LOSS: &str = "CALIBRAW_RESTARTED_AFTER_GPU_LOSS";
 
-pub(crate) struct DesktopPlatform;
+pub(crate) struct DesktopPlatform {
+    /// The touchpad pinch winit does not forward on Wayland; `None` once
+    /// the UI detaches, and on X11.
+    #[cfg(target_os = "linux")]
+    wayland_pinch: std::sync::Mutex<Option<wayland_pinch::WaylandPinch>>,
+}
 
 impl DesktopPlatform {
-    pub(crate) fn new() -> Arc<Self> {
-        Arc::new(Self)
+    pub(crate) fn new(cc: &eframe::CreationContext<'_>) -> Arc<Self> {
+        #[cfg(not(target_os = "linux"))]
+        let _ = cc;
+        Arc::new(Self {
+            #[cfg(target_os = "linux")]
+            wayland_pinch: std::sync::Mutex::new(wayland_pinch::WaylandPinch::start(cc)),
+        })
     }
 }
 
@@ -38,9 +50,28 @@ impl Platform for DesktopPlatform {
         macos_menu::set_wake_ui(Some(request_repaint));
     }
 
-    #[cfg(target_os = "macos")]
     fn detach_ui(&self) {
+        #[cfg(target_os = "macos")]
         macos_menu::set_wake_ui(None);
+        #[cfg(target_os = "linux")]
+        drop(
+            self.wayland_pinch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take(),
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn take_input_events(&self, events: &mut Vec<eframe::egui::Event>) {
+        if let Some(pinch) = self
+            .wayland_pinch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            pinch.take_events(events);
+        }
     }
 
     #[cfg(target_os = "macos")]

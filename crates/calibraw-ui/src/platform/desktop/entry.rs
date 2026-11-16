@@ -117,7 +117,7 @@ fn run_desktop() -> eframe::Result {
             // winit installed its default menu bar when the event loop launched.
             #[cfg(target_os = "macos")]
             super::macos_menu::install();
-            Ok(crate::app::create_app(cc, super::DesktopPlatform::new()))
+            Ok(crate::app::create_app(cc, super::DesktopPlatform::new(cc)))
         }),
     )
 }
