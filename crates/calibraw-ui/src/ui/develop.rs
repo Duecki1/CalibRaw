@@ -17,6 +17,9 @@ const FILMSTRIP_GAP: f32 = 8.0;
 const FILMSTRIP_PRELOAD_POINTS: f32 = 360.0;
 const FILMSTRIP_HOVER_OVERLAY_ALPHA: u8 = 156;
 const FILMSTRIP_HOVER_ANIMATION_SECONDS: f32 = 0.18;
+const FILMSTRIP_HOVER_TEXT_PADDING: f32 = 8.0;
+const FILMSTRIP_HOVER_FONT_MAX: f32 = 14.5;
+const FILMSTRIP_HOVER_FONT_MIN: f32 = 8.0;
 const SPLIT_GAP: f32 = 8.0;
 const SPLIT_MIN_PANE_WIDTH: f32 = 160.0;
 const SPLIT_HANDLE_HIT_SLOP: f32 = 5.0;
@@ -711,25 +714,58 @@ fn filmstrip_name_hover_overlay(ui: &Ui, response: &egui::Response, rect: egui::
             (f32::from(FILMSTRIP_HOVER_OVERLAY_ALPHA) * hover_progress).round() as u8,
         ),
     );
-    let font_size = 14.5;
-    let text_width = (rect.width() - 24.0).max(1.0);
-    let maximum_chars = (text_width / (font_size * 0.55)).floor().max(6.0) as usize;
-    let title = elide_middle(name, maximum_chars);
-    let slide = egui::vec2(0.0, 7.0 * (1.0 - hover_progress));
-    let text_center = rect.center() + slide;
     let text_color = Color32::from_white_alpha((255.0 * hover_progress).round() as u8);
-    let font = FontId::proportional(font_size);
-    if rect.height() > rect.width() {
-        let galley = painter.layout_no_wrap(title, font, text_color);
-        let text_pos = Align2::CENTER_CENTER
-            .anchor_size(text_center, galley.size())
-            .min;
-        painter.add(
-            egui::epaint::TextShape::new(text_pos, galley, text_color)
-                .with_angle_and_anchor(std::f32::consts::FRAC_PI_2, Align2::CENTER_CENTER),
-        );
+    // Portrait cards run the name along their long edge, rotated a quarter turn.
+    let portrait = rect.height() > rect.width();
+    let inner = rect
+        .shrink(FILMSTRIP_HOVER_TEXT_PADDING)
+        .size()
+        .max(egui::Vec2::splat(1.0));
+    let (line_width, block_height) = if portrait {
+        (inner.y, inner.x)
     } else {
-        painter.text(text_center, Align2::CENTER_CENTER, title, font, text_color);
+        (inner.x, inner.y)
+    };
+    let galley = fitted_name_galley(ui, name, line_width, block_height, text_color);
+    let slide = egui::vec2(0.0, 7.0 * (1.0 - hover_progress));
+    // Centred rows put the galley rect around its origin, so place by the rect centre.
+    let text_pos = rect.center() + slide - galley.rect.center().to_vec2();
+    let shape = egui::epaint::TextShape::new(text_pos, galley, text_color);
+    painter.add(if portrait {
+        shape.with_angle_and_anchor(std::f32::consts::FRAC_PI_2, Align2::CENTER_CENTER)
+    } else {
+        shape
+    });
+}
+
+/// Lays out the whole file name wrapped to `line_width`, stepping the font down
+/// until the block fits within `block_height` points. At the smallest size the
+/// name is still shown in full; the card painter clips anything left over.
+fn fitted_name_galley(
+    ui: &Ui,
+    name: &str,
+    line_width: f32,
+    block_height: f32,
+    color: Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let layout = |font_size: f32| {
+        let mut job = egui::text::LayoutJob::simple(
+            name.to_owned(),
+            FontId::proportional(font_size),
+            color,
+            line_width,
+        );
+        job.halign = egui::Align::Center;
+        job.wrap.break_anywhere = true;
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    };
+    let mut font_size = FILMSTRIP_HOVER_FONT_MAX;
+    loop {
+        let galley = layout(font_size);
+        if galley.size().y <= block_height || font_size <= FILMSTRIP_HOVER_FONT_MIN {
+            return galley;
+        }
+        font_size = (font_size - 0.5).max(FILMSTRIP_HOVER_FONT_MIN);
     }
 }
 
@@ -749,18 +785,6 @@ fn cover_uv(source_size: Option<[u32; 2]>, target_size: egui::Vec2) -> egui::Rec
         let inset = (1.0 - visible) * 0.5;
         egui::Rect::from_min_max(egui::pos2(0.0, inset), egui::pos2(1.0, 1.0 - inset))
     }
-}
-
-fn elide_middle(value: &str, maximum_chars: usize) -> String {
-    let count = value.chars().count();
-    if count <= maximum_chars || maximum_chars < 5 {
-        return value.to_owned();
-    }
-    let left = (maximum_chars - 1) / 2;
-    let right = maximum_chars - 1 - left;
-    let prefix = value.chars().take(left).collect::<String>();
-    let suffix = value.chars().skip(count - right).collect::<String>();
-    format!("{prefix}…{suffix}")
 }
 
 fn fitted_size(available: egui::Vec2, source: egui::Vec2) -> egui::Vec2 {
