@@ -112,10 +112,11 @@ impl Default for PointCurve {
 #[serde(rename_all = "snake_case")]
 pub enum ToneResponse {
     /// As Lightroom and the DNG SDK (`RefBaselineRGBTone`) apply a tone
-    /// curve: the largest and smallest channel of linear ProPhoto RGB go
-    /// through the control's tone function and the middle channel keeps its
-    /// place between them, which locks the RGB hue. Contrast raises
-    /// saturation with it.
+    /// curve: the largest and smallest channel go through the control's tone
+    /// function and the middle channel keeps its place between them, which
+    /// locks the RGB hue. Contrast raises saturation with it. Lightroom works
+    /// in linear ProPhoto RGB; this works in the working linear Rec.2020, as
+    /// the channel curves and the global Contrast do.
     #[default]
     Rgb,
     /// The control maps the luminance and scales RGB by the same ratio,

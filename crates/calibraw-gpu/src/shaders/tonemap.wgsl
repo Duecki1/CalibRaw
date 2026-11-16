@@ -4,7 +4,6 @@
 // Copyright (C) 2026 CalibRaw contributors (WGSL adaptation).
 
 #import calibraw::common as Common
-#import calibraw::color as Color
 #import calibraw::tone_common as ToneCommon
 
 @group(0) @binding(16) var<storage, read> tone_stats: ToneCommon::ToneStats;
@@ -238,7 +237,7 @@ fn mask_contrast_gain(luminance: f32, amount: f32) -> f32 {
 }
 
 // A mask's Contrast, -100 to 100, on scene-linear Rec.2020: the gain goes to
-// the largest and the smallest ProPhoto channel (`hue_locked_tone`), so
+// the largest and the smallest channel (`hue_locked_tone`), so
 // contrast moves saturation with it as the global Contrast's per-channel
 // sigmoid does. Channels at or below 0 take the gain at 1e-6.
 fn apply_mask_contrast_value(rgb: vec3<f32>, value: f32, legacy_luminance: bool) -> vec3<f32> {
@@ -252,13 +251,12 @@ fn apply_mask_contrast_value(rgb: vec3<f32>, value: f32, legacy_luminance: bool)
         return rgb * mask_contrast_gain(Common::safe_luma(rgb), amount);
     }
 
-    let prophoto = Color::REC2020_TO_PROPHOTO * rgb;
-    let range = channel_range(prophoto);
+    let range = channel_range(rgb);
     let gains = vec2<f32>(
         mask_contrast_gain(max(range.x, 1e-6), amount),
         mask_contrast_gain(max(range.y, 1e-6), amount),
     );
-    return Color::PROPHOTO_TO_REC2020 * hue_locked_tone(prophoto, range, range * gains);
+    return hue_locked_tone(rgb, range, range * gains);
 }
 
 // `curve` selects master (0), red (1), green (2) or blue (3); callers pass
@@ -551,39 +549,41 @@ fn channel_range(rgb: vec3<f32>) -> vec2<f32> {
 }
 
 // Lightroom's RGB tone, as the DNG SDK's RefBaselineRGBTone
-// (dng_reference.cpp) applies a tone curve. `prophoto` is linear ProPhoto RGB
-// and `range` its smallest and largest channel (`channel_range`), which take
-// the tone function's values `toned_range`. The middle channel keeps its share
-// of the distance between them, (mid - min) / (max - min), the RGB hue, which
-// is the hue lock Lightroom's curves have; a function steeper than its
-// secant, such as a contrast curve in the midtones, spreads the channels
-// apart and raises saturation. A neutral pixel takes the largest channel's
-// value on every channel.
-fn hue_locked_tone(prophoto: vec3<f32>, range: vec2<f32>, toned_range: vec2<f32>) -> vec3<f32> {
+// (dng_reference.cpp) applies a tone curve. `rgb` is linear RGB and `range`
+// its smallest and largest channel (`channel_range`), which take the tone
+// function's values `toned_range`. The middle channel keeps its share of the
+// distance between them, (mid - min) / (max - min), the RGB hue, which is the
+// hue lock Lightroom's curves have; a function steeper than its secant, such
+// as a contrast curve in the midtones, spreads the channels apart and raises
+// saturation. A neutral pixel takes the largest channel's value on every
+// channel.
+//
+// Lightroom does this in linear ProPhoto RGB; the callers keep the working
+// Rec.2020, the space of the channel curves and the global Contrast's
+// per-channel sigmoid. On sRGB-gamut colours the two differ by a few percent
+// of chroma gain and about a degree of hue, most in blues and cyans.
+fn hue_locked_tone(rgb: vec3<f32>, range: vec2<f32>, toned_range: vec2<f32>) -> vec3<f32> {
     let extent = range.y - range.x;
     if extent <= 0.0 {
         return vec3<f32>(toned_range.y);
     }
     // In [0, 1]: each channel's share of the extent, 1 for the largest.
-    let share = (prophoto - vec3<f32>(range.x)) / extent;
+    let share = (rgb - vec3<f32>(range.x)) / extent;
     return vec3<f32>(toned_range.x) + share * (toned_range.y - toned_range.x);
 }
 
 // The master curve on scene-linear Rec.2020: its largest and smallest
-// ProPhoto channel go through the curve as a channel curve does
+// channel go through the curve as a channel curve does
 // (`apply_scene_channel_curve`), and the middle one follows
 // (`hue_locked_tone`). A lifted black lifts every channel, so it stays
 // neutral; an inverted curve inverts the colours.
 fn apply_rgb_master_curve(rgb: vec3<f32>) -> vec3<f32> {
-    let prophoto = Color::REC2020_TO_PROPHOTO * rgb;
-    let range = channel_range(prophoto);
+    let range = channel_range(rgb);
     let toned_range = vec2<f32>(
         apply_scene_channel_curve(0u, range.x),
         apply_scene_channel_curve(0u, range.y),
     );
-    return limit_scene_curve_rgb_ratio_preserving(
-        Color::PROPHOTO_TO_REC2020 * hue_locked_tone(prophoto, range, toned_range),
-    );
+    return limit_scene_curve_rgb_ratio_preserving(hue_locked_tone(rgb, range, toned_range));
 }
 
 fn apply_point_tone_curve(rgb: vec3<f32>) -> vec3<f32> {
@@ -633,7 +633,7 @@ const DISPLAY_BLACKS_CRUSH_STRETCH: f32 = 0.20;
 const DISPLAY_BLACKS_CRUSH_JOIN: f32 = 0.05;
 
 // Blacks is a gain of display-linear levels (`display_blacks_gain`), which
-// goes to the largest and the smallest ProPhoto channel of a colour
+// goes to the largest and the smallest channel of a colour
 // (`hue_locked_tone`), so crushing the blacks raises their saturation and
 // lifting them lowers it, as the global Contrast's per-channel sigmoid moves
 // saturation with contrast. Below, Y is the level the gain is taken at.
@@ -699,13 +699,12 @@ fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32, legacy_luminance
         return rgb * display_blacks_gain(luminance, amount);
     }
 
-    let prophoto = Color::REC2020_TO_PROPHOTO * rgb;
-    let range = channel_range(prophoto);
+    let range = channel_range(rgb);
     let gains = vec2<f32>(
         display_blacks_gain(max(range.x, 0.0), amount),
         display_blacks_gain(max(range.y, 0.0), amount),
     );
-    return Color::PROPHOTO_TO_REC2020 * hue_locked_tone(prophoto, range, range * gains);
+    return hue_locked_tone(rgb, range, range * gains);
 }
 
 // The edit's Blacks, -100 to 100.

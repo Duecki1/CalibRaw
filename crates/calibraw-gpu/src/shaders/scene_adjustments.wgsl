@@ -295,14 +295,13 @@ fn apply_local_scene_channel_curve(mask_index: u32, curve: u32, value: f32) -> f
 // A mask's master curve, applied as `Tonemap::apply_rgb_master_curve`
 // applies the edit's.
 fn apply_local_rgb_master_curve(mask_index: u32, rgb: vec3<f32>) -> vec3<f32> {
-    let prophoto = Color::REC2020_TO_PROPHOTO * rgb;
-    let range = Tonemap::channel_range(prophoto);
+    let range = Tonemap::channel_range(rgb);
     let toned_range = vec2<f32>(
         apply_local_scene_channel_curve(mask_index, 0u, range.x),
         apply_local_scene_channel_curve(mask_index, 0u, range.y),
     );
     return Tonemap::limit_scene_curve_rgb_ratio_preserving(
-        Color::PROPHOTO_TO_REC2020 * Tonemap::hue_locked_tone(prophoto, range, toned_range),
+        Tonemap::hue_locked_tone(rgb, range, toned_range),
     );
 }
 
