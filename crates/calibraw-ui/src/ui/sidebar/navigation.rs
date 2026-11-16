@@ -384,10 +384,10 @@ impl Sidebar {
         if layout == ScreenLayout::Vertical {
             match app.develop_ui.adjustment_section {
                 AdjustmentSection::Light => {
-                    Self::show_camera_match_card(ui, app, layout);
                     Self::show_camera_profile_selector(ui, app, frame);
                     Self::show_film_negative_card(ui, app, layout);
                     changed |= Self::show_basic(ui, &mut app.develop.exposure, false);
+                    Self::show_camera_match_card(ui, app, layout);
                 }
                 AdjustmentSection::ToneCurve => {
                     changed |= Self::show_tone_curve(
@@ -654,7 +654,7 @@ impl Sidebar {
             }
             Some(mask_effects::EffectPick::CameraMatch) => {
                 app.request_camera_match();
-                // Its card leads the Light section of the vertical layout.
+                // Its card follows the Light controls in the vertical layout.
                 if layout == ScreenLayout::Vertical {
                     app.develop_ui.adjustment_section = AdjustmentSection::Light;
                     app.develop_ui.effect_component = None;

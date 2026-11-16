@@ -28,7 +28,7 @@ impl Sidebar {
         foldable: bool,
     ) -> Option<CameraMatchAction> {
         let mut action = None;
-        let card = Self::adjustment_card(ui, CAMERA_MATCH_CARD_TITLE, true, foldable, on, |ui| {
+        let card = Self::adjustment_card(ui, CAMERA_MATCH_CARD_TITLE, false, foldable, on, |ui| {
             let mut percent = amount * 100.0;
             if AdjustmentSlider::new(tr("Amount"), &mut percent, 0.0..=100.0)
                 .decimals(0)
