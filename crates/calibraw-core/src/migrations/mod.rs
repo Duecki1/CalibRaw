@@ -25,15 +25,9 @@
 //!   the Develop card order before Calibration moved above Lens Corrections,
 //!   updated when the settings are loaded (`calibraw-ui`,
 //!   `performance_settings.rs`).
-//! - The automatic ONNX Runtimes the WebGPU packages replaced (CPU, Linux
-//!   CUDA and Windows DirectML), removed from the model folder on desktop
-//!   start-up (`calibraw-ai`, `runtime/package.rs`, which lists them, and
-//!   `calibraw-ui`, `app/ai/models.rs`).
 //! - Saved AI-denoise results of version 2, whose Bayer samples above the
 //!   white level are restored from the RAW when they are loaded
 //!   (`calibraw-ai`, `models/denoise/result_cache.rs`).
-//! - The Lensfun 0.3.4 database Android copied into app data, removed on
-//!   start-up (`calibraw-ui`, `app/lifecycle/startup.rs`).
 //! - Tone controls that render with the luminance response
 //!   (`ToneResponse::Luminance`, `pipeline/basicadj.rs`), set by
 //!   `tone_responses`, and the shader branches that render it, chosen by
@@ -46,17 +40,15 @@
 //!   `app/ai/models.rs`).
 //!
 //! The start-up removals run through `remove_retired_app_data`
-//! (`calibraw-ui`, `app/lifecycle/startup.rs`). The desktop model folder and
-//! ONNX Runtime selection moves (`desktop_model_folder`,
-//! `onnx_runtime_selection`) run from `move_desktop_ai_files`
-//! (`calibraw-ui`, `app/ai/models.rs`) before the app reads either.
+//! (`calibraw-ui`, `app/lifecycle/startup.rs`). The ONNX Runtime selection
+//! move (`onnx_runtime_selection`) runs from `move_onnx_runtime_selection`
+//! (`calibraw-ui`, `app/ai/models.rs`) before the app reads it.
 //!
 //! `older_readers` works the other way: it writes sidecars and presets so
 //! that v1.2 and older can still open them.
 
 mod component_names;
 pub(crate) mod depth_range_feather;
-pub mod desktop_model_folder;
 pub(crate) mod edit_fingerprints;
 mod effect_sliders;
 mod highlight_glow;

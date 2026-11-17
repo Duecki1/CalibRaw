@@ -286,22 +286,6 @@ impl CalibRawApp {
             .join(calibraw_ai::models::depth::MODEL.cache_filename)
     }
 
-    /// Automatic runtimes the WebGPU packages replaced: the CPU ones, the
-    /// Linux CUDA ones and the Windows DirectML ones. Removes their install
-    /// folders and archives in the model cache and nothing else, keeping a
-    /// folder that holds the manually selected runtime.
-    ///
-    /// migration: remove in v1.5.0. Listed in `calibraw_core`'s `migrations`.
-    pub(in crate::app) fn remove_retired_onnx_runtimes(&self) {
-        let root = self.ai_model_root();
-        let manual = self.ai.manual_runtime.as_ref().map(|(path, _)| path);
-        for path in calibraw_ai::runtime::retired_runtime_paths(&root) {
-            if path.exists() && !manual.is_some_and(|manual| manual.starts_with(&path)) {
-                Self::remove_retired_app_data(path, "retired ONNX Runtime");
-            }
-        }
-    }
-
     /// Depth Anything V2 Small, the depth model before Distill-Any-Depth
     /// Small; nothing reads it any more. Removes that file and nothing else.
     ///
@@ -355,28 +339,6 @@ impl CalibRawApp {
             .err()
             .map(|error| {
                 tr_fmt("CalibRaw could not move the ONNX Runtime selection from {legacy} to {selection} ({error}). Select the ONNX Runtime library again in Settings.", &[("legacy", &legacy.display()), ("selection", &selection.display()), ("error", &error)])
-            })
-    }
-
-    /// Moves the models and runtimes that desktop versions up to 1.3
-    /// downloaded into a cache or the temporary folder to `model_root`,
-    /// before anything looks for them. A manually selected runtime in the old
-    /// folder stays there, since the settings name it by its path. Returns
-    /// the failure to report.
-    ///
-    /// migration: remove in v1.5.0, with
-    /// `calibraw_core::migrations::desktop_model_folder`.
-    pub(in crate::app) fn move_desktop_model_folder(
-        settings_path: Option<&std::path::Path>,
-        model_root: &std::path::Path,
-    ) -> Option<String> {
-        use calibraw_core::migrations::desktop_model_folder;
-        let legacy = desktop_model_folder::legacy_desktop_model_root();
-        let manual_runtime = Self::load_onnx_runtime_selection(settings_path).map(|(path, _)| path);
-        desktop_model_folder::move_desktop_models(&legacy, model_root, manual_runtime.as_deref())
-            .err()
-            .map(|error| {
-                tr_fmt("CalibRaw could not move the downloaded AI models from {legacy} to {model_root} ({error}). Models left behind are downloaded again when needed, and the old folder can then be deleted.", &[("legacy", &legacy.display()), ("model_root", &model_root.display()), ("error", &error)])
             })
     }
 

@@ -39,7 +39,7 @@ android_use_legacy_packaging = false
 android_onnxruntime_cmake_version = "4.1.2"
 
 [workspace.package]
-version = "1.4.1"
+version = "1.5.0"
 edition = "2021"
 rust-version = "1.92.0"
 authors = ["Duecki <calibraw@dueckis.de>"]
@@ -50,12 +50,12 @@ readme = "README.md"
 
 [workspace.dependencies]
 moduwu-design = { version = "4.2.0", git = "https://github.com/Duecki1/Moduwu", rev = "28b27ba09810921e54aaa720e0cb5410bdefa05c" }
-calibraw-core = { version = "1.4.1", path = "crates/calibraw-core" }
-calibraw-gpu = { version = "1.4.1", path = "crates/calibraw-gpu" }
-calibraw-ai = { version = "1.4.1", path = "crates/calibraw-ai" }
-calibraw-ui = { version = "1.4.1", path = "crates/calibraw-ui" }
-calibraw-ffi = { version = "1.4.1", path = "crates/calibraw-ffi" }
-calibraw-cli = { version = "1.4.1", path = "crates/calibraw-cli" }
+calibraw-core = { version = "1.5.0", path = "crates/calibraw-core" }
+calibraw-gpu = { version = "1.5.0", path = "crates/calibraw-gpu" }
+calibraw-ai = { version = "1.5.0", path = "crates/calibraw-ai" }
+calibraw-ui = { version = "1.5.0", path = "crates/calibraw-ui" }
+calibraw-ffi = { version = "1.5.0", path = "crates/calibraw-ffi" }
+calibraw-cli = { version = "1.5.0", path = "crates/calibraw-cli" }
 
 anyhow = "1.0"
 base64 = "0.22"

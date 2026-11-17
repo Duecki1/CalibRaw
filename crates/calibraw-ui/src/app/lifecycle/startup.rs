@@ -512,14 +512,6 @@ impl CalibRawApp {
         if std::env::var_os("CALIBRAW_LENSFUN_DB").is_none() {
             match platform.lensfun_database_dir() {
                 Ok(Some(path)) => {
-                    // Android copied Lensfun 0.3.4's database into `version_1`;
-                    // the bundled `version_2` beside it replaces it.
-                    // migration: remove in v1.5.0. Listed in `calibraw_core`'s
-                    // `migrations`.
-                    let retired = path.join("version_1");
-                    if retired.is_dir() {
-                        Self::remove_retired_app_data(retired, tr("Lensfun 0.3.4 database"));
-                    }
                     std::env::set_var("CALIBRAW_LENSFUN_DB", &path);
                     calibraw_core::diagnostics::record(format!(
                         "bundled Lensfun database materialized at {}",
@@ -532,13 +524,9 @@ impl CalibRawApp {
         }
         // Before the app reads the ONNX Runtime selection or looks for models.
         let moved_ai_file_failures: Vec<String> = if caps.is_desktop() {
-            [
-                Self::move_onnx_runtime_selection(performance_settings_path.as_deref()),
-                Self::move_desktop_model_folder(
-                    performance_settings_path.as_deref(),
-                    &platform.model_root(),
-                ),
-            ]
+            [Self::move_onnx_runtime_selection(
+                performance_settings_path.as_deref(),
+            )]
             .into_iter()
             .flatten()
             .collect()
@@ -594,9 +582,6 @@ impl CalibRawApp {
         }
         for failure in moved_ai_file_failures {
             app.report_error(ErrorKind::AiFilesNotMoved, failure);
-        }
-        if caps.is_desktop() {
-            app.remove_retired_onnx_runtimes();
         }
         app.remove_retired_depth_model();
         let interrupted_gpu_ai = calibraw_ai::configure(calibraw_ai::AiConfig {

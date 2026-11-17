@@ -12,8 +12,7 @@ mod probe;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub use builtin::{
     automatic_onnx_runtime_info, automatic_onnx_runtime_is_installed, bundled_onnx_runtime_path,
-    probe_runtime_subprocess, retired_runtime_paths, run_runtime_probe_process,
-    runtime_loaded_in_process,
+    probe_runtime_subprocess, run_runtime_probe_process, runtime_loaded_in_process,
 };
 pub use load::initialize_runtime;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -21,7 +20,7 @@ pub use load::runtime_loaded_in_process;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use package::{
     ai_sessions_may_use_gpu, automatic_onnx_runtime_info, automatic_onnx_runtime_is_installed,
-    bundled_onnx_runtime_path, retired_runtime_paths,
+    bundled_onnx_runtime_path,
 };
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) use package::{automatic_runtime_lacks_gpu_build, ensure_automatic_onnx_runtime};
@@ -45,7 +44,7 @@ mod builtin {
     use super::AutomaticOnnxRuntimeInfo;
     use crate::config::Sha256;
     use anyhow::{bail, Result};
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     const PLATFORM_NAME: &str = if cfg!(target_os = "android") {
         "Android"
@@ -67,10 +66,6 @@ mod builtin {
 
     pub fn bundled_onnx_runtime_path() -> Option<&'static Path> {
         None
-    }
-
-    pub fn retired_runtime_paths(_model_root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
-        std::iter::empty()
     }
 
     pub fn probe_runtime_subprocess(_runtime_path: &Path, _expected_sha256: &Sha256) -> Result<()> {

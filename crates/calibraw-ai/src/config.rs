@@ -367,10 +367,6 @@ fn default_model_root() -> PathBuf {
 /// - macOS: `~/Library/Application Support/calibraw/models`.
 /// - Linux: `$XDG_DATA_HOME/calibraw/models`, by default
 ///   `~/.local/share/calibraw/models`.
-///
-/// Versions up to 1.3 used a cache folder, which on Windows was the
-/// temporary folder; `calibraw_core::migrations::desktop_model_folder`
-/// moves what they downloaded.
 #[cfg(not(target_os = "android"))]
 pub fn desktop_model_root() -> PathBuf {
     let env_path = |name| std::env::var_os(name).map(PathBuf::from);

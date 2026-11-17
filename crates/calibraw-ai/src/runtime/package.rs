@@ -46,7 +46,7 @@ struct RuntimePackage {
 /// architecture. The WebGPU packages hold unmodified Microsoft libraries:
 /// ONNX Runtime 1.30.0 and `onnxruntime-ep-webgpu` 0.4.0, which needs 1.24.4
 /// or newer. Their install folders differ from the CPU, CUDA and DirectML
-/// packages they replaced, which `RETIRED_RUNTIME_FILES` lists.
+/// packages they replaced.
 const PACKAGES: [(&str, &str, RuntimePackage); 6] = [
     (
         "linux",
@@ -137,42 +137,6 @@ const PACKAGES: [(&str, &str, RuntimePackage); 6] = [
         },
     ),
 ];
-
-/// Automatic runtimes CalibRaw downloaded before the WebGPU packages, below
-/// the cache's `onnxruntime` folder: the CPU packages those replaced, the
-/// Linux CUDA 12 and 13 packages (up to 440 MB each) and the Windows
-/// DirectML ones, as install folders and their archives. Nothing loads them
-/// any more.
-///
-/// migration: remove in v1.5.0, with `retired_runtime_paths`. Listed in
-/// `calibraw_core`'s `migrations`.
-const RETIRED_RUNTIME_FILES: &[&str] = &[
-    "linux-x86_64",
-    "onnxruntime-linux-x64-1.30.0.tgz",
-    "linux-x86_64-cuda12",
-    "onnxruntime-linux-x64-gpu_cuda12-1.30.0.tgz",
-    "linux-x86_64-cuda13",
-    "onnxruntime-linux-x64-gpu_cuda13-1.30.0.tgz",
-    "linux-arm64",
-    "onnxruntime-linux-aarch64-1.30.0.tgz",
-    "macos-arm64",
-    "onnxruntime-osx-arm64-1.30.0.tgz",
-    "windows-x86_64",
-    "onnxruntime-win-x64-directml-1.24.4.zip",
-    "windows-arm64",
-    "onnxruntime-win-arm64-directml-1.24.4.zip",
-];
-
-/// The install folders and archives of retired automatic runtimes
-/// (`RETIRED_RUNTIME_FILES`) in the model folder `model_root`, for start-up
-/// to delete.
-///
-/// migration: remove in v1.5.0. Listed in `calibraw_core`'s `migrations`.
-pub fn retired_runtime_paths(model_root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
-    RETIRED_RUNTIME_FILES
-        .iter()
-        .map(move |name| model_root.join(RUNTIME_CACHE_FOLDER).join(name))
-}
 
 /// The folder automatic runtimes are installed in.
 fn runtime_cache_dir() -> PathBuf {
