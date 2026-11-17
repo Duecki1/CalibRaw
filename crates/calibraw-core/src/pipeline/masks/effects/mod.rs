@@ -656,9 +656,10 @@ impl MaskEffect {
         }
     }
 
-    /// Available, but its results are not yet reliable enough to present as finished.
+    /// Available, but not yet ready to present as finished: Relight's results
+    /// are not reliable enough, and Lens Blur (`Defocus`) renders too slowly.
     pub const fn is_experimental(self) -> bool {
-        matches!(self, Self::Relight)
+        matches!(self, Self::Relight | Self::Defocus)
     }
 
     pub const fn uses_adjustments(self) -> bool {
