@@ -451,7 +451,7 @@ fn wait_for_gpu(device: &wgpu::Device, queue: &wgpu::Queue, cancel: &AtomicBool)
             return false;
         }
         // A failed poll is a lost device: the readback that follows reports it.
-        if device.poll(wgpu::PollType::Poll).is_err() {
+        if calibraw_gpu::poll_device(device, wgpu::PollType::Poll).is_err() {
             return true;
         }
         std::thread::sleep(Duration::from_millis(2));

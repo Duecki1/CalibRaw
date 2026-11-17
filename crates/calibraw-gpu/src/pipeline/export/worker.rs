@@ -199,7 +199,8 @@ pub(super) fn resolved_export_tile_spec(
 
 /// The core of an export tile of the default size, `spec.core_edge`. A phone
 /// or tablet, whose GPU working set is limited, takes the largest core whose
-/// graph fits the share of the limit previews leave for an export tile
+/// graph fits the share of the limit previews leave for an export tile,
+/// capped by the memory the system has available
 /// (`mobile_export_padded_edge`), never less than the default, and then the
 /// smallest core that covers the photo in as many tiles. A computer keeps the
 /// default.

@@ -94,7 +94,7 @@ impl PreviewDispatchGate {
         if !self.open.load(Ordering::Acquire) {
             // A failed poll means a lost device, which cannot render the
             // preview anyway; `gpu_recovery` restarts the app where it can.
-            let _ = device.poll(wgpu::PollType::Poll);
+            let _ = calibraw_gpu::poll_device(device, wgpu::PollType::Poll);
         }
         self.open.load(Ordering::Acquire)
     }

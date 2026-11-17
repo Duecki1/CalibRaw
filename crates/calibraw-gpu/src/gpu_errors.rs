@@ -1,4 +1,6 @@
 use anyhow::{anyhow, Result};
+use std::fmt;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +23,9 @@ impl OomSignal {
 static GPU_OUT_OF_MEMORY: OomSignal = OomSignal::new();
 /// The driver's message for an unreported loss of the editor's device.
 static DEVICE_LOST: Mutex<Option<String>> = Mutex::new(None);
+/// Whether the editor's device was ever lost. Unlike [`DEVICE_LOST`] it is
+/// never taken, so a worker's poll still sees it after the UI reported the loss.
+static DEVICE_WAS_LOST: AtomicBool = AtomicBool::new(false);
 
 pub fn install_uncaptured_gpu_error_handler(device: &wgpu::Device) {
     device.on_uncaptured_error(Arc::new(|error| {
@@ -50,6 +55,7 @@ pub fn install_gpu_device_lost_handler(device: &wgpu::Device) {
         }
         // The app restarts once it notices; make sure this reaches the disk first.
         calibraw_core::diagnostics::flush();
+        DEVICE_WAS_LOST.store(true, Ordering::Release);
         *DEVICE_LOST
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(message);
@@ -62,6 +68,47 @@ pub fn take_gpu_device_lost() -> Option<String> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .take()
+}
+
+/// Why [`poll_device`] failed.
+#[derive(Debug)]
+pub enum PollFailure {
+    /// wgpu reported the failure, such as a timeout.
+    Poll(wgpu::PollError),
+    /// The device was lost, usually a driver reset.
+    DeviceLost,
+}
+
+impl fmt::Display for PollFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Poll(error) => error.fmt(formatter),
+            Self::DeviceLost => formatter.write_str("the GPU device was lost"),
+        }
+    }
+}
+
+impl std::error::Error for PollFailure {}
+
+/// `device.poll(poll_type)`, with the loss of a device that has the
+/// [`install_gpu_device_lost_handler`] as an error. wgpu 29 returns only
+/// timeouts from `Device::poll` and panics on every other failure, a lost
+/// device included. It runs the device-lost callback before that panic, so a
+/// panic after the callback is the loss; any other panic is passed on.
+pub fn poll_device(
+    device: &wgpu::Device,
+    poll_type: wgpu::PollType,
+) -> Result<wgpu::PollStatus, PollFailure> {
+    if DEVICE_WAS_LOST.load(Ordering::Acquire) {
+        return Err(PollFailure::DeviceLost);
+    }
+    // Unwind safety: the panic is raised by wgpu's front end after wgpu-core
+    // returned the error, with no lock held, and the device is not used again.
+    match catch_unwind(AssertUnwindSafe(|| device.poll(poll_type))) {
+        Ok(result) => result.map_err(PollFailure::Poll),
+        Err(_) if DEVICE_WAS_LOST.load(Ordering::Acquire) => Err(PollFailure::DeviceLost),
+        Err(panic) => resume_unwind(panic),
+    }
 }
 
 fn record_gpu_error(error: &wgpu::Error, context: &str) {

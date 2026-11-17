@@ -384,10 +384,14 @@ impl PreviousSession {
         let during = export
             .as_ref()
             .map_or_else(String::new, |step| format!(" while exporting ({step})"));
-        if let Some(index) = find("PANIC in thread") {
+        let panic = find("PANIC in thread");
+        let device_lost = find("GPU device lost: ");
+        // wgpu panics in any wait on a device that was lost, so a loss before
+        // the panic is the cause and the panic only its symptom.
+        if let Some(index) = panic.filter(|&panic| device_lost.is_none_or(|lost| lost > panic)) {
             return Some(format!("CalibRaw panicked{during}: {}", after(index)));
         }
-        if let Some(index) = find("GPU device lost: ") {
+        if let Some(index) = device_lost {
             let mut cause = format!(
                 "The graphics driver reset the GPU{during}: {}",
                 after(index)

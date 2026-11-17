@@ -9,8 +9,8 @@ pub use device::{
 mod gpu_errors;
 pub mod memory;
 pub use gpu_errors::{
-    install_gpu_device_lost_handler, install_uncaptured_gpu_error_handler, take_gpu_device_lost,
-    take_gpu_out_of_memory,
+    install_gpu_device_lost_handler, install_uncaptured_gpu_error_handler, poll_device,
+    take_gpu_device_lost, take_gpu_out_of_memory, PollFailure,
 };
 
 pub mod pipeline;

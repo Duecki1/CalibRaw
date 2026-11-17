@@ -103,6 +103,30 @@ fn mobile_export_tile_bytes(limit: u64) -> u64 {
     scale_from_working_set_floor(MOBILE_EXPORT_HEADROOM_BYTES, limit)
 }
 
+/// Share of the memory the system has available, as a divisor, one export
+/// tile may reserve. Besides its tile an export holds the kept RAW-stage
+/// scene, the row band and the output raster, and the previews stay open, so
+/// a tile of a sixteenth keeps the export within about a quarter of it. On a
+/// phone the GPU allocates from that same memory, and a Mali-G57 lost its
+/// device near the end of an export whose 448 MiB tile was sized from total
+/// RAM alone.
+const MOBILE_EXPORT_AVAILABLE_MEMORY_DIVISOR: u64 = 16;
+
+/// Resident GPU bytes the export tile may reserve when the process may
+/// reserve `limit` and the system has `available` bytes free: its share of
+/// the limit ([`mobile_export_tile_bytes`]), at most its share of the
+/// available memory, and never less than [`MOBILE_EXPORT_HEADROOM_BYTES`],
+/// the default tile's. Only the export's own tile is sized from available
+/// memory; the previews keep their shares of `limit`.
+fn mobile_export_tile_budget(limit: u64, available: Option<u64>) -> u64 {
+    let share = mobile_export_tile_bytes(limit);
+    available.map_or(share, |available| {
+        share
+            .min(available / MOBILE_EXPORT_AVAILABLE_MEMORY_DIVISOR)
+            .max(MOBILE_EXPORT_HEADROOM_BYTES)
+    })
+}
+
 /// `bytes`, sized for the 384 MiB floor, scaled with `limit`.
 fn scale_from_working_set_floor(bytes: u64, limit: u64) -> u64 {
     let scaled =
@@ -142,9 +166,10 @@ pub(crate) struct ExportTileShape {
 
 impl RawGpuPipeline {
     /// The longest padded export tile edge, up to `maximum`, whose
-    /// full-quality graph fits the share of the GPU working-set limit that
-    /// mobile previews leave for an export tile, with the same accounting
-    /// that admits it. `mask_atlas_edge` gives the tile's mask atlas edge for
+    /// full-quality graph fits the export tile's budget
+    /// ([`mobile_export_tile_budget`]): the share of the GPU working-set limit
+    /// that mobile previews leave for it, capped by the memory the system has
+    /// available now, with the same accounting that admits it. `mask_atlas_edge` gives the tile's mask atlas edge for
     /// a padded edge. `None` when the process has no working-set limit (a
     /// computer) or not even a 64 px tile fits.
     pub(crate) fn mobile_export_padded_edge(
@@ -156,7 +181,18 @@ impl RawGpuPipeline {
         if limit == u64::MAX {
             return None;
         }
-        let budget = mobile_export_tile_bytes(limit);
+        const MIB: u64 = 1024 * 1024;
+        let available = calibraw_core::system_memory::available_memory_bytes();
+        let budget = mobile_export_tile_budget(limit, available);
+        calibraw_core::diagnostics::record(format!(
+            "Export tile budget {} MiB: working-set share {} MiB, system memory available {}",
+            budget / MIB,
+            mobile_export_tile_bytes(limit) / MIB,
+            available.map_or_else(
+                || "unknown".to_owned(),
+                |bytes| format!("{} MiB", bytes / MIB)
+            ),
+        ));
         let fits = |edge: u32| {
             build_gpu_resource_plan(GpuResourcePlanInput {
                 width: edge,

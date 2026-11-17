@@ -183,8 +183,7 @@ impl PreviewHistogramGpu {
 
     pub fn poll(&mut self, device: &wgpu::Device) -> Option<Result<PreviewHistogram>> {
         let receiver = self.pending.as_ref()?;
-        let result = device
-            .poll(wgpu::PollType::Poll)
+        let result = crate::gpu_errors::poll_device(device, wgpu::PollType::Poll)
             .map_err(|error| anyhow!(error));
         let result = match result {
             Err(error) => Err(error),

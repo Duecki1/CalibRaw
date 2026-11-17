@@ -7,6 +7,7 @@
 //! needs that lock, so an unbroken wait on the editor device would hold off the
 //! UI's frames until the work finished.
 
+use crate::gpu_errors::{poll_device, PollFailure};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -46,7 +47,7 @@ impl GpuWait<'_> {
 
 #[derive(Debug)]
 pub(super) enum GpuWaitError {
-    Poll(wgpu::PollError),
+    Poll(PollFailure),
     /// The watcher of a [`GpuWait::Watched`] wait stopped it.
     Stopped {
         waited: Duration,
@@ -67,12 +68,14 @@ pub(super) fn wait_for_submission(
 ) -> Result<(), GpuWaitError> {
     let started = Instant::now();
     let poll = |slice| {
-        device
-            .poll(wgpu::PollType::Wait {
+        poll_device(
+            device,
+            wgpu::PollType::Wait {
                 submission_index: Some(submission.clone()),
                 timeout: Some(slice),
-            })
-            .map(|_| ())
+            },
+        )
+        .map(|_| ())
     };
     let early_return = |after: Duration| {
         static RECORDED: AtomicBool = AtomicBool::new(false);
@@ -93,7 +96,7 @@ pub(super) fn wait_for_submission(
 /// The loop of [`wait_for_submission`], with the device, the clock and the
 /// early-return handling passed in for tests.
 fn wait_in_slices(
-    mut poll: impl FnMut(Duration) -> Result<(), wgpu::PollError>,
+    mut poll: impl FnMut(Duration) -> Result<(), PollFailure>,
     mut wait: GpuWait<'_>,
     mut elapsed: impl FnMut() -> Duration,
     mut early_return: impl FnMut(Duration),
@@ -102,7 +105,7 @@ fn wait_in_slices(
         let poll_started = elapsed();
         match poll(POLL_SLICE) {
             Ok(()) => return Ok(()),
-            Err(wgpu::PollError::Timeout) => {}
+            Err(PollFailure::Poll(wgpu::PollError::Timeout)) => {}
             Err(error) => return Err(GpuWaitError::Poll(error)),
         }
         let waited = elapsed();

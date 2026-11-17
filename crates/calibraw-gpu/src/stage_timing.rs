@@ -364,11 +364,17 @@ impl ExportTiming {
         while state.pending > 0 && Instant::now() < deadline {
             drop(state);
             // Map callbacks run in polls; another thread's poll may run them too.
-            let _ = self.device.poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(Duration::from_millis(100)),
-            });
+            let poll = crate::gpu_errors::poll_device(
+                &self.device,
+                wgpu::PollType::Wait {
+                    submission_index: None,
+                    timeout: Some(Duration::from_millis(100)),
+                },
+            );
             state = self.totals.lock();
+            if matches!(poll, Err(crate::gpu_errors::PollFailure::DeviceLost)) {
+                break;
+            }
             if state.pending > 0 {
                 state = match self
                     .totals

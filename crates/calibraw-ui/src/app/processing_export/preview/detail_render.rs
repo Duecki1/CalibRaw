@@ -257,7 +257,7 @@ fn wait_for_queue(device: &wgpu::Device, queue: &wgpu::Queue) {
     while !done.load(Ordering::Acquire) {
         // A failed poll means a lost device, which the UI's device-loss
         // handling reports; the crop is then dropped with the graphs.
-        if device.poll(wgpu::PollType::Poll).is_err() {
+        if calibraw_gpu::poll_device(device, wgpu::PollType::Poll).is_err() {
             return;
         }
         std::thread::sleep(Duration::from_millis(2));

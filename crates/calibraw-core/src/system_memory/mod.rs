@@ -1,5 +1,6 @@
-//! Installed physical memory, for sizing background work pools, and returning
-//! freed heap memory to the system. Each platform has its own source.
+//! Installed and available physical memory, for sizing background work pools
+//! and export tiles, and returning freed heap memory to the system. Each
+//! platform has its own source.
 
 #[cfg(any(target_os = "android", all(target_os = "linux", target_env = "gnu")))]
 mod heap_purge;
@@ -24,6 +25,18 @@ pub fn total_memory_bytes() -> Option<u64> {
         windows,
         target_os = "macos"
     )))]
+    let bytes = None;
+    bytes
+}
+
+/// Memory the system can give to new allocations without swapping, in bytes
+/// (Linux and Android `MemAvailable`, which counts reclaimable caches), or
+/// `None` when the platform does not report it. It changes from moment to
+/// moment; read it when sizing work, not once per process.
+pub fn available_memory_bytes() -> Option<u64> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let bytes = procfs::available_memory_bytes();
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let bytes = None;
     bytes
 }
