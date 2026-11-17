@@ -45,20 +45,35 @@ pub fn install_gpu_device_lost_handler(device: &wgpu::Device) {
         if reason == wgpu::DeviceLostReason::Destroyed {
             return;
         }
+        // Workers must stop polling before any logging or disk flush can wait.
+        // Keep the first failure: later errors on this device are consequences.
+        if DEVICE_WAS_LOST.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let mut detail = format!("{message} (reason={reason:?})");
+        if let Some(errors) = calibraw_core::diagnostics::recent_gpu_errors() {
+            detail.push_str(&format!("\nRecent GPU errors:\n{errors}"));
+        }
         log::error!("the GPU device was lost: {message}");
-        calibraw_core::diagnostics::record(format!("GPU device lost: {message}"));
+        calibraw_core::diagnostics::record(format!("GPU device lost: {detail}"));
         if let Some(work) = crate::pipeline::in_flight_summary() {
             log::error!("GPU work in flight when the device was lost: {work}");
             calibraw_core::diagnostics::record(format!(
                 "GPU work in flight when the device was lost: {work}"
             ));
+            detail.push_str(&format!("\nGPU work in flight: {work}"));
         }
-        // The app restarts once it notices; make sure this reaches the disk first.
-        calibraw_core::diagnostics::flush();
-        DEVICE_WAS_LOST.store(true, Ordering::Release);
+        // These are OS memory counters, never queries on the lost GPU device.
+        calibraw_core::diagnostics::record(format!(
+            "Memory at GPU loss: system_total_bytes={:?} system_available_bytes={:?}",
+            calibraw_core::system_memory::total_memory_bytes(),
+            calibraw_core::system_memory::available_memory_bytes(),
+        ));
         *DEVICE_LOST
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(message);
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(detail);
+        // Everything above is queued before the UI can begin its recovery.
+        calibraw_core::diagnostics::flush();
     });
 }
 
@@ -112,6 +127,7 @@ pub fn poll_device(
 }
 
 fn record_gpu_error(error: &wgpu::Error, context: &str) {
+    use std::error::Error as _;
     let message = match error {
         wgpu::Error::OutOfMemory { .. } => {
             GPU_OUT_OF_MEMORY.raise();
@@ -124,8 +140,14 @@ fn record_gpu_error(error: &wgpu::Error, context: &str) {
             format!("{context} hit an internal GPU error: {description}")
         }
     };
-    log::error!("{message}");
-    calibraw_core::diagnostics::record(message);
+    let mut detail = message;
+    let mut source = error.source();
+    while let Some(cause) = source {
+        detail.push_str(&format!("; caused by: {cause}"));
+        source = cause.source();
+    }
+    log::error!("{detail}");
+    calibraw_core::diagnostics::record(detail);
 }
 
 pub(crate) struct GpuErrorScopes {
@@ -150,9 +172,16 @@ impl GpuErrorScopes {
         let validation = pollster::block_on(self.validation.pop());
         let internal = pollster::block_on(self.internal.pop());
         let out_of_memory = pollster::block_on(self.out_of_memory.pop());
+        // Preserve all failures even though the caller receives just the most
+        // severe one. An allocation failure can otherwise hide validation.
+        for error in [&out_of_memory, &internal, &validation]
+            .into_iter()
+            .flatten()
+        {
+            record_gpu_error(error, context);
+        }
         let error = out_of_memory.or(internal).or(validation);
         if let Some(error) = error {
-            record_gpu_error(&error, context);
             return Err(anyhow!("{context} failed: {error}"));
         }
         Ok(())

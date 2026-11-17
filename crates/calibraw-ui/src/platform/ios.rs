@@ -635,12 +635,15 @@ impl Platform for IosPlatform {
 }
 
 pub(crate) fn main() -> eframe::Result {
-    env_logger::init();
+    let logger = env_logger::Builder::from_default_env().build();
+    let level = logger.filter();
+    let _ = calibraw_core::diagnostics::install_logger(logger, level);
     let home = std::env::var_os("HOME").ok_or_else(|| {
         eframe::Error::AppCreation("iOS did not provide a sandbox HOME directory".into())
     })?;
     let home = PathBuf::from(home);
     let data_dir = home.join("Library/Application Support/CalibRaw");
+    calibraw_core::diagnostics::persist_to(&data_dir.join("diagnostics"));
     let cache_dir = home.join("Library/Caches/CalibRaw");
     let library = IosLibrary::new(home.join("Documents/CalibRaw"), cache_dir.join("library"))
         .map_err(|error| eframe::Error::AppCreation(error.into()))?;

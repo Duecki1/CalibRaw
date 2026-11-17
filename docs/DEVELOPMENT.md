@@ -508,6 +508,12 @@ beside the output beyond that. PNG uses fast lossless compression; file size
 can increase.
 GPU templates share deferred programs and compile the selected Bayer mode and
 active denoise/CA paths. A newly enabled effect or mode may compile on first use.
+Startup warms only the default preview/export pipeline, then saves its cache;
+it does not compile inactive effects or alternate demosaic/denoise variants.
+An effect's first use, including rendering saved edits or an edited thumbnail,
+can still encounter a native driver compiler failure. Deferred compilation
+keeps that optional program out of startup; it does not repair the driver or
+change the effect's output.
 
 Local measurements on a 7028x4688 Sony ARW, Ryzen 7 5700X3D and RTX 4070 Ti
 (Linux/Vulkan, release build, separate processes without an application program

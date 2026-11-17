@@ -24,10 +24,13 @@ use std::sync::Arc;
     reason = "found by its symbol name, which `no_mangle` exports"
 )]
 pub fn android_main(android_app: AndroidApp) {
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("CalibRaw"),
+    let _ = calibraw_core::diagnostics::install_logger(
+        android_logger::AndroidLogger::new(
+            android_logger::Config::default()
+                .with_max_level(log::LevelFilter::Info)
+                .with_tag("CalibRaw"),
+        ),
+        log::LevelFilter::Info,
     );
 
     match calibraw_ffi::gpu_stage_timing_requested(&android_app) {
@@ -38,6 +41,16 @@ pub fn android_main(android_app: AndroidApp) {
     let settings_path = calibraw_ffi::performance_settings_path(&android_app)
         .map_err(|error| log::warn!("{error}"))
         .ok();
+    if let Some(directory) = settings_path.as_deref().and_then(Path::parent) {
+        calibraw_core::diagnostics::persist_to(&directory.join("diagnostics"));
+        match calibraw_ffi::diagnostic_log_output(&android_app) {
+            Ok((file, location)) => {
+                calibraw_core::diagnostics::mirror_to(file);
+                calibraw_core::diagnostics::record(format!("Public diagnostic log: {location}"));
+            }
+            Err(error) => log::warn!("{error}"),
+        }
+    }
     let graphics_backend =
         crate::performance_settings::load_graphics_backend(settings_path.as_deref());
     let mut options = crate::native_options(PlatformCaps::ANDROID, graphics_backend);
@@ -58,6 +71,7 @@ pub fn android_main(android_app: AndroidApp) {
     if let Err(error) = result {
         log::error!("CalibRaw terminated: {error:#}");
     }
+    calibraw_core::diagnostics::flush();
 }
 
 /// The program's `main` does nothing on Android; the activity starts

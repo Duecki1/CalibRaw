@@ -28,10 +28,14 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;
+use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+mod logging;
+pub use logging::{install_logger, recent_gpu_errors};
 
 const MAX_EVENTS: usize = 300;
 /// Lines the writer thread may have queued before new ones are dropped.
@@ -93,6 +97,7 @@ impl DiagnosticState {
 enum Message {
     Line(String),
     Flush(SyncSender<()>),
+    Mirror(File),
 }
 
 static WRITER: OnceLock<SyncSender<Message>> = OnceLock::new();
@@ -217,9 +222,21 @@ pub fn persist_to(directory: &Path) {
             "PANIC in thread {}: {info}",
             thread.name().unwrap_or("unnamed")
         )));
+        send_to_writer(Message::Line(logging::bounded(format!(
+            "panic backtrace: {}",
+            std::backtrace::Backtrace::force_capture()
+        ))));
         flush();
         previous_hook(info);
     }));
+}
+
+/// Copies the current session to an additional, seekable file owned by the
+/// caller's platform (Android Downloads). The writer owns the descriptor from
+/// here and keeps the same bounded tail as the private session files. Attaching
+/// it after startup backfills lines already written; callers never wait on I/O.
+pub fn mirror_to(file: File) {
+    send_to_writer(Message::Mirror(file));
 }
 
 /// Waits, for a moment, until every line recorded so far is on disk. For where
@@ -260,8 +277,10 @@ fn write_session(path: &Path, receiver: &Receiver<Message>) {
     };
     let mut size = file.metadata().map_or(0, |metadata| metadata.len());
     let mut batch = String::new();
+    let mut mirror = None;
     while let Ok(first) = receiver.recv() {
         let mut waiting = Vec::new();
+        let mut refresh_mirror = false;
         batch.clear();
         let mut message = Some(first);
         while let Some(next) = message.take().or_else(|| receiver.try_recv().ok()) {
@@ -271,6 +290,10 @@ fn write_session(path: &Path, receiver: &Receiver<Message>) {
                     batch.push('\n');
                 }
                 Message::Flush(done) => waiting.push(done),
+                Message::Mirror(output) => {
+                    mirror = Some(output);
+                    refresh_mirror = true;
+                }
             }
             if batch.len() >= 64 * 1024 {
                 break;
@@ -293,12 +316,40 @@ fn write_session(path: &Path, receiver: &Receiver<Message>) {
                 };
                 file = reopened;
                 size = 0;
+                refresh_mirror = true;
+            }
+        }
+        if let Some(output) = &mut mirror {
+            let result = if refresh_mirror {
+                refresh_log_mirror(path, output)
+            } else {
+                output.write_all(batch.as_bytes())
+            };
+            if let Err(error) = result {
+                // A public-storage failure must not stop the private log.
+                mirror = None;
+                log::warn!("could not write the public diagnostic log: {error}");
             }
         }
         for done in waiting {
             let _ = done.try_send(());
         }
     }
+}
+
+fn refresh_log_mirror(path: &Path, output: &mut File) -> std::io::Result<()> {
+    output.seek(SeekFrom::Start(0))?;
+    output.set_len(0)?;
+    for source in [path.with_file_name(ROTATED_FILE), path.to_path_buf()] {
+        match File::open(source) {
+            Ok(mut input) => {
+                std::io::copy(&mut input, output)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn open_append(path: &Path) -> Option<File> {

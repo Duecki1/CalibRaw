@@ -1,6 +1,8 @@
 **CalibRaw 1.5.0 stability investigation and repair plan**
 
 Investigated on 2026-11-17. The evidence below records the withdrawn release.
+The subsequent Samsung/Mali export capture, PowerVR zoom report and heavy-pass
+audit have a separate [workload stability repair plan](GPU_WORKLOAD_STABILITY_PLAN.md).
 The following repairs have since been implemented in the working tree, but
 have not been released or verified on the reporting devices:
 
@@ -16,6 +18,11 @@ have not been released or verified on the reporting devices:
 - Android native libraries receive Build IDs and release packages retain native
   function symbols for Play crash reports. CI archives them separately and
   excludes that diagnostics archive from public application downloads.
+- Startup now warms the default preview/export passes only. The unconditional
+  common-program sweep and unused demosaic-variant prewarm were removed;
+  optional glow, defocus and other effect programs compile when rendered.
+  Saved edits and edited thumbnails can require them too. This contains the
+  optional-effect startup exposure; it does not fix a native compiler defect.
 
 These repairs do not establish the missing shader/driver causes described below.
 
@@ -474,6 +481,37 @@ unchanged from HEAD. `cargo deny check` fails its advisories check because
 unmaintained (RUSTSEC-2026-0543). Bans, licenses and sources pass. The only
 lockfile change is replacing registry winit with the same-version local patch.
 Neither check was suppressed or its baseline raised as part of these repairs.
+
+**Follow-up: basic startup prewarm only.** The app no longer calls or exposes
+`compile_common_programs`; its unused alternate-demosaic prewarm and filtering
+helpers were removed too. The preview/export constructors still warm the
+default RAW, tone and display passes. Optional effect programs retain their
+existing lazy compilation, shared templates and cache persistence. Their
+shader code, pass ordering and numerical output were not changed.
+
+A before/after run of the real desktop app on Linux/Vulkan, RTX 4070 Ti,
+NVIDIA 620.70.06, with isolated settings/cache and no photo open recorded:
+
+| Build / application cache | Pipeline-creation calls during startup | Optional effect pipelines |
+| --- | ---: | --- |
+| Before, empty app cache | 94 | Includes all nine styled-glow and eight defocus passes |
+| After, empty app cache | 27 | None |
+| After, reused basic-program cache | 27 | None |
+| After, full cache produced by the old startup sweep | 27 | None |
+
+All runs finished prewarming and remained alive until stopped. Driver caches
+were not separately cleared; these counts are driver API calls, not measurements
+of compiler cache misses. The workspace tests passed again (98 passed, 16
+ignored), including glow/defocus render parity with unchanged goldens. Clippy,
+Android arm64 compilation, formatting, architecture, JNI, UI lint and migrations
+passed; the two pre-existing check failures above are unchanged.
+
+This removes the optional compilation phase where #192's log stopped. It is
+containment pending an affected-device result, not proof of the exact crashing
+shader. An effect can still crash its driver when first rendered, including
+when a saved edit or edited thumbnail uses it. Basic-program compiler crashes,
+such as the supplied older Redmi RAW-stage stacks, are not removed by this
+change.
 
 These checks do not replace the reporting-device recovery/lifecycle and
 MediaStore-provider acceptance cases above. The native compiler calls now

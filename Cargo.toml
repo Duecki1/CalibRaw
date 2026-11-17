@@ -17,11 +17,14 @@ default-members = [
     "crates/calibraw-ffi",
     "crates/calibraw-cli",
 ]
-exclude = ["vendor/winit"]
+exclude = ["vendor/winit", "vendor/wgpu", "vendor/wgpu-hal"]
 
 [patch.crates-io]
 # Android Destroy/recreation fix, kept on the released 0.30.13 API.
 winit = { path = "vendor/winit" }
+# Preserve the native error and queue-upload phase before wgpu erases them.
+wgpu = { path = "vendor/wgpu" }
+wgpu-hal = { path = "vendor/wgpu-hal" }
 
 [workspace.metadata]
 # F-Droid reads this committed value when checking release tags. Increase it

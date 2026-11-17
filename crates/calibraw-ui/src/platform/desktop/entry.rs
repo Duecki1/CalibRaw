@@ -19,6 +19,7 @@ pub(super) fn end_process(result: eframe::Result) -> ! {
     let code = match result {
         Ok(()) => 0,
         Err(error) => {
+            log::error!("CalibRaw terminated: {error:?}");
             eprintln!("Error: {error:?}");
             1
         }
@@ -80,7 +81,15 @@ fn desktop_icon() -> std::sync::Arc<eframe::egui::IconData> {
 }
 
 fn run_desktop() -> eframe::Result {
-    env_logger::init();
+    let logger = env_logger::Builder::from_default_env().build();
+    let level = logger.filter();
+    let _ = calibraw_core::diagnostics::install_logger(logger, level);
+    if let Some(directory) = super::performance_settings_path()
+        .as_deref()
+        .and_then(std::path::Path::parent)
+    {
+        calibraw_core::diagnostics::persist_to(&directory.join("diagnostics"));
+    }
     #[cfg(target_os = "windows")]
     super::nvidia_vrr::keep_gsync_off_for_window();
 

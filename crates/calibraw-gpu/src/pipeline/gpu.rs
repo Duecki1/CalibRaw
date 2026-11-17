@@ -181,10 +181,6 @@ const fn demosaic_variant(mode: usize, denoise: bool) -> usize {
     mode * 2 + denoise as usize
 }
 
-/// Sensor denoise with the reference demosaic (mode 0): the variant ordinary
-/// edits switch to.
-const COMMON_DEMOSAIC_VARIANTS: [usize; 1] = [demosaic_variant(0, true)];
-
 fn demosaic_variant_for(camera: &CameraUniforms) -> usize {
     let mode = if camera.demosaic_mode >= 1.5 {
         2
@@ -237,15 +233,6 @@ impl ComputeProgram {
 
     fn is_bayer_demosaic(&self) -> bool {
         self.entry == "bayer_rcd_output"
-    }
-
-    /// The passes of the switched-off effects ([`MaskEffect::is_disabled`]),
-    /// which nothing encodes, so prewarm leaves them uncompiled.
-    fn serves_disabled_effect(&self) -> bool {
-        matches!(
-            self.entry.as_str(),
-            "apply_wet_surfaces" | "apply_weather_air"
-        )
     }
 
     fn for_demosaic_params(&self, camera: &CameraUniforms) -> &wgpu::ComputePipeline {
@@ -416,9 +403,10 @@ pub struct RawGpuProgramTemplate {
     pipeline_cache: Option<Arc<PersistentGpuPipelineCache>>,
 }
 
-/// Programs compile on first use, which stalls the edit that first needs one
-/// for up to seconds. These calls compile ahead of time. They block, so call
-/// them off the UI thread; pipelines built from the template share the results.
+/// Templates share compiled and deferred programs. Construction warms the
+/// active passes; optional effects compile only when dispatched. Preparing a
+/// selected demosaic variant can take seconds, so call [`Self::compile_for_params`]
+/// off the UI thread.
 impl RawGpuProgramTemplate {
     /// Whether a pipeline of `quality` for `raw` can be built from these
     /// programs ([`PipelineOptions::programs`]).
@@ -426,32 +414,6 @@ impl RawGpuProgramTemplate {
         self.cfa_kind == raw.cfa_kind
             && self.processing_quality == quality
             && self.pipelines.len() == expected_pass_count(raw.cfa_kind)
-    }
-
-    /// Compiles the programs ordinary edits switch on: every effect pass, and
-    /// the sensor-denoise variant of the reference demosaic. The other demosaic variants take seconds each and are left to
-    /// [`Self::compile_for_params`].
-    pub fn compile_common_programs(&self) {
-        for program in self
-            .pipelines
-            .iter()
-            .filter(|program| !program.serves_disabled_effect() && self.dispatches(program))
-        {
-            program.get();
-        }
-        for variant in COMMON_DEMOSAIC_VARIANTS {
-            for program in self.bayer_demosaic_programs() {
-                program.demosaic_variant(variant);
-            }
-        }
-    }
-
-    /// Whether pipelines built from these programs dispatch `program`: the
-    /// RCD reference pass runs only where the work format stores the
-    /// reference ([`stores_rcd_reference`]).
-    fn dispatches(&self, program: &ComputeProgram) -> bool {
-        program.entry != "bayer_rcd_reference"
-            || stores_rcd_reference(processing_work_format(self.processing_quality))
     }
 
     /// Compiles the demosaic variant that rendering `params` selects.

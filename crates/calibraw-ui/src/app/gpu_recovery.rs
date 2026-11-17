@@ -69,9 +69,9 @@ impl CalibRawApp {
     /// CPU first: a loaded model's memory alone can drive the GPU into paging
     /// and a reset.
     pub(in crate::app) fn handle_gpu_device_loss(&mut self, ctx: &egui::Context) {
-        if calibraw_gpu::take_gpu_device_lost().is_none() {
+        let Some(reason) = calibraw_gpu::take_gpu_device_lost() else {
             return;
-        }
+        };
         let ai_activity = calibraw_ai::gpu_ai_activity().or_else(|| {
             calibraw_ai::take_ai_gpu_device_loss()
                 .then(|| calibraw_ai::GpuAiActivity::Job("an AI model".to_owned()))
@@ -99,6 +99,8 @@ impl CalibRawApp {
         } else {
             tr(" Please start CalibRaw again.")
         });
+        message.push_str("\n\n");
+        message.push_str(&reason);
         // Recovery ends the old process directly, before eframe can paint or
         // destroy its lost swapchain. Run the normal persistence/shutdown
         // work first, while the application still owns its state.

@@ -106,6 +106,9 @@ pub(super) fn spawn_gpu_preview_prewarm(
         .spawn(move || {
             let started = Instant::now();
             calibraw_core::diagnostics::record("GPU preview prewarm started at app initialization");
+            calibraw_core::diagnostics::record(
+                "GPU startup prewarm uses default preview/export passes; optional effects compile on use",
+            );
 
             let persistent_cache = match cache_root.as_deref() {
                 Some(cache_root) => {
@@ -172,15 +175,13 @@ pub(super) fn spawn_gpu_preview_prewarm(
                 Err(error) => calibraw_core::diagnostics::record(error),
             }
 
-            // Programs are shared, so finishing the template's compiles below also
-            // serves the pipeline handed to the first document.
+            // Share the default preview's compiled and deferred programs with
+            // the first document and the library's saved-edit renders.
             let preview_template = result
                 .as_ref()
                 .map(RawGpuPipeline::program_template)
                 .map_err(Clone::clone);
-            // The library renders saved edits with the same programs.
-            preview_prewarm_for_thread.publish(preview_template.clone());
-            let preview_template = preview_template.ok();
+            preview_prewarm_for_thread.publish(preview_template);
             let _ = sender.send(result);
             repaint.request_repaint();
 
@@ -207,18 +208,9 @@ pub(super) fn spawn_gpu_preview_prewarm(
             export_prewarm_for_thread.publish(export_result);
             repaint.request_repaint();
 
-            // Effects compile on first use. Compile the common ones now so the
-            // first edit enabling one does not stall, and so they reach the
-            // persistent cache saved below.
-            if let Some(template) = preview_template {
-                let compile_started = Instant::now();
-                template.compile_common_programs();
-                calibraw_core::diagnostics::record(format!(
-                    "GPU preview common programs compiled in {:.3}s",
-                    compile_started.elapsed().as_secs_f64()
-                ));
-            }
-
+            // Save the basic programs only. Compiling inactive effects here
+            // makes their native driver failures a startup failure; their
+            // programs stay deferred until an edit actually dispatches them.
             if let Some(cache) = cache_to_persist {
                 let cache_save_started = Instant::now();
                 match cache.persist() {

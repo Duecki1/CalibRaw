@@ -166,6 +166,13 @@ job records the value it started with.
 
 ### Background jobs
 
+Startup prewarm builds the default preview and export pipelines and publishes
+their shared program templates. It compiles only the passes those defaults
+encode; optional effects and alternate demosaic/denoise variants stay deferred
+until rendering needs them. Native compilation of an optional effect must not
+be scheduled merely to finish startup. Edited thumbnails and saved edits count
+as uses of their effects.
+
 | Job | Queue | Cancellation | Document change | Failure / disconnect |
 |---|---|---|---|---|
 | Document load | single receiver; a new load replaces it | the replaced receiver is dropped and its result discarded | the load installs the new document and bumps `document_generation` | notice or unsupported-file dialog; a disconnected worker is reported |

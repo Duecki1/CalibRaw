@@ -481,6 +481,10 @@ impl InFlight {
     fn begin(description: String, submitted: Instant) -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        calibraw_core::diagnostics::trace(format!(
+            "GPU chunk submit id={id} thread={:?}: {description}",
+            std::thread::current().id(),
+        ));
         in_flight().push(InFlightChunk {
             id,
             description,
@@ -499,6 +503,12 @@ impl InFlight {
                 .map(|index| chunks.remove(index))
         };
         if let Some(chunk) = chunk {
+            calibraw_core::diagnostics::trace(format!(
+                "GPU chunk complete id={} elapsed_upper_ms={:.1}: {}",
+                chunk.id,
+                ran.as_secs_f64() * 1_000.0,
+                chunk.description,
+            ));
             if ran >= SLOW_CHUNK {
                 calibraw_core::diagnostics::record(format!(
                     "GPU chunk ran up to {:.0} ms: {}",

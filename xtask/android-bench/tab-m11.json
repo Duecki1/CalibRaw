@@ -9,7 +9,7 @@
       "name": "startup",
       "actions": [
         "launch",
-        { "wait_log": { "text": "GPU preview common programs compiled", "timeout_s": 120 } },
+        { "wait_log": { "text": "GPU export program prewarm finished", "timeout_s": 120 } },
         { "sleep_ms": 3000 }
       ]
     },
