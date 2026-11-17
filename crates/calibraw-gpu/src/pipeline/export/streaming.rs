@@ -164,6 +164,24 @@ where
         .context("upload full-image masks")?;
 
     let clock = ExportClock::default();
+    let probe = super::diagnostics::ExportProbe::requested()?;
+    let tile_inputs = ExportTileInputs {
+        pipeline: &tile_pipeline,
+        device,
+        queue,
+        raw,
+        exposure,
+        masks,
+        remove,
+        look,
+        geometry,
+        raw_stage_kept: false,
+        clock: &clock,
+    };
+    let mut tile_scratch = first_raw;
+    if let Some(probe) = probe.as_ref().filter(|probe| probe.raw_only()) {
+        return probe.run(&tile_inputs, &plan, &mut tile_scratch, None);
+    }
     let tone_analysis_started = Instant::now();
     if let Some(timing) = &gpu_timing {
         timing.phase("tone prepass");
@@ -186,7 +204,6 @@ where
         ),
     }
     let mut pending_scene = None;
-    let mut tile_scratch = first_raw;
     tile_pipeline.begin_export_tone_analysis(queue, device);
     for (index, tile) in plan.tiles.iter().copied().enumerate() {
         ensure_export_not_cancelled(cancellation)?;
@@ -271,17 +288,8 @@ where
     ));
 
     let tile_inputs = ExportTileInputs {
-        pipeline: &tile_pipeline,
-        device,
-        queue,
-        raw,
-        exposure,
-        masks,
-        remove,
-        look,
-        geometry,
         raw_stage_kept: raw_stage_store.is_some(),
-        clock: &clock,
+        ..tile_inputs
     };
     // A Lens Blur whose discs reach past the export halo reads the whole
     // image (defocus.rs): every tile adds its core to Lens Blur's full-image
@@ -354,10 +362,22 @@ where
         ));
     }
 
+    if let Some(probe) = probe.as_ref().filter(|probe| probe.captures_stages()) {
+        return probe.run(
+            &tile_inputs,
+            &plan,
+            &mut tile_scratch,
+            raw_stage_store.as_ref(),
+        );
+    }
     if let Some(timing) = &gpu_timing {
         timing.phase("final tiles");
     }
     let total_tiles = plan.tile_count();
+    let synchronous_readback = probe.as_ref().is_some_and(|probe| probe.synchronous());
+    if synchronous_readback {
+        calibraw_core::diagnostics::record("Export probe: synchronous tile readback enabled");
+    }
     let mut completed_tiles = 0usize;
     let mut first_progress_logged = false;
     let mut tile_index = 0usize;
@@ -405,11 +425,33 @@ where
                 )
                 .with_context(|| format!("queue export tile readback {}", global_index + 1))?;
 
-            let previous = pending_readback.replace((tile, global_index, readback));
+            let previous = if synchronous_readback {
+                Some((tile, global_index, readback))
+            } else {
+                pending_readback.replace((tile, global_index, readback))
+            };
             if let Some((previous_tile, previous_index, previous_readback)) = previous {
                 let rgb = clock
                     .time("tile readback", || {
                         previous_readback.finish(device, GpuWait::Watched(&mut watch_gpu))
+                    })
+                    .inspect_err(|error| {
+                        if probe.is_some() && error
+                            .downcast_ref::<super::super::gpu::NonFiniteReadback>()
+                            .is_some()
+                        {
+                            calibraw_core::diagnostics::record(format!("Export failure capture: invalid readback tile {}, current GPU tile {}", previous_index + 1, global_index + 1));
+                            tile_pipeline.capture_failed_export(
+                                device,
+                                queue,
+                                [
+                                    tile.local_core_x,
+                                    tile.local_core_y,
+                                    tile.core_width,
+                                    tile.core_height,
+                                ],
+                            );
+                        }
                     })
                     .with_context(|| format!("read export tile {}", previous_index + 1))?;
                 clock.time("tile stitching", || {
@@ -429,6 +471,28 @@ where
             let rgb = clock
                 .time("tile readback", || {
                     last_readback.finish(device, GpuWait::Watched(&mut watch_gpu))
+                })
+                .inspect_err(|error| {
+                    if probe.is_some()
+                        && error
+                            .downcast_ref::<super::super::gpu::NonFiniteReadback>()
+                            .is_some()
+                    {
+                        calibraw_core::diagnostics::record(format!(
+                            "Export failure capture: invalid readback and current GPU tile {}",
+                            last_index + 1
+                        ));
+                        tile_pipeline.capture_failed_export(
+                            device,
+                            queue,
+                            [
+                                last_tile.local_core_x,
+                                last_tile.local_core_y,
+                                last_tile.core_width,
+                                last_tile.core_height,
+                            ],
+                        );
+                    }
                 })
                 .with_context(|| format!("read export tile {}", last_index + 1))?;
             clock.time("tile stitching", || {
@@ -498,10 +562,10 @@ impl ExportClock {
 
 /// What every export tile is rendered from, for the Glow map prepass and the
 /// final tiles alike.
-struct ExportTileInputs<'a> {
-    pipeline: &'a RawGpuPipeline,
-    device: &'a wgpu::Device,
-    queue: &'a wgpu::Queue,
+pub(super) struct ExportTileInputs<'a> {
+    pub(super) pipeline: &'a RawGpuPipeline,
+    pub(super) device: &'a wgpu::Device,
+    pub(super) queue: &'a wgpu::Queue,
     raw: &'a LoadedRaw,
     exposure: &'a ExposureParams,
     masks: &'a MaskStack,
@@ -518,7 +582,12 @@ struct ExportTileInputs<'a> {
 impl ExportTileInputs<'_> {
     /// Uploads the RAW pixels (unless the RAW-stage scene is kept) and masks
     /// of `tile`, the `index`th, through `scratch` and returns its parameters.
-    fn upload(&self, tile: ExportTile, index: usize, scratch: &mut LoadedRaw) -> Result<GpuParams> {
+    pub(super) fn upload(
+        &self,
+        tile: ExportTile,
+        index: usize,
+        scratch: &mut LoadedRaw,
+    ) -> Result<GpuParams> {
         let (raw, masks) = (self.raw, self.masks);
         // The tile is extracted either way: its parameters come from it.
         self.clock.time("tile extraction", || {
@@ -574,7 +643,7 @@ impl ExportTileInputs<'_> {
     /// Puts the RAW-stage scene of `tile`, the `index`th, in the pipeline:
     /// the one the tone prepass kept in `store`, or the RAW stage run again
     /// with Remove.
-    fn load_scene(
+    pub(super) fn load_scene(
         &self,
         tile: ExportTile,
         index: usize,

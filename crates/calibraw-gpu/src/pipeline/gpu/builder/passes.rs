@@ -327,7 +327,7 @@ impl PassAssembler<'_> {
                     &self.effect_modules,
                 ),
                 layouts,
-                work: PassWork::for_entry(entry),
+                work: PassWork::for_entry(self.device, entry),
                 constants: program_constants(entry, self.stores_rcd_reference),
                 entry: entry.to_owned(),
                 cache: self.pipeline_cache.cloned(),

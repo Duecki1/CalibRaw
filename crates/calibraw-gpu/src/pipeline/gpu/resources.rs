@@ -1259,6 +1259,19 @@ pub(super) fn compile_compute_pipeline(
     device: &wgpu::Device,
     descriptor: &wgpu::ComputePipelineDescriptor<'_>,
 ) -> wgpu::ComputePipeline {
+    let probe = super::diagnostics::compile_probe();
+    static SERIAL_COMPILATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // A diagnostic serial run isolates native compiler overlap. A poisoned
+    // lock still owns no partial state; the driver call is the protected work.
+    let _serial = probe.serial.then(|| {
+        SERIAL_COMPILATION
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    });
+    let mut descriptor = descriptor.clone();
+    if probe.no_cache {
+        descriptor.cache = None;
+    }
     static NEXT_COMPILE: AtomicU64 = AtomicU64::new(0);
     let id = NEXT_COMPILE.fetch_add(1, Ordering::Relaxed);
     let thread = std::thread::current();
@@ -1274,7 +1287,7 @@ pub(super) fn compile_compute_pipeline(
     ));
     calibraw_core::diagnostics::flush();
     let started = Instant::now();
-    let pipeline = device.create_compute_pipeline(descriptor);
+    let pipeline = device.create_compute_pipeline(&descriptor);
     // Returning does not establish successful validation: the caller's error
     // scope owns that result. A native crash has no matching return record.
     calibraw_core::diagnostics::record(format!(

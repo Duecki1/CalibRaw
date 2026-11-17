@@ -30,9 +30,9 @@ struct GeometryResampleParams {
     // The lens map's image size and its grid size; unused without GEOMETRY_LENS.
     lens_map_size: vec2<u32>,
     lens_grid_size: vec2<u32>,
-    // First window row of the band and its row count.
+    // First window row of the dispatch band and its row count.
     band: vec2<u32>,
-    // First window column of the accumulated region and its width.
+    // First window column of the dispatch region and its width.
     region: vec2<u32>,
     // Source pixels the chunk buffer holds: x, y, width, height.
     chunk: vec4<u32>,
@@ -381,15 +381,17 @@ fn add_taps(plan: Plan, sum: vec4<f32>, first_row: u32, last_row: u32) -> vec4<f
 
 var<workgroup> workgroup_bounds: array<atomic<u32>, 4>;
 
-// Over the whole window: the source rectangle every cell reads. A cell's edge is a multiple
+// Over a region of the window: the source rectangle every cell reads. A cell's edge is a multiple
 // of the workgroup's, so a workgroup merges its pixels and writes its cell once.
 @compute @workgroup_size(8, 8)
 fn geometry_footprint(
     @builtin(global_invocation_id) id: vec3<u32>,
     @builtin(local_invocation_index) local_index: u32,
 ) {
-    if (id.x < params.window.z && id.y < params.window.w) {
-        let plan = plan_for(raster_point(id.x, id.y));
+    let window_id = vec2<u32>(params.region.x + id.x, params.band.x + id.y);
+    if (id.x < params.region.y && id.y < params.band.y
+            && window_id.x < params.window.z && window_id.y < params.window.w) {
+        let plan = plan_for(raster_point(window_id.x, window_id.y));
         if (plan.kind != PLAN_OUTSIDE) {
             var low = plan.nearest;
             var high = plan.nearest;
@@ -407,7 +409,7 @@ fn geometry_footprint(
     if (local_index == 0u) {
         let reads = atomicLoad(&workgroup_bounds[2]);
         if (reads != 0u) {
-            let cell = id.xy / params.cell_edge;
+            let cell = window_id / params.cell_edge;
             let slot = (cell.y * params.cells_per_row + cell.x) * 4u;
             atomicMax(&cell_bounds[slot], atomicLoad(&workgroup_bounds[0]));
             atomicMax(&cell_bounds[slot + 1u], atomicLoad(&workgroup_bounds[1]));
@@ -450,14 +452,15 @@ fn geometry_accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// Over the band: normalizes the sums into RGB.
+// Over the region of the band: normalizes the sums into RGB.
 @compute @workgroup_size(8, 8)
 fn geometry_resolve(@builtin(global_invocation_id) id: vec3<u32>) {
     let width = params.window.z;
-    if (id.x >= width || id.y >= params.band.y) {
+    let window_x = params.region.x + id.x;
+    if (id.x >= params.region.y || window_x >= width || id.y >= params.band.y) {
         return;
     }
-    let pixel = id.y * width + id.x;
+    let pixel = id.y * width + window_x;
     let sum = accumulator[pixel * 2u];
     let nearest = accumulator[pixel * 2u + 1u];
     let kind = u32(nearest.w);

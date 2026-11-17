@@ -29,6 +29,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod carousel;
 mod crop;
 mod destination;
+mod diagnostics;
 mod encoders;
 mod geometry_output;
 mod intermediate;

@@ -20,6 +20,7 @@
 //! On a fast GPU a stage stays one submission, as before; a slow one gets as
 //! many as its speed requires.
 
+use super::resources::GpuBudgetReservation;
 use super::wait::{wait_for_submission, GpuWait};
 use crate::stage_timing::{self, StageTiming};
 use std::collections::{HashMap, VecDeque};
@@ -82,17 +83,36 @@ pub(super) struct PassWork {
     key: u64,
     /// Whether the entry point adds the band's first row to its invocation.
     banded: bool,
+    /// Driver-specific execution bound, independent of timing estimates.
+    max_band_workgroups: u64,
+}
+
+/// Conservative execution bound shared by banded processing and export geometry.
+/// This identifies the measured driver, rather than imposing its workaround on all Mali GPUs.
+pub(super) fn driver_workgroup_limit(device: &wgpu::Device) -> Option<u64> {
+    let adapter = device.adapter_info();
+    // SM-A336B, Mali-G68 r32p1: adaptive bands lose the device during
+    // X100V export. Limiting recalculation alone moves the failure to
+    // homogeneity; limiting Markesteijn still leaves large finish/NR
+    // submissions. Keep every band conservative on this driver, without
+    // changing shader arithmetic or diagnosing the native fault.
+    let limited = adapter.backend == wgpu::Backend::Vulkan
+        && adapter.vendor == 0x13b5
+        && adapter.name == "Mali-G68"
+        && adapter.driver_info.contains("r32p1");
+    limited.then_some(PROBE_WORKGROUPS)
 }
 
 impl PassWork {
     /// The work of entry point `entry`, banded when its shader says so
     /// ([`super::shaders::entry_reads_dispatch_band`]).
-    pub(super) fn for_entry(entry: &str) -> Self {
+    pub(super) fn for_entry(device: &wgpu::Device, entry: &str) -> Self {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         entry.hash(&mut hasher);
         Self {
             key: hasher.finish(),
             banded: super::shaders::entry_reads_dispatch_band(entry),
+            max_band_workgroups: driver_workgroup_limit(device).unwrap_or(u64::MAX),
         }
     }
 
@@ -110,16 +130,27 @@ pub(super) struct DispatchBands {
     /// Bytes between two entries.
     stride: u32,
     entries: u32,
+    _reservation: GpuBudgetReservation,
 }
 
 impl DispatchBands {
-    /// Band origins for dispatches of up to `rows` invocation rows.
-    pub(super) fn new(device: &wgpu::Device, rows: u32) -> Self {
+    /// Cover every supported 2D texture grid, including effect maps larger
+    /// than the source image and padded pyramid levels. Bind groups retain
+    /// this buffer, so its capacity cannot grow when an effect is enabled.
+    pub(super) fn new(device: &wgpu::Device) -> anyhow::Result<Self> {
         let stride = device
             .limits()
             .min_uniform_buffer_offset_alignment
             .max(BAND_BYTES as u32);
-        let entries = rows.div_ceil(WORKGROUP_ROWS).max(1);
+        let entries = device
+            .limits()
+            .max_texture_dimension_2d
+            .div_ceil(WORKGROUP_ROWS)
+            .max(1);
+        let reservation = GpuBudgetReservation::acquire_bytes(
+            "dispatch band origins",
+            u64::from(stride) * u64::from(entries),
+        )?;
         let mut bytes = vec![0u8; stride as usize * entries as usize];
         for (entry, band) in bytes.chunks_exact_mut(stride as usize).enumerate() {
             let origin = [0u32, entry as u32 * WORKGROUP_ROWS, 0, 0];
@@ -131,11 +162,12 @@ impl DispatchBands {
             &bytes,
             wgpu::BufferUsages::UNIFORM,
         );
-        Self {
+        Ok(Self {
             buffer,
             stride,
             entries,
-        }
+            _reservation: reservation,
+        })
     }
 
     pub(super) fn binding(&self, binding: u32) -> wgpu::BindGroupEntry<'_> {
@@ -280,7 +312,7 @@ impl<'a> WorkEncoder<'a> {
     /// Closes the open chunk and submits it, so what is encoded next is its
     /// own submission.
     pub(super) fn cut(&mut self) {
-        if matches!(self.target, Target::Discard) {
+        if matches!(self.target, Target::Discard) || crate::gpu_errors::device_was_lost() {
             return;
         }
         let encoder = std::mem::replace(&mut self.encoder, Self::begin(self.device, self.label));
@@ -289,6 +321,12 @@ impl<'a> WorkEncoder<'a> {
 
     /// Submits `encoder`, which holds the open chunk.
     fn submit_chunk(&mut self, encoder: wgpu::CommandEncoder) {
+        // A failed pacing wait may have published terminal device loss.
+        // Do not submit the rest of this stage to an invalid device; its
+        // readback and the UI's recovery report the original failure.
+        if crate::gpu_errors::device_was_lost() {
+            return;
+        }
         let shares = std::mem::take(&mut self.open);
         let description = std::mem::take(&mut self.open_description);
         let estimate = self.open_estimate.replace(Duration::ZERO);
@@ -358,9 +396,17 @@ impl<'a> WorkEncoder<'a> {
         let banded = pass.work.banded && !matches!(self.target, Target::Discard);
 
         let mut row = 0;
-        // Row 0 is always in the table of origins.
-        let mut offset = 0;
         while row < rows {
+            if crate::gpu_errors::device_was_lost() {
+                return;
+            }
+            // Every banded grid is a 2D texture bounded by the device limit
+            // used to allocate the table. Never enlarge a band to hide a
+            // missing origin: that would bypass both execution bounds.
+            let offset = pass
+                .bands
+                .offset(row)
+                .expect("dispatch band table covers every supported 2D texture row");
             let left = rows - row;
             let cost = costs().per_workgroup(key);
             let estimate = |band_rows: u32| {
@@ -384,11 +430,9 @@ impl<'a> WorkEncoder<'a> {
             } else {
                 left
             };
-            // A band whose successor would start past the table takes the
-            // rest of the pass.
-            let next_offset = pass.bands.offset(row + band);
-            if next_offset.is_none() {
-                band = left;
+            if banded {
+                let limit = (pass.work.max_band_workgroups / row_workgroups).max(1);
+                band = band.min(u32::try_from(limit).unwrap_or(u32::MAX));
             }
             let band_estimate = estimate(band);
             let whole_pass = row == 0 && band == rows;
@@ -422,7 +466,6 @@ impl<'a> WorkEncoder<'a> {
                 self.cut();
             }
             row += band;
-            offset = next_offset.unwrap_or(0);
         }
     }
 
@@ -445,6 +488,9 @@ impl<'a> WorkEncoder<'a> {
 
     /// Submits the last chunk. `timing` timed the stage's passes.
     pub(super) fn submit(mut self, timing: Option<StageTiming>) {
+        if crate::gpu_errors::device_was_lost() {
+            return;
+        }
         let pending = stage_timing::resolve(timing, &mut self.encoder);
         let encoder = std::mem::replace(&mut self.encoder, Self::begin(self.device, self.label));
         self.submit_chunk(encoder);
@@ -459,7 +505,7 @@ impl<'a> WorkEncoder<'a> {
 const SLOW_CHUNK: Duration = Duration::from_millis(500);
 
 /// A chunk the GPU has not reported done.
-struct InFlight {
+pub(super) struct InFlight {
     id: u64,
 }
 
@@ -478,7 +524,7 @@ fn in_flight() -> std::sync::MutexGuard<'static, Vec<InFlightChunk>> {
 }
 
 impl InFlight {
-    fn begin(description: String, submitted: Instant) -> Self {
+    pub(super) fn begin(description: String, submitted: Instant) -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         calibraw_core::diagnostics::trace(format!(
@@ -494,7 +540,7 @@ impl InFlight {
     }
 
     /// Forgets the chunk, which ran for at most `ran`.
-    fn finish(self, ran: Duration) {
+    pub(super) fn finish(self, ran: Duration) {
         let chunk = {
             let mut chunks = in_flight();
             chunks

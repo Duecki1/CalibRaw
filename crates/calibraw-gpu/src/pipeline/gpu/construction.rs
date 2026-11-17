@@ -327,7 +327,7 @@ impl RawGpuPipeline {
             geometry.work_format,
             geometry.tone_format,
         );
-        let dispatch_bands = DispatchBands::new(device, raw.height);
+        let dispatch_bands = DispatchBands::new(device)?;
         let groups = create_bind_groups(
             device,
             &layouts,

@@ -239,6 +239,12 @@ pub fn mirror_to(file: File) {
     send_to_writer(Message::Mirror(file));
 }
 
+/// The directory owning this session's diagnostic files, once persistence
+/// starts. GPU diagnostics keep opt-in captures beside the session journal.
+pub fn storage_directory() -> Option<&'static Path> {
+    DIRECTORY.get().map(PathBuf::as_path)
+}
+
 /// Waits, for a moment, until every line recorded so far is on disk. For where
 /// the process is about to end; a no-op without [`persist_to`].
 pub fn flush() {
@@ -424,12 +430,15 @@ impl PreviousSession {
     /// shows nothing out of the ordinary.
     pub fn cause(&self) -> Option<String> {
         let lines: Vec<&str> = self.text.lines().collect();
-        let find = |needle: &str| lines.iter().rposition(|line| line.contains(needle));
         let after = |index: usize| {
             lines[index]
                 .split_once("] ")
                 .map_or(lines[index], |parts| parts.1)
         };
+        // A logged error dialog can quote a previous session's events. Only
+        // direct records describe this session; quoted failures must not
+        // recreate themselves on every launch.
+        let find = |needle: &str| (0..lines.len()).rfind(|&index| after(index).starts_with(needle));
 
         let export = self.running_export(&lines);
         let during = export
@@ -453,14 +462,13 @@ impl PreviousSession {
             return Some(cause);
         }
         let mut compiling = BTreeMap::new();
-        for (index, line) in lines.iter().enumerate() {
-            if let Some((_, started)) = line.split_once("GPU program compilation started #") {
+        for index in 0..lines.len() {
+            let line = after(index);
+            if let Some(started) = line.strip_prefix("GPU program compilation started #") {
                 if let Some((id, _)) = started.split_once(": ") {
                     compiling.insert(id, index);
                 }
-            } else if let Some((_, returned)) =
-                line.split_once("GPU program compilation returned #")
-            {
+            } else if let Some(returned) = line.strip_prefix("GPU program compilation returned #") {
                 if let Some((id, _)) = returned.split_once(' ') {
                     compiling.remove(id);
                 }

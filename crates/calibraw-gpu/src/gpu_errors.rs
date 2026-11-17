@@ -85,6 +85,12 @@ pub fn take_gpu_device_lost() -> Option<String> {
         .take()
 }
 
+/// Whether the editor's device entered terminal recovery. Workers must not
+/// submit more work after this, even after the UI has taken its message.
+pub(crate) fn device_was_lost() -> bool {
+    DEVICE_WAS_LOST.load(Ordering::Acquire)
+}
+
 /// Why [`poll_device`] failed.
 #[derive(Debug)]
 pub enum PollFailure {
@@ -114,14 +120,14 @@ pub fn poll_device(
     device: &wgpu::Device,
     poll_type: wgpu::PollType,
 ) -> Result<wgpu::PollStatus, PollFailure> {
-    if DEVICE_WAS_LOST.load(Ordering::Acquire) {
+    if device_was_lost() {
         return Err(PollFailure::DeviceLost);
     }
     // Unwind safety: the panic is raised by wgpu's front end after wgpu-core
     // returned the error, with no lock held, and the device is not used again.
     match catch_unwind(AssertUnwindSafe(|| device.poll(poll_type))) {
         Ok(result) => result.map_err(PollFailure::Poll),
-        Err(_) if DEVICE_WAS_LOST.load(Ordering::Acquire) => Err(PollFailure::DeviceLost),
+        Err(_) if device_was_lost() => Err(PollFailure::DeviceLost),
         Err(panic) => resume_unwind(panic),
     }
 }

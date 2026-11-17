@@ -7,8 +7,8 @@
 //! then resampled in bands one cell high: a band's cells are grouped into tiles whose source
 //! rectangle fits [`CHUNK_BYTES`], and a tile whose rectangle alone is larger (a strong
 //! reduction) is uploaded in runs of rows. Taps are added in source-row order however a
-//! rectangle is split, so the split never changes a pixel. One band renders on the GPU while
-//! the caller consumes the previous one.
+//! rectangle is split, so the split never changes a pixel. Each dispatch is bounded and
+//! awaited; two readbacks keep a pending mapping separate from the next band's output.
 
 use super::*;
 use crate::pipeline::geometry::{GeometryInverseMap, Homography};
@@ -72,7 +72,7 @@ pub(crate) fn resample_geometry(
     let cells = resampler.cell_footprints(device, queue, wait.reborrow())?;
     let mut pending: Option<PendingBand> = None;
     for band in 0..cells.rows {
-        let submitted = resampler.render_band(device, queue, &cells, band)?;
+        let submitted = resampler.render_band(device, queue, &cells, band, wait.reborrow())?;
         if let Some(previous) = pending.replace(submitted) {
             resampler.finish_band(device, previous, wait.reborrow(), &mut row)?;
         }
@@ -183,6 +183,8 @@ struct Resampler<'a> {
     footprint: wgpu::ComputePipeline,
     accumulate: wgpu::ComputePipeline,
     resolve: wgpu::ComputePipeline,
+    /// Bounds each dispatch independently of source upload and output band sizes.
+    workgroup_limit: u32,
     _budget: GpuBudgetReservation,
 }
 
@@ -371,6 +373,10 @@ impl<'a> Resampler<'a> {
             footprint,
             accumulate,
             resolve,
+            // One megapixel at most on other adapters. The affected Samsung needs
+            // the same smaller bound as RAW processing, including in this separate path.
+            workgroup_limit: work::driver_workgroup_limit(device)
+                .map_or(16_384, |limit| limit as u32),
             _budget: budget,
         })
     }
@@ -386,23 +392,61 @@ impl<'a> Resampler<'a> {
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
     }
 
-    fn dispatch(
+    /// Submits one bounded rectangle, records it for device-loss diagnostics and waits
+    /// before reusing the parameters or uploading the next source chunk.
+    fn dispatch_region(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         pipeline: &wgpu::ComputePipeline,
-        size: [u32; 2],
-    ) {
+        operation: &str,
+        wait: GpuWait<'_>,
+        params: GeometryResampleParams,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            !crate::gpu_errors::device_was_lost(),
+            "GPU device lost before {operation}"
+        );
+        self.write_params(queue, params.band, params.region, params.chunk);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some(operation),
+        });
         dispatch_compute(
-            encoder,
-            "calibraw export geometry",
+            &mut encoder,
+            operation,
             pipeline,
             &[&self.bind_group],
             [
-                size[0].div_ceil(GEOMETRY_WORKGROUP_EDGE),
-                size[1].div_ceil(GEOMETRY_WORKGROUP_EDGE),
+                params.region[1].div_ceil(GEOMETRY_WORKGROUP_EDGE),
+                params.band[1].div_ceil(GEOMETRY_WORKGROUP_EDGE),
                 1,
             ],
         );
+        let submitted = std::time::Instant::now();
+        let tracked = work::InFlight::begin(
+            format!(
+                "{operation} region={:?} band={:?} chunk={:?}",
+                params.region, params.band, params.chunk
+            ),
+            submitted,
+        );
+        let submission = queue.submit(Some(encoder.finish()));
+        queue.on_submitted_work_done(move || tracked.finish(submitted.elapsed()));
+        wait_for_submission(device, &submission, operation, wait).map_err(|error| match error {
+            GpuWaitError::Poll(error) => anyhow!("GPU poll failed during {operation}: {error}"),
+            GpuWaitError::Stopped { waited } => {
+                anyhow!("{operation} stopped after {} s", waited.as_secs())
+            }
+            GpuWaitError::LimitReached { waited } => {
+                anyhow!("{operation} did not finish within {} s", waited.as_secs())
+            }
+        })
+    }
+
+    /// Largest workgroup-aligned column count for a dispatch with `rows` rows.
+    fn region_width(&self, rows: u32) -> u32 {
+        (self.workgroup_limit / rows.div_ceil(GEOMETRY_WORKGROUP_EDGE)).max(1)
+            * GEOMETRY_WORKGROUP_EDGE
     }
 
     /// Runs the footprint pass over the window and reads back what each cell reads, widened
@@ -411,15 +455,38 @@ impl<'a> Resampler<'a> {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        wait: GpuWait<'_>,
+        mut wait: GpuWait<'_>,
     ) -> Result<CellFootprints> {
         let [_, _, width, height] = self.job.window;
-        self.write_params(queue, [0, height], [0, width], [0; 4]);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw export geometry footprints"),
         });
         encoder.clear_buffer(&self.cell_bounds, 0, None);
-        self.dispatch(&mut encoder, &self.footprint, [width, height]);
+        queue.submit(Some(encoder.finish()));
+        let column_step = width.min(self.region_width(GEOMETRY_WORKGROUP_EDGE));
+        let row_step = (self.workgroup_limit / column_step.div_ceil(GEOMETRY_WORKGROUP_EDGE))
+            .max(1)
+            * GEOMETRY_WORKGROUP_EDGE;
+        // Origins stay workgroup-aligned, so a footprint workgroup still lies in one cell.
+        for top in (0..height).step_by(row_step as usize) {
+            for left in (0..width).step_by(column_step as usize) {
+                self.dispatch_region(
+                    device,
+                    queue,
+                    &self.footprint,
+                    "geometry_footprint",
+                    wait.reborrow(),
+                    GeometryResampleParams {
+                        band: [top, row_step.min(height - top)],
+                        region: [left, column_step.min(width - left)],
+                        ..self.base
+                    },
+                )?;
+            }
+        }
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("calibraw export geometry footprint readback"),
+        });
         encoder.copy_buffer_to_buffer(&self.cell_bounds, 0, &self.cell_readback, 0, None);
         let submission = queue.submit(Some(encoder.finish()));
         let receiver = map_read_async(&self.cell_readback);
@@ -464,6 +531,7 @@ impl<'a> Resampler<'a> {
         queue: &wgpu::Queue,
         cells: &CellFootprints,
         band: u32,
+        mut wait: GpuWait<'_>,
     ) -> Result<PendingBand> {
         let [_, _, width, height] = self.job.window;
         let first_row = band * CELL_EDGE;
@@ -490,22 +558,48 @@ impl<'a> Resampler<'a> {
                 let chunk_height = chunk_rows.min(source.max[1] - chunk_top + 1);
                 let chunk = [source.min[0], chunk_top, source.width(), chunk_height];
                 self.upload_chunk(queue, chunk)?;
-                self.write_params(queue, band_rows, [tile.first_column, tile.width], chunk);
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("calibraw export geometry accumulate"),
-                });
-                self.dispatch(&mut encoder, &self.accumulate, [tile.width, rows]);
-                queue.submit(Some(encoder.finish()));
+                let column_step = self.region_width(rows);
+                for offset in (0..tile.width).step_by(column_step as usize) {
+                    self.dispatch_region(
+                        device,
+                        queue,
+                        &self.accumulate,
+                        "geometry_accumulate",
+                        wait.reborrow(),
+                        GeometryResampleParams {
+                            band: band_rows,
+                            region: [
+                                tile.first_column + offset,
+                                column_step.min(tile.width - offset),
+                            ],
+                            chunk,
+                            ..self.base
+                        },
+                    )?;
+                }
                 chunk_top += chunk_height;
             }
         }
 
-        self.write_params(queue, band_rows, [0, width], [0; 4]);
+        let column_step = self.region_width(rows);
+        for left in (0..width).step_by(column_step as usize) {
+            self.dispatch_region(
+                device,
+                queue,
+                &self.resolve,
+                "geometry_resolve",
+                wait.reborrow(),
+                GeometryResampleParams {
+                    band: band_rows,
+                    region: [left, column_step.min(width - left)],
+                    ..self.base
+                },
+            )?;
+        }
         let readback = band as usize % self.readbacks.len();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw export geometry resolve"),
         });
-        self.dispatch(&mut encoder, &self.resolve, [width, rows]);
         encoder.copy_buffer_to_buffer(
             &self.output,
             0,

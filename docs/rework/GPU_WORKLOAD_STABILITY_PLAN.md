@@ -5,6 +5,12 @@ defers optional startup programs. This follow-up is an investigation and plan;
 the repairs below have not been implemented or device-validated. Preserve the
 existing warmup/recovery changes as separate reviewable work.
 
+The [later same-day investigation](2026_11_17_GPU_CRASH_FOLLOWUP.md) records
+the new Glow/Windows logs, controlled Samsung dispatch experiments and the
+candidate repairs for band origins, terminal-loss submission and diagnostics.
+The findings below describe the earlier checkpoint; remaining plan items are
+not implied complete by that follow-up.
+
 **Finding:** there are real gaps in workload and memory bounds, but neither
 new report establishes RAM exhaustion as its cause. Repair those gaps and use
 controlled experiments to identify the failing driver workload. Do not group

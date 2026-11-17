@@ -117,6 +117,26 @@ pub struct PendingRgba32Readback {
     padded_bytes_per_row: u32,
 }
 
+/// A completed GPU copy containing invalid RGB, distinguished from a failed
+/// GPU wait/map so export diagnostics can inspect the still-valid device.
+#[derive(Debug)]
+pub(crate) struct NonFiniteReadback {
+    label: String,
+    extent: [u32; 2],
+    pixel: [usize; 2],
+    channel: usize,
+    value: f32,
+}
+
+impl std::fmt::Display for NonFiniteReadback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} contains NaN or infinity at readback pixel ({}, {}), channel {}, value {:?}; region {}x{}",
+            self.label, self.pixel[0], self.pixel[1], self.channel, self.value, self.extent[0], self.extent[1])
+    }
+}
+
+impl std::error::Error for NonFiniteReadback {}
+
 impl PendingRgba32Readback {
     pub fn finish(self, device: &wgpu::Device, wait: GpuWait<'_>) -> Result<Vec<f32>> {
         self.finish_with_context(
@@ -134,6 +154,32 @@ impl PendingRgba32Readback {
         operation: &str,
         label: &str,
         output_label: &str,
+        wait: GpuWait<'_>,
+    ) -> Result<Vec<f32>> {
+        let (width, height) = (self.width, self.height);
+        let rgb = self.read_rgb(device, operation, label, wait)?;
+        if let Some(index) = rgb.iter().position(|value| !value.is_finite()) {
+            let pixel = index / 3;
+            super::diagnostics::retain_invalid_readback(&rgb, width, height, output_label);
+            return Err(NonFiniteReadback {
+                label: output_label.to_owned(),
+                extent: [width, height],
+                pixel: [pixel % width as usize, pixel / width as usize],
+                channel: index % 3,
+                value: rgb[index],
+            }
+            .into());
+        }
+        Ok(rgb)
+    }
+
+    /// Unmodified RGB texels for diagnostics. May contain non-finite values;
+    /// production callers use `finish_with_context`, which rejects them.
+    pub(super) fn read_rgb(
+        self,
+        device: &wgpu::Device,
+        operation: &str,
+        label: &str,
         wait: GpuWait<'_>,
     ) -> Result<Vec<f32>> {
         wait_for_mapping(
@@ -183,9 +229,6 @@ impl PendingRgba32Readback {
         }
         drop(mapped);
         self.readback.unmap();
-        if rgb.iter().any(|value| !value.is_finite()) {
-            return Err(anyhow!("{output_label} contains NaN or infinity"));
-        }
         Ok(rgb)
     }
 }
@@ -425,7 +468,11 @@ pub(super) fn read_float_texture_pixel_blocking(
 /// Returns `(unpadded, padded)` bytes per row for a texture-to-buffer copy of
 /// `width` texels, padded to wgpu's 256-byte `COPY_BYTES_PER_ROW_ALIGNMENT`.
 /// `format` names the texel format in overflow errors.
-fn padded_bytes_per_row(width: u32, bytes_per_pixel: u32, format: &str) -> Result<(u32, u32)> {
+pub(super) fn padded_bytes_per_row(
+    width: u32,
+    bytes_per_pixel: u32,
+    format: &str,
+) -> Result<(u32, u32)> {
     let unpadded_bytes_per_row = width
         .checked_mul(bytes_per_pixel)
         .ok_or_else(|| anyhow!("GPU {format} row byte count overflows"))?;

@@ -283,9 +283,21 @@ impl EffectPrograms {
         set: EffectSet,
         readiness: Readiness,
     ) -> Option<(wgpu::ComputePipeline, EffectSet)> {
+        let mode = super::diagnostics::compile_probe().effects;
+        if mode == super::diagnostics::EffectCompileMode::Generic {
+            return None;
+        }
+        let readiness = if mode == super::diagnostics::EffectCompileMode::Specialized {
+            Readiness::Wait
+        } else {
+            readiness
+        };
         let variants = &self.0;
         let key = set.intersection(variants.dispatched);
-        if key == variants.dispatched || key.has_several_creative_slot_effects() {
+        if key == variants.dispatched
+            || (mode != super::diagnostics::EffectCompileMode::Specialized
+                && key.has_several_creative_slot_effects())
+        {
             return None;
         }
         let (cell, new) = {
@@ -382,17 +394,21 @@ impl ProgramVariants {
         let started = std::time::Instant::now();
         let scopes = GpuErrorScopes::push(&self.device);
         let pipeline = self.modules.module(key).map(|module| {
+            // The generic and specialized programs share an entry point and
+            // can compile concurrently. Keep their durable begin/end records
+            // distinguishable when a native compiler never returns.
+            let label = format!("{} effects={:#x}", self.entry, key.bits());
             let layout = self
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some(&self.entry),
+                    label: Some(&label),
                     bind_group_layouts: &self.layouts.each_ref().map(Some),
                     immediate_size: 0,
                 });
             super::compile_compute_pipeline(
                 &self.device,
                 &wgpu::ComputePipelineDescriptor {
-                    label: Some(&self.entry),
+                    label: Some(&label),
                     layout: Some(&layout),
                     module: &module,
                     entry_point: Some(&self.entry),

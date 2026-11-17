@@ -25,6 +25,7 @@ use crate::stage_timing;
 mod builder;
 mod clipping;
 mod construction;
+mod diagnostics;
 mod effect_inputs;
 mod effect_programs;
 mod geometry_resample;
@@ -70,6 +71,7 @@ pub(crate) use preview_budget::{
     gpu_working_set_is_limited, scale_with_mobile_export_tile, ExportTileShape,
 };
 pub use preview_budget::{preview_mask_layer_capacity, MobilePreviewRole, PreviewResourceShape};
+pub(crate) use readback::NonFiniteReadback;
 pub(crate) use readback::PendingSceneReadback;
 use readback::*;
 use resources::*;
