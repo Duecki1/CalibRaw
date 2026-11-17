@@ -1,7 +1,7 @@
 //! The Android backend: the JNI bridge in `calibraw-ffi`.
 
 use super::service::{
-    CameraProfileFolderResult, ExportPublishResult, GpuLossRestart, ImportProgress,
+    CameraProfileFolderResult, ExportPublishResult, GpuLossRecovery, ImportProgress,
     ImportedLibraryDocument, LibraryDocument, LibraryFolder, LinkFolderResult, LinkedFolder,
     ListedSidecar, PickedDocument, PickerResult, Platform, PublishedExport, ReplayVideoEncoder,
     StagedFilesResult, TaskNotification,
@@ -41,6 +41,10 @@ pub fn android_main(android_app: AndroidApp) {
     let graphics_backend =
         crate::performance_settings::load_graphics_backend(settings_path.as_deref());
     let mut options = crate::native_options(PlatformCaps::ANDROID, graphics_backend);
+    // Own and drop this Activity's event loop before android_main returns.
+    // eframe's default TLS cache outlives the native destruction handshake,
+    // racing a replacement Activity's event-loop creation guard.
+    options.run_and_return = false;
     options.wgpu_options.surface = eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY;
     options.android_app = Some(android_app.clone());
     options.viewport = eframe::egui::ViewportBuilder::default();
@@ -167,27 +171,19 @@ impl Platform for AndroidPlatform {
             .map(|folder| folder.join("gpu-ai-job.txt"))
     }
 
-    /// Ends this process and starts CalibRaw in a new one, or `None` after a
-    /// restart that already followed a GPU loss.
-    fn restart_after_gpu_loss(&self) -> Option<GpuLossRestart> {
-        match calibraw_ffi::restarted_after_gpu_loss(&self.app) {
-            Ok(false) => {}
-            Ok(true) => return None,
+    /// Transfers the notice to a separate process, allowing a single restart.
+    fn gpu_loss_recovery(&self) -> GpuLossRecovery {
+        let restart = match calibraw_ffi::restarted_after_gpu_loss(&self.app) {
+            Ok(restarted) => !restarted,
             Err(error) => {
                 log::warn!("{error}");
-                return None;
+                false
             }
-        }
+        };
         let app = self.app.clone();
-        Some(Box::new(move || calibraw_ffi::restart_after_gpu_loss(&app)))
-    }
-
-    /// A dialog over the activity. The UI runs on its own thread, not on
-    /// Android's main thread that shows it.
-    fn show_fatal_message(&self, title: &str, description: &str) {
-        if let Err(error) = calibraw_ffi::show_fatal_message(&self.app, title, description) {
-            log::error!("{error}. {title}: {description}");
-        }
+        GpuLossRecovery::new(restart, move |title, message| {
+            calibraw_ffi::recover_after_gpu_loss(&app, title, message, restart)
+        })
     }
 
     fn lensfun_database_dir(&self) -> Result<Option<PathBuf>, String> {
@@ -660,7 +656,7 @@ impl Platform for AndroidPlatform {
         &self,
         display_name: &str,
         mime_type: &str,
-    ) -> Result<Option<PathBuf>, String> {
+    ) -> Result<Option<(PathBuf, std::fs::File)>, String> {
         calibraw_ffi::prepare_direct_export(&self.app, display_name, mime_type)
     }
 

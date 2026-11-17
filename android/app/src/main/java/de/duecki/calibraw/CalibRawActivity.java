@@ -1,6 +1,5 @@
 package de.duecki.calibraw;
 
-import android.app.AlertDialog;
 import android.app.NativeActivity;
 import android.content.pm.ActivityInfo;
 import android.content.ClipData;
@@ -10,7 +9,6 @@ import android.content.Intent;
 import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Looper;
 import android.os.Process;
 import android.graphics.Insets;
 import android.view.View;
@@ -27,7 +25,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -66,9 +63,6 @@ public final class CalibRawActivity extends NativeActivity {
     // Whether this process was started by GpuLossRestartActivity. Kept for the
     // process, as the activity's intent changes with "Open with" and Share.
     private static volatile boolean restartedAfterGpuLoss;
-    // Released when the notice of showFatalMessage is dismissed, or the
-    // activity ends while it is shown.
-    private volatile CountDownLatch fatalMessageDismissed;
     private final ExecutorService startupMaintenanceExecutor =
             Executors.newSingleThreadExecutor(runnable ->
                     new Thread(runnable, "CalibRaw startup maintenance"));
@@ -479,53 +473,23 @@ public final class CalibRawActivity extends NativeActivity {
     }
 
     /**
-     * Shows a notice for a failure the native UI can no longer draw, such as a
-     * lost GPU device, and blocks the calling thread until it is dismissed.
-     * Rust calls it from its own thread; on the main thread, which shows the
-     * dialog, it would wait for itself, so there it only logs.
+     * Rust has saved the edits and diagnostics. Transfer the notice to a
+     * separate process and end this one without GPU teardown. Waiting here
+     * for a dialog deadlocks onPauseNative, which waits for Rust's event loop.
      */
-    public void showFatalMessage(String title, String message) {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            Log.e(LOG_TAG, title + ": " + message);
-            return;
-        }
-        CountDownLatch dismissed = new CountDownLatch(1);
-        fatalMessageDismissed = dismissed;
-        runOnUiThread(() -> {
-            if (isFinishing() || isDestroyed()) {
-                dismissed.countDown();
-                return;
-            }
-            new AlertDialog.Builder(this)
-                    .setTitle(title)
-                    .setMessage(message)
-                    .setCancelable(false)
-                    .setPositiveButton(android.R.string.ok, null)
-                    .setOnDismissListener(dialog -> dismissed.countDown())
-                    .show();
-        });
-        try {
-            dismissed.await();
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        } finally {
-            fatalMessageDismissed = null;
-        }
-    }
-
-    /**
-     * Ends this process and starts CalibRaw again in a new one, after the GPU
-     * device was lost: the editor's GPU state cannot be rebuilt in this
-     * process. GpuLossRestartActivity, in a process of its own, makes sure
-     * this one has ended and starts the activity again. Returns only if the
-     * restart could not be started.
-     */
-    public void restartAfterGpuLoss() {
-        Intent restart = new Intent(this, GpuLossRestartActivity.class)
+    public void recoverAfterGpuLoss(String title, String message, boolean restartAllowed) {
+        Intent recovery = new Intent(this, GpuLossRestartActivity.class)
                 .putExtra(GpuLossRestartActivity.EXTRA_ENDING_PID, Process.myPid())
+                .putExtra(GpuLossRestartActivity.EXTRA_TITLE, title)
+                .putExtra(GpuLossRestartActivity.EXTRA_MESSAGE, message)
+                .putExtra(GpuLossRestartActivity.EXTRA_RESTART_ALLOWED, restartAllowed)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(restart);
-        Runtime.getRuntime().exit(0);
+        try {
+            startActivity(recovery);
+        } finally {
+            // Even a failed handoff must not return to a lost renderer.
+            Process.killProcess(Process.myPid());
+        }
     }
 
     public String performanceSettingsPath() {
@@ -578,10 +542,6 @@ public final class CalibRawActivity extends NativeActivity {
 
     @Override
     protected void onDestroy() {
-        CountDownLatch dismissed = fatalMessageDismissed;
-        if (dismissed != null) {
-            dismissed.countDown();
-        }
         startupMaintenanceExecutor.shutdownNow();
         if (taskNotificationController != null) {
             taskNotificationController.clear();

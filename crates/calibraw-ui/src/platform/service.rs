@@ -182,11 +182,34 @@ pub(crate) trait ReplayVideoEncoder: Send {
     fn finish(self: Box<Self>) -> Result<(), String>;
 }
 
-/// Starts CalibRaw again after a lost GPU device, once the edits are saved
-/// and the notice was shown. On the desktop it starts a new process and this
-/// one then closes; on Android it ends this process and returns only with
-/// the reason it could not.
-pub(crate) type GpuLossRestart = Box<dyn FnOnce() -> Result<(), String>>;
+/// The platform's terminal recovery action, prepared before its notice is
+/// worded. The application saves and flushes before handing control to it.
+pub(crate) struct GpuLossRecovery {
+    restarts: bool,
+    finish: GpuLossNotice,
+}
+
+type GpuLossNotice = Box<dyn FnOnce(&str, &str) -> Result<(), String>>;
+
+impl GpuLossRecovery {
+    pub(crate) fn new(
+        restarts: bool,
+        finish: impl FnOnce(&str, &str) -> Result<(), String> + 'static,
+    ) -> Self {
+        Self {
+            restarts,
+            finish: Box::new(finish),
+        }
+    }
+
+    pub(crate) fn restarts(&self) -> bool {
+        self.restarts
+    }
+
+    pub(crate) fn finish(self, title: &str, message: &str) -> Result<(), String> {
+        (self.finish)(title, message)
+    }
+}
 
 /// The operating-system services behind actions. Handlers call these; views
 /// never do.
@@ -252,15 +275,14 @@ pub(crate) trait Platform: Send + Sync {
     fn clear_task_notification(&self) -> Result<(), String> {
         Ok(())
     }
-    /// What starts CalibRaw again after a lost GPU device, or `None` where a
-    /// restart cannot work.
-    fn restart_after_gpu_loss(&self) -> Option<GpuLossRestart> {
-        None
-    }
-    /// A native notice for a failure the UI can no longer draw, such as a
-    /// lost GPU device. Blocks until dismissed.
-    fn show_fatal_message(&self, title: &str, description: &str) {
-        super::files::show_fatal_message(title, description);
+    /// A notice and optional restart after the application saved its state.
+    /// Android must never wait for the notice on its native event thread:
+    /// Java lifecycle callbacks synchronously wait for that thread to poll.
+    fn gpu_loss_recovery(&self) -> GpuLossRecovery {
+        GpuLossRecovery::new(false, |title, message| {
+            super::files::show_fatal_message(title, message);
+            Ok(())
+        })
     }
 
     // --- Memory ---
@@ -744,7 +766,7 @@ pub(crate) trait Platform: Send + Sync {
         &self,
         _display_name: &str,
         _mime_type: &str,
-    ) -> Result<Option<PathBuf>, String> {
+    ) -> Result<Option<(PathBuf, File)>, String> {
         Ok(None)
     }
     fn finalize_direct_export(&self, _path: &Path) -> Result<PublishedExport, String> {

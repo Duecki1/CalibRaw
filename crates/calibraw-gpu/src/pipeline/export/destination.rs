@@ -1,15 +1,16 @@
 //! Export destinations: staging files, descriptor targets and atomic publishing.
 
 use super::*;
+use std::io::Seek;
 
 /// Where an export writer puts its file and its intermediate staging files.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ExportOutput<'a> {
     /// The file the writer produces.
     pub(super) path: &'a Path,
-    /// `path` is an existing platform descriptor to truncate rather than a
-    /// new file to create exclusively.
-    pub(super) truncate_existing: bool,
+    /// The platform-granted file, kept open through the export. `path` is
+    /// only its publication token and must never be reopened.
+    pub(super) descriptor: Option<&'a fs::File>,
     pub(super) staging_dir: &'a Path,
     /// Name prefix of staged intermediates (see [`temporary_export_path`]).
     pub(super) staging_name: &'a str,
@@ -63,6 +64,7 @@ where
 enum StagedTarget<'a> {
     Descriptor {
         path: &'a Path,
+        file: &'a fs::File,
         staging_dir: &'a Path,
     },
     File {
@@ -80,9 +82,15 @@ enum StagedTarget<'a> {
 impl<'a> StagedTarget<'a> {
     fn new(target: &'a ExportTarget) -> Result<Self> {
         Ok(match target {
-            ExportTarget::Descriptor { path, staging_dir } => {
-                Self::Descriptor { path, staging_dir }
-            }
+            ExportTarget::Descriptor {
+                path,
+                file,
+                staging_dir,
+            } => Self::Descriptor {
+                path,
+                file,
+                staging_dir,
+            },
             ExportTarget::File(destination) => Self::File {
                 staged: StagedFile::new(parent_directory(destination), file_name(destination)?)?,
                 destination,
@@ -102,15 +110,19 @@ impl<'a> StagedTarget<'a> {
 
     fn output(&self) -> Result<ExportOutput<'_>> {
         match self {
-            Self::Descriptor { path, staging_dir } => Ok(ExportOutput {
+            Self::Descriptor {
                 path,
-                truncate_existing: true,
+                file,
+                staging_dir,
+            } => Ok(ExportOutput {
+                path,
+                descriptor: Some(file),
                 staging_dir,
                 staging_name: DESCRIPTOR_STAGING_NAME,
             }),
             Self::File { staged, .. } | Self::NewFile { staged, .. } => Ok(ExportOutput {
                 path: staged.path(),
-                truncate_existing: false,
+                descriptor: None,
                 staging_dir: parent_directory(staged.path()),
                 staging_name: file_name(staged.path())?,
             }),
@@ -166,14 +178,17 @@ impl Drop for StagedFile {
 }
 
 pub(super) fn open_export_destination(output: ExportOutput<'_>) -> Result<fs::File> {
-    let mut options = OpenOptions::new();
-    options.write(true);
-    if output.truncate_existing {
-        options.truncate(true);
-    } else {
-        options.create_new(true);
+    if let Some(descriptor) = output.descriptor {
+        let mut file = descriptor
+            .try_clone()
+            .context("duplicate export descriptor")?;
+        file.set_len(0).context("truncate export descriptor")?;
+        file.rewind().context("rewind export descriptor")?;
+        return Ok(file);
     }
-    options
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
         .open(output.path)
         .with_context(|| format!("open export destination {}", output.path.display()))
 }

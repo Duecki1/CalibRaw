@@ -13,12 +13,12 @@ mod wayland_pinch;
 
 pub(crate) use entry::main;
 
-use super::service::{GpuLossRestart, Platform};
+use super::service::{GpuLossRecovery, Platform};
 use super::PlatformCaps;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Set in a process started by `restart_after_gpu_loss`, so a GPU
+/// Set in a process started by GPU-loss recovery, so a GPU
 /// that fails again right away does not restart CalibRaw in a loop.
 const RESTARTED_AFTER_GPU_LOSS: &str = "CALIBRAW_RESTARTED_AFTER_GPU_LOSS";
 
@@ -101,27 +101,32 @@ impl Platform for DesktopPlatform {
         Some(calibraw_core::thumbnail_cache::desktop_app_cache_root().join("gpu-ai-job.txt"))
     }
 
-    /// Starts this program with its arguments, or `None` after a restart
-    /// that already followed a GPU loss, and inside Flatpak, whose sandbox
-    /// ends with this process.
-    fn restart_after_gpu_loss(&self) -> Option<GpuLossRestart> {
-        if std::env::var_os(RESTARTED_AFTER_GPU_LOSS).is_some()
-            || std::env::var_os("FLATPAK_ID").is_some()
-        {
-            return None;
-        }
+    /// Ends the lost render process after its notice; restarts it once with
+    /// the same arguments, outside Flatpak, whose sandbox ends with the process.
+    fn gpu_loss_recovery(&self) -> GpuLossRecovery {
         // An AppImage runs from a temporary mount; restart the image itself.
-        let program = match std::env::var_os("APPIMAGE") {
-            Some(image) => PathBuf::from(image),
-            None => std::env::current_exe().ok()?,
-        };
-        let mut command = std::process::Command::new(program);
-        command
-            .args(std::env::args_os().skip(1))
-            .env(RESTARTED_AFTER_GPU_LOSS, "1");
-        Some(Box::new(move || {
-            command.spawn().map(drop).map_err(|error| error.to_string())
-        }))
+        let program = std::env::var_os("APPIMAGE")
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_exe().ok());
+        let restart = program.filter(|_| {
+            std::env::var_os(RESTARTED_AFTER_GPU_LOSS).is_none()
+                && std::env::var_os("FLATPAK_ID").is_none()
+        });
+        GpuLossRecovery::new(restart.is_some(), move |title, message| {
+            files::show_fatal_message(title, message);
+            if let Some(program) = restart {
+                if let Err(error) = std::process::Command::new(program)
+                    .args(std::env::args_os().skip(1))
+                    .env(RESTARTED_AFTER_GPU_LOSS, "1")
+                    .spawn()
+                {
+                    log::error!("could not restart CalibRaw after GPU loss: {error}");
+                }
+            }
+            // State is already saved. Do not unwind through a lost painter
+            // or swapchain: their teardown can panic a second time.
+            entry::end_process(Ok(()))
+        })
     }
 
     fn clear_thumbnail_cache(&self) -> Result<(), String> {

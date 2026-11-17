@@ -24,7 +24,7 @@
 //! the process is about to end: a GPU device loss, a panic and a clean exit.
 
 use crate::pipeline::{CompactPixelMap, LoadedRaw};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;
@@ -400,6 +400,26 @@ impl PreviousSession {
                 cause.push_str(&format!(". {}", after(work)));
             }
             return Some(cause);
+        }
+        let mut compiling = BTreeMap::new();
+        for (index, line) in lines.iter().enumerate() {
+            if let Some((_, started)) = line.split_once("GPU program compilation started #") {
+                if let Some((id, _)) = started.split_once(": ") {
+                    compiling.insert(id, index);
+                }
+            } else if let Some((_, returned)) =
+                line.split_once("GPU program compilation returned #")
+            {
+                if let Some((id, _)) = returned.split_once(' ') {
+                    compiling.remove(id);
+                }
+            }
+        }
+        if let Some(&index) = compiling.values().min() {
+            return Some(format!(
+                "The app ended during native GPU program compilation{during}: {}",
+                after(index)
+            ));
         }
         export.map(|step| {
             format!(

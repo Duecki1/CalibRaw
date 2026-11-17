@@ -1239,14 +1239,49 @@ pub(super) fn create_compute_pipeline(
     entry_point: &str,
     cache: Option<&wgpu::PipelineCache>,
 ) -> wgpu::ComputePipeline {
-    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some(label),
-        layout: Some(layout),
-        module,
-        entry_point: Some(entry_point),
-        compilation_options: Default::default(),
-        cache,
-    })
+    compile_compute_pipeline(
+        device,
+        &wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            module,
+            entry_point: Some(entry_point),
+            compilation_options: Default::default(),
+            cache,
+        },
+    )
+}
+
+/// The driver boundary for every processing program. Record and flush before
+/// entering native compilation, which can kill the process without unwinding.
+/// Separate IDs keep overlapping workers' unfinished calls identifiable.
+pub(super) fn compile_compute_pipeline(
+    device: &wgpu::Device,
+    descriptor: &wgpu::ComputePipelineDescriptor<'_>,
+) -> wgpu::ComputePipeline {
+    static NEXT_COMPILE: AtomicU64 = AtomicU64::new(0);
+    let id = NEXT_COMPILE.fetch_add(1, Ordering::Relaxed);
+    let thread = std::thread::current();
+    calibraw_core::diagnostics::record(format!(
+        "GPU program compilation started #{id}: entry={:?} label={:?} constants={:?} cache={} backend={:?} thread={} ({:?})",
+        descriptor.entry_point,
+        descriptor.label,
+        descriptor.compilation_options.constants,
+        descriptor.cache.is_some(),
+        device.adapter_info().backend,
+        thread.name().unwrap_or("unnamed"),
+        thread.id(),
+    ));
+    calibraw_core::diagnostics::flush();
+    let started = Instant::now();
+    let pipeline = device.create_compute_pipeline(descriptor);
+    // Returning does not establish successful validation: the caller's error
+    // scope owns that result. A native crash has no matching return record.
+    calibraw_core::diagnostics::record(format!(
+        "GPU program compilation returned #{id} in {:.3}s",
+        started.elapsed().as_secs_f64()
+    ));
+    pipeline
 }
 
 thread_local! {

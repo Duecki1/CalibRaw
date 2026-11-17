@@ -15,7 +15,7 @@ pub(crate) fn main() -> eframe::Result {
 /// GPU driver or a native library, so the process ends without running exit
 /// handlers, which would tear those libraries down under the threads: the
 /// NVIDIA driver and Lensfun crashed so at quit.
-fn end_process(result: eframe::Result) -> ! {
+pub(super) fn end_process(result: eframe::Result) -> ! {
     let code = match result {
         Ok(()) => 0,
         Err(error) => {

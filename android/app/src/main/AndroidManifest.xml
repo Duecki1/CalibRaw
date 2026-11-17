@@ -55,7 +55,6 @@
             android:name=".GpuLossRestartActivity"
             android:excludeFromRecents="true"
             android:exported="false"
-            android:noHistory="true"
             android:process=":gpu_restart"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>

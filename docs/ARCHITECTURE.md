@@ -62,8 +62,10 @@ change that establishes a boundary, not in advance.
   path and renamed into place; `ExportTarget::NewFile` (desktop batch and
   carousel exports) is moved into place without replacing anything, taking the
   next free `{stem}-N` name; `ExportTarget::Descriptor` (Android MediaStore)
-  is written in place with intermediates in a caller-chosen staging directory.
-  The exporter no longer asks the platform bridge which kind a path is.
+  carries an open `File`, shared with the publication state through `Arc`.
+  Its path is only a publication token: the worker duplicates the file and
+  is its sole writer/seeker, without reopening a proc path and rechecking
+  storage permissions. Intermediates use a caller-chosen staging directory.
 - An export keeps its intermediates (the linear raster a geometry export
   resamples, the raster an encoder compresses, a JPEG XL codestream awaiting its
   container) in memory while they fit an eighth of the device's RAM
@@ -233,6 +235,17 @@ of them is taken while holding it. Poisoned locks are recovered
 as errors where it may not.
 
 ### Shutdown
+
+Android owns one winit loop per Activity, with eframe's TLS loop cache disabled.
+The pinned `vendor/winit` patch exits on Destroy and releases the loop-creation
+guard before `android_main` returns, so NativeActivity's synchronous destruction
+handshake finishes and a replacement Activity can create its own loop.
+
+A lost render device ends the old process after the application runs its exit
+persistence work and flushes diagnostics, without painting or tearing down the
+lost swapchain. On Android the independent `GpuLossRestartActivity` owns the
+notice and its optional restart; the native event thread never waits for a
+dialog, because Java lifecycle callbacks wait for that thread to poll.
 
 `eframe::App::on_exit` empties the warm AI feature set (models unload once
 their job releases them), stops Discord presence, clears the Android task

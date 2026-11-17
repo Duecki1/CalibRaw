@@ -323,3 +323,12 @@ jobs:
           if-no-files-found: error
           # The Play bundle is only a hand-off to the Play Console; 0 keeps the repository default.
           retention-days: ${{ inputs.distribution == 'googleplay' && 7 || 0 }}
+
+      # Keep the symbols with the build that produced each APK/AAB. Publishing
+      # them separately avoids treating a diagnostics archive as a release app.
+      - name: Upload Android native symbols
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ steps.build_android_apk.outputs.artifact_name }}-native-symbols
+          path: android/app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+          if-no-files-found: error

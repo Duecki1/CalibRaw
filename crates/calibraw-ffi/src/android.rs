@@ -471,7 +471,7 @@ pub fn gpu_stage_timing_requested(app: &AndroidApp) -> Result<bool, String> {
     .map_err(|error| format!("could not read the GPU stage timing switch: {error:#}"))
 }
 
-/// Whether this process was started by [`restart_after_gpu_loss`], so that a
+/// Whether this process was started by GPU-loss recovery, so that a
 /// GPU that fails again right away does not restart CalibRaw in a loop.
 pub fn restarted_after_gpu_loss(app: &AndroidApp) -> Result<bool, String> {
     with_activity(app, |env, activity| {
@@ -486,37 +486,30 @@ pub fn restarted_after_gpu_loss(app: &AndroidApp) -> Result<bool, String> {
     .map_err(|error| format!("could not read how CalibRaw was started: {error:#}"))
 }
 
-/// Shows `title` and `message` in a native dialog, for a failure the UI can
-/// no longer draw, and blocks the calling thread until it is dismissed. Must
-/// not be called on Android's main thread, which shows the dialog.
-pub fn show_fatal_message(app: &AndroidApp, title: &str, message: &str) -> Result<(), String> {
+/// Transfers the notice to an independent Android process and ends the lost
+/// render process. Never waits for user input on the native event thread.
+pub fn recover_after_gpu_loss(
+    app: &AndroidApp,
+    title: &str,
+    message: &str,
+    restart: bool,
+) -> Result<(), String> {
     with_activity(app, |env, activity| {
         let title = env.new_string(title)?;
         let message = env.new_string(message)?;
         env.call_method(
             activity,
-            jni::jni_str!("showFatalMessage"),
-            jni::jni_sig!((JString, JString) -> void),
-            &[JValue::Object(&title), JValue::Object(&message)],
+            jni::jni_str!("recoverAfterGpuLoss"),
+            jni::jni_sig!((JString, JString, bool) -> void),
+            &[
+                JValue::Object(&title),
+                JValue::Object(&message),
+                JValue::Bool(restart),
+            ],
         )?;
         Ok(())
     })
-    .map_err(|error| format!("could not show the notice: {error:#}"))
-}
-
-/// Ends this process and starts CalibRaw again in a new one, after a lost
-/// GPU device. Returns only when Android could not start the restart.
-pub fn restart_after_gpu_loss(app: &AndroidApp) -> Result<(), String> {
-    with_activity(app, |env, activity| {
-        env.call_method(
-            activity,
-            jni::jni_str!("restartAfterGpuLoss"),
-            jni::jni_sig!(() -> void),
-            &[],
-        )?;
-        Ok(())
-    })
-    .map_err(|error| format!("could not restart CalibRaw: {error:#}"))
+    .map_err(|error| format!("could not transfer GPU-loss recovery: {error:#}"))
 }
 
 pub fn copy_text_to_clipboard(app: &AndroidApp, label: &str, text: &str) -> Result<(), String> {

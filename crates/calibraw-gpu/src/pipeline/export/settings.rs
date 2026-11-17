@@ -246,7 +246,7 @@ pub enum ExportEvent {
 }
 
 /// What an export writes.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum ExportFiles {
     /// The whole output, in one file.
     Single(ExportTarget),
@@ -259,7 +259,7 @@ pub enum ExportFiles {
 }
 
 /// Where an export is written.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum ExportTarget {
     /// A file path. The export is written to a temporary file in the same
     /// directory and renamed into place on success, so a failed or cancelled
@@ -275,11 +275,15 @@ pub enum ExportTarget {
         stem: String,
         extension: String,
     },
-    /// A writable descriptor path the platform handed out (an Android
-    /// MediaStore `/proc/self/fd/N`), which cannot be renamed into. The export
-    /// writes into it directly and stages intermediate files in `staging_dir`;
-    /// the caller publishes or cancels the descriptor afterwards.
-    Descriptor { path: PathBuf, staging_dir: PathBuf },
+    /// An open writable file granted by the platform. `path` only identifies
+    /// the pending export; reopening it can lose the descriptor's permission.
+    /// The UI shares the file with the worker until publication or cancellation.
+    /// Only the worker writes/seeks it; duplicates share its cursor.
+    Descriptor {
+        path: PathBuf,
+        file: Arc<fs::File>,
+        staging_dir: PathBuf,
+    },
 }
 
 impl ExportFormat {

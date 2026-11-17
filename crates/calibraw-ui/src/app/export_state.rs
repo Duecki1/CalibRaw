@@ -286,6 +286,8 @@ pub(super) enum ExportDestination {
     /// `staging_dir`.
     AndroidDirect {
         path: PathBuf,
+        /// Shared with the export job while the UI keeps its publication token.
+        file: Arc<std::fs::File>,
         staging_dir: PathBuf,
     },
     AndroidGallery {
@@ -309,8 +311,13 @@ impl ExportDestination {
                 stem: stem.clone(),
                 extension: extension.clone(),
             },
-            Self::AndroidDirect { path, staging_dir } => ExportTarget::Descriptor {
+            Self::AndroidDirect {
+                path,
+                file,
+                staging_dir,
+            } => ExportTarget::Descriptor {
                 path: path.clone(),
+                file: Arc::clone(file),
                 staging_dir: staging_dir.clone(),
             },
             // Gallery exports are cached as files and published afterwards.

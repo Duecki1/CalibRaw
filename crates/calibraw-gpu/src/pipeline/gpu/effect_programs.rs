@@ -389,15 +389,17 @@ impl ProgramVariants {
                     bind_group_layouts: &self.layouts.each_ref().map(Some),
                     immediate_size: 0,
                 });
-            self.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            super::compile_compute_pipeline(
+                &self.device,
+                &wgpu::ComputePipelineDescriptor {
                     label: Some(&self.entry),
                     layout: Some(&layout),
                     module: &module,
                     entry_point: Some(&self.entry),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     cache: self.cache.as_ref().map(|cache| cache.raw()),
-                })
+                },
+            )
         });
         let result = scopes
             .finish("compile an effect set's program")

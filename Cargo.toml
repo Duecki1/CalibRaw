@@ -17,6 +17,11 @@ default-members = [
     "crates/calibraw-ffi",
     "crates/calibraw-cli",
 ]
+exclude = ["vendor/winit"]
+
+[patch.crates-io]
+# Android Destroy/recreation fix, kept on the released 0.30.13 API.
+winit = { path = "vendor/winit" }
 
 [workspace.metadata]
 # F-Droid reads this committed value when checking release tags. Increase it

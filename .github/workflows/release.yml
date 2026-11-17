@@ -90,6 +90,10 @@ jobs:
           mkdir -p release-assets
           while IFS= read -r -d '' file; do
             case "$file" in
+              */native-debug-symbols.zip)
+                # Retain diagnostic artifacts in Actions, outside app downloads.
+                continue
+                ;;
               *.AppImage|*.deb|*.exe|*.zip|*.apk|*.ipa)
                 cp "$file" "release-assets/$(basename "$file")"
                 ;;

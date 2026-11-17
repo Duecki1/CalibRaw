@@ -22,6 +22,8 @@ impl TransferredFileDescriptor {
         if raw_fd < 0 {
             return Err(invalid_descriptor_message.to_owned());
         }
+        // SAFETY: Java detached this descriptor and transferred its sole
+        // ownership to Rust; this File closes it exactly once.
         let file = unsafe { File::from_raw_fd(raw_fd) };
         Ok(Self {
             _file: file,
@@ -75,7 +77,7 @@ pub fn prepare_direct_export(
     app: &AndroidApp,
     display_name: &str,
     mime_type: &str,
-) -> Result<Option<PathBuf>, String> {
+) -> Result<Option<(PathBuf, File)>, String> {
     let encoded = with_export_publisher(app, |env, export_publisher| {
         let display_name = env.new_string(display_name)?;
         let mime_type = env.new_string(mime_type)?;
@@ -98,6 +100,16 @@ pub fn prepare_direct_export(
         uri,
         location,
     } = PendingExportDescriptor::parse(&encoded)?;
+    let file = match descriptor._file.try_clone() {
+        Ok(file) => file,
+        Err(error) => {
+            drop(descriptor);
+            let _ = finish_pending_export(app, &uri, false);
+            return Err(format!(
+                "could not duplicate Android export descriptor: {error}"
+            ));
+        }
+    };
     let path = descriptor.proc_path();
     let target = DirectExportTarget {
         descriptor,
@@ -108,7 +120,7 @@ pub fn prepare_direct_export(
         .lock()
         .map_err(|_| "Android direct-export state is poisoned".to_owned())?
         .insert(path.clone(), target);
-    Ok(Some(path))
+    Ok(Some((path, file)))
 }
 
 /// Publishes a finished direct export and returns where it is, under the name

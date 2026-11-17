@@ -107,7 +107,7 @@ pub(crate) fn is_flatpak() -> bool {
 
 /// A native message box for failures the UI can no longer draw, such as a
 /// lost GPU device. Blocks until dismissed. Only logs on mobile, whose
-/// backends show their own (`Platform::show_fatal_message`).
+/// backends own their notice through `Platform::gpu_loss_recovery`.
 pub(super) fn show_fatal_message(title: &str, description: &str) {
     imp::show_fatal_message(title, description);
 }

@@ -81,7 +81,7 @@ impl CalibRawApp {
         }
         let save_failure = self.save_edits_before_exit();
 
-        let restart = self.platform.restart_after_gpu_loss();
+        let recovery = self.platform.gpu_loss_recovery();
         let mut message =
             tr("The graphics driver reset the GPU, so CalibRaw cannot continue.").to_owned();
         match &save_failure {
@@ -94,22 +94,21 @@ impl CalibRawApp {
                 &[("when", &during(activity))],
             ));
         }
-        message.push_str(if restart.is_some() {
+        message.push_str(if recovery.restarts() {
             tr(" CalibRaw will restart.")
         } else {
             tr(" Please start CalibRaw again.")
         });
-        self.platform
-            .show_fatal_message(tr("CalibRaw has to restart"), &message);
-
+        // Recovery ends the old process directly, before eframe can paint or
+        // destroy its lost swapchain. Run the normal persistence/shutdown
+        // work first, while the application still owns its state.
+        eframe::App::on_exit(self);
         // This loss has been reported; the next start must not find the record
         // of a job that is still running and report it again.
         calibraw_ai::end_gpu_job_records();
         calibraw_core::diagnostics::mark_reported();
-        if let Some(restart) = restart {
-            if let Err(error) = restart() {
-                log::error!("could not restart CalibRaw after the GPU was lost: {error}");
-            }
+        if let Err(error) = recovery.finish(tr("CalibRaw has to restart"), &message) {
+            log::error!("could not recover after the GPU was lost: {error}");
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }

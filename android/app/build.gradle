@@ -182,6 +182,11 @@ android {
 
     buildTypes {
         release {
+            // Preserve function symbols for Play's native crash reports;
+            // shipped libraries are still stripped by the Android packager.
+            ndk {
+                debugSymbolLevel 'SYMBOL_TABLE'
+            }
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"

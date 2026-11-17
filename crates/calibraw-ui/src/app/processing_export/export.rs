@@ -382,8 +382,9 @@ impl CalibRawApp {
             .platform
             .prepare_direct_export(&display_name, format.mime_type())
         {
-            Ok(Some(path)) => Ok(ExportDestination::AndroidDirect {
+            Ok(Some((path, file))) => Ok(ExportDestination::AndroidDirect {
                 path,
+                file: Arc::new(file),
                 staging_dir: export_dir,
             }),
             Ok(None) => Ok(ExportDestination::AndroidGallery {

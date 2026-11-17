@@ -279,9 +279,9 @@ impl ComputeProgram {
                 bind_group_layouts: &self.layouts.each_ref().map(Some),
                 immediate_size: 0,
             });
-        let pipeline = self
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = compile_compute_pipeline(
+            &self.device,
+            &wgpu::ComputePipelineDescriptor {
                 label: Some(&self.entry),
                 layout: Some(&layout),
                 module: &self.shader,
@@ -291,7 +291,8 @@ impl ComputeProgram {
                     ..Default::default()
                 },
                 cache: self.cache.as_ref().map(|cache| cache.raw()),
-            });
+            },
+        );
         if let Some(cache) = &self.cache {
             cache.note_compiled();
         }

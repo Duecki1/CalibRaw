@@ -43,6 +43,10 @@ update `Cargo.toml`, `scripts/build_lensfun.sh`,
 
 ## Checks
 
+The local `vendor/winit` dependency contains the Android Destroy/recreation
+backport only; see its `CALIBRAW_PATCHES.md` before updating winit. Keep the
+upstream license and remove the patch when a compatible release includes it.
+
 Ordinary CI runs these on every push and pull request; run them before
 finishing a change:
 
