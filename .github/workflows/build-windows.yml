@@ -45,6 +45,7 @@ jobs:
             cxx_compiler: x86_64-w64-mingw32-g++
             artifact_arch: x86_64
             vc_redist_arch: x64
+            dxc_arch: x64
             vc_runtime_dlls: msvcp140.dll msvcp140_1.dll msvcp140_atomic_wait.dll vcruntime140.dll vcruntime140_1.dll
           - name: ARM64 (GNU LLVM + LibRaw)
             runner: windows-11-arm
@@ -66,6 +67,7 @@ jobs:
             cxx_compiler: clang++
             artifact_arch: arm64
             vc_redist_arch: arm64
+            dxc_arch: arm64
             vc_runtime_dlls: msvcp140.dll msvcp140_1.dll msvcp140_atomic_wait.dll vcruntime140.dll
 
     defaults:
@@ -85,6 +87,11 @@ jobs:
       # Clang calls this ABI "gnu"; its triple parser does not accept Rust's
       # equivalent "gnullvm" suffix when bindgen parses native headers.
       BINDGEN_EXTRA_CLANG_ARGS_aarch64_pc_windows_gnullvm: --target=aarch64-pc-windows-gnu
+      # DirectX Shader Compiler release whose dxcompiler.dll ships beside
+      # calibraw.exe; see "Stage DirectX Shader Compiler".
+      DXC_VERSION: v1.9.2609
+      DXC_ARCHIVE: dxc_2026_09_29.zip
+      DXC_SHA256: ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1
 
     steps:
       # Line endings
@@ -253,6 +260,36 @@ jobs:
           }
           Set-Content -NoNewline -Path (Join-Path $staging "version.txt") -Value $redistVersion
 
+      # wgpu's Direct3D 12 backend compiles shaders with dxcompiler.dll when
+      # the DLL search path, which starts at calibraw.exe's directory, has one,
+      # and otherwise falls back to FXC, which cannot compile CalibRaw's
+      # shaders (issue #181). The release builds use GNU targets, where wgpu's
+      # static-dxc feature does not link DXC, so the DLL ships instead. DXC
+      # 1.8.2502 and later validate and sign DXIL without dxil.dll, so the
+      # closed-source dxil.dll stays out of the package.
+      - name: Stage DirectX Shader Compiler
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP $env:DXC_ARCHIVE
+          $url = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/$env:DXC_VERSION/$env:DXC_ARCHIVE"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($hash -ne $env:DXC_SHA256) {
+            throw "$env:DXC_ARCHIVE has SHA-256 $hash, expected $env:DXC_SHA256."
+          }
+
+          $extracted = Join-Path $env:RUNNER_TEMP "dxc-release"
+          Expand-Archive -Path $archive -DestinationPath $extracted -Force
+          $staging = Join-Path $env:RUNNER_TEMP "dxc"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          foreach ($file in "bin\${{ matrix.dxc_arch }}\dxcompiler.dll", "LICENSE-LLVM.txt", "LICENCE-MIT.txt") {
+            $source = Join-Path $extracted $file
+            if (-not (Test-Path $source -PathType Leaf)) {
+              throw "$env:DXC_ARCHIVE is missing $file."
+            }
+            Copy-Item $source $staging
+          }
+
       - name: Package portable Windows artifact
         run: |
           export PKG_CONFIG_PATH="$(cygpath -w ${{ matrix.msys_prefix }}/lib/pkgconfig);$(cygpath -w ${{ matrix.msys_prefix }}/share/pkgconfig)"
@@ -270,6 +307,11 @@ jobs:
           for dll in ${{ matrix.vc_runtime_dlls }}; do
             cp "$vc_runtime_dir/$dll" "$package_dir/"
           done
+
+          dxc_dir="$(cygpath -u "$RUNNER_TEMP")/dxc"
+          cp "$dxc_dir/dxcompiler.dll" "$package_dir/"
+          mkdir -p "$package_dir/licenses/DirectXShaderCompiler"
+          cp "$dxc_dir/LICENSE-LLVM.txt" "$dxc_dir/LICENCE-MIT.txt" "$package_dir/licenses/DirectXShaderCompiler/"
 
           lensfun_db="$(find ${{ matrix.msys_prefix }}/share/lensfun -type f -name '*.xml' -printf '%h\n' | head -n 1)"
           test -n "$lensfun_db"
@@ -316,6 +358,7 @@ jobs:
             echo "LibRaw: $libraw_version"
             echo "Lensfun: $lensfun_version"
             echo "Visual C++ runtime: $(cat "$vc_runtime_dir/version.txt")"
+            echo "DirectX Shader Compiler: $DXC_VERSION"
           } > "$package_dir/BUILD-INFO.txt"
 
           # Artifact

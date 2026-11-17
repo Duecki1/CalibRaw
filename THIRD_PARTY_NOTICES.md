@@ -238,6 +238,13 @@ native components:
   [license terms](https://visualstudio.microsoft.com/license-terms/) for
   [distributable code](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution).
   `BUILD-INFO.txt` records their version.
+- [DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler)
+  (`dxcompiler.dll`), under the
+  [University of Illinois/NCSA](https://github.com/microsoft/DirectXShaderCompiler/blob/main/LICENSE.TXT)
+  and MIT licenses. Windows artifacts include it from the pinned upstream
+  release recorded in `BUILD-INFO.txt`, so wgpu compiles shaders for
+  Direct3D 12 with DXC; its license texts are in
+  `licenses/DirectXShaderCompiler/`.
 - Android native builds also statically link pinned GLib (LGPL-2.1-or-later),
   GNU libiconv (LGPL-2.1), PCRE2 (BSD-3-Clause), libffi (MIT), and zlib
   (Zlib). Their versions and source hashes are pinned in
