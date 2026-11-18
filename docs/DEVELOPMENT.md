@@ -166,6 +166,15 @@ review the new goldens like code. The Remove and X-Trans denoise cases
 render or demosaic on the GPU first, so their goldens hold only on the
 adapter that blessed them. The file header documents the formats.
 
+### Shader stability
+
+- Read textures, samplers and other resource handles directly from module bindings. Pass coordinates, indices or sampled values to helpers. Passing handles through functions has crashed the Mali native compiler during pipeline creation. The `no_handle_arguments` contract checks composed shaders.
+- Bound work per invocation as well as work per dispatch. For a filter over active mask layers, traverse the slots once in mask order and stop at the bound output capacity. Repeated slot searches inside a tap loop multiply the work for every pixel. Preserve the order of taps and sums when splitting a pass.
+- Route image-sized processing through `WorkEncoder`. Its banded entries use 8×8 workgroups, name the global invocation `dispatch_gid`, and obtain image coordinates through `Common::dispatch_id`. Use `Common::dispatch_group` for group coordinates. Check the rounded-up invocation against the destination extent before accessing it, keeping barriers uniform across a workgroup. A separate submission path such as export geometry must bound its own rectangles, honor the applicable driver limit, pace submissions and stop on failed waits or device loss. Scope driver workarounds to the adapter and driver for which there is evidence.
+- Size buffers, dispatch grids and layer strides from the same allocated extent, including rectangular maps and partial edge tiles. Use the logical full-image grid for sampling and the allocated width and height for storage indexing. Bound layers by the actual texture view or buffer capacity. For effect maps and pyramids use `allocate_effect_resources` to check texture and storage-binding limits, reserve the complete resident footprint (including mip levels and simultaneous scratch resources), and return allocation errors before publishing the resources.
+- Keep optional effect pipelines lazy and identify the entry and specialization in compile diagnostics. When upgrading Naga or wgpu, recheck the sampled-array and storage-array layer queries against the HLSL patch in [the Naga patch notes](../vendor/naga/CALIBRAW_PATCHES.md). For a native compiler crash, exercise pipeline creation on the affected backend with a cold cache.
+- Run `cargo test --locked -p calibraw-gpu` for shader and layout contracts plus render parity. For a dispatch change, also run `CALIBRAW_GPU_CHUNK_MS=0.01 cargo test --locked -p calibraw-gpu --test render_parity` against the existing goldens. Verify a device crash fix with the triggering RAW, sidecar and backend through preview and full export as applicable. Record the adapter, driver, build, and whether the exported image was published and opens at the expected dimensions. Keep hardware verification pending when the affected device is unavailable.
+
 ### Adding an effect
 
 An effect is one row in the `mask_effects!` table

@@ -43,13 +43,6 @@ pub fn android_main(android_app: AndroidApp) {
         .ok();
     if let Some(directory) = settings_path.as_deref().and_then(Path::parent) {
         calibraw_core::diagnostics::persist_to(&directory.join("diagnostics"));
-        match calibraw_ffi::diagnostic_log_output(&android_app) {
-            Ok((file, location)) => {
-                calibraw_core::diagnostics::mirror_to(file);
-                calibraw_core::diagnostics::record(format!("Public diagnostic log: {location}"));
-            }
-            Err(error) => log::warn!("{error}"),
-        }
     }
     let graphics_backend =
         crate::performance_settings::load_graphics_backend(settings_path.as_deref());

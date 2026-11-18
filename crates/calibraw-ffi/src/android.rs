@@ -541,34 +541,6 @@ pub fn performance_settings_path(app: &AndroidApp) -> Result<PathBuf, String> {
     non_empty_path(path, "Android returned no performance settings path")
 }
 
-/// A seekable log in public storage, with sole descriptor ownership transferred
-/// from Java. Never reopen this descriptor through `/proc/self/fd`.
-pub fn diagnostic_log_output(app: &AndroidApp) -> Result<(File, String), String> {
-    let encoded = with_activity(app, |env, activity| {
-        let value = env.call_method(
-            activity,
-            jni::jni_str!("openDiagnosticLog"),
-            jni::jni_sig!(() -> JString),
-            &[],
-        )?;
-        java_string(env, value)
-    })
-    .map_err(|error| format!("could not open the public diagnostic log: {error:#}"))?;
-    let (descriptor, location) = encoded
-        .split_once('\t')
-        .ok_or_else(|| "Android returned an invalid diagnostic log descriptor".to_owned())?;
-    let descriptor = descriptor
-        .parse::<i32>()
-        .map_err(|error| format!("invalid diagnostic log fd: {error}"))?;
-    if descriptor < 0 {
-        return Err("Android returned a negative diagnostic log fd".to_owned());
-    }
-    // SAFETY: openDiagnosticLog detached this descriptor and transferred its
-    // sole ownership to Rust. File closes it, including on a writer failure.
-    let file = unsafe { File::from_raw_fd(descriptor) };
-    Ok((file, location.to_owned()))
-}
-
 pub fn gpu_pipeline_cache_dir(app: &AndroidApp) -> Result<PathBuf, String> {
     let path = with_activity(app, |env, activity| {
         let value = env.call_method(

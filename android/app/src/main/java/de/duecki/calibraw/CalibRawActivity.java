@@ -41,9 +41,6 @@ public final class CalibRawActivity extends NativeActivity {
 
     private static final String LOG_TAG = "CalibRaw";
 
-    public String openDiagnosticLog() throws IOException {
-        return DiagnosticLogs.open(this);
-    }
     private static final int TABLET_SMALLEST_WIDTH_DP = 600;
     private static final int OPEN_RAW_DOCUMENT = 1001;
     private static final int OPEN_CAMERA_PROFILE_FOLDER = 1003;

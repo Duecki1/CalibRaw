@@ -33,6 +33,7 @@ This codebase is yours. What it's for and how it's built are your call, and you 
 
 ## WGSL and GPU
 
+- Follow the [shader stability rules](docs/DEVELOPMENT.md#shader-stability) when changing WGSL, dispatch code, resource allocation or shader compiler dependencies.
 - Production shaders live in `.wgsl` files. Document colour spaces, coordinate systems, boundary handling and precision.
 - Rust/WGSL buffer layouts, bindings and shared IDs are verified by `layout_contract_tests`; change both sides and the test together.
 - Structural cleanup preserves pass order, clamps, negative/HDR handling, tile halos and cache behavior.

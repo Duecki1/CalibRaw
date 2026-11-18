@@ -1164,6 +1164,21 @@ fn inputs_left_out_of_a_part_are_not_read_by_it() {
 /// `entry_reads_dispatch_band` bands.
 #[test]
 fn banded_entry_points_offset_their_invocations() {
+    // These passes were in flight during reported device losses. Changing a declaration
+    // can silently remove it from band discovery and skip the checks below.
+    for name in [
+        "xtrans_markesteijn_recalculate",
+        "xtrans_markesteijn_homogeneity",
+        "xtrans_markesteijn_accumulate",
+        "xtrans_markesteijn_smooth",
+        "xtrans_demosaic_finish",
+        "build_styled_glow_map_level",
+    ] {
+        assert!(
+            shaders::entry_reads_dispatch_band(name),
+            "{name} must retain banded dispatch"
+        );
+    }
     let mut banded = 0;
     for shader in shaders::ALL_ENTRY_SHADERS {
         let text = shader.source.module_text();
