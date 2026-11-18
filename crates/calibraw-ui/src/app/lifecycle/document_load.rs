@@ -71,7 +71,7 @@ pub(super) struct CameraProfileSettings {
 pub(super) struct PreviewProgramSources {
     pub(super) previous_pipeline: Option<RawGpuPipeline>,
     pub(super) retained_template: Option<RawGpuProgramTemplate>,
-    pub(super) startup_prewarm: Option<mpsc::Receiver<Result<RawGpuPipeline, String>>>,
+    pub(super) shared_programs: Option<Arc<crate::pipeline::GpuProgramPrewarm>>,
 }
 
 /// Everything the decode worker needs, captured on the UI thread.
@@ -1165,7 +1165,7 @@ fn build_preview_proxy(
 }
 
 /// Builds the preview pipeline, reusing compiled programs from the previous
-/// document or the startup prewarm when available.
+/// document or from another render of this sensor layout.
 fn create_preview_pipeline(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1177,47 +1177,25 @@ fn create_preview_pipeline(
     let PreviewProgramSources {
         previous_pipeline,
         retained_template,
-        startup_prewarm,
+        shared_programs,
     } = programs;
-    // Only wait for the startup prewarm when nothing else can provide programs.
-    let prewarmed_pipeline = startup_prewarm
-        .filter(|_| previous_pipeline.is_none() && retained_template.is_none())
-        .and_then(|receiver| {
-            let wait_started = Instant::now();
-            match receiver.recv() {
-                Ok(Ok(pipeline)) => {
-                    calibraw_core::diagnostics::record(format!(
-                        "GPU preview startup prewarm available after {:.3}s wait",
-                        wait_started.elapsed().as_secs_f64()
-                    ));
-                    Some(pipeline)
-                }
-                Ok(Err(error)) => {
-                    calibraw_core::diagnostics::record(error);
-                    None
-                }
-                Err(error) => {
-                    calibraw_core::diagnostics::record(format!(
-                        "GPU preview startup prewarm unavailable: {error}"
-                    ));
-                    None
-                }
-            }
-        });
     let template = previous_pipeline
         .as_ref()
         .map(RawGpuPipeline::program_template)
-        .or(retained_template)
-        .or_else(|| {
-            prewarmed_pipeline
-                .as_ref()
-                .map(RawGpuPipeline::program_template)
-        });
+        .or(retained_template);
 
     let options =
         fitted_pipeline_options(mask_count).profile_preview(reserves_profile_preview(preview_raw));
     let compile = || {
-        RawGpuPipeline::new(device, queue, preview_raw, params, options).map_err(|error| {
+        RawGpuPipeline::new_reusing(
+            device,
+            queue,
+            preview_raw,
+            params,
+            options,
+            shared_programs.as_deref(),
+        )
+        .map_err(|error| {
             tr_fmt(
                 "GPU preview setup failed: {error}",
                 &[("error", &format!("{error:#}"))],

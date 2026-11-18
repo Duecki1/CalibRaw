@@ -215,13 +215,19 @@ fn build_styled_glow_near_first(@builtin(global_invocation_id) dispatch_gid: vec
     let gid = Common::dispatch_id(dispatch_gid);
     let size = textureDimensions(styled_glow_level_out);
     if any(gid.xy >= size) { return; }
-    let layers = styled_glow_layer_count(textureNumLayers(styled_glow_level_out));
+    let capacity = textureNumLayers(styled_glow_level_out);
     // Global texel g covers pixels 2g and 2g + 1; its taps are 2g - 1 to 2g + 2.
     let global = vec2<i32>(gid.xy) + styled_glow_near_origin(1u);
     let first = 2 * global - vec2<i32>(1) - Common::tile_origin();
     let weights = vec4<f32>(1.0, 3.0, 3.0, 1.0) / 8.0;
-    for (var layer = 0u; layer < layers; layer = layer + 1u) {
-        let index = styled_glow_slot(layer);
+    // Emit layers in mask order in one traversal. Looking up each layer by
+    // scanning the slots again nests two dynamic loops around the tap filter.
+    var layer = 0u;
+    for (var index = 0u; index < Common::mask_slot_count(); index = index + 1u) {
+        if layer >= capacity { break; }
+        if !Common::mask_slot_applies(Common::mask_metadata(index), MASK_EFFECT_STYLED_GLOW_ID) {
+            continue;
+        }
         let params = mask_effect_params(index);
         var sum = vec3<f32>(0.0);
         for (var y = 0; y < 4; y = y + 1) {
@@ -231,6 +237,7 @@ fn build_styled_glow_near_first(@builtin(global_invocation_id) dispatch_gid: vec
             }
         }
         textureStore(styled_glow_level_out, vec2<i32>(gid.xy), layer, vec4<f32>(sum, 0.0));
+        layer = layer + 1u;
     }
 }
 

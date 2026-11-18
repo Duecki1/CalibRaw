@@ -216,7 +216,7 @@ impl RawGpuPipeline {
         {
             return Ok(pipeline);
         }
-        let cache = prewarm.pipeline_cache();
+        let cache = prewarm.load_pipeline_cache(device);
         let options = match &cache {
             Some(cache) => options.pipeline_cache(cache),
             None => options,
@@ -228,6 +228,11 @@ impl RawGpuPipeline {
                 .any(|template| template.fits(raw, options.quality))
             {
                 kept.push(Arc::new(pipeline.program_template()));
+            }
+        }
+        if prewarm.cache_directory.is_some() {
+            if let Err(error) = prewarm.persist_pipeline_cache() {
+                log::warn!("could not persist GPU pipeline cache: {error:#}");
             }
         }
         Ok(pipeline)

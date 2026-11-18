@@ -14,14 +14,14 @@ use crate::pipeline::ExposureParams;
 use crate::pipeline::{
     build_proxy, load_raw_file_with_profile_selection, transform_thumbnail_geometry_with_lens,
     CameraProfileMode, CardSwitch, GpuParams, GpuProgramPrewarm, LoadedRaw, MaskStack, ProxySpec,
-    RawGpuPipeline, RawGpuProgramTemplate, RawThumbnail, RemoveSceneContext, SourceCorrections,
+    RawGpuPipeline, RawThumbnail, RemoveSceneContext, SourceCorrections,
 };
 use crate::platform::Platform;
 use crate::sidecar::{EditState, SidecarError};
 use eframe::wgpu;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 
 /// The editor's GPU device, which saved edits render on, and the programs
 /// they reuse.
@@ -29,29 +29,24 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 pub(crate) struct SavedEditsGpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    /// The editor's preview programs, published by the startup prewarm.
-    prewarmed: Arc<GpuProgramPrewarm>,
-    /// Programs compiled here for photos the prewarmed ones do not fit, such
-    /// as another sensor layout, kept for the next such photo.
-    compiled: Arc<Mutex<Vec<RawGpuProgramTemplate>>>,
+    programs: Arc<GpuProgramPrewarm>,
 }
 
 impl SavedEditsGpu {
     pub(crate) fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
-        prewarmed: Arc<GpuProgramPrewarm>,
+        programs: Arc<GpuProgramPrewarm>,
     ) -> Self {
         Self {
             device,
             queue,
-            prewarmed,
-            compiled: Arc::new(Mutex::new(Vec::new())),
+            programs,
         }
     }
 
     /// The fitted preview's pipeline for `raw`, built from programs compiled
-    /// before where they fit. Waits for the startup prewarm.
+    /// before where they fit.
     fn pipeline(
         &self,
         raw: &LoadedRaw,
@@ -59,38 +54,20 @@ impl SavedEditsGpu {
         mask_count: usize,
     ) -> Result<RawGpuPipeline, String> {
         let options = fitted_pipeline_options(mask_count);
-        let quality = options.quality;
-        // A failed prewarm leaves the programs to be compiled here.
-        let prewarmed = self.prewarmed.wait().ok();
-        let template = match prewarmed.filter(|template| template.fits(raw, quality)) {
-            Some(template) => Some(RawGpuProgramTemplate::clone(&template)),
-            None => self
-                .compiled
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .iter()
-                .find(|template| template.fits(raw, quality))
-                .cloned(),
-        };
-        let options = match &template {
-            Some(template) => options.programs(template),
-            None => options,
-        };
-        let pipeline = RawGpuPipeline::new(&self.device, &self.queue, raw, params, options)
-            .map_err(|error| {
-                tr_fmt(
-                    "could not prepare edited thumbnail rendering: {error}",
-                    &[("error", &format!("{error:#}"))],
-                )
-            })?;
-        if template.is_none() {
-            // Renders running side by side may have compiled the same programs.
-            let mut compiled = self.compiled.lock().unwrap_or_else(PoisonError::into_inner);
-            if !compiled.iter().any(|template| template.fits(raw, quality)) {
-                compiled.push(pipeline.program_template());
-            }
-        }
-        Ok(pipeline)
+        RawGpuPipeline::new_reusing(
+            &self.device,
+            &self.queue,
+            raw,
+            params,
+            options,
+            Some(&self.programs),
+        )
+        .map_err(|error| {
+            tr_fmt(
+                "could not prepare edited thumbnail rendering: {error}",
+                &[("error", &format!("{error:#}"))],
+            )
+        })
     }
 }
 

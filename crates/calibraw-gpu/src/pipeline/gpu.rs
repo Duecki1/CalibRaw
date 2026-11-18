@@ -443,9 +443,8 @@ impl RawGpuProgramTemplate {
     }
 }
 
-/// The compiled programs background work (exports, crops, merges) shares: the
-/// template the app compiles at startup, and one per other sensor layout or
-/// quality, kept from the first pipeline built for it
+/// Programs shared by photo workers, keyed by sensor layout and render
+/// quality and kept from the first pipeline built for each combination
 /// ([`RawGpuPipeline::new_reusing`]).
 #[derive(Default)]
 pub struct GpuProgramPrewarm {
@@ -453,6 +452,9 @@ pub struct GpuProgramPrewarm {
     ready: Condvar,
     /// The persistent cache of a prewarm without startup programs.
     pipeline_cache: Option<Arc<PersistentGpuPipelineCache>>,
+    /// The UI opens the disk cache on the first photo worker.
+    cache_directory: Option<std::path::PathBuf>,
+    disk_cache: OnceLock<Option<Arc<PersistentGpuPipelineCache>>>,
     /// Templates the startup one does not fit.
     kept: Mutex<Vec<Arc<RawGpuProgramTemplate>>>,
     /// Held while a pipeline is built without a template, so two jobs that
@@ -475,6 +477,40 @@ impl GpuProgramPrewarm {
             *slot = Some(Err("no programs were compiled at startup".to_owned()));
         }
         prewarm
+    }
+
+    /// Share programs compiled for actual photos. Opening the library alone
+    /// performs no driver compilation or disk-cache initialization.
+    pub fn on_demand(cache_directory: Option<std::path::PathBuf>) -> Self {
+        Self {
+            cache_directory,
+            ..Self::without_startup_programs(None)
+        }
+    }
+
+    fn load_pipeline_cache(
+        &self,
+        device: &wgpu::Device,
+    ) -> Option<Arc<PersistentGpuPipelineCache>> {
+        if let Some(root) = &self.cache_directory {
+            return self
+                .disk_cache
+                .get_or_init(|| {
+                    match PersistentGpuPipelineCache::load_or_create(
+                        device,
+                        &device.adapter_info(),
+                        root,
+                    ) {
+                        Ok(cache) => cache.map(|(cache, _)| cache),
+                        Err(error) => {
+                            log::warn!("could not load GPU pipeline cache: {error:#}");
+                            None
+                        }
+                    }
+                })
+                .clone();
+        }
+        self.pipeline_cache()
     }
 
     /// The programs a pipeline of `quality` for `raw` can be built from, once
@@ -511,7 +547,13 @@ impl GpuProgramPrewarm {
     /// Saves the programs compiled so far to the persistent pipeline cache, if
     /// one compiled since its last save.
     pub fn persist_pipeline_cache(&self) -> Result<()> {
-        if let Some(cache) = self.pipeline_cache() {
+        if let Some(cache) = self
+            .disk_cache
+            .get()
+            .cloned()
+            .flatten()
+            .or_else(|| self.pipeline_cache())
+        {
             cache.persist_if_changed()?;
         }
         Ok(())
@@ -2006,7 +2048,15 @@ impl RawGpuPipeline {
     fn effect_program(&self, pass: &Pass) -> Option<(wgpu::ComputePipeline, EffectSet)> {
         let effects = pass.pipeline.effects.as_ref()?;
         let set = EffectSet::from_bits(self.uploaded_effects.load(Ordering::Acquire));
-        effects.program(set, self.effect_readiness)
+        // The asynchronous path needs an already usable fallback. Compiling
+        // every effect just to cover the first specialized compile has crashed
+        // native drivers and blocks the preview longer than the smaller program.
+        let readiness = if pass.pipeline.compiled.get().is_some() {
+            self.effect_readiness
+        } else {
+            Readiness::Wait
+        };
+        effects.program(set, readiness)
     }
 
     fn pass_bind_group(&self, pass_record: &Pass) -> wgpu::BindGroup {

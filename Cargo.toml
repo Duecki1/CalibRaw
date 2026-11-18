@@ -17,9 +17,11 @@ default-members = [
     "crates/calibraw-ffi",
     "crates/calibraw-cli",
 ]
-exclude = ["vendor/winit", "vendor/wgpu", "vendor/wgpu-hal"]
+exclude = ["vendor/winit", "vendor/wgpu", "vendor/wgpu-hal", "vendor/naga"]
 
 [patch.crates-io]
+# Correct HLSL layer queries on texture arrays (Glow and Lens Blur).
+naga = { path = "vendor/naga" }
 # Android Destroy/recreation fix, kept on the released 0.30.13 API.
 winit = { path = "vendor/winit" }
 # Preserve the native error and queue-upload phase before wgpu erases them.

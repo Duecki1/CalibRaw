@@ -1,0 +1,68 @@
+--- a/src/arm/linux/api.h
++++ b/src/arm/linux/api.h
+@@ -177,6 +177,8 @@
+ #endif
+ 
+ struct cpuinfo_arm_linux_processor {
++	uint32_t sysfs_l2_size;
++	bool sysfs_l2_per_core;
+ 	uint32_t architecture_version;
+ #if CPUINFO_ARCH_ARM
+ 	uint32_t architecture_flags;
+--- a/src/arm/linux/init.c
++++ b/src/arm/linux/init.c
+@@ -781,6 +781,12 @@
+ 		}
+ #endif
+ 
++		/* Use the same topology when counting and filling the L2 cache array. */
++		arm_linux_processors[i].sysfs_l2_size =
++			cpuinfo_linux_read_sysfs_cache_size(arm_linux_processors[i].system_processor_id, 2);
++		arm_linux_processors[i].sysfs_l2_per_core = arm_linux_processors[i].sysfs_l2_size != 0 &&
++			cpuinfo_linux_is_l2_per_core(arm_linux_processors[i].system_processor_id);
++
+ 		if (temp_l3.size != 0) {
+ 			/*
+ 			 * Assumptions:
+@@ -806,14 +812,8 @@
+ 			 * between all cores
+ 			 */
+ 			shared_l3 = false;
+-			if (temp_l2.size != 0) {
+-				/* Check if L2 is per-core using sysfs */
+-				uint32_t sysfs_l2_size = cpuinfo_linux_read_sysfs_cache_size(
+-					arm_linux_processors[i].system_processor_id, 2);
+-				bool l2_is_per_core = (sysfs_l2_size > 0) &&
+-					cpuinfo_linux_is_l2_per_core(arm_linux_processors[i].system_processor_id);
+-
+-				if (l2_is_per_core) {
++			if (temp_l2.size != 0 || arm_linux_processors[i].sysfs_l2_size != 0) {
++				if (arm_linux_processors[i].sysfs_l2_per_core) {
+ 					/* L2 is private to each core */
+ 					l2_count += 1;
+ 				} else {
+@@ -869,9 +869,8 @@
+ 			&temp_l2,
+ 			&temp_l3);
+ 
+-		/* Try to read L2 cache size from sysfs (more accurate) */
+-		uint32_t sysfs_l2_size =
+-			cpuinfo_linux_read_sysfs_cache_size(arm_linux_processors[i].system_processor_id, 2);
++		/* The sysfs size takes precedence over the decoded size. */
++		const uint32_t sysfs_l2_size = arm_linux_processors[i].sysfs_l2_size;
+ 		if (sysfs_l2_size > 0) {
+ 			temp_l2.size = sysfs_l2_size;
+ 			/* Recalculate sets to maintain consistency: size = associativity * sets * partitions *
+@@ -882,11 +881,7 @@
+ 			}
+ 		}
+ 
+-		/* Check if L2 is per-core by reading sysfs */
+-		bool l2_is_per_core = (sysfs_l2_size > 0) &&
+-			cpuinfo_linux_is_l2_per_core(arm_linux_processors[i].system_processor_id);
+-
+-		if (temp_l3.size != 0 || l2_is_per_core) {
++		if (temp_l3.size != 0 || arm_linux_processors[i].sysfs_l2_per_core) {
+ 			/*
+ 			 * Assumptions:
+ 			 * - L2 is private to each core (either has L3, or sysfs confirms per-core L2)

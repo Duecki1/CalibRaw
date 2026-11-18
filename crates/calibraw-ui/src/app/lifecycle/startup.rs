@@ -133,7 +133,6 @@ impl CalibRawApp {
                 gpu_pipeline: None,
                 program_template: None,
                 retired_textures: TextureRetirement::new(ctx.clone()),
-                gpu_prewarm_receiver: None,
                 quality: performance.preview_quality,
                 zoom: 1.0,
                 center: [0.5, 0.5],
@@ -544,29 +543,22 @@ impl CalibRawApp {
             }
             prewarm_dcp_profile_folder(performance.camera_profile_folder.clone());
         }
-        let gpu_preview_prewarm = Arc::new(crate::pipeline::GpuProgramPrewarm::new());
-        let gpu_export_prewarm = Arc::new(crate::pipeline::GpuProgramPrewarm::new());
-        let gpu_preview_prewarm_receiver = spawn_gpu_preview_prewarm(
-            cc,
-            gpu_pipeline_cache_root,
-            Arc::clone(&gpu_preview_prewarm),
-            Arc::clone(&gpu_export_prewarm),
-            Arc::clone(&platform),
-        );
         let mut app = Self::from_performance_settings(
             &cc.egui_ctx,
             performance_settings_path,
             performance,
             platform,
         );
-        app.preview.gpu_prewarm_receiver = gpu_preview_prewarm_receiver;
-        app.export.gpu_prewarm = Some(gpu_export_prewarm);
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
+            let programs = Arc::new(crate::pipeline::GpuProgramPrewarm::on_demand(
+                gpu_pipeline_cache_root,
+            ));
+            app.export.gpu_prewarm = Some(Arc::clone(&programs));
             app.library
                 .set_saved_edits_gpu(crate::app::SavedEditsGpu::new(
                     render_state.device.clone(),
                     render_state.queue.clone(),
-                    gpu_preview_prewarm,
+                    programs,
                 ));
         }
         if let Err(error) = crate::i18n::set_active(app.preferences.language.resolve()) {

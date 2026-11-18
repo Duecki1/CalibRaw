@@ -200,7 +200,7 @@ impl CalibRawApp {
         let programs = PreviewProgramSources {
             previous_pipeline: self.take_preview_pipeline_and_release_textures(),
             retained_template: self.preview.program_template.clone(),
-            startup_prewarm: self.preview.gpu_prewarm_receiver.take(),
+            shared_programs: self.export.gpu_prewarm.clone(),
         };
         let initial_exposure = self.new_image_exposure();
         self.reset_document_state(&source.label, initial_exposure);

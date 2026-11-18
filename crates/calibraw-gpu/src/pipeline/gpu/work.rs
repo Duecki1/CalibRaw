@@ -95,10 +95,11 @@ pub(super) fn driver_workgroup_limit(device: &wgpu::Device) -> Option<u64> {
     // X100V export. Limiting recalculation alone moves the failure to
     // homogeneity; limiting Markesteijn still leaves large finish/NR
     // submissions. Keep every band conservative on this driver, without
-    // changing shader arithmetic or diagnosing the native fault.
+    // changing shader arithmetic. The Xiaomi 11T reports the same driver
+    // revision and device loss on export.
     let limited = adapter.backend == wgpu::Backend::Vulkan
         && adapter.vendor == 0x13b5
-        && adapter.name == "Mali-G68"
+        && (adapter.name == "Mali-G68" || adapter.name == "Mali-G77 MC9")
         && adapter.driver_info.contains("r32p1");
     limited.then_some(PROBE_WORKGROUPS)
 }

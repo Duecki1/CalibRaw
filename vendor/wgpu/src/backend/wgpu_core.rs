@@ -3964,7 +3964,9 @@ impl dispatch::SurfaceOutputDetailInterface for CoreSurfaceOutputDetail {
 
     fn texture_discard(&self) {
         match self.context.0.surface_texture_discard(self.surface_id) {
-            Ok(_status) => (),
+            // The device-lost callback owns recovery. A frame discarded
+            // after loss cannot be returned to the swapchain.
+            Ok(()) | Err(wgc::present::SurfaceError::Device(wgc::device::DeviceError::Lost)) => (),
             Err(err) => self
                 .context
                 .handle_error_fatal(err, "Surface::discard_texture"),

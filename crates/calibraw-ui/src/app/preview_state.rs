@@ -520,7 +520,6 @@ pub(crate) struct PreviewState {
     pub(crate) gpu_pipeline: Option<PreviewPipeline>,
     pub(crate) program_template: Option<RawGpuProgramTemplate>,
     pub(crate) retired_textures: TextureRetirement,
-    pub(crate) gpu_prewarm_receiver: Option<mpsc::Receiver<Result<RawGpuPipeline, String>>>,
     pub(crate) quality: PreviewQuality,
     pub(crate) zoom: f32,
     pub(crate) center: [f32; 2],

@@ -166,12 +166,10 @@ job records the value it started with.
 
 ### Background jobs
 
-Startup prewarm builds the default preview and export pipelines and publishes
-their shared program templates. It compiles only the passes those defaults
-encode; optional effects and alternate demosaic/denoise variants stay deferred
-until rendering needs them. Native compilation of an optional effect must not
-be scheduled merely to finish startup. Edited thumbnails and saved edits count
-as uses of their effects.
+Photo workers load the persistent GPU pipeline cache and compile the programs
+their edit uses on demand. Preview, saved edits and export share templates by
+sensor layout and quality. Opening the library or going through onboarding
+does not precompile photo programs.
 
 | Job | Queue | Cancellation | Document change | Failure / disconnect |
 |---|---|---|---|---|
@@ -192,7 +190,7 @@ as uses of their effects.
 | Linked folder tree | one `calibraw-library-folders` thread at a time, beside the photo scan; started by a refresh, not by selecting a folder within the tree; a refresh during a walk walks again after it | none; bounded by the folder limits | its folders carry the linked folder walked and are shown only while it is; switching linked folders abandons the walk | logged; the photo scan reaches the same folder and shows the error dialog |
 | Linked folder AI results | one thread per finished AI job, polled through `AndroidState::companion_publishes` | none | copies to the photo the job finished for | error dialog; the result stays usable until the photo closes |
 | Library thumbnails | shared work queue for a worker pool | `AtomicU64` generation; workers exit when it changes | generation bump on folder change | each item's result, success or error, is sent with its generation; older generations are ignored |
-| Edited thumbnails (`ui/library/thumbnails/developed.rs`) | `calibraw-edited-thumbnail` threads, started once every thumbnail of the folder has loaded: one where memory is constrained, elsewhere up to `MAX_RENDERED_THUMBNAIL_WORKERS` within the worker setting. Each renders the saved edits of one photo whose thumbnail does not show them (`ThumbnailEdits::Rendering`) at the thumbnail's size, without lens correction, on the editor's device with the startup prewarm's programs (`app/saved_edits.rs`), and keeps the result as its developed thumbnail. The library header's progress bar counts them once the previews are done | `AtomicBool`, checked before decoding and before rendering; set by a rescan and when the library gives way to another tab | the result is shown only while its generation is current and the tile still waits for it; a sidecar that changed while it rendered sends the photo back to the queue | the tile shows the error on hover; failures are collected and shown in one error dialog once no photo is waiting |
+| Edited thumbnails (`ui/library/thumbnails/developed.rs`) | `calibraw-edited-thumbnail` threads, started once every thumbnail of the folder has loaded: one where memory is constrained, elsewhere up to `MAX_RENDERED_THUMBNAIL_WORKERS` within the worker setting. Each renders the saved edits of one photo whose thumbnail does not show them (`ThumbnailEdits::Rendering`) at the thumbnail's size, without lens correction, on the editor's device with the shared preview programs (`app/saved_edits.rs`), and keeps the result as its developed thumbnail. The library header's progress bar counts them once the previews are done | `AtomicBool`, checked before decoding and before rendering; set by a rescan and when the library gives way to another tab | the result is shown only while its generation is current and the tile still waits for it; a sidecar that changed while it rendered sends the photo back to the queue | the tile shows the error on hover; failures are collected and shown in one error dialog once no photo is waiting |
 
 Job channels are unbounded `std::sync::mpsc` channels: each job sends a
 bounded number of progress events and one result, drained each frame by

@@ -19,6 +19,8 @@
 # - onnxruntime-webgpu-split-batches.patch: WebGPU Split nodes with more
 #   outputs than the GPU's storage buffer limit run in batches (BiRefNet on
 #   Adreno).
+# - cpuinfo-arm-linux-l2.patch: use one sysfs snapshot to count and fill L2
+#   caches, including on devices whose ARM CPU model is unknown.
 
 set(CALIBRAW_ONNXRUNTIME_VERSION 1.30.0)
 # Keep in step with ONNX Runtime 1.30.0's cmake/deps.txt, whose SHA1s these
@@ -34,8 +36,9 @@ set(CALIBRAW_ONNXRUNTIME_PATCH
     "${CMAKE_CURRENT_LIST_DIR}/onnxruntime-webgpu-split-batches.patch")
 file(SHA256 "${CMAKE_CURRENT_LIST_FILE}" CALIBRAW_ONNXRUNTIME_RECIPE_HASH)
 file(SHA256 "${CALIBRAW_ONNXRUNTIME_PATCH}" CALIBRAW_ONNXRUNTIME_PATCH_HASH)
+file(SHA256 "${CMAKE_CURRENT_LIST_DIR}/cpuinfo-arm-linux-l2.patch" CALIBRAW_CPUINFO_PATCH_HASH)
 set(CALIBRAW_ONNXRUNTIME_STAMP_TEXT
-    "onnxruntime ${CALIBRAW_ONNXRUNTIME_VERSION}\nrecipe ${CALIBRAW_ONNXRUNTIME_RECIPE_HASH}\npatch ${CALIBRAW_ONNXRUNTIME_PATCH_HASH}\nndk ${CMAKE_ANDROID_NDK}\nabi ${ANDROID_ABI}\napi ${CALIBRAW_ANDROID_MIN_SDK}\n")
+    "onnxruntime ${CALIBRAW_ONNXRUNTIME_VERSION}\nrecipe ${CALIBRAW_ONNXRUNTIME_RECIPE_HASH}\npatch ${CALIBRAW_ONNXRUNTIME_PATCH_HASH}\ncpuinfo ${CALIBRAW_CPUINFO_PATCH_HASH}\nndk ${CMAKE_ANDROID_NDK}\nabi ${ANDROID_ABI}\napi ${CALIBRAW_ANDROID_MIN_SDK}\n")
 
 set(CALIBRAW_ONNXRUNTIME_STAGED_TEXT "")
 if(EXISTS "${CALIBRAW_ONNXRUNTIME_STAMP}" AND EXISTS "${CALIBRAW_ONNXRUNTIME_LIBRARY}")
@@ -174,6 +177,7 @@ ExternalProject_Add(calibraw_onnxruntime_build
         "-DGIT_EXECUTABLE=${CALIBRAW_GIT_EXECUTABLE}"
         "-DPatch_EXECUTABLE=${CALIBRAW_PATCH_EXECUTABLE}"
         "-DONNX_CUSTOM_PROTOC_EXECUTABLE=${CALIBRAW_HOST_PROTOC}"
+        "-DCMAKE_PROJECT_cpuinfo_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/PatchCpuinfo.cmake"
         -Donnxruntime_BUILD_SHARED_LIB=ON
         -Donnxruntime_USE_WEBGPU=ON
         -Donnxruntime_USE_TELEMETRY=OFF
