@@ -435,6 +435,7 @@ impl CalibRawApp {
     pub(crate) fn persist_performance_settings(&self) -> bool {
         let settings = crate::performance_settings::PerformanceSettings {
             develop_histogram_open: self.develop_ui.histogram_open,
+            develop_histogram_overlay: self.develop_ui.histogram_overlay,
             tone_curve_overlay_vertical: self.develop_ui.tone_curve_overlay.vertical,
             tone_curve_overlay_sidebar: self.develop_ui.tone_curve_overlay.sidebar,
             app_usage_ms: crate::app::duration_millis_saturating(self.app_usage_duration()),

@@ -40,6 +40,8 @@ const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 #[serde(default)]
 pub(crate) struct PerformanceSettings {
     pub develop_histogram_open: bool,
+    /// Draw the histogram over the preview.
+    pub develop_histogram_overlay: bool,
     /// Draw the tone curve over the preview in the portrait layout.
     pub tone_curve_overlay_vertical: bool,
     /// Draw the tone curve over the preview in the sidebar layout.
@@ -321,7 +323,8 @@ mod export_format_serde {
 impl Default for PerformanceSettings {
     fn default() -> Self {
         Self {
-            develop_histogram_open: false,
+            develop_histogram_open: PlatformCaps::CURRENT.is_desktop(),
+            develop_histogram_overlay: PlatformCaps::CURRENT.is_mobile(),
             tone_curve_overlay_vertical: true,
             tone_curve_overlay_sidebar: false,
             app_usage_ms: 0,

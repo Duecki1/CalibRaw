@@ -173,6 +173,7 @@ impl CalibRawApp {
             },
             develop_ui: DevelopUiState {
                 histogram_open: performance.develop_histogram_open,
+                histogram_overlay: performance.develop_histogram_overlay,
                 tone_curve_overlay: crate::app::ToneCurveOverlay {
                     vertical: performance.tone_curve_overlay_vertical,
                     sidebar: performance.tone_curve_overlay_sidebar,

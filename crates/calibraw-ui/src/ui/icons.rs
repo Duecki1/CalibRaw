@@ -7,6 +7,7 @@ use crate::i18n::tr;
 pub(crate) enum UiIcon {
     Sidebar,
     Filmstrip,
+    PhotoOverlay,
 }
 
 impl UiIcon {
@@ -14,6 +15,7 @@ impl UiIcon {
         match self {
             Self::Sidebar => regular::SIDEBAR_SIMPLE,
             Self::Filmstrip => regular::IMAGE,
+            Self::PhotoOverlay => regular::PICTURE_IN_PICTURE,
         }
     }
 }

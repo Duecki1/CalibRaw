@@ -70,8 +70,8 @@ impl Sidebar {
         }
 
         Self::show_sidebar_header(ui, app);
-        Self::show_histogram_mode(ui, app);
-        Self::show_sidebar_content(ui, app, layout, frame);
+        Self::show_histogram(ui, app);
+        Self::show_sidebar_content(ui, app, layout, frame, false);
     }
 
     fn show_sidebar_header(ui: &mut Ui, app: &mut CalibRawApp) {
@@ -186,6 +186,7 @@ impl Sidebar {
         app: &mut CalibRawApp,
         layout: ScreenLayout,
         frame: &eframe::Frame,
+        histogram_in_scroll: bool,
     ) {
         let sidebar_scroll_source = if moduwu_design::slider_scroll_locked(ui.ctx()) {
             egui::scroll_area::ScrollSource::NONE
@@ -223,6 +224,9 @@ impl Sidebar {
                         |ui| {
                             ui.set_width(content_width);
                             ui.set_max_width(content_width);
+                            if histogram_in_scroll {
+                                Self::show_histogram(ui, app);
+                            }
                             match app.ui.sidebar_tab {
                                 SidebarTab::Adjustments => {
                                     Self::show_adjustments(ui, app, layout, frame)

@@ -45,8 +45,10 @@ impl Sidebar {
                 });
         }
 
-        // Below the sliders, above the navigation rows.
-        if app.develop_ui.histogram_open {
+        let histogram_open = app.develop_ui.histogram_open;
+        let histogram_overlay = app.develop_ui.histogram_overlay;
+        // Keep the overlay's controls above the navigation rows.
+        if histogram_open && histogram_overlay {
             egui::Panel::bottom("develop_portrait_histogram_mode")
                 .resizable(false)
                 .show_separator_line(false)
@@ -54,14 +56,20 @@ impl Sidebar {
                 .frame(Self::mobile_navigation_frame(ui))
                 .show(ui, |ui| {
                     ui.add_space(5.0);
-                    Self::show_histogram_mode(ui, app)
+                    Self::show_histogram_controls(ui, app)
                 });
         }
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().inner_margin(egui::Margin::same(0)))
             .show(ui, |ui| {
-                Self::show_sidebar_content(ui, app, ScreenLayout::Vertical, frame)
+                Self::show_sidebar_content(
+                    ui,
+                    app,
+                    ScreenLayout::Vertical,
+                    frame,
+                    histogram_open && !histogram_overlay,
+                )
             });
     }
 

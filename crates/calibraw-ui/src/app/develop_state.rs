@@ -532,6 +532,7 @@ pub(crate) struct ToneCurveOverlay {
 
 pub(crate) struct DevelopUiState {
     pub(crate) histogram_open: bool,
+    pub(crate) histogram_overlay: bool,
     pub(crate) tone_curve_overlay: ToneCurveOverlay,
     pub(crate) reference: DevelopReferenceState,
     pub(crate) loading_thumbnail: DevelopLoadingThumbnailState,

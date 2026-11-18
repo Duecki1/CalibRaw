@@ -1,6 +1,7 @@
 use crate::app::ToneCurveTab;
 use crate::i18n::tr;
 use crate::pipeline::{PointCurve, MAX_POINT_CURVE_POINTS};
+use crate::ui::icons::{icon_toggle_button, UiIcon};
 use crate::ui::theme::{CHANNEL_BLUE, CHANNEL_GREEN, CHANNEL_RED};
 use eframe::egui::Align;
 use eframe::egui::{self, Color32, Pos2, Sense, Stroke, StrokeKind, Ui};
@@ -522,9 +523,9 @@ fn reset_button(
 
 /// Switches the curve between the panel and the preview.
 fn overlay_toggle(ui: &mut Ui, overlay: &mut bool) {
-    if moduwu_design::ghost_icon_toggle_button(
+    if icon_toggle_button(
         ui,
-        egui_phosphor::regular::PICTURE_IN_PICTURE,
+        UiIcon::PhotoOverlay,
         *overlay,
         moduwu_design::toolbar_icon_size(),
         tr("Curve over the photo"),
