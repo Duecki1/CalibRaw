@@ -57,7 +57,7 @@ pub enum HeadlessAdapter {
 pub struct HeadlessDeviceRequest<'a> {
     pub label: &'a str,
     pub adapter: HeadlessAdapter,
-    /// The largest 2D texture edge the work allocates.
+    /// Minimum 2D texture edge the adapter must support for this input.
     pub texture_dimension: u32,
 }
 
@@ -98,8 +98,7 @@ impl fmt::Display for HeadlessDeviceError {
 
 impl std::error::Error for HeadlessDeviceError {}
 
-/// Creates a device and queue for compute work without a surface, with the
-/// 2D texture limit raised to `request.texture_dimension`.
+/// Creates a device and queue for compute work without a surface.
 pub fn request_headless_device(
     request: &HeadlessDeviceRequest<'_>,
 ) -> Result<HeadlessDevice, HeadlessDeviceError> {
@@ -119,7 +118,9 @@ pub fn request_headless_device(
         });
     }
     let mut required_limits = base_device_limits(&adapter);
-    required_limits.max_texture_dimension_2d = request.texture_dimension;
+    // As in the editor, leave room for padded tiles and effect pyramids.
+    // A small crop can have a 1024-pixel atlas but need a 1184-pixel RAW tile.
+    required_limits.max_texture_dimension_2d = supported;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some(request.label),
         // Timestamp queries when stage timing was requested, so a headless

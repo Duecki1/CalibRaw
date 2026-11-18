@@ -113,8 +113,7 @@ impl StyledGlowStreaks {
 }
 
 /// Cells of the full-image map along the image's longer edge
-/// (`STYLED_GLOW_MAP_LONG` in styled_glow.wgsl). Its sums take a square of
-/// this side per layer.
+/// (`STYLED_GLOW_MAP_LONG` in styled_glow.wgsl).
 pub(super) const STYLED_GLOW_MAP_LONG: u32 = 768;
 /// Levels of the near pyramid. Their reach past a pixel, 63 pixels with the
 /// B-spline read of the last, fits the export halo `GLOW_SUPPORT` reserves.
@@ -340,11 +339,15 @@ impl StyledGlowNear {
     /// A pyramid for an image of `image` pixels and `layers` Glow slots.
     fn reserved(device: &wgpu::Device, image: [u32; 2], layers: u32) -> Result<Self> {
         let size = near_size(image);
-        let reservation = GpuBudgetReservation::acquire_bytes(
+        allocate_effect_resources(
+            device,
             "Glow near pyramid",
+            size,
+            layers,
+            0,
             texture_bytes(size, STYLED_GLOW_NEAR_LEVELS, layers),
-        )?;
-        Ok(Self::build(device, size, layers, Some(reservation)))
+            |reservation| Self::build(device, size, layers, Some(reservation)),
+        )
     }
 }
 
@@ -393,7 +396,7 @@ impl StyledGlowMap {
             cells: create_gpu_buffer(
                 device,
                 "calibraw Glow map sums",
-                Self::cells_bytes(cell_layers).max(STYLED_GLOW_CELL_BYTES),
+                Self::cells_bytes(grid, cell_layers).max(STYLED_GLOW_CELL_BYTES),
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
             map_layers: texture.layers(0, layers, "calibraw Glow map layers"),
@@ -415,19 +418,24 @@ impl StyledGlowMap {
         Self::build(device, [2, 2], 0, 1, None)
     }
 
-    fn cells_bytes(layers: u32) -> u64 {
-        u64::from(STYLED_GLOW_MAP_LONG).pow(2) * STYLED_GLOW_CELL_BYTES * u64::from(layers)
+    fn cells_bytes([width, height]: [u32; 2], layers: u32) -> u64 {
+        u64::from(width) * u64::from(height) * STYLED_GLOW_CELL_BYTES * u64::from(layers)
     }
 
     /// A map of `grid` cells for `layers` Glow slots.
     fn reserved(device: &wgpu::Device, grid: [u32; 2], layers: u32) -> Result<Self> {
-        let reservation = GpuBudgetReservation::acquire_bytes(
+        let cells = Self::cells_bytes(grid, layers);
+        allocate_effect_resources(
+            device,
             "Glow full-image map",
+            grid,
+            2 * layers,
+            cells,
             texture_bytes(grid, mip_levels(grid), 2 * layers)
                 + 2 * texture_bytes(grid, 1, layers)
-                + Self::cells_bytes(layers),
-        )?;
-        Ok(Self::build(device, grid, layers, layers, Some(reservation)))
+                + cells,
+            |reservation| Self::build(device, grid, layers, layers, Some(reservation)),
+        )
     }
 
     /// Whether it holds `grid` cells and room for `layers` slots.
@@ -558,10 +566,11 @@ impl StyledGlowSources<'_> {
                     texture_binding(27, self.mask),
                     sampler_binding(28, self.mask_sampler),
                     buffer_binding(33, self.mask_data),
+                    texture_binding(121, &map.first_level),
                     buffer_binding(122, &map.cells),
                 ],
             ),
-            texels: [STYLED_GLOW_MAP_LONG; 2],
+            texels: map.grid,
         });
         let map_resolve = StyledGlowDispatch {
             bind_group: create_bind_group(
@@ -934,6 +943,7 @@ pub(super) fn styled_glow_layout_entries() -> [Vec<wgpu::BindGroupLayoutEntry>; 
             mask,
             sampler_entry(28),
             storage_buffer_entry(33, true),
+            parent,
             storage_buffer_entry(122, false),
         ],
         vec![

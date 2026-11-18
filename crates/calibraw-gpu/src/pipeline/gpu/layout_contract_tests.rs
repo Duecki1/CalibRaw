@@ -549,7 +549,7 @@ fn shared_constants_and_effect_ids_match_rust() {
         SCENE_EMISSION_SURFACE_GRID_LONG
     );
     assert_eq!(constant("MEDIUM_CELLS"), MEDIUM_CELLS);
-    // The Glow map's sums are sized from this.
+    // The CPU allocates the Glow map and the shader computes its sampling grid.
     assert_eq!(
         constant("STYLED_GLOW_MAP_LONG"),
         super::styled_glow::STYLED_GLOW_MAP_LONG

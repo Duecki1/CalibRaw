@@ -216,6 +216,38 @@ fn reserve_gpu_bytes(used: &AtomicU64, limit: u64, bytes: u64) -> std::result::R
     }
 }
 
+/// Reserve the effect's total footprint and validate its largest texture and
+/// storage binding. Only publish the resources if the driver created them all.
+pub(super) fn allocate_effect_resources<T>(
+    device: &wgpu::Device,
+    label: &'static str,
+    size: [u32; 2],
+    layers: u32,
+    storage_bytes: u64,
+    resident_bytes: u64,
+    build: impl FnOnce(GpuBudgetReservation) -> T,
+) -> Result<T> {
+    let limits = device.limits();
+    let edge = limits.max_texture_dimension_2d;
+    let layer_limit = limits.max_texture_array_layers;
+    anyhow::ensure!(
+        size[0].max(size[1]) <= edge && layers <= layer_limit,
+        "{label} needs a texture up to {size:?} with {layers} layers, device limits are {edge} per side and {layer_limit} layers"
+    );
+    let binding_limit = limits
+        .max_buffer_size
+        .min(limits.max_storage_buffer_binding_size);
+    anyhow::ensure!(
+        storage_bytes <= binding_limit,
+        "{label} needs a {storage_bytes}-byte storage binding, device limit is {binding_limit} bytes"
+    );
+    let reservation = GpuBudgetReservation::acquire_bytes(label, resident_bytes)?;
+    let scopes = GpuErrorScopes::push(device);
+    let resources = build(reservation);
+    scopes.finish(label)?;
+    Ok(resources)
+}
+
 fn checked_align_up(value: u64, alignment: u64, context: &'static str) -> Result<u64> {
     if alignment == 0 || !alignment.is_power_of_two() {
         return Err(anyhow!("invalid {context} alignment {alignment}"));

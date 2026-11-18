@@ -294,20 +294,21 @@ impl DefocusLocal {
     ) -> Result<Self> {
         let mips = local_mips(short, levels);
         let size = Self::level_size(image, levels, mips);
+        let occupancy = Self::occupancy_bytes(image, layers);
         let bytes = texture_bytes(image, 1, 2 * layers)
             + texture_bytes(size, source_mips(levels), layers * SOURCE_LAYERS)
             + texture_bytes(size, mips, layers * SLAB_LAYERS)
             + texture_bytes(image, 1, layers)
-            + Self::occupancy_bytes(image, layers);
-        let reservation = GpuBudgetReservation::acquire_bytes("Lens Blur textures", bytes)?;
-        Ok(Self::build(
+            + occupancy;
+        allocate_effect_resources(
             device,
-            image,
-            short,
-            levels,
-            layers,
-            Some(reservation),
-        ))
+            "Lens Blur textures",
+            [size[0].max(image[0]), size[1].max(image[1])],
+            layers * SLAB_LAYERS.max(SOURCE_LAYERS).max(2),
+            occupancy,
+            bytes,
+            |reservation| Self::build(device, image, short, levels, layers, Some(reservation)),
+        )
     }
 
     fn fits(&self, image: [u32; 2], short: u32, levels: [u32; LOCAL_BINS], layers: u32) -> bool {
@@ -423,15 +424,23 @@ impl DefocusMap {
 
     fn reserved(device: &wgpu::Device, grid: [u32; 2], layers: u32) -> Result<Self> {
         let mips = mip_levels(grid);
-        let bytes = Self::cells_bytes(grid, layers)
+        let cells = Self::cells_bytes(grid, layers);
+        let bytes = cells
             + texture_bytes(
                 grid,
                 MAP_BINS.min(mips),
                 layers * LOCAL_BINS as u32 * SOURCE_LAYERS,
             )
             + texture_bytes(grid, mips, layers * SLAB_LAYERS);
-        let reservation = GpuBudgetReservation::acquire_bytes("Lens Blur full-image map", bytes)?;
-        Ok(Self::build(device, grid, layers, Some(reservation)))
+        allocate_effect_resources(
+            device,
+            "Lens Blur full-image map",
+            grid,
+            layers * (LOCAL_BINS as u32 * SOURCE_LAYERS).max(SLAB_LAYERS),
+            cells,
+            bytes,
+            |reservation| Self::build(device, grid, layers, Some(reservation)),
+        )
     }
 
     fn fits(&self, grid: [u32; 2], layers: u32) -> bool {

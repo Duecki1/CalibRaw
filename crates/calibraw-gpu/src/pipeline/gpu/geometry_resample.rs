@@ -375,7 +375,7 @@ impl<'a> Resampler<'a> {
             resolve,
             // One megapixel at most on other adapters. The affected Samsung needs
             // the same smaller bound as RAW processing, including in this separate path.
-            workgroup_limit: work::driver_workgroup_limit(device)
+            workgroup_limit: work::driver_workgroup_limit(&device.adapter_info())
                 .map_or(16_384, |limit| limit as u32),
             _budget: budget,
         })

@@ -280,16 +280,15 @@ fn build_styled_glow_near_level(@builtin(global_invocation_id) dispatch_gid: vec
 
 // --- Full-image map ---
 
-// Cells of the map along the full image's longer edge, and the side of the
-// square each layer takes in the sums (STYLED_GLOW_MAP_LONG in resources.rs).
+// Cells of the map along the full image's longer edge (styled_glow.rs).
 const STYLED_GLOW_MAP_LONG: u32 = 768u;
 
 fn styled_glow_map_grid() -> vec2<u32> {
     return Common::full_image_grid(STYLED_GLOW_MAP_LONG);
 }
 
-fn styled_glow_cell_index(cell: vec2<u32>, layer: u32) -> u32 {
-    return (layer * STYLED_GLOW_MAP_LONG + cell.y) * STYLED_GLOW_MAP_LONG + cell.x;
+fn styled_glow_cell_index(cell: vec2<u32>, layer: u32, size: vec2<u32>) -> u32 {
+    return (layer * size.y + cell.y) * size.x + cell.x;
 }
 
 // Adds this tile's core to the map's sums: per cell, the S of the pixels
@@ -298,8 +297,11 @@ fn styled_glow_cell_index(cell: vec2<u32>, layer: u32) -> u32 {
 @compute @workgroup_size(8, 8, 1)
 fn accumulate_styled_glow_map(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
     let gid = Common::dispatch_id(dispatch_gid);
+    // Index the allocation by its actual extent. Keep the pixel spans on
+    // the full-image sampling grid, including at odd aspect ratios.
+    let size = textureDimensions(styled_glow_parent_tex);
     let grid = styled_glow_map_grid();
-    if any(gid.xy >= grid) { return; }
+    if any(gid.xy >= min(size, grid)) { return; }
     let span_x = Common::full_image_grid_pixel_span(gid.x, grid.x, Common::camera_uniforms.full_width);
     let span_y = Common::full_image_grid_pixel_span(gid.y, grid.y, Common::camera_uniforms.full_height);
     // Only this tile's core counts, so overlapping tile halos add nothing twice.
@@ -313,7 +315,7 @@ fn accumulate_styled_glow_map(@builtin(global_invocation_id) dispatch_gid: vec3<
     let hi = min(min(vec2<i32>(span_x.y, span_y.y), bounds.zw), tile_end);
     if any(hi <= lo) { return; }
     let count = f32((hi.x - lo.x) * (hi.y - lo.y));
-    let capacity = arrayLength(&styled_glow_cells) / (STYLED_GLOW_MAP_LONG * STYLED_GLOW_MAP_LONG);
+    let capacity = arrayLength(&styled_glow_cells) / (size.x * size.y);
     let layers = styled_glow_layer_count(capacity);
     for (var layer = 0u; layer < layers; layer = layer + 1u) {
         let index = styled_glow_slot(layer);
@@ -324,7 +326,7 @@ fn accumulate_styled_glow_map(@builtin(global_invocation_id) dispatch_gid: vec3<
                 sum += styled_glow_source_at(vec2<i32>(x, y) - origin, index, params);
             }
         }
-        let cell = styled_glow_cell_index(gid.xy, layer);
+        let cell = styled_glow_cell_index(gid.xy, layer, size);
         styled_glow_cells[cell] = styled_glow_cells[cell] + vec4<f32>(sum, count);
     }
 }
@@ -337,7 +339,7 @@ fn resolve_styled_glow_map(@builtin(global_invocation_id) dispatch_gid: vec3<u32
     if any(gid.xy >= size) { return; }
     let layers = styled_glow_layer_count(textureNumLayers(styled_glow_level_out));
     for (var layer = 0u; layer < layers; layer = layer + 1u) {
-        let sums = styled_glow_cells[styled_glow_cell_index(gid.xy, layer)];
+        let sums = styled_glow_cells[styled_glow_cell_index(gid.xy, layer, size)];
         let mean = select(vec3<f32>(0.0), sums.xyz / sums.w, sums.w > 0.0);
         textureStore(styled_glow_level_out, vec2<i32>(gid.xy), layer, vec4<f32>(mean, 0.0));
     }

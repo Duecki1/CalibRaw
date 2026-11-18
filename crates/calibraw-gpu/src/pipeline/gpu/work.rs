@@ -89,8 +89,7 @@ pub(super) struct PassWork {
 
 /// Conservative execution bound shared by banded processing and export geometry.
 /// This identifies the measured driver, rather than imposing its workaround on all Mali GPUs.
-pub(super) fn driver_workgroup_limit(device: &wgpu::Device) -> Option<u64> {
-    let adapter = device.adapter_info();
+pub(super) fn driver_workgroup_limit(adapter: &wgpu::AdapterInfo) -> Option<u64> {
     // SM-A336B, Mali-G68 r32p1: adaptive bands lose the device during
     // X100V export. Limiting recalculation alone moves the failure to
     // homogeneity; limiting Markesteijn still leaves large finish/NR
@@ -110,10 +109,23 @@ impl PassWork {
     pub(super) fn for_entry(device: &wgpu::Device, entry: &str) -> Self {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         entry.hash(&mut hasher);
+        let adapter = device.adapter_info();
+        // On the Redmi BXM-8-256 two 48x5 map bands finished, then the
+        // adaptive 48x26 dispatch stalled until the driver reset the GPU.
+        let max_band_workgroups = if entry == "build_styled_glow_map_level"
+            && adapter.backend == wgpu::Backend::Vulkan
+            && adapter.vendor == 0x1010
+            && adapter.device == 0x35010101
+            && adapter.driver_info == "25.1@6715691"
+        {
+            PROBE_WORKGROUPS
+        } else {
+            driver_workgroup_limit(&adapter).unwrap_or(u64::MAX)
+        };
         Self {
             key: hasher.finish(),
             banded: super::shaders::entry_reads_dispatch_band(entry),
-            max_band_workgroups: driver_workgroup_limit(device).unwrap_or(u64::MAX),
+            max_band_workgroups,
         }
     }
 
