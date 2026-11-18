@@ -236,7 +236,7 @@ pub(super) struct PassDispatch<'a> {
     pub(super) variant: u64,
 }
 
-/// The chunks one stage may have in flight before it waits for the oldest.
+/// Maximum submitted processing chunks per pipeline, across stages and repaints.
 /// wgpu keeps the command pool of every encoder that was ever alive at the
 /// same time and never frees it, and a pool holds command buffers in batches
 /// of 16 (about 2.5 MB of GPU memory on Adreno), so the number alive together
@@ -249,7 +249,11 @@ enum Target<'a> {
     /// Each chunk is submitted when it closes. `paced` also waits whenever
     /// [`CHUNK_TARGET`] of work is outstanding, which a worker thread does so
     /// that the UI's frames reach the GPU between its chunks.
-    Queue { queue: &'a wgpu::Queue, paced: bool },
+    Queue {
+        queue: &'a wgpu::Queue,
+        submissions: &'a Mutex<VecDeque<wgpu::SubmissionIndex>>,
+        paced: bool,
+    },
     /// Nothing is submitted: one command buffer that is dropped, to compile
     /// the programs a stage uses.
     Discard,
@@ -267,8 +271,6 @@ pub(super) struct WorkEncoder<'a> {
     open_description: String,
     /// The estimate of the open chunk; `None` with an unmeasured pass.
     open_estimate: Option<Duration>,
-    /// The submitted chunks that may still run, oldest first.
-    in_flight: VecDeque<wgpu::SubmissionIndex>,
     /// The estimate of what was submitted since the last wait.
     outstanding: Duration,
 }
@@ -294,9 +296,18 @@ impl<'a> WorkEncoder<'a> {
         device: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
         label: &'static str,
+        submissions: &'a Mutex<VecDeque<wgpu::SubmissionIndex>>,
         paced: bool,
     ) -> Self {
-        Self::with_target(device, Target::Queue { queue, paced }, label)
+        Self::with_target(
+            device,
+            Target::Queue {
+                queue,
+                submissions,
+                paced,
+            },
+            label,
+        )
     }
 
     /// A stage that is encoded and dropped ([`Target::Discard`]).
@@ -313,7 +324,6 @@ impl<'a> WorkEncoder<'a> {
             open: Vec::new(),
             open_description: String::new(),
             open_estimate: Some(Duration::ZERO),
-            in_flight: VecDeque::new(),
             outstanding: Duration::ZERO,
         }
     }
@@ -343,9 +353,28 @@ impl<'a> WorkEncoder<'a> {
         let shares = std::mem::take(&mut self.open);
         let description = std::mem::take(&mut self.open_description);
         let estimate = self.open_estimate.replace(Duration::ZERO);
-        let Target::Queue { queue, paced } = self.target else {
+        let Target::Queue {
+            queue,
+            submissions,
+            paced,
+        } = self.target
+        else {
             return;
         };
+        // Serialize admission and submission for this graph. Completion and
+        // device-loss callbacks do not take this lock.
+        let mut pending = submissions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if pending.len() == MAX_IN_FLIGHT {
+            if !self.wait_for_chunk(&pending[0], "GPU work in flight") {
+                return;
+            }
+            pending.pop_front();
+        }
+        if crate::gpu_errors::device_was_lost() {
+            return;
+        }
         let submission = queue.submit(Some(encoder.finish()));
         if !shares.is_empty() {
             self.outstanding += estimate.unwrap_or_else(chunk_target);
@@ -356,24 +385,24 @@ impl<'a> WorkEncoder<'a> {
                 in_flight.finish(ran);
             });
         }
-        self.in_flight.push_back(submission);
-        // A failed wait is a lost device, which the caller's next readback
-        // or the device-lost handler reports.
         if paced && self.outstanding >= chunk_target() {
-            if let Some(newest) = self.in_flight.back() {
-                let _ =
-                    wait_for_submission(self.device, newest, "paced GPU work", GpuWait::Limited);
+            if self.wait_for_chunk(&submission, "paced GPU work") {
+                pending.clear();
+                self.outstanding = Duration::ZERO;
             }
-            self.in_flight.clear();
-            self.outstanding = Duration::ZERO;
-        } else if self.in_flight.len() > MAX_IN_FLIGHT {
-            if let Some(oldest) = self.in_flight.pop_front() {
-                let _ = wait_for_submission(
-                    self.device,
-                    &oldest,
-                    "GPU work in flight",
-                    GpuWait::Limited,
-                );
+        } else {
+            pending.push_back(submission);
+        }
+    }
+
+    /// A required wait that fails ends processing on this device. Continuing
+    /// would either exceed the limit or present a partially rendered stage.
+    fn wait_for_chunk(&self, submission: &wgpu::SubmissionIndex, operation: &str) -> bool {
+        match wait_for_submission(self.device, submission, operation, GpuWait::Limited) {
+            Ok(()) => true,
+            Err(error) => {
+                crate::gpu_errors::report_device_failure(format!("{operation}: {error:?}"));
+                false
             }
         }
     }

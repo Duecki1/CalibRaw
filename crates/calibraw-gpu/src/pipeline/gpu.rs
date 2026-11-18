@@ -15,6 +15,7 @@ use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use calibraw_core::color_math::{linear_srgb_to_oklab, srgb_decode};
 use calibraw_core::luts::{CubeLut, LutId, ResolvedLook};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -602,6 +603,8 @@ pub struct RawGpuPipeline {
     /// Whether this pipeline's stages wait for the GPU between chunks
     /// ([`Self::pace_submissions`]).
     paced_submissions: AtomicBool,
+    /// Fences for this graph's submitted processing chunks, oldest first.
+    pending_submissions: Mutex<VecDeque<wgpu::SubmissionIndex>>,
     effects_bind_group: wgpu::BindGroup,
     remove_composite_pipeline: wgpu::ComputePipeline,
     remove_composite_bind_group: wgpu::BindGroup,
@@ -2020,7 +2023,7 @@ impl RawGpuPipeline {
     /// A stage's work, whose chunks go to `queue` as they close and the last
     /// one with `WorkEncoder::submit`.
     fn work<'a>(
-        &self,
+        &'a self,
         device: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
         label: &'static str,
@@ -2029,6 +2032,7 @@ impl RawGpuPipeline {
             device,
             queue,
             label,
+            &self.pending_submissions,
             self.paced_submissions.load(Ordering::Acquire),
         )
     }

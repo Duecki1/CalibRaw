@@ -228,9 +228,8 @@ impl RawGpuPipeline {
                         extent: [output_width, output_height],
                     }),
                 );
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("calibraw Remove patch composite encoder"),
-                });
+                let mut encoder =
+                    self.work(device, queue, "calibraw Remove patch composite encoder");
                 dispatch_compute(
                     &mut encoder,
                     "calibraw Remove patch composite",
@@ -253,7 +252,7 @@ impl RawGpuPipeline {
                     },
                     upload_extent,
                 );
-                queue.submit(Some(encoder.finish()));
+                encoder.submit(None);
             }
         }
         Ok(())

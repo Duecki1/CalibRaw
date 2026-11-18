@@ -404,6 +404,7 @@ impl RawGpuPipeline {
             scene_tone_bind_group: groups.scene_tone_bind_group,
             dispatch_bands,
             paced_submissions: AtomicBool::new(false),
+            pending_submissions: Mutex::default(),
             effects_bind_group: groups.effects_bind_group,
             remove_composite_pipeline,
             remove_composite_bind_group,

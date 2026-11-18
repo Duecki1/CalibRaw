@@ -45,36 +45,41 @@ pub fn install_gpu_device_lost_handler(device: &wgpu::Device) {
         if reason == wgpu::DeviceLostReason::Destroyed {
             return;
         }
-        // Workers must stop polling before any logging or disk flush can wait.
-        // Keep the first failure: later errors on this device are consequences.
-        if DEVICE_WAS_LOST.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let mut detail = format!("{message} (reason={reason:?})");
-        if let Some(errors) = calibraw_core::diagnostics::recent_gpu_errors() {
-            detail.push_str(&format!("\nRecent GPU errors:\n{errors}"));
-        }
-        log::error!("the GPU device was lost: {message}");
-        calibraw_core::diagnostics::record(format!("GPU device lost: {detail}"));
-        if let Some(work) = crate::pipeline::in_flight_summary() {
-            log::error!("GPU work in flight when the device was lost: {work}");
-            calibraw_core::diagnostics::record(format!(
-                "GPU work in flight when the device was lost: {work}"
-            ));
-            detail.push_str(&format!("\nGPU work in flight: {work}"));
-        }
-        // These are OS memory counters, never queries on the lost GPU device.
-        calibraw_core::diagnostics::record(format!(
-            "Memory at GPU loss: system_total_bytes={:?} system_available_bytes={:?}",
-            calibraw_core::system_memory::total_memory_bytes(),
-            calibraw_core::system_memory::available_memory_bytes(),
-        ));
-        *DEVICE_LOST
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(detail);
-        // Everything above is queued before the UI can begin its recovery.
-        calibraw_core::diagnostics::flush();
+        report_device_failure(format!("{message} (reason={reason:?})"));
     });
+}
+
+/// Stops further submissions and wakes the existing recovery path after a
+/// driver loss or a required fence that the device could not satisfy.
+pub(crate) fn report_device_failure(mut detail: String) {
+    // Workers must stop polling before any logging or disk flush can wait.
+    // Keep the first failure: later errors on this device are consequences.
+    if DEVICE_WAS_LOST.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    if let Some(errors) = calibraw_core::diagnostics::recent_gpu_errors() {
+        detail.push_str(&format!("\nRecent GPU errors:\n{errors}"));
+    }
+    log::error!("GPU processing stopped: {detail}");
+    calibraw_core::diagnostics::record(format!("GPU device lost: {detail}"));
+    if let Some(work) = crate::pipeline::in_flight_summary() {
+        log::error!("GPU work in flight when the device was lost: {work}");
+        calibraw_core::diagnostics::record(format!(
+            "GPU work in flight when the device was lost: {work}"
+        ));
+        detail.push_str(&format!("\nGPU work in flight: {work}"));
+    }
+    // These are OS memory counters, never queries on the lost GPU device.
+    calibraw_core::diagnostics::record(format!(
+        "Memory at GPU loss: system_total_bytes={:?} system_available_bytes={:?}",
+        calibraw_core::system_memory::total_memory_bytes(),
+        calibraw_core::system_memory::available_memory_bytes(),
+    ));
+    *DEVICE_LOST
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(detail);
+    // Everything above is queued before the UI can begin its recovery.
+    calibraw_core::diagnostics::flush();
 }
 
 /// The driver's message if the device was lost since the last call.
