@@ -7,6 +7,9 @@ rustc-ice-*.txt
 *.pdb
 
 # Android
+*.apk
+*.apk.idsig
+*.aab
 .gradle/
 android/.gradle/
 android/build/
@@ -17,6 +20,9 @@ android/app/src/main/jniLibs/
 android/native/
 local.properties
 android/local.properties
+
+# Local agent checkouts
+/.claude/worktrees/
 
 # IDE
 .idea/
@@ -32,9 +38,10 @@ android.iml
 # Local Android signing credentials
 *.keystore
 *.keystore.base64
+*.jks
+*.jks.base64
 
 # Generated
-/.flatpak/
 THIRD_PARTY_LICENSES.md
 dist/
 .pytest_cache/

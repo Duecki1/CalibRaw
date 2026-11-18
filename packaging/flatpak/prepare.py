@@ -83,7 +83,7 @@ def snapshot(profile: str) -> None:
         "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "README.md", "COPYING",
         "THIRD_PARTY_NOTICES.md", ".cargo/config.toml",
     }
-    prefixes = ("crates/", "xtask/", "data/", "packaging/icons/", "packaging/linux/", "packaging/flatpak/")
+    prefixes = ("vendor/", "crates/", "xtask/", "data/", "packaging/icons/", "packaging/linux/", "packaging/flatpak/")
     paths = git("ls-files", "-z", "--cached", "--others", "--exclude-standard").split(b"\0")
     for raw in paths:
         if not raw:
@@ -144,7 +144,7 @@ def stage_release(revision: str) -> None:
             raise SystemExit(f"{filename} is absent from {commit}; commit the tested packaging first") from None
         if committed != (ROOT / filename).read_bytes():
             raise SystemExit(f"{filename} differs from {commit}; commit the tested packaging first")
-    differences = git("diff", "--name-only", commit, "--", "Cargo.toml", "Cargo.lock", "crates", "xtask", "data", "packaging/linux", "packaging/icons", "packaging/flatpak/generate-licenses.py")
+    differences = git("diff", "--name-only", commit, "--", "Cargo.toml", "Cargo.lock", "vendor", "crates", "xtask", "data", "packaging/linux", "packaging/icons", "packaging/flatpak/generate-licenses.py")
     if differences.strip():
         raise SystemExit("Application files differ from the requested commit:\n" + differences.decode())
     # Do not silently overwrite a directory the developer might be reviewing.
