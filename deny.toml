@@ -54,6 +54,7 @@ unknown-registry = "deny"
 # zbus 6 absorbed these crates. accesskit_unix (via eframe/egui-winit) still
 # requires zbus 5, so they stay until the egui stack moves to zbus 6.
 ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "Unmaintained chrono is required by rawler and trash; remove when their dependency graphs migrate" },
     { id = "RUSTSEC-2026-0370", reason = "zvariant: pulled by zbus 5 through accesskit_unix" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names: pulled by zbus 5 through accesskit_unix" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: pulled by zbus 5 through accesskit_unix" },

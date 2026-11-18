@@ -147,9 +147,15 @@ ExternalProject_Add(calibraw_onnxruntime_host_protoc
 # The source folder is named after the patch, so a changed patch is applied to
 # freshly extracted source rather than over the previous one.
 string(SUBSTRING "${CALIBRAW_ONNXRUNTIME_PATCH_HASH}" 0 12 CALIBRAW_ONNXRUNTIME_PATCH_ID)
+# Both archives refer to the release commit and must match the checksum
+# pinned by packaging/flatpak/onnxruntime-sources.json.
+set(CALIBRAW_ONNXRUNTIME_COMMIT f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7)
 ExternalProject_Add(calibraw_onnxruntime_build
-    URL https://github.com/microsoft/onnxruntime/archive/refs/tags/v${CALIBRAW_ONNXRUNTIME_VERSION}.tar.gz
-    URL_HASH SHA256=f6681ecbddf53898adf0cc9e8e9e84657485b84d2eca3c8aa353de6d7dd417ef
+    URL
+        https://github.com/microsoft/onnxruntime/archive/${CALIBRAW_ONNXRUNTIME_COMMIT}.tar.gz
+        https://codeload.github.com/ROCm/onnxruntime/tar.gz/${CALIBRAW_ONNXRUNTIME_COMMIT}
+    DOWNLOAD_NAME onnxruntime-${CALIBRAW_ONNXRUNTIME_COMMIT}.tar.gz
+    URL_HASH SHA256=1b4ec55fa26ee8fe622ea256894dfe9381bdfa99d41489994a1961720f556c48
     PREFIX "${CALIBRAW_ONNXRUNTIME_ROOT}/onnxruntime-prefix"
     SOURCE_DIR "${CALIBRAW_ONNXRUNTIME_ROOT}/onnxruntime-src-${CALIBRAW_ONNXRUNTIME_PATCH_ID}"
     BINARY_DIR "${CALIBRAW_ONNXRUNTIME_ROOT}/onnxruntime-build"
