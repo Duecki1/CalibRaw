@@ -32,7 +32,7 @@ fn validate_shader(shader: shaders::EntryShader, quality: ProcessingQuality, eff
                 effects.bits()
             )
         });
-    naga::valid::Validator::new(
+    let info = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
     )
@@ -44,6 +44,94 @@ fn validate_shader(shader: shaders::EntryShader, quality: ProcessingQuality, eff
             effects.bits()
         )
     });
+    if let Some(validator) = std::env::var_os("CALIBRAW_SPIRV_VAL") {
+        for entry in &module.entry_points {
+            validate_vulkan_entry(&validator, &module, &info, entry).unwrap_or_else(|error| {
+                panic!(
+                    "{} / {} ({quality:?}, effects {:#x}): {error:#}",
+                    shader.source.file_name,
+                    entry.name,
+                    effects.bits()
+                )
+            });
+        }
+    }
+}
+
+fn validate_vulkan_entry(
+    validator: &std::ffi::OsStr,
+    module: &naga::Module,
+    info: &naga::valid::ModuleInfo,
+    entry: &naga::EntryPoint,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use naga::back::{pipeline_constants, spv};
+    use naga::proc::BoundsCheckPolicy;
+
+    let pipeline = spv::PipelineOptions {
+        shader_stage: entry.stage,
+        entry_point: entry.name.clone(),
+    };
+    let (module, info) = pipeline_constants::process_overrides(
+        module,
+        info,
+        Some((entry.stage, &entry.name)),
+        &Default::default(),
+    )?;
+
+    // Match the language versions selected by wgpu-hal's Vulkan adapter.
+    for (target, lang_version) in [
+        ("vulkan1.0", (1, 0)),
+        ("vulkan1.1", (1, 3)),
+        ("vulkan1.2", (1, 5)),
+        ("vulkan1.3", (1, 6)),
+    ] {
+        // wgpu inserts resource checks on adapters without hardware robustness.
+        for resource_bounds in [BoundsCheckPolicy::Restrict, BoundsCheckPolicy::Unchecked] {
+            let options = spv::Options {
+                lang_version,
+                bounds_check_policies: naga::proc::BoundsCheckPolicies {
+                    index: BoundsCheckPolicy::Restrict,
+                    buffer: resource_bounds,
+                    image_load: resource_bounds,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let words = spv::write_vec(&module, &info, &options, Some(&pipeline))
+                .with_context(|| format!("emit SPIR-V for {target}"))?;
+            run_spirv_val(validator, target, &words)
+                .with_context(|| format!("{target}, resource bounds {resource_bounds:?}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn run_spirv_val(validator: &std::ffi::OsStr, target: &str, words: &[u32]) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new(validator)
+        .args(["--target-env", target, "-"])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("start {validator:?} for {target}"))?;
+    let write_result = child
+        .stdin
+        .as_mut()
+        .expect("piped stdin")
+        .write_all(bytemuck::cast_slice(words));
+    let output = child.wait_with_output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "spirv-val ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    write_result?;
+    Ok(())
 }
 
 #[test]

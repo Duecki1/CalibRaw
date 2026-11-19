@@ -1,6 +1,7 @@
 // Display histogram, separate from the scene EV histogram used by tone mapping.
 // Workgroup-local bins avoid global atomic contention on flat/clipped images.
-struct Histogram { bins: array<atomic<u32>, 1024> }
+// The storage binding supplies the bin count. Workgroup storage has its own fixed extent.
+struct Histogram { bins: array<atomic<u32>> }
 // Rows of the homography from sample (x, y, 1) to source pixel, the output geometry of
 // `extent` samples; source pixel centres are at whole coordinates.
 struct Sampling {

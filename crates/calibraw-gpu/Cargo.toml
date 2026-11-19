@@ -37,5 +37,5 @@ ash.workspace = true
 objc2-metal.workspace = true
 
 [dev-dependencies]
-naga.workspace = true
+naga = { workspace = true, features = ["spv-out"] }
 serde_json.workspace = true

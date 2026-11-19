@@ -1,7 +1,5 @@
 use super::*;
 
-const SHADER: &str = include_str!("../../shaders/preview_clipping.wgsl");
-
 /// A display-only composite; the processed source remains untouched for export and analysis.
 pub struct PreviewClippingGpu {
     pipeline: wgpu::ComputePipeline,
@@ -37,7 +35,7 @@ impl PreviewClippingGpu {
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("preview clipping shader"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(shaders::PREVIEW_CLIPPING.text.into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("preview clipping pipeline layout"),

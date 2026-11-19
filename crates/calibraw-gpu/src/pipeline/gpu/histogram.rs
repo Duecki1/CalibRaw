@@ -3,7 +3,6 @@ use crate::pipeline::geometry::GeometryMapping;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 const HISTOGRAM_BYTES: u64 = 4 * 256 * std::mem::size_of::<u32>() as u64;
-const SHADER: &str = include_str!("../../shaders/preview_histogram.wgsl");
 
 #[derive(Clone, Debug)]
 pub struct PreviewHistogram {
@@ -78,7 +77,7 @@ impl PreviewHistogramGpu {
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("preview histogram shader"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(shaders::PREVIEW_HISTOGRAM.text.into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("preview histogram pipeline layout"),

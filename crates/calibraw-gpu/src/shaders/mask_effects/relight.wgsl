@@ -165,10 +165,12 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
 
     let uv = full_image_uv(pos);
     let has_geometry = Geometry::scene_geometry_present();
-    var frame = RelightFrame(
-        relight_flat_camera(),
+    var aspect = Common::scene_image_size();
+    if has_geometry { aspect = Geometry::scene_aspect(); }
+    let frame = RelightFrame(
+        scene_light_camera(),
         clamp(mask_effect_lane(params, RELIGHT_RELIEF_SCALE_LANE) / 100.0, 0.1, 3.0),
-        Common::scene_image_size(),
+        aspect,
         uv,
         ambient,
         scene_ambient_level(),
@@ -187,8 +189,6 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
         let pixel = Geometry::ScenePixel(1.0, surface, surface, false, vec2<i32>(0), vec4<f32>(0.0), vec4<f32>(0.0));
         return relight_shade(surface, pixel, input_rgb, params, frame);
     }
-    frame.camera = Bake::scene_bake.camera;
-    frame.aspect = Geometry::scene_aspect();
     let scene_rgb = Geometry::scene_unedited_at(pos);
     let pixel = Geometry::scene_pixel(uv, scene_rgb, frame.relief_scale);
     let colors = Geometry::scene_split(pixel, scene_rgb, input_rgb);

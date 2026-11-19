@@ -2074,6 +2074,7 @@ impl Writer {
         &mut self,
         module: &crate::Module,
         handle: Handle<crate::Type>,
+        explicit_layout: bool,
     ) -> Result<Word, Error> {
         let ty = &module.types[handle];
         // If it's a type that needs SPIR-V capabilities, request them now.
@@ -2105,7 +2106,9 @@ impl Writer {
             let id = self.id_gen.next();
             let instruction = match ty.inner {
                 crate::TypeInner::Array { base, size, stride } => {
-                    self.decorate(id, Decoration::ArrayStride, &[stride]);
+                    if explicit_layout {
+                        self.decorate(id, Decoration::ArrayStride, &[stride]);
+                    }
 
                     let type_id = self.get_handle_type_id(base);
                     match size.resolve(module.to_ctx())? {
@@ -2148,7 +2151,13 @@ impl Writer {
                             }
                             _ => (),
                         }
-                        self.decorate_struct_member(id, index, member, &module.types)?;
+                        self.decorate_struct_member(
+                            id,
+                            index,
+                            member,
+                            &module.types,
+                            explicit_layout,
+                        )?;
                         let member_id = self.get_handle_type_id(member.ty);
                         member_ids.push(member_id);
                     }
@@ -2394,6 +2403,7 @@ impl Writer {
                                                 next_index as usize,
                                                 member,
                                                 &module.types,
+                                                true,
                                             )?;
                                             self.get_handle_type_id(member.ty)
                                         }
@@ -3383,7 +3393,13 @@ impl Writer {
                         binding: None,
                         offset: 0,
                     };
-                    self.decorate_struct_member(wrapper_type_id, 0, &member, &ir_module.types)?;
+                    self.decorate_struct_member(
+                        wrapper_type_id,
+                        0,
+                        &member,
+                        &ir_module.types,
+                        true,
+                    )?;
 
                     Instruction::type_struct(wrapper_type_id, &[inner_type_id])
                         .to_words(&mut self.logical_layout.declarations);
@@ -3459,15 +3475,9 @@ impl Writer {
         index: usize,
         member: &crate::StructMember,
         arena: &UniqueArena<crate::Type>,
+        explicit_layout: bool,
     ) -> Result<(), Error> {
         use spirv::Decoration;
-
-        self.annotations.push(Instruction::member_decorate(
-            struct_id,
-            index as u32,
-            Decoration::Offset,
-            &[member.offset],
-        ));
 
         if self.flags.contains(WriterFlags::DEBUG) {
             if let Some(ref name) = member.name {
@@ -3475,6 +3485,17 @@ impl Writer {
                     .push(Instruction::member_name(struct_id, index as u32, name));
             }
         }
+
+        if !explicit_layout {
+            return Ok(());
+        }
+
+        self.annotations.push(Instruction::member_decorate(
+            struct_id,
+            index as u32,
+            Decoration::Offset,
+            &[member.offset],
+        ));
 
         // Matrices and (potentially nested) arrays of matrices both require decorations,
         // so "see through" any arrays to determine if they're needed.
@@ -3625,9 +3646,38 @@ impl Writer {
             }
         }
 
-        // write all types
+        // Only buffer and immediate aggregates require explicit memory layout.
+        // Type dependencies precede their users in the arena.
+        let mut explicit_layout = vec![false; ir_module.types.len()];
+        for (_, var) in ir_module.global_variables.iter() {
+            if matches!(
+                var.space,
+                crate::AddressSpace::Uniform
+                    | crate::AddressSpace::Storage { .. }
+                    | crate::AddressSpace::Immediate
+            ) {
+                explicit_layout[var.ty.index()] = true;
+            }
+        }
+        for (handle, ty) in ir_module.types.iter().rev() {
+            if explicit_layout[handle.index()] {
+                match &ty.inner {
+                    crate::TypeInner::Array { base, .. }
+                    | crate::TypeInner::BindingArray { base, .. } => {
+                        explicit_layout[base.index()] = true;
+                    }
+                    crate::TypeInner::Struct { members, .. } => {
+                        for member in members {
+                            explicit_layout[member.ty.index()] = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         for (handle, _) in ir_module.types.iter() {
-            self.write_type_declaration_arena(ir_module, handle)?;
+            self.write_type_declaration_arena(ir_module, handle, explicit_layout[handle.index()])?;
         }
 
         // write std140 layout compatible types required by uniforms

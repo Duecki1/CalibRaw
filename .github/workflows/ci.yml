@@ -76,7 +76,20 @@ jobs:
           -D warnings -W clippy::perf -W clippy::large_stack_arrays
           -W clippy::redundant_clone -W unreachable-pub
 
-      - name: Run tests
+      - name: Cache Vulkan shader validator
+        id: spirv-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: /tmp/calibraw-spirv-tools/spirv-val
+          key: spirv-val-ubuntu-24.04-${{ runner.arch }}-${{ hashFiles('scripts/build_spirv_val.sh') }}
+
+      - name: Build pinned Vulkan shader validator
+        if: steps.spirv-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_spirv_val.sh /tmp/calibraw-spirv-tools
+
+      - name: Run tests and validate Vulkan shader binaries
+        env:
+          CALIBRAW_SPIRV_VAL: /tmp/calibraw-spirv-tools/spirv-val
         run: cargo test --locked --workspace --all-targets
 
       - name: Check architecture boundaries

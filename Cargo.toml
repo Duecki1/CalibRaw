@@ -20,7 +20,7 @@ default-members = [
 exclude = ["vendor/winit", "vendor/wgpu", "vendor/wgpu-hal", "vendor/naga"]
 
 [patch.crates-io]
-# Correct HLSL layer queries on texture arrays (Glow and Lens Blur).
+# Shader layout and image-query fixes, documented in vendor/naga/CALIBRAW_PATCHES.md.
 naga = { path = "vendor/naga" }
 # Android Destroy/recreation fix, kept on the released 0.30.13 API.
 winit = { path = "vendor/winit" }

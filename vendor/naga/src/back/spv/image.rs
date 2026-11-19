@@ -29,6 +29,9 @@ struct ImageCoordinates {
     /// The SPIR-V id of the type of `value`.
     type_id: Word,
 
+    /// Component type of the coordinates, including their signedness.
+    scalar: crate::Scalar,
+
     /// The number of components in `value`, if it is a vector, or `None` if it
     /// is a scalar.
     size: Option<crate::VectorSize>,
@@ -274,14 +277,15 @@ impl BlockContext<'_> {
             None => {
                 let value_id = coordinates_id;
                 let type_id = self.get_expression_type_id(ty);
-                let size = match *inner_ty {
-                    Ti::Scalar { .. } => None,
-                    Ti::Vector { size, .. } => Some(size),
+                let (scalar, size) = match *inner_ty {
+                    Ti::Scalar(scalar) => (scalar, None),
+                    Ti::Vector { size, scalar } => (scalar, Some(size)),
                     _ => return Err(Error::Validation("coordinate type")),
                 };
                 return Ok(ImageCoordinates {
                     value_id,
                     type_id,
+                    scalar,
                     size,
                 });
             }
@@ -369,6 +373,7 @@ impl BlockContext<'_> {
             value_id,
             type_id,
             size: Some(size),
+            scalar: component_scalar,
         })
     }
 
@@ -401,7 +406,9 @@ impl BlockContext<'_> {
     /// If `coordinates` is a scalar, return a scalar one. Otherwise, return
     /// a vector of ones.
     fn write_coordinate_one(&mut self, coordinates: &ImageCoordinates) -> Result<Word, Error> {
-        let one = self.get_scope_constant(1);
+        let one = self
+            .writer
+            .get_constant_scalar_with(1, coordinates.scalar)?;
         match coordinates.size {
             None => Ok(one),
             Some(vector_size) => {
@@ -1138,6 +1145,12 @@ impl BlockContext<'_> {
         self.writer
             .require_any("image queries", &[spirv::Capability::ImageQuery])?;
 
+        let size_op = match class {
+            Ic::Sampled { multi: true, .. } | Ic::Depth { multi: true } | Ic::Storage { .. } => {
+                spirv::Op::ImageQuerySize
+            }
+            _ => spirv::Op::ImageQuerySizeLod,
+        };
         let id = match query {
             Iq::Size { level } => {
                 let dim_coords = match dim {
@@ -1162,30 +1175,16 @@ impl BlockContext<'_> {
 
                 let extended_size_type_id = self.get_numeric_type_id(vector_numeric_type);
 
-                let (query_op, level_id) = match class {
-                    Ic::Sampled { multi: true, .. }
-                    | Ic::Depth { multi: true }
-                    | Ic::Storage { .. } => (spirv::Op::ImageQuerySize, None),
-                    _ => {
-                        let level_id = match level {
-                            Some(expr) => self.cached[expr],
-                            None => self.get_index_constant(0),
-                        };
-                        (spirv::Op::ImageQuerySizeLod, Some(level_id))
-                    }
-                };
-
                 // The ID of the vector returned by SPIR-V, which contains the dimensions
                 // as well as the layer count.
                 let id_extended = self.gen_id();
-                let mut inst = Instruction::image_query(
-                    query_op,
-                    extended_size_type_id,
-                    id_extended,
-                    image_id,
-                );
-                if let Some(expr_id) = level_id {
-                    inst.add_operand(expr_id);
+                let mut inst =
+                    Instruction::image_query(size_op, extended_size_type_id, id_extended, image_id);
+                if size_op == spirv::Op::ImageQuerySizeLod {
+                    inst.add_operand(match level {
+                        Some(expr) => self.cached[expr],
+                        None => self.get_index_constant(0),
+                    });
                 }
                 block.body.push(inst);
 
@@ -1231,13 +1230,11 @@ impl BlockContext<'_> {
                     scalar: crate::Scalar::U32,
                 });
                 let id_extended = self.gen_id();
-                let mut inst = Instruction::image_query(
-                    spirv::Op::ImageQuerySizeLod,
-                    extended_size_type_id,
-                    id_extended,
-                    image_id,
-                );
-                inst.add_operand(self.get_index_constant(0));
+                let mut inst =
+                    Instruction::image_query(size_op, extended_size_type_id, id_extended, image_id);
+                if size_op == spirv::Op::ImageQuerySizeLod {
+                    inst.add_operand(self.get_index_constant(0));
+                }
                 block.body.push(inst);
 
                 let extract_id = self.gen_id();

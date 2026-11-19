@@ -184,6 +184,8 @@ pub(super) const VIEW_TRANSFORM: ShaderSource = wgsl!("view_transform.wgsl");
 pub(super) const REMOVE_COMPOSITE: ShaderSource = wgsl!("remove_composite.wgsl");
 /// Export geometry, compiled outside the processing pipeline (geometry_resample.rs).
 pub(super) const GEOMETRY_RESAMPLE: ShaderSource = wgsl!("geometry_resample.wgsl");
+pub(super) const PREVIEW_HISTOGRAM: ShaderSource = wgsl!("preview_histogram.wgsl");
+pub(super) const PREVIEW_CLIPPING: ShaderSource = wgsl!("preview_clipping.wgsl");
 /// The scene bake's accumulation, a pass of the processing pipeline, and its
 /// own passes (pipeline/gpu/scene/).
 pub(super) const SCENE_BAKE_ACCUMULATE: ShaderSource = wgsl!("scene/bake_accumulate.wgsl");
@@ -390,7 +392,7 @@ pub(super) const SCENE_BAKE_ACCUMULATE_ENTRY: EntryShader = entry(
 /// passes and export geometry compile outside the processing pipeline
 /// (scene/bake.rs, geometry_resample.rs) but are validated with the rest.
 #[cfg(test)]
-pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 27] = [
+pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 29] = [
     HIGHLIGHTS_ENTRY,
     BAYER_RCD_P1_ENTRY,
     BAYER_RCD_P2_ENTRY,
@@ -410,6 +412,8 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 27] = [
     REMOVE_COMPOSITE_ENTRY,
     GEOMETRY_RESAMPLE_ENTRY,
     SCENE_BAKE_ACCUMULATE_ENTRY,
+    entry("preview histogram", PREVIEW_HISTOGRAM, false, None),
+    entry("preview clipping", PREVIEW_CLIPPING, false, None),
     entry("scene bake depth", SCENE_BAKE_DEPTH, false, None),
     entry("scene bake lens blur", SCENE_BAKE_FOCUS, false, None),
     entry("scene bake coverage", SCENE_BAKE_COVERAGE, false, None),

@@ -228,13 +228,11 @@ fn accumulate_haze(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
 
     // Tiles are dispatched one after another, so each cell has one writer.
     let index = haze_cell_index(vec2<i32>(gid.xy));
-    var cell = haze_cells[index];
+    let cell = haze_cells[index];
     if haze_cell_pixels(cell) > 0.0 {
         darkest = min(darkest, cell.darkest.xyz);
     }
-    cell.darkest = vec4<f32>(darkest, haze_cell_pixels(cell) + pixels);
-    cell.sums = cell.sums + sums;
-    haze_cells[index] = cell;
+    haze_cells[index] = HazeCell(vec4<f32>(darkest, haze_cell_pixels(cell) + pixels), cell.sums + sums);
 }
 
 // Each channel's darkest box mean over the 3 x 3 cells around `cell`, about

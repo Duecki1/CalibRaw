@@ -235,12 +235,8 @@ const IMAGE_LIGHT_CORE_SIGMA: f32 = 0.012;
 const IMAGE_LIGHT_TAIL_SIGMA: f32 = 0.06;
 const IMAGE_LIGHT_TAIL_SHARE: f32 = 0.45;
 
-struct ImageLightCell {
-    // Summed colour (xyz) and pixel count (w) of each band.
-    bands: array<vec4<f32>, IMAGE_LIGHT_BANDS>,
-}
-
-@group(0) @binding(38) var<storage, read_write> image_light_cells: array<ImageLightCell>;
+// Each cell stores IMAGE_LIGHT_BANDS consecutive sums of colour (xyz) and pixel count (w).
+@group(0) @binding(38) var<storage, read_write> image_light_bands: array<vec4<f32>>;
 @group(0) @binding(39) var image_light_out: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(40) var image_light_in: texture_2d<f32>;
 @group(0) @binding(41) var image_light_core_out: texture_storage_2d<rgba16float, write>;
@@ -248,8 +244,8 @@ struct ImageLightCell {
 @group(0) @binding(43) var image_light_core_in: texture_2d<f32>;
 @group(0) @binding(44) var image_light_tail_in: texture_2d<f32>;
 
-fn image_light_cell_index(cell: vec2<u32>) -> u32 {
-    return cell.y * Common::IMAGE_LIGHT_GRID_LONG + cell.x;
+fn image_light_band_offset(cell: vec2<u32>) -> u32 {
+    return (cell.y * Common::IMAGE_LIGHT_GRID_LONG + cell.x) * IMAGE_LIGHT_BANDS;
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -289,9 +285,9 @@ fn accumulate_image_lights(@builtin(global_invocation_id) dispatch_gid: vec3<u32
         }
     }
     // Tiles are dispatched one after another, so each cell has one writer.
-    let index = image_light_cell_index(gid.xy);
+    let offset = image_light_band_offset(gid.xy);
     for (var band = 0u; band < IMAGE_LIGHT_BANDS; band = band + 1u) {
-        image_light_cells[index].bands[band] += bands[band];
+        image_light_bands[offset + band] += bands[band];
     }
 }
 
@@ -303,9 +299,9 @@ fn image_light_surroundings_ev(cell: vec2<i32>, grid: vec2<i32>) -> f32 {
         for (var dx = -IMAGE_LIGHT_SURROUNDINGS; dx <= IMAGE_LIGHT_SURROUNDINGS; dx = dx + 1) {
             let neighbour = cell + vec2<i32>(dx, dy);
             if any(neighbour < vec2<i32>(0)) || any(neighbour >= grid) { continue; }
-            let index = image_light_cell_index(vec2<u32>(neighbour));
+            let offset = image_light_band_offset(vec2<u32>(neighbour));
             for (var band = 0u; band < IMAGE_LIGHT_BANDS; band = band + 1u) {
-                let count = image_light_cells[index].bands[band].w;
+                let count = image_light_bands[offset + band].w;
                 counts[band] = counts[band] + count;
                 total = total + count;
             }
@@ -332,13 +328,13 @@ fn resolve_image_lights(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) 
         median + IMAGE_LIGHT_ABOVE_MEDIAN_EV,
         surroundings + IMAGE_LIGHT_ABOVE_SURROUNDINGS_EV,
     );
-    let index = image_light_cell_index(gid.xy);
+    let offset = image_light_band_offset(gid.xy);
     var light = vec3<f32>(0.0);
     var count = 0.0;
     for (var band = 0u; band < IMAGE_LIGHT_BANDS; band = band + 1u) {
         let ev = IMAGE_LIGHT_BAND_MIN_EV + f32(band) + 0.5;
         let share = smoothstep(threshold, threshold + IMAGE_LIGHT_RAMP_EV, ev);
-        let sums = image_light_cells[index].bands[band];
+        let sums = image_light_bands[offset + band];
         light += sums.xyz * share;
         count += sums.w;
     }
