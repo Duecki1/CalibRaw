@@ -66,6 +66,9 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="1.5.1" date="2026-11-19" type="stable">
+      <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.5.1</url>
+    </release>
     <release version="1.4.1" date="2026-11-08" type="stable">
       <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.4.1</url>
       <description>
