@@ -383,6 +383,12 @@ canvases, mask cards, and colour controls in their existing components.
   merges, focus stacks) reports through the toolbar task indicator
   (`ui/background_tasks.rs`), not a dialog. Work that edits the open document,
   such as AI masks and denoise, keeps its blocking progress dialog.
+- Every local-AI model run passes the one AI consent dialog
+  (`app/ai/consent.rs`), which asks before a model or the ONNX Runtime is
+  downloaded. Work outside the editor, such as a Library merge's AI denoise,
+  adds an `AiConsentRequester`, calls `CalibRawApp::request_ai_consent` when
+  it is confirmed and `take_ai_consent_answer` until answered, and downloads
+  only when the answer allows it; it adds no consent dialog of its own.
 - Report every failure the user should know about with
   `CalibRawApp::report_error(ErrorKind, message)` (`app/error_dialogs.rs`). It
   queues the shared error dialog, keeps the message in the status line and logs

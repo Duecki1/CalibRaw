@@ -309,6 +309,7 @@ impl CalibRawApp {
                             feature: AiFeature::Remove,
                             runtime_download_needed,
                             origin: AiJobOrigin::Requested,
+                            requester: AiConsentRequester::Editor,
                         });
                         self.ui.notice = Some(
                             tr("Big-LaMa needs to be installed or re-verified before Remove can continue.")
@@ -365,6 +366,7 @@ mod tests {
                 feature: AiFeature::Remove,
                 runtime_download_needed: false,
                 origin: AiJobOrigin::Requested,
+                requester: AiConsentRequester::Editor,
             });
 
             match transition {

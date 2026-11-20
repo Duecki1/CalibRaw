@@ -1,10 +1,11 @@
 use super::*;
-use crate::app::ErrorKind;
+use crate::app::{AiConsentAnswer, AiConsentCheck, AiConsentRequester, ErrorKind};
 use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::LoadedRaw;
-use crate::services::ai_denoise::{ai_denoise_models_installed, install_ai_denoise};
+use crate::services::ai_denoise::{install_ai_denoise, AiDenoiseStatus};
 use crate::ui::background_tasks::{BackgroundTaskId, BackgroundTaskView};
 use anyhow::{Context, Result};
+use calibraw_ai::AiFeature;
 use calibraw_gpu::pipeline::{
     merge_hdr_bracket, stack_focus, MergeOptions, MergedImage, SourceDenoiser,
 };
@@ -49,49 +50,34 @@ pub(super) struct MergeChoices {
     ai_denoise: bool,
 }
 
+/// Whether a merge AI-denoises its sources.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MergeAiDenoise {
+    Off,
+    /// `allow_download` downloads the RawNIND models, as the user accepted in
+    /// the consent dialog.
+    On {
+        allow_download: bool,
+    },
+}
+
+/// A merge the dialog confirmed.
+struct MergeRequest {
+    kind: MergeKind,
+    options: MergeOptions,
+    ai_denoise: MergeAiDenoise,
+    /// Open the result in Develop once it is saved.
+    open: bool,
+    assets: Vec<LibraryAsset>,
+}
+
 /// The options dialog a merge asks before it starts.
 pub(super) struct MergeDialog {
     kind: MergeKind,
     assets: Vec<LibraryAsset>,
-    ai_models: AiModels,
-}
-
-/// Whether the RawNIND models AI denoise needs are installed, which takes a
-/// worker seconds to check ([`ai_denoise_models_installed`]).
-enum AiModels {
-    Checking(mpsc::Receiver<bool>),
-    Installed,
-    Missing,
-}
-
-impl AiModels {
-    fn check(context: &egui::Context) -> Self {
-        let (sender, receiver) = mpsc::channel();
-        let repaint = context.clone();
-        let spawned = std::thread::Builder::new()
-            .name("raw-merge-ai-models".to_owned())
-            .spawn(move || {
-                let _ = sender.send(ai_denoise_models_installed());
-                repaint.request_repaint();
-            });
-        match spawned {
-            Ok(_) => Self::Checking(receiver),
-            Err(error) => {
-                log::warn!("could not check the RawNIND models: {error}");
-                Self::Missing
-            }
-        }
-    }
-
-    fn poll(&mut self) {
-        if let Self::Checking(receiver) = self {
-            *self = match receiver.try_recv() {
-                Ok(true) => Self::Installed,
-                Ok(false) | Err(mpsc::TryRecvError::Disconnected) => Self::Missing,
-                Err(mpsc::TryRecvError::Empty) => return,
-            };
-        }
-    }
+    /// The confirmed merge waits for the AI consent dialog, which asks before
+    /// the models AI denoise needs are downloaded; `open` as confirmed.
+    awaiting_consent: Option<bool>,
 }
 
 /// How the merge dialog was closed.
@@ -106,31 +92,48 @@ enum MergeDialogChoice {
 
 /// Asks for the options of a `kind` merge of `assets`; [`show_dialog`] starts
 /// it once they are confirmed.
-pub(super) fn ask(
-    app: &mut CalibRawApp,
-    kind: MergeKind,
-    assets: Vec<LibraryAsset>,
-    context: &egui::Context,
-) {
+pub(super) fn ask(app: &mut CalibRawApp, kind: MergeKind, assets: Vec<LibraryAsset>) {
     if assets.len() >= 2 {
         app.library.merge_dialog = Some(MergeDialog {
             kind,
             assets,
-            ai_models: AiModels::check(context),
+            awaiting_consent: None,
         });
     }
 }
 
 /// The open merge dialog: one switch per option, each starting from the
-/// choice of the previous merge. AI denoise can be chosen once its models are
-/// known to be installed; turning it on in Develop installs them.
+/// choice of the previous merge. A merge with AI denoise first passes the AI
+/// consent dialog, which asks when RawNIND or the ONNX Runtime must be
+/// downloaded; declining it returns to this dialog.
 pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
-    let Some(dialog) = &mut app.library.merge_dialog else {
+    let Some(dialog) = &app.library.merge_dialog else {
         return;
     };
-    dialog.ai_models.poll();
+    if let Some(open) = dialog.awaiting_consent {
+        match app.take_ai_consent_answer(AiConsentRequester::Merge) {
+            Some(AiConsentAnswer::Accepted { allow_download }) => {
+                confirm(
+                    app,
+                    frame,
+                    open,
+                    MergeAiDenoise::On { allow_download },
+                    ui.ctx(),
+                );
+                return;
+            }
+            Some(AiConsentAnswer::Declined) => {
+                if let Some(dialog) = &mut app.library.merge_dialog {
+                    dialog.awaiting_consent = None;
+                }
+            }
+            None => {}
+        }
+    }
+    let Some(dialog) = &app.library.merge_dialog else {
+        return;
+    };
     let kind = dialog.kind;
-    let models = &dialog.ai_models;
     let choices = &mut app.library.merge_choices;
     let mut choice = None;
     moduwu_design::Dialog::new("library-merge-options", kind.title()).show_with_footer(
@@ -148,22 +151,7 @@ pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fr
                 );
             }
             moduwu_design::toggle_row(ui, &mut options.remove_hot_pixels, tr("Remove hot pixels"));
-            let installed = matches!(models, AiModels::Installed);
-            // Shown off while it cannot run, without forgetting the choice.
-            let mut ai_denoise = choices.ai_denoise && installed;
-            let mut toggle = ui
-                .add_enabled_ui(installed, |ui| {
-                    moduwu_design::toggle_row(ui, &mut ai_denoise, tr("AI denoise"))
-                })
-                .inner;
-            if matches!(models, AiModels::Missing) {
-                toggle = toggle.on_disabled_hover_text(tr(
-                    "Turn on AI denoise for a photo in Develop once to install its models.",
-                ));
-            }
-            if toggle.changed() {
-                choices.ai_denoise = ai_denoise;
-            }
+            moduwu_design::toggle_row(ui, &mut choices.ai_denoise, tr("AI denoise"));
         },
         |ui| {
             if moduwu_design::primary_action_button(ui, tr("Merge")).clicked() {
@@ -187,27 +175,51 @@ pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fr
             }
         },
     );
-    let Some(choice) = choice else {
-        return;
-    };
+    match choice {
+        None => {}
+        Some(MergeDialogChoice::Cancel) => app.library.merge_dialog = None,
+        Some(MergeDialogChoice::Merge { open }) if !app.library.merge_choices.ai_denoise => {
+            confirm(app, frame, open, MergeAiDenoise::Off, ui.ctx());
+        }
+        Some(MergeDialogChoice::Merge { open }) => {
+            match app.request_ai_consent(AiFeature::Denoise, AiConsentRequester::Merge) {
+                AiConsentCheck::Ready => {
+                    let ai_denoise = MergeAiDenoise::On {
+                        allow_download: false,
+                    };
+                    confirm(app, frame, open, ai_denoise, ui.ctx());
+                }
+                AiConsentCheck::Asking => {
+                    if let Some(dialog) = &mut app.library.merge_dialog {
+                        dialog.awaiting_consent = Some(open);
+                    }
+                }
+                // Reported; the dialog stays open to turn AI denoise off.
+                AiConsentCheck::Unavailable => {}
+            }
+        }
+    }
+}
+
+/// Closes the dialog and starts its merge with the chosen options.
+fn confirm(
+    app: &mut CalibRawApp,
+    frame: &eframe::Frame,
+    open: bool,
+    ai_denoise: MergeAiDenoise,
+    context: &egui::Context,
+) {
     let Some(dialog) = app.library.merge_dialog.take() else {
         return;
     };
-    if let MergeDialogChoice::Merge { open } = choice {
-        let mut choices = app.library.merge_choices;
-        // Still checking: the models were installed when AI denoise was last
-        // chosen, and the first source fails clearly if they are gone.
-        choices.ai_denoise &= !matches!(dialog.ai_models, AiModels::Missing);
-        start(
-            app,
-            frame,
-            dialog.kind,
-            choices,
-            open,
-            dialog.assets,
-            ui.ctx(),
-        );
-    }
+    let request = MergeRequest {
+        kind: dialog.kind,
+        options: app.library.merge_choices.options,
+        ai_denoise,
+        open,
+        assets: dialog.assets,
+    };
+    start(app, frame, request, context);
 }
 
 /// A saved merge.
@@ -234,12 +246,16 @@ pub(super) struct MergeTask {
 fn start(
     app: &mut CalibRawApp,
     frame: &eframe::Frame,
-    kind: MergeKind,
-    choices: MergeChoices,
-    open: bool,
-    assets: Vec<LibraryAsset>,
+    request: MergeRequest,
     context: &egui::Context,
 ) {
+    let MergeRequest {
+        kind,
+        options,
+        ai_denoise,
+        open,
+        assets,
+    } = request;
     if assets.len() < 2
         || local_action_in_progress(app)
         || app.library_batch_export_progress().is_some()
@@ -283,26 +299,39 @@ fn start(
             // The result is not saved beside the RAW: the merge corrects and
             // white balances each source its own way, so a saved result would
             // not match the photo's edit, and restoring one deletes it.
+            let allow_download = ai_denoise
+                == MergeAiDenoise::On {
+                    allow_download: true,
+                };
             let mut denoise_source = |raw: &Arc<LoadedRaw>| -> Result<()> {
                 install_ai_denoise(
                     raw,
                     None,
+                    allow_download,
                     &device,
                     &queue,
                     &cancelled,
-                    |completed, total| {
-                        if total > 0 {
+                    |status| match status {
+                        AiDenoiseStatus::Downloading(download) => {
+                            report(format!(
+                                "{} ({:.1} / {:.1} MB)",
+                                tr("Downloading verified RawNIND model package"),
+                                download.downloaded as f64 / 1_000_000.0,
+                                download.total as f64 / 1_000_000.0,
+                            ));
+                        }
+                        AiDenoiseStatus::Denoising { completed, total } if total > 0 => {
                             report(tr_fmt(
                                 "Applying AI denoise: tile {completed}/{total}",
                                 &[("completed", &completed), ("total", &total)],
                             ));
                         }
+                        AiDenoiseStatus::Denoising { .. } => {}
                     },
                 )
                 .map_err(anyhow::Error::msg)
             };
-            let denoise = choices
-                .ai_denoise
+            let denoise = (ai_denoise != MergeAiDenoise::Off)
                 .then_some(&mut denoise_source as &mut SourceDenoiser);
             // The merge reads files: media-library photos are staged as local copies.
             let mut staged = Vec::with_capacity(assets.len());
@@ -323,7 +352,6 @@ fn start(
                     .iter()
                     .map(|staged| staged.raw_path.clone())
                     .collect();
-                let options = choices.options;
                 let merged = match kind {
                     MergeKind::Hdr => merge_hdr_bracket(
                         &device, &queue, &paths, options, denoise, prewarm, report,
@@ -340,7 +368,7 @@ fn start(
                     name,
                     locator,
                     open,
-                    lens_uncorrected: choices.options.lens_correction && !merged.lens_corrected,
+                    lens_uncorrected: options.lens_correction && !merged.lens_corrected,
                 })
             })()
             .map_err(|error| format!("{error:#}"));

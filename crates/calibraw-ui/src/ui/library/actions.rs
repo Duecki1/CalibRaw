@@ -331,7 +331,7 @@ pub(crate) fn apply_library_action(
         app.settle_library_review_saves();
     }
     match action {
-        LibraryAction::Merge(kind, assets) => super::merge::ask(app, kind, assets, ui.ctx()),
+        LibraryAction::Merge(kind, assets) => super::merge::ask(app, kind, assets),
         LibraryAction::Review(assets, change) => {
             app.review_photos(assets, change);
         }

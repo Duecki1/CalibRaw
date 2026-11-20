@@ -1626,7 +1626,6 @@
   "The graphics API CalibRaw draws its window and processes photos with. Automatic picks the best one for this device. Try another if the preview shows errors or CalibRaw is unstable. Takes effect after a restart.": "CalibRaw'ın penceresini çizmek ve fotoğrafları işlemek için kullandığı grafik API'si. Otomatik, bu cihaz için en iyisini seçer. Önizlemede hatalar görünürse veya CalibRaw kararsızsa başka birini deneyin. Yeniden başlatmadan sonra etkili olur.",
   "The linked folder used last is no longer available, so the Library is shown instead. ({error})": "En son kullanılan bağlı klasör artık kullanılamıyor, bu yüzden onun yerine Kitaplık gösteriliyor. ({error})",
   "The LUT and its amount.": "LUT ve miktarı.",
-  "Turn on AI denoise for a photo in Develop once to install its models.": "Modellerini yüklemek için Geliştir'de bir fotoğrafta yapay zekâ ile gürültü gidermeyi bir kez açın.",
   "Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview.": "Kamera eşleştirmenin açık olup olmadığı ve miktarı. Her fotoğraf kendi gömülü önizlemesiyle eşleştirilir.",
   "The LUT and its amount. Enabled by default.": "LUT ve miktarı. Varsayılan olarak etkindir.",
   "Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview. Enabled by default.": "Kamera eşleştirmenin açık olup olmadığı ve miktarı. Her fotoğraf kendi gömülü önizlemesiyle eşleştirilir. Varsayılan olarak etkindir.",

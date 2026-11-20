@@ -235,7 +235,10 @@ impl CalibRawApp {
         }
     }
 
-    /// The one consent dialog for every local-AI job.
+    /// The one consent dialog for every local-AI job, wherever it was asked
+    /// for. The editor's staged job starts or is dropped here; any other
+    /// requester gets the answer (`take_ai_consent_answer`) and runs the model
+    /// itself.
     pub(in crate::app) fn show_ai_consent_dialog(
         &mut self,
         ctx: &egui::Context,
@@ -245,6 +248,7 @@ impl CalibRawApp {
             feature,
             runtime_download_needed,
             origin,
+            requester,
         }) = self.ai.consent
         else {
             return;
@@ -318,13 +322,26 @@ impl CalibRawApp {
                     action = Self::show_ai_consent_buttons(ui, decline, accept, runtime_ready);
                 },
             );
-        match action {
-            moduwu_design::DialogAction::Confirm => {
+        let answer = match action {
+            moduwu_design::DialogAction::Confirm => AiConsentAnswer::Accepted {
+                allow_download: model_download_needed,
+            },
+            moduwu_design::DialogAction::Cancel => AiConsentAnswer::Declined,
+            moduwu_design::DialogAction::None => return,
+        };
+        match (requester, answer) {
+            (AiConsentRequester::Editor, AiConsentAnswer::Accepted { allow_download }) => {
                 self.ai.consent = None;
-                self.start_ai_job(feature, model_download_needed, frame);
+                self.start_ai_job(feature, allow_download, frame);
             }
-            moduwu_design::DialogAction::Cancel => self.abandon_ai_job(feature),
-            moduwu_design::DialogAction::None => {}
+            (AiConsentRequester::Editor, AiConsentAnswer::Declined) => {
+                self.abandon_ai_job(feature);
+            }
+            (requester, answer) => {
+                self.ai.consent = None;
+                self.ai.consent_answer = Some((requester, answer));
+                self.egui_ctx.request_repaint();
+            }
         }
     }
 }

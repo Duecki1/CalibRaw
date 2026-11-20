@@ -253,6 +253,7 @@ impl CalibRawApp {
                 manual_runtime,
                 library_mask_refresh: None,
                 consent: None,
+                consent_answer: None,
                 object_pending_target: None,
                 object_cache: None,
                 people: PeopleState::default(),

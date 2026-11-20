@@ -8,7 +8,7 @@ use crate::pipeline::CardSwitch;
 mod ai_denoise;
 mod task_view;
 
-use crate::services::ai_denoise::install_ai_denoise;
+use crate::services::ai_denoise::{install_ai_denoise, AiDenoiseStatus};
 use ai_denoise::export_needs_ai_denoise;
 
 impl ExportTask {
@@ -114,14 +114,19 @@ pub(in crate::app) fn spawn_export_item(
                     completed: 0,
                     total: 0,
                 });
+                // Exports run without asking, so nothing is downloaded.
                 if let Err(error) = install_ai_denoise(
                     &raw,
                     ai_denoise_result.as_deref(),
+                    false,
                     &device,
                     &queue,
                     &cancellation,
-                    |completed, total| {
-                        let _ = worker_sender.send(ExportItemEvent::Denoising { completed, total });
+                    |status| {
+                        if let AiDenoiseStatus::Denoising { completed, total } = status {
+                            let _ =
+                                worker_sender.send(ExportItemEvent::Denoising { completed, total });
+                        }
                     },
                 ) {
                     let _ = worker_sender.send(ExportItemEvent::Render(ExportEvent::Finished(

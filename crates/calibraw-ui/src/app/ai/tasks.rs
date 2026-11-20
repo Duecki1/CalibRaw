@@ -4,6 +4,13 @@
 //! starts ([`CalibRawApp::start_ai_job`]) or is dropped
 //! ([`CalibRawApp::abandon_ai_job`]). The open tab only decides which models
 //! stay loaded between jobs; it never cancels a job.
+//!
+//! Work that runs a model outside the editor, such as a Library merge's AI
+//! denoise, asks through the same consent dialog with
+//! [`CalibRawApp::request_ai_consent`], naming itself as an
+//! [`AiConsentRequester`], and takes the answer with
+//! [`CalibRawApp::take_ai_consent_answer`]. It then runs the model itself,
+//! downloading it only if the user accepted the download.
 
 use super::*;
 use crate::i18n::tr;
@@ -81,10 +88,11 @@ impl CalibRawApp {
             .is_some_and(is_content_feature)
     }
 
+    /// Whether the consent dialog asks about the editor's staged `feature` job.
     pub(crate) fn ai_consent_is_for(&self, feature: AiFeature) -> bool {
-        self.ai
-            .consent
-            .is_some_and(|consent| consent.feature == feature)
+        self.ai.consent.is_some_and(|consent| {
+            consent.feature == feature && consent.requester == AiConsentRequester::Editor
+        })
     }
 
     pub(crate) fn content_consent_open(&self) -> bool {
@@ -137,23 +145,87 @@ impl CalibRawApp {
             self.abandon_ai_job(feature);
             return false;
         }
-        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        if runtime_download_needed
-            || self.model_download_needed(feature)
-            || origin == AiJobOrigin::Restore
-        {
-            self.ai.consent = Some(AiConsent {
-                feature,
-                runtime_download_needed,
-                origin,
-            });
-            self.egui_ctx.request_repaint();
+        if let Some(consent) = self.consent_needed(feature, origin, AiConsentRequester::Editor) {
+            self.ask_ai_consent(consent);
             return false;
         }
         if self.ai_consent_is_for(feature) {
             self.ai.consent = None;
         }
         true
+    }
+
+    /// The consent gate for a model run outside the editor by `requester`.
+    /// `Ready` when nothing must be downloaded: the work may run its model now,
+    /// without downloading. `Asking` while the consent dialog asks, whose
+    /// answer [`Self::take_ai_consent_answer`] gives. `Unavailable` when the
+    /// ONNX Runtime cannot be used, which has been reported to the user.
+    pub(crate) fn request_ai_consent(
+        &mut self,
+        feature: AiFeature,
+        requester: AiConsentRequester,
+    ) -> AiConsentCheck {
+        debug_assert_ne!(requester, AiConsentRequester::Editor);
+        if !self.ai_runtime_ready() {
+            return AiConsentCheck::Unavailable;
+        }
+        match self.consent_needed(feature, AiJobOrigin::Requested, requester) {
+            Some(consent) => {
+                self.ask_ai_consent(consent);
+                AiConsentCheck::Asking
+            }
+            None => AiConsentCheck::Ready,
+        }
+    }
+
+    /// The answer to `requester`'s [`Self::request_ai_consent`], taken once;
+    /// `None` while the dialog still asks. A question withdrawn without an
+    /// answer, as when another job's question replaced it or the runtime mode
+    /// changed, answers `Declined`, so a requester never waits forever. Call
+    /// it only while waiting for an answer.
+    pub(crate) fn take_ai_consent_answer(
+        &mut self,
+        requester: AiConsentRequester,
+    ) -> Option<AiConsentAnswer> {
+        if let Some((asked, answer)) = self.ai.consent_answer {
+            if asked == requester {
+                self.ai.consent_answer = None;
+                return Some(answer);
+            }
+        }
+        let asking = self
+            .ai
+            .consent
+            .is_some_and(|consent| consent.requester == requester);
+        (!asking).then_some(AiConsentAnswer::Declined)
+    }
+
+    /// The question to ask before `feature` runs for `requester`: when its
+    /// model or the ONNX Runtime must be downloaded, or the job restores an
+    /// edit's result the user did not just ask for.
+    fn consent_needed(
+        &self,
+        feature: AiFeature,
+        origin: AiJobOrigin,
+        requester: AiConsentRequester,
+    ) -> Option<AiConsent> {
+        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
+        (runtime_download_needed
+            || self.model_download_needed(feature)
+            || origin == AiJobOrigin::Restore)
+            .then_some(AiConsent {
+                feature,
+                runtime_download_needed,
+                origin,
+                requester,
+            })
+    }
+
+    /// Opens the consent dialog on `consent`, replacing a question it showed.
+    fn ask_ai_consent(&mut self, consent: AiConsent) {
+        self.ai.consent = Some(consent);
+        self.ai.consent_answer = None;
+        self.egui_ctx.request_repaint();
     }
 
     /// Gate and start for a content job; these need no GPU frame.
@@ -307,6 +379,7 @@ mod tests {
             feature: AiFeature::Sky,
             runtime_download_needed: true,
             origin: AiJobOrigin::Requested,
+            requester: AiConsentRequester::Editor,
         });
 
         app.abandon_ai_job(AiFeature::Sky);

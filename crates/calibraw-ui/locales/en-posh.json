@@ -1625,7 +1625,6 @@
   "The graphics API CalibRaw draws its window and processes photos with. Automatic picks the best one for this device. Try another if the preview shows errors or CalibRaw is unstable. Takes effect after a restart.": "The graphical apparatus by which CalibRaw renders its window and attends to one's photographs. Automatic selects the finest available for this device. Should the preview misbehave or CalibRaw prove temperamental, one might try another. The change is observed upon restarting.",
   "The linked folder used last is no longer available, so the Library is shown instead. ({error})": "The linked directory last employed is no longer available, so the Library is shown instead. ({error})",
   "The LUT and its amount.": "The LUT and its amount.",
-  "Turn on AI denoise for a photo in Develop once to install its models.": "Kindly enable AI denoise for a photograph in Develop but once, and its models shall be installed.",
   "Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview.": "Whether Camera match is on, and its amount. Each photograph is matched to its own embedded preview.",
   "The LUT and its amount. Enabled by default.": "The LUT and its amount. Enabled by default, as one would expect.",
   "Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview. Enabled by default.": "Whether Camera match is on, and its amount. Each photograph is matched to its own embedded preview. Enabled by default, as one would expect.",

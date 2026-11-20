@@ -1626,7 +1626,6 @@
   "The graphics API CalibRaw draws its window and processes photos with. Automatic picks the best one for this device. Try another if the preview shows errors or CalibRaw is unstable. Takes effect after a restart.": "Графический API, с помощью которого CalibRaw рисует окно и обрабатывает фотографии. «Автоматически» выбирает лучший для этого устройства. Попробуйте другой, если в предпросмотре видны ошибки или CalibRaw работает нестабильно. Вступает в силу после перезапуска.",
   "The linked folder used last is no longer available, so the Library is shown instead. ({error})": "Последняя использованная подключённая папка больше недоступна, поэтому вместо неё показана библиотека. ({error})",
   "The LUT and its amount.": "LUT и её интенсивность.",
-  "Turn on AI denoise for a photo in Develop once to install its models.": "Чтобы установить модели, один раз включите шумоподавление ИИ для фото в разделе «Проявка».",
   "Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview.": "Включён ли режим «Как в камере», и его интенсивность. Каждая фотография подбирается по своему встроенному превью.",
   "The LUT and its amount. Enabled by default.": "LUT и её интенсивность. Включено по умолчанию.",
   "Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview. Enabled by default.": "Включён ли режим «Как в камере», и его интенсивность. Каждая фотография подбирается по своему встроенному превью. Включено по умолчанию.",

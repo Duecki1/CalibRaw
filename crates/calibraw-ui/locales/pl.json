@@ -1625,7 +1625,6 @@
   "The graphics API CalibRaw draws its window and processes photos with. Automatic picks the best one for this device. Try another if the preview shows errors or CalibRaw is unstable. Takes effect after a restart.": "Graficzne API, za pomocą którego CalibRaw rysuje okno i przetwarza zdjęcia. Automatycznie wybiera najlepsze dla tego urządzenia. Wypróbuj inne, jeśli podgląd pokazuje błędy lub CalibRaw działa niestabilnie. Zmiana działa po ponownym uruchomieniu.",
   "The linked folder used last is no longer available, so the Library is shown instead. ({error})": "Ostatnio używany połączony folder nie jest już dostępny, więc zamiast niego wyświetlana jest Biblioteka. ({error})",
   "The LUT and its amount.": "LUT i jego siła.",
-  "Turn on AI denoise for a photo in Develop once to install its models.": "Włącz raz redukcję szumu AI dla zdjęcia w Wywoływaniu, aby zainstalować jej modele.",
   "Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview.": "Czy Dopasowanie do aparatu jest włączone, i jego siła. Każde zdjęcie jest dopasowywane do własnego osadzonego podglądu.",
   "The LUT and its amount. Enabled by default.": "LUT i jego siła. Domyślnie włączone.",
   "Whether Camera match is on, and its amount. Each photo is matched to its own embedded preview. Enabled by default.": "Czy Dopasowanie do aparatu jest włączone, i jego siła. Każde zdjęcie jest dopasowywane do własnego osadzonego podglądu. Domyślnie włączone.",

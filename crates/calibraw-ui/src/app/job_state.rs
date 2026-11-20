@@ -156,6 +156,43 @@ pub(crate) struct AiConsent {
     pub(crate) feature: calibraw_ai::AiFeature,
     pub(crate) runtime_download_needed: bool,
     pub(crate) origin: AiJobOrigin,
+    pub(crate) requester: AiConsentRequester,
+}
+
+/// Who waits for the consent dialog's answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AiConsentRequester {
+    /// The editor's staged job, which starts when the dialog is accepted and
+    /// is dropped when it is declined.
+    Editor,
+    /// A Library HDR merge or focus stack, which runs AI denoise on its
+    /// sources itself.
+    Merge,
+}
+
+/// How [`CalibRawApp::request_ai_consent`] answers a requester at once.
+///
+/// [`CalibRawApp::request_ai_consent`]: crate::app::CalibRawApp::request_ai_consent
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AiConsentCheck {
+    /// Nothing to download: run the model now, without downloading.
+    Ready,
+    /// The consent dialog asks; the answer follows.
+    Asking,
+    /// The ONNX Runtime cannot be used, which was reported.
+    Unavailable,
+}
+
+/// The consent dialog's answer to a requester other than the editor
+/// ([`AiConsentRequester`]), which then runs the model itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AiConsentAnswer {
+    Declined,
+    /// The user accepted; `allow_download` lets the job download the model,
+    /// as they accepted. The ONNX Runtime downloads whenever the job loads it.
+    Accepted {
+        allow_download: bool,
+    },
 }
 
 pub(crate) struct AiState {
@@ -172,6 +209,9 @@ pub(crate) struct AiState {
     pub(crate) manual_runtime: Option<(PathBuf, calibraw_ai::Sha256)>,
     pub(crate) library_mask_refresh: Option<LibraryAiMaskRefreshState>,
     pub(crate) consent: Option<AiConsent>,
+    /// The answer to a requester other than the editor, until it takes it
+    /// (`CalibRawApp::take_ai_consent_answer`).
+    pub(crate) consent_answer: Option<(AiConsentRequester, AiConsentAnswer)>,
     pub(crate) object_pending_target: Option<(usize, usize)>,
     pub(crate) object_cache: Option<((usize, usize), ObjectInferenceCache)>,
     pub(crate) people: PeopleState,
