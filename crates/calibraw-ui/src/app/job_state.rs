@@ -154,6 +154,10 @@ pub(crate) enum AiJobOrigin {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AiConsent {
     pub(crate) feature: calibraw_ai::AiFeature,
+    /// Whether the model and the ONNX Runtime had to be downloaded when the
+    /// question was asked. Checking hashes the files, so the dialog shows
+    /// these rather than checking again every frame.
+    pub(crate) model_download_needed: bool,
     pub(crate) runtime_download_needed: bool,
     pub(crate) origin: AiJobOrigin,
     pub(crate) requester: AiConsentRequester,
@@ -188,10 +192,9 @@ pub(crate) enum AiConsentCheck {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AiConsentAnswer {
     Declined,
-    /// The user accepted; `allow_download` lets the job download the model,
-    /// as they accepted. The ONNX Runtime downloads whenever the job loads it.
+    /// The user accepted; the job may download what the dialog showed.
     Accepted {
-        allow_download: bool,
+        downloads: calibraw_ai::AiDownloads,
     },
 }
 

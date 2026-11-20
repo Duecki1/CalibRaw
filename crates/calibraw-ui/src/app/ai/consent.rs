@@ -246,6 +246,7 @@ impl CalibRawApp {
     ) {
         let Some(AiConsent {
             feature,
+            model_download_needed,
             runtime_download_needed,
             origin,
             requester,
@@ -253,7 +254,6 @@ impl CalibRawApp {
         else {
             return;
         };
-        let model_download_needed = self.model_download_needed(feature);
         let description = self.describe_ai_job(feature);
         let download_needed = model_download_needed || runtime_download_needed;
         let restore = description
@@ -272,7 +272,9 @@ impl CalibRawApp {
             (None, false, true) => tr("Download ONNX Runtime?").to_owned(),
             (None, false, false) => tr_fmt("Prepare {label}?", &[("label", &description.label)]),
         };
-        let runtime_ready = self.ai_runtime_ready();
+        // Validated before asking; this only follows a runtime choice the
+        // dialog's warning asks for, without probing or reporting every frame.
+        let runtime_ready = self.ai_runtime_selected();
         let mut action = moduwu_design::DialogAction::None;
         moduwu_design::Dialog::new("ai-consent", title)
             .size(moduwu_design::DialogSize::Wide)
@@ -323,16 +325,20 @@ impl CalibRawApp {
                 },
             );
         let answer = match action {
+            // The job may download exactly what the dialog showed.
             moduwu_design::DialogAction::Confirm => AiConsentAnswer::Accepted {
-                allow_download: model_download_needed,
+                downloads: calibraw_ai::AiDownloads {
+                    model: model_download_needed,
+                    runtime: runtime_download_needed,
+                },
             },
             moduwu_design::DialogAction::Cancel => AiConsentAnswer::Declined,
             moduwu_design::DialogAction::None => return,
         };
         match (requester, answer) {
-            (AiConsentRequester::Editor, AiConsentAnswer::Accepted { allow_download }) => {
+            (AiConsentRequester::Editor, AiConsentAnswer::Accepted { downloads }) => {
                 self.ai.consent = None;
-                self.start_ai_job(feature, allow_download, frame);
+                self.start_ai_job(feature, downloads, frame);
             }
             (AiConsentRequester::Editor, AiConsentAnswer::Declined) => {
                 self.abandon_ai_job(feature);

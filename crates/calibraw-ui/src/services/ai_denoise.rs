@@ -2,13 +2,12 @@
 //! Library photo, or a merge's sources. Runs the model on the caller's worker
 //! thread. It downloads the models only when the caller says the user accepted
 //! that through the consent dialog (`CalibRawApp::request_ai_consent`), which
-//! the caller asks before it starts; the ONNX Runtime downloads whenever a job
-//! loads it, so that question covers it too.
+//! the caller asks before it starts, and passes on as [`AiDownloads`].
 
 use crate::i18n::tr;
 use crate::pipeline::{AiDenoisedImage, LoadedRaw};
 use calibraw_ai::models::denoise::{AiDenoiseProgress, RawNindJob};
-use calibraw_ai::{AiJobEvent, ModelDownloadProgress};
+use calibraw_ai::{AiDownloads, AiJobEvent, ModelDownloadProgress};
 use calibraw_gpu::wgpu;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,12 +28,12 @@ pub(crate) enum AiDenoiseStatus {
 /// RawNIND result is saved there. A restore that does not match deletes the
 /// file, so `saved_result` is only for the photo's own source, prepared as its
 /// edit prepares it. Without it RawNIND runs and the result lasts only as long
-/// as `raw`. `allow_model_download` downloads missing models, which the user
-/// must have accepted; without it missing models fail the job.
+/// as `raw`. `downloads` is what the user accepted to download; whatever else
+/// is missing fails the job.
 pub(crate) fn install_ai_denoise(
     raw: &Arc<LoadedRaw>,
     saved_result: Option<&Path>,
-    allow_model_download: bool,
+    downloads: AiDownloads,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     cancellation: &Arc<AtomicBool>,
@@ -55,7 +54,7 @@ pub(crate) fn install_ai_denoise(
         }
         None => run(RawNindJob::Infer {
             save_to: saved_result.map(Path::to_owned),
-            allow_model_download,
+            downloads,
         })?,
     };
     raw.set_ai_denoised_image(image)

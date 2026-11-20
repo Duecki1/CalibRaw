@@ -5,7 +5,7 @@ use crate::pipeline::LoadedRaw;
 use crate::services::ai_denoise::{install_ai_denoise, AiDenoiseStatus};
 use crate::ui::background_tasks::{BackgroundTaskId, BackgroundTaskView};
 use anyhow::{Context, Result};
-use calibraw_ai::AiFeature;
+use calibraw_ai::{AiDownloads, AiFeature};
 use calibraw_gpu::pipeline::{
     merge_hdr_bracket, stack_focus, MergeOptions, MergedImage, SourceDenoiser,
 };
@@ -54,10 +54,10 @@ pub(super) struct MergeChoices {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MergeAiDenoise {
     Off,
-    /// `allow_download` downloads the RawNIND models, as the user accepted in
-    /// the consent dialog.
+    /// `downloads` is what the user accepted to download in the consent
+    /// dialog: the RawNIND models and the ONNX Runtime.
     On {
-        allow_download: bool,
+        downloads: AiDownloads,
     },
 }
 
@@ -112,14 +112,8 @@ pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fr
     };
     if let Some(open) = dialog.awaiting_consent {
         match app.take_ai_consent_answer(AiConsentRequester::Merge) {
-            Some(AiConsentAnswer::Accepted { allow_download }) => {
-                confirm(
-                    app,
-                    frame,
-                    open,
-                    MergeAiDenoise::On { allow_download },
-                    ui.ctx(),
-                );
+            Some(AiConsentAnswer::Accepted { downloads }) => {
+                confirm(app, frame, open, MergeAiDenoise::On { downloads }, ui.ctx());
                 return;
             }
             Some(AiConsentAnswer::Declined) => {
@@ -185,7 +179,7 @@ pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fr
             match app.request_ai_consent(AiFeature::Denoise, AiConsentRequester::Merge) {
                 AiConsentCheck::Ready => {
                     let ai_denoise = MergeAiDenoise::On {
-                        allow_download: false,
+                        downloads: AiDownloads::NONE,
                     };
                     confirm(app, frame, open, ai_denoise, ui.ctx());
                 }
@@ -299,15 +293,15 @@ fn start(
             // The result is not saved beside the RAW: the merge corrects and
             // white balances each source its own way, so a saved result would
             // not match the photo's edit, and restoring one deletes it.
-            let allow_download = ai_denoise
-                == MergeAiDenoise::On {
-                    allow_download: true,
-                };
+            let downloads = match ai_denoise {
+                MergeAiDenoise::On { downloads } => downloads,
+                MergeAiDenoise::Off => AiDownloads::NONE,
+            };
             let mut denoise_source = |raw: &Arc<LoadedRaw>| -> Result<()> {
                 install_ai_denoise(
                     raw,
                     None,
-                    allow_download,
+                    downloads,
                     &device,
                     &queue,
                     &cancelled,

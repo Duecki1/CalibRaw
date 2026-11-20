@@ -14,7 +14,7 @@
 
 use super::*;
 use crate::i18n::tr;
-use calibraw_ai::{AiFeature, AiFeatureSet};
+use calibraw_ai::{AiDownloads, AiFeature, AiFeatureSet};
 
 /// Features whose results are derived from image content (masks and scene
 /// depth). They go stale together when the source image changes.
@@ -210,11 +210,11 @@ impl CalibRawApp {
         requester: AiConsentRequester,
     ) -> Option<AiConsent> {
         let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        (runtime_download_needed
-            || self.model_download_needed(feature)
-            || origin == AiJobOrigin::Restore)
+        let model_download_needed = self.model_download_needed(feature);
+        (runtime_download_needed || model_download_needed || origin == AiJobOrigin::Restore)
             .then_some(AiConsent {
                 feature,
+                model_download_needed,
                 runtime_download_needed,
                 origin,
                 requester,
@@ -231,7 +231,7 @@ impl CalibRawApp {
     /// Gate and start for a content job; these need no GPU frame.
     pub(in crate::app) fn request_content_job(&mut self, feature: AiFeature) {
         if self.ai_job_may_start(feature) {
-            self.start_content_job(feature, false);
+            self.start_content_job(feature, AiDownloads::NONE);
         }
     }
 
@@ -239,39 +239,33 @@ impl CalibRawApp {
     pub(in crate::app) fn start_ai_job(
         &mut self,
         feature: AiFeature,
-        allow_download: bool,
+        downloads: AiDownloads,
         frame: &eframe::Frame,
     ) {
         match feature {
             AiFeature::Remove => {
                 if let Some(brush) = self.inpaint.pending_brush.take() {
                     let existing = self.inpaint.edits.as_ref().clone();
-                    let _ = self.start_remove_request(frame, existing, brush, allow_download);
+                    let _ = self.start_remove_request(frame, existing, brush, downloads);
                 }
             }
-            AiFeature::Denoise => self.start_ai_denoise(frame, allow_download),
+            AiFeature::Denoise => self.start_ai_denoise(frame, downloads),
             AiFeature::Subject
             | AiFeature::Sky
             | AiFeature::SceneDepth
             | AiFeature::Object
-            | AiFeature::People => self.start_content_job(feature, allow_download),
+            | AiFeature::People => self.start_content_job(feature, downloads),
         }
     }
 
-    fn start_content_job(&mut self, feature: AiFeature, allow_download: bool) {
+    fn start_content_job(&mut self, feature: AiFeature, downloads: AiDownloads) {
         if let Some(model) = generated_model(feature) {
-            self.start_generated_mask_worker(model, allow_download);
+            self.start_generated_mask_worker(model, downloads);
         } else if feature == AiFeature::People {
-            self.start_people_worker(allow_download);
+            self.start_people_worker(downloads);
         } else if let Some((mask_index, component_index)) = self.ai.object_pending_target.take() {
             let (encoder, decoder) = self.sam21_model_paths();
-            self.start_object_worker(
-                mask_index,
-                component_index,
-                encoder,
-                decoder,
-                allow_download,
-            );
+            self.start_object_worker(mask_index, component_index, encoder, decoder, downloads);
         }
     }
 
@@ -377,6 +371,7 @@ mod tests {
         app.ai.update = Some(AiUpdate::planned(&app.masks.stack.content_dependencies()));
         app.ai.consent = Some(AiConsent {
             feature: AiFeature::Sky,
+            model_download_needed: false,
             runtime_download_needed: true,
             origin: AiJobOrigin::Requested,
             requester: AiConsentRequester::Editor,

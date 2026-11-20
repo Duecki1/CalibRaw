@@ -1,7 +1,7 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
 use calibraw_ai::models::remove::RemoveProgress;
-use calibraw_ai::AiFeature;
+use calibraw_ai::{AiDownloads, AiFeature};
 
 impl InpaintState {
     pub(crate) fn reset_for_document(&mut self) {
@@ -130,7 +130,7 @@ impl CalibRawApp {
         frame: &eframe::Frame,
         existing: RemoveEditState,
         brush: RemoveBrushStroke,
-        allow_download: bool,
+        downloads: AiDownloads,
     ) -> bool {
         let Some(raw) = self.develop.loaded_raw.as_ref().cloned() else {
             self.ui.notice = Some(tr("Open a photo before using Remove.").to_owned());
@@ -155,7 +155,7 @@ impl CalibRawApp {
             brush: brush.clone(),
             opacity: self.inpaint.brush_opacity,
             model_path: self.big_lama_model_path(),
-            allow_download,
+            downloads,
             program_prewarm: self.export.gpu_prewarm.clone(),
             cancellation: Arc::clone(&cancellation),
         };
@@ -178,7 +178,7 @@ impl CalibRawApp {
         self.inpaint.pending_brush = Some(brush);
         self.inpaint.pending_retouch = None;
         if self.ai_job_may_start(AiFeature::Remove) {
-            self.start_ai_job(AiFeature::Remove, false, frame);
+            self.start_ai_job(AiFeature::Remove, AiDownloads::NONE, frame);
         }
     }
 
@@ -307,6 +307,7 @@ impl CalibRawApp {
                         let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
                         self.ai.consent = Some(AiConsent {
                             feature: AiFeature::Remove,
+                            model_download_needed: self.model_download_needed(AiFeature::Remove),
                             runtime_download_needed,
                             origin: AiJobOrigin::Requested,
                             requester: AiConsentRequester::Editor,
@@ -364,6 +365,7 @@ mod tests {
             app.inpaint.selected_stroke = Some(0);
             app.ai.consent = Some(AiConsent {
                 feature: AiFeature::Remove,
+                model_download_needed: false,
                 runtime_download_needed: false,
                 origin: AiJobOrigin::Requested,
                 requester: AiConsentRequester::Editor,

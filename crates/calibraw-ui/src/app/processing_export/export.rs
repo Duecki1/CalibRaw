@@ -118,7 +118,7 @@ pub(in crate::app) fn spawn_export_item(
                 if let Err(error) = install_ai_denoise(
                     &raw,
                     ai_denoise_result.as_deref(),
-                    false,
+                    calibraw_ai::AiDownloads::NONE,
                     &device,
                     &queue,
                     &cancellation,

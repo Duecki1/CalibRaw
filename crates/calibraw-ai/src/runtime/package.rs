@@ -293,11 +293,17 @@ pub(crate) struct WebGpuPlugin {
     pub(crate) version: &'static str,
 }
 
-pub(crate) fn ensure_automatic_onnx_runtime() -> Result<RuntimeLibraries> {
-    ensure_automatic_runtime(configured_automatic_runtime()?)
+/// The automatic runtime's libraries, verified. A missing runtime downloads
+/// only with `allow_download`, which the user accepted in the consent dialog;
+/// otherwise the job fails and asks again.
+pub(crate) fn ensure_automatic_onnx_runtime(allow_download: bool) -> Result<RuntimeLibraries> {
+    ensure_automatic_runtime(configured_automatic_runtime()?, allow_download)
 }
 
-fn ensure_automatic_runtime(runtime: AutomaticRuntime<'_>) -> Result<RuntimeLibraries> {
+fn ensure_automatic_runtime(
+    runtime: AutomaticRuntime<'_>,
+    allow_download: bool,
+) -> Result<RuntimeLibraries> {
     let _guard = install_lock();
     let package = match runtime {
         AutomaticRuntime::Bundled { path, .. } => {
@@ -322,6 +328,10 @@ fn ensure_automatic_runtime(runtime: AutomaticRuntime<'_>) -> Result<RuntimeLibr
     if let Some(runtime) = load_verified_install(&install_dir, &package)? {
         return Ok(runtime);
     }
+    anyhow::ensure!(
+        allow_download,
+        "the automatic ONNX Runtime is not installed; consent to its download again"
+    );
 
     fs::create_dir_all(&root)
         .with_context(|| format!("create ONNX Runtime cache {}", root.display()))?;

@@ -21,19 +21,21 @@ static RUNTIME_INITIALIZED: OnceLock<()> = OnceLock::new();
 static RUNTIME_INIT_LOCK: Mutex<()> = Mutex::new(());
 
 /// Loads the configured ONNX Runtime unless this process already has. A
-/// different library than the loaded one fails until CalibRaw restarts.
-pub fn initialize_runtime() -> Result<()> {
-    load(&crate::config::runtime_source())
+/// different library than the loaded one fails until CalibRaw restarts. A
+/// missing automatic runtime downloads only with `allow_download`
+/// ([`crate::AiDownloads::runtime`]).
+pub fn initialize_runtime(allow_download: bool) -> Result<()> {
+    load(&crate::config::runtime_source(), allow_download)
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub(super) fn load(source: &RuntimeSource) -> Result<()> {
+pub(super) fn load(source: &RuntimeSource, allow_download: bool) -> Result<()> {
     // A manual runtime runs only the providers built into it: a plugin beside
     // it would not be covered by the SHA-256 the user approved.
     let ((selected, expected_sha256), webgpu) = match source {
         RuntimeSource::Manual { path, sha256 } => ((path.clone(), sha256.clone()), None),
         RuntimeSource::Automatic => {
-            let libraries = super::ensure_automatic_onnx_runtime()
+            let libraries = super::ensure_automatic_onnx_runtime(allow_download)
                 .context("prepare the automatic ONNX Runtime")?;
             (libraries.core, libraries.webgpu)
         }
@@ -204,7 +206,7 @@ pub fn runtime_loaded_in_process() -> bool {
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
-fn load(_source: &RuntimeSource) -> Result<()> {
+fn load(_source: &RuntimeSource, _allow_download: bool) -> Result<()> {
     if RUNTIME_INITIALIZED.get().is_some() {
         return Ok(());
     }

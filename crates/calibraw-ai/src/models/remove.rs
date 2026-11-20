@@ -3,7 +3,7 @@
 // Copyright the GIMP contributors.
 // Copyright (C) 2026 CalibRaw contributors (Rust adaptation).
 
-use crate::jobs::{spawn_job, AiJobEvent, JobContext, JobKind};
+use crate::jobs::{spawn_job, AiDownloads, AiJobEvent, JobContext, JobKind};
 use crate::pipeline::{
     adaptive_remove_dilation, pipeline_scene_to_canonical_remove_scene,
     pipeline_scene_to_working_rec2020, plan_remove_passes, rasterize_remove_brush,
@@ -64,7 +64,7 @@ pub struct RemoveRequest {
     pub brush: RemoveBrushStroke,
     pub opacity: f32,
     pub model_path: PathBuf,
-    pub allow_download: bool,
+    pub downloads: AiDownloads,
     pub program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     pub cancellation: Arc<AtomicBool>,
 }
@@ -124,11 +124,11 @@ fn run_remove(
     job: &JobContext<RemoveStroke, RemoveProgress>,
 ) -> Result<RemoveStroke> {
     job.ensure_not_cancelled()?;
-    initialize_runtime()?;
+    initialize_runtime(request.downloads.runtime)?;
     job.install(
         AiModel::BigLama.spec(),
         &request.model_path,
-        request.allow_download,
+        request.downloads.model,
     )?;
     job.ensure_not_cancelled()?;
 

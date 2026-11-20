@@ -60,7 +60,8 @@ use calibraw_ai::pipeline::{
     RemoveBrushStroke, RemoveEditState, SceneCamera, SceneDepth,
 };
 use calibraw_ai::{
-    AiConfigChange, AiJobEvent, AiSessionStatus, CpuReason, Placement, RuntimeSource, Sha256,
+    AiConfigChange, AiDownloads, AiJobEvent, AiSessionStatus, CpuReason, Placement, RuntimeSource,
+    Sha256,
 };
 use calibraw_gpu::wgpu;
 use calibraw_gpu::{
@@ -331,7 +332,7 @@ fn remove() {
         brush,
         opacity: 1.0,
         model_path: harness.models.join(remove::MODEL.cache_filename),
-        allow_download: harness.download,
+        downloads: harness.downloads(),
         program_prewarm: None,
         cancellation: Arc::new(AtomicBool::new(false)),
     });
@@ -455,6 +456,15 @@ impl Harness {
         }
     }
 
+    /// `CALIBRAW_PARITY_DOWNLOAD=1` downloads the models and the automatic
+    /// ONNX Runtime; otherwise both must be installed.
+    fn downloads(&self) -> AiDownloads {
+        AiDownloads {
+            model: self.download,
+            runtime: self.download,
+        }
+    }
+
     fn photo(&self, photo: &Photo) -> PathBuf {
         let path = self.photos.join(photo.path);
         let sha256 = Sha256::of_file(&path)
@@ -573,7 +583,7 @@ impl Harness {
                 scene_geometry,
                 focal_length_35mm: None,
                 model_path,
-                allow_download: self.download,
+                downloads: self.downloads(),
                 width: scene.width(),
                 height: scene.height(),
                 rgba: scene.as_raw().clone(),
@@ -595,7 +605,7 @@ impl Harness {
         let events = spawn_object_mask(ObjectMaskWorkerRequest {
             encoder_path: self.models.join(ENCODER_MODEL.cache_filename),
             decoder_path: self.models.join(DECODER_MODEL.cache_filename),
-            allow_download: self.download,
+            downloads: self.downloads(),
             inference: ObjectMaskRequest {
                 source_width: scene.width(),
                 source_height: scene.height(),
@@ -633,7 +643,7 @@ impl Harness {
         let models = PeopleModels::new(segmentation, &self.models, SubjectModelPrecision::Float32);
         let events = spawn_people_mask(PeopleMaskWorkerRequest {
             models,
-            allow_download: self.download,
+            downloads: self.downloads(),
             request: PeopleMaskRequest {
                 source: PeopleSource {
                     width: scene.width(),
@@ -691,7 +701,7 @@ impl Harness {
             Some(gpu.queue),
             RawNindJob::Infer {
                 save_to: None,
-                allow_model_download: self.download,
+                downloads: self.downloads(),
             },
             Arc::new(AtomicBool::new(false)),
         );

@@ -2,7 +2,7 @@ use super::worker::megabytes_detail;
 use super::*;
 use crate::i18n::{tr, tr_fmt};
 use calibraw_ai::models::denoise::{AiDenoiseProgress, RawNindJob};
-use calibraw_ai::AiFeature;
+use calibraw_ai::{AiDownloads, AiFeature};
 use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
@@ -156,14 +156,14 @@ impl CalibRawApp {
             .is_some_and(|path| path.is_file());
         // A saved result restores without running the model, so it never asks.
         if saved_result_exists || self.ai_job_may_start_from(AiFeature::Denoise, origin) {
-            self.start_ai_denoise(frame, false);
+            self.start_ai_denoise(frame, AiDownloads::NONE);
         }
     }
 
     pub(in crate::app) fn start_ai_denoise(
         &mut self,
         frame: &eframe::Frame,
-        allow_model_download: bool,
+        downloads: AiDownloads,
     ) {
         if self.foreground_operation_active() {
             return;
@@ -183,7 +183,8 @@ impl CalibRawApp {
         }
         // A built-in runtime is loaded before the worker starts.
         if !self.caps().configurable_ai_runtime && !saved_result_exists {
-            if let Err(error) = calibraw_ai::runtime::initialize_runtime() {
+            // Mobile links the runtime in: nothing downloads.
+            if let Err(error) = calibraw_ai::runtime::initialize_runtime(false) {
                 self.develop.exposure.ai_denoise_enabled = false;
                 self.develop.target_exposure.ai_denoise_enabled = false;
                 self.report_error(
@@ -230,10 +231,7 @@ impl CalibRawApp {
             Some(render_state.queue.clone()),
             match result_path {
                 Some(path) if saved_result_exists => RawNindJob::Restore { path },
-                save_to => RawNindJob::Infer {
-                    save_to,
-                    allow_model_download,
-                },
+                save_to => RawNindJob::Infer { save_to, downloads },
             },
             Arc::clone(&cancellation),
         );

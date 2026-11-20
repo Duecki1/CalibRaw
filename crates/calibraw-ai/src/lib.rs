@@ -16,7 +16,7 @@ pub use config::{
     configure, gpu_ai_memory_sufficient, update, AiConfig, AiConfigChange, GpuIdentity,
     RuntimeSource, Sha256,
 };
-pub use jobs::AiJobEvent;
+pub use jobs::{AiDownloads, AiJobEvent};
 pub use placement::{
     ai_acceleration_enabled, ai_session_statuses, end_gpu_job_records, gpu_ai_activity,
     gpu_job_in_progress, take_ai_gpu_device_loss, AiSessionStatus, CpuReason, GpuAiActivity,

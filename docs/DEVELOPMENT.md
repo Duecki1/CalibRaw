@@ -158,7 +158,7 @@ CALIBRAW_PARITY_PHOTOS=/path/to/Demo \
 
 The inputs are pinned by SHA-256. Models come from the desktop model folder,
 or `CALIBRAW_PARITY_MODELS`; `CALIBRAW_PARITY_DOWNLOAD=1` fetches missing
-ones. `CALIBRAW_PARITY_RUNTIME` loads a specific ONNX Runtime library, and
+ones and a missing automatic ONNX Runtime. `CALIBRAW_PARITY_RUNTIME` loads a specific ONNX Runtime library, and
 `CALIBRAW_PARITY_GPU=1` keeps GPU acceleration on to compare GPU sessions
 with the CPU goldens. `CALIBRAW_PARITY_BLESS=1` rewrites the goldens and
 their pins from CPU sessions; do it only for an intended output change, and
@@ -389,6 +389,11 @@ canvases, mask cards, and colour controls in their existing components.
   adds an `AiConsentRequester`, calls `CalibRawApp::request_ai_consent` when
   it is confirmed and `take_ai_consent_answer` until answered, and downloads
   only when the answer allows it; it adds no consent dialog of its own.
+  Nothing downloads without that dialog: every AI job takes an
+  `AiDownloads` (its models, the automatic ONNX Runtime), which only an
+  accepted dialog fills with what it showed. Work that runs without asking,
+  such as an export's AI denoise, passes `AiDownloads::NONE`, and whatever is
+  missing fails the job.
 - Report every failure the user should know about with
   `CalibRawApp::report_error(ErrorKind, message)` (`app/error_dialogs.rs`). It
   queues the shared error dialog, keeps the message in the status line and logs

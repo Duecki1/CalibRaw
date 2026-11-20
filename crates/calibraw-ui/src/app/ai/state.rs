@@ -446,4 +446,12 @@ impl CalibRawApp {
     pub(in crate::app) fn ai_runtime_ready(&mut self) -> bool {
         !self.caps().configurable_ai_runtime || self.validate_onnx_runtime_for_ai()
     }
+
+    /// Whether a runtime is chosen, as [`Self::ai_runtime_ready`] requires
+    /// before validating it: cheap, and reports nothing.
+    pub(in crate::app) fn ai_runtime_selected(&self) -> bool {
+        !self.caps().configurable_ai_runtime
+            || self.ai.runtime_mode == OnnxRuntimeMode::Automatic
+            || self.ai.manual_runtime.is_some()
+    }
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use calibraw_ai::AiDownloads;
 
 impl CalibRawApp {
     pub(crate) fn set_subject_mask_quality(
@@ -136,7 +137,11 @@ impl CalibRawApp {
         }
     }
 
-    pub(super) fn start_generated_mask_worker(&mut self, model: AiMaskModel, allow_download: bool) {
+    pub(super) fn start_generated_mask_worker(
+        &mut self,
+        model: AiMaskModel,
+        downloads: AiDownloads,
+    ) {
         if self.foreground_operation_active() {
             return;
         }
@@ -152,7 +157,9 @@ impl CalibRawApp {
         };
         let subject_precision = self.subject_model_precision();
         let model_path = self.generated_model_path(model, subject_precision);
-        let model_present = self.generated_model_is_verified(model, subject_precision, &model_path);
+        // The consent gate checked the model just before: a download was
+        // allowed exactly when it was missing.
+        let model_present = !downloads.model;
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_ai_mask(
             AiMaskWorkerRequest {
@@ -162,7 +169,7 @@ impl CalibRawApp {
                 scene_geometry: (model == AiMaskModel::Depth).then(|| self.scene_geometry_model()),
                 focal_length_35mm: self.known_focal_length(),
                 model_path,
-                allow_download,
+                downloads,
                 width: source.width,
                 height: source.height,
                 rgba: source.rgba.to_vec(),

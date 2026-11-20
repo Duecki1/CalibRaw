@@ -11,7 +11,7 @@
 //! from Sapiens2 or BiRefNet.
 
 use crate::config::{MemoryClass, CAPABILITIES};
-use crate::jobs::{spawn_job, AiJobEvent, JobContext, JobKind};
+use crate::jobs::{spawn_job, AiDownloads, AiJobEvent, JobContext, JobKind};
 use crate::models::masks::mask_model_retention;
 use crate::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
 use crate::pipeline::{LoadedRaw, MaskImage, MaskRgbImage, PersonPart, RemoveEditState};
@@ -742,7 +742,7 @@ pub type PeopleMaskEvent = AiJobEvent<PeopleAnalysis, PeopleMaskProgress>;
 
 pub struct PeopleMaskWorkerRequest {
     pub models: PeopleModels,
-    pub allow_download: bool,
+    pub downloads: AiDownloads,
     pub request: PeopleMaskRequest,
     pub cancellation: Arc<AtomicBool>,
 }
@@ -750,7 +750,7 @@ pub struct PeopleMaskWorkerRequest {
 pub fn spawn_people_mask(worker: PeopleMaskWorkerRequest) -> mpsc::Receiver<PeopleMaskEvent> {
     let PeopleMaskWorkerRequest {
         models,
-        allow_download,
+        downloads,
         request,
         cancellation,
     } = worker;
@@ -758,16 +758,16 @@ pub fn spawn_people_mask(worker: PeopleMaskWorkerRequest) -> mpsc::Receiver<Peop
         job.install(
             AiModel::PersonDetector.spec(),
             models.detector(),
-            allow_download,
+            downloads.model,
         )?;
         if let Some(path) = models.body_parts() {
-            job.install(AiModel::BodyParts.spec(), path, allow_download)?;
+            job.install(AiModel::BodyParts.spec(), path, downloads.model)?;
         }
         if let Some(model) = models.foreground() {
-            job.install(model.ai_model().spec(), &model.path, allow_download)?;
+            job.install(model.ai_model().spec(), &model.path, downloads.model)?;
         }
         job.ensure_not_cancelled()?;
-        infer_people_masks(job, &models, request)
+        infer_people_masks(job, &models, request, downloads.runtime)
     })
 }
 
@@ -778,10 +778,12 @@ pub fn spawn_people_mask(worker: PeopleMaskWorkerRequest) -> mpsc::Receiver<Peop
 /// segments them: one model is loaded at a time, so each runs for everyone
 /// at once. A cancelled job keeps and reports what it found before it
 /// stopped.
+/// `allow_runtime_download` as [`AiDownloads::runtime`].
 fn infer_people_masks(
     job: &JobContext<PeopleAnalysis, PeopleMaskProgress>,
     models: &PeopleModels,
     request: PeopleMaskRequest,
+    allow_runtime_download: bool,
 ) -> Result<PeopleAnalysis> {
     let PeopleMaskRequest {
         source,
@@ -794,7 +796,7 @@ fn infer_people_masks(
         "a people-mask job takes at most {MAX_TARGETS} masks"
     );
     let image = source.image()?;
-    initialize_runtime()?;
+    initialize_runtime(allow_runtime_download)?;
 
     let detects = analysis.is_none();
     let mut analysis = match analysis {

@@ -3,7 +3,7 @@
 use super::scene_geometry::SceneGeometryModel;
 use super::{depth, sky, subject};
 use crate::config::CAPABILITIES;
-use crate::jobs::{spawn_job, AiJobEvent, JobKind};
+use crate::jobs::{spawn_job, AiDownloads, AiJobEvent, JobKind};
 use crate::pipeline::{MaskImage, SceneDepth};
 use crate::registry::AiModel;
 use crate::runtime::initialize_runtime;
@@ -61,7 +61,7 @@ pub struct AiMaskWorkerRequest {
     /// length, when known.
     pub focal_length_35mm: Option<f32>,
     pub model_path: PathBuf,
-    pub allow_download: bool,
+    pub downloads: AiDownloads,
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
@@ -103,7 +103,7 @@ pub fn spawn_ai_mask(
             AiMaskModel::Sky => AiModel::SkySeg,
             AiMaskModel::Depth => AiModel::Depth,
         };
-        job.install(model.spec(), &request.model_path, request.allow_download)?;
+        job.install(model.spec(), &request.model_path, request.downloads.model)?;
         if request.model == AiMaskModel::Depth {
             let geometry = request
                 .scene_geometry
@@ -113,7 +113,7 @@ pub fn spawn_ai_mask(
             job.install(
                 geometry.quality.ai_model().spec(),
                 &geometry.path,
-                request.allow_download,
+                request.downloads.model,
             )?;
         }
         job.ensure_not_cancelled()?;
@@ -130,7 +130,7 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
         scene_geometry,
         focal_length_35mm,
         model_path,
-        allow_download: _,
+        downloads,
         width,
         height,
         rgba,
@@ -153,7 +153,7 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
         rgba.len()
     );
     calibraw_core::diagnostics::record(format!("AI {} mask: preparing ONNX Runtime", model.noun()));
-    initialize_runtime()?;
+    initialize_runtime(downloads.runtime)?;
     let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba)
         .context("invalid preview image for AI mask")?;
     let started = std::time::Instant::now();

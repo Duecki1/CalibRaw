@@ -3,7 +3,7 @@
 
 use super::masks::mask_model_retention;
 use super::normalized_rgb_input;
-use crate::jobs::{spawn_job, AiJobEvent, JobKind};
+use crate::jobs::{spawn_job, AiDownloads, AiJobEvent, JobKind};
 use crate::registry::{AiModel, InputShape, ModelInfo};
 use crate::runtime::initialize_runtime;
 use anyhow::{Context, Result};
@@ -108,7 +108,7 @@ pub type ObjectMaskEvent = AiJobEvent<ObjectMaskResult, ObjectMaskProgress>;
 pub struct ObjectMaskWorkerRequest {
     pub encoder_path: PathBuf,
     pub decoder_path: PathBuf,
-    pub allow_download: bool,
+    pub downloads: AiDownloads,
     pub inference: ObjectMaskRequest,
     pub cancellation: Arc<AtomicBool>,
 }
@@ -117,24 +117,26 @@ pub fn spawn_object_mask(worker: ObjectMaskWorkerRequest) -> mpsc::Receiver<Obje
     let ObjectMaskWorkerRequest {
         encoder_path,
         decoder_path,
-        allow_download,
+        downloads,
         inference,
         cancellation,
     } = worker;
     spawn_job(&OBJECT_JOB, cancellation, move |job| {
-        job.install(AiModel::SamEncoder.spec(), &encoder_path, allow_download)?;
-        job.install(AiModel::SamDecoder.spec(), &decoder_path, allow_download)?;
+        job.install(AiModel::SamEncoder.spec(), &encoder_path, downloads.model)?;
+        job.install(AiModel::SamDecoder.spec(), &decoder_path, downloads.model)?;
         job.ensure_not_cancelled()?;
         let decoder_only = inference.cache.is_some();
         job.progress(ObjectMaskProgress::Inferencing { decoder_only });
-        infer_object_mask(&encoder_path, &decoder_path, inference)
+        infer_object_mask(&encoder_path, &decoder_path, inference, downloads.runtime)
     })
 }
 
+/// `allow_runtime_download` as [`AiDownloads::runtime`].
 fn infer_object_mask(
     encoder_path: &Path,
     decoder_path: &Path,
     request: ObjectMaskRequest,
+    allow_runtime_download: bool,
 ) -> Result<ObjectMaskResult> {
     anyhow::ensure!(
         request.source_width > 0 && request.source_height > 0,
@@ -165,7 +167,7 @@ fn infer_object_mask(
             .any(|stroke| stroke.positive && !stroke.points.is_empty()),
         "paint inside an object before running selection"
     );
-    initialize_runtime()?;
+    initialize_runtime(allow_runtime_download)?;
 
     let source = ImageBuffer::<Rgba<u8>, _>::from_raw(
         request.source_width,

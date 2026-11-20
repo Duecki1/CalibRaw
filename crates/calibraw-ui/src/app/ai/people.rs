@@ -14,6 +14,7 @@ use calibraw_ai::models::people::{
     PeopleMaskWorkerRequest, PeopleModels, PeopleSegmentation, PeopleSource, PeopleTarget,
     PersonBounds, PersonMask,
 };
+use calibraw_ai::AiDownloads;
 use calibraw_ai::AiFeature;
 use image::{Rgba, RgbaImage};
 use std::collections::BTreeSet;
@@ -536,7 +537,7 @@ impl CalibRawApp {
         })
     }
 
-    pub(in crate::app) fn start_people_worker(&mut self, allow_download: bool) {
+    pub(in crate::app) fn start_people_worker(&mut self, downloads: AiDownloads) {
         let components = std::mem::take(&mut self.ai.people.pending);
         if self.foreground_operation_active() || components.is_empty() {
             return;
@@ -580,7 +581,9 @@ impl CalibRawApp {
                     .any(|&person| !analysis.is_segmented(person, segmentation))
             })
         });
-        let phase = if !models.are_verified() {
+        // The consent gate checked the models just before: a download was
+        // allowed exactly when they were missing.
+        let phase = if downloads.model {
             tr("Preparing people models…")
         } else if analysis.is_none() {
             tr("Finding people…")
@@ -594,7 +597,7 @@ impl CalibRawApp {
         let cancellation = Arc::new(AtomicBool::new(false));
         let receiver = spawn_people_mask(PeopleMaskWorkerRequest {
             models,
-            allow_download,
+            downloads,
             request: PeopleMaskRequest {
                 source,
                 analysis,

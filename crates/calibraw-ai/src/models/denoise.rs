@@ -1,7 +1,7 @@
 //! RawNIND denoising of Bayer and X-Trans RAWs, and the result saved next to
 //! the RAW.
 
-use crate::jobs::{spawn_job, AiJobEvent, JobContext, JobKind};
+use crate::jobs::{spawn_job, AiDownloads, AiJobEvent, JobContext, JobKind};
 use crate::placement::FallbackSession;
 use crate::registry::artifact::install_artifact_from_reader;
 use crate::registry::{AiModel, InputShape, ModelSource, ModelSpec, RAWNIND_PACKAGE};
@@ -98,10 +98,11 @@ pub enum RawNindJob {
     /// Loads the result saved at `path`. Never runs the model, so restoring
     /// needs no models, runtime or user consent.
     Restore { path: PathBuf },
-    /// Runs the model and saves the result to `save_to` when given.
+    /// Runs the model and saves the result to `save_to` when given,
+    /// downloading only what `downloads` allows.
     Infer {
         save_to: Option<PathBuf>,
-        allow_model_download: bool,
+        downloads: AiDownloads,
     },
 }
 
@@ -120,14 +121,11 @@ pub fn spawn_rawnind_denoise(
 ) -> mpsc::Receiver<AiDenoiseEvent> {
     spawn_job(&DENOISE_JOB, cancellation, move |job| {
         job.ensure_not_cancelled()?;
-        let (save_to, allow_model_download) = match job_kind {
+        let (save_to, downloads) = match job_kind {
             RawNindJob::Restore { path } => {
                 return restore_saved_result(&path, &raw, job);
             }
-            RawNindJob::Infer {
-                save_to,
-                allow_model_download,
-            } => (save_to, allow_model_download),
+            RawNindJob::Infer { save_to, downloads } => (save_to, downloads),
         };
         job.progress(AiDenoiseProgress::Phase {
             phase: "Checking RawNIND models",
@@ -135,17 +133,17 @@ pub fn spawn_rawnind_denoise(
             total: 0,
         });
         anyhow::ensure!(
-            allow_model_download || models_are_verified(&model_dir),
+            downloads.model || models_are_verified(&model_dir),
             "RawNIND models are not installed; enable AI denoise again to authorize the download"
         );
-        ensure_models(&model_dir, job)?;
+        ensure_models(&model_dir, downloads.model, job)?;
         job.ensure_not_cancelled()?;
         job.progress(AiDenoiseProgress::Phase {
             phase: "Starting AI runtime",
             completed: 0,
             total: 0,
         });
-        initialize_runtime()?;
+        initialize_runtime(downloads.runtime)?;
         let progress = |progress| job.progress(progress);
         let image = match raw.cfa_kind {
             CfaKind::Bayer => infer_bayer(
@@ -249,6 +247,7 @@ fn ensure_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
 
 fn ensure_models(
     model_dir: &Path,
+    allow_download: bool,
     job: &JobContext<AiDenoisedImage, AiDenoiseProgress>,
 ) -> Result<()> {
     let models = [AiModel::RawNindBayer.spec(), AiModel::RawNindLinear.spec()];
@@ -262,7 +261,7 @@ fn ensure_models(
         .with_context(|| format!("create RawNIND model cache {}", model_dir.display()))?;
 
     let package = model_dir.join(RAWNIND_PACKAGE.artifact.cache_filename);
-    job.install_package(&RAWNIND_PACKAGE, &package)?;
+    job.install_package(&RAWNIND_PACKAGE, &package, allow_download)?;
     job.ensure_not_cancelled()?;
     job.progress(AiDenoiseProgress::Phase {
         phase: "Extracting RawNIND models",

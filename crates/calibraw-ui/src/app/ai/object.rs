@@ -1,5 +1,6 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use calibraw_ai::AiDownloads;
 
 const OBJECT_JOB: ForegroundOperationKind =
     ForegroundOperationKind::Ai(calibraw_ai::AiFeature::Object);
@@ -71,7 +72,7 @@ impl CalibRawApp {
         component_index: usize,
         encoder_path: PathBuf,
         decoder_path: PathBuf,
-        allow_download: bool,
+        downloads: AiDownloads,
     ) {
         if self.foreground_operation_active() {
             if self.foreground_operation_is(OBJECT_JOB) {
@@ -144,13 +145,14 @@ impl CalibRawApp {
             return;
         };
         self.ai.object_pending_target = None;
-        let needs_download =
-            !calibraw_ai::models::object::object_models_are_verified(&encoder_path, &decoder_path);
+        // The consent gate checked the models just before: a download was
+        // allowed exactly when they were missing.
+        let needs_download = downloads.model;
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_object_mask(ObjectMaskWorkerRequest {
             encoder_path,
             decoder_path,
-            allow_download,
+            downloads,
             inference: request,
             cancellation: Arc::clone(&cancellation),
         });

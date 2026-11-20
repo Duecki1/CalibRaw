@@ -16,6 +16,26 @@ use std::{
     time::Instant,
 };
 
+/// What an AI job may download: only what the user accepted in the consent
+/// dialog, which shows the model and the ONNX Runtime downloads it asks
+/// about. A job downloads nothing else; something missing fails it, asking
+/// the user to consent again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AiDownloads {
+    /// The job's own models.
+    pub model: bool,
+    /// The automatic ONNX Runtime.
+    pub runtime: bool,
+}
+
+impl AiDownloads {
+    /// For a job that runs without asking: nothing downloads.
+    pub const NONE: Self = Self {
+        model: false,
+        runtime: false,
+    };
+}
+
 /// What a running AI job reports: `T` is its result, `P` its own progress.
 #[derive(Debug)]
 pub enum AiJobEvent<T, P> {
@@ -78,10 +98,15 @@ impl<T, P> JobContext<T, P> {
     }
 
     /// `install` for a package rather than a single model.
-    pub(crate) fn install_package(&self, package: &ModelInstallSpec, path: &Path) -> Result<()> {
+    pub(crate) fn install_package(
+        &self,
+        package: &ModelInstallSpec,
+        path: &Path,
+        allow_download: bool,
+    ) -> Result<()> {
         package.ensure_installed(
             path,
-            true,
+            allow_download,
             |progress| self.download_progress(progress),
             || self.ensure_not_cancelled(),
         )

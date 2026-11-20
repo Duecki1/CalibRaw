@@ -59,8 +59,12 @@ pub fn probe_runtime_subprocess(runtime_path: &Path, expected_sha256: &Sha256) -
 
 /// The child process's side of `probe_runtime_subprocess`.
 pub fn run_runtime_probe_process(runtime_path: &Path, expected_sha256: &Sha256) -> Result<()> {
-    load(&RuntimeSource::Manual {
-        path: runtime_path.to_path_buf(),
-        sha256: expected_sha256.clone(),
-    })
+    // A manual runtime is never downloaded.
+    load(
+        &RuntimeSource::Manual {
+            path: runtime_path.to_path_buf(),
+            sha256: expected_sha256.clone(),
+        },
+        false,
+    )
 }
