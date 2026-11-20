@@ -76,6 +76,16 @@ change that establishes a boundary, not in advance.
   so slides continue each other pixel for pixel; a watermark is placed on every
   slide, each as its own frame. Its switch and placement belong to the open
   photo and are not saved in the sidecar.
+- An export's colour space changes only how its pixels are encoded, on the
+  CPU, after the GPU's display-linear Rec.2020 readback (`OutputTransform` in
+  `calibraw-core`): GPU passes and the preview are the same for every space,
+  and sRGB is encoded exactly as the preview. The other spaces (Display P3,
+  Adobe RGB, ProPhoto RGB, Rec. 2020) take their matrix from the same rounded
+  colorants their embedded ICC profile records, so colour-managed readers
+  decode what was encoded. JPEG XL is sRGB only, as its encoder cannot signal
+  another colour encoding; a float master is always linear Rec.2020. The
+  export writes its own EXIF ColorSpace and drops the source's
+  InteroperabilityIndex, which describe the camera's JPEG setting.
 - A batch export may apply a preset and a LUT to every photo
   (`ExportOverride`). They change only the edit snapshot each item is rendered
   from; sidecars are never written.

@@ -127,22 +127,12 @@ fn run_export_worker(
     };
     let tile_spec = resolved_export_tile_spec(job.tile_spec, &job.exposure, &job.masks, &job.raw)?;
 
-    let color_settings = match format {
-        ExportFormat::Jpeg => {
-            let mut settings = job.settings.clone();
-            settings.bit_depth = ExportBitDepth::Eight;
-            Cow::Owned(settings)
-        }
-        ExportFormat::Png | ExportFormat::Tiff | ExportFormat::JpegXl => {
-            Cow::Borrowed(&job.settings)
-        }
-    };
-    let color = resolve_export_color(color_settings.as_ref())?;
     let bit_depth = if format == ExportFormat::Jpeg {
         ExportBitDepth::Eight
     } else {
         job.settings.bit_depth
     };
+    let color = resolve_export_color(bit_depth, format.output_color_space(&job.settings))?;
 
     let memory = IntermediateMemory::for_this_device();
     export_to_destinations(targets, &job.cancellation, |outputs| {

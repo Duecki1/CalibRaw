@@ -2139,5 +2139,7 @@
   "{shortcut} no longer does: {actions}": "{shortcut} artık şunu yapmıyor: {actions}",
   "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Bu fırça alt maskesi dolu. Boyamaya devam etmek için başka bir fırça alt maskesi ekleyin.",
   "Remove hot pixels": "Sıcak pikselleri kaldır",
-  "Updating hot pixel removal…": "Sıcak piksel kaldırma güncelleniyor…"
+  "Updating hot pixel removal…": "Sıcak piksel kaldırma güncelleniyor…",
+  "Color space": "Renk alanı",
+  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB her yerde doğru görüntülenir. Daha geniş alanlar daha doygun renkleri korur ancak renk yönetimli görüntüleyiciler gerektirir; ProPhoto RGB ve Rec. 2020 ile 16 bit kullanın."
 }

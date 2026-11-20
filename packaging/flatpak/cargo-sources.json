@@ -3315,19 +3315,6 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/naga/naga-29.0.4.crate",
-        "sha256": "b2bf919621e7975acb27d881bae2fb993e0d45c8e0446e85e6272971e00dc8df",
-        "dest": "cargo/vendor/naga-29.0.4"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"b2bf919621e7975acb27d881bae2fb993e0d45c8e0446e85e6272971e00dc8df\", \"files\": {}}",
-        "dest": "cargo/vendor/naga-29.0.4",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/naga_oil/naga_oil-0.22.0.crate",
         "sha256": "319f03062940ed85c03da020042618356bb8ca5263020322930883b05e30208e",
         "dest": "cargo/vendor/naga_oil-0.22.0"
@@ -6097,19 +6084,6 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/wgpu/wgpu-29.0.4.crate",
-        "sha256": "76e8840e1ba2881d4cbb18d2147627a56af426ff064c0401eb0c8410c6325d07",
-        "dest": "cargo/vendor/wgpu-29.0.4"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"76e8840e1ba2881d4cbb18d2147627a56af426ff064c0401eb0c8410c6325d07\", \"files\": {}}",
-        "dest": "cargo/vendor/wgpu-29.0.4",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/wgpu-core/wgpu-core-29.0.4.crate",
         "sha256": "2f519832254e56965a9940c4af57dcb75f702b6f6fa4a0b172f685395843a4d7",
         "dest": "cargo/vendor/wgpu-core-29.0.4"
@@ -6170,19 +6144,6 @@
         "type": "inline",
         "contents": "{\"package\": \"4e592c1bbef6ad047647ae6e666ebd8cee7a32bb4544d9700ec96cbf73230257\", \"files\": {}}",
         "dest": "cargo/vendor/wgpu-core-deps-windows-linux-android-29.0.4",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/wgpu-hal/wgpu-hal-29.0.4.crate",
-        "sha256": "97ace1c17727311c22a46e4e3faf56ea6de81af99dcc839bdfb54857b94d448d",
-        "dest": "cargo/vendor/wgpu-hal-29.0.4"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"97ace1c17727311c22a46e4e3faf56ea6de81af99dcc839bdfb54857b94d448d\", \"files\": {}}",
-        "dest": "cargo/vendor/wgpu-hal-29.0.4",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -6651,19 +6612,6 @@
         "type": "inline",
         "contents": "{\"package\": \"d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650\", \"files\": {}}",
         "dest": "cargo/vendor/windows_x86_64_msvc-0.53.1",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/winit/winit-0.30.13.crate",
-        "sha256": "a6755fa58a9f8350bd1e472d4c3fcc25f824ec358933bba33306d0b63df5978d",
-        "dest": "cargo/vendor/winit-0.30.13"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"a6755fa58a9f8350bd1e472d4c3fcc25f824ec358933bba33306d0b63df5978d\", \"files\": {}}",
-        "dest": "cargo/vendor/winit-0.30.13",
         "dest-filename": ".cargo-checksum.json"
     },
     {

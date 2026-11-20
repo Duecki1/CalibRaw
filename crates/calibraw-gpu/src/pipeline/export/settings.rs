@@ -37,6 +37,26 @@ impl ExportFormat {
             .any(|candidate| extension.eq_ignore_ascii_case(candidate))
     }
 
+    /// Whether an integer export in this format can be written in `space`.
+    /// JPEG XL is written as sRGB only: its encoder cannot signal another
+    /// colour encoding or embed an ICC profile.
+    pub const fn supports_color_space(self, space: OutputColorSpace) -> bool {
+        match self {
+            Self::Png | Self::Jpeg | Self::Tiff => true,
+            Self::JpegXl => matches!(space, OutputColorSpace::Srgb),
+        }
+    }
+
+    /// The colour space an integer export with `settings` is written in:
+    /// `settings.color_space` where this format supports it, else sRGB.
+    pub const fn output_color_space(self, settings: &ExportSettings) -> OutputColorSpace {
+        if self.supports_color_space(settings.color_space) {
+            settings.color_space
+        } else {
+            OutputColorSpace::Srgb
+        }
+    }
+
     pub const fn mime_type(self) -> &'static str {
         match self {
             Self::Png => "image/png",
@@ -102,6 +122,9 @@ pub struct ExportSettings {
     pub keep_metadata: bool,
     pub jpeg_quality: u8,
     pub bit_depth: ExportBitDepth,
+    /// The colour space of 8- and 16-bit output; a 32-bit float master is
+    /// always display-linear Rec.2020.
+    pub color_space: OutputColorSpace,
     /// Drawn over the output; `None` exports the photo alone.
     pub watermark: Option<ExportWatermark>,
 }
@@ -116,6 +139,7 @@ impl Default for ExportSettings {
             keep_metadata: true,
             jpeg_quality: 90,
             bit_depth: ExportBitDepth::Sixteen,
+            color_space: OutputColorSpace::Srgb,
             watermark: None,
         }
     }

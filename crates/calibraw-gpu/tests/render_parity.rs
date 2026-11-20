@@ -4,7 +4,8 @@
 //! A case is `<input>/<name>.json`, a CalibRaw sidecar whose missing fields
 //! keep their default values, so it lists only what it changes; a sidecar the
 //! app saved works as it is. `<input>` names the synthetic photo it develops
-//! (see [`input`]). The golden is `<name>.png` beside it, a 16-bit sRGB PNG.
+//! (see [`input`]). The golden is `<name>.png` beside it, a 16-bit PNG in the
+//! input's output colour space (sRGB unless the input names another).
 //!
 //! Cases render on the machine's GPU, or wgpu's software adapter without one
 //! (Mesa's lavapipe in CI). GPUs round differently, so a render matches when
@@ -26,8 +27,8 @@ use calibraw_core::luts::ResolvedLook;
 use calibraw_core::sidecar::{self, EditState};
 use calibraw_gpu::pipeline::{
     build_proxy, spawn_tiled_export, CfaKind, CompactPixelMap, ExportBitDepth, ExportEvent,
-    ExportFiles, ExportFormat, ExportMetadata, ExportSettings, ExportTarget, LoadedRaw, ProxySpec,
-    SourceCorrections, TileSpec, TiledExportJob,
+    ExportFiles, ExportFormat, ExportMetadata, ExportSettings, ExportTarget, LoadedRaw,
+    OutputColorSpace, ProxySpec, SourceCorrections, TileSpec, TiledExportJob,
 };
 use calibraw_gpu::{request_headless_device, wgpu, HeadlessAdapter, HeadlessDeviceRequest};
 use image::{ImageBuffer, Rgb, RgbImage};
@@ -148,6 +149,7 @@ fn rain_without_depth_does_not_depend_on_the_tile_size() {
             Input {
                 raw: raw.clone(),
                 binned: false,
+                color_space: OutputColorSpace::Srgb,
             },
             edits(&case),
             tile_spec,
@@ -212,6 +214,8 @@ struct Input {
     /// Developed at half its size, binned to RGB as a reduced preview's proxy
     /// is, after the source corrections.
     binned: bool,
+    /// The colour space the case is exported in.
+    color_space: OutputColorSpace,
 }
 
 /// Photosites of the `-hot` inputs that read far too bright, as `(x, y,
@@ -239,8 +243,18 @@ const HOT_PHOTOSITES: [(u32, u32, f32); 9] = [
 /// - `bayer` and `xtrans`: the scene seen through an RGGB or X-Trans mosaic,
 ///   with black level, white balance, clipped highlights and noise;
 /// - `bayer-hot` and `xtrans-hot`: those mosaics with [`HOT_PHOTOSITES`];
-/// - `<mosaic>-binned`: a mosaic binned ([`Input::binned`]).
+/// - `<mosaic>-binned`: a mosaic binned ([`Input::binned`]);
+/// - `<input>-<colour space>`: any of these exported in a colour space other
+///   than sRGB, named by its `OutputColorSpace::id` (`scene-display-p3`).
 fn input(name: &str) -> Input {
+    for space in OutputColorSpace::ALL {
+        if let Some(input_name) = name.strip_suffix(&format!("-{}", space.id())) {
+            return Input {
+                color_space: space,
+                ..input(input_name)
+            };
+        }
+    }
     if let Some(sensor) = name.strip_suffix("-binned") {
         return Input {
             binned: true,
@@ -253,7 +267,11 @@ fn input(name: &str) -> Input {
         for (x, y, level) in HOT_PHOTOSITES {
             samples[(y * WIDTH + x) as usize] = (BLACK + level * (WHITE - BLACK)).round() as u16;
         }
-        return Input { raw, binned: false };
+        return Input {
+            raw,
+            binned: false,
+            color_space: OutputColorSpace::Srgb,
+        };
     }
     let scene: Vec<f32> = (0..HEIGHT)
         .flat_map(|y| (0..WIDTH).flat_map(move |x| scene(x, y)))
@@ -265,13 +283,14 @@ fn input(name: &str) -> Input {
             return Input {
                 raw: raster,
                 binned: false,
+                color_space: OutputColorSpace::Srgb,
             }
         }
         "bayer" => (CfaKind::Bayer, 2, vec![0, 1, 3, 2]),
         "xtrans" => (CfaKind::XTrans, 6, XTRANS.concat()),
         _ => panic!(
             "unknown input {name:?}; use scene, bayer or xtrans, each mosaic optionally \
-             with -hot and then -binned"
+             with -hot and then -binned, and any optionally with a colour space"
         ),
     };
     // As-shot white balance: red and blue reach the sensor weaker than green.
@@ -300,7 +319,11 @@ fn input(name: &str) -> Input {
         white_levels: [WHITE; 4],
         ..raster
     };
-    Input { raw, binned: false }
+    Input {
+        raw,
+        binned: false,
+        color_space: OutputColorSpace::Srgb,
+    }
 }
 
 /// The black and white levels of the synthetic mosaics.
@@ -391,6 +414,7 @@ fn render(
         .apply(&input.raw)
         .unwrap_or_else(|error| panic!("{}: lens correction: {error:#}", path.display()))
         .unwrap_or(input.raw);
+    let color_space = input.color_space;
     let raw = if input.binned {
         build_proxy(
             &raw,
@@ -419,6 +443,7 @@ fn render(
             settings: ExportSettings {
                 keep_metadata: false,
                 bit_depth: ExportBitDepth::Sixteen,
+                color_space,
                 ..ExportSettings::default()
             },
             metadata: ExportMetadata::default(),

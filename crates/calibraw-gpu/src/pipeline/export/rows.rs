@@ -97,7 +97,7 @@ pub(super) fn validate_rgb_raster_len(bytes: &[u8], width: u32, height: u32) -> 
 
 pub(super) fn encode_output_row(
     row: &[f32],
-    transform: Option<&SrgbOutputTransform>,
+    transform: Option<&OutputTransform>,
     row_format: ExportRowFormat,
 ) -> Result<Vec<u8>> {
     anyhow::ensure!(

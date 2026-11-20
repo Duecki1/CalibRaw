@@ -283,20 +283,6 @@ impl CameraProfile {
     }
 }
 
-/// Encodes display-linear Rec.2020 as sRGB for 8- and 16-bit export.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SrgbOutputTransform;
-
-impl SrgbOutputTransform {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn transform_rgb(&self, rgb: [f32; 3]) -> [f32; 3] {
-        display_linear_rec2020_to_srgb(rgb)
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct ProfileGpuLayout {
     pub hue_sat: [u32; 4],
@@ -597,10 +583,19 @@ fn sample_natural_cubic(points: &[[f32; 2]], second: &[f64], x: f32) -> f32 {
 /// chroma is compressed to the sRGB boundary. Mirrors `apply_output_encoding`
 /// in profile.wgsl so exports match the preview.
 pub(super) fn display_linear_rec2020_to_srgb(rgb: [f32; 3]) -> [f32; 3] {
-    perceptual_gamut_compress_unit_srgb(rec2020_to_linear_srgb(rgb)).map(srgb_encode)
+    perceptual_gamut_compress_unit(rec2020_to_linear_srgb(rgb), rgb_is_unit).map(srgb_encode)
 }
 
-fn perceptual_gamut_compress_unit_srgb(rgb: [f32; 3]) -> [f32; 3] {
+/// Compresses linear sRGB `rgb` into a unit RGB cube: `inside` reports whether
+/// a linear sRGB colour falls in it. In-gamut colours (with room to spare up to
+/// the 0.90 knee) are returned unchanged; others keep their OKLab lightness
+/// (clamped to `[0, 1]`) and hue while their chroma rolls off softly towards
+/// the boundary. The result is linear sRGB, possibly outside sRGB's own gamut
+/// when the cube is wider.
+pub(super) fn perceptual_gamut_compress_unit(
+    rgb: [f32; 3],
+    inside: impl Fn([f32; 3]) -> bool,
+) -> [f32; 3] {
     let lab = linear_srgb_to_oklab(rgb);
     let lightness = lab[0].clamp(0.0, 1.0);
     let chroma = lab[1].hypot(lab[2]);
@@ -610,15 +605,15 @@ fn perceptual_gamut_compress_unit_srgb(rgb: [f32; 3]) -> [f32; 3] {
     let hue = [lab[1] / chroma, lab[2] / chroma];
     let knee_chroma = chroma / 0.90;
     let knee_probe = oklab_to_linear_srgb([lightness, hue[0] * knee_chroma, hue[1] * knee_chroma]);
-    if (lightness - lab[0]).abs() <= 1e-7 && rgb_is_unit(rgb) && rgb_is_unit(knee_probe) {
+    if (lightness - lab[0]).abs() <= 1e-7 && inside(rgb) && inside(knee_probe) {
         return rgb;
     }
-    let boundary = srgb_unit_boundary(lightness, hue, chroma);
+    let boundary = unit_boundary(lightness, hue, chroma, &inside);
     let compressed = perceptual_soft_chroma(chroma, boundary);
     oklab_to_linear_srgb([lightness, hue[0] * compressed, hue[1] * compressed])
 }
 
-fn rgb_is_unit(rgb: [f32; 3]) -> bool {
+pub(super) fn rgb_is_unit(rgb: [f32; 3]) -> bool {
     rgb[0].min(rgb[1]).min(rgb[2]) >= -1e-7 && rgb[0].max(rgb[1]).max(rgb[2]) <= 1.000_000_1
 }
 
@@ -635,13 +630,18 @@ fn perceptual_soft_chroma(requested: f32, boundary: f32) -> f32 {
     (knee + span * (1.0 - (-(chroma - knee) / span).exp())).min(boundary * 0.999_95)
 }
 
-fn srgb_unit_boundary(lightness: f32, hue: [f32; 2], requested: f32) -> f32 {
+fn unit_boundary(
+    lightness: f32,
+    hue: [f32; 2],
+    requested: f32,
+    inside: &impl Fn([f32; 3]) -> bool,
+) -> f32 {
     let lightness = lightness.clamp(0.0, 1.0);
     let mut low = 0.0;
     let mut high = requested.max(0.04);
     for _ in 0..8 {
         let probe = oklab_to_linear_srgb([lightness, hue[0] * high, hue[1] * high]);
-        if rgb_is_unit(probe) {
+        if inside(probe) {
             low = high;
             high *= 2.0;
         }
@@ -649,7 +649,7 @@ fn srgb_unit_boundary(lightness: f32, hue: [f32; 2], requested: f32) -> f32 {
     for _ in 0..11 {
         let middle = 0.5 * (low + high);
         let probe = oklab_to_linear_srgb([lightness, hue[0] * middle, hue[1] * middle]);
-        if rgb_is_unit(probe) {
+        if inside(probe) {
             low = middle;
         } else {
             high = middle;

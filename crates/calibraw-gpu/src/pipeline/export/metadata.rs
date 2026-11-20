@@ -345,16 +345,33 @@ fn ifd0_entries(
     entries
 }
 
+/// The Exif ColorSpace value (tag 0xA001) of an export: 1 for sRGB output,
+/// 0xFFFF ("Uncalibrated") for any other, whose embedded ICC profile
+/// identifies it. Written by the export, never copied from the source, whose
+/// value described the camera's JPEG setting.
+fn exif_color_space(srgb_output: bool) -> u16 {
+    if srgb_output {
+        1
+    } else {
+        0xffff
+    }
+}
+
 fn exif_ifd_entries(
     metadata: &ExportMetadata,
     output_width: u32,
     output_height: u32,
+    srgb_output: bool,
     has_interop: bool,
 ) -> Vec<ExifEntry> {
     let mut entries = vec![
         ExifEntry {
             tag: 0x9000,
             value: ExifValue::Undefined(b"0232".to_vec()),
+        },
+        ExifEntry {
+            tag: 0xa001,
+            value: ExifValue::Short(exif_color_space(srgb_output)),
         },
         ExifEntry {
             tag: 0xa002,
@@ -434,6 +451,9 @@ fn gps_ifd_entries(metadata: &ExportMetadata) -> Vec<ExifEntry> {
 fn interop_ifd_entries(metadata: &ExportMetadata) -> Vec<ExifEntry> {
     let mut entries = Vec::new();
     add_preserved(&mut entries, metadata, ExifIfd::Interop);
+    // InteroperabilityIndex: the source's R98 (sRGB) or R03 (Adobe RGB) names
+    // the camera's colour space, not the export's.
+    entries.retain(|entry| entry.tag != 0x0001);
     entries.sort_by_key(|entry| entry.tag);
     entries
 }
@@ -445,9 +465,20 @@ struct ExifIfds {
 }
 
 impl ExifIfds {
-    fn from_metadata(metadata: &ExportMetadata, output_width: u32, output_height: u32) -> Self {
+    fn from_metadata(
+        metadata: &ExportMetadata,
+        output_width: u32,
+        output_height: u32,
+        srgb_output: bool,
+    ) -> Self {
         let interop = interop_ifd_entries(metadata);
-        let exif = exif_ifd_entries(metadata, output_width, output_height, !interop.is_empty());
+        let exif = exif_ifd_entries(
+            metadata,
+            output_width,
+            output_height,
+            srgb_output,
+            !interop.is_empty(),
+        );
         Self { exif, interop }
     }
 
@@ -477,12 +508,14 @@ impl ExifIfds {
     }
 }
 
+/// The EXIF payload of an export; `srgb_output` is whether its pixels are sRGB.
 pub(super) fn build_exif_payload(
     metadata: &ExportMetadata,
     output_width: u32,
     output_height: u32,
+    srgb_output: bool,
 ) -> Vec<u8> {
-    let exif_ifds = ExifIfds::from_metadata(metadata, output_width, output_height);
+    let exif_ifds = ExifIfds::from_metadata(metadata, output_width, output_height, srgb_output);
     let gps = gps_ifd_entries(metadata);
     let has_gps = !gps.is_empty();
     let mut ifd0 = ifd0_entries(metadata, output_width, output_height, has_gps);
@@ -520,8 +553,9 @@ pub(super) fn exif_ifd_encoded_len(
     metadata: &ExportMetadata,
     output_width: u32,
     output_height: u32,
+    srgb_output: bool,
 ) -> u32 {
-    ExifIfds::from_metadata(metadata, output_width, output_height).encoded_len()
+    ExifIfds::from_metadata(metadata, output_width, output_height, srgb_output).encoded_len()
 }
 
 pub(super) fn encode_exif_ifd(
@@ -529,8 +563,9 @@ pub(super) fn encode_exif_ifd(
     offset: u32,
     output_width: u32,
     output_height: u32,
+    srgb_output: bool,
 ) -> Vec<u8> {
-    ExifIfds::from_metadata(metadata, output_width, output_height).encode(offset)
+    ExifIfds::from_metadata(metadata, output_width, output_height, srgb_output).encode(offset)
 }
 
 pub(super) fn gps_ifd_encoded_len(metadata: &ExportMetadata) -> u32 {

@@ -17,7 +17,8 @@ use crate::i18n::{tr, tr_fmt};
 use crate::pipeline::{
     spawn_tiled_export, ExportBitDepth, ExportEvent, ExportFiles, ExportFormat, ExportMetadata,
     ExportResizeMode, ExportSettings, ExportTarget, ExposureParams, GeometryTransform,
-    GpuProgramPrewarm, LoadedRaw, MaskStack, RemoveEditState, TileSpec, TiledExportJob,
+    GpuProgramPrewarm, LoadedRaw, MaskStack, OutputColorSpace, RemoveEditState, TileSpec,
+    TiledExportJob,
 };
 use crate::platform::{Platform, VideoEncoder};
 use calibraw_gpu::wgpu;
@@ -171,6 +172,8 @@ fn render_still(
         keep_metadata: false,
         jpeg_quality: 90,
         bit_depth: ExportBitDepth::Eight,
+        // Video frames are encoded as sRGB.
+        color_space: OutputColorSpace::Srgb,
         watermark: None,
     };
     let receiver = spawn_tiled_export(

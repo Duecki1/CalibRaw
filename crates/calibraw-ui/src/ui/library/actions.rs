@@ -967,6 +967,7 @@ pub(crate) fn show_library_action_overlays(
     let mut close_export_dialog = false;
     let mut confirm_export = false;
     let mut selected_export_format = None;
+    let mut selected_color_space = None;
     let mut watermark_action = None;
     // The watermark is app-wide, so the dialog edits the Export panel's.
     let watermark = app.export.watermark.view();
@@ -1008,6 +1009,7 @@ pub(crate) fn show_library_action_overlays(
                     if change.format_changed {
                         selected_export_format = Some(dialog.format);
                     }
+                    selected_color_space = change.color_space;
                     watermark_action = change.watermark;
                     show_export_override_controls(ui, &mut dialog.overrides, presets, luts);
                 },
@@ -1037,6 +1039,11 @@ pub(crate) fn show_library_action_overlays(
 
     if let Some(format) = selected_export_format {
         app.export.format = format;
+        app.persist_performance_settings();
+    }
+    // Like the format, the colour space is remembered for every export.
+    if let Some(space) = selected_color_space {
+        app.export.settings.color_space = space;
         app.persist_performance_settings();
     }
     if let Some(action) = watermark_action {

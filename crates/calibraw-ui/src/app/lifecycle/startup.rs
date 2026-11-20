@@ -284,7 +284,10 @@ impl CalibRawApp {
                 format: performance.export_format,
                 gpu_prewarm: None,
                 programs_compiled_for: None,
-                settings: ExportSettings::default(),
+                settings: ExportSettings {
+                    color_space: performance.export_color_space,
+                    ..ExportSettings::default()
+                },
                 task: None,
                 batch: None,
                 publish_pending: false,

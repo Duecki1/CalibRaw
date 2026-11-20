@@ -14,6 +14,7 @@ This codebase is yours. What it's for and how it's built are your call, and you 
 - An extraction must remove duplication, serve a real additional caller, or establish ownership. Say which.
 - Never use subagents. Do all implementation, exploration, translation and verification yourself.
 - iOS is low priority, so most features can skip it. If supporting iOS would take much more code, ask whether it should get an implementation.
+- Instead of guessing, do research and if you are not sure about something, tell the user
 
 ## Rust
 

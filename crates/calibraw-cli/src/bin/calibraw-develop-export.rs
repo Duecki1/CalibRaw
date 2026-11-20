@@ -3,9 +3,9 @@ use calibraw_cli::pipeline::{
     crop_raw, effect_params, export_mask_atlas_edge, load_raw_file, load_raw_file_with_dcp,
     spawn_tiled_export, DemosaicMode, DenoiseQuality, EffectComponent, ExportEvent, ExportFiles,
     ExportFormat, ExportMetadata, ExportSettings, ExportTarget, ExposureParams, GeometryTransform,
-    GpuProgramPrewarm, LoadedRaw, MaskEffect, MaskStack, PersistentGpuPipelineCache,
-    RemoveEditState, TileSpec, TiledExportJob, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
-    HUE_ROTATION_LIMIT_DEGREES,
+    GpuProgramPrewarm, LoadedRaw, MaskEffect, MaskStack, OutputColorSpace,
+    PersistentGpuPipelineCache, RemoveEditState, TileSpec, TiledExportJob,
+    GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
 };
 use calibraw_core::luts::ResolvedLook;
 use calibraw_core::pipeline::SourceCorrections;
@@ -31,6 +31,8 @@ struct Args {
     crop: Option<[u32; 4]>,
     report_detail_defaults: bool,
     adjustments: Vec<(String, f32)>,
+    color_space: OutputColorSpace,
+    keep_metadata: bool,
 }
 
 fn main() {
@@ -122,7 +124,8 @@ fn run() -> Result<()> {
             .map(str::to_owned),
     );
     let settings = ExportSettings {
-        keep_metadata: false,
+        keep_metadata: args.keep_metadata,
+        color_space: args.color_space,
         ..ExportSettings::default()
     };
 
@@ -276,10 +279,11 @@ impl ExportHarness<'_> {
         // The worker saved the programs it compiled to the program cache.
         let output = finished.context("export worker exited without a completion event")?;
         println!(
-            "wrote {} ({}x{}, sRGB {}, {:?})",
+            "wrote {} ({}x{}, {} {}, {:?})",
             output.display(),
             source_dimensions.0,
             source_dimensions.1,
+            format.output_color_space(self.settings).label(),
             format.label(),
             self.backend,
         );
@@ -423,6 +427,8 @@ fn parse_args() -> Result<Args> {
     let mut crop = None;
     let mut report_detail_defaults = false;
     let mut adjustments = Vec::new();
+    let mut color_space = OutputColorSpace::Srgb;
+    let mut keep_metadata = false;
     let mut values = env::args().skip(1);
     while let Some(argument) = values.next() {
         match argument.as_str() {
@@ -440,6 +446,12 @@ fn parse_args() -> Result<Args> {
             }
             "--crop" => crop = Some(parse_crop(&next_value(&mut values, "--crop")?)?),
             "--report-detail-defaults" => report_detail_defaults = true,
+            "--keep-metadata" => keep_metadata = true,
+            "--color-space" => {
+                let name = next_value(&mut values, "--color-space")?;
+                color_space = OutputColorSpace::from_id(&name)
+                    .ok_or_else(|| anyhow!("unknown colour space {name:?}; use --help"))?;
+            }
             "--adjust" => {
                 let assignment = next_value(&mut values, "--adjust")?;
                 let (name, value) = assignment
@@ -483,7 +495,10 @@ fn parse_args() -> Result<Args> {
         }
     }
     if let Some(output) = &output {
-        output_format(output)?;
+        let format = output_format(output)?;
+        if !format.supports_color_space(color_space) {
+            bail!("{} export supports sRGB output only", format.label());
+        }
     }
     Ok(Args {
         input: input.ok_or_else(|| anyhow!("--input is required"))?,
@@ -497,6 +512,8 @@ fn parse_args() -> Result<Args> {
         crop,
         report_detail_defaults,
         adjustments,
+        color_space,
+        keep_metadata,
     })
 }
 
@@ -505,12 +522,17 @@ fn output_format(path: &Path) -> Result<ExportFormat> {
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    for format in [ExportFormat::Png, ExportFormat::JpegXl] {
+    for format in [
+        ExportFormat::Png,
+        ExportFormat::JpegXl,
+        ExportFormat::Tiff,
+        ExportFormat::Jpeg,
+    ] {
         if format.matches_extension(extension) {
             return Ok(format);
         }
     }
-    bail!("--output must use the .png or .jxl extension")
+    bail!("--output must use the .png, .jxl, .tif or .jpg extension")
 }
 
 fn parse_crop(value: &str) -> Result<[u32; 4]> {
@@ -540,8 +562,9 @@ fn print_help() {
     println!(concat!(
         "Headless CalibRaw Develop export\n\n",
         "Usage:\n",
-        "  calibraw-develop-export --input FILE --output FILE.png|FILE.jxl [--dcp PROFILE.dcp]\n",
-        "    [--sidecar FILE.calibraw] [--program-cache DIRECTORY]\n",
+        "  calibraw-develop-export --input FILE --output FILE.png|.jxl|.tif|.jpg\n",
+        "    [--dcp PROFILE.dcp] [--sidecar FILE.calibraw] [--program-cache DIRECTORY]\n",
+        "    [--color-space srgb|display-p3|adobe-rgb|prophoto-rgb|rec2020] [--keep-metadata]\n",
         "    [--crop X,Y,WIDTH,HEIGHT] [--report-detail-defaults]\n",
         "    [--adjust NAME=VALUE]...\n\n",
         "  calibraw-develop-export --input FILE --suite-output DIRECTORY [--dcp PROFILE.dcp]\n",
@@ -557,6 +580,7 @@ fn print_help() {
         "sidecar stores (without its creative LUT); adjustments apply on top of it.\n",
         "Without it, lens profile correction is not applied. --program-cache keeps\n",
         "compiled GPU programs in a directory, as the app does. CALIBRAW_GPU_STAGE_TIMING=1\n",
-        "records the GPU time of every pass."
+        "records the GPU time of every pass. --color-space sets the output colour space\n",
+        "(JPEG XL is sRGB only). --keep-metadata embeds the source's metadata, as the app does."
     ));
 }

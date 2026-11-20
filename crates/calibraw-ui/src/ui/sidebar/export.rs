@@ -59,6 +59,8 @@ fn export_number_row<Num>(
 /// What the user changed in [`export_settings_controls`].
 pub(crate) struct ExportControlsChange {
     pub(crate) format_changed: bool,
+    /// The colour space the user picked, if they picked one.
+    pub(crate) color_space: Option<OutputColorSpace>,
     pub(crate) carousel: Option<CarouselAction>,
     pub(crate) watermark: Option<WatermarkAction>,
 }
@@ -73,7 +75,10 @@ pub(crate) fn export_settings_controls(
     carousel: Option<CarouselView>,
     watermark: WatermarkView,
 ) -> ExportControlsChange {
+    let previous_color_space = settings.color_space;
     let format_changed = export_format_card(ui, format, settings);
+    let color_space =
+        (settings.color_space != previous_color_space).then_some(settings.color_space);
     moduwu_design::card_gap(ui);
     let carousel = carousel.and_then(|view| {
         let action = super::carousel::carousel_card(ui, view);
@@ -85,6 +90,7 @@ pub(crate) fn export_settings_controls(
     export_size_and_metadata_cards(ui, settings);
     ExportControlsChange {
         format_changed,
+        color_space,
         carousel,
         watermark,
     }
@@ -183,8 +189,44 @@ fn export_format_card(
                 },
             );
         }
+        export_color_space_row(ui, *format, settings);
     });
     *format != previous_format
+}
+
+/// The colour space of 8- and 16-bit output, where the format can write
+/// another than sRGB. A float master is always linear Rec.2020, and JPEG XL
+/// always sRGB, so neither shows the row; the choice stays saved for the
+/// formats that use it.
+fn export_color_space_row(
+    ui: &mut Ui,
+    format: ExportFormat,
+    settings: &mut crate::pipeline::ExportSettings,
+) {
+    let writes_choice = OutputColorSpace::ALL
+        .iter()
+        .all(|&space| format.supports_color_space(space));
+    let bit_depth = if format == ExportFormat::Jpeg {
+        ExportBitDepth::Eight
+    } else {
+        settings.bit_depth
+    };
+    if !writes_choice || bit_depth.is_float() {
+        return;
+    }
+    moduwu_design::form_combo_with_help(
+        ui,
+        tr("Color space"),
+        "export-color-space",
+        settings.color_space.label(),
+        EXPORT_FIELD_WIDTH,
+        tr("sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020."),
+        |ui| {
+            for space in OutputColorSpace::ALL {
+                ui.selectable_value(&mut settings.color_space, space, space.label());
+            }
+        },
+    );
 }
 
 fn export_size_and_metadata_cards(ui: &mut Ui, settings: &mut crate::pipeline::ExportSettings) {
@@ -410,7 +452,7 @@ impl Sidebar {
                     Some(carousel),
                     app.export.watermark.view(),
                 );
-                if change.format_changed {
+                if change.format_changed || change.color_space.is_some() {
                     app.persist_performance_settings();
                 }
                 if let Some(action) = change.carousel {

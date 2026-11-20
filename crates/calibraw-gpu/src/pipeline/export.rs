@@ -3,10 +3,10 @@ use super::{
     build_region_proxy, export_mask_atlas_edge, extract_padded_tile, extract_padded_tile_into,
     mask_atlas_edge, mask_region_texture_extent, mask_source_region_uv, required_export_tile_halo,
     CfaKind, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm, GpuWait,
-    LensGeometryMap, LoadedRaw, MaskStack, NativeRect, PipelineOptions, ProcessingQuality,
-    ProcessingStage, ProxySpec, RawGpuPipeline, RemoveEditState, RemoveSceneContext,
-    SrgbOutputTransform, TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
-    MIN_EXPORT_TILE_HALO, SLOW_GPU_WAIT, TONE_GUIDE_CELL_SIZE,
+    LensGeometryMap, LoadedRaw, MaskStack, NativeRect, OutputColorSpace, OutputTransfer,
+    OutputTransform, PipelineOptions, ProcessingQuality, ProcessingStage, ProxySpec,
+    RawGpuPipeline, RemoveEditState, RemoveSceneContext, TilePlan, TileSpec, EXPORT_TILE_HALO,
+    MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO, SLOW_GPU_WAIT, TONE_GUIDE_CELL_SIZE,
 };
 use super::{
     export_mask_atlas_edge_limit, resample_geometry, ExportTileShape, GeometryResampleJob,

@@ -2133,5 +2133,7 @@
   "{shortcut} no longer does: {actions}": "{shortcut}은(는) 더 이상 다음 작업을 하지 않습니다: {actions}",
   "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "이 브러시 하위 마스크가 가득 찼습니다. 계속 칠하려면 브러시 하위 마스크를 하나 더 추가하세요.",
   "Remove hot pixels": "핫 픽셀 제거",
-  "Updating hot pixel removal…": "핫 픽셀 제거 업데이트 중…"
+  "Updating hot pixel removal…": "핫 픽셀 제거 업데이트 중…",
+  "Color space": "색 공간",
+  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB는 어디서나 올바르게 표시됩니다. 더 넓은 색 공간은 더 채도 높은 색을 유지하지만 색 관리를 지원하는 뷰어가 필요합니다. ProPhoto RGB와 Rec. 2020에는 16비트를 사용하세요."
 }

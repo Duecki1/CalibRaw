@@ -1,15 +1,29 @@
 use super::*;
 
+/// How an export encodes and tags its colour.
 pub(super) struct ResolvedExportColor {
-    pub(super) transform: Option<SrgbOutputTransform>,
+    /// `None` for a float master, which keeps display-linear Rec.2020.
+    pub(super) transform: Option<OutputTransform>,
+    /// The profile written into the file; `None` for sRGB, which formats tag
+    /// their own way (a PNG `sRGB` chunk, an untagged JPEG, JPEG XL's default
+    /// colour encoding).
     pub(super) embedded_icc: Option<Vec<u8>>,
-    pub(super) srgb: bool,
+    /// The output colour space of an integer export; `None` for a float master.
+    pub(super) color_space: Option<OutputColorSpace>,
+}
+
+impl ResolvedExportColor {
+    pub(super) fn is_srgb(&self) -> bool {
+        self.color_space == Some(OutputColorSpace::Srgb)
+    }
 }
 
 #[derive(Clone, Copy)]
 enum IccTransfer {
     Linear,
     Srgb,
+    /// A pure power law with this u8Fixed8Number exponent.
+    Gamma(u16),
 }
 
 pub(super) fn built_in_srgb_icc() -> Vec<u8> {
@@ -21,13 +35,44 @@ pub(super) fn built_in_srgb_icc() -> Vec<u8> {
             [0.013_932_2, 0.097_104_5, 0.714_173_3],
         ],
         IccTransfer::Srgb,
+        None,
+    )
+}
+
+/// The ICC profile of an 8- or 16-bit export in `space`, built from the
+/// colorants and curve [`OutputTransform`] encodes with.
+fn output_icc(space: OutputColorSpace) -> Vec<u8> {
+    let transfer = match space.transfer() {
+        OutputTransfer::Srgb => IccTransfer::Srgb,
+        OutputTransfer::Gamma { u8_fixed8 } => IccTransfer::Gamma(u8_fixed8),
+    };
+    let description = match space {
+        OutputColorSpace::Srgb => "sRGB",
+        OutputColorSpace::DisplayP3 => "Display P3",
+        OutputColorSpace::AdobeRgb => "Adobe RGB (1998) compatible",
+        OutputColorSpace::ProPhotoRgb => "ProPhoto RGB",
+        OutputColorSpace::Rec2020 => "Rec. 2020 (gamma 2.4)",
+    };
+    build_matrix_shaper_icc(
+        description,
+        space.pcs_colorants(),
+        transfer,
+        Some(space.pcs_adaptation()),
     )
 }
 
 /// Builds an ICC v2.1 display profile with the tags a v2 matrix/TRC profile
 /// requires: `desc`, `cprt`, `wtpt`, the colorant XYZ tags and the TRC curves.
-/// `name` must be ASCII; it becomes the profile description.
-fn build_matrix_shaper_icc(name: &str, matrix: [[f32; 3]; 3], transfer: IccTransfer) -> Vec<u8> {
+/// `name` must be ASCII; it becomes the profile description. `adaptation`, the
+/// row-major matrix that adapted the colorants from the space's white to the
+/// PCS, adds a `chad` tag, as ICC White Paper 6 recommends for v2 display
+/// profiles; the media white point stays D50 either way.
+fn build_matrix_shaper_icc(
+    name: &str,
+    matrix: [[f32; 3]; 3],
+    transfer: IccTransfer,
+    adaptation: Option<[[f32; 3]; 3]>,
+) -> Vec<u8> {
     fn fixed(value: f32) -> [u8; 4] {
         ((value as f64 * 65_536.0).round() as i32).to_be_bytes()
     }
@@ -79,6 +124,11 @@ fn build_matrix_shaper_icc(name: &str, matrix: [[f32; 3]; 3], transfer: IccTrans
             IccTransfer::Linear => {
                 data.extend_from_slice(&0u32.to_be_bytes());
             }
+            IccTransfer::Gamma(u8_fixed8) => {
+                // One entry: a u8Fixed8Number exponent, `linear = encoded^γ`.
+                data.extend_from_slice(&1u32.to_be_bytes());
+                data.extend_from_slice(&u8_fixed8.to_be_bytes());
+            }
             IccTransfer::Srgb => {
                 const SAMPLES: u32 = 1024;
                 data.extend_from_slice(&SAMPLES.to_be_bytes());
@@ -94,8 +144,19 @@ fn build_matrix_shaper_icc(name: &str, matrix: [[f32; 3]; 3], transfer: IccTrans
         data
     }
 
+    /// s15Fixed16ArrayType (ICC.1:2001-04 6.5.14).
+    fn s15_fixed16_array_tag(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"sf32");
+        data.extend_from_slice(&[0; 4]);
+        for value in values {
+            data.extend_from_slice(&fixed(value));
+        }
+        data
+    }
+
     debug_assert!(name.is_ascii(), "ICC v2 descriptions are ASCII");
-    let tags = [
+    let mut tags = vec![
         (*b"desc", description_tag(name)),
         (*b"cprt", text_tag("No copyright, use freely")),
         (*b"wtpt", xyz_tag([0.9642, 1.0, 0.8249])),
@@ -115,6 +176,12 @@ fn build_matrix_shaper_icc(name: &str, matrix: [[f32; 3]; 3], transfer: IccTrans
         (*b"gTRC", curve_tag(transfer)),
         (*b"bTRC", curve_tag(transfer)),
     ];
+    if let Some(adaptation) = adaptation {
+        tags.push((
+            *b"chad",
+            s15_fixed16_array_tag(adaptation.into_iter().flatten()),
+        ));
+    }
 
     let table_size = 128usize + 4 + tags.len() * 12;
     let mut offsets = Vec::with_capacity(tags.len());
@@ -167,21 +234,27 @@ pub(in crate::pipeline) fn linear_rec2020_icc() -> Vec<u8> {
             [-0.001_930_0, 0.029_978_4, 0.797_333],
         ],
         IccTransfer::Linear,
+        None,
     )
 }
 
-pub(super) fn resolve_export_color(settings: &ExportSettings) -> Result<ResolvedExportColor> {
-    if settings.bit_depth.is_float() {
+/// The colour of an export written at `bit_depth`; `space` is the output colour
+/// space of an integer export (see [`ExportFormat::output_color_space`]).
+pub(super) fn resolve_export_color(
+    bit_depth: ExportBitDepth,
+    space: OutputColorSpace,
+) -> Result<ResolvedExportColor> {
+    if bit_depth.is_float() {
         return Ok(ResolvedExportColor {
             transform: None,
             embedded_icc: Some(linear_rec2020_icc()),
-            srgb: false,
+            color_space: None,
         });
     }
 
     Ok(ResolvedExportColor {
-        transform: Some(SrgbOutputTransform::new()),
-        embedded_icc: None,
-        srgb: true,
+        transform: Some(OutputTransform::new(space)),
+        embedded_icc: (space != OutputColorSpace::Srgb).then(|| output_icc(space)),
+        color_space: Some(space),
     })
 }

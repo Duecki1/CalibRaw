@@ -73,7 +73,7 @@ impl FinalSizeOutputSharpen {
     pub(super) fn push_row<W: Write>(
         &mut self,
         row: Vec<f32>,
-        output_transform: Option<&SrgbOutputTransform>,
+        output_transform: Option<&OutputTransform>,
         row_format: ExportRowFormat,
         output: &mut W,
     ) -> Result<()> {
@@ -100,7 +100,7 @@ impl FinalSizeOutputSharpen {
 
     pub(super) fn finish<W: Write>(
         &mut self,
-        output_transform: Option<&SrgbOutputTransform>,
+        output_transform: Option<&OutputTransform>,
         row_format: ExportRowFormat,
         output: &mut W,
     ) -> Result<()> {
@@ -118,7 +118,7 @@ impl FinalSizeOutputSharpen {
 
     fn flush_full_batch<W: Write>(
         &mut self,
-        output_transform: Option<&SrgbOutputTransform>,
+        output_transform: Option<&OutputTransform>,
         row_format: ExportRowFormat,
         output: &mut W,
     ) -> Result<()> {
@@ -130,7 +130,7 @@ impl FinalSizeOutputSharpen {
 
     fn flush_batch<W: Write>(
         &mut self,
-        output_transform: Option<&SrgbOutputTransform>,
+        output_transform: Option<&OutputTransform>,
         row_format: ExportRowFormat,
         output: &mut W,
     ) -> Result<()> {
@@ -304,7 +304,7 @@ impl LinearLightResizer {
         &mut self,
         source_y: u32,
         source: &[f32],
-        output_transform: Option<&SrgbOutputTransform>,
+        output_transform: Option<&OutputTransform>,
         output: &mut W,
     ) -> Result<()> {
         anyhow::ensure!(
@@ -358,7 +358,7 @@ impl LinearLightResizer {
 
     pub(super) fn finish<W: Write>(
         &mut self,
-        output_transform: Option<&SrgbOutputTransform>,
+        output_transform: Option<&OutputTransform>,
         output: &mut W,
     ) -> Result<()> {
         anyhow::ensure!(
@@ -398,7 +398,7 @@ impl LinearLightResizer {
         &mut self,
         source_y: u32,
         completed_through_output: u32,
-        output_transform: Option<&SrgbOutputTransform>,
+        output_transform: Option<&OutputTransform>,
         output: &mut W,
     ) -> Result<()> {
         while self.next_output_row < self.output_height

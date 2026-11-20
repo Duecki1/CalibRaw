@@ -2137,5 +2137,7 @@
   "{shortcut} no longer does: {actions}": "{shortcut} już nie wykonuje: {actions}",
   "This brush sub-mask is full. Add another brush sub-mask to keep painting.": "Ta maska podrzędna pędzla jest pełna. Dodaj kolejną maskę podrzędną pędzla, aby dalej malować.",
   "Remove hot pixels": "Usuń gorące piksele",
-  "Updating hot pixel removal…": "Aktualizowanie usuwania gorących pikseli…"
+  "Updating hot pixel removal…": "Aktualizowanie usuwania gorących pikseli…",
+  "Color space": "Przestrzeń barw",
+  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB wyświetla się poprawnie wszędzie. Szersze przestrzenie zachowują bardziej nasycone kolory, ale wymagają przeglądarek z zarządzaniem barwą; z ProPhoto RGB i Rec. 2020 używaj 16 bitów."
 }

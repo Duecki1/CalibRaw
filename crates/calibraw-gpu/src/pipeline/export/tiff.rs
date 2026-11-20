@@ -281,7 +281,12 @@ pub(super) fn write_tiff_header<W: Write>(
 
         // Reserve the EXIF and GPS IFDs before the layout pass. Their encoded
         // lengths do not depend on where they land, only their internal offsets do.
-        let exif_len = metadata::exif_ifd_encoded_len(request.metadata, width, height);
+        let exif_len = metadata::exif_ifd_encoded_len(
+            request.metadata,
+            width,
+            height,
+            request.color.is_srgb(),
+        );
         entries.push(TiffEntry {
             tag: 0x8769,
             field_type: 4,
@@ -353,7 +358,13 @@ pub(super) fn write_tiff_header<W: Write>(
         let offset = u32::try_from(offset.context("missing TIFF metadata IFD offset")?)
             .context("TIFF metadata IFD offset overflow")?;
         entry.data = if entry.tag == 0x8769 {
-            metadata::encode_exif_ifd(request.metadata, offset, width, height)
+            metadata::encode_exif_ifd(
+                request.metadata,
+                offset,
+                width,
+                height,
+                request.color.is_srgb(),
+            )
         } else {
             metadata::encode_gps_ifd(request.metadata, offset)
         };

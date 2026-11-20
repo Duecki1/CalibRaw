@@ -63,6 +63,7 @@ fn write_png_header(
             request.metadata,
             width,
             height,
+            request.color.is_srgb(),
         )));
     }
     let mut encoder =
@@ -70,7 +71,7 @@ fn write_png_header(
     // Lossless pixel values are identical; avoid spending most of an export
     // searching for a slightly smaller DEFLATE stream.
     encoder.set_compression(png::Compression::Fast);
-    if request.color.srgb {
+    if request.color.is_srgb() {
         encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     }
     if request.keep_metadata {
@@ -128,7 +129,7 @@ pub(super) fn export_tiled_jpeg(
             quality,
             keep_metadata: request.keep_metadata,
             metadata: request.metadata,
-            icc_profile: request.color.embedded_icc.as_deref(),
+            color: request.color,
         })
     })
 }
@@ -140,6 +141,11 @@ pub(super) fn export_tiled_jxl(
     anyhow::ensure!(
         !request.bit_depth.is_float(),
         "JPEG XL export supports 8-bit or 16-bit integer output"
+    );
+    // The encoder writes JPEG XL's default colour encoding, sRGB.
+    anyhow::ensure!(
+        request.color.is_srgb(),
+        "JPEG XL export supports sRGB output only"
     );
     let (width, height) = (request.slide_width(), request.window.height);
     anyhow::ensure!(
@@ -196,7 +202,7 @@ pub(super) fn export_tiled_jxl(
                 &mut writer,
                 &mut &codestream[..],
                 codestream.len() as u64,
-                &build_exif_payload(request.metadata, width, height),
+                &build_exif_payload(request.metadata, width, height, request.color.is_srgb()),
             )?;
             writer.flush().context("flush JPEG XL container")?;
         } else {
@@ -262,7 +268,7 @@ pub(super) struct JpegEncodeRequest<'a> {
     pub(super) quality: u8,
     pub(super) keep_metadata: bool,
     pub(super) metadata: &'a ExportMetadata,
-    pub(super) icc_profile: Option<&'a [u8]>,
+    pub(super) color: &'a ResolvedExportColor,
 }
 
 pub(super) fn encode_jpeg_rgb(request: JpegEncodeRequest<'_>) -> Result<()> {
@@ -274,7 +280,7 @@ pub(super) fn encode_jpeg_rgb(request: JpegEncodeRequest<'_>) -> Result<()> {
         quality,
         keep_metadata,
         metadata,
-        icc_profile,
+        color,
     } = request;
     validate_rgb_raster_len(rgb, output_width, output_height)?;
     let width = u16::try_from(output_width).context("JPEG width exceeds baseline limit")?;
@@ -285,14 +291,19 @@ pub(super) fn encode_jpeg_rgb(request: JpegEncodeRequest<'_>) -> Result<()> {
     let encode_started = Instant::now();
     let mut encoder = jpeg_encoder::Encoder::new(&mut writer, quality.clamp(1, 100));
     encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::F_1_1);
-    if let Some(profile) = icc_profile {
+    if let Some(profile) = color.embedded_icc.as_deref() {
         encoder
             .add_icc_profile(profile)
             .context("embed JPEG ICC profile")?;
     }
     if keep_metadata {
         encoder
-            .add_exif_metadata(&build_exif_payload(metadata, output_width, output_height))
+            .add_exif_metadata(&build_exif_payload(
+                metadata,
+                output_width,
+                output_height,
+                color.is_srgb(),
+            ))
             .context("embed JPEG EXIF metadata")?;
     }
     encoder

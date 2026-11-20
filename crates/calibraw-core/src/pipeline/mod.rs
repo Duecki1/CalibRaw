@@ -22,6 +22,7 @@ pub mod lensfun;
 mod mask_region;
 pub mod masks;
 pub mod noise;
+mod output_color;
 pub mod point_color;
 pub mod processing;
 pub mod raw_loader;
@@ -50,8 +51,7 @@ pub use basicadj::{
 pub use calibration::{Calibration, PrimaryCalibration, CALIBRATION_LIMIT};
 pub use chromatic_aberration::{LateralChannel, LateralChromaticAberration, MAX_LATERAL_SHIFT};
 pub use color_profile::{
-    CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, SrgbOutputTransform,
-    ToneCurve,
+    CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, ToneCurve,
 };
 pub use film_negative::{FilmNegative, FilmSettlement, FilmSource, FilmStock};
 pub use geometry::{
@@ -92,6 +92,7 @@ pub use masks::{
     OPTION_COUNT,
 };
 pub use noise::{AdaptiveDetailDefaults, DenoiseQuality, NoiseProfile};
+pub use output_color::{OutputColorSpace, OutputTransfer, OutputTransform, ICC_PCS_D50_XYZ};
 pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
 pub use processing::{
     affected_stage, build_proxy, build_region_proxy, build_region_proxy_until, crop_raw,

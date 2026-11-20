@@ -256,7 +256,9 @@ is a sidecar that lists only the fields it changes; `<input>` is one of the
 synthetic photos `scene`, `bayer` and `xtrans`; a mosaic with `-hot`
 (`bayer-hot`, `xtrans-hot`), seeded with hot photosites; and a mosaic with
 `-binned` (`bayer-binned`, `xtrans-binned`, `bayer-hot-binned`), reduced to
-half size as a preview proxy bins it, after the source corrections. Cases
+half size as a preview proxy bins it, after the source corrections; and any of
+these with a colour space suffix (`scene-display-p3`, named by
+`OutputColorSpace::id`), exported in that space instead of sRGB. Cases
 render on the
 machine's GPU, or wgpu's software adapter without one (lavapipe in CI). GPUs
 round differently, so the mean colour of every 8×8 square must stay within

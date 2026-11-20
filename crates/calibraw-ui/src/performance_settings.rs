@@ -1,5 +1,6 @@
 use crate::pipeline::{
-    CameraProfileMode, Carousel, CarouselRatio, ExportFormat, WatermarkAnchor, WatermarkPlacement,
+    CameraProfileMode, Carousel, CarouselRatio, ExportFormat, OutputColorSpace, WatermarkAnchor,
+    WatermarkPlacement,
 };
 use crate::platform::PlatformCaps;
 use serde::{Deserialize, Serialize};
@@ -81,6 +82,10 @@ pub(crate) struct PerformanceSettings {
     pub export_name_template: String,
     #[serde(with = "export_format_serde")]
     pub export_format: ExportFormat,
+    /// The colour space of 8- and 16-bit exports. Missing in files written
+    /// before it existed, which therefore export sRGB as they did.
+    #[serde(with = "export_color_space_serde")]
+    pub export_color_space: OutputColorSpace,
     pub export_watermark: SavedWatermark,
     pub export_carousel: SavedCarousel,
     pub ui_design: crate::appearance::UiDesign,
@@ -320,6 +325,31 @@ mod export_format_serde {
     }
 }
 
+mod export_color_space_serde {
+    use super::OutputColorSpace;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S>(space: &OutputColorSpace, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(space.id())
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<OutputColorSpace, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        OutputColorSpace::from_id(&value).ok_or_else(|| {
+            serde::de::Error::unknown_variant(
+                &value,
+                &["srgb", "display-p3", "adobe-rgb", "prophoto-rgb", "rec2020"],
+            )
+        })
+    }
+}
+
 impl Default for PerformanceSettings {
     fn default() -> Self {
         Self {
@@ -347,6 +377,7 @@ impl Default for PerformanceSettings {
             keyboard_shortcuts: crate::app::Shortcuts::default(),
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
             export_format: ExportFormat::Jpeg,
+            export_color_space: OutputColorSpace::Srgb,
             export_watermark: SavedWatermark::default(),
             export_carousel: SavedCarousel::default(),
             ui_design: crate::appearance::UiDesign::default(),

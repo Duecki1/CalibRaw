@@ -457,6 +457,7 @@ impl CalibRawApp {
             keyboard_shortcuts: self.preferences.shortcuts.clone(),
             export_name_template: self.preferences.export_name_template.clone(),
             export_format: self.export.format,
+            export_color_space: self.export.settings.color_space,
             export_watermark: self.export.watermark.saved(),
             export_carousel: self.export.carousel.saved(),
             ui_design: self.preferences.ui_design,
