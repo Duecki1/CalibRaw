@@ -3,12 +3,12 @@
 //! CalibRaw repaints only when input arrives. When the driver applies G-SYNC to
 //! windowed programs, the monitor's refresh rate then follows the mouse and falls
 //! back when it stops, which panels show as flicker. A program cannot opt out of
-//! variable refresh when it presents, so at startup this sets G-SYNC to
-//! fullscreen-only in CalibRaw's profile of the NVIDIA driver settings, as Godot
-//! does for its editor. CalibRaw has no fullscreen mode, so that turns it off.
+//! variable refresh when it presents, so at startup this turns G-SYNC off in
+//! CalibRaw's profile of the NVIDIA driver settings, with the two settings
+//! [`SETTINGS`] lists.
 //!
 //! A value the profile already holds, chosen in NVIDIA's tools or written by an
-//! earlier start, is left alone, so the driver database is written at most once.
+//! earlier start, is left alone, so each setting is written at most once.
 
 use std::ffi::{c_void, OsStr};
 use std::fmt;
@@ -28,10 +28,33 @@ const NVAPI_LIBRARY: PCWSTR = w!("nvapi.dll");
 /// Name of the profile created when no profile lists CalibRaw's executable.
 const PROFILE_NAME: &str = "CalibRaw";
 
-/// `VRR_MODE_ID` and `VRR_MODE_FULLSCREEN_ONLY` from NVIDIA's
-/// NvApiDriverSettings.h.
-const VRR_MODE_ID: u32 = 0x1194_F158;
-const VRR_MODE_FULLSCREEN_ONLY: u32 = 1;
+/// A DWORD driver setting CalibRaw's profile gets.
+struct ProfileSetting {
+    /// Name in NVIDIA's NvApiDriverSettings.h, for the diagnostics.
+    name: &'static str,
+    id: u32,
+    value: u32,
+}
+
+/// IDs and values from NVIDIA's NvApiDriverSettings.h.
+const SETTINGS: [ProfileSetting; 2] = [
+    // "Enable G-SYNC globally" set to fullscreen-only, as Godot does for its
+    // editor; CalibRaw has no fullscreen mode. The driver may read this mode only
+    // from the global profile, which is why the override below is also set.
+    ProfileSetting {
+        name: "VRR_MODE",
+        id: 0x1194_F158,
+        value: 1, // VRR_MODE_FULLSCREEN_ONLY
+    },
+    // The per-program G-SYNC state, "Monitor Technology" in the NVIDIA Control
+    // Panel, forced off. Paint.NET sets the same, and Visual Studio's profile in
+    // the driver holds it.
+    ProfileSetting {
+        name: "VRR_APP_OVERRIDE",
+        id: 0x10A8_79CF,
+        value: 1, // VRR_APP_OVERRIDE_FORCE_OFF
+    },
+];
 
 // Function IDs for `nvapi_QueryInterface`, from NVIDIA's nvapi_interface.h.
 const NVAPI_INITIALIZE: u32 = 0x0150_E828;
@@ -146,21 +169,28 @@ impl DriverStruct for DrsApplication {}
 impl DriverStruct for DrsProfile {}
 impl DriverStruct for UnicodeString {}
 
-/// Sets G-SYNC to fullscreen-only for CalibRaw where an NVIDIA driver is
-/// installed and records what happened in the diagnostics. Runs before the
-/// window opens because the driver reads the profile when the process creates
-/// its device.
+/// Turns G-SYNC off for CalibRaw where an NVIDIA driver is installed and
+/// records what happened in the diagnostics. Runs before the window opens
+/// because the driver reads the profile when the process creates its device.
 pub(super) fn keep_gsync_off_for_window() {
     let started = Instant::now();
     match apply() {
-        Ok(Outcome::NoNvidiaDriver) => {}
-        Ok(Outcome::AlreadySet(value)) => calibraw_core::diagnostics::record(format!(
-            "NVIDIA driver profile keeps G-SYNC mode {value} for CalibRaw"
-        )),
-        Ok(Outcome::Written) => calibraw_core::diagnostics::record(format!(
-            "NVIDIA driver profile: set G-SYNC to fullscreen-only for CalibRaw in {:.3}s",
-            started.elapsed().as_secs_f64()
-        )),
+        Ok(None) => {}
+        Ok(Some(states)) => {
+            let states = SETTINGS
+                .iter()
+                .zip(states)
+                .map(|(setting, state)| match state {
+                    SettingState::Kept(value) => format!("{} kept at {value}", setting.name),
+                    SettingState::Written => format!("{} set to {}", setting.name, setting.value),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            calibraw_core::diagnostics::record(format!(
+                "NVIDIA driver profile for CalibRaw: {states} ({:.3}s)",
+                started.elapsed().as_secs_f64()
+            ));
+        }
         // No dialog: CalibRaw works without the setting, and an error at
         // every start would not help a user who cannot change the driver.
         Err(error) => calibraw_core::diagnostics::record(format!(
@@ -169,10 +199,10 @@ pub(super) fn keep_gsync_off_for_window() {
     }
 }
 
-enum Outcome {
-    NoNvidiaDriver,
-    /// The profile already holds a G-SYNC mode, this value.
-    AlreadySet(u32),
+/// What happened to one of [`SETTINGS`].
+enum SettingState {
+    /// The profile already held this value.
+    Kept(u32),
     Written,
 }
 
@@ -203,18 +233,18 @@ fn check(call: &'static str, status: i32) -> Result<(), Error> {
     }
 }
 
-fn apply() -> Result<Outcome, Error> {
+/// The state of each of [`SETTINGS`], in order, or `None` without an NVIDIA
+/// driver.
+fn apply() -> Result<Option<[SettingState; SETTINGS.len()]>, Error> {
     let Some(library) = Library::load() else {
-        return Ok(Outcome::NoNvidiaDriver);
+        return Ok(None);
     };
     let api = Api::load(library).ok_or(Error::MissingFunction)?;
     // SAFETY: NvAPI_Initialize takes no arguments.
     match unsafe { (api.initialize)() } {
         NVAPI_OK => {}
         // An NVIDIA driver without an NVIDIA GPU driving a display.
-        NVAPI_LIBRARY_NOT_FOUND | NVAPI_NVIDIA_DEVICE_NOT_FOUND => {
-            return Ok(Outcome::NoNvidiaDriver)
-        }
+        NVAPI_LIBRARY_NOT_FOUND | NVAPI_NVIDIA_DEVICE_NOT_FOUND => return Ok(None),
         status => {
             return Err(Error::Status {
                 call: "NvAPI_Initialize",
@@ -226,12 +256,20 @@ fn apply() -> Result<Outcome, Error> {
     let session = Session::open(&api)?;
     let executable = std::env::current_exe().map_err(Error::ExecutablePath)?;
     let profile = session.profile_for(&executable)?;
-    if let Some(value) = session.own_dword(profile, VRR_MODE_ID)? {
-        return Ok(Outcome::AlreadySet(value));
+    let mut states = [const { SettingState::Written }; SETTINGS.len()];
+    for (setting, state) in SETTINGS.iter().zip(&mut states) {
+        match session.own_dword(profile, setting.id)? {
+            Some(value) => *state = SettingState::Kept(value),
+            None => session.set_dword(profile, setting.id, setting.value)?,
+        }
     }
-    session.set_dword(profile, VRR_MODE_ID, VRR_MODE_FULLSCREEN_ONLY)?;
-    session.save()?;
-    Ok(Outcome::Written)
+    if states
+        .iter()
+        .any(|state| matches!(state, SettingState::Written))
+    {
+        session.save()?;
+    }
+    Ok(Some(states))
 }
 
 /// NVIDIA's NVAPI library, freed on drop.
