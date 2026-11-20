@@ -100,6 +100,14 @@ fn run_desktop() -> eframe::Result {
         super::performance_settings_path().as_deref(),
     );
     let mut options = crate::native_options(PlatformCaps::DESKTOP, graphics_backend);
+    // eframe saves the window's size, position, maximized and fullscreen state here
+    // on exit and restores it on the next launch; the viewport below applies only
+    // when nothing is saved yet. Without a settings directory eframe falls back to
+    // its own per-app-id data directory.
+    options.persistence_path = super::performance_settings_path()
+        .as_deref()
+        .and_then(std::path::Path::parent)
+        .map(|directory| directory.join("window.ron"));
     // wgpu initializes every enabled backend before any adapter is chosen, and
     // WGL initialization ends the process without an error on some drivers (seen
     // on a Radeon 780M + RTX 4060 laptop). Windows needs no GL adapter to show the
@@ -116,6 +124,7 @@ fn run_desktop() -> eframe::Result {
             "de.duecki.calibraw"
         })
         .with_inner_size([1280.0, 720.0])
+        .with_maximized(true)
         .with_min_inner_size([480.0, 480.0])
         .with_icon(desktop_icon());
 

@@ -52,6 +52,12 @@ impl UnsupportedGpuApp {
 }
 
 impl eframe::App for UnsupportedGpuApp {
+    /// Only the native window is persisted; egui's own memory (panel sizes, scroll
+    /// and focus state) starts fresh each launch as it always has.
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);

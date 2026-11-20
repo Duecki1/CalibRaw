@@ -47,7 +47,8 @@ ureq.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 discord-rich-presence.workspace = true
-eframe = { workspace = true, features = ["accesskit", "wgpu", "default_fonts", "wayland", "x11"] }
+# `persistence` restores the window size, position and maximized state between launches.
+eframe = { workspace = true, features = ["accesskit", "wgpu", "default_fonts", "persistence", "wayland", "x11"] }
 env_logger.workspace = true
 pollster.workspace = true
 rfd.workspace = true

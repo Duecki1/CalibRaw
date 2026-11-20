@@ -305,6 +305,12 @@ impl CalibRawApp {
 }
 
 impl eframe::App for CalibRawApp {
+    /// Only the native window is persisted; egui's own memory (panel sizes, scroll
+    /// and focus state) starts fresh each launch as it always has.
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let caps = self.caps();
         if caps.can_restart {
