@@ -453,6 +453,10 @@ impl Sidebar {
         let mut chosen = None;
         let mut add_editor = false;
         moduwu_design::dropdown_menu(&response, |ui| {
+            // As wide as the button it opens from; a longer editor name
+            // widens it rather than wrapping.
+            ui.set_min_width(response.rect.width());
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             for target in &targets {
                 let EditInTarget::Editor(editor) = target else {
                     continue;

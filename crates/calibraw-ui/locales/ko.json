@@ -2165,5 +2165,6 @@
   "Add editor…": "편집기 추가…",
   "Choose program…": "프로그램 선택…",
   "Edit in…": "다른 앱에서 편집…",
-  "Edit in {editor}": "{editor}에서 편집"
+  "Edit in {editor}": "{editor}에서 편집",
+  "Installed applications": "설치된 응용 프로그램"
 }

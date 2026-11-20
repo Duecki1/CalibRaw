@@ -2171,5 +2171,6 @@
   "Add editor…": "添加编辑器…",
   "Choose program…": "选择程序…",
   "Edit in…": "在其他应用中编辑…",
-  "Edit in {editor}": "在 {editor} 中编辑"
+  "Edit in {editor}": "在 {editor} 中编辑",
+  "Installed applications": "已安装的应用程序"
 }

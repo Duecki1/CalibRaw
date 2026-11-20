@@ -81,18 +81,22 @@ pub(crate) fn photo_actions_menu(
     }
     // One photo of folder storage, as Edit In opens one file.
     if let Some(asset) = single.filter(|asset| asset.desktop_path().is_some()) {
-        for target in app.edit_in_targets() {
-            let label = match &target {
-                crate::edit_in::EditInTarget::Editor(editor) => {
-                    tr_fmt("Edit in {editor}", &[("editor", &editor.name)])
+        ui.scope(|ui| {
+            // An editor's name can be long; the menu widens rather than wrapping it.
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            for target in app.edit_in_targets() {
+                let label = match &target {
+                    crate::edit_in::EditInTarget::Editor(editor) => {
+                        tr_fmt("Edit in {editor}", &[("editor", &editor.name)])
+                    }
+                    crate::edit_in::EditInTarget::SystemChooser => tr("Edit in…").to_owned(),
+                };
+                let item = MenuItem::new(label).icon(regular::ARROW_SQUARE_OUT);
+                if menu_row(ui, enabled, item).clicked() {
+                    action = Some(LibraryAction::EditIn(asset.clone(), target));
                 }
-                crate::edit_in::EditInTarget::SystemChooser => tr("Edit in…").to_owned(),
-            };
-            let item = MenuItem::new(label).icon(regular::ARROW_SQUARE_OUT);
-            if menu_row(ui, enabled, item).clicked() {
-                action = Some(LibraryAction::EditIn(asset.clone(), target));
             }
-        }
+        });
     }
     if assets.len() >= 2 {
         let merge = ui.add_enabled_ui(enabled, |ui| {

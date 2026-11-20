@@ -244,6 +244,21 @@ impl CalibRawApp {
         }
     }
 
+    /// Moves the editor at `index` one place up or down the list.
+    pub(crate) fn move_editor(&mut self, index: usize, up: bool) {
+        let editors = &mut self.preferences.edit_in.editors;
+        let Some(other) = (if up {
+            index.checked_sub(1)
+        } else {
+            index.checked_add(1)
+        })
+        .filter(|&other| other < editors.len() && index < editors.len()) else {
+            return;
+        };
+        editors.swap(index, other);
+        self.persist_performance_settings();
+    }
+
     pub(crate) fn set_editor_sends_original(&mut self, index: usize, send_original: bool) {
         let Some(editor) = self.preferences.edit_in.editors.get_mut(index) else {
             return;

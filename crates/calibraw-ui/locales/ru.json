@@ -2171,5 +2171,6 @@
   "Add editor…": "Добавить редактор…",
   "Choose program…": "Выбрать программу…",
   "Edit in…": "Редактировать в…",
-  "Edit in {editor}": "Редактировать в {editor}"
+  "Edit in {editor}": "Редактировать в {editor}",
+  "Installed applications": "Установленные приложения"
 }

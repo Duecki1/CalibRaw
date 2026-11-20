@@ -84,6 +84,8 @@ pub(crate) enum OnboardingStep {
 pub(crate) enum SettingsDialog {
     DevelopCardOrder,
     Luts,
+    /// The editors Edit In offers.
+    Editors,
 }
 
 /// A foldable section of Settings, in the order they are shown.

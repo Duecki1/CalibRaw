@@ -2171,5 +2171,6 @@
   "Add editor…": "Editor hinzufügen…",
   "Choose program…": "Programm wählen…",
   "Edit in…": "Bearbeiten in…",
-  "Edit in {editor}": "In {editor} bearbeiten"
+  "Edit in {editor}": "In {editor} bearbeiten",
+  "Installed applications": "Installierte Anwendungen"
 }

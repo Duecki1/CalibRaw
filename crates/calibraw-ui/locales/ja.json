@@ -2171,5 +2171,6 @@
   "Add editor…": "エディターを追加…",
   "Choose program…": "プログラムを選択…",
   "Edit in…": "他のアプリで編集…",
-  "Edit in {editor}": "{editor}で編集"
+  "Edit in {editor}": "{editor}で編集",
+  "Installed applications": "インストール済みのアプリケーション"
 }
