@@ -293,6 +293,7 @@ impl CalibRawApp {
                 publish_pending: false,
                 android_batch_load_pending: false,
                 share_mime_type: None,
+                edit_in: None,
                 override_choice: ExportOverrideChoice::default(),
                 watermark: WatermarkState::new(performance.export_watermark),
                 carousel: CarouselState::new(performance.export_carousel),
@@ -352,7 +353,12 @@ impl CalibRawApp {
                 camera_match_new_photos: performance.camera_match_new_photos,
                 export_name_template: performance.export_name_template.clone(),
                 export_folder: performance.export_folder.clone(),
-                edit_in_folder: performance.edit_in_folder.clone(),
+                edit_in: crate::edit_in::EditInSettings {
+                    folder: performance.edit_in_folder.clone(),
+                    format: performance.edit_in_format,
+                    color_space: performance.edit_in_color_space,
+                    editors: performance.edit_in_editors.clone(),
+                },
                 discord_rich_presence: performance.discord_rich_presence,
                 hdd_mode: performance.hdd_mode,
                 graphics_backend: performance.graphics_backend,
@@ -381,6 +387,8 @@ impl CalibRawApp {
             ui: UiState {
                 thumbnail_cache_size: None,
                 thumbnail_cache_size_receiver: None,
+                installed_editors: None,
+                installed_editors_receiver: None,
                 active_tab: AppTab::default(),
                 sidebar_tab: SidebarTab::default(),
                 desktop_picker_receiver: None,
@@ -582,6 +590,9 @@ impl CalibRawApp {
             app.report_error(ErrorKind::AiFilesNotMoved, failure);
         }
         app.remove_retired_depth_model();
+        if let Some(folder) = app.platform.edit_in_cache_dir() {
+            crate::app::edit_in::spawn_edit_in_cache_cleanup(folder);
+        }
         let interrupted_gpu_ai = calibraw_ai::configure(calibraw_ai::AiConfig {
             acceleration: app.ai.gpu_acceleration,
             runtime: app.ai_runtime_source(),

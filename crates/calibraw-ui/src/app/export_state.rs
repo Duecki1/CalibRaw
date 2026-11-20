@@ -188,6 +188,17 @@ pub(crate) struct LibraryBatchExportState {
     pub(super) format: ExportFormat,
     pub(super) settings: ExportSettings,
     pub(super) export_override: ExportOverride,
+    /// The editor the batch's photo is opened in once it is saved (a library
+    /// Edit In), and the file it was saved as.
+    pub(super) edit_in: Option<crate::edit_in::EditInTarget>,
+    pub(super) edit_in_file: Option<PathBuf>,
+}
+
+/// A batch export's settings as chosen, which a media-library batch keeps for
+/// each export it starts, and as the desktop batch renders them.
+pub(super) struct LibraryExportSettings {
+    pub(super) chosen: ExportSettings,
+    pub(super) rendered: ExportSettings,
 }
 
 pub(super) enum LibraryBatchExportEvent {
@@ -204,6 +215,8 @@ pub(super) enum LibraryBatchExportEvent {
         total: usize,
     },
     ItemFinished {
+        /// The saved file; `None` when the item failed or was cancelled.
+        path: Option<PathBuf>,
         error: Option<String>,
     },
     Finished {
@@ -393,6 +406,9 @@ pub(crate) struct ExportState {
     /// publishes without sharing. Kept outside the task because a replay's task
     /// ends before its gallery publish does.
     pub(crate) share_mime_type: Option<&'static str>,
+    /// The editor the running single export is opened in once it is saved;
+    /// see `app::edit_in`.
+    pub(crate) edit_in: Option<crate::edit_in::EditInTarget>,
     pub(crate) override_choice: ExportOverrideChoice,
     /// Drawn over every export while it is on; see `app::watermark`.
     pub(crate) watermark: WatermarkState,

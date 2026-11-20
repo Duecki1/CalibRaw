@@ -166,6 +166,9 @@ impl CalibRawApp {
             crate::app::DesktopPickerEvent::EditInFolder(Some(folder)) => {
                 self.set_edit_in_folder(crate::export_folders::EditInFolder::Folder(folder));
             }
+            crate::app::DesktopPickerEvent::EditorProgram(Some(program)) => {
+                self.add_editor_program(&program);
+            }
             crate::app::DesktopPickerEvent::OnnxRuntime(Ok(Some((path, sha256)))) => {
                 self.ai.manual_runtime = Some((path, sha256));
                 self.sync_onnx_runtime_source();

@@ -1,6 +1,7 @@
 //! The desktop backend (Linux, Windows, macOS).
 
 pub(super) mod discord;
+mod editors;
 mod entry;
 pub(super) mod files;
 #[cfg(target_os = "macos")]
@@ -89,6 +90,37 @@ impl Platform for DesktopPlatform {
 
     fn reveal_file(&self, path: &std::path::Path) -> Result<(), String> {
         files::reveal_file(path)
+    }
+
+    fn edit_in_support(&self) -> super::EditInSupport {
+        editors::support()
+    }
+
+    fn installed_editors(&self) -> Vec<crate::edit_in::ExternalEditor> {
+        editors::installed()
+    }
+
+    fn editor_program_dialog(&self) -> super::FileDialog {
+        editors::program_dialog()
+    }
+
+    fn editor_for_program(
+        &self,
+        program: &std::path::Path,
+    ) -> Option<crate::edit_in::ExternalEditor> {
+        editors::editor_for_program(program)
+    }
+
+    fn open_in_editor(
+        &self,
+        program: Option<&std::path::Path>,
+        file: &std::path::Path,
+    ) -> Result<(), String> {
+        editors::open(program, file)
+    }
+
+    fn edit_in_cache_dir(&self) -> Option<PathBuf> {
+        Some(calibraw_core::thumbnail_cache::desktop_app_cache_root().join("edit-in"))
     }
 
     fn gpu_pipeline_cache_dir(&self) -> Result<Option<PathBuf>, String> {

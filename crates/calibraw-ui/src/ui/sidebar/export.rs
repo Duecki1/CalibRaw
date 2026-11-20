@@ -434,6 +434,56 @@ impl Sidebar {
         }
     }
 
+    /// Edit In for the open photo: the system's chooser where it decides,
+    /// otherwise a menu of the editors added in Settings and a way to add one.
+    fn show_edit_in_action(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
+        use crate::edit_in::EditInTarget;
+        let response = ui
+            .add_enabled_ui(app.can_export(), |ui| {
+                moduwu_design::full_width_button(ui, tr("Edit in…"))
+            })
+            .inner;
+        if app.edit_in_support() == crate::platform::EditInSupport::SystemChooser {
+            if response.clicked() {
+                app.edit_open_photo_in(frame, EditInTarget::SystemChooser);
+            }
+            return;
+        }
+        let targets = app.edit_in_targets();
+        let mut chosen = None;
+        let mut add_editor = false;
+        moduwu_design::dropdown_menu(&response, |ui| {
+            for target in &targets {
+                let EditInTarget::Editor(editor) = target else {
+                    continue;
+                };
+                if ui
+                    .add(moduwu_design::MenuItem::new(editor.name.as_str()))
+                    .clicked()
+                {
+                    chosen = Some(target.clone());
+                    ui.close();
+                }
+            }
+            if !targets.is_empty() {
+                ui.separator();
+            }
+            if ui
+                .add(moduwu_design::MenuItem::new(tr("Add editor…")))
+                .clicked()
+            {
+                add_editor = true;
+                ui.close();
+            }
+        });
+        if let Some(target) = chosen {
+            app.edit_open_photo_in(frame, target);
+        }
+        if add_editor {
+            app.choose_editor_program();
+        }
+    }
+
     pub(super) fn show_export(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         let content_width = ui.available_width().max(1.0);
         let column_width = content_width;
@@ -509,6 +559,9 @@ impl Sidebar {
                     if replay_response.clicked() {
                         app.create_edit_replay(_frame);
                     }
+                }
+                if app.edit_in_support() != crate::platform::EditInSupport::Unavailable {
+                    Self::show_edit_in_action(ui, app, _frame);
                 }
                 if app.export_task_active() {
                     ui.label(

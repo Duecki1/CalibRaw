@@ -8,6 +8,7 @@ pub(crate) enum DesktopPickerEvent {
     CameraProfileFolder(Option<PathBuf>),
     ExportFolder(Option<PathBuf>),
     EditInFolder(Option<PathBuf>),
+    EditorProgram(Option<PathBuf>),
     OnnxRuntime(Result<Option<(PathBuf, calibraw_ai::Sha256)>, String>),
     PresetFiles(Option<Vec<PathBuf>>),
     LutFiles(Option<Vec<PathBuf>>),
@@ -38,7 +39,7 @@ pub(crate) struct PreferencesState {
     pub(crate) camera_match_new_photos: Option<bool>,
     pub(crate) export_name_template: String,
     pub(crate) export_folder: crate::export_folders::ExportFolder,
-    pub(crate) edit_in_folder: crate::export_folders::EditInFolder,
+    pub(crate) edit_in: crate::edit_in::EditInSettings,
     pub(crate) discord_rich_presence: bool,
     pub(crate) hdd_mode: bool,
     /// The saved choice, which the editor's device follows from the next start.
@@ -143,6 +144,10 @@ pub(crate) struct UiState {
     pub(crate) settings_dialog: Option<SettingsDialog>,
     pub(crate) thumbnail_cache_size: Option<Result<u64, String>>,
     pub(crate) thumbnail_cache_size_receiver: Option<mpsc::Receiver<Result<u64, String>>>,
+    /// The editors installed here, found once Settings first shows Edit In.
+    pub(crate) installed_editors: Option<Vec<crate::edit_in::ExternalEditor>>,
+    pub(crate) installed_editors_receiver:
+        Option<mpsc::Receiver<Vec<crate::edit_in::ExternalEditor>>>,
     pub(crate) desktop_picker_receiver: Option<mpsc::Receiver<DesktopPickerEvent>>,
     /// The platform was last asked for the soft keyboard's number layout.
     pub(in crate::app) numeric_keyboard: bool,

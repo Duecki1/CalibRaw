@@ -1,3 +1,4 @@
+use crate::edit_in::{EditInFormat, ExternalEditor};
 use crate::export_folders::{EditInFolder, ExportFolder};
 use crate::pipeline::{
     CameraProfileMode, Carousel, CarouselRatio, ExportFormat, OutputColorSpace, WatermarkAnchor,
@@ -95,9 +96,16 @@ pub(crate) struct PerformanceSettings {
     /// as they did.
     #[serde(deserialize_with = "lenient")]
     pub export_folder: ExportFolder,
-    /// Where Edit In saves its copy; folder storage only.
+    /// Where Edit In saves its copy, the file it renders and the editors it
+    /// offers; folder storage only (`crate::edit_in`).
     #[serde(deserialize_with = "lenient")]
     pub edit_in_folder: EditInFolder,
+    #[serde(deserialize_with = "lenient")]
+    pub edit_in_format: EditInFormat,
+    #[serde(with = "export_color_space_serde")]
+    pub edit_in_color_space: OutputColorSpace,
+    #[serde(deserialize_with = "lenient", skip_serializing_if = "Vec::is_empty")]
+    pub edit_in_editors: Vec<ExternalEditor>,
     pub ui_design: crate::appearance::UiDesign,
     pub preview_backdrop: crate::appearance::PreviewBackdrop,
     /// Missing in files written before it existed, which therefore follow the
@@ -407,6 +415,12 @@ impl Default for PerformanceSettings {
             export_carousel: SavedCarousel::default(),
             export_folder: ExportFolder::default(),
             edit_in_folder: EditInFolder::default(),
+            edit_in_format: EditInFormat::default(),
+            // The widest space a 16-bit TIFF keeps without banding, as photo
+            // editors commonly hand on; the editors Edit In targets read its
+            // embedded profile.
+            edit_in_color_space: OutputColorSpace::ProPhotoRgb,
+            edit_in_editors: Vec::new(),
             ui_design: crate::appearance::UiDesign::default(),
             preview_backdrop: crate::appearance::PreviewBackdrop::default(),
             // A first open shows English; `System` is only the decode default for

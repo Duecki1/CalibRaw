@@ -91,8 +91,10 @@ fn spawn_desktop_library_batch_export(
                 let request = match request {
                     Ok(request) => request,
                     Err(error) => {
-                        let _ = worker_sender
-                            .send(LibraryBatchExportEvent::ItemFinished { error: Some(error) });
+                        let _ = worker_sender.send(LibraryBatchExportEvent::ItemFinished {
+                            path: None,
+                            error: Some(error),
+                        });
                         repaint.request_repaint();
                         continue;
                     }
@@ -119,16 +121,19 @@ fn spawn_desktop_library_batch_export(
 
                 let cancelled = context.cancellation.load(Ordering::Acquire);
                 if !cancelled || item_result.is_ok() {
-                    let error = (!cancelled)
-                        .then(|| item_result.err())
-                        .flatten()
-                        .map(|error| {
-                            tr_fmt(
+                    let (path, error) = match item_result {
+                        Ok(path) => (Some(path), None),
+                        Err(_) if cancelled => (None, None),
+                        Err(error) => (
+                            None,
+                            Some(tr_fmt(
                                 "{source}: {error}",
                                 &[("source", &job.source.display()), ("error", &error)],
-                            )
-                        });
-                    let _ = worker_sender.send(LibraryBatchExportEvent::ItemFinished { error });
+                            )),
+                        ),
+                    };
+                    let _ =
+                        worker_sender.send(LibraryBatchExportEvent::ItemFinished { path, error });
                     repaint.request_repaint();
                 }
                 if cancelled {
@@ -471,6 +476,8 @@ impl CalibRawApp {
             format,
             settings,
             export_override,
+            edit_in: None,
+            edit_in_file: None,
         });
         self.export.task = Some(ExportTask::new(
             ExportTaskKind::LibraryBatch,
@@ -744,6 +751,16 @@ impl CalibRawApp {
         let Some(batch) = self.export.batch.take() else {
             return;
         };
+        // A library Edit In: its photo opens in the editor instead of a
+        // notice that it was exported.
+        if let (Some(target), Some(file)) = (&batch.edit_in, &batch.edit_in_file) {
+            if batch.failures.is_empty() && !batch.cancel_requested {
+                self.export.task = None;
+                self.open_in_editor(target, file);
+                self.egui_ctx.request_repaint();
+                return;
+            }
+        }
         let succeeded = batch.completed.saturating_sub(batch.failures.len());
         let failure_count = batch.failures.len();
         let failures = batch.failures.join(" · ");
@@ -806,6 +823,36 @@ impl CalibRawApp {
         export_override: ExportOverride,
         frame: &eframe::Frame,
     ) {
+        let rendered = self.export.watermark.export_settings(&settings);
+        self.start_library_export_jobs(
+            jobs,
+            LibraryExportSettings {
+                chosen: settings,
+                rendered,
+            },
+            format,
+            export_override,
+            None,
+            frame,
+        );
+    }
+
+    /// Starts the desktop batch export of `jobs`, rendered with
+    /// `settings.rendered`; `edit_in` opens its photo in that editor once
+    /// it is saved.
+    pub(in crate::app) fn start_library_export_jobs(
+        &mut self,
+        jobs: Vec<(PathBuf, LibraryExportDestination)>,
+        settings: LibraryExportSettings,
+        format: ExportFormat,
+        export_override: ExportOverride,
+        edit_in: Option<crate::edit_in::EditInTarget>,
+        frame: &eframe::Frame,
+    ) {
+        let LibraryExportSettings {
+            chosen: settings,
+            rendered,
+        } = settings;
         if jobs.is_empty() || self.export.task.is_some() {
             if self.export.task.is_some() {
                 self.report_error(
@@ -837,7 +884,7 @@ impl CalibRawApp {
                 device: render_state.device.clone(),
                 queue: render_state.queue.clone(),
                 format,
-                settings: self.export.watermark.export_settings(&settings),
+                settings: rendered,
                 camera_profile_mode: self.preferences.camera_profile_mode,
                 camera_profile_folder: self.preferences.camera_profile_folder.clone(),
                 last_camera_profile: self.preferences.last_camera_profile.clone(),
@@ -860,6 +907,8 @@ impl CalibRawApp {
             format,
             settings,
             export_override,
+            edit_in,
+            edit_in_file: None,
         });
         self.export.task = Some(ExportTask::new(
             ExportTaskKind::LibraryBatch,
@@ -954,12 +1003,15 @@ impl CalibRawApp {
                         task.phase = ai_denoise_phase(completed, total);
                     }
                 }
-                LibraryBatchExportEvent::ItemFinished { error } => {
+                LibraryBatchExportEvent::ItemFinished { path, error } => {
                     if let Some(batch) = self.export.batch.as_mut() {
                         batch.completed += 1;
                         batch.current = None;
                         if let Some(error) = error {
                             batch.failures.push(error);
+                        }
+                        if batch.edit_in.is_some() {
+                            batch.edit_in_file = path;
                         }
                     }
                     if let Some(task) = self.export.task.as_mut() {

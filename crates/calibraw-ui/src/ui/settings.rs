@@ -1072,8 +1072,148 @@ impl Settings {
         if app.caps().has_folders() {
             moduwu_design::section_separator(ui);
             Self::show_export_folder(ui, app);
+        }
+        if app.edit_in_support() != crate::platform::EditInSupport::Unavailable {
             moduwu_design::section_separator(ui);
-            Self::show_edit_in_folder(ui, app);
+            Self::show_edit_in(ui, app);
+        }
+    }
+
+    fn show_edit_in(ui: &mut Ui, app: &mut CalibRawApp) {
+        moduwu_design::strong_with_help(
+            ui,
+            tr("Edit In"),
+            tr("Renders the photo with its edits and opens it in another editor."),
+        );
+        Self::show_edit_in_folder(ui, app);
+
+        let mut format = app.preferences.edit_in.format;
+        moduwu_design::form_combo(
+            ui,
+            tr("Format"),
+            "settings-edit-in-format",
+            format.label(),
+            190.0,
+            |ui| {
+                for option in crate::edit_in::EditInFormat::ALL {
+                    ui.selectable_value(&mut format, option, option.label());
+                }
+            },
+        );
+        app.set_edit_in_format(format);
+
+        let mut color_space = app.preferences.edit_in.color_space;
+        moduwu_design::form_combo_with_help(
+            ui,
+            tr("Color space"),
+            "settings-edit-in-color-space",
+            color_space.label(),
+            190.0,
+            tr("sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020."),
+            |ui| {
+                for space in crate::pipeline::OutputColorSpace::ALL {
+                    ui.selectable_value(&mut color_space, space, space.label());
+                }
+            },
+        );
+        app.set_edit_in_color_space(color_space);
+
+        match app.edit_in_support() {
+            crate::platform::EditInSupport::Editors => Self::show_editors(ui, app),
+            crate::platform::EditInSupport::SystemChooser => {
+                Self::description(ui, tr("The system asks which application opens the image."));
+            }
+            crate::platform::EditInSupport::Unavailable => {}
+        }
+    }
+
+    /// The editors Edit In offers, each removable and able to take the
+    /// photo's own file instead, and a menu to add one.
+    fn show_editors(ui: &mut Ui, app: &mut CalibRawApp) {
+        ui.add_space(moduwu_design::SPACE_SM);
+        ui.label(egui::RichText::new(tr("Editors")).strong());
+        if app.preferences.edit_in.editors.is_empty() {
+            ui.small(tr("No editors added."));
+        }
+        let mut removed = None;
+        let mut send_original = None;
+        for (index, editor) in app.preferences.edit_in.editors.iter().enumerate() {
+            ui.push_id(("settings-editor", index), |ui| {
+                ui.label(&editor.name);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(editor.program.display().to_string())
+                            .small()
+                            .monospace()
+                            .color(ui.visuals().weak_text_color()),
+                    )
+                    .wrap(),
+                );
+                let mut sends = editor.send_original;
+                moduwu_design::toggle_with_help(
+                    ui,
+                    &mut sends,
+                    tr("Send original file"),
+                    tr("Opens the photo's own file instead of a rendered copy, for applications that develop RAW files themselves."),
+                );
+                if sends != editor.send_original {
+                    send_original = Some((index, sends));
+                }
+                moduwu_design::action_row(ui, |ui| {
+                    if moduwu_design::secondary_button(ui, tr("Remove")).clicked() {
+                        removed = Some(index);
+                    }
+                });
+            });
+        }
+        if let Some((index, sends)) = send_original {
+            app.set_editor_sends_original(index, sends);
+        }
+        if let Some(index) = removed {
+            app.remove_editor(index);
+        }
+
+        let picker_open = app.ui.desktop_picker_receiver.is_some();
+        let mut installed = app.installed_editors().unwrap_or_default().to_vec();
+        installed.retain(|editor| {
+            !app.preferences
+                .edit_in
+                .editors
+                .iter()
+                .any(|listed| listed.program == editor.program)
+        });
+        let mut added = None;
+        let mut choose_program = false;
+        moduwu_design::action_row(ui, |ui| {
+            let button =
+                moduwu_design::secondary_button_enabled(ui, !picker_open, tr("Add editor…"));
+            moduwu_design::dropdown_menu(&button, |ui| {
+                for editor in &installed {
+                    if ui
+                        .add(moduwu_design::MenuItem::new(editor.name.as_str()))
+                        .clicked()
+                    {
+                        added = Some(editor.clone());
+                        ui.close();
+                    }
+                }
+                if !installed.is_empty() {
+                    ui.separator();
+                }
+                if ui
+                    .add(moduwu_design::MenuItem::new(tr("Choose program…")))
+                    .clicked()
+                {
+                    choose_program = true;
+                    ui.close();
+                }
+            });
+        });
+        if let Some(editor) = added {
+            app.add_editor(editor);
+        }
+        if choose_program {
+            app.choose_editor_program();
         }
     }
 
@@ -1119,7 +1259,7 @@ impl Settings {
 
     fn show_edit_in_folder(ui: &mut Ui, app: &mut CalibRawApp) {
         use crate::export_folders::EditInFolder;
-        let (current, chosen) = match &app.preferences.edit_in_folder {
+        let (current, chosen) = match &app.preferences.edit_in.folder {
             EditInFolder::AppCache => (FolderChoice::AppCache, None),
             EditInFolder::PhotoFolder => (FolderChoice::Photo, None),
             EditInFolder::Folder(folder) => (FolderChoice::Other, Some(folder.clone())),
@@ -1127,7 +1267,7 @@ impl Settings {
         let mut choice = current;
         moduwu_design::form_combo_with_help(
             ui,
-            tr("Edit In folder"),
+            tr("Folder"),
             "settings-edit-in-folder",
             choice.label(),
             190.0,

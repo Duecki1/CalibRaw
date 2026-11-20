@@ -176,17 +176,17 @@ pub(super) fn ai_denoise_phase(completed: usize, total: usize) -> String {
 }
 
 /// Runs one export to completion on the calling thread, passing on its
-/// progress.
+/// progress. Returns the saved file.
 pub(in crate::app) fn run_export_item(
     request: ExportItemRequest,
     cancellation: Arc<std::sync::atomic::AtomicBool>,
     mut progress: impl FnMut(ExportItemEvent),
-) -> Result<(), String> {
+) -> Result<PathBuf, String> {
     let receiver = spawn_export_item(request, cancellation);
     while let Ok(event) = receiver.recv() {
         match event {
             ExportItemEvent::Render(ExportEvent::Finished(result)) => {
-                return result.map(|_| ());
+                return result;
             }
             event => progress(event),
         }
@@ -796,11 +796,16 @@ impl CalibRawApp {
                                 self.finish_carousel_render(&path, slides);
                             } else if !publishes {
                                 if !is_batch {
-                                    self.ui.notice = Some(tr_fmt(
-                                        "Exported {path}",
-                                        &[("path", &path.display())],
-                                    ));
                                     self.export.task = None;
+                                    match self.export.edit_in.take() {
+                                        Some(target) => self.open_in_editor(&target, &path),
+                                        None => {
+                                            self.ui.notice = Some(tr_fmt(
+                                                "Exported {path}",
+                                                &[("path", &path.display())],
+                                            ));
+                                        }
+                                    }
                                 }
                             } else {
                                 match output.and_then(ExportItemOutput::into_single) {
@@ -932,6 +937,10 @@ impl CalibRawApp {
             }
         }
 
+        // An Edit In whose export failed or was cancelled opens nothing.
+        if finished || disconnected {
+            self.export.edit_in = None;
+        }
         if disconnected && !finished {
             if let Some(task) = self.export.task.as_mut() {
                 task.receiver = None;

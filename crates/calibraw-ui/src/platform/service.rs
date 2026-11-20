@@ -1,4 +1,4 @@
-use super::PlatformCaps;
+use super::{FileDialog, PlatformCaps};
 use crate::pipeline::RawThumbnail;
 use crate::sidecar::{
     EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SavedSidecar, SidecarError,
@@ -13,6 +13,18 @@ use std::time::Duration;
 /// How long a touch is held to become a long press where the platform has
 /// no setting of its own: Android's default Touch & hold delay.
 pub(super) const DEFAULT_LONG_PRESS: Duration = Duration::from_millis(400);
+
+/// How Edit In reaches other editors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EditInSupport {
+    Unavailable,
+    /// The person adds editors in Settings, and the app starts them.
+    #[allow(dead_code, reason = "only the desktop backend starts editors")]
+    Editors,
+    /// The system asks which application opens the file, as a sandbox that
+    /// cannot start other programs must (Flatpak).
+    SystemChooser,
+}
 
 /// A photo the platform's document picker or another app handed over.
 #[derive(Debug)]
@@ -378,6 +390,41 @@ pub(crate) trait Platform: Send + Sync {
     /// platform allows. The error is the system's own text, for an error dialog.
     fn reveal_file(&self, _path: &Path) -> Result<(), String> {
         Err(unavailable("the system file manager"))
+    }
+
+    // --- Edit In ---
+
+    /// How Edit In reaches other editors here.
+    fn edit_in_support(&self) -> EditInSupport {
+        EditInSupport::Unavailable
+    }
+    /// Editors installed here that Settings offers to add. May read many
+    /// files, so call it off the UI thread.
+    fn installed_editors(&self) -> Vec<crate::edit_in::ExternalEditor> {
+        Vec::new()
+    }
+    /// A file dialog that picks a program to add as an editor.
+    fn editor_program_dialog(&self) -> FileDialog {
+        FileDialog::new()
+    }
+    /// The editor `program`, a path [`Self::editor_program_dialog`] chose,
+    /// opens files as; `None` when it is not something that opens files.
+    fn editor_for_program(&self, _program: &Path) -> Option<crate::edit_in::ExternalEditor> {
+        None
+    }
+    /// Opens the local `file` in `program` (an [`ExternalEditor`]'s
+    /// program), or in the application the person picks from the system's
+    /// chooser when `None`. Returns once the editor was started or the
+    /// chooser shown; the error is for an error dialog.
+    ///
+    /// [`ExternalEditor`]: crate::edit_in::ExternalEditor
+    fn open_in_editor(&self, _program: Option<&Path>, _file: &Path) -> Result<(), String> {
+        Err(unavailable("Edit In"))
+    }
+    /// The app-cache folder for Edit In's files, which the app empties of
+    /// old files; `None` where there is none.
+    fn edit_in_cache_dir(&self) -> Option<PathBuf> {
+        None
     }
     fn remove_camera_profile_mirror(&self, _path: &Path) -> Result<(), String> {
         Ok(())

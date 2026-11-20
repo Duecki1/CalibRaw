@@ -369,14 +369,6 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
-    pub(crate) fn set_edit_in_folder(&mut self, folder: crate::export_folders::EditInFolder) {
-        if self.preferences.edit_in_folder == folder {
-            return;
-        }
-        self.preferences.edit_in_folder = folder;
-        self.persist_performance_settings();
-    }
-
     /// Asks for the folder export dialogs open in; it applies once chosen.
     pub(crate) fn choose_export_folder(&mut self) {
         let current = match &self.preferences.export_folder {
@@ -386,19 +378,9 @@ impl CalibRawApp {
         self.choose_settings_folder(current, crate::app::DesktopPickerEvent::ExportFolder);
     }
 
-    /// Asks for the folder Edit In saves to; it applies once chosen.
-    pub(crate) fn choose_edit_in_folder(&mut self) {
-        let current = match &self.preferences.edit_in_folder {
-            crate::export_folders::EditInFolder::Folder(folder) => Some(folder.clone()),
-            crate::export_folders::EditInFolder::AppCache
-            | crate::export_folders::EditInFolder::PhotoFolder => None,
-        };
-        self.choose_settings_folder(current, crate::app::DesktopPickerEvent::EditInFolder);
-    }
-
     /// Opens a native folder dialog at `current`; `event` carries the answer
     /// to `poll_desktop_picker`.
-    fn choose_settings_folder(
+    pub(in crate::app) fn choose_settings_folder(
         &mut self,
         current: Option<PathBuf>,
         event: fn(Option<PathBuf>) -> crate::app::DesktopPickerEvent,
@@ -515,7 +497,10 @@ impl CalibRawApp {
             export_watermark: self.export.watermark.saved(),
             export_carousel: self.export.carousel.saved(),
             export_folder: self.preferences.export_folder.clone(),
-            edit_in_folder: self.preferences.edit_in_folder.clone(),
+            edit_in_folder: self.preferences.edit_in.folder.clone(),
+            edit_in_format: self.preferences.edit_in.format,
+            edit_in_color_space: self.preferences.edit_in.color_space,
+            edit_in_editors: self.preferences.edit_in.editors.clone(),
             ui_design: self.preferences.ui_design,
             preview_backdrop: self.preferences.preview_backdrop,
             language: self.preferences.language,

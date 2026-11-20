@@ -10,6 +10,7 @@ const SELECTION_BAR_COUNT_LABEL_BREAKPOINT: f32 = 360.0;
 pub(crate) enum LibraryAction {
     Review(Vec<LibraryAsset>, super::review::ReviewChange),
     Export(Vec<LibraryAsset>),
+    EditIn(LibraryAsset, crate::edit_in::EditInTarget),
     Merge(super::MergeKind, Vec<LibraryAsset>),
     CopyAdjustments(LibraryAsset),
     /// Opens the dialog that chooses which settings Copy adjustments takes.
@@ -77,6 +78,21 @@ pub(crate) fn photo_actions_menu(
     .clicked()
     {
         action = Some(LibraryAction::Export(assets.to_vec()));
+    }
+    // One photo of folder storage, as Edit In opens one file.
+    if let Some(asset) = single.filter(|asset| asset.desktop_path().is_some()) {
+        for target in app.edit_in_targets() {
+            let label = match &target {
+                crate::edit_in::EditInTarget::Editor(editor) => {
+                    tr_fmt("Edit in {editor}", &[("editor", &editor.name)])
+                }
+                crate::edit_in::EditInTarget::SystemChooser => tr("Edit in…").to_owned(),
+            };
+            let item = MenuItem::new(label).icon(regular::ARROW_SQUARE_OUT);
+            if menu_row(ui, enabled, item).clicked() {
+                action = Some(LibraryAction::EditIn(asset.clone(), target));
+            }
+        }
     }
     if assets.len() >= 2 {
         let merge = ui.add_enabled_ui(enabled, |ui| {
@@ -325,6 +341,11 @@ pub(crate) fn apply_library_action(
                     format: app.export.format,
                     overrides: app.export.override_choice.clone(),
                 });
+            }
+        }
+        LibraryAction::EditIn(asset, target) => {
+            if let Some(path) = asset.desktop_path() {
+                app.edit_library_photo_in(frame, path.to_path_buf(), target);
             }
         }
         LibraryAction::CopyAdjustments(asset) => {

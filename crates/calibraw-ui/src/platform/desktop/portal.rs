@@ -38,6 +38,38 @@ pub(in crate::platform) fn trash_file(path: &std::path::Path) -> anyhow::Result<
     Ok(())
 }
 
+/// Asks the desktop to open `path` in an application the person picks from its
+/// chooser (`ask`). The file is passed read-only: the editor saves its result
+/// elsewhere, so a file in the app's cache is never the only copy of work.
+#[cfg(target_os = "linux")]
+pub(in crate::platform) fn open_file_with_chooser(path: &std::path::Path) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use std::os::fd::AsFd;
+
+    // Keep the file alive through the call so the borrowed descriptor remains valid.
+    let file = std::fs::File::open(path).context("Could not open file for the OpenURI portal")?;
+    let connection = zbus::blocking::Connection::session()
+        .context("Could not connect to the desktop portal session bus")?;
+    let proxy = zbus::blocking::Proxy::new(
+        &connection,
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.OpenURI",
+    )
+    .context("Could not access the OpenURI portal")?;
+    let options = std::collections::HashMap::from([
+        ("ask", zbus::zvariant::Value::from(true)),
+        ("writable", zbus::zvariant::Value::from(false)),
+    ]);
+    let _request: zbus::zvariant::OwnedObjectPath = proxy
+        .call(
+            "OpenFile",
+            &("", zbus::zvariant::Fd::from(file.as_fd()), options),
+        )
+        .context("OpenURI portal call failed")?;
+    Ok(())
+}
+
 /// Asks the host file manager to show `path` selected. The portal itself falls
 /// back to opening the folder when the host cannot select the file.
 #[cfg(target_os = "linux")]
