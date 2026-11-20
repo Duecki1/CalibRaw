@@ -102,11 +102,6 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// follows as `AssembledPasses::binned_finish_pass`. It runs with the RAW
     /// stage but comes last so that adding it kept earlier positions.
     pub(in crate::pipeline::gpu) binned_highlight_pass_index: usize,
-    /// Wet Surfaces before the creative pass, and Rain and Wet Surfaces'
-    /// highlights after it. They run with the output stage but come last so that
-    /// adding them kept earlier positions.
-    pub(in crate::pipeline::gpu) wet_surfaces_pass_index: usize,
-    pub(in crate::pipeline::gpu) weather_air_pass_index: usize,
     /// Accumulation into the contour grid, which runs with the tone stage, and
     /// the scene emission passes, which run first in the output stage. They
     /// come last so that adding them kept earlier positions.
@@ -181,8 +176,6 @@ impl StageIndices {
         let chromatic_aberration_prepare_pass_index = take(1);
         let chromatic_aberration_fringe_pass_index = take(1);
         let binned_highlight_pass_index = take(1);
-        let wet_surfaces_pass_index = take(1);
-        let weather_air_pass_index = take(1);
         let contour_accumulate_pass_index = take(1);
         let scene_emission_pass_index = take(SCENE_EMISSION_PASSES);
         let scene_bake_accumulation_pass_index = take(1);
@@ -227,8 +220,6 @@ impl StageIndices {
             chromatic_aberration_prepare_pass_index,
             chromatic_aberration_fringe_pass_index,
             binned_highlight_pass_index,
-            wet_surfaces_pass_index,
-            weather_air_pass_index,
             contour_accumulate_pass_index,
             scene_emission_pass_index,
             scene_bake_accumulation_pass_index,
@@ -776,24 +767,6 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         bindings: groups.bg_binned_finish.clone().into(),
         workgroups: image_workgroups,
     };
-
-    ensure_planned(&passes, indices.wet_surfaces_pass_index, "wet surfaces")?;
-    passes.extend([
-        assembler.make_pass(
-            shaders.creative_effects_module.as_ref(),
-            "apply_wet_surfaces",
-            &layouts.bgl_adjust_creative,
-            InputBoundPass::EffectsFromTex1,
-            image_workgroups,
-        ),
-        assembler.make_pass(
-            shaders.creative_effects_module.as_ref(),
-            "apply_weather_air",
-            &layouts.bgl_adjust_creative,
-            InputBoundPass::EffectsFromTex1,
-            image_workgroups,
-        ),
-    ]);
 
     ensure_planned(&passes, indices.contour_accumulate_pass_index, "contours")?;
     passes.push(assembler.make_pass(

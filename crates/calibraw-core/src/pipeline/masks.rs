@@ -25,10 +25,9 @@ pub use effects::{
     LightRaysEffectSettings, LightShaftSource, LightShaftsEffectSettings, LightShaftsMode,
     MaskEffect, MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings,
     NeonEffectSettings, PackContext, PixelateEffectSettings, RadialBlurEffectSettings,
-    RadialBlurMode, RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneNeed,
-    SceneNeeds, SharpenEffectSettings, SmokeEffectSettings, StarPoints, StyledGlowEffectSettings,
-    TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings,
-    MAX_EFFECT_INSTANCES, OPTION_COUNT,
+    RadialBlurMode, ReachGroup, RelightEffectSettings, RelightLight, SceneNeed, SceneNeeds,
+    SharpenEffectSettings, SmokeEffectSettings, StarPoints, StyledGlowEffectSettings,
+    TiltShiftEffectSettings, VignetteEffectSettings, MAX_EFFECT_INSTANCES, OPTION_COUNT,
 };
 
 mod box_filter;

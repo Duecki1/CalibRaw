@@ -26,7 +26,6 @@ pub mod params;
 mod passes;
 mod pixelate;
 mod radial_blur;
-mod rain;
 mod relight;
 mod settings;
 mod sharpen;
@@ -35,7 +34,6 @@ mod styled_glow;
 mod tilt_shift;
 mod vignette;
 mod warmth;
-mod wet_surfaces;
 
 pub use blur::BlurEffectSettings;
 pub use color_fringe::{ColorFringeEffectSettings, ColorFringeStyle};
@@ -57,7 +55,6 @@ pub use neon::NeonEffectSettings;
 pub use passes::{EffectPass, EffectReach, ReachGroup, SceneNeed, SceneNeeds};
 pub use pixelate::PixelateEffectSettings;
 pub use radial_blur::{RadialBlurEffectSettings, RadialBlurMode};
-pub use rain::RainEffectSettings;
 pub use relight::{RelightEffectSettings, RelightLight};
 pub use settings::{EffectControl, EffectControls, EffectDetails, EffectSettings};
 pub use sharpen::SharpenEffectSettings;
@@ -66,7 +63,6 @@ pub use styled_glow::{GlowSplitMode, GlowStyle, StarPoints, StyledGlowEffectSett
 pub use tilt_shift::TiltShiftEffectSettings;
 pub use vignette::VignetteEffectSettings;
 pub use warmth::LightColorMode;
-pub use wet_surfaces::WetSurfacesEffectSettings;
 
 // The legacy effects' settings modules, by their settings fields, as the
 // registry names them.
@@ -514,28 +510,6 @@ mask_effects! {
         passes: [DisplayFinish],
         reach: Pixel,
     }
-    Rain {
-        label: "Rain",
-        description: "Add falling rain and its mist. Drops pass behind nearer objects, catch Relight, Light Rays, Glow, Neon and the photo's own lights, and show best against dark areas. The mask controls where it falls.",
-        shader_id: 18,
-        category: Texture,
-        family: Rain,
-        settings: rain: RainEffectSettings,
-        passes: [AfterCreative],
-        reach: Pixel,
-        scene: [AirLight, Image],
-    }
-    WetSurfaces {
-        label: "Wet Surfaces",
-        description: "Darken surfaces as water does and let the ground reflect the photo, with standing puddles on smooth ground. The ground is found in scene depth, which is generated automatically; a Rain effect ripples the puddles. The mask controls where it applies.",
-        shader_id: 19,
-        category: Texture,
-        family: WetSurfaces,
-        settings: wet_surfaces: WetSurfacesEffectSettings,
-        passes: [BeforeCreative, AfterCreative],
-        reach: Pixel,
-        scene: [Geometry, Image],
-    }
     StyledGlow {
         label: "Glow",
         description: "Let light spread from the bright parts of the mask: Bloom glows around highlights, Diffusion softens across tones, Halation adds a film's red halo around bright edges. Range sets which tones glow, Spread how far. The glow can extend beyond the selection.",
@@ -613,21 +587,11 @@ impl MaskEffect {
         Self::Smoke,
         Self::Grain,
         Self::Vignette,
-        Self::Rain,
-        Self::WetSurfaces,
         Self::Halation,
         Self::LegacyHighlightGlow,
         Self::LightRays,
         Self::LensBlur,
     ];
-
-    /// Switched off: never offered and never rendered (2026-11-07; Rain and Wet
-    /// Surfaces shipped in no release and nobody uses them). Components that hold
-    /// one keep their settings and render as if disabled. Their GPU passes are
-    /// never compiled either: Rain's crashes the Adreno 830 shader compiler.
-    pub const fn is_disabled(self) -> bool {
-        matches!(self, Self::Rain | Self::WetSurfaces)
-    }
 
     /// Replaced by a rebuilt effect (`legacy/`): edits that hold it render it
     /// as before, but it is never offered, and its card offers only to switch
@@ -639,10 +603,10 @@ impl MaskEffect {
         )
     }
 
-    /// Whether pickers, quick-add buttons and Style controls offer it: neither
-    /// switched off nor legacy.
+    /// Whether pickers, quick-add buttons and Style controls offer it: not
+    /// legacy.
     pub const fn is_offered(self) -> bool {
-        !self.is_disabled() && !self.is_legacy()
+        !self.is_legacy()
     }
 
     /// The style of the rebuilt effect that replaces a legacy effect, which

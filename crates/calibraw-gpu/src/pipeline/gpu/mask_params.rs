@@ -1,7 +1,7 @@
 //! Packing of local adjustment masks and mask effects into `MaskData` slots.
 
 use super::*;
-use crate::pipeline::effect_lanes::{light_rays, light_shafts, options, rain, relight};
+use crate::pipeline::effect_lanes::{light_rays, light_shafts, options, relight};
 use crate::pipeline::{EffectLanes, PackContext};
 
 /// Bits of `metadata[2]` of an effect slot that hold its instance; the bits
@@ -37,11 +37,9 @@ fn effect_mask_data(
     }
 }
 
-/// Whether an active Fog, Smoke or Rain slot scatters the photograph's own lights.
+/// Whether an active Fog or Smoke slot scatters the photograph's own lights.
 pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
-    (data.applies(MaskEffect::Fog)
-        || data.applies(MaskEffect::Smoke)
-        || data.applies(MaskEffect::Rain))
+    (data.applies(MaskEffect::Fog) || data.applies(MaskEffect::Smoke))
         && data.option(options::MEDIUM_IMAGE_LIGHTS) > 0.5
 }
 
@@ -53,7 +51,7 @@ pub(super) fn relight_casts_shadows(data: &MaskData) -> bool {
         && data.percent(relight::SHADOWS) > 1e-6
 }
 
-/// Whether an active slot of a medium (Fog, Smoke, Rain) reads the light
+/// Whether an active slot of a medium (Fog, Smoke) reads the light
 /// bake: then every Relight light is in it, whether or not it casts shadows on
 /// surfaces, as light in the air was always shadowed by the scene. Relight and
 /// Light Rays read only their own lights.
@@ -88,66 +86,6 @@ fn light_shafts_emit(data: &MaskData) -> bool {
         && data.lane(light_shafts::LENGTH) > 1e-6
 }
 
-/// The direction in image points that `output_direction`, a unit vector in the
-/// output frame, points in, for a projection from source to output
-/// coordinates. Rain and the ground follow the frame the photo is seen in, so
-/// straightening or flipping it does not tilt them.
-pub(super) fn source_direction(
-    projection: [[f32; 3]; 3],
-    output_size: [f32; 2],
-    image_size: [f32; 2],
-    output_direction: [f32; 2],
-) -> [f32; 2] {
-    let project = |u: f32, v: f32| {
-        let row = |r: [f32; 3]| r[0] * u + r[1] * v + r[2];
-        let w = row(projection[2]);
-        [row(projection[0]) / w, row(projection[1]) / w]
-    };
-    let short = output_size[0].min(output_size[1]).max(1.0);
-    let scale = [output_size[0] / short, output_size[1] / short];
-    const STEP: f32 = 1e-3;
-    let center = project(0.5, 0.5);
-    let along_u = project(0.5 + STEP, 0.5);
-    let along_v = project(0.5, 0.5 + STEP);
-    // Output points per image point along each image axis.
-    let along_x = [
-        (along_u[0] - center[0]) * scale[0] / (STEP * image_size[0]),
-        (along_u[1] - center[1]) * scale[1] / (STEP * image_size[0]),
-    ];
-    let along_y = [
-        (along_v[0] - center[0]) * scale[0] / (STEP * image_size[1]),
-        (along_v[1] - center[1]) * scale[1] / (STEP * image_size[1]),
-    ];
-    let determinant = along_x[0] * along_y[1] - along_y[0] * along_x[1];
-    if determinant.abs() < 1e-6 {
-        return output_direction;
-    }
-    let [fx, fy] = output_direction;
-    let x = (fx * along_y[1] - fy * along_y[0]) / determinant;
-    let y = (fy * along_x[0] - fx * along_x[1]) / determinant;
-    let magnitude = x.hypot(y);
-    if magnitude < 1e-6 {
-        return output_direction;
-    }
-    [x / magnitude, y / magnitude]
-}
-
-/// Points the slots' fall directions, which are in the output frame when this
-/// is called, along `direction_of`, which maps an output-frame direction to
-/// image points.
-pub(super) fn orient_rain_slots(
-    packed: &mut [MaskData],
-    direction_of: impl Fn([f32; 2]) -> [f32; 2],
-) {
-    for data in packed.iter_mut() {
-        if data.effect_id() == MaskEffect::Rain.shader_id() {
-            let fall = direction_of([data.lane(rain::FALL_X), data.lane(rain::FALL_Y)]);
-            data.set_lane(rain::FALL_X, fall[0]);
-            data.set_lane(rain::FALL_Y, fall[1]);
-        }
-    }
-}
-
 /// The slots of an effect, one per instance in order, with its settings as
 /// its shader reads them. They are active when `enabled` and the settings
 /// change the image; each instance's own values say whether it adds anything.
@@ -156,15 +94,11 @@ pub(super) fn pack_effect_slots(
     effect: MaskEffect,
     settings: &crate::pipeline::MaskEffectSettings,
     enabled: bool,
-    shutter_seconds: f32,
 ) -> impl Iterator<Item = MaskData> + '_ {
     let count = settings.instance_count(effect);
-    let active = enabled && !effect.is_disabled() && settings.effect_is_active(effect);
+    let active = enabled && settings.effect_is_active(effect);
     (0..count).filter_map(move |instance| {
-        let context = PackContext {
-            shutter_seconds,
-            instance,
-        };
+        let context = PackContext { instance };
         let lanes = settings.pack(effect, &context)?;
         Some(effect_mask_data(effect, active, &lanes, instance, count))
     })
@@ -259,7 +193,7 @@ pub(super) fn render_mask_slot_count(masks: &MaskStack) -> usize {
         + crate::pipeline::effect_places(&masks.global_effects)
 }
 
-pub(super) fn pack_mask_params(masks: &MaskStack, shutter_seconds: f32) -> Box<[MaskData]> {
+pub(super) fn pack_mask_params(masks: &MaskStack) -> Box<[MaskData]> {
     let mut packed = vec![MaskData::zeroed(); MAX_RENDER_MASK_SLOTS].into_boxed_slice();
     let mut slot = 0;
     // Validation keeps every list within its places (MAX_EFFECT_COMPONENTS),
@@ -277,12 +211,7 @@ pub(super) fn pack_mask_params(masks: &MaskStack, shutter_seconds: f32) -> Box<[
         if mask.effect == MaskEffect::Adjustment {
             place(pack_adjustment_mask(mask), layer);
         } else {
-            for data in pack_effect_slots(
-                mask.effect,
-                &mask.effect_settings,
-                mask.enabled,
-                shutter_seconds,
-            ) {
+            for data in pack_effect_slots(mask.effect, &mask.effect_settings, mask.enabled) {
                 place(data, layer);
             }
         }
@@ -291,19 +220,13 @@ pub(super) fn pack_mask_params(masks: &MaskStack, shutter_seconds: f32) -> Box<[
                 component.effect,
                 &component.settings,
                 mask.enabled && component.enabled,
-                shutter_seconds,
             ) {
                 place(data, layer);
             }
         }
     }
     for component in &masks.global_effects {
-        for data in pack_effect_slots(
-            component.effect,
-            &component.settings,
-            component.enabled,
-            shutter_seconds,
-        ) {
+        for data in pack_effect_slots(component.effect, &component.settings, component.enabled) {
             place(data, u32::MAX);
         }
     }
@@ -314,7 +237,7 @@ pub(super) fn pack_mask_params(masks: &MaskStack, shutter_seconds: f32) -> Box<[
 
 /// Gives the first Relight slots that light the scene and cast shadows, every
 /// Light Rays source (its rays are the air light of its channel), and every
-/// Relight and legacy Light Rays slot that lights a medium or the wet ground,
+/// Relight and legacy Light Rays slot that lights a medium,
 /// in slot order, a channel of the light bake each (`scene::lights`), as its
 /// number plus one in the flag bits of `metadata[3]` below the effect's ID
 /// (`mask_effect_scene_bake_light` in effect_api.wgsl). Later ones cast none,

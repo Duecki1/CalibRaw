@@ -16,7 +16,8 @@
 //! 2D (`Flat`): the earlier Light Rays' shafts, without depth. Procedural
 //! rays fan out from each source in the image and pass only through the
 //! openings the mask paints along their way (light_shafts_flat.wgsl);
-//! Spread, Softness, Variation and Ray count shape them.
+//! Spread, Softness, Variation and Ray count shape them, and each source's
+//! Ray rotation turns its rays around it, in degrees clockwise on screen.
 //!
 //! - Length sets how far a source's light reaches: the distance at which it
 //!   has halved, in shorter edges at the source's depth (Scene), or where
@@ -91,6 +92,9 @@ pub struct LightShaftSource {
     pub color_mode: LightColorMode,
     /// The picked colour, sRGB encoded; only its hue and saturation count.
     pub color: [f32; 3],
+    /// 2D: how far the rays turn around the source, in degrees clockwise on
+    /// screen.
+    pub rotation: f32,
 }
 
 impl Default for LightShaftsEffectSettings {
@@ -116,6 +120,7 @@ impl Default for LightShaftSource {
             warmth: WARMTH.default,
             color_mode: LightColorMode::default(),
             color: COLOR.default,
+            rotation: ROTATION.default,
         }
     }
 }
@@ -175,6 +180,8 @@ effect_lanes! {
     RAY_COUNT = 9,
     VARIATION = 10,
     SOFTNESS = 11,
+    /// 2D: the source's Ray rotation in degrees, clockwise on screen.
+    ROTATION = 12,
 }
 
 impl EffectSettings for LightShaftsEffectSettings {
@@ -204,6 +211,7 @@ impl EffectSettings for LightShaftsEffectSettings {
                 EffectControl::Position(&mut source.source, [SOURCE_X, SOURCE_Y]),
                 EffectControl::Slider(&mut source.warmth, WARMTH),
                 EffectControl::Color(&mut source.color, COLOR),
+                EffectControl::Angle(&mut source.rotation, ROTATION),
             ]);
         }
         shown.push(EffectControl::Slider(&mut self.penetration, PENETRATION));
@@ -234,6 +242,7 @@ impl EffectSettings for LightShaftsEffectSettings {
         slot.set(lanes::RAY_COUNT, RAY_COUNT.clamp(self.ray_count));
         slot.set(lanes::VARIATION, VARIATION.clamp(self.variation));
         slot.set(lanes::SOFTNESS, SOFTNESS.clamp(self.softness));
+        slot.set(lanes::ROTATION, ROTATION.clamp(source.rotation));
         slot.set_switch(
             options::LIGHT_SHAFTS_FLAT,
             self.mode == LightShaftsMode::Flat,

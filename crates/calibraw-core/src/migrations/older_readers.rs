@@ -25,12 +25,11 @@
 //!   aspect stretch and cannot decode a Select People mask. Edits with any of them are written
 //!   with schema 3, which shares the same layout and which those readers
 //!   report as newer.
-//! - Up to v1.4, readers cannot decode a Rain or Wet Surfaces effect, and
-//!   reject the scene normals' assets as unreferenced. They read only the
-//!   first of Relight's lights or Light Rays' sources, which are stored where
-//!   those effects kept their one light. Edits with any of these are written
-//!   with schema 4, which shares the same layout and which those readers
-//!   report as newer.
+//! - Up to v1.4, readers reject the scene normals' assets as unreferenced.
+//!   They read only the first of Relight's lights or Light Rays' sources,
+//!   which are stored where those effects kept their one light. Edits with
+//!   any of these are written with schema 4, which shares the same layout and
+//!   which those readers report as newer.
 //! - Readers of schema 4, development builds after v1.4, read scene depth as
 //!   one 8-bit map. Edits holding scene depth are written with schema 5, its
 //!   layout as `SceneDepth`, which those readers report as newer.
@@ -162,7 +161,7 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
         .iter()
         .chain(masks.masks.iter().flat_map(|mask| &mask.effect_components))
         .any(|component| component.places() > 1);
-    if uses_effect(&[MaskEffect::Rain, MaskEffect::WetSurfaces]) || has_instances {
+    if has_instances {
         return V4_SCHEMA_VERSION;
     }
     if edits.look_lut.is_some()

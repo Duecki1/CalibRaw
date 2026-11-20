@@ -2,7 +2,7 @@
   "edited": true,
   "migrated": true,
   "saved": {
-    "edit_fingerprint": "2ac9e6c7e265cca7",
+    "edit_fingerprint": "aa5b4b377ca630f5",
     "editing_time_ms": 61000,
     "edits": {
       "ai_masks_need_update": false,
@@ -163,6 +163,7 @@
                     "color": [1.0,0.2,0.7],
                     "color_mode": "Custom",
                     "length": 100.0,
+                    "rotation": 0.0,
                     "source": [20.0,10.0],
                     "warmth": -20.0
                   }
@@ -174,6 +175,7 @@
                 "mode": "Scene",
                 "penetration": 0.0,
                 "ray_count": 32.0,
+                "rotation": 0.0,
                 "softness": 60.0,
                 "source": [60.0,15.0],
                 "spread": 8.0,

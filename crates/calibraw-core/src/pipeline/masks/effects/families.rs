@@ -32,8 +32,6 @@ pub enum EffectFamily {
     Grain,
     Halation,
     Vignette,
-    Rain,
-    WetSurfaces,
     LegacyHighlightGlow,
     LegacyLightRays,
     LegacyLensBlur,
@@ -214,8 +212,8 @@ impl EffectFamily {
     }
 
     /// The styles a list of `components` can still take: those whose effect
-    /// it lacks, as it holds each effect at most once. Effects switched off
-    /// for good or replaced ([`MaskEffect::is_offered`]) are never offered.
+    /// it lacks, as it holds each effect at most once. Legacy effects
+    /// ([`MaskEffect::is_offered`]) are never offered.
     pub fn styles_to_add(
         self,
         components: &[EffectComponent],

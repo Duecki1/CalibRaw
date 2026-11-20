@@ -35,8 +35,8 @@ pub use size_limits::*;
 // The newest schema of the "CalibRaw edit sidecar" format. Bump this for every incompatible
 // serialized layout change; pre-release AuRaw sidecars use a different format discriminator.
 // Schemas 2 to 4 share the layout of schema 1. Schema 2 adds the Relight effect and manual lens
-// correction, schema 3 the LUT, perspective correction and aspect stretch, schema 4 Rain and Wet
-// Surfaces. Schema 5 stores scene depth as `SceneDepth` (`SidecarSceneDepth`), which schemas 1
+// correction, schema 3 the LUT, perspective correction and aspect stretch, schema 4 several
+// lights or sources per effect and the scene normals. Schema 5 stores scene depth as `SceneDepth` (`SidecarSceneDepth`), which schemas 1
 // to 4 held as an 8-bit map (`migrations::scene_depth_layout`). Edits are written with the
 // oldest schema that holds them (`migrations::older_readers`).
 pub const SIDECAR_SCHEMA_VERSION: u32 = 5;

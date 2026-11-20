@@ -1746,8 +1746,7 @@ impl RawGpuPipeline {
                 if params.needs_scene_emission() {
                     // Rebuilt for every render that reaches the Creative part:
                     // it follows the emitters' settings and masks, which change
-                    // without a new tone result. Wet Surfaces, in the Scene
-                    // part, reads it too.
+                    // without a new tone result.
                     let start = self.indices.scene_emission_pass_index;
                     self.encode_pass_range(encoder, start, start + SCENE_EMISSION_PASSES);
                 }
@@ -1766,7 +1765,7 @@ impl RawGpuPipeline {
 
     /// The Creative part of the output stage from the creative input, in the
     /// second work texture when `creative_input_in_tex2`: the Glow passes,
-    /// Pixelate's blocks, the creative pass and the pass after it. Each pass
+    /// Pixelate's blocks and the creative pass. Each pass
     /// that transforms the image reads it from one work texture and writes
     /// the other; the Glow passes write the other and display_linear.
     fn encode_creative_part(
@@ -1776,7 +1775,6 @@ impl RawGpuPipeline {
         creative_input_in_tex2: bool,
     ) -> OutputTextures {
         let mut image_in_tex2 = creative_input_in_tex2;
-        let mut creative_input_intact = true;
         if params.needs_intermediate_adjustment_passes() {
             if params.styled_glow_slots() > 0 {
                 self.encode_styled_glow(encoder, params, image_in_tex2);
@@ -1810,25 +1808,17 @@ impl RawGpuPipeline {
                     self.encode_pass(encoder, self.indices.pixelate_blocks_pass_index);
                 }
             }
-            for (needed, index) in [
-                (
-                    params.needs_creative_pass(),
+            if params.needs_creative_pass() {
+                // It writes the other work texture, so the creative input stays.
+                self.encode_effects_pass(
+                    encoder,
                     self.indices.adjustment_creative_pass_index,
-                ),
-                (
-                    params.needs_weather_air_pass(),
-                    self.indices.weather_air_pass_index,
-                ),
-            ] {
-                if needed {
-                    self.encode_effects_pass(encoder, index, &mut image_in_tex2);
-                    // The pass wrote the texture the image is now in.
-                    creative_input_intact &= image_in_tex2 != creative_input_in_tex2;
-                }
+                    &mut image_in_tex2,
+                );
             }
         }
         OutputTextures {
-            creative_input_in_tex2: creative_input_intact.then_some(creative_input_in_tex2),
+            creative_input_in_tex2,
             view_input_in_tex2: image_in_tex2,
         }
     }
@@ -1844,8 +1834,8 @@ impl RawGpuPipeline {
     }
 
     /// The output stage up to the creative pass's input: the scene
-    /// adjustments, and with intermediate passes the scene effects, the blurs
-    /// and Wet Surfaces. Returns whether the image ends in the second work
+    /// adjustments, and with intermediate passes the scene effects and the
+    /// blurs. Returns whether the image ends in the second work
     /// texture rather than the first.
     fn encode_creative_input(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) -> bool {
         let mut image_in_tex2 = self.encode_scene_adjustments(encoder, params);
@@ -1867,13 +1857,6 @@ impl RawGpuPipeline {
                 self.encode_pass(encoder, self.indices.mask_blur_start_index);
             }
             image_in_tex2 = true;
-        }
-        if params.needs_wet_surfaces_pass() {
-            self.encode_effects_pass(
-                encoder,
-                self.indices.wet_surfaces_pass_index,
-                &mut image_in_tex2,
-            );
         }
         image_in_tex2
     }

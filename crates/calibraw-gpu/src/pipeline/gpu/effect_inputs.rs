@@ -1,6 +1,6 @@
 //! GPU inputs that only some effects read, allocated the first time one of
 //! them renders: scene depth and the scene map that every depth-reading effect
-//! shares, the scene shadow map, the image-light map that Fog, Smoke and Rain
+//! shares, the scene shadow map, the image-light map that Fog and Smoke
 //! scatter, the contours and the light that Glow and Neon emit into the scene,
 //! the haze map Dehaze applies, the LUT the view pass applies, the scene
 //! bake (`scene`), whose working image a pass of this pipeline accumulates,
@@ -49,7 +49,7 @@ pub(super) const SCENE_EMISSION_PASSES: usize = 3;
 /// prepass, and copied from the full frame by cropped and zoomed views.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FullImageMap {
-    /// The light sources Fog, Smoke and Rain scatter (tone_analysis.wgsl).
+    /// The light sources Fog and Smoke scatter (tone_analysis.wgsl).
     ImageLights,
     /// The airlight and transmission Dehaze applies (haze_analysis.wgsl).
     Haze,
@@ -77,8 +77,8 @@ pub(super) struct FullImageMapResources {
 pub(super) enum InputBoundPass {
     /// The scene preparation, which applies Dehaze from the haze map.
     ScenePreparation,
-    /// Wet Surfaces, the creative effects or Rain, reading the first work
-    /// texture and writing the second.
+    /// The creative effects, reading the first work texture and writing the
+    /// second.
     EffectsFromTex1,
     /// The same, reading the second work texture and writing the first.
     EffectsFromTex2,

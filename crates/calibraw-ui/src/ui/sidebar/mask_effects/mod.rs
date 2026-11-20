@@ -8,7 +8,6 @@ pub(super) mod lens_blur;
 pub(super) mod light_shafts;
 mod picker;
 pub(super) mod radial_blur;
-pub(super) mod rain;
 pub(super) mod relight;
 pub(super) mod tilt_shift;
 pub(super) mod vignette;

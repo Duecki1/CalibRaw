@@ -1,8 +1,7 @@
 // Scene emission: effects that light the scene from an area of the image rather
 // than from a point. A Glowing Area and Neon's lines reach the same
-// receivers as the scene lights of scene_lights.wgsl: surfaces, Fog, Smoke and
-// Rain's mist and drops, and highlights on wet ground. Particles and other drawn
-// light join as further emitters.
+// receivers as the scene lights of scene_lights.wgsl: surfaces, Fog and Smoke.
+// Particles and other drawn light join as further emitters.
 //
 // Writers. `build_scene_emission` evaluates every slot on a coarse grid over the
 // full image, SCENE_EMISSION_GRID_LONG cells along its longer edge, sampled
@@ -26,11 +25,11 @@
 // render, so a receiver's cost does not depend on the emitters:
 // - `build_scene_emission_surfaces` gives the light arriving at the scene's
 //   surfaces on a grid twice as fine, at each cell's depth, with its mean
-//   direction. Surfaces (`apply_scene_emission_light`) and wet ground read it.
+//   direction. Surfaces (`apply_scene_emission_light`) read it.
 // - `build_scene_emission_volume` integrates the light along each view ray over
 //   the depth cells of the media (MEDIUM_CELLS), scattered evenly and with the
 //   forward lobe of Fog (FOG_LIGHT_ANISOTROPY), from cells merged two by two.
-//   Fog, Smoke and Rain read it.
+//   Fog and Smoke read it.
 // Light is relative to the scene's ambient level, as the scene lights' is.
 // Emitters cast no shadows.
 //

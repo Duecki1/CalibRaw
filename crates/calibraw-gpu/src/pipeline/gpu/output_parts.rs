@@ -4,11 +4,10 @@
 //! the part before from a work texture:
 //!
 //! - [`OutputPart::Scene`]: scene preparation, tone, local tone, the detail
-//!   pyramid, the scene effects, the blurs (Lens Blur among them) and Wet
-//!   Surfaces, up to the creative input;
+//!   pyramid, the scene effects and the blurs (Lens Blur among them), up to
+//!   the creative input;
 //! - [`OutputPart::Creative`]: scene emission, the Glow passes and map,
-//!   Pixelate's blocks, the creative pass and the pass after it (Rain, Wet
-//!   Surfaces), up to the view input;
+//!   Pixelate's blocks and the creative pass, up to the view input;
 //! - [`OutputPart::View`]: the view transform and display (`apply_view_node`).
 //!
 //! [`RawGpuPipeline::dispatch_stage`] compares what a render reads
@@ -69,13 +68,10 @@ impl OutputPart {
 
     const fn of_pass(pass: EffectPass) -> Self {
         match pass {
-            EffectPass::CaptureSharpening
-            | EffectPass::SceneEffects
-            | EffectPass::Blur
-            | EffectPass::BeforeCreative => Self::Scene,
-            EffectPass::Creative | EffectPass::CreativeLight | EffectPass::AfterCreative => {
-                Self::Creative
+            EffectPass::CaptureSharpening | EffectPass::SceneEffects | EffectPass::Blur => {
+                Self::Scene
             }
+            EffectPass::Creative | EffectPass::CreativeLight => Self::Creative,
             EffectPass::DisplayFinish => Self::View,
         }
     }
@@ -106,7 +102,7 @@ pub(super) enum OutputStart {
     View {
         input_in_tex2: bool,
         /// Where the creative input stays, which the view node leaves alone.
-        creative_input_in_tex2: Option<bool>,
+        creative_input_in_tex2: bool,
     },
 }
 
@@ -134,9 +130,8 @@ impl OutputStart {
 /// (`true`: the second).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct OutputTextures {
-    /// `None` once a pass after the creative input overwrote it (Rain and Wet
-    /// Surfaces' pass after the creative pass).
-    pub(super) creative_input_in_tex2: Option<bool>,
+    /// No pass of the Creative part overwrites its input, so it stays.
+    pub(super) creative_input_in_tex2: bool,
     pub(super) view_input_in_tex2: bool,
 }
 
@@ -151,10 +146,7 @@ struct SceneShape {
     blur: bool,
     progressive_blur: bool,
     defocus_slots: usize,
-    wet_surfaces: bool,
-    weather_air: bool,
     scene_geometry: bool,
-    scene_image: bool,
 }
 
 impl SceneShape {
@@ -167,10 +159,7 @@ impl SceneShape {
             blur: params.needs_blur_passes(),
             progressive_blur: params.needs_progressive_blur_passes(),
             defocus_slots: params.defocus_slots(),
-            wet_surfaces: params.needs_wet_surfaces_pass(),
-            weather_air: params.needs_weather_air_pass(),
             scene_geometry: params.needs_scene_geometry(),
-            scene_image: params.needs_scene_image(),
         }
     }
 }
@@ -376,9 +365,8 @@ impl OutputResume {
         .unwrap_or(OutputPart::Scene);
         match part {
             OutputPart::Scene => OutputStart::Scene,
-            OutputPart::Creative => match textures.creative_input_in_tex2 {
-                Some(input_in_tex2) => OutputStart::Creative { input_in_tex2 },
-                None => OutputStart::Scene,
+            OutputPart::Creative => OutputStart::Creative {
+                input_in_tex2: textures.creative_input_in_tex2,
             },
             OutputPart::View => OutputStart::View {
                 input_in_tex2: textures.view_input_in_tex2,

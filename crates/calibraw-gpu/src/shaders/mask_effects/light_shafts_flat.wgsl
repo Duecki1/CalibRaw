@@ -13,13 +13,15 @@
 
 // The look of a source's rays, as its effect's controls set them: Spread in
 // degrees (0 to 45); Fade, Softness and Variation in [0, 1]; Ray count as set
-// (clamped to 4 to 96 where it is used).
+// (clamped to 4 to 96 where it is used); Rotation in turns, clockwise on
+// screen (full-image y points down), 0 for the legacy Light Rays.
 struct LightShaftsFlatLook {
     spread: f32,
     fade: f32,
     softness: f32,
     variation: f32,
     ray_count: f32,
+    rotation: f32,
 }
 
 // A source's shafts at a pixel: their strength along the ray, and the
@@ -66,9 +68,14 @@ fn light_shafts_flat_angular_pattern(
     variation: f32,
     softness: f32,
     spread: f32,
+    rotation: f32,
 ) -> f32 {
     let count = u32(floor(clamp(ray_count, 4.0, 96.0) + 0.5));
-    let turn = atan2(radial_pixels.y, radial_pixels.x) / (2.0 * LIGHT_SHAFTS_FLAT_PI) + 0.5;
+    // Turning the rays clockwise by `rotation` samples the pattern that much
+    // counter-clockwise; the circular noise wraps the turn (`fract`). A zero
+    // rotation leaves the turn exactly as before it existed.
+    let turn = atan2(radial_pixels.y, radial_pixels.x) / (2.0 * LIGHT_SHAFTS_FLAT_PI) + 0.5
+        - rotation;
     let footprint = 0.75 / max(length(radial_pixels), 1.0);
     let width = radians(spread) * mix(0.08, 0.28, softness) / (2.0 * LIGHT_SHAFTS_FLAT_PI);
     let offset = max(width, footprint / (2.0 * LIGHT_SHAFTS_FLAT_PI));
@@ -181,7 +188,7 @@ fn light_shafts_flat_ray(
     // Placement translates the same shafts without reshuffling their
     // texture on every slider movement.
     let pattern = light_shafts_flat_angular_pattern(radial_pixels, 19u,
-        look.ray_count, look.variation, look.softness, look.spread);
+        look.ray_count, look.variation, look.softness, look.spread, look.rotation);
     let image_point = output_uv * full_size / short_edge;
     let density = mix(1.0, 0.80 + 0.32 * effect_noise(
         image_point * 7.0 + vec2<f32>(13.1, 7.9),

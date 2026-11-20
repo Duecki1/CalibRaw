@@ -117,54 +117,6 @@ fn rendered_cases_match_their_goldens() {
     );
 }
 
-/// The scene map is built once from every tile's core and must stay so for each
-/// tile: rebuilt from a tile's own region, it shows as seams that move with the
-/// tile size. The cases above fit in one tile, so they cannot show this.
-#[test]
-fn rain_without_depth_does_not_depend_on_the_tile_size() {
-    const SCALE: u32 = 10;
-    let output = Path::new(env!("CARGO_TARGET_TMPDIR")).join("render-parity");
-    fs::create_dir_all(&output).unwrap();
-    let gpu = request_headless_device(&HeadlessDeviceRequest {
-        label: "render parity tile sizes",
-        adapter: HeadlessAdapter::PreferredOrSoftware(wgpu::PowerPreference::HighPerformance),
-        texture_dimension: wgpu::Limits::default().max_texture_dimension_2d,
-    })
-    .unwrap_or_else(|error| panic!("render parity needs a GPU adapter: {error}"));
-    let case = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../data/render-parity/scene/rain-no-depth.json");
-    let scene: Vec<f32> = (0..HEIGHT * SCALE)
-        .flat_map(|y| (0..WIDTH * SCALE).flat_map(move |x| scene(x / SCALE, y / SCALE)))
-        .collect();
-    let raw = LoadedRaw::from_scene_linear_rec2020(WIDTH * SCALE, HEIGHT * SCALE, scene).unwrap();
-    let [large, small] = [1024, 512].map(|core_edge| {
-        let path = output.join(format!("rain-no-depth-tiles-{core_edge}.png"));
-        let tile_spec = TileSpec {
-            core_edge,
-            ..TileSpec::default()
-        };
-        render(
-            &gpu.device,
-            &gpu.queue,
-            Input {
-                raw: raw.clone(),
-                binned: false,
-                color_space: OutputColorSpace::Srgb,
-            },
-            edits(&case),
-            tile_spec,
-            &path,
-        );
-        image::open(&path).unwrap().into_rgb16()
-    });
-    let difference = largest_block_difference(&large, &small);
-    assert!(
-        difference <= BLOCK_TOLERANCE,
-        "a square's mean moved by {:.1} 8-bit levels between tile sizes",
-        difference * 255.0
-    );
-}
-
 /// Every case, sorted so failures list in a stable order.
 fn cases(root: &Path) -> Vec<PathBuf> {
     let mut cases = Vec::new();

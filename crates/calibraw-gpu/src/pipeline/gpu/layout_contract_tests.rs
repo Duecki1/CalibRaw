@@ -30,7 +30,6 @@ use crate::pipeline::{effect_lanes::options, MaskEffect, ReachGroup, OPTION_COUN
 use calibraw_core::pipeline::{
     CA_WINDOW_RADIUS, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT,
     HAZE_GUIDE_SUPPORT, MAX_LATERAL_SHIFT, MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
-    WET_SURFACES_SUPPORT,
 };
 use naga::proc::Layouter;
 use std::collections::BTreeSet;
@@ -720,16 +719,6 @@ fn haze_buffers_and_supports_match_their_wgsl_declarations() {
     );
 }
 
-/// The export halo reserves how far Wet Surfaces reads the photo around a pixel.
-#[test]
-fn wet_surfaces_halo_matches_its_wgsl_reach() {
-    let modules = production_modules();
-    assert_eq!(
-        shared_u32_constant(&modules, "WET_DETAIL_REACH"),
-        WET_SURFACES_SUPPORT
-    );
-}
-
 /// Color Fringe caps its shift at the reach its registry row reserves in the
 /// export halo.
 #[test]
@@ -1083,14 +1072,13 @@ fn mask_rows_stripped(strip: impl Fn(&MaskData) -> MaskData) -> BTreeSet<String>
 /// from it starts with), or the Scene part for every other entry point, the
 /// strictest, which also covers the RAW and tone stages.
 fn output_part_of_entry(entry: &str) -> OutputPart {
-    const CREATIVE: [&str; 7] = [
+    const CREATIVE: [&str; 6] = [
         "build_scene_emission",
         "prepare_glow_source",
         "diffuse_glow_",
         "styled_glow",
         "prepare_pixelate_blocks",
         "apply_creative_effects",
-        "apply_weather_air",
     ];
     if entry == "apply_view_node" {
         OutputPart::View

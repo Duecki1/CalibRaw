@@ -12,8 +12,7 @@
 // through the functions below and the participating media in medium.wgsl, so the
 // pipeline behind them can change without touching the effect. Relight shades the
 // scene's surfaces and shares its shadows with the scene's lights, so it reads
-// scene_depth.wgsl and scene_lights.wgsl directly, as Rain and Wet Surfaces do from
-// their own passes. Shader IDs, lanes and the creative pass's dispatch are generated
+// scene_depth.wgsl and scene_lights.wgsl directly. Shader IDs, lanes and the creative pass's dispatch are generated
 // from the registry (effect_wgsl.rs).
 //
 // Everything here depends on full-image coordinates, the effect uniforms, global tone

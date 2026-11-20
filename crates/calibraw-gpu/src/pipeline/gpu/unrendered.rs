@@ -16,7 +16,7 @@ pub enum UnrenderedEffect {
     /// The Glow's pyramids or its full-image map.
     Glow,
     /// The scene bake, light bake or air light that depth effects (Relight,
-    /// Fog, Smoke, Rain, Light Rays, Wet Surfaces) read.
+    /// Fog, Smoke, Light Rays) read.
     Scene,
 }
 

@@ -27,6 +27,7 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
             clamp(mask_effect_lane(params, LIGHT_RAYS_SOFTNESS_LANE) / 100.0, 0.0, 1.0),
             clamp(mask_effect_lane(params, LIGHT_RAYS_VARIATION_LANE) / 100.0, 0.0, 1.0),
             mask_effect_lane(params, LIGHT_RAYS_RAY_COUNT_LANE),
+            0.0,
         );
         let ray = light_shafts_flat_ray(pos, index, output_uv, source_uv, reach, look, 0.0);
         if ray.aperture <= 1e-6 { continue; }

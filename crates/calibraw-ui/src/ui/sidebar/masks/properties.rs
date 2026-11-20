@@ -352,12 +352,6 @@ impl Sidebar {
                 remove,
                 style.as_deref_mut(),
             ),
-            MaskEffect::Rain => mask_effects::rain::show(
-                ui,
-                &mut component.settings.rain,
-                &mut component.enabled,
-                remove,
-            ),
             MaskEffect::StyledGlow => mask_effects::glow::show(
                 ui,
                 &mut component.settings.styled_glow,

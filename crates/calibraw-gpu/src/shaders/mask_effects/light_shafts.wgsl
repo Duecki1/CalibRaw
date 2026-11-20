@@ -114,6 +114,7 @@ fn light_shafts_flat_light(pos: vec2<i32>, index: u32, params: MaskEffectParams,
         mask_effect_percent(params, LIGHT_SHAFTS_SOFTNESS_LANE),
         mask_effect_percent(params, LIGHT_SHAFTS_VARIATION_LANE),
         mask_effect_lane(params, LIGHT_SHAFTS_RAY_COUNT_LANE),
+        mask_effect_lane(params, LIGHT_SHAFTS_ROTATION_LANE) / 360.0,
     );
     let source_uv = mask_effect_lane_pair(params, LIGHT_SHAFTS_SOURCE_X_LANE) / 100.0;
     let penetration = mask_effect_percent(params, LIGHT_SHAFTS_PENETRATION_LANE);

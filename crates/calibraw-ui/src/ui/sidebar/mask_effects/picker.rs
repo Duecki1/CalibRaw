@@ -312,8 +312,6 @@ fn effect_icon(effect: MaskEffect) -> &'static str {
         MaskEffect::ColorFringe => regular::INTERSECT_THREE,
         MaskEffect::Fog => regular::CLOUD_FOG,
         MaskEffect::Smoke => regular::WIND,
-        MaskEffect::Rain => regular::CLOUD_RAIN,
-        MaskEffect::WetSurfaces => regular::DROP,
         MaskEffect::Grain => regular::DOTS_NINE,
         MaskEffect::Halation => regular::CIRCLE_DASHED,
         MaskEffect::LegacyHighlightGlow => regular::SUN_DIM,

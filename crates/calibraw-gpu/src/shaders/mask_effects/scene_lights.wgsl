@@ -8,8 +8,8 @@
 // over an area of the image (a Glowing Area, Neon) are lights of
 // scene_emission.wgsl, which receivers add through the same functions.
 // Receivers loop over the effect slots (`Common::mask_slot_count`), skip lights
-// that do not emit and weight each light by `scene_light_coverage`. Fog, Smoke
-// and Rain's mist scatter it (medium.wgsl), drops and wet ground reflect it.
+// that do not emit and weight each light by `scene_light_coverage`. Fog and
+// Smoke scatter it (medium.wgsl).
 // The scene's surfaces shadow it through the light bake (scene/lights.rs): a
 // light has a channel there (`SceneLight::channel`), from which a surface reads
 // its visibility (`Geometry::scene_visibility`), a point in the air the cube

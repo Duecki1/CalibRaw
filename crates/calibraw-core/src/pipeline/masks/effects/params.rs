@@ -44,7 +44,7 @@ pub struct ToggleSpec {
     pub help: &'static str,
 }
 
-/// Image lights of an effect that scatters light (Fog, Smoke, Rain).
+/// Image lights of an effect that scatters light (Fog, Smoke).
 pub const IMAGE_LIGHTS: ToggleSpec = ToggleSpec {
     label: "Image lights",
     help: "Let light sources in the photo, such as lamps, lit windows and signs, glow in it in their own colours. Light glow sets their strength.",
@@ -489,7 +489,7 @@ pub mod glow {
         50.0,
         0.5,
         0,
-        Some("How much the glow lights its surroundings, Fog, Smoke, Rain and wet ground. Only a self-illuminating Glow lights the scene."),
+        Some("How much the glow lights its surroundings, Fog and Smoke. Only a self-illuminating Glow lights the scene."),
     );
 }
 
@@ -653,6 +653,8 @@ pub mod light_shafts {
     float_param!(RAY_COUNT, "Ray Count", 4.0, 96.0, 32.0, 1.0, 0, None);
     float_param!(VARIATION, "Variation", 0.0, 100.0, 65.0, 0.5, 0, None);
     float_param!(SOFTNESS, "Softness", 0.0, 100.0, 60.0, 0.5, 0, None);
+    // 2D: how far a source's rays turn around it, per source.
+    float_param!(ROTATION, "Ray rotation", -180.0, 180.0, 0.0, 1.0, 0, None);
 }
 
 pub mod relight {
@@ -809,7 +811,7 @@ pub mod neon {
         50.0,
         0.5,
         0,
-        Some("How much the neon lines light their surroundings, Fog, Smoke, Rain and wet ground."),
+        Some("How much the neon lines light their surroundings, Fog and Smoke."),
     );
     color_param!(
         COLOR,
@@ -1125,205 +1127,6 @@ pub mod fog {
         "Fog color",
         [0.82, 0.87, 0.92],
         "Choose the color of the atmospheric veil.",
-    );
-}
-
-pub mod rain {
-    use super::*;
-
-    pub const SCENE_DEPTH: ToggleSpec = ToggleSpec {
-        label: "Scene depth",
-        help: "Generate and use shared scene depth so rain falls behind nearer objects and mist builds with distance. Turn off for rain in front of the whole photo.",
-    };
-
-    float_param!(
-        AMOUNT,
-        "Amount",
-        0.0,
-        100.0,
-        50.0,
-        0.5,
-        0,
-        Some("How hard it rains: more drops and denser mist."),
-    );
-    float_param!(
-        LENGTH,
-        "Streak length",
-        -100.0,
-        100.0,
-        0.0,
-        1.0,
-        0,
-        Some("How far drops travel during the exposure. 0 follows the photo's shutter speed. Long streaks are fainter, as with a slow shutter."),
-    );
-    float_param!(
-        ANGLE,
-        "Direction",
-        -180.0,
-        180.0,
-        96.0,
-        1.0,
-        0,
-        Some("The direction the rain falls in the cropped frame. 90 falls straight down."),
-    );
-    float_param!(
-        DROP_SIZE,
-        "Drop size",
-        0.0,
-        100.0,
-        40.0,
-        0.5,
-        0,
-        Some("From fine drizzle to heavy drops."),
-    );
-    float_param!(
-        MIST,
-        "Mist",
-        0.0,
-        100.0,
-        35.0,
-        0.5,
-        0,
-        Some("The veil of unresolved rain that builds with distance."),
-    );
-    float_param!(
-        LIGHT_GLOW,
-        "Light glow",
-        0.0,
-        100.0,
-        50.0,
-        0.5,
-        0,
-        Some(
-            "Makes drops and mist glow where Relight, Light Rays, Glow and Neon lights reach them."
-        ),
-    );
-    float_param!(
-        GUSTS,
-        "Gusts",
-        0.0,
-        100.0,
-        35.0,
-        0.5,
-        0,
-        Some("Gathers the rain into uneven curtains and bends its direction."),
-    );
-    float_param!(
-        PERSPECTIVE,
-        "Perspective",
-        -100.0,
-        100.0,
-        0.0,
-        1.0,
-        0,
-        Some("Makes streaks converge, as when looking up into the rain or down through it."),
-    );
-    float_param!(
-        SPLASHES,
-        "Splashes",
-        0.0,
-        100.0,
-        50.0,
-        0.5,
-        0,
-        Some("Crowns of water where drops land on the ground."),
-    );
-    float_param!(
-        FOCUS,
-        "Focus distance",
-        0.0,
-        100.0,
-        45.0,
-        0.5,
-        0,
-        Some("The distance at which drops are sharp without scene depth. Drops nearer or farther melt into soft streaks."),
-    );
-    float_param!(
-        SEED,
-        "Pattern",
-        0.0,
-        1_000.0,
-        0.0,
-        1.0,
-        0,
-        Some(
-            "Chooses a different arrangement of drops that stays fixed between preview and export."
-        ),
-    );
-}
-
-pub mod wet_surfaces {
-    use super::*;
-
-    float_param!(
-        WETNESS,
-        "Wetness",
-        0.0,
-        100.0,
-        60.0,
-        0.5,
-        0,
-        Some("Darkens and saturates surfaces as water does, and gives the ground a sheen."),
-    );
-    float_param!(
-        PUDDLES,
-        "Puddles",
-        0.0,
-        100.0,
-        30.0,
-        0.5,
-        0,
-        Some("How much of the ground lies under standing water."),
-    );
-    float_param!(
-        PUDDLE_SIZE,
-        "Puddle size",
-        0.0,
-        100.0,
-        50.0,
-        0.5,
-        0,
-        Some("From many small pools to a few large ones."),
-    );
-    float_param!(
-        GLOSS,
-        "Gloss",
-        0.0,
-        100.0,
-        55.0,
-        0.5,
-        0,
-        Some("How smooth the wet ground is: rough ground spreads reflections into long streaks."),
-    );
-    float_param!(
-        REFLECTIONS,
-        "Reflections",
-        0.0,
-        100.0,
-        70.0,
-        0.5,
-        0,
-        Some("The strength of what the wet ground and puddles reflect."),
-    );
-    float_param!(
-        RIPPLES,
-        "Ripples",
-        0.0,
-        100.0,
-        50.0,
-        0.5,
-        0,
-        Some("How much a Rain effect in this edit disturbs the puddles."),
-    );
-    float_param!(
-        SEED,
-        "Pattern",
-        0.0,
-        1_000.0,
-        0.0,
-        1.0,
-        0,
-        Some("Chooses a different arrangement of puddles that stays fixed between preview and export."),
     );
 }
 

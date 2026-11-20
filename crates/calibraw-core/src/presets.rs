@@ -30,7 +30,7 @@ pub const PRESET_SUFFIX: &str = ".calibraw-preset";
 /// The newest schema. Bump for every incompatible change to the serialized
 /// layout. Schemas 2 to 4 share the layout of schema 1; schema 2 adds the
 /// Relight effect, schema 3 the LUT, perspective correction and aspect stretch
-/// and schema 4 Rain and Wet Surfaces. Schema 5 holds Relight's scene controls
+/// and schema 4 several lights or sources per effect. Schema 5 holds Relight's scene controls
 /// as `relief_scale` and `light_depth` (`migrations::scene_depth_controls`).
 /// Presets are written with the oldest schema that holds them
 /// (`migrations::older_readers`).

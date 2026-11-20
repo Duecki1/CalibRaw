@@ -318,7 +318,7 @@ the pointer lifts (`defer_background_preview_processing`). A preview graph
 renders its Output stage from the first of three parts that the change since
 its last render reaches (`pipeline/gpu/output_parts.rs`): Scene (scene
 adjustments, scene effects and the blurs, Lens Blur among them), Creative
-(scene emission, Glow, the creative pass, Rain's air) or View (the view node).
+(scene emission, Glow, the creative pass) or View (the view node).
 It compares the uniforms as uploaded and the mask slots with the last render's,
 each value counted by the shaders that read it, and keeps the work texture
 holding each part's input; so a drag of a creative or view control does not
@@ -352,7 +352,7 @@ halos and scene depth generation read it there; `calibraw-gpu` writes the IDs, l
 and the creative pass's per-slot dispatch into the creative module (`effect_wgsl.rs`)
 and decides from it which passes and maps to prepare. Fog, Smoke, Grain and Vignette
 read the photo and the scene through `mask_effects/effect_api.wgsl` and `medium.wgsl`;
-Relight, Rain and Wet Surfaces shade the scene's surfaces through the scene bake
+Relight shades the scene's surfaces through the scene bake
 (`shaders/scene/geometry.wgsl`).
 
 Every mask effect and the scene it reads compile into one module
@@ -378,7 +378,7 @@ it reads in its registry row (`scene: [Geometry, LightBake, AirLight, Image]`), 
   reaches a view ray, past what blocks it by the light's Penetration.
   `scene_lights.wgsl` turns Relight's lights and Light Rays' sources into lights in
   that frame (a flat plane without depth) and receivers read them: `medium.wgsl` is
-  what Fog, Smoke and Rain's mist share to scatter them, and Light Rays draws the
+  what Fog and Smoke share to scatter them, and Light Rays draws the
   light the air scatters along each view ray from that share (`light_shafts.wgsl`);
   its 2D style draws without depth (`light_shafts_flat.wgsl`).
 - `scene_environment.wgsl` is the scene's light as effects receive it: its ambient
@@ -422,12 +422,6 @@ input. The effect uniforms tell the shader whether each part is ready. Motion an
 Streak build their streaks from the map alone, in passes after its levels, and keep
 them in the map texture's second set of layers, so they are shared and exported with
 it.
-
-Rain and Wet Surfaces do not run inside the creative pass: `apply_wet_surfaces`
-runs before it and `apply_weather_air` after it, so their result does not depend on
-the order of their cards and edits without them run the same passes as before. Each
-pass reads the image from one work texture and writes the other, and
-`encode_output_stage` tracks which one holds it.
 
 Export geometry (`geometry_resample.rs`, `geometry_resample.wgsl`) resamples the
 rendered photo through crop, turns, flips, rotation, perspective and the lens map

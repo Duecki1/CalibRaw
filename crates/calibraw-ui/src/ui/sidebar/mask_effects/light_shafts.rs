@@ -1,7 +1,7 @@
 use super::instances::{instance_row, InstanceSelection, SOURCES};
 use super::{
-    effect_details, effect_position, float_param_slider, light_color, styled_effect_card,
-    EffectFrame, PositionSpace, StyleChoice,
+    effect_details, effect_position, float_param_angle, float_param_slider, light_color,
+    styled_effect_card, EffectFrame, PositionSpace, StyleChoice,
 };
 use crate::i18n::tr;
 use crate::pipeline::{
@@ -11,8 +11,8 @@ use crate::pipeline::{
 use eframe::egui::Ui;
 
 /// The card: its Scene and 2D styles (`style`), the sources, the selected
-/// source's controls, then what all sources share: Penetration and, in 2D,
-/// the look of the rays.
+/// source's controls (in 2D with its Ray rotation), then what all sources
+/// share: Penetration and, in 2D, the look of the rays.
 pub(crate) fn show(
     ui: &mut Ui,
     settings: &mut LightShaftsEffectSettings,
@@ -38,10 +38,13 @@ pub(crate) fn show(
                 LightShaftSource::swatch,
                 LightShaftSource::mirrored,
             );
+            let rays_turn = rays_vary(settings);
             if let Some(source) = settings.sources.get_mut(*selection.selected) {
                 // Each source's controls keep their own state (pad focus).
                 changed |= ui
-                    .push_id(*selection.selected, |ui| source_controls(ui, source, frame))
+                    .push_id(*selection.selected, |ui| {
+                        source_controls(ui, source, frame, rays_turn)
+                    })
                     .inner;
             }
             changed |= float_param_slider(ui, &mut settings.penetration, light_shafts::PENETRATION);
@@ -53,7 +56,19 @@ pub(crate) fn show(
     )
 }
 
-fn source_controls(ui: &mut Ui, source: &mut LightShaftSource, frame: &EffectFrame) -> bool {
+/// Whether the 2D rays differ around a source, so that turning them shows:
+/// at Variation 0 they are even all round.
+fn rays_vary(settings: &LightShaftsEffectSettings) -> bool {
+    settings.mode == LightShaftsMode::Flat && settings.variation > 0.0
+}
+
+/// The source's own controls; its Ray rotation only where `rays_turn`.
+fn source_controls(
+    ui: &mut Ui,
+    source: &mut LightShaftSource,
+    frame: &EffectFrame,
+    rays_turn: bool,
+) -> bool {
     let mut changed = float_param_slider(ui, &mut source.amount, light_shafts::AMOUNT);
     changed |= float_param_slider(ui, &mut source.length, light_shafts::LENGTH);
     changed |= effect_position(
@@ -64,6 +79,9 @@ fn source_controls(ui: &mut Ui, source: &mut LightShaftSource, frame: &EffectFra
         frame,
         PositionSpace::Source,
     );
+    if rays_turn {
+        changed |= float_param_angle(ui, &mut source.rotation, light_shafts::ROTATION);
+    }
     let warmth_swatch = source.warmth_swatch();
     changed |= light_color(
         ui,

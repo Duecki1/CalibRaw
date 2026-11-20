@@ -35,10 +35,8 @@ Checked items are done. Order within a section is not a priority.
 - [ ]  Depth lens blur fit: far tree lines read too sharp (about 5 px instead of 30–40 px)
 - [ ]  Depth cut-out edges: raise the share of the foreground edge within 1.5 px of the photo's edge above 66%
 - [ ]  Fog, Relight: faint ghost edge where the depth outline differs from the photo's (DSC08062, roofline behind the sign)
-- [ ]  Wet Surfaces: tune the roughness thresholds on photos (where puddles and sheen may form on gravel and grass)
-- [ ]  Rain and Wet Surfaces: offer them in the effect picker again once judged
 - [ ]  Depth effects performance pass: working size, shadow face size, filter taps, air light steps
-- [ ]  Release notes for the depth rework's look changes (shadow shapes, traced reflections, Rain drop spacing, lights without depth)
+- [ ]  Release notes for the depth rework's look changes (shadow shapes, lights without depth)
 
 ## Masks
 

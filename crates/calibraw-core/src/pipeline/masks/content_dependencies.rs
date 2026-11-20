@@ -13,7 +13,7 @@ pub struct ContentDependencies {
     pub subject: bool,
     /// Sky masks share one sky segmentation.
     pub sky: bool,
-    /// Depth-range masks, depth fog, depth rain, Wet Surfaces and Relight share
+    /// Depth-range masks, depth fog, Relight and the other depth effects share
     /// one scene depth estimate.
     pub scene_depth: bool,
     /// `(mask, component)` of each object mask with a positive stroke; every

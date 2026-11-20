@@ -384,17 +384,6 @@ impl MaskData {
         row[lane.index() % 4]
     }
 
-    pub(super) fn set_lane(&mut self, lane: Lane, value: f32) {
-        // `Lane::new` keeps every lane below 16.
-        let row = match lane.index() / 4 {
-            0 => &mut self.adjust_0,
-            1 => &mut self.adjust_1,
-            2 => &mut self.adjust_2,
-            _ => &mut self.adjust_3,
-        };
-        row[lane.index() % 4] = value;
-    }
-
     /// A percentage lane as a fraction in [0, 1] (`mask_effect_percent`).
     pub(super) fn percent(&self, lane: Lane) -> f32 {
         (self.lane(lane) / 100.0).clamp(0.0, 1.0)
@@ -713,7 +702,7 @@ impl GpuParams {
                 full_height,
             },
         };
-        let mask_data = pack_mask_params(masks, raw.capture_metadata.shutter_seconds);
+        let mask_data = pack_mask_params(masks);
         let (camera, highlight_model) = pack_camera_params(&context);
         Self {
             camera,
@@ -833,21 +822,6 @@ impl GpuParams {
         self.effects.vignette_frame = [output_width, output_height, 0.0, 0.0];
         let projection = mapping.output_uv_from_source_uv().rows();
         self.effects.vignette_projection = projection.map(|[x, y, w]| [x, y, w, 0.0]);
-        let full = [
-            self.camera.full_width.max(1) as f32,
-            self.camera.full_height.max(1) as f32,
-        ];
-        let short = full[0].min(full[1]);
-        let direction_of = |direction| {
-            source_direction(
-                projection,
-                [output_width, output_height],
-                [full[0] / short, full[1] / short],
-                direction,
-            )
-        };
-        let count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        orient_rain_slots(&mut self.mask_data[..count], direction_of);
         self
     }
 
@@ -1118,8 +1092,8 @@ impl GpuParams {
         })
     }
 
-    /// Whether an effect samples the image-light map (Image lights on Fog,
-    /// Smoke or Rain), so the export tone prepass must build it.
+    /// Whether an effect samples the image-light map (Image lights on Fog or
+    /// Smoke), so the export tone prepass must build it.
     pub(super) fn needs_image_lights(&self) -> bool {
         self.mask_slots().iter().any(medium_uses_image_lights)
     }
@@ -1134,22 +1108,6 @@ impl GpuParams {
                 .any(|mask| mask.applies(MaskEffect::Adjustment) && mask.adjust_2[3].abs() > 1e-7)
     }
 
-    /// Whether an effect runs a pass before the creative effects (Wet
-    /// Surfaces).
-    pub(super) fn needs_wet_surfaces_pass(&self) -> bool {
-        self.mask_slots()
-            .iter()
-            .any(|mask| mask.runs_in(EffectPass::BeforeCreative))
-    }
-
-    /// Whether an effect runs a pass after the creative effects (Rain, Wet
-    /// Surfaces).
-    pub(super) fn needs_weather_air_pass(&self) -> bool {
-        self.mask_slots()
-            .iter()
-            .any(|mask| mask.runs_in(EffectPass::AfterCreative))
-    }
-
     /// Whether an active effect reads the scene bake's geometry
     /// ([`MaskData::scene_needs`]), which needs a depth result.
     pub(super) fn needs_scene_geometry(&self) -> bool {
@@ -1162,19 +1120,10 @@ impl GpuParams {
                     .any(|needs| needs.geometry))
     }
 
-    /// Whether an active effect reads the scene bake's working image
-    /// ([`MaskData::scene_needs`]), which exists without a depth result.
-    pub(super) fn needs_scene_image(&self) -> bool {
-        self.mask_slots()
-            .iter()
-            .filter_map(MaskData::scene_needs)
-            .any(|needs| needs.image)
-    }
-
-    /// Whether an active effect reads the scene bake: its working image, and
-    /// with a depth result its geometry.
+    /// Whether an active effect reads the scene bake, which it does only for
+    /// its geometry.
     pub(super) fn needs_scene_bake(&self) -> bool {
-        self.needs_scene_geometry() || self.needs_scene_image()
+        self.needs_scene_geometry()
     }
 
     /// Whether an active effect reads the light bake and a light casts

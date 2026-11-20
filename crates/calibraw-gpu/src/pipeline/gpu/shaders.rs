@@ -123,8 +123,6 @@ pub(super) const MASK_FOG: ShaderSource = wgsl!("mask_effects/fog.wgsl");
 pub(super) const MASK_SMOKE: ShaderSource = wgsl!("mask_effects/smoke.wgsl");
 pub(super) const MASK_RELIGHT: ShaderSource = wgsl!("mask_effects/relight.wgsl");
 pub(super) const MASK_FILM_FINISH: ShaderSource = wgsl!("mask_effects/film_finish.wgsl");
-pub(super) const MASK_RAIN: ShaderSource = wgsl!("mask_effects/rain.wgsl");
-pub(super) const MASK_WET_SURFACES: ShaderSource = wgsl!("mask_effects/wet_surfaces.wgsl");
 
 /// Every mask effect and the scene they read (`MASK_SCENE_*`), compiled as one
 /// module because the effects share its helpers and the effect passes dispatch
@@ -155,8 +153,6 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         MASK_FOG,
         MASK_SMOKE,
         MASK_RELIGHT,
-        MASK_RAIN,
-        MASK_WET_SURFACES,
         MASK_FILM_FINISH,
         // Legacy effects (mask_effects/legacy/), replaced by rebuilt ones.
         MASK_LEGACY_HIGHLIGHT_GLOW,

@@ -198,16 +198,15 @@ its controls as `<NAME>_<LANE>_LANE`, generated from its lanes (`effect_wgsl.rs`
 reads the photo and the scene through `effect_api.wgsl` and `medium.wgsl`. What an
 effect needs already exists in the scene (`scene_*.wgsl`), so do not sample or upsample
 it again: when the API lacks it, add a function to `effect_api.wgsl` that reads it. An
-effect that shades the scene's surfaces or needs its camera or ground, as Relight, Rain
-and Wet Surfaces do, reads the scene bake through `scene/geometry.wgsl` (`scene_pixel`,
+effect that shades the scene's surfaces or needs its camera or ground, as Relight does, reads the scene bake through `scene/geometry.wgsl` (`scene_pixel`,
 `scene_split`, `scene_blend`) and `scene_lights.wgsl` directly. An effect that lights the
 scene from an area of the image (particles, glowing props) writes into the scene
 emission grid instead: it gives its radiance at a full-image point from full-image
 inputs only, adds its case to `scene_emission_slot_at` and `scene_emission_present`
 (`scene_emission.wgsl`) and to `GpuParams::needs_scene_emission`, and keeps its mask in
-the full-image atlas (`MaskEffect::reads_full_image_mask`); Fog, Smoke, Rain, Wet Surfaces and the
+the full-image atlas (`MaskEffect::reads_full_image_mask`); Fog, Smoke and the
 surfaces then receive its light. Effects with passes of their
-own (the blurs, Glow, the legacy Light Rays, Rain, Wet Surfaces, the light bake) also need
+own (the blurs, Glow, the legacy Light Rays, the light bake) also need
 those passes and their `GpuParams::needs_*` checks, and read their slots by lane name
 too (`mask_effect_params`).
 
@@ -662,7 +661,7 @@ stay the same; set `CALIBRAW_ONNXRUNTIME_BUILD_JOBS` below the core count on
 machines with less than about 2 GiB of memory per core. To build one ABI through
 the compatibility helper, use `cargo xtask build-android arm64-v8a release`.
 
-Depth masks, fog, rain, Wet Surfaces and Relight on every platform share a pinned
+Depth masks, fog, Relight and the other depth effects on every platform share a pinned
 Distill-Any-Depth Small FP32 model (~99 MB, Depth Anything V2 Small architecture),
 run on the photo scaled to 1540 pixels on its longer side (1540 × 1036 for 3:2),
 exported by `packaging/models/distill_any_depth_export.py`. Android runs it on

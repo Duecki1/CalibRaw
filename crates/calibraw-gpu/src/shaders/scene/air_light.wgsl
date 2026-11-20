@@ -6,7 +6,7 @@
 // ray of a pipeline's region and every light of the light bake, the share of
 // the light the ray receives in the air that the scene does not shadow,
 //     share = Σ visibility · w / Σ w,
-// with w the light's falloff along the ray. Media (Fog, Smoke, Rain's mist)
+// with w the light's falloff along the ray. Media (Fog, Smoke)
 // multiply their own analytic, unshadowed in-scattering by it, so it holds
 // nothing of their density, phase or colour, and moving one of their sliders
 // rebuilds nothing.

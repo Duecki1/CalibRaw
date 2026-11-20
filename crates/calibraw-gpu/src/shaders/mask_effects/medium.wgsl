@@ -1,4 +1,4 @@
-// Participating media: what Fog, Smoke and Rain's mist share. A medium scatters
+// Participating media: what Fog and Smoke share. A medium scatters
 // light toward the camera along the view ray, so a lamp also glows in the air in
 // front of it.
 
@@ -146,7 +146,7 @@ fn medium_surface_light(pos: vec2<i32>, anisotropy: f32, receiver: MediumTarget)
 // Image light a medium scatters at Light glow 100, relative to the halo's mean
 // light: a lamp's halo outshines its share of the spread light.
 const IMAGE_LIGHT_SCATTER_GAIN: f32 = 4.0;
-// The Image lights switch of Fog, Smoke and Rain is `MEDIUM_IMAGE_LIGHTS_OPTION`.
+// The Image lights switch of Fog and Smoke is `MEDIUM_IMAGE_LIGHTS_OPTION`.
 fn medium_image_lights_enabled(params: MaskEffectParams) -> bool {
     return params.options[MEDIUM_IMAGE_LIGHTS_OPTION] > 0.5;
 }
