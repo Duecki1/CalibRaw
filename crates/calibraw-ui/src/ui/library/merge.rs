@@ -3,7 +3,9 @@ use crate::app::ErrorKind;
 use crate::i18n::{tr, tr_fmt};
 use crate::ui::background_tasks::{BackgroundTaskId, BackgroundTaskView};
 use anyhow::{Context, Result};
-use calibraw_gpu::pipeline::{merge_hdr_bracket, stack_focus, GpuProgramPrewarm, MergedImage};
+use calibraw_gpu::pipeline::{
+    merge_hdr_bracket, stack_focus, GpuProgramPrewarm, MergeOptions, MergedImage,
+};
 use eframe::wgpu;
 
 /// Library actions that merge several RAW files into one floating-point TIFF.
@@ -41,12 +43,65 @@ impl MergeKind {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         paths: &[PathBuf],
+        options: MergeOptions,
         prewarm: Option<Arc<GpuProgramPrewarm>>,
         progress: impl FnMut(String) -> bool,
     ) -> Result<MergedImage> {
         match self {
-            Self::Hdr => merge_hdr_bracket(device, queue, paths, prewarm, progress),
-            Self::FocusStack => stack_focus(device, queue, paths, prewarm, progress),
+            Self::Hdr => merge_hdr_bracket(device, queue, paths, options, prewarm, progress),
+            Self::FocusStack => stack_focus(device, queue, paths, options, prewarm, progress),
+        }
+    }
+}
+
+/// The options dialog a merge asks before it starts.
+pub(super) struct MergeDialog {
+    kind: MergeKind,
+    assets: Vec<LibraryAsset>,
+}
+
+/// Asks for the options of a `kind` merge of `assets`; [`show_dialog`] starts
+/// it once they are confirmed.
+pub(super) fn ask(app: &mut CalibRawApp, kind: MergeKind, assets: Vec<LibraryAsset>) {
+    if assets.len() >= 2 {
+        app.library.merge_dialog = Some(MergeDialog { kind, assets });
+    }
+}
+
+/// The open merge dialog: one switch per option, each starting from the
+/// choice of the previous merge. Merge starts the merge with them.
+pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
+    let Some(dialog) = &app.library.merge_dialog else {
+        return;
+    };
+    let options = &mut app.library.merge_options;
+    let mut action = moduwu_design::DialogAction::None;
+    moduwu_design::Dialog::new("library-merge-options", dialog.kind.title()).show_with_footer(
+        ui.ctx(),
+        |ui| {
+            moduwu_design::toggle_row(ui, &mut options.remove_hot_pixels, tr("Remove hot pixels"));
+        },
+        |ui| {
+            action = moduwu_design::dialog_confirmation_actions(
+                ui,
+                tr("Cancel"),
+                tr("Merge"),
+                true,
+                false,
+                // Enter also flips a focused switch, so it does not confirm.
+                moduwu_design::DialogKeyboard::CLOSE_ONLY,
+            );
+        },
+    );
+    let confirmed = match action {
+        moduwu_design::DialogAction::Confirm => true,
+        moduwu_design::DialogAction::Cancel => false,
+        moduwu_design::DialogAction::None => return,
+    };
+    if let Some(dialog) = app.library.merge_dialog.take() {
+        if confirmed {
+            let options = app.library.merge_options;
+            start(app, frame, dialog.kind, options, dialog.assets, ui.ctx());
         }
     }
 }
@@ -59,10 +114,11 @@ pub(super) struct MergeTask {
     cancelled: Arc<AtomicBool>,
 }
 
-pub(super) fn start(
+fn start(
     app: &mut CalibRawApp,
     frame: &eframe::Frame,
     kind: MergeKind,
+    options: MergeOptions,
     assets: Vec<LibraryAsset>,
     context: &egui::Context,
 ) {
@@ -125,7 +181,7 @@ pub(super) fn start(
                     .iter()
                     .map(|staged| staged.raw_path.clone())
                     .collect();
-                let merged = kind.run(&device, &queue, &paths, prewarm, report)?;
+                let merged = kind.run(&device, &queue, &paths, options, prewarm, report)?;
                 anyhow::ensure!(!cancelled.load(Ordering::Relaxed), tr("Merge cancelled"));
                 report(tr("Saving floating-point TIFF…").to_owned());
                 save_merged(&merged, &assets[0], &paths[0], kind, &*platform, &cancelled)

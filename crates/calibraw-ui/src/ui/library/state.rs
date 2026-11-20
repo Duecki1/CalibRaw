@@ -193,6 +193,8 @@ impl LibraryState {
             chosen_copy_selection: None,
             asset_transfer_receiver: None,
             merge: None,
+            merge_dialog: None,
+            merge_options: Default::default(),
             raw_import_receiver: None,
             folder_operation_receiver: None,
             folder_clipboard: None,
@@ -249,7 +251,8 @@ impl LibraryState {
             || self.export_dialog.is_some()
             || self.adjustment_copy_dialog.is_some()
             || self.adjustment_paste_dialog.is_some()
-            || self.ai_mask_refresh_prompt.is_some();
+            || self.ai_mask_refresh_prompt.is_some()
+            || self.merge_dialog.is_some();
         common
             || self.folder_name_dialog.is_some()
             || self.folder_delete_confirmation.is_some()

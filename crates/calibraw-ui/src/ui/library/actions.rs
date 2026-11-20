@@ -331,9 +331,7 @@ pub(crate) fn apply_library_action(
         app.settle_library_review_saves();
     }
     match action {
-        LibraryAction::Merge(kind, assets) => {
-            super::merge::start(app, frame, kind, assets, ui.ctx())
-        }
+        LibraryAction::Merge(kind, assets) => super::merge::ask(app, kind, assets),
         LibraryAction::Review(assets, change) => {
             app.review_photos(assets, change);
         }
@@ -913,6 +911,7 @@ pub(crate) fn show_library_action_overlays(
     }
 
     show_library_raw_name_dialog(ui, app, frame);
+    super::merge::show_dialog(ui, app, frame);
 
     let copy_choice = app
         .library

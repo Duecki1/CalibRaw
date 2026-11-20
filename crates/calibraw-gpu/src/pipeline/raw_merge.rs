@@ -34,6 +34,16 @@ impl MergedImage {
     }
 }
 
+/// The corrections a merge applies to every source before developing it. Each is
+/// off by default, which merges the sources as decoded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MergeOptions {
+    /// Repair each source's hot pixels ([`remove_hot_pixels`]) in its mosaic, as
+    /// the Detail card does for a single RAW. A source without a mosaic (a linear
+    /// DNG) has no photosites to repair and merges as decoded.
+    pub remove_hot_pixels: bool,
+}
+
 /// Requires at least two distinct files.
 pub(super) fn ensure_distinct_sources(paths: &[PathBuf], noun: &str) -> Result<()> {
     ensure!(paths.len() >= 2, "Select at least two RAW {noun}s");
@@ -109,11 +119,14 @@ pub(super) struct MergeFrame<'a> {
 /// Develops and registers `sources` (in processing order; the first is the reference)
 /// one at a time and hands each to `merge`, so only one developed frame is resident.
 /// `noun` names a source in progress messages ("exposure", "frame"). The progress
-/// callback returns false to cancel between frames and tiles.
+/// callback returns false to cancel between frames and tiles. `options` corrects
+/// each source as it is decoded.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn merge_sources(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     sources: &[MergeSource],
+    options: MergeOptions,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     noun: &str,
     progress: &mut impl FnMut(String) -> bool,
@@ -135,6 +148,13 @@ pub(super) fn merge_sources(
             !raw.is_display_referred_raster(),
             "Merging requires original RAW files, not rendered TIFFs"
         );
+        // Repaired before anything reads the mosaic, so neither the developed
+        // frame nor its saturation peak sees a hot photosite.
+        if options.remove_hot_pixels {
+            if let Some(repaired) = remove_hot_pixels(&raw) {
+                raw = repaired;
+            }
+        }
         if let Some(camera) = &reference_camera {
             ensure!(
                 camera.identity == (raw.camera_make.clone(), raw.camera_model.clone())

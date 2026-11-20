@@ -9,7 +9,7 @@ pub mod hdr;
 mod raw_merge;
 pub use focus_stack::stack_focus;
 pub use hdr::merge_hdr_bracket;
-pub use raw_merge::MergedImage;
+pub use raw_merge::{MergeOptions, MergedImage};
 
 pub use export::{
     compile_export_programs, render_developed_linear_crop, render_remove_scene_crop,

@@ -1,5 +1,7 @@
 //! Focus stacking of RAW frames into a floating-point master.
-use super::raw_merge::{ensure_distinct_sources, merge_sources, MergeSource, MergedImage};
+use super::raw_merge::{
+    ensure_distinct_sources, merge_sources, MergeOptions, MergeSource, MergedImage,
+};
 use super::*;
 use anyhow::{ensure, Context, Result};
 use calibraw_core::pipeline::focus_stack::FocusStack;
@@ -13,6 +15,7 @@ pub fn stack_focus(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     paths: &[PathBuf],
+    options: MergeOptions,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     mut progress: impl FnMut(String) -> bool,
 ) -> Result<MergedImage> {
@@ -33,6 +36,7 @@ pub fn stack_focus(
         device,
         queue,
         &frames,
+        options,
         program_prewarm,
         "frame",
         &mut progress,

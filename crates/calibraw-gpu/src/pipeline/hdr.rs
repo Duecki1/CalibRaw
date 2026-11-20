@@ -1,5 +1,7 @@
 //! HDR merge of a RAW exposure bracket into a floating-point master.
-use super::raw_merge::{ensure_distinct_sources, merge_sources, MergeSource, MergedImage};
+use super::raw_merge::{
+    ensure_distinct_sources, merge_sources, MergeOptions, MergeSource, MergedImage,
+};
 use super::*;
 use anyhow::{ensure, Context, Result};
 use calibraw_core::pipeline::hdr::{collected_light, exposure_scale, HdrAccumulator, HdrFrame};
@@ -11,6 +13,7 @@ pub fn merge_hdr_bracket(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     paths: &[PathBuf],
+    options: MergeOptions,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     mut progress: impl FnMut(String) -> bool,
 ) -> Result<MergedImage> {
@@ -46,6 +49,7 @@ pub fn merge_hdr_bracket(
         device,
         queue,
         &bracket,
+        options,
         program_prewarm,
         "exposure",
         &mut progress,

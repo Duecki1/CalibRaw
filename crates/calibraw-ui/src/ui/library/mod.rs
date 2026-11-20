@@ -903,6 +903,10 @@ pub(crate) struct LibraryState {
     chosen_copy_selection: Option<crate::sidecar::EditSelection>,
     asset_transfer_receiver: Option<mpsc::Receiver<AssetTransferCompletion>>,
     merge: Option<merge::MergeTask>,
+    merge_dialog: Option<merge::MergeDialog>,
+    /// The options of the last confirmed merge, which the merge dialog opens
+    /// with again until CalibRaw quits.
+    merge_options: calibraw_gpu::pipeline::MergeOptions,
     raw_import_receiver: Option<mpsc::Receiver<RawImportResult>>,
     folder_operation_receiver: Option<mpsc::Receiver<LibraryFolderOperationCompletion>>,
     folder_clipboard: Option<LibraryFolderClipboard>,
