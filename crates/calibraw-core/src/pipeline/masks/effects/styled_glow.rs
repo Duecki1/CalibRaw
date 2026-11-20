@@ -43,7 +43,10 @@
 //!   roll-off scales all channels alike, which keeps the hue
 //!   (styled_glow.wgsl).
 //! - Warmth tints the spread light: along the Planckian locus from cool to
-//!   warm, or from yellow to deep red for Halation.
+//!   warm, or from yellow to deep red for Halation. A picked colour tints it
+//!   instead with its hue and saturation, at the brightness Warmth's tints
+//!   have: luminance 1, or for Halation a brightest channel of 1 in linear
+//!   sRGB, as its tints between yellow and red.
 //! - Dispersion scales the kernel of each primary by its wavelength, as
 //!   diffraction does: red spreads wider and blue tighter, so Bloom,
 //!   Diffusion and Halation turn bluish at the core and red at the rim, and
@@ -71,7 +74,7 @@
 use super::lanes::{effect_lanes, EffectLanes, LaneName, PackContext};
 use super::params::styled_glow::*;
 use super::settings::{EffectControl, EffectControls, EffectSettings};
-use super::warmth::warmth_tint;
+use super::warmth::{picked_hue, picked_tint, tint_swatch, warmth_tint, LightColorMode};
 
 /// How a Glow looks, chosen with its card's Style control.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -228,6 +231,10 @@ pub struct StyledGlowEffectSettings {
     pub range: f32,
     pub spread: f32,
     pub warmth: f32,
+    /// Whether Warmth or `color` tints the glow; both are kept.
+    pub color_mode: LightColorMode,
+    /// The picked colour, sRGB encoded; only its hue and saturation count.
+    pub color: [f32; 3],
     /// Every style but Motion: how much wider red spreads than blue.
     pub dispersion: f32,
     /// Motion, Streak and Star: the direction light streaks toward (Star's
@@ -254,6 +261,8 @@ impl Default for StyledGlowEffectSettings {
             range: RANGE.default,
             spread: SPREAD.default,
             warmth: WARMTH.default,
+            color_mode: LightColorMode::default(),
+            color: COLOR.default,
             dispersion: DISPERSION.default,
             direction: DIRECTION.default,
             softness: SOFTNESS.default,
@@ -384,7 +393,33 @@ impl StyledGlowEffectSettings {
         STREAK_SOFTNESS_AT_FULL * softness * softness
     }
 
+    /// The colour its Warmth gives, sRGB encoded with its brightest channel
+    /// 1, whichever tints the glow: where its colour picker starts.
+    pub fn warmth_swatch(&self) -> [f32; 3] {
+        tint_swatch(self.warmth_tint())
+    }
+
+    /// The tint of the spread light, before Amount's boost.
     fn tint(&self) -> [f32; 3] {
+        match self.color_mode {
+            LightColorMode::Warmth => self.warmth_tint(),
+            LightColorMode::Custom => {
+                let color = COLOR.clamp(self.color);
+                match self.style {
+                    GlowStyle::Bloom
+                    | GlowStyle::Diffusion
+                    | GlowStyle::Motion
+                    | GlowStyle::Streak
+                    | GlowStyle::Star => picked_tint(color),
+                    GlowStyle::Halation => {
+                        crate::color_math::linear_srgb_to_rec2020(picked_hue(color))
+                    }
+                }
+            }
+        }
+    }
+
+    fn warmth_tint(&self) -> [f32; 3] {
         let warmth = WARMTH.clamp(self.warmth) / 100.0;
         match self.style {
             GlowStyle::Bloom
@@ -420,6 +455,7 @@ impl EffectSettings for StyledGlowEffectSettings {
             EffectControl::Slider(&mut self.range, RANGE),
             EffectControl::Slider(&mut self.spread, SPREAD),
             EffectControl::Slider(&mut self.warmth, WARMTH),
+            EffectControl::Color(&mut self.color, COLOR),
         ];
         if self.style.streaks() {
             controls.push(EffectControl::Angle(&mut self.direction, DIRECTION));

@@ -1,0 +1,26 @@
+{
+  "edits": {
+    "masks": {
+      "global_effects": [
+        {
+          "effect": "StyledGlow",
+          "settings": {
+            "styled_glow": {
+              "style": "Halation",
+              "amount": 100.0,
+              "range": 55.0,
+              "spread": 70.0,
+              "warmth": 40.0,
+              "color_mode": "Custom",
+              "color": [
+                1.0,
+                0.3,
+                0.6
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

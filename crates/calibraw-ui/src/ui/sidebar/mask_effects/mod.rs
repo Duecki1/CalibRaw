@@ -28,7 +28,8 @@ pub(super) use picker::{
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::{ColorParamSpec, ToggleSpec};
 use crate::pipeline::{
-    effect_places, EffectComponent, EffectSettings, EffectStyle, MAX_EFFECT_COMPONENTS,
+    effect_places, EffectComponent, EffectSettings, EffectStyle, LightColorMode,
+    MAX_EFFECT_COMPONENTS,
 };
 
 /// The Style control of a card whose effect has kin ([`crate::pipeline::EffectFamily`]):
@@ -411,6 +412,38 @@ fn effect_color(
         tr(spec.label),
         tr(spec.tooltip),
     )
+}
+
+/// Width of the Light color choice where the card is wide enough.
+const LIGHT_COLOR_WIDTH: f32 = 160.0;
+
+/// How a light is coloured, Warmth or Custom (Glow and Light Rays), then the
+/// control of the one chosen: Warmth's, which `warmth_slider` draws, or the
+/// colour picker. A colour never picked starts as `warmth_swatch`, the colour
+/// the Warmth gives, so switching to Custom keeps the look.
+fn light_color(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    mode: &mut LightColorMode,
+    color: &mut [f32; 3],
+    spec: ColorParamSpec,
+    warmth_swatch: [f32; 3],
+    warmth_slider: impl FnOnce(&mut Ui) -> bool,
+) -> bool {
+    let options = LightColorMode::ALL.map(|option| (option, tr(option.label())));
+    let switched =
+        moduwu_design::form_row(ui, tr("Light color"), LIGHT_COLOR_WIDTH, |ui, width| {
+            moduwu_design::segmented_control(ui, mode, &options, width).changed()
+        })
+        .inner;
+    if switched && *mode == LightColorMode::Custom && *color == spec.default {
+        *color = warmth_swatch;
+    }
+    let edited = match *mode {
+        LightColorMode::Warmth => warmth_slider(ui),
+        LightColorMode::Custom => effect_color(ui, id_salt, color, spec),
+    };
+    switched | edited
 }
 
 /// A switch with its help as the tooltip.

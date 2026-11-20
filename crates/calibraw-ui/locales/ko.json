@@ -1091,6 +1091,7 @@
   "Light": "밝게",
   "Light depth": "조명 깊이",
   "Light details": "조명 세부 설정",
+  "Light color": "빛 색상",
   "Light {number}": "조명 {number}",
   "Add light": "조명 추가",
   "Remove light": "조명 제거",

@@ -21,13 +21,14 @@ pub use effects::{
     EffectInstances, EffectLanes, EffectOption, EffectPass, EffectReach, EffectSettings,
     EffectSettingsVisitor, EffectStyle, FogEffectSettings, GlowEffectSettings, GlowSplitMode,
     GlowStyle, GrainEffectSettings, HalationEffectSettings, Lane, LaneName,
-    LegacyHighlightGlowEffectSettings, LensBlurEffectSettings, LightRaysEffectSettings,
-    LightShaftSource, LightShaftsEffectSettings, LightShaftsMode, MaskEffect, MaskEffectCategory,
-    MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings, PackContext,
-    PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, RainEffectSettings,
-    ReachGroup, RelightEffectSettings, RelightLight, SceneNeed, SceneNeeds, SharpenEffectSettings,
-    SmokeEffectSettings, StarPoints, StyledGlowEffectSettings, TiltShiftEffectSettings,
-    VignetteEffectSettings, WetSurfacesEffectSettings, MAX_EFFECT_INSTANCES, OPTION_COUNT,
+    LegacyHighlightGlowEffectSettings, LensBlurEffectSettings, LightColorMode,
+    LightRaysEffectSettings, LightShaftSource, LightShaftsEffectSettings, LightShaftsMode,
+    MaskEffect, MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings,
+    NeonEffectSettings, PackContext, PixelateEffectSettings, RadialBlurEffectSettings,
+    RadialBlurMode, RainEffectSettings, ReachGroup, RelightEffectSettings, RelightLight, SceneNeed,
+    SceneNeeds, SharpenEffectSettings, SmokeEffectSettings, StarPoints, StyledGlowEffectSettings,
+    TiltShiftEffectSettings, VignetteEffectSettings, WetSurfacesEffectSettings,
+    MAX_EFFECT_INSTANCES, OPTION_COUNT,
 };
 
 mod box_filter;

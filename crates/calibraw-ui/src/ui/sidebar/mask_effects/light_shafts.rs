@@ -1,7 +1,7 @@
 use super::instances::{instance_row, InstanceSelection, SOURCES};
 use super::{
-    effect_details, effect_position, float_param_slider, styled_effect_card, EffectFrame,
-    PositionSpace, StyleChoice,
+    effect_details, effect_position, float_param_slider, light_color, styled_effect_card,
+    EffectFrame, PositionSpace, StyleChoice,
 };
 use crate::i18n::tr;
 use crate::pipeline::{
@@ -64,7 +64,16 @@ fn source_controls(ui: &mut Ui, source: &mut LightShaftSource, frame: &EffectFra
         frame,
         PositionSpace::Source,
     );
-    changed |= float_param_slider(ui, &mut source.warmth, light_shafts::WARMTH);
+    let warmth_swatch = source.warmth_swatch();
+    changed |= light_color(
+        ui,
+        "light-rays-color-picker",
+        &mut source.color_mode,
+        &mut source.color,
+        light_shafts::COLOR,
+        warmth_swatch,
+        |ui| float_param_slider(ui, &mut source.warmth, light_shafts::WARMTH),
+    );
     changed
 }
 

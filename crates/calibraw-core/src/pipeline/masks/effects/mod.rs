@@ -65,6 +65,7 @@ pub use smoke::SmokeEffectSettings;
 pub use styled_glow::{GlowSplitMode, GlowStyle, StarPoints, StyledGlowEffectSettings};
 pub use tilt_shift::TiltShiftEffectSettings;
 pub use vignette::VignetteEffectSettings;
+pub use warmth::LightColorMode;
 pub use wet_surfaces::WetSurfacesEffectSettings;
 
 // The legacy effects' settings modules, by their settings fields, as the

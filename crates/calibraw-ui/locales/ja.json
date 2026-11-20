@@ -1041,6 +1041,7 @@
   "Light Y": "ライトY",
   "Light depth": "ライトの奥行き",
   "Light details": "ライトの詳細",
+  "Light color": "光の色",
   "Light {number}": "ライト {number}",
   "Add light": "ライトを追加",
   "Remove light": "ライトを削除",

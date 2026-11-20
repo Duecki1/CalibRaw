@@ -1041,6 +1041,7 @@
   "Light Y": "燈光 Y",
   "Light depth": "燈光深度",
   "Light details": "燈光細節",
+  "Light color": "光線顏色",
   "Light {number}": "燈光 {number}",
   "Add light": "新增燈光",
   "Remove light": "移除燈光",

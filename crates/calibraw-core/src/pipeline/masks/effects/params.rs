@@ -502,6 +502,13 @@ pub mod styled_glow {
     float_param!(RANGE, "Range", 0.0, 100.0, 50.0, 0.5, 0, None);
     float_param!(SPREAD, "Spread", 0.0, 100.0, 50.0, 0.5, 0, None);
     float_param!(WARMTH, "Warmth", -100.0, 100.0, 0.0, 0.5, 0, None);
+    color_param!(
+        COLOR,
+        "Color",
+        "Glow color",
+        [1.0, 1.0, 1.0],
+        "Choose the color emitted by the Glow effect.",
+    );
     float_param!(DISPERSION, "Dispersion", 0.0, 100.0, 0.0, 0.5, 0, None);
     float_param!(DIRECTION, "Direction", -180.0, 180.0, 0.0, 1.0, 0, None);
     float_param!(SOFTNESS, "Softness", 0.0, 100.0, 50.0, 0.5, 0, None);
@@ -632,6 +639,14 @@ pub mod light_shafts {
     float_param!(SOURCE_X, "Source X", -50.0, 150.0, 50.0, 1.0, 0, None);
     float_param!(SOURCE_Y, "Source Y", -50.0, 150.0, 20.0, 1.0, 0, None);
     float_param!(WARMTH, "Warmth", -100.0, 100.0, 20.0, 0.5, 0, None);
+    // The picked colour's default is Warmth 20's swatch, rounded.
+    color_param!(
+        COLOR,
+        "Color",
+        "Light Rays color",
+        [1.0, 0.96, 0.9],
+        "Choose the color emitted by the Light Rays effect.",
+    );
     float_param!(PENETRATION, "Penetration", 0.0, 100.0, 0.0, 0.5, 0, None);
     // The 2D style's ray look, from the legacy Light Rays.
     float_param!(SPREAD, "Spread", 0.0, 45.0, 8.0, 0.25, 1, None);

@@ -1041,6 +1041,7 @@
   "Light Y": "रोशनी Y",
   "Light depth": "रोशनी की गहराई",
   "Light details": "रोशनी का विवरण",
+  "Light color": "प्रकाश का रंग",
   "Light {number}": "रोशनी {number}",
   "Add light": "रोशनी जोड़ें",
   "Remove light": "रोशनी हटाएँ",

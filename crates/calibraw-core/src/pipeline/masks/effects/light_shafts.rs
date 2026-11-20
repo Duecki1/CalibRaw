@@ -25,7 +25,8 @@
 //!   continues behind the first object it meets, fading as it goes, 0 a hard
 //!   shadow and 100 most of the scene's depth (Scene); the share that passes
 //!   the closed parts of the mask (2D).
-//! - Warmth colours a source along the Planckian locus (warmth.rs).
+//! - A source is coloured along the Planckian locus by its Warmth, or by the
+//!   hue of a picked colour, at the same brightness (warmth.rs).
 //!
 //! The values are packed as set; calibraw-gpu turns Length, the position and
 //! Penetration into the light bake's frame, where the camera is known.
@@ -34,7 +35,7 @@ use super::instances::{mirrored_position, EffectInstances};
 use super::lanes::{effect_lanes, options, EffectLanes, LaneName, PackContext};
 use super::params::light_shafts::*;
 use super::settings::{EffectControl, EffectControls, EffectSettings};
-use super::warmth::{warmth_swatch, warmth_tint};
+use super::warmth::{picked_tint, tint_swatch, warmth_tint, LightColorMode};
 
 /// How Light Rays draws its shafts, chosen with its card's Style control.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -86,6 +87,10 @@ pub struct LightShaftSource {
     /// frame.
     pub source: [f32; 2],
     pub warmth: f32,
+    /// Whether Warmth or `color` colours the source; both are kept.
+    pub color_mode: LightColorMode,
+    /// The picked colour, sRGB encoded; only its hue and saturation count.
+    pub color: [f32; 3],
 }
 
 impl Default for LightShaftsEffectSettings {
@@ -109,6 +114,8 @@ impl Default for LightShaftSource {
             length: LENGTH.default,
             source: [SOURCE_X.default, SOURCE_Y.default],
             warmth: WARMTH.default,
+            color_mode: LightColorMode::default(),
+            color: COLOR.default,
         }
     }
 }
@@ -129,7 +136,25 @@ impl LightShaftSource {
     /// The source's colour for its swatch and canvas handle: sRGB encoded,
     /// brightest channel 1.
     pub fn swatch(&self) -> [f32; 3] {
-        warmth_swatch(WARMTH.clamp(self.warmth) / 100.0)
+        tint_swatch(self.tint())
+    }
+
+    /// The colour its Warmth gives, as [`Self::swatch`], whichever colours
+    /// the source: where its colour picker starts.
+    pub fn warmth_swatch(&self) -> [f32; 3] {
+        tint_swatch(self.warmth_tint())
+    }
+
+    /// The `TINT` lane.
+    fn tint(&self) -> [f32; 3] {
+        match self.color_mode {
+            LightColorMode::Warmth => self.warmth_tint(),
+            LightColorMode::Custom => picked_tint(COLOR.clamp(self.color)),
+        }
+    }
+
+    fn warmth_tint(&self) -> [f32; 3] {
+        warmth_tint(WARMTH.clamp(self.warmth) / 100.0)
     }
 }
 
@@ -178,6 +203,7 @@ impl EffectSettings for LightShaftsEffectSettings {
                 EffectControl::Slider(&mut source.length, LENGTH),
                 EffectControl::Position(&mut source.source, [SOURCE_X, SOURCE_Y]),
                 EffectControl::Slider(&mut source.warmth, WARMTH),
+                EffectControl::Color(&mut source.color, COLOR),
             ]);
         }
         shown.push(EffectControl::Slider(&mut self.penetration, PENETRATION));
@@ -202,10 +228,7 @@ impl EffectSettings for LightShaftsEffectSettings {
         slot.set(lanes::LENGTH, LENGTH.clamp(source.length));
         slot.set(lanes::SOURCE_X, SOURCE_X.clamp(source.source[0]));
         slot.set(lanes::SOURCE_Y, SOURCE_Y.clamp(source.source[1]));
-        slot.set_color(
-            lanes::TINT,
-            warmth_tint(WARMTH.clamp(source.warmth) / 100.0),
-        );
+        slot.set_color(lanes::TINT, source.tint());
         slot.set(lanes::PENETRATION, PENETRATION.clamp(self.penetration));
         slot.set(lanes::SPREAD, SPREAD.clamp(self.spread));
         slot.set(lanes::RAY_COUNT, RAY_COUNT.clamp(self.ray_count));

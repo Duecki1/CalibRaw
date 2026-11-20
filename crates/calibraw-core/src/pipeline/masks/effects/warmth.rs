@@ -1,9 +1,35 @@
-//! Warmth: the colour of light along the Planckian locus, shared by the
-//! effects with a Warmth control (Glow, Light Rays). Warmth runs from -1
-//! (cool) to 1 (warm); ±1 moves the light's temperature one octave from
-//! neutral, so 0 is exactly white, 1 is 3252 K and -1 is 13008 K.
+//! The colour of light, shared by the effects with a Warmth control (Glow,
+//! Light Rays): along the Planckian locus by its Warmth, or picked
+//! ([`LightColorMode`]).
+//!
+//! Warmth runs from -1 (cool) to 1 (warm); ±1 moves the light's temperature
+//! one octave from neutral, so 0 is exactly white, 1 is 3252 K and -1 is
+//! 13008 K. A picked colour gives only its hue and saturation: the light
+//! keeps the brightness its Amount sets.
 
-use crate::color_math::{rec2020_to_linear_srgb, srgb_encode};
+use crate::color_math::{linear_srgb_to_rec2020, rec2020_to_linear_srgb, srgb_decode, srgb_encode};
+
+/// How a light's colour is set. The effects keep both the Warmth and the
+/// picked colour, so switching back restores the one set before.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum LightColorMode {
+    /// Along the Planckian locus, by the Warmth control.
+    #[default]
+    Warmth,
+    /// The hue and saturation of a picked colour.
+    Custom,
+}
+
+impl LightColorMode {
+    pub const ALL: [Self; 2] = [Self::Warmth, Self::Custom];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Warmth => "Warmth",
+            Self::Custom => "Custom",
+        }
+    }
+}
 
 /// The temperature of Warmth 0: white in the working space (D65).
 const NEUTRAL_KELVIN: f32 = 6504.0;
@@ -18,10 +44,44 @@ pub(super) fn warmth_tint(warmth: f32) -> [f32; 3] {
 
 /// The tint of Warmth `warmth` as a display colour for swatches and canvas
 /// handles: sRGB encoded, its brightest channel at 1.
-pub(super) fn warmth_swatch(warmth: f32) -> [f32; 3] {
-    let linear = rec2020_to_linear_srgb(warmth_tint(warmth)).map(|value| value.max(0.0));
+fn warmth_swatch(warmth: f32) -> [f32; 3] {
+    tint_swatch(warmth_tint(warmth))
+}
+
+/// A light's `tint` (scene-linear Rec.2020) as a display colour for swatches
+/// and canvas handles: sRGB encoded, its brightest channel at 1.
+pub(super) fn tint_swatch(tint: [f32; 3]) -> [f32; 3] {
+    let linear = rec2020_to_linear_srgb(tint).map(|value| value.max(0.0));
     let peak = linear.into_iter().fold(f32::MIN_POSITIVE, f32::max);
     linear.map(|value| srgb_encode(value / peak))
+}
+
+/// The hue and saturation of `color`, a picked display colour (sRGB
+/// encoded, as the colour picker holds it): linear sRGB with its brightest
+/// channel at 1, however dark the colour. Black, which has neither, is white.
+pub(super) fn picked_hue(color: [f32; 3]) -> [f32; 3] {
+    let linear = color.map(srgb_decode);
+    let peak = linear.into_iter().fold(0.0, f32::max);
+    if peak < 1e-6 {
+        return [1.0; 3];
+    }
+    linear.map(|value| value / peak)
+}
+
+/// The tint of a picked display colour, as [`warmth_tint`] gives one:
+/// scene-linear Rec.2020 with luminance 1, so picking a colour changes the
+/// light's colour and not its brightness. sRGB's darkest hue, its blue
+/// primary, has luminance 0.0722, so no channel exceeds about 12.4.
+pub(super) fn picked_tint(color: [f32; 3]) -> [f32; 3] {
+    // sRGB lies within Rec.2020, so a hue converts without negative channels
+    // and its luminance is at least the blue primary's.
+    let rgb = linear_srgb_to_rec2020(picked_hue(color));
+    let luminance = REC2020_LUMA
+        .iter()
+        .zip(rgb)
+        .map(|(weight, value)| weight * value)
+        .sum::<f32>();
+    rgb.map(|value| value / luminance)
 }
 
 /// The Warmth (in [-1, 1]) whose swatch is nearest in hue to `color`, a

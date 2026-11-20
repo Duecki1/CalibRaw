@@ -1,13 +1,16 @@
 //! The Glow's card: its Style, then what most edits need: Amount, Range,
-//! Spread and Warmth, whose track runs yellow to red for Halation and cool to
-//! warm otherwise, as its tint does (styled_glow.rs in calibraw-core); Star
+//! Spread and its colour, Warmth or a picked one; Warmth's track runs yellow
+//! to red for Halation and cool to warm otherwise, as its tint does
+//! (styled_glow.rs in calibraw-core); Star
 //! adds its Points, and Motion, Streak and Star their Direction. Two
 //! collapsed sections hold the rest: Glow details has Core and, for the
 //! streaking styles, Softness; Color separation has Dispersion (but for
 //! Motion) and Split, whose mode and, for Shift, direction show once Split
 //! is above 0.
 
-use super::{effect_details_with_help, float_param_slider, styled_effect_card, StyleChoice};
+use super::{
+    effect_details_with_help, float_param_slider, light_color, styled_effect_card, StyleChoice,
+};
 use crate::i18n::tr;
 use crate::pipeline::{
     effect_params::styled_glow, GlowSplitMode, GlowStyle, MaskEffect, StarPoints,
@@ -57,8 +60,23 @@ pub(crate) fn show(
                 | GlowStyle::Streak
                 | GlowStyle::Star => SliderGradient::Temperature,
             };
-            changed |=
-                gradient_float_param_slider(ui, &mut settings.warmth, styled_glow::WARMTH, warmth);
+            let warmth_swatch = settings.warmth_swatch();
+            changed |= light_color(
+                ui,
+                "glow-color-picker",
+                &mut settings.color_mode,
+                &mut settings.color,
+                styled_glow::COLOR,
+                warmth_swatch,
+                |ui| {
+                    gradient_float_param_slider(
+                        ui,
+                        &mut settings.warmth,
+                        styled_glow::WARMTH,
+                        warmth,
+                    )
+                },
+            );
             if settings.style == GlowStyle::Star {
                 changed |= star_points(ui, &mut settings.points);
             }
