@@ -307,7 +307,7 @@ impl RawGpuPipeline {
             ai_cfa: has_ai_cfa,
             cfa_kind: raw.cfa_kind,
         })?;
-        let gpu_budget_reservation = GpuBudgetReservation::acquire(&resource_plan)?;
+        let gpu_budget_reservation = GpuBudgetReservation::acquire(device, &resource_plan)?;
 
         let gpu_error_scopes = GpuErrorScopes::push(device);
 

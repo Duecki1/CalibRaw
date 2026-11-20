@@ -275,8 +275,11 @@ Lensfun under threads still inside them.
 
 `RawGpuPipeline` owns all textures and buffers of one processing graph and a
 `GpuBudgetReservation` (RAII) against the process-wide admission limit. On a
-computer there is none (the driver reports real OOM). On Android, whose GPUs
-share system memory and whose drivers may let the low-memory killer end the app
+computer there is none (the driver reports real OOM), except that on Linux an
+integrated or software adapter, whose driver takes GPU memory from system RAM
+and may swap rather than report OOM, admits a reservation only up to half of
+the memory the system reports free when it is made (`admit_system_memory`).
+On Android, whose GPUs share system memory and whose drivers may let the low-memory killer end the app
 instead of reporting OOM, two shares of device RAM apply: previews, export tiles
 and quality tiers are sized against the working-set budget (RAM / 8, 384 MiB to
 1.5 GiB), and allocations are admitted up to the larger admission limit (RAM / 4,

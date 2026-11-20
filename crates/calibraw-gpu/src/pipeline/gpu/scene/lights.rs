@@ -252,7 +252,7 @@ impl SceneLightBake {
         let bytes = u64::from(face_texels).pow(2) * 4 * u64::from(cube_layers)
             + texels * 4 * 5 / 4
             + texels * 4 * 2 * u64::from(groups);
-        let reservation = GpuBudgetReservation::acquire_bytes("scene light bake", bytes)?;
+        let reservation = GpuBudgetReservation::acquire_bytes(device, "scene light bake", bytes)?;
         let cubes = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("calibraw scene shadow cubes"),
             size: wgpu::Extent3d {

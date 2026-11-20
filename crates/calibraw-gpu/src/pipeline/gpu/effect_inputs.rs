@@ -379,8 +379,11 @@ impl LookLutInputs {
 
     /// A texture for `size`³ texels with its budget reservation.
     fn reserved(device: &wgpu::Device, size: u32) -> Result<Self> {
-        let reservation =
-            GpuBudgetReservation::acquire_bytes("LUT texture", look_lut_texture_bytes(size)?)?;
+        let reservation = GpuBudgetReservation::acquire_bytes(
+            device,
+            "LUT texture",
+            look_lut_texture_bytes(size)?,
+        )?;
         Ok(Self::new(device, size, Some(reservation)))
     }
 
@@ -1245,6 +1248,7 @@ impl EffectInputs {
         if !fits {
             allocated.air_light = None;
             let reservation = GpuBudgetReservation::acquire_bytes(
+                &self.device,
                 "scene air light",
                 AirLightInputs::bytes(region.size, groups),
             );

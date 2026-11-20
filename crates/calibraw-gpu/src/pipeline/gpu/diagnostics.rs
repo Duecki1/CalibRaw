@@ -288,8 +288,11 @@ impl RawGpuPipeline {
             bytes <= super::MAX_RGBA32_READBACK_CHUNK_BYTES,
             "diagnostic texture exceeds the bounded readback limit"
         );
-        let _reservation =
-            super::GpuBudgetReservation::acquire_bytes("export diagnostic readback", bytes)?;
+        let _reservation = super::GpuBudgetReservation::acquire_bytes(
+            device,
+            "export diagnostic readback",
+            bytes,
+        )?;
         let rgb = begin_rgba32_texture_region_rgb_readback(
             device,
             queue,

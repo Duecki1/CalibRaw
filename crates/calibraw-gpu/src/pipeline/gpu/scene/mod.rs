@@ -204,7 +204,7 @@ impl SceneBake {
             + texels * 8 * 4 / 3
             + texels * SCRATCH_TEXEL_BYTES
             + SCENE_FOCUS_BYTES;
-        let reservation = GpuBudgetReservation::acquire_bytes("scene bake", bytes)?;
+        let reservation = GpuBudgetReservation::acquire_bytes(device, "scene bake", bytes)?;
         let layers = create_processing_texture_array(
             device,
             width,
@@ -491,7 +491,7 @@ impl SceneBakeInputs {
             .collect();
         let bytes =
             disparity.values.len() as u64 * 4 + sky.values.len() as u64 + normals.len() as u64;
-        let reservation = GpuBudgetReservation::acquire_bytes("scene depth inputs", bytes)?;
+        let reservation = GpuBudgetReservation::acquire_bytes(device, "scene depth inputs", bytes)?;
         let texture =
             |[width, height]: [u32; 2], format, label, bytes_per_texel: u32, data: &[u8]| {
                 let texture = device.create_texture(&wgpu::TextureDescriptor {

@@ -225,6 +225,7 @@ impl<'a> Resampler<'a> {
         };
         let lens_bytes = std::mem::size_of_val(lens_grid) as u64;
         let budget = GpuBudgetReservation::acquire_bytes(
+            device,
             "export geometry resampler",
             chunk_bytes
                 + cell_bytes * 2

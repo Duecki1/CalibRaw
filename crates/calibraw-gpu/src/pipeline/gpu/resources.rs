@@ -154,12 +154,14 @@ pub(super) struct GpuBudgetReservation {
 }
 
 impl GpuBudgetReservation {
-    /// Reserves `plan`'s resident bytes within the admission limit
-    /// ([`gpu_admission_limit_bytes`]).
-    pub(super) fn acquire(plan: &GpuResourcePlan) -> Result<Self> {
+    /// Reserves `plan`'s resident bytes on `device` within the admission limit
+    /// ([`gpu_admission_limit_bytes`]) and the system memory free now
+    /// ([`admit_system_memory`]).
+    pub(super) fn acquire(device: &wgpu::Device, plan: &GpuResourcePlan) -> Result<Self> {
         let limit = gpu_admission_limit_bytes();
         validate_gpu_resource_plan(plan, limit)?;
         let bytes = plan.persistent_gpu_bytes;
+        admit_system_memory(device, "this pipeline", bytes)?;
         reserve_gpu_bytes(&RESERVED_GPU_BYTES, limit, bytes).map_err(|used| {
             anyhow!(
                 "GPU pipelines already reserve {:.1} MiB of resident resources; this pipeline needs another {:.1} MiB, exceeding the {:.1} MiB process budget; close optional detail/navigation previews, reduce proxy size or mask capacity, or use tiled export",
@@ -173,11 +175,13 @@ impl GpuBudgetReservation {
 }
 
 impl GpuBudgetReservation {
-    /// Reserves `bytes` for `resource`, which is allocated after its pipeline
-    /// was built and is not part of the pipeline's plan, within the admission
-    /// limit ([`gpu_admission_limit_bytes`]).
-    pub(super) fn acquire_bytes(resource: &str, bytes: u64) -> Result<Self> {
+    /// Reserves `bytes` on `device` for `resource`, which is allocated after
+    /// its pipeline was built and is not part of the pipeline's plan, within
+    /// the admission limit ([`gpu_admission_limit_bytes`]) and the system
+    /// memory free now ([`admit_system_memory`]).
+    pub(super) fn acquire_bytes(device: &wgpu::Device, resource: &str, bytes: u64) -> Result<Self> {
         let limit = gpu_admission_limit_bytes();
+        admit_system_memory(device, &format!("the {resource}"), bytes)?;
         reserve_gpu_bytes(&RESERVED_GPU_BYTES, limit, bytes).map_err(|used| {
             anyhow!(
                 "GPU pipelines already reserve {:.1} MiB of resident resources; the {resource} needs another {:.1} MiB, exceeding the {:.1} MiB process budget",
@@ -241,7 +245,7 @@ pub(super) fn allocate_effect_resources<T>(
         storage_bytes <= binding_limit,
         "{label} needs a {storage_bytes}-byte storage binding, device limit is {binding_limit} bytes"
     );
-    let reservation = GpuBudgetReservation::acquire_bytes(label, resident_bytes)?;
+    let reservation = GpuBudgetReservation::acquire_bytes(device, label, resident_bytes)?;
     let scopes = GpuErrorScopes::push(device);
     let resources = build(reservation);
     scopes.finish(label)?;
@@ -682,10 +686,60 @@ pub(super) fn gpu_admission_limit_bytes() -> u64 {
     })
 }
 
-/// No limit on a computer: real OOM is reported by the GPU error scopes.
+/// No limit on a computer: real OOM is reported by the GPU error scopes. On
+/// Linux an adapter that renders from system memory is held to what the system
+/// has free instead ([`admit_system_memory`]).
 #[cfg(not(target_os = "android"))]
 pub(super) fn gpu_admission_limit_bytes() -> u64 {
     u64::MAX
+}
+
+/// Share of the system memory free now, as a divisor, that one reservation may
+/// take on a Linux adapter that renders from system memory: half, so the rest
+/// of the desktop and the programs beside CalibRaw keep the other half.
+#[cfg(target_os = "linux")]
+const SHARED_MEMORY_FREE_DIVISOR: u64 = 2;
+
+/// Declines `bytes` for `resource` on `device` when its adapter renders from
+/// system memory (integrated or software) and they exceed half of what Linux
+/// reports free now (`MemAvailable`).
+///
+/// Such adapters take GPU memory from system RAM, and their drivers report
+/// heaps sized from installed RAM rather than free RAM, so an allocation the
+/// driver accepts can push the rest of the system into swap instead of
+/// failing: the desktop stalls rather than CalibRaw getting an OOM error. A declined reservation takes the same path
+/// as the admission limit: the effect is left out of the preview, an export
+/// fails with the reason.
+///
+/// Each reservation is checked on its own against the memory free when it is
+/// made; drivers may populate pages lazily, so reservations made together
+/// before any GPU work each see the same free memory. Unknown free memory
+/// admits, as do dedicated adapters and other platforms.
+#[cfg(target_os = "linux")]
+fn admit_system_memory(device: &wgpu::Device, resource: &str, bytes: u64) -> Result<()> {
+    let device_type = device.adapter_info().device_type;
+    if !matches!(
+        device_type,
+        wgpu::DeviceType::IntegratedGpu | wgpu::DeviceType::Cpu
+    ) {
+        return Ok(());
+    }
+    let Some(available) = calibraw_core::system_memory::available_memory_bytes() else {
+        return Ok(());
+    };
+    let allowed = available / SHARED_MEMORY_FREE_DIVISOR;
+    anyhow::ensure!(
+        bytes <= allowed,
+        "{resource} needs {:.1} MiB of GPU memory, more than half of the {:.1} MiB the system has free; this GPU uses system memory, so close other programs, reduce the preview size, or use tiled export",
+        bytes as f64 / (1024.0 * 1024.0),
+        available as f64 / (1024.0 * 1024.0),
+    );
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn admit_system_memory(_device: &wgpu::Device, _resource: &str, _bytes: u64) -> Result<()> {
+    Ok(())
 }
 
 /// The Android admission limit for `total_ram_bytes` of device RAM: a fixed

@@ -161,6 +161,7 @@ impl DispatchBands {
             .div_ceil(WORKGROUP_ROWS)
             .max(1);
         let reservation = GpuBudgetReservation::acquire_bytes(
+            device,
             "dispatch band origins",
             u64::from(stride) * u64::from(entries),
         )?;
