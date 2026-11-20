@@ -8,7 +8,8 @@ use crate::pipeline::CardSwitch;
 mod ai_denoise;
 mod task_view;
 
-use ai_denoise::{export_needs_ai_denoise, install_export_ai_denoise};
+use crate::services::ai_denoise::install_ai_denoise;
+use ai_denoise::export_needs_ai_denoise;
 
 impl ExportTask {
     pub(super) fn new(
@@ -75,7 +76,7 @@ pub(in crate::app) fn export_source_stem(
 }
 
 /// Renders one export on a worker, after installing the AI denoise the edit
-/// needs ([`install_export_ai_denoise`]).
+/// needs ([`install_ai_denoise`]).
 pub(in crate::app) fn spawn_export_item(
     request: ExportItemRequest,
     cancellation: Arc<std::sync::atomic::AtomicBool>,
@@ -113,7 +114,7 @@ pub(in crate::app) fn spawn_export_item(
                     completed: 0,
                     total: 0,
                 });
-                if let Err(error) = install_export_ai_denoise(
+                if let Err(error) = install_ai_denoise(
                     &raw,
                     ai_denoise_result.as_deref(),
                     &device,

@@ -214,7 +214,7 @@ impl CalibRawApp {
         self.poll_foreground_operation(frame);
         self.poll_people_composes();
         self.poll_library_ai_mask_refresh(frame);
-        self.poll_merge();
+        self.poll_merge(frame);
         self.poll_library_review_saves();
         self.resume_pending_ai_denoise(frame);
         if caps.tasks_need_foreground {

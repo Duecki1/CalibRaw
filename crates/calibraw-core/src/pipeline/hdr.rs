@@ -138,6 +138,10 @@ pub struct HdrFrame<'a> {
 pub struct HdrAccumulator {
     width: usize,
     height: usize,
+    /// Fade out frames that disagree with the reference ([`Reference::consistency`]).
+    /// Without it every frame counts wherever it measured the pixel, which suits a
+    /// static scene whose brightness differences are not motion.
+    reject_motion: bool,
     reference: Option<Reference>,
     pixels: Vec<MergePixel>,
     min_light: f32,
@@ -158,11 +162,13 @@ struct MergePixel {
 }
 
 impl HdrAccumulator {
-    pub fn new(width: u32, height: u32) -> Result<Self> {
+    /// `reject_motion` deghosts: frames fade out where they disagree with the reference.
+    pub fn new(width: u32, height: u32, reject_motion: bool) -> Result<Self> {
         let count = validate_raw_dimensions(width, height)?;
         Ok(Self {
             width: width as usize,
             height: height as usize,
+            reject_motion,
             reference: None,
             pixels: vec![MergePixel::default(); count],
             min_light: f32::INFINITY,
@@ -214,15 +220,17 @@ impl HdrAccumulator {
                 let gain = reference
                     .relative_gain(&warped, &luminance)
                     .unwrap_or(frame.registration.gain);
-                let consistency = reference.consistency(
-                    self.width,
-                    self.height,
-                    &warped,
-                    &luminance,
-                    frame.exposure,
-                    gain,
-                );
-                (gain, Some(consistency))
+                let consistency = self.reject_motion.then(|| {
+                    reference.consistency(
+                        self.width,
+                        self.height,
+                        &warped,
+                        &luminance,
+                        frame.exposure,
+                        gain,
+                    )
+                });
+                (gain, consistency)
             }
             None => (1.0, None),
         };

@@ -72,20 +72,38 @@ impl CalibRawApp {
         }
     }
 
-    /// Reports a finished HDR merge or focus stack.
-    pub(super) fn poll_merge(&mut self) {
-        use crate::ui::library::MergeOutcome;
+    /// Reports a finished HDR merge or focus stack, and opens it in Develop
+    /// when the user asked to.
+    pub(super) fn poll_merge(&mut self, frame: &eframe::Frame) {
+        use crate::ui::library::{LibraryLocator, MergeOutcome};
         let Some((kind, outcome)) = self.library.poll_merge(&self.egui_ctx) else {
             return;
         };
         match outcome {
-            MergeOutcome::Saved(name) => {
-                let message = tr_fmt(
-                    "{kind} saved: {name}",
-                    &[("kind", &kind.title()), ("name", &name)],
-                );
+            MergeOutcome::Saved(saved) => {
+                let arguments = [
+                    ("kind", &kind.title() as &dyn std::fmt::Display),
+                    ("name", &saved.name),
+                ];
+                let message = if saved.lens_uncorrected {
+                    tr_fmt(
+                        "{kind} saved without lens correction, as no lens profile matches: {name}",
+                        &arguments,
+                    )
+                } else {
+                    tr_fmt("{kind} saved: {name}", &arguments)
+                };
                 self.library.set_status(message.clone());
                 self.ui.notice = Some(message);
+                if saved.open {
+                    match saved.locator {
+                        LibraryLocator::Desktop(path) => self.open_path(path, frame),
+                        LibraryLocator::Android { uri } => {
+                            self.library.clear_selection();
+                            self.open_android_library_document(&uri, &saved.name);
+                        }
+                    }
+                }
             }
             MergeOutcome::Cancelled => {
                 self.ui.notice = Some(tr_fmt("{kind} cancelled.", &[("kind", &kind.title())]));

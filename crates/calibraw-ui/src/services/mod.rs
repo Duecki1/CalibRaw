@@ -5,4 +5,5 @@
 //! arch-check` enforces this); the `app` module turns their progress into
 //! repaints and displayed state.
 
+pub(crate) mod ai_denoise;
 pub(crate) mod replay;

@@ -1,12 +1,13 @@
 use super::*;
 use crate::app::ErrorKind;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::LoadedRaw;
+use crate::services::ai_denoise::{ai_denoise_models_installed, install_ai_denoise};
 use crate::ui::background_tasks::{BackgroundTaskId, BackgroundTaskView};
 use anyhow::{Context, Result};
 use calibraw_gpu::pipeline::{
-    merge_hdr_bracket, stack_focus, GpuProgramPrewarm, MergeOptions, MergedImage,
+    merge_hdr_bracket, stack_focus, MergeOptions, MergedImage, SourceDenoiser,
 };
-use eframe::wgpu;
 
 /// Library actions that merge several RAW files into one floating-point TIFF.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,79 +38,195 @@ impl MergeKind {
             Self::FocusStack => "FocusStack",
         }
     }
+}
 
-    fn run(
-        self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        paths: &[PathBuf],
-        options: MergeOptions,
-        prewarm: Option<Arc<GpuProgramPrewarm>>,
-        progress: impl FnMut(String) -> bool,
-    ) -> Result<MergedImage> {
-        match self {
-            Self::Hdr => merge_hdr_bracket(device, queue, paths, options, prewarm, progress),
-            Self::FocusStack => stack_focus(device, queue, paths, options, prewarm, progress),
-        }
-    }
+/// What the merge dialog chose. The last confirmed choice opens the dialog
+/// again until CalibRaw quits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct MergeChoices {
+    options: MergeOptions,
+    /// AI-denoise every source with RawNIND before it develops.
+    ai_denoise: bool,
 }
 
 /// The options dialog a merge asks before it starts.
 pub(super) struct MergeDialog {
     kind: MergeKind,
     assets: Vec<LibraryAsset>,
+    ai_models: AiModels,
 }
 
-/// Asks for the options of a `kind` merge of `assets`; [`show_dialog`] starts
-/// it once they are confirmed.
-pub(super) fn ask(app: &mut CalibRawApp, kind: MergeKind, assets: Vec<LibraryAsset>) {
-    if assets.len() >= 2 {
-        app.library.merge_dialog = Some(MergeDialog { kind, assets });
+/// Whether the RawNIND models AI denoise needs are installed, which takes a
+/// worker seconds to check ([`ai_denoise_models_installed`]).
+enum AiModels {
+    Checking(mpsc::Receiver<bool>),
+    Installed,
+    Missing,
+}
+
+impl AiModels {
+    fn check(context: &egui::Context) -> Self {
+        let (sender, receiver) = mpsc::channel();
+        let repaint = context.clone();
+        let spawned = std::thread::Builder::new()
+            .name("raw-merge-ai-models".to_owned())
+            .spawn(move || {
+                let _ = sender.send(ai_denoise_models_installed());
+                repaint.request_repaint();
+            });
+        match spawned {
+            Ok(_) => Self::Checking(receiver),
+            Err(error) => {
+                log::warn!("could not check the RawNIND models: {error}");
+                Self::Missing
+            }
+        }
     }
-}
 
-/// The open merge dialog: one switch per option, each starting from the
-/// choice of the previous merge. Merge starts the merge with them.
-pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
-    let Some(dialog) = &app.library.merge_dialog else {
-        return;
-    };
-    let options = &mut app.library.merge_options;
-    let mut action = moduwu_design::DialogAction::None;
-    moduwu_design::Dialog::new("library-merge-options", dialog.kind.title()).show_with_footer(
-        ui.ctx(),
-        |ui| {
-            moduwu_design::toggle_row(ui, &mut options.remove_hot_pixels, tr("Remove hot pixels"));
-        },
-        |ui| {
-            action = moduwu_design::dialog_confirmation_actions(
-                ui,
-                tr("Cancel"),
-                tr("Merge"),
-                true,
-                false,
-                // Enter also flips a focused switch, so it does not confirm.
-                moduwu_design::DialogKeyboard::CLOSE_ONLY,
-            );
-        },
-    );
-    let confirmed = match action {
-        moduwu_design::DialogAction::Confirm => true,
-        moduwu_design::DialogAction::Cancel => false,
-        moduwu_design::DialogAction::None => return,
-    };
-    if let Some(dialog) = app.library.merge_dialog.take() {
-        if confirmed {
-            let options = app.library.merge_options;
-            start(app, frame, dialog.kind, options, dialog.assets, ui.ctx());
+    fn poll(&mut self) {
+        if let Self::Checking(receiver) = self {
+            *self = match receiver.try_recv() {
+                Ok(true) => Self::Installed,
+                Ok(false) | Err(mpsc::TryRecvError::Disconnected) => Self::Missing,
+                Err(mpsc::TryRecvError::Empty) => return,
+            };
         }
     }
 }
 
+/// How the merge dialog was closed.
+enum MergeDialogChoice {
+    Cancel,
+    /// Start the merge, and open its result in Develop once it is saved when
+    /// `open` is set.
+    Merge {
+        open: bool,
+    },
+}
+
+/// Asks for the options of a `kind` merge of `assets`; [`show_dialog`] starts
+/// it once they are confirmed.
+pub(super) fn ask(
+    app: &mut CalibRawApp,
+    kind: MergeKind,
+    assets: Vec<LibraryAsset>,
+    context: &egui::Context,
+) {
+    if assets.len() >= 2 {
+        app.library.merge_dialog = Some(MergeDialog {
+            kind,
+            assets,
+            ai_models: AiModels::check(context),
+        });
+    }
+}
+
+/// The open merge dialog: one switch per option, each starting from the
+/// choice of the previous merge. AI denoise can be chosen once its models are
+/// known to be installed; turning it on in Develop installs them.
+pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
+    let Some(dialog) = &mut app.library.merge_dialog else {
+        return;
+    };
+    dialog.ai_models.poll();
+    let kind = dialog.kind;
+    let models = &dialog.ai_models;
+    let choices = &mut app.library.merge_choices;
+    let mut choice = None;
+    moduwu_design::Dialog::new("library-merge-options", kind.title()).show_with_footer(
+        ui.ctx(),
+        |ui| {
+            let options = &mut choices.options;
+            moduwu_design::toggle_row(ui, &mut options.lens_correction, tr("Lens correction"));
+            moduwu_design::toggle_row(ui, &mut options.align, tr("Auto-align"));
+            if kind == MergeKind::Hdr {
+                moduwu_design::toggle_with_help(
+                    ui,
+                    &mut options.reject_motion,
+                    tr("Deghost"),
+                    tr("Leaves out a frame where something moved between the shots."),
+                );
+            }
+            moduwu_design::toggle_row(ui, &mut options.remove_hot_pixels, tr("Remove hot pixels"));
+            let installed = matches!(models, AiModels::Installed);
+            // Shown off while it cannot run, without forgetting the choice.
+            let mut ai_denoise = choices.ai_denoise && installed;
+            let mut toggle = ui
+                .add_enabled_ui(installed, |ui| {
+                    moduwu_design::toggle_row(ui, &mut ai_denoise, tr("AI denoise"))
+                })
+                .inner;
+            if matches!(models, AiModels::Missing) {
+                toggle = toggle.on_disabled_hover_text(tr(
+                    "Turn on AI denoise for a photo in Develop once to install its models.",
+                ));
+            }
+            if toggle.changed() {
+                choices.ai_denoise = ai_denoise;
+            }
+        },
+        |ui| {
+            if moduwu_design::primary_action_button(ui, tr("Merge")).clicked() {
+                choice = Some(MergeDialogChoice::Merge { open: false });
+            }
+            if moduwu_design::secondary_button(ui, tr("Merge and open")).clicked() {
+                choice = Some(MergeDialogChoice::Merge { open: true });
+            }
+            if moduwu_design::secondary_button(ui, tr("Cancel")).clicked() {
+                choice = Some(MergeDialogChoice::Cancel);
+            }
+            // Enter also flips a focused switch, so it does not confirm.
+            if choice.is_none()
+                && moduwu_design::dialog_keyboard_action(
+                    ui,
+                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                    false,
+                ) == moduwu_design::DialogAction::Cancel
+            {
+                choice = Some(MergeDialogChoice::Cancel);
+            }
+        },
+    );
+    let Some(choice) = choice else {
+        return;
+    };
+    let Some(dialog) = app.library.merge_dialog.take() else {
+        return;
+    };
+    if let MergeDialogChoice::Merge { open } = choice {
+        let mut choices = app.library.merge_choices;
+        // Still checking: the models were installed when AI denoise was last
+        // chosen, and the first source fails clearly if they are gone.
+        choices.ai_denoise &= !matches!(dialog.ai_models, AiModels::Missing);
+        start(
+            app,
+            frame,
+            dialog.kind,
+            choices,
+            open,
+            dialog.assets,
+            ui.ctx(),
+        );
+    }
+}
+
+/// A saved merge.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SavedMerge {
+    /// The saved file's name.
+    pub(crate) name: String,
+    /// Where it was saved: beside the first source, or in the media library.
+    pub(crate) locator: LibraryLocator,
+    /// Open it in Develop, as the user asked.
+    pub(crate) open: bool,
+    /// Lens correction was asked for but no profile matched, so the merge is
+    /// not lens corrected.
+    pub(crate) lens_uncorrected: bool,
+}
+
 pub(super) struct MergeTask {
     kind: MergeKind,
-    /// The saved file name, or the error.
-    receiver: mpsc::Receiver<Result<String, String>>,
+    receiver: mpsc::Receiver<Result<SavedMerge, String>>,
     progress: Arc<Mutex<String>>,
     cancelled: Arc<AtomicBool>,
 }
@@ -118,7 +235,8 @@ fn start(
     app: &mut CalibRawApp,
     frame: &eframe::Frame,
     kind: MergeKind,
-    options: MergeOptions,
+    choices: MergeChoices,
+    open: bool,
     assets: Vec<LibraryAsset>,
     context: &egui::Context,
 ) {
@@ -162,9 +280,33 @@ fn start(
                 repaint.request_repaint();
                 !cancelled.load(Ordering::Relaxed)
             };
+            // The result is not saved beside the RAW: the merge corrects and
+            // white balances each source its own way, so a saved result would
+            // not match the photo's edit, and restoring one deletes it.
+            let mut denoise_source = |raw: &Arc<LoadedRaw>| -> Result<()> {
+                install_ai_denoise(
+                    raw,
+                    None,
+                    &device,
+                    &queue,
+                    &cancelled,
+                    |completed, total| {
+                        if total > 0 {
+                            report(tr_fmt(
+                                "Applying AI denoise: tile {completed}/{total}",
+                                &[("completed", &completed), ("total", &total)],
+                            ));
+                        }
+                    },
+                )
+                .map_err(anyhow::Error::msg)
+            };
+            let denoise = choices
+                .ai_denoise
+                .then_some(&mut denoise_source as &mut SourceDenoiser);
             // The merge reads files: media-library photos are staged as local copies.
             let mut staged = Vec::with_capacity(assets.len());
-            let result = (|| -> Result<String> {
+            let result = (|| -> Result<SavedMerge> {
                 for (index, asset) in assets.iter().enumerate() {
                     anyhow::ensure!(
                         report(tr_fmt(
@@ -181,10 +323,25 @@ fn start(
                     .iter()
                     .map(|staged| staged.raw_path.clone())
                     .collect();
-                let merged = kind.run(&device, &queue, &paths, options, prewarm, report)?;
+                let options = choices.options;
+                let merged = match kind {
+                    MergeKind::Hdr => merge_hdr_bracket(
+                        &device, &queue, &paths, options, denoise, prewarm, report,
+                    ),
+                    MergeKind::FocusStack => {
+                        stack_focus(&device, &queue, &paths, options, denoise, prewarm, report)
+                    }
+                }?;
                 anyhow::ensure!(!cancelled.load(Ordering::Relaxed), tr("Merge cancelled"));
                 report(tr("Saving floating-point TIFF…").to_owned());
-                save_merged(&merged, &assets[0], &paths[0], kind, &*platform, &cancelled)
+                let (name, locator) =
+                    save_merged(&merged, &assets[0], &paths[0], kind, &*platform, &cancelled)?;
+                Ok(SavedMerge {
+                    name,
+                    locator,
+                    open,
+                    lens_uncorrected: choices.options.lens_correction && !merged.lens_corrected,
+                })
             })()
             .map_err(|error| format!("{error:#}"));
             for staged in &staged {
@@ -207,7 +364,7 @@ fn start(
 
 /// Saves `merged` as `{stem}-{suffix}.tif` for the first `source`, staged at
 /// `staged`: beside a folder photo, or into the media library for a media-library
-/// photo. Returns the saved file name.
+/// photo. Returns the saved file name and where it is.
 fn save_merged(
     merged: &MergedImage,
     source: &LibraryAsset,
@@ -215,7 +372,7 @@ fn save_merged(
     kind: MergeKind,
     platform: &dyn Platform,
     cancelled: &AtomicBool,
-) -> Result<String> {
+) -> Result<(String, LibraryLocator)> {
     let parent = staged
         .parent()
         .context(tr("Merge source has no parent folder"))?;
@@ -229,10 +386,11 @@ fn save_merged(
     match &source.locator {
         LibraryLocator::Desktop(path) => {
             let saved = save_unique(temporary, path, kind.file_suffix())?;
-            Ok(saved
+            let name = saved
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| saved.display().to_string()))
+                .unwrap_or_else(|| saved.display().to_string());
+            Ok((name, LibraryLocator::Desktop(saved)))
         }
         // The library picks a free name; the staged copy is deleted when dropped.
         LibraryLocator::Android { .. } => {
@@ -244,7 +402,10 @@ fn save_merged(
             let imported = platform
                 .import_local_library_document(temporary.path(), &name)
                 .map_err(anyhow::Error::msg)?;
-            Ok(imported.display_name)
+            Ok((
+                imported.display_name,
+                LibraryLocator::Android { uri: imported.uri },
+            ))
         }
     }
 }
@@ -330,8 +491,7 @@ mod save_unique_tests {
 /// How a merge ended.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum MergeOutcome {
-    /// The saved file name.
-    Saved(String),
+    Saved(SavedMerge),
     Cancelled,
     Failed(String),
 }
@@ -352,7 +512,7 @@ impl LibraryState {
         let task = self.merge.as_ref()?;
         let cancelled = task.cancelled.load(Ordering::Relaxed);
         let outcome = match task.receiver.try_recv() {
-            Ok(Ok(name)) => MergeOutcome::Saved(name),
+            Ok(Ok(saved)) => MergeOutcome::Saved(saved),
             Ok(Err(_)) if cancelled => MergeOutcome::Cancelled,
             Ok(Err(error)) => MergeOutcome::Failed(error),
             Err(mpsc::TryRecvError::Disconnected) => MergeOutcome::Failed(tr_fmt(

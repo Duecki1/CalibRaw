@@ -14,6 +14,7 @@
 //! (Baker & Matthews, "Lucas-Kanade 20 Years On"), restricted to a similarity on coarse
 //! levels and free on finer ones.
 
+use super::LensGeometryMap;
 use anyhow::{ensure, Result};
 use rayon::prelude::*;
 
@@ -125,11 +126,40 @@ pub(super) fn warp(
             covered: vec![true; width * height],
         };
     }
+    resample(width, height, rgb, peak, |x, y| alignment.map(x, y))
+}
+
+/// Undoes the distortion `map` describes: resamples `rgb`, a `width × height` image in
+/// sensor coordinates such as a merged master, onto the corrected grid the map's
+/// geometry pass shows. Catmull–Rom like [`warp`]; corrected pixels whose source lies
+/// outside the image repeat its edge.
+pub fn correct_lens_distortion(
+    width: u32,
+    height: u32,
+    rgb: &[f32],
+    map: &LensGeometryMap,
+) -> Vec<f32> {
+    let warped = resample(width as usize, height as usize, rgb, None, |x, y| {
+        let [x, y] = map.source_position_for_raster(x, y, width, height);
+        (x, y)
+    });
+    warped.rgb.into_iter().flatten().collect()
+}
+
+/// Resamples `rgb` (and `peak`) onto a `width × height` grid whose pixel `(x, y)` shows
+/// source position `source(x, y)` (pixel centers at integer coordinates; NaN for none).
+fn resample(
+    width: usize,
+    height: usize,
+    rgb: &[f32],
+    peak: Option<&[f32]>,
+    source: impl Fn(f32, f32) -> (f32, f32) + Sync,
+) -> Warped {
     let has_peak = peak.is_some();
     let ((rgb, maxima), covered): ((Vec<_>, Vec<_>), Vec<_>) = (0..width * height)
         .into_par_iter()
         .map(|i| {
-            let (x, y) = alignment.map((i % width) as f32, (i / width) as f32);
+            let (x, y) = source((i % width) as f32, (i / width) as f32);
             let covered = sample_coordinates(width, height, x, y).is_some();
             let (ix, fx) = split(x, width);
             let (iy, fy) = split(y, height);

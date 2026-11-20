@@ -142,8 +142,9 @@ change that establishes a boundary, not in advance.
 - `ui/` — views. They read state, keep view-local drafts, selection, focus and
   drag state, and return actions; application handlers perform mutation,
   persistence and background work.
-- `services/` — presentation-independent workflows (no egui/eframe), currently
-  edit replay. Progress is reported through callbacks and failures through
+- `services/` — presentation-independent workflows (no egui/eframe): edit
+  replay, and the AI denoise of photos not open in Develop (exports,
+  merges). Progress is reported through callbacks and failures through
   typed errors; the app turns them into repaints and displayed state.
 - `platform/` — the only module that names an OS (see
   [Platform boundaries](#platform-boundaries)).

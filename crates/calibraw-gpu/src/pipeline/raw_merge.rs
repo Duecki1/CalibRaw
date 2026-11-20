@@ -4,7 +4,9 @@
 //! linear measurements.
 use super::*;
 use anyhow::{ensure, Context, Result};
-use calibraw_core::pipeline::alignment::{Alignment, AlignmentReference, Registration};
+use calibraw_core::pipeline::alignment::{
+    correct_lens_distortion, Alignment, AlignmentReference, Registration,
+};
 use image::ImageEncoder;
 use rayon::prelude::*;
 use std::io::{Seek, Write};
@@ -17,6 +19,9 @@ pub struct MergedImage {
     pub width: u32,
     pub height: u32,
     pub rgb: Vec<f32>,
+    /// Whether a lens profile corrected it: false when lens correction was off or no
+    /// profile matched the reference source.
+    pub lens_corrected: bool,
 }
 
 impl MergedImage {
@@ -34,15 +39,43 @@ impl MergedImage {
     }
 }
 
-/// The corrections a merge applies to every source before developing it. Each is
-/// off by default, which merges the sources as decoded.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// How a merge develops and combines its sources. [`Default`] is what a merge does
+/// unless the user turns something off: correct the lens, align, and reject motion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MergeOptions {
     /// Repair each source's hot pixels ([`remove_hot_pixels`]) in its mosaic, as
     /// the Detail card does for a single RAW. A source without a mosaic (a linear
     /// DNG) has no photosites to repair and merges as decoded.
     pub remove_hot_pixels: bool,
+    /// Correct distortion, lateral chromatic aberration and vignetting with the
+    /// Lensfun profile that matches the reference source automatically. Every
+    /// source takes that profile at its own focal length and aperture. Without a
+    /// match, the merge is not lens corrected ([`MergedImage::lens_corrected`]).
+    pub lens_correction: bool,
+    /// Register every source to the reference. Without it the sources are merged
+    /// pixel for pixel, as shot from a tripod.
+    pub align: bool,
+    /// HDR merge only: fade out a frame where it disagrees with the reference, so
+    /// moving subjects do not ghost.
+    pub reject_motion: bool,
 }
+
+impl Default for MergeOptions {
+    fn default() -> Self {
+        Self {
+            remove_hot_pixels: false,
+            lens_correction: true,
+            align: true,
+            reject_motion: true,
+        }
+    }
+}
+
+/// Installs an AI-denoised image on a decoded source
+/// ([`LoadedRaw::set_ai_denoised_image`]), which the merge then develops from.
+/// calibraw-gpu cannot run AI models, so the caller supplies this. It gets each
+/// source with a sensor mosaic, after the merge's corrections and white balance.
+pub type SourceDenoiser<'a> = dyn FnMut(&Arc<LoadedRaw>) -> Result<()> + 'a;
 
 /// Requires at least two distinct files.
 pub(super) fn ensure_distinct_sources(paths: &[PathBuf], noun: &str) -> Result<()> {
@@ -65,10 +98,17 @@ pub(super) struct MergeCamera {
     wb_coeffs: [f32; 4],
     /// Reference white balance and camera matrix: camera RGB → working Rec.2020.
     color_transform: [[f32; 3]; 3],
+    /// The reference's distortion correction, which develops leave to a later
+    /// geometry pass: applied to the merged master.
+    lens_geometry: Option<Arc<LensGeometryMap>>,
+    /// The Lensfun profile every source is corrected with; `None` leaves them as
+    /// decoded.
+    lens: Option<LensfunLens>,
 }
 
 impl MergeCamera {
-    fn new(raw: &LoadedRaw) -> Self {
+    /// `raw` is the reference, corrected with `lens`.
+    fn new(raw: &LoadedRaw, lens: Option<LensfunLens>) -> Self {
         let (wb, matrix, _) = raw.adjusted_white_balance_and_camera_transform(0.0, 0.0);
         let wb = [wb[0], 0.5 * (wb[1] + wb[3]), wb[2]];
         let mut color_transform = [[0.0; 3]; 3];
@@ -83,12 +123,25 @@ impl MergeCamera {
             identity: (raw.camera_make.clone(), raw.camera_model.clone()),
             wb_coeffs: raw.wb_coeffs,
             color_transform,
+            lens_geometry: raw.lens_geometry.clone(),
+            lens,
         }
     }
 
-    /// Converts merged camera RGB to working Rec.2020; see [`camera_to_working_rec2020`].
-    pub(super) fn to_working_rec2020(&self, rgb: &mut [f32]) {
-        camera_to_working_rec2020(rgb, self.color_transform);
+    /// The master of merged camera RGB `rgb` (reference units, sensor coordinates):
+    /// distortion corrected when the sources were lens corrected, then converted to
+    /// working Rec.2020 ([`camera_to_working_rec2020`]).
+    pub(super) fn finish(&self, mut rgb: Vec<f32>) -> MergedImage {
+        if let Some(map) = &self.lens_geometry {
+            rgb = correct_lens_distortion(self.width, self.height, &rgb, map);
+        }
+        camera_to_working_rec2020(&mut rgb, self.color_transform);
+        MergedImage {
+            width: self.width,
+            height: self.height,
+            rgb,
+            lens_corrected: self.lens.is_some(),
+        }
     }
 }
 
@@ -120,13 +173,19 @@ pub(super) struct MergeFrame<'a> {
 /// one at a time and hands each to `merge`, so only one developed frame is resident.
 /// `noun` names a source in progress messages ("exposure", "frame"). The progress
 /// callback returns false to cancel between frames and tiles. `options` corrects
-/// each source as it is decoded.
+/// and registers each source; `denoise`, when given, AI-denoises it.
+///
+/// A source's frame stays in sensor coordinates, as its saturation peak is
+/// measured: the distortion correction is applied to the merged master
+/// ([`MergeCamera::finish`]), so alignment registers frames that share the lens's
+/// distortion and only one resampling corrects it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn merge_sources(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     sources: &[MergeSource],
     options: MergeOptions,
+    mut denoise: Option<&mut SourceDenoiser>,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     noun: &str,
     progress: &mut impl FnMut(String) -> bool,
@@ -148,13 +207,6 @@ pub(super) fn merge_sources(
             !raw.is_display_referred_raster(),
             "Merging requires original RAW files, not rendered TIFFs"
         );
-        // Repaired before anything reads the mosaic, so neither the developed
-        // frame nor its saturation peak sees a hot photosite.
-        if options.remove_hot_pixels {
-            if let Some(repaired) = remove_hot_pixels(&raw) {
-                raw = repaired;
-            }
-        }
         if let Some(camera) = &reference_camera {
             ensure!(
                 camera.identity == (raw.camera_make.clone(), raw.camera_model.clone())
@@ -162,14 +214,57 @@ pub(super) fn merge_sources(
                 "Merge sources must have the same camera and image dimensions"
             );
         }
-        let camera = &*reference_camera.get_or_insert_with(|| MergeCamera::new(&raw));
+        // The reference picks the profile, so every source gets the same one.
+        let lens = match &reference_camera {
+            Some(camera) => camera.lens.clone(),
+            None if options.lens_correction => {
+                let lens = lensfun_catalog(&raw).auto_match;
+                if lens.is_none() {
+                    calibraw_core::diagnostics::record(format!(
+                        "Merge: no Lensfun profile matches {}; not lens corrected",
+                        path.display()
+                    ));
+                }
+                lens
+            }
+            None => None,
+        };
+        if lens.is_some() || options.remove_hot_pixels {
+            ensure!(progress(format!("Correcting {step}")), "Merge cancelled");
+        }
+        // Before anything reads the mosaic, so neither the developed frame nor
+        // its saturation peak sees a hot photosite.
+        if options.remove_hot_pixels {
+            if let Some(repaired) = remove_hot_pixels(&raw) {
+                raw = repaired;
+            }
+        }
+        // A sample clips at the sensor, so the peak is measured before the
+        // vignetting correction brightens the corners past white. The lens
+        // correction moves no sample further than lateral chromatic
+        // aberration, well inside the peak's demosaic footprint.
+        let peak = sensor_footprint_peak(&raw);
+        if let Some(lens) = &lens {
+            raw = apply_lens_correction(&raw, &LensCorrection::Profile(lens.clone()))
+                .with_context(|| format!("correct the lens of {}", path.display()))?;
+        }
+        let camera = &*reference_camera.get_or_insert_with(|| MergeCamera::new(&raw, lens));
         // One white balance for every source, so per-shot auto WB cannot create seams.
         raw.wb_coeffs = camera.wb_coeffs;
         let raw = Arc::new(raw);
+        let denoised = match denoise.as_deref_mut() {
+            Some(denoise) if !raw.is_pre_demosaiced_raster() => {
+                ensure!(progress(format!("Denoising {step}")), "Merge cancelled");
+                denoise(&raw).with_context(|| format!("AI denoise {}", path.display()))?;
+                true
+            }
+            _ => false,
+        };
         let rgb = render_camera_rgb(
             device,
             queue,
             &raw,
+            denoised,
             program_prewarm.clone(),
             |development| match development {
                 Development::Developed(percent) => {
@@ -181,25 +276,29 @@ pub(super) fn merge_sources(
                 )),
             },
         )?;
-        let peak = sensor_footprint_peak(&raw);
         drop(raw);
-        ensure!(progress(format!("Aligning {step}")), "Merge cancelled");
         let exposure = source.exposure / reference_exposure;
+        let unregistered = Registration {
+            alignment: Alignment::default(),
+            gain: 1.0,
+        };
         let registration = match &reference {
-            Some(reference) => reference
-                .align(&rgb, exposure)
-                .with_context(|| format!("align {}", path.display()))?,
+            _ if !options.align => unregistered,
+            Some(reference) => {
+                ensure!(progress(format!("Aligning {step}")), "Merge cancelled");
+                reference
+                    .align(&rgb, exposure)
+                    .with_context(|| format!("align {}", path.display()))?
+            }
             None => {
+                ensure!(progress(format!("Aligning {step}")), "Merge cancelled");
                 reference = Some(AlignmentReference::new(
                     camera.width,
                     camera.height,
                     &rgb,
                     exposure,
                 )?);
-                Registration {
-                    alignment: Alignment::default(),
-                    gain: 1.0,
-                }
+                unregistered
             }
         };
         ensure!(progress(format!("Merging {step}")), "Merge cancelled");
@@ -219,7 +318,7 @@ pub(super) fn merge_sources(
 
 /// Applies `color_transform` (camera RGB → working Rec.2020) and preserves negative
 /// out-of-gamut values and values above 1.
-pub(super) fn camera_to_working_rec2020(rgb: &mut [f32], color_transform: [[f32; 3]; 3]) {
+fn camera_to_working_rec2020(rgb: &mut [f32], color_transform: [[f32; 3]; 3]) {
     rgb.par_chunks_exact_mut(3).for_each(|p| {
         let source = [p[0], p[1], p[2]];
         for row in 0..3 {
@@ -240,17 +339,20 @@ pub(super) enum Development {
 /// Develops `raw` to camera RGB without white balance. Clipped highlights get the
 /// default reconstruction, which only replaces saturated photosites: a merge weighs
 /// those pixels out wherever another frame measured them, and keeps the reconstruction
-/// where none did, as a single RAW would show it.
+/// where none did, as a single RAW would show it. `ai_denoised` develops the
+/// AI-denoised image installed on `raw` instead of its mosaic.
 pub(super) fn render_camera_rgb(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     raw: &Arc<LoadedRaw>,
+    ai_denoised: bool,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     mut progress: impl FnMut(Development) -> bool,
 ) -> Result<Vec<f32>> {
     let exposure = ExposureParams {
         frequency_chroma: 0.0,
         sharpen_amount: 0.0,
+        ai_denoise_enabled: ai_denoised,
         ..ExposureParams::default()
     };
     let mut rgb = vec![0.0f32; raw.width as usize * raw.height as usize * 3];

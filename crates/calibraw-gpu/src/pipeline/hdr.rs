@@ -1,6 +1,6 @@
 //! HDR merge of a RAW exposure bracket into a floating-point master.
 use super::raw_merge::{
-    ensure_distinct_sources, merge_sources, MergeOptions, MergeSource, MergedImage,
+    ensure_distinct_sources, merge_sources, MergeOptions, MergeSource, MergedImage, SourceDenoiser,
 };
 use super::*;
 use anyhow::{ensure, Context, Result};
@@ -8,12 +8,14 @@ use calibraw_core::pipeline::hdr::{collected_light, exposure_scale, HdrAccumulat
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// `options.reject_motion` deghosts. `denoise`, when given, AI-denoises every source.
 /// The callback reports progress and returns false to cancel between frames/tiles.
 pub fn merge_hdr_bracket(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     paths: &[PathBuf],
     options: MergeOptions,
+    denoise: Option<&mut SourceDenoiser>,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     mut progress: impl FnMut(String) -> bool,
 ) -> Result<MergedImage> {
@@ -50,13 +52,18 @@ pub fn merge_hdr_bracket(
         queue,
         &bracket,
         options,
+        denoise,
         program_prewarm,
         "exposure",
         &mut progress,
         |camera, frame| {
             let accumulator = match &mut accumulator {
                 Some(accumulator) => accumulator,
-                None => accumulator.insert(HdrAccumulator::new(camera.width, camera.height)?),
+                None => accumulator.insert(HdrAccumulator::new(
+                    camera.width,
+                    camera.height,
+                    options.reject_motion,
+                )?),
             };
             accumulator.add(HdrFrame {
                 rgb: frame.rgb,
@@ -71,11 +78,6 @@ pub fn merge_hdr_bracket(
         progress("Preparing floating-point master".to_owned()),
         "Merge cancelled"
     );
-    let mut rgb = accumulator.context("HDR bracket is empty")?.finish()?;
-    camera.to_working_rec2020(&mut rgb);
-    Ok(MergedImage {
-        width: camera.width,
-        height: camera.height,
-        rgb,
-    })
+    let rgb = accumulator.context("HDR bracket is empty")?.finish()?;
+    Ok(camera.finish(rgb))
 }

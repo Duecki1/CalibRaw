@@ -194,7 +194,7 @@ impl LibraryState {
             asset_transfer_receiver: None,
             merge: None,
             merge_dialog: None,
-            merge_options: Default::default(),
+            merge_choices: merge::MergeChoices::default(),
             raw_import_receiver: None,
             folder_operation_receiver: None,
             folder_clipboard: None,
