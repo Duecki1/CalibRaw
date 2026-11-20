@@ -2141,5 +2141,12 @@
   "Remove hot pixels": "Удалить горячие пиксели",
   "Updating hot pixel removal…": "Обновление удаления горячих пикселей…",
   "Color space": "Цветовое пространство",
-  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB везде отображается правильно. Более широкие пространства сохраняют более насыщенные цвета, но требуют программ с управлением цветом; для ProPhoto RGB и Rec. 2020 используйте 16 бит."
+  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB везде отображается правильно. Более широкие пространства сохраняют более насыщенные цвета, но требуют программ с управлением цветом; для ProPhoto RGB и Rec. 2020 используйте 16 бит.",
+  "Export folder": "Папка экспорта",
+  "The folder export dialogs open in.": "Папка, в которой открываются окна экспорта.",
+  "Edit In folder": "Папка «Редактировать в»",
+  "Where Edit In saves the image it opens in another editor.": "Куда «Редактировать в» сохраняет изображение, которое открывает в другом редакторе.",
+  "App cache": "Кэш приложения",
+  "Photo's folder": "Папка фото",
+  "Other folder": "Другая папка"
 }

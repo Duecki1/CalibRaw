@@ -381,6 +381,7 @@ pub(in crate::ui::library) fn start_local_library_export(
         &desktop_paths(assets),
         format,
         &app.preferences.export_name_template,
+        &app.preferences.export_folder,
     ) else {
         return false;
     };

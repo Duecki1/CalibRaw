@@ -2141,5 +2141,12 @@
   "Remove hot pixels": "Sıcak pikselleri kaldır",
   "Updating hot pixel removal…": "Sıcak piksel kaldırma güncelleniyor…",
   "Color space": "Renk alanı",
-  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB her yerde doğru görüntülenir. Daha geniş alanlar daha doygun renkleri korur ancak renk yönetimli görüntüleyiciler gerektirir; ProPhoto RGB ve Rec. 2020 ile 16 bit kullanın."
+  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB her yerde doğru görüntülenir. Daha geniş alanlar daha doygun renkleri korur ancak renk yönetimli görüntüleyiciler gerektirir; ProPhoto RGB ve Rec. 2020 ile 16 bit kullanın.",
+  "Export folder": "Dışa aktarma klasörü",
+  "The folder export dialogs open in.": "Dışa aktarma pencerelerinin açıldığı klasör.",
+  "Edit In folder": "“Şurada düzenle” klasörü",
+  "Where Edit In saves the image it opens in another editor.": "“Şurada düzenle” özelliğinin başka bir düzenleyicide açtığı görüntüyü kaydettiği yer.",
+  "App cache": "Uygulama önbelleği",
+  "Photo's folder": "Fotoğrafın klasörü",
+  "Other folder": "Başka klasör"
 }

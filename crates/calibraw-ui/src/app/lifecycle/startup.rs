@@ -351,6 +351,8 @@ impl CalibRawApp {
                 new_photo_preset: performance.new_photo_preset.clone(),
                 camera_match_new_photos: performance.camera_match_new_photos,
                 export_name_template: performance.export_name_template.clone(),
+                export_folder: performance.export_folder.clone(),
+                edit_in_folder: performance.edit_in_folder.clone(),
                 discord_rich_presence: performance.discord_rich_presence,
                 hdd_mode: performance.hdd_mode,
                 graphics_backend: performance.graphics_backend,

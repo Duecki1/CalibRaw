@@ -253,10 +253,9 @@ impl CalibRawApp {
             return;
         };
         let initial_directory = self
-            .develop
-            .current_path
-            .as_deref()
-            .and_then(|path| path.parent());
+            .preferences
+            .export_folder
+            .start_directory(self.develop.current_path.as_deref());
         let default_name = crate::export_naming::free_export_file_name(
             initial_directory,
             &stem,

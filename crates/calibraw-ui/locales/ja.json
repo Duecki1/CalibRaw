@@ -2141,5 +2141,12 @@
   "Remove hot pixels": "ホットピクセルを除去",
   "Updating hot pixel removal…": "ホットピクセル除去を更新中…",
   "Color space": "カラースペース",
-  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB はどの環境でも正しく表示されます。広い色空間はより鮮やかな色を保持しますが、カラーマネジメント対応のビューアが必要です。ProPhoto RGB と Rec. 2020 では 16 ビットを使用してください。"
+  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB はどの環境でも正しく表示されます。広い色空間はより鮮やかな色を保持しますが、カラーマネジメント対応のビューアが必要です。ProPhoto RGB と Rec. 2020 では 16 ビットを使用してください。",
+  "Export folder": "書き出しフォルダー",
+  "The folder export dialogs open in.": "書き出しダイアログが開くフォルダーです。",
+  "Edit In folder": "「他のアプリで編集」フォルダー",
+  "Where Edit In saves the image it opens in another editor.": "「他のアプリで編集」が別のエディターで開く画像を保存する場所です。",
+  "App cache": "アプリのキャッシュ",
+  "Photo's folder": "写真のフォルダー",
+  "Other folder": "その他のフォルダー"
 }

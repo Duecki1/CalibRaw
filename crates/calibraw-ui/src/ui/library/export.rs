@@ -105,6 +105,7 @@ pub(super) fn library_export_jobs(
     paths: &[PathBuf],
     format: ExportFormat,
     name_template: &str,
+    export_folder: &crate::export_folders::ExportFolder,
 ) -> Option<Vec<(PathBuf, LibraryExportDestination)>> {
     if paths.is_empty() {
         return None;
@@ -112,10 +113,10 @@ pub(super) fn library_export_jobs(
     if paths.len() == 1 {
         let source = &paths[0];
         let stem = library_export_stem(source, name_template);
+        let directory = export_folder.start_directory(Some(source));
         let default_name =
-            crate::export_naming::free_export_file_name(source.parent(), &stem, format.extension());
-        let destination =
-            crate::ui::choose_export_file_path(format, &default_name, source.parent())?;
+            crate::export_naming::free_export_file_name(directory, &stem, format.extension());
+        let destination = crate::ui::choose_export_file_path(format, &default_name, directory)?;
         return Some(vec![(
             source.clone(),
             LibraryExportDestination::Chosen(destination),
@@ -123,12 +124,8 @@ pub(super) fn library_export_jobs(
     }
 
     let mut dialog = crate::platform::FileDialog::new();
-    if let Some(parent) = paths
-        .first()
-        .and_then(|path| path.parent())
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        dialog = dialog.set_directory(parent);
+    if let Some(directory) = export_folder.start_directory(paths.first().map(PathBuf::as_path)) {
+        dialog = dialog.set_directory(directory);
     }
     let folder = dialog.pick_folder()?;
     // Names are numbered when each finished file is moved into place, so

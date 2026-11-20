@@ -1,9 +1,11 @@
+use crate::export_folders::{EditInFolder, ExportFolder};
 use crate::pipeline::{
     CameraProfileMode, Carousel, CarouselRatio, ExportFormat, OutputColorSpace, WatermarkAnchor,
     WatermarkPlacement,
 };
 use crate::platform::PlatformCaps;
-use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -88,6 +90,14 @@ pub(crate) struct PerformanceSettings {
     pub export_color_space: OutputColorSpace,
     pub export_watermark: SavedWatermark,
     pub export_carousel: SavedCarousel,
+    /// Where export dialogs open; folder storage only. Missing in files
+    /// written before it existed, which therefore open in the photo's folder
+    /// as they did.
+    #[serde(deserialize_with = "lenient")]
+    pub export_folder: ExportFolder,
+    /// Where Edit In saves its copy; folder storage only.
+    #[serde(deserialize_with = "lenient")]
+    pub edit_in_folder: EditInFolder,
     pub ui_design: crate::appearance::UiDesign,
     pub preview_backdrop: crate::appearance::PreviewBackdrop,
     /// Missing in files written before it existed, which therefore follow the
@@ -292,6 +302,21 @@ mod watermark_anchor_serde {
     }
 }
 
+/// Decodes a value whose unreadable form, such as a choice a newer version
+/// added, falls back to its default instead of failing the whole file, which
+/// `load` would replace with defaults.
+fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned + Default,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(T::deserialize(value).unwrap_or_else(|error| {
+        log::warn!("ignoring an unreadable setting: {error}");
+        T::default()
+    }))
+}
+
 mod export_format_serde {
     use super::ExportFormat;
     use serde::{Deserialize, Deserializer, Serializer};
@@ -380,6 +405,8 @@ impl Default for PerformanceSettings {
             export_color_space: OutputColorSpace::Srgb,
             export_watermark: SavedWatermark::default(),
             export_carousel: SavedCarousel::default(),
+            export_folder: ExportFolder::default(),
+            edit_in_folder: EditInFolder::default(),
             ui_design: crate::appearance::UiDesign::default(),
             preview_backdrop: crate::appearance::PreviewBackdrop::default(),
             // A first open shows English; `System` is only the decode default for

@@ -2141,5 +2141,12 @@
   "Remove hot pixels": "Fjern hot pixels",
   "Updating hot pixel removal…": "Opdaterer fjernelse af hot pixels…",
   "Color space": "Farverum",
-  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB vises korrekt overalt. Større farverum bevarer mere mættede farver, men kræver farvestyrede fremvisere; brug 16 bit med ProPhoto RGB og Rec. 2020."
+  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB vises korrekt overalt. Større farverum bevarer mere mættede farver, men kræver farvestyrede fremvisere; brug 16 bit med ProPhoto RGB og Rec. 2020.",
+  "Export folder": "Eksportmappe",
+  "The folder export dialogs open in.": "Mappen, som eksportdialoger åbner i.",
+  "Edit In folder": "Mappe til “Redigér i”",
+  "Where Edit In saves the image it opens in another editor.": "Hvor “Redigér i” gemmer billedet, som det åbner i et andet redigeringsprogram.",
+  "App cache": "Appens cache",
+  "Photo's folder": "Fotoets mappe",
+  "Other folder": "Anden mappe"
 }

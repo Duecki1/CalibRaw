@@ -2141,5 +2141,12 @@
   "Remove hot pixels": "हॉट पिक्सेल हटाएँ",
   "Updating hot pixel removal…": "हॉट पिक्सेल हटाना अपडेट हो रहा है…",
   "Color space": "कलर स्पेस",
-  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB हर जगह सही दिखता है। बड़े कलर स्पेस अधिक संतृप्त रंग बनाए रखते हैं, लेकिन इनके लिए कलर-मैनेज्ड व्यूअर चाहिए; ProPhoto RGB और Rec. 2020 के साथ 16-बिट का उपयोग करें।"
+  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB हर जगह सही दिखता है। बड़े कलर स्पेस अधिक संतृप्त रंग बनाए रखते हैं, लेकिन इनके लिए कलर-मैनेज्ड व्यूअर चाहिए; ProPhoto RGB और Rec. 2020 के साथ 16-बिट का उपयोग करें।",
+  "Export folder": "निर्यात फ़ोल्डर",
+  "The folder export dialogs open in.": "वह फ़ोल्डर जिसमें निर्यात डायलॉग खुलते हैं।",
+  "Edit In folder": "“इसमें संपादित करें” फ़ोल्डर",
+  "Where Edit In saves the image it opens in another editor.": "“इसमें संपादित करें” उस छवि को कहाँ सहेजता है जिसे वह किसी दूसरे एडिटर में खोलता है।",
+  "App cache": "ऐप कैश",
+  "Photo's folder": "फ़ोटो का फ़ोल्डर",
+  "Other folder": "दूसरा फ़ोल्डर"
 }

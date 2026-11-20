@@ -160,6 +160,12 @@ impl CalibRawApp {
             crate::app::DesktopPickerEvent::CameraProfileFolder(Some(folder)) => {
                 self.apply_camera_profile_folder(folder);
             }
+            crate::app::DesktopPickerEvent::ExportFolder(Some(folder)) => {
+                self.set_export_folder(crate::export_folders::ExportFolder::Folder(folder));
+            }
+            crate::app::DesktopPickerEvent::EditInFolder(Some(folder)) => {
+                self.set_edit_in_folder(crate::export_folders::EditInFolder::Folder(folder));
+            }
             crate::app::DesktopPickerEvent::OnnxRuntime(Ok(Some((path, sha256)))) => {
                 self.ai.manual_runtime = Some((path, sha256));
                 self.sync_onnx_runtime_source();

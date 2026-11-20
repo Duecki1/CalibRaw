@@ -2141,5 +2141,12 @@
   "Remove hot pixels": "移除热像素",
   "Updating hot pixel removal…": "正在更新热像素移除…",
   "Color space": "色彩空间",
-  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB 在任何地方都能正确显示。更广的色彩空间可保留更饱和的颜色，但需要支持色彩管理的查看器；使用 ProPhoto RGB 和 Rec. 2020 时请选择 16 位。"
+  "sRGB displays correctly everywhere. Wider spaces keep more saturated colors but need color-managed viewers; use 16-bit with ProPhoto RGB and Rec. 2020.": "sRGB 在任何地方都能正确显示。更广的色彩空间可保留更饱和的颜色，但需要支持色彩管理的查看器；使用 ProPhoto RGB 和 Rec. 2020 时请选择 16 位。",
+  "Export folder": "导出文件夹",
+  "The folder export dialogs open in.": "导出对话框打开时所在的文件夹。",
+  "Edit In folder": "“在其他应用中编辑”文件夹",
+  "Where Edit In saves the image it opens in another editor.": "“在其他应用中编辑”保存要在其他编辑器中打开的图像的位置。",
+  "App cache": "应用缓存",
+  "Photo's folder": "照片所在文件夹",
+  "Other folder": "其他文件夹"
 }

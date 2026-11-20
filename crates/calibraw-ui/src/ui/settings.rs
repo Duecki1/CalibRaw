@@ -23,6 +23,25 @@ mod shortcuts;
 
 pub(crate) struct Settings;
 
+/// An option of the Export and Edit In folder menus; choosing `Other` asks for
+/// the folder.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FolderChoice {
+    AppCache,
+    Photo,
+    Other,
+}
+
+impl FolderChoice {
+    fn label(self) -> &'static str {
+        match self {
+            Self::AppCache => tr("App cache"),
+            Self::Photo => tr("Photo's folder"),
+            Self::Other => tr("Other folder"),
+        }
+    }
+}
+
 /// How long the header of a section that just opened is kept in view: longer
 /// than the fold animation of the section that closes.
 const OPENING_SETTLE_SECONDS: f64 = 0.4;
@@ -459,7 +478,7 @@ impl Settings {
                 SettingsSection::KeyboardShortcuts => Self::show_shortcuts_section(ui, app),
                 SettingsSection::NewPhotos => Self::show_new_photos_section(ui, app),
                 SettingsSection::CopyPaste => Self::show_adjustment_clipboard_section(ui, app),
-                SettingsSection::Export => Self::show_export_names_section(ui, app),
+                SettingsSection::Export => Self::show_export_section(ui, app),
                 SettingsSection::ColorProfiles => Self::show_color_profiles_section(ui, app),
                 SettingsSection::Performance => Self::show_performance_section(ui, app),
                 SettingsSection::Ai => Self::show_ai_section(ui, app),
@@ -1043,12 +1062,112 @@ impl Settings {
         app.set_missing_lens_profile_prompt(missing_profile_prompt);
     }
 
-    fn show_export_names_section(ui: &mut Ui, app: &mut CalibRawApp) {
+    fn show_export_section(ui: &mut Ui, app: &mut CalibRawApp) {
         Self::description(
             ui,
             tr("Build export file names from the original name, dates, and capture metadata. The selected image format adds its extension automatically."),
         );
         export_name_template_controls(ui, app, "settings-export-name-template");
+        // A media library chooses its own destinations.
+        if app.caps().has_folders() {
+            moduwu_design::section_separator(ui);
+            Self::show_export_folder(ui, app);
+            moduwu_design::section_separator(ui);
+            Self::show_edit_in_folder(ui, app);
+        }
+    }
+
+    fn show_export_folder(ui: &mut Ui, app: &mut CalibRawApp) {
+        use crate::export_folders::ExportFolder;
+        let chosen = match &app.preferences.export_folder {
+            ExportFolder::Folder(folder) => Some(folder.clone()),
+            ExportFolder::PhotoFolder => None,
+        };
+        let current = if chosen.is_some() {
+            FolderChoice::Other
+        } else {
+            FolderChoice::Photo
+        };
+        let mut choice = current;
+        moduwu_design::form_combo_with_help(
+            ui,
+            tr("Export folder"),
+            "settings-export-folder",
+            choice.label(),
+            190.0,
+            tr("The folder export dialogs open in."),
+            |ui| {
+                for option in [FolderChoice::Photo, FolderChoice::Other] {
+                    ui.selectable_value(&mut choice, option, option.label());
+                }
+            },
+        );
+        if choice != current {
+            match choice {
+                FolderChoice::Other => app.choose_export_folder(),
+                FolderChoice::Photo | FolderChoice::AppCache => {
+                    app.set_export_folder(ExportFolder::PhotoFolder);
+                }
+            }
+        }
+        if let Some(folder) = chosen {
+            if Self::chosen_folder(ui, app, &folder) {
+                app.choose_export_folder();
+            }
+        }
+    }
+
+    fn show_edit_in_folder(ui: &mut Ui, app: &mut CalibRawApp) {
+        use crate::export_folders::EditInFolder;
+        let (current, chosen) = match &app.preferences.edit_in_folder {
+            EditInFolder::AppCache => (FolderChoice::AppCache, None),
+            EditInFolder::PhotoFolder => (FolderChoice::Photo, None),
+            EditInFolder::Folder(folder) => (FolderChoice::Other, Some(folder.clone())),
+        };
+        let mut choice = current;
+        moduwu_design::form_combo_with_help(
+            ui,
+            tr("Edit In folder"),
+            "settings-edit-in-folder",
+            choice.label(),
+            190.0,
+            tr("Where Edit In saves the image it opens in another editor."),
+            |ui| {
+                for option in [
+                    FolderChoice::AppCache,
+                    FolderChoice::Photo,
+                    FolderChoice::Other,
+                ] {
+                    ui.selectable_value(&mut choice, option, option.label());
+                }
+            },
+        );
+        if choice != current {
+            match choice {
+                FolderChoice::AppCache => app.set_edit_in_folder(EditInFolder::AppCache),
+                FolderChoice::Photo => app.set_edit_in_folder(EditInFolder::PhotoFolder),
+                FolderChoice::Other => app.choose_edit_in_folder(),
+            }
+        }
+        if let Some(folder) = chosen {
+            if Self::chosen_folder(ui, app, &folder) {
+                app.choose_edit_in_folder();
+            }
+        }
+    }
+
+    /// Shows a chosen folder with a button to choose another; returns whether
+    /// it was pressed.
+    fn chosen_folder(ui: &mut Ui, app: &CalibRawApp, folder: &std::path::Path) -> bool {
+        ui.add(
+            egui::Label::new(egui::RichText::new(folder.display().to_string()).monospace()).wrap(),
+        );
+        let picker_open = app.ui.desktop_picker_receiver.is_some();
+        moduwu_design::action_row(ui, |ui| {
+            moduwu_design::secondary_button_enabled(ui, !picker_open, tr("Choose folder…"))
+                .clicked()
+        })
+        .inner
     }
 
     fn show_color_profiles_section(ui: &mut Ui, app: &mut CalibRawApp) {

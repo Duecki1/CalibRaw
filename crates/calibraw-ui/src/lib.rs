@@ -8,6 +8,7 @@ pub mod file_ops {
     pub use calibraw_core::file_ops::*;
 }
 
+pub(crate) mod export_folders;
 pub(crate) mod export_naming;
 pub(crate) mod graphics_backend;
 pub(crate) mod i18n;

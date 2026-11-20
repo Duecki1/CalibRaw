@@ -361,6 +361,60 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    pub(crate) fn set_export_folder(&mut self, folder: crate::export_folders::ExportFolder) {
+        if self.preferences.export_folder == folder {
+            return;
+        }
+        self.preferences.export_folder = folder;
+        self.persist_performance_settings();
+    }
+
+    pub(crate) fn set_edit_in_folder(&mut self, folder: crate::export_folders::EditInFolder) {
+        if self.preferences.edit_in_folder == folder {
+            return;
+        }
+        self.preferences.edit_in_folder = folder;
+        self.persist_performance_settings();
+    }
+
+    /// Asks for the folder export dialogs open in; it applies once chosen.
+    pub(crate) fn choose_export_folder(&mut self) {
+        let current = match &self.preferences.export_folder {
+            crate::export_folders::ExportFolder::Folder(folder) => Some(folder.clone()),
+            crate::export_folders::ExportFolder::PhotoFolder => None,
+        };
+        self.choose_settings_folder(current, crate::app::DesktopPickerEvent::ExportFolder);
+    }
+
+    /// Asks for the folder Edit In saves to; it applies once chosen.
+    pub(crate) fn choose_edit_in_folder(&mut self) {
+        let current = match &self.preferences.edit_in_folder {
+            crate::export_folders::EditInFolder::Folder(folder) => Some(folder.clone()),
+            crate::export_folders::EditInFolder::AppCache
+            | crate::export_folders::EditInFolder::PhotoFolder => None,
+        };
+        self.choose_settings_folder(current, crate::app::DesktopPickerEvent::EditInFolder);
+    }
+
+    /// Opens a native folder dialog at `current`; `event` carries the answer
+    /// to `poll_desktop_picker`.
+    fn choose_settings_folder(
+        &mut self,
+        current: Option<PathBuf>,
+        event: fn(Option<PathBuf>) -> crate::app::DesktopPickerEvent,
+    ) {
+        if self.ui.desktop_picker_receiver.is_some() {
+            return;
+        }
+        let mut dialog = crate::platform::FileDialog::new();
+        if let Some(folder) = current.filter(|folder| folder.is_dir()) {
+            dialog = dialog.set_directory(folder);
+        }
+        self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
+            event(dialog.pick_folder_on_worker())
+        }));
+    }
+
     pub(crate) fn set_library_view(&mut self, view: crate::ui::library::LibraryView) {
         if self.library.set_view(view, &self.egui_ctx) {
             self.persist_performance_settings();
@@ -460,6 +514,8 @@ impl CalibRawApp {
             export_color_space: self.export.settings.color_space,
             export_watermark: self.export.watermark.saved(),
             export_carousel: self.export.carousel.saved(),
+            export_folder: self.preferences.export_folder.clone(),
+            edit_in_folder: self.preferences.edit_in_folder.clone(),
             ui_design: self.preferences.ui_design,
             preview_backdrop: self.preferences.preview_backdrop,
             language: self.preferences.language,

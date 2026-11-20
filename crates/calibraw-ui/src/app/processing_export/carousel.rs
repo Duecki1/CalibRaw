@@ -69,14 +69,12 @@ impl CalibRawApp {
         slide_count: usize,
     ) -> Option<Vec<ExportDestination>> {
         let mut dialog = crate::platform::FileDialog::new();
-        if let Some(parent) = self
-            .develop
-            .current_path
-            .as_deref()
-            .and_then(Path::parent)
-            .filter(|parent| !parent.as_os_str().is_empty())
+        if let Some(directory) = self
+            .preferences
+            .export_folder
+            .start_directory(self.develop.current_path.as_deref())
         {
-            dialog = dialog.set_directory(parent);
+            dialog = dialog.set_directory(directory);
         }
         let folder = dialog.pick_folder()?;
         let extension = format.extension();
