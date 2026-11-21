@@ -18,7 +18,11 @@ use anyhow::{bail, ensure, Result};
 use rayon::prelude::*;
 
 /// Pinhole intrinsics in full-resolution undistorted pixels, principal point at the
-/// image centre.
+/// image centre, with an optional radial distortion for lenses no profile corrected.
+///
+/// The distortion is PanoTools' `b` term (the one Hugin's `SmartOptimise` fits for an
+/// uncalibrated lens): a point at radius `r` on the ideal pinhole image is recorded at
+/// `r · (b·r² + 1 − b)`, with radii in units of half the shorter image side.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Pinhole {
     pub(super) focal: f64,
@@ -26,7 +30,11 @@ pub(super) struct Pinhole {
     cy: f64,
     width: f64,
     height: f64,
+    distortion: f64,
 }
+
+/// Newton steps inverting the radial distortion.
+const UNDISTORT_ITERATIONS: usize = 8;
 
 impl Pinhole {
     pub(super) fn new(width: usize, height: usize, focal: f64) -> Self {
@@ -36,6 +44,7 @@ impl Pinhole {
             cy: 0.5 * (height as f64 - 1.0),
             width: width as f64,
             height: height as f64,
+            distortion: 0.0,
         }
     }
 
@@ -43,23 +52,59 @@ impl Pinhole {
         Self { focal, ..self }
     }
 
+    fn with_distortion(self, distortion: f64) -> Self {
+        Self { distortion, ..self }
+    }
+
+    /// The radius distortion is normalized by.
+    fn radius(&self) -> f64 {
+        0.5 * self.width.min(self.height)
+    }
+
     /// The unit ray of pixel `p` in camera coordinates (x right, y down, z forward).
     pub(super) fn ray(&self, p: [f64; 2]) -> Vec3 {
-        normalize([
-            (p[0] - self.cx) / self.focal,
-            (p[1] - self.cy) / self.focal,
-            1.0,
-        ])
+        let (mut x, mut y) = (p[0] - self.cx, p[1] - self.cy);
+        let b = self.distortion;
+        if b != 0.0 {
+            // Solve b·r³ + (1 − b)·r = recorded radius for the ideal radius r.
+            let recorded = x.hypot(y) / self.radius();
+            let mut r = recorded;
+            for _ in 0..UNDISTORT_ITERATIONS {
+                let slope = 3.0 * b * r * r + 1.0 - b;
+                if slope <= 1e-6 {
+                    break;
+                }
+                r -= (b * r * r * r + (1.0 - b) * r - recorded) / slope;
+            }
+            let scale = b * r * r + 1.0 - b;
+            if scale > 1e-6 {
+                x /= scale;
+                y /= scale;
+            }
+        }
+        normalize([x / self.focal, y / self.focal, 1.0])
     }
 
     /// The pixel a camera-coordinate direction falls on, when it points forward.
     pub(super) fn pixel(&self, direction: Vec3) -> Option<[f64; 2]> {
-        (direction[2] > 1e-9).then(|| {
-            [
-                self.focal * direction[0] / direction[2] + self.cx,
-                self.focal * direction[1] / direction[2] + self.cy,
-            ]
-        })
+        if direction[2] <= 1e-9 {
+            return None;
+        }
+        let x = self.focal * direction[0] / direction[2];
+        let y = self.focal * direction[1] / direction[2];
+        let b = self.distortion;
+        let scale = if b == 0.0 {
+            1.0
+        } else {
+            let r = x.hypot(y) / self.radius();
+            // Past the radius where the recorded radius stops growing (b < 0), the
+            // polynomial folds back onto the image; no pixel records such directions.
+            if 3.0 * b * r * r + 1.0 - b <= 0.0 {
+                return None;
+            }
+            b * r * r + 1.0 - b
+        };
+        Some([x * scale + self.cx, y * scale + self.cy])
     }
 
     /// Whether pixel `p` lies on the image (pixel centres at integer coordinates).
@@ -110,16 +155,45 @@ const BA_ITERATIONS: usize = 100;
 /// deviations (and at least `MIN_OUTLIER_PIXELS`) are dropped.
 const OUTLIER_SIGMAS: f64 = 3.0;
 const MIN_OUTLIER_PIXELS: f64 = 2.0;
+/// The Huber loss's threshold in pixels: Hugin's `SmartOptimise` sets the optimizer's
+/// `huberSigma` to 2. Correspondences on near objects, which parallax shifts by tens of
+/// pixels in a handheld panorama, then barely pull the frames away from the distant
+/// scene most correspondences agree on.
+const HUBER_PIXELS: f64 = 2.0;
+/// Hugin discards a fitted distortion of larger magnitude as implausible and solves
+/// again without it (`SmartOptimise`).
+const MAX_DISTORTION: f64 = 0.2;
+/// The panorama width from which Hugin refines the field of view (`SmartOptimise`).
+const MIN_FOCAL_SPAN_DEGREES: f64 = 150.0;
 /// The median residual, relative to the long edge, beyond which the frames do not
 /// fit one rotating camera.
 const MAX_MEDIAN_RESIDUAL: f64 = 0.01;
 
-/// Solves the frames' orientations and focal length. `pinholes` holds each frame's
-/// initial intrinsics; with `shared_focal` every frame keeps one focal length.
-/// `labels` name the frames in errors.
+/// What the solver knows of the frames' lens.
+#[derive(Clone, Copy)]
+pub(super) struct Lens {
+    /// Every frame has one focal length.
+    pub(super) shared_focal: bool,
+    /// The initial focal length came from the metadata rather than an estimate.
+    pub(super) focal_from_metadata: bool,
+    /// A lens profile corrected the frames' distortion (and, with Lensfun's auto-scale,
+    /// enlarged them, so the metadata's focal length no longer fits them exactly).
+    pub(super) corrected: bool,
+}
+
+/// Solves the frames' orientations and the lens. `pinholes` holds each frame's initial
+/// intrinsics.
+///
+/// The lens is refined as Hugin's `SmartOptimise` does: for a lens no profile corrected
+/// (sharing one focal length), one radial distortion is fitted for all frames and the
+/// focal length from the metadata is kept unless the panorama spans
+/// `MIN_FOCAL_SPAN_DEGREES` (too few degrees determine it poorly, and parallax then
+/// drags it away); a fitted distortion beyond `MAX_DISTORTION` is discarded. Otherwise
+/// the focal length is refined, as OpenCV's `BundleAdjusterRay` does. `labels` name the
+/// frames in errors.
 pub(super) fn solve(
     pinholes: &[Pinhole],
-    shared_focal: bool,
+    lens: Lens,
     pairs: &[PairMatches],
     labels: &[String],
 ) -> Result<Vec<Camera>> {
@@ -156,7 +230,7 @@ pub(super) fn solve(
             queue.push_back(to);
         }
     }
-    let mut observations: Vec<Observation> = pairs
+    let observations: Vec<Observation> = pairs
         .iter()
         .flat_map(|pair| {
             pair.points.iter().map(|&(a, b)| Observation {
@@ -167,27 +241,40 @@ pub(super) fn solve(
             })
         })
         .collect();
-    let adjustment = Adjustment::new(n, center, shared_focal);
-    adjustment.run(&mut cameras, &observations);
-    let residuals = residual_norms(&cameras, &observations);
-    let sigma = 1.4826 * median(&residuals);
-    let limit = (OUTLIER_SIGMAS * sigma).max(MIN_OUTLIER_PIXELS);
-    observations = observations
-        .into_iter()
-        .zip(&residuals)
-        .filter(|(_, &r)| r <= limit)
-        .map(|(o, _)| o)
-        .collect();
-    adjustment.run(&mut cameras, &observations);
+    let initial = cameras.clone();
+    let fit_distortion = !lens.corrected && lens.shared_focal;
+    let free_focal = if lens.shared_focal {
+        FocalParameters::Shared
+    } else {
+        FocalParameters::PerFrame
+    };
+    let mut focal = if fit_distortion && lens.focal_from_metadata {
+        FocalParameters::Fixed
+    } else {
+        free_focal
+    };
+    let mut kept = Adjustment::new(n, center, focal, fit_distortion)
+        .run_cleaned(&mut cameras, observations.clone());
+    if focal == FocalParameters::Fixed && span_degrees(&cameras) >= MIN_FOCAL_SPAN_DEGREES {
+        focal = free_focal;
+        kept = Adjustment::new(n, center, focal, fit_distortion)
+            .run_cleaned(&mut cameras, observations.clone());
+    }
+    if fit_distortion && cameras[center].pinhole.distortion.abs() > MAX_DISTORTION {
+        cameras = initial;
+        kept = Adjustment::new(n, center, focal, false).run_cleaned(&mut cameras, observations);
+    }
+    let observations = kept;
     let residual = median(&residual_norms(&cameras, &observations));
     let long = cameras
         .iter()
         .map(|c| c.pinhole.width.max(c.pinhole.height))
         .fold(0.0, f64::max);
     crate::diagnostics::record(format!(
-        "Panorama: {} correspondences, median residual {residual:.2} px, focal {:.1} px",
+        "Panorama: {} correspondences, median residual {residual:.2} px, focal {:.1} px, distortion {:.4}",
         observations.len(),
-        cameras[center].pinhole.focal
+        cameras[center].pinhole.focal,
+        cameras[center].pinhole.distortion
     ));
     ensure!(
         residual <= MAX_MEDIAN_RESIDUAL * long,
@@ -201,6 +288,40 @@ pub(super) fn solve(
     );
     straighten(&mut cameras);
     Ok(cameras)
+}
+
+/// A lower bound of the horizontal angle the frames cover, in degrees: the widest angle
+/// between two cameras' viewing directions about their mean vertical, plus one frame's
+/// horizontal field of view. It reaches any threshold below 180° whenever the true
+/// span does, full turns included.
+fn span_degrees(cameras: &[Camera]) -> f64 {
+    let up = normalize(cameras.iter().fold([0.0; 3], |sum, c| {
+        let y = column(&c.rotation, 1);
+        [sum[0] + y[0], sum[1] + y[1], sum[2] + y[2]]
+    }));
+    let headings: Vec<Vec3> = cameras
+        .iter()
+        .map(|c| {
+            let z = column(&c.rotation, 2);
+            let along = dot(z, up);
+            normalize([
+                z[0] - along * up[0],
+                z[1] - along * up[1],
+                z[2] - along * up[2],
+            ])
+        })
+        .collect();
+    let mut widest: f64 = 0.0;
+    for (i, a) in headings.iter().enumerate() {
+        for b in &headings[i + 1..] {
+            widest = widest.max(dot(*a, *b).clamp(-1.0, 1.0).acos());
+        }
+    }
+    let field = cameras
+        .iter()
+        .map(|c| 2.0 * (0.5 * c.pinhole.width / c.pinhole.focal).atan())
+        .fold(0.0, f64::max);
+    (widest + field).to_degrees()
 }
 
 /// The pairs of a maximum spanning tree weighted by inlier count (Kruskal). Fails, naming
@@ -312,11 +433,21 @@ fn median(values: &[f64]) -> f64 {
 }
 
 /// The parameters bundle adjustment refines: a rotation increment per frame except the
-/// fixed centre frame, and the logarithm of the focal length, shared or per frame.
+/// fixed centre frame, the logarithm of the focal length (`focal`), and optionally one
+/// radial distortion all frames share.
 struct Adjustment {
     frames: usize,
     fixed: usize,
-    shared_focal: bool,
+    focal: FocalParameters,
+    distortion: bool,
+}
+
+/// How bundle adjustment treats the focal length.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FocalParameters {
+    Fixed,
+    Shared,
+    PerFrame,
 }
 
 /// One parameter an observation depends on.
@@ -326,15 +457,39 @@ enum Local {
     Rotation { second: bool, axis: usize },
     /// The focal length of the first and/or second camera.
     Focal { first: bool, second: bool },
+    /// The distortion every camera shares.
+    Distortion,
 }
 
 impl Adjustment {
-    fn new(frames: usize, fixed: usize, shared_focal: bool) -> Self {
+    fn new(frames: usize, fixed: usize, focal: FocalParameters, distortion: bool) -> Self {
         Self {
             frames,
             fixed,
-            shared_focal,
+            focal,
+            distortion,
         }
+    }
+
+    /// Adjusts `cameras` to `observations`, drops the correspondences still far off and
+    /// adjusts again; returns the correspondences kept.
+    fn run_cleaned(
+        &self,
+        cameras: &mut Vec<Camera>,
+        observations: Vec<Observation>,
+    ) -> Vec<Observation> {
+        self.run(cameras, &observations);
+        let residuals = residual_norms(cameras, &observations);
+        let sigma = 1.4826 * median(&residuals);
+        let limit = (OUTLIER_SIGMAS * sigma).max(MIN_OUTLIER_PIXELS);
+        let kept: Vec<Observation> = observations
+            .into_iter()
+            .zip(&residuals)
+            .filter(|(_, &r)| r <= limit)
+            .map(|(o, _)| o)
+            .collect();
+        self.run(cameras, &kept);
+        kept
     }
 
     fn rotation_index(&self, frame: usize, axis: usize) -> Option<usize> {
@@ -345,12 +500,30 @@ impl Adjustment {
         }
     }
 
-    fn focal_index(&self, frame: usize) -> usize {
-        3 * (self.frames - 1) + if self.shared_focal { 0 } else { frame }
+    fn focal_index(&self, frame: usize) -> Option<usize> {
+        let first = 3 * (self.frames - 1);
+        match self.focal {
+            FocalParameters::Fixed => None,
+            FocalParameters::Shared => Some(first),
+            FocalParameters::PerFrame => Some(first + frame),
+        }
+    }
+
+    fn focal_parameters(&self) -> usize {
+        match self.focal {
+            FocalParameters::Fixed => 0,
+            FocalParameters::Shared => 1,
+            FocalParameters::PerFrame => self.frames,
+        }
+    }
+
+    fn distortion_index(&self) -> Option<usize> {
+        self.distortion
+            .then(|| 3 * (self.frames - 1) + self.focal_parameters())
     }
 
     fn parameters(&self) -> usize {
-        3 * (self.frames - 1) + if self.shared_focal { 1 } else { self.frames }
+        3 * (self.frames - 1) + self.focal_parameters() + usize::from(self.distortion)
     }
 
     /// The parameters observation `o` depends on, with their global indices.
@@ -370,30 +543,34 @@ impl Adjustment {
                 locals.push((index, Local::Rotation { second: true, axis }));
             }
         }
-        let (fa, fb) = (self.focal_index(o.first), self.focal_index(o.second));
-        if fa == fb {
-            locals.push((
+        match (self.focal_index(o.first), self.focal_index(o.second)) {
+            (Some(fa), Some(fb)) if fa == fb => locals.push((
                 fa,
                 Local::Focal {
                     first: true,
                     second: true,
                 },
-            ));
-        } else {
-            locals.push((
-                fa,
-                Local::Focal {
-                    first: true,
-                    second: false,
-                },
-            ));
-            locals.push((
-                fb,
-                Local::Focal {
-                    first: false,
-                    second: true,
-                },
-            ));
+            )),
+            (Some(fa), Some(fb)) => {
+                locals.push((
+                    fa,
+                    Local::Focal {
+                        first: true,
+                        second: false,
+                    },
+                ));
+                locals.push((
+                    fb,
+                    Local::Focal {
+                        first: false,
+                        second: true,
+                    },
+                ));
+            }
+            _ => {}
+        }
+        if let Some(index) = self.distortion_index() {
+            locals.push((index, Local::Distortion));
         }
         locals
     }
@@ -407,9 +584,12 @@ impl Adjustment {
                 let w: Vec3 = std::array::from_fn(|axis| {
                     self.rotation_index(frame, axis).map_or(0.0, |i| step[i])
                 });
-                let focal = camera.pinhole.focal * step[self.focal_index(frame)].exp();
+                let focal =
+                    camera.pinhole.focal * self.focal_index(frame).map_or(0.0, |i| step[i]).exp();
+                let distortion =
+                    camera.pinhole.distortion + self.distortion_index().map_or(0.0, |i| step[i]);
                 Camera {
-                    pinhole: camera.pinhole.with_focal(focal),
+                    pinhole: camera.pinhole.with_focal(focal).with_distortion(distortion),
                     rotation: mul(&exp_rotation(w), &camera.rotation),
                 }
             })
@@ -434,6 +614,10 @@ impl Adjustment {
                     c2.pinhole = c2.pinhole.with_focal(c2.pinhole.focal * h.exp());
                 }
             }
+            Local::Distortion => {
+                c1.pinhole = c1.pinhole.with_distortion(c1.pinhole.distortion + h);
+                c2.pinhole = c2.pinhole.with_distortion(c2.pinhole.distortion + h);
+            }
         }
         let scale = (c1.pinhole.focal * c2.pinhole.focal).sqrt();
         let (r1, r2) = (c1.ray(o.a), c2.ray(o.b));
@@ -455,8 +639,7 @@ impl Adjustment {
         }
         const H: f64 = 1e-6;
         let p = self.parameters();
-        let sigma = 1.4826 * median(&residual_norms(cameras, observations));
-        let huber = (1.345 * sigma).max(0.5);
+        let huber = HUBER_PIXELS;
         let mut cost = Self::cost(cameras, observations, huber);
         let mut lambda = 1e-3;
         for _ in 0..BA_ITERATIONS {

@@ -1,8 +1,9 @@
 # Panorama merge plan
 
-Status: implemented in the working tree on 2026-11-21 against commit `024185ee`
-(branch `main`, workspace version 1.5.1), not yet committed. §12 records where the
-implementation differs from this plan and what has been verified.
+Status: implemented, committed as `d70e204e` ("Basic panorama merge") on 2026-11-21,
+with a second pass on seams and lens refinement after review on real frames (§12,
+"Second pass"). §12 records where the implementation differs from this plan and what
+has been verified.
 
 Panorama merge joins two or more overlapping RAW frames into one floating-point
 TIFF master, as HDR merge and focus stacking already do from the library's
@@ -533,13 +534,54 @@ Where the implementation differs from the plan above:
 - **CLI.** `calibraw-panorama` runs the whole merge headless and prints its
   diagnostics. It replaces the planned layout-only command.
 
+Second pass (after review of the Sony set showed a split bottle, doubled edges and
+steps at the seams). Measured on that set by rendering each frame alone and
+phase-correlating 256 px patches: the frames agree to 0–2 px on the back wall, but
+differ by 10–42 px on the ceiling and 50–126 px on the floor near the camera. That is
+parallax from a hand-held camera turning about the photographer, not the lens's
+no-parallax point; no rotation model removes it (PTGui: "correcting for parallax
+errors is impossible; the best one can do is attempting to mask the misalignments",
+ptgui.com/examples/vptutorial.html). The changes:
+
+- **No clipped-sample seam cost.** The terminal preference for the frame that measured
+  a highlight (not in OpenCV) pulled islands of another frame into a region wherever
+  highlights were: the bottle's speculars and an LED strip. Seams use OpenCV's terms
+  only.
+- **Sharp seam mask.** The full-resolution mask is binary, each pixel owned by the
+  label with the largest bilinear weight on the seam grid, as Enblend fills its
+  scaled-up seam contour at full size (`createMask`, `src/mask.h`). The previous
+  bilinear share mixed two misaligned frames over about 11 output pixels, which
+  doubled edges.
+- **Seam grid.** At 1/8 of the output scale (Enblend's default `--coarse-mask`
+  factor) instead of a fixed 0.25 MP, bounded by `MAX_RAW_PIXELS / 64`.
+- **Huber threshold 2 px** (Hugin's `SmartOptimise` sets `huberSigma = 2`), instead of
+  1.345 robust standard deviations (8 px on that set), so near-object matches stop
+  pulling the frames off the distant scene: median residual 4.04 → 2.84 px.
+- **Rotation RANSAC tolerance** 25 px per 5000 px of image diagonal (cpfind's default
+  `--ransacdist` and its scaling, `RansacMatchesInPairCam`), 42 px on a 7008 × 4672
+  frame, instead of 4 registration pixels (16 px). The Sony set without lens
+  correction verified only 1 of 3 pairs before.
+- **Lens refinement as Hugin's `SmartOptimise`.** For frames no profile corrected,
+  one PanoTools radial term `b` is fitted for all frames, discarded beyond |b| > 0.2,
+  and the focal length from the metadata is kept unless the frames span 150° (Hugin
+  refines the field of view only then). Lens-corrected frames keep refining the
+  focal length: CalibRaw enables Lensfun's auto-scale, so the corrected frames no
+  longer have the metadata's focal length. On the S25 DNGs: `b` = 0.009, median
+  residual 5.21 → 4.83 px, focal length held at the EXIF value (3795 px). On
+  synthetic frames rendered with `b` = −0.03, `b` is recovered to ±0.0001.
+- **Reference run.** OpenCV 5.1's default `Stitcher` on the same Sony frames (developed
+  as JPEG, not lens corrected) shows dark ghosted smudges on the wall and ceiling;
+  it has no step where its seam crosses the ceiling molding, which CalibRaw's result
+  still has (about 12 px). Why its seam found a better crossing is not established.
+
 Verified:
 
 - Real hand-held sets, each three frames of one room:
-  - Sony A7C II, 17 mm, lens profile matched: 3/3 pairs, median residual 4 px,
-    8068 × 3572 cylindrical master in 78 s;
+  - Sony A7C II, 17 mm, lens profile matched: 3/3 pairs, median residual 5.5 px
+    over 463 correspondences (parallax, see above), 8128 × 3568 cylindrical master
+    in about 63 s; without lens correction 3/3 pairs as well;
   - Galaxy S25 Ultra DNGs, no lens profile, focal length from EXIF: 3/3 pairs,
-    7586 × 3513;
+    median residual 4.83 px, 7608 × 3520;
   - the same phone's JPEGs through the core stitcher, with and without a focal
     length: both converge to the same focal length (2655 px).
 - Real RAWs: unrelated frames are refused with an error naming them, and the float
@@ -548,11 +590,17 @@ Verified:
   - a 3-frame row and a 2 × 3 grid, with roll, pitch and exposure offsets, in all
     three projections, stitch without visible seams;
   - the focal length is recovered to within 0.1 % and the median residual is
-    0.1–0.3 px, with and without focal-length metadata.
+    0.1–0.3 px, with and without focal-length metadata; a rendered radial
+    distortion is recovered too.
 - HDR merge and focus stacking produce byte-identical TIFFs before and after the
   refactors of steps 1–3.
 
 Pending:
 
 - Android device testing.
-- Larger sets (360° rows, multi-row) from a real camera.
+- Larger sets (360° rows, multi-row) from a real camera, and a distant scene, where
+  parallax is small.
+- Parallax itself. Neither Hugin, PTGui nor OpenCV warps frames locally to hide it;
+  research methods do (Zaragoza et al., "As-Projective-As-Possible Image Stitching
+  with Moving DLT", CVPR 2013; Zhang & Liu, "Parallax-tolerant Image Stitching",
+  CVPR 2014). A separate change if wanted.

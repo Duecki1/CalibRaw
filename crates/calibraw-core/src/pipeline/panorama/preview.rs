@@ -31,8 +31,6 @@ pub(super) struct Reduced {
     /// Whether the pixel measured the scene: inside the sensor after undistortion, not
     /// clipped and above black.
     pub(super) measured: Vec<bool>,
-    /// Whether any sample the pixel mixes clipped.
-    pub(super) clipped: Vec<bool>,
     /// The frame's bright level: the luminance (in `rgb`'s units) that
     /// `LEVEL_PERCENTILE` of its unclipped pixels stay below.
     pub(super) level: f32,
@@ -69,7 +67,6 @@ impl Reduced {
         let mut sample = ReducedSample {
             rgb: [0.0; 3],
             measured: true,
-            clipped: false,
         };
         for (index, weight) in taps {
             for c in 0..3 {
@@ -77,7 +74,6 @@ impl Reduced {
             }
             if weight > 0.0 {
                 sample.measured &= self.measured[index];
-                sample.clipped |= self.clipped[index];
             }
         }
         Some(sample)
@@ -89,8 +85,6 @@ pub(super) struct ReducedSample {
     pub(super) rgb: [f32; 3],
     /// Every tap measured the scene.
     pub(super) measured: bool,
-    /// Some tap clipped.
-    pub(super) clipped: bool,
 }
 
 /// The source frame a preview is made from.
@@ -144,7 +138,7 @@ impl SourceFrame<'_> {
         let full_width = self.width as u32;
         let full_height = self.height as u32;
         let exposure = self.exposure;
-        let pixels: Vec<([f32; 3], bool, bool)> = (0..w * h)
+        let pixels: Vec<([f32; 3], bool)> = (0..w * h)
             .into_par_iter()
             .map(|i| {
                 let (x, y) = (
@@ -165,7 +159,7 @@ impl SourceFrame<'_> {
                 };
                 let (bx, by) = ((sx - half) / factor as f64, (sy - half) / factor as f64);
                 if !(bx >= 0.0 && by >= 0.0 && bx <= (w - 1) as f64 && by <= (h - 1) as f64) {
-                    return ([0.0; 3], false, false);
+                    return ([0.0; 3], false);
                 }
                 let (ix, iy) = (bx.floor() as usize, by.floor() as usize);
                 let (jx, jy) = ((ix + 1).min(w - 1), (iy + 1).min(h - 1));
@@ -188,17 +182,15 @@ impl SourceFrame<'_> {
                 }
                 let clipped = peak.is_nan() || peak >= CLIPPED;
                 let valid = !clipped && rgb.iter().all(|v| v.is_finite());
-                (rgb.map(|v| v / exposure), valid, clipped)
+                (rgb.map(|v| v / exposure), valid)
             })
             .collect();
         let level = bright_level(pixels.iter().filter(|p| p.1).map(|p| luminance(p.0)));
         let mut rgb = Vec::with_capacity(pixels.len());
         let mut measured = Vec::with_capacity(pixels.len());
-        let mut clipped = Vec::with_capacity(pixels.len());
-        for (value, valid, is_clipped) in pixels {
+        for (value, valid) in pixels {
             measured.push(valid && luminance(value) > level * BLACK_SHARE);
             rgb.push(value);
-            clipped.push(is_clipped);
         }
         Reduced {
             factor,
@@ -206,7 +198,6 @@ impl SourceFrame<'_> {
             height: h,
             rgb,
             measured,
-            clipped,
             level,
         }
     }

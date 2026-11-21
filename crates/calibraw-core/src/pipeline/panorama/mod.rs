@@ -47,16 +47,17 @@ use rayon::prelude::*;
 use seams::Seams;
 use std::sync::Arc;
 
-/// Seam-grid pixels: OpenCV estimates seams at 0.1 MP; frames of 45 MP bodies deserve
-/// more.
-const SEAM_PIXELS: f64 = 250_000.0;
+/// The seam grid's resolution relative to the output's: Enblend's default
+/// `--coarse-mask` factor. Finer than OpenCV's fixed 0.1 MP, so the cut sees the few
+/// pixels by which parallax shifts near objects between frames.
+const SEAM_REDUCTION: f64 = 8.0;
 /// Multi-band blend strength in percent of the panorama's size (OpenCV's default).
 const BLEND_STRENGTH: f64 = 5.0;
 /// Detail levels at most. Exposure is balanced before blending, so wider bands would
 /// only grow the halo every region renders.
 const MAX_LEVELS: usize = 7;
-/// Share of a frame's blend weight kept outside its seam, so a pixel some frame covers
-/// is never left without weight where the coarse seam grid assigns it to another.
+/// A frame's blend weight outside its seam, so a pixel some frame covers is never left
+/// without weight where the seam grid assigns it to a frame that ends just short of it.
 const OFF_SEAM_WEIGHT: f32 = 1e-4;
 /// Bytes of working memory per region pixel: the blend pyramids, one frame's pyramid
 /// with its temporaries and its sampling positions.
@@ -214,13 +215,13 @@ impl PanoramaBuilder {
         ensure!(frames.len() >= 2, "Select at least two RAW frames");
         let labels: Vec<String> = frames.iter().map(|f| f.label.clone()).collect();
         let putative = matching::match_frames(&features);
-        let (pinholes, shared_focal, pairs) = verify_pairs(&frames, &features, &putative);
+        let (pinholes, lens, pairs) = verify_pairs(&frames, &features, &putative);
         crate::diagnostics::record(format!(
             "Panorama: {} of {} frame pairs verified",
             pairs.len(),
             putative.len()
         ));
-        let cameras = camera::solve(&pinholes, shared_focal, &pairs, &labels)?;
+        let cameras = camera::solve(&pinholes, lens, &pairs, &labels)?;
         let projection = projection.resolve(&cameras);
         let extents = cameras
             .iter()
@@ -238,7 +239,11 @@ impl PanoramaBuilder {
             .zip(&frames)
             .map(|(c, f)| c.pinhole.focal / f.thumbnail.factor as f64)
             .fold(f64::INFINITY, f64::min);
-        let seam_scale = (SEAM_PIXELS / area).sqrt().min(thumbnail_scale);
+        // The output's scale before any reduction to MAX_RAW_PIXELS, which bounds the grid.
+        let full_scale = median(cameras.iter().map(|c| c.pinhole.focal).collect());
+        let seam_scale = (full_scale / SEAM_REDUCTION)
+            .min((MAX_RAW_PIXELS as f64 / area).sqrt() / SEAM_REDUCTION)
+            .min(thumbnail_scale);
         let seam_grid = Grid::covering(projection, total, seam_scale);
         let overviews: Vec<overview::Overview> = cameras
             .iter()
@@ -287,16 +292,16 @@ fn focal_from_35mm(focal_35mm: f32, width: usize, height: usize) -> f64 {
     PerspectiveCorrection::focal_length_pixels(focal_35mm, [width as f64, height as f64])
 }
 
-/// The frames' starting cameras, whether they share one focal length, and the verified
-/// pairs. With every frame's focal length known from metadata, pairs are verified with
-/// the rotation model; otherwise with homographies, from which the focal length is
-/// estimated (or, failing that, taken as the generic one perspective correction
-/// assumes).
+/// The frames' starting cameras, what is known of their lens, and the verified pairs.
+/// With every frame's focal length known from metadata, pairs are verified with the
+/// rotation model; otherwise with homographies, from which the focal length is estimated
+/// (or, failing that, taken as the generic one perspective correction assumes).
 fn verify_pairs(
     frames: &[Frame],
     features: &[FrameFeatures],
     putative: &[matching::Putative],
-) -> (Vec<Pinhole>, bool, Vec<matching::PairMatches>) {
+) -> (Vec<Pinhole>, camera::Lens, Vec<matching::PairMatches>) {
+    let corrected = frames.iter().any(|f| f.lens.is_some());
     let cameras = |focals: &[f64]| -> Vec<Pinhole> {
         frames
             .iter()
@@ -315,7 +320,12 @@ fn verify_pairs(
         };
         let pinholes = cameras(&focals);
         let pairs = matching::verify_rotations(features, &pinholes, putative);
-        return (pinholes, shared, pairs);
+        let lens = camera::Lens {
+            shared_focal: shared,
+            focal_from_metadata: true,
+            corrected,
+        };
+        return (pinholes, lens, pairs);
     }
     let sizes: Vec<(usize, usize)> = frames.iter().map(|f| (f.width, f.height)).collect();
     let verified = matching::verify_homographies(features, &sizes, putative);
@@ -339,7 +349,12 @@ fn verify_pairs(
     };
     let pinholes = cameras(&vec![focal; frames.len()]);
     let pairs = matching::rotations_from_inliers(verified, &pinholes);
-    (pinholes, true, pairs)
+    let lens = camera::Lens {
+        shared_focal: true,
+        focal_from_metadata: false,
+        corrected,
+    };
+    (pinholes, lens, pairs)
 }
 
 fn median(mut values: Vec<f64>) -> f64 {
@@ -672,7 +687,8 @@ impl PanoramaLayout {
                 let x = (origin[0] + (i % size) as isize) as f64;
                 let y = (origin[1] + (i / size) as isize) as f64;
                 let seam = seam_grid.position(self.output.plane(x, y));
-                self.seams.share(label, seam[0], seam[1]) + OFF_SEAM_WEIGHT
+                let owned = self.seams.owner(seam[0], seam[1]) == label;
+                f32::from(u8::from(owned)) + OFF_SEAM_WEIGHT
             })
             .collect();
         Ok(Some(WarpedRegion {

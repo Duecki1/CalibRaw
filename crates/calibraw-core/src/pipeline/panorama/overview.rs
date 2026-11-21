@@ -16,8 +16,6 @@ pub(super) struct Overview {
     pub(super) covered: Vec<bool>,
     /// The thumbnail measured it: inside the sensor, not clipped, above black.
     pub(super) measured: Vec<bool>,
-    /// Some sample it mixes clipped.
-    pub(super) clipped: Vec<bool>,
     /// Distance from the frame's nearest edge, relative to its long edge.
     pub(super) depth: Vec<f32>,
 }
@@ -46,11 +44,11 @@ pub(super) fn warp(grid: &Grid, camera: &Camera, thumbnail: &Reduced, extent: Ex
     let width = x1 - x0;
     let (frame_width, frame_height) = camera.pinhole.size();
     let long = frame_width.max(frame_height);
-    let pixels: Vec<([f32; 3], bool, bool, bool, f32)> = (0..width * (y1 - y0))
+    let pixels: Vec<([f32; 3], bool, bool, f32)> = (0..width * (y1 - y0))
         .into_par_iter()
         .map(|i| {
             let (x, y) = ((x0 + i % width) as f64, (y0 + i / width) as f64);
-            let outside = ([0.0; 3], false, false, false, 0.0);
+            let outside = ([0.0; 3], false, false, 0.0);
             let Some(p) = grid
                 .ray(x, y)
                 .and_then(|ray| camera.pixel(ray))
@@ -60,8 +58,8 @@ pub(super) fn warp(grid: &Grid, camera: &Camera, thumbnail: &Reduced, extent: Ex
             };
             let depth = (camera.pinhole.depth(p) / long) as f32;
             match thumbnail.sample(p[0], p[1]) {
-                Some(sample) => (sample.rgb, true, sample.measured, sample.clipped, depth),
-                None => ([0.0; 3], true, false, false, depth),
+                Some(sample) => (sample.rgb, true, sample.measured, depth),
+                None => ([0.0; 3], true, false, depth),
             }
         })
         .collect();
@@ -70,14 +68,12 @@ pub(super) fn warp(grid: &Grid, camera: &Camera, thumbnail: &Reduced, extent: Ex
         rgb: Vec::with_capacity(pixels.len()),
         covered: Vec::with_capacity(pixels.len()),
         measured: Vec::with_capacity(pixels.len()),
-        clipped: Vec::with_capacity(pixels.len()),
         depth: Vec::with_capacity(pixels.len()),
     };
-    for (rgb, covered, measured, clipped, depth) in pixels {
+    for (rgb, covered, measured, depth) in pixels {
         overview.rgb.push(rgb);
         overview.covered.push(covered);
         overview.measured.push(measured);
-        overview.clipped.push(clipped);
         overview.depth.push(depth);
     }
     overview

@@ -9,8 +9,12 @@
 //! 2003). A cut is cheap only where the frames agree, so seams go around moving
 //! subjects and around near objects that parallax shifts between the frames. (The
 //! colour-and-gradient cost would make cuts through busy detail cheap, and halves such
-//! objects.) A clipped sample costs its frame a little, so seams prefer the frame that
-//! measured a highlight.
+//! objects.)
+//!
+//! The grid is coarse (Enblend's `--coarse-mask` likewise finds seams at an eighth of
+//! the resolution); the full-resolution mask is sharp, as Enblend fills its scaled-up
+//! seam contour (`createMask`, `src/mask.h`), so frames never mix across the seam and
+//! each band of the blend widens the transition only as far as its own scale.
 
 use super::maxflow::Graph;
 use super::overview::Overview;
@@ -23,8 +27,6 @@ pub(super) const NO_FRAME: u16 = u16::MAX;
 const TERMINAL_COST: f32 = 10_000.0;
 const BAD_REGION_PENALTY: f32 = 1_000.0;
 const WEIGHT_EPS: f32 = 1.0;
-/// Terminal preference against a clipped sample, on the same scale.
-const CLIPPED_COST: f32 = 50.0;
 
 /// The frame each seam-grid pixel takes its picture from.
 pub(super) struct Seams {
@@ -33,20 +35,39 @@ pub(super) struct Seams {
 }
 
 impl Seams {
-    /// The share of `frame` at fractional grid position `(x, y)`: the bilinear blend of
-    /// whether the four nearest pixels belong to it.
-    pub(super) fn share(&self, frame: u16, x: f64, y: f64) -> f32 {
+    /// The frame owning fractional grid position `(x, y)`: the label with the largest
+    /// bilinear weight among the four nearest pixels, so seams run smoothly between grid
+    /// pixels instead of in steps of whole grid pixels.
+    pub(super) fn owner(&self, x: f64, y: f64) -> u16 {
         let (w, h) = (self.grid.width, self.grid.height);
         let x = x.clamp(0.0, (w - 1) as f64);
         let y = y.clamp(0.0, (h - 1) as f64);
         let (ix, iy) = (x.floor() as usize, y.floor() as usize);
         let (jx, jy) = ((ix + 1).min(w - 1), (iy + 1).min(h - 1));
-        let (fx, fy) = ((x - ix as f64) as f32, (y - iy as f64) as f32);
-        let is = |i: usize| f32::from(u8::from(self.labels[i] == frame));
-        is(iy * w + ix) * (1.0 - fx) * (1.0 - fy)
-            + is(iy * w + jx) * fx * (1.0 - fy)
-            + is(jy * w + ix) * (1.0 - fx) * fy
-            + is(jy * w + jx) * fx * fy
+        let (fx, fy) = (x - ix as f64, y - iy as f64);
+        let taps = [
+            (self.labels[iy * w + ix], (1.0 - fx) * (1.0 - fy)),
+            (self.labels[iy * w + jx], fx * (1.0 - fy)),
+            (self.labels[jy * w + ix], (1.0 - fx) * fy),
+            (self.labels[jy * w + jx], fx * fy),
+        ];
+        let weight = |label: u16| -> f64 {
+            taps.iter()
+                .filter(|(l, _)| *l == label)
+                .map(|(_, w)| w)
+                .sum()
+        };
+        // Ties go to the earliest tap, so the choice is deterministic.
+        taps.iter()
+            .map(|&(label, _)| (label, weight(label)))
+            .fold((NO_FRAME, f64::NEG_INFINITY), |best, candidate| {
+                if candidate.1 > best.1 {
+                    candidate
+                } else {
+                    best
+                }
+            })
+            .0
     }
 }
 
@@ -178,16 +199,9 @@ fn cut_pair(
                 Role::Outside
             };
             match role[n] {
-                Role::Free => {
-                    let clipped = |o: &Overview| o.index(x, y).is_some_and(|i| o.clipped[i]);
-                    let (ca, cb) = (clipped(a), clipped(b));
-                    let source = if cb && !ca { CLIPPED_COST } else { 0.0 };
-                    let sink = if ca && !cb { CLIPPED_COST } else { 0.0 };
-                    graph.add_terminal_weights(n, source, sink);
-                }
+                Role::Free | Role::Outside => {}
                 Role::First => graph.add_terminal_weights(n, TERMINAL_COST, 0.0),
                 Role::Second => graph.add_terminal_weights(n, 0.0, TERMINAL_COST),
-                Role::Outside => {}
             }
         }
     }

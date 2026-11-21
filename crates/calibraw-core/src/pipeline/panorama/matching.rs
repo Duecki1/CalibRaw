@@ -35,8 +35,14 @@ const CANDIDATES_PER_FRAME: usize = 6;
 /// Strongest keypoints per frame used to vote for candidate pairs.
 const VOTE_KEYPOINTS: usize = 256;
 const VOTE_CHECKS: usize = 32;
-/// Inlier tolerance in registration-image pixels.
+/// Homography inlier tolerance in registration-image pixels.
 const RANSAC_TOLERANCE: f64 = 4.0;
+/// Rotation inlier tolerance as a share of the image diagonal: cpfind's default
+/// `--ransacdist` of 25 px, which it scales to the image as a share of a 5000 px
+/// diagonal (`RansacMatchesInPairCam`, `PanoDetectorLogic.cpp`). It admits the
+/// residual distortion of a lens without a profile and the parallax of a handheld
+/// shot; bundle adjustment's robust loss weighs them down afterwards.
+const ROTATION_TOLERANCE: f64 = 25.0 / 5000.0;
 const RANSAC_CONFIDENCE: f64 = 0.999;
 const RANSAC_MAX_ITERATIONS: usize = 2000;
 /// Fewest inliers that verify a pair, whatever the match count.
@@ -196,7 +202,8 @@ pub(super) fn verify_rotations(
                 .map(|&(i, j)| (ca.ray(a.points[i]), cb.ray(b.points[j])))
                 .collect();
             // Angular tolerance from the pixel tolerance at the image centre.
-            let tolerance = RANSAC_TOLERANCE * a.pixel.max(b.pixel) / ca.focal.min(cb.focal);
+            let (width, height) = cb.size();
+            let tolerance = ROTATION_TOLERANCE * width.hypot(height) / ca.focal.min(cb.focal);
             let seed = (pair.first as u64) << 32 | pair.second as u64;
             let (rotation, inliers) = ransac_rotation(&rays, tolerance, seed)?;
             verified(inliers.len(), rays.len()).then(|| PairMatches {
