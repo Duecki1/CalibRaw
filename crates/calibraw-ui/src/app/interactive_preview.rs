@@ -7,6 +7,12 @@
 //! everything it missed (`queue_preview_processing` keeps merging the stage it
 //! owes while it waits) and replaces the reduced one once it is done.
 //!
+//! A mask handle, brush or mask slider drag is followed the same way. Each
+//! edit marks the layers it changes (`MaskState::reduced_dirty_layers`), and
+//! the reduced graph rasterizes only those, at its own small atlas
+//! (`interactive_mask_edge`), before its Output stage; the sharp preview
+//! rasterizes them at its full atlas once, when it catches up.
+//!
 //! What is reduced depends on the view. The photo is shown whole by the fitted
 //! preview, so the reduced graph is the whole photo at half the fitted edge.
 //! Zoomed in, the sharp crop (`PreviewDetail`) covers the view and is the
@@ -401,20 +407,6 @@ impl CalibRawApp {
             && (!self.preview.zoomed_in() || self.sharp_crop_covers_view())
     }
 
-    /// Whether the masks let the reduced preview follow a drag now. A mask
-    /// being shaped has its own path, and the reduced graph's masks are
-    /// uploaded as a whole when a drag starts. Unlike `interactive_usable`,
-    /// this does not drop the graph: a mask edit lasts a frame or a drag,
-    /// and the edits made meanwhile leave the graph unsynced
-    /// (`InteractiveState::enter`), so its next drag renders everything.
-    fn interactive_masks_settled(&self) -> bool {
-        self.masks.interaction_dirty_layer.is_none()
-            && !self.masks.dirty_layers.iter().any(|dirty| *dirty)
-            // The crop's own masks, which stay marked while it is absent.
-            && (!self.preview.zoomed_in()
-                || !self.masks.detail_dirty_layers.iter().any(|dirty| *dirty))
-    }
-
     /// Whether the sharp crop is there to be reduced: it covers the part of
     /// the photo in view. It need not be the crop this view would get
     /// (`preview_detail_is_current`): one prepared for a view since moved,
@@ -518,10 +510,7 @@ impl CalibRawApp {
         let keep_or_build = !replacing_crop || self.preview.interactive.graph.is_some();
         self.maintain_interactive_graph(frame, usable && slow && keep_or_build);
 
-        let eligible = usable
-            && slow
-            && self.interactive_masks_settled()
-            && self.preview.interactive.graph.is_some();
+        let eligible = usable && slow && self.preview.interactive.graph.is_some();
         // The GPU has finished what it was given, too, so the sharp picture
         // that replaces the reduced one is on the screen.
         let sharp_current = self.sharp_preview_rendered()
@@ -877,6 +866,10 @@ impl CalibRawApp {
             ),
         };
         let state = &mut self.preview.interactive;
+        if result.is_ok() && (state.masks_pending || stage == ProcessingStage::Output) {
+            // Every mask went up, or the ones a drag changed did.
+            self.masks.reduced_dirty_layers.fill(false);
+        }
         if let Err(error) = result {
             if let Some(source) = state.graph.as_ref().map(|graph| Arc::clone(&graph.source)) {
                 state.failed_for = Some(source);
@@ -907,7 +900,8 @@ impl CalibRawApp {
     }
 
     /// Renders `stage` of the reduced graph of the whole photo. With
-    /// `masks_pending` the masks go up first.
+    /// `masks_pending` the masks go up first; otherwise its Output stage
+    /// takes the layers a drag changed (`reduced_dirty_layers`).
     fn render_whole_stage(
         &self,
         render_state: &eframe::egui_wgpu::RenderState,
@@ -920,6 +914,19 @@ impl CalibRawApp {
         if self.preview.interactive.masks_pending() {
             Self::upload_preview_masks(pipeline.gpu(), &render_state.queue, masks, raw)
                 .map_err(anyhow::Error::msg)?;
+        } else if stage == ProcessingStage::Output
+            && self.masks.reduced_dirty_layers.iter().any(|dirty| *dirty)
+        {
+            // Cleared by the caller once the stage has rendered.
+            let mut dirty_layers = self.masks.reduced_dirty_layers;
+            Self::upload_dirty_preview_masks(
+                pipeline.gpu(),
+                &render_state.queue,
+                masks,
+                raw,
+                &mut dirty_layers,
+            )
+            .map_err(anyhow::Error::msg)?;
         }
         let params = GpuParams::new(&self.develop.target_exposure, masks, raw)
             .with_vignette_geometry(self.develop.geometry)

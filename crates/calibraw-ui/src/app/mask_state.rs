@@ -221,4 +221,8 @@ pub(crate) struct MaskState {
     pub(crate) dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) detail_dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) navigation_dirty_layers: [bool; MAX_LOCAL_MASKS],
+    /// The layers the reduced drag preview (`interactive_preview`) has yet to
+    /// receive. It reads them only while it follows a drag in sync; otherwise
+    /// it uploads every mask before it renders again.
+    pub(crate) reduced_dirty_layers: [bool; MAX_LOCAL_MASKS],
 }

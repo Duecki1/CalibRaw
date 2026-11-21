@@ -69,6 +69,9 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) reconstructed_raw_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) highlight_work_a: wgpu::Texture,
     pub(in crate::pipeline::gpu) highlight_work_b: wgpu::Texture,
+    /// The stored RCD reference of a 16-bit graph (`rcd_reference_extent`);
+    /// `None` where highlight work A holds it.
+    pub(in crate::pipeline::gpu) rcd_reference: Option<wgpu::Texture>,
     pub(in crate::pipeline::gpu) rgb_source_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) binned_ai_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) binned_clipping_texture: wgpu::Texture,
@@ -86,6 +89,9 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) reconstructed_raw_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) highlight_work_a_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) highlight_work_b_view: wgpu::TextureView,
+    /// Where the RCD reference pass writes and the Bayer finish passes read
+    /// a stored reference: `rcd_reference`, or highlight work A.
+    pub(in crate::pipeline::gpu) rcd_reference_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) rgb_source_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) binned_ai_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) binned_clipping_view: wgpu::TextureView,
@@ -168,6 +174,22 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         highlight_work_format,
         "calibraw highlight work B",
     );
+
+    let rcd_reference = rcd_reference_extent(
+        work_format,
+        raw.cfa_kind,
+        raw.pixel_layout(),
+        size.width,
+        size.height,
+    )
+    .map(|[width, height]| {
+        create_float_work_texture(
+            device,
+            texture_size(width, height),
+            RCD_REFERENCE_FORMAT,
+            "calibraw RCD reference",
+        )
+    });
 
     let rgb_source_texture = create_rgb_source_texture(device, queue, raw, demosaic_format)?;
     let binned_ai_texture =
@@ -257,6 +279,8 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     let reconstructed_raw_view = default_texture_view(&reconstructed_raw_texture);
     let highlight_work_a_view = default_texture_view(&highlight_work_a);
     let highlight_work_b_view = default_texture_view(&highlight_work_b);
+    let rcd_reference_view =
+        default_texture_view(rcd_reference.as_ref().unwrap_or(&highlight_work_a));
     let rgb_source_view = default_texture_view(&rgb_source_texture);
     let binned_ai_view = default_texture_view(&binned_ai_texture);
     let binned_clipping_view = default_texture_view(&binned_clipping_texture);
@@ -303,6 +327,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             reconstructed_raw_texture,
             highlight_work_a,
             highlight_work_b,
+            rcd_reference,
             rgb_source_texture,
             binned_ai_texture,
             binned_clipping_texture,
@@ -320,6 +345,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             reconstructed_raw_view,
             highlight_work_a_view,
             highlight_work_b_view,
+            rcd_reference_view,
             rgb_source_view,
             binned_ai_view,
             binned_clipping_view,

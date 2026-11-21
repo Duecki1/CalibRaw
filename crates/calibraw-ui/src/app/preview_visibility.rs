@@ -200,6 +200,7 @@ impl CalibRawApp {
         self.masks.dirty_layers.fill(true);
         self.masks.detail_dirty_layers.fill(true);
         self.masks.navigation_dirty_layers.fill(true);
+        self.masks.reduced_dirty_layers.fill(true);
         if source_changed {
             self.preview.quality_dirty = true;
             self.preview.drop_detail_rebuild();

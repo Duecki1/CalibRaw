@@ -149,6 +149,7 @@ impl MaskState {
             self.dirty_layers[layer] = true;
             self.detail_dirty_layers[layer] = true;
             self.navigation_dirty_layers[layer] = true;
+            self.reduced_dirty_layers[layer] = true;
         }
         self.overlay_revision = self.overlay_revision.wrapping_add(1);
     }
@@ -157,6 +158,7 @@ impl MaskState {
         self.dirty_layers.fill(true);
         self.detail_dirty_layers.fill(true);
         self.navigation_dirty_layers.fill(true);
+        self.reduced_dirty_layers.fill(true);
         self.overlay_revision = self.overlay_revision.wrapping_add(1);
     }
 }

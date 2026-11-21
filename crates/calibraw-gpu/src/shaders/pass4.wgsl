@@ -13,11 +13,11 @@
 @group(0) @binding(9) var tex3_read: texture_2d<f32>;
 @group(0) @binding(10) var scene_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 // The RCD reference of every pixel (`rcd_reference_at`), stored by
-// `bayer_rcd_reference` for the passes after it. It is written in the work
-// format, which is 32-bit float where it is stored (`RCD_STORED_REFERENCE`),
-// so a stored value equals the computed one exactly.
+// `bayer_rcd_reference` for the passes after it. It is written as 32-bit
+// float in every work format (`RCD_REFERENCE_FORMAT`), so a stored value
+// equals the computed one exactly.
 @group(0) @binding(46) var rcd_reference_read: texture_2d<f32>;
-@group(0) @binding(47) var rcd_reference_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
+@group(0) @binding(47) var rcd_reference_write: texture_storage_2d<rgba32float, write>;
 
 const RCD_MARGIN: i32 = 9;
 // Specialize the selected algorithm before driver compilation. The dynamic
@@ -27,7 +27,7 @@ override BAYER_SENSOR_DENOISE: bool = true;
 // Whether `bayer_rcd_reference` ran and the passes after it read the stored
 // reference instead of recomputing it: about 53 times per finished pixel, each
 // about 35 texture reads (false-colour guard 4, frequency chroma 173, sensor
-// denoise up to 48). Set for 32-bit work formats only.
+// denoise up to 48). Set where the graph stores it (`stores_rcd_reference`).
 override RCD_STORED_REFERENCE: bool = false;
 
 fn rcd_has_reference_margin(pos: vec2<i32>) -> bool {

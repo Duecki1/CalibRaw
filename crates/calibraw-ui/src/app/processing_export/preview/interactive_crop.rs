@@ -91,8 +91,10 @@ impl CalibRawApp {
 
     /// Renders `stage` of the reduced crop. While the masks are pending
     /// (`InteractiveState::masks_pending`) they go up first, all of them, as
-    /// the crop was built without. Like the sharp crop, it takes the tone
-    /// statistics of a full-frame graph.
+    /// the crop was built without; otherwise its Output stage takes the
+    /// layers a drag changed (`reduced_dirty_layers`, cleared by the caller).
+    /// Like the sharp crop, it takes the tone statistics of a full-frame
+    /// graph.
     pub(in crate::app) fn render_interactive_crop_stage(
         &self,
         queue: &wgpu::Queue,
@@ -112,6 +114,19 @@ impl CalibRawApp {
                 placement.mask_region,
                 placement.mask_extent,
                 None,
+            )
+            .map_err(anyhow::Error::msg)?;
+        } else if stage == ProcessingStage::Output
+            && self.masks.reduced_dirty_layers.iter().any(|dirty| *dirty)
+        {
+            Self::upload_detail_masks(
+                reduced.pipeline.gpu(),
+                queue,
+                masks,
+                full_raw,
+                placement.mask_region,
+                placement.mask_extent,
+                Some(&self.masks.reduced_dirty_layers),
             )
             .map_err(anyhow::Error::msg)?;
         }

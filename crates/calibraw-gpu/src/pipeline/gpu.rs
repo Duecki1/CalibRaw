@@ -685,6 +685,8 @@ pub struct RawGpuPipeline {
     _tex2: wgpu::Texture,
     _xtrans_homogeneity: Option<wgpu::Texture>,
     _xtrans_complete: Option<wgpu::Texture>,
+    /// A 16-bit graph's stored RCD reference (`stores_rcd_reference`).
+    _rcd_reference: Option<wgpu::Texture>,
     rgb_source_texture: wgpu::Texture,
     binned_ai_texture: wgpu::Texture,
     binned_clipping_texture: wgpu::Texture,

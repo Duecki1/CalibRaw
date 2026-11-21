@@ -120,8 +120,8 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// that adding them kept earlier positions.
     pub(in crate::pipeline::gpu) defocus_pass_index: usize,
     /// Bayer only (X-Trans plans no pass here): stores the RCD reference
-    /// between the RCD passes and dual demosaicing when the work format
-    /// holds it exactly ([`stores_rcd_reference`]). It comes last so that
+    /// between the RCD passes and dual demosaicing where the graph stores it
+    /// ([`stores_rcd_reference`]). It comes last so that
     /// adding it kept earlier positions.
     pub(in crate::pipeline::gpu) rcd_reference_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,

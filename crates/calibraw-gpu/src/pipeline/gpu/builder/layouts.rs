@@ -198,7 +198,11 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                 texture_entry(3, wgpu::TextureSampleType::Float { filterable: false }),
                 texture_entry(7, wgpu::TextureSampleType::Float { filterable: false }),
                 texture_entry(9, wgpu::TextureSampleType::Float { filterable: false }),
-                storage_texture_entry(47, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
+                storage_texture_entry(
+                    47,
+                    RCD_REFERENCE_FORMAT,
+                    wgpu::StorageTextureAccess::WriteOnly,
+                ),
             ],
         )
     });

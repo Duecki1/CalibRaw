@@ -233,6 +233,7 @@ impl CalibRawApp {
                 dirty_layers: [false; MAX_LOCAL_MASKS],
                 detail_dirty_layers: [false; MAX_LOCAL_MASKS],
                 navigation_dirty_layers: [false; MAX_LOCAL_MASKS],
+                reduced_dirty_layers: [false; MAX_LOCAL_MASKS],
             },
             ai: AiState {
                 subject_mask_quality: performance.subject_mask_quality,

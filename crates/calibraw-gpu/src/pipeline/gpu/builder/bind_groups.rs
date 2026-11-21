@@ -69,6 +69,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         reconstructed_raw_view,
         highlight_work_a_view,
         highlight_work_b_view,
+        rcd_reference_view: stored_reference_view,
         rgb_source_view,
         binned_ai_view,
         binned_clipping_view,
@@ -179,10 +180,10 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         ],
     );
 
-    // A stored RCD reference (`stores_rcd_reference`) goes to highlight work
-    // A, which only binned sources and AI scenes use, and those skip
-    // demosaicing. Its pass reads RCD's planes in tex2 and tex1, which nothing
-    // reads after it.
+    // A stored RCD reference (`stores_rcd_reference`) goes to a 16-bit
+    // graph's own texture or to highlight work A, which only binned sources
+    // and AI scenes use, and those skip demosaicing. Its pass reads RCD's
+    // planes in tex2 and tex1, which nothing reads after it.
     let bg_rcd_reference = create_bind_group(
         device,
         "bg RCD reference",
@@ -195,14 +196,14 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             texture_binding(3, reconstructed_raw_view),
             texture_binding(7, tex2_view),
             texture_binding(9, tex1_view),
-            texture_binding(47, highlight_work_a_view),
+            texture_binding(47, stored_reference_view),
         ],
     );
 
     // Scratch textures the reference demosaic no longer needs by the dual
     // passes: the prepared interpolation, then the smoothed one with its mask.
     // With a stored reference RCD's planes are free, so the interpolation
-    // takes tex1 and leaves the reference in highlight work A.
+    // takes tex1 and leaves the reference where it is stored.
     let (dual_prepared_view, dual_low_view) = match cfa_kind {
         CfaKind::Bayer if stores_rcd_reference => (tex1_view, highlight_work_b_view),
         CfaKind::Bayer => (highlight_work_a_view, highlight_work_b_view),
@@ -212,7 +213,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     // that recompute it never read the binding, so they get tex2, which they
     // only read.
     let rcd_reference_view = if stores_rcd_reference {
-        highlight_work_a_view
+        stored_reference_view
     } else {
         tex2_view
     };

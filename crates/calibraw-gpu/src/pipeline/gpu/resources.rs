@@ -420,6 +420,20 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             full(work_format)?,
         );
     }
+    if let Some([width, height]) = rcd_reference_extent(
+        work_format,
+        input.cfa_kind,
+        input.layout,
+        input.width,
+        input.height,
+    ) {
+        push_entry(
+            &mut entries,
+            "RCD reference",
+            GpuResourceResidency::Persistent,
+            texture_allocation_bytes(width, height, 1, 1, RCD_REFERENCE_FORMAT)?,
+        );
+    }
     push_entry(
         &mut entries,
         "encoded output texture",
@@ -815,13 +829,46 @@ pub(super) fn processing_work_format(quality: ProcessingQuality) -> wgpu::Textur
     }
 }
 
-/// Whether Bayer demosaicing stores its RCD reference once per pixel in
-/// highlight work A (pass4.wgsl `RCD_STORED_REFERENCE`) instead of having the
-/// finish passes recompute it at every tap. Only a 32-bit work format holds
-/// the reference exactly; there highlight work A is free once RCD has run, so
-/// storing it costs no memory. Previews recompute it.
+/// The format of the stored RCD reference: 32-bit, so a stored value equals
+/// the computed one exactly.
+pub(super) const RCD_REFERENCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+
+/// Whether Bayer demosaicing stores its RCD reference once per pixel
+/// (pass4.wgsl `RCD_STORED_REFERENCE`) instead of having the finish passes
+/// recompute it at every tap, about 53 times per pixel.
+///
+/// A 32-bit work format keeps it in highlight work A, which is free once RCD
+/// has run, so storing it costs no memory. A 16-bit preview keeps it in a
+/// texture of its own ([`rcd_reference_extent`]), 16 bytes a pixel: a phone or
+/// tablet stores it, as its previews are bounded to its screen and its GPU is
+/// what a drag waits for; a computer, whose idle preview can be the native
+/// photo, recomputes it. The value is the same either way.
+///
+/// Program templates are shared by every graph of a work format, so this may
+/// depend on nothing else.
 pub(super) fn stores_rcd_reference(work_format: wgpu::TextureFormat) -> bool {
-    work_format == wgpu::TextureFormat::Rgba32Float
+    work_format == RCD_REFERENCE_FORMAT || gpu_working_set_is_limited()
+}
+
+/// The extent of a graph's own RCD reference texture, or `None` where
+/// highlight work A holds the reference (a 32-bit work format). Only a Bayer
+/// mosaic that stores its reference needs the whole extent; any other graph
+/// gets one texel, as the reference pass's binding still needs a 32-bit
+/// storage texture.
+pub(super) fn rcd_reference_extent(
+    work_format: wgpu::TextureFormat,
+    cfa_kind: CfaKind,
+    layout: PixelLayout,
+    width: u32,
+    height: u32,
+) -> Option<[u32; 2]> {
+    if work_format == RCD_REFERENCE_FORMAT {
+        return None;
+    }
+    let stored = cfa_kind == CfaKind::Bayer
+        && layout == PixelLayout::Mosaic
+        && stores_rcd_reference(work_format);
+    Some(if stored { [width, height] } else { [1, 1] })
 }
 
 pub(super) fn work_shader_source(
