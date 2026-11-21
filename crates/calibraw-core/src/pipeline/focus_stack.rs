@@ -20,6 +20,7 @@
 //! One frame is resident at a time, and the result does not depend on frame order.
 
 use super::alignment::{warp, Registration};
+use super::pyramid::Plane;
 use super::raw_loader::validate_raw_dimensions;
 use anyhow::{ensure, Result};
 use rayon::prelude::*;
@@ -33,8 +34,6 @@ const SHADOW_FLOOR: f32 = 1.0 / 1024.0;
 const LAPLACIAN_REACH: usize = 4;
 /// The pyramid stops before the shorter edge falls below this.
 const TOP_EDGE: usize = 8;
-/// Burt–Adelson generating kernel (a = 0.375).
-const KERNEL: [f32; 5] = [1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0];
 
 /// Streaming focus-stack accumulator on the reference frame's pixel grid.
 pub struct FocusStack {
@@ -309,122 +308,4 @@ impl Plane<f32> {
 
 fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-/// A value that pyramid filters combine linearly.
-trait Texel: Copy + Send + Sync {
-    const ZERO: Self;
-    fn add_weighted(self, weight: f32, sum: Self) -> Self;
-}
-
-impl Texel for f32 {
-    const ZERO: Self = 0.0;
-    fn add_weighted(self, weight: f32, sum: Self) -> Self {
-        sum + weight * self
-    }
-}
-
-impl Texel for [f32; 3] {
-    const ZERO: Self = [0.0; 3];
-    fn add_weighted(self, weight: f32, sum: Self) -> Self {
-        [
-            sum[0] + weight * self[0],
-            sum[1] + weight * self[1],
-            sum[2] + weight * self[2],
-        ]
-    }
-}
-
-/// A row-major image. Filters repeat the edge. The Laplacian pyramid reconstructs exactly
-/// with any boundary rule: a level stores `g − expand(reduce(g))` and collapsing adds the
-/// same `expand` back.
-struct Plane<T> {
-    width: usize,
-    height: usize,
-    data: Vec<T>,
-}
-
-impl<T: Texel> Plane<T> {
-    /// Separable filter of the rows and then the columns. `taps(i, size)` lists the
-    /// source indices and weights of output index `i` along an axis of `size` samples.
-    fn separable<F>(&self, width: usize, height: usize, taps: F) -> Self
-    where
-        F: Fn(usize, usize) -> [(usize, f32); 5] + Sync,
-    {
-        let mut rows = vec![T::ZERO; width * self.height];
-        rows.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
-            let source = &self.data[y * self.width..(y + 1) * self.width];
-            for (x, out) in row.iter_mut().enumerate() {
-                *out = taps(x, self.width)
-                    .into_iter()
-                    .fold(T::ZERO, |sum, (i, w)| source[i].add_weighted(w, sum));
-            }
-        });
-        let mut data = vec![T::ZERO; width * height];
-        data.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
-            let taps = taps(y, self.height);
-            for (x, out) in row.iter_mut().enumerate() {
-                *out = taps.into_iter().fold(T::ZERO, |sum, (i, w)| {
-                    rows[i * width + x].add_weighted(w, sum)
-                });
-            }
-        });
-        Self {
-            width,
-            height,
-            data,
-        }
-    }
-
-    /// Low-pass filter and decimate by two.
-    fn reduce(&self) -> Self {
-        self.separable(
-            self.width.div_ceil(2),
-            self.height.div_ceil(2),
-            |i, size| {
-                std::array::from_fn(|k| {
-                    (
-                        clamp_index(2 * i as isize + k as isize - 2, size),
-                        KERNEL[k],
-                    )
-                })
-            },
-        )
-    }
-
-    /// Upsample to `width × height` (at most twice this size) with the interpolating
-    /// counterpart of `reduce`: even samples weigh 1/8, 6/8, 1/8 and odd ones 1/2, 1/2.
-    fn expand(&self, width: usize, height: usize) -> Self {
-        self.separable(width, height, |i, size| {
-            let n = (i / 2) as isize;
-            if i % 2 == 0 {
-                [
-                    (clamp_index(n - 1, size), 0.125),
-                    (clamp_index(n, size), 0.75),
-                    (clamp_index(n + 1, size), 0.125),
-                    (0, 0.0),
-                    (0, 0.0),
-                ]
-            } else {
-                [
-                    (clamp_index(n, size), 0.5),
-                    (clamp_index(n + 1, size), 0.5),
-                    (0, 0.0),
-                    (0, 0.0),
-                    (0, 0.0),
-                ]
-            }
-        })
-    }
-
-    /// Binomial `[1 4 6 4 1] / 16` smoothing (σ = 1): the salience window.
-    fn blur5(&self) -> Self {
-        self.separable(self.width, self.height, |i, size| {
-            std::array::from_fn(|k| (clamp_index(i as isize + k as isize - 2, size), KERNEL[k]))
-        })
-    }
-}
-
-fn clamp_index(index: isize, size: usize) -> usize {
-    index.clamp(0, size as isize - 1) as usize
 }

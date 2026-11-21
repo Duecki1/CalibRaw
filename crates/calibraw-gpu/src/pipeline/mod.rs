@@ -6,9 +6,11 @@ mod gpu;
 pub(crate) use gpu::in_flight_summary;
 mod gpu_cache;
 pub mod hdr;
+mod panorama_merge;
 mod raw_merge;
 pub use focus_stack::stack_focus;
 pub use hdr::merge_hdr_bracket;
+pub use panorama_merge::{merge_panorama, PanoramaMaster, PanoramaOptions};
 pub use raw_merge::{MergeOptions, MergedImage, SourceDenoiser};
 
 pub use export::{

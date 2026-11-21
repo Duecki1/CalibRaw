@@ -132,6 +132,101 @@ included.
   frames measured, following
   [focus-stack](https://github.com/PetteriAimonen/focus-stack) (MIT).
 
+### OpenCV (panorama merge)
+
+`crates/calibraw-core/src/pipeline/panorama/` adapts parts of
+[OpenCV](https://github.com/opencv/opencv) 4.x:
+
+- `features.rs` ports SIFT from `modules/features2d/src/sift.dispatch.cpp` and
+  `sift.simd.hpp` (Apache-2.0; Copyright (C) 2009, Willow Garage Inc.; Copyright
+  (C) 2020, Intel Corporation), which derive from Rob Hess's SIFT implementation
+  under the notice below.
+- `maxflow.rs` ports the Boykov–Kolmogorov max-flow of `GCGraph`
+  (`modules/imgproc/src/gcgraph.hpp`, Copyright (C) 2000, Intel Corporation).
+- `matching.rs`, `camera.rs`, `exposure.rs`, `seams.rs`, `blend.rs` and
+  `projection.rs` follow the stitching module (`modules/stitching`, Copyright (C)
+  2000-2008, Intel Corporation; Copyright (C) 2009, Willow Garage Inc.): pair
+  verification, the focal length from homographies (ported), initial rotations
+  from a maximum spanning tree, the ray bundle-adjustment cost, wave correction,
+  the gain-compensation objective, the colour graph-cut seam cost,
+  multi-band accumulation and the projection formulas.
+
+`gcgraph.hpp` and the stitching module are distributed under OpenCV's 3-clause BSD
+license:
+
+> Redistribution and use in source and binary forms, with or without modification,
+> are permitted provided that the following conditions are met:
+>
+> * Redistribution's of source code must retain the above copyright notice,
+>   this list of conditions and the following disclaimer.
+> * Redistribution's in binary form must reproduce the above copyright notice,
+>   this list of conditions and the following disclaimer in the documentation
+>   and/or other materials provided with the distribution.
+> * The name of the copyright holders may not be used to endorse or promote products
+>   derived from this software without specific prior written permission.
+>
+> This software is provided by the copyright holders and contributors "as is" and
+> any express or implied warranties, including, but not limited to, the implied
+> warranties of merchantability and fitness for a particular purpose are disclaimed.
+> In no event shall the Intel Corporation or contributors be liable for any direct,
+> indirect, incidental, special, exemplary, or consequential damages
+> (including, but not limited to, procurement of substitute goods or services;
+> loss of use, data, or profits; or business interruption) however caused
+> and on any theory of liability, whether in contract, strict liability,
+> or tort (including negligence or otherwise) arising in any way out of
+> the use of this software, even if advised of the possibility of such damage.
+
+The SIFT sources are licensed under the
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0); CalibRaw's port
+keeps the scalar path, works on float images in [0, 1], does not double the image
+first and normalizes descriptors as RootSIFT. Rob Hess's original notice:
+
+> Copyright (c) 2006-2010, Rob Hess <hess@eecs.oregonstate.edu>
+> All rights reserved.
+>
+> The following patent has been issued for methods embodied in this software:
+> "Method and apparatus for identifying scale invariant features in an image and
+> use of same for locating an object in an image," David G. Lowe, US Patent
+> 6,711,293 (March 23, 2004). Provisional application filed March 8, 1999.
+> Assignee: The University of British Columbia. (The patent expired in March 2020.)
+>
+> Redistribution and use in source and binary forms, with or without modification,
+> are permitted provided that the following conditions are met:
+>
+> * Redistributions of source code must retain the above copyright and patent
+>   notices, this list of conditions and the following disclaimer.
+> * Redistributions in binary form must reproduce the above copyright notice, this
+>   list of conditions and the following disclaimer in the documentation and/or
+>   other materials provided with the distribution.
+> * Neither the name of Oregon State University nor the names of its contributors
+>   may be used to endorse or promote products derived from this software without
+>   specific prior written permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+> ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+> WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+> DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY DIRECT,
+> INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+> BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+> DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+> LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+> OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+> ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+### Panorama merge design references
+
+These are independent implementations; no source from the projects below is
+included.
+
+- `crates/calibraw-core/src/pipeline/panorama/matching.rs` verifies pairs with a
+  rotation model when the focal length is known and keeps keypoints spread with a
+  bucket sieve, as cpfind of [Hugin](https://hugin.sourceforge.io/)
+  (GPL-2.0-or-later) does; `camera.rs` drops correspondences that stay far off
+  after bundle adjustment, as Hugin's cpclean does.
+- `crates/calibraw-core/src/pipeline/pyramid.rs` masks pyramid filters with an
+  image's coverage, and `panorama/seams.rs` starts from each pixel's deepest
+  frame, after [Enblend](https://enblend.sourceforge.net/) (GPL-2.0-or-later).
+
 ## Bundled data
 
 `data/wb_presets.json` is a compact snapshot derived from darktable's white

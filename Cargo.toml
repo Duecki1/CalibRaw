@@ -96,6 +96,7 @@ semver = "1.0"
 sys-locale = "0.3.2"
 skrifa = { version = "0.42", default-features = false, features = ["std"] }
 tempfile = "3.27"
+tiff = { version = "0.11", default-features = false }
 tar = "0.4"
 toml_edit = "0.25"
 trash = "5.2"

@@ -78,6 +78,12 @@ impl PerspectiveCorrection {
             .filter(|focal| focal.is_finite() && Self::FOCAL_LENGTH_RANGE.contains(focal))
     }
 
+    /// The focal length in pixels of a `size` image whose 35 mm equivalent focal length
+    /// is `focal_length_35mm`: the same field of view across the diagonal.
+    pub fn focal_length_pixels(focal_length_35mm: f32, size: [f64; 2]) -> f64 {
+        f64::from(focal_length_35mm / FULL_FRAME_DIAGONAL_MM) * size[0].hypot(size[1])
+    }
+
     pub fn is_identity(&self) -> bool {
         self.pitch_degrees.abs() < 1e-4 && self.yaw_degrees.abs() < 1e-4
     }
@@ -139,8 +145,7 @@ impl PerspectiveCorrection {
             return Homography::IDENTITY;
         }
         let center = [size[0] * 0.5, size[1] * 0.5];
-        let focal =
-            f64::from(self.focal_length_35mm / FULL_FRAME_DIAGONAL_MM) * size[0].hypot(size[1]);
+        let focal = Self::focal_length_pixels(self.focal_length_35mm, size);
         // K · R · K⁻¹ with K = diag(f, f, 1), on positions relative to the centre.
         let r = rotation(self.pitch_degrees, self.yaw_degrees).map(|row| row.map(f64::from));
         let projective = Homography::from_rows([

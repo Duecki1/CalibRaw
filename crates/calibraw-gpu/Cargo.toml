@@ -22,6 +22,7 @@ memmap2.workspace = true
 png.workspace = true
 pollster.workspace = true
 rayon.workspace = true
+tiff.workspace = true
 wgpu = { workspace = true, features = ["naga-ir"] }
 naga_oil.workspace = true
 zune-core.workspace = true

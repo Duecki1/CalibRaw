@@ -723,6 +723,7 @@ dependencies = [
  "pollster",
  "rayon",
  "serde_json",
+ "tiff",
  "wgpu",
  "windows",
  "zune-core",

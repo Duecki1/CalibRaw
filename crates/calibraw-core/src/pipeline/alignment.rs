@@ -126,7 +126,9 @@ pub(super) fn warp(
             covered: vec![true; width * height],
         };
     }
-    resample(width, height, rgb, peak, |x, y| alignment.map(x, y))
+    resample((width, height), (width, height), rgb, peak, |x, y| {
+        alignment.map(x, y)
+    })
 }
 
 /// Undoes the distortion `map` describes: resamples `rgb`, a `width × height` image in
@@ -139,27 +141,31 @@ pub fn correct_lens_distortion(
     rgb: &[f32],
     map: &LensGeometryMap,
 ) -> Vec<f32> {
-    let warped = resample(width as usize, height as usize, rgb, None, |x, y| {
+    let size = (width as usize, height as usize);
+    let warped = resample(size, size, rgb, None, |x, y| {
         let [x, y] = map.source_position_for_raster(x, y, width, height);
         (x, y)
     });
     warped.rgb.into_iter().flatten().collect()
 }
 
-/// Resamples `rgb` (and `peak`) onto a `width × height` grid whose pixel `(x, y)` shows
-/// source position `source(x, y)` (pixel centers at integer coordinates; NaN for none).
-fn resample(
-    width: usize,
-    height: usize,
+/// Resamples `rgb` (and `peak`), a `source_size` (width, height) image, onto an
+/// `output_size` grid whose pixel `(x, y)` shows source position `source(x, y)` (pixel
+/// centers at integer coordinates; NaN for none). Catmull–Rom; positions outside the
+/// source repeat its edge and are not `covered`.
+pub(super) fn resample(
+    source_size: (usize, usize),
+    output_size: (usize, usize),
     rgb: &[f32],
     peak: Option<&[f32]>,
     source: impl Fn(f32, f32) -> (f32, f32) + Sync,
 ) -> Warped {
+    let (width, height) = source_size;
     let has_peak = peak.is_some();
-    let ((rgb, maxima), covered): ((Vec<_>, Vec<_>), Vec<_>) = (0..width * height)
+    let ((rgb, maxima), covered): ((Vec<_>, Vec<_>), Vec<_>) = (0..output_size.0 * output_size.1)
         .into_par_iter()
         .map(|i| {
-            let (x, y) = source((i % width) as f32, (i / width) as f32);
+            let (x, y) = source((i % output_size.0) as f32, (i / output_size.0) as f32);
             let covered = sample_coordinates(width, height, x, y).is_some();
             let (ix, fx) = split(x, width);
             let (iy, fy) = split(y, height);

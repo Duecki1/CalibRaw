@@ -72,7 +72,7 @@ impl CalibRawApp {
         }
     }
 
-    /// Reports a finished HDR merge or focus stack, and opens it in Develop
+    /// Reports a finished merge, and opens it in Develop
     /// when the user asked to.
     pub(super) fn poll_merge(&mut self, frame: &eframe::Frame) {
         use crate::ui::library::{LibraryLocator, MergeOutcome};
@@ -85,13 +85,20 @@ impl CalibRawApp {
                     ("kind", &kind.title() as &dyn std::fmt::Display),
                     ("name", &saved.name),
                 ];
-                let message = if saved.lens_uncorrected {
-                    tr_fmt(
+                let message = match (saved.lens_uncorrected, saved.reduced) {
+                    (true, true) => tr_fmt(
+                        "{kind} saved at reduced size and without lens correction, as no lens profile matches: {name}",
+                        &arguments,
+                    ),
+                    (true, false) => tr_fmt(
                         "{kind} saved without lens correction, as no lens profile matches: {name}",
                         &arguments,
-                    )
-                } else {
-                    tr_fmt("{kind} saved: {name}", &arguments)
+                    ),
+                    (false, true) => tr_fmt(
+                        "{kind} saved at reduced size, the largest CalibRaw opens: {name}",
+                        &arguments,
+                    ),
+                    (false, false) => tr_fmt("{kind} saved: {name}", &arguments),
                 };
                 self.library.set_status(message.clone());
                 self.ui.notice = Some(message);

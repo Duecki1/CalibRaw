@@ -6,15 +6,18 @@ use crate::services::ai_denoise::{install_ai_denoise, AiDenoiseStatus};
 use crate::ui::background_tasks::{BackgroundTaskId, BackgroundTaskView};
 use anyhow::{Context, Result};
 use calibraw_ai::{AiDownloads, AiFeature};
+use calibraw_gpu::pipeline::panorama::ProjectionChoice;
 use calibraw_gpu::pipeline::{
-    merge_hdr_bracket, stack_focus, MergeOptions, MergedImage, SourceDenoiser,
+    merge_hdr_bracket, merge_panorama, stack_focus, MergeOptions, PanoramaOptions, SourceDenoiser,
 };
+use std::fs::File;
 
 /// Library actions that merge several RAW files into one floating-point TIFF.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MergeKind {
     Hdr,
     FocusStack,
+    Panorama,
 }
 
 impl MergeKind {
@@ -22,6 +25,7 @@ impl MergeKind {
         match self {
             Self::Hdr => tr("HDR merge"),
             Self::FocusStack => tr("Focus stack"),
+            Self::Panorama => tr("Panorama"),
         }
     }
 
@@ -29,6 +33,7 @@ impl MergeKind {
         match self {
             Self::Hdr => ErrorKind::HdrMerge,
             Self::FocusStack => ErrorKind::FocusStack,
+            Self::Panorama => ErrorKind::Panorama,
         }
     }
 
@@ -37,6 +42,7 @@ impl MergeKind {
         match self {
             Self::Hdr => "HDR",
             Self::FocusStack => "FocusStack",
+            Self::Panorama => "Pano",
         }
     }
 }
@@ -46,9 +52,13 @@ impl MergeKind {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct MergeChoices {
     options: MergeOptions,
+    panorama: PanoramaOptions,
     /// AI-denoise every source with RawNIND before it develops.
     ai_denoise: bool,
 }
+
+/// Width of the panorama projection choice.
+const PROJECTION_WIDTH: f32 = 340.0;
 
 /// Whether a merge AI-denoises its sources.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +75,7 @@ enum MergeAiDenoise {
 struct MergeRequest {
     kind: MergeKind,
     options: MergeOptions,
+    panorama: PanoramaOptions,
     ai_denoise: MergeAiDenoise,
     /// Open the result in Develop once it is saved.
     open: bool,
@@ -135,7 +146,24 @@ pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fr
         |ui| {
             let options = &mut choices.options;
             moduwu_design::toggle_row(ui, &mut options.lens_correction, tr("Lens correction"));
-            moduwu_design::toggle_row(ui, &mut options.align, tr("Auto-align"));
+            // A panorama is always aligned: its frames are taken from different directions.
+            if kind == MergeKind::Panorama {
+                moduwu_design::form_row(ui, tr("Projection"), PROJECTION_WIDTH, |ui, width| {
+                    moduwu_design::segmented_control(
+                        ui,
+                        &mut choices.panorama.projection,
+                        &[
+                            (ProjectionChoice::Auto, tr("Auto")),
+                            (ProjectionChoice::Spherical, tr("Spherical")),
+                            (ProjectionChoice::Cylindrical, tr("Cylindrical")),
+                            (ProjectionChoice::Perspective, tr("Perspective")),
+                        ],
+                        width,
+                    );
+                });
+            } else {
+                moduwu_design::toggle_row(ui, &mut options.align, tr("Auto-align"));
+            }
             if kind == MergeKind::Hdr {
                 moduwu_design::toggle_with_help(
                     ui,
@@ -209,6 +237,7 @@ fn confirm(
     let request = MergeRequest {
         kind: dialog.kind,
         options: app.library.merge_choices.options,
+        panorama: app.library.merge_choices.panorama,
         ai_denoise,
         open,
         assets: dialog.assets,
@@ -228,6 +257,9 @@ pub(crate) struct SavedMerge {
     /// Lens correction was asked for but no profile matched, so the merge is
     /// not lens corrected.
     pub(crate) lens_uncorrected: bool,
+    /// A panorama was reduced below its frames' resolution to stay within the
+    /// largest photo CalibRaw opens.
+    pub(crate) reduced: bool,
 }
 
 pub(super) struct MergeTask {
@@ -246,6 +278,7 @@ fn start(
     let MergeRequest {
         kind,
         options,
+        panorama,
         ai_denoise,
         open,
         assets,
@@ -346,23 +379,57 @@ fn start(
                     .iter()
                     .map(|staged| staged.raw_path.clone())
                     .collect();
-                let merged = match kind {
-                    MergeKind::Hdr => merge_hdr_bracket(
-                        &device, &queue, &paths, options, denoise, prewarm, report,
-                    ),
-                    MergeKind::FocusStack => {
-                        stack_focus(&device, &queue, &paths, options, denoise, prewarm, report)
+                let saving = || report(tr("Saving floating-point TIFF…").to_owned());
+                let (name, locator, lens_corrected, reduced) = match kind {
+                    MergeKind::Hdr | MergeKind::FocusStack => {
+                        let merged = if kind == MergeKind::Hdr {
+                            merge_hdr_bracket(
+                                &device, &queue, &paths, options, denoise, prewarm, report,
+                            )
+                        } else {
+                            stack_focus(&device, &queue, &paths, options, denoise, prewarm, report)
+                        }?;
+                        anyhow::ensure!(!cancelled.load(Ordering::Relaxed), tr("Merge cancelled"));
+                        saving();
+                        let (name, locator) = save_merged(
+                            |file| merged.write_tiff(file),
+                            &assets[0],
+                            &paths[0],
+                            kind,
+                            &*platform,
+                            &cancelled,
+                        )?;
+                        (name, locator, merged.lens_corrected, false)
                     }
-                }?;
-                anyhow::ensure!(!cancelled.load(Ordering::Relaxed), tr("Merge cancelled"));
-                report(tr("Saving floating-point TIFF…").to_owned());
-                let (name, locator) =
-                    save_merged(&merged, &assets[0], &paths[0], kind, &*platform, &cancelled)?;
+                    MergeKind::Panorama => {
+                        let staging = paths[0]
+                            .parent()
+                            .context(tr("Merge source has no parent folder"))?
+                            .to_path_buf();
+                        let master = merge_panorama(
+                            &device, &queue, &paths, options, panorama, denoise, prewarm, &staging,
+                            report,
+                        )?;
+                        anyhow::ensure!(!cancelled.load(Ordering::Relaxed), tr("Merge cancelled"));
+                        saving();
+                        // Compositing runs while the file is written.
+                        let (name, locator) = save_merged(
+                            |file| master.write_tiff(file, report),
+                            &assets[0],
+                            &paths[0],
+                            kind,
+                            &*platform,
+                            &cancelled,
+                        )?;
+                        (name, locator, master.lens_corrected(), master.reduced())
+                    }
+                };
                 Ok(SavedMerge {
                     name,
                     locator,
                     open,
-                    lens_uncorrected: options.lens_correction && !merged.lens_corrected,
+                    lens_uncorrected: options.lens_correction && !lens_corrected,
+                    reduced,
                 })
             })()
             .map_err(|error| format!("{error:#}"));
@@ -384,11 +451,11 @@ fn start(
     }
 }
 
-/// Saves `merged` as `{stem}-{suffix}.tif` for the first `source`, staged at
-/// `staged`: beside a folder photo, or into the media library for a media-library
-/// photo. Returns the saved file name and where it is.
+/// Saves the TIFF `write` produces as `{stem}-{suffix}.tif` for the first
+/// `source`, staged at `staged`: beside a folder photo, or into the media library
+/// for a media-library photo. Returns the saved file name and where it is.
 fn save_merged(
-    merged: &MergedImage,
+    write: impl FnOnce(&mut File) -> Result<()>,
     source: &LibraryAsset,
     staged: &Path,
     kind: MergeKind,
@@ -402,7 +469,7 @@ fn save_merged(
         .prefix(".calibraw-merge-")
         .suffix(".tmp")
         .tempfile_in(calibraw_core::file_ops::staging_directory(parent))?;
-    merged.write_tiff(temporary.as_file_mut())?;
+    write(temporary.as_file_mut())?;
     calibraw_core::file_ops::sync_file(temporary.as_file())?;
     anyhow::ensure!(!cancelled.load(Ordering::Relaxed), tr("Merge cancelled"));
     match &source.locator {

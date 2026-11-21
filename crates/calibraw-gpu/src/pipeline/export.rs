@@ -41,6 +41,7 @@ pub use crop::*;
 use destination::*;
 use encoders::*;
 use geometry_output::*;
+pub(super) use intermediate::intermediate_allowance;
 use intermediate::*;
 use raw_stage_store::*;
 use resize::*;

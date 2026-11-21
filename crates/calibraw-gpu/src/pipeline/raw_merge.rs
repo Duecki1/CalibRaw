@@ -104,11 +104,14 @@ pub(super) struct MergeCamera {
     /// The Lensfun profile every source is corrected with; `None` leaves them as
     /// decoded.
     lens: Option<LensfunLens>,
+    /// The reference camera's sensor diagonal relative to 35 mm film, when Lensfun
+    /// knows the camera.
+    crop_factor: Option<f32>,
 }
 
 impl MergeCamera {
     /// `raw` is the reference, corrected with `lens`.
-    fn new(raw: &LoadedRaw, lens: Option<LensfunLens>) -> Self {
+    fn new(raw: &LoadedRaw, lens: Option<LensfunLens>, crop_factor: Option<f32>) -> Self {
         let (wb, matrix, _) = raw.adjusted_white_balance_and_camera_transform(0.0, 0.0);
         let wb = [wb[0], 0.5 * (wb[1] + wb[3]), wb[2]];
         let mut color_transform = [[0.0; 3]; 3];
@@ -125,23 +128,39 @@ impl MergeCamera {
             color_transform,
             lens_geometry: raw.lens_geometry.clone(),
             lens,
+            crop_factor,
         }
     }
 
     /// The master of merged camera RGB `rgb` (reference units, sensor coordinates):
     /// distortion corrected when the sources were lens corrected, then converted to
-    /// working Rec.2020 ([`camera_to_working_rec2020`]).
+    /// working Rec.2020 ([`Self::to_working_rec2020`]).
     pub(super) fn finish(&self, mut rgb: Vec<f32>) -> MergedImage {
         if let Some(map) = &self.lens_geometry {
             rgb = correct_lens_distortion(self.width, self.height, &rgb, map);
         }
-        camera_to_working_rec2020(&mut rgb, self.color_transform);
+        self.to_working_rec2020(&mut rgb);
         MergedImage {
             width: self.width,
             height: self.height,
             rgb,
-            lens_corrected: self.lens.is_some(),
+            lens_corrected: self.lens_corrected(),
         }
+    }
+
+    /// Converts camera RGB in reference units to working Rec.2020 with the reference's
+    /// white balance and camera matrix ([`camera_to_working_rec2020`]).
+    pub(super) fn to_working_rec2020(&self, rgb: &mut [f32]) {
+        camera_to_working_rec2020(rgb, self.color_transform);
+    }
+
+    /// Whether a Lensfun profile corrected the sources.
+    pub(super) fn lens_corrected(&self) -> bool {
+        self.lens.is_some()
+    }
+
+    pub(super) fn crop_factor(&self) -> Option<f32> {
+        self.crop_factor
     }
 }
 
@@ -185,20 +204,124 @@ pub(super) fn merge_sources(
     queue: &wgpu::Queue,
     sources: &[MergeSource],
     options: MergeOptions,
-    mut denoise: Option<&mut SourceDenoiser>,
+    denoise: Option<&mut SourceDenoiser>,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     noun: &str,
     progress: &mut impl FnMut(String) -> bool,
     mut merge: impl FnMut(&MergeCamera, MergeFrame) -> Result<()>,
 ) -> Result<MergeCamera> {
     let count = sources.len();
-    let mut reference_camera: Option<MergeCamera> = None;
+    let mut developer = SourceDeveloper::new(device, queue, options, denoise, program_prewarm);
     let mut reference: Option<AlignmentReference> = None;
     let first = sources.first().context("Nothing to merge")?;
     let (reference_exposure, reference_light) = (first.exposure, first.light);
     for (index, source) in sources.iter().enumerate() {
         let path = source.path;
         let step = format!("{noun} {}/{count}", index + 1);
+        let developed = developer.develop(path, &step, progress)?;
+        let camera = developer.camera().context("Nothing to merge")?;
+        let exposure = source.exposure / reference_exposure;
+        let unregistered = Registration {
+            alignment: Alignment::default(),
+            gain: 1.0,
+        };
+        let registration = match &reference {
+            _ if !options.align => unregistered,
+            Some(reference) => {
+                ensure!(progress(format!("Aligning {step}")), "Merge cancelled");
+                reference
+                    .align(&developed.rgb, exposure)
+                    .with_context(|| format!("align {}", path.display()))?
+            }
+            None => {
+                ensure!(progress(format!("Aligning {step}")), "Merge cancelled");
+                reference = Some(AlignmentReference::new(
+                    camera.width,
+                    camera.height,
+                    &developed.rgb,
+                    exposure,
+                )?);
+                unregistered
+            }
+        };
+        ensure!(progress(format!("Merging {step}")), "Merge cancelled");
+        merge(
+            camera,
+            MergeFrame {
+                rgb: &developed.rgb,
+                peak: &developed.peak,
+                exposure,
+                light: source.light / reference_light,
+                registration,
+            },
+        )?;
+    }
+    developer.into_camera().context("Nothing to merge")
+}
+
+/// One source developed by [`SourceDeveloper::develop`], in sensor coordinates.
+pub(super) struct DevelopedSource {
+    /// Black-subtracted, white-normalized camera RGB without white balance, row-major.
+    /// Clipped highlights are reconstructed the way a single RAW develops them.
+    pub(super) rgb: Vec<f32>,
+    /// Per pixel, the brightest normalized sensor sample (white = 1) of its demosaic
+    /// footprint ([`sensor_footprint_peak`]).
+    pub(super) peak: Vec<f32>,
+    /// This source's distortion correction, which the develop leaves to a later
+    /// geometry pass. Sources shot at other focal lengths than the reference have
+    /// their own.
+    pub(super) lens_geometry: Option<Arc<LensGeometryMap>>,
+    /// Focal length in millimetres from the source's metadata; 0 when unknown.
+    pub(super) focal_length_mm: f32,
+}
+
+/// Develops merge sources one at a time the way every merge needs them: from the
+/// original RAW, with hot pixels repaired, the reference's Lensfun profile and white
+/// balance, and optionally AI denoise. The first source developed is the reference.
+pub(super) struct SourceDeveloper<'a, 'd> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    options: MergeOptions,
+    denoise: Option<&'a mut SourceDenoiser<'d>>,
+    program_prewarm: Option<Arc<GpuProgramPrewarm>>,
+    camera: Option<MergeCamera>,
+}
+
+impl<'a, 'd> SourceDeveloper<'a, 'd> {
+    pub(super) fn new(
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        options: MergeOptions,
+        denoise: Option<&'a mut SourceDenoiser<'d>>,
+        program_prewarm: Option<Arc<GpuProgramPrewarm>>,
+    ) -> Self {
+        Self {
+            device,
+            queue,
+            options,
+            denoise,
+            program_prewarm,
+            camera: None,
+        }
+    }
+
+    /// The reference's camera, once a source has been developed.
+    pub(super) fn camera(&self) -> Option<&MergeCamera> {
+        self.camera.as_ref()
+    }
+
+    pub(super) fn into_camera(self) -> Option<MergeCamera> {
+        self.camera
+    }
+
+    /// Develops the RAW at `path`. `step` names it in progress messages ("frame
+    /// 2/5"); the callback returns false to cancel between steps and tiles.
+    pub(super) fn develop(
+        &mut self,
+        path: &Path,
+        step: &str,
+        progress: &mut impl FnMut(String) -> bool,
+    ) -> Result<DevelopedSource> {
         ensure!(progress(format!("Decoding {step}")), "Merge cancelled");
         let mut raw = load_raw_file_with_profile_config(path, CameraProfileMode::MatrixOnly, None)?;
         // Linear DNGs merge like sensor RAWs: their pixels are camera RGB
@@ -207,7 +330,7 @@ pub(super) fn merge_sources(
             !raw.is_display_referred_raster(),
             "Merging requires original RAW files, not rendered TIFFs"
         );
-        if let Some(camera) = &reference_camera {
+        if let Some(camera) = &self.camera {
             ensure!(
                 camera.identity == (raw.camera_make.clone(), raw.camera_model.clone())
                     && (camera.width, camera.height) == (raw.width, raw.height),
@@ -215,26 +338,30 @@ pub(super) fn merge_sources(
             );
         }
         // The reference picks the profile, so every source gets the same one.
-        let lens = match &reference_camera {
-            Some(camera) => camera.lens.clone(),
-            None if options.lens_correction => {
-                let lens = lensfun_catalog(&raw).auto_match;
-                if lens.is_none() {
-                    calibraw_core::diagnostics::record(format!(
-                        "Merge: no Lensfun profile matches {}; not lens corrected",
-                        path.display()
-                    ));
-                }
-                lens
+        let (lens, crop_factor) = match &self.camera {
+            Some(camera) => (camera.lens.clone(), camera.crop_factor),
+            None => {
+                let catalog = lensfun_catalog(&raw);
+                let lens = if self.options.lens_correction {
+                    if catalog.auto_match.is_none() {
+                        calibraw_core::diagnostics::record(format!(
+                            "Merge: no Lensfun profile matches {}; not lens corrected",
+                            path.display()
+                        ));
+                    }
+                    catalog.auto_match
+                } else {
+                    None
+                };
+                (lens, catalog.camera_crop_factor)
             }
-            None => None,
         };
-        if lens.is_some() || options.remove_hot_pixels {
+        if lens.is_some() || self.options.remove_hot_pixels {
             ensure!(progress(format!("Correcting {step}")), "Merge cancelled");
         }
         // Before anything reads the mosaic, so neither the developed frame nor
         // its saturation peak sees a hot photosite.
-        if options.remove_hot_pixels {
+        if self.options.remove_hot_pixels {
             if let Some(repaired) = remove_hot_pixels(&raw) {
                 raw = repaired;
             }
@@ -248,11 +375,15 @@ pub(super) fn merge_sources(
             raw = apply_lens_correction(&raw, &LensCorrection::Profile(lens.clone()))
                 .with_context(|| format!("correct the lens of {}", path.display()))?;
         }
-        let camera = &*reference_camera.get_or_insert_with(|| MergeCamera::new(&raw, lens));
+        let camera = &*self
+            .camera
+            .get_or_insert_with(|| MergeCamera::new(&raw, lens, crop_factor));
         // One white balance for every source, so per-shot auto WB cannot create seams.
         raw.wb_coeffs = camera.wb_coeffs;
+        let lens_geometry = raw.lens_geometry.clone();
+        let focal_length_mm = raw.focal_length;
         let raw = Arc::new(raw);
-        let denoised = match denoise.as_deref_mut() {
+        let denoised = match self.denoise.as_deref_mut() {
             Some(denoise) if !raw.is_pre_demosaiced_raster() => {
                 ensure!(progress(format!("Denoising {step}")), "Merge cancelled");
                 denoise(&raw).with_context(|| format!("AI denoise {}", path.display()))?;
@@ -261,11 +392,11 @@ pub(super) fn merge_sources(
             _ => false,
         };
         let rgb = render_camera_rgb(
-            device,
-            queue,
+            self.device,
+            self.queue,
             &raw,
             denoised,
-            program_prewarm.clone(),
+            self.program_prewarm.clone(),
             |development| match development {
                 Development::Developed(percent) => {
                     progress(format!("Developing {step} ({percent:.0}%)"))
@@ -276,44 +407,13 @@ pub(super) fn merge_sources(
                 )),
             },
         )?;
-        drop(raw);
-        let exposure = source.exposure / reference_exposure;
-        let unregistered = Registration {
-            alignment: Alignment::default(),
-            gain: 1.0,
-        };
-        let registration = match &reference {
-            _ if !options.align => unregistered,
-            Some(reference) => {
-                ensure!(progress(format!("Aligning {step}")), "Merge cancelled");
-                reference
-                    .align(&rgb, exposure)
-                    .with_context(|| format!("align {}", path.display()))?
-            }
-            None => {
-                ensure!(progress(format!("Aligning {step}")), "Merge cancelled");
-                reference = Some(AlignmentReference::new(
-                    camera.width,
-                    camera.height,
-                    &rgb,
-                    exposure,
-                )?);
-                unregistered
-            }
-        };
-        ensure!(progress(format!("Merging {step}")), "Merge cancelled");
-        merge(
-            camera,
-            MergeFrame {
-                rgb: &rgb,
-                peak: &peak,
-                exposure,
-                light: source.light / reference_light,
-                registration,
-            },
-        )?;
+        Ok(DevelopedSource {
+            rgb,
+            peak,
+            lens_geometry,
+            focal_length_mm,
+        })
     }
-    reference_camera.context("Nothing to merge")
 }
 
 /// Applies `color_transform` (camera RGB → working Rec.2020) and preserves negative

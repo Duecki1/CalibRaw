@@ -15,13 +15,17 @@ pub(super) struct IntermediateMemory {
     available: AtomicU64,
 }
 
+/// The RAM one export, or one merge, may hold its intermediates in on this device; 0 where
+/// the RAM size is unknown.
+pub(in crate::pipeline) fn intermediate_allowance() -> u64 {
+    calibraw_core::system_memory::total_memory_bytes().map_or(0, |total| total / RAM_SHARE_DIVISOR)
+}
+
 impl IntermediateMemory {
     /// The allowance of one export on this device.
     pub(super) fn for_this_device() -> Self {
-        let bytes = calibraw_core::system_memory::total_memory_bytes()
-            .map_or(0, |total| total / RAM_SHARE_DIVISOR);
         Self {
-            available: AtomicU64::new(bytes),
+            available: AtomicU64::new(intermediate_allowance()),
         }
     }
 

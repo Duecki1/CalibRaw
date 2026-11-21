@@ -52,6 +52,14 @@ fn is_exif_date_tag(tag: u16) -> bool {
     matches!(tag, 0x0132 | 0x9003 | 0x9004 | 0x9010..=0x9012 | 0x9290..=0x9292)
 }
 
+/// The 35 mm equivalent focal length the photo's EXIF reports (`FocalLengthIn35mmFilm`),
+/// which phones and many cameras write; `None` when the file has none or its EXIF cannot
+/// be read.
+pub fn load_focal_length_35mm(path: &Path) -> Option<f32> {
+    let focal = ExifSummary::read_or_default(path).focal_length_35mm;
+    (focal > 0.0).then_some(focal)
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct ExifSummary {
     pub(super) camera_make: String,
@@ -59,6 +67,8 @@ pub(super) struct ExifSummary {
     pub(super) lens_make: String,
     pub(super) lens_model: String,
     pub(super) focal_length: f32,
+    /// The 35 mm equivalent focal length the camera reports; 0 when it does not.
+    focal_length_35mm: f32,
     pub(super) aperture: f32,
     pub(super) capture: CaptureMetadata,
 }
@@ -110,6 +120,7 @@ impl ExifSummary {
             lens_make: text(Tag::LensMake),
             lens_model: text(Tag::LensModel),
             focal_length: number(Tag::FocalLength),
+            focal_length_35mm: number(Tag::FocalLengthIn35mmFilm),
             aperture: number(Tag::FNumber),
             capture: CaptureMetadata {
                 exif_dates,

@@ -241,7 +241,7 @@ fn film_menu(ui: &mut Ui) -> Option<FilmSource> {
     chosen
 }
 
-/// HDR merge and focus stacking, for two or more photos.
+/// HDR merge, focus stacking and panoramas, for two or more photos.
 fn merge_menu(ui: &mut Ui) -> Option<super::MergeKind> {
     let mut chosen = None;
     for (kind, help) in [
@@ -252,6 +252,10 @@ fn merge_menu(ui: &mut Ui) -> Option<super::MergeKind> {
         (
             super::MergeKind::FocusStack,
             tr("Auto-align RAW frames focused at different distances and combine their sharpest parts into an editable 32-bit float TIFF"),
+        ),
+        (
+            super::MergeKind::Panorama,
+            tr("Auto-align overlapping RAW frames shot from one spot and stitch them into an editable 32-bit float TIFF"),
         ),
     ] {
         let item = MenuItem::new(kind.title()).icon(BarAction::Merge(kind).glyph());
@@ -595,6 +599,7 @@ impl BarAction {
             actions.extend([
                 Self::Merge(super::MergeKind::Hdr),
                 Self::Merge(super::MergeKind::FocusStack),
+                Self::Merge(super::MergeKind::Panorama),
             ]);
         }
         if count == 1 {
@@ -613,6 +618,7 @@ impl BarAction {
             Self::Export => egui_phosphor::regular::EXPORT,
             Self::Merge(super::MergeKind::Hdr) => egui_phosphor::regular::STACK,
             Self::Merge(super::MergeKind::FocusStack) => egui_phosphor::regular::CROSSHAIR_SIMPLE,
+            Self::Merge(super::MergeKind::Panorama) => egui_phosphor::regular::PANORAMA,
             Self::CopyAdjustments => egui_phosphor::regular::SLIDERS_HORIZONTAL,
             Self::PasteAdjustments => egui_phosphor::regular::CLIPBOARD_TEXT,
             Self::Copy => egui_phosphor::regular::COPY,
