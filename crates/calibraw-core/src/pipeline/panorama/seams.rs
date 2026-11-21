@@ -11,6 +11,16 @@
 //! colour-and-gradient cost would make cuts through busy detail cheap, and halves such
 //! objects.)
 //!
+//! Unlike OpenCV, the cost compares the frames' colour difference less its local mean,
+//! as far as the multi-band blend reaches: blending hides a difference that varies more
+//! slowly than its coarsest band (shading, a slight exposure mismatch), but not an edge
+//! the frames place apart. A seam run down a smooth ceiling the frames shade slightly
+//! differently was otherwise pushed to cross the ceiling line wherever the shading
+//! matched, though parallax had shifted the line there by ten-odd pixels, leaving a
+//! visible step. Photomontage compares gradients for the same reason when its blend
+//! removes smooth differences (Agarwala et al., "Interactive Digital Photomontage",
+//! SIGGRAPH 2004).
+//!
 //! The grid is coarse (Enblend's `--coarse-mask` likewise finds seams at an eighth of
 //! the resolution); the full-resolution mask is sharp, as Enblend fills its scaled-up
 //! seam contour (`createMask`, `src/mask.h`), so frames never mix across the seam and
@@ -78,8 +88,15 @@ struct Encoded {
 }
 
 /// Finds the seams between `overviews` (on `grid`) after multiplying frame `k` by
-/// `gains[k]`.
-pub(super) fn find(grid: Grid, overviews: &[Overview], gains: &[f64]) -> Seams {
+/// `gains[k]`, for a blend whose coarsest band spans `blend_width` output pixels at
+/// `output_scale` pixels per plane unit.
+pub(super) fn find(
+    grid: Grid,
+    overviews: &[Overview],
+    gains: &[f64],
+    blend_width: f64,
+    output_scale: f64,
+) -> Seams {
     let (w, h) = (grid.width, grid.height);
     let mut labels: Vec<u16> = (0..w * h)
         .into_par_iter()
@@ -101,11 +118,16 @@ pub(super) fn find(grid: Grid, overviews: &[Overview], gains: &[f64]) -> Seams {
         .zip(gains)
         .map(|(overview, &gain)| encode(overview, gain as f32))
         .collect();
+    // Two box passes of this radius reach twice as far, as far as the coarsest band.
+    let radius = (0.5 * blend_width * grid.scale / output_scale)
+        .round()
+        .max(1.0) as usize;
     for first in 0..overviews.len() {
         for second in first + 1..overviews.len() {
             cut_pair(
                 &mut labels,
                 w,
+                radius,
                 [&overviews[first], &overviews[second]],
                 [&encoded[first], &encoded[second]],
                 [first as u16, second as u16],
@@ -137,11 +159,13 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 }
 
 /// Relabels the pixels both frames cover and currently own between `frames[0]` and
-/// `frames[1]` by a minimum cut. Pixels around them owned by either frame anchor the cut
-/// to that frame; pixels of other frames are left out.
+/// `frames[1]` by a minimum cut, with the cost [`detail_differences`] gives for a local
+/// mean over `radius`. Pixels around them owned by either frame anchor the cut to that
+/// frame; pixels of other frames are left out.
 fn cut_pair(
     labels: &mut [u16],
     grid_width: usize,
+    radius: usize,
     overviews: [&Overview; 2],
     encoded: [&Encoded; 2],
     frames: [u16; 2],
@@ -209,6 +233,18 @@ fn cut_pair(
         o.index(x, y).map_or([0.0; 3], |i| e.values[i])
     };
     let covered = |x: usize, y: usize| a.covers(x, y) && b.covers(x, y);
+    let rh = ry1 - ry0;
+    let differences: Vec<[f32; 3]> = (0..rw * rh)
+        .map(|n| {
+            let (x, y) = (rx0 + n % rw, ry0 + n / rw);
+            let (pa, pb) = (sample(encoded[0], a, x, y), sample(encoded[1], b, x, y));
+            [pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]]
+        })
+        .collect();
+    let shared: Vec<bool> = (0..rw * rh)
+        .map(|n| covered(rx0 + n % rw, ry0 + n / rw))
+        .collect();
+    let costs = detail_differences(rw, &differences, &shared, radius);
     for y in ry0..ry1 {
         for x in rx0..rx1 {
             if role[node(x, y)] == Role::Outside {
@@ -218,9 +254,7 @@ fn cut_pair(
                 if nx >= rx1 || ny >= ry1 || role[node(nx, ny)] == Role::Outside {
                     continue;
                 }
-                let (pa, pb) = (sample(encoded[0], a, x, y), sample(encoded[1], b, x, y));
-                let (qa, qb) = (sample(encoded[0], a, nx, ny), sample(encoded[1], b, nx, ny));
-                let mut weight = distance(pa, pb) + distance(qa, qb) + WEIGHT_EPS;
+                let mut weight = costs[node(x, y)] + costs[node(nx, ny)] + WEIGHT_EPS;
                 if !covered(x, y) || !covered(nx, ny) {
                     weight += BAD_REGION_PENALTY;
                 }
@@ -248,4 +282,86 @@ enum Role {
     First,
     Second,
     Outside,
+}
+
+/// The length of each colour difference less the mean difference within `radius`
+/// pixels (two box passes over the `width`-wide region's `shared` pixels, the ones
+/// both frames cover). Pixels not shared keep their whole difference; the bad-region
+/// penalty decides there.
+fn detail_differences(
+    width: usize,
+    differences: &[[f32; 3]],
+    shared: &[bool],
+    radius: usize,
+) -> Vec<f32> {
+    // Weighted sums: the shared differences and, last, their count.
+    let mut sums: Vec<[f64; 4]> = differences
+        .iter()
+        .zip(shared)
+        .map(|(d, &s)| {
+            if s {
+                [f64::from(d[0]), f64::from(d[1]), f64::from(d[2]), 1.0]
+            } else {
+                [0.0; 4]
+            }
+        })
+        .collect();
+    for _ in 0..2 {
+        sums = box_rows(width, &sums, radius);
+        sums = box_columns(width, &sums, radius);
+    }
+    differences
+        .par_iter()
+        .zip(shared)
+        .zip(&sums)
+        .map(|((&d, &s), sum)| {
+            if s && sum[3] > 0.0 {
+                let mean = [0, 1, 2].map(|c| (sum[c] / sum[3]) as f32);
+                distance(d, mean)
+            } else {
+                distance(d, [0.0; 3])
+            }
+        })
+        .collect()
+}
+
+/// Sums of `values` over `2·radius + 1` samples along each row, clipped at the ends.
+fn box_rows(width: usize, values: &[[f64; 4]], radius: usize) -> Vec<[f64; 4]> {
+    let mut out = vec![[0.0; 4]; values.len()];
+    out.par_chunks_mut(width)
+        .zip(values.par_chunks(width))
+        .for_each(|(out, row)| {
+            let mut prefix = vec![[0.0f64; 4]; width + 1];
+            for (i, value) in row.iter().enumerate() {
+                prefix[i + 1] = std::array::from_fn(|c| prefix[i][c] + value[c]);
+            }
+            for (i, sum) in out.iter_mut().enumerate() {
+                let (lo, hi) = (i.saturating_sub(radius), (i + radius + 1).min(width));
+                *sum = std::array::from_fn(|c| prefix[hi][c] - prefix[lo][c]);
+            }
+        });
+    out
+}
+
+/// Sums of `values` over `2·radius + 1` samples down each column, clipped at the ends.
+fn box_columns(width: usize, values: &[[f64; 4]], radius: usize) -> Vec<[f64; 4]> {
+    let height = values.len() / width;
+    // Row prefix sums: `prefix[y]` holds the sum of rows above `y`.
+    let mut prefix = vec![[0.0f64; 4]; (height + 1) * width];
+    for y in 0..height {
+        for x in 0..width {
+            let above = prefix[y * width + x];
+            let value = values[y * width + x];
+            prefix[(y + 1) * width + x] = std::array::from_fn(|c| above[c] + value[c]);
+        }
+    }
+    let mut out = vec![[0.0; 4]; values.len()];
+    out.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
+        let (lo, hi) = (y.saturating_sub(radius), (y + radius + 1).min(height));
+        for (x, sum) in row.iter_mut().enumerate() {
+            let (top, bottom) = (prefix[lo * width + x], prefix[hi * width + x]);
+            *sum = std::array::from_fn(|c| bottom[c] - top[c]);
+        }
+    });
+    out
 }

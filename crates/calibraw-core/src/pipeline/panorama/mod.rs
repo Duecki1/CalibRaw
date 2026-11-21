@@ -254,7 +254,6 @@ impl PanoramaBuilder {
             })
             .collect();
         let gains = exposure::balance(&overviews);
-        let seams = seams::find(seam_grid, &overviews, &gains);
         let crop = crop_extent(&seam_grid, &overviews)?;
         let output = output_grid(projection, crop, &cameras);
         crate::diagnostics::record(format!(
@@ -264,6 +263,13 @@ impl PanoramaBuilder {
             output.scale / median(cameras.iter().map(|c| c.pinhole.focal).collect())
         ));
         let levels = blend_levels(output.width, output.height);
+        let seams = seams::find(
+            seam_grid,
+            &overviews,
+            &gains,
+            (1u64 << levels) as f64,
+            output.scale,
+        );
         Ok(PanoramaLayout {
             frames: frames
                 .into_iter()

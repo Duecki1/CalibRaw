@@ -569,10 +569,23 @@ ptgui.com/examples/vptutorial.html). The changes:
   longer have the metadata's focal length. On the S25 DNGs: `b` = 0.009, median
   residual 5.21 → 4.83 px, focal length held at the EXIF value (3795 px). On
   synthetic frames rendered with `b` = −0.03, `b` is recovered to ±0.0001.
+- **Seam cost without what blending hides.** The colour difference less its local mean
+  (two box passes over the shared pixels whose reach matches the blend's coarsest band,
+  `2^levels` output pixels), so the cut ignores smooth shading differences the blend
+  removes and weighs only edges the frames place apart. On the Sony set the frames shade
+  the ceiling differently by 4–7 (0–255 cube-root scale) left of the molding step and by
+  under 1 to its right; the plain colour cost therefore led the seam down the right and
+  across the molding where parallax had shifted it 12 px. With the local mean removed,
+  the steps on the molding, the wall-ceiling edge and the skirting board are gone on the
+  Sony and the S25 sets. Cutting on a finer image instead (the registration image,
+  max-pooled to the grid) did not help: the cost of crossing a line hardly depends on
+  the offset once any is resolved. Photomontage compares gradients for the same reason
+  (Agarwala et al., SIGGRAPH 2004).
 - **Reference run.** OpenCV 5.1's default `Stitcher` on the same Sony frames (developed
   as JPEG, not lens corrected) shows dark ghosted smudges on the wall and ceiling;
-  it has no step where its seam crosses the ceiling molding, which CalibRaw's result
-  still has (about 12 px). Why its seam found a better crossing is not established.
+  it has no step where its seam crosses the ceiling molding. Its seam finder, given
+  CalibRaw's own warped frames, removes the middle frame and leaves a single seam near
+  the room corner, so it never crosses the molding where the frames disagree most.
 
 Verified:
 
