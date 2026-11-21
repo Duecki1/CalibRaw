@@ -47,6 +47,10 @@ pub struct MergeOptions {
     /// the Detail card does for a single RAW. A source without a mosaic (a linear
     /// DNG) has no photosites to repair and merges as decoded.
     pub remove_hot_pixels: bool,
+    /// Reduce each source's noise with the Detail card's profiled luminance and
+    /// colour noise reduction, at the amounts the source's ISO and measured noise
+    /// give a photo opening in Develop ([`LoadedRaw::apply_adaptive_detail_defaults`]).
+    pub denoise: bool,
     /// Correct distortion, lateral chromatic aberration and vignetting with the
     /// Lensfun profile that matches the reference source automatically. Every
     /// source takes that profile at its own focal length and aperture. Without a
@@ -64,6 +68,7 @@ impl Default for MergeOptions {
     fn default() -> Self {
         Self {
             remove_hot_pixels: false,
+            denoise: false,
             lens_correction: true,
             align: true,
             reject_motion: true,
@@ -96,7 +101,8 @@ pub(super) struct MergeCamera {
     pub(super) height: u32,
     identity: (String, String),
     wb_coeffs: [f32; 4],
-    /// Reference white balance and camera matrix: camera RGB → working Rec.2020.
+    /// Reference white balance, camera matrix and profile exposure: camera RGB →
+    /// working Rec.2020 at the scene exposure the reference opens with in Develop.
     color_transform: [[f32; 3]; 3],
     /// The reference's distortion correction, which develops leave to a later
     /// geometry pass: applied to the merged master.
@@ -114,10 +120,15 @@ impl MergeCamera {
     fn new(raw: &LoadedRaw, lens: Option<LensfunLens>, crop_factor: Option<f32>) -> Self {
         let (wb, matrix, _) = raw.adjusted_white_balance_and_camera_transform(0.0, 0.0);
         let wb = [wb[0], 0.5 * (wb[1] + wb[3]), wb[2]];
+        // The develop reads the scene before the profile's default exposure (the
+        // DNG BaselineExposure, or the fallback for RAWs without one), which
+        // `profiled_from_camera` in scene_source.wgsl applies. A master opens
+        // without one, so it carries the reference's.
+        let profile_gain = raw.profile_color.camera_profile.default_exposure_ev.exp2();
         let mut color_transform = [[0.0; 3]; 3];
         for (row, matrix) in color_transform.iter_mut().zip(matrix) {
             for c in 0..3 {
-                row[c] = matrix[c] * wb[c];
+                row[c] = matrix[c] * wb[c] * profile_gain;
             }
         }
         Self {
@@ -149,7 +160,7 @@ impl MergeCamera {
     }
 
     /// Converts camera RGB in reference units to working Rec.2020 with the reference's
-    /// white balance and camera matrix ([`camera_to_working_rec2020`]).
+    /// white balance, camera matrix and profile exposure ([`camera_to_working_rec2020`]).
     pub(super) fn to_working_rec2020(&self, rgb: &mut [f32]) {
         camera_to_working_rec2020(rgb, self.color_transform);
     }
@@ -277,7 +288,7 @@ pub(super) struct DevelopedSource {
 
 /// Develops merge sources one at a time the way every merge needs them: from the
 /// original RAW, with hot pixels repaired, the reference's Lensfun profile and white
-/// balance, and optionally AI denoise. The first source developed is the reference.
+/// balance, and optionally noise reduction and AI denoise. The first source developed is the reference.
 pub(super) struct SourceDeveloper<'a, 'd> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
@@ -395,7 +406,10 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
             self.device,
             self.queue,
             &raw,
-            denoised,
+            SourceNoise {
+                ai_denoised: denoised,
+                denoise: self.options.denoise,
+            },
             self.program_prewarm.clone(),
             |development| match development {
                 Development::Developed(percent) => {
@@ -436,25 +450,38 @@ pub(super) enum Development {
     WaitingForGpu(Duration),
 }
 
+/// How [`render_camera_rgb`] reduces a source's noise.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SourceNoise {
+    /// Develop the AI-denoised image installed on the source instead of its mosaic.
+    pub(super) ai_denoised: bool,
+    /// Apply the profiled noise reduction ([`MergeOptions::denoise`]).
+    pub(super) denoise: bool,
+}
+
 /// Develops `raw` to camera RGB without white balance. Clipped highlights get the
 /// default reconstruction, which only replaces saturated photosites: a merge weighs
 /// those pixels out wherever another frame measured them, and keeps the reconstruction
-/// where none did, as a single RAW would show it. `ai_denoised` develops the
-/// AI-denoised image installed on `raw` instead of its mosaic.
+/// where none did, as a single RAW would show it. Noise is reduced as `noise` asks.
 pub(super) fn render_camera_rgb(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     raw: &Arc<LoadedRaw>,
-    ai_denoised: bool,
+    noise: SourceNoise,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     mut progress: impl FnMut(Development) -> bool,
 ) -> Result<Vec<f32>> {
-    let exposure = ExposureParams {
+    let mut exposure = ExposureParams {
         frequency_chroma: 0.0,
         sharpen_amount: 0.0,
-        ai_denoise_enabled: ai_denoised,
+        ai_denoise_enabled: noise.ai_denoised,
         ..ExposureParams::default()
     };
+    // `raw` carries the merge's shared white balance by now, which the amounts
+    // weigh its noise with, as the develop does.
+    if noise.denoise {
+        raw.apply_adaptive_detail_defaults(&mut exposure);
+    }
     let mut rgb = vec![0.0f32; raw.width as usize * raw.height as usize * 3];
     let wb = remove_scene_white_balance(raw, &exposure);
     // Small GPU tiles keep merge independent of the device's full-image texture limit.

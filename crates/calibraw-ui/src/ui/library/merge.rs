@@ -173,6 +173,7 @@ pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fr
                 );
             }
             moduwu_design::toggle_row(ui, &mut options.remove_hot_pixels, tr("Remove hot pixels"));
+            moduwu_design::toggle_row(ui, &mut options.denoise, tr("Noise reduction"));
             moduwu_design::toggle_row(ui, &mut choices.ai_denoise, tr("AI denoise"));
         },
         |ui| {

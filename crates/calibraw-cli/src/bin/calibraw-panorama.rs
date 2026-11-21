@@ -116,10 +116,11 @@ fn parse_args() -> Result<Args> {
             }
             "--no-lens-correction" => options.lens_correction = false,
             "--remove-hot-pixels" => options.remove_hot_pixels = true,
+            "--denoise" => options.denoise = true,
             "--help" | "-h" => {
                 eprintln!(
                     "Usage: calibraw-panorama --output OUT.tif [--projection auto|spherical|cylindrical|perspective] \
-                     [--no-lens-correction] [--remove-hot-pixels] RAW..."
+                     [--no-lens-correction] [--remove-hot-pixels] [--denoise] RAW..."
                 );
                 std::process::exit(0);
             }
