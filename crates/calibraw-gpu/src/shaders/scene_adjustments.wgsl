@@ -279,10 +279,12 @@ fn local_scene_curve_zero_slope(mask_index: u32, curve: u32) -> f32 {
     return Tonemap::decoded_scene_curve_zero_slope(encoded_black, encoded_slope);
 }
 
+// As Tonemap::apply_scene_channel_curve: only values below 0 evaluate the
+// curve's black and zero slope.
 fn apply_local_scene_channel_curve(mask_index: u32, curve: u32, value: f32) -> f32 {
-    let encoded_black = local_curve_value(mask_index, curve, 0.0);
-    let black = Tonemap::scene_curve_decode(encoded_black);
     if value < 0.0 {
+        let encoded_black = local_curve_value(mask_index, curve, 0.0);
+        let black = Tonemap::scene_curve_decode(encoded_black);
         return Tonemap::clamp_scene_curve_value(
             black + value * local_scene_curve_zero_slope(mask_index, curve),
         );
@@ -341,6 +343,10 @@ fn apply_local_curves_for_mask(mask_index: u32, input_rgb: vec3<f32>) -> vec3<f3
 
 fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
+    // The pixel's tone guide, sampled for the first mask whose tone controls
+    // need it and shared by the rest.
+    var guide: Tonemap::ToneGuide;
+    var guide_sampled = false;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_metadata(index);
@@ -348,24 +354,34 @@ fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f3
         let weight = local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
 
-        rgb = Tonemap::apply_local_basic_tone_values_with_low_strength(
-            rgb,
-            pos,
+        let low_controls = Tonemap::local_basic_tone_controls(
             0.0,
             Common::mask_adjust_0_field(index).w,
             0.0,
-            0.0,
             weight,
         );
+        if Tonemap::local_basic_tone_active(low_controls) {
+            if !guide_sampled {
+                guide = Tonemap::tone_guide_at(pos);
+                guide_sampled = true;
+            }
+            rgb = Tonemap::apply_local_basic_tone_controls(rgb, pos, guide, low_controls);
+        }
 
-        var adjusted = Tonemap::apply_local_basic_tone_values(
-            rgb,
-            pos,
+        var adjusted = rgb;
+        let controls = Tonemap::local_basic_tone_controls(
             Common::mask_adjust_0_field(index).z,
             0.0,
             Common::mask_adjust_1_field(index).x,
-            0.0,
+            1.0,
         );
+        if Tonemap::local_basic_tone_active(controls) {
+            if !guide_sampled {
+                guide = Tonemap::tone_guide_at(pos);
+                guide_sampled = true;
+            }
+            adjusted = Tonemap::apply_local_basic_tone_controls(rgb, pos, guide, controls);
+        }
         // migration: remove in v2.0.0, with LEGACY_LUMINANCE_CONTRAST.
         let legacy_contrast = (state.w & Common::LEGACY_LUMINANCE_CONTRAST) != 0u;
         adjusted = Tonemap::apply_mask_contrast_value(

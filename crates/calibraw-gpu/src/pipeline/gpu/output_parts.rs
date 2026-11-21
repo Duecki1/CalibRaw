@@ -466,9 +466,9 @@ fn same_depth_result(a: Option<&SceneDepth>, b: Option<&SceneDepth>) -> bool {
 }
 
 /// `scene_tone` without what only the view node reads. Blacks is the fourth
-/// lane of `basic_tone`: the scene tone pass takes it as an unused argument
-/// (`apply_local_basic_tone_values_with_low_strength` in tonemap.wgsl), and
-/// the view node applies it as a display toe, with its response bit.
+/// lane of `basic_tone`: the scene tone pass does not read it
+/// (`apply_local_basic_tone` in tonemap.wgsl), and the view node applies it
+/// as a display toe, with its response bit.
 pub(super) fn scene_tone_before_view(scene_tone: &SceneToneUniforms) -> SceneToneUniforms {
     let [highlights, shadows, whites, _blacks] = scene_tone.basic_tone;
     SceneToneUniforms {

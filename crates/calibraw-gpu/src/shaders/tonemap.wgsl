@@ -142,25 +142,53 @@ fn signed_tone_range(value: f32, negative_ev: f32, positive_ev: f32) -> f32 {
     return select(value * negative_ev, value * positive_ev, value >= 0.0);
 }
 
-fn apply_local_basic_tone_values_with_low_strength(
-    rgb: vec3<f32>,
-    pos: vec2<i32>,
+// What the local tone controls read of the photo at a pixel: the tone
+// guide's EV there and the scene's percentiles, both moved by the user
+// exposure. It is the same for every mask at the pixel, so a loop over the
+// masks samples it once.
+struct ToneGuide {
+    ev: f32,
+    percentiles: ToneCommon::TonePercentiles,
+}
+
+fn tone_guide_at(pos: vec2<i32>) -> ToneGuide {
+    return ToneGuide(sample_tone_guide_ev(pos), tone_percentiles());
+}
+
+// Highlights, Shadows and Whites (-100 to 100) as the local tone applies
+// them, each -1 to 1. Shadows is shaped and weighted by `low_tone_strength`.
+fn local_basic_tone_controls(
     highlights_value: f32,
     shadows_value: f32,
     whites_value: f32,
-    _blacks_value: f32,
     low_tone_strength: f32,
 ) -> vec3<f32> {
-    let highlights = clamp(highlights_value / 100.0, -1.0, 1.0);
-    let shadows = basic_low_tone_control(shadows_value)
-        * clamp(low_tone_strength, 0.0, 1.0);
-    let whites = clamp(whites_value / 100.0, -1.0, 1.0);
-    if max(max(abs(highlights), abs(shadows)), abs(whites)) < 1e-6 {
-        return rgb;
-    }
+    return vec3<f32>(
+        clamp(highlights_value / 100.0, -1.0, 1.0),
+        basic_low_tone_control(shadows_value) * clamp(low_tone_strength, 0.0, 1.0),
+        clamp(whites_value / 100.0, -1.0, 1.0),
+    );
+}
 
-    let percentiles = tone_percentiles();
-    let guide_ev = sample_tone_guide_ev(pos);
+// Whether `controls` (`local_basic_tone_controls`) change the image. A NaN
+// control counts as a change.
+fn local_basic_tone_active(controls: vec3<f32>) -> bool {
+    return !(max(max(abs(controls.x), abs(controls.y)), abs(controls.z)) < 1e-6);
+}
+
+// Applies active `controls` (`local_basic_tone_active`) at `pos`, whose tone
+// guide is `guide`.
+fn apply_local_basic_tone_controls(
+    rgb: vec3<f32>,
+    pos: vec2<i32>,
+    guide: ToneGuide,
+    controls: vec3<f32>,
+) -> vec3<f32> {
+    let highlights = controls.x;
+    let shadows = controls.y;
+    let whites = controls.z;
+    let percentiles = guide.percentiles;
+    let guide_ev = guide.ev;
     let low_ev = adaptive_low_tone_ev(rgb, pos, guide_ev);
     let masks = adaptive_tone_masks(low_ev, guide_ev, percentiles);
 
@@ -182,34 +210,17 @@ fn apply_local_basic_tone_values_with_low_strength(
     return rgb * exp2(clamp(shadow_ev + highlight_ev + white_ev, -6.5, 6.5));
 }
 
-fn apply_local_basic_tone_values(
-    rgb: vec3<f32>,
-    pos: vec2<i32>,
-    highlights_value: f32,
-    shadows_value: f32,
-    whites_value: f32,
-    blacks_value: f32,
-) -> vec3<f32> {
-    return apply_local_basic_tone_values_with_low_strength(
-        rgb,
-        pos,
-        highlights_value,
-        shadows_value,
-        whites_value,
-        blacks_value,
-        1.0,
-    );
-}
-
 fn apply_local_basic_tone(rgb: vec3<f32>, pos: vec2<i32>) -> vec3<f32> {
-    return apply_local_basic_tone_values(
-        rgb,
-        pos,
+    let controls = local_basic_tone_controls(
         Common::scene_tone_uniforms.basic_tone.x,
         Common::scene_tone_uniforms.basic_tone.y,
         Common::scene_tone_uniforms.basic_tone.z,
-        Common::scene_tone_uniforms.basic_tone.w,
+        1.0,
     );
+    if !local_basic_tone_active(controls) {
+        return rgb;
+    }
+    return apply_local_basic_tone_controls(rgb, pos, tone_guide_at(pos), controls);
 }
 
 // The gain a mask's Contrast `amount` (-1 to 1) gives a scene-linear
@@ -530,10 +541,12 @@ fn scene_curve_zero_slope(curve: u32) -> f32 {
     return decoded_scene_curve_zero_slope(encoded_black, encoded_slope);
 }
 
+// Below scene value 0 the curve continues from its black at its zero slope.
+// Only that path evaluates them: per pixel they would repeat the same work.
 fn apply_scene_channel_curve(curve: u32, value: f32) -> f32 {
-    let encoded_black = point_curve_value(curve, 0.0);
-    let black = scene_curve_decode(encoded_black);
     if value < 0.0 {
+        let encoded_black = point_curve_value(curve, 0.0);
+        let black = scene_curve_decode(encoded_black);
         return clamp_scene_curve_value(
             black + value * scene_curve_zero_slope(curve),
         );
