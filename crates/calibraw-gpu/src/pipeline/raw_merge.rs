@@ -1,7 +1,7 @@
-//! Shared by HDR merge and focus stacking: develops RAW sources to linear camera RGB with
-//! the tiled demosaicer, registers them to a reference frame and writes the
-//! floating-point master. Source sidecar edits are deliberately excluded: merging needs
-//! linear measurements.
+//! Shared by HDR merge, focus stacking and panoramas: develops RAW sources to linear
+//! camera RGB with the tiled demosaicer, or takes a rendered photo's linear pixels as
+//! decoded, registers them to a reference frame and writes the master. Source sidecar
+//! edits are deliberately excluded: merging needs linear measurements.
 use super::*;
 use anyhow::{ensure, Context, Result};
 use calibraw_core::pipeline::alignment::{
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// A merged master: scene-linear working Rec.2020, row-major RGB.
+/// A merged master: linear working Rec.2020, row-major RGB.
 pub struct MergedImage {
     pub width: u32,
     pub height: u32,
@@ -22,21 +22,92 @@ pub struct MergedImage {
     /// Whether a lens profile corrected it: false when lens correction was off or no
     /// profile matched the reference source.
     pub lens_corrected: bool,
+    sources: MergeSourceKind,
 }
 
 impl MergedImage {
-    /// Scene-linear Rec.2020, explicitly tagged, with no range compression or integer quantization.
+    /// Linear Rec.2020, explicitly tagged, in the samples [`MergeSourceKind::master_samples`]
+    /// chooses: floating point without range compression, or 16-bit integers.
     pub fn write_tiff(&self, writer: impl Write + Seek) -> Result<()> {
         let mut encoder = image::codecs::tiff::TiffEncoder::new(writer);
         encoder.set_icc_profile(super::export::linear_rec2020_icc())?;
-        encoder.write_image(
-            bytemuck::cast_slice(&self.rgb),
-            self.width,
-            self.height,
-            image::ExtendedColorType::Rgb32F,
-        )?;
+        match self.sources.master_samples() {
+            MasterSamples::Float => encoder.write_image(
+                bytemuck::cast_slice(&self.rgb),
+                self.width,
+                self.height,
+                image::ExtendedColorType::Rgb32F,
+            )?,
+            MasterSamples::Integer => encoder.write_image(
+                bytemuck::cast_slice(&integer_samples(&self.rgb)),
+                self.width,
+                self.height,
+                image::ExtendedColorType::Rgb16,
+            )?,
+        }
         Ok(())
     }
+}
+
+/// What a merge's sources are. Every source must be the same kind as the reference:
+/// the kinds are developed differently and their pixels mean different things.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MergeSourceKind {
+    /// Sensor RAWs, linear DNGs included: developed here, merged as scene radiance.
+    Raw,
+    /// Floating-point TIFFs (merge masters, linear exports): scene radiance as decoded.
+    SceneRaster,
+    /// Rendered photos (JPEG, PNG, HEIF, integer TIFF): developed images, white at 1.
+    Rendered,
+}
+
+impl MergeSourceKind {
+    fn of(raw: &LoadedRaw) -> Self {
+        if !raw.is_display_referred_raster() {
+            Self::Raw
+        } else if raw.scene_referred_raster {
+            Self::SceneRaster
+        } else {
+            Self::Rendered
+        }
+    }
+
+    /// How a master of these sources is stored. A floating-point TIFF opens as scene
+    /// radiance and is tone mapped, so rendered photos, whose tones are developed
+    /// already, merge into an integer TIFF, which opens as a developed photo does.
+    pub(super) fn master_samples(self) -> MasterSamples {
+        match self {
+            Self::Raw | Self::SceneRaster => MasterSamples::Float,
+            Self::Rendered => MasterSamples::Integer,
+        }
+    }
+}
+
+/// The samples a merged master's TIFF stores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MasterSamples {
+    /// 32-bit floating point.
+    Float,
+    /// 16-bit integers, linear, with white at 1.
+    Integer,
+}
+
+/// `rgb` in [`MasterSamples::Integer`] samples: clamped to `[0, 1]`, which a rendered
+/// source's pixels fill, and rounded. A step is 1/65535, finer than an 8-bit photo's
+/// darkest sRGB step (about 20 steps).
+pub(super) fn integer_samples(rgb: &[f32]) -> Vec<u16> {
+    rgb.par_iter()
+        .map(|value| (value.clamp(0.0, 1.0) * f32::from(u16::MAX)).round() as u16)
+        .collect()
+}
+
+/// Whether a merge takes rendered photos and floating-point TIFFs as sources besides
+/// RAW files.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RasterSources {
+    /// Only RAW files, for a merge that measures sensor values (HDR merge).
+    Refuse,
+    Accept,
 }
 
 /// How a merge develops and combines its sources. [`Default`] is what a merge does
@@ -55,6 +126,7 @@ pub struct MergeOptions {
     /// Lensfun profile that matches the reference source automatically. Every
     /// source takes that profile at its own focal length and aperture. Without a
     /// match, the merge is not lens corrected ([`MergedImage::lens_corrected`]).
+    /// RAW sources only: rasters merge as their camera or editor corrected them.
     pub lens_correction: bool,
     /// Register every source to the reference. Without it the sources are merged
     /// pixel for pixel, as shot from a tripod.
@@ -113,24 +185,35 @@ pub(super) struct MergeCamera {
     /// The reference camera's sensor diagonal relative to 35 mm film, when Lensfun
     /// knows the camera.
     crop_factor: Option<f32>,
+    sources: MergeSourceKind,
 }
 
 impl MergeCamera {
     /// `raw` is the reference, corrected with `lens`.
     fn new(raw: &LoadedRaw, lens: Option<LensfunLens>, crop_factor: Option<f32>) -> Self {
-        let (wb, matrix, _) = raw.adjusted_white_balance_and_camera_transform(0.0, 0.0);
-        let wb = [wb[0], 0.5 * (wb[1] + wb[3]), wb[2]];
-        // The develop reads the scene before the profile's default exposure (the
-        // DNG BaselineExposure, or the fallback for RAWs without one), which
-        // `profiled_from_camera` in scene_source.wgsl applies. A master opens
-        // without one, so it carries the reference's.
-        let profile_gain = raw.profile_color.camera_profile.default_exposure_ev.exp2();
-        let mut color_transform = [[0.0; 3]; 3];
-        for (row, matrix) in color_transform.iter_mut().zip(matrix) {
-            for c in 0..3 {
-                row[c] = matrix[c] * wb[c] * profile_gain;
+        let sources = MergeSourceKind::of(raw);
+        let color_transform = match sources {
+            MergeSourceKind::Raw => {
+                let (wb, matrix, _) = raw.adjusted_white_balance_and_camera_transform(0.0, 0.0);
+                let wb = [wb[0], 0.5 * (wb[1] + wb[3]), wb[2]];
+                // The develop reads the scene before the profile's default exposure (the
+                // DNG BaselineExposure, or the fallback for RAWs without one), which
+                // `profiled_from_camera` in scene_source.wgsl applies. A master opens
+                // without one, so it carries the reference's.
+                let profile_gain = raw.profile_color.camera_profile.default_exposure_ev.exp2();
+                let mut color_transform = [[0.0; 3]; 3];
+                for (row, matrix) in color_transform.iter_mut().zip(matrix) {
+                    for c in 0..3 {
+                        row[c] = matrix[c] * wb[c] * profile_gain;
+                    }
+                }
+                color_transform
             }
-        }
+            // Rasters decode to working Rec.2020 already.
+            MergeSourceKind::SceneRaster | MergeSourceKind::Rendered => {
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            }
+        };
         Self {
             width: raw.width,
             height: raw.height,
@@ -140,7 +223,13 @@ impl MergeCamera {
             lens_geometry: raw.lens_geometry.clone(),
             lens,
             crop_factor,
+            sources,
         }
+    }
+
+    /// What the merge's sources are: the reference's kind, which every source shares.
+    pub(super) fn sources(&self) -> MergeSourceKind {
+        self.sources
     }
 
     /// The master of merged camera RGB `rgb` (reference units, sensor coordinates):
@@ -156,13 +245,16 @@ impl MergeCamera {
             height: self.height,
             rgb,
             lens_corrected: self.lens_corrected(),
+            sources: self.sources,
         }
     }
 
     /// Converts camera RGB in reference units to working Rec.2020 with the reference's
     /// white balance, camera matrix and profile exposure ([`camera_to_working_rec2020`]).
     pub(super) fn to_working_rec2020(&self, rgb: &mut [f32]) {
-        camera_to_working_rec2020(rgb, self.color_transform);
+        if self.sources == MergeSourceKind::Raw {
+            camera_to_working_rec2020(rgb, self.color_transform);
+        }
     }
 
     /// Whether a Lensfun profile corrected the sources.
@@ -175,7 +267,7 @@ impl MergeCamera {
     }
 }
 
-/// A RAW file to merge.
+/// A file to merge.
 pub(super) struct MergeSource<'a> {
     pub(super) path: &'a Path,
     /// Exposure (light × sensor gain) in a unit shared by all sources.
@@ -186,11 +278,9 @@ pub(super) struct MergeSource<'a> {
 
 /// One developed source, registered to the reference.
 pub(super) struct MergeFrame<'a> {
-    /// Black-subtracted, white-normalized camera RGB without white balance. Clipped
-    /// highlights are reconstructed the way a single RAW develops them.
+    /// As [`DevelopedSource::rgb`].
     pub(super) rgb: &'a [f32],
-    /// Per pixel, the brightest normalized sensor sample (white = 1) of its demosaic
-    /// footprint.
+    /// As [`DevelopedSource::peak`].
     pub(super) peak: &'a [f32],
     /// Exposure relative to the reference.
     pub(super) exposure: f32,
@@ -203,7 +293,8 @@ pub(super) struct MergeFrame<'a> {
 /// one at a time and hands each to `merge`, so only one developed frame is resident.
 /// `noun` names a source in progress messages ("exposure", "frame"). The progress
 /// callback returns false to cancel between frames and tiles. `options` corrects
-/// and registers each source; `denoise`, when given, AI-denoises it.
+/// and registers each source; `denoise`, when given, AI-denoises it. `rasters` says
+/// whether sources other than RAW files are taken.
 ///
 /// A source's frame stays in sensor coordinates, as its saturation peak is
 /// measured: the distortion correction is applied to the merged master
@@ -217,12 +308,14 @@ pub(super) fn merge_sources(
     options: MergeOptions,
     denoise: Option<&mut SourceDenoiser>,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
+    rasters: RasterSources,
     noun: &str,
     progress: &mut impl FnMut(String) -> bool,
     mut merge: impl FnMut(&MergeCamera, MergeFrame) -> Result<()>,
 ) -> Result<MergeCamera> {
     let count = sources.len();
-    let mut developer = SourceDeveloper::new(device, queue, options, denoise, program_prewarm);
+    let mut developer =
+        SourceDeveloper::new(device, queue, options, denoise, program_prewarm, rasters);
     let mut reference: Option<AlignmentReference> = None;
     let first = sources.first().context("Nothing to merge")?;
     let (reference_exposure, reference_light) = (first.exposure, first.light);
@@ -272,11 +365,12 @@ pub(super) fn merge_sources(
 
 /// One source developed by [`SourceDeveloper::develop`], in sensor coordinates.
 pub(super) struct DevelopedSource {
-    /// Black-subtracted, white-normalized camera RGB without white balance, row-major.
-    /// Clipped highlights are reconstructed the way a single RAW develops them.
+    /// Row-major RGB. From a RAW, black-subtracted, white-normalized camera RGB without
+    /// white balance, clipped highlights reconstructed the way a single RAW develops
+    /// them; from a raster, its working Rec.2020 as decoded.
     pub(super) rgb: Vec<f32>,
-    /// Per pixel, the brightest normalized sensor sample (white = 1) of its demosaic
-    /// footprint ([`sensor_footprint_peak`]).
+    /// Per pixel, how close it came to clipping: 1 is the white level
+    /// ([`sensor_footprint_peak`]).
     pub(super) peak: Vec<f32>,
     /// This source's distortion correction, which the develop leaves to a later
     /// geometry pass. Sources shot at other focal lengths than the reference have
@@ -288,13 +382,16 @@ pub(super) struct DevelopedSource {
 
 /// Develops merge sources one at a time the way every merge needs them: from the
 /// original RAW, with hot pixels repaired, the reference's Lensfun profile and white
-/// balance, and optionally noise reduction and AI denoise. The first source developed is the reference.
+/// balance, and optionally noise reduction and AI denoise. A raster, when `rasters`
+/// accepts it, is merged as decoded: its tones, noise and lens were developed already.
+/// The first source developed is the reference.
 pub(super) struct SourceDeveloper<'a, 'd> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
     options: MergeOptions,
     denoise: Option<&'a mut SourceDenoiser<'d>>,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
+    rasters: RasterSources,
     camera: Option<MergeCamera>,
 }
 
@@ -305,6 +402,7 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
         options: MergeOptions,
         denoise: Option<&'a mut SourceDenoiser<'d>>,
         program_prewarm: Option<Arc<GpuProgramPrewarm>>,
+        rasters: RasterSources,
     ) -> Self {
         Self {
             device,
@@ -312,6 +410,7 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
             options,
             denoise,
             program_prewarm,
+            rasters,
             camera: None,
         }
     }
@@ -325,7 +424,7 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
         self.camera
     }
 
-    /// Develops the RAW at `path`. `step` names it in progress messages ("frame
+    /// Develops the photo at `path`. `step` names it in progress messages ("frame
     /// 2/5"); the callback returns false to cancel between steps and tiles.
     pub(super) fn develop(
         &mut self,
@@ -337,11 +436,16 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
         let mut raw = load_raw_file_with_profile_config(path, CameraProfileMode::MatrixOnly, None)?;
         // Linear DNGs merge like sensor RAWs: their pixels are camera RGB
         // before white balance, as `render_camera_rgb` develops a mosaic.
+        let kind = MergeSourceKind::of(&raw);
         ensure!(
-            !raw.is_display_referred_raster(),
-            "Merging requires original RAW files, not rendered TIFFs"
+            kind == MergeSourceKind::Raw || self.rasters == RasterSources::Accept,
+            "HDR merge requires original RAW files, not rendered photos or TIFFs"
         );
         if let Some(camera) = &self.camera {
+            ensure!(
+                camera.sources == kind,
+                "Merge sources must all be RAW files, all floating-point TIFFs or all rendered photos"
+            );
             ensure!(
                 camera.identity == (raw.camera_make.clone(), raw.camera_model.clone())
                     && (camera.width, camera.height) == (raw.width, raw.height),
@@ -353,7 +457,9 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
             Some(camera) => (camera.lens.clone(), camera.crop_factor),
             None => {
                 let catalog = lensfun_catalog(&raw);
-                let lens = if self.options.lens_correction {
+                // Rasters were developed with their own lens corrections, if any, which
+                // a profile cannot tell; their crop factor still sizes a panorama.
+                let lens = if self.options.lens_correction && kind == MergeSourceKind::Raw {
                     if catalog.auto_match.is_none() {
                         calibraw_core::diagnostics::record(format!(
                             "Merge: no Lensfun profile matches {}; not lens corrected",
@@ -389,10 +495,23 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
         let camera = &*self
             .camera
             .get_or_insert_with(|| MergeCamera::new(&raw, lens, crop_factor));
-        // One white balance for every source, so per-shot auto WB cannot create seams.
-        raw.wb_coeffs = camera.wb_coeffs;
         let lens_geometry = raw.lens_geometry.clone();
         let focal_length_mm = raw.focal_length;
+        if kind != MergeSourceKind::Raw {
+            // The merge owns its frame, which the raster shares with nothing else.
+            let rgb = raw
+                .scene_linear_raster()
+                .with_context(|| format!("{} has no decoded pixels", path.display()))?
+                .to_vec();
+            return Ok(DevelopedSource {
+                rgb,
+                peak,
+                lens_geometry,
+                focal_length_mm,
+            });
+        }
+        // One white balance for every source, so per-shot auto WB cannot create seams.
+        raw.wb_coeffs = camera.wb_coeffs;
         let raw = Arc::new(raw);
         let denoised = match self.denoise.as_deref_mut() {
             Some(denoise) if !raw.is_pre_demosaiced_raster() => {
@@ -544,37 +663,47 @@ pub(super) fn render_camera_rgb(
 ///
 /// A linear DNG was demosaiced by the camera, so its photosites are gone: each pixel's
 /// brightest channel stands in for them (its channels are normalized to the file's white
-/// level), and the footprint covers the smoothing a camera's demosaic leaves.
+/// level), and the footprint covers the smoothing a camera's demosaic leaves. A rendered
+/// photo is read the same way against its display white. A floating-point TIFF holds
+/// radiance without a clipping level, so none of its pixels counts as clipped.
 pub(super) fn sensor_footprint_peak(raw: &LoadedRaw) -> Vec<f32> {
     /// Pixels of a linear DNG within which the camera's demosaic spread a clipped
     /// photosite, as for a Bayer mosaic.
     const LINEAR_DNG_RADIUS: usize = 3;
+    /// Pixels of a rendered photo within which its encoder smeared a clipped pixel:
+    /// chroma subsampling's 2×2 blocks.
+    const RENDERED_RADIUS: usize = 1;
     let width = raw.width as usize;
     let height = raw.height as usize;
-    let (sensor, radius): (Vec<f32>, usize) = match raw.scene_linear_raster() {
-        Some(rgb) if raw.is_camera_linear_raster() => (
-            rgb.par_chunks_exact(3)
-                .map(|pixel| pixel[0].max(pixel[1]).max(pixel[2]))
-                .collect(),
-            LINEAR_DNG_RADIUS,
-        ),
-        _ => (
-            raw.raw_pixels
-                .par_iter()
-                .enumerate()
-                .map(|(i, value)| {
-                    let c = usize::from(raw.color_indices[i].min(3));
-                    let black = raw.black_levels_per_pixel[i];
-                    let range = (raw.white_levels[c] - black).max(1.0);
-                    (f32::from(*value) - black) / range
-                })
-                .collect(),
-            match raw.cfa_kind {
-                CfaKind::Bayer => 3,
-                CfaKind::XTrans => 6,
-            },
-        ),
+    let brightest_channel = |rgb: &[f32]| -> Vec<f32> {
+        rgb.par_chunks_exact(3)
+            .map(|pixel| pixel[0].max(pixel[1]).max(pixel[2]))
+            .collect()
     };
+    let (sensor, radius): (Vec<f32>, usize) =
+        match (MergeSourceKind::of(raw), raw.scene_linear_raster()) {
+            (MergeSourceKind::SceneRaster, _) => return vec![0.0; width * height],
+            (MergeSourceKind::Rendered, Some(rgb)) => (brightest_channel(rgb), RENDERED_RADIUS),
+            (MergeSourceKind::Raw, Some(rgb)) if raw.is_camera_linear_raster() => {
+                (brightest_channel(rgb), LINEAR_DNG_RADIUS)
+            }
+            _ => (
+                raw.raw_pixels
+                    .par_iter()
+                    .enumerate()
+                    .map(|(i, value)| {
+                        let c = usize::from(raw.color_indices[i].min(3));
+                        let black = raw.black_levels_per_pixel[i];
+                        let range = (raw.white_levels[c] - black).max(1.0);
+                        (f32::from(*value) - black) / range
+                    })
+                    .collect(),
+                match raw.cfa_kind {
+                    CfaKind::Bayer => 3,
+                    CfaKind::XTrans => 6,
+                },
+            ),
+        };
     let horizontal: Vec<f32> = (0..sensor.len())
         .into_par_iter()
         .map(|i| {

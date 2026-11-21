@@ -1,7 +1,7 @@
 use super::*;
 use crate::app::{AiConsentAnswer, AiConsentCheck, AiConsentRequester, ErrorKind};
 use crate::i18n::{tr, tr_fmt};
-use crate::pipeline::LoadedRaw;
+use crate::pipeline::{is_camera_raw_path, LoadedRaw};
 use crate::services::ai_denoise::{install_ai_denoise, AiDenoiseStatus};
 use crate::ui::background_tasks::{BackgroundTaskId, BackgroundTaskView};
 use anyhow::{Context, Result};
@@ -86,6 +86,9 @@ struct MergeRequest {
 pub(super) struct MergeDialog {
     kind: MergeKind,
     assets: Vec<LibraryAsset>,
+    /// Every photo is a camera RAW: only those take a lens profile, so the dialog
+    /// offers lens correction for them alone.
+    raw_sources: bool,
     /// The confirmed merge waits for the AI consent dialog, which asks before
     /// the models AI denoise needs are downloaded; `open` as confirmed.
     awaiting_consent: Option<bool>,
@@ -105,9 +108,13 @@ enum MergeDialogChoice {
 /// it once they are confirmed.
 pub(super) fn ask(app: &mut CalibRawApp, kind: MergeKind, assets: Vec<LibraryAsset>) {
     if assets.len() >= 2 {
+        let raw_sources = assets
+            .iter()
+            .all(|asset| is_camera_raw_path(Path::new(&asset.display_name)));
         app.library.merge_dialog = Some(MergeDialog {
             kind,
             assets,
+            raw_sources,
             awaiting_consent: None,
         });
     }
@@ -139,13 +146,16 @@ pub(super) fn show_dialog(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fr
         return;
     };
     let kind = dialog.kind;
+    let raw_sources = dialog.raw_sources;
     let choices = &mut app.library.merge_choices;
     let mut choice = None;
     moduwu_design::Dialog::new("library-merge-options", kind.title()).show_with_footer(
         ui.ctx(),
         |ui| {
             let options = &mut choices.options;
-            moduwu_design::toggle_row(ui, &mut options.lens_correction, tr("Lens correction"));
+            if raw_sources {
+                moduwu_design::toggle_row(ui, &mut options.lens_correction, tr("Lens correction"));
+            }
             // A panorama is always aligned: its frames are taken from different directions.
             if kind == MergeKind::Panorama {
                 moduwu_design::form_row(ui, tr("Projection"), PROJECTION_WIDTH, |ui, width| {
@@ -235,9 +245,14 @@ fn confirm(
     let Some(dialog) = app.library.merge_dialog.take() else {
         return;
     };
+    // The remembered choice stays for the next RAW merge.
+    let chosen = app.library.merge_choices.options;
     let request = MergeRequest {
         kind: dialog.kind,
-        options: app.library.merge_choices.options,
+        options: MergeOptions {
+            lens_correction: chosen.lens_correction && dialog.raw_sources,
+            ..chosen
+        },
         panorama: app.library.merge_choices.panorama,
         ai_denoise,
         open,
@@ -380,7 +395,7 @@ fn start(
                     .iter()
                     .map(|staged| staged.raw_path.clone())
                     .collect();
-                let saving = || report(tr("Saving floating-point TIFF…").to_owned());
+                let saving = || report(tr("Saving TIFF…").to_owned());
                 let (name, locator, lens_corrected, reduced) = match kind {
                     MergeKind::Hdr | MergeKind::FocusStack => {
                         let merged = if kind == MergeKind::Hdr {

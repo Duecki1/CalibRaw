@@ -251,11 +251,11 @@ fn merge_menu(ui: &mut Ui) -> Option<super::MergeKind> {
         ),
         (
             super::MergeKind::FocusStack,
-            tr("Auto-align RAW frames focused at different distances and combine their sharpest parts into an editable 32-bit float TIFF"),
+            tr("Auto-align photos focused at different distances and combine their sharpest parts into an editable TIFF"),
         ),
         (
             super::MergeKind::Panorama,
-            tr("Auto-align overlapping RAW frames shot from one spot and stitch them into an editable 32-bit float TIFF"),
+            tr("Auto-align overlapping photos shot from one spot and stitch them into an editable TIFF"),
         ),
     ] {
         let item = MenuItem::new(kind.title()).icon(BarAction::Merge(kind).glyph());

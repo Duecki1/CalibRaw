@@ -1,4 +1,5 @@
-//! Panorama merge of RAW frames into a floating-point master.
+//! Panorama merge of RAW frames into a floating-point master, or of rendered photos into a
+//! 16-bit one ([`MergeSourceKind::master_samples`]).
 //!
 //! Each frame is developed like every merge source ([`SourceDeveloper`]), handed to the
 //! stitcher ([`PanoramaBuilder`]) and staged for compositing: in memory while the
@@ -8,7 +9,8 @@
 
 use super::export::{intermediate_allowance, linear_rec2020_icc};
 use super::raw_merge::{
-    ensure_distinct_sources, MergeCamera, MergeOptions, SourceDenoiser, SourceDeveloper,
+    ensure_distinct_sources, integer_samples, MasterSamples, MergeCamera, MergeOptions,
+    MergeSourceKind, RasterSources, SourceDenoiser, SourceDeveloper,
 };
 use super::GpuProgramPrewarm;
 use anyhow::{ensure, Context, Result};
@@ -25,7 +27,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tiff::encoder::{colortype::RGB32Float, TiffEncoder};
+use tiff::encoder::{
+    colortype::{ColorType, RGB32Float, RGB16},
+    TiffEncoder,
+};
 use tiff::tags::Tag;
 
 /// What a panorama merge chooses beyond the develop options.
@@ -70,20 +75,42 @@ impl PanoramaMaster {
         self.layout.reduced()
     }
 
-    /// Composites the panorama into a scene-linear Rec.2020 32-bit float TIFF, tagged
-    /// like the other merges' masters. The callback reports progress and returns false
-    /// to cancel between parts.
+    /// Composites the panorama into a linear Rec.2020 TIFF, tagged and sampled like the
+    /// other merges' masters ([`MergeSourceKind::master_samples`]). The callback reports
+    /// progress and returns false to cancel between parts.
     pub fn write_tiff(
         &self,
         writer: impl Write + Seek,
         progress: impl FnMut(String) -> bool,
     ) -> Result<()> {
+        match self.camera.sources().master_samples() {
+            MasterSamples::Float => {
+                self.write_samples::<RGB32Float>(writer, progress, |strip| strip.to_vec())
+            }
+            MasterSamples::Integer => {
+                self.write_samples::<RGB16>(writer, progress, integer_samples)
+            }
+        }
+    }
+
+    /// [`Self::write_tiff`] in samples of `C`, which `encode` turns working Rec.2020 into.
+    fn write_samples<C: ColorType>(
+        &self,
+        writer: impl Write + Seek,
+        progress: impl FnMut(String) -> bool,
+        encode: impl Fn(&[f32]) -> Vec<C::Inner>,
+    ) -> Result<()>
+    where
+        [C::Inner]: tiff::encoder::TiffValue,
+    {
         let row_values = self.width() as usize * 3;
         // About as large as the TIFF export's strips: libtiff refuses an uncompressed
         // final strip shorter than its rows per strip once a strip exceeds 100 MB.
-        let strip_rows = (TIFF_STRIP_BYTES / (row_values * 4)).clamp(1, self.height() as usize);
+        let sample_bytes = std::mem::size_of::<C::Inner>();
+        let strip_rows =
+            (TIFF_STRIP_BYTES / (row_values * sample_bytes)).clamp(1, self.height() as usize);
         let mut encoder = TiffEncoder::new(writer)?;
-        let mut image = encoder.new_image::<RGB32Float>(self.width(), self.height())?;
+        let mut image = encoder.new_image::<C>(self.width(), self.height())?;
         image.rows_per_strip(strip_rows as u32)?;
         image
             .encoder()
@@ -98,7 +125,7 @@ impl PanoramaMaster {
                 let whole = pending.len() / (strip_rows * row_values) * strip_rows * row_values;
                 self.camera.to_working_rec2020(&mut pending[..whole]);
                 for strip in pending[..whole].chunks_exact(strip_rows * row_values) {
-                    image.write_strip(strip)?;
+                    image.write_strip(&encode(strip))?;
                 }
                 pending.drain(..whole);
                 Ok(())
@@ -107,7 +134,7 @@ impl PanoramaMaster {
         )?;
         if !pending.is_empty() {
             self.camera.to_working_rec2020(&mut pending);
-            image.write_strip(&pending)?;
+            image.write_strip(&encode(&pending))?;
         }
         image.finish()?;
         Ok(())
@@ -137,16 +164,29 @@ pub fn merge_panorama(
     // The reference is developed first; the rest keep their order.
     let reference = sorted.remove(sorted.len() / 2);
     sorted.insert(0, reference);
-    let exposures = relative_exposures(&sorted);
     let allowance = intermediate_allowance();
     let mut frames = StagedFrames::new(staging_dir, allowance / 2);
     let mut builder = PanoramaBuilder::new();
-    let mut developer = SourceDeveloper::new(device, queue, options, denoise, program_prewarm);
+    let mut developer = SourceDeveloper::new(
+        device,
+        queue,
+        options,
+        denoise,
+        program_prewarm,
+        RasterSources::Accept,
+    );
     let count = sorted.len();
-    for (index, (path, exposure)) in sorted.iter().zip(exposures).enumerate() {
+    let mut exposures: Option<Vec<f32>> = None;
+    for (index, path) in sorted.iter().enumerate() {
         let step = format!("frame {}/{count}", index + 1);
         let developed = developer.develop(path, &step, &mut progress)?;
         let camera = developer.camera().context("Nothing to merge")?;
+        // A raster's brightness is what its camera or editor made of the exposure, so
+        // only RAW frames are balanced by their metadata.
+        let exposure = exposures.get_or_insert_with(|| match camera.sources() {
+            MergeSourceKind::Raw => relative_exposures(&sorted),
+            MergeSourceKind::SceneRaster | MergeSourceKind::Rendered => vec![1.0; count],
+        })[index];
         ensure!(
             progress(format!("Finding features in {step}")),
             "Merge cancelled"

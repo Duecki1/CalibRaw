@@ -120,7 +120,7 @@ fn parse_args() -> Result<Args> {
             "--help" | "-h" => {
                 eprintln!(
                     "Usage: calibraw-panorama --output OUT.tif [--projection auto|spherical|cylindrical|perspective] \
-                     [--no-lens-correction] [--remove-hot-pixels] [--denoise] RAW..."
+                     [--no-lens-correction] [--remove-hot-pixels] [--denoise] PHOTO..."
                 );
                 std::process::exit(0);
             }

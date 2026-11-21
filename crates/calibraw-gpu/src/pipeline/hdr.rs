@@ -1,6 +1,7 @@
 //! HDR merge of a RAW exposure bracket into a floating-point master.
 use super::raw_merge::{
-    ensure_distinct_sources, merge_sources, MergeOptions, MergeSource, MergedImage, SourceDenoiser,
+    ensure_distinct_sources, merge_sources, MergeOptions, MergeSource, MergedImage, RasterSources,
+    SourceDenoiser,
 };
 use super::*;
 use anyhow::{ensure, Context, Result};
@@ -54,6 +55,8 @@ pub fn merge_hdr_bracket(
         options,
         denoise,
         program_prewarm,
+        // Exposures are weighed by how close their sensor values came to clipping.
+        RasterSources::Refuse,
         "exposure",
         &mut progress,
         |camera, frame| {

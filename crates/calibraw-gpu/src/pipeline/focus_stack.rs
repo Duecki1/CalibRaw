@@ -1,6 +1,8 @@
-//! Focus stacking of RAW frames into a floating-point master.
+//! Focus stacking of RAW frames into a floating-point master, or of rendered photos into
+//! a 16-bit one ([`super::raw_merge::MergeSourceKind::master_samples`]).
 use super::raw_merge::{
-    ensure_distinct_sources, merge_sources, MergeOptions, MergeSource, MergedImage, SourceDenoiser,
+    ensure_distinct_sources, merge_sources, MergeOptions, MergeSource, MergedImage, RasterSources,
+    SourceDenoiser,
 };
 use super::*;
 use anyhow::{ensure, Context, Result};
@@ -42,6 +44,7 @@ pub fn stack_focus(
         options,
         denoise,
         program_prewarm,
+        RasterSources::Accept,
         "frame",
         &mut progress,
         |camera, frame| {
