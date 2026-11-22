@@ -191,7 +191,9 @@ fn rasterize_component_internal(
     let mut space = MaskRasterSpace::new(width, height, image_width, image_height);
     space.corrected_uv = corrected_uv;
     match &component.geometry {
-        MaskGeometry::Fullscreen => vec![1.0; width as usize * height as usize],
+        MaskGeometry::Fullscreen => {
+            raster_buffers::coverage_buffer(width as usize * height as usize, 1.0)
+        }
         MaskGeometry::Brush {
             overlap_enabled,
             stroke_starts,

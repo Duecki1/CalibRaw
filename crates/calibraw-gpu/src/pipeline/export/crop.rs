@@ -223,6 +223,7 @@ pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         job.raw.height,
         mask_region,
         job.raw.lens_geometry.as_deref(),
+        &mut Vec::new(),
     )?;
     pipeline.update_full_image_mask_layers(
         &job.queue,

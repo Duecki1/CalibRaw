@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::pipeline::ExportTile;
+use std::cell::RefCell;
 
 pub(super) fn render_export_output<W: Write>(
     context: ExportContext<'_>,
@@ -164,6 +165,7 @@ where
         .context("upload full-image masks")?;
 
     let clock = ExportClock::default();
+    let mask_bits = RefCell::new(Vec::new());
     let probe = super::diagnostics::ExportProbe::requested()?;
     let tile_inputs = ExportTileInputs {
         pipeline: &tile_pipeline,
@@ -177,6 +179,7 @@ where
         geometry,
         raw_stage_kept: false,
         clock: &clock,
+        mask_bits: &mask_bits,
     };
     let mut tile_scratch = first_raw;
     if let Some(probe) = probe.as_ref().filter(|probe| probe.raw_only()) {
@@ -577,6 +580,9 @@ pub(super) struct ExportTileInputs<'a> {
     /// again, so the tile is not uploaded.
     raw_stage_kept: bool,
     clock: &'a ExportClock,
+    /// The binary16 coverage of the layer being uploaded, kept from tile to
+    /// tile so its allocation is made once (`upload_mask_atlas`).
+    mask_bits: &'a RefCell<Vec<u16>>,
 }
 
 impl ExportTileInputs<'_> {
@@ -635,6 +641,7 @@ impl ExportTileInputs<'_> {
                 raw.height,
                 mask_region,
                 raw.lens_geometry.as_deref(),
+                &mut self.mask_bits.borrow_mut(),
             )
         })?;
         Ok(params)
@@ -863,6 +870,9 @@ pub(super) fn tile_mask_source_region(
 
 /// Rasterizes `region` of the masks a render of `params` reads
 /// ([`GpuParams::reads_mask_layer`]) and uploads them to the mask atlas.
+/// Each layer is rasterized into `bits`, which the caller keeps for its next
+/// tile: a new buffer of this size costs a phone its page faults, more than
+/// a radial shape takes to draw.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn upload_mask_atlas(
     pipeline: &RawGpuPipeline,
@@ -873,6 +883,7 @@ pub(super) fn upload_mask_atlas(
     image_height: u32,
     region: [u32; 4],
     lens_geometry: Option<&LensGeometryMap>,
+    bits: &mut Vec<u16>,
 ) -> Result<()> {
     let edge = pipeline.mask_atlas_edge();
     let extent = mask_region_texture_extent(region, edge);
@@ -883,9 +894,9 @@ pub(super) fn upload_mask_atlas(
     // Cropped once for every layer.
     let cropped = masks.region(region, [image_width, image_height]);
     for layer in (0..layers).filter(|layer| params.reads_mask_layer(*layer)) {
-        let bytes = cropped.rasterize_layer_f16(layer, extent, lens_geometry);
+        cropped.rasterize_layer_f16_into(layer, extent, lens_geometry, bits);
         pipeline
-            .update_mask_layer_region(queue, layer, extent[0], extent[1], &bytes)
+            .update_mask_layer_region(queue, layer, extent[0], extent[1], bits)
             .with_context(|| format!("upload local-mask layer {}", layer + 1))?;
     }
     Ok(())

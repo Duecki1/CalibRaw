@@ -62,7 +62,7 @@ pub(super) fn rasterize_brush(space: MaskRasterSpace, dabs: &[BrushDab]) -> Vec<
     let specs = brush_raster_specs(space, dabs);
 
     let row_stride = width as usize;
-    let mut out = vec![0.0f32; row_stride * height as usize];
+    let mut out = raster_buffers::coverage_buffer(row_stride * height as usize, 0.0);
     out.par_chunks_mut(row_stride * ROW_BAND_HEIGHT)
         .enumerate()
         .for_each(|(band_index, band)| {
@@ -312,7 +312,7 @@ pub(super) fn rasterize_subject_refinement_delta(
         recorded_brush_groups(&refinement.dabs, &refinement.stroke_starts);
     let specs = brush_raster_specs(space, &refinement.dabs);
     let row_stride = width as usize;
-    let mut out = vec![0.0f32; row_stride * height as usize];
+    let mut out = raster_buffers::coverage_buffer(row_stride * height as usize, 0.0);
 
     out.par_chunks_mut(row_stride * ROW_BAND_HEIGHT)
         .enumerate()

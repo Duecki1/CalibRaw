@@ -238,6 +238,7 @@ impl MaskStack {
                     }
                     coverage
                 } else {
+                    raster_buffers::recycle(coverage);
                     vec![0.0; len]
                 });
                 continue;
@@ -251,8 +252,8 @@ impl MaskStack {
             // blend, so masks without component opacity stay bit-identical.
             existing
                 .par_iter_mut()
-                .zip(coverage.into_par_iter())
-                .for_each(|(dst, src)| {
+                .zip(coverage.par_iter())
+                .for_each(|(dst, &src)| {
                     let combined = combine(*dst, src);
                     *dst = if opacity < 1.0 {
                         *dst + (combined - *dst) * opacity
@@ -260,19 +261,19 @@ impl MaskStack {
                         combined
                     };
                 });
+            raster_buffers::recycle(coverage);
         }
 
-        let Some(combined) = combined else {
+        let Some(mut combined) = combined else {
             return vec![0.0; len];
         };
         let opacity = mask.opacity.clamp(0.0, 1.0);
+        // In place: a second buffer of this size would cost its page faults.
+        combined.par_iter_mut().for_each(|value| {
+            let inverted = if mask.invert { 1.0 - *value } else { *value };
+            *value = inverted.clamp(0.0, 1.0) * opacity;
+        });
         combined
-            .into_par_iter()
-            .map(|value| {
-                let value = if mask.invert { 1.0 - value } else { value };
-                value.clamp(0.0, 1.0) * opacity
-            })
-            .collect()
     }
 
     pub fn rasterize_layer(
@@ -283,10 +284,19 @@ impl MaskStack {
         image_width: u32,
         image_height: u32,
     ) -> Vec<u8> {
-        self.rasterize_layer_coverage(layer, atlas_width, atlas_height, image_width, image_height)
-            .into_par_iter()
-            .map(|value| (value * 255.0 + 0.5) as u8)
-            .collect()
+        let coverage = self.rasterize_layer_coverage(
+            layer,
+            atlas_width,
+            atlas_height,
+            image_width,
+            image_height,
+        );
+        let bytes = coverage
+            .par_iter()
+            .map(|&value| (value * 255.0 + 0.5) as u8)
+            .collect();
+        raster_buffers::recycle(coverage);
+        bytes
     }
 
     pub fn rasterize_layer_f16(
@@ -297,10 +307,19 @@ impl MaskStack {
         image_width: u32,
         image_height: u32,
     ) -> Vec<u16> {
-        self.rasterize_layer_coverage(layer, atlas_width, atlas_height, image_width, image_height)
-            .into_par_iter()
-            .map(|value| f16::from_f32(value).to_bits())
-            .collect()
+        let coverage = self.rasterize_layer_coverage(
+            layer,
+            atlas_width,
+            atlas_height,
+            image_width,
+            image_height,
+        );
+        let bits = coverage
+            .par_iter()
+            .map(|&value| f16::from_f32(value).to_bits())
+            .collect();
+        raster_buffers::recycle(coverage);
+        bits
     }
 
     /// Rasterize a native region `[x, y, width, height]` into `extent` pixels.
@@ -315,10 +334,13 @@ impl MaskStack {
         full_size: [u32; 2],
         lens: Option<&LensGeometryMap>,
     ) -> Vec<u8> {
-        self.rasterize_layer_region_coverage(layer, extent, region, full_size, lens)
-            .into_par_iter()
-            .map(|value| (value * 255.0 + 0.5) as u8)
-            .collect()
+        let coverage = self.rasterize_layer_region_coverage(layer, extent, region, full_size, lens);
+        let bytes = coverage
+            .par_iter()
+            .map(|&value| (value * 255.0 + 0.5) as u8)
+            .collect();
+        raster_buffers::recycle(coverage);
+        bytes
     }
 
     /// Like `rasterize_layer_region`, returning IEEE binary16 coverage bits.
@@ -507,10 +529,28 @@ impl MaskRegion<'_> {
         extent: [u32; 2],
         lens: Option<&LensGeometryMap>,
     ) -> Vec<u16> {
-        self.rasterize_layer_coverage(layer, extent, lens)
-            .into_par_iter()
-            .map(|value| f16::from_f32(value).to_bits())
-            .collect()
+        let mut bits = Vec::new();
+        self.rasterize_layer_f16_into(layer, extent, lens, &mut bits);
+        bits
+    }
+
+    /// As [`Self::rasterize_layer_f16`], into `bits`, whose allocation a
+    /// caller rasterizing many layers keeps from one to the next.
+    pub fn rasterize_layer_f16_into(
+        &self,
+        layer: usize,
+        extent: [u32; 2],
+        lens: Option<&LensGeometryMap>,
+        bits: &mut Vec<u16>,
+    ) {
+        let coverage = self.rasterize_layer_coverage(layer, extent, lens);
+        bits.clear();
+        bits.par_extend(
+            coverage
+                .par_iter()
+                .map(|&value| f16::from_f32(value).to_bits()),
+        );
+        raster_buffers::recycle(coverage);
     }
 
     fn rasterize_layer_coverage(

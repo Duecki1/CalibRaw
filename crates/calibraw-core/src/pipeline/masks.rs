@@ -39,6 +39,7 @@ mod morphology;
 mod probability;
 mod range_filters;
 mod raster;
+mod raster_buffers;
 mod shapes;
 pub use brush::*;
 pub use layers::MaskRegion;

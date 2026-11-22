@@ -12,7 +12,7 @@ pub(super) fn rasterize_radial(
     let [width, height] = space.raster;
     let [image_width, image_height] = space.image;
     let row_stride = width as usize;
-    let mut out = vec![0.0f32; row_stride * height as usize];
+    let mut out = raster_buffers::coverage_buffer(row_stride * height as usize, 0.0);
     let cos_r = rotation.cos();
     let sin_r = rotation.sin();
     let rx = (radius[0].abs() * image_width.max(1) as f32).max(1.0);
@@ -126,7 +126,7 @@ pub(super) fn rasterize_path(
         })
         .collect::<Vec<_>>();
     let row_stride = width as usize;
-    let mut out = vec![0.0f32; row_stride * height as usize];
+    let mut out = raster_buffers::coverage_buffer(row_stride * height as usize, 0.0);
     out.par_chunks_mut(row_stride)
         .enumerate()
         .for_each(|(y, row)| {
@@ -165,7 +165,7 @@ pub(super) fn rasterize_linear(
     let [width, height] = space.raster;
     let [image_width, image_height] = space.image;
     let row_stride = width as usize;
-    let mut out = vec![0.0f32; row_stride * height as usize];
+    let mut out = raster_buffers::coverage_buffer(row_stride * height as usize, 0.0);
     let sx = start[0] * image_width.max(1) as f32;
     let sy = start[1] * image_height.max(1) as f32;
     let dx = (end[0] - start[0]) * image_width.max(1) as f32;
