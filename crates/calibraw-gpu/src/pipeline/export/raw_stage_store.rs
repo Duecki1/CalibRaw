@@ -61,6 +61,11 @@ impl<'a> RawStageStore<'a> {
         })
     }
 
+    /// Bytes of one stored texel, in the scene texture's format.
+    pub(super) fn texel_bytes(&self) -> u32 {
+        self.texel_bytes
+    }
+
     /// Bytes the store holds.
     pub(super) fn bytes(&self) -> usize {
         self.texels.len()

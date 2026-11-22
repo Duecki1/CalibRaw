@@ -289,6 +289,7 @@ where
         tone_analysis_started.elapsed().as_secs_f64(),
         plan.tile_count()
     ));
+    record_tone_statistics(&tile_pipeline, device, queue);
 
     let tile_inputs = ExportTileInputs {
         raw_stage_kept: raw_stage_store.is_some(),
@@ -466,6 +467,7 @@ where
                     total_tiles,
                     &mut first_progress_logged,
                     export_started,
+                    &rgb,
                 );
             }
         }
@@ -507,6 +509,7 @@ where
                 total_tiles,
                 &mut first_progress_logged,
                 export_started,
+                &rgb,
             );
         }
 
@@ -713,11 +716,94 @@ fn store_raw_stage_tile(
     index: usize,
     readback: crate::pipeline::PendingSceneReadback,
 ) -> Result<()> {
+    // The first tile's scene is summarized for the diagnostics: an export that
+    // comes out black shows there whether the RAW stage already left nothing.
+    let rgba32 = store.texel_bytes() == 16;
+    let mut summary = ValueSummary::default();
     readback
         .finish(device, GpuWait::Watched(watch_gpu), |row, texels| {
+            if index == 0 && rgba32 {
+                for texel in texels.chunks_exact(16) {
+                    summary.extend(texel[..12].chunks_exact(4).map(|channel| {
+                        f32::from_le_bytes([channel[0], channel[1], channel[2], channel[3]])
+                    }));
+                }
+            }
             store.store_row(tile, row, texels);
         })
-        .with_context(|| format!("read the RAW-stage scene of tile {}", index + 1))
+        .with_context(|| format!("read the RAW-stage scene of tile {}", index + 1))?;
+    if index == 0 && rgba32 {
+        calibraw_core::diagnostics::record(format!(
+            "Export RAW-stage scene of tile 1: RGB {summary}"
+        ));
+    }
+    Ok(())
+}
+
+/// Records the whole-image tone statistics of the tone prepass, which every
+/// tile's tone response reads: degenerate ones render the whole export black.
+fn record_tone_statistics(pipeline: &RawGpuPipeline, device: &wgpu::Device, queue: &wgpu::Queue) {
+    match pipeline.read_tone_statistics(device, queue) {
+        Ok([p005, p05, p50, p95, p995, spread, count, _]) => {
+            calibraw_core::diagnostics::record(format!(
+                "Export tone statistics: EV percentiles 0.5/5/50/95/99.5 = {p005:?}/{p05:?}/{p50:?}/{p95:?}/{p995:?} spread={spread:?} pixels={count:?}"
+            ))
+        }
+        Err(error) => calibraw_core::diagnostics::record(format!(
+            "Export tone statistics could not be read: {error:#}"
+        )),
+    }
+}
+
+/// The range, mean and non-finite count of some channel values, for the
+/// diagnostics.
+#[derive(Default)]
+struct ValueSummary {
+    finite: u64,
+    nonfinite: u64,
+    minimum: f32,
+    maximum: f32,
+    sum: f64,
+}
+
+impl ValueSummary {
+    fn of(values: impl Iterator<Item = f32>) -> Self {
+        let mut summary = Self::default();
+        summary.extend(values);
+        summary
+    }
+
+    fn extend(&mut self, values: impl Iterator<Item = f32>) {
+        for value in values {
+            if !value.is_finite() {
+                self.nonfinite += 1;
+                continue;
+            }
+            if self.finite == 0 {
+                (self.minimum, self.maximum) = (value, value);
+            } else {
+                self.minimum = self.minimum.min(value);
+                self.maximum = self.maximum.max(value);
+            }
+            self.finite += 1;
+            self.sum += f64::from(value);
+        }
+    }
+}
+
+impl std::fmt::Display for ValueSummary {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mean = if self.finite == 0 {
+            f64::NAN
+        } else {
+            self.sum / self.finite as f64
+        };
+        write!(
+            formatter,
+            "min={:?} max={:?} mean={mean:.6} values={} nonfinite={}",
+            self.minimum, self.maximum, self.finite, self.nonfinite
+        )
+    }
 }
 
 /// Watches an export's GPU readbacks: they wait as long as the export is not cancelled, and
@@ -742,13 +828,15 @@ fn report_completed_export_tile(
     total_tiles: usize,
     first_progress_logged: &mut bool,
     export_started: Instant,
+    rgb: &[f32],
 ) {
     *completed_tiles += 1;
     if !*first_progress_logged {
         *first_progress_logged = true;
         calibraw_core::diagnostics::record(format!(
-            "First export tile completed after {:.3}s; pipelined GPU readback is active",
-            export_started.elapsed().as_secs_f64()
+            "First export tile completed after {:.3}s; pipelined GPU readback is active; display-linear RGB {}",
+            export_started.elapsed().as_secs_f64(),
+            ValueSummary::of(rgb.iter().copied()),
         ));
     }
     let _ = events.send(ExportEvent::Progress {

@@ -28,6 +28,9 @@ const ACCUMULATOR_BYTES: u64 = 32;
 /// `GEOMETRY_AFFINE` and `GEOMETRY_LENS` in geometry_resample.wgsl.
 pub(super) const GEOMETRY_AFFINE: u32 = 1;
 pub(super) const GEOMETRY_LENS: u32 = 2;
+/// `FOOTPRINT_MIN_FLIP` in geometry_resample.wgsl: a cell's minimum source column or row `m`
+/// is stored as `FOOTPRINT_MIN_FLIP - m`.
+pub(super) const FOOTPRINT_MIN_FLIP: u32 = 0x7fff_ffff;
 
 /// `GeometryResampleParams` in geometry_resample.wgsl, where each field is described.
 #[repr(C)]
@@ -507,17 +510,30 @@ impl<'a> Resampler<'a> {
             words
                 .chunks_exact(4)
                 .map(|slot| {
-                    (slot[2] != 0).then(|| SourceRect {
-                        min: [(!slot[0]).saturating_sub(1), (!slot[1]).saturating_sub(1)],
+                    if slot[2] == 0 {
+                        return Ok(None);
+                    }
+                    let rect = SourceRect {
+                        min: [
+                            FOOTPRINT_MIN_FLIP.saturating_sub(slot[0]).saturating_sub(1),
+                            FOOTPRINT_MIN_FLIP.saturating_sub(slot[1]).saturating_sub(1),
+                        ],
                         max: [
                             slot[2].min(source_width - 1),
                             slot[3].min(source_height - 1),
                         ],
-                    })
+                    };
+                    // An inverted rectangle would index past the source when uploaded.
+                    anyhow::ensure!(
+                        rect.min[0] <= rect.max[0] && rect.min[1] <= rect.max[1],
+                        "the GPU returned an invalid export geometry footprint {slot:?}"
+                    );
+                    Ok(Some(rect))
                 })
-                .collect()
+                .collect::<Result<Vec<_>>>()
         };
         self.cell_readback.unmap();
+        let cells = cells?;
         Ok(CellFootprints {
             columns: self.base.cells_per_row,
             rows: height.div_ceil(CELL_EDGE),

@@ -174,18 +174,14 @@ impl RawGpuPipeline {
         )
     }
 
-    /// Diagnostic split of the standard export stages, with the same whole-
-    /// image statistics already installed. Pass order and arithmetic remain
-    /// unchanged; extra waits deliberately isolate their producing stage.
-    pub(crate) fn capture_export_output(
+    /// The whole-image tone statistics (`ToneStats` in `tone_common.wgsl`) the
+    /// last tone analysis left: the scene EV percentiles 0.5, 5, 50, 95 and
+    /// 99.5, their spread and the pixel count, then a zero. Waits for the GPU.
+    pub(crate) fn read_tone_statistics(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        params: &GpuParams,
-        directory: &Path,
-        core: [u32; 4],
-    ) -> Result<()> {
-        self.capture_export_raw(device, queue, directory, core)?;
+    ) -> Result<[f32; 8]> {
         let statistics = create_gpu_buffer(
             device,
             "export diagnostic tone statistics",
@@ -208,15 +204,36 @@ impl RawGpuPipeline {
             device,
             submission,
             receiver,
-            "export probe tone statistics",
-            "export probe",
+            "export tone statistics",
+            "export",
             GpuWait::Limited,
         )?;
+        let mut values = [0.0f32; 8];
         {
             let mapped = statistics.get_mapped_range(..);
-            std::fs::write(directory.join("tone-statistics.bin"), &mapped)?;
+            bytemuck::cast_slice_mut(&mut values).copy_from_slice(&mapped);
         }
         statistics.unmap();
+        Ok(values)
+    }
+
+    /// Diagnostic split of the standard export stages, with the same whole-
+    /// image statistics already installed. Pass order and arithmetic remain
+    /// unchanged; extra waits deliberately isolate their producing stage.
+    pub(crate) fn capture_export_output(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+        directory: &Path,
+        core: [u32; 4],
+    ) -> Result<()> {
+        self.capture_export_raw(device, queue, directory, core)?;
+        let statistics = self.read_tone_statistics(device, queue)?;
+        std::fs::write(
+            directory.join("tone-statistics.bin"),
+            bytemuck::cast_slice(&statistics),
+        )?;
         self.upload_params(queue, params);
         self.prepare_tiered_effects(queue, params, OutputPart::Scene);
         self.forget_output();

@@ -772,7 +772,8 @@ fn remove_composite_params_match_rust_layout() {
 #[test]
 fn geometry_resample_matches_its_wgsl_declarations() {
     use super::geometry_resample::{
-        GeometryResampleParams, GEOMETRY_AFFINE, GEOMETRY_LENS, GEOMETRY_WORKGROUP_EDGE,
+        GeometryResampleParams, FOOTPRINT_MIN_FLIP, GEOMETRY_AFFINE, GEOMETRY_LENS,
+        GEOMETRY_WORKGROUP_EDGE,
     };
     let rust = rust_layout!(GeometryResampleParams {
         source_from_output,
@@ -805,6 +806,10 @@ fn geometry_resample_matches_its_wgsl_declarations() {
             Some(GEOMETRY_AFFINE)
         );
         assert_eq!(u32_constant(module, "GEOMETRY_LENS"), Some(GEOMETRY_LENS));
+        assert_eq!(
+            u32_constant(module, "FOOTPRINT_MIN_FLIP"),
+            Some(FOOTPRINT_MIN_FLIP)
+        );
         for entry in &module.entry_points {
             assert_eq!(
                 entry.workgroup_size,

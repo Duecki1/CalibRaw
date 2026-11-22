@@ -64,9 +64,15 @@ const MITCHELL_C: f32 = 1.0 / 3.0;
 @group(0) @binding(1) var<storage, read> lens_grid: array<vec2<f32>>;
 // Interleaved RGB of the source rectangle `params.chunk`, row by row.
 @group(0) @binding(2) var<storage, read> chunk_rgb: array<f32>;
-// Per footprint cell: max(!min_x), max(!min_y), max(max_x + 1), max(max_y + 1) of the source
-// pixels it reads (inclusive bounds), so a zeroed cell reads nothing.
+// Per footprint cell: max(FOOTPRINT_MIN_FLIP - min_x), max(FOOTPRINT_MIN_FLIP - min_y),
+// max(max_x + 1), max(max_y + 1) of the source pixels it reads (inclusive bounds), so a zeroed
+// cell reads nothing.
 @group(0) @binding(3) var<storage, read_write> cell_bounds: array<atomic<u32>>;
+// Turns a minimum into a value `atomicMax` raises. Every value the bounds' atomics see stays
+// below 2^31 (source edges are at most 32768), where signed and unsigned order agree: the
+// Adreno 642L Vulkan driver (compiler EV031.35.01.12) ordered `atomicMax` on u32 as signed, so
+// the former `~min_x` (at least 2^31) never raised a cleared slot and every footprint inverted.
+const FOOTPRINT_MIN_FLIP: u32 = 0x7fffffffu;
 // Per band pixel: (weighted RGB sum, weight sum), then (nearest source RGB, plan kind).
 @group(0) @binding(4) var<storage, read_write> accumulator: array<vec4<f32>>;
 // Interleaved RGB of the band, window width by band rows.
@@ -399,8 +405,8 @@ fn geometry_footprint(
                 low = plan.taps_min;
                 high = plan.taps_max;
             }
-            atomicMax(&workgroup_bounds[0], ~low.x);
-            atomicMax(&workgroup_bounds[1], ~low.y);
+            atomicMax(&workgroup_bounds[0], FOOTPRINT_MIN_FLIP - low.x);
+            atomicMax(&workgroup_bounds[1], FOOTPRINT_MIN_FLIP - low.y);
             atomicMax(&workgroup_bounds[2], high.x + 1u);
             atomicMax(&workgroup_bounds[3], high.y + 1u);
         }
