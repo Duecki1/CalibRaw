@@ -5,13 +5,16 @@ use super::*;
 use crate::app::LOOK_LUT_CARD_TITLE;
 use crate::i18n::{tr, tr_fmt};
 use crate::luts::{LookLut, LutEntry, LutId};
-use crate::ui::components::preview_list::{preview_list, ListHeight, PreviewListItem};
+use crate::ui::components::preview_list::{preview_list, ListHeight, PreviewListItem, ROW_GAP};
 
 /// Libraries with more LUTs than this get a search field.
 const SEARCH_FROM_LUTS: usize = 8;
-/// Rows the list shows before it scrolls in the docked panel.
-const VISIBLE_LUT_ROWS: f32 = 7.5;
-/// Rows the list keeps in the portrait panel, where it fills the panel.
+/// Columns of the LUT grid where the panel is wide enough.
+const LUT_COLUMNS: usize = 2;
+/// Grid rows the list shows before it scrolls in the docked panel; the half
+/// row shows that it scrolls.
+const VISIBLE_LUT_ROWS: f32 = 4.5;
+/// Grid rows the list keeps in the portrait panel, where it fills the panel.
 const MIN_PORTRAIT_LUT_ROWS: f32 = 3.0;
 
 /// What the LUT card asks for.
@@ -61,14 +64,18 @@ impl Sidebar {
             let items = look_lut_items(view, &query);
             let list_id = "develop-look-lut-list";
             let list = match view.layout {
-                ScreenLayout::Horizontal => {
-                    preview_list(ui, list_id, ListHeight::Rows(VISIBLE_LUT_ROWS), items)
-                }
+                ScreenLayout::Horizontal => preview_list(
+                    ui,
+                    list_id,
+                    ListHeight::Rows(VISIBLE_LUT_ROWS),
+                    LUT_COLUMNS,
+                    items,
+                ),
                 ScreenLayout::Vertical => {
-                    let min_height = (moduwu_design::CONTROL_HEIGHT + ui.spacing().item_spacing.y)
-                        * MIN_PORTRAIT_LUT_ROWS;
+                    let row_height = moduwu_design::Metrics::of(ui.ctx()).control_height;
+                    let min_height = (row_height + ROW_GAP) * MIN_PORTRAIT_LUT_ROWS;
                     Self::portrait_fill(ui, list_id, min_height, |ui, height| {
-                        preview_list(ui, list_id, ListHeight::Points(height), items)
+                        preview_list(ui, list_id, ListHeight::Points(height), LUT_COLUMNS, items)
                     })
                 }
             };

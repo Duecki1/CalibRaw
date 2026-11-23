@@ -198,10 +198,7 @@ impl Sidebar {
                 Self::begin_vertical_card_actions(ui.ctx());
             }
 
-            let mut scroll_style = egui::style::ScrollStyle::solid();
-            scroll_style.bar_width = 7.0;
-            scroll_style.bar_inner_margin = 7.0;
-            ui.spacing_mut().scroll = scroll_style;
+            ui.spacing_mut().scroll = moduwu_design::solid_scroll_style(ui);
 
             if app.ui.sidebar_tab == SidebarTab::Export {
                 super::export::show_export_action_panel(ui, |ui| {

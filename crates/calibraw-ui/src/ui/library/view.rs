@@ -60,10 +60,7 @@ impl Library {
         // One card fills the panel below the header, as wide as the header,
         // and the tree scrolls inside it.
         moduwu_design::content_card(ui, |ui| {
-            let mut scroll_style = egui::style::ScrollStyle::solid();
-            scroll_style.bar_width = 7.0;
-            scroll_style.bar_inner_margin = 7.0;
-            ui.spacing_mut().scroll = scroll_style;
+            ui.spacing_mut().scroll = moduwu_design::solid_scroll_style(ui);
 
             // While the scroll bar animates in or out, egui rounds the content
             // width up to whole pixels, so the area can report a fraction of a

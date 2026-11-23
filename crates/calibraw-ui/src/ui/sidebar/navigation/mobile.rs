@@ -3,6 +3,13 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
 
+/// Gap between two context tabs.
+const CONTEXT_TAB_SPACING: f32 = 1.0;
+/// Share of the last tab in view that an overflowing context-tab row shows.
+/// The scroll fade dims it, which shows the row scrolls; a row cut between
+/// two tabs would leave the fade nothing to dim.
+const CONTEXT_TAB_PEEK: f32 = 0.7;
+
 impl Sidebar {
     pub(super) fn show_vertical_mobile_shell(
         ui: &mut Ui,
@@ -132,6 +139,13 @@ impl Sidebar {
             52.0
         };
         let tabs_width = ui.available_width().max(1.0);
+        // Whether the tabs overflowed last frame; their width depends on it.
+        let overflow_id = ui.id().with("develop-portrait-context-tabs-overflow");
+        let overflowing = ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(overflow_id))
+            .unwrap_or(false);
+        let tab_size = egui::vec2(context_tab_width(tabs_width, overflowing), tab_height);
 
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.allocate_ui_with_layout(
@@ -139,21 +153,27 @@ impl Sidebar {
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_width(tabs_width);
-                egui::ScrollArea::horizontal()
+                let output = egui::ScrollArea::horizontal()
                     .id_salt("develop-portrait-context-tabs")
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .show(ui, |ui| {
-                        Self::show_mobile_context_tab_items(ui, app, tab_height)
+                        Self::show_mobile_context_tab_items(ui, app, tab_size)
                     });
+                let overflows = output.content_size.x > output.inner_rect.width() + 0.5;
+                if overflows != overflowing {
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(overflow_id, overflows));
+                    ui.ctx().request_repaint();
+                }
             },
         );
     }
 
-    fn show_mobile_context_tab_items(ui: &mut Ui, app: &mut CalibRawApp, tab_height: f32) {
+    fn show_mobile_context_tab_items(ui: &mut Ui, app: &mut CalibRawApp, tab_size: egui::Vec2) {
         use egui_phosphor::regular;
 
         let show_labels = app.preferences.show_develop_navigation_labels;
-        ui.spacing_mut().item_spacing.x = 1.0;
+        ui.spacing_mut().item_spacing.x = CONTEXT_TAB_SPACING;
         ui.horizontal(|ui| match app.ui.sidebar_tab {
             SidebarTab::Adjustments => {
                 let lut_shown = Self::look_lut_card_shown(app);
@@ -189,7 +209,7 @@ impl Sidebar {
                         app.develop_ui.adjustment_section == section
                             && (section != AdjustmentSection::Effects
                                 || app.develop_ui.effect_component.is_none()),
-                        egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
+                        tab_size,
                         label,
                     )
                     .clicked()
@@ -211,7 +231,7 @@ impl Sidebar {
                     &mut app.masks.stack.global_effects,
                     &mut app.develop_ui.effect_component,
                     photo_tiles,
-                    tab_height,
+                    tab_size,
                     show_labels,
                 );
                 let added =
@@ -262,7 +282,7 @@ impl Sidebar {
                         app.develop_ui.mask_section == section
                             && (section != MaskSection::Effects
                                 || app.develop_ui.mask_effect_component.is_none()),
-                        egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
+                        tab_size,
                         label,
                     )
                     .clicked()
@@ -283,7 +303,7 @@ impl Sidebar {
                         &mut mask.effect_components,
                         &mut app.develop_ui.mask_effect_component,
                         mask_effects::PhotoTiles::HIDDEN,
-                        tab_height,
+                        tab_size,
                         show_labels,
                     )
                     .is_some();
@@ -318,7 +338,7 @@ impl Sidebar {
         components: &mut Vec<crate::pipeline::EffectComponent>,
         selection: &mut Option<MaskEffect>,
         photo_tiles: mask_effects::PhotoTiles,
-        tab_height: f32,
+        tab_size: egui::Vec2,
         show_labels: bool,
     ) -> Option<mask_effects::EffectPick> {
         use egui_phosphor::regular;
@@ -334,7 +354,7 @@ impl Sidebar {
                         tr(effect.label()),
                         show_labels,
                         *selection == Some(effect),
-                        egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
+                        tab_size,
                         tr(effect.label()),
                     )
                     .clicked()
@@ -359,7 +379,7 @@ impl Sidebar {
                     tr("Add"),
                     show_labels,
                     false,
-                    egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
+                    tab_size,
                     tr("Add effect"),
                 )
             })
@@ -524,4 +544,21 @@ impl Sidebar {
             }
         });
     }
+}
+
+/// Width of each context tab in a row `row_width` wide. An overflowing row
+/// widens its tabs, from [`Sidebar::CONTEXT_TAB_WIDTH`], until the last tab in
+/// view is cut at [`CONTEXT_TAB_PEEK`] of its width. Widening never makes an
+/// overflowing row fit, so the width does not flip between frames.
+fn context_tab_width(row_width: f32, overflowing: bool) -> f32 {
+    let width = Sidebar::CONTEXT_TAB_WIDTH;
+    if !overflowing {
+        return width;
+    }
+    let pitch = width + CONTEXT_TAB_SPACING;
+    let whole_tabs = ((row_width - CONTEXT_TAB_PEEK * width) / pitch)
+        .floor()
+        .max(0.0);
+    // `whole_tabs` tabs and their gaps, then the peeking tab's share.
+    (row_width - whole_tabs * CONTEXT_TAB_SPACING) / (whole_tabs + CONTEXT_TAB_PEEK)
 }

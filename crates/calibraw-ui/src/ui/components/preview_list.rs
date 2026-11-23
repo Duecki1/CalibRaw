@@ -62,21 +62,29 @@ pub(crate) fn pointer_previews(ui: &Ui) -> bool {
     pointer_hovers(ui) && !egui::Popup::is_any_open(ui.ctx())
 }
 
-/// Draws `items` in a scroll area `height` tall, or shorter when they all
-/// fit.
+/// Narrowest cell a [`preview_list`] splits its width into; a narrower list
+/// shows fewer columns.
+const MIN_CELL_WIDTH: f32 = 120.0;
+/// Vertical gap between two rows of a [`preview_list`].
+pub(crate) const ROW_GAP: f32 = moduwu_design::SPACE_XS;
+
+/// Draws `items` in a grid of up to `columns` columns, filled row by row, in
+/// a scroll area `height` tall, or shorter when they all fit. A row of
+/// [`ListHeight::Rows`] is one grid row.
 pub(crate) fn preview_list<K: Clone>(
     ui: &mut Ui,
     id_salt: impl egui::AsIdSalt,
     height: ListHeight,
+    columns: usize,
     items: impl IntoIterator<Item = PreviewListItem<K>>,
 ) -> PreviewListResponse<K> {
     let previews = pointer_previews(ui);
+    let row_height = moduwu_design::Metrics::of(ui.ctx()).control_height;
     let height = match height {
-        ListHeight::Rows(rows) => {
-            (moduwu_design::CONTROL_HEIGHT + ui.spacing().item_spacing.y) * rows
-        }
+        ListHeight::Rows(rows) => (row_height + ROW_GAP) * rows,
         ListHeight::Points(points) => points,
     };
+    let items: Vec<_> = items.into_iter().collect();
     egui::ScrollArea::vertical()
         .id_salt(id_salt)
         .max_height(height)
@@ -86,11 +94,52 @@ pub(crate) fn preview_list<K: Clone>(
         .min_scrolled_height(height)
         .auto_shrink([false, true])
         .show(ui, |ui| {
-            show_items(ui, items, previews, |ui, label, selected| {
-                moduwu_design::navigation_row(ui, label, selected, egui::Sense::click())
-            })
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
+            let gap = ui.spacing().item_spacing.x;
+            let width = ui.available_width().max(1.0);
+            let fitting = ((width + gap) / (MIN_CELL_WIDTH + gap)).floor() as usize;
+            let columns = fitting.clamp(1, columns.max(1));
+            let cell = egui::vec2(
+                ((width - gap * (columns - 1) as f32) / columns as f32).max(1.0),
+                row_height,
+            );
+            let mut response = PreviewListResponse::default();
+            let mut items = items.into_iter().peekable();
+            while items.peek().is_some() {
+                ui.horizontal(|ui| {
+                    for item in items.by_ref().take(columns) {
+                        ui.allocate_ui(cell, |ui| {
+                            show_item(ui, item, previews, &mut response, |ui, label, selected| {
+                                let truncated = label_width(ui, &label)
+                                    > cell.x - ui.spacing().button_padding.x * 2.0;
+                                let row = moduwu_design::navigation_row(
+                                    ui,
+                                    label.as_str(),
+                                    selected,
+                                    egui::Sense::click(),
+                                );
+                                if truncated {
+                                    row.on_hover_text(label)
+                                } else {
+                                    row
+                                }
+                            });
+                        });
+                    }
+                });
+            }
+            response
         })
         .inner
+}
+
+/// Width of `label` on one line in a button's font.
+fn label_width(ui: &Ui, label: &str) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    ui.painter()
+        .layout_no_wrap(label.to_owned(), font, egui::Color32::PLACEHOLDER)
+        .size()
+        .x
 }
 
 /// A full-width dropdown of `items` whose closed field reads the selected
@@ -125,22 +174,34 @@ fn show_items<K: Clone>(
     mut row: impl FnMut(&mut Ui, String, bool) -> egui::Response,
 ) -> PreviewListResponse<K> {
     let mut response = PreviewListResponse::default();
-    for PreviewListItem {
+    for item in items {
+        show_item(ui, item, previews, &mut response, &mut row);
+    }
+    response
+}
+
+/// Draws `item` with `row` and records it in `response` when it is clicked
+/// or, when `previews`, hovered.
+fn show_item<K: Clone>(
+    ui: &mut Ui,
+    item: PreviewListItem<K>,
+    previews: bool,
+    response: &mut PreviewListResponse<K>,
+    row: impl FnOnce(&mut Ui, String, bool) -> egui::Response,
+) {
+    let PreviewListItem {
         key,
         label,
         selected,
         enabled,
-    } in items
-    {
-        let shown = ui
-            .add_enabled_ui(enabled, |ui| row(ui, label, selected))
-            .inner;
-        if shown.clicked() {
-            response.clicked = Some(key.clone());
-        }
-        if previews && shown.hovered() && enabled {
-            response.hovered = Some(key);
-        }
+    } = item;
+    let shown = ui
+        .add_enabled_ui(enabled, |ui| row(ui, label, selected))
+        .inner;
+    if shown.clicked() {
+        response.clicked = Some(key.clone());
     }
-    response
+    if previews && shown.hovered() && enabled {
+        response.hovered = Some(key);
+    }
 }

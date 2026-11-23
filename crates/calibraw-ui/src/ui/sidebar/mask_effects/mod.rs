@@ -155,7 +155,7 @@ where
         )
 }
 
-/// An effect card: its title, then its switch, Remove and, given `reset`,
+/// An effect card: its title, then Remove, its switch and, given `reset`,
 /// a Reset that sets it, in the header (in the shared footer on portrait
 /// screens), and `body`, collapsible. Returns whether the switch or `body`
 /// changed anything.
@@ -225,6 +225,11 @@ fn effect_card_frame(
                                 **reset = reset_button.clicked();
                                 rects.push(reset_button.rect);
                             }
+                            // Switch and reset line up with the adjustment cards'; the
+                            // effect's own remove button sits before them.
+                            let switch =
+                                moduwu_design::toggle_switch(ui, enabled, tr(effect.label()));
+                            changed |= switch.changed();
                             let remove_button = moduwu_design::ghost_icon_button(
                                 ui,
                                 egui_phosphor::regular::TRASH,
@@ -232,11 +237,8 @@ fn effect_card_frame(
                                 &tr_fmt("Remove {title}", &[("title", &tr(effect.label()))]),
                             );
                             *remove = remove_button.clicked();
-                            let switch =
-                                moduwu_design::toggle_switch(ui, enabled, tr(effect.label()));
-                            changed |= switch.changed();
-                            rects.push(remove_button.rect);
                             rects.push(switch.rect);
+                            rects.push(remove_button.rect);
                             rects
                         })
                         .inner;

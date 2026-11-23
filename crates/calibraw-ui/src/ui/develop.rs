@@ -242,10 +242,7 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
 
     ui.scope(|ui| {
         ui.style_mut().always_scroll_the_only_direction = true;
-        let mut scroll_style = egui::style::ScrollStyle::solid();
-        scroll_style.bar_width = 7.0;
-        scroll_style.bar_inner_margin = 7.0;
-        ui.spacing_mut().scroll = scroll_style;
+        ui.spacing_mut().scroll = moduwu_design::solid_scroll_style(ui);
 
         egui::ScrollArea::horizontal()
             .scroll_source(egui::scroll_area::ScrollSource::default())
