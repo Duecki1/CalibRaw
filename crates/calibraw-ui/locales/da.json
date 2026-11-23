@@ -2168,5 +2168,9 @@
   "Choose program…": "Vælg program…",
   "Edit in…": "Redigér i…",
   "Edit in {editor}": "Redigér i {editor}",
-  "Installed applications": "Installerede programmer"
+  "Installed applications": "Installerede programmer",
+  "Interface density": "Tæthed i brugerfladen",
+  "Comfortable": "Komfortabel",
+  "Compact": "Kompakt",
+  "Compact tightens the spacing of panels, cards, and sliders so more controls fit on screen. Buttons and switches keep their size.": "Kompakt gør afstanden i paneler, kort og skydere mindre, så flere kontroller er synlige på skærmen. Knapper og kontakter beholder deres størrelse."
 }

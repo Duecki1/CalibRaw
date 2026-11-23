@@ -1,6 +1,6 @@
-use crate::appearance::UiDesign;
+use crate::appearance::{UiDensity, UiDesign};
 use crate::pipeline::MaskCombineMode;
-use crate::platform::{self, SystemFont};
+use crate::platform::{self, PlatformCaps, SystemFont};
 use eframe::egui::{self, Color32};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -141,7 +141,7 @@ pub(crate) fn install(ctx: &egui::Context) {
     // Ctrl/Cmd +/- zoom the photo preview (`Preview::zoom_with_keyboard`),
     // not the interface.
     ctx.options_mut(|options| options.zoom_with_keyboard = false);
-    apply(ctx, UiDesign::default());
+    apply(ctx, UiDesign::default(), UiDensity::default());
 }
 
 /// Adds `font` after every other font of both families, so it only draws
@@ -164,6 +164,10 @@ fn add_fallback_font(fonts: &mut egui::FontDefinitions, font: SystemFont, name: 
     }
 }
 
-pub(crate) fn apply(ctx: &egui::Context, design: UiDesign) {
-    design.design().theme().apply(ctx);
+/// Installs `design`'s colours with `density`'s metrics for this device.
+pub(crate) fn apply(ctx: &egui::Context, design: UiDesign, density: UiDensity) {
+    design
+        .design()
+        .theme()
+        .apply_with_metrics(ctx, density.metrics(PlatformCaps::CURRENT));
 }

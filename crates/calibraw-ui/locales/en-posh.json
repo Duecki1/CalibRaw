@@ -2161,5 +2161,9 @@
   "Choose program…": "Select a programme…",
   "Edit in…": "Edit elsewhere…",
   "Edit in {editor}": "Edit in {editor}, if you please",
-  "Installed applications": "Applications in residence"
+  "Installed applications": "Applications in residence",
+  "Interface density": "Interface density",
+  "Comfortable": "Comfortable",
+  "Compact": "Compact",
+  "Compact tightens the spacing of panels, cards, and sliders so more controls fit on screen. Buttons and switches keep their size.": "Compact draws the panels, cards, and sliders closer together so that more controls fit upon the screen. Buttons and switches retain their size."
 }

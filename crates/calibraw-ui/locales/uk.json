@@ -2168,5 +2168,9 @@
   "Choose program…": "Вибрати програму…",
   "Edit in…": "Редагувати в…",
   "Edit in {editor}": "Редагувати в {editor}",
-  "Installed applications": "Встановлені застосунки"
+  "Installed applications": "Встановлені застосунки",
+  "Interface density": "Щільність інтерфейсу",
+  "Comfortable": "Вільна",
+  "Compact": "Компактна",
+  "Compact tightens the spacing of panels, cards, and sliders so more controls fit on screen. Buttons and switches keep their size.": "Компактна щільність зменшує відступи в панелях, картках і повзунках, щоб на екрані вміщувалося більше елементів керування. Кнопки й перемикачі зберігають свій розмір."
 }

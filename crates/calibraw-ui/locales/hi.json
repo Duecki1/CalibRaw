@@ -2168,5 +2168,9 @@
   "Choose program…": "प्रोग्राम चुनें…",
   "Edit in…": "इसमें संपादित करें…",
   "Edit in {editor}": "{editor} में संपादित करें",
-  "Installed applications": "इंस्टॉल किए गए ऐप्लिकेशन"
+  "Installed applications": "इंस्टॉल किए गए ऐप्लिकेशन",
+  "Interface density": "इंटरफ़ेस घनत्व",
+  "Comfortable": "आरामदायक",
+  "Compact": "कॉम्पैक्ट",
+  "Compact tightens the spacing of panels, cards, and sliders so more controls fit on screen. Buttons and switches keep their size.": "कॉम्पैक्ट पैनल, कार्ड और स्लाइडर के बीच की दूरी कम करता है, ताकि स्क्रीन पर ज़्यादा नियंत्रण दिखें। बटन और स्विच का आकार वही रहता है।"
 }

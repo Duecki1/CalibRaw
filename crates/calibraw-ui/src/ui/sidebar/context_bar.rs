@@ -61,7 +61,7 @@ impl Sidebar {
     fn padded_bar_row(ui: &mut Ui, contents: impl FnOnce(&mut Ui)) {
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(
-                moduwu_design::CONTENT_MARGIN,
+                moduwu_design::content_margin(ui),
                 moduwu_design::SPACE_SM as i8,
             ))
             .show(ui, |ui| {

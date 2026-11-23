@@ -1,6 +1,7 @@
 //! Persisted appearance settings.
 
 use crate::i18n::tr;
+use crate::platform::PlatformCaps;
 use eframe::egui::Color32;
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +55,52 @@ impl UiDesign {
 
     pub(crate) const fn is_dark(self) -> bool {
         self.design().is_dark()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+/// How tightly panels, cards and sliders are packed. Serde names are
+/// persisted in settings files. Control heights follow the input method, not
+/// this setting.
+pub(crate) enum UiDensity {
+    Comfortable,
+    Compact,
+}
+
+impl UiDensity {
+    pub(crate) const ALL: [Self; 2] = [Self::Comfortable, Self::Compact];
+
+    /// Compact on mobile, where the panel shares a small screen with the
+    /// photo; comfortable elsewhere.
+    pub(crate) const fn default_for(caps: PlatformCaps) -> Self {
+        if caps.is_mobile() {
+            Self::Compact
+        } else {
+            Self::Comfortable
+        }
+    }
+
+    /// The Moduwu metrics for this density with the device's input method.
+    pub(crate) const fn metrics(self, caps: PlatformCaps) -> moduwu_design::Metrics {
+        let density = match self {
+            Self::Comfortable => moduwu_design::Density::Comfortable,
+            Self::Compact => moduwu_design::Density::Compact,
+        };
+        moduwu_design::Metrics::new(caps.is_mobile(), density)
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Comfortable => tr("Comfortable"),
+            Self::Compact => tr("Compact"),
+        }
+    }
+}
+
+impl Default for UiDensity {
+    fn default() -> Self {
+        Self::default_for(PlatformCaps::CURRENT)
     }
 }
 

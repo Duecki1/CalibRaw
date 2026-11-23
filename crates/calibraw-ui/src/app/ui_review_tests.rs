@@ -8,12 +8,14 @@
 //! (a software Vulkan adapter also works); no window/display server is needed.
 //! CALIBRAW_UI_REVIEW_FILTER optionally selects comma-separated substrings of
 //! `theme/size/state.png`, e.g. `obsidian-blue/desktop-1280x800/presets-populated`.
-//! With no filter, all 132 PNGs are captured. Reuse a directory to replace the
+//! The `-compact` theme is Plain Grey Dark at compact density.
+//! With no filter, all 231 PNGs are captured. Reuse a directory to replace the
 //! same captures, or separate baseline/after directories for manual comparison.
 //! A child test process isolates config/cache without mutating this process's
 //! environment. The parent bounds the entire capture, including GPU startup.
 
 use super::*;
+use crate::appearance::UiDensity;
 use crate::performance_settings::PerformanceSettings;
 use eframe::egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor};
 use std::process::Command;
@@ -24,13 +26,38 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(600);
 const GPU_TIMEOUT: Duration = Duration::from_secs(30);
 const SETTLE_FRAMES: usize = 4;
 
-const THEMES: [(UiDesign, &str); 6] = [
-    (UiDesign::ObsidianBlue, "obsidian-blue"),
-    (UiDesign::ObsidianRed, "obsidian-red"),
-    (UiDesign::PlainGreyDark, "plain-grey-dark"),
-    (UiDesign::Porcelain, "porcelain"),
-    (UiDesign::DaylightBlue, "daylight-blue"),
-    (UiDesign::PlainGreyLight, "plain-grey-light"),
+const THEMES: [(UiDesign, UiDensity, &str); 7] = [
+    (
+        UiDesign::ObsidianBlue,
+        UiDensity::Comfortable,
+        "obsidian-blue",
+    ),
+    (
+        UiDesign::ObsidianRed,
+        UiDensity::Comfortable,
+        "obsidian-red",
+    ),
+    (
+        UiDesign::PlainGreyDark,
+        UiDensity::Comfortable,
+        "plain-grey-dark",
+    ),
+    (
+        UiDesign::PlainGreyDark,
+        UiDensity::Compact,
+        "plain-grey-dark-compact",
+    ),
+    (UiDesign::Porcelain, UiDensity::Comfortable, "porcelain"),
+    (
+        UiDesign::DaylightBlue,
+        UiDensity::Comfortable,
+        "daylight-blue",
+    ),
+    (
+        UiDesign::PlainGreyLight,
+        UiDensity::Comfortable,
+        "plain-grey-light",
+    ),
 ];
 const SIZES: [(&str, [u32; 2]); 3] = [
     ("desktop-1280x800", [1280, 800]),
@@ -119,7 +146,7 @@ fn capture_review(root: &Path, output_dir: &Path) {
     let selected =
         |name: &str| filters.is_empty() || filters.iter().any(|part| name.contains(part));
     let mut filenames = Vec::new();
-    for (_, theme) in THEMES {
+    for (_, _, theme) in THEMES {
         for (size, _) in SIZES {
             for (case, _, _) in CASES {
                 let name = format!("{theme}/{size}/{case}.png");
@@ -185,7 +212,7 @@ fn capture_review(root: &Path, output_dir: &Path) {
     pipeline.recompute(&queue, &device, &params);
 
     let mut count = 0;
-    for (design, theme_name) in THEMES {
+    for (design, density, theme_name) in THEMES {
         for (size_name, size) in SIZES {
             let prefix = format!("{theme_name}/{size_name}/");
             if !filenames.iter().any(|name| name.starts_with(&prefix)) {
@@ -193,11 +220,12 @@ fn capture_review(root: &Path, output_dir: &Path) {
             }
             let context = egui::Context::default();
             crate::ui::theme::install(&context);
-            crate::ui::theme::apply(&context, design);
+            crate::ui::theme::apply(&context, design, density);
             context.set_pixels_per_point(1.0);
             context.all_styles_mut(|style| style.animation_time = 0.0);
             let settings = PerformanceSettings {
                 ui_design: design,
+                ui_density: density,
                 onboarding_completed: true,
                 subject_mask_quality_chosen: true,
                 people_mask_quality_chosen: true,

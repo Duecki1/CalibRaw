@@ -100,7 +100,7 @@ fn develop_toolbar_dock_geometry(
         // Panel state is available after the first layout pass. Until then use
         // the same sizing rules as the Develop dock as a one-frame fallback.
         let viewport_size = ctx.content_rect().size();
-        let mut dock_width = crate::ui::sidebar::Sidebar::DOCKED_TOOL_RAIL_WIDTH;
+        let mut dock_width = crate::ui::sidebar::Sidebar::docked_tool_rail_width(ctx);
         if app.develop_ui.sidebar_open {
             let panel_max = crate::ui::layout::develop_sidebar_max_width(viewport_size);
             let default_width = moduwu_design::ScreenLayout::Horizontal

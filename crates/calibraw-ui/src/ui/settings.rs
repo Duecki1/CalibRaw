@@ -603,6 +603,20 @@ impl Settings {
             app.set_ui_design(design);
         }
 
+        let mut density = app.preferences.ui_density;
+        let density_options =
+            crate::appearance::UiDensity::ALL.map(|option| (option, option.label()));
+        moduwu_design::form_row_with_help(
+            ui,
+            tr("Interface density"),
+            220.0,
+            tr("Compact tightens the spacing of panels, cards, and sliders so more controls fit on screen. Buttons and switches keep their size."),
+            |ui, width| moduwu_design::segmented_control(ui, &mut density, &density_options, width),
+        );
+        if density != app.preferences.ui_density {
+            app.set_ui_density(density);
+        }
+
         let mut backdrop = app.preferences.preview_backdrop;
         let backdrop_help = match backdrop {
             crate::appearance::PreviewBackdrop::MatchPhoto => {

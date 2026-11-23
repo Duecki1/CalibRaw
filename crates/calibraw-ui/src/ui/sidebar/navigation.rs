@@ -57,7 +57,7 @@ impl Sidebar {
     ) {
         ui.take_available_width();
         single_open_cards::set_enabled(ui.ctx(), app.preferences.close_other_cards);
-        let vertical_spacing = if moduwu_design::is_compact_portrait(ui) {
+        let vertical_spacing = if moduwu_design::Metrics::of(ui.ctx()).density.is_compact() {
             moduwu_design::SPACE_XS
         } else {
             moduwu_design::SPACE_SM
@@ -277,8 +277,14 @@ impl Sidebar {
         ui.set_min_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = moduwu_design::SPACE_XS;
         let show_labels = app.preferences.show_develop_navigation_labels;
+        let icon_size = moduwu_design::tool_rail_icon_size(ui);
+        let end_space = if moduwu_design::Metrics::of(ui.ctx()).density.is_compact() {
+            2.0
+        } else {
+            5.0
+        };
         ui.vertical_centered(|ui| {
-            ui.add_space(5.0);
+            ui.add_space(end_space);
             for tab in SidebarTab::ALL {
                 let selected = app.ui.sidebar_tab == tab;
                 let clicked = ui
@@ -288,7 +294,7 @@ impl Sidebar {
                             ui,
                             tab.glyph(),
                             selected,
-                            moduwu_design::tool_rail_icon_size(),
+                            icon_size,
                             tab.tooltip(),
                         )
                         .clicked();
@@ -320,7 +326,7 @@ impl Sidebar {
         });
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-            ui.add_space(5.0);
+            ui.add_space(end_space);
 
             let filmstrip_tooltip = if app.develop_ui.filmstrip_open {
                 tr("Hide filmstrip")
@@ -331,7 +337,7 @@ impl Sidebar {
                 ui,
                 UiIcon::Filmstrip,
                 app.develop_ui.filmstrip_open,
-                moduwu_design::tool_rail_icon_size(),
+                icon_size,
                 filmstrip_tooltip,
             )
             .clicked()
@@ -348,7 +354,7 @@ impl Sidebar {
                 ui,
                 UiIcon::Sidebar,
                 app.develop_ui.sidebar_open,
-                moduwu_design::tool_rail_icon_size(),
+                icon_size,
                 sidebar_tooltip,
             )
             .clicked()

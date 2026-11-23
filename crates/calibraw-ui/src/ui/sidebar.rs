@@ -93,7 +93,11 @@ impl MaskCardSize {
 }
 
 impl Sidebar {
-    pub(crate) const DOCKED_TOOL_RAIL_WIDTH: f32 = 60.0;
+    /// Width of the docked Develop tool rail: its buttons and 10 points
+    /// either side (60 at comfortable density, 52 at compact on desktop).
+    pub(crate) fn docked_tool_rail_width(ctx: &egui::Context) -> f32 {
+        moduwu_design::Metrics::of(ctx).tool_rail_icon_edge + 20.0
+    }
     pub(crate) const ANDROID_LANDSCAPE_TOOL_RAIL_WIDTH: f32 = 72.0;
     const MASK_THUMBNAIL_EDGE: u32 = 64;
     pub(crate) const VERTICAL_MASK_STRIP_HEIGHT: f32 = 92.0;

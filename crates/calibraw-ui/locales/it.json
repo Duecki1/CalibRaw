@@ -2168,5 +2168,9 @@
   "Choose program…": "Scegli programma…",
   "Edit in…": "Modifica in…",
   "Edit in {editor}": "Modifica in {editor}",
-  "Installed applications": "Applicazioni installate"
+  "Installed applications": "Applicazioni installate",
+  "Interface density": "Densità dell’interfaccia",
+  "Comfortable": "Confortevole",
+  "Compact": "Compatta",
+  "Compact tightens the spacing of panels, cards, and sliders so more controls fit on screen. Buttons and switches keep their size.": "Compatta riduce la spaziatura di pannelli, schede e cursori, così sullo schermo entrano più controlli. Pulsanti e interruttori mantengono le loro dimensioni."
 }

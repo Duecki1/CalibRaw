@@ -365,6 +365,7 @@ impl CalibRawApp {
                 hdd_mode: performance.hdd_mode,
                 graphics_backend: performance.graphics_backend,
                 ui_design: performance.ui_design,
+                ui_density: performance.ui_density,
                 preview_backdrop: performance.preview_backdrop,
                 language: performance.language,
                 onboarding_completed: performance.onboarding_completed,
@@ -581,7 +582,11 @@ impl CalibRawApp {
             app.report_error(ErrorKind::Settings, error.to_string());
         }
         crate::ui::theme::install(&cc.egui_ctx);
-        crate::ui::theme::apply(&cc.egui_ctx, app.preferences.ui_design);
+        crate::ui::theme::apply(
+            &cc.egui_ctx,
+            app.preferences.ui_design,
+            app.preferences.ui_density,
+        );
         if let Err(error) = app
             .platform
             .set_light_system_bars(!app.preferences.ui_design.is_dark())

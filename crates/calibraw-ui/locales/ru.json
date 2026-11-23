@@ -2168,5 +2168,9 @@
   "Choose program…": "Выбрать программу…",
   "Edit in…": "Редактировать в…",
   "Edit in {editor}": "Редактировать в {editor}",
-  "Installed applications": "Установленные приложения"
+  "Installed applications": "Установленные приложения",
+  "Interface density": "Плотность интерфейса",
+  "Comfortable": "Свободная",
+  "Compact": "Компактная",
+  "Compact tightens the spacing of panels, cards, and sliders so more controls fit on screen. Buttons and switches keep their size.": "Компактная плотность уменьшает отступы в панелях, карточках и ползунках, чтобы на экране помещалось больше элементов управления. Кнопки и переключатели сохраняют свой размер."
 }

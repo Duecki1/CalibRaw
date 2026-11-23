@@ -650,7 +650,9 @@ impl Sidebar {
             full_image_mask_changed = full_image_mask_before != mask.reads_full_image_mask();
         }
 
-        if moduwu_design::is_compact_portrait(ui)
+        // Vertical details only show in the portrait shell; touch devices
+        // reset the section's adjustments from here.
+        if app.caps().is_mobile()
             && vertical_section.is_some_and(|section| section != MaskSection::Properties)
         {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

@@ -7,10 +7,19 @@ impl CalibRawApp {
             return;
         }
         self.preferences.ui_design = design;
-        crate::ui::theme::apply(&self.egui_ctx, design);
+        crate::ui::theme::apply(&self.egui_ctx, design, self.preferences.ui_density);
         if let Err(error) = self.platform.set_light_system_bars(!design.is_dark()) {
             log::warn!("{error}");
         }
+        self.persist_performance_settings();
+    }
+
+    pub(crate) fn set_ui_density(&mut self, density: crate::appearance::UiDensity) {
+        if self.preferences.ui_density == density {
+            return;
+        }
+        self.preferences.ui_density = density;
+        crate::ui::theme::apply(&self.egui_ctx, self.preferences.ui_design, density);
         self.persist_performance_settings();
     }
 
@@ -502,6 +511,7 @@ impl CalibRawApp {
             edit_in_color_space: self.preferences.edit_in.color_space,
             edit_in_editors: self.preferences.edit_in.editors.clone(),
             ui_design: self.preferences.ui_design,
+            ui_density: self.preferences.ui_density,
             preview_backdrop: self.preferences.preview_backdrop,
             language: self.preferences.language,
             onboarding_completed: self.preferences.onboarding_completed,

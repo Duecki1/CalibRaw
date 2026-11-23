@@ -2168,5 +2168,9 @@
   "Choose program…": "選擇程式…",
   "Edit in…": "在其他應用程式中編輯…",
   "Edit in {editor}": "在 {editor} 中編輯",
-  "Installed applications": "已安裝的應用程式"
+  "Installed applications": "已安裝的應用程式",
+  "Interface density": "介面密度",
+  "Comfortable": "寬鬆",
+  "Compact": "緊湊",
+  "Compact tightens the spacing of panels, cards, and sliders so more controls fit on screen. Buttons and switches keep their size.": "緊湊模式會縮小面板、卡片和滑桿的間距，讓畫面容納更多控制項。按鈕和開關的大小維持不變。"
 }

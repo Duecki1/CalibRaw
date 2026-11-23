@@ -28,6 +28,11 @@ winit = { path = "vendor/winit" }
 wgpu = { path = "vendor/wgpu" }
 wgpu-hal = { path = "vendor/wgpu-hal" }
 
+# TEMPORARY: Moduwu 5.0.0 (UI density) is not pushed yet. Push it, set the
+# `rev` above to its commit and delete this section.
+[patch."https://github.com/Duecki1/Moduwu"]
+moduwu-design = { path = "../moduwu-design" }
+
 [workspace.metadata]
 # F-Droid reads this committed value when checking release tags. Increase it
 # for every release; GitHub APKs keep their existing Git-history version codes.
@@ -59,7 +64,7 @@ repository = "https://github.com/Duecki1/CalibRaw"
 readme = "README.md"
 
 [workspace.dependencies]
-moduwu-design = { version = "4.2.0", git = "https://github.com/Duecki1/Moduwu", rev = "28b27ba09810921e54aaa720e0cb5410bdefa05c" }
+moduwu-design = { version = "5.0.0", git = "https://github.com/Duecki1/Moduwu", rev = "28b27ba09810921e54aaa720e0cb5410bdefa05c" }
 calibraw-core = { version = "1.5.1", path = "crates/calibraw-core" }
 calibraw-gpu = { version = "1.5.1", path = "crates/calibraw-gpu" }
 calibraw-ai = { version = "1.5.1", path = "crates/calibraw-ai" }

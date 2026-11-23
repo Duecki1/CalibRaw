@@ -360,7 +360,7 @@ impl eframe::App for CalibRawApp {
         if self.ui.active_tab == AppTab::Develop && !overlay_develop {
             egui::Panel::right(crate::ui::layout::DEVELOP_TOOL_RAIL_ID)
                 .resizable(false)
-                .exact_size(Sidebar::DOCKED_TOOL_RAIL_WIDTH)
+                .exact_size(Sidebar::docked_tool_rail_width(ui.ctx()))
                 .frame(moduwu_design::panel_frame(ui))
                 .show(ui, |ui| {
                     crate::ui::layout::docked_panel_contents(ui, |ui| {

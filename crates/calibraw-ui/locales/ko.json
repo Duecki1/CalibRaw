@@ -2162,5 +2162,9 @@
   "Choose program…": "프로그램 선택…",
   "Edit in…": "다른 앱에서 편집…",
   "Edit in {editor}": "{editor}에서 편집",
-  "Installed applications": "설치된 응용 프로그램"
+  "Installed applications": "설치된 응용 프로그램",
+  "Interface density": "인터페이스 밀도",
+  "Comfortable": "여유 있게",
+  "Compact": "컴팩트",
+  "Compact tightens the spacing of panels, cards, and sliders so more controls fit on screen. Buttons and switches keep their size.": "컴팩트는 패널, 카드 및 슬라이더의 간격을 좁혀 화면에 더 많은 컨트롤이 들어가게 합니다. 버튼과 스위치의 크기는 그대로 유지됩니다."
 }

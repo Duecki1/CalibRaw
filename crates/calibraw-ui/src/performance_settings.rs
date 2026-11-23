@@ -107,6 +107,10 @@ pub(crate) struct PerformanceSettings {
     #[serde(deserialize_with = "lenient", skip_serializing_if = "Vec::is_empty")]
     pub edit_in_editors: Vec<ExternalEditor>,
     pub ui_design: crate::appearance::UiDesign,
+    /// Missing in files written before it existed, which therefore take the
+    /// platform default: compact on mobile, comfortable elsewhere.
+    #[serde(deserialize_with = "lenient")]
+    pub ui_density: crate::appearance::UiDensity,
     pub preview_backdrop: crate::appearance::PreviewBackdrop,
     /// Missing in files written before it existed, which therefore follow the
     /// system; a first open starts in English and asks for another language in
@@ -422,6 +426,7 @@ impl Default for PerformanceSettings {
             edit_in_color_space: OutputColorSpace::ProPhotoRgb,
             edit_in_editors: Vec::new(),
             ui_design: crate::appearance::UiDesign::default(),
+            ui_density: crate::appearance::UiDensity::default(),
             preview_backdrop: crate::appearance::PreviewBackdrop::default(),
             // A first open shows English; `System` is only the decode default for
             // files written before the language setting existed, whose users had

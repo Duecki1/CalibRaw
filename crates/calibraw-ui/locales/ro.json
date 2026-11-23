@@ -2168,5 +2168,9 @@
   "Choose program…": "Alege programul…",
   "Edit in…": "Editează în…",
   "Edit in {editor}": "Editează în {editor}",
-  "Installed applications": "Aplicații instalate"
+  "Installed applications": "Aplicații instalate",
+  "Interface density": "Densitatea interfeței",
+  "Comfortable": "Confortabilă",
+  "Compact": "Compactă",
+  "Compact tightens the spacing of panels, cards, and sliders so more controls fit on screen. Buttons and switches keep their size.": "Compactă micșorează spațierea panourilor, cardurilor și glisoarelor, ca să încapă mai multe comenzi pe ecran. Butoanele și comutatoarele își păstrează dimensiunea."
 }

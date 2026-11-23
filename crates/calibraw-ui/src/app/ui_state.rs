@@ -45,6 +45,7 @@ pub(crate) struct PreferencesState {
     /// The saved choice, which the editor's device follows from the next start.
     pub(crate) graphics_backend: crate::graphics_backend::GraphicsBackend,
     pub(crate) ui_design: UiDesign,
+    pub(crate) ui_density: crate::appearance::UiDensity,
     pub(crate) preview_backdrop: PreviewBackdrop,
     pub(crate) language: crate::i18n::LanguageChoice,
     pub(crate) onboarding_completed: bool,
