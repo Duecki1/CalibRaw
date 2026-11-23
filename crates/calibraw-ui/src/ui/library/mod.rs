@@ -113,10 +113,117 @@ const MAX_AUTOMATIC_THUMBNAIL_WORKERS: usize = 12;
 /// The automatic count when installed memory is unknown.
 const UNKNOWN_MEMORY_THUMBNAIL_WORKERS: usize = 4;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+/// What the library sorts by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LibrarySortKey {
+    /// The capture date, falling back to the file's date until it is read.
+    Date,
+    Name,
+    Size,
+    Rating,
+    Flag,
+    /// Whether the saved edits differ from the photo's start.
+    Edits,
+}
+
+impl LibrarySortKey {
+    const ALL: [Self; 6] = [
+        Self::Date,
+        Self::Name,
+        Self::Size,
+        Self::Rating,
+        Self::Flag,
+        Self::Edits,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Date => tr("Date"),
+            Self::Name => tr("Name"),
+            Self::Size => tr("File size"),
+            Self::Rating => tr("Rating"),
+            Self::Flag => tr("Flag"),
+            Self::Edits => tr("Edits"),
+        }
+    }
+
+    /// The direction choosing the key starts with: the order people usually
+    /// want, which the direction switch then reverses.
+    const fn usual_direction(self) -> LibrarySortDirection {
+        match self {
+            Self::Name => LibrarySortDirection::Ascending,
+            Self::Date | Self::Size | Self::Rating | Self::Flag | Self::Edits => {
+                LibrarySortDirection::Descending
+            }
+        }
+    }
+
+    /// The order `direction` gives this key, as the direction switch names it.
+    fn direction_label(self, direction: LibrarySortDirection) -> &'static str {
+        use LibrarySortDirection::{Ascending, Descending};
+        match (self, direction) {
+            (Self::Date, Descending) => tr("Newest first"),
+            (Self::Date, Ascending) => tr("Oldest first"),
+            (Self::Name, Ascending) => tr("A–Z"),
+            (Self::Name, Descending) => tr("Z–A"),
+            (Self::Size, Descending) => tr("Largest first"),
+            (Self::Size, Ascending) => tr("Smallest first"),
+            (Self::Rating, Descending) => tr("Highest first"),
+            (Self::Rating, Ascending) => tr("Lowest first"),
+            (Self::Flag, Descending) => tr("Picks first"),
+            (Self::Flag, Ascending) => tr("Rejects first"),
+            (Self::Edits, Descending) => tr("Edited first"),
+            (Self::Edits, Ascending) => tr("Unedited first"),
+        }
+    }
+}
+
+/// Ascending puts the smallest value first: the oldest date, A, the smallest
+/// file, the lowest rating, rejects, and unedited photos.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LibrarySortDirection {
+    Ascending,
+    Descending,
+}
+
+/// The library's order: a key and its direction. Saved in the settings under
+/// one name for each pair ([`SavedLibrarySortOrder`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(from = "SavedLibrarySortOrder", into = "SavedLibrarySortOrder")]
+pub(crate) struct LibrarySortOrder {
+    key: LibrarySortKey,
+    direction: LibrarySortDirection,
+}
+
+impl Default for LibrarySortOrder {
+    fn default() -> Self {
+        Self::by(LibrarySortKey::Date)
+    }
+}
+
+impl LibrarySortOrder {
+    /// Sorts by `key` in its usual direction.
+    const fn by(key: LibrarySortKey) -> Self {
+        Self {
+            key,
+            direction: key.usual_direction(),
+        }
+    }
+
+    fn label(self) -> String {
+        format!(
+            "{} · {}",
+            self.key.label(),
+            self.key.direction_label(self.direction)
+        )
+    }
+}
+
+/// How a [`LibrarySortOrder`] is saved in the settings. These names are
+/// stored and must not change.
+#[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum LibrarySortOrder {
-    #[default]
+enum SavedLibrarySortOrder {
     NewestFirst,
     OldestFirst,
     NameAscending,
@@ -127,21 +234,47 @@ pub(crate) enum LibrarySortOrder {
     RatingLowestFirst,
     FlagPickedFirst,
     FlagRejectedFirst,
+    EditedFirst,
+    UneditedFirst,
 }
 
-impl LibrarySortOrder {
-    fn label(self) -> &'static str {
-        match self {
-            Self::NewestFirst => tr("Newest first"),
-            Self::OldestFirst => tr("Oldest first"),
-            Self::NameAscending => tr("Name A–Z"),
-            Self::NameDescending => tr("Name Z–A"),
-            Self::LargestFirst => tr("Largest first"),
-            Self::SmallestFirst => tr("Smallest first"),
-            Self::RatingHighestFirst => tr("Rating: highest first"),
-            Self::RatingLowestFirst => tr("Rating: lowest first"),
-            Self::FlagPickedFirst => tr("Flag: picks first"),
-            Self::FlagRejectedFirst => tr("Flag: rejects first"),
+impl From<SavedLibrarySortOrder> for LibrarySortOrder {
+    fn from(saved: SavedLibrarySortOrder) -> Self {
+        use LibrarySortDirection::{Ascending, Descending};
+        let (key, direction) = match saved {
+            SavedLibrarySortOrder::NewestFirst => (LibrarySortKey::Date, Descending),
+            SavedLibrarySortOrder::OldestFirst => (LibrarySortKey::Date, Ascending),
+            SavedLibrarySortOrder::NameAscending => (LibrarySortKey::Name, Ascending),
+            SavedLibrarySortOrder::NameDescending => (LibrarySortKey::Name, Descending),
+            SavedLibrarySortOrder::LargestFirst => (LibrarySortKey::Size, Descending),
+            SavedLibrarySortOrder::SmallestFirst => (LibrarySortKey::Size, Ascending),
+            SavedLibrarySortOrder::RatingHighestFirst => (LibrarySortKey::Rating, Descending),
+            SavedLibrarySortOrder::RatingLowestFirst => (LibrarySortKey::Rating, Ascending),
+            SavedLibrarySortOrder::FlagPickedFirst => (LibrarySortKey::Flag, Descending),
+            SavedLibrarySortOrder::FlagRejectedFirst => (LibrarySortKey::Flag, Ascending),
+            SavedLibrarySortOrder::EditedFirst => (LibrarySortKey::Edits, Descending),
+            SavedLibrarySortOrder::UneditedFirst => (LibrarySortKey::Edits, Ascending),
+        };
+        Self { key, direction }
+    }
+}
+
+impl From<LibrarySortOrder> for SavedLibrarySortOrder {
+    fn from(order: LibrarySortOrder) -> Self {
+        use LibrarySortDirection::{Ascending, Descending};
+        match (order.key, order.direction) {
+            (LibrarySortKey::Date, Descending) => Self::NewestFirst,
+            (LibrarySortKey::Date, Ascending) => Self::OldestFirst,
+            (LibrarySortKey::Name, Ascending) => Self::NameAscending,
+            (LibrarySortKey::Name, Descending) => Self::NameDescending,
+            (LibrarySortKey::Size, Descending) => Self::LargestFirst,
+            (LibrarySortKey::Size, Ascending) => Self::SmallestFirst,
+            (LibrarySortKey::Rating, Descending) => Self::RatingHighestFirst,
+            (LibrarySortKey::Rating, Ascending) => Self::RatingLowestFirst,
+            (LibrarySortKey::Flag, Descending) => Self::FlagPickedFirst,
+            (LibrarySortKey::Flag, Ascending) => Self::FlagRejectedFirst,
+            (LibrarySortKey::Edits, Descending) => Self::EditedFirst,
+            (LibrarySortKey::Edits, Ascending) => Self::UneditedFirst,
         }
     }
 }
@@ -890,7 +1023,7 @@ pub(crate) struct LibraryState {
     sort_order: LibrarySortOrder,
     view: LibraryView,
     search_query: String,
-    review_filter: LibraryReviewFilter,
+    photo_filter: LibraryPhotoFilter,
     /// Show RAW+JPEG pairs once, as the RAW. Rebuilt with the entry indices.
     stack_raw_companions: bool,
     raw_companions: RawCompanions,

@@ -413,6 +413,7 @@ impl LibraryState {
 
         let mut review_sort_changed = false;
         let mut date_sort_changed = false;
+        let mut edit_sort_changed = false;
         for _ in 0..MAX_EVENTS_PER_FRAME {
             let received = self.event_receiver.as_ref().map(mpsc::Receiver::try_recv);
             let event = match received {
@@ -543,7 +544,7 @@ impl LibraryState {
                                     review_sort_changed |=
                                         self.show_review(&asset_id, badges.review);
                                 }
-                                self.entries[index].asset.metadata.edited = badges.edited;
+                                edit_sort_changed |= self.show_edit_state(&asset_id, badges.edited);
                             }
                             let entry = &mut self.entries[index];
                             entry.edits = edits;
@@ -609,7 +610,7 @@ impl LibraryState {
                 _ => {}
             }
         }
-        if review_sort_changed || date_sort_changed {
+        if review_sort_changed || date_sort_changed || edit_sort_changed {
             self.sort_entries();
         }
     }

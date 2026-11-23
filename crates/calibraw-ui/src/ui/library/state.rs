@@ -183,7 +183,7 @@ impl LibraryState {
             sort_order,
             view,
             search_query: String::new(),
-            review_filter: LibraryReviewFilter::default(),
+            photo_filter: LibraryPhotoFilter::default(),
             stack_raw_companions,
             raw_companions: RawCompanions::default(),
             selection: LibrarySelection::default(),
@@ -290,7 +290,9 @@ impl LibraryState {
             .enumerate()
             .filter_map(|(index, entry)| {
                 (library_filename_matches(&entry.asset.display_name, &terms)
-                    && self.review_filter.matches(entry.review())
+                    && self
+                        .photo_filter
+                        .matches(entry.review(), entry.asset.metadata.edited)
                     && !self.hides_raw_companion(&entry.asset.id))
                 .then_some(index)
             })
@@ -444,12 +446,13 @@ impl LibraryState {
 
     fn sorts_by_review(&self) -> bool {
         matches!(
-            self.sort_order,
-            LibrarySortOrder::RatingHighestFirst
-                | LibrarySortOrder::RatingLowestFirst
-                | LibrarySortOrder::FlagPickedFirst
-                | LibrarySortOrder::FlagRejectedFirst
+            self.sort_order.key,
+            LibrarySortKey::Rating | LibrarySortKey::Flag
         )
+    }
+
+    fn sorts_by_edit_state(&self) -> bool {
+        self.sort_order.key == LibrarySortKey::Edits
     }
 
     /// The photo's review as the library shows it.
@@ -477,10 +480,23 @@ impl LibraryState {
         changed && self.sorts_by_review()
     }
 
-    /// Shows whether the photo's saved edits now differ from its start.
+    /// Shows whether the photo's saved edits differ from its start; returns
+    /// whether that changed the order the grid sorts by.
+    pub(super) fn show_edit_state(&mut self, asset_id: &LibraryAssetId, edited: bool) -> bool {
+        let Some(index) = self.entry_indices.get(asset_id).copied() else {
+            return false;
+        };
+        let metadata = &mut self.entries[index].asset.metadata;
+        let changed = metadata.edited != edited;
+        metadata.edited = edited;
+        changed && self.sorts_by_edit_state()
+    }
+
+    /// Shows whether the photo's saved edits now differ from its start,
+    /// re-sorting when needed.
     pub(crate) fn show_saved_edit_state(&mut self, asset_id: &LibraryAssetId, edited: bool) {
-        if let Some(index) = self.entry_indices.get(asset_id).copied() {
-            self.entries[index].asset.metadata.edited = edited;
+        if self.show_edit_state(asset_id, edited) {
+            self.sort_entries();
         }
     }
 

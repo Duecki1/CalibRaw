@@ -291,60 +291,36 @@ pub(super) fn compare_library_entries(
     sort_order: LibrarySortOrder,
 ) -> CmpOrdering {
     let name_order = compare_library_names(&left.asset, &right.asset);
-
-    match sort_order {
-        LibrarySortOrder::RatingHighestFirst => right
-            .review()
-            .rating
-            .cmp(&left.review().rating)
-            .then(name_order),
-        LibrarySortOrder::RatingLowestFirst => left
-            .review()
-            .rating
-            .cmp(&right.review().rating)
-            .then(name_order),
-        LibrarySortOrder::FlagPickedFirst => right
-            .review()
-            .flag
-            .cmp(&left.review().flag)
-            .then_with(|| right.review().rating.cmp(&left.review().rating))
-            .then(name_order),
-        LibrarySortOrder::FlagRejectedFirst => left
-            .review()
-            .flag
-            .cmp(&right.review().flag)
-            .then_with(|| right.review().rating.cmp(&left.review().rating))
-            .then(name_order),
+    let (left_metadata, right_metadata) = (&left.asset.metadata, &right.asset.metadata);
+    let ascending = match sort_order.key {
         // The date the photo was taken, not the file's: a photo keeps its
         // capture date when it is copied or edited, while its file date moves.
         // Capture dates arrive with the metadata the thumbnail workers read,
         // so photos without one yet fall back to the file's date.
-        LibrarySortOrder::NewestFirst => right
-            .asset
-            .metadata
+        LibrarySortKey::Date => left_metadata
             .date_order_seconds()
-            .cmp(&left.asset.metadata.date_order_seconds())
+            .cmp(&right_metadata.date_order_seconds()),
+        LibrarySortKey::Name => name_order,
+        LibrarySortKey::Size => left_metadata.bytes.cmp(&right_metadata.bytes),
+        LibrarySortKey::Rating => left.review().rating.cmp(&right.review().rating),
+        LibrarySortKey::Flag => left.review().flag.cmp(&right.review().flag),
+        LibrarySortKey::Edits => left_metadata.edited.cmp(&right_metadata.edited),
+    };
+    let order = match sort_order.direction {
+        LibrarySortDirection::Ascending => ascending,
+        LibrarySortDirection::Descending => ascending.reverse(),
+    };
+    // Ties keep one order whichever the direction: photos with the same flag
+    // by rating, highest first, and every tie then by name, A–Z.
+    match sort_order.key {
+        LibrarySortKey::Name => order,
+        LibrarySortKey::Flag => order
+            .then_with(|| right.review().rating.cmp(&left.review().rating))
             .then(name_order),
-        LibrarySortOrder::OldestFirst => left
-            .asset
-            .metadata
-            .date_order_seconds()
-            .cmp(&right.asset.metadata.date_order_seconds())
-            .then(name_order),
-        LibrarySortOrder::NameAscending => name_order,
-        LibrarySortOrder::NameDescending => name_order.reverse(),
-        LibrarySortOrder::LargestFirst => right
-            .asset
-            .metadata
-            .bytes
-            .cmp(&left.asset.metadata.bytes)
-            .then(name_order),
-        LibrarySortOrder::SmallestFirst => left
-            .asset
-            .metadata
-            .bytes
-            .cmp(&right.asset.metadata.bytes)
-            .then(name_order),
+        LibrarySortKey::Date
+        | LibrarySortKey::Size
+        | LibrarySortKey::Rating
+        | LibrarySortKey::Edits => order.then(name_order),
     }
 }
 

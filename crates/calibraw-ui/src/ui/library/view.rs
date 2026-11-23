@@ -100,7 +100,7 @@ impl Library {
             moduwu_design::ResponsiveWidth::from_width(ui.available_width()).is_compact();
         let mut selected_sort = app.library.sort_order();
         let mut selected_view = app.library.view();
-        let mut selected_filter = app.library.review_filter;
+        let mut selected_filter = app.library.photo_filter;
         let mut stack_raw_companions = app.library.stacks_raw_companions();
         let header_title = library_header_title(app);
         let in_linked_folder = app.library.linked_folder_label().is_some();
@@ -245,7 +245,7 @@ impl Library {
         }
         app.set_library_sort_order(selected_sort);
         app.set_library_view(selected_view);
-        app.library.review_filter = selected_filter;
+        app.library.photo_filter = selected_filter;
         app.set_library_stack_raw_companions(stack_raw_companions);
         if toggle_selecting {
             if app.library.is_selecting() {
@@ -258,18 +258,18 @@ impl Library {
             .follow_document(super::review::current_document_id(app));
         let visible = app.library.visible_entry_indices();
         app.library.retain_visible_selection(&visible);
-        if app.library.review_filter.active() {
+        if app.library.photo_filter.active() {
             ui.horizontal_wrapped(|ui| {
                 ui.weak(tr_fmt(
                     "Showing {count} of {photo_count} · {summary}",
                     &[
                         ("count", &visible.len()),
                         ("photo_count", &app.library.photo_count()),
-                        ("summary", &app.library.review_filter.summary()),
+                        ("summary", &app.library.photo_filter.summary()),
                     ],
                 ));
                 if ui.small_button(tr("Clear filters")).clicked() {
-                    app.library.review_filter = LibraryReviewFilter::default();
+                    app.library.photo_filter = LibraryPhotoFilter::default();
                 }
             });
         }
@@ -302,11 +302,11 @@ impl Library {
             if show_library_empty_state(
                 ui,
                 tr("No matching photos"),
-                tr("Change the filename, rating or flag filters to show more photos."),
+                tr("Change the filename, rating, flag or edit filters to show more photos."),
                 Some(tr("Clear search & filters")),
             ) {
                 app.library.clear_search();
-                app.library.review_filter = LibraryReviewFilter::default();
+                app.library.photo_filter = LibraryPhotoFilter::default();
             }
         } else {
             show_thumbnail_grid(ui, app, visible, &mut open_asset, &mut library_action);
@@ -745,7 +745,7 @@ fn show_library_view_combos(
     ui: &mut Ui,
     selected_sort: &mut LibrarySortOrder,
     selected_view: &mut LibraryView,
-    selected_filter: &mut LibraryReviewFilter,
+    selected_filter: &mut LibraryPhotoFilter,
     stack_raw_companions: &mut bool,
 ) {
     const SORT_WIDTH: f32 = 154.0;

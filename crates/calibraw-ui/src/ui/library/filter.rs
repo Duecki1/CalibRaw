@@ -5,32 +5,37 @@ use egui_phosphor::regular;
 use moduwu_design::MenuItem;
 
 /// An empty selection means all values; choices within a group are combined with OR.
-/// The rating, flag and filename groups are combined with AND.
+/// The rating, flag, edit and filename groups are combined with AND.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct LibraryReviewFilter {
+pub(super) struct LibraryPhotoFilter {
     pub(super) ratings: [bool; 6],
     pub(super) flags: [bool; 3],
+    /// In the order of `edit_labels`: edited, unedited.
+    pub(super) edits: [bool; 2],
 }
 
-impl LibraryReviewFilter {
+impl LibraryPhotoFilter {
     pub(super) fn active(self) -> bool {
-        self.ratings.iter().any(|selected| *selected) || self.flags.iter().any(|selected| *selected)
+        any_selected(&self.ratings) || any_selected(&self.flags) || any_selected(&self.edits)
     }
 
-    pub(super) fn matches(self, review: PhotoReview) -> bool {
+    /// Whether a photo with `review`, whose saved edits differ from its start
+    /// when `edited`, passes the filter.
+    pub(super) fn matches(self, review: PhotoReview, edited: bool) -> bool {
         let flag = match review.flag {
             PhotoFlag::Picked => 0,
             PhotoFlag::Unflagged => 1,
             PhotoFlag::Rejected => 2,
         };
-        (!self.ratings.iter().any(|selected| *selected)
-            || self.ratings[usize::from(review.rating.min(5))])
-            && (!self.flags.iter().any(|selected| *selected) || self.flags[flag])
+        let edit = if edited { 0 } else { 1 };
+        (!any_selected(&self.ratings) || self.ratings[usize::from(review.rating.min(5))])
+            && (!any_selected(&self.flags) || self.flags[flag])
+            && (!any_selected(&self.edits) || self.edits[edit])
     }
 
     /// The ratings the filter shows, such as "5★, 4★", or `None` for all.
     fn rating_summary(self) -> Option<String> {
-        self.ratings.iter().any(|selected| *selected).then(|| {
+        any_selected(&self.ratings).then(|| {
             (0..=5)
                 .rev()
                 .filter(|rating| self.ratings[*rating])
@@ -48,7 +53,7 @@ impl LibraryReviewFilter {
 
     /// The flags the filter shows, such as "Pick, Reject", or `None` for all.
     fn flag_summary(self) -> Option<String> {
-        self.flags.iter().any(|selected| *selected).then(|| {
+        any_selected(&self.flags).then(|| {
             flag_labels()
                 .into_iter()
                 .enumerate()
@@ -59,62 +64,109 @@ impl LibraryReviewFilter {
         })
     }
 
+    /// The edit states the filter shows, such as "Edited", or `None` for all.
+    fn edit_summary(self) -> Option<String> {
+        any_selected(&self.edits).then(|| {
+            edit_labels()
+                .into_iter()
+                .zip(self.edits)
+                .filter(|(_, selected)| *selected)
+                .map(|(label, _)| label)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+    }
+
     pub(super) fn summary(self) -> String {
-        [self.rating_summary(), self.flag_summary()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ")
+        [
+            self.rating_summary(),
+            self.flag_summary(),
+            self.edit_summary(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
     }
 }
 
-/// The flag filter's labels, in the order of `LibraryReviewFilter::flags`.
+/// The flag filter's labels, in the order of `LibraryPhotoFilter::flags`.
 fn flag_labels() -> [&'static str; 3] {
     [tr("Pick"), tr("Unflagged"), tr("Reject")]
 }
 
-/// Every sort order, with the icon of what it sorts by.
-const SORT_ORDERS: [(LibrarySortOrder, &str); 10] = [
-    (LibrarySortOrder::NewestFirst, regular::CALENDAR_BLANK),
-    (LibrarySortOrder::OldestFirst, regular::CALENDAR_BLANK),
-    (LibrarySortOrder::NameAscending, regular::TEXT_AA),
-    (LibrarySortOrder::NameDescending, regular::TEXT_AA),
-    (LibrarySortOrder::LargestFirst, regular::FILE),
-    (LibrarySortOrder::SmallestFirst, regular::FILE),
-    (LibrarySortOrder::RatingHighestFirst, regular::STAR),
-    (LibrarySortOrder::RatingLowestFirst, regular::STAR),
-    (LibrarySortOrder::FlagPickedFirst, regular::FLAG),
-    (LibrarySortOrder::FlagRejectedFirst, regular::FLAG),
-];
+/// The edit filter's labels, in the order of `LibraryPhotoFilter::edits`.
+fn edit_labels() -> [&'static str; 2] {
+    [tr("Edited"), tr("Unedited")]
+}
+
+fn any_selected(choices: &[bool]) -> bool {
+    choices.iter().any(|selected| *selected)
+}
+
+/// The icon of what a sort key sorts by.
+fn sort_key_icon(key: LibrarySortKey) -> &'static str {
+    match key {
+        LibrarySortKey::Date => regular::CALENDAR_BLANK,
+        LibrarySortKey::Name => regular::TEXT_AA,
+        LibrarySortKey::Size => regular::FILE,
+        LibrarySortKey::Rating => regular::STAR,
+        LibrarySortKey::Flag => regular::FLAG,
+        LibrarySortKey::Edits => regular::SLIDERS_HORIZONTAL,
+    }
+}
 
 /// Sort & filter, laid out like the other menus and the same on every
-/// platform: the sort order as a list that closes the menu once a choice is
-/// made; the RAW + JPEG switch; the rating and flag filters, whose lists stay
-/// open for several choices; Clear filters; and, where the header has no room
-/// for the View menu, its options. Only a list closes the menu, so a sheet
-/// gets a close button.
+/// platform: what to sort by as a list that closes the menu once a choice is
+/// made, and the direction as a switch below it; the RAW + JPEG switch; the
+/// rating, flag and edit filters, whose lists stay open for several choices;
+/// Clear filters; and, where the header has no room for the View menu, its
+/// options. Only a list closes the menu, so a sheet gets a close button.
 fn sort_filter_menu(
     ui: &mut Ui,
     sort: &mut LibrarySortOrder,
-    filter: &mut LibraryReviewFilter,
+    filter: &mut LibraryPhotoFilter,
     stack_raw_companions: &mut bool,
     compact_view: Option<&mut LibraryView>,
 ) {
     moduwu_design::menu_title_with_close(ui, tr("Sort & filter"));
+    let sort_icon = match sort.direction {
+        LibrarySortDirection::Ascending => regular::SORT_ASCENDING,
+        LibrarySortDirection::Descending => regular::SORT_DESCENDING,
+    };
     let sort_item = MenuItem::new(tr("Sort by"))
-        .icon(regular::SORT_ASCENDING)
-        .value(sort.label());
+        .icon(sort_icon)
+        .value(sort.key.label());
     moduwu_design::submenu(ui, sort_item, |ui| {
-        for (order, icon) in SORT_ORDERS {
-            let item = MenuItem::new(order.label())
-                .icon(icon)
-                .selected(*sort == order);
+        for key in LibrarySortKey::ALL {
+            let item = MenuItem::new(key.label())
+                .icon(sort_key_icon(key))
+                .selected(sort.key == key);
             if ui.add(item).clicked() {
-                *sort = order;
+                if sort.key != key {
+                    *sort = LibrarySortOrder::by(key);
+                }
                 ui.close();
             }
         }
     });
+    // The key's usual order on the left, its reverse on the right.
+    let usual = sort.key.usual_direction();
+    let reversed = match usual {
+        LibrarySortDirection::Ascending => LibrarySortDirection::Descending,
+        LibrarySortDirection::Descending => LibrarySortDirection::Ascending,
+    };
+    ui.add_space(moduwu_design::SPACE_XS);
+    let width = menu_choice_width(ui);
+    moduwu_design::segmented_control(
+        ui,
+        &mut sort.direction,
+        &[
+            (usual, sort.key.direction_label(usual)),
+            (reversed, sort.key.direction_label(reversed)),
+        ],
+        width,
+    );
     moduwu_design::menu_checkbox_item(ui, stack_raw_companions, tr("Show only the RAW"))
         .on_hover_text(tr(
             "Cameras shooting RAW+JPEG or RAW+HEIC save both files. Show each pair once, \
@@ -134,9 +186,17 @@ fn sort_filter_menu(
             .unwrap_or_else(|| tr("All").to_owned()),
     );
     moduwu_design::submenu(ui, flag_item, |ui| flag_filter_menu(ui, sort, filter));
+    let edit_item = MenuItem::new(tr("Edits"))
+        .icon(regular::SLIDERS_HORIZONTAL)
+        .value(
+            filter
+                .edit_summary()
+                .unwrap_or_else(|| tr("All").to_owned()),
+        );
+    moduwu_design::submenu(ui, edit_item, |ui| edit_filter_menu(ui, filter));
     let clear_item = MenuItem::new(tr("Clear filters")).icon(regular::ARROW_COUNTER_CLOCKWISE);
     if ui.add_enabled(filter.active(), clear_item).clicked() {
-        *filter = LibraryReviewFilter::default();
+        *filter = LibraryPhotoFilter::default();
     }
     if let Some(view) = compact_view {
         ui.separator();
@@ -144,19 +204,23 @@ fn sort_filter_menu(
     }
 }
 
-/// How wide the View menu's choices are in a popup; a sheet gives them its
-/// own width.
-const VIEW_CHOICE_WIDTH: f32 = 320.0;
+/// How wide a menu's segmented choices are in a popup; a sheet gives them
+/// its own width.
+const MENU_CHOICE_WIDTH: f32 = 320.0;
+
+fn menu_choice_width(ui: &Ui) -> f32 {
+    if moduwu_design::menu_sheet_open(ui.ctx()) {
+        ui.available_width().max(1.0)
+    } else {
+        MENU_CHOICE_WIDTH
+    }
+}
 
 /// The View menu's options, each a segmented control like the app's tabs
 /// under a static label. Choosing keeps the menu open, so several options can
 /// be changed at once.
 fn view_menu_items(ui: &mut Ui, view: &mut LibraryView) {
-    let width = if moduwu_design::menu_sheet_open(ui.ctx()) {
-        ui.available_width().max(1.0)
-    } else {
-        VIEW_CHOICE_WIDTH
-    };
+    let width = menu_choice_width(ui);
     let sizes = LibraryThumbnailSize::ALL.map(|size| (size, size.label()));
     view_choice(
         ui,
@@ -205,8 +269,8 @@ pub(super) fn view_popup(ui: &mut Ui, view: &mut LibraryView, width: f32) {
 
 /// The ratings to show; several can be chosen. The first one chosen sorts by
 /// rating, unless the photos already are.
-fn rating_filter_menu(ui: &mut Ui, sort: &mut LibrarySortOrder, filter: &mut LibraryReviewFilter) {
-    let had_ratings = filter.ratings.iter().any(|selected| *selected);
+fn rating_filter_menu(ui: &mut Ui, sort: &mut LibrarySortOrder, filter: &mut LibraryPhotoFilter) {
+    let had_ratings = any_selected(&filter.ratings);
     if ui
         .add(MenuItem::new(tr("All")).selected(!had_ratings))
         .clicked()
@@ -224,21 +288,15 @@ fn rating_filter_menu(ui: &mut Ui, sort: &mut LibrarySortOrder, filter: &mut Lib
             *selected = !*selected;
         }
     }
-    if !had_ratings
-        && filter.ratings.iter().any(|selected| *selected)
-        && !matches!(
-            sort,
-            LibrarySortOrder::RatingHighestFirst | LibrarySortOrder::RatingLowestFirst
-        )
-    {
-        *sort = LibrarySortOrder::RatingHighestFirst;
+    if !had_ratings && any_selected(&filter.ratings) && sort.key != LibrarySortKey::Rating {
+        *sort = LibrarySortOrder::by(LibrarySortKey::Rating);
     }
 }
 
 /// The flags to show; several can be chosen. The first one chosen sorts by
 /// flag, unless the photos are sorted by rating or flag already.
-fn flag_filter_menu(ui: &mut Ui, sort: &mut LibrarySortOrder, filter: &mut LibraryReviewFilter) {
-    let had_flags = filter.flags.iter().any(|selected| *selected);
+fn flag_filter_menu(ui: &mut Ui, sort: &mut LibrarySortOrder, filter: &mut LibraryPhotoFilter) {
+    let had_flags = any_selected(&filter.flags);
     if ui
         .add(MenuItem::new(tr("All")).selected(!had_flags))
         .clicked()
@@ -250,23 +308,35 @@ fn flag_filter_menu(ui: &mut Ui, sort: &mut LibrarySortOrder, filter: &mut Libra
             *selected = !*selected;
         }
     }
-    let has_ratings = filter.ratings.iter().any(|selected| *selected);
     if !had_flags
-        && filter.flags.iter().any(|selected| *selected)
-        && !has_ratings
-        && !matches!(
-            sort,
-            LibrarySortOrder::FlagPickedFirst | LibrarySortOrder::FlagRejectedFirst
-        )
+        && any_selected(&filter.flags)
+        && !any_selected(&filter.ratings)
+        && sort.key != LibrarySortKey::Flag
     {
-        *sort = LibrarySortOrder::FlagPickedFirst;
+        *sort = LibrarySortOrder::by(LibrarySortKey::Flag);
+    }
+}
+
+/// The edit states to show. Unlike ratings and flags, choosing one does not
+/// sort by it: the photos shown then all share it.
+fn edit_filter_menu(ui: &mut Ui, filter: &mut LibraryPhotoFilter) {
+    if ui
+        .add(MenuItem::new(tr("All")).selected(!any_selected(&filter.edits)))
+        .clicked()
+    {
+        filter.edits = [false; 2];
+    }
+    for (selected, label) in filter.edits.iter_mut().zip(edit_labels()) {
+        if ui.add(MenuItem::new(label).selected(*selected)).clicked() {
+            *selected = !*selected;
+        }
     }
 }
 
 pub(super) fn sort_filter_popup(
     ui: &mut Ui,
     sort: &mut LibrarySortOrder,
-    filter: &mut LibraryReviewFilter,
+    filter: &mut LibraryPhotoFilter,
     stack_raw_companions: &mut bool,
     compact_view: Option<&mut LibraryView>,
     width: f32,

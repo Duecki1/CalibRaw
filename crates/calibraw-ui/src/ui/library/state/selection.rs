@@ -174,7 +174,7 @@ impl LibraryState {
 
     /// Selects every photo the search and filters show; returns how many.
     pub(crate) fn select_search_matches(&mut self) -> usize {
-        if !self.search_active() && !self.review_filter.active()
+        if !self.search_active() && !self.photo_filter.active()
             || self.visible_entry_indices().is_empty()
         {
             return 0;
