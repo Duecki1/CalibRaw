@@ -456,6 +456,28 @@ pub fn device_diagnostics(app: &AndroidApp) -> Result<String, String> {
     .map_err(|error| format!("could not read Android device diagnostics: {error:#}"))
 }
 
+/// How Android reported the end of this app's last main process
+/// (`ApplicationExitInfo`, Android 11 and later), or `None` without a record.
+pub fn previous_process_exit(
+    app: &AndroidApp,
+) -> Result<Option<calibraw_core::diagnostics::ProcessExit>, String> {
+    let fields = with_activity(app, |env, activity| {
+        let value = env.call_method(
+            activity,
+            jni::jni_str!("previousProcessExit"),
+            jni::jni_sig!(() -> JString),
+            &[],
+        )?;
+        java_string(env, value)
+    })
+    .map_err(|error| {
+        format!("could not read Android's record of the last process exit: {error:#}")
+    })?;
+    Ok(calibraw_core::diagnostics::ProcessExit::from_fields(
+        &fields,
+    ))
+}
+
 /// Whether the activity was launched with the extra that turns GPU stage
 /// timing on (`calibraw_gpu::stage_timing`).
 pub fn gpu_stage_timing_requested(app: &AndroidApp) -> Result<bool, String> {

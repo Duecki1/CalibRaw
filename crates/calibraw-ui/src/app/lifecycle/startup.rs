@@ -491,7 +491,8 @@ impl CalibRawApp {
             .as_deref()
             .and_then(std::path::Path::parent)
         {
-            calibraw_core::diagnostics::persist_to(&directory.join("diagnostics"));
+            // Android's entry already persists, with the system's record of the last exit.
+            calibraw_core::diagnostics::persist_to(&directory.join("diagnostics"), None);
         }
         let mut editor_gpu = None;
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {

@@ -1,5 +1,7 @@
 package de.duecki.calibraw;
 
+import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.app.NativeActivity;
 import android.content.pm.ActivityInfo;
 import android.content.ClipData;
@@ -25,6 +27,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -457,6 +460,94 @@ public final class CalibRawActivity extends NativeActivity {
                 + "\nandroid_release=" + Build.VERSION.RELEASE
                 + "\nsdk=" + Build.VERSION.SDK_INT
                 + "\nsupported_abis=" + String.join(",", Build.SUPPORTED_ABIS);
+    }
+
+    /**
+     * How Android reported the end of this app's last main process, as
+     * key=value lines with timestamp_ms and reason first and description,
+     * which may hold spaces, last; "" before Android 11 or without a record.
+     * The main process is the one running this Activity; the GPU restart
+     * process is not counted.
+     */
+    public String previousProcessExit() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return "";
+        }
+        try {
+            ActivityManager manager = getSystemService(ActivityManager.class);
+            if (manager == null) {
+                return "";
+            }
+            String process = getApplicationInfo().processName;
+            ApplicationExitInfo last = null;
+            List<ApplicationExitInfo> exits =
+                    manager.getHistoricalProcessExitReasons(getPackageName(), 0, 0);
+            for (ApplicationExitInfo exit : exits) {
+                if (process.equals(exit.getProcessName())
+                        && (last == null || exit.getTimestamp() > last.getTimestamp())) {
+                    last = exit;
+                }
+            }
+            if (last == null) {
+                return "";
+            }
+            String description = last.getDescription();
+            return "timestamp_ms=" + last.getTimestamp()
+                    + "\nreason=" + exitReasonName(last.getReason())
+                    + "\nstatus=" + last.getStatus()
+                    + "\nimportance=" + last.getImportance()
+                    + "\npss_kib=" + last.getPss()
+                    + "\nrss_kib=" + last.getRss()
+                    + "\nlow_memory_kill_reports="
+                    + ActivityManager.isLowMemoryKillReportSupported()
+                    + (description == null || description.isEmpty()
+                            ? ""
+                            : "\ndescription=" + description.replace('\n', ' '));
+        } catch (RuntimeException error) {
+            Log.w(LOG_TAG, "Could not read the previous process exit", error);
+            return "";
+        }
+    }
+
+    private static String exitReasonName(int reason) {
+        switch (reason) {
+            case ApplicationExitInfo.REASON_EXIT_SELF:
+                return "EXIT_SELF";
+            case ApplicationExitInfo.REASON_SIGNALED:
+                return "SIGNALED";
+            case ApplicationExitInfo.REASON_LOW_MEMORY:
+                return "LOW_MEMORY";
+            case ApplicationExitInfo.REASON_CRASH:
+                return "CRASH";
+            case ApplicationExitInfo.REASON_CRASH_NATIVE:
+                return "CRASH_NATIVE";
+            case ApplicationExitInfo.REASON_ANR:
+                return "ANR";
+            case ApplicationExitInfo.REASON_INITIALIZATION_FAILURE:
+                return "INITIALIZATION_FAILURE";
+            case ApplicationExitInfo.REASON_PERMISSION_CHANGE:
+                return "PERMISSION_CHANGE";
+            case ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE:
+                return "EXCESSIVE_RESOURCE_USAGE";
+            case ApplicationExitInfo.REASON_USER_REQUESTED:
+                return "USER_REQUESTED";
+            case ApplicationExitInfo.REASON_USER_STOPPED:
+                return "USER_STOPPED";
+            case ApplicationExitInfo.REASON_DEPENDENCY_DIED:
+                return "DEPENDENCY_DIED";
+            case ApplicationExitInfo.REASON_OTHER:
+                return "OTHER";
+            case ApplicationExitInfo.REASON_FREEZER:
+                return "FREEZER";
+            case ApplicationExitInfo.REASON_PACKAGE_STATE_CHANGE:
+                return "PACKAGE_STATE_CHANGE";
+            case ApplicationExitInfo.REASON_PACKAGE_UPDATED:
+                return "PACKAGE_UPDATED";
+            case ApplicationExitInfo.REASON_UNKNOWN:
+                return "UNKNOWN";
+            default:
+                return "REASON_" + reason;
+        }
     }
 
     /** Milliseconds a touch is held to become a long press: the Touch & hold delay. */

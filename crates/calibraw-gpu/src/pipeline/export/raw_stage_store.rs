@@ -27,6 +27,14 @@ pub(super) struct RawStageStore<'a> {
     _reservation: MemoryReservation<'a>,
 }
 
+/// Share of the memory the system has available at export start, as a divisor, the store may
+/// take. With the export tile's sixteenth (`MOBILE_EXPORT_AVAILABLE_MEMORY_DIVISOR`) it leaves
+/// the output raster and the previews room within about a quarter of it. The store's pages are
+/// touched one tile at a time during the tone prepass, so a store admitted from total RAM alone
+/// grows towards its full size near the prepass's end: a Redmi 24094RAD4G (PowerVR BXM-8-256)
+/// export with such a store ended without an error 21 tiles into a 24-tile tone prepass.
+const AVAILABLE_MEMORY_DIVISOR: u64 = 8;
+
 /// A region of a tile: its origin in the tile's padded pixels and its extent.
 #[derive(Clone, Copy)]
 pub(super) struct TileRegion {
@@ -35,8 +43,10 @@ pub(super) struct TileRegion {
 }
 
 impl<'a> RawStageStore<'a> {
-    /// A store for the tiles of `plan` with `texel_bytes` per texel, if `memory` has room for it
-    /// and the allocation succeeds.
+    /// A store for the tiles of `plan` with `texel_bytes` per texel, if `memory` has room for it,
+    /// it takes at most its share of the memory the system has available now
+    /// ([`AVAILABLE_MEMORY_DIVISOR`]; unchecked where the platform does not report it) and the
+    /// allocation succeeds.
     pub(super) fn new(
         plan: &TilePlan,
         texel_bytes: u32,
@@ -48,6 +58,17 @@ impl<'a> RawStageStore<'a> {
         let bytes = u64::from(width)
             .checked_mul(u64::from(height))?
             .checked_mul(u64::from(texel_bytes))?;
+        if let Some(available) = calibraw_core::system_memory::available_memory_bytes() {
+            if bytes > available / AVAILABLE_MEMORY_DIVISOR {
+                const MIB: f64 = 1024.0 * 1024.0;
+                calibraw_core::diagnostics::record(format!(
+                    "Export RAW-stage scene ({:.1} MiB) exceeds 1/{AVAILABLE_MEMORY_DIVISOR} of the {:.0} MiB of system memory available",
+                    bytes as f64 / MIB,
+                    available as f64 / MIB,
+                ));
+                return None;
+            }
+        }
         let reservation = memory.reserve(bytes)?;
         let texels = zeroed_bytes(usize::try_from(bytes).ok()?)?;
         Some(Self {

@@ -643,7 +643,7 @@ pub(crate) fn main() -> eframe::Result {
     })?;
     let home = PathBuf::from(home);
     let data_dir = home.join("Library/Application Support/CalibRaw");
-    calibraw_core::diagnostics::persist_to(&data_dir.join("diagnostics"));
+    calibraw_core::diagnostics::persist_to(&data_dir.join("diagnostics"), None);
     let cache_dir = home.join("Library/Caches/CalibRaw");
     let library = IosLibrary::new(home.join("Documents/CalibRaw"), cache_dir.join("library"))
         .map_err(|error| eframe::Error::AppCreation(error.into()))?;

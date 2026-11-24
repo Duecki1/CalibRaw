@@ -42,7 +42,11 @@ pub fn android_main(android_app: AndroidApp) {
         .map_err(|error| log::warn!("{error}"))
         .ok();
     if let Some(directory) = settings_path.as_deref().and_then(Path::parent) {
-        calibraw_core::diagnostics::persist_to(&directory.join("diagnostics"));
+        let previous_exit = calibraw_ffi::previous_process_exit(&android_app)
+            .map_err(|error| log::warn!("{error}"))
+            .ok()
+            .flatten();
+        calibraw_core::diagnostics::persist_to(&directory.join("diagnostics"), previous_exit);
     }
     let graphics_backend =
         crate::performance_settings::load_graphics_backend(settings_path.as_deref());

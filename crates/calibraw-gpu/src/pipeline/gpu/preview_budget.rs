@@ -105,8 +105,9 @@ fn mobile_export_tile_bytes(limit: u64) -> u64 {
 
 /// Share of the memory the system has available, as a divisor, one export
 /// tile may reserve. Besides its tile an export holds the kept RAW-stage
-/// scene, the row band and the output raster, and the previews stay open, so
-/// a tile of a sixteenth keeps the export within about a quarter of it. On a
+/// scene (at most an eighth, `raw_stage_store.rs`), the row band and the
+/// output raster, and the previews stay open, so a tile of a sixteenth keeps
+/// the export within about a quarter of it. On a
 /// phone the GPU allocates from that same memory, and a Mali-G57 lost its
 /// device near the end of an export whose 448 MiB tile was sized from total
 /// RAM alone.

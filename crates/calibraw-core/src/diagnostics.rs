@@ -161,17 +161,61 @@ fn persist_block(kind: &str, info: &str) {
     }
 }
 
+/// How the system reported the end of the app's last process (Android's
+/// `ApplicationExitInfo`). A record from after the previous session started
+/// is that session's end, and is appended to its log when it did not end by
+/// itself, so its cause ([`PreviousSession::cause`]) says how it ended.
+#[derive(Clone, Debug)]
+pub struct ProcessExit {
+    /// When the process ended, in milliseconds since the Unix epoch.
+    unix_time_ms: u64,
+    /// The record as space-separated `key=value` fields, `reason` first.
+    fields: String,
+}
+
+impl ProcessExit {
+    /// A record from `key=value` lines, which must hold `timestamp_ms` and
+    /// `reason`; a `description`, whose value may hold spaces, comes last.
+    pub fn from_fields(lines: &str) -> Option<Self> {
+        let mut unix_time_ms = None;
+        let mut reason = None;
+        let mut rest = Vec::new();
+        for line in lines.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            match line.split_once('=') {
+                Some(("timestamp_ms", value)) => unix_time_ms = value.parse().ok(),
+                Some(("reason", value)) => reason = Some(value),
+                _ => rest.push(line),
+            }
+        }
+        let fields = std::iter::once(format!("reason={}", reason?))
+            .chain(rest.into_iter().map(str::to_owned))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(Self {
+            unix_time_ms: unix_time_ms?,
+            fields,
+        })
+    }
+}
+
+/// Starts the line [`archive_previous_session`] appends for a [`ProcessExit`].
+/// The bracket stands where recorded lines keep their time, which the
+/// system's record has relative to no session.
+const PROCESS_EXIT_LINE: &str = "[system] Process exit reported by the system: ";
+
 /// Keeps this session's events in `directory` from now on, and reads what the
-/// previous session left there ([`previous_session`]). Call once, early, with
-/// a directory the app owns; a second call and any I/O failure do nothing.
+/// previous session left there ([`previous_session`]), with `previous_exit`,
+/// the system's record of the app's last process, where the platform keeps
+/// one. Call once, early, with a directory the app owns; a second call and
+/// any I/O failure do nothing.
 ///
 /// Also installs a panic hook that writes the panic to the file and flushes it
 /// before the previous hook runs.
-pub fn persist_to(directory: &Path) {
+pub fn persist_to(directory: &Path, previous_exit: Option<ProcessExit>) {
     if WRITER.get().is_some() || fs::create_dir_all(directory).is_err() {
         return;
     }
-    let previous = archive_previous_session(directory);
+    let previous = archive_previous_session(directory, previous_exit);
     let _ = PREVIOUS.set(previous);
     let _ = DIRECTORY.set(directory.to_path_buf());
     if let Ok(mut report) = PREVIOUS_REPORT.lock() {
@@ -319,15 +363,26 @@ fn open_append(path: &Path) -> Option<File> {
 }
 
 /// Moves what the last session wrote to `previous.log`, and to `crash.log`
-/// too when it did not end normally, and returns it.
-fn archive_previous_session(directory: &Path) -> PreviousSession {
+/// too when it did not end normally, and returns it. A session that did not
+/// end normally gets `exit`'s line when `exit` is from after it started, or
+/// when its first line, which holds its start, was rotated away.
+fn archive_previous_session(directory: &Path, exit: Option<ProcessExit>) -> PreviousSession {
     let mut text = String::new();
     for name in [ROTATED_FILE, SESSION_FILE] {
         if let Ok(bytes) = fs::read(directory.join(name)) {
             text.push_str(&String::from_utf8_lossy(&bytes));
         }
     }
-    let previous = PreviousSession::from_log(&text);
+    let mut previous = PreviousSession::from_log(&text);
+    if let Some(exit) = exit.filter(|exit| {
+        !previous.ended_normally
+            && !previous.text.is_empty()
+            && previous
+                .start_unix_time()
+                .is_none_or(|started| exit.unix_time_ms / 1000 >= started)
+    }) {
+        let _ = writeln!(previous.text, "{PROCESS_EXIT_LINE}{}", exit.fields);
+    }
     if !text.is_empty() {
         replace_file(&directory.join(PREVIOUS_FILE), previous.text.as_bytes());
         if !previous.ended_normally {
@@ -373,6 +428,32 @@ impl PreviousSession {
             text: complete.to_owned(),
             ended_normally,
         }
+    }
+
+    /// When the session started, in seconds since the Unix epoch, from its
+    /// first line ([`persist_to`]); `None` once that line was rotated away.
+    fn start_unix_time(&self) -> Option<u64> {
+        let first = self.text.lines().next()?;
+        if !first.starts_with("CalibRaw ") {
+            return None;
+        }
+        first
+            .split_whitespace()
+            .find_map(|field| field.strip_prefix("unix_time="))?
+            .parse()
+            .ok()
+    }
+
+    /// The system's record of how the session's process ended
+    /// ([`ProcessExit`]): its reason and its fields.
+    fn process_exit(&self) -> Option<(&str, &str)> {
+        let fields = self
+            .text
+            .lines()
+            .rev()
+            .find_map(|line| line.strip_prefix(PROCESS_EXIT_LINE))?;
+        let reason = fields.split_whitespace().next()?.strip_prefix("reason=")?;
+        Some((reason, fields))
     }
 
     /// Whether the session's end is worth telling the user about: a GPU
@@ -430,16 +511,29 @@ impl PreviousSession {
                 }
             }
         }
+        let exit = self.process_exit();
+        let reported = exit.map_or_else(String::new, |(_, fields)| {
+            format!(". The system reports: {fields}")
+        });
         if let Some(&index) = compiling.values().min() {
             return Some(format!(
-                "The app ended during native GPU program compilation{during}: {}",
+                "The app ended during native GPU program compilation{during}: {}{reported}",
                 after(index)
             ));
         }
-        export.map(|step| {
-            format!(
+        export.map(|step| match exit {
+            Some(("LOW_MEMORY", _)) => format!(
+                "The system ended the app for lack of memory while exporting ({step}){reported}"
+            ),
+            Some(("CRASH_NATIVE", _)) => {
+                format!("The app crashed in native code while exporting ({step}){reported}")
+            }
+            Some(_) => format!(
+                "The app ended while exporting ({step}), with no error recorded{reported}"
+            ),
+            None => format!(
                 "The app ended while exporting ({step}), with no error recorded: the system ended it (often for memory) or it crashed in native code"
-            )
+            ),
         })
     }
 
@@ -497,9 +591,10 @@ fn build_previous_report(directory: &Path) -> Option<String> {
     };
     let mut output = String::new();
     let _ = writeln!(output, "\n[{heading}]");
-    let cause = session.cause().unwrap_or_else(|| {
-        "not recorded; the system may have ended the app in the background, or it crashed in native code"
-            .to_owned()
+    let cause = session.cause().unwrap_or_else(|| match session.process_exit() {
+        Some((_, fields)) => format!("not recorded by the app; the system reports: {fields}"),
+        None => "not recorded; the system may have ended the app in the background, or it crashed in native code"
+            .to_owned(),
     });
     let _ = writeln!(output, "cause: {cause}");
     // Steps repeat once per tile and stage; only the last ones say where it ended.

@@ -88,7 +88,7 @@ fn run_desktop() -> eframe::Result {
         .as_deref()
         .and_then(std::path::Path::parent)
     {
-        calibraw_core::diagnostics::persist_to(&directory.join("diagnostics"));
+        calibraw_core::diagnostics::persist_to(&directory.join("diagnostics"), None);
     }
     #[cfg(target_os = "windows")]
     super::nvidia_vrr::keep_gsync_off_for_window();
