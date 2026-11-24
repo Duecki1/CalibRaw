@@ -10,7 +10,7 @@ use crate::color_math::{
     linear_srgb_to_oklab, oklab_to_linear_srgb, rec2020_to_linear_srgb, srgb_encode,
 };
 use crate::matrix::transform;
-use dcp::{profile_from_tags, profile_identity_from_tags, TiffReader};
+use dcp::{as_shot_white_xy_from_tags, profile_from_tags, profile_identity_from_tags, TiffReader};
 
 const PROFILE_TONE_LUT_SIZE: usize = 4096;
 const MAX_DCP_TAG_BYTES: u64 = 16 * 1024 * 1024;
@@ -216,6 +216,17 @@ impl DcpProfile {
             (None, None) => None,
         }
     }
+}
+
+/// The AsShotWhiteXY chromaticity of the DNG at `path`, read with the same
+/// primary-IFD parser as its embedded profile; `None` for a file without
+/// the tag or that is not a TIFF.
+pub(crate) fn dng_as_shot_white_xy(path: &Path) -> Result<Option<[f32; 2]>> {
+    let Some(mut tiff) = open_profile_tiff(path)? else {
+        return Ok(None);
+    };
+    let tags = tiff.read_primary_ifd()?;
+    as_shot_white_xy_from_tags(&mut tiff, &tags)
 }
 
 fn open_profile_tiff(path: &Path) -> Result<Option<TiffReader>> {

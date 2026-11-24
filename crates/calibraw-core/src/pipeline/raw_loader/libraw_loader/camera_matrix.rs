@@ -180,19 +180,23 @@ pub(super) fn camera_to_working_matrix(
 }
 
 /// As-shot multipliers in the sensor's channel order, normalized to green:
-/// LibRaw's `cam_mul` when it records a gain for red, green and blue, else
-/// the daylight white of the colour `profile` (or the photo's own colour
-/// data) gives the camera.
+/// LibRaw's `cam_mul` when it records a gain for red, green and blue; else
+/// the multipliers for a DNG's `as_shot_white_xy` (AsShotWhiteXY) through
+/// the colour `profile` (or the photo's own colour data); else that colour's
+/// daylight white.
 ///
-/// LibRaw leaves `cam_mul` empty for a camera whose maker-note white-balance
-/// layout it does not know, such as the 3447-word ColorData of the Canon EOS
-/// R8 Mark II, and for a DNG that records its white only as AsShotWhiteXY.
-/// Unit multipliers would render such a photo green; daylight renders it
-/// neutral to within the light's distance from D65. Sensors without red,
-/// green and blue channels have no daylight white and keep `cam_mul`.
+/// LibRaw does not report AsShotWhiteXY as multipliers: it folds the white
+/// into its own camera matrices and leaves `cam_mul` empty, as for Google
+/// Pixel DNGs. It also leaves `cam_mul` empty for a camera whose maker-note
+/// white-balance layout it does not know, such as the 3447-word ColorData of
+/// the Canon EOS R8 Mark II. Unit multipliers would render such a photo
+/// green; daylight renders it neutral to within the light's distance from
+/// D65. Sensors without red, green and blue channels have no daylight white
+/// and keep `cam_mul`.
 pub(super) fn as_shot_physical_white_balance(
     color: &LibRawColor,
     cam_mul: [f32; 4],
+    as_shot_white_xy: Option<[f32; 2]>,
     cdesc: [u8; 4],
     profile: Option<&DcpProfile>,
 ) -> [f32; 4] {
@@ -207,11 +211,18 @@ pub(super) fn as_shot_physical_white_balance(
     }
     // The colour model does not depend on the multipliers it is built with.
     let calibration_compatible = profile.is_none_or(DcpProfile::calibration_is_compatible);
-    let daylight =
-        camera_to_working_matrix(color, [1.0; 4], cdesc, profile, calibration_compatible)
-            .ok()
-            .and_then(|(_, _, model)| daylight_white_balance(&model?));
-    let Some(daylight) = daylight else {
+    let model = camera_to_working_matrix(color, [1.0; 4], cdesc, profile, calibration_compatible)
+        .ok()
+        .and_then(|(_, _, model)| model);
+    if let Some(xy) = as_shot_white_xy {
+        if let Some(white_balance) = model.as_ref().and_then(|model| xy_white_balance(model, xy)) {
+            return white_balance;
+        }
+        crate::diagnostics::record(format!(
+            "DNG AsShotWhiteXY {xy:?} gives no usable white balance"
+        ));
+    }
+    let Some(daylight) = model.as_ref().and_then(daylight_white_balance) else {
         crate::diagnostics::record(
             "RAW records no as-shot white balance and gives no daylight white; rendering with unit multipliers",
         );

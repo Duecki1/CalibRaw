@@ -197,18 +197,20 @@ pub(super) fn load_raw_file_with_profile_selection(
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
     // The RAW is read in two gated sections, header and payload, so DCP
     // profile resolution in between does not hold the read gate.
-    let (source_metadata, ctx) = crate::serialized_reads::run(|| -> Result<_> {
-        let source_metadata = read_exif_capture_metadata_or_default(path);
+    let (source_metadata, as_shot_white_xy, ctx) =
+        crate::serialized_reads::run(|| -> Result<_> {
+            let source_metadata = read_exif_capture_metadata_or_default(path);
+            let as_shot_white_xy = read_dng_as_shot_white_xy(path);
 
-        let ctx = LibRawContext::new()?;
-        let identify_started = Instant::now();
-        open_libraw_file(&ctx, path, "open RAW file")?;
-        crate::diagnostics::record(format!(
-            "LibRaw identify/open_file finished in {:.3}s",
-            identify_started.elapsed().as_secs_f64()
-        ));
-        Ok((source_metadata, ctx))
-    })?;
+            let ctx = LibRawContext::new()?;
+            let identify_started = Instant::now();
+            open_libraw_file(&ctx, path, "open RAW file")?;
+            crate::diagnostics::record(format!(
+                "LibRaw identify/open_file finished in {:.3}s",
+                identify_started.elapsed().as_secs_f64()
+            ));
+            Ok((source_metadata, as_shot_white_xy, ctx))
+        })?;
     validate_opened_raw_geometry(&ctx)?;
 
     let iparams = &ctx.data().rawdata.iparams;
@@ -241,7 +243,13 @@ pub(super) fn load_raw_file_with_profile_selection(
         unpack_started.elapsed().as_secs_f64()
     ));
     let materialize_started = Instant::now();
-    let mut loaded = loaded_raw_from_context(&ctx, signature, selection.profile, selection.source)?;
+    let mut loaded = loaded_raw_from_context(
+        &ctx,
+        as_shot_white_xy,
+        signature,
+        selection.profile,
+        selection.source,
+    )?;
     merge_exif_capture_metadata(&mut loaded.capture_metadata, source_metadata);
     crate::diagnostics::record(format!(
         "Decoded mosaic materialization finished in {:.3}s",
@@ -362,21 +370,45 @@ fn load_raw_file_with_selected_profile(
 ) -> Result<LoadedRaw> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
     // Every file read happens here; unpacking ends with the payload in memory.
-    let (source_metadata, ctx) = crate::serialized_reads::run(|| -> Result<_> {
-        let source_metadata = read_exif_capture_metadata_or_default(path);
+    let (source_metadata, as_shot_white_xy, ctx) =
+        crate::serialized_reads::run(|| -> Result<_> {
+            let source_metadata = read_exif_capture_metadata_or_default(path);
+            let as_shot_white_xy = read_dng_as_shot_white_xy(path);
 
-        let ctx = LibRawContext::new()?;
+            let ctx = LibRawContext::new()?;
 
-        open_libraw_file(&ctx, path, "open RAW file")?;
-        validate_opened_raw_geometry(&ctx)?;
-        // SAFETY: `ctx` is a live context with a file opened (type invariant).
-        check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")?;
-        Ok((source_metadata, ctx))
-    })?;
+            open_libraw_file(&ctx, path, "open RAW file")?;
+            validate_opened_raw_geometry(&ctx)?;
+            // SAFETY: `ctx` is a live context with a file opened (type invariant).
+            check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")?;
+            Ok((source_metadata, as_shot_white_xy, ctx))
+        })?;
 
-    let mut loaded = loaded_raw_from_context(&ctx, signature, dcp_profile, profile_source)?;
+    let mut loaded = loaded_raw_from_context(
+        &ctx,
+        as_shot_white_xy,
+        signature,
+        dcp_profile,
+        profile_source,
+    )?;
     merge_exif_capture_metadata(&mut loaded.capture_metadata, source_metadata);
     Ok(loaded)
+}
+
+/// The AsShotWhiteXY of a DNG, which LibRaw folds into its camera matrices
+/// instead of reporting as multipliers. `None` for other RAWs, and for a DNG
+/// whose tag cannot be read, which then decodes as one without it.
+fn read_dng_as_shot_white_xy(path: &Path) -> Option<[f32; 2]> {
+    if !super::path_is_dng(path) {
+        return None;
+    }
+    crate::pipeline::color_profile::dng_as_shot_white_xy(path).unwrap_or_else(|error| {
+        log::warn!(
+            "could not read AsShotWhiteXY from {}: {error:#}",
+            path.display()
+        );
+        None
+    })
 }
 
 /// Unpacks the stored samples of a DNG's main image for a payload Rawler
@@ -612,9 +644,11 @@ fn validate_opened_raw_geometry(ctx: &LibRawContext) -> Result<()> {
 
 /// Builds the `LoadedRaw` from a context that has been unpacked, with
 /// `dcp_profile`, read from `profile_source` and matched against
-/// `signature`, or the RAW's own colour data.
+/// `signature`, or the RAW's own colour data. `as_shot_white_xy` is the
+/// DNG's AsShotWhiteXY ([`read_dng_as_shot_white_xy`]).
 fn loaded_raw_from_context(
     ctx: &LibRawContext,
+    as_shot_white_xy: Option<[f32; 2]>,
     signature: EmbeddedSignature,
     dcp_profile: Option<DcpProfile>,
     profile_source: Option<PathBuf>,
@@ -727,8 +761,13 @@ fn loaded_raw_from_context(
         &mut raw_pixels,
     );
     let libraw_color = LibRawColor::from_libraw(color);
-    let physical_wb =
-        as_shot_physical_white_balance(&libraw_color, color.cam_mul, cdesc, dcp_profile.as_ref());
+    let physical_wb = as_shot_physical_white_balance(
+        &libraw_color,
+        color.cam_mul,
+        as_shot_white_xy,
+        cdesc,
+        dcp_profile.as_ref(),
+    );
     let wb_coeffs = canonicalize_f32x4(physical_wb, cfa_map);
     let color_source = ProfileColorSource::new(
         &c_array_to_string(&iparams.make),

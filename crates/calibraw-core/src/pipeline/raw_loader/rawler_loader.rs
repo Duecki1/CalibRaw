@@ -487,6 +487,8 @@ struct CameraColor {
     /// A DNG that declares AsShotNeutral must not fall back to a derived
     /// white balance when the declared one is unusable.
     declares_as_shot_neutral: bool,
+    /// The DNG's AsShotWhiteXY chromaticity.
+    as_shot_white_xy: Option<[f32; 2]>,
 }
 
 impl CameraColor {
@@ -507,6 +509,7 @@ impl CameraColor {
             declares_as_shot_neutral: entry(&input.root, DngTag::AsShotNeutral as u16)
                 .or_else(|| entry(&input.raw, DngTag::AsShotNeutral as u16))
                 .is_some(),
+            as_shot_white_xy: values::<2>(&input.raw, &input.root, DngTag::AsShotWhiteXY)?,
         })
     }
 
@@ -544,6 +547,7 @@ impl CameraColor {
             analog_balance: identity(),
             baseline_exposure: None,
             declares_as_shot_neutral: false,
+            as_shot_white_xy: None,
         })
     }
 }
@@ -688,6 +692,31 @@ fn adapt(
         .find_map(|s| s.color_matrix)
         .context("missing color matrix")?;
     let mut wb = image.wb_coeffs;
+    if let Some(xy) = color
+        .as_shot_white_xy
+        .filter(|_| !color.declares_as_shot_neutral)
+    {
+        // Rawler converts AsShotWhiteXY through the D65 ColorMatrix alone;
+        // the DNG SDK interpolates the matrices, CameraCalibration included,
+        // at the white's temperature. The colour model does not depend on
+        // the multipliers it is built with.
+        let converted = shared::camera_to_working_matrix_from_profiles(
+            xyz_to_cam,
+            [1.0; 4],
+            *b"RGBG",
+            Some(&embedded),
+            chosen.profile.as_ref(),
+            color.analog_balance,
+        )
+        .ok()
+        .and_then(|(_, _, model)| shared::xy_white_balance(&model?, xy));
+        match converted {
+            Some(converted) => wb = converted,
+            None => crate::diagnostics::record(format!(
+                "DNG AsShotWhiteXY {xy:?} gives no usable white balance; keeping Rawler's"
+            )),
+        }
+    }
     if !wb[..3].iter().all(|v| v.is_finite() && *v > 0.0) {
         // Missing as-shot WB uses the embedded matrix's daylight neutral.
         ensure!(

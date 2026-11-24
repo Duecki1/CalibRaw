@@ -563,8 +563,36 @@ pub(in crate::pipeline::raw_loader) fn temperature_tint_to_coefficients(
     tint: f32,
 ) -> Option<[f32; 4]> {
     let temperature = temperature.clamp(MIN_TEMPERATURE_KELVIN, MAX_TEMPERATURE_KELVIN);
+    white_coefficients(model, temperature, white_xyz(temperature, tint)?)
+}
+
+/// Multipliers, in the model's channel order, that balance the white of
+/// chromaticity `xy` (a DNG's AsShotWhiteXY), as the DNG SDK's
+/// `dng_color_spec::SetWhiteXY` and `CameraWhite`: the camera's response
+/// to the white through the matrices interpolated at the white's own
+/// temperature. `None` for a chromaticity outside the CIE triangle or a
+/// white the camera cannot balance.
+pub(in crate::pipeline::raw_loader) fn xy_white_balance(
+    model: &CameraWhiteBalanceModel,
+    [x, y]: [f32; 2],
+) -> Option<[f32; 4]> {
+    if !(x.is_finite() && y.is_finite() && x > 0.0 && y > 0.0 && x + y < 1.0) {
+        return None;
+    }
+    let xyz = [x / y, 1.0, (1.0 - x - y) / y];
+    let (temperature, _) = uv_temperature_tint(xyz_to_uv(xyz)?)?;
+    white_coefficients(model, temperature as f32, xyz)
+}
+
+/// Multipliers balancing the XYZ white `xyz` (Y = 1) through the matrices
+/// at `temperature` (K), the white's own.
+fn white_coefficients(
+    model: &CameraWhiteBalanceModel,
+    temperature: f32,
+    xyz: [f32; 3],
+) -> Option<[f32; 4]> {
     let matrix = xyz_to_camera_at(&model.color, temperature);
-    let camera = matrix::transform(matrix, white_xyz(temperature, tint)?);
+    let camera = matrix::transform(matrix, xyz);
     let mut coefficients = [1.0; 4];
     for index in 0..4 {
         if logical_rgb_channel(model.cdesc, index).is_none() {

@@ -21,6 +21,22 @@ const PROFILE_LOOK_TABLE_DATA: u16 = 50982;
 const PROFILE_HUE_SAT_MAP_ENCODING: u16 = 51107;
 const PROFILE_LOOK_TABLE_ENCODING: u16 = 51108;
 const BASELINE_EXPOSURE_OFFSET: u16 = 51109;
+const AS_SHOT_WHITE_XY: u16 = 50729;
+
+/// The DNG AsShotWhiteXY chromaticity in `tags`; `None` without the tag.
+pub(super) fn as_shot_white_xy_from_tags(
+    reader: &mut TiffReader,
+    tags: &[IfdEntry],
+) -> Result<Option<[f32; 2]>> {
+    let Some(entry) = find_tag(tags, AS_SHOT_WHITE_XY) else {
+        return Ok(None);
+    };
+    let values = reader.entry_f32(entry)?;
+    let [x, y] = values[..] else {
+        bail!("AsShotWhiteXY has {} values; expected 2", values.len());
+    };
+    Ok(Some([x, y]))
+}
 
 fn has_profile_tags(tags: &[IfdEntry]) -> bool {
     tags.iter().any(|tag| {
