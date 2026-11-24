@@ -726,14 +726,16 @@ fn loaded_raw_from_context(
         ),
         &mut raw_pixels,
     );
-    let physical_wb = white_balance(color.cam_mul, cdesc);
+    let libraw_color = LibRawColor::from_libraw(color);
+    let physical_wb =
+        as_shot_physical_white_balance(&libraw_color, color.cam_mul, cdesc, dcp_profile.as_ref());
     let wb_coeffs = canonicalize_f32x4(physical_wb, cfa_map);
     let color_source = ProfileColorSource::new(
         &c_array_to_string(&iparams.make),
         &c_array_to_string(&iparams.model),
         signature,
         DecoderColor::LibRaw(Box::new(LibRawColorInputs {
-            color: LibRawColor::from_libraw(color),
+            color: libraw_color,
             physical_wb,
             cdesc,
             baseline_exposure: valid_baseline_exposure(color.dng_levels.baseline_exposure),

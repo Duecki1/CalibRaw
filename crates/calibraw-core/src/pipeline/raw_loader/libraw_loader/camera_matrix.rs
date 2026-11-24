@@ -179,6 +179,54 @@ pub(super) fn camera_to_working_matrix(
     Ok((matrix, weight, Some(model)))
 }
 
+/// As-shot multipliers in the sensor's channel order, normalized to green:
+/// LibRaw's `cam_mul` when it records a gain for red, green and blue, else
+/// the daylight white of the colour `profile` (or the photo's own colour
+/// data) gives the camera.
+///
+/// LibRaw leaves `cam_mul` empty for a camera whose maker-note white-balance
+/// layout it does not know, such as the 3447-word ColorData of the Canon EOS
+/// R8 Mark II, and for a DNG that records its white only as AsShotWhiteXY.
+/// Unit multipliers would render such a photo green; daylight renders it
+/// neutral to within the light's distance from D65. Sensors without red,
+/// green and blue channels have no daylight white and keep `cam_mul`.
+pub(super) fn as_shot_physical_white_balance(
+    color: &LibRawColor,
+    cam_mul: [f32; 4],
+    cdesc: [u8; 4],
+    profile: Option<&DcpProfile>,
+) -> [f32; 4] {
+    let mut recorded = [false; 3];
+    for (index, gain) in cam_mul.into_iter().enumerate() {
+        if let Some(channel) = logical_rgb_channel(cdesc, index) {
+            recorded[channel] |= gain.is_finite() && gain > 0.0;
+        }
+    }
+    if recorded == [true; 3] {
+        return white_balance(cam_mul, cdesc);
+    }
+    // The colour model does not depend on the multipliers it is built with.
+    let calibration_compatible = profile.is_none_or(DcpProfile::calibration_is_compatible);
+    let daylight =
+        camera_to_working_matrix(color, [1.0; 4], cdesc, profile, calibration_compatible)
+            .ok()
+            .and_then(|(_, _, model)| daylight_white_balance(&model?));
+    let Some(daylight) = daylight else {
+        crate::diagnostics::record(
+            "RAW records no as-shot white balance and gives no daylight white; rendering with unit multipliers",
+        );
+        return white_balance(cam_mul, cdesc);
+    };
+    crate::diagnostics::record("RAW records no as-shot white balance; using its daylight white");
+    let mut physical = [1.0; 4];
+    for (index, gain) in physical.iter_mut().enumerate() {
+        if let Some(channel) = logical_rgb_channel(cdesc, index) {
+            *gain = daylight[channel];
+        }
+    }
+    white_balance(physical, cdesc)
+}
+
 pub(super) fn endpoint_weight(endpoints: &[DngColorEndpoint; 2], cct: f32) -> f32 {
     match (endpoints[0].cct, endpoints[1].cct) {
         (Some(first), Some(second)) => mired_interpolation_weight(cct, first, second),
