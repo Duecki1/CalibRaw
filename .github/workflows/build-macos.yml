@@ -25,19 +25,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Homebrew's libraries on this runner require macOS 26.0, so the app
-          # does too. LibRaw and Lensfun are built for it: without a target they
-          # would require the runner's newer SDK version.
+          # Homebrew's libraries require the runner's macOS version, so the app
+          # does too: a macOS 26 runner would make it require Tahoe. LibRaw and
+          # Lensfun are built for the same target, which their SDK would
+          # otherwise raise.
           - name: Apple Silicon
-            runner: macos-26
+            runner: macos-15
             target: aarch64-apple-darwin
             artifact_arch: arm64
-            deployment_target: "26.0"
-          # There is no macOS 26 Intel runner.
+            deployment_target: "15.0"
           - name: Intel
             runner: macos-15-intel
             target: x86_64-apple-darwin
             artifact_arch: x86_64
+            deployment_target: "15.0"
 
     env:
       CARGO_TERM_COLOR: always
@@ -78,8 +79,8 @@ jobs:
       # Homebrew's LibRaw is a release that lacks newer cameras, so build the
       # pinned commit. Apple Clang has no built-in OpenMP, so LibRaw's OpenMP
       # check is pointed at Homebrew's libomp to keep its threaded decoders.
-      # The deployment target is empty, so the default, on Intel. It is not set for
-      # the Rust build, which targets an older macOS by default.
+      # The deployment target is not set for the Rust build, which targets an
+      # older macOS by default.
       - name: Build pinned LibRaw
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
@@ -143,7 +144,7 @@ jobs:
           set -euxo pipefail
 
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
-          minimum_system="${{ matrix.deployment_target || '12.0' }}"
+          minimum_system="${{ matrix.deployment_target }}"
           package_name="CalibRaw-macos-${{ matrix.artifact_arch }}"
           app_dir="dist/$package_name/CalibRaw.app"
           contents="$app_dir/Contents"
@@ -262,18 +263,21 @@ jobs:
           test -n "$(find "$contents/Frameworks" -name '*.dylib' -print -quit)"
           test -z "$(otool -L "$executable" | awk '/\\/opt\\/homebrew|\\/usr\\/local\\/Cellar/ { print }')"
 
-          # A build with a deployment target must run on the version Info.plist states:
-          # a bundled library that needs a newer macOS would crash at launch instead.
-          if [[ -n "${{ matrix.deployment_target }}" ]]; then
-            while IFS= read -r -d '' binary; do
-              minos="$(otool -l "$binary" | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; exit }')"
-              test -n "$minos"
-              if [[ "$(printf '%s\n' "$minos" "$minimum_system" | sort -V | tail -n 1)" != "$minimum_system" ]]; then
-                echo "$binary requires macOS $minos, above $minimum_system" >&2
-                exit 1
-              fi
-            done < <(find "$executable" "$contents/Frameworks" -type f -print0)
-          fi
+          # The app must run on the version Info.plist states: a bundled library that
+          # needs a newer macOS would crash at launch instead. Binaries built for a
+          # target older than 10.14, such as the Intel Rust default, record it in
+          # LC_VERSION_MIN_MACOSX rather than LC_BUILD_VERSION.
+          while IFS= read -r -d '' binary; do
+            minos="$(otool -l "$binary" | awk '
+              /LC_BUILD_VERSION/ { key = "minos" }
+              /LC_VERSION_MIN_MACOSX/ { key = "version" }
+              key != "" && $1 == key { print $2; exit }')"
+            test -n "$minos"
+            if [[ "$(printf '%s\n' "$minos" "$minimum_system" | sort -V | tail -n 1)" != "$minimum_system" ]]; then
+              echo "$binary requires macOS $minos, above $minimum_system" >&2
+              exit 1
+            fi
+          done < <(find "$executable" "$contents/Frameworks" -type f -print0)
 
           (
             cd "dist/$package_name"
