@@ -201,6 +201,7 @@ impl LibraryState {
             folder_name_dialog: None,
             folder_delete_confirmation: None,
             delete_originals_confirmation: None,
+            permanent_delete_confirmation: None,
             raw_name_dialog: None,
             export_dialog: None,
             adjustment_copy_dialog: None,
@@ -247,6 +248,7 @@ impl LibraryState {
 
     pub(crate) fn transient_dialog_open(&self) -> bool {
         let common = self.delete_originals_confirmation.is_some()
+            || self.permanent_delete_confirmation.is_some()
             || self.raw_name_dialog.is_some()
             || self.export_dialog.is_some()
             || self.adjustment_copy_dialog.is_some()

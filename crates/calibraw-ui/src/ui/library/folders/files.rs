@@ -132,7 +132,7 @@ pub(in crate::ui::library) fn copy_raw_bundle_to_folder(
 pub(in crate::ui::library) fn remove_local_raw_bundle(raw_path: &Path) -> Result<(), String> {
     fs::remove_file(raw_path).map_err(|error| {
         tr_fmt(
-            "Could not remove {raw_path} after copying it: {error}",
+            "Could not remove {raw_path}: {error}",
             &[("raw_path", &raw_path.display()), ("error", &error)],
         )
     })?;
@@ -140,14 +140,14 @@ pub(in crate::ui::library) fn remove_local_raw_bundle(raw_path: &Path) -> Result
         if let Err(error) = fs::remove_file(&companion) {
             if error.kind() != io::ErrorKind::NotFound {
                 log::warn!(
-                    "could not remove {} after moving its RAW: {error}",
+                    "could not remove {} with its RAW: {error}",
                     companion.display()
                 );
             }
         }
     }
     if let Err(error) = crate::sidecar::invalidate_developed_thumbnail_cache(raw_path) {
-        log::warn!("could not remove the old developed thumbnail after moving a RAW: {error}");
+        log::warn!("could not remove the developed thumbnail of a removed RAW: {error}");
     }
     Ok(())
 }

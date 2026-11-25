@@ -508,11 +508,31 @@ fn delete_confirmed_library_assets(ui: &Ui, app: &mut CalibRawApp, assets: Vec<L
     let total = assets.len();
     let mut deleted = 0usize;
     let mut failures = Vec::new();
-    for asset in &assets {
-        match delete_library_asset(app, asset) {
+    // Failures other than a trash refusal, which stay reported after the
+    // refused photos are deleted permanently.
+    let mut other_failures = Vec::new();
+    let mut refused = Vec::new();
+    for asset in assets {
+        match delete_library_asset(app, &asset) {
             Ok(()) => deleted += 1,
-            Err(error) => failures.push(format!("{}: {error}", asset.display_name)),
+            Err(DeleteAssetError::NotRecycled(error)) => {
+                failures.push(format!("{}: {error}", asset.display_name));
+                refused.push((asset, error));
+            }
+            Err(DeleteAssetError::Failed(error)) => {
+                let failure = format!("{}: {error}", asset.display_name);
+                failures.push(failure.clone());
+                other_failures.push(failure);
+            }
         }
+    }
+    if !refused.is_empty() {
+        app.library.permanent_delete_confirmation = Some(LibraryPermanentDeleteConfirmation {
+            refused,
+            total,
+            recycled: deleted,
+            failures: other_failures,
+        });
     }
     app.library.clear_selection();
     app.library.refresh(ui.ctx());
@@ -543,6 +563,55 @@ fn delete_confirmed_library_assets(ui: &Ui, app: &mut CalibRawApp, assets: Vec<L
             "Removed {deleted} of {total} selected originals. {details}",
             &[
                 ("deleted", &deleted),
+                ("total", &total),
+                ("details", &failures.join(" · ")),
+            ],
+        ),
+    };
+}
+
+/// Deletes the photos the trash refused without it, after the person
+/// confirmed that, and reports the whole delete.
+fn delete_refused_library_assets_permanently(
+    ui: &Ui,
+    app: &mut CalibRawApp,
+    confirmation: LibraryPermanentDeleteConfirmation,
+) {
+    let LibraryPermanentDeleteConfirmation {
+        refused,
+        total,
+        recycled,
+        mut failures,
+    } = confirmation;
+    let mut deleted = 0usize;
+    for (asset, _) in &refused {
+        match delete_library_asset_permanently(app, asset) {
+            Ok(()) => deleted += 1,
+            Err(error) => failures.push(format!("{}: {error}", asset.display_name)),
+        }
+    }
+    app.library.refresh(ui.ctx());
+    app.library.status = match (failures.is_empty(), recycled, deleted == 1) {
+        (true, 0, true) => tr_fmt(
+            "Deleted {deleted} original permanently",
+            &[("deleted", &deleted)],
+        ),
+        (true, 0, false) => tr_fmt(
+            "Deleted {deleted} originals permanently",
+            &[("deleted", &deleted)],
+        ),
+        (true, recycled, _) => tr_fmt(
+            "Moved to the {trash}: {recycled} · Deleted permanently: {deleted}",
+            &[
+                ("trash", &crate::platform::trash_name()),
+                ("recycled", &recycled),
+                ("deleted", &deleted),
+            ],
+        ),
+        (false, recycled, _) => tr_fmt(
+            "Removed {deleted} of {total} selected originals. {details}",
+            &[
+                ("deleted", &(recycled + deleted)),
                 ("total", &total),
                 ("details", &failures.join(" · ")),
             ],
@@ -912,6 +981,19 @@ pub(crate) fn show_library_action_overlays(
         if let Some(assets) = app.library.delete_originals_confirmation.take() {
             if confirmed {
                 delete_confirmed_library_assets(ui, app, assets);
+            }
+        }
+    }
+
+    let permanent_choice = app
+        .library
+        .permanent_delete_confirmation
+        .as_ref()
+        .and_then(|confirmation| show_permanent_delete_confirmation(ui, &confirmation.refused));
+    if let Some(confirmed) = permanent_choice {
+        if let Some(confirmation) = app.library.permanent_delete_confirmation.take() {
+            if confirmed {
+                delete_refused_library_assets_permanently(ui, app, confirmation);
             }
         }
     }

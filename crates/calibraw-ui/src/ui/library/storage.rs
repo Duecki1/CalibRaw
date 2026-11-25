@@ -71,30 +71,64 @@ pub(super) fn rename_asset(
     }
 }
 
+/// Why a confirmed delete left a photo in place.
+#[derive(Debug)]
+pub(super) enum DeleteAssetError {
+    /// The system trash refused a folder photo. It is untouched, so it can
+    /// still be deleted permanently once the person agrees.
+    NotRecycled(String),
+    Failed(String),
+}
+
 pub(super) fn delete_library_asset(
     app: &mut CalibRawApp,
     asset: &LibraryAsset,
-) -> Result<(), String> {
+) -> Result<(), DeleteAssetError> {
     match &asset.locator {
         LibraryLocator::Desktop(path) => {
             let was_current = app.develop.current_path.as_deref() == Some(path.as_path());
             if was_current {
                 app.detach_current_file_for_library_action(path);
             }
-            recycle_local_raw_bundle(path)?;
+            recycle_local_raw_bundle(path).map_err(DeleteAssetError::NotRecycled)?;
             if was_current {
                 app.develop.current_path = None;
             }
             Ok(())
         }
-        LibraryLocator::Android { uri } => {
-            app.delete_android_library_item(uri, &asset.display_name)
-        }
+        LibraryLocator::Android { uri } => app
+            .delete_android_library_item(uri, &asset.display_name)
+            .map_err(DeleteAssetError::Failed),
     }
+}
+
+/// Deletes a folder photo, its companions and developed thumbnail without the
+/// trash. Only for photos the trash refused, after the person confirmed it.
+pub(super) fn delete_library_asset_permanently(
+    app: &mut CalibRawApp,
+    asset: &LibraryAsset,
+) -> Result<(), String> {
+    let path = asset
+        .desktop_path()
+        .ok_or_else(|| tr("Library asset is not available from desktop storage").to_owned())?;
+    let was_current = app.develop.current_path.as_deref() == Some(path);
+    if was_current {
+        app.detach_current_file_for_library_action(path);
+    }
+    remove_local_raw_bundle(path)?;
+    if was_current {
+        app.develop.current_path = None;
+    }
+    Ok(())
 }
 
 fn recycle_local_raw_bundle(raw_path: &Path) -> Result<(), String> {
     crate::platform::trash(raw_path).map_err(|error| {
+        log::warn!(
+            "could not move {} to the system {}: {error}",
+            raw_path.display(),
+            crate::platform::trash_name()
+        );
         tr_fmt(
             "Could not move {raw_path} to the system {trash_name}: {error}",
             &[

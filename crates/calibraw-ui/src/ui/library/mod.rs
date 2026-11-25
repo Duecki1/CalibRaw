@@ -779,6 +779,19 @@ struct LibraryAdjustmentPasteDialog {
     edited_count: usize,
 }
 
+/// Folder photos the system trash refused during a confirmed delete, offered
+/// for permanent deletion.
+struct LibraryPermanentDeleteConfirmation {
+    /// Each refused photo with the trash error, which the dialog shows.
+    refused: Vec<(LibraryAsset, String)>,
+    /// How many photos the delete selected in all.
+    total: usize,
+    /// How many of them went to the trash.
+    recycled: usize,
+    /// Photos that failed for other reasons, already reported in the status.
+    failures: Vec<String>,
+}
+
 #[derive(Clone)]
 struct LibraryAiMaskRefreshPrompt {
     assets: Vec<LibraryAsset>,
@@ -1044,6 +1057,7 @@ pub(crate) struct LibraryState {
     folder_name_dialog: Option<LibraryFolderNameDialog>,
     folder_delete_confirmation: Option<PathBuf>,
     delete_originals_confirmation: Option<Vec<LibraryAsset>>,
+    permanent_delete_confirmation: Option<LibraryPermanentDeleteConfirmation>,
     raw_name_dialog: Option<LibraryRawNameDialog>,
     export_dialog: Option<LibraryExportDialog>,
     adjustment_copy_dialog: Option<LibraryAdjustmentCopyDialog>,

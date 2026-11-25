@@ -93,6 +93,75 @@ pub(super) fn show_delete_originals_confirmation(
     }
 }
 
+/// Offers to delete folder photos permanently after the system trash refused
+/// them; `refused` pairs each photo with the trash error. Returns whether the
+/// person confirmed, once they chose.
+pub(super) fn show_permanent_delete_confirmation(
+    ui: &mut Ui,
+    refused: &[(LibraryAsset, String)],
+) -> Option<bool> {
+    let count = refused.len();
+    let trash_name = crate::platform::trash_name();
+    let title = if count == 1 {
+        tr("Delete permanently?").to_owned()
+    } else {
+        tr_fmt(
+            "Delete {count} originals permanently?",
+            &[("count", &count)],
+        )
+    };
+    let mut action = moduwu_design::DialogAction::None;
+    moduwu_design::Dialog::new("library-permanent-delete-confirmation", title).show_with_footer(
+        ui.ctx(),
+        |ui| {
+            if let [(asset, error)] = refused {
+                ui.label(tr_fmt(
+                    "{display_name} could not be moved to the {trash_name}.",
+                    &[("display_name", &asset.display_name), ("trash_name", &trash_name)],
+                ));
+                ui.label(egui::RichText::new(error).small().weak());
+            } else {
+                ui.label(tr_fmt(
+                    "{count} originals could not be moved to the {trash_name}.",
+                    &[("count", &count), ("trash_name", &trash_name)],
+                ));
+                for (asset, error) in refused {
+                    ui.label(
+                        egui::RichText::new(format!("{}: {error}", asset.display_name))
+                            .small()
+                            .weak(),
+                    );
+                }
+            }
+            let warning = if count == 1 {
+                tr("The original and its saved adjustments will be deleted permanently. This cannot be undone.")
+            } else {
+                tr("The originals and their saved adjustments will be deleted permanently. This cannot be undone.")
+            };
+            ui.label(
+                egui::RichText::new(warning)
+                    .strong()
+                    .color(ui.visuals().warn_fg_color),
+            );
+        },
+        |ui| {
+            action = moduwu_design::dialog_confirmation_actions(
+                ui,
+                tr("Cancel"),
+                tr("Delete permanently"),
+                true,
+                true,
+                moduwu_design::DialogKeyboard::CLOSE_ONLY,
+            );
+        },
+    );
+    match action {
+        moduwu_design::DialogAction::Cancel => Some(false),
+        moduwu_design::DialogAction::Confirm => Some(true),
+        moduwu_design::DialogAction::None => None,
+    }
+}
+
 /// Chooses which settings of the photo in `dialog` Copy adjustments takes.
 pub(super) fn show_adjustment_copy_dialog(
     ui: &mut Ui,
