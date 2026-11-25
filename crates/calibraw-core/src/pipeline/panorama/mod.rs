@@ -77,7 +77,7 @@ pub struct PanoramaFrame<'a> {
     /// Black-subtracted, white-normalized camera RGB without white balance, in sensor
     /// coordinates, row-major.
     pub rgb: &'a [f32],
-    /// Per pixel, the brightest sensor sample of its demosaic footprint (white = 1).
+    /// Per pixel, the brightest sensor sample of its demosaic footprint (saturation = 1).
     pub peak: &'a [f32],
     /// The frame's distortion correction (undistorted → sensor positions), when the lens
     /// is corrected.

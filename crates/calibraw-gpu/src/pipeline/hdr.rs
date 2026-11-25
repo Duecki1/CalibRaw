@@ -71,6 +71,7 @@ pub fn merge_hdr_bracket(
             accumulator.add(HdrFrame {
                 rgb: frame.rgb,
                 peak: frame.peak,
+                saturation: frame.saturation,
                 exposure: frame.exposure,
                 light: frame.light,
                 registration: frame.registration,

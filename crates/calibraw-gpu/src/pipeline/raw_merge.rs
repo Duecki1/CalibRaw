@@ -282,6 +282,7 @@ pub(super) struct MergeFrame<'a> {
     pub(super) rgb: &'a [f32],
     /// As [`DevelopedSource::peak`].
     pub(super) peak: &'a [f32],
+    pub(super) saturation: SensorSaturation,
     /// Exposure relative to the reference.
     pub(super) exposure: f32,
     /// Collected light relative to the reference.
@@ -354,6 +355,7 @@ pub(super) fn merge_sources(
             MergeFrame {
                 rgb: &developed.rgb,
                 peak: &developed.peak,
+                saturation: developed.saturation,
                 exposure,
                 light: source.light / reference_light,
                 registration,
@@ -369,9 +371,11 @@ pub(super) struct DevelopedSource {
     /// white balance, clipped highlights reconstructed the way a single RAW develops
     /// them; from a raster, its working Rec.2020 as decoded.
     pub(super) rgb: Vec<f32>,
-    /// Per pixel, how close it came to clipping: 1 is the white level
+    /// Per pixel, how close it came to clipping: 1 is sensor saturation
     /// ([`sensor_footprint_peak`]).
     pub(super) peak: Vec<f32>,
+    /// Sensor saturation in the white-normalized units of the developed RGB.
+    pub(super) saturation: SensorSaturation,
     /// This source's distortion correction, which the develop leaves to a later
     /// geometry pass. Sources shot at other focal lengths than the reference have
     /// their own.
@@ -487,6 +491,7 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
         // vignetting correction brightens the corners past white. The lens
         // correction moves no sample further than lateral chromatic
         // aberration, well inside the peak's demosaic footprint.
+        let saturation = raw.sensor_saturation;
         let peak = sensor_footprint_peak(&raw);
         if let Some(lens) = &lens {
             raw = apply_lens_correction(&raw, &LensCorrection::Profile(lens.clone()))
@@ -506,6 +511,7 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
             return Ok(DevelopedSource {
                 rgb,
                 peak,
+                saturation,
                 lens_geometry,
                 focal_length_mm,
             });
@@ -543,6 +549,7 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
         Ok(DevelopedSource {
             rgb,
             peak,
+            saturation,
             lens_geometry,
             focal_length_mm,
         })
@@ -657,7 +664,7 @@ pub(super) fn render_camera_rgb(
     Ok(rgb)
 }
 
-/// Per pixel, the brightest normalized sensor sample (white = 1) within the demosaic
+/// Per pixel, the brightest normalized sensor sample (saturation = 1) within the demosaic
 /// footprint, so a pixel interpolated from a saturated photosite reads as saturated even
 /// where demosaicing smoothed its value below the white level.
 ///
@@ -695,7 +702,8 @@ pub(super) fn sensor_footprint_peak(raw: &LoadedRaw) -> Vec<f32> {
                         let c = usize::from(raw.color_indices[i].min(3));
                         let black = raw.black_levels_per_pixel[i];
                         let range = (raw.white_levels[c] - black).max(1.0);
-                        (f32::from(*value) - black) / range
+                        // A conservative metadata white can be below sensor saturation.
+                        (f32::from(*value) - black) / (range * raw.sensor_saturation.level())
                     })
                     .collect(),
                 match raw.cfa_kind {

@@ -19,7 +19,7 @@
 //! clipped reference highlight as darker than the clip, fades out there.
 
 use super::alignment::{warp, Alignment, Registration, Warped};
-use super::raw_loader::validate_raw_dimensions;
+use super::raw_loader::{validate_raw_dimensions, SensorSaturation};
 use anyhow::{ensure, Result};
 use rayon::prelude::*;
 
@@ -53,7 +53,7 @@ pub fn collected_light(shutter_seconds: f32, aperture: f32) -> Result<f32> {
     Ok(light)
 }
 
-/// darktable's safety margin below the white level for demosaic interpolation and
+/// darktable's safety margin below sensor saturation for demosaic interpolation and
 /// quantization: a pixel whose footprint peak reaches `1 − ENVELOPE_OFFSET` is saturated.
 const ENVELOPE_OFFSET: f32 = 3000.0 / 65535.0;
 /// How strongly the fallback for pixels no frame measured prefers the shortest exposure:
@@ -62,7 +62,7 @@ const FALLBACK_SELECTIVITY: i32 = 8;
 /// Weight of the fallback relative to the smallest frame weight, so pixels change over to
 /// it continuously as the last measuring frame fades out near its clip.
 const FALLBACK_WEIGHT: f32 = 1e-4;
-/// Footprint peaks (white = 1) treated as well exposed when measuring exposure ratios:
+/// Footprint peaks (saturation = 1) treated as well exposed when measuring exposure ratios:
 /// above sensor noise and safely below saturation, where RAW data is linear.
 const GAIN_SAMPLE_RANGE: std::ops::Range<f32> = 0.01..0.9;
 /// Exposure-ratio histogram: ln(ratio) in ±`GAIN_LOG_RANGE`, binned at about 0.05 %.
@@ -119,9 +119,11 @@ pub struct HdrFrame<'a> {
     /// Black-subtracted, white-normalized camera RGB without white balance, row-major.
     /// Clipped highlights may be reconstructed: they only count as a fallback.
     pub rgb: &'a [f32],
-    /// Per pixel, the brightest normalized sensor sample (white = 1) of the footprint the
+    /// Per pixel, the brightest normalized sensor sample (saturation = 1) of the footprint the
     /// demosaicer interpolated it from.
     pub peak: &'a [f32],
+    /// Sensor saturation in the white-normalized units of `rgb`.
+    pub saturation: SensorSaturation,
     /// Exposure (light × sensor gain) relative to the reference, from metadata.
     pub exposure: f32,
     /// Light collected (shutter × aperture area) relative to the reference. Shot noise,
@@ -151,6 +153,7 @@ pub struct HdrAccumulator {
 struct Reference {
     luminance: Vec<f32>,
     peak: Vec<f32>,
+    saturation: SensorSaturation,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -222,12 +225,12 @@ impl HdrAccumulator {
                     .unwrap_or(frame.registration.gain);
                 let consistency = self.reject_motion.then(|| {
                     reference.consistency(
-                        self.width,
-                        self.height,
+                        [self.width, self.height],
                         &warped,
                         &luminance,
                         frame.exposure,
                         gain,
+                        frame.saturation,
                     )
                 });
                 (gain, consistency)
@@ -257,6 +260,7 @@ impl HdrAccumulator {
             self.reference = Some(Reference {
                 luminance,
                 peak: warped.peak,
+                saturation: frame.saturation,
             });
         }
         Ok(())
@@ -340,15 +344,18 @@ impl Reference {
     /// yet by its measured `gain`.
     fn consistency(
         &self,
-        width: usize,
-        height: usize,
+        [width, height]: [usize; 2],
         frame: &Warped,
         luminance: &[f32],
         exposure: f32,
         gain: f32,
+        saturation: SensorSaturation,
     ) -> Vec<f32> {
         // Converts reference units to the frame's normalized sensor units.
         let exposure = exposure * gain;
+        // Peaks use each frame's saturation as their unit. The exposure ratio
+        // alone relates RGB measurements, which use metadata white instead.
+        let peak_exposure = exposure * (self.saturation.level() / saturation.level());
         let (cells_x, cells_y) = (width.div_ceil(CELL), height.div_ceil(CELL));
         let cells: Vec<f32> = (0..cells_x * cells_y)
             .into_par_iter()
@@ -365,7 +372,7 @@ impl Reference {
                         }
                         if saturated(self.peak[i]) {
                             clipped += 1;
-                            let frame_peak = frame.peak[i] / exposure;
+                            let frame_peak = frame.peak[i] / peak_exposure;
                             if frame_peak < CONTRADICTION * (1.0 - ENVELOPE_OFFSET) {
                                 contradicting += 1;
                             }

@@ -11,7 +11,7 @@ use rayon::prelude::*;
 const REGISTRATION_EDGE: usize = 2048;
 /// Long edge of the colour thumbnail.
 const THUMBNAIL_EDGE: usize = 1024;
-/// Samples whose demosaic footprint reaches this (white = 1) count as clipped.
+/// Samples whose demosaic footprint reaches this fraction of saturation count as clipped.
 pub(super) const CLIPPED: f32 = 0.95;
 /// A frame's bright level: this share of its unclipped pixels is darker.
 const LEVEL_PERCENTILE: f64 = 0.99;
@@ -93,7 +93,7 @@ pub(super) struct SourceFrame<'a> {
     pub(super) height: usize,
     /// Camera RGB in sensor coordinates, row-major.
     pub(super) rgb: &'a [f32],
-    /// Per pixel, the brightest sensor sample of its demosaic footprint (white = 1).
+    /// Per pixel, the brightest sensor sample of its demosaic footprint (saturation = 1).
     pub(super) peak: &'a [f32],
     /// Maps undistorted to sensor positions; `None` when the lens is not corrected.
     pub(super) lens: Option<&'a LensGeometryMap>,
