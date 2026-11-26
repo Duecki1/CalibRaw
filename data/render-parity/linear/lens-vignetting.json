@@ -1,0 +1,11 @@
+{
+  "edits": {
+    "exposure": {
+      "exposure": -1.5
+    },
+    "lens": {
+      "enabled": true,
+      "manual": {"vignetting": 35.0}
+    }
+  }
+}

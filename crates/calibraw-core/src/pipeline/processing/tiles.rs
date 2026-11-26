@@ -321,6 +321,12 @@ pub fn extract_padded_tile_into(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mu
         *tile_raw = extract_padded_binned_tile(raw, binned, tile);
         return;
     }
+    if raw.raster_clipping.averaged().is_some() {
+        // Tiles of a reduced raster proxy carry its clipping record as well,
+        // so they too are built afresh.
+        *tile_raw = extract_padded_raster_tile(raw, tile);
+        return;
+    }
     tile_raw.highlight_model_cache = std::sync::Arc::clone(&raw.highlight_model_cache);
     tile_raw.highlight_source_identity = std::sync::Arc::clone(&raw.highlight_source_identity);
     tile_raw.highlight_reference_source = false;

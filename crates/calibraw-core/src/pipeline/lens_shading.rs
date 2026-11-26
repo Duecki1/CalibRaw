@@ -1,5 +1,5 @@
 //! `LensShadingMap`: lens vignetting gains the GPU applies to a sensor mosaic
-//! after highlight reconstruction.
+//! or camera-linear raster after highlight reconstruction.
 
 use std::sync::Arc;
 

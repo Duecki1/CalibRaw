@@ -96,6 +96,7 @@ impl RawGpuPipeline {
             raw_pixels: vec![0u16; pixels].into(),
             binned_sensor: None,
             scene_linear_raster: None,
+            raster_clipping: crate::pipeline::RasterClipping::None,
             scene_referred_raster: false,
             color_indices: crate::pipeline::CompactPixelMap::repeating(
                 EDGE,
@@ -305,6 +306,7 @@ impl RawGpuPipeline {
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
             layout,
             ai_cfa: has_ai_cfa,
+            clipping_texture: holds_clipping_texture(raw),
             cfa_kind: raw.cfa_kind,
         })?;
         let gpu_budget_reservation = GpuBudgetReservation::acquire(device, &resource_plan)?;
@@ -375,7 +377,7 @@ impl RawGpuPipeline {
             post_blur_glow_passes,
             post_blur_pixelate_blocks_pass,
             post_blur_render_pass,
-            binned_finish_pass,
+            highlight_finish_pass,
             indices,
         } = assembled;
 
@@ -438,7 +440,7 @@ impl RawGpuPipeline {
             unrendered: Mutex::default(),
             tone_build: BuildRevision::new(),
             inherited_tone: std::sync::atomic::AtomicU64::new(0),
-            binned_finish_pass,
+            highlight_finish_pass,
             passes,
             raw_texture: surfaces.raw_texture,
             color_texture: surfaces.color_texture,
@@ -462,6 +464,7 @@ impl RawGpuPipeline {
             scene_format: geometry.demosaic_format,
             has_ai_scene,
             layout,
+            camera_linear_raster: raw.is_camera_linear_raster(),
             has_ai_cfa,
             display_linear_texture: surfaces.display_linear_texture,
             _tone_guide_a: surfaces.tone_guide_a,

@@ -662,8 +662,9 @@ pub struct RawGpuPipeline {
     /// any.
     inherited_tone: std::sync::atomic::AtomicU64,
     /// The raster finish program reading camera RGB from highlight work A: a
-    /// binned source's reconstruction, or an X-Trans photo's AI-denoised scene.
-    binned_finish_pass: Pass,
+    /// binned source's or camera-linear raster's reconstruction, or an X-Trans
+    /// photo's AI-denoised scene.
+    highlight_finish_pass: Pass,
     passes: Vec<Pass>,
     raw_texture: wgpu::Texture,
     color_texture: wgpu::Texture,
@@ -696,6 +697,11 @@ pub struct RawGpuPipeline {
     /// The layout of the source the graph was built for; uploaded tiles must
     /// share it.
     layout: PixelLayout,
+    /// Whether that source is a camera-linear raster (a LinearRaw DNG), whose
+    /// RGB the RAW stage treats as sensor RGB, as a binned view's: clipped
+    /// channels are rebuilt and the lens shading gains applied. Uploaded tiles
+    /// must share it.
+    camera_linear_raster: bool,
     /// Whether the RAW stage blends in AI-denoised sensor samples: a Bayer
     /// mosaic's in the raw texture, or a binned view's in its own texture.
     has_ai_cfa: bool,
@@ -1099,15 +1105,40 @@ impl RawGpuPipeline {
             raw.pixel_layout()
         );
 
+        anyhow::ensure!(
+            raw.is_camera_linear_raster() == self.camera_linear_raster,
+            "reusable pipeline received a tile that {} a camera-linear raster, unlike its source",
+            if raw.is_camera_linear_raster() {
+                "is"
+            } else {
+                "is not"
+            },
+        );
+
         if let Some(rgb) = rgb_source_pixels(raw) {
             upload_rgb_texture(queue, &self.rgb_source_texture, self.scene_format, raw, rgb)?;
         }
         match self.layout {
-            PixelLayout::Raster => return Ok(()),
+            PixelLayout::Raster => {
+                if self.camera_linear_raster {
+                    // Without a clipping record the texture keeps the last
+                    // tile's content, which `highlight_options.w` disables.
+                    if let Some(clipping) = raw.averaged_clipping() {
+                        upload_binned_clipping_texture(
+                            queue,
+                            &self.binned_clipping_texture,
+                            raw,
+                            clipping,
+                        )?;
+                    }
+                    upload_lens_shading_texture(queue, &self.lens_shading_texture, raw);
+                }
+                return Ok(());
+            }
             PixelLayout::Binned => {
                 // Without clipped photosites the texture keeps the last
                 // view's content, which `highlight_options.w` disables.
-                if let Some(clipping) = binned_clipping(raw) {
+                if let Some(clipping) = raw.averaged_clipping() {
                     upload_binned_clipping_texture(
                         queue,
                         &self.binned_clipping_texture,
@@ -1640,7 +1671,19 @@ impl RawGpuPipeline {
     fn encode_raw_stage(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
         self.forget_output();
         if self.layout == PixelLayout::Raster {
-            self.encode_pass(encoder, self.indices.raster_finish_pass_index);
+            if self.camera_linear_raster {
+                // Highlight reconstruction writes highlight work A, which the
+                // raster finish program then reads.
+                self.ai_scene_intact.store(false, Ordering::Release);
+                self.encode_pass(encoder, self.indices.raster_highlight_pass_index);
+                self.encode_bound_pass(
+                    encoder,
+                    &self.highlight_finish_pass,
+                    "camera raster finish",
+                );
+            } else {
+                self.encode_pass(encoder, self.indices.raster_finish_pass_index);
+            }
             self.encode_chromatic_aberration(encoder, params);
             self.encode_color_denoise(encoder, params);
             return;
@@ -1653,7 +1696,7 @@ impl RawGpuPipeline {
                 // the binned finish: the profiled luminance denoise on the way
                 // into the scene, a plain copy at zero. It only reads
                 // highlight work A, which stays intact for the next render.
-                self.encode_bound_pass(encoder, &self.binned_finish_pass, "AI scene finish");
+                self.encode_bound_pass(encoder, &self.highlight_finish_pass, "AI scene finish");
                 self.encode_chromatic_aberration(encoder, params);
                 self.encode_color_denoise(encoder, params);
             }
@@ -1663,7 +1706,7 @@ impl RawGpuPipeline {
         self.ai_scene_intact.store(false, Ordering::Release);
         if self.layout == PixelLayout::Binned {
             self.encode_pass(encoder, self.indices.binned_highlight_pass_index);
-            self.encode_bound_pass(encoder, &self.binned_finish_pass, "binned finish");
+            self.encode_bound_pass(encoder, &self.highlight_finish_pass, "binned finish");
         } else {
             self.encode_demosaic(encoder, params);
         }

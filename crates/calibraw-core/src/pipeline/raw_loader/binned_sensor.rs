@@ -44,7 +44,12 @@ pub struct BinnedSensor {
 /// They are measured on the recorded mosaic. An AI-denoised mosaic keeps the
 /// recorded values of clipped photosites, so they hold for `ai_rgb` too.
 ///
+/// A reduced proxy of a camera-linear raster keeps the same record of the
+/// pixels it averages, each pixel's colours counting as photosites
+/// ([`RasterClipping::Averaged`]).
+///
 /// [`SensorSaturation::CLIP_DETECTION`]: crate::pipeline::SensorSaturation::CLIP_DETECTION
+/// [`RasterClipping::Averaged`]: super::RasterClipping::Averaged
 #[derive(Clone, Debug)]
 pub struct BinnedClipping {
     shares: Arc<[f32]>,
@@ -66,6 +71,19 @@ impl BinnedClipping {
 
     pub fn clipped_values(&self) -> &[f32] {
         &self.clipped_values
+    }
+
+    /// Both planes passed through `plane`, which crops, pads or averages
+    /// interleaved RGB rows; `None` when it returns `None`, as a cancelled
+    /// average does.
+    pub(crate) fn try_map_planes(
+        &self,
+        mut plane: impl FnMut(&[f32]) -> Option<Vec<f32>>,
+    ) -> Option<Self> {
+        Some(Self::new(
+            plane(&self.shares)?,
+            plane(&self.clipped_values)?,
+        ))
     }
 }
 
@@ -103,10 +121,7 @@ impl BinnedSensor {
             None => None,
         };
         let clipping = match &self.clipping {
-            Some(clipping) => Some(BinnedClipping::new(
-                plane(&clipping.shares)?,
-                plane(&clipping.clipped_values)?,
-            )),
+            Some(clipping) => Some(clipping.try_map_planes(&mut plane)?),
             None => None,
         };
         Some(Self::new(rgb, ai_rgb, clipping))

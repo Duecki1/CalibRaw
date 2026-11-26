@@ -270,8 +270,12 @@ fn correct_raster(
 
     let vignette_enabled = flags & LF_MODIFY_VIGNETTING != 0;
     let coordinate_enabled = flags & LF_MODIFY_TCA != 0;
+    // A camera-linear raster takes its vignetting as a shading map after
+    // highlight reconstruction, as a mosaic does, so brightened corners are
+    // not taken for clipped samples. Rendered photos take it in their pixels.
+    let shading_map = vignette_enabled && raw.is_camera_linear_raster();
     let mut shaded = source.to_vec();
-    if vignette_enabled {
+    if vignette_enabled && !shading_map {
         apply_raster_vignette(raw, modifier, &mut shaded)?;
     }
 
@@ -311,6 +315,10 @@ fn correct_raster(
 
     let mut corrected = raw.clone();
     corrected.scene_linear_raster = Some(Arc::from(output));
+    if shading_map {
+        corrected.lens_shading =
+            Some(build_lens_shading_map(raw, modifier)?.after(raw.lens_shading.as_ref()));
+    }
     corrected.lens_geometry = lens_geometry;
     corrected.ai_denoised = Arc::new(std::sync::RwLock::new(None));
     corrected.highlight_model_cache = Default::default();

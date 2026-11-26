@@ -99,7 +99,7 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) chromatic_aberration_fringe_pass_index: usize,
     /// A binned source's replacement for highlight reconstruction and
     /// demosaicing (`binned_highlight_reconstruct`); the raster finish program
-    /// follows as `AssembledPasses::binned_finish_pass`. It runs with the RAW
+    /// follows as `AssembledPasses::highlight_finish_pass`. It runs with the RAW
     /// stage but comes last so that adding it kept earlier positions.
     pub(in crate::pipeline::gpu) binned_highlight_pass_index: usize,
     /// Accumulation into the contour grid, which runs with the tone stage, and
@@ -124,6 +124,12 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// ([`stores_rcd_reference`]). It comes last so that
     /// adding it kept earlier positions.
     pub(in crate::pipeline::gpu) rcd_reference_pass_index: usize,
+    /// A camera-linear raster's highlight reconstruction
+    /// (`raster_highlight_reconstruct`), which takes the binned pass's
+    /// bindings; the raster finish program follows as
+    /// `AssembledPasses::highlight_finish_pass`. It runs with the RAW stage
+    /// but comes last so that adding it kept earlier positions.
+    pub(in crate::pipeline::gpu) raster_highlight_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -182,6 +188,7 @@ impl StageIndices {
         let styled_glow_pass_index = take(STYLED_GLOW_PASSES);
         let defocus_pass_index = take(DEFOCUS_PASSES);
         let rcd_reference_pass_index = take(usize::from(matches!(cfa_kind, CfaKind::Bayer)));
+        let raster_highlight_pass_index = take(1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -226,6 +233,7 @@ impl StageIndices {
             styled_glow_pass_index,
             defocus_pass_index,
             rcd_reference_pass_index,
+            raster_highlight_pass_index,
             pass_count,
         }
     }
@@ -266,9 +274,10 @@ pub(in crate::pipeline::gpu) struct AssembledPasses {
     pub(in crate::pipeline::gpu) post_blur_glow_passes: Vec<Pass>,
     pub(in crate::pipeline::gpu) post_blur_pixelate_blocks_pass: Pass,
     pub(in crate::pipeline::gpu) post_blur_render_pass: Pass,
-    /// The raster finish program reading a binned source's reconstructed
-    /// camera RGB instead of a raster.
-    pub(in crate::pipeline::gpu) binned_finish_pass: Pass,
+    /// The raster finish program reading the camera RGB that binned or
+    /// camera-raster highlight reconstruction writes to highlight work A
+    /// instead of a raster.
+    pub(in crate::pipeline::gpu) highlight_finish_pass: Pass,
     pub(in crate::pipeline::gpu) indices: StageIndices,
 }
 
@@ -762,9 +771,9 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         groups.bg_binned_highlights.clone(),
         image_workgroups,
     ));
-    let binned_finish_pass = Pass {
+    let highlight_finish_pass = Pass {
         pipeline: passes[indices.raster_finish_pass_index].pipeline.clone(),
-        bindings: groups.bg_binned_finish.clone().into(),
+        bindings: groups.bg_highlight_finish.clone().into(),
         workgroups: image_workgroups,
     };
 
@@ -862,6 +871,19 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         ));
     }
 
+    ensure_planned(
+        &passes,
+        indices.raster_highlight_pass_index,
+        "camera raster highlights",
+    )?;
+    passes.push(assembler.make_pass(
+        shaders.highlight_module.as_ref(),
+        "raster_highlight_reconstruct",
+        &layouts.bgl_binned_highlights,
+        groups.bg_binned_highlights.clone(),
+        image_workgroups,
+    ));
+
     // These variants reuse the programs above with bind groups that read tex2:
     // the mask-blurred scene, or whatever else last wrote there.
     let mut post_blur_glow_passes = vec![Pass {
@@ -908,7 +930,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         post_blur_glow_passes,
         post_blur_pixelate_blocks_pass,
         post_blur_render_pass,
-        binned_finish_pass,
+        highlight_finish_pass,
         indices,
     })
 }

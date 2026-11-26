@@ -14,12 +14,13 @@
 @group(0) @binding(13) var lens_shading_tex: texture_2d<f32>;
 // A binned source (BinnedSensor in Rust) instead of a mosaic: normalized
 // sensor RGB, the AI-denoised RGB binned alike (a 1x1 placeholder without
-// one), and where its reconstructed camera RGB goes.
+// one), and where its reconstructed camera RGB goes. A camera-linear raster
+// takes the same bindings (raster_highlight_reconstruct).
 @group(0) @binding(11) var binned_sensor_tex: texture_2d<f32>;
 @group(0) @binding(12) var binned_ai_tex: texture_2d<f32>;
 @group(0) @binding(10) var binned_camera_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
-// Where the photosites behind a binned source clipped (BinnedClipping in
-// Rust): per pixel, the share of red, green and blue photosites at or above
+// Where the photosites behind a binned source, or the pixels behind a reduced
+// camera-linear raster proxy, clipped (BinnedClipping in Rust): per pixel, the share of red, green and blue photosites at or above
 // 0.987 of the sensor's saturation in rgb, and the mean normalized sensor
 // value of those photosites, at black point 0, in a. Its content applies only
 // while camera_uniforms.highlight_options.w is 1; a 1x1 placeholder for other
@@ -546,6 +547,42 @@ fn binned_highlight_reconstruct(@builtin(global_invocation_id) dispatch_gid: vec
     } else if method >= 1.5 {
         output = binned_guided_rgb(pos, sensor, output);
     }
+    let shading = lens_shading_gains(pos);
+    output *= vec3<f32>(shading.r, 0.5 * (shading.g + shading.a), shading.b);
+    textureStore(binned_camera_write, pos, vec4<f32>(output, 1.0));
+}
+
+// highlight_reconstruct for a camera-linear raster (a LinearRaw DNG), which
+// takes the binned bindings: binned_sensor_tex holds its RGB, demosaiced
+// already, in camera RGB before white balance with black 0 and the white
+// level 1 (LoadedRaw::scene_linear_raster), and binned_clipping_tex the record
+// of a reduced proxy (RasterClipping::Averaged in Rust). Such a raster has no
+// room to move its black (binned_apply_black_point) and no AI-denoised
+// samples, so its values are read as they are.
+//
+// Clipped channels are rebuilt as a binned pixel's, in white-balanced camera
+// RGB: white balance would otherwise lift the channels that did not clip
+// above them and tint blown areas (magenta where green clipped). The result
+// returns to camera RGB before white balance, which the camera transform of
+// such a raster applies, and takes the lens shading gains; a channel left as
+// it was keeps its recorded value exactly. The raster finish program then
+// reads it from highlight work A.
+@compute @workgroup_size(8, 8, 1)
+fn raster_highlight_reconstruct(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
+    let gid = Common::dispatch_id(dispatch_gid);
+    if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
+    let pos = vec2<i32>(i32(gid.x), i32(gid.y));
+    let method = Common::camera_uniforms.highlight_options.x;
+    let sensor = textureLoad(binned_sensor_tex, pos, 0).rgb;
+    let wb = Common::camera_uniforms.wb.rgb;
+    let camera = sensor * wb;
+    var rebuilt = camera;
+    if method >= 0.5 && method < 1.5 {
+        rebuilt = binned_lch_rgb(pos, sensor, camera);
+    } else if method >= 1.5 {
+        rebuilt = binned_guided_rgb(pos, sensor, camera);
+    }
+    var output = select(rebuilt / max(wb, vec3<f32>(1e-6)), sensor, rebuilt == camera);
     let shading = lens_shading_gains(pos);
     output *= vec3<f32>(shading.r, 0.5 * (shading.g + shading.a), shading.b);
     textureStore(binned_camera_write, pos, vec4<f32>(output, 1.0));

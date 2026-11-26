@@ -2,7 +2,9 @@
 
 use super::binning::{bin_mosaic, BinnedMosaic};
 use super::*;
-use crate::pipeline::{AiDenoisedImage, BinnedSensor};
+use crate::pipeline::{
+    AiDenoisedImage, BinnedClipping, BinnedSensor, RasterClipping, SensorSaturation,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -23,15 +25,21 @@ impl Default for ProxySpec {
     }
 }
 
+/// A raster view of `raw`'s photo (a crop, proxy or tile), `width` by
+/// `height`, with `rgb` as its pixels and `raster_clipping` as where they
+/// clipped. It keeps the photo's metadata, colour and lens shading, and
+/// shares the highlight model of `raw`'s full source as a consumer.
 fn raster_with_metadata(
     raw: &LoadedRaw,
     width: u32,
     height: u32,
     rgb: Vec<f32>,
+    raster_clipping: RasterClipping,
     preserve_lens_geometry: bool,
 ) -> LoadedRaw {
     let mut output = LoadedRaw::from_scene_linear_rec2020(width, height, rgb)
         .expect("validated raster dimensions must remain valid");
+    output.raster_clipping = raster_clipping;
     output.source_extent = raw.source_extent;
     output.camera_make = raw.camera_make.clone();
     output.camera_model = raw.camera_model.clone();
@@ -46,6 +54,7 @@ fn raster_with_metadata(
     output.wb_coeffs = raw.wb_coeffs;
     output.black_levels = raw.black_levels;
     output.white_levels = raw.white_levels;
+    output.sensor_saturation = raw.sensor_saturation;
     output.cfa_kind = raw.cfa_kind;
     output.noise_profile = raw.noise_profile;
     output.profile_color = Arc::clone(&raw.profile_color);
@@ -54,8 +63,11 @@ fn raster_with_metadata(
     output.lens_geometry = preserve_lens_geometry
         .then(|| raw.lens_geometry.clone())
         .flatten();
+    output.lens_shading = raw.lens_shading.clone();
     output.lateral_chromatic_aberration = raw.lateral_chromatic_aberration;
     output.highlight_model_cache = Arc::clone(&raw.highlight_model_cache);
+    output.highlight_source_identity = Arc::clone(&raw.highlight_source_identity);
+    output.highlight_reference_source = false;
     output
 }
 
@@ -128,9 +140,21 @@ fn crop_rgb(source: &[f32], source_width: u32, [x, y, width, height]: [u32; 4]) 
 fn average_rgb_region(
     source: &[f32],
     source_width: u32,
+    region: [u32; 4],
+    output: [u32; 2],
+    cancel: &AtomicBool,
+) -> Option<Vec<f32>> {
+    average_rgb_region_of(source, source_width, region, output, cancel, |value| value)
+}
+
+/// [`average_rgb_region`] of `sample` of each source value.
+fn average_rgb_region_of(
+    source: &[f32],
+    source_width: u32,
     [x, y, region_width, region_height]: [u32; 4],
     [output_width, output_height]: [u32; 2],
     cancel: &AtomicBool,
+    sample: impl Fn(f32) -> f32 + Sync,
 ) -> Option<Vec<f32>> {
     let source_width = source_width as usize;
     let mut rgb = vec![0.0f32; output_width as usize * output_height as usize * 3];
@@ -148,9 +172,9 @@ fn average_rgb_region(
                 for sy in sy0..sy1 {
                     for sx in sx0..sx1 {
                         let index = ((y + sy) as usize * source_width + (x + sx) as usize) * 3;
-                        sum[0] += f64::from(source[index]);
-                        sum[1] += f64::from(source[index + 1]);
-                        sum[2] += f64::from(source[index + 2]);
+                        sum[0] += f64::from(sample(source[index]));
+                        sum[1] += f64::from(sample(source[index + 1]));
+                        sum[2] += f64::from(sample(source[index + 2]));
                         count += 1;
                     }
                 }
@@ -174,8 +198,46 @@ fn crop_raster(raw: &LoadedRaw, region: [u32; 4]) -> LoadedRaw {
         width,
         height,
         crop_rgb(source, raw.width, region),
+        raw.raster_clipping
+            .map_planes(|plane| crop_rgb(plane, raw.width, region)),
         is_whole_image(raw, region),
     )
+}
+
+/// What a proxy that averages `region` of `raw`, whose pixels are `source`,
+/// down to `output` records of where they clipped: `None` once `cancel` is
+/// set. Pixels that clip throughout keep showing it at the clip level; the
+/// record keeps the clipped share of the others, which averaging pulls below
+/// it (`binned_split` in highlights.wgsl reads it).
+fn averaged_raster_clipping(
+    raw: &LoadedRaw,
+    source: &[f32],
+    region: [u32; 4],
+    output: [u32; 2],
+    cancel: &AtomicBool,
+) -> Option<RasterClipping> {
+    let average = |plane: &[f32], sample: &(dyn Fn(f32) -> f32 + Sync)| {
+        average_rgb_region_of(plane, raw.width, region, output, cancel, sample)
+    };
+    match &raw.raster_clipping {
+        RasterClipping::None => Some(RasterClipping::None),
+        RasterClipping::Averaged(clipping) => clipping
+            .try_map_planes(|plane| average(plane, &|value| value))
+            .map(RasterClipping::Averaged),
+        RasterClipping::PerPixel => {
+            let level = SensorSaturation::CLIP_DETECTION * raw.sensor_saturation.level();
+            let shares = average(source, &|value| if value >= level { 1.0 } else { 0.0 })?;
+            if !shares.iter().any(|share| *share > 0.0) {
+                return Some(RasterClipping::PerPixel);
+            }
+            let clipped_values =
+                average(source, &|value| if value >= level { value } else { 0.0 })?;
+            Some(RasterClipping::Averaged(BinnedClipping::new(
+                shares,
+                clipped_values,
+            )))
+        }
+    }
 }
 
 fn build_raster_region_proxy(
@@ -194,8 +256,15 @@ fn build_raster_region_proxy(
         .scene_linear_raster()
         .expect("raster source flag requires RGB pixels");
     let rgb = average_rgb_region(source, raw.width, region, output, cancel)?;
-    let mut proxy =
-        raster_with_metadata(raw, output[0], output[1], rgb, is_whole_image(raw, region));
+    let clipping = averaged_raster_clipping(raw, source, region, output, cancel)?;
+    let mut proxy = raster_with_metadata(
+        raw,
+        output[0],
+        output[1],
+        rgb,
+        clipping,
+        is_whole_image(raw, region),
+    );
     // Box-filtered pixels average their footprint, so noise variance scales
     // with the area ratio, as for sensor proxies.
     proxy.noise_profile = raw
@@ -303,8 +372,19 @@ pub(super) fn extract_padded_raster_tile(raw: &LoadedRaw, tile: ExportTile) -> L
     let source = raw
         .scene_linear_raster()
         .expect("raster source flag requires RGB pixels");
-    let rgb = padded_rgb(source, [raw.width, raw.height], tile);
-    raster_with_metadata(raw, tile.padded_width, tile.padded_height, rgb, false)
+    let size = [raw.width, raw.height];
+    let rgb = padded_rgb(source, size, tile);
+    let clipping = raw
+        .raster_clipping
+        .map_planes(|plane| padded_rgb(plane, size, tile));
+    raster_with_metadata(
+        raw,
+        tile.padded_width,
+        tile.padded_height,
+        rgb,
+        clipping,
+        false,
+    )
 }
 
 pub(super) fn extract_padded_binned_tile(

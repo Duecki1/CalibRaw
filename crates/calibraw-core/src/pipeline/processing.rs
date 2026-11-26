@@ -155,7 +155,9 @@ impl RawStageControls {
 #[cfg(test)]
 mod tests {
     use super::{build_region_proxy, build_region_proxy_until, ProxySpec};
-    use crate::pipeline::{CameraProfile, CfaKind, CompactPixelMap, LoadedRaw, SensorSaturation};
+    use crate::pipeline::{
+        CameraProfile, CfaKind, CompactPixelMap, LoadedRaw, RasterClipping, SensorSaturation,
+    };
 
     fn test_raster(width: u32, height: u32) -> LoadedRaw {
         let mut rgb = Vec::with_capacity((width * height * 3) as usize);
@@ -188,6 +190,7 @@ mod tests {
             raw_pixels: pixels.into(),
             binned_sensor: None,
             scene_linear_raster: None,
+            raster_clipping: RasterClipping::None,
             scene_referred_raster: false,
             color_indices: CompactPixelMap::dense(
                 width,

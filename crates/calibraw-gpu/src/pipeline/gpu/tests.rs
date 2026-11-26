@@ -4,8 +4,9 @@ use super::{
     COLOR_DENOISE_ENTRY_POINTS, DETAIL_PYRAMID_LEVELS,
 };
 use crate::pipeline::{
-    build_proxy, CameraProfile, CfaKind, CompactPixelMap, ExposureParams, LoadedRaw, MaskEffect,
-    MaskStack, ProxySpec, SensorSaturation,
+    build_proxy, CameraColorModel, CameraProfile, CameraWhiteBalanceModel, CfaKind,
+    CompactPixelMap, ExposureParams, LinearSampleFormat, LoadedRaw, MaskEffect, MaskStack,
+    ProfileColor, ProxySpec, RasterClipping, SensorSaturation,
 };
 
 /// Composes `shader` the way production does for `quality` with the effects
@@ -227,6 +228,7 @@ fn highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         raw_pixels: pixels.into(),
         binned_sensor: None,
         scene_linear_raster: None,
+        raster_clipping: crate::pipeline::RasterClipping::None,
         scene_referred_raster: false,
         color_indices: CompactPixelMap::dense(width, height, colors),
         wb_coeffs: [1.45, 1.0, 0.72, 1.0],
@@ -323,6 +325,10 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
             indices.binned_highlight_pass_index,
             "binned_highlight_reconstruct",
         ),
+        (
+            indices.raster_highlight_pass_index,
+            "raster_highlight_reconstruct",
+        ),
     ] {
         assert_eq!(entry(index), expected, "pass {index}");
     }
@@ -360,10 +366,44 @@ fn pipelines_build_and_render_for_every_sensor_layout_and_quality() -> anyhow::R
             .collect(),
     );
     let raster = tone_consistency_scene(EDGE, EDGE);
+    // A LinearRaw DNG's camera RGB, clipped at its white level.
+    let mut camera_raster = raster.clone();
+    let clipped: Vec<f32> = raster
+        .scene_linear_raster()
+        .unwrap()
+        .iter()
+        .map(|value| value.min(1.0))
+        .collect();
+    camera_raster.raster_clipping =
+        RasterClipping::of_linear_raw(&clipped, LinearSampleFormat::Integer);
+    camera_raster.scene_linear_raster = Some(clipped.into());
+    camera_raster.wb_coeffs = [2.0, 1.0, 1.5, 1.0];
+    camera_raster.profile_color = std::sync::Arc::new(ProfileColor {
+        white_balance_model: Some(CameraWhiteBalanceModel {
+            base_wb: camera_raster.wb_coeffs,
+            cdesc: *b"RGBG",
+            base_cct: 5000.0,
+            color: CameraColorModel::Matrix {
+                xyz_to_camera: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]],
+            },
+        }),
+        ..ProfileColor::default()
+    });
+    assert!(camera_raster.is_camera_linear_raster() && camera_raster.raster_clipping.is_recorded());
     let binned = ProxySpec { max_edge: EDGE / 2 };
     let binned_bayer = build_proxy(&bayer, binned);
     let binned_xtrans = build_proxy(&xtrans, binned);
-    for raw in [&bayer, &xtrans, &raster, &binned_bayer, &binned_xtrans] {
+    let camera_raster_proxy = build_proxy(&camera_raster, binned);
+    assert!(camera_raster_proxy.averaged_clipping().is_some());
+    for raw in [
+        &bayer,
+        &xtrans,
+        &raster,
+        &camera_raster,
+        &binned_bayer,
+        &binned_xtrans,
+        &camera_raster_proxy,
+    ] {
         let source = (raw.cfa_kind, raw.pixel_layout());
         let params = GpuParams::new(&ExposureParams::default(), &MaskStack::default(), raw);
         for quality in [ProcessingQuality::Preview, ProcessingQuality::High] {

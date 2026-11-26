@@ -21,7 +21,7 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_raster_finish: wgpu::BindGroup,
     /// The raster finish program reading a binned source's reconstructed
     /// camera RGB.
-    pub(in crate::pipeline::gpu) bg_binned_finish: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_highlight_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_color_denoise: [wgpu::BindGroup; 6],
     pub(in crate::pipeline::gpu) bg_chromatic_aberration_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_chromatic_aberration_fringes: wgpu::BindGroup,
@@ -439,7 +439,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         };
     let bg_raster_finish =
         make_color_denoise_bind_group("bg raster finish", rgb_source_view, scene_view);
-    let bg_binned_finish =
+    let bg_highlight_finish =
         make_color_denoise_bind_group("bg binned finish", highlight_work_a_view, scene_view);
     let bg_color_denoise = [
         make_color_denoise_bind_group("bg color denoise scale 1", scene_view, tex1_view),
@@ -686,7 +686,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_xtrans_markesteijn,
         bg_xtrans_finish,
         bg_raster_finish,
-        bg_binned_finish,
+        bg_highlight_finish,
         bg_color_denoise,
         bg_chromatic_aberration_prepare,
         bg_chromatic_aberration_fringes,

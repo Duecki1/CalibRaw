@@ -26,10 +26,10 @@
 use calibraw_core::luts::ResolvedLook;
 use calibraw_core::sidecar::{self, EditState};
 use calibraw_gpu::pipeline::{
-    build_proxy, spawn_tiled_export, CfaKind, CompactPixelMap, ExportBitDepth, ExportEvent,
-    ExportFiles, ExportFormat, ExportMetadata, ExportSettings, ExportTarget, LoadedRaw,
-    OutputColorSpace, ProfileColor, ProxySpec, SourceCorrections, TileSpec, TiledExportJob,
-    ToneCurve,
+    build_proxy, spawn_tiled_export, CameraColorModel, CameraWhiteBalanceModel, CfaKind,
+    CompactPixelMap, ExportBitDepth, ExportEvent, ExportFiles, ExportFormat, ExportMetadata,
+    ExportSettings, ExportTarget, LinearSampleFormat, LoadedRaw, OutputColorSpace, ProfileColor,
+    ProxySpec, RasterClipping, SourceCorrections, TileSpec, TiledExportJob, ToneCurve,
 };
 use calibraw_gpu::{request_headless_device, wgpu, HeadlessAdapter, HeadlessDeviceRequest};
 use image::{ImageBuffer, Rgb, RgbImage};
@@ -164,8 +164,8 @@ fn merge(base: &mut Value, changes: Value) {
 /// A case's synthetic photo ([`input`]).
 struct Input {
     raw: LoadedRaw,
-    /// Developed at half its size, binned to RGB as a reduced preview's proxy
-    /// is, after the source corrections.
+    /// Developed at half its size, reduced as a preview's proxy is (a mosaic
+    /// binned to RGB, a raster averaged), after the source corrections.
     binned: bool,
     /// The colour space the case is exported in.
     color_space: OutputColorSpace,
@@ -208,8 +208,11 @@ const PROFILE_TONE_CURVE: [[f32; 2]; 7] = [
 ///   stages;
 /// - `bayer` and `xtrans`: the scene seen through an RGGB or X-Trans mosaic,
 ///   with black level, white balance, clipped highlights and noise;
+/// - `linear`: the scene as a LinearRaw DNG holds it, camera RGB demosaiced
+///   already, with the mosaics' white balance, clipped highlights and noise;
 /// - `bayer-hot` and `xtrans-hot`: those mosaics with [`HOT_PHOTOSITES`];
-/// - `<mosaic>-binned`: a mosaic binned ([`Input::binned`]);
+/// - `<mosaic>-binned` and `linear-binned`: reduced as a preview proxy
+///   ([`Input::binned`]);
 /// - `<mosaic>-profile-tone`: a mosaic whose camera profile has a tone curve
 ///   ([`PROFILE_TONE_CURVE`]);
 /// - `<input>-<colour space>`: any of these exported in a colour space other
@@ -253,6 +256,18 @@ fn input(name: &str) -> Input {
         .flat_map(|y| (0..WIDTH).flat_map(move |x| scene(x, y)))
         .collect();
     let raster = LoadedRaw::from_scene_linear_rec2020(WIDTH, HEIGHT, scene.clone()).unwrap();
+    // As-shot white balance: red and blue reach the sensor weaker than green.
+    const WB: [f32; 4] = [2.1, 1.0, 1.6, 1.0];
+    // Scene white lands at half the sensor's range, so the top of the
+    // exposure ramp and the specular spots clip.
+    const SCENE_WHITE: f32 = 0.5;
+    // The level a sensor sample of `channel`'s scene value at `(x, y)` records,
+    // as a share of the range from black to white.
+    let sensor = |x: u32, y: u32, channel: usize, wb: f32| {
+        let signal = scene[(y * WIDTH + x) as usize * 3 + channel] / wb * SCENE_WHITE;
+        let noise = (hash(x, y) - 0.5) * 0.004 * (signal + 0.01).sqrt();
+        (signal + noise).clamp(0.0, 1.0)
+    };
     // Colour indices: 0 red, 1 green, 2 blue, 3 the second Bayer green.
     let (cfa_kind, period, pattern) = match name {
         "scene" => {
@@ -262,27 +277,59 @@ fn input(name: &str) -> Input {
                 color_space: OutputColorSpace::Srgb,
             }
         }
+        "linear" => {
+            let rgb: Vec<f32> = (0..WIDTH * HEIGHT)
+                .flat_map(|index| {
+                    let (x, y) = (index % WIDTH, index / WIDTH);
+                    (0..3).map(move |channel| sensor(x, y, channel, WB[channel]))
+                })
+                .collect();
+            // The identity camera matrix with a white-balance model, which
+            // makes the raster camera RGB before white balance.
+            let color = ProfileColor {
+                white_balance_model: Some(CameraWhiteBalanceModel {
+                    base_wb: WB,
+                    cdesc: *b"RGBG",
+                    base_cct: 5000.0,
+                    color: CameraColorModel::Matrix {
+                        xyz_to_camera: [
+                            [1.0, 0.0, 0.0],
+                            [0.0, 1.0, 0.0],
+                            [0.0, 0.0, 1.0],
+                            [0.0; 3],
+                        ],
+                    },
+                }),
+                ..ProfileColor::default()
+            };
+            let raw = LoadedRaw {
+                raster_clipping: RasterClipping::of_linear_raw(&rgb, LinearSampleFormat::Integer),
+                scene_linear_raster: Some(rgb.into()),
+                wb_coeffs: WB,
+                profile_color: Arc::new(color),
+                ..raster
+            };
+            assert!(raw.is_camera_linear_raster() && raw.raster_clipping.is_recorded());
+            return Input {
+                raw,
+                binned: false,
+                color_space: OutputColorSpace::Srgb,
+            };
+        }
         "bayer" => (CfaKind::Bayer, 2, vec![0, 1, 3, 2]),
         "xtrans" => (CfaKind::XTrans, 6, XTRANS.concat()),
         _ => panic!(
-            "unknown input {name:?}; use scene, bayer or xtrans, each mosaic optionally \
-             with -hot, then -binned and then -profile-tone, and any optionally with a \
-             colour space"
+            "unknown input {name:?}; use scene, linear, bayer or xtrans, each mosaic optionally \
+             with -hot, then -binned and then -profile-tone, linear optionally with -binned, \
+             and any optionally with a colour space"
         ),
     };
-    // As-shot white balance: red and blue reach the sensor weaker than green.
-    const WB: [f32; 4] = [2.1, 1.0, 1.6, 1.0];
-    // Scene white lands at half the sensor's range, so the top of the
-    // exposure ramp and the specular spots clip.
-    const SCENE_WHITE: f32 = 0.5;
     let pixels = (0..WIDTH * HEIGHT)
         .map(|index| {
             let (x, y) = (index % WIDTH, index / WIDTH);
             let color = usize::from(pattern[((y % period) * period + x % period) as usize]);
             let channel = [0, 1, 2, 1][color];
-            let signal = scene[index as usize * 3 + channel] / WB[color] * SCENE_WHITE;
-            let noise = (hash(x, y) - 0.5) * 0.004 * (signal + 0.01).sqrt();
-            (BLACK + (signal + noise).clamp(0.0, 1.0) * (WHITE - BLACK)).round() as u16
+            (BLACK + sensor(x, y, channel, WB[color]) * (WHITE - BLACK)).round() as u16
         })
         .collect::<Vec<_>>();
     let raw = LoadedRaw {

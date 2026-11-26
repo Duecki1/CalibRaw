@@ -54,7 +54,9 @@ pub(super) fn pack_camera_params(
         profile_stages.characterization.hue_sat_2,
         profile_layout.hue_sat_2
     );
-    let highlight_method = if raw.is_pre_demosaiced_raster() {
+    // A raster has nothing to rebuild unless it is a camera-linear one that
+    // recorded clipped channels (`RasterClipping`).
+    let highlight_method = if raw.is_pre_demosaiced_raster() && !raw.raster_clipping.is_recorded() {
         0.0
     } else {
         shader_highlight_method(raw.cfa_kind, exposure.highlight_method)
@@ -120,7 +122,7 @@ pub(super) fn pack_camera_params(
             highlight_method,
             highlight_cells[0] as f32,
             highlight_cells[1] as f32,
-            if binned_clipping(raw).is_some() {
+            if raw.averaged_clipping().is_some() {
                 1.0
             } else {
                 0.0

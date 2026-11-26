@@ -207,6 +207,8 @@ impl RawGpuPipeline {
                 mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
                 layout: shape.layout,
                 ai_cfa: shape.ai_cfa,
+                // Export tiles are full size, so only a binned graph holds one.
+                clipping_texture: shape.layout == PixelLayout::Binned,
                 cfa_kind: shape.cfa_kind,
             })
             .is_ok_and(|plan| plan.admitted_gpu_bytes <= budget)
@@ -347,6 +349,7 @@ fn preview_plan_input(
         // AI denoise, needs less than the CFA textures it replaces.
         layout: PixelLayout::Mosaic,
         ai_cfa: false,
+        clipping_texture: false,
         cfa_kind,
     }
 }

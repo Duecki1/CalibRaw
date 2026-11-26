@@ -20,7 +20,7 @@
 //! is held per model cell, each cell taking the segment most of its segment blocks belong to.
 
 use super::super::{CfaKind, LoadedRaw};
-use super::{other_channels, SensorSaturation};
+use super::{other_channels, HighlightSamples, SensorSaturation};
 use rayon::prelude::*;
 
 /// Edge of a block in photosites.
@@ -40,9 +40,10 @@ const CANDIDATE_LOWEST_ROOT: f32 = 0.125;
 /// darktable's binomial weights of the 5×5 blocks a candidate's level is read from.
 const LEVEL_WEIGHTS: [f32; 5] = [1.0, 4.0, 6.0, 4.0, 1.0];
 
-/// The blocks of a mosaic. Block `(x, y)` covers rows `3y..3y + 3` and columns
-/// `o + 3x..o + 3x + 3`, `o` being the row's offset: 1 on a Bayer row starting with red or
-/// blue, as darktable aligns blocks so each holds greens, reds and blues 5 : 2 : 2, else 0.
+/// The blocks of a mosaic or camera-linear raster. Block `(x, y)` covers rows `3y..3y + 3` and
+/// columns `o + 3x..o + 3x + 3`, `o` being the row's offset: 1 on a Bayer row starting with red
+/// or blue, as darktable aligns blocks so each holds greens, reds and blues 5 : 2 : 2, else 0.
+/// A raster's pixels hold every colour, so its rows keep offset 0.
 struct Blocks {
     width: usize,
     height: usize,
@@ -192,12 +193,12 @@ impl ColourSegments {
 }
 
 impl LoadedRaw {
-    /// The blocks of `pixels`, a mosaic of this photo, at `black_point`. Only blocks centred in
-    /// a model cell of `cells` that `near_clipping` marks are read; the others hold roots of 0.
+    /// The blocks of `samples`, this photo's, at `black_point`. Only blocks centred in a model
+    /// cell of `cells` that `near_clipping` marks are read; the others hold roots of 0.
     fn highlight_blocks(
         &self,
         black_point: f32,
-        pixels: &[u16],
+        samples: HighlightSamples<'_>,
         cells: [u32; 2],
         near_clipping: &[bool],
     ) -> Blocks {
@@ -211,7 +212,9 @@ impl LoadedRaw {
             .map(|block_row| {
                 let top = block_row * BLOCK_EDGE;
                 let left = usize::from(
-                    self.cfa_kind == CfaKind::Bayer && self.logical_color(top * width) != 1,
+                    matches!(samples, HighlightSamples::Mosaic(_))
+                        && self.cfa_kind == CfaKind::Bayer
+                        && self.logical_color(top * width) != 1,
                 );
                 let cell_row = (top + 1) * cells_y / height * cells_x;
                 let roots = (0..blocks_x)
@@ -224,11 +227,15 @@ impl LoadedRaw {
                         let mut count = [0u32; 3];
                         for y in top..top + BLOCK_EDGE {
                             for x in first..first + BLOCK_EDGE {
-                                let index = y * width + x;
-                                let color = self.logical_color(index);
-                                sum[color] +=
-                                    self.highlight_sensor_value(index, black_point, pixels);
-                                count[color] += 1;
+                                self.visit_highlight_samples(
+                                    samples,
+                                    y * width + x,
+                                    black_point,
+                                    |color, value| {
+                                        sum[color] += value;
+                                        count[color] += 1;
+                                    },
+                                );
                             }
                         }
                         std::array::from_fn(|color| {
@@ -252,8 +259,8 @@ impl LoadedRaw {
         blocks
     }
 
-    /// The segments of each colour of `pixels`, a mosaic of this photo, for a model of `cells`
-    /// cells; photosites clip at `clip_threshold` in normalized sensor units. `clipped_cells`
+    /// The segments of each colour of `samples`, this photo's, for a model of `cells` cells;
+    /// samples clip at `clip_threshold` in normalized sensor units. `clipped_cells`
     /// marks the cells with a clipped photosite: segments, their borders and the windows their
     /// candidates read lie within 5 blocks, 15 photosites, of a clipped block, so only blocks
     /// within two cells of those are read.
@@ -263,7 +270,7 @@ impl LoadedRaw {
         clipped_cells: &[bool],
         black_point: f32,
         clip_threshold: f32,
-        pixels: &[u16],
+        samples: HighlightSamples<'_>,
     ) -> [ColourSegments; 3] {
         let [cells_x, cells_y] = cells.map(|count| count as usize);
         let near_clipping: Vec<bool> = (0..clipped_cells.len())
@@ -275,7 +282,7 @@ impl LoadedRaw {
                 })
             })
             .collect();
-        let blocks = self.highlight_blocks(black_point, pixels, cells, &near_clipping);
+        let blocks = self.highlight_blocks(black_point, samples, cells, &near_clipping);
         let clip_root = (SensorSaturation::CLIP_DETECTION * clip_threshold).cbrt();
         std::array::from_fn(|colour| self.colour_segments(&blocks, colour, cells, clip_root))
     }

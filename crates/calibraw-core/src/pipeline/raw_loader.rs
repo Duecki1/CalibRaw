@@ -30,6 +30,7 @@ mod binned_sensor;
 mod compact_pixel_map;
 mod highlight_model;
 mod profile_color;
+mod raster_clipping;
 mod sensor_samples;
 mod sensor_saturation;
 mod white_balance;
@@ -37,6 +38,7 @@ pub use binned_sensor::{BinnedClipping, BinnedSensor};
 pub use compact_pixel_map::*;
 pub use highlight_model::*;
 pub use profile_color::{ProfileColor, ProfileColorSource};
+pub use raster_clipping::{LinearSampleFormat, RasterClipping};
 pub use sensor_samples::SensorSamples;
 pub use sensor_saturation::SensorSaturation;
 
@@ -438,6 +440,10 @@ pub struct LoadedRaw {
     /// black-level maps are uniform placeholders.
     pub binned_sensor: Option<BinnedSensor>,
     pub scene_linear_raster: Option<Arc<[f32]>>,
+    /// Where a camera-linear raster's channels clipped; [`RasterClipping::None`]
+    /// for every other source. Crops and tiles keep their source's, and a
+    /// reduced proxy records what it averaged.
+    pub raster_clipping: RasterClipping,
     /// The raster holds scene radiance whose tones were never rendered, such as a
     /// floating-point HDR or focus-stack master, rather than a developed photo. It may
     /// exceed display white, so it always takes the scene view transform.
@@ -459,8 +465,9 @@ pub struct LoadedRaw {
     pub available_camera_profiles: Vec<CameraProfileCandidate>,
     pub lens_geometry: Option<Arc<LensGeometryMap>>,
     /// Vignetting gains the GPU applies after highlight reconstruction; only
-    /// sensor mosaics carry them. Placed over the whole photo, so crops,
-    /// proxies and tiles keep them.
+    /// sensor mosaics and camera-linear rasters carry them, as rendered
+    /// rasters take their vignetting in the pixels. Placed over the whole
+    /// photo, so crops, proxies and tiles keep them.
     pub lens_shading: Option<LensShadingMap>,
     /// Where red and blue sit relative to green, measured over the whole
     /// photo when it is decoded. Normalized to the photo, so crops, proxies
@@ -510,6 +517,7 @@ impl LoadedRaw {
             raw_pixels: raw_pixels.into(),
             binned_sensor: None,
             scene_linear_raster: None,
+            raster_clipping: RasterClipping::None,
             scene_referred_raster: self.scene_referred_raster,
             color_indices,
             wb_coeffs: self.wb_coeffs,
@@ -562,6 +570,7 @@ impl LoadedRaw {
             raw_pixels: SensorSamples::default(),
             binned_sensor: None,
             scene_linear_raster: Some(rgb.into()),
+            raster_clipping: RasterClipping::None,
             scene_referred_raster: false,
             color_indices: CompactPixelMap::repeating(width, height, 1, 1, vec![1]),
             wb_coeffs: [1.0; 4],
@@ -625,6 +634,16 @@ impl LoadedRaw {
 
     pub fn scene_linear_raster(&self) -> Option<&[f32]> {
         self.scene_linear_raster.as_deref()
+    }
+
+    /// Where the source pixels behind a reduced RGB view clipped: a binned
+    /// view's photosites, or a camera-linear raster proxy's averaged pixels.
+    /// `None` for every other source, whose own values show where it clipped.
+    pub fn averaged_clipping(&self) -> Option<&BinnedClipping> {
+        match &self.binned_sensor {
+            Some(binned) => binned.clipping(),
+            None => self.raster_clipping.averaged(),
+        }
     }
 
     pub fn ai_denoised_image(&self) -> Option<AiDenoisedImage> {

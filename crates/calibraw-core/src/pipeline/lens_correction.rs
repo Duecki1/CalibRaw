@@ -217,12 +217,13 @@ fn distortion_map(model: &ManualLensModel, raw: &LoadedRaw) -> Result<LensGeomet
 }
 
 /// Applies the model's vignetting gain: as a [`LensShadingMap`] the GPU
-/// applies after highlight reconstruction for sensor mosaics, or to the
-/// scene-linear raster of rendered photos.
+/// applies after highlight reconstruction for sensor mosaics and camera-linear
+/// rasters, so brightened corners are not taken for clipped samples, or to the
+/// pixels of rendered photos.
 fn apply_vignetting(raw: &LoadedRaw, model: &ManualLensModel) -> Result<LoadedRaw> {
     let gain = |[x, y]: [f32; 2]| model.vignetting_stops([x, y]).exp2();
 
-    if raw.is_pre_demosaiced_raster() {
+    if raw.is_display_referred_raster() {
         let width = (raw.width as usize).max(1);
         let source = raw
             .scene_linear_raster()

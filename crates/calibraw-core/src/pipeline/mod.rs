@@ -113,9 +113,11 @@ pub use raw_loader::{
     load_raw_file, load_raw_file_with_dcp, load_raw_file_with_profile_config,
     load_raw_file_with_profile_selection, load_raw_thumbnail,
     load_raw_thumbnail_with_display_metadata, reflect_index, AiDenoisedImage, BinnedClipping,
-    BinnedSensor, CameraProfileCandidate, CameraProfileMode, CfaKind, CompactPixelMap,
-    HighlightModel, LoadedRaw, PixelLayout, ProfileColor, ProfileColorSource, RawDisplayMetadata,
-    RawThumbnail, SensorSamples, SensorSaturation, WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
+    BinnedSensor, CameraColorModel, CameraProfileCandidate, CameraProfileMode,
+    CameraWhiteBalanceModel, CfaKind, CompactPixelMap, DngColorEndpoint, HighlightModel,
+    LinearSampleFormat, LoadedRaw, PixelLayout, ProfileColor, ProfileColorSource, RasterClipping,
+    RawDisplayMetadata, RawThumbnail, SensorSamples, SensorSaturation, WhiteBalanceRanges,
+    SUPPORTED_RAW_EXTENSIONS,
 };
 pub use raw_loader::{
     invalidate_dcp_profile_index, prewarm_dcp_profile_index, profiles_share_style,

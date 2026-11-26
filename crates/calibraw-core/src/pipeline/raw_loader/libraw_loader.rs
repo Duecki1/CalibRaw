@@ -9,8 +9,8 @@ use super::super::noise::NoiseProfile;
 use super::{
     validate_raw_dimensions, CameraColorModel, CameraProfile, CameraProfileCandidate,
     CameraProfileMode, CameraWhiteBalanceModel, CfaKind, CompactPixelMap, DngColorEndpoint,
-    LoadedRaw, RawThumbnail, SensorSaturation, WhiteBalanceRanges, MAX_RAW_FILE_BYTES,
-    MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
+    LoadedRaw, RasterClipping, RawThumbnail, SensorSaturation, WhiteBalanceRanges,
+    MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
 };
 use crate::matrix;
 use crate::pipeline::basicadj::{
@@ -830,6 +830,7 @@ fn loaded_raw_from_context(
         raw_pixels: raw_pixels.into(),
         binned_sensor: None,
         scene_linear_raster: None,
+        raster_clipping: RasterClipping::None,
         scene_referred_raster: false,
         color_indices,
         wb_coeffs,

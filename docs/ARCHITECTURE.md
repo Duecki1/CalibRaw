@@ -305,9 +305,15 @@ reduces a mosaic is binned to co-sited RGB instead (`BinnedSensor`, built by
 `build_region_proxy`), so detail near the reduced resolution cannot demosaic
 into false colour: its graph keeps the pixels in the RGB source texture and
 replaces highlight reconstruction and demosaicing with
-`binned_highlight_reconstruct` and the raster finish program. A raster takes
-the raster finish alone. Graphs reused for new pixels (`upload_raw_tile`)
-take only sources of their own layout.
+`binned_highlight_reconstruct` and the raster finish program. A rendered
+raster takes the raster finish alone. A camera-linear raster (a LinearRaw DNG,
+demosaiced by its converter) still holds clipped sensor channels
+(`RasterClipping`, detected as the file decodes), so like a binned view it
+takes `raster_highlight_reconstruct`, then the raster finish: clipped channels
+are rebuilt in white-balanced camera RGB and its vignetting applies after them
+as a `LensShadingMap`. Its reduced proxies record where the pixels they
+average clipped, as binned views record their photosites. Graphs reused for
+new pixels (`upload_raw_tile`) take only sources of their own layout.
 The graphs that show a photo with camera profiles to choose from (fitted,
 navigation and zoomed crop) size their profile buffer for
 `PREVIEWED_PROFILE_BYTES`, so a hovered profile renders on them

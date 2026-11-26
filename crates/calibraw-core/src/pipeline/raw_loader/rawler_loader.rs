@@ -7,8 +7,9 @@
 use super::libraw_loader as shared;
 use super::{
     exif_date_seconds, validate_raw_dimensions, CameraProfileCandidate, CameraProfileMode,
-    CaptureMetadata, CfaKind, CompactPixelMap, LoadedRaw, ProfileColorSource, RawDisplayMetadata,
-    RawThumbnail, SensorSaturation, MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
+    CaptureMetadata, CfaKind, CompactPixelMap, LinearSampleFormat, LoadedRaw, ProfileColorSource,
+    RasterClipping, RawDisplayMetadata, RawThumbnail, SensorSaturation, MAX_RAW_FILE_BYTES,
+    MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
 };
 use crate::pipeline::{color_profile::DcpProfile, noise::NoiseProfile, LateralChromaticAberration};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -767,6 +768,7 @@ fn adapt(
         raw_pixels: Default::default(),
         binned_sensor: None,
         scene_linear_raster: None,
+        raster_clipping: RasterClipping::None,
         scene_referred_raster: false,
         color_indices: CompactPixelMap::repeating(width, height, 1, 1, vec![1]),
         wb_coeffs,
@@ -952,6 +954,13 @@ fn adapt(
                 &rgb,
                 loaded.capture_metadata.iso_speed,
                 code_range,
+            );
+            loaded.raster_clipping = RasterClipping::of_linear_raw(
+                &rgb,
+                match &image.data {
+                    RawImageData::Integer(_) => LinearSampleFormat::Integer,
+                    RawImageData::Float(_) => LinearSampleFormat::Float,
+                },
             );
             loaded.scene_linear_raster = Some(Arc::from(rgb));
         }

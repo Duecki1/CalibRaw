@@ -6,6 +6,9 @@
 //! that on a coarse grid over the whole photo, so previews, crops and export tiles of one photo
 //! reconstruct alike.
 //!
+//! It is measured from the full source's mosaic, or from a clipped camera-linear raster (a
+//! LinearRaw DNG), whose pixels hold a sample of every colour.
+//!
 //! All colours are white-balanced camera RGB with the sensor's white level at the white-balance
 //! multiplier, the units of `RawSampling::raw_camera_at`. A colour is "known" where it did not
 //! clip. Three cases, by how many colours of a pixel are known:
@@ -145,7 +148,27 @@ const fn other_channels(channel: usize) -> [usize; 2] {
     }
 }
 
-/// Per-cell measurements of a mosaic in normalized sensor units, before white balance.
+/// The samples a model is measured from: the full source's sensor data.
+#[derive(Clone, Copy)]
+enum HighlightSamples<'a> {
+    /// A mosaic's photosites, one colour each.
+    Mosaic(&'a [u16]),
+    /// A camera-linear raster's interleaved RGB, every colour at every pixel.
+    Raster(&'a [f32]),
+}
+
+impl HighlightSamples<'_> {
+    /// Whether these are the samples of an image of `pixels` pixels.
+    fn covers(self, pixels: usize) -> bool {
+        match self {
+            Self::Mosaic(photosites) => photosites.len() == pixels,
+            Self::Raster(rgb) => rgb.len() == pixels.saturating_mul(3),
+        }
+    }
+}
+
+/// Per-cell measurements of a mosaic or camera-linear raster in normalized sensor units,
+/// before white balance.
 #[derive(Debug)]
 struct HighlightStatistics {
     cells: [u32; 2],
@@ -347,23 +370,47 @@ impl LoadedRaw {
         }
     }
 
-    /// Measures the mosaic `pixels`; `None` when no photosite clipped.
+    /// Calls `visit` with the colour (0 red, 1 green, 2 blue) and the normalized value at
+    /// `black_point` of each of `samples` at pixel `index`: one for a mosaic, three for a raster.
+    /// A camera-linear raster's black is 0 and its white 1, which leaves no room to move its
+    /// black, as `binned_apply_black_point` (highlights.wgsl) finds for such levels.
+    fn visit_highlight_samples(
+        &self,
+        samples: HighlightSamples<'_>,
+        index: usize,
+        black_point: f32,
+        mut visit: impl FnMut(usize, f32),
+    ) {
+        match samples {
+            HighlightSamples::Mosaic(pixels) => visit(
+                self.logical_color(index),
+                self.highlight_sensor_value(index, black_point, pixels),
+            ),
+            HighlightSamples::Raster(rgb) => {
+                for (color, value) in rgb[index * 3..index * 3 + 3].iter().enumerate() {
+                    visit(color, value.clamp(0.0, 4.0));
+                }
+            }
+        }
+    }
+
+    /// Measures `samples`; `None` when no sample clipped.
     fn highlight_statistics(
         &self,
         black_point: f32,
         clip_threshold: f32,
-        pixels: &[u16],
+        samples: HighlightSamples<'_>,
     ) -> Option<HighlightStatistics> {
         let width = self.width as usize;
         let height = self.height as usize;
-        if width == 0 || height == 0 || pixels.len() != width.saturating_mul(height) {
+        if width == 0 || height == 0 || !samples.covers(width.saturating_mul(height)) {
             return None;
         }
         let cells = HighlightModel::grid_for([self.width, self.height]);
         let [cells_x, cells_y] = cells.map(|count| count as usize);
         let detection = SensorSaturation::CLIP_DETECTION * clip_threshold;
         let column_cell: Vec<usize> = (0..width).map(|x| x * cells_x / width).collect();
-        let samples: Vec<CellSamples> = (0..cells_y)
+        let cell_samples: Vec<CellSamples> = (0..cells_y)
             .into_par_iter()
             .flat_map_iter(|cell_row| {
                 let mut row = vec![CellSamples::default(); cells_x];
@@ -372,29 +419,33 @@ impl LoadedRaw {
                 let end = ((cell_row + 1) * height).div_ceil(cells_y);
                 for y in start..end {
                     for (x, cell) in column_cell.iter().enumerate() {
-                        let index = y * width + x;
-                        let color = self.logical_color(index);
-                        let value = self.highlight_sensor_value(index, black_point, pixels);
                         let cell = &mut row[*cell];
-                        cell.sum[color] += value;
-                        cell.count[color] += 1;
-                        cell.clipped[color] += u32::from(value >= detection);
+                        self.visit_highlight_samples(
+                            samples,
+                            y * width + x,
+                            black_point,
+                            |color, value| {
+                                cell.sum[color] += value;
+                                cell.count[color] += 1;
+                                cell.clipped[color] += u32::from(value >= detection);
+                            },
+                        );
                     }
                 }
                 row
             })
             .collect();
-        if samples
+        if cell_samples
             .iter()
             .all(|cell| cell.clipped.iter().all(|count| *count == 0))
         {
             return None;
         }
 
-        let mut mean = Vec::with_capacity(samples.len());
-        let mut clipped = Vec::with_capacity(samples.len());
-        let mut donor = Vec::with_capacity(samples.len());
-        for cell in &samples {
+        let mut mean = Vec::with_capacity(cell_samples.len());
+        let mut clipped = Vec::with_capacity(cell_samples.len());
+        let mut donor = Vec::with_capacity(cell_samples.len());
+        for cell in &cell_samples {
             let complete = cell.count.iter().all(|count| *count > 0);
             let cell_mean: [f32; 3] =
                 std::array::from_fn(|color| cell.sum[color] / cell.count[color].max(1) as f32);
@@ -413,12 +464,12 @@ impl LoadedRaw {
             clipped.push(cell_clipped);
             donor.push(weight);
         }
-        let clipped_cells: Vec<bool> = samples
+        let clipped_cells: Vec<bool> = cell_samples
             .iter()
             .map(|cell| cell.clipped.iter().any(|count| *count > 0))
             .collect();
         let segments =
-            self.highlight_segments(cells, &clipped_cells, black_point, clip_threshold, pixels);
+            self.highlight_segments(cells, &clipped_cells, black_point, clip_threshold, samples);
         Some(HighlightStatistics {
             cells,
             mean,
@@ -428,7 +479,8 @@ impl LoadedRaw {
         })
     }
 
-    /// The statistics for `key`: cached, or measured when this is the photo's full mosaic.
+    /// The statistics for `key`: cached, or measured when this is the photo's full mosaic or
+    /// clipped camera-linear raster.
     /// The outer `None` is a crop, proxy or tile whose source was not measured yet.
     fn cached_highlight_statistics(
         &self,
@@ -447,16 +499,27 @@ impl LoadedRaw {
         }
         // Only the full source may measure: a derived view would describe its own part of the
         // photo under the whole photo's key.
-        if !self.highlight_reference_source || self.pixel_layout() != PixelLayout::Mosaic {
+        if !self.highlight_reference_source {
             return None;
         }
-        let ai_image = key.use_ai_cfa.then(|| self.ai_denoised_image()).flatten();
-        let pixels = ai_image
-            .as_ref()
-            .and_then(AiDenoisedImage::bayer_cfa)
-            .unwrap_or(&self.raw_pixels);
+        let ai_image;
+        let samples = match self.pixel_layout() {
+            PixelLayout::Mosaic => {
+                ai_image = key.use_ai_cfa.then(|| self.ai_denoised_image()).flatten();
+                HighlightSamples::Mosaic(
+                    ai_image
+                        .as_ref()
+                        .and_then(AiDenoisedImage::bayer_cfa)
+                        .unwrap_or(&self.raw_pixels),
+                )
+            }
+            PixelLayout::Raster if matches!(self.raster_clipping, RasterClipping::PerPixel) => {
+                HighlightSamples::Raster(self.scene_linear_raster()?)
+            }
+            PixelLayout::Raster | PixelLayout::Binned => return None,
+        };
         let statistics = self
-            .highlight_statistics(black_point, clip_threshold, pixels)
+            .highlight_statistics(black_point, clip_threshold, samples)
             .map(Arc::new);
         if let Ok(mut cache) = self.highlight_model_cache.write() {
             remember(

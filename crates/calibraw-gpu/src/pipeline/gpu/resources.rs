@@ -144,6 +144,9 @@ pub(super) struct GpuResourcePlanInput {
     /// Whether the source also carries AI-denoised sensor samples: in the raw
     /// texture of a Bayer mosaic, or in a second RGB texture of a binned view.
     pub ai_cfa: bool,
+    /// Whether the graph holds a full-size clipping texture
+    /// ([`holds_clipping_texture`]).
+    pub clipping_texture: bool,
     /// X-Trans pipelines also hold Markesteijn's homogeneity map.
     pub cfa_kind: CfaKind,
 }
@@ -396,10 +399,10 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
                 full(work_format)?,
             );
         }
-        if input.layout == PixelLayout::Binned {
+        if input.clipping_texture {
             push_entry(
                 &mut entries,
-                "binned clipping texture",
+                "clipping texture",
                 GpuResourceResidency::Persistent,
                 full(BINNED_CLIPPING_FORMAT)?,
             );
@@ -968,20 +971,26 @@ pub(super) fn create_binned_ai_texture(
 /// level to 0.05%.
 pub(super) const BINNED_CLIPPING_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// The clipping texture of a binned view (`binned_clipping_tex` in
-/// highlights.wgsl), or a 1x1 placeholder for other sources. A binned
-/// pipeline always gets the full size, since the views a reusable one
-/// receives later ([`RawGpuPipeline::upload_raw_tile`]) may clip where its
-/// first did not; `highlight_options.w` says whether the content applies.
+/// Whether a graph for `raw` holds a full-size clipping texture: a binned
+/// graph always, since the views a reusable one receives later
+/// ([`RawGpuPipeline::upload_raw_tile`]) may clip where its first did not, and
+/// any graph whose source carries a clipping record
+/// ([`LoadedRaw::averaged_clipping`]), a reduced camera-linear raster proxy's.
+pub(super) fn holds_clipping_texture(raw: &LoadedRaw) -> bool {
+    raw.pixel_layout() == PixelLayout::Binned || raw.averaged_clipping().is_some()
+}
+
+/// The clipping texture of a reduced RGB view (`binned_clipping_tex` in
+/// highlights.wgsl), full size where [`holds_clipping_texture`], else a 1x1
+/// placeholder; `highlight_options.w` says whether the content applies.
 pub(super) fn create_binned_clipping_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     raw: &LoadedRaw,
 ) -> Result<wgpu::Texture> {
-    let binned = raw.pixel_layout() == PixelLayout::Binned;
     let texture = create_processing_texture(
         device,
-        if binned {
+        if holds_clipping_texture(raw) {
             texture_size(raw.width, raw.height)
         } else {
             texture_size(1, 1)
@@ -990,18 +999,10 @@ pub(super) fn create_binned_clipping_texture(
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         "calibraw binned clipping",
     );
-    if let Some(clipping) = binned_clipping(raw) {
+    if let Some(clipping) = raw.averaged_clipping() {
         upload_binned_clipping_texture(queue, &texture, raw, clipping)?;
     }
     Ok(texture)
-}
-
-/// The clipping record of a binned view, `None` for other sources and views
-/// without clipped photosites.
-pub(super) fn binned_clipping(raw: &LoadedRaw) -> Option<&BinnedClipping> {
-    raw.binned_sensor
-        .as_ref()
-        .and_then(crate::pipeline::BinnedSensor::clipping)
 }
 
 /// Packs `clipping` into `texture` ([`BINNED_CLIPPING_FORMAT`]). The clipped
@@ -1014,6 +1015,15 @@ pub(super) fn upload_binned_clipping_texture(
     raw: &LoadedRaw,
     clipping: &BinnedClipping,
 ) -> Result<()> {
+    let size = texture.size();
+    anyhow::ensure!(
+        [size.width, size.height] == [raw.width, raw.height],
+        "a {}x{} clipping texture cannot hold the clipping of a {}x{} source",
+        size.width,
+        size.height,
+        raw.width,
+        raw.height
+    );
     let expected = raw.width as usize * raw.height as usize * 3;
     let (shares, values) = (clipping.shares(), clipping.clipped_values());
     anyhow::ensure!(
