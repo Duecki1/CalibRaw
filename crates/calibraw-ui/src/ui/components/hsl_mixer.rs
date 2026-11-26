@@ -95,6 +95,25 @@ pub(crate) fn hsl_mixer(
     changed
 }
 
+/// The mix of a black-and-white photo: how much each colour's grey is
+/// brightened or darkened, one slider per colour as Lightroom's B&W mix shows
+/// them. The values are the colour mixer's Luminance, which renders as the mix
+/// while the photo is black and white (`Treatment::Monochrome`).
+pub(crate) fn monochrome_mix(ui: &mut Ui, luminance: &mut [f32; 8]) -> bool {
+    let mut changed = false;
+    for (index, (name, accent)) in CHANNELS.iter().enumerate() {
+        ui.push_id(("monochrome-mix", index), |ui| {
+            changed |= AdjustmentSlider::new(tr(name), &mut luminance[index], -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .accent(*accent)
+                .gradient(SliderGradient::Luminance(*accent))
+                .show(ui);
+        });
+    }
+    changed
+}
+
 fn selector_geometry(available_width: f32) -> (f32, f32) {
     let available_width = available_width.max(0.0);
     let gap = SELECTOR_GAP.min(available_width / 14.0);

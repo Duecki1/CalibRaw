@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::pipeline::effect_lanes::glow;
-use crate::pipeline::ToneResponse;
+use crate::pipeline::{PointColors, ToneResponse};
 
 /// The camera uniforms, and the highlight model `highlight_options` describes: the pipeline
 /// uploads the model with the uniforms.
@@ -274,6 +274,20 @@ fn pack_film(
 pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
     let exposure = ctx.exposure;
     let masks = ctx.masks;
+    // A black-and-white photo has no colour for these to act on
+    // (`Treatment::Monochrome`); their values stay in the edit.
+    let monochrome = exposure.treatment.is_monochrome();
+    let (saturation, vibrance, hue) = if monochrome {
+        (0.0, 0.0, 0.0)
+    } else {
+        (exposure.saturation, exposure.vibrance, exposure.hue)
+    };
+    let global_point_colors = if monochrome {
+        PointColors::default()
+    } else {
+        exposure.point_colors
+    };
+    let point_color_visualize = exposure.point_color_visualize.filter(|_| !monochrome);
     let (sigmoid_curve, sigmoid_power) = pack_sigmoid(tone_sigmoid_coefficients(exposure));
     let (reference_sigmoid_curve, reference_sigmoid_power) =
         pack_sigmoid(reference_sigmoid_coefficients());
@@ -299,7 +313,7 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
     ]
     .map(pack_local_point_curve);
     let mut point_colors = [PackedPointColor::zeroed(); MAX_POINT_COLORS];
-    for (destination, point) in point_colors.iter_mut().zip(exposure.point_colors.iter()) {
+    for (destination, point) in point_colors.iter_mut().zip(global_point_colors.iter()) {
         *destination = pack_point_color(*point);
     }
     let raster_temperature = if ctx.raw.is_display_referred_raster() {
@@ -310,8 +324,8 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
 
     SceneToneUniforms {
         exposure: exposure.exposure,
-        saturation: exposure.saturation,
-        vibrance: exposure.vibrance,
+        saturation,
+        vibrance,
         legacy_luminance_tone: legacy_luminance_bits(
             exposure.tone_curve_response,
             ToneResponse::Rgb,
@@ -344,7 +358,7 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
         grade_midtones: pack_color_grade_wheel(exposure.color_grading.midtones),
         grade_highlights: pack_color_grade_wheel(exposure.color_grading.highlights),
         grade_global: pack_color_grade_wheel(exposure.color_grading.global),
-        grade_options: pack_view_options(exposure.color_grading, exposure.hue, exposure.brightness),
+        grade_options: pack_view_options(exposure.color_grading, hue, exposure.brightness),
         rec2020_to_xyz: [
             [0.636_958, 0.262_700_2, 0.0, 0.0],
             [0.144_616_9, 0.677_998_1, 0.028_072_7, 0.0],
@@ -367,18 +381,17 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
         ],
         point_colors,
         point_color_meta: [
-            exposure.point_colors.len() as u32,
-            exposure
-                .point_color_visualize
-                .map_or(0, |index| (index + 1) as u32),
+            global_point_colors.len() as u32,
+            point_color_visualize.map_or(0, |index| (index + 1) as u32),
             0,
-            local_point_color_flags | (u32::from(exposure.point_colors.has_adjustments()) << 2),
+            local_point_color_flags | (u32::from(global_point_colors.has_adjustments()) << 2),
         ],
         // Set by `GpuParams::with_look_lut`.
         look_lut: [0.0; 4],
         look_lut_domain_min: [0.0; 4],
         look_lut_domain_scale: [0.0; 4],
         raster_temperature: [raster_temperature, 0.0, 0.0, 0.0],
+        treatment: [if monochrome { TREATMENT_MONOCHROME } else { 0 }, 0, 0, 0],
     }
 }
 

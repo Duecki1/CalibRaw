@@ -134,6 +134,35 @@ impl ToneResponse {
     }
 }
 
+/// Whether the photo develops in colour or black and white, the Color card's
+/// choice (Lightroom's Treatment).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Treatment {
+    #[default]
+    Color,
+    /// Black and white: the view node turns the photo grey after the colour
+    /// mixers, keeping each pixel's OKLab lightness, and
+    /// [`ExposureParams::hsl_luminance`] mixes the grey from the colours
+    /// before it (`apply_monochrome_mix` in view_transform.wgsl). Colour
+    /// Grading tones the grey. Saturation, Vibrance, Hue, the mixer's Hue and
+    /// Saturation and Point Color have no colour to act on and do not render;
+    /// their values stay in the edit for a return to [`Self::Color`].
+    /// White balance and Calibration change the colours the mix reads.
+    Monochrome,
+}
+
+impl Treatment {
+    pub const fn is_monochrome(self) -> bool {
+        matches!(self, Self::Monochrome)
+    }
+
+    /// Takes a reference for `skip_serializing_if`.
+    pub const fn is_color(&self) -> bool {
+        matches!(self, Self::Color)
+    }
+}
+
 /// Whether the camera profile's own tone curve (the DCP's ProfileToneCurve)
 /// renders the scene, in place of the sigmoid. A profile without one renders
 /// with the sigmoid either way.
@@ -325,6 +354,10 @@ pub struct ExposureParams {
     pub hue: f32,
     pub saturation: f32,
     pub vibrance: f32,
+    /// Colour or black and white. Left out of files while colour, which stay
+    /// as they were.
+    #[serde(default, skip_serializing_if = "Treatment::is_color")]
+    pub treatment: Treatment,
     /// Brightness of the Tone Curve card, -100 to +100: brightens (positive) or
     /// darkens the midtones of the display-referred image while black and the
     /// display white stay where they are (`apply_display_brightness_amount` in
@@ -478,6 +511,7 @@ impl Default for ExposureParams {
             hue: 0.0,
             saturation: 0.0,
             vibrance: 0.0,
+            treatment: Treatment::Color,
             brightness: 0.0,
             tone_curve: PointCurve::linear(),
             tone_curve_response: ToneResponse::Rgb,

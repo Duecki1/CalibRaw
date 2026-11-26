@@ -23,7 +23,7 @@ use super::{
     LEGACY_LUMINANCE_BLACKS, LEGACY_LUMINANCE_CONTRAST, LEGACY_LUMINANCE_TONE_CURVE,
     MASK_EFFECT_ID_SHIFT, MASK_SCENE_BAKE_LIGHT_BITS, MAX_RENDER_MASK_SLOTS, MEDIUM_CELLS,
     SCENE_EMISSION_GRID_LONG, SCENE_EMISSION_SURFACE_GRID_LONG, SCENE_SHADOW_LIGHTS,
-    TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES, TREATMENT_MONOCHROME,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::{effect_lanes::options, MaskEffect, ReachGroup, OPTION_COUNT};
@@ -280,6 +280,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 look_lut_domain_min,
                 look_lut_domain_scale,
                 raster_temperature,
+                treatment,
             }),
         ),
         (
@@ -520,6 +521,7 @@ fn shared_constants_and_effect_ids_match_rust() {
     );
     assert_eq!(constant("FILM_MODE_POSITIVE"), FILM_MODE_POSITIVE);
     assert_eq!(constant("FILM_MODE_MONOCHROME"), FILM_MODE_MONOCHROME);
+    assert_eq!(constant("TREATMENT_MONOCHROME"), TREATMENT_MONOCHROME);
     assert_eq!(
         constant("LEGACY_LUMINANCE_TONE_CURVE"),
         LEGACY_LUMINANCE_TONE_CURVE

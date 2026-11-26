@@ -158,6 +158,7 @@ impl ExposureParams {
             hue,
             saturation,
             vibrance,
+            treatment,
             brightness,
             tone_curve,
             tone_curve_response,
@@ -228,6 +229,7 @@ impl ExposureParams {
                 self.hue = hue;
                 self.saturation = saturation;
                 self.vibrance = vibrance;
+                self.treatment = treatment;
             }
             ExposureSection::Group(AdjustmentGroup::ColorGrading) => {
                 self.color_grading = color_grading;

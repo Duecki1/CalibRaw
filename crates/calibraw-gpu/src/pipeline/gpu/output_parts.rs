@@ -20,8 +20,9 @@
 //!
 //! What each part reads is decided by which shaders read a value:
 //!
-//! - the view node alone reads the global and mask colour mixer, colour
-//!   grading, hue rotation, brightness, Blacks, point colours and the LUT
+//! - the view node alone reads the global and mask colour mixer, the
+//!   treatment (black and white), colour grading, hue rotation, brightness,
+//!   Blacks, point colours and the LUT
 //!   (view_transform.wgsl, look_lut.wgsl), and Vignette's frame in the
 //!   cropped output (film_finish.wgsl, the only caller of
 //!   `effect_output_uv`), which a crop or straighten changes;
@@ -490,6 +491,7 @@ pub(super) fn scene_tone_before_view(scene_tone: &SceneToneUniforms) -> SceneTon
         look_lut: [0.0; 4],
         look_lut_domain_min: [0.0; 4],
         look_lut_domain_scale: [0.0; 4],
+        treatment: [0; 4],
         ..*scene_tone
     }
 }

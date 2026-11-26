@@ -279,7 +279,17 @@ pub(super) struct SceneToneUniforms {
     /// [`ExposureParams::raster_temperature`] on a rendered photo, 0 on any
     /// other, then 0, 0, 0.
     pub(super) raster_temperature: [f32; 4],
+    /// [`TREATMENT_MONOCHROME`] for a black-and-white edit
+    /// ([`Treatment::Monochrome`]), else 0; then 0, 0, 0. Only the view node
+    /// reads it.
+    ///
+    /// [`Treatment::Monochrome`]: calibraw_core::pipeline::Treatment::Monochrome
+    pub(super) treatment: [u32; 4],
 }
+
+/// `SceneToneUniforms::treatment[0]` of a black-and-white edit; matches
+/// `TREATMENT_MONOCHROME` in common.wgsl.
+pub(super) const TREATMENT_MONOCHROME: u32 = 1;
 
 const _: () =
     assert!(std::mem::size_of::<SceneToneUniforms>() == SCENE_TONE_UNIFORMS_SIZE_BYTES as usize);
@@ -311,7 +321,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_432);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_448);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

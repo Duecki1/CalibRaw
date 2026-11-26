@@ -1,6 +1,6 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
-use crate::pipeline::{effect_params, CardSwitch};
+use crate::pipeline::{effect_params, CardSwitch, Treatment};
 
 const LENS_CARD_TITLE: &str = "Lens Corrections";
 
@@ -348,6 +348,22 @@ impl Sidebar {
         let mut changed = false;
         let on = exposure.card_on(CardSwitch::Color);
         let action = Self::adjustment_card(ui, "Color", false, foldable, on, |ui| {
+            let mut treatment = exposure.treatment;
+            if moduwu_design::segmented_control(
+                ui,
+                &mut treatment,
+                &[
+                    (Treatment::Color, tr("Color")),
+                    (Treatment::Monochrome, tr("B&W")),
+                ],
+                ui.available_width(),
+            )
+            .changed()
+            {
+                exposure.treatment = treatment;
+                changed = true;
+            }
+            ui.add_space(moduwu_design::SPACE_XS);
             if let Some((raw, (shown_kelvin, shown_tint))) = raw.and_then(|raw| {
                 raw.shown_white_balance(exposure.white_balance)
                     .map(|shown| (raw, shown))
@@ -557,19 +573,27 @@ impl Sidebar {
                     );
                 }
             }
-            changed |= hue_adjustment_slider(ui, &mut exposure.hue);
-            changed |=
-                AdjustmentSlider::new(tr("Vibrance"), &mut exposure.vibrance, -100.0..=100.0)
-                    .decimals(0)
-                    .step(1.0)
-                    .gradient(SliderGradient::Colorfulness)
-                    .show(ui);
-            changed |=
-                AdjustmentSlider::new(tr("Saturation"), &mut exposure.saturation, -100.0..=100.0)
-                    .decimals(0)
-                    .step(1.0)
-                    .gradient(SliderGradient::Colorfulness)
-                    .show(ui);
+            // A black-and-white photo keeps these for a return to colour
+            // but has no colour for them to change (`Treatment::Monochrome`).
+            let in_color = !exposure.treatment.is_monochrome();
+            ui.add_enabled_ui(in_color, |ui| {
+                changed |= hue_adjustment_slider(ui, &mut exposure.hue);
+                changed |=
+                    AdjustmentSlider::new(tr("Vibrance"), &mut exposure.vibrance, -100.0..=100.0)
+                        .decimals(0)
+                        .step(1.0)
+                        .gradient(SliderGradient::Colorfulness)
+                        .show(ui);
+                changed |= AdjustmentSlider::new(
+                    tr("Saturation"),
+                    &mut exposure.saturation,
+                    -100.0..=100.0,
+                )
+                .decimals(0)
+                .step(1.0)
+                .gradient(SliderGradient::Colorfulness)
+                .show(ui);
+            });
         });
         changed |= action.apply(exposure, AdjustmentGroup::Color);
         if !exposure.card_on(CardSwitch::Color)
@@ -802,7 +826,19 @@ impl Sidebar {
     ) -> bool {
         let mut changed = false;
         let on = exposure.card_on(CardSwitch::ColorMixer);
+        // As it renders: the Color card's switch turns black and white off.
+        let monochrome =
+            exposure.treatment.is_monochrome() && exposure.card_on(CardSwitch::Color);
         let action = Self::adjustment_card(ui, "Color Mixer", false, foldable, on, |ui| {
+            if monochrome {
+                // The mix of a black-and-white photo: each colour's Luminance,
+                // all at once as Lightroom's B&W mix shows them. Point Color
+                // has no colour to select in a grey photo.
+                point_color.picker_active = false;
+                point_color.visualize_range = false;
+                changed |= monochrome_mix(ui, &mut exposure.hsl_luminance);
+                return;
+            }
             ui.horizontal(|ui| {
                 ui.selectable_value(point_color_tab, false, tr("Mixer"));
                 ui.selectable_value(point_color_tab, true, tr("Point Color"));

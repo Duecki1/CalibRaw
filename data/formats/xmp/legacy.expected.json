@@ -69,13 +69,13 @@
         "highlight_reconstruction": 1.0,
         "highlights": 0.0,
         "hsl_hue": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
-        "hsl_luminance": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+        "hsl_luminance": [20.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
         "hsl_saturation": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
         "hue": 0.0,
         "luminance_denoise": 0.0,
         "point_colors": [],
         "profile_tone_curve": "applied",
-        "saturation": -100.0,
+        "saturation": 0.0,
         "shadows": 0.0,
         "sharpen_amount": 40.0,
         "sharpen_detail": 25.0,
@@ -109,6 +109,7 @@
           "points": [[0.0,0.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0],[1.0,1.0]]
         },
         "tone_curve_response": "rgb",
+        "treatment": "monochrome",
         "vibrance": 0.0,
         "vignette_amount": 0.0,
         "vignette_feather": 50.0,
@@ -166,6 +167,7 @@
         "color",
         "color_grading",
         "effects",
+        "color_mixer",
         "calibration"
       ],
       "ai_masks": false,
@@ -178,7 +180,6 @@
     }
   },
   "warnings": [
-    "Grayscale mix settings were not imported; the preset is imported as a black-and-white conversion.",
     "Perspective corrections were not imported.",
     "Defringing was not imported.",
     "Some noise reduction detail settings were not imported.",

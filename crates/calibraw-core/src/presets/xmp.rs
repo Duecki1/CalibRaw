@@ -35,7 +35,7 @@ use super::{read_preset_bytes, Preset, PresetError, DEFAULT_PRESET_GROUP, MAX_PR
 use crate::pipeline::{
     AdjustmentGroup, AdjustmentGroupSet, ColorGradeWheel, ColorGrading, EffectComponent,
     ExposureParams, GrainEffectSettings, ManualLensCorrection, MaskEffect, MaskEffectSettings,
-    MaskStack, VignetteEffectSettings, WhiteBalance, CALIBRATION_LIMIT, HSL_HUE_LIMIT,
+    MaskStack, Treatment, VignetteEffectSettings, WhiteBalance, CALIBRATION_LIMIT, HSL_HUE_LIMIT,
     MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
 use crate::sidecar::{default_edit_state, is_manual_mask_kind, EditSelection, LensEditState};
@@ -390,16 +390,12 @@ impl Converter<'_> {
         if let Some(value) = self.number("Saturation") {
             exposure.saturation = value.clamp(-100.0, 100.0);
         }
-        if self.properties.boolean("ConvertToGrayscale") == Some(true) {
-            exposure.saturation = -100.0;
-            if MIXER_COLORS
-                .iter()
-                .any(|color| self.properties.differs(&format!("GrayMixer{color}"), 0.0))
-            {
-                self.warnings.push(
-                    "Grayscale mix settings were not imported; the preset is imported as a black-and-white conversion.",
-                );
-            }
+        if let Some(grayscale) = self.properties.boolean("ConvertToGrayscale") {
+            exposure.treatment = if grayscale {
+                Treatment::Monochrome
+            } else {
+                Treatment::Color
+            };
         }
     }
 
@@ -451,7 +447,7 @@ impl Converter<'_> {
         exposure: &mut ExposureParams,
         groups: &mut AdjustmentGroupSet,
     ) {
-        let keys = MIXER_COLORS.map(|color| {
+        let mut keys = MIXER_COLORS.map(|color| {
             [
                 format!("HueAdjustment{color}"),
                 format!("SaturationAdjustment{color}"),
@@ -468,6 +464,15 @@ impl Converter<'_> {
                     &mut self.warnings,
                 )
             });
+        // Lightroom keeps a black-and-white photo's mix apart from the colour
+        // mixer's luminance and renders only the mix; CalibRaw's mix is the
+        // mixer's luminance (`Treatment::Monochrome`), so a black-and-white
+        // preset's luminance comes from its mix.
+        if exposure.treatment.is_monochrome() {
+            for (color_keys, color) in keys.iter_mut().zip(MIXER_COLORS) {
+                color_keys[2] = format!("GrayMixer{color}");
+            }
+        }
         if point_colors.is_none() && !keys.iter().flatten().any(|key| self.properties.has(key)) {
             return;
         }

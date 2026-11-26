@@ -85,6 +85,7 @@ impl RawStageControls {
             hue: _,
             saturation: _,
             vibrance: _,
+            treatment: _,
             brightness: _,
             tone_curve: _,
             tone_curve_response: _,

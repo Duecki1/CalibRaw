@@ -1,0 +1,8 @@
+{
+  "edits": {
+    "exposure": {
+      "treatment": "monochrome",
+      "hsl_luminance": [60.0,40.0,10.0,-20.0,-60.0,-100.0,-40.0,20.0]
+    }
+  }
+}

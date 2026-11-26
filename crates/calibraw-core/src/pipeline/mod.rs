@@ -46,10 +46,10 @@ pub mod white_balance_presets;
 pub use basicadj::{
     temperature_kelvin_from_offset, temperature_offset_from_kelvin, white_balance_tint_from_offset,
     white_balance_tint_offset, ColorGradeWheel, ColorGrading, DemosaicMode, ExposureParams,
-    HighlightReconstructionMethod, PointCurve, ProfileToneCurve, ToneResponse, WhiteBalance,
-    GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, HSL_HUE_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
-    MAX_POINT_CURVE_POINTS, MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN,
-    MIN_WHITE_BALANCE_TINT,
+    HighlightReconstructionMethod, PointCurve, ProfileToneCurve, ToneResponse, Treatment,
+    WhiteBalance, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, HSL_HUE_LIMIT,
+    HUE_ROTATION_LIMIT_DEGREES, MAX_POINT_CURVE_POINTS, MAX_TEMPERATURE_KELVIN,
+    MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
 pub use calibration::{Calibration, PrimaryCalibration, CALIBRATION_LIMIT};
 pub use chromatic_aberration::{LateralChannel, LateralChromaticAberration, MAX_LATERAL_SHIFT};

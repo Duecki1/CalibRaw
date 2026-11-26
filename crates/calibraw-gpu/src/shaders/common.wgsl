@@ -71,6 +71,11 @@ const LEGACY_LUMINANCE_TONE_CURVE: u32 = 8u;
 const LEGACY_LUMINANCE_CONTRAST: u32 = 16u;
 const LEGACY_LUMINANCE_BLACKS: u32 = 32u;
 
+// `SceneToneUniforms::treatment.x` of a black-and-white photo (Rust
+// `Treatment::Monochrome`, `apply_monochrome_mix` in view_transform.wgsl); a
+// colour photo has 0.
+const TREATMENT_MONOCHROME: u32 = 1u;
+
 fn mask_effect_id(metadata: vec4<u32>) -> u32 {
     return metadata.w >> MASK_EFFECT_ID_SHIFT;
 }
@@ -200,6 +205,9 @@ struct SceneToneUniforms {
     // The Temperature of a rendered photo, -100 (cool) to +100 (warm), 0 on any
     // other photo; then 0, 0, 0.
     raster_temperature: vec4<f32>,
+    // Read by the view node alone: TREATMENT_MONOCHROME for a black-and-white
+    // photo, else 0; then 0, 0, 0.
+    treatment: vec4<u32>,
 }
 
 struct PointColor {

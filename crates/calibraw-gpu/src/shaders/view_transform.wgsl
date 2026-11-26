@@ -378,6 +378,116 @@ fn apply_color_mixer(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     );
 }
 
+// Black and white (Rust `Treatment::Monochrome`). The view node turns the
+// photo grey after the colour mixers: each pixel keeps its OKLab lightness,
+// the grey of Saturation -100. The mixer's Luminance values are the mix: each
+// brightens or darkens the grey of the colours of its band, as a colour
+// filter does on black-and-white film (Lightroom's B&W mix). The mix moves a
+// pixel by how colourful it is, so neutral greys stay where they are and a
+// deep colour moves more than a pale one of the same hue.
+
+// The gain at ±100 on a fully colourful pixel, in EV. Further than the colour
+// mixer's Luminance (mixer_luminance_ev): without colour there is no hue to
+// break, and a red filter takes a blue sky down by two to three stops.
+const MONOCHROME_MIX_DARKEN_EV: f32 = 3.0;
+const MONOCHROME_MIX_BRIGHTEN_EV: f32 = 2.0;
+// The colour estimate (monochrome_mix_colour) weighs a neighbour by
+// exp(-(d² / SPATIAL + (ΔL / LIGHTNESS)² + |Δab|² / COLOUR²)), d in pixels and
+// ΔL, Δab in OKLab.
+const MONOCHROME_MIX_SPATIAL: f32 = 4.5;
+const MONOCHROME_MIX_LIGHTNESS: f32 = 0.05;
+const MONOCHROME_MIX_COLOUR: f32 = 0.05;
+
+// The OKLab colour (a, b) the mix reads at `pos`: the pixel's own averaged
+// over its 5×5 neighbourhood with weights that fall with distance and with the
+// difference in lightness and colour from the pixel (a joint bilateral
+// filter). Averaging the ab vector, not chroma, lets chroma noise cancel: a
+// neutral pixel's noise averages towards grey and the mix leaves it, and a
+// flat colour such as a noisy blue sky gets one gain instead of turning its
+// chroma noise into grain when the mix moves it by stops. A neighbour across
+// an edge differs in lightness or colour and barely counts, so the mix keeps
+// to its side of the edge. `center_lab` is the pixel's OKLab. Reads the same
+// taps of final_adjustment_tex as the colour mixer (stabilized_mixer_sample),
+// which COLOR_MIXER_SUPPORT keeps in an export tile's halo.
+fn monochrome_mix_colour(pos: vec2<i32>, center_lab: vec3<f32>) -> vec2<f32> {
+    var ab_sum = center_lab.yz;
+    var weight_sum = 1.0;
+    for (var dy = -2; dy <= 2; dy = dy + 1) {
+        for (var dx = -2; dx <= 2; dx = dx + 1) {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            let neighbour_rgb = textureLoad(SceneAdjustments::final_adjustment_tex, Common::clamp_pos(pos + vec2<i32>(dx, dy)), 0).xyz;
+            let neighbour = Color::rec2020_to_oklab(neighbour_rgb);
+            let lightness_delta = (neighbour.x - center_lab.x) / MONOCHROME_MIX_LIGHTNESS;
+            let colour_delta = (neighbour.yz - center_lab.yz) / MONOCHROME_MIX_COLOUR;
+            let distance_squared = f32(dx * dx + dy * dy);
+            let weight = exp(-(
+                distance_squared / MONOCHROME_MIX_SPATIAL
+                + lightness_delta * lightness_delta
+                + dot(colour_delta, colour_delta)
+            ));
+            ab_sum = ab_sum + neighbour.yz * weight;
+            weight_sum = weight_sum + weight;
+        }
+    }
+    return ab_sum / weight_sum;
+}
+
+// The mix's gain in EV for a pixel of OKLab lightness `lightness` and colour
+// `ab`; `luminance_0` and `luminance_1` are the eight bands' values (±100).
+// How colourful the pixel is, its chroma relative to its lightness as the
+// colour mixer measures it, ramps the gain in: from nothing at near-neutral
+// chroma, which noise reaches, to all of it at the chroma of a deep colour.
+// Like the colour mixer's Luminance, it fades out in the deepest shadows,
+// where colour is mostly noise, and eases off above diffuse white.
+fn monochrome_mix_ev(
+    lightness: f32,
+    ab: vec2<f32>,
+    luminance_0: vec4<f32>,
+    luminance_1: vec4<f32>,
+) -> f32 {
+    let chroma = length(ab);
+    if chroma <= 1e-9 {
+        return 0.0;
+    }
+    let hue = fract(atan2(ab.y, ab.x) / (2.0 * 3.14159265359) + 1.0);
+    let amount = clamp(mixer_band_value(mixer_band_weights(hue), luminance_0, luminance_1) / 100.0, -1.0, 1.0);
+    let relative_chroma = chroma / max(0.028 + 0.095 * max(lightness, 0.0), 0.028);
+    let colourfulness = smoothstep(0.10, 1.60, relative_chroma);
+    let signal = smoothstep(0.035, 0.115, max(lightness, 0.0));
+    let hdr_guard = 1.0 / (1.0 + 0.20 * max(lightness - 1.0, 0.0));
+    let endpoint_ev = select(MONOCHROME_MIX_DARKEN_EV, MONOCHROME_MIX_BRIGHTEN_EV, amount >= 0.0);
+    return amount * endpoint_ev * colourfulness * signal * hdr_guard;
+}
+
+// The global mix at `pos` applied to `rgb`, the pixel there in scene-linear
+// Rec.2020: scaled by the mix's gain, still in colour so that the masks' colour
+// mixers can mix it further before monochrome_grey. Scaling linear RGB by g
+// scales its OKLab lightness by g^(1/3), so the grey moves by the same g.
+fn apply_monochrome_mix(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
+    let luminance_0 = Common::scene_tone_uniforms.hsl_luminance_0_field;
+    let luminance_1 = Common::scene_tone_uniforms.hsl_luminance_1_field;
+    if max(max_abs_vec4(luminance_0), max_abs_vec4(luminance_1)) < 1e-6 {
+        return rgb;
+    }
+    let lab = Color::rec2020_to_oklab(rgb);
+    let ab = monochrome_mix_colour(pos, lab);
+    let ev = monochrome_mix_ev(lab.x, ab, luminance_0, luminance_1);
+    if abs(ev) < 1e-7 {
+        return rgb;
+    }
+    return rgb * exp2(ev);
+}
+
+// The grey of `rgb` (scene-linear Rec.2020) that keeps its OKLab lightness L:
+// L³ in every channel, which is OKLab (L, 0, 0) exactly and stays neutral
+// through the view transform. Rec.2020 and sRGB share D65 white.
+fn monochrome_grey(rgb: vec3<f32>) -> vec3<f32> {
+    let lightness = max(Color::rec2020_to_oklab(rgb).x, 0.0);
+    return vec3<f32>(lightness * lightness * lightness);
+}
+
 fn point_color_hsl(rgb: vec3<f32>) -> vec3<f32> {
     let linear_srgb = clamp(Common::REC2020_TO_SRGB * rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     let srgb = Color::srgb_oetf(linear_srgb);
@@ -667,8 +777,16 @@ fn apply_view_node(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let rgb = textureLoad(SceneAdjustments::final_adjustment_tex, pos, 0).xyz;
-    let globally_mixed = apply_color_mixer(pos, rgb);
-    let mixed = apply_local_color_mixer(pos, globally_mixed);
+    // Black and white mixes the grey from the colours, through the masks'
+    // colour mixers too, then drops them. The global mixer's Hue and
+    // Saturation have nothing left to change.
+    let monochrome = Common::scene_tone_uniforms.treatment.x == Common::TREATMENT_MONOCHROME;
+    var mixed: vec3<f32>;
+    if monochrome {
+        mixed = monochrome_grey(apply_local_color_mixer(pos, apply_monochrome_mix(pos, rgb)));
+    } else {
+        mixed = apply_local_color_mixer(pos, apply_color_mixer(pos, rgb));
+    }
     let globally_hue_rotated = apply_hue_rotation_value(
         mixed,
         Common::scene_tone_uniforms.grade_options.z,

@@ -1,0 +1,12 @@
+{
+  "edits": {
+    "exposure": {
+      "treatment": "monochrome",
+      "hsl_hue": [40.0,0.0,0.0,0.0,0.0,-60.0,0.0,0.0],
+      "hsl_saturation": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+      "hue": 30.0,
+      "saturation": -60.0,
+      "vibrance": 40.0
+    }
+  }
+}
