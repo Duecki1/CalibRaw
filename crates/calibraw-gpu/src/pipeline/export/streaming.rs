@@ -61,6 +61,7 @@ where
         window,
         keep_metadata: _,
         metadata: _,
+        xmp_packet: _,
         geometry,
         bit_depth: _,
         color: _,

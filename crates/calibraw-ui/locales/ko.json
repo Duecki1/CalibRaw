@@ -2184,5 +2184,18 @@
   "Lowest first": "낮은 순",
   "Picks first": "선택 먼저",
   "Rejects first": "거부 먼저",
-  "Change the filename, rating, flag or edit filters to show more photos.": "더 많은 사진을 보려면 파일 이름, 별점, 플래그 또는 편집 필터를 변경하세요."
+  "Change the filename, rating, flag or edit filters to show more photos.": "더 많은 사진을 보려면 파일 이름, 별점, 플래그 또는 편집 필터를 변경하세요.",
+  "Ratings in XMP files": "XMP 파일의 별점",
+  "Shares star ratings and pick and reject flags with apps such as Lightroom, darktable and digiKam through the XMP files beside your photos.": "사진 옆의 XMP 파일을 통해 별점과 선택 및 거부 플래그를 Lightroom, darktable, digiKam 같은 앱과 공유합니다.",
+  "Use XMP": "XMP 사용",
+  "Off": "끔",
+  "Read": "읽기",
+  "Read and write": "읽기 및 쓰기",
+  "Ratings are kept in CalibRaw's own sidecar files only.": "별점은 CalibRaw 자체 사이드카 파일에만 저장됩니다.",
+  "Photos without CalibRaw edits or ratings show the rating their XMP file records. Changes are saved only to CalibRaw's own files.": "CalibRaw에서 편집하거나 별점을 매기지 않은 사진은 XMP 파일에 기록된 별점을 표시합니다. 변경 사항은 CalibRaw 자체 파일에만 저장됩니다.",
+  "The rating in a photo's XMP file wins, and every change is saved to it too. Everything else in the file is kept.": "사진의 XMP 파일에 있는 별점이 우선하며, 모든 변경 사항이 XMP 파일에도 저장됩니다. 파일의 다른 내용은 모두 유지됩니다.",
+  "XMP file name": "XMP 파일 이름",
+  "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "가장 먼저 찾고 새 XMP 파일에 붙이는 이름입니다. darktable과 digiKam은 사진의 확장자를 유지하고, Lightroom과 Capture One은 확장자를 생략하므로 이름이 같은 RAW와 JPEG는 하나의 파일을 공유합니다.",
+  "Include rating": "별점 포함",
+  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "별점과 선택 또는 거부 플래그를 XMP로 삽입합니다. Lightroom, Windows 및 기타 앱에서 읽을 수 있습니다."
 }

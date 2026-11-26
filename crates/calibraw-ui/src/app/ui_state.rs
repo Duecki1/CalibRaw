@@ -42,6 +42,9 @@ pub(crate) struct PreferencesState {
     pub(crate) edit_in: crate::edit_in::EditInSettings,
     pub(crate) discord_rich_presence: bool,
     pub(crate) hdd_mode: bool,
+    /// Applied to `calibraw_core` where the platform has folders, and off
+    /// elsewhere.
+    pub(crate) xmp_review: crate::sidecar::xmp_review::XmpReviewSettings,
     /// The saved choice, which the editor's device follows from the next start.
     pub(crate) graphics_backend: crate::graphics_backend::GraphicsBackend,
     pub(crate) ui_design: UiDesign,

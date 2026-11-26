@@ -380,6 +380,19 @@ fn prepare_desktop_library_export_item(
         .file_name()
         .and_then(|name| name.to_str())
         .map(str::to_owned);
+    // Read only where it is embedded; one that cannot be read leaves the
+    // export without it.
+    let review = if settings.keep_metadata && settings.include_rating {
+        crate::sidecar::load_photo_review(&job.source).unwrap_or_else(|error| {
+            log::warn!(
+                "could not read the rating of {} for its export: {error}",
+                job.source.display()
+            );
+            crate::sidecar::PhotoReview::default()
+        })
+    } else {
+        crate::sidecar::PhotoReview::default()
+    };
     Ok(ExportItemRequest {
         device: device.clone(),
         queue: queue.clone(),
@@ -391,6 +404,7 @@ fn prepare_desktop_library_export_item(
             remove,
             look,
             source_file_name,
+            review,
             gpu_export_prewarm: None,
             ai_denoise_result: Some(crate::sidecar::ai_denoise_path_for_raw(&job.source)),
         },

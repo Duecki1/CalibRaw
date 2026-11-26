@@ -1,0 +1,48 @@
+{
+  "read": {
+    "flag": "unflagged",
+    "rating": 5
+  },
+  "saved": {
+    "picked_two_stars": {
+      "read_back": {
+        "flag": "picked",
+        "rating": 2
+      },
+      "xmp": [
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"3.1.1-112\">",
+        " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">",
+        "  <rdf:Description rdf:about=\"uuid:faf5bdd5-ba3d-11da-ad31-d33d75182f1b\"",
+        "    xmlns:xap=\"http://ns.adobe.com/xap/1.0/\"",
+        "    xmlns:xmpDM=\"http://ns.adobe.com/xmp/1.0/DynamicMedia/\"",
+        "    xmpDM:pick=\"1\"",
+        "    xmpDM:good=\"true\">",
+        "   <xap:Rating>2</xap:Rating>",
+        "   <xap:CreatorTool>Adobe Bridge</xap:CreatorTool>",
+        "  </rdf:Description>",
+        " </rdf:RDF>",
+        "</x:xmpmeta>"
+      ]
+    },
+    "rejected": {
+      "read_back": {
+        "flag": "rejected",
+        "rating": 0
+      },
+      "xmp": [
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"3.1.1-112\">",
+        " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">",
+        "  <rdf:Description rdf:about=\"uuid:faf5bdd5-ba3d-11da-ad31-d33d75182f1b\"",
+        "    xmlns:xap=\"http://ns.adobe.com/xap/1.0/\"",
+        "    xmlns:xmpDM=\"http://ns.adobe.com/xmp/1.0/DynamicMedia/\"",
+        "    xmpDM:pick=\"-1\"",
+        "    xmpDM:good=\"false\">",
+        "   <xap:Rating>-1</xap:Rating>",
+        "   <xap:CreatorTool>Adobe Bridge</xap:CreatorTool>",
+        "  </rdf:Description>",
+        " </rdf:RDF>",
+        "</x:xmpmeta>"
+      ]
+    }
+  }
+}

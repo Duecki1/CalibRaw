@@ -2190,5 +2190,18 @@
   "Lowest first": "Önce en düşük",
   "Picks first": "Önce seçilenler",
   "Rejects first": "Önce reddedilenler",
-  "Change the filename, rating, flag or edit filters to show more photos.": "Daha fazla fotoğraf göstermek için dosya adı, derecelendirme, işaret veya düzenleme filtrelerini değiştirin."
+  "Change the filename, rating, flag or edit filters to show more photos.": "Daha fazla fotoğraf göstermek için dosya adı, derecelendirme, işaret veya düzenleme filtrelerini değiştirin.",
+  "Ratings in XMP files": "XMP dosyalarındaki derecelendirmeler",
+  "Shares star ratings and pick and reject flags with apps such as Lightroom, darktable and digiKam through the XMP files beside your photos.": "Fotoğraflarınızın yanındaki XMP dosyaları aracılığıyla yıldız derecelendirmelerini ve seçme ile reddetme işaretlerini Lightroom, darktable ve digiKam gibi uygulamalarla paylaşır.",
+  "Use XMP": "XMP kullan",
+  "Off": "Kapalı",
+  "Read": "Okuma",
+  "Read and write": "Okuma ve yazma",
+  "Ratings are kept in CalibRaw's own sidecar files only.": "Derecelendirmeler yalnızca CalibRaw'ın kendi yan dosyalarında tutulur.",
+  "Photos without CalibRaw edits or ratings show the rating their XMP file records. Changes are saved only to CalibRaw's own files.": "CalibRaw'da düzenlenmemiş veya derecelendirilmemiş fotoğraflar, XMP dosyalarında kayıtlı derecelendirmeyi gösterir. Değişiklikler yalnızca CalibRaw'ın kendi dosyalarına kaydedilir.",
+  "The rating in a photo's XMP file wins, and every change is saved to it too. Everything else in the file is kept.": "Bir fotoğrafın XMP dosyasındaki derecelendirme önceliklidir ve her değişiklik oraya da kaydedilir. Dosyadaki diğer her şey korunur.",
+  "XMP file name": "XMP dosya adı",
+  "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "Önce aranan ve yeni XMP dosyalarına verilen ad. darktable ve digiKam fotoğrafın uzantısını korur; Lightroom ve Capture One ise uzantıyı atar, bu nedenle aynı adlı bir RAW ve bir JPEG tek bir dosyayı paylaşır.",
+  "Include rating": "Derecelendirmeyi ekle",
+  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "Yıldız derecelendirmesini ve seçme ya da reddetme işaretini, Lightroom, Windows ve diğer uygulamaların okuduğu XMP olarak gömer."
 }

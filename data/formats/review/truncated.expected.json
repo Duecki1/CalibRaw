@@ -1,0 +1,14 @@
+{
+  "read": {
+    "flag": "unflagged",
+    "rating": 0
+  },
+  "saved": {
+    "picked_two_stars": {
+      "error": "<folder>/photo.raf.xmp: invalid XMP: syntax error: tag not closed: `>` not found before end of input"
+    },
+    "rejected": {
+      "error": "<folder>/photo.raf.xmp: invalid XMP: syntax error: tag not closed: `>` not found before end of input"
+    }
+  }
+}

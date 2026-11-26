@@ -201,6 +201,31 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    /// Reads and saves ratings with `settings` from now on. Ratings still
+    /// being saved finish under the old ones; the library and the open photo
+    /// show their ratings as the new ones read them.
+    pub(crate) fn set_xmp_review_settings(
+        &mut self,
+        settings: crate::sidecar::xmp_review::XmpReviewSettings,
+    ) {
+        if self.preferences.xmp_review == settings {
+            return;
+        }
+        self.settle_library_review_saves();
+        self.preferences.xmp_review = settings;
+        crate::sidecar::xmp_review::set_xmp_review_settings(settings);
+        self.persist_performance_settings();
+        if let Some(crate::sidecar::SidecarTarget::Desktop { raw_path }) =
+            &self.persistence.sidecar_target
+        {
+            match crate::sidecar::load_photo_review(raw_path) {
+                Ok(review) => self.develop.review = review,
+                Err(error) => log::warn!("could not read the rating of the open photo: {error}"),
+            }
+        }
+        self.library.refresh(&self.egui_ctx);
+    }
+
     pub(crate) fn set_discord_rich_presence(&mut self, enabled: bool) {
         if self.preferences.discord_rich_presence == enabled {
             return;
@@ -503,6 +528,7 @@ impl CalibRawApp {
             export_name_template: self.preferences.export_name_template.clone(),
             export_format: self.export.format,
             export_color_space: self.export.settings.color_space,
+            export_include_rating: self.export.settings.include_rating,
             export_watermark: self.export.watermark.saved(),
             export_carousel: self.export.carousel.saved(),
             export_folder: self.preferences.export_folder.clone(),
@@ -534,6 +560,8 @@ impl CalibRawApp {
             graphics_backend: self.preferences.graphics_backend,
             discord_rich_presence: self.preferences.discord_rich_presence,
             hdd_mode: self.preferences.hdd_mode,
+            xmp_review_sync: self.preferences.xmp_review.sync,
+            xmp_sidecar_name: self.preferences.xmp_review.sidecar_name,
             camera_profile_mode: self.preferences.camera_profile_mode,
             camera_profile_folder: self.preferences.camera_profile_folder.clone(),
             camera_profile_folder_label: self.preferences.camera_profile_folder_label.clone(),

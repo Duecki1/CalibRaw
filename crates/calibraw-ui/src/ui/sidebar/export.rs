@@ -61,6 +61,8 @@ pub(crate) struct ExportControlsChange {
     pub(crate) format_changed: bool,
     /// The colour space the user picked, if they picked one.
     pub(crate) color_space: Option<OutputColorSpace>,
+    /// Whether exports embed the rating, if the user switched it.
+    pub(crate) include_rating: Option<bool>,
     pub(crate) carousel: Option<CarouselAction>,
     pub(crate) watermark: Option<WatermarkAction>,
 }
@@ -87,10 +89,14 @@ pub(crate) fn export_settings_controls(
     });
     let watermark = super::watermark::watermark_card(ui, watermark);
     moduwu_design::card_gap(ui);
+    let previous_include_rating = settings.include_rating;
     export_size_and_metadata_cards(ui, settings);
+    let include_rating =
+        (settings.include_rating != previous_include_rating).then_some(settings.include_rating);
     ExportControlsChange {
         format_changed,
         color_space,
+        include_rating,
         carousel,
         watermark,
     }
@@ -298,6 +304,14 @@ fn export_size_and_metadata_cards(ui: &mut Ui, settings: &mut crate::pipeline::E
             tr("Keep metadata"),
             tr("Embeds available source, camera, lens, exposure, creator, original-size, software, and normalized-orientation metadata in the exported image."),
         );
+        ui.add_enabled_ui(settings.keep_metadata, |ui| {
+            moduwu_design::toggle_with_help(
+                ui,
+                &mut settings.include_rating,
+                tr("Include rating"),
+                tr("Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read."),
+            );
+        });
     });
 }
 
@@ -506,7 +520,10 @@ impl Sidebar {
                     Some(carousel),
                     app.export.watermark.view(),
                 );
-                if change.format_changed || change.color_space.is_some() {
+                if change.format_changed
+                    || change.color_space.is_some()
+                    || change.include_rating.is_some()
+                {
                     app.persist_performance_settings();
                 }
                 if let Some(action) = change.carousel {

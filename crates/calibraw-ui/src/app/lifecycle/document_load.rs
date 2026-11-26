@@ -149,12 +149,18 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         "RAW sidecar lookup finished in {:.3}s",
         sidecar_started.elapsed().as_secs_f64()
     ));
-    let review = loaded_sidecar
+    let sidecar_review = loaded_sidecar
         .as_ref()
         .ok()
         .and_then(Option::as_ref)
-        .map(|loaded| loaded.review)
-        .unwrap_or_default();
+        .map(|loaded| loaded.review);
+    // A photo in a folder may take its review from XMP.
+    let review = match &source.sidecar_target {
+        crate::sidecar::SidecarTarget::Desktop { raw_path } => {
+            crate::sidecar::xmp_review::resolve_photo_review(raw_path, sidecar_review)
+        }
+        crate::sidecar::SidecarTarget::Android { .. } => sidecar_review.unwrap_or_default(),
+    };
     let (reload_profile, reload_edits) = match profile_reload {
         Some(reload) => (Some(reload.camera_profile), Some(reload.edits)),
         None => (None, None),

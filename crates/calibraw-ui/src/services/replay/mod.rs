@@ -170,6 +170,7 @@ fn render_still(
         percentage: 100.0,
         allow_upscale: true,
         keep_metadata: false,
+        include_rating: false,
         jpeg_quality: 90,
         bit_depth: ExportBitDepth::Eight,
         // Video frames are encoded as sRGB.

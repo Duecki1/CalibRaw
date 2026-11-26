@@ -2,6 +2,7 @@
 
 use super::*;
 use calibraw_core::pipeline::PreservedExifField;
+use calibraw_core::sidecar::PhotoReview;
 
 impl ExportFormat {
     pub const fn label(self) -> &'static str {
@@ -120,6 +121,9 @@ pub struct ExportSettings {
     pub percentage: f32,
     pub allow_upscale: bool,
     pub keep_metadata: bool,
+    /// Embed the photo's rating and flag ([`ExportMetadata::review`]) as XMP;
+    /// only with `keep_metadata`.
+    pub include_rating: bool,
     pub jpeg_quality: u8,
     pub bit_depth: ExportBitDepth,
     /// The colour space of 8- and 16-bit output; a 32-bit float master is
@@ -137,6 +141,7 @@ impl Default for ExportSettings {
             percentage: 100.0,
             allow_upscale: false,
             keep_metadata: true,
+            include_rating: false,
             jpeg_quality: 90,
             bit_depth: ExportBitDepth::Sixteen,
             color_space: OutputColorSpace::Srgb,
@@ -231,6 +236,9 @@ pub struct ExportMetadata {
     pub source_height: u32,
     /// Source EXIF fields CalibRaw does not interpret, written back unchanged.
     pub preserved_exif: Vec<PreservedExifField>,
+    /// The photo's rating and flag, embedded with
+    /// [`ExportSettings::include_rating`].
+    pub review: PhotoReview,
 }
 
 impl ExportMetadata {
@@ -252,6 +260,7 @@ impl ExportMetadata {
             source_width: raw.width,
             source_height: raw.height,
             preserved_exif: raw.capture_metadata.preserved_exif.clone(),
+            review: PhotoReview::default(),
         }
     }
 }

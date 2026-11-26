@@ -2190,5 +2190,18 @@
   "Lowest first": "Mai întâi cele mai mici",
   "Picks first": "Mai întâi cele selectate",
   "Rejects first": "Mai întâi cele respinse",
-  "Change the filename, rating, flag or edit filters to show more photos.": "Modifică filtrele pentru numele fișierului, evaluare, marcaj sau editare ca să afișezi mai multe fotografii."
+  "Change the filename, rating, flag or edit filters to show more photos.": "Modifică filtrele pentru numele fișierului, evaluare, marcaj sau editare ca să afișezi mai multe fotografii.",
+  "Ratings in XMP files": "Evaluări în fișiere XMP",
+  "Shares star ratings and pick and reject flags with apps such as Lightroom, darktable and digiKam through the XMP files beside your photos.": "Partajează evaluările cu stele și marcajele de selectare și respingere cu aplicații precum Lightroom, darktable și digiKam prin fișierele XMP de lângă fotografiile tale.",
+  "Use XMP": "Folosește XMP",
+  "Off": "Dezactivat",
+  "Read": "Citire",
+  "Read and write": "Citire și scriere",
+  "Ratings are kept in CalibRaw's own sidecar files only.": "Evaluările sunt păstrate doar în fișierele sidecar proprii ale CalibRaw.",
+  "Photos without CalibRaw edits or ratings show the rating their XMP file records. Changes are saved only to CalibRaw's own files.": "Fotografiile fără editări sau evaluări în CalibRaw afișează evaluarea din fișierul lor XMP. Modificările sunt salvate doar în fișierele proprii ale CalibRaw.",
+  "The rating in a photo's XMP file wins, and every change is saved to it too. Everything else in the file is kept.": "Evaluarea din fișierul XMP al unei fotografii are prioritate și fiecare modificare este salvată și acolo. Restul conținutului fișierului este păstrat.",
+  "XMP file name": "Numele fișierului XMP",
+  "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "Numele căutat mai întâi și dat fișierelor XMP noi. darktable și digiKam păstrează extensia fotografiei; Lightroom și Capture One o omit, astfel încât un RAW și un JPEG cu același nume împart un singur fișier.",
+  "Include rating": "Include evaluarea",
+  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "Încorporează evaluarea cu stele și marcajul de selectare sau respingere ca XMP, pe care îl citesc Lightroom, Windows și alte aplicații."
 }

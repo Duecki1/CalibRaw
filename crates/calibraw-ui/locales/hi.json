@@ -2190,5 +2190,18 @@
   "Lowest first": "सबसे कम पहले",
   "Picks first": "पसंदीदा पहले",
   "Rejects first": "अस्वीकृत पहले",
-  "Change the filename, rating, flag or edit filters to show more photos.": "अधिक फ़ोटो दिखाने के लिए फ़ाइल नाम, रेटिंग, फ़्लैग या संपादन फ़िल्टर बदलें।"
+  "Change the filename, rating, flag or edit filters to show more photos.": "अधिक फ़ोटो दिखाने के लिए फ़ाइल नाम, रेटिंग, फ़्लैग या संपादन फ़िल्टर बदलें।",
+  "Ratings in XMP files": "XMP फ़ाइलों में रेटिंग",
+  "Shares star ratings and pick and reject flags with apps such as Lightroom, darktable and digiKam through the XMP files beside your photos.": "आपकी फ़ोटो के पास रखी XMP फ़ाइलों के ज़रिए Lightroom, darktable और digiKam जैसे ऐप के साथ स्टार रेटिंग और पसंद व अस्वीकार फ़्लैग साझा करता है।",
+  "Use XMP": "XMP का उपयोग करें",
+  "Off": "बंद",
+  "Read": "पढ़ें",
+  "Read and write": "पढ़ें और लिखें",
+  "Ratings are kept in CalibRaw's own sidecar files only.": "रेटिंग केवल CalibRaw की अपनी साइडकार फ़ाइलों में रखी जाती है।",
+  "Photos without CalibRaw edits or ratings show the rating their XMP file records. Changes are saved only to CalibRaw's own files.": "जिन फ़ोटो में CalibRaw के संपादन या रेटिंग नहीं हैं, वे अपनी XMP फ़ाइल में दर्ज रेटिंग दिखाती हैं। बदलाव केवल CalibRaw की अपनी फ़ाइलों में सहेजे जाते हैं।",
+  "The rating in a photo's XMP file wins, and every change is saved to it too. Everything else in the file is kept.": "फ़ोटो की XMP फ़ाइल की रेटिंग को प्राथमिकता मिलती है, और हर बदलाव उसमें भी सहेजा जाता है। फ़ाइल की बाकी सारी जानकारी बनी रहती है।",
+  "XMP file name": "XMP फ़ाइल का नाम",
+  "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "वह नाम जिसे पहले खोजा जाता है और जो नई XMP फ़ाइलों को दिया जाता है। darktable और digiKam फ़ोटो का एक्सटेंशन रखते हैं; Lightroom और Capture One उसे हटा देते हैं, इसलिए एक ही नाम की RAW और JPEG फ़ाइलें एक ही फ़ाइल साझा करती हैं।",
+  "Include rating": "रेटिंग शामिल करें",
+  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "स्टार रेटिंग और पसंद या अस्वीकार फ़्लैग को XMP के रूप में जोड़ता है, जिसे Lightroom, Windows और अन्य ऐप पढ़ते हैं।"
 }

@@ -33,6 +33,16 @@ impl CalibRawApp {
         if caps.has_folders() {
             calibraw_core::serialized_reads::set_enabled(performance.hdd_mode);
         }
+        // Ratings in XMP sidecars: folder storage only.
+        let xmp_review = if caps.has_folders() {
+            crate::sidecar::xmp_review::XmpReviewSettings {
+                sync: performance.xmp_review_sync,
+                sidecar_name: performance.xmp_sidecar_name,
+            }
+        } else {
+            crate::sidecar::xmp_review::XmpReviewSettings::default()
+        };
+        crate::sidecar::xmp_review::set_xmp_review_settings(xmp_review);
         let discord_presence = DiscordPresence::new(performance.discord_rich_presence);
         let last_library_folder = performance.last_library_folder.clone();
         let last_library_selected_folder = performance.last_library_selected_folder.clone();
@@ -288,6 +298,7 @@ impl CalibRawApp {
                 programs_compiled_for: None,
                 settings: ExportSettings {
                     color_space: performance.export_color_space,
+                    include_rating: performance.export_include_rating,
                     ..ExportSettings::default()
                 },
                 task: None,
@@ -363,6 +374,7 @@ impl CalibRawApp {
                 },
                 discord_rich_presence: performance.discord_rich_presence,
                 hdd_mode: performance.hdd_mode,
+                xmp_review,
                 graphics_backend: performance.graphics_backend,
                 ui_design: performance.ui_design,
                 ui_density: performance.ui_density,

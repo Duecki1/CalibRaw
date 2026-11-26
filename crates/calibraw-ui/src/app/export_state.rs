@@ -361,6 +361,8 @@ pub(super) struct PreparedExportSource {
     pub(super) remove: RemoveEditState,
     pub(super) look: Option<crate::luts::ResolvedLook>,
     pub(super) source_file_name: Option<String>,
+    /// Embedded where the export settings include the rating.
+    pub(super) review: crate::sidecar::PhotoReview,
     pub(super) gpu_export_prewarm: Option<Arc<GpuProgramPrewarm>>,
     /// Where the photo's AI-denoise result is saved, restored from there or
     /// saved there when the export has to run RawNIND.

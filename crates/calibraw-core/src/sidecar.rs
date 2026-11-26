@@ -23,6 +23,7 @@ mod files;
 mod mask_assets;
 mod remove_assets;
 mod size_limits;
+pub mod xmp_review;
 use crate::migrations::{self, LegacyEdits};
 use edit_fingerprint::Fnv1a;
 pub use edit_fingerprint::{EditFingerprint, SidecarStart};
@@ -49,6 +50,9 @@ pub const AI_DENOISE_SUFFIX: &str = ".calibraw-denoise";
 /// and parts without running a model. Derived data like the AI-denoise
 /// result, kept while the saved edit has a people mask.
 pub const PEOPLE_ANALYSIS_SUFFIX: &str = ".calibraw-people";
+/// The XMP sidecar other photo apps keep beside a photo under its full name,
+/// as darktable and digiKam do ([`xmp_review`]).
+pub const XMP_SIDECAR_SUFFIX: &str = ".xmp";
 
 /// A file kept beside a photo that native code reads and writes by path, and
 /// that the app can make again when it is lost.
@@ -507,7 +511,7 @@ pub use desktop::{
     developed_thumbnail_cache_is_fresh, developed_thumbnail_path_for_raw,
     invalidate_developed_thumbnail_cache, load_developed_thumbnail_cache,
     people_analysis_path_for_raw, raw_companion_paths, remove_desktop_edits,
-    save_developed_thumbnail_cache,
+    save_developed_thumbnail_cache, xmp_sidecar_path_for_raw,
 };
 
 /// `edits` alone, for a photo that starts at the defaults.

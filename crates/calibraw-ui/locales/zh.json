@@ -2190,5 +2190,18 @@
   "Lowest first": "从低到高",
   "Picks first": "选中的优先",
   "Rejects first": "拒绝的优先",
-  "Change the filename, rating, flag or edit filters to show more photos.": "更改文件名、评分、标记或编辑筛选条件以显示更多照片。"
+  "Change the filename, rating, flag or edit filters to show more photos.": "更改文件名、评分、标记或编辑筛选条件以显示更多照片。",
+  "Ratings in XMP files": "XMP 文件中的评分",
+  "Shares star ratings and pick and reject flags with apps such as Lightroom, darktable and digiKam through the XMP files beside your photos.": "通过照片旁的 XMP 文件，与 Lightroom、darktable 和 digiKam 等应用共享星级评分以及选用和拒绝标记。",
+  "Use XMP": "使用 XMP",
+  "Off": "关闭",
+  "Read": "读取",
+  "Read and write": "读取和写入",
+  "Ratings are kept in CalibRaw's own sidecar files only.": "评分仅保存在 CalibRaw 自己的边车文件中。",
+  "Photos without CalibRaw edits or ratings show the rating their XMP file records. Changes are saved only to CalibRaw's own files.": "未在 CalibRaw 中编辑或评分的照片会显示其 XMP 文件记录的评分。更改仅保存到 CalibRaw 自己的文件中。",
+  "The rating in a photo's XMP file wins, and every change is saved to it too. Everything else in the file is kept.": "照片 XMP 文件中的评分优先，每次更改也会保存到该文件。文件中的其他内容都会保留。",
+  "XMP file name": "XMP 文件名",
+  "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "最先查找并用于新 XMP 文件的名称。darktable 和 digiKam 保留照片的扩展名；Lightroom 和 Capture One 会省略扩展名，因此同名的 RAW 和 JPEG 共用一个文件。",
+  "Include rating": "包含评分",
+  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "将星级评分以及选用或拒绝标记以 XMP 形式嵌入，Lightroom、Windows 和其他应用可以读取。"
 }

@@ -278,6 +278,14 @@ pub(super) fn write_tiff_header<W: Write>(
         if !request.metadata.artist.trim().is_empty() {
             entries.push(tiff_ascii_entry(315, request.metadata.artist.trim())?);
         }
+        if let Some(packet) = request.xmp_packet {
+            entries.push(TiffEntry {
+                tag: 700, // XMP, as bytes
+                field_type: 1,
+                count: u32::try_from(packet.len()).context("XMP packet is too large for TIFF")?,
+                data: packet.as_bytes().to_vec(),
+            });
+        }
 
         // Reserve the EXIF and GPS IFDs before the layout pass. Their encoded
         // lengths do not depend on where they land, only their internal offsets do.

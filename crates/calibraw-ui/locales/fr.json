@@ -2190,5 +2190,18 @@
   "Lowest first": "De la plus basse à la plus élevée",
   "Picks first": "Sélectionnées d’abord",
   "Rejects first": "Rejetées d’abord",
-  "Change the filename, rating, flag or edit filters to show more photos.": "Modifiez les filtres de nom de fichier, de note, de marqueur ou de retouche pour afficher davantage de photos."
+  "Change the filename, rating, flag or edit filters to show more photos.": "Modifiez les filtres de nom de fichier, de note, de marqueur ou de retouche pour afficher davantage de photos.",
+  "Ratings in XMP files": "Notes dans les fichiers XMP",
+  "Shares star ratings and pick and reject flags with apps such as Lightroom, darktable and digiKam through the XMP files beside your photos.": "Partage les notes par étoiles et les marques de sélection et de rejet avec des applications comme Lightroom, darktable et digiKam via les fichiers XMP placés à côté de vos photos.",
+  "Use XMP": "Utiliser XMP",
+  "Off": "Désactivé",
+  "Read": "Lecture",
+  "Read and write": "Lecture et écriture",
+  "Ratings are kept in CalibRaw's own sidecar files only.": "Les notes sont conservées uniquement dans les fichiers annexes de CalibRaw.",
+  "Photos without CalibRaw edits or ratings show the rating their XMP file records. Changes are saved only to CalibRaw's own files.": "Les photos sans retouches ni notes dans CalibRaw affichent la note de leur fichier XMP. Les modifications sont enregistrées uniquement dans les fichiers de CalibRaw.",
+  "The rating in a photo's XMP file wins, and every change is saved to it too. Everything else in the file is kept.": "La note du fichier XMP d’une photo l’emporte, et chaque modification y est aussi enregistrée. Tout le reste du fichier est conservé.",
+  "XMP file name": "Nom du fichier XMP",
+  "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "Le nom recherché en premier et donné aux nouveaux fichiers XMP. darktable et digiKam conservent l’extension de la photo ; Lightroom et Capture One la suppriment, de sorte qu’un RAW et un JPEG du même nom partagent un seul fichier.",
+  "Include rating": "Inclure la note",
+  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "Intègre la note par étoiles et la marque de sélection ou de rejet au format XMP, lu par Lightroom, Windows et d’autres applications."
 }

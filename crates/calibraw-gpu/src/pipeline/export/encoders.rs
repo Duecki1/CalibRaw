@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// The keyword of the iTXt chunk that holds a PNG's XMP packet.
+const PNG_XMP_KEYWORD: &str = "XML:com.adobe.xmp";
+/// What precedes the XMP packet in a JPEG APP1 segment.
+const JPEG_XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+
 pub(super) fn export_tiled_png(
     context: ExportContext<'_>,
     request: ExportRequest<'_>,
@@ -77,6 +82,11 @@ fn write_png_header(
     if request.keep_metadata {
         add_png_text_metadata(&mut encoder, request.metadata, width, height)?;
     }
+    if let Some(packet) = request.xmp_packet {
+        encoder
+            .add_itxt_chunk(PNG_XMP_KEYWORD.to_owned(), packet.to_owned())
+            .context("write PNG XMP metadata")?;
+    }
     encoder
         .write_header()
         .with_context(|| format!("write PNG header for {}", output.path.display()))
@@ -129,6 +139,7 @@ pub(super) fn export_tiled_jpeg(
             quality,
             keep_metadata: request.keep_metadata,
             metadata: request.metadata,
+            xmp_packet: request.xmp_packet,
             color: request.color,
         })
     })
@@ -203,6 +214,7 @@ pub(super) fn export_tiled_jxl(
                 &mut &codestream[..],
                 codestream.len() as u64,
                 &build_exif_payload(request.metadata, width, height, request.color.is_srgb()),
+                request.xmp_packet,
             )?;
             writer.flush().context("flush JPEG XL container")?;
         } else {
@@ -223,6 +235,7 @@ pub(super) fn write_jxl_container<W: Write>(
     codestream: &mut impl std::io::Read,
     codestream_len: u64,
     exif: &[u8],
+    xmp_packet: Option<&str>,
 ) -> Result<()> {
     // JPEG XL container signature and file type boxes.
     output.write_all(&[0, 0, 0, 12, b'J', b'X', b'L', b' ', 13, 10, 0x87, 10])?;
@@ -240,6 +253,18 @@ pub(super) fn write_jxl_container<W: Write>(
     output.write_all(b"Exif")?;
     output.write_all(&0u32.to_be_bytes())?; // TIFF header starts at byte zero.
     output.write_all(exif)?;
+    if let Some(packet) = xmp_packet {
+        let xml_box_size = u32::try_from(
+            packet
+                .len()
+                .checked_add(8)
+                .context("JPEG XL XMP size overflow")?,
+        )
+        .context("JPEG XL XMP box too large")?;
+        output.write_all(&xml_box_size.to_be_bytes())?;
+        output.write_all(b"xml ")?;
+        output.write_all(packet.as_bytes())?;
+    }
     let box_size = codestream_len
         .checked_add(8)
         .context("JPEG XL codestream size overflow")?;
@@ -268,6 +293,7 @@ pub(super) struct JpegEncodeRequest<'a> {
     pub(super) quality: u8,
     pub(super) keep_metadata: bool,
     pub(super) metadata: &'a ExportMetadata,
+    pub(super) xmp_packet: Option<&'a str>,
     pub(super) color: &'a ResolvedExportColor,
 }
 
@@ -280,6 +306,7 @@ pub(super) fn encode_jpeg_rgb(request: JpegEncodeRequest<'_>) -> Result<()> {
         quality,
         keep_metadata,
         metadata,
+        xmp_packet,
         color,
     } = request;
     validate_rgb_raster_len(rgb, output_width, output_height)?;
@@ -305,6 +332,11 @@ pub(super) fn encode_jpeg_rgb(request: JpegEncodeRequest<'_>) -> Result<()> {
                 color.is_srgb(),
             ))
             .context("embed JPEG EXIF metadata")?;
+    }
+    if let Some(packet) = xmp_packet {
+        encoder
+            .add_app_segment(1, [JPEG_XMP_SIGNATURE, packet.as_bytes()].concat())
+            .context("embed JPEG XMP metadata")?;
     }
     encoder
         .encode(rgb, width, height, jpeg_encoder::ColorType::Rgb)

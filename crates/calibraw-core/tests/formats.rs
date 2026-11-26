@@ -8,6 +8,10 @@
 //! - `preset/*.json`: native presets.
 //! - `xmp/*.xmp`: Lightroom and Camera Raw presets, with the warnings the
 //!   import shows.
+//! - `review/*.xmp`, `review/*.jpg`, `review/*.tif`: ratings in XMP, read with
+//!   XMP sync on. An XMP file is the sidecar of a RAW named after it, an
+//!   image carries its packet embedded. `saved` holds the XMP sidecar after
+//!   saving each of two reviews, `read_back` the review then read.
 //!
 //! A file CalibRaw rejects expects `{"error": message}`. To add a case, add
 //! the file and run this test with `CALIBRAW_PARITY_BLESS=1`, which writes
@@ -21,12 +25,23 @@ use base64::Engine as _;
 use calibraw_core::presets::xmp::read_xmp_preset_file;
 use calibraw_core::presets::Preset;
 use calibraw_core::sidecar;
+use calibraw_core::sidecar::xmp_review::{
+    set_xmp_review_settings, XmpReviewSettings, XmpReviewSync, XmpSidecarName,
+};
+use calibraw_core::sidecar::{PhotoFlag, PhotoReview};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-const KINDS: [(&str, &str); 3] = [("sidecar", "json"), ("preset", "json"), ("xmp", "xmp")];
+const KINDS: [(&str, &str); 6] = [
+    ("sidecar", "json"),
+    ("preset", "json"),
+    ("xmp", "xmp"),
+    ("review", "xmp"),
+    ("review", "jpg"),
+    ("review", "tif"),
+];
 const EXPECTED_SUFFIX: &str = ".expected.json";
 
 #[test]
@@ -85,6 +100,7 @@ fn read(kind: &str, path: &Path) -> Value {
         "sidecar" => read_sidecar(path),
         "preset" => read_preset(path),
         "xmp" => read_xmp(path),
+        "review" => read_review(path),
         _ => unreachable!("KINDS lists every kind"),
     };
     result.unwrap_or_else(|error| json!({ "error": error }))
@@ -118,6 +134,70 @@ fn read_xmp(path: &Path) -> Result<Value, String> {
     let (import, _) = read_xmp_preset_file(path).map_err(|error| error.to_string())?;
     let saved = import.preset.encode().map_err(|error| error.to_string())?;
     Ok(json!({ "warnings": import.warnings, "saved": parse(&saved) }))
+}
+
+fn read_review(path: &Path) -> Result<Value, String> {
+    set_xmp_review_settings(XmpReviewSettings {
+        sync: XmpReviewSync::ReadWrite,
+        sidecar_name: XmpSidecarName::WithExtension,
+    });
+    let read =
+        sidecar::load_photo_review(&review_photo(path)).map_err(|error| error.to_string())?;
+    let mut saved = serde_json::Map::new();
+    let reviews = [
+        (
+            "picked_two_stars",
+            PhotoReview {
+                flag: PhotoFlag::Picked,
+                rating: 2,
+            },
+        ),
+        (
+            "rejected",
+            PhotoReview {
+                flag: PhotoFlag::Rejected,
+                rating: 0,
+            },
+        ),
+    ];
+    for (label, review) in reviews {
+        let photo = review_photo(path);
+        let folder = photo.parent().unwrap().display().to_string();
+        let result = sidecar::save_photo_review(&photo, review)
+            // Messages name the file; the folder differs between machines.
+            .map_err(|error| error.to_string().replace(&folder, "<folder>"))
+            .and_then(|()| {
+                let xmp = fs::read_to_string(sidecar::xmp_sidecar_path_for_raw(&photo))
+                    .map_err(|error| error.to_string())?;
+                let read_back =
+                    sidecar::load_photo_review(&photo).map_err(|error| error.to_string())?;
+                Ok(json!({ "xmp": xmp.lines().collect::<Vec<_>>(), "read_back": read_back }))
+            });
+        saved.insert(
+            label.to_owned(),
+            result.unwrap_or_else(|error| json!({ "error": error })),
+        );
+    }
+    Ok(json!({ "read": read, "saved": saved }))
+}
+
+/// A fresh copy of the photo a review fixture belongs to, alone in its folder.
+fn review_photo(fixture: &Path) -> PathBuf {
+    let folder = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("formats/review-photos")
+        .join(fixture.file_name().unwrap());
+    let _ = fs::remove_dir_all(&folder);
+    fs::create_dir_all(&folder).unwrap();
+    let extension = fixture.extension().unwrap().to_string_lossy();
+    if extension == "xmp" {
+        let photo = folder.join("photo.raf");
+        fs::copy(fixture, sidecar::xmp_sidecar_path_for_raw(&photo)).unwrap();
+        photo
+    } else {
+        let photo = folder.join(format!("photo.{extension}"));
+        fs::copy(fixture, &photo).unwrap();
+        photo
+    }
 }
 
 fn parse(bytes: &[u8]) -> Value {

@@ -2190,5 +2190,18 @@
   "Lowest first": "Сначала с наименьшим",
   "Picks first": "Сначала выбранные",
   "Rejects first": "Сначала отклонённые",
-  "Change the filename, rating, flag or edit filters to show more photos.": "Измените фильтры имени файла, рейтинга, флажка или коррекций, чтобы показать больше фотографий."
+  "Change the filename, rating, flag or edit filters to show more photos.": "Измените фильтры имени файла, рейтинга, флажка или коррекций, чтобы показать больше фотографий.",
+  "Ratings in XMP files": "Рейтинги в файлах XMP",
+  "Shares star ratings and pick and reject flags with apps such as Lightroom, darktable and digiKam through the XMP files beside your photos.": "Передаёт рейтинги в звёздах и отметки «выбрано» и «отклонено» приложениям вроде Lightroom, darktable и digiKam через файлы XMP рядом с вашими фотографиями.",
+  "Use XMP": "Использовать XMP",
+  "Off": "Выкл.",
+  "Read": "Чтение",
+  "Read and write": "Чтение и запись",
+  "Ratings are kept in CalibRaw's own sidecar files only.": "Рейтинги хранятся только в собственных сопутствующих файлах CalibRaw.",
+  "Photos without CalibRaw edits or ratings show the rating their XMP file records. Changes are saved only to CalibRaw's own files.": "Фотографии без правок и рейтингов в CalibRaw показывают рейтинг из своего файла XMP. Изменения сохраняются только в собственных файлах CalibRaw.",
+  "The rating in a photo's XMP file wins, and every change is saved to it too. Everything else in the file is kept.": "Рейтинг из файла XMP фотографии имеет приоритет, и каждое изменение также сохраняется в нём. Всё остальное в файле сохраняется.",
+  "XMP file name": "Имя файла XMP",
+  "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "Имя, которое ищется первым и даётся новым файлам XMP. darktable и digiKam сохраняют расширение фотографии; Lightroom и Capture One его отбрасывают, поэтому RAW и JPEG с одинаковым именем используют один файл.",
+  "Include rating": "Включать рейтинг",
+  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "Встраивает рейтинг в звёздах и отметку «выбрано» или «отклонено» в формате XMP, который читают Lightroom, Windows и другие приложения."
 }

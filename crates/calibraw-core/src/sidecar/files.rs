@@ -267,16 +267,21 @@ pub fn decode_sidecar_metadata(bytes: &[u8]) -> Result<SidecarMetadata, SidecarE
     })
 }
 
-/// Read review/timer metadata from a desktop sidecar, returning defaults when absent.
+/// Read review/timer metadata from a desktop sidecar, returning defaults when
+/// absent. The review is the photo's, from the sidecar and its XMP as
+/// [`xmp_review::resolve_photo_review`] combines them, so a sidecar saved with
+/// it keeps a review read from XMP.
 pub fn load_sidecar_metadata(raw_path: &Path) -> Result<SidecarMetadata, SidecarError> {
-    let bytes = match read_bounded(&sidecar_path_for_raw(raw_path)) {
-        Ok(bytes) => bytes,
-        Err(SidecarError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(SidecarMetadata::default())
-        }
+    let sidecar = match read_bounded(&sidecar_path_for_raw(raw_path)) {
+        Ok(bytes) => Some(decode_sidecar_metadata(&bytes)?),
+        Err(SidecarError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error),
     };
-    decode_sidecar_metadata(&bytes)
+    let review = xmp_review::resolve_photo_review(raw_path, sidecar.map(|sidecar| sidecar.review));
+    Ok(SidecarMetadata {
+        review,
+        ..sidecar.unwrap_or_default()
+    })
 }
 
 /// Read review metadata without decoding embedded masks or development state.
@@ -345,6 +350,12 @@ fn save_photo_review_impl(
     }
     // Validate the existing document before modifying it, preserving all adjustment assets.
     load_sidecar_metadata(raw_path)?;
+    // XMP first: CalibRaw's sidecar keeps the old review if it fails, which
+    // XMP would win over anyway.
+    let xmp = xmp_review::xmp_review_settings();
+    if xmp.sync.writes() {
+        xmp_review::save_xmp_review(raw_path, xmp.sidecar_name, review)?;
+    }
     let path = sidecar_path_for_raw(raw_path);
     let bytes = match read_bounded(&path) {
         Ok(bytes) => bytes,

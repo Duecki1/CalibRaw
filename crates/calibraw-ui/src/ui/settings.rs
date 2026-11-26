@@ -21,6 +21,7 @@ mod card_order;
 mod editors;
 mod lut_library;
 mod shortcuts;
+mod xmp_reviews;
 
 pub(crate) struct Settings;
 
@@ -641,6 +642,12 @@ impl Settings {
         );
         if backdrop != app.preferences.preview_backdrop {
             app.set_preview_backdrop(backdrop);
+        }
+
+        // Only photos in folders have XMP files beside them.
+        if app.caps().has_folders() {
+            moduwu_design::section_separator(ui);
+            Self::show_xmp_reviews(ui, app);
         }
 
         moduwu_design::section_separator(ui);

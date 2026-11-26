@@ -1,6 +1,7 @@
 use super::AI_DENOISE_SUFFIX;
 use super::PEOPLE_ANALYSIS_SUFFIX;
 use super::SIDECAR_SUFFIX;
+use super::XMP_SIDECAR_SUFFIX;
 use super::{
     atomic_write, read_bounded, SidecarError, DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT,
     DEVELOPED_THUMBNAIL_FINGERPRINT_SUFFIX, DEVELOPED_THUMBNAIL_SUFFIX,
@@ -22,13 +23,20 @@ pub fn people_analysis_path_for_raw(raw_path: &Path) -> PathBuf {
     path_beside_raw(raw_path, PEOPLE_ANALYSIS_SUFFIX)
 }
 
+/// The XMP sidecar named after the RAW's full name. One named after its stem
+/// alone may belong to several photos, so only this one is a companion.
+pub fn xmp_sidecar_path_for_raw(raw_path: &Path) -> PathBuf {
+    path_beside_raw(raw_path, XMP_SIDECAR_SUFFIX)
+}
+
 /// Files stored next to a RAW that belong to it, so they are copied, renamed
 /// and deleted together with it.
-pub fn raw_companion_paths(raw_path: &Path) -> [PathBuf; 3] {
+pub fn raw_companion_paths(raw_path: &Path) -> [PathBuf; 4] {
     [
         sidecar_path_for_raw(raw_path),
         ai_denoise_path_for_raw(raw_path),
         people_analysis_path_for_raw(raw_path),
+        xmp_sidecar_path_for_raw(raw_path),
     ]
 }
 

@@ -97,12 +97,16 @@ pub(in crate::app) fn spawn_export_item(
         remove,
         look,
         source_file_name,
+        review,
         gpu_export_prewarm,
         ai_denoise_result,
     } = source;
     // Rendered photos cannot be AI-denoised and show without it in Develop.
     exposure.ai_denoise_enabled &= !raw.is_pre_demosaiced_raster();
-    let metadata = ExportMetadata::from_raw(&raw, source_file_name);
+    let metadata = ExportMetadata {
+        review,
+        ..ExportMetadata::from_raw(&raw, source_file_name)
+    };
     let files = output.files();
     let (sender, receiver) = mpsc::channel();
     let worker_sender = sender.clone();
@@ -514,6 +518,7 @@ impl CalibRawApp {
                 remove: self.inpaint.edits.as_ref().clone(),
                 look,
                 source_file_name,
+                review: self.develop.review,
                 gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),
                 ai_denoise_result: self.ai_denoise_result_path(),
             },

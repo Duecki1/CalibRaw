@@ -144,6 +144,9 @@ fn run_export_worker(
             program_prewarm: job.program_prewarm.as_deref(),
             memory: &memory,
         };
+        let xmp_packet = (job.settings.keep_metadata && job.settings.include_rating)
+            .then(|| calibraw_core::sidecar::xmp_review::export_packet(job.metadata.review))
+            .flatten();
         let request = ExportRequest {
             raw: &job.raw,
             exposure: &job.exposure,
@@ -155,6 +158,7 @@ fn run_export_worker(
             window,
             keep_metadata: job.settings.keep_metadata,
             metadata: &job.metadata,
+            xmp_packet: xmp_packet.as_deref(),
             geometry,
             bit_depth,
             color: &color,

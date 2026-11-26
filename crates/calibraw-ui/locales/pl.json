@@ -2188,5 +2188,18 @@
   "Lowest first": "Najniższe najpierw",
   "Picks first": "Wybrane najpierw",
   "Rejects first": "Odrzucone najpierw",
-  "Change the filename, rating, flag or edit filters to show more photos.": "Zmień filtry nazw plików, ocen, flag lub edycji, aby wyświetlić więcej zdjęć."
+  "Change the filename, rating, flag or edit filters to show more photos.": "Zmień filtry nazw plików, ocen, flag lub edycji, aby wyświetlić więcej zdjęć.",
+  "Ratings in XMP files": "Oceny w plikach XMP",
+  "Shares star ratings and pick and reject flags with apps such as Lightroom, darktable and digiKam through the XMP files beside your photos.": "Udostępnia oceny w gwiazdkach oraz oznaczenia wybranych i odrzuconych zdjęć aplikacjom takim jak Lightroom, darktable i digiKam za pomocą plików XMP obok zdjęć.",
+  "Use XMP": "Używaj XMP",
+  "Off": "Wyłączone",
+  "Read": "Odczyt",
+  "Read and write": "Odczyt i zapis",
+  "Ratings are kept in CalibRaw's own sidecar files only.": "Oceny są przechowywane tylko we własnych plikach sidecar CalibRaw.",
+  "Photos without CalibRaw edits or ratings show the rating their XMP file records. Changes are saved only to CalibRaw's own files.": "Zdjęcia bez edycji i ocen w CalibRaw pokazują ocenę zapisaną w ich pliku XMP. Zmiany są zapisywane tylko we własnych plikach CalibRaw.",
+  "The rating in a photo's XMP file wins, and every change is saved to it too. Everything else in the file is kept.": "Ocena w pliku XMP zdjęcia ma pierwszeństwo, a każda zmiana jest również w nim zapisywana. Pozostała zawartość pliku zostaje zachowana.",
+  "XMP file name": "Nazwa pliku XMP",
+  "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "Nazwa wyszukiwana jako pierwsza i nadawana nowym plikom XMP. darktable i digiKam zachowują rozszerzenie zdjęcia; Lightroom i Capture One je pomijają, więc plik RAW i JPEG o tej samej nazwie współdzielą jeden plik.",
+  "Include rating": "Dołącz ocenę",
+  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "Osadza ocenę w gwiazdkach oraz oznaczenie wybranego lub odrzuconego zdjęcia jako XMP, które odczytują Lightroom, Windows i inne aplikacje."
 }

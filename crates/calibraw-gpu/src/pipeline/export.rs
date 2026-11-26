@@ -158,6 +158,8 @@ struct ExportRequest<'a> {
     window: OutputWindow,
     keep_metadata: bool,
     metadata: &'a ExportMetadata,
+    /// The XMP packet holding the rating, where the export embeds one.
+    xmp_packet: Option<&'a str>,
     geometry: GeometryTransform,
     bit_depth: ExportBitDepth,
     color: &'a ResolvedExportColor,

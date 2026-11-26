@@ -89,6 +89,8 @@ pub(crate) struct PerformanceSettings {
     /// before it existed, which therefore export sRGB as they did.
     #[serde(with = "export_color_space_serde")]
     pub export_color_space: OutputColorSpace,
+    /// Embed the rating in exports that keep metadata.
+    pub export_include_rating: bool,
     pub export_watermark: SavedWatermark,
     pub export_carousel: SavedCarousel,
     /// Where export dialogs open; folder storage only. Missing in files
@@ -161,6 +163,11 @@ pub(crate) struct PerformanceSettings {
     /// Serialize photo file reads for libraries on rotational disks; folder
     /// storage only.
     pub hdd_mode: bool,
+    /// How ratings use XMP files; folder storage only.
+    #[serde(deserialize_with = "lenient")]
+    pub xmp_review_sync: crate::sidecar::xmp_review::XmpReviewSync,
+    #[serde(deserialize_with = "lenient")]
+    pub xmp_sidecar_name: crate::sidecar::xmp_review::XmpSidecarName,
     pub camera_profile_mode: CameraProfileMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub camera_profile_folder: Option<PathBuf>,
@@ -415,6 +422,7 @@ impl Default for PerformanceSettings {
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
             export_format: ExportFormat::Jpeg,
             export_color_space: OutputColorSpace::Srgb,
+            export_include_rating: false,
             export_watermark: SavedWatermark::default(),
             export_carousel: SavedCarousel::default(),
             export_folder: ExportFolder::default(),
@@ -450,6 +458,8 @@ impl Default for PerformanceSettings {
             graphics_backend: crate::graphics_backend::GraphicsBackend::default(),
             discord_rich_presence: false,
             hdd_mode: false,
+            xmp_review_sync: crate::sidecar::xmp_review::XmpReviewSync::default(),
+            xmp_sidecar_name: crate::sidecar::xmp_review::XmpSidecarName::default(),
             camera_profile_mode: CameraProfileMode::default(),
             camera_profile_folder: None,
             camera_profile_folder_label: None,

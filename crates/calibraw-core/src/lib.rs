@@ -13,6 +13,7 @@ pub mod serialized_reads;
 pub mod sidecar;
 pub mod system_memory;
 pub mod thumbnail_cache;
+mod xmp;
 
 #[used]
 pub static SOURCE_REVISION: &str = env!("CALIBRAW_SOURCE_REVISION");

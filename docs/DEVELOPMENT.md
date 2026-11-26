@@ -266,9 +266,10 @@ two 8-bit levels of the golden; single-pixel rounding averages out, a changed
 tone or colour does not. A new effect or adjustment gets a case here: add the
 JSON and bless.
 
-`crates/calibraw-core/tests/formats.rs` reads every sidecar, preset and
-Lightroom XMP in `data/formats/` the way the app does, writes it again and
-compares the result with `<name>.expected.json`. A layout change or new import
+`crates/calibraw-core/tests/formats.rs` reads every sidecar, preset,
+Lightroom XMP preset and XMP rating (`data/formats/review/`: sidecars of other
+apps and images with an embedded packet) in `data/formats/` the way the app
+does, writes it again and compares the result with `<name>.expected.json`. A layout change or new import
 mapping gets a fixture here: an old-layout or real-world file.
 
 ```sh
