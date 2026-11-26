@@ -41,6 +41,15 @@ pub(crate) struct DevelopedThumbnailEvent {
     pub(super) result: Result<crate::pipeline::RawThumbnail, String>,
 }
 
+/// Whether the photo's cached developed thumbnail still matches its saved
+/// sidecar, asked off the UI thread: on Android the sidecar read can wait on
+/// a storage provider, and the event thread must keep answering lifecycle
+/// callbacks. `None` when there is no current cached thumbnail.
+pub(crate) struct DevelopedThumbnailCheck {
+    pub(super) job: DevelopedThumbnailJob,
+    pub(super) receiver: mpsc::Receiver<Result<Option<crate::pipeline::RawThumbnail>, String>>,
+}
+
 /// The start the open photo's saves record
 /// ([`crate::sidecar::EditFingerprint`]): how it looked once opened, before
 /// anyone changed it.
@@ -75,6 +84,7 @@ pub(crate) struct PersistenceState {
     pub(crate) sidecar_save_error_dialog: Option<String>,
     pub(crate) sidecar_recovery: Option<SidecarSaveRequest>,
     pub(crate) sidecar_autosave_deadline: Option<SidecarAutosaveDeadline>,
+    pub(crate) developed_thumbnail_check: Option<DevelopedThumbnailCheck>,
     pub(crate) developed_thumbnail_pending: Option<DevelopedThumbnailJob>,
     pub(crate) developed_thumbnail_in_flight: Option<DevelopedThumbnailJob>,
     pub(crate) developed_thumbnail_receiver: Option<mpsc::Receiver<DevelopedThumbnailEvent>>,

@@ -32,27 +32,10 @@ impl CalibRawApp {
         }
     }
 
-    pub(in crate::app) fn load_developed_thumbnail_for_target(
-        &self,
-        target: &crate::sidecar::SidecarTarget,
-    ) -> Result<Option<crate::pipeline::RawThumbnail>, String> {
-        match target {
-            crate::sidecar::SidecarTarget::Desktop { raw_path } => {
-                if self.caps().has_folders() {
-                    crate::sidecar::load_developed_thumbnail_cache(raw_path, 512)
-                } else {
-                    Ok(None)
-                }
-            }
-            crate::sidecar::SidecarTarget::Android {
-                raw_uri,
-                display_name,
-            } => self
-                .platform
-                .load_developed_thumbnail_cache(raw_uri, display_name, 512),
-        }
-    }
-
+    /// Shows the saved edits in the library thumbnail: the cached developed
+    /// thumbnail when it still matches the sidecar, else one rendered from
+    /// the preview once it is current. The cache is checked on a worker, as
+    /// it reads the sidecar; a newer refresh replaces a check still running.
     pub(in crate::app) fn queue_developed_thumbnail_refresh(
         &mut self,
         generation: u64,
@@ -69,21 +52,84 @@ impl CalibRawApp {
             generation,
             revision,
         };
+        if self
+            .persistence
+            .developed_thumbnail_check
+            .as_ref()
+            .is_some_and(|check| check.job == job)
+        {
+            return;
+        }
 
-        match self.load_developed_thumbnail_for_target(&job.target) {
+        let worker_target = job.target.clone();
+        let platform = Arc::clone(&self.platform);
+        let folders = self.caps().has_folders();
+        let repaint = self.egui_ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        let spawn = std::thread::Builder::new()
+            .name("calibraw-developed-thumbnail-check".to_owned())
+            .spawn(move || {
+                let _ = sender.send(load_cached_developed_thumbnail(
+                    &worker_target,
+                    &*platform,
+                    folders,
+                ));
+                repaint.request_repaint();
+            });
+        match spawn {
+            Ok(_) => {
+                self.persistence.developed_thumbnail_check =
+                    Some(DevelopedThumbnailCheck { job, receiver });
+            }
+            Err(error) => {
+                log::warn!("could not start developed-thumbnail cache check: {error}");
+                self.persistence.developed_thumbnail_check = None;
+                self.queue_developed_thumbnail_render(job);
+            }
+        }
+    }
+
+    /// Applies a finished cache check while its document is still open: a
+    /// library action may have reset the sidecar since the check read it.
+    fn poll_developed_thumbnail_check(&mut self) {
+        let received = self
+            .persistence
+            .developed_thumbnail_check
+            .as_ref()
+            .map(|check| check.receiver.try_recv());
+        let result = match received {
+            Some(Ok(result)) => result,
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                Err("the cache check stopped unexpectedly".to_owned())
+            }
+            Some(Err(mpsc::TryRecvError::Empty)) | None => return,
+        };
+        let Some(DevelopedThumbnailCheck { job, .. }) =
+            self.persistence.developed_thumbnail_check.take()
+        else {
+            return;
+        };
+        if job.generation != self.persistence.document_generation
+            || self.persistence.sidecar_target.as_ref() != Some(&job.target)
+        {
+            return;
+        }
+        match result {
             Ok(Some(thumbnail)) => {
-                self.install_developed_thumbnail_result(&job.target, thumbnail, revision);
+                self.install_developed_thumbnail_result(&job.target, thumbnail, job.revision);
                 if self.persistence.developed_thumbnail_pending.as_ref() == Some(&job) {
                     self.persistence.developed_thumbnail_pending = None;
                 }
-                return;
             }
-            Ok(None) => {}
+            Ok(None) => self.queue_developed_thumbnail_render(job),
             Err(error) => {
                 log::warn!("could not validate developed thumbnail cache: {error}");
+                self.queue_developed_thumbnail_render(job);
             }
         }
+    }
 
+    fn queue_developed_thumbnail_render(&mut self, job: DevelopedThumbnailJob) {
         if self.persistence.developed_thumbnail_in_flight.as_ref() == Some(&job)
             || self.persistence.developed_thumbnail_pending.as_ref() == Some(&job)
         {
@@ -94,6 +140,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_developed_thumbnail(&mut self, frame: &eframe::Frame) {
+        self.poll_developed_thumbnail_check();
         let received = self
             .persistence
             .developed_thumbnail_receiver
@@ -251,5 +298,27 @@ impl CalibRawApp {
                 log::warn!("could not start developed-thumbnail worker: {error}");
             }
         }
+    }
+}
+
+/// The photo's cached developed thumbnail when it still matches its sidecar;
+/// `folders`: whether this platform keeps folder photos' thumbnails.
+fn load_cached_developed_thumbnail(
+    target: &crate::sidecar::SidecarTarget,
+    platform: &dyn Platform,
+    folders: bool,
+) -> Result<Option<crate::pipeline::RawThumbnail>, String> {
+    match target {
+        crate::sidecar::SidecarTarget::Desktop { raw_path } => {
+            if folders {
+                crate::sidecar::load_developed_thumbnail_cache(raw_path, 512)
+            } else {
+                Ok(None)
+            }
+        }
+        crate::sidecar::SidecarTarget::Android {
+            raw_uri,
+            display_name,
+        } => platform.load_developed_thumbnail_cache(raw_uri, display_name, 512),
     }
 }

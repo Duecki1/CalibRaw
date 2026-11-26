@@ -327,6 +327,7 @@ impl CalibRawApp {
                 sidecar_save_error_dialog: None,
                 sidecar_recovery: None,
                 sidecar_autosave_deadline: None,
+                developed_thumbnail_check: None,
                 developed_thumbnail_pending: None,
                 developed_thumbnail_in_flight: None,
                 developed_thumbnail_receiver: None,
