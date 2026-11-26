@@ -403,6 +403,14 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    pub(crate) fn set_edit_replay_detail(&mut self, detail: crate::services::replay::ReplayDetail) {
+        if self.preferences.edit_replay_detail == detail {
+            return;
+        }
+        self.preferences.edit_replay_detail = detail;
+        self.persist_performance_settings();
+    }
+
     /// Asks for the folder export dialogs open in; it applies once chosen.
     pub(crate) fn choose_export_folder(&mut self) {
         let current = match &self.preferences.export_folder {
@@ -532,6 +540,7 @@ impl CalibRawApp {
             export_watermark: self.export.watermark.saved(),
             export_carousel: self.export.carousel.saved(),
             export_folder: self.preferences.export_folder.clone(),
+            edit_replay_detail: self.preferences.edit_replay_detail,
             edit_in_folder: self.preferences.edit_in.folder.clone(),
             edit_in_format: self.preferences.edit_in.format,
             edit_in_color_space: self.preferences.edit_in.color_space,

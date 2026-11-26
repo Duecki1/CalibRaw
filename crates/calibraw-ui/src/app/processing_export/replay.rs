@@ -15,8 +15,8 @@ impl CalibRawApp {
         })
     }
 
-    /// Renders the edit replay MP4. On Android it is saved to the gallery and
-    /// then opened in the share sheet.
+    /// Renders the edit replay MP4 at the detail set in Settings. On Android
+    /// it is saved to the gallery and then opened in the share sheet.
     pub(crate) fn create_edit_replay(&mut self, frame: &eframe::Frame) {
         if !self.can_export() || self.inpaint_processing() {
             return;
@@ -94,6 +94,7 @@ impl CalibRawApp {
             final_masks: self.applied_masks(),
             final_remove: self.inpaint.edits.as_ref().clone(),
             final_look,
+            detail: self.preferences.edit_replay_detail,
             gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),
             platform: Arc::clone(&self.platform),
         };

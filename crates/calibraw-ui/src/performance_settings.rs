@@ -5,6 +5,7 @@ use crate::pipeline::{
     WatermarkPlacement,
 };
 use crate::platform::PlatformCaps;
+use crate::services::replay::ReplayDetail;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
@@ -100,6 +101,10 @@ pub(crate) struct PerformanceSettings {
     pub export_folder: ExportFolder,
     /// Where Edit In saves its copy, the file it renders and the editors it
     /// offers; folder storage only (`crate::edit_in`).
+    /// How finely Edit Replay breaks the edit into stages. Missing in files
+    /// written before it existed, which therefore replay as they did.
+    #[serde(deserialize_with = "lenient")]
+    pub edit_replay_detail: ReplayDetail,
     #[serde(deserialize_with = "lenient")]
     pub edit_in_folder: EditInFolder,
     #[serde(deserialize_with = "lenient")]
@@ -426,6 +431,7 @@ impl Default for PerformanceSettings {
             export_watermark: SavedWatermark::default(),
             export_carousel: SavedCarousel::default(),
             export_folder: ExportFolder::default(),
+            edit_replay_detail: ReplayDetail::default(),
             edit_in_folder: EditInFolder::default(),
             edit_in_format: EditInFormat::default(),
             // The widest space a 16-bit TIFF keeps without banding, as photo

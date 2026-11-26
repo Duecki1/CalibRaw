@@ -39,6 +39,7 @@ pub(crate) struct PreferencesState {
     pub(crate) camera_match_new_photos: Option<bool>,
     pub(crate) export_name_template: String,
     pub(crate) export_folder: crate::export_folders::ExportFolder,
+    pub(crate) edit_replay_detail: crate::services::replay::ReplayDetail,
     pub(crate) edit_in: crate::edit_in::EditInSettings,
     pub(crate) discord_rich_presence: bool,
     pub(crate) hdd_mode: bool,

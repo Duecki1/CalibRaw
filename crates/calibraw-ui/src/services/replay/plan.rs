@@ -1,32 +1,40 @@
-//! Which edit categories a replay shows, in order, and the edit state after each.
+//! Which stages a replay shows, in order, and the edit state after each.
+//!
+//! Every stage's state includes all earlier stages, so the stages build the
+//! edit up from the photo as it opened. The replay still ends on a separately
+//! rendered final edit, so a setting no stage takes over cannot leave the last
+//! frame wrong.
 
+use super::frames::title_is_drawable;
+use super::ReplayRequest;
+use crate::i18n::tr;
 use crate::luts::ResolvedLook;
 use crate::pipeline::{
-    EffectComponent, ExposureParams, GeometryTransform, LocalMask, MaskEffect, MaskStack,
-    RemoveEditState,
+    AdjustmentGroup, EffectComponent, ExposureParams, GeometryTransform, LocalMask, MaskEffect,
+    MaskStack, RemoveEditState,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ReplayStageKind {
-    Edit,
-    Crop,
-    Rotate,
-    Transform,
-    Masks,
-    Effects,
-    Remove,
+/// How finely a replay breaks the edit into stages; a setting, saved by its
+/// serialized name.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ReplayDetail {
+    /// One stage per category: the photo-wide edit, crop, rotation,
+    /// transform, masks, effects and Remove.
+    #[default]
+    Normal,
+    /// One stage per Develop card and per mask. Each mask's area is
+    /// highlighted before its edit applies.
+    Detailed,
 }
 
-impl ReplayStageKind {
-    pub(super) const fn label(self) -> &'static str {
+impl ReplayDetail {
+    pub(crate) const ALL: [Self; 2] = [Self::Normal, Self::Detailed];
+
+    pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Edit => "Edit",
-            Self::Crop => "Crop",
-            Self::Rotate => "Rotate",
-            Self::Transform => "Transform",
-            Self::Masks => "Masks",
-            Self::Effects => "Effects",
-            Self::Remove => "Remove",
+            Self::Normal => tr("Normal"),
+            Self::Detailed => tr("Detailed"),
         }
     }
 }
@@ -53,89 +61,186 @@ impl ReplayRenderState {
 }
 
 pub(super) struct ReplayStage {
-    pub(super) kind: ReplayStageKind,
+    /// Shown over the stage in the video's bitmap font, which is English only.
+    pub(super) title: String,
+    /// The mask, by index into `state.masks`, whose area is highlighted
+    /// before this stage applies it.
+    pub(super) highlight: Option<usize>,
     pub(super) state: ReplayRenderState,
 }
 
-pub(super) fn replay_stage_plan(
-    original_exposure: ExposureParams,
-    final_exposure: ExposureParams,
-    final_geometry: GeometryTransform,
-    final_masks: &MaskStack,
-    final_remove: &RemoveEditState,
-    final_look: Option<&ResolvedLook>,
-) -> Vec<ReplayStage> {
-    let final_geometry = final_geometry.sanitized();
-    let mut current = ReplayRenderState::original(original_exposure);
-    let mut stages = Vec::new();
+pub(super) fn replay_stage_plan(request: &ReplayRequest) -> Vec<ReplayStage> {
+    let detail = request.detail;
+    let mut plan = StagePlan {
+        current: ReplayRenderState::original(request.original_exposure),
+        stages: Vec::new(),
+    };
+    let look = request.final_look.as_ref();
+    match detail {
+        ReplayDetail::Normal => plan.photo_wide_edit(request.final_exposure, look),
+        ReplayDetail::Detailed => plan.develop_cards(&request.final_exposure, look),
+    }
+    plan.geometry(request.final_geometry.sanitized());
+    match detail {
+        ReplayDetail::Normal => plan.masks_and_effects(&request.final_masks),
+        ReplayDetail::Detailed => plan.each_mask_then_effects(&request.final_masks),
+    }
+    plan.remove(&request.final_remove);
+    plan.stages
+}
 
-    // The LUT is shown with the global adjustments.
-    if final_exposure != original_exposure || final_look.is_some() {
-        current.exposure = final_exposure;
-        current.look = final_look.cloned();
-        stages.push(ReplayStage {
-            kind: ReplayStageKind::Edit,
-            state: current.clone(),
+/// The stages so far and the edit state after the last of them.
+struct StagePlan {
+    current: ReplayRenderState,
+    stages: Vec<ReplayStage>,
+}
+
+impl StagePlan {
+    fn push(&mut self, title: impl Into<String>, highlight: Option<usize>) {
+        self.stages.push(ReplayStage {
+            title: title.into(),
+            highlight,
+            state: self.current.clone(),
         });
     }
 
-    if crop_used(final_geometry) {
-        current.geometry.crop = final_geometry.crop;
-        current.geometry.aspect_ratio = final_geometry.aspect_ratio;
-        stages.push(ReplayStage {
-            kind: ReplayStageKind::Crop,
-            state: current.clone(),
-        });
+    /// One stage for every photo-wide setting. The LUT is shown with them.
+    fn photo_wide_edit(&mut self, final_exposure: ExposureParams, look: Option<&ResolvedLook>) {
+        if final_exposure != self.current.exposure || look.is_some() {
+            self.current.exposure = final_exposure;
+            self.current.look = look.cloned();
+            self.push("Edit", None);
+        }
     }
 
-    if rotate_used(final_geometry) {
-        current.geometry.quarter_turns = final_geometry.quarter_turns;
-        current.geometry.rotation_degrees = final_geometry.rotation_degrees;
-        current.geometry.flip_horizontal = final_geometry.flip_horizontal;
-        current.geometry.flip_vertical = final_geometry.flip_vertical;
-        stages.push(ReplayStage {
-            kind: ReplayStageKind::Rotate,
-            state: current.clone(),
+    /// One stage for each Develop card that changed, then the look. Every
+    /// setting belongs to exactly one of the copied sections
+    /// (`ExposureParams::copy_group_from`), so after them the exposure is the
+    /// final one.
+    fn develop_cards(&mut self, final_exposure: &ExposureParams, look: Option<&ResolvedLook>) {
+        self.exposure_step("Raw Processing", |exposure| {
+            exposure.copy_raw_processing_from(final_exposure);
         });
+        for group in AdjustmentGroup::ALL {
+            self.exposure_step(group.label(), |exposure| {
+                exposure.copy_group_from(final_exposure, group);
+            });
+        }
+        self.exposure_step("Lens Corrections", |exposure| {
+            exposure.copy_lens_correction_from(final_exposure);
+        });
+        if let Some(look) = look {
+            self.current.look = Some(look.clone());
+            self.push("Look", None);
+        }
     }
 
-    if transform_used(final_geometry) {
-        current.geometry.horizontal_skew_degrees = final_geometry.horizontal_skew_degrees;
-        current.geometry.vertical_skew_degrees = final_geometry.vertical_skew_degrees;
-        current.geometry.perspective = final_geometry.perspective;
-        current.geometry.aspect_stretch = final_geometry.aspect_stretch;
-        stages.push(ReplayStage {
-            kind: ReplayStageKind::Transform,
-            state: current.clone(),
-        });
+    /// Applies `copy` to the current exposure and adds a stage if that changed it.
+    fn exposure_step(&mut self, title: &str, copy: impl FnOnce(&mut ExposureParams)) {
+        let before = self.current.exposure;
+        copy(&mut self.current.exposure);
+        if self.current.exposure != before {
+            self.push(title, None);
+        }
     }
 
-    let adjustment_masks = masks_without_effects(final_masks);
-    if masks_used(&adjustment_masks) {
-        current.masks = adjustment_masks;
-        stages.push(ReplayStage {
-            kind: ReplayStageKind::Masks,
-            state: current.clone(),
-        });
+    fn geometry(&mut self, final_geometry: GeometryTransform) {
+        if crop_used(final_geometry) {
+            self.current.geometry.crop = final_geometry.crop;
+            self.current.geometry.aspect_ratio = final_geometry.aspect_ratio;
+            self.push("Crop", None);
+        }
+
+        if rotate_used(final_geometry) {
+            self.current.geometry.quarter_turns = final_geometry.quarter_turns;
+            self.current.geometry.rotation_degrees = final_geometry.rotation_degrees;
+            self.current.geometry.flip_horizontal = final_geometry.flip_horizontal;
+            self.current.geometry.flip_vertical = final_geometry.flip_vertical;
+            self.push("Rotate", None);
+        }
+
+        if transform_used(final_geometry) {
+            self.current.geometry.horizontal_skew_degrees = final_geometry.horizontal_skew_degrees;
+            self.current.geometry.vertical_skew_degrees = final_geometry.vertical_skew_degrees;
+            self.current.geometry.perspective = final_geometry.perspective;
+            self.current.geometry.aspect_stretch = final_geometry.aspect_stretch;
+            self.push("Transform", None);
+        }
     }
 
-    if effects_used(final_masks) {
-        current.masks = final_masks.clone();
-        stages.push(ReplayStage {
-            kind: ReplayStageKind::Effects,
-            state: current.clone(),
-        });
+    /// Every mask's adjustments in one stage, then every effect in another.
+    fn masks_and_effects(&mut self, final_masks: &MaskStack) {
+        let adjustment_masks = masks_without_effects(final_masks);
+        if masks_used(&adjustment_masks) {
+            self.current.masks = adjustment_masks;
+            self.push("Masks", None);
+        }
+
+        if effects_used(final_masks) {
+            self.current.masks = final_masks.clone();
+            self.push("Effects", None);
+        }
     }
 
-    if remove_used(final_remove) {
-        current.remove = final_remove.clone();
-        stages.push(ReplayStage {
-            kind: ReplayStageKind::Remove,
-            state: current,
-        });
+    /// One highlighted stage per mask that changes the photo, in stack order,
+    /// with its adjustments and its effects, then the photo-wide effects.
+    /// Masks render in stack order, so switching them on one by one shows
+    /// what each adds.
+    fn each_mask_then_effects(&mut self, final_masks: &MaskStack) {
+        let shown: Vec<usize> = final_masks
+            .masks
+            .iter()
+            .enumerate()
+            .filter(|(_, mask)| mask_is_visible(mask) && mask.has_active_edit())
+            .map(|(index, _)| index)
+            .collect();
+        let global_effects = final_masks
+            .global_effects
+            .iter()
+            .any(EffectComponent::is_active);
+        if shown.is_empty() && !global_effects {
+            return;
+        }
+
+        let mut masks = final_masks.clone();
+        masks.global_effects.clear();
+        for &index in &shown {
+            masks.masks[index].enabled = false;
+        }
+        self.current.masks = masks;
+        for index in shown {
+            let mask = &mut self.current.masks.masks[index];
+            mask.enabled = true;
+            let title = mask_title(mask, index);
+            self.push(title, Some(index));
+        }
+
+        if global_effects {
+            self.current
+                .masks
+                .global_effects
+                .clone_from(&final_masks.global_effects);
+            self.push("Effects", None);
+        }
     }
 
-    stages
+    fn remove(&mut self, final_remove: &RemoveEditState) {
+        if remove_used(final_remove) {
+            self.current.remove = final_remove.clone();
+            self.push("Remove", None);
+        }
+    }
+}
+
+/// The mask's name when the video's font can draw it, otherwise its number
+/// in the stack, as the Masks panel numbers new masks.
+fn mask_title(mask: &LocalMask, index: usize) -> String {
+    let name = mask.name.trim();
+    if !name.is_empty() && title_is_drawable(name) {
+        name.to_owned()
+    } else {
+        format!("Mask {}", index + 1)
+    }
 }
 
 fn masks_without_effects(masks: &MaskStack) -> MaskStack {

@@ -1097,10 +1097,30 @@ impl Settings {
             moduwu_design::section_separator(ui);
             Self::show_export_folder(ui, app);
         }
+        moduwu_design::section_separator(ui);
+        Self::show_edit_replay_detail(ui, app);
         if app.edit_in_support() != crate::platform::EditInSupport::Unavailable {
             moduwu_design::section_separator(ui);
             Self::show_edit_in(ui, app);
         }
+    }
+
+    fn show_edit_replay_detail(ui: &mut Ui, app: &mut CalibRawApp) {
+        let mut detail = app.preferences.edit_replay_detail;
+        moduwu_design::form_combo_with_help(
+            ui,
+            tr("Edit replay"),
+            "settings-edit-replay-detail",
+            detail.label(),
+            190.0,
+            tr("Normal replays the edit category by category. Detailed replays every Develop card and every mask on its own, highlighting each mask before it applies."),
+            |ui| {
+                for option in crate::services::replay::ReplayDetail::ALL {
+                    ui.selectable_value(&mut detail, option, option.label());
+                }
+            },
+        );
+        app.set_edit_replay_detail(detail);
     }
 
     fn show_edit_in(ui: &mut Ui, app: &mut CalibRawApp) {

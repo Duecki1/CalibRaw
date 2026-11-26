@@ -367,6 +367,7 @@ impl CalibRawApp {
                 camera_match_new_photos: performance.camera_match_new_photos,
                 export_name_template: performance.export_name_template.clone(),
                 export_folder: performance.export_folder.clone(),
+                edit_replay_detail: performance.edit_replay_detail,
                 edit_in: crate::edit_in::EditInSettings {
                     folder: performance.edit_in_folder.clone(),
                     format: performance.edit_in_format,

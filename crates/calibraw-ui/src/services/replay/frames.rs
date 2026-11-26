@@ -42,6 +42,30 @@ pub(super) fn replay_canvas_dimensions(width: u32, height: u32) -> (u32, u32) {
     (even_dimension(output_width), even_dimension(output_height))
 }
 
+/// Where [`fit_to_canvas`] places a still of `width` × `height`:
+/// `[x, y, width, height]` in canvas pixels, centred and as large as fits.
+pub(super) fn fitted_rect(
+    width: u32,
+    height: u32,
+    canvas_width: u32,
+    canvas_height: u32,
+) -> [u32; 4] {
+    let scale = (canvas_width as f64 / width.max(1) as f64)
+        .min(canvas_height as f64 / height.max(1) as f64);
+    let fitted_width = (width as f64 * scale)
+        .round()
+        .clamp(1.0, canvas_width as f64) as u32;
+    let fitted_height = (height as f64 * scale)
+        .round()
+        .clamp(1.0, canvas_height as f64) as u32;
+    [
+        (canvas_width - fitted_width) / 2,
+        (canvas_height - fitted_height) / 2,
+        fitted_width,
+        fitted_height,
+    ]
+}
+
 pub(super) fn fit_to_canvas(
     still: &RenderedStill,
     canvas_width: u32,
@@ -49,14 +73,8 @@ pub(super) fn fit_to_canvas(
 ) -> Vec<u8> {
     let source = ImageBuffer::<Rgb<u8>, &[u8]>::from_raw(still.width, still.height, &still.rgb)
         .expect("rendered replay still has a valid RGB byte count");
-    let scale = (canvas_width as f64 / still.width.max(1) as f64)
-        .min(canvas_height as f64 / still.height.max(1) as f64);
-    let width = (still.width as f64 * scale)
-        .round()
-        .clamp(1.0, canvas_width as f64) as u32;
-    let height = (still.height as f64 * scale)
-        .round()
-        .clamp(1.0, canvas_height as f64) as u32;
+    let [x0, y0, width, height] =
+        fitted_rect(still.width, still.height, canvas_width, canvas_height);
     let resized;
     let pixels: &[u8] = if width == still.width && height == still.height {
         &still.rgb
@@ -65,8 +83,6 @@ pub(super) fn fit_to_canvas(
         resized.as_raw()
     };
     let mut canvas = vec![18u8; canvas_width as usize * canvas_height as usize * 3];
-    let x0 = (canvas_width - width) / 2;
-    let y0 = (canvas_height - height) / 2;
     for y in 0..height {
         let source_start = y as usize * width as usize * 3;
         let destination_start = ((y + y0) as usize * canvas_width as usize + x0 as usize) * 3;
@@ -89,6 +105,32 @@ pub(super) fn crossfade(a: &[u8], b: &[u8], amount: f32, output: &mut [u8]) {
         *out = (f32::from(*left) * inverse + f32::from(*right) * amount)
             .round()
             .clamp(0.0, 255.0) as u8;
+    }
+}
+
+/// The colour the editor shows a selected mask's area in.
+const MASK_HIGHLIGHT_RGB: [f32; 3] = [78.0, 163.0, 255.0];
+/// Opacity of that colour over a fully covered pixel, as in the editor.
+const MASK_HIGHLIGHT_ALPHA: f32 = 92.0 / 255.0;
+/// How much the area outside the mask darkens, so the highlight reads at
+/// video sizes.
+const MASK_HIGHLIGHT_DIM: f32 = 0.4;
+
+/// Tints the area of `frame` that `coverage` selects (one byte per pixel,
+/// 255 fully covered) in the editor's mask colour and dims the rest, both by
+/// `amount` from 0 (unchanged) to 1.
+pub(super) fn highlight_mask(frame: &mut [u8], coverage: &[u8], amount: f32) {
+    let amount = amount.clamp(0.0, 1.0);
+    for (pixel, &covered) in frame.chunks_exact_mut(3).zip(coverage) {
+        let covered = f32::from(covered) / 255.0;
+        let dim = 1.0 - MASK_HIGHLIGHT_DIM * amount * (1.0 - covered);
+        let tint = MASK_HIGHLIGHT_ALPHA * amount * covered;
+        for (channel, highlight) in pixel.iter_mut().zip(MASK_HIGHLIGHT_RGB) {
+            let value = f32::from(*channel) * dim;
+            *channel = (value + (highlight - value) * tint)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+        }
     }
 }
 
@@ -129,8 +171,10 @@ fn blend_pixel(pixel: &mut [u8], color: [u8; 3], alpha: u8) {
     }
 }
 
-fn glyph_rows(character: char) -> [u8; 7] {
-    match character {
+/// The 5 × 7 bitmap of `character`, top row first, or `None` when the font
+/// has no glyph for it.
+fn glyph_rows(character: char) -> Option<[u8; 7]> {
+    Some(match character {
         'A' => [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
         'B' => [0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e],
         'C' => [0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e],
@@ -138,19 +182,35 @@ fn glyph_rows(character: char) -> [u8; 7] {
         'E' => [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
         'F' => [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10],
         'G' => [0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f],
+        'H' => [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
         'I' => [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x1f],
+        'J' => [0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0c],
         'K' => [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
         'L' => [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
         'M' => [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
         'N' => [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
         'O' => [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
         'P' => [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
+        'Q' => [0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d],
         'R' => [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
         'S' => [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e],
         'T' => [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
         'U' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
         'V' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04],
         'W' => [0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a],
+        'X' => [0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11],
+        'Y' => [0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04],
+        'Z' => [0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f],
+        '0' => [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
+        '1' => [0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e],
+        '2' => [0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f],
+        '3' => [0x1f, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0e],
+        '4' => [0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02],
+        '5' => [0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e],
+        '6' => [0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e],
+        '7' => [0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
+        '8' => [0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e],
+        '9' => [0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c],
         'a' => [0x00, 0x00, 0x0e, 0x01, 0x0f, 0x11, 0x0f],
         'b' => [0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x1e],
         'c' => [0x00, 0x00, 0x0e, 0x10, 0x10, 0x11, 0x0e],
@@ -171,8 +231,16 @@ fn glyph_rows(character: char) -> [u8; 7] {
         ',' => [0x00, 0x00, 0x00, 0x00, 0x06, 0x06, 0x04],
         '.' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x06],
         ' ' => [0; 7],
-        _ => [0; 7],
-    }
+        _ => return None,
+    })
+}
+
+/// Whether the stage title font can draw every character of `title`. Stage
+/// titles are drawn in capitals ([`draw_stage_title`]).
+pub(super) fn title_is_drawable(title: &str) -> bool {
+    title
+        .chars()
+        .all(|character| glyph_rows(character.to_ascii_uppercase()).is_some())
 }
 
 fn bitmap_text_width(text: &str, scale: i32) -> i32 {
@@ -205,7 +273,7 @@ fn draw_bitmap_text(frame: &mut [u8], width: u32, height: u32, run: BitmapTextRu
     } = run;
     let mut cursor_x = start_x;
     for character in text.chars() {
-        let rows = glyph_rows(character);
+        let rows = glyph_rows(character).unwrap_or([0; 7]);
         for (row, bits) in rows.into_iter().enumerate() {
             for column in 0..5 {
                 if bits & (1 << (4 - column)) == 0 {
@@ -330,7 +398,8 @@ fn rounded_rect_contains(x: i32, y: i32, width: i32, height: i32, radius: i32) -
 
 pub(super) fn draw_stage_title(frame: &mut [u8], width: u32, height: u32, title: &str, alpha: f32) {
     let title = title.to_ascii_uppercase();
-    let scale = (width.min(height) / 280).clamp(3, 6) as i32;
+    // Long titles, such as mask names, shrink to stay inside the frame.
+    let scale = fitted_bitmap_scale(&title, width * 4 / 5, (width.min(height) / 280).clamp(3, 6));
     let glyph_width = 5 * scale;
     let spacing = scale;
     let text_width = title.chars().count() as i32 * (glyph_width + spacing) - spacing;
@@ -375,8 +444,9 @@ pub(super) fn draw_stage_title(frame: &mut [u8], width: u32, height: u32, title:
     );
 }
 
-pub(super) fn stage_title_alpha(frame: u32, transition_frames: u32, hold_frames: u32) -> f32 {
-    let total = transition_frames + hold_frames;
+/// Opacity of a stage's title on `frame` of the stage's `total` frames: it
+/// fades in at the start and out at the end.
+pub(super) fn stage_title_alpha(frame: u32, total: u32) -> f32 {
     let fade = 6u32.min(total / 2).max(1);
     if frame < fade {
         smootherstep((frame + 1) as f32 / fade as f32)

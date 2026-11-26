@@ -1,5 +1,6 @@
 //! Edit replay: renders the photo at each edit stage and encodes a 30 FPS
-//! MP4 that replays the edit category by category.
+//! MP4 that replays the edit category by category, or card by card and mask
+//! by mask ([`ReplayDetail`]).
 //!
 //! Runs on a worker thread. Progress is reported through a callback and the
 //! MP4 is published atomically at the destination. Encoders live in `desktop`
@@ -7,6 +8,7 @@
 //! platform's `VideoEncoder` capability picks one.
 
 mod frames;
+mod highlight;
 mod plan;
 
 mod android;
@@ -23,10 +25,13 @@ use crate::pipeline::{
 use crate::platform::{Platform, VideoEncoder};
 use calibraw_gpu::wgpu;
 use frames::{
-    brand_outro_frame, crossfade, draw_stage_title, fit_to_canvas, replay_canvas_dimensions,
-    smootherstep, split_frame, stage_title_alpha, RenderedStill,
+    brand_outro_frame, crossfade, draw_stage_title, fit_to_canvas, fitted_rect, highlight_mask,
+    replay_canvas_dimensions, smootherstep, split_frame, stage_title_alpha, RenderedStill,
+    BRAND_TITLE,
 };
-use plan::{replay_stage_plan, ReplayRenderState};
+use highlight::mask_highlight;
+pub(crate) use plan::ReplayDetail;
+use plan::{replay_stage_plan, ReplayRenderState, ReplayStage};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +44,9 @@ const SPLIT_SWEEP_FRAMES: u32 = 27;
 const FULL_FRAME_HOLD_FRAMES: u32 = 30;
 const STAGE_TRANSITION_FRAMES: u32 = 24;
 const STAGE_HOLD_FRAMES: u32 = 30;
+/// A mask's highlight fades in over the photo before the mask applies.
+const HIGHLIGHT_FADE_FRAMES: u32 = 12;
+const HIGHLIGHT_HOLD_FRAMES: u32 = 24;
 const FINAL_HOLD_FRAMES: u32 = 45;
 const OUTRO_FADE_TO_BLACK_FRAMES: u32 = 18;
 const OUTRO_BRAND_FADE_FRAMES: u32 = 12;
@@ -65,6 +73,7 @@ pub(crate) struct ReplayRequest {
     pub(crate) final_masks: MaskStack,
     pub(crate) final_remove: RemoveEditState,
     pub(crate) final_look: Option<crate::luts::ResolvedLook>,
+    pub(crate) detail: ReplayDetail,
     pub(crate) gpu_export_prewarm: Option<Arc<GpuProgramPrewarm>>,
     pub(crate) platform: Arc<dyn Platform>,
 }
@@ -121,7 +130,7 @@ pub(crate) struct ReplayProgress {
     /// Share of the whole job that is done, from 0 to 1.
     pub(crate) fraction: f32,
     pub(crate) phase: String,
-    /// Encoded video frames; both are zero while stills are rendered.
+    /// Video frames encoded so far, and in all.
     pub(crate) completed_frames: usize,
     pub(crate) total_frames: usize,
 }
@@ -249,15 +258,101 @@ fn final_render_state(request: &ReplayRequest) -> ReplayRenderState {
     }
 }
 
-fn total_replay_frames(stage_count: usize) -> u32 {
+/// Frames a stage takes: the highlight of its mask, if it has one, then the
+/// crossfade into its still and a hold on it.
+fn stage_frames(stage: &ReplayStage) -> u32 {
+    let highlight = if stage.highlight.is_some() {
+        HIGHLIGHT_FADE_FRAMES + HIGHLIGHT_HOLD_FRAMES
+    } else {
+        0
+    };
+    highlight + STAGE_TRANSITION_FRAMES + STAGE_HOLD_FRAMES
+}
+
+fn total_replay_frames(stages: &[ReplayStage]) -> u32 {
     SPLIT_HOLD_FRAMES
         + SPLIT_SWEEP_FRAMES * 2
         + FULL_FRAME_HOLD_FRAMES * 2
-        + stage_count as u32 * (STAGE_TRANSITION_FRAMES + STAGE_HOLD_FRAMES)
+        + stages.iter().map(stage_frames).sum::<u32>()
         + FINAL_HOLD_FRAMES
         + OUTRO_FADE_TO_BLACK_FRAMES
         + OUTRO_BRAND_FADE_FRAMES
         + OUTRO_HOLD_FRAMES
+}
+
+/// How far frame `frame` of a transition of `frames` frames is, from 0 on its
+/// first frame to 1 on its last.
+fn ramp(frame: u32, frames: u32) -> f32 {
+    if frames <= 1 {
+        1.0
+    } else {
+        frame as f32 / (frames - 1) as f32
+    }
+}
+
+/// Progress over the whole replay. Rendering stills fills
+/// `RENDER_PROGRESS_WEIGHT` of it and encoding frames the rest; the two
+/// interleave, since each stage's still renders just before its frames.
+struct ProgressTracker<'a> {
+    report: &'a mut dyn FnMut(ReplayProgress),
+    render_count: usize,
+    rendered: usize,
+    total_frames: usize,
+    completed_frames: usize,
+}
+
+impl ProgressTracker<'_> {
+    fn send(&mut self, still_fraction: f32, phase: String) {
+        let rendered = (self.rendered as f32 + still_fraction) / self.render_count.max(1) as f32;
+        let encoded = self.completed_frames as f32 / self.total_frames.max(1) as f32;
+        (self.report)(ReplayProgress {
+            fraction: RENDER_PROGRESS_WEIGHT * rendered + (1.0 - RENDER_PROGRESS_WEIGHT) * encoded,
+            phase,
+            completed_frames: self.completed_frames,
+            total_frames: self.total_frames,
+        });
+    }
+
+    fn still_rendering(&mut self, label: &str, tile_fraction: f32) {
+        self.send(
+            tile_fraction,
+            tr_fmt("Rendering {label}…", &[("label", &label)]),
+        );
+    }
+
+    fn still_rendered(&mut self, label: &str) {
+        self.rendered += 1;
+        self.send(0.0, tr_fmt("Rendered {label}", &[("label", &label)]));
+    }
+
+    fn frame_encoded(&mut self, phase: &str) {
+        self.completed_frames += 1;
+        if self.completed_frames == self.total_frames || self.completed_frames.is_multiple_of(3) {
+            self.send(0.0, phase.to_owned());
+        }
+    }
+}
+
+/// Renders one still of the replay into `directory` and decodes it.
+fn render_replay_still(
+    request: &ReplayRequest,
+    directory: &Path,
+    cancellation: &Arc<AtomicBool>,
+    progress: &mut ProgressTracker<'_>,
+    label: &str,
+    state: &ReplayRenderState,
+) -> Result<RenderedStill, ReplayError> {
+    let path = directory.join(format!("still-{:02}.png", progress.rendered));
+    let still = render_still(request, state, &path, cancellation, |done, total| {
+        let tile_fraction = if total == 0 {
+            0.0
+        } else {
+            done as f32 / total as f32
+        };
+        progress.still_rendering(label, tile_fraction);
+    })?;
+    progress.still_rendered(label);
+    Ok(still)
 }
 
 fn write_video_frame(
@@ -270,6 +365,160 @@ fn write_video_frame(
         return Err(ReplayError::Cancelled);
     }
     Ok(writer.write_frame(frame)?)
+}
+
+/// Composes the replay's frames on the canvas and feeds them to the encoder.
+struct ReplayEncoder<'a> {
+    writer: ReplayFrameWriter,
+    cancellation: &'a Arc<AtomicBool>,
+    width: u32,
+    height: u32,
+    /// The frame being composed.
+    scratch: Vec<u8>,
+}
+
+impl ReplayEncoder<'_> {
+    fn emit(
+        &mut self,
+        progress: &mut ProgressTracker<'_>,
+        frame: &[u8],
+        phase: &str,
+    ) -> Result<(), ReplayError> {
+        write_video_frame(&mut self.writer, self.cancellation, frame)?;
+        progress.frame_encoded(phase);
+        Ok(())
+    }
+
+    fn emit_scratch(
+        &mut self,
+        progress: &mut ProgressTracker<'_>,
+        phase: &str,
+    ) -> Result<(), ReplayError> {
+        write_video_frame(&mut self.writer, self.cancellation, &self.scratch)?;
+        progress.frame_encoded(phase);
+        Ok(())
+    }
+
+    /// Before / after: a split view that sweeps to the final edit and back.
+    fn intro(
+        &mut self,
+        progress: &mut ProgressTracker<'_>,
+        original: &[u8],
+        final_edit: &[u8],
+    ) -> Result<(), ReplayError> {
+        let (width, height) = (self.width, self.height);
+        split_frame(original, final_edit, width, height, 0.5, &mut self.scratch);
+        for _ in 0..SPLIT_HOLD_FRAMES {
+            self.emit_scratch(progress, tr("Before / after"))?;
+        }
+        for frame in 0..SPLIT_SWEEP_FRAMES {
+            let t = smootherstep(ramp(frame, SPLIT_SWEEP_FRAMES));
+            split_frame(
+                original,
+                final_edit,
+                width,
+                height,
+                0.5 * (1.0 - t),
+                &mut self.scratch,
+            );
+            self.emit_scratch(progress, tr("Revealing final edit"))?;
+        }
+        for _ in 0..FULL_FRAME_HOLD_FRAMES {
+            self.emit(progress, final_edit, tr("Final edit"))?;
+        }
+        for frame in 0..SPLIT_SWEEP_FRAMES {
+            let t = smootherstep(ramp(frame, SPLIT_SWEEP_FRAMES));
+            split_frame(original, final_edit, width, height, t, &mut self.scratch);
+            self.emit_scratch(progress, tr("Returning to original"))?;
+        }
+        for _ in 0..FULL_FRAME_HOLD_FRAMES {
+            self.emit(progress, original, tr("Original"))?;
+        }
+        Ok(())
+    }
+
+    /// The [`stage_frames`] of `stage`: the highlight of its mask, drawn from
+    /// `highlight`, the mask's coverage ([`highlight::mask_highlight`]), then
+    /// a crossfade from `previous` to `next` while the highlight fades, and a
+    /// hold on `next`. The stage's title shows throughout.
+    fn stage(
+        &mut self,
+        progress: &mut ProgressTracker<'_>,
+        stage: &ReplayStage,
+        highlight: Option<&[u8]>,
+        previous: &[u8],
+        next: &[u8],
+    ) -> Result<(), ReplayError> {
+        let title = stage.title.as_str();
+        let phase = tr_fmt("Applying {stage}", &[("stage", &title)]);
+        let total = stage_frames(stage);
+        let mut frame = 0;
+        let mut emit_titled = |encoder: &mut Self, progress: &mut ProgressTracker<'_>| {
+            draw_stage_title(
+                &mut encoder.scratch,
+                encoder.width,
+                encoder.height,
+                title,
+                stage_title_alpha(frame, total),
+            );
+            frame += 1;
+            encoder.emit_scratch(progress, &phase)
+        };
+
+        if let Some(coverage) = highlight {
+            for step in 0..HIGHLIGHT_FADE_FRAMES {
+                self.scratch.copy_from_slice(previous);
+                let amount = smootherstep(ramp(step, HIGHLIGHT_FADE_FRAMES));
+                highlight_mask(&mut self.scratch, coverage, amount);
+                emit_titled(self, progress)?;
+            }
+            for _ in 0..HIGHLIGHT_HOLD_FRAMES {
+                self.scratch.copy_from_slice(previous);
+                highlight_mask(&mut self.scratch, coverage, 1.0);
+                emit_titled(self, progress)?;
+            }
+        }
+        for step in 0..STAGE_TRANSITION_FRAMES {
+            let t = smootherstep(ramp(step, STAGE_TRANSITION_FRAMES));
+            crossfade(previous, next, t, &mut self.scratch);
+            if let Some(coverage) = highlight {
+                highlight_mask(&mut self.scratch, coverage, 1.0 - t);
+            }
+            emit_titled(self, progress)?;
+        }
+        for _ in 0..STAGE_HOLD_FRAMES {
+            self.scratch.copy_from_slice(next);
+            emit_titled(self, progress)?;
+        }
+        Ok(())
+    }
+
+    /// A hold on the final edit, a fade to black and the brand card.
+    fn outro(
+        &mut self,
+        progress: &mut ProgressTracker<'_>,
+        final_edit: &[u8],
+    ) -> Result<(), ReplayError> {
+        let brand = brand_outro_frame(self.width, self.height)?;
+        let black = vec![0u8; final_edit.len()];
+        for _ in 0..FINAL_HOLD_FRAMES {
+            self.emit(progress, final_edit, tr("Holding final edit"))?;
+        }
+        for frame in 0..OUTRO_FADE_TO_BLACK_FRAMES {
+            let t = smootherstep(ramp(frame, OUTRO_FADE_TO_BLACK_FRAMES));
+            crossfade(final_edit, &black, t, &mut self.scratch);
+            self.emit_scratch(progress, tr("Ending replay"))?;
+        }
+        for frame in 0..OUTRO_BRAND_FADE_FRAMES {
+            let t = smootherstep(ramp(frame, OUTRO_BRAND_FADE_FRAMES));
+            crossfade(&black, &brand, t, &mut self.scratch);
+            self.emit_scratch(progress, BRAND_TITLE)?;
+        }
+        for _ in 0..OUTRO_HOLD_FRAMES {
+            self.emit(progress, &brand, BRAND_TITLE)?;
+        }
+        Ok(())
+    }
 }
 
 /// The folder that holds the replay's full-size render stills.
@@ -297,6 +546,9 @@ fn render_cache_parent(destination: &Path) -> PathBuf {
 /// Renders and encodes the replay of `request` and publishes it at
 /// `destination`, replacing an existing file only once encoding succeeded.
 /// Blocks; call it from a worker thread.
+///
+/// Each stage's still is rendered just before its frames are encoded, so
+/// only a few canvases are held at once, however many stages there are.
 pub(crate) fn render_edit_replay(
     request: ReplayRequest,
     destination: PathBuf,
@@ -306,15 +558,7 @@ pub(crate) fn render_edit_replay(
     if request.platform.caps().video_encoder == VideoEncoder::Ffmpeg {
         ensure_ffmpeg_available()?;
     }
-    let stages = replay_stage_plan(
-        request.original_exposure,
-        request.final_exposure,
-        request.final_geometry,
-        &request.final_masks,
-        &request.final_remove,
-        request.final_look.as_ref(),
-    );
-    let render_count = stages.len() + 2;
+    let stages = replay_stage_plan(&request);
     let render_dir = tempfile::Builder::new()
         .prefix("calibraw-edit-replay-")
         .tempdir_in(render_cache_parent(&destination))
@@ -324,67 +568,43 @@ pub(crate) fn render_edit_replay(
                 &[("error", &error)],
             )
         })?;
-
-    let original_state = ReplayRenderState::original(request.original_exposure);
-    let mut rendered = Vec::with_capacity(render_count);
-    let mut render_endpoint = |index: usize,
-                               label: &str,
-                               state: &ReplayRenderState|
-     -> Result<RenderedStill, ReplayError> {
-        let path = render_dir.path().join(format!("stage-{index:02}.png"));
-        let base = index as f32 / render_count as f32;
-        let step = 1.0 / render_count as f32;
-        let still = render_still(&request, state, &path, cancellation, |done, total| {
-            let tile_fraction = if total == 0 {
-                0.0
-            } else {
-                done as f32 / total as f32
-            };
-            progress(ReplayProgress {
-                fraction: RENDER_PROGRESS_WEIGHT * (base + step * tile_fraction),
-                phase: tr_fmt("Rendering {label}…", &[("label", &label)]),
-                completed_frames: 0,
-                total_frames: 0,
-            });
-        })?;
-        progress(ReplayProgress {
-            fraction: RENDER_PROGRESS_WEIGHT * ((index + 1) as f32 / render_count as f32),
-            phase: tr_fmt("Rendered {label}", &[("label", &label)]),
-            completed_frames: 0,
-            total_frames: 0,
-        });
-        Ok(still)
+    let mut progress = ProgressTracker {
+        report: progress,
+        render_count: stages.len() + 2,
+        rendered: 0,
+        total_frames: total_replay_frames(&stages) as usize,
+        completed_frames: 0,
+    };
+    let render = |progress: &mut ProgressTracker<'_>, label: &str, state: &ReplayRenderState| {
+        render_replay_still(
+            &request,
+            render_dir.path(),
+            cancellation,
+            progress,
+            label,
+            state,
+        )
     };
 
-    rendered.push(render_endpoint(0, tr("original"), &original_state)?);
-    for (stage_index, stage) in stages.iter().enumerate() {
-        rendered.push(render_endpoint(
-            stage_index + 1,
-            stage.kind.label(),
-            &stage.state,
-        )?);
-    }
-    let final_state = final_render_state(&request);
-    let final_still = render_endpoint(render_count - 1, tr("final edit"), &final_state)?;
-
+    // The opening compares the original with the final edit, whose still
+    // also sets the canvas size, so both render first.
+    let original_state = ReplayRenderState::original(request.original_exposure);
+    let original_still = render(&mut progress, tr("original"), &original_state)?;
+    let final_still = render(
+        &mut progress,
+        tr("final edit"),
+        &final_render_state(&request),
+    )?;
     let (canvas_width, canvas_height) =
         replay_canvas_dimensions(final_still.width, final_still.height);
     let (canvas_width, canvas_height) =
         request
             .platform
             .replay_encoder_size(canvas_width, canvas_height, REPLAY_FPS);
-    let original_canvas = fit_to_canvas(&rendered[0], canvas_width, canvas_height);
-    let mut stage_canvases = rendered
-        .iter()
-        .skip(1)
-        .map(|still| fit_to_canvas(still, canvas_width, canvas_height))
-        .collect::<Vec<_>>();
+    let original_canvas = fit_to_canvas(&original_still, canvas_width, canvas_height);
     let final_canvas = fit_to_canvas(&final_still, canvas_width, canvas_height);
-    // Release rendered endpoints before allocating and encoding video frames on mobile.
-    drop(rendered);
+    drop(original_still);
     drop(final_still);
-    let brand_canvas = brand_outro_frame(canvas_width, canvas_height)?;
-    let black_canvas = vec![0u8; final_canvas.len()];
 
     let parent = destination
         .parent()
@@ -401,163 +621,62 @@ pub(crate) fn render_edit_replay(
             )
         })?
         .into_temp_path();
-    let mut writer = ReplayFrameWriter::start(
-        &*request.platform,
-        temporary.as_ref(),
-        canvas_width,
-        canvas_height,
-    )?;
-    let total_frames = total_replay_frames(stages.len()) as usize;
-    let mut completed_frames = 0usize;
-    let mut scratch = vec![0u8; canvas_width as usize * canvas_height as usize * 3];
-
-    let mut emit =
-        |writer: &mut ReplayFrameWriter, frame: &[u8], phase: &str| -> Result<(), ReplayError> {
-            write_video_frame(writer, cancellation, frame)?;
-            completed_frames += 1;
-            if completed_frames == total_frames || completed_frames.is_multiple_of(3) {
-                let encode_fraction = completed_frames as f32 / total_frames.max(1) as f32;
-                progress(ReplayProgress {
-                    fraction: RENDER_PROGRESS_WEIGHT
-                        + (1.0 - RENDER_PROGRESS_WEIGHT) * encode_fraction,
-                    phase: phase.to_owned(),
-                    completed_frames,
-                    total_frames,
-                });
-            }
-            Ok(())
-        };
-
-    split_frame(
-        &original_canvas,
-        &final_canvas,
-        canvas_width,
-        canvas_height,
-        0.5,
-        &mut scratch,
-    );
-    for _ in 0..SPLIT_HOLD_FRAMES {
-        emit(&mut writer, &scratch, tr("Before / after"))?;
-    }
-    for frame in 0..SPLIT_SWEEP_FRAMES {
-        let t = if SPLIT_SWEEP_FRAMES <= 1 {
-            1.0
-        } else {
-            frame as f32 / (SPLIT_SWEEP_FRAMES - 1) as f32
-        };
-        split_frame(
-            &original_canvas,
-            &final_canvas,
+    // Declared after `temporary`, so an error drops (and stops) the encoder
+    // before the unfinished file is removed.
+    let mut encoder = ReplayEncoder {
+        writer: ReplayFrameWriter::start(
+            &*request.platform,
+            temporary.as_ref(),
             canvas_width,
             canvas_height,
-            0.5 * (1.0 - smootherstep(t)),
-            &mut scratch,
-        );
-        emit(&mut writer, &scratch, tr("Revealing final edit"))?;
-    }
-    for _ in 0..FULL_FRAME_HOLD_FRAMES {
-        emit(&mut writer, &final_canvas, tr("Final edit"))?;
-    }
-    for frame in 0..SPLIT_SWEEP_FRAMES {
-        let t = if SPLIT_SWEEP_FRAMES <= 1 {
-            1.0
-        } else {
-            frame as f32 / (SPLIT_SWEEP_FRAMES - 1) as f32
-        };
-        split_frame(
-            &original_canvas,
-            &final_canvas,
-            canvas_width,
-            canvas_height,
-            smootherstep(t),
-            &mut scratch,
-        );
-        emit(&mut writer, &scratch, tr("Returning to original"))?;
-    }
-    for _ in 0..FULL_FRAME_HOLD_FRAMES {
-        emit(&mut writer, &original_canvas, tr("Original"))?;
-    }
+        )?,
+        cancellation,
+        width: canvas_width,
+        height: canvas_height,
+        scratch: vec![0u8; canvas_width as usize * canvas_height as usize * 3],
+    };
 
+    encoder.intro(&mut progress, &original_canvas, &final_canvas)?;
     let mut previous = original_canvas;
-    for (stage_index, stage) in stages.iter().enumerate() {
-        let next = stage_canvases
-            .get_mut(stage_index)
-            .expect("each replay stage has a rendered endpoint");
-        let title_phase = tr_fmt("Applying {stage}", &[("stage", &stage.kind.label())]);
-        for frame in 0..STAGE_TRANSITION_FRAMES {
-            let t = if STAGE_TRANSITION_FRAMES <= 1 {
-                1.0
-            } else {
-                frame as f32 / (STAGE_TRANSITION_FRAMES - 1) as f32
-            };
-            crossfade(&previous, next, smootherstep(t), &mut scratch);
-            draw_stage_title(
-                &mut scratch,
+    for stage in &stages {
+        let still = render(&mut progress, &stage.title, &stage.state)?;
+        let photo_rect = fitted_rect(still.width, still.height, canvas_width, canvas_height);
+        let next = fit_to_canvas(&still, canvas_width, canvas_height);
+        drop(still);
+        // Mask stages follow every geometry stage, so the previous still
+        // frames the photo as this one does and the highlight fits both.
+        let highlight = stage.highlight.map(|index| {
+            mask_highlight(
+                &stage.state.masks,
+                index,
+                &request.raw,
+                stage.state.geometry,
+                photo_rect,
                 canvas_width,
                 canvas_height,
-                stage.kind.label(),
-                stage_title_alpha(frame, STAGE_TRANSITION_FRAMES, STAGE_HOLD_FRAMES),
-            );
-            emit(&mut writer, &scratch, &title_phase)?;
-        }
-        for hold in 0..STAGE_HOLD_FRAMES {
-            scratch.copy_from_slice(next);
-            draw_stage_title(
-                &mut scratch,
-                canvas_width,
-                canvas_height,
-                stage.kind.label(),
-                stage_title_alpha(
-                    STAGE_TRANSITION_FRAMES + hold,
-                    STAGE_TRANSITION_FRAMES,
-                    STAGE_HOLD_FRAMES,
-                ),
-            );
-            emit(&mut writer, &scratch, &title_phase)?;
-        }
-        previous = std::mem::take(next);
+            )
+        });
+        encoder.stage(&mut progress, stage, highlight.as_deref(), &previous, &next)?;
+        previous = next;
     }
-
+    drop(previous);
     // The final hold always uses a separately rendered full request. This makes
     // the last frame exact even if a future edit-state field is not yet assigned
-    // to one of the replay categories above.
-    for _ in 0..FINAL_HOLD_FRAMES {
-        emit(&mut writer, &final_canvas, tr("Holding final edit"))?;
-    }
-
-    for frame in 0..OUTRO_FADE_TO_BLACK_FRAMES {
-        let t = if OUTRO_FADE_TO_BLACK_FRAMES <= 1 {
-            1.0
-        } else {
-            frame as f32 / (OUTRO_FADE_TO_BLACK_FRAMES - 1) as f32
-        };
-        crossfade(&final_canvas, &black_canvas, smootherstep(t), &mut scratch);
-        emit(&mut writer, &scratch, tr("Ending replay"))?;
-    }
-    for frame in 0..OUTRO_BRAND_FADE_FRAMES {
-        let t = if OUTRO_BRAND_FADE_FRAMES <= 1 {
-            1.0
-        } else {
-            frame as f32 / (OUTRO_BRAND_FADE_FRAMES - 1) as f32
-        };
-        crossfade(&black_canvas, &brand_canvas, smootherstep(t), &mut scratch);
-        emit(&mut writer, &scratch, "CalibRaw")?;
-    }
-    for _ in 0..OUTRO_HOLD_FRAMES {
-        emit(&mut writer, &brand_canvas, "CalibRaw")?;
-    }
+    // to one of the replay stages.
+    encoder.outro(&mut progress, &final_canvas)?;
 
     if cancellation.load(Ordering::Acquire) {
-        writer.cancel();
+        encoder.writer.cancel();
         return Err(ReplayError::Cancelled);
     }
-    progress(ReplayProgress {
+    let total_frames = progress.total_frames;
+    (progress.report)(ReplayProgress {
         fraction: 1.0,
         phase: tr("Finalizing MP4…").to_owned(),
         completed_frames: total_frames,
         total_frames,
     });
-    writer.finish()?;
+    encoder.writer.finish()?;
     ensure_not_cancelled(cancellation)?;
     calibraw_core::file_ops::replace_file(temporary.as_ref(), &destination).map_err(|error| {
         tr_fmt(
@@ -611,6 +730,7 @@ mod tests {
             final_masks: MaskStack::default(),
             final_remove: RemoveEditState::default(),
             final_look: None,
+            detail: ReplayDetail::Normal,
             gpu_export_prewarm: None,
             platform: crate::platform::fake::FakePlatform::new(
                 crate::platform::PlatformCaps::DESKTOP,
@@ -622,6 +742,7 @@ mod tests {
     #[ignore = "renders on a wgpu adapter and encodes with FFmpeg (libx264)"]
     fn replay_renders_encodes_and_publishes_an_mp4() {
         let request = test_request().expect("a wgpu adapter");
+        let expected_frames = total_replay_frames(&replay_stage_plan(&request)) as usize;
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("replay.mp4");
         let cancellation = Arc::new(AtomicBool::new(false));
@@ -641,9 +762,9 @@ mod tests {
         assert!(events
             .windows(2)
             .all(|pair| pair[1].fraction >= pair[0].fraction));
-        // Edit and Crop stages; the last report covers every encoded frame.
+        // The last report covers every encoded frame.
         let last = events.last().unwrap();
-        assert_eq!(last.total_frames, total_replay_frames(2) as usize);
+        assert_eq!(last.total_frames, expected_frames);
         assert_eq!(last.completed_frames, last.total_frames);
         assert_eq!(
             std::fs::read_dir(directory.path()).unwrap().count(),
