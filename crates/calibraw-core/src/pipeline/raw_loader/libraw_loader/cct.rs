@@ -148,7 +148,7 @@ pub(super) fn xyz_to_cct(xyz: [f32; 3]) -> Option<f32> {
 }
 
 /// Tint per unit of CIE 1960 uv distance from the Planckian locus along the
-/// isotherm, the scale of Lightroom and the DNG SDK. A white above the locus
+/// isotherm, using the DNG SDK scale. A white above the locus
 /// (greener light) has a positive tint, and balancing it adds magenta.
 const TINT_PER_UV: f64 = 3_000.0;
 

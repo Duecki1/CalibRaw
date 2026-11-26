@@ -2,7 +2,7 @@
   "edited": true,
   "migrated": true,
   "saved": {
-    "edit_fingerprint": "e5f792c0f8a1d649",
+    "edit_fingerprint": "ba015e15b568bc3d",
     "editing_time_ms": 61000,
     "edits": {
       "ai_masks_need_update": false,
@@ -64,6 +64,7 @@
         "hue": 0.0,
         "luminance_denoise": 0.0,
         "point_colors": [],
+        "profile_tone_curve": "ignored",
         "saturation": 0.0,
         "shadows": 30.0,
         "sharpen_amount": 40.0,

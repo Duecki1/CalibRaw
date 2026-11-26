@@ -54,7 +54,7 @@ fn detail_level_variance(level: i32) -> f32 {
 // Texture (z) bases. Texture and negative Texture keep the Gaussian sigma of
 // their former 5×5 and 7×7 bilateral filters (1.44 and 2.16 taps of 1.65 px per
 // reference scale). Clarity's sigma of 16 px per reference scale is about 1.5 %
-// of the short edge, a Lightroom-like local-contrast radius. A reduced preview
+// of the short edge. A reduced preview
 // may need a base below one pixel; it blends with the unfiltered image rather
 // than widening, so it covers the same share of the photo as the export.
 fn detail_target_variances() -> vec3<f32> {

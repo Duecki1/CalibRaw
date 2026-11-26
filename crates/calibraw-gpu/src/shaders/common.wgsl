@@ -40,6 +40,21 @@ const VIEW_TRANSFORM_PASSTHROUGH: u32 = 0u;
 const VIEW_TRANSFORM_SCENE_SIGMOID: u32 = 1u;
 // A developed raster is retoned from the reference sigmoid to the edit's sigmoid.
 const VIEW_TRANSFORM_DISPLAY_RETONE: u32 = 2u;
+// Scene radiance takes the camera profile's tone curve, the sigmoid at the
+// reference curve.
+const VIEW_TRANSFORM_PROFILE_TONE: u32 = 3u;
+// Scene radiance takes the camera profile's tone curve, whose result is
+// retoned from the reference sigmoid to the edit's sigmoid.
+const VIEW_TRANSFORM_PROFILE_TONE_RETONE: u32 = 4u;
+
+// Whether the view transform renders scene radiance rather than a developed
+// raster (Rust's ViewTransformMode::select decides).
+fn view_transform_renders_scene() -> bool {
+    let mode = camera_uniforms.view_transform_mode;
+    return mode == VIEW_TRANSFORM_SCENE_SIGMOID
+        || mode == VIEW_TRANSFORM_PROFILE_TONE
+        || mode == VIEW_TRANSFORM_PROFILE_TONE_RETONE;
+}
 
 // `metadata.w` packs the mask effect's shader ID above eight flag bits. Of
 // these, an effect slot's lowest four hold its light's channel of the light

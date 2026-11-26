@@ -1,5 +1,5 @@
 //! Panorama projections: how world directions (x right, y down, z ahead) map onto the
-//! panorama plane. The three are Lightroom's: spherical (equirectangular), cylindrical
+//! panorama plane. Supported projections are spherical (equirectangular), cylindrical
 //! and perspective (rectilinear). The formulas follow OpenCV's `warpers_inl.hpp`
 //! (BSD-3-Clause). Plane coordinates are in units of the focal length, so one unit is one
 //! radian across the centre for every projection.

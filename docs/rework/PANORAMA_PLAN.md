@@ -43,7 +43,6 @@ No merge has render-parity coverage today.
 | OpenCV `stitching` (4.x) | Apache-2.0 (GPL-3 compatible) | Brown & Lowe's pipeline. `Stitcher::create(PANORAMA)` uses registration at 0.6 MP, seam estimation at 0.1 MP, compositing at full resolution, ORB features, `BestOf2NearestMatcher`, `HomographyBasedEstimator`, `BundleAdjusterRay`, horizontal wave correction, `SphericalWarper`, `BlocksGainCompensator`, `GraphCutSeamFinder(COST_COLOR)` and `MultiBandBlender` (`stitcher.cpp`). The `stitching_detailed` sample defaults to graph-cut colour seams, gain-blocks exposure and multi-band strength 5. |
 | Hugin (cpfind, autooptimiser, vig_optimize, nona) | GPL-2.0-or-later | cpfind finds keypoints at half scale, keeps them spread with a 10×10 bucket sieve, matches through a k-d tree, and verifies with RANSAC whose model is a homography for HFOV < 65° and roll/pitch/yaw otherwise ("rpy … the preferred mode if a calibrated lens is used, or the HFOV could be read from the EXIF data"). vig_optimize fits exposure (Ev), white balance (Er, Eb), the EMoR response and a radial vignetting polynomial (Va = 1, Vb, Vc, Vd) from overlaps. |
 | Enblend | GPL-2.0-or-later | Multi-resolution spline. Seams from the nearest-feature transform by default, graph cut optionally ("less likely to cut through visible structures", more memory and time). Floating-point images blend in the IDENTITY colour space by default. Its reduce is alpha-aware: uncovered samples are left out and the result is normalised by the summed alpha (`pyramid2.h`, as copied into Hugin). The halo of an `L`-level pyramid is `2^(L+1) − 4` pixels. |
-| Lightroom / Camera Raw | proprietary | Spherical, cylindrical and perspective projections; Boundary Warp; Fill Edges; Auto Crop; output is a linear DNG (`-Pano.dng`). Projection and Boundary Warp cannot be changed after the merge. |
 | darktable, RawTherapee, ART | GPL-3 | No panorama merge. |
 | Rust crates | — | `akaze` 0.7.0 (MIT) was last released 2020-06-23 and depends on `image` 0.23 and `ndarray` 0.13: not acceptable. `imageproc` (MIT, maintained) has corners but no scale-invariant descriptor. No pure-Rust SIFT crate was found. |
 
@@ -70,7 +69,7 @@ Version 1:
 
 - Single-row and multi-row panoramas from one camera body, hand-held or on a
   tripod, rotating about roughly one point.
-- Projections: Auto, Spherical, Cylindrical, Perspective (Lightroom's three).
+- Projections: Auto, Spherical, Cylindrical, Perspective.
 - Always cropped to the largest covered rectangle; there is no switch for it.
 - The same develop options as the other merges: lens correction, hot pixels,
   AI denoise.
@@ -319,7 +318,7 @@ The canvas is composited in horizontal strips, which the TIFF is written in
 - **Writing:** strips go out through `tiff::encoder::TiffEncoder::write_strip`
   with the existing linear Rec.2020 ICC profile. 210 MP of RGB f32 is 2.5 GB,
   within classic TIFF's 4 GB, so BigTIFF is not needed while the cap holds.
-- **Name:** `{stem}-Pano.tif`, matching Lightroom's suffix.
+- **Name:** `{stem}-Pano.tif`.
 
 ## 6. Code changes to existing modules
 
@@ -468,8 +467,7 @@ Each step is one focused change, per AGENTS.md.
 
 - **HDR panorama:** HDR-merge each position, then stitch. `PanoramaBuilder`
   takes frames from any source, so this is a UI and grouping feature.
-  Lightroom offers it.
-- **Boundary Warp** (Lightroom): a smooth mesh warp that fills the canvas
+- **Boundary Warp**: a smooth mesh warp that fills the canvas
   rectangle.
 - **Fill edges:** an uncropped output whose uncovered corners the existing
   LaMa remove model fills. Until then every panorama is cropped.

@@ -192,6 +192,51 @@ fn apply_optional_profile_look(rgb: vec3<f32>) -> vec3<f32> {
     return apply_profile_hsv_map(rgb, Common::camera_uniforms.profile_look, Common::camera_uniforms.profile_flags.y);
 }
 
+// The camera profile's tone curve (the DCP's ProfileToneCurve) at `x`: linear
+// ProPhoto values in [0, 1] to linear display values in [0, 1]. Rust samples
+// the curve's cubic spline at `profile_tone.x` evenly spaced inputs from 0 to
+// 1, stored from `profile_tone.y` in `profile_data` (ProfileGpuData), and a
+// value between samples is interpolated linearly. Inputs outside [0, 1] take
+// the end samples. Without a curve it is the identity.
+fn profile_tone_curve_value(x: f32) -> f32 {
+    let size = Common::camera_uniforms.profile_tone.x;
+    if size < 2u {
+        return x;
+    }
+    let offset = Common::camera_uniforms.profile_tone.y;
+    let last = size - 1u;
+    let position = clamp(x, 0.0, 1.0) * f32(last);
+    let low = min(u32(position), last - 1u);
+    return mix(
+        profile_data[offset + low].x,
+        profile_data[offset + low + 1u].x,
+        position - f32(low),
+    );
+}
+
+// The scene value where the profile tone's shoulder begins. Scene value 1 is
+// the RAW's white point at the profile's exposure, the end of the curve's
+// domain; exposure and highlight reconstruction lift highlights above it.
+const PROFILE_TONE_SHOULDER_START: f32 = 0.8;
+
+// Compresses a non-negative scene value into the curve's domain: the identity
+// up to PROFILE_TONE_SHOULDER_START, then an exponential approach to 1 that
+// leaves the start at slope 1, so highlights above the white point roll into
+// the top of the curve instead of clipping at it.
+fn profile_tone_shoulder(value: f32) -> f32 {
+    if value <= PROFILE_TONE_SHOULDER_START {
+        return value;
+    }
+    let room = 1.0 - PROFILE_TONE_SHOULDER_START;
+    return 1.0 - room * exp(-(value - PROFILE_TONE_SHOULDER_START) / room);
+}
+
+// The display value of a scene value through the shoulder and the profile's
+// tone curve. Values at or below 0 take the curve's value at 0.
+fn profile_tone_value(value: f32) -> f32 {
+    return profile_tone_curve_value(profile_tone_shoulder(max(value, 0.0)));
+}
+
 // Encodes display-linear Rec.2020 as sRGB. In-gamut colors are converted
 // exactly; out-of-gamut colors keep their OKLab lightness and hue while their
 // chroma is compressed to the sRGB boundary. Mirrors

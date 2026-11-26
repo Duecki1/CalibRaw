@@ -55,9 +55,9 @@ impl MergedImage {
 pub(super) enum MergeSourceKind {
     /// Sensor RAWs, linear DNGs included: developed here, merged as scene radiance.
     Raw,
-    /// Floating-point TIFFs (merge masters, linear exports): scene radiance as decoded.
+    /// Scene-referred floating-point TIFFs, including RAW merge masters.
     SceneRaster,
-    /// Rendered photos (JPEG, PNG, HEIF, integer TIFF): developed images, white at 1.
+    /// Developed photos, including float TIFFs from Develop, with display white at 1.
     Rendered,
 }
 
@@ -72,7 +72,7 @@ impl MergeSourceKind {
         }
     }
 
-    /// How a master of these sources is stored. A floating-point TIFF opens as scene
+    /// How a master of these sources is stored. A floating-point merge opens as scene
     /// radiance and is tone mapped, so rendered photos, whose tones are developed
     /// already, merge into an integer TIFF, which opens as a developed photo does.
     pub(super) fn master_samples(self) -> MasterSamples {
@@ -448,7 +448,7 @@ impl<'a, 'd> SourceDeveloper<'a, 'd> {
         if let Some(camera) = &self.camera {
             ensure!(
                 camera.sources == kind,
-                "Merge sources must all be RAW files, all floating-point TIFFs or all rendered photos"
+                "Merge sources must all be RAW files, all scene-referred TIFFs or all rendered photos"
             );
             ensure!(
                 camera.identity == (raw.camera_make.clone(), raw.camera_model.clone())
@@ -671,7 +671,7 @@ pub(super) fn render_camera_rgb(
 /// A linear DNG was demosaiced by the camera, so its photosites are gone: each pixel's
 /// brightest channel stands in for them (its channels are normalized to the file's white
 /// level), and the footprint covers the smoothing a camera's demosaic leaves. A rendered
-/// photo is read the same way against its display white. A floating-point TIFF holds
+/// photo is read the same way against its display white. A scene-referred TIFF holds
 /// radiance without a clipping level, so none of its pixels counts as clipped.
 pub(super) fn sensor_footprint_peak(raw: &LoadedRaw) -> Vec<f32> {
     /// Pixels of a linear DNG within which the camera's demosaic spread a clipped

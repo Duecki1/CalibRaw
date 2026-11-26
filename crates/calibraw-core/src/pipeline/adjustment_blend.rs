@@ -51,6 +51,7 @@ impl ExposureParams {
             exposure,
             contrast,
             sigmoid: _,
+            profile_tone_curve: _,
             white_balance: _,
             raster_temperature,
             hue,
@@ -104,6 +105,7 @@ impl ExposureParams {
             contrast: contrast.blend(target.contrast, amount),
             // The tone mapper's settings are one choice.
             sigmoid: target.sigmoid,
+            profile_tone_curve: target.profile_tone_curve,
             // Needs the photo's as-shot white balance (`faded_from`).
             white_balance: target.white_balance,
             raster_temperature: raster_temperature.blend(target.raster_temperature, amount),

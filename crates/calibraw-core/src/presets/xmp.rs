@@ -19,10 +19,9 @@
 //! Color is rescaled to CalibRaw's ranges ([`point_colors`]), lens profiles
 //! are matched on the target photo, and white balance is absolute, so named
 //! white balances use their usual temperature and tint. Calibration takes
-//! Lightroom's slider values as they are: CalibRaw's sliders have the same
-//! range and directions, but how far Lightroom moves a primary per unit is not
-//! published ([`crate::pipeline::Calibration`]). Masks are covered in
-//! [`masks`].
+//! the stored slider values directly. Their ranges and directions agree;
+//! the resulting colour depends on the working primaries and the transform
+//! in [`crate::pipeline::Calibration`]. Masks are covered in [`masks`].
 //!
 //! XMP writers use the conventional `rdf` and `crs` prefixes, so elements and
 //! attributes are matched by prefix rather than by resolved namespace.

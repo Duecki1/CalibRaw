@@ -1049,7 +1049,7 @@ mod tests {
     }
 
     #[test]
-    fn reference_illuminants_have_lightroom_temperature_and_tint() {
+    fn reference_illuminants_have_expected_temperature_and_tint() {
         // D65 lies above the locus (greener), illuminant A on it.
         for ([x, y], expected_kelvin, expected_tint) in [
             ([0.312_72, 0.329_03], 6_504.0, 9.6),

@@ -503,6 +503,14 @@ fn shared_constants_and_effect_ids_match_rust() {
             "VIEW_TRANSFORM_DISPLAY_RETONE",
             ViewTransformMode::DisplayRetone,
         ),
+        (
+            "VIEW_TRANSFORM_PROFILE_TONE",
+            ViewTransformMode::ProfileTone,
+        ),
+        (
+            "VIEW_TRANSFORM_PROFILE_TONE_RETONE",
+            ViewTransformMode::ProfileToneRetone,
+        ),
     ] {
         assert_eq!(constant(name), mode.shader_value(), "{name}");
     }

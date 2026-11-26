@@ -83,15 +83,21 @@ change that establishes a boundary, not in advance.
   Adobe RGB, ProPhoto RGB, Rec. 2020) take their matrix from the same rounded
   colorants their embedded ICC profile records, so colour-managed readers
   decode what was encoded. JPEG XL is sRGB only, as its encoder cannot signal
-  another colour encoding; a float master is always linear Rec.2020. The
+  another colour encoding. Develop writes float TIFFs in display-linear Rec.2020.
+  On reopening one, the TIFF reader recognizes its Software tag and ICC creator
+  and preserves the developed tones. RAW merge masters carry scene-linear radiance
+  and receive the scene view transform on open. The
   export writes its own EXIF ColorSpace and drops the source's
   InteroperabilityIndex, which describe the camera's JPEG setting.
 - A batch export may apply a preset and a LUT to every photo
   (`ExportOverride`). They change only the edit snapshot each item is rendered
   from; sidecars are never written.
 - A camera profile changes only how the samples' colour is read
-  (`ProfileColor`), never the samples. A decode keeps what it read the colour
-  from (`ProfileColorSource`), so another profile is applied to the decode in
+  (`ProfileColor`), never the samples. A profile with a tone curve also
+  renders the scene to the display in place of the sigmoid, unless the edit
+  ignores it (`ProfileToneCurve`, `ViewTransformMode` in `calibraw-gpu`). A
+  decode keeps what it read the colour from (`ProfileColorSource`), so
+  another profile is applied to the decode in
   memory (`LoadedRaw::with_camera_profile_selection`), sharing its
   `SensorSamples`, exactly as decoding with that profile would apply it. One
   `DecodedRawCache` entry therefore serves every camera-profile request; only

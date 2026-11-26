@@ -1,16 +1,14 @@
-//! Tone controls saved before they rendered like Lightroom's, by v1.4.1 and
-//! older.
+//! Tone responses for edits saved by v1.4.1 and earlier.
 //!
 //! migration: remove in v2.0.0
 //!
 //! The master tone curve and Blacks, globally and in a mask, and a mask's
 //! Contrast mapped the luminance and scaled RGB by its ratio, which keeps
-//! chromaticity, so contrast added no saturation. They now apply Lightroom's
+//! chromaticity, so contrast added no saturation. New edits use
 //! hue-locked RGB tone ([`ToneResponse::Rgb`]), and each stores its response
 //! beside its value. A control saved without one keeps rendering as it did:
 //! it becomes [`ToneResponse::Luminance`] when it changes the image. One at
-//! its default renders the same either way, so it takes the new response
-//! and renders like Lightroom's once it is moved.
+//! its default renders the same either way, so it takes the new response.
 //!
 //! [`LegacyToneResponses`] reads which responses a serialized `edits` object
 //! holds, by mask position, in the same pass as the decoded edit.

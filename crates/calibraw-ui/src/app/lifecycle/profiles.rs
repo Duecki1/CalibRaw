@@ -1,7 +1,27 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::pipeline::camera_look::CameraMatch;
+use crate::pipeline::ProfileToneCurve;
 
 impl CalibRawApp {
+    /// Renders the open photo with its camera profile's tone curve applied or
+    /// ignored, as a change of the edit. The canonical rendering keeps the
+    /// choice (`ExposureParams::source_reference`), so the masks drawn from
+    /// it are out of date and a fitted Camera match look is fitted again; a
+    /// pending one fits the choice when it runs.
+    pub(crate) fn set_profile_tone_curve(&mut self, choice: ProfileToneCurve) {
+        if self.develop.exposure.profile_tone_curve == choice {
+            return;
+        }
+        self.develop.exposure.profile_tone_curve = choice;
+        self.note_mask_source_changed();
+        if let Some(look) = self.develop.camera_match.look() {
+            let amount = look.amount();
+            self.install_camera_match(CameraMatch::Pending { amount });
+        }
+        self.mark_pipeline_dirty();
+    }
+
     /// Tells the user once per scan of the profile folder when it holds more DCP profiles
     /// than the index keeps, so that profiles for their camera may be missing.
     pub(super) fn report_camera_profile_limit(&mut self) {

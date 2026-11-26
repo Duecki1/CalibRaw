@@ -129,8 +129,9 @@ impl ExposureParams {
         self.copy_section_from(source, ExposureSection::Group(group));
     }
 
-    /// Copies the RAW decoding settings: black point, tone mapper, demosaic
-    /// and highlight reconstruction, which no sidebar card owns, and the film
+    /// Copies the RAW decoding settings: black point, tone mapper (the sigmoid
+    /// and whether the profile's tone curve replaces it), demosaic and
+    /// highlight reconstruction, which no sidebar card owns, and the film
     /// negative, which a roll of scans shares.
     pub fn copy_raw_processing_from(&mut self, source: &Self) {
         self.copy_section_from(source, ExposureSection::RawProcessing);
@@ -151,6 +152,7 @@ impl ExposureParams {
             exposure,
             contrast,
             sigmoid,
+            profile_tone_curve,
             white_balance,
             raster_temperature,
             hue,
@@ -263,6 +265,7 @@ impl ExposureParams {
             ExposureSection::RawProcessing => {
                 self.black_point = black_point;
                 self.sigmoid = sigmoid;
+                self.profile_tone_curve = profile_tone_curve;
                 self.demosaic_mode = demosaic_mode;
                 self.dual_threshold = dual_threshold;
                 self.frequency_chroma = frequency_chroma;

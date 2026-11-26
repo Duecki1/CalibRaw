@@ -371,6 +371,7 @@ impl Preset {
             }
         };
 
+        let legacy_profile_tone_curve = header.edits.profile_tone_curve();
         // Only a preset with the Effects group carried Effects-card sliders.
         let legacy = if document
             .selection
@@ -382,6 +383,11 @@ impl Preset {
             header.edits.without_global()
         };
         migrations::migrate_edits(&mut document.edits, legacy);
+        // The RAW processing settings hold the choice.
+        legacy_profile_tone_curve.migrate(
+            &mut document.edits.exposure,
+            document.selection.raw_processing,
+        );
 
         // Rebuild through `new` so a hand-edited file gets the same filtering
         // as a preset created in the app.

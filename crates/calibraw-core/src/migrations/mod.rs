@@ -55,6 +55,7 @@ mod highlight_glow;
 pub(crate) mod older_readers;
 pub mod onnx_runtime_selection;
 pub(crate) mod point_curve_slots;
+mod profile_tone_curves;
 mod scene_depth_controls;
 mod scene_depth_layout;
 mod tone_responses;
@@ -65,20 +66,23 @@ pub(crate) use scene_depth_layout::LegacySceneDepth;
 
 use crate::sidecar::EditState;
 use highlight_glow::LegacyHighlightGlows;
+use profile_tone_curves::LegacyProfileToneCurve;
 use scene_depth_controls::LegacySceneControls;
 use serde::{Deserialize, Deserializer};
 use tone_responses::LegacyToneResponses;
 
 /// What older layouts kept in a serialized `edits` object besides what the
 /// edit decodes: the Effects-card sliders, Relight's old scene controls, the
-/// Self-illuminating switch of Glows, and which tone controls were saved
-/// without a response. Read in the same pass as a document's header.
+/// Self-illuminating switch of Glows, which tone controls were saved without
+/// a response, and whether the profile tone curve choice was saved. Read in
+/// the same pass as a document's header.
 #[derive(Debug, Default)]
 pub(crate) struct LegacyEdits {
     sliders: LegacyEffectSliders,
     scene_controls: LegacySceneControls,
     highlight_glows: LegacyHighlightGlows,
     tone_responses: LegacyToneResponses,
+    profile_tone_curve: LegacyProfileToneCurve,
 }
 
 impl<'de> Deserialize<'de> for LegacyEdits {
@@ -91,6 +95,7 @@ impl<'de> Deserialize<'de> for LegacyEdits {
             scene_controls: LegacySceneControls::deserialize(&edits).map_err(read)?,
             highlight_glows: LegacyHighlightGlows::deserialize(&edits).map_err(read)?,
             tone_responses: LegacyToneResponses::deserialize(&edits).map_err(read)?,
+            profile_tone_curve: LegacyProfileToneCurve::deserialize(&edits).map_err(read)?,
         })
     }
 }
@@ -102,6 +107,14 @@ impl LegacyEdits {
             sliders: self.sliders.without_global(),
             ..self
         }
+    }
+
+    /// Whether the profile tone curve choice was saved. Its migration needs
+    /// what the document says about the edit as a whole (whether the photo
+    /// was edited, which categories a preset carries), so the caller runs it
+    /// rather than [`migrate_edits`].
+    pub(crate) fn profile_tone_curve(&self) -> LegacyProfileToneCurve {
+        self.profile_tone_curve
     }
 }
 

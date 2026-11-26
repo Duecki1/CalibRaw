@@ -584,6 +584,29 @@ fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     return rgb;
 }
 
+// VIEW_TRANSFORM_PROFILE_TONE: the camera profile's tone curve renders the
+// scene as the DNG SDK applies a ProfileToneCurve (RefBaselineRGBTone): in
+// linear ProPhoto RGB, the largest and the smallest channel take the curve's
+// values (behind its shoulder, Profile::profile_tone_value) and the middle
+// channel keeps its share of the distance between them, which locks the RGB
+// hue. `view_input` is non-negative scene-linear Rec.2020; the result is
+// display-linear Rec.2020, with ProPhoto colours outside Rec.2020 projected
+// into it.
+fn apply_profile_tone_view_transform(view_input: vec3<f32>) -> vec3<f32> {
+    let profile_signed = Profile::REC2020_TO_PROPHOTO * view_input;
+    let profile_linear = Color::gamut_project_nonnegative(
+        profile_signed,
+        dot(profile_signed, Profile::PROPHOTO_LUMA),
+    );
+    let range = Tonemap::channel_range(profile_linear);
+    let toned = Tonemap::hue_locked_tone(
+        profile_linear,
+        range,
+        vec2<f32>(Profile::profile_tone_value(range.x), Profile::profile_tone_value(range.y)),
+    );
+    return Color::gamut_project_nonnegative_rec2020(Profile::PROPHOTO_TO_REC2020 * toned);
+}
+
 fn apply_view_transform(scene_rgb: vec3<f32>) -> vec3<f32> {
     let view_input = Color::gamut_project_nonnegative_rec2020(scene_rgb);
 
@@ -594,6 +617,14 @@ fn apply_view_transform(scene_rgb: vec3<f32>) -> vec3<f32> {
     }
     if mode == Common::VIEW_TRANSFORM_DISPLAY_RETONE {
         return Tonemap::apply_display_retone(view_input);
+    }
+    if mode == Common::VIEW_TRANSFORM_PROFILE_TONE {
+        return apply_profile_tone_view_transform(view_input);
+    }
+    // The profile's rendering takes the place of a developed raster's: Contrast
+    // and the sigmoid settings retone it relative to the reference sigmoid.
+    if mode == Common::VIEW_TRANSFORM_PROFILE_TONE_RETONE {
+        return Tonemap::apply_display_retone(apply_profile_tone_view_transform(view_input));
     }
     if mode == Common::VIEW_TRANSFORM_PASSTHROUGH {
         return view_input;

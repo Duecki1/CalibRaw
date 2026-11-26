@@ -1,6 +1,7 @@
 #import calibraw::common as Common
 #import calibraw::color as Color
 #import calibraw::basic_adjustments as BasicAdjustments
+#import calibraw::profile as Profile
 #import calibraw::scene_source as SceneSource
 #import calibraw::scene_adjustments as SceneAdjustments
 #import calibraw::detail_scale_space as DetailScaleSpace

@@ -3,7 +3,7 @@ use super::film_negative::FilmNegativeAction;
 use super::*;
 use crate::app::{AreaPicker, CameraProfileChoice, FILM_NEGATIVE_CARD_TITLE};
 use crate::i18n::{tr, tr_fmt};
-use crate::pipeline::CardSwitch;
+use crate::pipeline::{CardSwitch, ProfileToneCurve};
 use crate::ui::components::preview_list::{preview_combo, PreviewListItem};
 
 mod mobile;
@@ -770,7 +770,8 @@ impl Sidebar {
 
     /// The Camera profile card: a dropdown of automatic selection, the RAW's
     /// embedded matrix and the matching DCPs. Resting the pointer on one in
-    /// the open menu previews it.
+    /// the open menu previews it. A profile with a tone curve adds a switch
+    /// that renders with it or with the sigmoid.
     fn show_camera_profile_selector(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         if app.preferences.camera_profile_mode == crate::pipeline::CameraProfileMode::MatrixOnly {
             return;
@@ -787,12 +788,40 @@ impl Sidebar {
             &selected,
             app.preferences.camera_profile_folder.as_ref(),
         );
+        // Shown for the profile the photo renders with, not one previewed.
+        let profile_tone_curve = raw
+            .profile_color
+            .camera_profile
+            .tone_curve
+            .is_some()
+            .then_some(app.develop.exposure.profile_tone_curve);
         let mut combo = None;
+        let mut chosen_tone_curve = None;
         moduwu_design::section_card(ui, tr("Camera profile"), |ui| {
             combo = Some(preview_combo(ui, "current-image-camera-profile", items));
+            if let Some(current) = profile_tone_curve {
+                let mut applied = current == ProfileToneCurve::Applied;
+                let toggled = moduwu_design::toggle_with_help(
+                    ui,
+                    &mut applied,
+                    tr("Profile tone curve"),
+                    tr("Renders with the camera profile's own tone curve instead of the default tone mapping."),
+                )
+                .changed();
+                if toggled {
+                    chosen_tone_curve = Some(if applied {
+                        ProfileToneCurve::Applied
+                    } else {
+                        ProfileToneCurve::Ignored
+                    });
+                }
+            }
         });
         moduwu_design::card_gap(ui);
 
+        if let Some(choice) = chosen_tone_curve {
+            app.set_profile_tone_curve(choice);
+        }
         let Some(combo) = combo else {
             return;
         };

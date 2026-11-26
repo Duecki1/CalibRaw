@@ -561,20 +561,12 @@ fn channel_range(rgb: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(min(rgb.r, min(rgb.g, rgb.b)), max(rgb.r, max(rgb.g, rgb.b)));
 }
 
-// Lightroom's RGB tone, as the DNG SDK's RefBaselineRGBTone
-// (dng_reference.cpp) applies a tone curve. `rgb` is linear RGB and `range`
-// its smallest and largest channel (`channel_range`), which take the tone
-// function's values `toned_range`. The middle channel keeps its share of the
-// distance between them, (mid - min) / (max - min), the RGB hue, which is the
-// hue lock Lightroom's curves have; a function steeper than its secant, such
-// as a contrast curve in the midtones, spreads the channels apart and raises
-// saturation. A neutral pixel takes the largest channel's value on every
-// channel.
-//
-// Lightroom does this in linear ProPhoto RGB; the callers keep the working
-// Rec.2020, the space of the channel curves and the global Contrast's
-// per-channel sigmoid. On sRGB-gamut colours the two differ by a few percent
-// of chroma gain and about a degree of hue, most in blues and cyans.
+// Hue-locked RGB tone (DNG SDK, RefBaselineRGBTone in dng_reference.cpp).
+// In linear RGB (Rec.2020 for the edit's controls, ProPhoto for the camera
+// profile's tone curve), the smallest and largest channels take the mapped
+// endpoints. Interpolating the middle channel at its original fraction of
+// that range preserves RGB hue. A neutral pixel takes one value on all
+// three channels.
 fn hue_locked_tone(rgb: vec3<f32>, range: vec2<f32>, toned_range: vec2<f32>) -> vec3<f32> {
     let extent = range.y - range.x;
     if extent <= 0.0 {

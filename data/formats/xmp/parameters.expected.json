@@ -60,6 +60,7 @@
         "hue": 0.0,
         "luminance_denoise": 20.0,
         "point_colors": [],
+        "profile_tone_curve": "applied",
         "saturation": 0.0,
         "shadows": 0.0,
         "sharpen_amount": 40.0,

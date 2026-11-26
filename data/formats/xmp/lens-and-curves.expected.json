@@ -86,6 +86,7 @@
             "saturation_shift": -50.0
           }
         ],
+        "profile_tone_curve": "applied",
         "saturation": 0.0,
         "shadows": 0.0,
         "sharpen_amount": 40.0,

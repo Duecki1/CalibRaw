@@ -636,6 +636,10 @@ impl CalibRawApp {
         let geometry_changed = snapshot.geometry != self.develop.geometry;
         let ai_denoise_changed =
             snapshot.exposure.ai_denoise_enabled != self.develop.exposure.ai_denoise_enabled;
+        // Mask sources render the canonical edit, which keeps the film
+        // negative and the profile tone curve choice.
+        let source_reference_changed =
+            snapshot.exposure.source_reference() != self.develop.exposure.source_reference();
         self.cancel_document_bound_foreground_operation();
 
         self.persistence.history.set_restoring_snapshot(true);
@@ -683,7 +687,7 @@ impl CalibRawApp {
             self.note_geometry_changed();
         }
         self.rehydrate_restored_mask_state();
-        if remove_changed {
+        if remove_changed || source_reference_changed {
             self.note_mask_source_changed();
         }
         if ai_denoise_changed && self.develop.exposure.ai_denoise_enabled {

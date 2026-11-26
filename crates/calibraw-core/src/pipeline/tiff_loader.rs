@@ -28,6 +28,7 @@ const MIN_TIFF_ICC_BYTES: u64 = 132;
 const TAG_BITS_PER_SAMPLE: u16 = 258;
 const TAG_COMPRESSION: u16 = 259;
 const TAG_PHOTOMETRIC: u16 = 262;
+const TAG_SOFTWARE: u16 = 305;
 const TAG_SUB_IFDS: u16 = 330;
 /// TIFF/EP CFARepeatPatternDim and CFAPattern: only sensor data carries them.
 const TAG_CFA_REPEAT_PATTERN_DIM: u16 = 33421;
@@ -39,6 +40,16 @@ const TAG_DNG_VERSION: u16 = 50706;
 pub(super) const PHOTOMETRIC_CFA: u64 = 32803;
 pub(super) const PHOTOMETRIC_LINEAR_RAW: u64 = 34892;
 const MAX_TIFF_ICC_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Software tag of the Develop TIFF writer, including exports with metadata disabled.
+/// Merge writers produce scene-linear masters and do not write this tag.
+pub const DEVELOP_TIFF_SOFTWARE: &str = "CalibRaw 2.0";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Directories {
+    Primary,
+    All,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TiffContainerKind {
@@ -150,7 +161,7 @@ fn has_camera_raw_marks(path: &Path) -> Result<bool> {
     if &header[8..10] == b"CR" {
         return Ok(true);
     }
-    let marked = walk_tiff_fields(path, |file, tag, field| {
+    let marked = walk_tiff_fields(path, Directories::All, |file, tag, field| {
         let sensor = match tag {
             TAG_BITS_PER_SAMPLE => integer_values(file, field, 4)?
                 .into_iter()
@@ -173,16 +184,15 @@ pub(crate) fn is_tiff_path(path: &Path) -> bool {
 }
 
 pub(super) fn has_dng_version(path: &Path) -> Result<bool> {
-    Ok(walk_tiff_fields(path, |_file, tag, field| {
-        // DNGVersion is a four-byte version tuple. Reuse the bounded TIFF
-        // walker so extensionless Android descriptor paths can be identified.
-        Ok((tag == TAG_DNG_VERSION && field.field_type == 1 && field.count == 4).then_some(true))
-    })?
-    .unwrap_or(false))
+    let version = walk_tiff_fields(path, Directories::All, |_file, tag, field| {
+        // DNGVersion is a four-byte version tuple.
+        Ok((tag == TAG_DNG_VERSION && field.field_type == 1 && field.count == 4).then_some(()))
+    })?;
+    Ok(version.is_some())
 }
 
 fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
-    Ok(walk_tiff_fields(path, |file, tag, field| {
+    let kind = walk_tiff_fields(path, Directories::All, |file, tag, field| {
         if matches!(tag, TAG_CFA_REPEAT_PATTERN_DIM | TAG_CFA_PATTERN) {
             return Ok(Some(TiffContainerKind::Sensor));
         }
@@ -194,12 +204,13 @@ fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
             }
         }
         Ok(None)
-    })?
-    .unwrap_or(TiffContainerKind::Raster))
+    })?;
+    Ok(kind.unwrap_or(TiffContainerKind::Raster))
 }
 
 fn walk_tiff_fields<T>(
     path: &Path,
+    directories: Directories,
     mut visit: impl FnMut(&mut File, u16, TiffFieldRef) -> Result<Option<T>>,
 ) -> Result<Option<T>> {
     let (mut file, header) = open_tiff(path)?;
@@ -275,10 +286,16 @@ fn walk_tiff_fields<T>(
             if let Some(value) = visit(&mut file, tag, field)? {
                 return Ok(Some(value));
             }
-            if tag == TAG_SUB_IFDS && pending.len() < MAX_TIFF_SUBIFDS {
+            if directories == Directories::All
+                && tag == TAG_SUB_IFDS
+                && pending.len() < MAX_TIFF_SUBIFDS
+            {
                 let offsets = integer_values(&mut file, field, MAX_TIFF_SUBIFDS - pending.len())?;
                 pending.extend(offsets.into_iter().filter(|offset| *offset != 0));
             }
+        }
+        if directories == Directories::Primary {
+            break;
         }
         file.seek(SeekFrom::Start(next_pos))?;
         let next_ifd = if big_tiff {
@@ -393,16 +410,14 @@ fn integer_values(file: &mut File, field: TiffFieldRef, limit: usize) -> Result<
 }
 
 pub(super) fn load_raster_tiff(path: &Path) -> Result<LoadedRaw> {
-    let (width, height, rgb, source_is_float) = decode_scene_linear_rec2020(path)?;
+    let (width, height, rgb, scene_referred) = decode_scene_linear_rec2020(path)?;
     let mut raw = LoadedRaw::from_scene_linear_rec2020(width, height, rgb)?;
-    // Floating-point TIFFs hold scene radiance (HDR and focus-stack masters, linear
-    // exports); integer TIFFs are developed photos.
-    raw.scene_referred_raster = source_is_float;
+    raw.scene_referred_raster = scene_referred;
     ExifSummary::read_or_default(path).apply_to(&mut raw);
     Ok(raw)
 }
 
-/// Decoded linear Rec.2020 pixels and whether the file stores floating-point samples.
+/// Decoded linear Rec.2020 pixels and whether they need a scene view transform.
 fn decode_scene_linear_rec2020(path: &Path) -> Result<(u32, u32, Vec<f32>, bool)> {
     let image = decode_tiff(path)?;
     let width = image.width();
@@ -415,7 +430,8 @@ fn decode_scene_linear_rec2020(path: &Path) -> Result<(u32, u32, Vec<f32>, bool)
         return Err(anyhow!("TIFF contains NaN or infinity"));
     }
 
-    if let Some(icc) = read_embedded_icc_profile(path)? {
+    let (icc, develop_export) = raster_color_metadata(path)?;
+    if let Some(icc) = icc {
         encoded_rgb_to_scene_linear_rec2020(&mut rgb, EncodedColorSpace::Icc(&icc))
             .with_context(|| format!("apply embedded TIFF ICC profile from {}", path.display()))?;
     } else if !source_is_float {
@@ -423,7 +439,7 @@ fn decode_scene_linear_rec2020(path: &Path) -> Result<(u32, u32, Vec<f32>, bool)
     }
     ensure_finite(&rgb)?;
 
-    Ok((width, height, rgb, source_is_float))
+    Ok((width, height, rgb, source_is_float && !develop_export))
 }
 
 pub(super) fn load_raster_tiff_dimensions(path: &Path) -> Result<[u32; 2]> {
@@ -453,33 +469,60 @@ pub(super) fn load_raster_tiff_thumbnail(path: &Path, maximum_edge: u32) -> Resu
     ))
 }
 
-fn read_embedded_icc_profile(path: &Path) -> Result<Option<Vec<u8>>> {
-    walk_tiff_fields(path, |file, tag, field| {
-        if tag != TAG_ICC_PROFILE {
-            return Ok(None);
+/// Read the colour metadata of the image we decode (IFD0). A later page or
+/// preview can have its own profile. The Develop writer has always stamped
+/// its Software tag and ICC creator together, including on float exports.
+/// Those samples already include the view transform. Our merge masters use
+/// the same linear Rec.2020 profile with no Develop stamp.
+fn raster_color_metadata(path: &Path) -> Result<(Option<Vec<u8>>, bool)> {
+    let mut icc = None;
+    let mut develop_writer = false;
+    walk_tiff_fields(path, Directories::Primary, |file, tag, field| {
+        if tag == TAG_ICC_PROFILE {
+            icc = Some(read_icc_profile(file, field)?);
+        } else if tag == TAG_SOFTWARE && field.field_type == 2 {
+            // The writer used its former name before CalibRaw was renamed.
+            for name in [DEVELOP_TIFF_SOFTWARE, "AuRaw 2.0"] {
+                if field.count == (name.len() + 1) as u64 {
+                    let mut bytes = [0; DEVELOP_TIFF_SOFTWARE.len() + 1];
+                    let value = &mut bytes[..name.len() + 1];
+                    file.seek(SeekFrom::Start(field.data_offset(field.count)))?;
+                    file.read_exact(value)?;
+                    develop_writer = value.strip_suffix(&[0]) == Some(name.as_bytes());
+                }
+            }
         }
-        anyhow::ensure!(
-            matches!(field.field_type, 1 | 7),
-            "TIFF ICC profile tag has unsupported field type {}",
-            field.field_type
-        );
-        anyhow::ensure!(
-            (MIN_TIFF_ICC_BYTES..=MAX_TIFF_ICC_BYTES).contains(&field.count),
-            "TIFF ICC profile has an invalid size"
-        );
-        let data_offset = field.data_offset(field.count);
-        anyhow::ensure!(
-            data_offset
-                .checked_add(field.count)
-                .is_some_and(|end| end <= field.file_len),
-            "TIFF ICC profile extends outside the file"
-        );
-        file.seek(SeekFrom::Start(data_offset))?;
-        let mut bytes =
-            vec![0u8; usize::try_from(field.count).context("TIFF ICC profile size overflow")?];
-        file.read_exact(&mut bytes)?;
-        Ok(Some(normalize_icc_profile(bytes)?))
-    })
+        Ok(None::<()>)
+    })?;
+    let develop_export = develop_writer
+        && icc
+            .as_ref()
+            .is_some_and(|profile| &profile[80..84] == b"AuRw");
+    Ok((icc, develop_export))
+}
+
+fn read_icc_profile(file: &mut File, field: TiffFieldRef) -> Result<Vec<u8>> {
+    anyhow::ensure!(
+        matches!(field.field_type, 1 | 7),
+        "TIFF ICC profile tag has unsupported field type {}",
+        field.field_type
+    );
+    anyhow::ensure!(
+        (MIN_TIFF_ICC_BYTES..=MAX_TIFF_ICC_BYTES).contains(&field.count),
+        "TIFF ICC profile has an invalid size"
+    );
+    let data_offset = field.data_offset(field.count);
+    anyhow::ensure!(
+        data_offset
+            .checked_add(field.count)
+            .is_some_and(|end| end <= field.file_len),
+        "TIFF ICC profile extends outside the file"
+    );
+    file.seek(SeekFrom::Start(data_offset))?;
+    let mut bytes =
+        vec![0u8; usize::try_from(field.count).context("TIFF ICC profile size overflow")?];
+    file.read_exact(&mut bytes)?;
+    normalize_icc_profile(bytes)
 }
 
 fn normalize_icc_profile(mut bytes: Vec<u8>) -> Result<Vec<u8>> {

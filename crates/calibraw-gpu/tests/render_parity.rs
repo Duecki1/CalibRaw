@@ -28,7 +28,8 @@ use calibraw_core::sidecar::{self, EditState};
 use calibraw_gpu::pipeline::{
     build_proxy, spawn_tiled_export, CfaKind, CompactPixelMap, ExportBitDepth, ExportEvent,
     ExportFiles, ExportFormat, ExportMetadata, ExportSettings, ExportTarget, LoadedRaw,
-    OutputColorSpace, ProxySpec, SourceCorrections, TileSpec, TiledExportJob,
+    OutputColorSpace, ProfileColor, ProxySpec, SourceCorrections, TileSpec, TiledExportJob,
+    ToneCurve,
 };
 use calibraw_gpu::{request_headless_device, wgpu, HeadlessAdapter, HeadlessDeviceRequest};
 use image::{ImageBuffer, Rgb, RgbImage};
@@ -189,6 +190,19 @@ const HOT_PHOTOSITES: [(u32, u32, f32); 9] = [
     (0, 100, 1.0),
 ];
 
+/// The tone curve of the `-profile-tone` inputs' camera profile, as a DCP's
+/// ProfileToneCurve holds it: linear in and out, from (0, 0) to (1, 1),
+/// lifting the midtones and flattening towards white as camera profiles do.
+const PROFILE_TONE_CURVE: [[f32; 2]; 7] = [
+    [0.0, 0.0],
+    [0.02, 0.035],
+    [0.1, 0.22],
+    [0.25, 0.48],
+    [0.5, 0.78],
+    [0.75, 0.93],
+    [1.0, 1.0],
+];
+
 /// The synthetic photo a case develops:
 /// - `scene`: the test scene as scene-linear Rec.2020, which skips the sensor
 ///   stages;
@@ -196,6 +210,8 @@ const HOT_PHOTOSITES: [(u32, u32, f32); 9] = [
 ///   with black level, white balance, clipped highlights and noise;
 /// - `bayer-hot` and `xtrans-hot`: those mosaics with [`HOT_PHOTOSITES`];
 /// - `<mosaic>-binned`: a mosaic binned ([`Input::binned`]);
+/// - `<mosaic>-profile-tone`: a mosaic whose camera profile has a tone curve
+///   ([`PROFILE_TONE_CURVE`]);
 /// - `<input>-<colour space>`: any of these exported in a colour space other
 ///   than sRGB, named by its `OutputColorSpace::id` (`scene-display-p3`).
 fn input(name: &str) -> Input {
@@ -206,6 +222,14 @@ fn input(name: &str) -> Input {
                 ..input(input_name)
             };
         }
+    }
+    if let Some(sensor) = name.strip_suffix("-profile-tone") {
+        let mut input = input(sensor);
+        let mut color = ProfileColor::clone(&input.raw.profile_color);
+        color.camera_profile.tone_curve =
+            Some(ToneCurve::new(PROFILE_TONE_CURVE.to_vec()).unwrap());
+        input.raw.profile_color = Arc::new(color);
+        return input;
     }
     if let Some(sensor) = name.strip_suffix("-binned") {
         return Input {
@@ -242,7 +266,8 @@ fn input(name: &str) -> Input {
         "xtrans" => (CfaKind::XTrans, 6, XTRANS.concat()),
         _ => panic!(
             "unknown input {name:?}; use scene, bayer or xtrans, each mosaic optionally \
-             with -hot and then -binned, and any optionally with a colour space"
+             with -hot, then -binned and then -profile-tone, and any optionally with a \
+             colour space"
         ),
     };
     // As-shot white balance: red and blue reach the sensor weaker than green.

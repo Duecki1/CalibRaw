@@ -107,8 +107,13 @@ pub(super) fn pack_camera_params(
         demosaic_mode: exposure.demosaic_mode.shader_value(),
         dual_threshold: exposure.dual_threshold.clamp(0.0, 100.0),
         frequency_chroma: exposure.frequency_chroma.clamp(0.0, 1.0),
-        view_transform_mode: ViewTransformMode::select(raw, exposure, camera_linear_raster)
-            .shader_value(),
+        view_transform_mode: ViewTransformMode::select(
+            raw,
+            &color.camera_profile,
+            exposure,
+            camera_linear_raster,
+        )
+        .shader_value(),
         padding_0: 0,
         padding_1: 0,
         highlight_options: [

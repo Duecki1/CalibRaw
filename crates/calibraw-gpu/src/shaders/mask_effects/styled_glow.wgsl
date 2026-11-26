@@ -825,9 +825,16 @@ fn styled_glow_core_active(params: MaskEffectParams) -> bool {
 }
 
 // The level Core keeps the glow below: the scene value at which the view
-// transform's path to white begins.
+// transform's path to white begins, the profile tone's shoulder for the
+// camera profile's tone curve.
 fn styled_glow_core_ceiling() -> f32 {
-    if Common::camera_uniforms.view_transform_mode == Common::VIEW_TRANSFORM_SCENE_SIGMOID {
+    let mode = Common::camera_uniforms.view_transform_mode;
+    if mode == Common::VIEW_TRANSFORM_PROFILE_TONE
+        || mode == Common::VIEW_TRANSFORM_PROFILE_TONE_RETONE
+    {
+        return Profile::PROFILE_TONE_SHOULDER_START;
+    }
+    if mode == Common::VIEW_TRANSFORM_SCENE_SIGMOID {
         let curve = Tonemap::edit_sigmoid_curve();
         if Tonemap::sigmoid_curve_is_valid(curve) {
             return Tonemap::inverse_loglogistic_curve(

@@ -1,21 +1,17 @@
-//! Lightroom's Calibration sliders: the hue and saturation of the red, green
-//! and blue primaries.
+//! Hue and saturation of the red, green and blue working primaries.
 //!
 //! Each primary of the working space (linear Rec.2020 with its D65 white) is
 //! rotated about white in CIE 1931 xy by its Hue and moved towards or away
 //! from white by its Saturation. [`Calibration::working_matrix`] reads working
 //! RGB as if its primaries were the adjusted ones while white stays where it
-//! was. The render folds it into the camera-to-working matrix. Adobe documents
-//! the Calibration sliders as the same controls as the Color Matrices tab of
-//! its DNG Profile Editor, which edits the camera profile's matrix, so like
-//! Lightroom's they act before the profile's hue/saturation and look tables
-//! and before exposure. Lightroom applies them to rendered photos too.
+//! was. The render folds this transform into the camera-to-working matrix,
+//! before the profile's hue/saturation and look tables and before exposure.
+//! It also applies to rendered inputs.
 //!
-//! The parametrization and slider ranges are those of ART's channel mixer in
-//! its primaries mode (`get_mixer_matrix` in `src/engine/ipchmixer.cc`, ART
-//! 1.26.10-77-g9429cd370), written by Alberto Griggio as an analogue of
-//! Lightroom's Calibration after the four-color matrix method of Ohno and
-//! Hardis (1997). It differs where ART does not keep white or a valid matrix:
+//! The parametrization and slider ranges follow Alberto Griggio's primaries
+//! mode in ART's channel mixer (`get_mixer_matrix` in `src/engine/ipchmixer.cc`,
+//! ART 1.26.10-77-g9429cd370), based on the four-color matrix method of Ohno
+//! and Hardis (1997). The handling of white and matrix validity differs:
 //! - ART multiplies the adjusted matrix by the inverse of the original
 //!   (`N * M^-1`), which tints white. Here working RGB goes to XYZ through the
 //!   adjusted primaries and back through the original ones (`M^-1 * N`), as
@@ -30,7 +26,7 @@
 
 use crate::matrix::{self, Matrix3};
 
-/// Limit of every Calibration slider, in Lightroom's units.
+/// Maximum absolute value of a Calibration slider.
 pub const CALIBRATION_LIMIT: f32 = 100.0;
 
 /// ITU-R BT.2020 primaries (red, green, blue) and its D65 white in CIE 1931
@@ -50,7 +46,7 @@ const FULL_SATURATION_CHANGE: [f32; 3] = [0.3, 0.5, 0.5];
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PrimaryCalibration {
     /// Rotation about white: positive turns red towards orange, green
-    /// towards cyan and blue towards purple, as in Lightroom and ART.
+    /// towards cyan and blue towards purple.
     pub hue: f32,
     /// Distance from white: positive is more saturated.
     pub saturation: f32,
@@ -62,7 +58,7 @@ impl PrimaryCalibration {
     }
 }
 
-/// Lightroom's Calibration panel, apart from its Shadows Tint.
+/// Hue and saturation adjustments for all three primaries.
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Calibration {
     pub red: PrimaryCalibration,

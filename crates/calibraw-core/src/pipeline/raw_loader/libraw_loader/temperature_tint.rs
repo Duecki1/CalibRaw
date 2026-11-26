@@ -1,10 +1,8 @@
 //! White balance models: daylight, temperature/tint ranges and conversions.
 //!
-//! Temperature and tint locate the white being balanced as the DNG SDK and
-//! Lightroom do: the correlated colour temperature on the Planckian locus and
-//! the distance from the locus along its isotherm (see `cct.rs`). Tints are
-//! in Lightroom units, positive for whites greener than the locus, which
-//! balancing turns magenta.
+//! Temperature locates the balanced white along the Planckian locus. Tint
+//! measures its distance along the isotherm (see `cct.rs`). Positive tint
+//! balances a greenish white by adding magenta.
 //!
 //! As in the DNG SDK, a dual-illuminant profile's matrices depend on the
 //! white: every conversion between a white and camera responses uses the
@@ -316,7 +314,7 @@ fn white_xyz(temperature: f32, tint: f32) -> Option<[f32; 3]> {
 // Rounding inward to the displayed precision also prevents a drag/typed value
 // from rounding onto a white beyond the usable limits.
 const MIN_WB_CAMERA_RESPONSE: f32 = 1e-8;
-/// Tint ticks per unit; the slider shows whole tints, as Lightroom does.
+/// Tint ticks per unit for a slider displaying whole tint values.
 const TINT_PRECISION: f64 = 1.0;
 
 /// Largest ratio between the strongest and the weakest channel gain that the

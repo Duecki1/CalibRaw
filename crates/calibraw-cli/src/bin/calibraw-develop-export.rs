@@ -141,7 +141,7 @@ fn run() -> Result<()> {
     if let Some(directory) = &args.suite_output {
         std::fs::create_dir_all(directory)
             .with_context(|| format!("create suite directory {}", directory.display()))?;
-        for (label, adjustment) in REFERENCE_CONTRAST_SUITE {
+        for (label, adjustment) in ADJUSTMENT_SUITE {
             if !args.suite_only.is_empty() && !args.suite_only.iter().any(|value| value == label) {
                 continue;
             }
@@ -297,7 +297,7 @@ fn default_exposure_for_raw(raw: &calibraw_cli::pipeline::LoadedRaw) -> Exposure
     exposure
 }
 
-const REFERENCE_CONTRAST_SUITE: &[(&str, Option<(&str, f32)>)] = &[
+const ADJUSTMENT_SUITE: &[(&str, Option<(&str, f32)>)] = &[
     ("baseline", None),
     ("exposure_plus1_25", Some(("exposure", 1.25))),
     ("exposure_minus1_25", Some(("exposure", -1.25))),
@@ -487,7 +487,7 @@ fn parse_args() -> Result<Args> {
         bail!("--skip-existing requires --suite-output");
     }
     for label in &suite_only {
-        if !REFERENCE_CONTRAST_SUITE
+        if !ADJUSTMENT_SUITE
             .iter()
             .any(|(candidate, _)| candidate == label)
         {
@@ -575,8 +575,7 @@ fn print_help() {
         "sharpen_amount, sharpen_radius, sharpen_detail, sharpen_masking, demosaic_mode\n",
         "(0 Reference, 1 frequency-domain chroma, 2 dual), dual_threshold,\n",
         "frequency_chroma and chromatic_aberration (0 to 100). The suite\n",
-        "exports isolated endpoints matching the standard\n",
-        "Reference comparison set. --sidecar exports the edit a CalibRaw\n",
+        "exports each adjustment in isolation. --sidecar exports the edit a CalibRaw\n",
         "sidecar stores (without its creative LUT); adjustments apply on top of it.\n",
         "Without it, lens profile correction is not applied. --program-cache keeps\n",
         "compiled GPU programs in a directory, as the app does. CALIBRAW_GPU_STAGE_TIMING=1\n",

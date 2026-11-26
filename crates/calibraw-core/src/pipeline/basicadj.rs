@@ -111,12 +111,10 @@ impl Default for PointCurve {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToneResponse {
-    /// As Lightroom and the DNG SDK (`RefBaselineRGBTone`) apply a tone
-    /// curve: the largest and smallest channel go through the control's tone
-    /// function and the middle channel keeps its place between them, which
-    /// locks the RGB hue. Contrast raises saturation with it. Lightroom works
-    /// in linear ProPhoto RGB; this works in the working linear Rec.2020, as
-    /// the channel curves and the global Contrast do.
+    /// Map the smallest and largest linear Rec.2020 channels through the
+    /// tone curve and keep the middle channel's relative position between
+    /// them. This preserves RGB hue as contrast changes saturation
+    /// (DNG SDK, `RefBaselineRGBTone`).
     #[default]
     Rgb,
     /// The control maps the luminance and scales RGB by the same ratio,
@@ -134,6 +132,23 @@ impl ToneResponse {
     pub const fn is_luminance(self) -> bool {
         matches!(self, Self::Luminance)
     }
+}
+
+/// Whether the camera profile's own tone curve (the DCP's ProfileToneCurve)
+/// renders the scene, in place of the sigmoid. A profile without one renders
+/// with the sigmoid either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileToneCurve {
+    /// The profile's curve maps the scene to the display, and the sigmoid
+    /// settings and Contrast retone its result relative to the default
+    /// sigmoid, so at their defaults the photo renders as the profile
+    /// intends.
+    #[default]
+    Applied,
+    /// The sigmoid maps the scene to the display, as for a profile without a
+    /// curve.
+    Ignored,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -203,7 +218,7 @@ const DARKTABLE_SIGMOID_CONTRAST_SOFT_MIN: f32 = 0.7;
 const DARKTABLE_SIGMOID_CONTRAST_SOFT_MAX: f32 = 3.0;
 pub const MIN_TEMPERATURE_KELVIN: f32 = 1_901.0;
 pub const MAX_TEMPERATURE_KELVIN: f32 = 25_000.0;
-/// Limits of the white-balance tint the sliders show, in Lightroom units:
+/// Limits of the white-balance tint the sliders show:
 /// 3000 × the CIE 1960 uv distance from the Planckian locus along the
 /// isotherm, positive for whites greener than the locus, which balancing
 /// turns magenta.
@@ -292,6 +307,10 @@ pub struct ExposureParams {
     #[serde(default)]
     pub contrast: f32,
     pub sigmoid: SigmoidParams,
+    /// Written in every file: one without it was saved before the profile's
+    /// tone curve rendered (`migrations/profile_tone_curves.rs`).
+    #[serde(default)]
+    pub profile_tone_curve: ProfileToneCurve,
     #[serde(flatten, with = "crate::migrations::white_balance_offsets")]
     pub white_balance: WhiteBalance,
     /// Warm (+100) to cool (-100) shift of a rendered photo
@@ -394,8 +413,7 @@ pub struct ExposureParams {
 
     pub color_grading: ColorGrading,
 
-    /// Lightroom's Calibration of the primaries. Left out of files while
-    /// neutral, which stay as they were.
+    /// Hue and saturation of the working primaries. Omitted when neutral.
     #[serde(default, skip_serializing_if = "Calibration::is_neutral")]
     pub calibration: Calibration,
 
@@ -433,11 +451,15 @@ impl ExposureParams {
     }
 
     /// The default edit of this edit's source, which canonical renderings
-    /// such as mask sources develop. A film negative stays one: it is how the
-    /// source is read, not an edit of it.
+    /// such as mask sources and Camera match's fit develop. A film negative
+    /// stays one: it is how the source is read, not an edit of it. The
+    /// profile's tone curve stays applied or ignored as the edit has it: it is
+    /// the rendering the edit builds on, so a Camera match look fitted on the
+    /// canonical rendering fits the edit's.
     pub fn source_reference(&self) -> Self {
         Self {
             film: self.film,
+            profile_tone_curve: self.profile_tone_curve,
             ..Self::scene_referred_default()
         }
     }
@@ -450,6 +472,7 @@ impl Default for ExposureParams {
             exposure: 0.0,
             contrast: 0.0,
             sigmoid: SigmoidParams::default(),
+            profile_tone_curve: ProfileToneCurve::Applied,
             white_balance: WhiteBalance::AsShot,
             raster_temperature: 0.0,
             hue: 0.0,

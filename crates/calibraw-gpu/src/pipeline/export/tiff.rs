@@ -1,7 +1,7 @@
 //! Tiled TIFF writer.
 
 use super::*;
-use calibraw_core::pipeline::ExifIfd;
+use calibraw_core::pipeline::{ExifIfd, DEVELOP_TIFF_SOFTWARE};
 
 pub(super) fn export_tiled_tiff(
     context: ExportContext<'_>,
@@ -170,7 +170,7 @@ pub(super) fn write_tiff_header<W: Write>(
             .checked_mul(std::mem::size_of::<u32>())
             .context("TIFF strip-offset array size overflow")?
     ];
-    let software = tiff_ascii_entry(305, "CalibRaw 2.0")?;
+    let software = tiff_ascii_entry(305, DEVELOP_TIFF_SOFTWARE)?;
 
     let mut entries = vec![
         TiffEntry {

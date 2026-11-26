@@ -140,7 +140,8 @@ pub(super) enum ViewTransformMode {
     Passthrough,
     /// Scene radiance (RAWs, camera-linear and scene-referred rasters) takes
     /// the sigmoid view transform. `scene_working_at` in scene_source.wgsl
-    /// also compresses these sources into Rec.2020.
+    /// also compresses these sources, and those of the profile tone modes,
+    /// into Rec.2020.
     SceneSigmoid,
     /// A developed raster whose tone curve differs from the reference is
     /// retoned relative to it: each value is mapped back through the reference
@@ -148,29 +149,44 @@ pub(super) enum ViewTransformMode {
     /// at the reference curve, so tone edits start continuously from the
     /// rendered photo instead of jumping to the scene transform.
     DisplayRetone,
+    /// Scene radiance rendered by the camera profile's tone curve
+    /// ([`ProfileToneCurve::Applied`]) while the sigmoid is at the reference
+    /// curve.
+    ProfileTone,
+    /// [`Self::ProfileTone`] with a sigmoid that differs from the reference:
+    /// the curve's display values are retoned as [`Self::DisplayRetone`]
+    /// retones a developed raster, so Contrast and the sigmoid settings work
+    /// on the profile's rendering and start continuously from it.
+    ProfileToneRetone,
 }
 
 impl ViewTransformMode {
+    /// The mode of `exposure` rendering `raw` with `profile`, the camera
+    /// profile the render applies (`GpuParamContext::color`).
     pub(super) fn select(
         raw: &LoadedRaw,
+        profile: &CameraProfile,
         exposure: &ExposureParams,
         camera_linear_raster: bool,
     ) -> Self {
-        // The positive of a negative scan is scene radiance, whatever the
-        // scan's own encoding.
-        if camera_linear_raster
-            || !raw.is_pre_demosaiced_raster()
-            || raw.scene_referred_raster
-            || !exposure.film.is_positive()
-        {
-            Self::SceneSigmoid
-        } else if same_tone_curve(
+        let at_reference_curve = same_tone_curve(
             tone_sigmoid_coefficients(exposure),
             reference_sigmoid_coefficients(),
-        ) {
-            Self::Passthrough
-        } else {
-            Self::DisplayRetone
+        );
+        // The positive of a negative scan is scene radiance, whatever the
+        // scan's own encoding.
+        let scene_radiance = camera_linear_raster
+            || !raw.is_pre_demosaiced_raster()
+            || raw.scene_referred_raster
+            || !exposure.film.is_positive();
+        let profile_tone = profile.tone_curve.is_some()
+            && exposure.profile_tone_curve == ProfileToneCurve::Applied;
+        match (scene_radiance, profile_tone, at_reference_curve) {
+            (true, false, _) => Self::SceneSigmoid,
+            (true, true, true) => Self::ProfileTone,
+            (true, true, false) => Self::ProfileToneRetone,
+            (false, _, true) => Self::Passthrough,
+            (false, _, false) => Self::DisplayRetone,
         }
     }
 
@@ -179,6 +195,8 @@ impl ViewTransformMode {
             Self::Passthrough => 0,
             Self::SceneSigmoid => 1,
             Self::DisplayRetone => 2,
+            Self::ProfileTone => 3,
+            Self::ProfileToneRetone => 4,
         }
     }
 }

@@ -169,7 +169,7 @@ fn export_format_card(
                 "export-bit-depth",
                 tr(settings.bit_depth.label()),
                 EXPORT_FIELD_WIDTH,
-                tr("8-bit is broadly compatible; 16-bit retains more tonal precision; 32-bit float writes a scene-linear TIFF master."),
+                tr("8-bit offers broad compatibility. 16-bit preserves finer tonal steps. 32-bit float stores the developed image in linear Rec.2020."),
                 |ui| {
                     for depth in [
                         ExportBitDepth::Eight,

@@ -62,9 +62,10 @@ fn film_positive(camera_rgb: vec3<f32>) -> vec3<f32> {
 
 // Scene radiance (RAWs, camera-linear and float rasters) rather than a
 // developed photo. Rust's ViewTransformMode::select makes this decision and
-// gives exactly these sources the scene view transform.
+// gives exactly these sources a scene view transform: the sigmoid or the
+// camera profile's tone curve.
 fn source_is_scene_referred() -> bool {
-    return Common::camera_uniforms.view_transform_mode == Common::VIEW_TRANSFORM_SCENE_SIGMOID;
+    return Common::view_transform_renders_scene();
 }
 
 // Camera RGB `camera_rgb` in linear working RGB, before camera

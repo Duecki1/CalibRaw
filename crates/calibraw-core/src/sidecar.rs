@@ -610,6 +610,7 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
     }
 
     let (mut document, legacy_depth) = decode_versioned_document(bytes, header.schema_version)?;
+    let legacy_profile_tone_curve = header.edits.profile_tone_curve();
     // Mask indices still match the serialized masks here.
     let edits_migrated = migrations::migrate_edits(&mut document.edits, header.edits);
     // Before restoring the assets: older layouts keep depth among them.
@@ -660,6 +661,9 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
             migrations::edit_fingerprints::edited_without_fingerprints(&document.edits)?,
         ),
     };
+    // After the start is taken: a photo at its start keeps the default.
+    let profile_tone_curve_migrated =
+        legacy_profile_tone_curve.migrate(&mut document.edits.exposure, edited);
     Ok(LoadedSidecar {
         edits: document.edits,
         review: PhotoReview {
@@ -669,7 +673,7 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
         editing_time_ms: document.editing_time_ms,
         start,
         edited,
-        migrated: depth_migrated || edits_migrated,
+        migrated: depth_migrated || edits_migrated || profile_tone_curve_migrated,
     })
 }
 
