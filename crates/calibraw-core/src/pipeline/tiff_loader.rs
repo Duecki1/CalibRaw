@@ -432,8 +432,12 @@ fn decode_scene_linear_rec2020(path: &Path) -> Result<(u32, u32, Vec<f32>, bool)
 
     let (icc, develop_export) = raster_color_metadata(path)?;
     if let Some(icc) = icc {
-        encoded_rgb_to_scene_linear_rec2020(&mut rgb, EncodedColorSpace::Icc(&icc))
-            .with_context(|| format!("apply embedded TIFF ICC profile from {}", path.display()))?;
+        super::color_profile::convert_input_rgb_to_rec2020(
+            &icc,
+            &mut rgb,
+            source_is_float && develop_export,
+        )
+        .with_context(|| format!("apply embedded TIFF ICC profile from {}", path.display()))?;
     } else if !source_is_float {
         encoded_rgb_to_scene_linear_rec2020(&mut rgb, EncodedColorSpace::SRGB)?;
     }

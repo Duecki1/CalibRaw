@@ -17,6 +17,17 @@ use crate::matrix::{transform, Matrix3};
 /// D50 rounded to four decimals as every ICC profile records it.
 pub const ICC_PCS_D50_XYZ: [f32; 3] = [0.9642, 1.0, 0.8249];
 
+/// D50 PCS colorants of CalibRaw's linear Rec.2020 float profile, rounded
+/// to the s15Fixed16 values in its XYZ tags. Shared by TIFF export and import.
+pub fn linear_rec2020_icc_colorants() -> Matrix3 {
+    [
+        [0.673_424_1, 0.165_641_1, 0.125_128_6],
+        [0.279_017_7, 0.675_340_2, 0.045_637_7],
+        [-0.001_930_0, 0.029_978_4, 0.797_333],
+    ]
+    .map(|row| row.map(s15_fixed16))
+}
+
 /// An output colour space of 8- and 16-bit exports.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OutputColorSpace {

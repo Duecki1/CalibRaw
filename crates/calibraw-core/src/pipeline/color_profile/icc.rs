@@ -81,8 +81,8 @@ impl TransferCurve {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct MatrixShaperProfile {
-    device_to_rec2020: [[f32; 3]; 3],
+struct MatrixShaperProfile {
+    device_to_pcs: [[f32; 3]; 3],
     curves: [TransferCurve; 3],
 }
 
@@ -149,18 +149,17 @@ impl MatrixShaperProfile {
         ];
         curves.iter().try_for_each(TransferCurve::validate)?;
         Ok(Self {
-            device_to_rec2020: device_to_rec2020_from_colorants(device_to_pcs)?,
+            device_to_pcs,
             curves,
         })
     }
 
-    fn transform_input_to_rec2020(&self, encoded: [f32; 3]) -> [f32; 3] {
-        let linear = [
+    fn decode(&self, encoded: [f32; 3]) -> [f32; 3] {
+        [
             self.curves[0].forward_extended(encoded[0]),
             self.curves[1].forward_extended(encoded[1]),
             self.curves[2].forward_extended(encoded[2]),
-        ];
-        transform(self.device_to_rec2020, linear)
+        ]
     }
 }
 
@@ -183,14 +182,30 @@ fn device_to_rec2020_from_colorants(device_to_pcs: [[f32; 3]; 3]) -> Result<[[f3
     ))
 }
 
-pub(super) fn convert_input_rgb_to_rec2020(bytes: &[u8], rgb: &mut [f32]) -> Result<()> {
+pub(in crate::pipeline) fn convert_input_rgb_to_rec2020(
+    bytes: &[u8],
+    rgb: &mut [f32],
+    develop_float_tiff: bool,
+) -> Result<()> {
     if !rgb.len().is_multiple_of(3) {
         bail!("ICC source RGB buffer length must be divisible by three");
     }
     let profile = MatrixShaperProfile::parse_input(bytes)?;
+    // The Develop writer stores the working samples themselves. Reconstructing
+    // their primaries from rounded ICC colorants perturbs saturated colours.
+    if develop_float_tiff
+        && profile.device_to_pcs == crate::pipeline::linear_rec2020_icc_colorants()
+        && profile
+            .curves
+            .iter()
+            .all(|curve| matches!(curve, TransferCurve::Identity))
+    {
+        return Ok(());
+    }
+    let matrix = device_to_rec2020_from_colorants(profile.device_to_pcs)?;
     for pixel in rgb.chunks_exact_mut(3) {
-        let converted = profile.transform_input_to_rec2020([pixel[0], pixel[1], pixel[2]]);
-        pixel.copy_from_slice(&converted);
+        let linear = profile.decode([pixel[0], pixel[1], pixel[2]]);
+        pixel.copy_from_slice(&transform(matrix, linear));
     }
     Ok(())
 }

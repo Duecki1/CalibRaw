@@ -141,7 +141,7 @@ pub(super) fn encoded_rgb_to_scene_linear_rec2020(
 ) -> Result<()> {
     match space {
         EncodedColorSpace::Icc(profile) => {
-            super::color_profile::convert_embedded_icc_rgb_to_rec2020(profile, rgb)
+            super::color_profile::convert_input_rgb_to_rec2020(profile, rgb, false)
         }
         EncodedColorSpace::Coded {
             primaries,

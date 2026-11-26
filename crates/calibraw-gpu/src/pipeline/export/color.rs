@@ -228,11 +228,7 @@ fn build_matrix_shaper_icc(
 pub(in crate::pipeline) fn linear_rec2020_icc() -> Vec<u8> {
     build_matrix_shaper_icc(
         "Linear Rec.2020",
-        [
-            [0.673_424_1, 0.165_641_1, 0.125_128_6],
-            [0.279_017_7, 0.675_340_2, 0.045_637_7],
-            [-0.001_930_0, 0.029_978_4, 0.797_333],
-        ],
+        calibraw_core::pipeline::linear_rec2020_icc_colorants(),
         IccTransfer::Linear,
         None,
     )

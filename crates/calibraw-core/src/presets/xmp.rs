@@ -1,7 +1,7 @@
 //! Importing `.xmp` develop presets.
 //!
 //! An XMP preset stores develop settings in the Camera Raw settings schema
-//! (the `crs:` namespace), the format Adobe Lightroom writes its presets in.
+//! (the `crs:` namespace).
 //! Each top-level `rdf:Description` holds the preset's own properties, either
 //! as `crs:*` attributes or inside a `crs:Parameters` description. Only those
 //! descriptions and their direct children are read: nested structures such

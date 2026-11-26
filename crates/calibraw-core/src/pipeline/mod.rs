@@ -94,7 +94,10 @@ pub use masks::{
     MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_MASK_PEOPLE, MAX_PATH_POINTS, OPTION_COUNT,
 };
 pub use noise::{AdaptiveDetailDefaults, DenoiseQuality, NoiseProfile};
-pub use output_color::{OutputColorSpace, OutputTransfer, OutputTransform, ICC_PCS_D50_XYZ};
+pub use output_color::{
+    linear_rec2020_icc_colorants, OutputColorSpace, OutputTransfer, OutputTransform,
+    ICC_PCS_D50_XYZ,
+};
 pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
 pub use processing::{
     affected_stage, build_proxy, build_region_proxy, build_region_proxy_until, crop_raw,

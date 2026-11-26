@@ -16,9 +16,7 @@ const PROFILE_TONE_LUT_SIZE: usize = 4096;
 const MAX_DCP_TAG_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_DCP_MAP_ENTRIES: usize = 1_000_000;
 const MAX_DCP_TONE_POINTS: usize = 65_536;
-pub(super) fn convert_embedded_icc_rgb_to_rec2020(bytes: &[u8], rgb: &mut [f32]) -> Result<()> {
-    icc::convert_input_rgb_to_rec2020(bytes, rgb)
-}
+pub(super) use icc::convert_input_rgb_to_rec2020;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ProfileEncoding {
