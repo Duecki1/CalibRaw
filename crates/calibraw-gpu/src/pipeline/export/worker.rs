@@ -214,13 +214,12 @@ fn device_export_core_edge(
         maximum_padded = maximum_padded
             .min(export_mask_atlas_edge_limit().saturating_sub(margin.saturating_mul(2)));
     }
-    let shape = ExportTileShape {
-        cfa_kind: raw.cfa_kind,
-        layout: raw.pixel_layout(),
-        ai_cfa: exposure.ai_denoise_enabled,
-        mask_layers: masks.masks.len(),
-        profile_bytes: PREVIEWED_PROFILE_BYTES,
-    };
+    let shape = ExportTileShape::of(
+        raw,
+        exposure.ai_denoise_enabled,
+        masks.masks.len(),
+        PREVIEWED_PROFILE_BYTES,
+    );
     let Some(padded) = RawGpuPipeline::mobile_export_padded_edge(maximum_padded, shape, |edge| {
         export_tile_mask_atlas_edge(masks, [raw.width, raw.height], [edge, edge])
     }) else {

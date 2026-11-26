@@ -397,8 +397,15 @@ impl CalibRawApp {
         }
 
         // Constrained memory updates the current preview in place instead of
-        // building a second pipeline next to it.
-        if self.caps().constrained_memory() {
+        // building a second pipeline next to it, unless the pipeline cannot
+        // take the corrected proxy: one that now records clipping its graph
+        // was built without.
+        let in_place = self.caps().constrained_memory()
+            && self
+                .preview
+                .pipeline()
+                .is_none_or(|pipeline| pipeline.accepts_tile(&prepared.preview_raw));
+        if in_place {
             let Some(pipeline) = self.preview.pipeline() else {
                 return Err(tr("The preview pipeline is unavailable.").to_owned());
             };

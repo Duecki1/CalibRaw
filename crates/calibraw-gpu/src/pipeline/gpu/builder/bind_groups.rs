@@ -19,8 +19,9 @@ pub(in crate::pipeline::gpu) struct BindGroups {
         Option<[wgpu::BindGroup; XTRANS_MARKESTEIJN_ENTRIES.len()]>,
     pub(in crate::pipeline::gpu) bg_xtrans_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_raster_finish: wgpu::BindGroup,
-    /// The raster finish program reading a binned source's reconstructed
-    /// camera RGB.
+    /// The raster finish program reading the camera RGB that binned or
+    /// camera-linear raster highlight reconstruction writes to highlight
+    /// work A.
     pub(in crate::pipeline::gpu) bg_highlight_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_color_denoise: [wgpu::BindGroup; 6],
     pub(in crate::pipeline::gpu) bg_chromatic_aberration_prepare: wgpu::BindGroup,
@@ -440,7 +441,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_raster_finish =
         make_color_denoise_bind_group("bg raster finish", rgb_source_view, scene_view);
     let bg_highlight_finish =
-        make_color_denoise_bind_group("bg binned finish", highlight_work_a_view, scene_view);
+        make_color_denoise_bind_group("bg highlight finish", highlight_work_a_view, scene_view);
     let bg_color_denoise = [
         make_color_denoise_bind_group("bg color denoise scale 1", scene_view, tex1_view),
         make_color_denoise_bind_group("bg color denoise scale 2", tex1_view, tex2_view),

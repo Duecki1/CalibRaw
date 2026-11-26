@@ -936,12 +936,6 @@ impl RawGpuPipeline {
         self.mask_layer_capacity
     }
 
-    /// The layout of the source the graph was built for, which
-    /// [`Self::upload_raw_tile`] requires of every tile.
-    pub const fn pixel_layout(&self) -> PixelLayout {
-        self.layout
-    }
-
     pub fn immutable_ai_source_matches(&self, cfa_kind: CfaKind, enabled: bool) -> bool {
         match cfa_kind {
             CfaKind::Bayer => self.has_ai_cfa == enabled,
@@ -1086,6 +1080,26 @@ impl RawGpuPipeline {
         format!("{stage} {}x{}", self.width, self.height)
     }
 
+    /// Whether [`Self::upload_raw_tile`] accepts `raw`: the size, layout and
+    /// kind of raster the graph was built for, with a clipping record
+    /// ([`LoadedRaw::averaged_clipping`]) only where the graph holds a
+    /// full-size clipping texture. A reduced camera-linear raster's graph
+    /// holds one only when its first source recorded clipping, so a later
+    /// crop of a region that clipped may not fit it.
+    pub fn accepts_tile(&self, raw: &LoadedRaw) -> bool {
+        [raw.width, raw.height] == [self.width, self.height]
+            && raw.pixel_layout() == self.layout
+            && raw.is_camera_linear_raster() == self.camera_linear_raster
+            && self.holds_clipping_of(raw)
+    }
+
+    /// Whether the clipping texture can take `raw`'s clipping record: it has
+    /// none, or the texture is full size ([`holds_clipping_texture`]).
+    fn holds_clipping_of(&self, raw: &LoadedRaw) -> bool {
+        let size = self.binned_clipping_texture.size();
+        raw.averaged_clipping().is_none() || [size.width, size.height] == [raw.width, raw.height]
+    }
+
     pub fn upload_raw_tile(&self, queue: &wgpu::Queue, raw: &LoadedRaw) -> Result<()> {
         if raw.width != self.width || raw.height != self.height {
             return Err(anyhow!(
@@ -1113,6 +1127,12 @@ impl RawGpuPipeline {
             } else {
                 "is not"
             },
+        );
+        // Checked before anything is uploaded, so a refused tile leaves the
+        // graph's sources as they were.
+        anyhow::ensure!(
+            self.holds_clipping_of(raw),
+            "reusable pipeline has no clipping texture for a tile that records clipping"
         );
 
         if let Some(rgb) = rgb_source_pixels(raw) {

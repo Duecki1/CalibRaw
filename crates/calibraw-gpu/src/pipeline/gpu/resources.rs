@@ -976,6 +976,9 @@ pub(super) const BINNED_CLIPPING_FORMAT: wgpu::TextureFormat = wgpu::TextureForm
 /// ([`RawGpuPipeline::upload_raw_tile`]) may clip where its first did not, and
 /// any graph whose source carries a clipping record
 /// ([`LoadedRaw::averaged_clipping`]), a reduced camera-linear raster proxy's.
+/// A camera-linear graph built without one refuses later views that carry a
+/// record ([`RawGpuPipeline::accepts_tile`]) rather than reserving a texture
+/// for every reduced raster.
 pub(super) fn holds_clipping_texture(raw: &LoadedRaw) -> bool {
     raw.pixel_layout() == PixelLayout::Binned || raw.averaged_clipping().is_some()
 }

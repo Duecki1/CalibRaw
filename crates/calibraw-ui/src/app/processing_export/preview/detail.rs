@@ -335,9 +335,7 @@ impl CalibRawApp {
             .as_mut()
             .filter(|detail| {
                 detail.pipeline.gpu().is_some_and(|gpu| {
-                    gpu.width == detail_raw.width
-                        && gpu.height == detail_raw.height
-                        && gpu.pixel_layout() == detail_raw.pixel_layout()
+                    gpu.accepts_tile(&detail_raw)
                         && gpu.tone_guide_supports_origin(virtual_origin[0], virtual_origin[1])
                         && gpu.mask_layer_capacity() >= required_mask_layers
                 })

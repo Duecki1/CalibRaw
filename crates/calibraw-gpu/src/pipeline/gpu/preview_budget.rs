@@ -6,14 +6,15 @@
 //! of any size reserves before building one.
 
 use super::resources::{
-    build_gpu_resource_plan, gpu_working_set_limit_bytes, interactive_mask_atlas_edge,
-    mobile_preview_limit_bytes, tone_analysis_scale, GpuResourcePlan, GpuResourcePlanInput,
+    build_gpu_resource_plan, gpu_working_set_limit_bytes, holds_clipping_texture,
+    interactive_mask_atlas_edge, mobile_preview_limit_bytes, tone_analysis_scale, GpuResourcePlan,
+    GpuResourcePlanInput,
 };
 use super::{
     ProcessingQuality, RawGpuPipeline, ANDROID_GPU_WORKING_SET_LIMIT_BYTES,
     GPU_STAGE_UNIFORM_ALLOCATION_BYTES, MASK_DATA_SIZE_BYTES,
 };
-use crate::pipeline::{CfaKind, PixelLayout, MAX_LOCAL_MASKS};
+use crate::pipeline::{CfaKind, LoadedRaw, PixelLayout, MAX_LOCAL_MASKS};
 use anyhow::Result;
 
 /// Which preview graph a mobile size bound is for. The fitted graph and the
@@ -155,14 +156,39 @@ pub(crate) fn scale_with_mobile_export_tile(bytes: u64) -> u64 {
 /// [`RawGpuPipeline::mobile_export_padded_edge`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ExportTileShape {
-    pub(crate) cfa_kind: CfaKind,
-    pub(crate) layout: PixelLayout,
+    cfa_kind: CfaKind,
+    layout: PixelLayout,
+    /// Whether the graph holds a full-size clipping texture
+    /// ([`holds_clipping_texture`]), as a binned or reduced camera-linear
+    /// raster source's tiles need.
+    clipping_texture: bool,
     /// Whether the RAW stage blends in AI-denoised sensor samples.
-    pub(crate) ai_cfa: bool,
+    ai_cfa: bool,
     /// The graph's mask layers.
-    pub(crate) mask_layers: usize,
+    mask_layers: usize,
     /// The bytes of the camera profile's tables.
-    pub(crate) profile_bytes: u64,
+    profile_bytes: u64,
+}
+
+impl ExportTileShape {
+    /// The shape of the tiles of `raw` whose graph has `mask_layers` mask
+    /// layers and `profile_bytes` of profile tables, blending in AI-denoised
+    /// samples when `ai_cfa`.
+    pub(crate) fn of(
+        raw: &LoadedRaw,
+        ai_cfa: bool,
+        mask_layers: usize,
+        profile_bytes: u64,
+    ) -> Self {
+        Self {
+            cfa_kind: raw.cfa_kind,
+            layout: raw.pixel_layout(),
+            clipping_texture: holds_clipping_texture(raw),
+            ai_cfa,
+            mask_layers,
+            profile_bytes,
+        }
+    }
 }
 
 impl RawGpuPipeline {
@@ -207,8 +233,7 @@ impl RawGpuPipeline {
                 mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
                 layout: shape.layout,
                 ai_cfa: shape.ai_cfa,
-                // Export tiles are full size, so only a binned graph holds one.
-                clipping_texture: shape.layout == PixelLayout::Binned,
+                clipping_texture: shape.clipping_texture,
                 cfa_kind: shape.cfa_kind,
             })
             .is_ok_and(|plan| plan.admitted_gpu_bytes <= budget)

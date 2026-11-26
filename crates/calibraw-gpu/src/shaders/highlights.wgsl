@@ -20,10 +20,11 @@
 @group(0) @binding(12) var binned_ai_tex: texture_2d<f32>;
 @group(0) @binding(10) var binned_camera_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 // Where the photosites behind a binned source, or the pixels behind a reduced
-// camera-linear raster proxy, clipped (BinnedClipping in Rust): per pixel, the share of red, green and blue photosites at or above
-// 0.987 of the sensor's saturation in rgb, and the mean normalized sensor
-// value of those photosites, at black point 0, in a. Its content applies only
-// while camera_uniforms.highlight_options.w is 1; a 1x1 placeholder for other
+// camera-linear raster proxy, clipped (BinnedClipping in Rust): per pixel, the
+// share of red, green and blue photosites at or above 0.987 of the sensor's
+// saturation in rgb, and the mean normalized sensor value of those
+// photosites, at black point 0, in a. Its content applies only while
+// camera_uniforms.highlight_options.w is 1; a 1x1 placeholder for other
 // sources.
 @group(0) @binding(15) var binned_clipping_tex: texture_2d<f32>;
 
