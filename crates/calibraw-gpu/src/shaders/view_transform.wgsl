@@ -90,6 +90,26 @@ fn mixer_hue_shift_values(weights: MixerBandWeights, first_values: vec4<f32>, se
     return (dot(weights.first, first) + dot(weights.second, second)) / max(weights.total, 1e-6);
 }
 
+// How colourful an OKLab colour of chroma `chroma` and lightness `lightness`
+// is, the way the colour mixer and the black-and-white mix measure it: chroma
+// relative to what a deep colour of that lightness reaches, so 1 or more is a
+// deep colour and near 0 is near-neutral.
+fn mixer_relative_chroma(chroma: f32, lightness: f32) -> f32 {
+    return chroma / max(0.028 + 0.095 * max(lightness, 0.0), 0.028);
+}
+
+// 0 in the deepest shadows, where colour is mostly noise, rising to 1 by
+// OKLab lightness 0.115.
+fn mixer_signal_confidence(lightness: f32) -> f32 {
+    return smoothstep(0.035, 0.115, max(lightness, 0.0));
+}
+
+// 1 up to OKLab lightness 1 (diffuse white), easing off above it so HDR
+// highlights are not pushed further.
+fn mixer_hdr_guard(lightness: f32) -> f32 {
+    return 1.0 / (1.0 + 0.20 * max(lightness - 1.0, 0.0));
+}
+
 fn mixer_sample_from_rgb(rgb: vec3<f32>) -> MixerSample {
     let lab = Color::linear_srgb_to_oklab(Common::REC2020_TO_SRGB * rgb);
     let chroma = length(lab.yz);
@@ -98,9 +118,9 @@ fn mixer_sample_from_rgb(rgb: vec3<f32>) -> MixerSample {
         hue_vector = lab.yz / chroma;
     }
 
-    let relative_chroma = chroma / max(0.028 + 0.095 * max(lab.x, 0.0), 0.028);
+    let relative_chroma = mixer_relative_chroma(chroma, lab.x);
     let chroma_confidence = smoothstep(0.10, 0.62, relative_chroma);
-    let signal_confidence = smoothstep(0.035, 0.115, max(lab.x, 0.0));
+    let signal_confidence = mixer_signal_confidence(lab.x);
     let confidence = chroma_confidence * signal_confidence;
     return MixerSample(lab, chroma, hue_vector, confidence);
 }
@@ -161,8 +181,7 @@ fn mixer_luminance_ev(amount: f32, lightness: f32) -> f32 {
     let value = clamp(amount, -1.0, 1.0);
     let endpoint_ev = select(1.45, 1.20, value >= 0.0);
     let signal = smoothstep(0.040, 0.135, max(lightness, 0.0));
-    let hdr_guard = 1.0 / (1.0 + 0.20 * max(lightness - 1.0, 0.0));
-    return value * endpoint_ev * signal * hdr_guard;
+    return value * endpoint_ev * signal * mixer_hdr_guard(lightness);
 }
 
 fn apply_hue_rotation_value(input_rgb: vec3<f32>, degrees: f32) -> vec3<f32> {
@@ -453,10 +472,9 @@ fn monochrome_mix_ev(
     }
     let hue = fract(atan2(ab.y, ab.x) / (2.0 * 3.14159265359) + 1.0);
     let amount = clamp(mixer_band_value(mixer_band_weights(hue), luminance_0, luminance_1) / 100.0, -1.0, 1.0);
-    let relative_chroma = chroma / max(0.028 + 0.095 * max(lightness, 0.0), 0.028);
-    let colourfulness = smoothstep(0.10, 1.60, relative_chroma);
-    let signal = smoothstep(0.035, 0.115, max(lightness, 0.0));
-    let hdr_guard = 1.0 / (1.0 + 0.20 * max(lightness - 1.0, 0.0));
+    let colourfulness = smoothstep(0.10, 1.60, mixer_relative_chroma(chroma, lightness));
+    let signal = mixer_signal_confidence(lightness);
+    let hdr_guard = mixer_hdr_guard(lightness);
     let endpoint_ev = select(MONOCHROME_MIX_DARKEN_EV, MONOCHROME_MIX_BRIGHTEN_EV, amount >= 0.0);
     return amount * endpoint_ev * colourfulness * signal * hdr_guard;
 }

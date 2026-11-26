@@ -255,6 +255,8 @@ impl Converter<'_> {
         self.convert_light(&mut exposure, &mut groups);
         self.convert_tone_curves(document, &mut exposure, &mut groups);
         self.convert_color(&mut exposure, &mut groups);
+        // After `convert_color`: a black-and-white treatment reads the
+        // mixer's luminance from the grey mix.
         self.convert_color_mixer(document, &mut exposure, &mut groups);
         self.convert_color_grading(&mut exposure, &mut groups);
         self.convert_detail(&mut exposure, &mut groups);

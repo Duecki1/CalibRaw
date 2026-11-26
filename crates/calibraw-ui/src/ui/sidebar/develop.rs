@@ -827,8 +827,7 @@ impl Sidebar {
         let mut changed = false;
         let on = exposure.card_on(CardSwitch::ColorMixer);
         // As it renders: the Color card's switch turns black and white off.
-        let monochrome =
-            exposure.treatment.is_monochrome() && exposure.card_on(CardSwitch::Color);
+        let monochrome = exposure.treatment.is_monochrome() && exposure.card_on(CardSwitch::Color);
         let action = Self::adjustment_card(ui, "Color Mixer", false, foldable, on, |ui| {
             if monochrome {
                 // The mix of a black-and-white photo: each colour's Luminance,
