@@ -4,10 +4,33 @@ use super::*;
 use crate::pipeline::effect_lanes::glow;
 use crate::pipeline::{CaptureDeconvolution, PointColors, SharpenMethod, ToneResponse};
 
+/// Capture sharpening by deconvolution as the RAW stage of `ctx` runs it, its
+/// sigma in processing pixels: None without deconvolution or where the blur
+/// is too narrow at this resolution to sharpen visibly
+/// ([`CaptureDeconvolution::at_processing_scale`]), which skips its passes.
+pub(super) fn processing_capture_deconvolution(
+    ctx: &GpuParamContext<'_>,
+) -> Option<CaptureDeconvolution> {
+    let raw = ctx.raw;
+    let capture = CaptureDeconvolution::of(ctx.exposure, raw)?;
+    // The blur is measured in sensor pixels; a reduced preview blurs with it
+    // at its own resolution (`processing_per_source_pixel` in common.wgsl).
+    let processing_short_edge = ctx.tile.full_width.min(ctx.tile.full_height).max(1) as f32;
+    let source_short_edge = raw.source_extent[0].min(raw.source_extent[1]);
+    let processing_per_source = if source_short_edge > 0 {
+        processing_short_edge / source_short_edge as f32
+    } else {
+        1.0
+    };
+    capture.at_processing_scale(processing_per_source)
+}
+
 /// The camera uniforms, and the highlight model `highlight_options` describes: the pipeline
-/// uploads the model with the uniforms.
+/// uploads the model with the uniforms. `capture` is
+/// [`processing_capture_deconvolution`] of `ctx`.
 pub(super) fn pack_camera_params(
     ctx: &GpuParamContext<'_>,
+    capture: Option<CaptureDeconvolution>,
 ) -> (CameraUniforms, Option<Arc<HighlightModel>>) {
     let exposure = ctx.exposure;
     let raw = ctx.raw;
@@ -97,19 +120,9 @@ pub(super) fn pack_camera_params(
             .map(|coefficient| coefficient * chromatic_aberration)
     };
 
-    let capture_sharpening = CaptureDeconvolution::of(exposure, raw).map_or([0.0; 4], |capture| {
-        // The blur is measured in sensor pixels; a reduced preview blurs
-        // with it at its own resolution (`processing_per_source_pixel` in
-        // common.wgsl).
-        let processing_short_edge = full_width.min(full_height).max(1) as f32;
-        let source_short_edge = raw.source_extent[0].min(raw.source_extent[1]);
-        let processing_per_source = if source_short_edge > 0 {
-            processing_short_edge / source_short_edge as f32
-        } else {
-            1.0
-        };
+    let capture_sharpening = capture.map_or([0.0; 4], |capture| {
         [
-            capture.sigma() * processing_per_source,
+            capture.sigma(),
             capture.contrast_threshold(),
             capture.masking(),
             capture.last_fraction(),

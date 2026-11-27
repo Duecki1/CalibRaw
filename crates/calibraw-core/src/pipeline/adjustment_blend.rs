@@ -91,7 +91,7 @@ impl ExposureParams {
             sharpen_radius,
             sharpen_detail,
             sharpen_masking,
-            sharpen_method: _,
+            sharpen_method,
             hsl_hue,
             hsl_saturation,
             hsl_luminance,
@@ -101,6 +101,16 @@ impl ExposureParams {
             calibration,
             cards_off: _,
         } = *self;
+        // The two sharpening methods read their controls in different units,
+        // so a change of method takes the new controls as they are.
+        let same_sharpening = sharpen_method == target.sharpen_method;
+        let sharpening = |from: f32, to: f32| {
+            if same_sharpening {
+                from.blend(to, amount)
+            } else {
+                to
+            }
+        };
         Self {
             black_point: black_point.blend(target.black_point, amount),
             exposure: exposure.blend(target.exposure, amount),
@@ -146,15 +156,15 @@ impl ExposureParams {
             texture: texture.blend(target.texture, amount),
             clarity: clarity.blend(target.clarity, amount),
             dehaze: dehaze.blend(target.dehaze, amount),
-            sharpen_amount: sharpen_amount.blend(target.sharpen_amount, amount),
+            sharpen_amount: sharpening(sharpen_amount, target.sharpen_amount),
             // A radius of 0 is the photo's own, which no other radius fades to.
             sharpen_radius: if sharpen_radius > 0.0 && target.sharpen_radius > 0.0 {
-                sharpen_radius.blend(target.sharpen_radius, amount)
+                sharpening(sharpen_radius, target.sharpen_radius)
             } else {
                 target.sharpen_radius
             },
-            sharpen_detail: sharpen_detail.blend(target.sharpen_detail, amount),
-            sharpen_masking: sharpen_masking.blend(target.sharpen_masking, amount),
+            sharpen_detail: sharpening(sharpen_detail, target.sharpen_detail),
+            sharpen_masking: sharpening(sharpen_masking, target.sharpen_masking),
             sharpen_method: target.sharpen_method,
             hsl_hue: hsl_hue.blend(target.hsl_hue, amount),
             hsl_saturation: hsl_saturation.blend(target.hsl_saturation, amount),

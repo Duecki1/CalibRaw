@@ -476,7 +476,9 @@ pub struct GpuParams {
     /// the parameters.
     pub(super) highlight_model: Option<Arc<HighlightModel>>,
     /// Richardson-Lucy iterations the RAW stage runs for capture sharpening
-    /// (`camera.capture_sharpening`), 0 without deconvolution.
+    /// (`camera.capture_sharpening`), 0 without deconvolution or where its
+    /// blur is too narrow at the processing resolution
+    /// (`processing_capture_deconvolution`).
     capture_iterations: u32,
 }
 
@@ -757,12 +759,12 @@ impl GpuParams {
             },
         };
         let mask_data = pack_mask_params(masks);
-        let (camera, highlight_model) = pack_camera_params(&context);
+        let capture = processing_capture_deconvolution(&context);
+        let (camera, highlight_model) = pack_camera_params(&context, capture);
         Self {
             camera,
             highlight_model,
-            capture_iterations: CaptureDeconvolution::of(exposure, raw)
-                .map_or(0, CaptureDeconvolution::passes),
+            capture_iterations: capture.map_or(0, CaptureDeconvolution::passes),
             scene_tone: pack_scene_tone_params(&context),
             effects: pack_effect_params(&context, &mask_data),
             mask_data,

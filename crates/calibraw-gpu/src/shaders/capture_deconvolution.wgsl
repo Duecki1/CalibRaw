@@ -37,6 +37,11 @@
 // raster, as darktable's demosaic output; Y takes BT.709 weights as
 // darktable's. Values may be negative (read noise) or above 1 (highlight
 // reconstruction); Y is floored at 0.
+// Precision: the state lives in the work format, rgba32float for an export
+// and rgba16float for a preview. In half precision a ratio near 1 resolves to
+// about 0.001 and every pass rounds the estimate to about 0.05%, so over many
+// iterations a 1:1 preview can differ slightly from the export of the same
+// edit. The arithmetic is f32 in both.
 // Coordinates: tile-local pixels, neighbours clamped to the tile, whose
 // export halo covers CAPTURE_DECONVOLUTION_MAX_SUPPORT; the blur narrows over
 // the 8 pixels at the full image's edge and the mask is 0 on its outer 2, as

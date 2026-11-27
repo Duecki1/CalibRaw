@@ -59,12 +59,20 @@ const fn kernel_radius(sigma: f32) -> u32 {
     }
 }
 
+/// Sigmas below this, in processing pixels, give a pixel's nearest
+/// neighbours under exp(-1 / (2 * 0.2²)) ≈ 4e-6 of its weight in the blur:
+/// even 30 iterations then change a pixel by under 0.1%, less than an 8-bit
+/// level, so a render skips the passes ([`CaptureDeconvolution::at_processing_scale`]).
+/// A fit-to-screen preview of a large photo reaches it.
+const MIN_PROCESSING_SIGMA: f32 = 0.2;
+
 /// The settings of one render's deconvolution, in the units the shader reads.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CaptureDeconvolution {
     /// Richardson-Lucy iterations, fractional: the last runs in part.
     iterations: f32,
-    /// Gaussian sigma of the blur, in sensor pixels.
+    /// Gaussian sigma of the blur: in sensor pixels from [`Self::of`], in
+    /// processing pixels from [`Self::at_processing_scale`].
     sigma: f32,
     /// darktable's contrast sensitivity (`cs_thrs`), 0 to 1.
     contrast_threshold: f32,
@@ -77,28 +85,31 @@ impl CaptureDeconvolution {
     /// with [`SharpenMethod::Legacy`] or not at all.
     pub fn of(exposure: &ExposureParams, raw: &LoadedRaw) -> Option<Self> {
         let iterations = iterations(exposure)?;
-        let radius = exposure.sharpen_radius;
-        let sigma = if radius.is_finite() && radius > 0.0 {
-            radius.min(MAX_CAPTURE_RADIUS)
-        } else {
-            raw.capture_radius
-        };
         let detail = finite_or(exposure.sharpen_detail, NEUTRAL_DETAIL).clamp(0.0, 100.0);
         let white = raw.white_levels[..3].iter().copied().fold(0.0, f32::max);
         let auto = auto_contrast_threshold(raw.capture_metadata.iso_speed, white);
         Some(Self {
             iterations,
-            sigma,
+            sigma: chosen_sigma(exposure).unwrap_or(raw.capture_radius),
             contrast_threshold: (auto * (100.0 - detail) / (100.0 - NEUTRAL_DETAIL))
                 .clamp(0.0, 1.0),
             masking: finite_or(exposure.sharpen_masking, 0.0).clamp(0.0, 100.0) / 100.0,
         })
     }
 
+    /// `self` rendered at `processing_per_source` processing pixels per
+    /// sensor pixel (below 1 for a reduced preview or a binned view), its
+    /// sigma in processing pixels. None where that sigma is below
+    /// [`MIN_PROCESSING_SIGMA`], too narrow to sharpen visibly.
+    pub fn at_processing_scale(self, processing_per_source: f32) -> Option<Self> {
+        let sigma = self.sigma * processing_per_source;
+        (sigma >= MIN_PROCESSING_SIGMA).then_some(Self { sigma, ..self })
+    }
+
     /// Full iterations the passes run; the last of them counts by
     /// [`Self::last_fraction`].
     pub fn passes(self) -> u32 {
-        (self.iterations.ceil() as u32).clamp(1, MAX_CAPTURE_ITERATIONS)
+        passes(self.iterations)
     }
 
     /// The share of the last iteration's change kept, in (0, 1].
@@ -129,20 +140,27 @@ fn iterations(exposure: &ExposureParams) -> Option<f32> {
     (iterations > 1e-4).then_some(iterations)
 }
 
+/// The passes that run `iterations`, the last of them in part.
+fn passes(iterations: f32) -> u32 {
+    (iterations.ceil() as u32).clamp(1, MAX_CAPTURE_ITERATIONS)
+}
+
+/// The sigma, in sensor pixels, that `exposure`'s Radius sets, or None for
+/// the photo's own ([`LoadedRaw::capture_radius`]) at Radius 0.
+fn chosen_sigma(exposure: &ExposureParams) -> Option<f32> {
+    let radius = exposure.sharpen_radius;
+    (radius.is_finite() && radius > 0.0).then(|| radius.min(MAX_CAPTURE_RADIUS))
+}
+
 /// Pixels past a tile core the deconvolution of `exposure` reads, 0 without
-/// one. A radius taken from the photo counts with the larger kernel.
+/// one. A radius taken from the photo counts with the larger kernel, and the
+/// sigma in sensor pixels, which no render's processing sigma exceeds.
 pub fn capture_deconvolution_support(exposure: &ExposureParams) -> u32 {
     let Some(iterations) = iterations(exposure) else {
         return 0;
     };
-    let radius = exposure.sharpen_radius;
-    let sigma = if radius.is_finite() && radius > 0.0 {
-        radius.min(MAX_CAPTURE_RADIUS)
-    } else {
-        MAX_CAPTURE_RADIUS
-    };
-    let passes = (iterations.ceil() as u32).clamp(1, MAX_CAPTURE_ITERATIONS);
-    MASK_SUPPORT + passes * 2 * kernel_radius(sigma)
+    let sigma = chosen_sigma(exposure).unwrap_or(MAX_CAPTURE_RADIUS);
+    MASK_SUPPORT + passes(iterations) * 2 * kernel_radius(sigma)
 }
 
 fn finite_or(value: f32, fallback: f32) -> f32 {

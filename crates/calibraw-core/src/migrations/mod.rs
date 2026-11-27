@@ -38,7 +38,10 @@
 //! - Capture sharpening with the legacy method (`SharpenMethod::Legacy`,
 //!   `pipeline/basicadj.rs`), set by `capture_sharpening`, and the scene tone
 //!   pass's global capture sharpening that renders it (`calibraw-gpu`:
-//!   `scene_adjustments.wgsl`, `pipeline/gpu/stage_params.rs`).
+//!   `scene_adjustments.wgsl`, `pipeline/gpu/stage_params.rs`), and the
+//!   library thumbnail's check for edits, which compares a sidecar saved
+//!   without a method with those versions' defaults
+//!   (`sidecar/files.rs`, `load_photo_preview_info`).
 //! - Depth Anything V2 Small, the depth model before Distill-Any-Depth
 //!   Small, removed from the model folder on start-up (`calibraw-ui`,
 //!   `app/ai/models.rs`).
@@ -51,7 +54,7 @@
 //! `older_readers` works the other way: it writes sidecars and presets so
 //! that v1.2 and older can still open them.
 
-mod capture_sharpening;
+pub(crate) mod capture_sharpening;
 mod component_names;
 pub(crate) mod depth_range_feather;
 pub(crate) mod edit_fingerprints;

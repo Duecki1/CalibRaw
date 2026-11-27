@@ -311,9 +311,10 @@ pub fn load_photo_preview_info(raw_path: &Path) -> Result<(GeometryTransform, bo
         .transpose()
         .map_err(|error| SidecarError::Invalid(error.to_string()))?
         .unwrap_or_default();
-    let mut default = serde_json::from_slice::<PreviewDocument>(&encode(default_edit_state())?)
-        .map_err(|error| SidecarError::Invalid(error.to_string()))?
-        .edits;
+    // A sidecar saved before sharpening methods compares with those
+    // versions' defaults.
+    let mut default =
+        crate::migrations::capture_sharpening::defaults_written_beside(&document.edits)?;
     // This bookkeeping flag alone is not a development adjustment.
     for value in [&mut document.edits, &mut default] {
         if let Some(object) = value.as_object_mut() {
