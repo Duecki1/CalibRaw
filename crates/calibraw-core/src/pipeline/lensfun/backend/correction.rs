@@ -124,6 +124,8 @@ pub(super) fn correct_mosaic(
         let mut resampled = resample_mosaic(raw, modifier);
         // The profile moved red and blue toward green; measure what is left.
         resampled.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&resampled);
+        // Resampling blurs the mosaic, so its radius is measured again.
+        resampled.capture_radius = crate::pipeline::measure_capture_radius(&resampled);
         resampled
     } else {
         raw.clone()

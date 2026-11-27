@@ -192,6 +192,7 @@ impl ExposureParams {
             sharpen_radius,
             sharpen_detail,
             sharpen_masking,
+            sharpen_method,
             hsl_hue,
             hsl_saturation,
             hsl_luminance,
@@ -246,6 +247,7 @@ impl ExposureParams {
                 self.sharpen_radius = sharpen_radius;
                 self.sharpen_detail = sharpen_detail;
                 self.sharpen_masking = sharpen_masking;
+                self.sharpen_method = sharpen_method;
             }
             ExposureSection::Group(AdjustmentGroup::Effects) => {
                 self.texture = texture;

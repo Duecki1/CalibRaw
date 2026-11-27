@@ -400,7 +400,9 @@ fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f3
     return rgb;
 }
 
-// Capture sharpening of the Detail card, then every Sharpen effect slot. The
+// The Detail card's legacy capture sharpening, which pack_effect_params leaves
+// at Amount 0 unless the edit keeps SharpenMethod::Legacy (migration: remove
+// in v2.0.0, with that branch), then every Sharpen effect slot. The
 // slots' gains, each weighted by its mask, are summed and limited once, so
 // overlapping slots cannot compound their halos. Without active sharpening
 // `rgb` is returned unchanged, negative channels included.

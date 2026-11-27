@@ -783,6 +783,7 @@ fn adapt(
         lens_geometry: None,
         lens_shading: None,
         lateral_chromatic_aberration: LateralChromaticAberration::NONE,
+        capture_radius: crate::pipeline::FALLBACK_CAPTURE_RADIUS,
         ai_denoised: Default::default(),
         highlight_model_cache: Default::default(),
         highlight_source_identity: Default::default(),
@@ -967,6 +968,7 @@ fn adapt(
         _ => bail!("unsupported Rawler photometric interpretation"),
     }
     loaded.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&loaded);
+    loaded.capture_radius = super::super::measure_capture_radius(&loaded);
     Ok(loaded)
 }
 

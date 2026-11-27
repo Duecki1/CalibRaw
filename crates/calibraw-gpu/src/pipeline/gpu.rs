@@ -98,7 +98,7 @@ pub use params::*;
 pub use remove_scene::*;
 use stage_params::*;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 16;
+const GPU_PARAMS_ABI_VERSION: u32 = 17;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 /// The flag bits of an effect slot's `metadata[3]` that hold its light bake
 /// channel plus one (`assign_scene_bake_lights`).
@@ -109,7 +109,7 @@ pub(super) const FULL_IMAGE_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android"
     512
 };
 const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_120;
-const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 432;
+const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 464;
 const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_792;
 const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 224;
 const GPU_STAGE_UNIFORM_SIZE_BYTES: u32 =
@@ -1706,6 +1706,7 @@ impl RawGpuPipeline {
             }
             self.encode_chromatic_aberration(encoder, params);
             self.encode_color_denoise(encoder, params);
+            self.encode_capture_deconvolution(encoder, params);
             return;
         }
         if self.has_ai_scene && params.uses_ai_denoise() {
@@ -1719,6 +1720,7 @@ impl RawGpuPipeline {
                 self.encode_bound_pass(encoder, &self.highlight_finish_pass, "AI scene finish");
                 self.encode_chromatic_aberration(encoder, params);
                 self.encode_color_denoise(encoder, params);
+                self.encode_capture_deconvolution(encoder, params);
             }
             return;
         }
@@ -1732,6 +1734,7 @@ impl RawGpuPipeline {
         }
         self.encode_chromatic_aberration(encoder, params);
         self.encode_color_denoise(encoder, params);
+        self.encode_capture_deconvolution(encoder, params);
     }
 
     /// Reconstructs a mosaic's highlights and demosaics it into the scene.
@@ -1774,6 +1777,27 @@ impl RawGpuPipeline {
             );
             self.encode_pass(encoder, self.indices.chromatic_aberration_fringe_pass_index);
         }
+    }
+
+    /// Sharpens the scene in place by Richardson-Lucy deconvolution when
+    /// capture sharpening deconvolves (capture_deconvolution.wgsl): the mask,
+    /// the iterations, then the result stored back into the scene.
+    fn encode_capture_deconvolution(&self, encoder: &mut WorkEncoder<'_>, params: &GpuParams) {
+        let iterations = params.capture_iterations();
+        if iterations == 0 {
+            return;
+        }
+        let start = self.indices.capture_deconvolution_start_index;
+        self.encode_pass_range(encoder, start, start + CAPTURE_DIVIDE_PASS);
+        for _ in 0..iterations {
+            self.encode_pass(encoder, start + CAPTURE_DIVIDE_PASS);
+            self.encode_pass(encoder, start + CAPTURE_MULTIPLY_PASS);
+        }
+        self.encode_pass_range(
+            encoder,
+            start + CAPTURE_APPLY_PASS,
+            start + CAPTURE_DECONVOLUTION_ENTRIES.len(),
+        );
     }
 
     /// Filters the scene's colour noise in place when Color denoise is on.

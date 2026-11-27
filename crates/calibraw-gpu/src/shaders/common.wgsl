@@ -154,6 +154,13 @@ struct CameraUniforms {
     film_base: vec4<f32>,
     film_exponents: vec4<f32>,
     film_gains: vec4<f32>,
+    // Capture sharpening by deconvolution (capture_deconvolution.wgsl): the
+    // blur's sigma in processing pixels, darktable's contrast sensitivity,
+    // Masking (0-1) and the share of the last iteration kept; then the
+    // normalized sensor level a photosite counts as clipped at and where
+    // clipping is read (CAPTURE_CLIP_* there).
+    capture_sharpening: vec4<f32>,
+    capture_clip: vec4<f32>,
 }
 
 struct SceneToneUniforms {

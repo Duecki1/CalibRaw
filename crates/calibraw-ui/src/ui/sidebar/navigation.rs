@@ -383,6 +383,19 @@ impl Sidebar {
                     .ai_denoised_image()
                     .is_some_and(|image| image.bayer_cfa().is_some())
         });
+        let detail_photo = develop::DetailPhoto {
+            hot_pixels,
+            ai_denoise,
+            ai_strength_available,
+            // The radius of the source the previews render.
+            capture_radius: app
+                .develop
+                .loaded_raw
+                .as_deref()
+                .map_or(crate::pipeline::FALLBACK_CAPTURE_RADIUS, |raw| {
+                    raw.capture_radius
+                }),
+        };
         // Detail resets restore this photo's first-open noise reduction, as
         // resetting all adjustments does, rather than switching it off.
         let mut detail_defaults = ExposureParams::default();
@@ -423,9 +436,7 @@ impl Sidebar {
                         ui,
                         &mut app.develop.exposure,
                         &detail_defaults,
-                        hot_pixels,
-                        ai_denoise,
-                        ai_strength_available,
+                        detail_photo,
                         false,
                     );
                     changed |= detail_changed;
@@ -508,9 +519,7 @@ impl Sidebar {
                             ui,
                             &mut app.develop.exposure,
                             &detail_defaults,
-                            hot_pixels,
-                            ai_denoise,
-                            ai_strength_available,
+                            detail_photo,
                             true,
                         );
                         changed |= detail_changed;

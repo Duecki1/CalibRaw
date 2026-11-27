@@ -8,7 +8,9 @@ use calibraw_cli::pipeline::{
     GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
 };
 use calibraw_core::luts::ResolvedLook;
-use calibraw_core::pipeline::SourceCorrections;
+use calibraw_core::pipeline::{
+    auto_contrast_threshold, SharpenMethod, SourceCorrections, MAX_CAPTURE_RADIUS,
+};
 use calibraw_core::sidecar;
 use calibraw_gpu::{
     request_headless_device, wgpu, HeadlessAdapter, HeadlessDevice, HeadlessDeviceError,
@@ -56,7 +58,7 @@ fn run() -> Result<()> {
     let adaptive_exposure = default_exposure_for_raw(&raw);
     if args.report_detail_defaults {
         eprintln!(
-            "ISO {:.0}; estimated shot={:?}, read={:?}, confidence={:.3}; adaptive Detail: luminance={:.1}, color={:.1}, detail={:.1}, quality={}, sharpen={:.0}/{:.2}/{:.0}/{:.0}",
+            "ISO {:.0}; estimated shot={:?}, read={:?}, confidence={:.3}; adaptive Detail: luminance={:.1}, color={:.1}, detail={:.1}, quality={}, sharpen={:.0}/{:.2}/{:.0}/{:.0}; capture radius={:.3}, contrast threshold={:.2}",
             raw.iso_speed(),
             raw.noise_profile.shot,
             raw.noise_profile.read,
@@ -69,6 +71,11 @@ fn run() -> Result<()> {
             adaptive_exposure.sharpen_radius,
             adaptive_exposure.sharpen_detail,
             adaptive_exposure.sharpen_masking,
+            raw.capture_radius,
+            auto_contrast_threshold(
+                raw.iso_speed(),
+                raw.white_levels[..3].iter().copied().fold(0.0, f32::max),
+            ),
         );
     }
     if let Some([x, y, width, height]) = args.crop {
@@ -377,7 +384,19 @@ fn set_adjustment(
             }
         }
         "sharpen_amount" => exposure.sharpen_amount = value.clamp(0.0, 150.0),
-        "sharpen_radius" => exposure.sharpen_radius = value.clamp(0.5, 3.0),
+        "sharpen_radius" => {
+            exposure.sharpen_radius = match exposure.sharpen_method {
+                SharpenMethod::Deconvolution => value.clamp(0.0, MAX_CAPTURE_RADIUS),
+                SharpenMethod::Legacy => value.clamp(0.5, 3.0),
+            }
+        }
+        "sharpen_method" => {
+            exposure.sharpen_method = if value < 0.5 {
+                SharpenMethod::Deconvolution
+            } else {
+                SharpenMethod::Legacy
+            }
+        }
         "sharpen_detail" => exposure.sharpen_detail = value.clamp(0.0, 100.0),
         "sharpen_masking" => exposure.sharpen_masking = value.clamp(0.0, 100.0),
         "demosaic_mode" => {
@@ -572,7 +591,8 @@ fn print_help() {
         "Supported adjustment names: exposure, contrast, highlights, shadows, whites,\n",
         "blacks, texture, clarity, dehaze, vignette, hue, vibrance, saturation, temperature, tint,\n",
         "luminance_denoise, color_denoise, denoise_detail, denoise_quality (0/1/2),\n",
-        "sharpen_amount, sharpen_radius, sharpen_detail, sharpen_masking, demosaic_mode\n",
+        "sharpen_amount, sharpen_radius, sharpen_detail, sharpen_masking,\n",
+        "  sharpen_method (0 deconvolution, 1 legacy; set it before sharpen_radius), demosaic_mode\n",
         "(0 Reference, 1 frequency-domain chroma, 2 dual), dual_threshold,\n",
         "frequency_chroma and chromatic_aberration (0 to 100). The suite\n",
         "exports each adjustment in isolation. --sidecar exports the edit a CalibRaw\n",

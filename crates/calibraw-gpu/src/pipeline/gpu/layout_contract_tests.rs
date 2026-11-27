@@ -243,6 +243,8 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 film_base,
                 film_exponents,
                 film_gains,
+                capture_sharpening,
+                capture_clip,
             }),
         ),
         (

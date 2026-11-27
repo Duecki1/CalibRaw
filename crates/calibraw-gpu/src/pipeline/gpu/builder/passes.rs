@@ -35,6 +35,22 @@ pub(in crate::pipeline::gpu) const XTRANS_COMPLETE_PASSES: [usize; 2] = [6, 7];
 pub(in crate::pipeline::gpu) const XTRANS_HOMOGENEITY_PASS: usize = 8;
 pub(in crate::pipeline::gpu) const XTRANS_ACCUMULATE_PASS: usize = 9;
 pub(in crate::pipeline::gpu) const XTRANS_SMOOTHING_PASS: usize = 10;
+/// The capture deconvolution passes (capture_deconvolution.wgsl) in plan
+/// order; `encode_capture_deconvolution` repeats the divide and multiply
+/// passes once per iteration.
+pub(in crate::pipeline::gpu) const CAPTURE_DECONVOLUTION_ENTRIES: [&str; 7] = [
+    "capture_prepare",
+    "capture_mask_horizontal",
+    "capture_mask_vertical",
+    "capture_divide",
+    "capture_multiply",
+    "capture_apply",
+    "capture_store",
+];
+pub(in crate::pipeline::gpu) const CAPTURE_PREPARE_PASS: usize = 0;
+pub(in crate::pipeline::gpu) const CAPTURE_DIVIDE_PASS: usize = 3;
+pub(in crate::pipeline::gpu) const CAPTURE_MULTIPLY_PASS: usize = 4;
+pub(in crate::pipeline::gpu) const CAPTURE_APPLY_PASS: usize = 5;
 
 /// Where every program sits in the pass list. Program templates share
 /// compiled programs by position, so bind group layouts, pass assembly and
@@ -130,6 +146,11 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// `AssembledPasses::highlight_finish_pass`. It runs with the RAW stage
     /// but comes last so that adding it kept earlier positions.
     pub(in crate::pipeline::gpu) raster_highlight_pass_index: usize,
+    /// Capture sharpening by deconvolution (capture_deconvolution.wgsl), the
+    /// last passes of the RAW stage, in [`CAPTURE_DECONVOLUTION_ENTRIES`]
+    /// order from here. They come last so that adding them kept earlier
+    /// positions.
+    pub(in crate::pipeline::gpu) capture_deconvolution_start_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -189,6 +210,7 @@ impl StageIndices {
         let defocus_pass_index = take(DEFOCUS_PASSES);
         let rcd_reference_pass_index = take(usize::from(matches!(cfa_kind, CfaKind::Bayer)));
         let raster_highlight_pass_index = take(1);
+        let capture_deconvolution_start_index = take(CAPTURE_DECONVOLUTION_ENTRIES.len());
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -234,6 +256,7 @@ impl StageIndices {
             defocus_pass_index,
             rcd_reference_pass_index,
             raster_highlight_pass_index,
+            capture_deconvolution_start_index,
             pass_count,
         }
     }
@@ -883,6 +906,28 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         groups.bg_binned_highlights.clone(),
         image_workgroups,
     ));
+
+    ensure_planned(
+        &passes,
+        indices.capture_deconvolution_start_index,
+        "capture deconvolution",
+    )?;
+    for (index, entry) in CAPTURE_DECONVOLUTION_ENTRIES.into_iter().enumerate() {
+        let layout = match index {
+            CAPTURE_PREPARE_PASS => &layouts.bgl_capture_prepare,
+            CAPTURE_APPLY_PASS => &layouts.bgl_capture_apply,
+            // The others read one work texture into another, like a colour
+            // denoise scale.
+            _ => &layouts.bgl_color_denoise,
+        };
+        passes.push(assembler.make_pass(
+            shaders.capture_deconvolution_module.as_ref(),
+            entry,
+            layout,
+            groups.bg_capture_deconvolution[index].clone(),
+            image_workgroups,
+        ));
+    }
 
     // These variants reuse the programs above with bind groups that read tex2:
     // the mask-blurred scene, or whatever else last wrote there.

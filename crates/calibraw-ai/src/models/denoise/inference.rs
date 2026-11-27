@@ -297,6 +297,8 @@ pub(super) fn infer_linear(
     neutral.ai_denoise_enabled = false;
     neutral.luminance_denoise = 0.0;
     neutral.chroma_denoise = 0.0;
+    // Capture sharpening ends the RAW stage; the model takes the demosaic.
+    neutral.sharpen_amount = 0.0;
     let masks = MaskStack::default();
     if raw.uses_highlight_model(&neutral) {
         raw.prime_highlight_model(&neutral);

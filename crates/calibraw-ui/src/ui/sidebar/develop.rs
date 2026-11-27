@@ -1,6 +1,6 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
-use crate::pipeline::{effect_params, CardSwitch, Treatment};
+use crate::pipeline::{effect_params, CardSwitch, SharpenMethod, Treatment, MAX_CAPTURE_RADIUS};
 
 const LENS_CARD_TITLE: &str = "Lens Corrections";
 
@@ -619,22 +619,118 @@ impl Sidebar {
         changed
     }
 
-    /// `defaults` holds the photo's first-open Detail settings, which slider
-    /// double-clicks and the card reset restore. `ai_strength_available` is
-    /// whether the photo has an AI result that can be blended with the
-    /// original: a Bayer RAW whose denoised mosaic is loaded.
-    /// `ai_denoise` says whether the photo can be AI denoised.
-    /// The Detail card. `hot_pixels` offers hot pixel removal, which only a
-    /// sensor mosaic has photosites for.
+    /// Capture sharpening by deconvolution. Radius 0 is automatic: the
+    /// slider shows `capture_radius`, the photo's, and moving it sets a
+    /// radius of its own.
+    fn show_capture_deconvolution(
+        ui: &mut Ui,
+        exposure: &mut ExposureParams,
+        defaults: &ExposureParams,
+        capture_radius: f32,
+    ) -> bool {
+        moduwu_design::strong_with_help(
+            ui,
+            tr("Capture sharpening"),
+            tr("Deconvolution restores the detail the lens and sensor blurred. Amount sets how far it goes, Radius the blur it undoes (measured from the photo when automatic), Detail how faint a contrast it sharpens, and Masking how strictly it keeps to edges."),
+        );
+        let mut changed =
+            AdjustmentSlider::new(tr("Amount"), &mut exposure.sharpen_amount, 0.0..=150.0)
+                .decimals(0)
+                .step(1.0)
+                .reset_to(defaults.sharpen_amount)
+                .show(ui);
+        let mut automatic = exposure.sharpen_radius <= 0.0;
+        let mut radius = if automatic {
+            capture_radius
+        } else {
+            exposure.sharpen_radius
+        };
+        if AdjustmentSlider::new(tr("Radius"), &mut radius, 0.0..=MAX_CAPTURE_RADIUS)
+            .decimals(2)
+            .step(0.01)
+            .reset_to(defaults.sharpen_radius)
+            .show(ui)
+        {
+            exposure.sharpen_radius = radius;
+            automatic = radius <= 0.0;
+            changed = true;
+        }
+        if moduwu_design::toggle_row(ui, &mut automatic, tr("Automatic radius")).changed() {
+            exposure.sharpen_radius = if automatic { 0.0 } else { capture_radius };
+            changed = true;
+        }
+        changed |= AdjustmentSlider::new(tr("Detail"), &mut exposure.sharpen_detail, 0.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .reset_to(defaults.sharpen_detail)
+            .show(ui);
+        changed |= AdjustmentSlider::new(tr("Masking"), &mut exposure.sharpen_masking, 0.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .reset_to(defaults.sharpen_masking)
+            .show(ui);
+        changed
+    }
+
+    /// The capture sharpening an edit saved before deconvolution keeps
+    /// (`SharpenMethod::Legacy`), with a switch to deconvolution.
+    fn show_legacy_capture_sharpening(
+        ui: &mut Ui,
+        exposure: &mut ExposureParams,
+        defaults: &ExposureParams,
+    ) -> bool {
+        moduwu_design::strong_with_help(
+            ui,
+            tr("Capture sharpening"),
+            tr("Edge-aware capture sharpening restores fine detail while its radius, detail, and masking controls limit halos and noisy texture."),
+        );
+        let mut changed =
+            AdjustmentSlider::new(tr("Amount"), &mut exposure.sharpen_amount, 0.0..=150.0)
+                .decimals(0)
+                .step(1.0)
+                .reset_to(SharpenMethod::LEGACY_DEFAULT_AMOUNT)
+                .show(ui);
+        changed |= AdjustmentSlider::new(tr("Radius"), &mut exposure.sharpen_radius, 0.5..=3.0)
+            .decimals(2)
+            .step(0.05)
+            .reset_to(SharpenMethod::LEGACY_DEFAULT_RADIUS)
+            .show(ui);
+        changed |= AdjustmentSlider::new(tr("Detail"), &mut exposure.sharpen_detail, 0.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .reset_to(defaults.sharpen_detail)
+            .show(ui);
+        changed |= AdjustmentSlider::new(tr("Masking"), &mut exposure.sharpen_masking, 0.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .reset_to(defaults.sharpen_masking)
+            .show(ui);
+        if moduwu_design::secondary_button(ui, tr("Use deconvolution"))
+            .on_hover_text(tr("This photo keeps the sharpening it was edited with. Deconvolution restores more of the detail the lens and sensor blurred."))
+            .clicked()
+        {
+            exposure.sharpen_method = SharpenMethod::Deconvolution;
+            exposure.sharpen_radius = 0.0;
+            changed = true;
+        }
+        changed
+    }
+
+    /// The Detail card. `defaults` holds the photo's first-open Detail
+    /// settings, which slider double-clicks and the card reset restore.
     pub(super) fn show_detail(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         defaults: &ExposureParams,
-        hot_pixels: bool,
-        ai_denoise: AiDenoiseOffer,
-        ai_strength_available: bool,
+        photo: DetailPhoto,
         foldable: bool,
     ) -> (bool, Option<bool>) {
+        let DetailPhoto {
+            hot_pixels,
+            ai_denoise,
+            ai_strength_available,
+            ..
+        } = photo;
         let mut changed = false;
         let mut ai_request = None;
         let ai_before = exposure.ai_denoise_enabled;
@@ -741,34 +837,14 @@ impl Sidebar {
             );
             changed |= previous_quality != exposure.denoise_quality;
             moduwu_design::section_separator(ui);
-            moduwu_design::strong_with_help(
-                ui,
-                tr("Capture sharpening"),
-                tr("Edge-aware capture sharpening restores fine detail while its radius, detail, and masking controls limit halos and noisy texture."),
-            );
-            changed |=
-                AdjustmentSlider::new(tr("Amount"), &mut exposure.sharpen_amount, 0.0..=150.0)
-                    .decimals(0)
-                    .step(1.0)
-                    .reset_to(defaults.sharpen_amount)
-                    .show(ui);
-            changed |= AdjustmentSlider::new(tr("Radius"), &mut exposure.sharpen_radius, 0.5..=3.0)
-                .decimals(2)
-                .step(0.05)
-                .reset_to(defaults.sharpen_radius)
-                .show(ui);
-            changed |=
-                AdjustmentSlider::new(tr("Detail"), &mut exposure.sharpen_detail, 0.0..=100.0)
-                    .decimals(0)
-                    .step(1.0)
-                    .reset_to(defaults.sharpen_detail)
-                    .show(ui);
-            changed |=
-                AdjustmentSlider::new(tr("Masking"), &mut exposure.sharpen_masking, 0.0..=100.0)
-                    .decimals(0)
-                    .step(1.0)
-                    .reset_to(defaults.sharpen_masking)
-                    .show(ui);
+            changed |= match exposure.sharpen_method {
+                SharpenMethod::Deconvolution => {
+                    Self::show_capture_deconvolution(ui, exposure, defaults, photo.capture_radius)
+                }
+                SharpenMethod::Legacy => {
+                    Self::show_legacy_capture_sharpening(ui, exposure, defaults)
+                }
+            };
         });
         changed |= action.apply_from(exposure, defaults, AdjustmentGroup::Detail);
         if exposure.ai_denoise_enabled != ai_before {
@@ -940,6 +1016,20 @@ impl Sidebar {
         changed |= action.apply(exposure, AdjustmentGroup::Calibration);
         changed
     }
+}
+
+/// What the open photo offers the Detail card.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct DetailPhoto {
+    /// Hot pixel removal, which only a sensor mosaic has photosites for.
+    pub(super) hot_pixels: bool,
+    pub(super) ai_denoise: AiDenoiseOffer,
+    /// Whether the photo has an AI result that can be blended with the
+    /// original: a Bayer RAW whose denoised mosaic is loaded.
+    pub(super) ai_strength_available: bool,
+    /// The blur radius measured from the photo ([`LoadedRaw::capture_radius`]),
+    /// which capture sharpening deconvolves while its Radius is automatic.
+    pub(super) capture_radius: f32,
 }
 
 /// Whether the Detail card offers AI denoise for the open photo.

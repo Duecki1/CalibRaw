@@ -26,6 +26,9 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_color_denoise: [wgpu::BindGroup; 6],
     pub(in crate::pipeline::gpu) bg_chromatic_aberration_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_chromatic_aberration_fringes: wgpu::BindGroup,
+    /// The capture deconvolution passes, in `CAPTURE_DECONVOLUTION_ENTRIES`
+    /// order.
+    pub(in crate::pipeline::gpu) bg_capture_deconvolution: [wgpu::BindGroup; 7],
     pub(in crate::pipeline::gpu) bg_tone_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_tone_horizontal: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_tone_vertical: wgpu::BindGroup,
@@ -457,6 +460,42 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_chromatic_aberration_fringes =
         make_color_denoise_bind_group("bg chromatic aberration fringes", tex1_view, scene_view);
 
+    // Capture deconvolution keeps its state in tex1 and tex2, which no
+    // later pass of the RAW stage reads (capture_deconvolution.wgsl).
+    let bg_capture_deconvolution = [
+        create_bind_group(
+            device,
+            "bg capture deconvolution prepare",
+            &layouts.bgl_capture_prepare,
+            &[
+                buffer_binding(0, camera_uniforms_buffer),
+                texture_binding(1, raw_view),
+                texture_binding(2, color_view),
+                texture_binding(19, black_view),
+                texture_binding(10, tex1_view),
+                texture_binding(11, scene_view),
+                texture_binding(15, binned_clipping_view),
+                texture_binding(16, rgb_source_view),
+            ],
+        ),
+        make_color_denoise_bind_group("bg capture mask horizontal", tex1_view, tex2_view),
+        make_color_denoise_bind_group("bg capture mask vertical", tex2_view, tex1_view),
+        make_color_denoise_bind_group("bg capture divide", tex1_view, tex2_view),
+        make_color_denoise_bind_group("bg capture multiply", tex2_view, tex1_view),
+        create_bind_group(
+            device,
+            "bg capture deconvolution apply",
+            &layouts.bgl_capture_apply,
+            &[
+                buffer_binding(0, camera_uniforms_buffer),
+                texture_binding(10, tex2_view),
+                texture_binding(11, tex1_view),
+                texture_binding(12, scene_view),
+            ],
+        ),
+        make_color_denoise_bind_group("bg capture store", tex2_view, scene_view),
+    ];
+
     let bg_tone_prepare = create_bind_group(
         device,
         "bg tone prepare",
@@ -691,6 +730,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_color_denoise,
         bg_chromatic_aberration_prepare,
         bg_chromatic_aberration_fringes,
+        bg_capture_deconvolution,
         bg_tone_prepare,
         bg_tone_horizontal,
         bg_tone_vertical,

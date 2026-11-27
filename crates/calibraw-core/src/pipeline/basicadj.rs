@@ -106,6 +106,41 @@ impl Default for PointCurve {
     }
 }
 
+/// How capture sharpening (the Detail card's Amount, Radius, Detail and
+/// Masking) sharpens.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SharpenMethod {
+    /// Richardson-Lucy deconvolution of luminance with a Gaussian blur, in
+    /// the RAW stage after demosaicing, as darktable's and RawTherapee's
+    /// capture sharpening (`capture_deconvolution.wgsl`).
+    #[default]
+    Deconvolution,
+    /// The edge-aware local contrast boost of the scene tone pass
+    /// (`detail_capture.wgsl`), whose result stays within each pixel's
+    /// neighbourhood. Edits saved before [`Self::Deconvolution`] render with
+    /// it (`migrations/capture_sharpening.rs`); it is never chosen for a new
+    /// edit.
+    ///
+    /// migration: remove in v2.0.0, with the scene tone pass's global
+    /// capture sharpening that renders it.
+    Legacy,
+}
+
+impl SharpenMethod {
+    /// The Amount of [`Self::Legacy`] when an edit saved none, which its
+    /// slider resets to.
+    pub const LEGACY_DEFAULT_AMOUNT: f32 = 40.0;
+    /// The Radius of [`Self::Legacy`] when an edit saved none, which its
+    /// slider resets to.
+    pub const LEGACY_DEFAULT_RADIUS: f32 = 1.0;
+
+    /// Whether capture sharpening runs in the RAW stage.
+    pub const fn is_deconvolution(self) -> bool {
+        matches!(self, Self::Deconvolution)
+    }
+}
+
 /// How a tone control (the master tone curve, Contrast of a mask, Blacks)
 /// treats a pixel's colour.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -426,6 +461,15 @@ pub struct ExposureParams {
     pub clarity: f32,
     pub dehaze: f32,
 
+    /// Capture sharpening of the Detail card. With
+    /// [`SharpenMethod::Deconvolution`] (`capture_deconvolution.wgsl`):
+    /// Amount 0-150 runs `Amount / 5` Richardson-Lucy iterations, Radius is
+    /// the Gaussian blur's sigma in sensor pixels from 0 to 1.5 with 0 for
+    /// the photo's own ([`LoadedRaw::capture_radius`]), Detail 0-100 lowers
+    /// the contrast threshold below which nothing is sharpened (25 keeps the
+    /// photo's), and Masking 0-100 limits it to strong edges.
+    ///
+    /// [`LoadedRaw::capture_radius`]: super::LoadedRaw::capture_radius
     #[serde(default = "default_sharpen_amount")]
     pub sharpen_amount: f32,
     #[serde(default = "default_sharpen_radius")]
@@ -434,6 +478,9 @@ pub struct ExposureParams {
     pub sharpen_detail: f32,
     #[serde(default)]
     pub sharpen_masking: f32,
+    /// How the four sharpening controls above sharpen.
+    #[serde(default)]
+    pub sharpen_method: SharpenMethod,
 
     pub hsl_hue: [f32; 8],
     pub hsl_saturation: [f32; 8],
@@ -545,6 +592,7 @@ impl Default for ExposureParams {
             sharpen_radius: default_sharpen_radius(),
             sharpen_detail: default_sharpen_detail(),
             sharpen_masking: 0.0,
+            sharpen_method: SharpenMethod::Deconvolution,
             hsl_hue: [0.0; 8],
             hsl_saturation: [0.0; 8],
             hsl_luminance: [0.0; 8],
@@ -565,12 +613,14 @@ const fn default_ai_denoise_amount() -> f32 {
     1.0
 }
 
+/// Six Richardson-Lucy iterations ([`ExposureParams::sharpen_amount`]).
 const fn default_sharpen_amount() -> f32 {
-    40.0
+    30.0
 }
 
+/// The photo's own blur radius ([`ExposureParams::sharpen_radius`]).
 const fn default_sharpen_radius() -> f32 {
-    1.0
+    0.0
 }
 
 const fn default_sharpen_detail() -> f32 {

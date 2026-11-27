@@ -1,0 +1,10 @@
+{
+  "edits": {
+    "exposure": {
+      "exposure": -1.5,
+      "highlights": -50.0,
+      "sharpen_amount": 150.0,
+      "sharpen_detail": 100.0
+    }
+  }
+}

@@ -2201,5 +2201,9 @@
   "XMP file name": "XMP 파일 이름",
   "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "가장 먼저 찾고 새 XMP 파일에 붙이는 이름입니다. darktable과 digiKam은 사진의 확장자를 유지하고, Lightroom과 Capture One은 확장자를 생략하므로 이름이 같은 RAW와 JPEG는 하나의 파일을 공유합니다.",
   "Include rating": "별점 포함",
-  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "별점과 선택 또는 거부 플래그를 XMP로 삽입합니다. Lightroom, Windows 및 기타 앱에서 읽을 수 있습니다."
+  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "별점과 선택 또는 거부 플래그를 XMP로 삽입합니다. Lightroom, Windows 및 기타 앱에서 읽을 수 있습니다.",
+  "Deconvolution restores the detail the lens and sensor blurred. Amount sets how far it goes, Radius the blur it undoes (measured from the photo when automatic), Detail how faint a contrast it sharpens, and Masking how strictly it keeps to edges.": "디콘볼루션은 렌즈와 센서가 흐리게 만든 세부 묘사를 복원합니다. 양은 적용 정도를, 반경은 되돌릴 흐림(자동일 때는 사진에서 측정)을, 세부 묘사는 얼마나 약한 대비까지 선명하게 할지를, 마스킹은 얼마나 엄격하게 가장자리에만 적용할지를 정합니다.",
+  "Automatic radius": "자동 반경",
+  "Use deconvolution": "디콘볼루션 사용",
+  "This photo keeps the sharpening it was edited with. Deconvolution restores more of the detail the lens and sensor blurred.": "이 사진은 편집할 때 사용한 선명하게 하기를 유지합니다. 디콘볼루션은 렌즈와 센서가 흐리게 만든 세부 묘사를 더 많이 복원합니다."
 }

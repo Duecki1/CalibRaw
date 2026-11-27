@@ -116,8 +116,9 @@ pub mod adjustment {
     float_param!(BRIGHTNESS, "Brightness", -100.0, 100.0, 0.0, 1.0, 0, None);
 }
 
-/// Capture sharpening under a mask. Ranges and defaults match the Detail
-/// card's sharpening, which runs the same algorithm (`detail_capture.wgsl`).
+/// Sharpening under a mask: the edge-aware local contrast boost of
+/// `detail_capture.wgsl`, with the ranges and defaults the Detail card's
+/// capture sharpening had before it deconvolved (`SharpenMethod::Legacy`).
 pub mod sharpen {
     use super::*;
 

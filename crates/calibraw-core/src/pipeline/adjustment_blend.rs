@@ -91,6 +91,7 @@ impl ExposureParams {
             sharpen_radius,
             sharpen_detail,
             sharpen_masking,
+            sharpen_method: _,
             hsl_hue,
             hsl_saturation,
             hsl_luminance,
@@ -146,9 +147,15 @@ impl ExposureParams {
             clarity: clarity.blend(target.clarity, amount),
             dehaze: dehaze.blend(target.dehaze, amount),
             sharpen_amount: sharpen_amount.blend(target.sharpen_amount, amount),
-            sharpen_radius: sharpen_radius.blend(target.sharpen_radius, amount),
+            // A radius of 0 is the photo's own, which no other radius fades to.
+            sharpen_radius: if sharpen_radius > 0.0 && target.sharpen_radius > 0.0 {
+                sharpen_radius.blend(target.sharpen_radius, amount)
+            } else {
+                target.sharpen_radius
+            },
             sharpen_detail: sharpen_detail.blend(target.sharpen_detail, amount),
             sharpen_masking: sharpen_masking.blend(target.sharpen_masking, amount),
+            sharpen_method: target.sharpen_method,
             hsl_hue: hsl_hue.blend(target.hsl_hue, amount),
             hsl_saturation: hsl_saturation.blend(target.hsl_saturation, amount),
             hsl_luminance: hsl_luminance.blend(target.hsl_luminance, amount),

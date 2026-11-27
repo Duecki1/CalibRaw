@@ -197,7 +197,8 @@ fn capture_band_gain(settings: CaptureSharpening) -> f32 {
     return settings.amount * mix(4.20, 6.00, settings.detail);
 }
 
-// Log2 luminance gain of the Detail card's capture sharpening, in
+// Log2 luminance gain of the Detail card's legacy capture sharpening
+// (SharpenMethod::Legacy; deconvolution is capture_deconvolution.wgsl), in
 // -0.28..0.32 EV, before the local-range limit of `apply_capture_sharpening_ev`.
 fn capture_sharpening_ev(
     pos: vec2<i32>,
@@ -215,8 +216,8 @@ fn capture_sharpening_ev(
 // SHARPEN_EFFECT_GAIN times as much and lets edges overshoot their
 // neighbourhood by up to SHARPEN_EFFECT_HALO_EV at full Amount: the visible
 // acutance halo that capture sharpening deliberately suppresses. Tuned on
-// photographs so Amount 40 roughly matches the Detail card's Amount 150 and
-// Amount 150 is about 2.5 times as strong.
+// photographs so Amount 40 roughly matches the legacy capture sharpening's
+// Amount 150 and Amount 150 is about 2.5 times as strong.
 const SHARPEN_EFFECT_GAIN: f32 = 4.0;
 const SHARPEN_EFFECT_HALO_EV: f32 = 0.5;
 // Soft limit of one slot's gain, in EV.

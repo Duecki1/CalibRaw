@@ -473,6 +473,12 @@ pub struct LoadedRaw {
     /// photo when it is decoded. Normalized to the photo, so crops, proxies
     /// and tiles keep their source's.
     pub lateral_chromatic_aberration: LateralChromaticAberration,
+    /// The Gaussian sigma, in sensor pixels, that blurs the photo's sharpest
+    /// detail, measured from the mosaic when it is decoded
+    /// ([`super::measure_capture_radius`]). Capture sharpening deconvolves
+    /// it while its Radius is 0. Crops, proxies and tiles keep their
+    /// source's.
+    pub capture_radius: f32,
     pub ai_denoised: Arc<RwLock<Option<AiDenoisedImage>>>,
     /// The highlight models measured from the full sensor source ([`HighlightModel`]), shared
     /// with its crops, proxies and tiles.
@@ -532,6 +538,7 @@ impl LoadedRaw {
             lens_geometry: None,
             lens_shading: self.lens_shading.clone(),
             lateral_chromatic_aberration: self.lateral_chromatic_aberration,
+            capture_radius: self.capture_radius,
             ai_denoised: Arc::new(RwLock::new(None)),
             highlight_model_cache: Arc::clone(&self.highlight_model_cache),
             highlight_source_identity: Arc::clone(&self.highlight_source_identity),
@@ -585,6 +592,7 @@ impl LoadedRaw {
             lens_geometry: None,
             lens_shading: None,
             lateral_chromatic_aberration: LateralChromaticAberration::NONE,
+            capture_radius: super::FALLBACK_CAPTURE_RADIUS,
             ai_denoised: Arc::new(RwLock::new(None)),
             highlight_model_cache: Default::default(),
             highlight_source_identity: Default::default(),

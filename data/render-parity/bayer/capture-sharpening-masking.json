@@ -1,0 +1,9 @@
+{
+  "edits": {
+    "exposure": {
+      "sharpen_amount": 80.0,
+      "sharpen_radius": 0.5,
+      "sharpen_masking": 60.0
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::pipeline::effect_lanes::glow;
-use crate::pipeline::{PointColors, ToneResponse};
+use crate::pipeline::{CaptureDeconvolution, PointColors, SharpenMethod, ToneResponse};
 
 /// The camera uniforms, and the highlight model `highlight_options` describes: the pipeline
 /// uploads the model with the uniforms.
@@ -95,6 +95,43 @@ pub(super) fn pack_camera_params(
         raw.lateral_chromatic_aberration
             .coefficients(channel)
             .map(|coefficient| coefficient * chromatic_aberration)
+    };
+
+    let capture_sharpening = CaptureDeconvolution::of(exposure, raw).map_or([0.0; 4], |capture| {
+        // The blur is measured in sensor pixels; a reduced preview blurs
+        // with it at its own resolution (`processing_per_source_pixel` in
+        // common.wgsl).
+        let processing_short_edge = full_width.min(full_height).max(1) as f32;
+        let source_short_edge = raw.source_extent[0].min(raw.source_extent[1]);
+        let processing_per_source = if source_short_edge > 0 {
+            processing_short_edge / source_short_edge as f32
+        } else {
+            1.0
+        };
+        [
+            capture.sigma() * processing_per_source,
+            capture.contrast_threshold(),
+            capture.masking(),
+            capture.last_fraction(),
+        ]
+    });
+    // darktable masks photosites above 90% of white (`CAPTURE_CFACLIP`);
+    // where a photo's photosites saturate is its white.
+    let capture_clip = match raw.pixel_layout() {
+        PixelLayout::Mosaic => [
+            0.9 * raw.sensor_saturation.level(),
+            CAPTURE_CLIP_MOSAIC,
+            0.0,
+            0.0,
+        ],
+        _ if raw.averaged_clipping().is_some() => [0.0, CAPTURE_CLIP_TEXTURE, 0.0, 0.0],
+        PixelLayout::Raster if raw.raster_clipping.is_recorded() => [
+            0.9 * raw.sensor_saturation.level(),
+            CAPTURE_CLIP_RASTER,
+            0.0,
+            0.0,
+        ],
+        _ => [0.0, CAPTURE_CLIP_NONE, 0.0, 0.0],
     };
 
     let camera = CameraUniforms {
@@ -191,6 +228,8 @@ pub(super) fn pack_camera_params(
         film_base,
         film_exponents,
         film_gains,
+        capture_sharpening,
+        capture_clip,
     };
     (camera, highlight_model)
 }
@@ -432,8 +471,14 @@ pub(super) fn pack_effect_params(
         .fold(0.0_f32, f32::max);
     EffectsUniforms {
         presence: [exposure.texture, exposure.clarity, exposure.dehaze, 0.0],
+        // The scene tone pass sharpens only with the legacy method;
+        // deconvolution runs in the RAW stage.
         sharpen: [
-            exposure.sharpen_amount.clamp(0.0, 150.0),
+            if exposure.sharpen_method == SharpenMethod::Legacy {
+                exposure.sharpen_amount.clamp(0.0, 150.0)
+            } else {
+                0.0
+            },
             exposure.sharpen_radius.clamp(0.5, 3.0),
             exposure.sharpen_detail.clamp(0.0, 100.0),
             exposure.sharpen_masking.clamp(0.0, 100.0),

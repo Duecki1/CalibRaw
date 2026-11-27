@@ -21,6 +21,8 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_xtrans_smoothing: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_finish: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_color_denoise: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_capture_prepare: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_capture_apply: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_tone_prepare: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_tone_blur: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_tone_reduce: wgpu::BindGroupLayout,
@@ -371,6 +373,49 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                 buffer_entry(0),
                 storage_texture_entry(10, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
                 texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
+            ],
+        )
+    });
+
+    // Capture deconvolution's first pass reads the scene, the CFA for its
+    // clipped photosites, a binned view's clipping and a raster's source
+    // pixels, and writes tex1
+    // (capture_deconvolution.wgsl `capture_prepare`).
+    let bgl_capture_prepare =
+        reused_layout(plan.capture_deconvolution_start_index + CAPTURE_PREPARE_PASS)
+            .unwrap_or_else(|| {
+                create_bind_group_layout(
+                    device,
+                    "bgl capture deconvolution prepare",
+                    &[
+                        common_entries[0],
+                        common_entries[1],
+                        common_entries[2],
+                        common_entries[3],
+                        storage_texture_entry(
+                            10,
+                            work_format,
+                            wgpu::StorageTextureAccess::WriteOnly,
+                        ),
+                        texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
+                        texture_entry(15, wgpu::TextureSampleType::Float { filterable: false }),
+                        texture_entry(16, wgpu::TextureSampleType::Float { filterable: false }),
+                    ],
+                )
+            });
+    // Its apply pass reads the deconvolved luminance and the scene into tex2.
+    let bgl_capture_apply = reused_layout(
+        plan.capture_deconvolution_start_index + CAPTURE_APPLY_PASS,
+    )
+    .unwrap_or_else(|| {
+        create_bind_group_layout(
+            device,
+            "bgl capture deconvolution apply",
+            &[
+                buffer_entry(0),
+                storage_texture_entry(10, work_format, wgpu::StorageTextureAccess::WriteOnly),
+                texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
+                texture_entry(12, wgpu::TextureSampleType::Float { filterable: false }),
             ],
         )
     });
@@ -856,6 +901,8 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_xtrans_smoothing,
         bgl_xtrans_finish,
         bgl_color_denoise,
+        bgl_capture_prepare,
+        bgl_capture_apply,
         bgl_tone_prepare,
         bgl_tone_blur,
         bgl_tone_reduce,

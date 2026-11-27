@@ -1,6 +1,6 @@
 use super::{
     reflect_index, CompactPixelMap, DemosaicMode, DenoiseQuality, ExposureParams, FilmSource,
-    HighlightReconstructionMethod, LoadedRaw, MaskEffect, MaskStack, WhiteBalance,
+    HighlightReconstructionMethod, LoadedRaw, MaskEffect, MaskStack, SharpenMethod, WhiteBalance,
 };
 use rayon::prelude::*;
 
@@ -67,6 +67,10 @@ struct RawStageControls {
     chromatic_aberration: f32,
     /// Tone analysis measures the positive, so the stages it starts must run again.
     film: FilmSource,
+    /// The capture sharpening the RAW stage deconvolves with: its four
+    /// controls with [`SharpenMethod::Deconvolution`] and an Amount above 0,
+    /// otherwise none.
+    capture_deconvolution: Option<[f32; 4]>,
 }
 
 impl RawStageControls {
@@ -117,10 +121,13 @@ impl RawStageControls {
             texture: _,
             clarity: _,
             dehaze: _,
+            // Deconvolution runs in the RAW stage, the legacy sharpening in
+            // the output stage (`capture_deconvolution`).
             sharpen_amount: _,
             sharpen_radius: _,
             sharpen_detail: _,
             sharpen_masking: _,
+            sharpen_method: _,
             hsl_hue: _,
             hsl_saturation: _,
             hsl_luminance: _,
@@ -149,6 +156,14 @@ impl RawStageControls {
             highlight_reconstruction,
             chromatic_aberration,
             film,
+            capture_deconvolution: (params.sharpen_method == SharpenMethod::Deconvolution
+                && params.sharpen_amount > 0.0)
+                .then_some([
+                    params.sharpen_amount,
+                    params.sharpen_radius,
+                    params.sharpen_detail,
+                    params.sharpen_masking,
+                ]),
         }
     }
 }
@@ -219,6 +234,7 @@ mod tests {
             lens_geometry: None,
             lens_shading: None,
             lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
+            capture_radius: crate::pipeline::FALLBACK_CAPTURE_RADIUS,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             highlight_model_cache: Default::default(),
             highlight_source_identity: Default::default(),

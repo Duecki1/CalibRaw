@@ -565,9 +565,11 @@ impl Converter<'_> {
             return;
         }
         groups.set(AdjustmentGroup::Detail, true);
+        // Lightroom's SharpenRadius (0.5-3) is not the sigma of the blur that
+        // deconvolution undoes, and no mapping between them is published, so
+        // the preset keeps the radius of each photo it is applied to (0).
         for (key, target, min, max) in [
             ("Sharpness", &mut exposure.sharpen_amount, 0.0, 150.0),
-            ("SharpenRadius", &mut exposure.sharpen_radius, 0.5, 3.0),
             ("SharpenDetail", &mut exposure.sharpen_detail, 0.0, 100.0),
             (
                 "SharpenEdgeMasking",

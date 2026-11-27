@@ -2207,5 +2207,9 @@
   "XMP file name": "XMP फ़ाइल का नाम",
   "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "वह नाम जिसे पहले खोजा जाता है और जो नई XMP फ़ाइलों को दिया जाता है। darktable और digiKam फ़ोटो का एक्सटेंशन रखते हैं; Lightroom और Capture One उसे हटा देते हैं, इसलिए एक ही नाम की RAW और JPEG फ़ाइलें एक ही फ़ाइल साझा करती हैं।",
   "Include rating": "रेटिंग शामिल करें",
-  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "स्टार रेटिंग और पसंद या अस्वीकार फ़्लैग को XMP के रूप में जोड़ता है, जिसे Lightroom, Windows और अन्य ऐप पढ़ते हैं।"
+  "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "स्टार रेटिंग और पसंद या अस्वीकार फ़्लैग को XMP के रूप में जोड़ता है, जिसे Lightroom, Windows और अन्य ऐप पढ़ते हैं।",
+  "Deconvolution restores the detail the lens and sensor blurred. Amount sets how far it goes, Radius the blur it undoes (measured from the photo when automatic), Detail how faint a contrast it sharpens, and Masking how strictly it keeps to edges.": "डिकॉन्वोल्यूशन वह विवरण वापस लाता है जिसे लेंस और सेंसर ने धुंधला कर दिया था। मात्रा तय करती है कि यह कितना आगे जाए, रेडियस वह धुंधलापन जिसे यह हटाता है (स्वचालित होने पर फ़ोटो से मापा गया), विवरण यह कि यह कितने हल्के कंट्रास्ट को शार्प करे, और मास्किंग यह कि यह किनारों तक कितनी सख्ती से सीमित रहे।",
+  "Automatic radius": "स्वचालित रेडियस",
+  "Use deconvolution": "डिकॉन्वोल्यूशन का उपयोग करें",
+  "This photo keeps the sharpening it was edited with. Deconvolution restores more of the detail the lens and sensor blurred.": "यह फ़ोटो वही शार्पनिंग रखती है जिसके साथ इसे संपादित किया गया था। डिकॉन्वोल्यूशन लेंस और सेंसर द्वारा धुंधले किए गए विवरण का अधिक हिस्सा वापस लाता है।"
 }

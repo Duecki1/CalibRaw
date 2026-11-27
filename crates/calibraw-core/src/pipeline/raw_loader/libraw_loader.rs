@@ -845,6 +845,7 @@ fn loaded_raw_from_context(
         lens_geometry: None,
         lens_shading: None,
         lateral_chromatic_aberration: LateralChromaticAberration::NONE,
+        capture_radius: crate::pipeline::FALLBACK_CAPTURE_RADIUS,
         ai_denoised: Arc::new(std::sync::RwLock::new(None)),
         highlight_model_cache: Default::default(),
         highlight_source_identity: Default::default(),
@@ -857,6 +858,7 @@ fn loaded_raw_from_context(
     );
     super::makernote_lens::record(&mut loaded, makernote_lens);
     loaded.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&loaded);
+    loaded.capture_radius = super::super::measure_capture_radius(&loaded);
     Ok(loaded)
 }
 

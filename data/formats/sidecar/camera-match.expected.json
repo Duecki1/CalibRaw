@@ -2,7 +2,7 @@
   "edited": true,
   "migrated": true,
   "saved": {
-    "edit_fingerprint": "c9ab27ebbec9054d",
+    "edit_fingerprint": "6af8a9068d29a9de",
     "editing_time_ms": 61000,
     "edits": {
       "ai_masks_need_update": false,
@@ -77,6 +77,7 @@
         "sharpen_amount": 40.0,
         "sharpen_detail": 25.0,
         "sharpen_masking": 0.0,
+        "sharpen_method": "legacy",
         "sharpen_radius": 1.0,
         "sigmoid": {
           "color_processing": "PerChannel",

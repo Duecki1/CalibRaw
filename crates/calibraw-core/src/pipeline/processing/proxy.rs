@@ -65,6 +65,7 @@ fn raster_with_metadata(
         .flatten();
     output.lens_shading = raw.lens_shading.clone();
     output.lateral_chromatic_aberration = raw.lateral_chromatic_aberration;
+    output.capture_radius = raw.capture_radius;
     output.highlight_model_cache = Arc::clone(&raw.highlight_model_cache);
     output.highlight_source_identity = Arc::clone(&raw.highlight_source_identity);
     output.highlight_reference_source = false;

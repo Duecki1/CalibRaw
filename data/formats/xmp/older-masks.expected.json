@@ -63,10 +63,11 @@
         "profile_tone_curve": "applied",
         "saturation": 0.0,
         "shadows": 0.0,
-        "sharpen_amount": 40.0,
+        "sharpen_amount": 30.0,
         "sharpen_detail": 25.0,
         "sharpen_masking": 0.0,
-        "sharpen_radius": 1.0,
+        "sharpen_method": "deconvolution",
+        "sharpen_radius": 0.0,
         "sigmoid": {
           "color_processing": "PerChannel",
           "contrast": 1.5,

@@ -1,6 +1,6 @@
 //! The scene the RAW stage (highlight reconstruction, demosaic, chromatic aberration, colour
-//! denoise and Remove) leaves for every tile of an export, kept from the tone prepass so the
-//! final pass does not run that stage again.
+//! denoise, capture sharpening and Remove) leaves for every tile of an export, kept from the
+//! tone prepass so the final pass does not run that stage again.
 //!
 //! Each tile stores its core, and on the photo's edges the halo past them, into one canvas of
 //! the photo and a halo around it. A final tile then reads its padded region from the canvas.

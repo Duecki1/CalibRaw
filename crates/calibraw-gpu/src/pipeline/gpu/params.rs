@@ -9,7 +9,7 @@ use super::*;
 use crate::pipeline::effect_lanes::{
     glow, light_rays, light_shafts, neon, options, pixelate, relight, styled_glow,
 };
-use crate::pipeline::{EffectOption, EffectPass, Lane, SceneNeeds};
+use crate::pipeline::{CaptureDeconvolution, EffectOption, EffectPass, Lane, SceneNeeds};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -83,7 +83,30 @@ pub(super) struct CameraUniforms {
     /// balance relative to the as-shot one, less any the camera transform
     /// applies.
     pub(super) film_gains: [f32; 4],
+    /// Capture sharpening by deconvolution (capture_deconvolution.wgsl): the
+    /// blur's sigma in processing pixels, darktable's contrast sensitivity
+    /// (0-1), Masking (0-1) and the share of the last iteration kept.
+    pub(super) capture_sharpening: [f32; 4],
+    /// The normalized sensor level a photosite counts as clipped at for the
+    /// deconvolution's mask, then where clipping is read (`CAPTURE_CLIP_*`),
+    /// then 0.
+    pub(super) capture_clip: [f32; 4],
 }
+
+/// `capture_clip[1]`: where capture_deconvolution.wgsl reads clipping.
+/// Nowhere: a raster without a clipping record, whose white level is not
+/// where light clipped.
+pub(super) const CAPTURE_CLIP_NONE: f32 = 0.0;
+/// The mosaic's photosites.
+pub(super) const CAPTURE_CLIP_MOSAIC: f32 = 1.0;
+/// The clipping texture of a binned view or of a reduced camera-linear
+/// raster.
+pub(super) const CAPTURE_CLIP_TEXTURE: f32 = 2.0;
+/// The source pixels of a camera-linear raster that records its clipping per
+/// pixel ([`RasterClipping::PerPixel`]).
+///
+/// [`RasterClipping::PerPixel`]: crate::pipeline::RasterClipping::PerPixel
+pub(super) const CAPTURE_CLIP_RASTER: f32 = 3.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -321,7 +344,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_448);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_480);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -452,6 +475,9 @@ pub struct GpuParams {
     /// The highlight model `camera.highlight_options` describes, uploaded with
     /// the parameters.
     pub(super) highlight_model: Option<Arc<HighlightModel>>,
+    /// Richardson-Lucy iterations the RAW stage runs for capture sharpening
+    /// (`camera.capture_sharpening`), 0 without deconvolution.
+    capture_iterations: u32,
 }
 
 impl GpuParams {
@@ -735,6 +761,8 @@ impl GpuParams {
         Self {
             camera,
             highlight_model,
+            capture_iterations: CaptureDeconvolution::of(exposure, raw)
+                .map_or(0, CaptureDeconvolution::passes),
             scene_tone: pack_scene_tone_params(&context),
             effects: pack_effect_params(&context, &mask_data),
             mask_data,
@@ -919,6 +947,13 @@ impl GpuParams {
     /// Chromatic aberration runs between the demosaic finish and colour
     /// denoise whenever its amount is above zero, even for a photo without
     /// lateral aberration: its fringe removal still applies.
+    /// Richardson-Lucy iterations of capture sharpening, each a blur-divide
+    /// and a blur-multiply pass (capture_deconvolution.wgsl); 0 skips its
+    /// passes.
+    pub(super) fn capture_iterations(&self) -> u32 {
+        self.capture_iterations
+    }
+
     pub(super) fn needs_chromatic_aberration_passes(&self) -> bool {
         self.camera.chromatic_aberration[0] > 0.0
     }

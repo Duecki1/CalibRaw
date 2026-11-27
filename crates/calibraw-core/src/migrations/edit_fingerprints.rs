@@ -6,13 +6,25 @@
 //! for every photo whose start is not known. Saving it again records both
 //! fingerprints. Once removed, a sidecar without them reads as unedited.
 
-use crate::sidecar::{EditFingerprint, EditState, SidecarError};
+use crate::pipeline::SharpenMethod;
+use crate::sidecar::{default_edit_state, EditFingerprint, EditState, SidecarError};
 use serde::Deserialize;
 
 /// Whether `edits`, decoded from a sidecar without fingerprints, differ from
-/// the defaults.
+/// the defaults of the versions that saved such sidecars.
 pub(crate) fn edited_without_fingerprints(edits: &EditState) -> Result<bool, SidecarError> {
-    Ok(EditFingerprint::of(edits)? != EditFingerprint::of_defaults()?)
+    Ok(EditFingerprint::of(edits)? != EditFingerprint::of(&saved_defaults())?)
+}
+
+/// The defaults as those versions had them: capture sharpening by the legacy
+/// method at Amount 40 and Radius 1, which their edits decode to
+/// (`capture_sharpening`).
+fn saved_defaults() -> EditState {
+    let mut defaults = default_edit_state();
+    defaults.exposure.sharpen_method = SharpenMethod::Legacy;
+    defaults.exposure.sharpen_amount = SharpenMethod::LEGACY_DEFAULT_AMOUNT;
+    defaults.exposure.sharpen_radius = SharpenMethod::LEGACY_DEFAULT_RADIUS;
+    defaults
 }
 
 /// The same for the sidecar `bytes`, without decoding its edits: compares the

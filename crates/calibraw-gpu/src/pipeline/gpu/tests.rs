@@ -252,6 +252,7 @@ fn highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         lens_geometry: None,
         lens_shading: None,
         lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
+        capture_radius: crate::pipeline::FALLBACK_CAPTURE_RADIUS,
         ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
         highlight_model_cache: Default::default(),
         highlight_source_identity: Default::default(),
@@ -528,6 +529,7 @@ fn xtrans_demosaic_matches_darktable_markesteijn() -> anyhow::Result<()> {
         dual_threshold: 0.0,
         luminance_denoise: 0.0,
         chroma_denoise: 0.0,
+        sharpen_amount: 0.0,
         ..Default::default()
     };
     let params = GpuParams::new(&exposure, &MaskStack::default(), &raw);

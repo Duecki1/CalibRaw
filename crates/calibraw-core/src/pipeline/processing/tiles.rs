@@ -32,8 +32,8 @@ pub const TONE_GUIDE_RADIUS_CELLS: u32 = 5;
 pub const MAX_RESOLUTION_SCALE: u32 = 3;
 pub(super) const TONE_GUIDE_SUPPORT: u32 =
     (TONE_GUIDE_RADIUS_CELLS * MAX_RESOLUTION_SCALE + 1) * TONE_GUIDE_CELL_SIZE;
-// Capture sharpening (detail_capture.wgsl): a 5×5 blur at a step of at most 3,
-// in the scene tone pass before the scene effects.
+// Legacy capture sharpening and Sharpen effects (detail_capture.wgsl): a 5×5
+// blur at a step of at most 3, in the scene tone pass before the scene effects.
 pub(crate) const CAPTURE_SHARPEN_SUPPORT: u32 = 6;
 /// Pixels past a tile core that the haze grid's box means read in the export
 /// tone prepass (`HAZE_BOX_MAX` - 1 in haze_analysis.wgsl).
@@ -81,6 +81,7 @@ const EXPORT_CUMULATIVE_SUPPORT: u32 = HIGHLIGHT_RECONSTRUCTION_SUPPORT
     + DEMOSAIC_CHAIN_SUPPORT
     + CHROMATIC_ABERRATION_SUPPORT
     + COLOR_DENOISE_SUPPORT_HIGH
+    + crate::pipeline::CAPTURE_DECONVOLUTION_MAX_SUPPORT
     + TONE_GUIDE_SUPPORT
     + LOCAL_EFFECTS_SUPPORT
     + NEON_SUPPORT
@@ -135,6 +136,9 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
         };
     }
 
+    // Capture sharpening by deconvolution ends the RAW stage.
+    support += crate::pipeline::capture_deconvolution_support(exposure);
+
     // Each group of effect reaches reserves its widest active reach once.
     let mut reaches = [0; ReachGroup::ALL.len()];
     for effect in MaskEffect::ALL {
@@ -147,8 +151,11 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
     }
     let reach = |group: ReachGroup| reaches[group as usize];
 
-    // Sharpen components run in the capture-sharpening pass of the Detail card.
-    let detail_sharpening = if exposure.sharpen_amount.abs() > 1e-6 {
+    // Sharpen components run in the capture-sharpening pass of the Detail
+    // card, which sharpens there with the legacy method.
+    let detail_sharpening = if exposure.sharpen_method == crate::pipeline::SharpenMethod::Legacy
+        && exposure.sharpen_amount.abs() > 1e-6
+    {
         CAPTURE_SHARPEN_SUPPORT
     } else {
         0

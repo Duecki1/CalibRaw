@@ -5,6 +5,7 @@ pub mod alignment;
 pub mod basicadj;
 mod calibration;
 pub mod camera_look;
+mod capture_sharpening;
 mod card_switches;
 pub use card_switches::{CardSwitch, CardSwitches};
 mod chromatic_aberration;
@@ -46,12 +47,17 @@ pub mod white_balance_presets;
 pub use basicadj::{
     temperature_kelvin_from_offset, temperature_offset_from_kelvin, white_balance_tint_from_offset,
     white_balance_tint_offset, ColorGradeWheel, ColorGrading, DemosaicMode, ExposureParams,
-    HighlightReconstructionMethod, PointCurve, ProfileToneCurve, ToneResponse, Treatment,
-    WhiteBalance, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, HSL_HUE_LIMIT,
+    HighlightReconstructionMethod, PointCurve, ProfileToneCurve, SharpenMethod, ToneResponse,
+    Treatment, WhiteBalance, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, HSL_HUE_LIMIT,
     HUE_ROTATION_LIMIT_DEGREES, MAX_POINT_CURVE_POINTS, MAX_TEMPERATURE_KELVIN,
     MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
 pub use calibration::{Calibration, PrimaryCalibration, CALIBRATION_LIMIT};
+pub use capture_sharpening::{
+    auto_contrast_threshold, capture_deconvolution_support, measure_capture_radius,
+    CaptureDeconvolution, CAPTURE_DECONVOLUTION_MAX_SUPPORT, FALLBACK_CAPTURE_RADIUS,
+    MAX_CAPTURE_ITERATIONS, MAX_CAPTURE_RADIUS,
+};
 pub use chromatic_aberration::{LateralChannel, LateralChromaticAberration, MAX_LATERAL_SHIFT};
 pub use color_profile::{
     CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, ToneCurve,

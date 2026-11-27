@@ -35,6 +35,10 @@
 //!   (`calibraw-gpu`: `tonemap.wgsl`, `scene_adjustments.wgsl`,
 //!   `view_transform.wgsl`, `pipeline/gpu/stage_params.rs`,
 //!   `pipeline/gpu/mask_params.rs`).
+//! - Capture sharpening with the legacy method (`SharpenMethod::Legacy`,
+//!   `pipeline/basicadj.rs`), set by `capture_sharpening`, and the scene tone
+//!   pass's global capture sharpening that renders it (`calibraw-gpu`:
+//!   `scene_adjustments.wgsl`, `pipeline/gpu/stage_params.rs`).
 //! - Depth Anything V2 Small, the depth model before Distill-Any-Depth
 //!   Small, removed from the model folder on start-up (`calibraw-ui`,
 //!   `app/ai/models.rs`).
@@ -47,6 +51,7 @@
 //! `older_readers` works the other way: it writes sidecars and presets so
 //! that v1.2 and older can still open them.
 
+mod capture_sharpening;
 mod component_names;
 pub(crate) mod depth_range_feather;
 pub(crate) mod edit_fingerprints;
@@ -65,6 +70,7 @@ pub(crate) use effect_sliders::LegacyEffectSliders;
 pub(crate) use scene_depth_layout::LegacySceneDepth;
 
 use crate::sidecar::EditState;
+use capture_sharpening::LegacyCaptureSharpening;
 use highlight_glow::LegacyHighlightGlows;
 use profile_tone_curves::LegacyProfileToneCurve;
 use scene_depth_controls::LegacySceneControls;
@@ -74,7 +80,8 @@ use tone_responses::LegacyToneResponses;
 /// What older layouts kept in a serialized `edits` object besides what the
 /// edit decodes: the Effects-card sliders, Relight's old scene controls, the
 /// Self-illuminating switch of Glows, which tone controls were saved without
-/// a response, and whether the profile tone curve choice was saved. Read in
+/// a response, whether capture sharpening was saved with its method, and
+/// whether the profile tone curve choice was saved. Read in
 /// the same pass as a document's header.
 #[derive(Debug, Default)]
 pub(crate) struct LegacyEdits {
@@ -82,6 +89,7 @@ pub(crate) struct LegacyEdits {
     scene_controls: LegacySceneControls,
     highlight_glows: LegacyHighlightGlows,
     tone_responses: LegacyToneResponses,
+    capture_sharpening: LegacyCaptureSharpening,
     profile_tone_curve: LegacyProfileToneCurve,
 }
 
@@ -95,6 +103,7 @@ impl<'de> Deserialize<'de> for LegacyEdits {
             scene_controls: LegacySceneControls::deserialize(&edits).map_err(read)?,
             highlight_glows: LegacyHighlightGlows::deserialize(&edits).map_err(read)?,
             tone_responses: LegacyToneResponses::deserialize(&edits).map_err(read)?,
+            capture_sharpening: LegacyCaptureSharpening::deserialize(&edits).map_err(read)?,
             profile_tone_curve: LegacyProfileToneCurve::deserialize(&edits).map_err(read)?,
         })
     }
@@ -125,10 +134,11 @@ impl LegacyEdits {
 pub(crate) fn migrate_edits(edits: &mut EditState, legacy: LegacyEdits) -> bool {
     // First, while every mask is where the document saved it.
     let tone_responses = legacy.tone_responses.migrate(edits);
+    let capture_sharpening = legacy.capture_sharpening.migrate(edits);
     // Before the sliders, which then find the highlight Glows they would add.
     let highlight_glows = legacy.highlight_glows.migrate(edits);
     let effects = legacy.sliders.migrate(edits);
     let scene_controls = legacy.scene_controls.migrate(edits);
     let names = component_names::migrate(edits);
-    highlight_glows || effects || scene_controls || names || tone_responses
+    highlight_glows || effects || scene_controls || names || tone_responses || capture_sharpening
 }

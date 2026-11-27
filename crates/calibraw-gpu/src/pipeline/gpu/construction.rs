@@ -123,6 +123,7 @@ impl RawGpuPipeline {
             lens_geometry: None,
             lens_shading: None,
             lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
+            capture_radius: crate::pipeline::FALLBACK_CAPTURE_RADIUS,
             ai_denoised: Arc::new(std::sync::RwLock::new(None)),
             highlight_model_cache: Default::default(),
             highlight_source_identity: Default::default(),
