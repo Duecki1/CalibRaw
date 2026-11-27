@@ -2208,8 +2208,7 @@
   "The name looked for first and given to new XMP files. darktable and digiKam keep the photo's extension; Lightroom and Capture One drop it, so a RAW and a JPEG of the same name share one file.": "最先尋找並用於新 XMP 檔案的名稱。darktable 和 digiKam 保留照片的副檔名；Lightroom 和 Capture One 會省略副檔名，因此同名的 RAW 和 JPEG 共用一個檔案。",
   "Include rating": "包含評分",
   "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "將星級評分以及選用或拒絕標記以 XMP 格式嵌入，Lightroom、Windows 和其他應用程式可以讀取。",
-  "Deconvolution restores the detail the lens and sensor blurred. Amount sets how far it goes, Radius the blur it undoes (measured from the photo when automatic), Detail how faint a contrast it sharpens, and Masking how strictly it keeps to edges.": "反摺積可還原被鏡頭與感光元件模糊的細節。數量決定處理強度，半徑決定要消除的模糊（自動時從照片中測量），細節決定銳化多弱的反差，遮色片決定在多大程度上只作用於邊緣。",
-  "Automatic radius": "自動半徑",
+  "Deconvolution restores the detail the lens and sensor blurred. Amount sets how far it goes, Radius the blur it undoes (measured from the photo until you change it), Detail how faint a contrast it sharpens, and Masking how strictly it keeps to edges.": "反摺積可還原被鏡頭與感光元件模糊的細節。數量決定處理強度，半徑決定要消除的模糊（在您更改之前從照片中測量），細節決定銳化多弱的反差，遮色片決定在多大程度上只作用於邊緣。",
   "Use deconvolution": "使用反摺積",
   "This photo keeps the sharpening it was edited with. Deconvolution restores more of the detail the lens and sensor blurred.": "這張照片保留編輯時使用的銳化。反摺積能還原更多被鏡頭與感光元件模糊的細節。"
 }

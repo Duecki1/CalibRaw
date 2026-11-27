@@ -619,9 +619,10 @@ impl Sidebar {
         changed
     }
 
-    /// Capture sharpening by deconvolution. Radius 0 is automatic: the
-    /// slider shows `capture_radius`, the photo's, and moving it sets a
-    /// radius of its own.
+    /// Capture sharpening by deconvolution. Radius 0 is the photo's own, as
+    /// the noise reduction starts at the photo's: the slider shows
+    /// `capture_radius`, moving it sets a radius of the edit's own, and its
+    /// reset returns to the photo's.
     fn show_capture_deconvolution(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
@@ -631,7 +632,7 @@ impl Sidebar {
         moduwu_design::strong_with_help(
             ui,
             tr("Capture sharpening"),
-            tr("Deconvolution restores the detail the lens and sensor blurred. Amount sets how far it goes, Radius the blur it undoes (measured from the photo when automatic), Detail how faint a contrast it sharpens, and Masking how strictly it keeps to edges."),
+            tr("Deconvolution restores the detail the lens and sensor blurred. Amount sets how far it goes, Radius the blur it undoes (measured from the photo until you change it), Detail how faint a contrast it sharpens, and Masking how strictly it keeps to edges."),
         );
         let mut changed =
             AdjustmentSlider::new(tr("Amount"), &mut exposure.sharpen_amount, 0.0..=150.0)
@@ -639,24 +640,23 @@ impl Sidebar {
                 .step(1.0)
                 .reset_to(defaults.sharpen_amount)
                 .show(ui);
-        let mut automatic = exposure.sharpen_radius <= 0.0;
-        let mut radius = if automatic {
-            capture_radius
-        } else {
+        // The slider shows the radius the photo renders with; its reset, Radius
+        // 0, returns to the photo's own.
+        let shown = if exposure.sharpen_radius > 0.0 {
             exposure.sharpen_radius
+        } else {
+            capture_radius
         };
+        let mut radius = shown;
         if AdjustmentSlider::new(tr("Radius"), &mut radius, 0.0..=MAX_CAPTURE_RADIUS)
             .decimals(2)
             .step(0.01)
             .reset_to(defaults.sharpen_radius)
             .show(ui)
+            && radius != shown
+            && radius != exposure.sharpen_radius
         {
             exposure.sharpen_radius = radius;
-            automatic = radius <= 0.0;
-            changed = true;
-        }
-        if moduwu_design::toggle_row(ui, &mut automatic, tr("Automatic radius")).changed() {
-            exposure.sharpen_radius = if automatic { 0.0 } else { capture_radius };
             changed = true;
         }
         changed |= AdjustmentSlider::new(tr("Detail"), &mut exposure.sharpen_detail, 0.0..=100.0)
