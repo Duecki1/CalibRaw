@@ -22,6 +22,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 
 /**
  * A folder the user linked through the Storage Access Framework. Photos are worked on where they
@@ -198,25 +199,38 @@ final class TreeLibraryStore implements LibraryStore {
                 Long.compare(right.modifiedMillis, left.modifiedMillis));
         ArrayList<Document> result = new ArrayList<>();
         for (Entry photo : photos.subList(0, Math.min(limit, photos.size()))) {
-            Entry sidecar = sidecarOf(entries, photo.displayName);
+            String name = photo.displayName;
             result.add(new Document(
-                    photoUri(normalized, photo.displayName).toString(),
-                    photo.displayName,
-                    displayPath(normalized, photo.displayName),
+                    photoUri(normalized, name).toString(),
+                    name,
+                    displayPath(normalized, name),
                     Math.max(0, photo.size),
                     Math.max(0, photo.modifiedMillis / 1000),
-                    sidecar != null ? Math.max(0, sidecar.size) : NO_SIDECAR,
-                    sidecar != null ? sidecar.modifiedMillis : NO_SIDECAR));
+                    stampBeside(entries, name, AndroidStorageContract::sidecarDisplayName),
+                    stampBeside(
+                            entries,
+                            name,
+                            photoName -> AndroidStorageContract.xmpDisplayName(photoName, false)),
+                    stampBeside(
+                            entries,
+                            name,
+                            photoName -> AndroidStorageContract.xmpDisplayName(photoName, true))));
         }
         return result;
     }
 
-    /** The sidecar of the photo called {@code photoName} in {@code entries}, or null. */
-    private static Entry sidecarOf(Map<String, Entry> entries, String photoName) {
+    /**
+     * The file {@code name} names beside the photo called {@code photoName} in {@code entries},
+     * or null when there is none.
+     */
+    private static Stamp stampBeside(
+            Map<String, Entry> entries, String photoName, UnaryOperator<String> name) {
         try {
-            Entry sidecar = entries.get(AndroidStorageContract.sidecarDisplayName(photoName));
-            return sidecar != null && !sidecar.directory ? sidecar : null;
-        } catch (IllegalArgumentException noSidecarName) {
+            Entry beside = entries.get(name.apply(photoName));
+            return beside != null && !beside.directory
+                    ? new Stamp(Math.max(0, beside.size), beside.modifiedMillis)
+                    : null;
+        } catch (IllegalArgumentException noName) {
             return null;
         }
     }

@@ -4,7 +4,8 @@
 
 use super::super::*;
 use crate::platform::{LibraryDocument, ListedSidecar};
-use calibraw_core::display_metadata_cache::{FileStamp, FolderDisplayMetadataCache};
+use crate::sidecar::xmp_review;
+use calibraw_core::display_metadata_cache::{FileStamp, FolderDisplayMetadataCache, XmpSources};
 
 pub(in crate::ui::library) struct MediaFolderScan {
     pub(in crate::ui::library) assets: Vec<LibraryAsset>,
@@ -32,6 +33,7 @@ pub(in crate::ui::library) fn catalog_media_folder(
                 FolderDisplayMetadataCache::load_file,
             )
     };
+    let xmp_settings = xmp_review::xmp_review_settings();
     let truncated = documents.len() > MAX_LIBRARY_FILES;
     let mut deferred = DeferredFolderMetadata::new(sidecar_writes);
     // The listed folder's cache is always loaded, so it drops the entries of
@@ -53,6 +55,7 @@ pub(in crate::ui::library) fn catalog_media_folder(
                 })
         };
         let listed_sidecar = document.sidecar;
+        let listed_xmp = document.xmp_sidecars;
         let mut asset = LibraryAsset::from_android_document(document);
         let file_name = OsString::from(&asset.display_name);
         let stamp = photo_stamp(&asset.metadata);
@@ -74,7 +77,6 @@ pub(in crate::ui::library) fn catalog_media_folder(
             ListedSidecar::Present(stamp) => {
                 match deferred.cache_mut(slot).sidecar(&file_name, stamp) {
                     Some(summary) => {
-                        asset.metadata.review = summary.review;
                         asset.metadata.edited = summary.edited;
                         PhotoSidecar::Summarized(summary)
                     }
@@ -82,7 +84,22 @@ pub(in crate::ui::library) fn catalog_media_folder(
                 }
             }
         };
-        deferred.set_sidecar(asset.id.clone(), slot, file_name, sidecar);
+        let xmp = match listed_xmp {
+            None => PhotoXmp::Unknown,
+            Some(sidecars) => {
+                let sources = XmpSources::new(xmp_settings.sidecar_name, sidecars, stamp);
+                let has_sidecar = matches!(listed_sidecar, ListedSidecar::Present(_));
+                match deferred.cache_mut(slot).xmp_review(&file_name, &sources) {
+                    Some(review) => PhotoXmp::Read(review),
+                    None if xmp_settings.sync.reads(has_sidecar) => PhotoXmp::Unread(sources),
+                    None => PhotoXmp::Unknown,
+                }
+            }
+        };
+        if let Some(review) = known_review(&sidecar, &xmp) {
+            asset.metadata.review = review;
+        }
+        deferred.set_listed(asset.id.clone(), slot, file_name, sidecar, xmp);
         assets.push(asset);
     }
     // Drops the entries of removed photos now; the workers save what they read.
@@ -92,6 +109,17 @@ pub(in crate::ui::library) fn catalog_media_folder(
         truncated,
         deferred_metadata: deferred,
     }
+}
+
+/// The photo's review when its sidecar and, where the settings read it, its
+/// XMP review are known ([`xmp_review::resolve_review_from`]).
+fn known_review(sidecar: &PhotoSidecar, xmp: &PhotoXmp) -> Option<crate::sidecar::PhotoReview> {
+    let sidecar_review = match sidecar {
+        PhotoSidecar::Absent => None,
+        PhotoSidecar::Summarized(summary) => Some(summary.review),
+        PhotoSidecar::Unlisted | PhotoSidecar::Unread(_) => return None,
+    };
+    xmp_review::resolve_review_from(sidecar_review, |_| xmp.known())
 }
 
 /// The library path of `subfolder`, a path below `folder`.

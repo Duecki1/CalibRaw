@@ -97,7 +97,7 @@ impl AndroidXmpFiles<'_> {
         let staged = staged.to_str().ok_or_else(|| {
             SidecarError::Platform("the XMP staging path is not valid UTF-8".to_owned())
         })?;
-        with_storage_manager(self.app, |env, storage_manager| {
+        let published = with_storage_manager(self.app, |env, storage_manager| {
             let staged = env.new_string(staged)?;
             let raw_uri = env.new_string(self.raw_uri)?;
             let display_name = env.new_string(self.display_name)?;
@@ -114,7 +114,11 @@ impl AndroidXmpFiles<'_> {
             )?;
             Ok(())
         })
-        .map_err(|error| SidecarError::Platform(format!("could not save it: {error:#}")))
+        .map_err(|error| SidecarError::Platform(format!("could not save it: {error:#}")));
+        // Even a failed publish may have replaced the sidecar, which a library
+        // listing taken before does not show.
+        note_sidecar_written(self.raw_uri);
+        published
     }
 }
 
@@ -149,6 +153,23 @@ pub fn resolve_android_review(
         photo,
     };
     xmp_review::resolve_review(&files, sidecar_review)
+}
+
+/// The review a library photo's XMP records, its `preferred` sidecar name
+/// first ([`xmp_review::read_xmp_review`]).
+pub fn read_android_xmp_review(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    preferred: XmpSidecarName,
+) -> xmp_review::XmpReview {
+    let files = AndroidXmpFiles {
+        app,
+        raw_uri,
+        display_name,
+        photo: None,
+    };
+    xmp_review::read_xmp_review(&files, preferred)
 }
 
 /// Saves `review` to a library photo's XMP sidecar when the XMP settings

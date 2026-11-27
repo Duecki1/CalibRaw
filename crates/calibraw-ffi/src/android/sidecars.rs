@@ -21,7 +21,8 @@ fn sidecar_writes() -> std::sync::MutexGuard<'static, SidecarWrites> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Every change this process makes to a sidecar passes through here.
+/// Every change this process makes to a sidecar or an XMP sidecar passes
+/// through here.
 pub(super) fn note_sidecar_written(raw_uri: &str) {
     let mut writes = sidecar_writes();
     writes.count += 1;

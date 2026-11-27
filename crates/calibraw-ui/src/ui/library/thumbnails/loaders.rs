@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::i18n::{tr, tr_fmt};
+use crate::sidecar::xmp_review::{self, XmpReview, XmpSidecarName};
+use crate::sidecar::SidecarSummary;
 use calibraw_core::pipeline::RawDisplayMetadata;
 
 /// Develop's reference photo: its developed thumbnail when that is large
@@ -174,8 +176,9 @@ fn load_desktop_raw_library_thumbnail(
 
 /// A media-library photo's thumbnail: the developed one while it matches the
 /// sidecar, otherwise the camera's preview with the sidecar's crop and
-/// rotation. Cached previews come straight from the platform's cache; reading
-/// a photo waits for one of `extraction`.
+/// rotation, with the photo's review and edit state. Cached previews come
+/// straight from the platform's cache; reading a photo waits for one of
+/// `extraction`.
 pub(in crate::ui::library) fn load_media_library_thumbnail(
     platform: &dyn Platform,
     folder: &DeferredFolderMetadata,
@@ -202,13 +205,14 @@ pub(in crate::ui::library) fn load_media_library_thumbnail(
         PhotoSidecar::Summarized(summary) => Some(summary),
         PhotoSidecar::Unread(_) => photo.read_sidecar_summary(true),
     };
+    let badges = photo.badges(sidecar.as_ref(), written_since_listing);
     if let Some(summary) = &sidecar {
         match platform.load_current_developed_thumbnail(
             uri,
             summary.render_fingerprint,
             THUMBNAIL_EDGE,
         ) {
-            Ok(Some(thumbnail)) => return Ok(photo.developed(thumbnail, Some(summary.into()))),
+            Ok(Some(thumbnail)) => return Ok(photo.developed(thumbnail, Some(badges))),
             Ok(None) => {}
             Err(error) => log::warn!(
                 "could not use Android developed-thumbnail cache for {}: {error}",
@@ -219,7 +223,7 @@ pub(in crate::ui::library) fn load_media_library_thumbnail(
     photo.camera_preview(
         sidecar.as_ref().map(|summary| summary.geometry),
         sidecar.as_ref().is_some_and(|summary| summary.has_edits),
-        sidecar.as_ref().map(SidecarBadges::from),
+        Some(badges),
     )
 }
 
@@ -278,6 +282,52 @@ impl MediaPhoto<'_> {
                 edited: sidecar.edited,
             }),
         )
+    }
+
+    /// The tile's badges: the edit state `sidecar` gives (`None`: the photo
+    /// has none) and the photo's review, its sidecar's combined with what its
+    /// XMP records as the settings say. With `written_since_listing`, the
+    /// folder cache predates what the app wrote, so XMP is read again.
+    fn badges(
+        &self,
+        sidecar: Option<&SidecarSummary>,
+        written_since_listing: bool,
+    ) -> SidecarBadges {
+        let review =
+            xmp_review::resolve_review_from(sidecar.map(|summary| summary.review), |preferred| {
+                Some(self.xmp_review(preferred, written_since_listing))
+            })
+            .unwrap_or_default();
+        SidecarBadges {
+            review,
+            edited: sidecar.is_some_and(|summary| summary.edited),
+        }
+    }
+
+    /// The review the photo's XMP records, `preferred` sidecar name first:
+    /// from the folder cache, or read, and recorded when the cache lacked it
+    /// for what it is read from now.
+    fn xmp_review(&self, preferred: XmpSidecarName, written_since_listing: bool) -> XmpReview {
+        match self.folder.xmp(&self.asset.id) {
+            PhotoXmp::Read(review) if !written_since_listing => review,
+            PhotoXmp::Unread(sources)
+                if !written_since_listing && sources.preferred() == preferred =>
+            {
+                let review = self.read_xmp_review(preferred);
+                self.folder.record_xmp(&self.asset.id, review);
+                review
+            }
+            PhotoXmp::Read(_) | PhotoXmp::Unread(_) | PhotoXmp::Unknown => {
+                self.read_xmp_review(preferred)
+            }
+        }
+    }
+
+    fn read_xmp_review(&self, preferred: XmpSidecarName) -> XmpReview {
+        // Reads the photo itself when no XMP sidecar records a review.
+        let _permit = self.extraction.acquire();
+        self.platform
+            .read_xmp_review(self.uri, &self.asset.display_name, preferred)
     }
 
     /// Reads the photo's sidecar. With `record`, its summary is kept under the

@@ -228,7 +228,7 @@ GPU readbacks wait on one-slot channels.
 | `REFERENCE_PREVIEW_SERIAL` | `ui::develop` | the reference-preview worker | one reference decode at a time |
 | thumbnail work queue and request receiver | `ThumbnailWorkerContext` | thumbnail workers | short critical sections; never held while decoding |
 | rendered-thumbnail permits (counting semaphore) | `calibraw_core::thumbnail_cache` | thumbnail workers rendering a full RAW for a photo without an embedded preview | at most four such renders, fewer with fewer workers, bounding indexing memory |
-| `ExtractionPermits` (counting semaphore) | one per media-library scan | its thumbnail workers while reading a photo (preview or display metadata) | at most the thumbnail-worker setting of photo reads at once; the scan has more workers, which serve cached previews without a permit |
+| `ExtractionPermits` (counting semaphore) | one per media-library scan | its thumbnail workers while reading a photo (preview, display metadata, or XMP, which may read its embedded packet) | at most the thumbnail-worker setting of photo reads at once; the scan has more workers, which serve cached previews without a permit |
 | model runtime slot | `calibraw_ai::slot` | the running AI job | one ONNX session at a time; evicted models unload once released |
 | `RUNTIME_INIT_LOCK`, runtime probe cache, runtime install lock | `calibraw_ai::runtime` | AI jobs, the Settings runtime picker | serialize ONNX Runtime initialization, probes and automatic runtime installs |
 | provider statuses | `calibraw_ai::placement` | AI jobs, Settings | the provider each model's latest session uses |
@@ -505,12 +505,17 @@ production `ShaderManager` composes.
   photo, as `raw_companion_paths` does on desktop.
 - Media-library previews: Java owns the cache directory (`ThumbnailCache`:
   trimming, size, clearing); `calibraw-ffi` names, reads and writes the files in
-  it, so a cached preview needs no JNI call. The listing reports each photo's
-  sidecar size and time. The folder cache (`calibraw_core::display_metadata_cache`,
-  one file per folder in the same directory) keeps each photo's dimensions and a
-  summary of its sidecar, so a scan shows final tile shapes and ratings at once
-  and reads a sidecar once per change (`ui/library/media_library/catalog.rs`,
-  `ui/library/deferred_metadata.rs`). A scan runs `MEDIA_LIBRARY_PREVIEW_WORKERS`
+  it, so a cached preview needs no JNI call. The listing reports the size and
+  time of each photo's sidecar and XMP sidecars. The folder cache
+  (`calibraw_core::display_metadata_cache`, one file per folder in the same
+  directory) keeps each photo's dimensions, a summary of its sidecar and the
+  review its XMP records, the last checked against its `XmpSources` (both XMP
+  sidecars, the name looked for first, and the photo for its embedded packet),
+  so a scan shows final tile shapes and ratings at once and reads a sidecar or
+  an XMP once per change (`ui/library/media_library/catalog.rs`,
+  `ui/library/deferred_metadata.rs`). A tile's rating combines the two as
+  `xmp_review::resolve_review_from` does; reading XMP takes an
+  `ExtractionPermits` permit, as it may read the photo. A scan runs `MEDIA_LIBRARY_PREVIEW_WORKERS`
   workers; `ExtractionPermits` keeps photo reads within the worker setting.
 - Edit replay picks FFmpeg or the platform encoder from
   `PlatformCaps::video_encoder` (`services/replay/`).

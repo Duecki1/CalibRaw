@@ -8,6 +8,7 @@ use super::service::{
 };
 use super::PlatformCaps;
 use crate::pipeline::RawThumbnail;
+use crate::sidecar::xmp_review::{XmpReview, XmpSidecarName};
 use crate::sidecar::{
     EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SavedSidecar, SidecarError,
     SidecarMetadata, SidecarStart, SidecarSummary,
@@ -308,6 +309,7 @@ impl Platform for AndroidPlatform {
                     sidecar: document
                         .sidecar
                         .map_or(ListedSidecar::Absent, ListedSidecar::Present),
+                    xmp_sidecars: Some(document.xmp_sidecars),
                     subfolder: document.subfolder,
                 })
                 .collect()
@@ -442,6 +444,15 @@ impl Platform for AndroidPlatform {
             sidecar_review,
             photo,
         )
+    }
+
+    fn read_xmp_review(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        preferred: XmpSidecarName,
+    ) -> XmpReview {
+        calibraw_ffi::read_android_xmp_review(&self.app, raw_uri, display_name, preferred)
     }
 
     fn save_xmp_review(

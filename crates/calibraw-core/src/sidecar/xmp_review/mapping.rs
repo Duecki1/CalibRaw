@@ -19,6 +19,7 @@ use crate::xmp::{
     apply_edits, attribute_insertion_point, attribute_span, attribute_value_span, parse_document,
     split_bom, Element, Packet, TextError, XmlError,
 };
+use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
 /// A file that adds properties gets this description when it has none.
@@ -65,9 +66,9 @@ const PICK_LABEL: Property = Property {
 };
 
 /// The review an XMP file records: each field is `None` where the file has
-/// no property for it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct XmpReview {
+/// no property for it. Serialized in the media library's folder caches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct XmpReview {
     rating: Option<u8>,
     flag: Option<PhotoFlag>,
 }
@@ -79,7 +80,7 @@ impl XmpReview {
     }
 
     /// `base` with each field this file records replaced by its value.
-    pub(super) fn over(self, base: PhotoReview) -> PhotoReview {
+    pub fn over(self, base: PhotoReview) -> PhotoReview {
         PhotoReview {
             rating: self.rating.unwrap_or(base.rating),
             flag: self.flag.unwrap_or(base.flag),

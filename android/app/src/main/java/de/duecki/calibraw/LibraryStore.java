@@ -22,15 +22,28 @@ interface LibraryStore {
     int MAX_FOLDERS = 10_000;
     int MAX_FOLDER_DEPTH = 64;
 
+    /** A file's version as a listing tells it: its size and modification time. */
+    final class Stamp {
+        final long bytes;
+        final long modifiedMillis;
+
+        Stamp(long bytes, long modifiedMillis) {
+            this.bytes = bytes;
+            this.modifiedMillis = modifiedMillis;
+        }
+    }
+
     final class Document {
         final String uri;
         final String displayName;
         final String displayPath;
         final long bytes;
         final long modifiedSeconds;
-        /** The sidecar's size, or {@link #NO_SIDECAR} when the photo has none. */
-        final long sidecarBytes;
-        final long sidecarModifiedMillis;
+        /** The files kept beside the photo, each null when it has none. */
+        final Stamp sidecar;
+        /** The XMP sidecars {@link AndroidStorageContract#xmpDisplayName} names. */
+        final Stamp xmp;
+        final Stamp basenameXmp;
 
         Document(
                 String uri,
@@ -38,19 +51,19 @@ interface LibraryStore {
                 String displayPath,
                 long bytes,
                 long modifiedSeconds,
-                long sidecarBytes,
-                long sidecarModifiedMillis) {
+                Stamp sidecar,
+                Stamp xmp,
+                Stamp basenameXmp) {
             this.uri = uri;
             this.displayName = displayName;
             this.displayPath = displayPath;
             this.bytes = bytes;
             this.modifiedSeconds = modifiedSeconds;
-            this.sidecarBytes = sidecarBytes;
-            this.sidecarModifiedMillis = sidecarModifiedMillis;
+            this.sidecar = sidecar;
+            this.xmp = xmp;
+            this.basenameXmp = basenameXmp;
         }
     }
-
-    long NO_SIDECAR = -1L;
 
     final class Stored {
         final Uri uri;
@@ -70,8 +83,8 @@ interface LibraryStore {
 
     /**
      * The newest {@code limit} photos directly in {@code folder}, in no particular order, with
-     * the size and modification time of each one's sidecar, so the library can tell which changed
-     * without reading them.
+     * the size and modification time of each one's sidecar and XMP sidecars, so the library can
+     * tell which changed without reading them.
      */
     ArrayList<Document> listDocuments(String folder, int limit) throws Exception;
 

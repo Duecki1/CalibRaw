@@ -1,10 +1,11 @@
 use super::{FileDialog, PlatformCaps};
 use crate::pipeline::RawThumbnail;
+use crate::sidecar::xmp_review::{XmpReview, XmpSidecarName};
 use crate::sidecar::{
     EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SavedSidecar, SidecarError,
     SidecarMetadata, SidecarStart, SidecarSummary,
 };
-use calibraw_core::display_metadata_cache::FileStamp;
+use calibraw_core::display_metadata_cache::{FileStamp, XmpSidecarStamps};
 use calibraw_core::pipeline::RawDisplayMetadata;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -45,6 +46,8 @@ pub(crate) struct LibraryDocument {
     pub(crate) bytes: u64,
     pub(crate) modified_seconds: u64,
     pub(crate) sidecar: ListedSidecar,
+    /// The photo's XMP sidecars; `None` where the platform does not list them.
+    pub(crate) xmp_sidecars: Option<XmpSidecarStamps>,
     /// The folder below the listed one that holds the photo, `/`-separated
     /// and relative to it; empty for the listed folder itself.
     pub(crate) subfolder: String,
@@ -561,6 +564,17 @@ pub(crate) trait Platform: Send + Sync {
         _photo: Option<&Path>,
     ) -> PhotoReview {
         sidecar_review.unwrap_or_default()
+    }
+    /// The review a media-library photo's XMP records, its `preferred`
+    /// sidecar name first. Asked only of platforms whose listing reports XMP
+    /// sidecars ([`LibraryDocument::xmp_sidecars`]).
+    fn read_xmp_review(
+        &self,
+        _raw_uri: &str,
+        _display_name: &str,
+        _preferred: XmpSidecarName,
+    ) -> XmpReview {
+        XmpReview::default()
     }
     /// Saves a changed review to a media-library photo's XMP sidecar when the
     /// XMP settings write XMP, before its sidecar is saved with it.

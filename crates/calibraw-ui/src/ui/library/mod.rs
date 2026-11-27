@@ -533,15 +533,6 @@ impl ThumbnailEdits {
     }
 }
 
-impl From<&crate::sidecar::SidecarSummary> for SidecarBadges {
-    fn from(summary: &crate::sidecar::SidecarSummary) -> Self {
-        Self {
-            review: summary.review,
-            edited: summary.edited,
-        }
-    }
-}
-
 /// A photo as Develop's filmstrip shows it, from folders or the media library.
 #[derive(Clone)]
 pub(crate) struct FilmstripItem {
@@ -551,7 +542,7 @@ pub(crate) struct FilmstripItem {
     pub(crate) developed_thumbnail_pending: bool,
 }
 
-/// What a tile's badges show from the photo's sidecar.
+/// What a tile's badges show: the photo's review and whether it is edited.
 #[derive(Clone, Copy, Debug)]
 struct SidecarBadges {
     review: crate::sidecar::PhotoReview,
@@ -562,7 +553,8 @@ struct SidecarBadges {
 struct LoadedLibraryThumbnail {
     thumbnail: RawThumbnail,
     resident_thumbnail: RawThumbnail,
-    /// Read where loading the thumbnail reads the sidecar: in the media library.
+    /// Read where loading the thumbnail reads the sidecar and XMP: in the
+    /// media library.
     badges: Option<SidecarBadges>,
     edits: LoadedEdits,
     /// Display metadata the catalog scan deferred, read while loading this thumbnail.

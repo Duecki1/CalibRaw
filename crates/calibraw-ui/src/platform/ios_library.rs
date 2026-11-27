@@ -207,6 +207,7 @@ impl IosLibrary {
                     .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                     .map_or(0, |time| time.as_secs()),
                 sidecar: ListedSidecar::Unlisted,
+                xmp_sidecars: None,
                 subfolder: subfolder.to_owned(),
             });
         }

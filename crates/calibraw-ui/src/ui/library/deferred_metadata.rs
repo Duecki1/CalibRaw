@@ -1,6 +1,6 @@
 //! What a library scan did not find in its folders' caches, filled in by the
 //! thumbnail workers: display metadata, and in the media library the
-//! summaries of sidecars that changed.
+//! summaries of sidecars and the XMP reviews that changed.
 //!
 //! A scan reads only the folder listings and the folder caches, so the
 //! catalog appears at once. A worker reads what is missing from the same open
@@ -8,8 +8,9 @@
 //! includes subfolders keeps one cache per folder its photos are in.
 
 use super::*;
+use crate::sidecar::xmp_review::XmpReview;
 use crate::sidecar::SidecarSummary;
-use calibraw_core::display_metadata_cache::{FileStamp, FolderDisplayMetadataCache};
+use calibraw_core::display_metadata_cache::{FileStamp, FolderDisplayMetadataCache, XmpSources};
 use calibraw_core::pipeline::RawDisplayMetadata;
 use std::sync::{MutexGuard, PoisonError};
 
@@ -27,6 +28,49 @@ pub(in crate::ui::library) enum PhotoSidecar {
     /// Changed since it was summarised, or never was: read it, then record
     /// its summary with [`DeferredFolderMetadata::record_sidecar`].
     Unread(FileStamp),
+}
+
+/// What the folder listing and its cache say about the review a photo's XMP
+/// records.
+#[derive(Clone, Debug)]
+pub(in crate::ui::library) enum PhotoXmp {
+    /// Not known: the platform lists no XMP sidecars, or the settings did not
+    /// read XMP for the photo when its folder was listed.
+    Unknown,
+    Read(XmpReview),
+    /// What it is read from changed since it was read, or it never was: read
+    /// it, then record it with [`DeferredFolderMetadata::record_xmp`].
+    Unread(XmpSources),
+}
+
+impl PhotoXmp {
+    /// The review the photo's XMP records, when it is known.
+    pub(in crate::ui::library) const fn known(&self) -> Option<XmpReview> {
+        match self {
+            Self::Read(review) => Some(*review),
+            Self::Unknown | Self::Unread(_) => None,
+        }
+    }
+
+    const fn is_unread(&self) -> bool {
+        matches!(self, Self::Unread(_))
+    }
+}
+
+/// What the listing and its folder's cache say about a media-library photo.
+#[derive(Clone, Debug)]
+struct ListedPhoto {
+    key: CacheKey,
+    sidecar: PhotoSidecar,
+    xmp: PhotoXmp,
+}
+
+impl ListedPhoto {
+    /// How many of its sidecar and XMP review are left for the workers.
+    fn unread(&self) -> usize {
+        usize::from(matches!(self.sidecar, PhotoSidecar::Unread(_)))
+            + usize::from(self.xmp.is_unread())
+    }
 }
 
 /// One of the scan's folder caches, returned by
@@ -54,10 +98,11 @@ struct DeferredState {
     /// Photos whose display metadata is unread, with the stamp that validates
     /// a cache entry; photos without a stamp are read but never cached.
     pending: HashMap<LibraryAssetId, (CacheKey, Option<FileStamp>)>,
-    /// Media-library sidecars by their photo. Desktop reads sidecars directly
-    /// and leaves this empty.
-    sidecars: HashMap<LibraryAssetId, (CacheKey, PhotoSidecar)>,
-    unread_sidecars: usize,
+    /// Media-library photos' sidecars and XMP reviews. Desktop reads them
+    /// directly and leaves this empty.
+    listed: HashMap<LibraryAssetId, ListedPhoto>,
+    /// Sidecars and XMP reviews in `listed` left to the workers.
+    unread: usize,
     unsaved: usize,
 }
 
@@ -70,8 +115,8 @@ impl DeferredFolderMetadata {
             state: Mutex::new(DeferredState {
                 caches: Vec::new(),
                 pending: HashMap::new(),
-                sidecars: HashMap::new(),
-                unread_sidecars: 0,
+                listed: HashMap::new(),
+                unread: 0,
                 unsaved: 0,
             }),
             sidecar_writes_before_listing,
@@ -111,22 +156,25 @@ impl DeferredFolderMetadata {
     }
 
     /// Records what the listing and the cache of `folder` say about the
-    /// sidecar of `asset`, called `file_name` there.
-    pub(in crate::ui::library) fn set_sidecar(
+    /// sidecar and the XMP review of `asset`, called `file_name` there.
+    pub(in crate::ui::library) fn set_listed(
         &mut self,
         asset: LibraryAssetId,
         folder: FolderSlot,
         file_name: OsString,
         sidecar: PhotoSidecar,
+        xmp: PhotoXmp,
     ) {
         let state = self.state_mut();
-        let unread = matches!(sidecar, PhotoSidecar::Unread(_));
-        let previous = state
-            .sidecars
-            .insert(asset, (CacheKey { folder, file_name }, sidecar));
-        let was_unread = matches!(previous, Some((_, PhotoSidecar::Unread(_))));
-        state.unread_sidecars =
-            state.unread_sidecars + usize::from(unread) - usize::from(was_unread);
+        let photo = ListedPhoto {
+            key: CacheKey { folder, file_name },
+            sidecar,
+            xmp,
+        };
+        state.unread += photo.unread();
+        if let Some(previous) = state.listed.insert(asset, photo) {
+            state.unread -= previous.unread();
+        }
     }
 
     pub(in crate::ui::library) fn sidecar_writes_before_listing(&self) -> u64 {
@@ -184,10 +232,16 @@ impl DeferredFolderMetadata {
 
     pub(in crate::ui::library) fn sidecar(&self, asset: &LibraryAssetId) -> PhotoSidecar {
         self.lock()
-            .sidecars
+            .listed
             .get(asset)
-            .map(|(_, sidecar)| sidecar.clone())
-            .unwrap_or(PhotoSidecar::Unlisted)
+            .map_or(PhotoSidecar::Unlisted, |photo| photo.sidecar.clone())
+    }
+
+    pub(in crate::ui::library) fn xmp(&self, asset: &LibraryAssetId) -> PhotoXmp {
+        self.lock()
+            .listed
+            .get(asset)
+            .map_or(PhotoXmp::Unknown, |photo| photo.xmp.clone())
     }
 
     /// Records the summary of an unread sidecar, so it is not read again
@@ -198,14 +252,38 @@ impl DeferredFolderMetadata {
         summary: SidecarSummary,
     ) {
         let mut state = self.lock();
-        let Some((key, PhotoSidecar::Unread(stamp))) = state.sidecars.get(asset).cloned() else {
+        let state = &mut *state;
+        let Some(photo) = state.listed.get_mut(asset) else {
             return;
         };
-        state.caches[key.folder.0].insert_sidecar(&key.file_name, stamp, summary.clone());
-        state
-            .sidecars
-            .insert(asset.clone(), (key, PhotoSidecar::Summarized(summary)));
-        state.unread_sidecars -= 1;
+        let PhotoSidecar::Unread(stamp) = photo.sidecar else {
+            return;
+        };
+        state.caches[photo.key.folder.0].insert_sidecar(
+            &photo.key.file_name,
+            stamp,
+            summary.clone(),
+        );
+        photo.sidecar = PhotoSidecar::Summarized(summary);
+        state.unread -= 1;
+        state.unsaved += 1;
+        state.save_when_due();
+    }
+
+    /// Records the review an unread XMP records, so it is not read again
+    /// while what it is read from stays the same.
+    pub(in crate::ui::library) fn record_xmp(&self, asset: &LibraryAssetId, review: XmpReview) {
+        let mut state = self.lock();
+        let state = &mut *state;
+        let Some(photo) = state.listed.get_mut(asset) else {
+            return;
+        };
+        let PhotoXmp::Unread(sources) = photo.xmp else {
+            return;
+        };
+        state.caches[photo.key.folder.0].insert_xmp_review(&photo.key.file_name, sources, review);
+        photo.xmp = PhotoXmp::Read(review);
+        state.unread -= 1;
         state.unsaved += 1;
         state.save_when_due();
     }
@@ -218,7 +296,7 @@ impl DeferredFolderMetadata {
 
 impl DeferredState {
     fn save_when_due(&mut self) {
-        let complete = self.pending.is_empty() && self.unread_sidecars == 0;
+        let complete = self.pending.is_empty() && self.unread == 0;
         if complete || self.unsaved >= SAVE_INTERVAL {
             self.save();
         }

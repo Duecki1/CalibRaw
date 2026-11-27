@@ -910,9 +910,10 @@ final class StorageManager {
 
     /**
      * One tab-separated line: the encoded URI, name and path, the byte size, the modification
-     * time in seconds, the sidecar's byte size and modification time in milliseconds, both "-"
-     * when the photo has none, then the encoded subfolder, empty for the listed folder itself.
-     * Read by {@code parse_library_record} in calibraw-ffi.
+     * time in seconds, the byte size and modification time in milliseconds of the sidecar, the
+     * XMP sidecar named after the full name and the one named after the name without its
+     * extension, each "-\t-" when the photo has none, then the encoded subfolder, empty for the
+     * listed folder itself. Read by {@code parse_library_record} in calibraw-ffi.
      */
     private static void appendLibraryRecord(
             StringBuilder result, LibraryStore.Document record, String subfolder) {
@@ -921,12 +922,18 @@ final class StorageManager {
                 .append(Uri.encode(record.displayPath)).append('\t')
                 .append(record.bytes).append('\t')
                 .append(record.modifiedSeconds).append('\t');
-        if (record.sidecarBytes == LibraryStore.NO_SIDECAR) {
-            result.append("-\t-");
+        appendStamp(result, record.sidecar);
+        appendStamp(result, record.xmp);
+        appendStamp(result, record.basenameXmp);
+        result.append(Uri.encode(subfolder)).append('\n');
+    }
+
+    private static void appendStamp(StringBuilder result, LibraryStore.Stamp stamp) {
+        if (stamp == null) {
+            result.append("-\t-\t");
         } else {
-            result.append(record.sidecarBytes).append('\t').append(record.sidecarModifiedMillis);
+            result.append(stamp.bytes).append('\t').append(stamp.modifiedMillis).append('\t');
         }
-        result.append('\t').append(Uri.encode(subfolder)).append('\n');
     }
 
     private void deleteStoredRaw(Uri uri, String displayName) {

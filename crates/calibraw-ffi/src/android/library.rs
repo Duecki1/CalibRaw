@@ -39,9 +39,11 @@ pub fn list_library_documents(
 }
 
 /// One `listRawLibrary` line: the encoded URI, name and path, the byte size,
-/// the modification time in seconds, the sidecar's byte size and
-/// modification time in milliseconds, both `-` when the photo has none, then
-/// the encoded subfolder, empty for the listed folder itself.
+/// the modification time in seconds, the byte size and modification time in
+/// milliseconds of the sidecar, the XMP sidecar named after the full name and
+/// the one named after the name without its extension, each `-` and `-` when
+/// the photo has none, then the encoded subfolder, empty for the listed folder
+/// itself.
 fn parse_library_record(line: &str) -> Result<LibraryDocument, String> {
     fn number(field: Option<&str>, what: &str) -> Result<u64, String> {
         field
@@ -49,21 +51,32 @@ fn parse_library_record(line: &str) -> Result<LibraryDocument, String> {
             .parse::<u64>()
             .map_err(|error| format!("invalid Android library {what}: {error}"))
     }
+    /// A file beside the photo: its byte size and modification time.
+    fn stamp<'a>(
+        fields: &mut impl Iterator<Item = &'a str>,
+        what: &str,
+    ) -> Result<Option<calibraw_core::display_metadata_cache::FileStamp>, String> {
+        Ok(match (fields.next(), fields.next()) {
+            (Some("-"), Some("-")) => None,
+            (bytes, modified_millis) => {
+                Some(calibraw_core::display_metadata_cache::FileStamp::new(
+                    number(bytes, &format!("{what} byte size"))?,
+                    number(modified_millis, &format!("{what} modification time"))?
+                        .saturating_mul(1_000_000),
+                ))
+            }
+        })
+    }
     let mut fields = line.split('\t');
     let uri = decode_uri_component(fields.next().unwrap_or_default())?;
     let display_name = decode_uri_component(fields.next().unwrap_or_default())?;
     let display_path = decode_uri_component(fields.next().unwrap_or_default())?;
     let bytes = number(fields.next(), "byte size")?;
     let modified_seconds = number(fields.next(), "modification time")?;
-    let sidecar = match (fields.next(), fields.next()) {
-        (Some("-"), Some("-")) => None,
-        (sidecar_bytes, sidecar_modified_millis) => {
-            Some(calibraw_core::display_metadata_cache::FileStamp::new(
-                number(sidecar_bytes, "sidecar byte size")?,
-                number(sidecar_modified_millis, "sidecar modification time")?
-                    .saturating_mul(1_000_000),
-            ))
-        }
+    let sidecar = stamp(&mut fields, "sidecar")?;
+    let xmp_sidecars = calibraw_core::display_metadata_cache::XmpSidecarStamps {
+        with_extension: stamp(&mut fields, "XMP sidecar")?,
+        basename: stamp(&mut fields, "basename XMP sidecar")?,
     };
     let subfolder = decode_uri_component(
         fields
@@ -80,6 +93,7 @@ fn parse_library_record(line: &str) -> Result<LibraryDocument, String> {
         bytes,
         modified_seconds,
         sidecar,
+        xmp_sidecars,
         subfolder,
     })
 }

@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.PriorityQueue;
+import java.util.function.UnaryOperator;
 
 /** CalibRaw's own library in the app's shared media folder, reached by file path. */
 final class FileLibraryStore implements LibraryStore {
@@ -118,27 +119,25 @@ final class FileLibraryStore implements LibraryStore {
         PriorityQueue<RawLibraryCandidate> retained = selectRawLibraryCandidates(files, limit);
         for (RawLibraryCandidate candidate : retained) {
             File file = candidate.file;
-            File sidecar = sidecarOf(file);
             result.add(new Document(
                     Uri.fromFile(file).toString(),
                     file.getName(),
                     file.getAbsolutePath(),
                     Math.max(0, file.length()),
                     Math.max(0, candidate.modifiedMillis / 1000),
-                    sidecar != null ? sidecar.length() : NO_SIDECAR,
-                    sidecar != null ? sidecar.lastModified() : NO_SIDECAR));
+                    stampBeside(file, AndroidStorageContract::sidecarDisplayName),
+                    stampBeside(file, name -> AndroidStorageContract.xmpDisplayName(name, false)),
+                    stampBeside(file, name -> AndroidStorageContract.xmpDisplayName(name, true))));
         }
         return result;
     }
 
-    /** The sidecar beside {@code photo}, or null when it has none. */
-    private static File sidecarOf(File photo) {
+    /** The file {@code name} names beside {@code photo}, or null when there is none. */
+    private static Stamp stampBeside(File photo, UnaryOperator<String> name) {
         try {
-            File sidecar = new File(
-                    photo.getParentFile(),
-                    AndroidStorageContract.sidecarDisplayName(photo.getName()));
-            return sidecar.isFile() ? sidecar : null;
-        } catch (IllegalArgumentException noSidecarName) {
+            File beside = new File(photo.getParentFile(), name.apply(photo.getName()));
+            return beside.isFile() ? new Stamp(beside.length(), beside.lastModified()) : null;
+        } catch (IllegalArgumentException noName) {
             return null;
         }
     }

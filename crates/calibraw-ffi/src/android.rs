@@ -53,6 +53,8 @@ pub struct LibraryDocument {
     pub modified_seconds: u64,
     /// The photo's sidecar; `None` when it has none.
     pub sidecar: Option<calibraw_core::display_metadata_cache::FileStamp>,
+    /// The photo's XMP sidecars.
+    pub xmp_sidecars: calibraw_core::display_metadata_cache::XmpSidecarStamps,
     /// The folder below the listed one that holds the photo, relative to it;
     /// empty for the listed folder itself.
     pub subfolder: String,

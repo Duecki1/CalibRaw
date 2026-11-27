@@ -15,8 +15,7 @@ mod embedded;
 mod mapping;
 
 use super::{atomic_write, xmp_sidecar_path_for_raw, PhotoReview, SidecarError};
-pub use mapping::export_packet;
-use mapping::XmpReview;
+pub use mapping::{export_packet, XmpReview};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
@@ -48,6 +47,16 @@ impl XmpReviewSync {
     /// Whether review changes are saved to XMP.
     pub const fn writes(self) -> bool {
         matches!(self, Self::ReadWrite)
+    }
+
+    /// Whether the review of a photo with a CalibRaw sidecar, or without one,
+    /// takes what its XMP records.
+    pub const fn reads(self, has_sidecar: bool) -> bool {
+        match self {
+            Self::Off => false,
+            Self::Read => !has_sidecar,
+            Self::ReadWrite => true,
+        }
     }
 }
 
@@ -97,7 +106,8 @@ pub fn set_xmp_review_settings(settings: XmpReviewSettings) {
     *SETTINGS.write().unwrap_or_else(PoisonError::into_inner) = settings;
 }
 
-fn xmp_review_settings() -> XmpReviewSettings {
+/// The settings [`set_xmp_review_settings`] applied last.
+pub fn xmp_review_settings() -> XmpReviewSettings {
     *SETTINGS.read().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -151,23 +161,32 @@ pub fn resolve_photo_review(raw_path: &Path, sidecar_review: Option<PhotoReview>
 
 /// [`resolve_photo_review`] for a photo whose XMP `files` reaches.
 pub fn resolve_review(files: &dyn XmpFiles, sidecar_review: Option<PhotoReview>) -> PhotoReview {
+    resolve_review_from(sidecar_review, |preferred| {
+        Some(read_xmp_review(files, preferred))
+    })
+    .unwrap_or_default()
+}
+
+/// The review of a photo, from the review in its CalibRaw sidecar (`None`
+/// when it has none) and, as the settings say, the review its XMP records,
+/// which `recorded` gives for the preferred sidecar name when asked. `None`
+/// when XMP is read and `recorded` does not know what it records.
+pub fn resolve_review_from(
+    sidecar_review: Option<PhotoReview>,
+    recorded: impl FnOnce(XmpSidecarName) -> Option<XmpReview>,
+) -> Option<PhotoReview> {
     let settings = xmp_review_settings();
     let base = sidecar_review.unwrap_or_default();
-    let reads_xmp = match settings.sync {
-        XmpReviewSync::Off => false,
-        XmpReviewSync::Read => sidecar_review.is_none(),
-        XmpReviewSync::ReadWrite => true,
-    };
-    if !reads_xmp {
-        return base;
+    if !settings.sync.reads(sidecar_review.is_some()) {
+        return Some(base);
     }
-    read_xmp_review(files, settings.sidecar_name).over(base)
+    recorded(settings.sidecar_name).map(|recorded| recorded.over(base))
 }
 
 /// The review the photo's XMP records: from the first of its XMP sidecars
 /// that records one, `preferred` name first, else from the packet embedded in
 /// the photo file. An unreadable file is logged and passed over.
-fn read_xmp_review(files: &dyn XmpFiles, preferred: XmpSidecarName) -> XmpReview {
+pub fn read_xmp_review(files: &dyn XmpFiles, preferred: XmpSidecarName) -> XmpReview {
     for name in sidecar_names(preferred) {
         match files
             .read_sidecar(name)
