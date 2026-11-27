@@ -206,10 +206,16 @@ pub fn reset_android_adjustments(
     camera_match: bool,
 ) -> Result<(), String> {
     let metadata = load_android_sidecar_metadata(app, raw_uri, display_name)
-        .map_err(|error| error.to_string())?
-        .unwrap_or_default();
-    let review = metadata.review;
-    let editing_time_ms = editing_time_override_ms.unwrap_or(metadata.editing_time_ms);
+        .map_err(|error| error.to_string())?;
+    let review = resolve_android_review(
+        app,
+        raw_uri,
+        display_name,
+        metadata.as_ref().map(|metadata| metadata.review),
+        None,
+    );
+    let editing_time_ms = editing_time_override_ms
+        .unwrap_or_else(|| metadata.map_or(0, |metadata| metadata.editing_time_ms));
     // An unreadable edit state has no camera look to keep.
     let previous = load_android(app, raw_uri, display_name).ok().flatten();
     let edits = calibraw_core::sidecar::reset_edit_state(
@@ -391,20 +397,29 @@ pub fn load_android_sidecar_summary(
     )
 }
 
-/// Saves `edits`, keeping the sidecar's review, editing time and start.
+/// Saves `edits`, keeping the photo's review (the sidecar's, combined with
+/// its XMP as the settings say), and the sidecar's editing time and start.
 pub fn save_android(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
     edits: calibraw_core::sidecar::EditState,
 ) -> Result<calibraw_core::sidecar::SavedSidecar, calibraw_core::sidecar::SidecarError> {
-    let metadata = load_android_sidecar_metadata(app, raw_uri, display_name)?.unwrap_or_default();
+    let metadata = load_android_sidecar_metadata(app, raw_uri, display_name)?;
+    let review = resolve_android_review(
+        app,
+        raw_uri,
+        display_name,
+        metadata.as_ref().map(|metadata| metadata.review),
+        None,
+    );
+    let metadata = metadata.unwrap_or_default();
     write_android_sidecar(
         app,
         raw_uri,
         display_name,
         edits,
-        metadata.review,
+        review,
         metadata.editing_time_ms,
         calibraw_core::sidecar::SidecarStart::Keep.fingerprint(metadata.start)?,
     )

@@ -31,7 +31,7 @@ impl CalibRawApp {
             if current && matches!(asset.locator, LibraryLocator::Android { .. }) {
                 self.library
                     .show_saved_review(&asset.id, self.develop.review);
-                self.queue_explicit_sidecar_save();
+                self.queue_review_sidecar_save();
             } else {
                 saves.push(ReviewSave {
                     editing_time_ms: current.then(|| self.raw_editing_time_ms()),

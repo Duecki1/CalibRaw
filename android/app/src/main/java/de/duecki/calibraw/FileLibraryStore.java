@@ -272,18 +272,35 @@ final class FileLibraryStore implements LibraryStore {
                 new File(parent, AndroidStorageContract.sidecarDisplayName(displayName));
         File destinationSidecar =
                 new File(parent, AndroidStorageContract.sidecarDisplayName(requestedName));
-        if (destinationRaw.exists() || destinationSidecar.exists()) {
+        File sourceXmp = new File(parent, AndroidStorageContract.xmpDisplayName(displayName, false));
+        File destinationXmp =
+                new File(parent, AndroidStorageContract.xmpDisplayName(requestedName, false));
+        if (destinationRaw.exists() || destinationSidecar.exists() || destinationXmp.exists()) {
             throw new IllegalStateException(requestedName + " already exists");
         }
         if (!sourceRaw.renameTo(destinationRaw)) {
             throw new IllegalStateException("Android storage could not rename the RAW file");
         }
-        if (sourceSidecar.isFile() && !sourceSidecar.renameTo(destinationSidecar)) {
-            if (!destinationRaw.renameTo(sourceRaw)) {
+        boolean sidecarMoved = false;
+        if (sourceSidecar.isFile()) {
+            if (!sourceSidecar.renameTo(destinationSidecar)) {
+                if (!destinationRaw.renameTo(sourceRaw)) {
+                    throw new IllegalStateException(
+                            "The RAW was renamed, but its sidecar and RAW rollback both failed");
+                }
                 throw new IllegalStateException(
-                        "The RAW was renamed, but its sidecar and RAW rollback both failed");
+                        "Android storage could not rename the RAW sidecar");
             }
-            throw new IllegalStateException("Android storage could not rename the RAW sidecar");
+            sidecarMoved = true;
+        }
+        if (sourceXmp.isFile() && !sourceXmp.renameTo(destinationXmp)) {
+            boolean restored = (!sidecarMoved || destinationSidecar.renameTo(sourceSidecar))
+                    && destinationRaw.renameTo(sourceRaw);
+            if (!restored) {
+                throw new IllegalStateException(
+                        "The RAW was renamed, but its XMP sidecar and the rollback both failed");
+            }
+            throw new IllegalStateException("Android storage could not rename the XMP sidecar");
         }
         keepRegeneratedCompanion(
                 parent,
@@ -320,6 +337,15 @@ final class FileLibraryStore implements LibraryStore {
             Log.w(LOG_TAG, "Deleted RAW but could not clean up its sidecar", error);
         }
         try {
+            File xmp = new File(
+                    raw.getParentFile(), AndroidStorageContract.xmpDisplayName(displayName, false));
+            if (xmp.exists() && !xmp.delete()) {
+                throw new IllegalStateException("Could not delete " + xmp);
+            }
+        } catch (Exception error) {
+            Log.w(LOG_TAG, "Deleted RAW but could not clean up its XMP sidecar", error);
+        }
+        try {
             AndroidStorageContract.deleteAiDenoiseResult(raw.getParentFile(), displayName);
         } catch (Exception error) {
             Log.w(LOG_TAG, "Deleted RAW but could not clean up its AI-denoise result", error);
@@ -354,6 +380,25 @@ final class FileLibraryStore implements LibraryStore {
                 new File(rawUri.getPath()).getParentFile(),
                 displayName,
                 MAX_SIDECAR_BYTES);
+    }
+
+    @Override
+    public InputStream openXmp(Uri rawUri, String displayName, boolean basename)
+            throws Exception {
+        File xmp = new File(
+                new File(rawUri.getPath()).getParentFile(),
+                AndroidStorageContract.xmpDisplayName(displayName, basename));
+        return xmp.isFile() ? new FileInputStream(xmp) : null;
+    }
+
+    @Override
+    public void publishXmp(File cached, Uri rawUri, String displayName, boolean basename)
+            throws Exception {
+        AndroidStorageContract.publishAtomically(
+                cached,
+                new File(rawUri.getPath()).getParentFile(),
+                AndroidStorageContract.xmpDisplayName(displayName, basename),
+                MAX_XMP_BYTES);
     }
 
     // Native code reads and writes companions directly: they are too large to stage through the

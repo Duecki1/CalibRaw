@@ -1,4 +1,5 @@
-//! The rows that choose how ratings use XMP files; folder storage only.
+//! The rows that choose how ratings use XMP files, where the platform offers
+//! them (`PlatformCaps::xmp_reviews`).
 
 use super::Settings;
 use crate::app::CalibRawApp;

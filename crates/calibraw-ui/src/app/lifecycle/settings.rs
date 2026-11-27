@@ -202,8 +202,10 @@ impl CalibRawApp {
     }
 
     /// Reads and saves ratings with `settings` from now on. Ratings still
-    /// being saved finish under the old ones; the library and the open photo
-    /// show their ratings as the new ones read them.
+    /// being saved finish under the old ones; the library and an open folder
+    /// photo show their ratings as the new ones read them. An open
+    /// media-library photo, whose review is saved with its edits and may be
+    /// waiting to, takes them when it is opened again.
     pub(crate) fn set_xmp_review_settings(
         &mut self,
         settings: crate::sidecar::xmp_review::XmpReviewSettings,

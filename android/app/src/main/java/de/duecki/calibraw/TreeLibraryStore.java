@@ -481,9 +481,13 @@ final class TreeLibraryStore implements LibraryStore {
             Map<String, Entry> entries = refresh(place.folder);
             String sidecar = AndroidStorageContract.sidecarDisplayName(displayName);
             String destinationSidecar = AndroidStorageContract.sidecarDisplayName(requestedName);
+            String xmp = AndroidStorageContract.xmpDisplayName(displayName, false);
+            String destinationXmp = AndroidStorageContract.xmpDisplayName(requestedName, false);
             // This also refuses changing only the case, which shared storage cannot tell apart,
             // as CalibRaw's own library does.
-            if (holdsName(entries, requestedName) || holdsName(entries, destinationSidecar)) {
+            if (holdsName(entries, requestedName)
+                    || holdsName(entries, destinationSidecar)
+                    || holdsName(entries, destinationXmp)) {
                 throw new IllegalStateException(requestedName + " already exists");
             }
             Entry photo = entries.get(displayName);
@@ -493,10 +497,24 @@ final class TreeLibraryStore implements LibraryStore {
             synchronized (this) {
                 Entry renamed = renameExact(place.folder, photo, requestedName);
                 Entry sidecarEntry = entries.get(sidecar);
+                Entry renamedSidecar = null;
                 if (sidecarEntry != null) {
                     try {
-                        renameExact(place.folder, sidecarEntry, destinationSidecar);
+                        renamedSidecar =
+                                renameExact(place.folder, sidecarEntry, destinationSidecar);
                     } catch (Exception error) {
+                        renameExact(place.folder, renamed, displayName);
+                        throw error;
+                    }
+                }
+                Entry xmpEntry = entries.get(xmp);
+                if (xmpEntry != null) {
+                    try {
+                        renameExact(place.folder, xmpEntry, destinationXmp);
+                    } catch (Exception error) {
+                        if (renamedSidecar != null) {
+                            renameExact(place.folder, renamedSidecar, sidecar);
+                        }
                         renameExact(place.folder, renamed, displayName);
                         throw error;
                     }
@@ -537,6 +555,13 @@ final class TreeLibraryStore implements LibraryStore {
                 } catch (Exception error) {
                     Log.w(LOG_TAG, "Deleted photo but could not clean up its edits", error);
                 }
+                try {
+                    deleteIfPresent(
+                            place.folder,
+                            entries.get(AndroidStorageContract.xmpDisplayName(displayName, false)));
+                } catch (Exception error) {
+                    Log.w(LOG_TAG, "Deleted photo but could not delete its XMP sidecar", error);
+                }
                 noteWrite(place.folder);
             }
         }
@@ -568,9 +593,23 @@ final class TreeLibraryStore implements LibraryStore {
     }
 
     @Override
-    public synchronized InputStream openSidecar(Uri raw, String displayName) throws Exception {
-        Place place = place(raw, displayName);
-        String name = AndroidStorageContract.sidecarDisplayName(displayName);
+    public InputStream openSidecar(Uri raw, String displayName) throws Exception {
+        return openSaved(
+                place(raw, displayName), AndroidStorageContract.sidecarDisplayName(displayName));
+    }
+
+    @Override
+    public InputStream openXmp(Uri raw, String displayName, boolean basename) throws Exception {
+        return openSaved(
+                place(raw, displayName),
+                AndroidStorageContract.xmpDisplayName(displayName, basename));
+    }
+
+    /**
+     * The file {@link #replaceDocument} saves as {@code name} beside the photo at {@code place},
+     * or null when there is none.
+     */
+    private synchronized InputStream openSaved(Place place, String name) throws Exception {
         Entry cached = entries(place.folder).get(name);
         if (cached != null) {
             try {
@@ -579,19 +618,21 @@ final class TreeLibraryStore implements LibraryStore {
                 // Sync replaced or removed it since the folder was listed.
             }
         }
-        // The index may predate a sidecar sync brought since. Opening the photo without it
+        // The index may predate a file sync brought since. Opening the photo without its sidecar
         // would let the next save overwrite the edits made on another device.
+        // An XMP sidecar is read before it is saved, which would replace one sync brought with
+        // a file holding only the rating.
         Map<String, Entry> entries = refresh(place.folder);
-        Entry sidecar = entries.get(name);
-        if (sidecar == null) {
+        Entry saved = entries.get(name);
+        if (saved == null) {
             Entry interrupted = entries.get(AndroidStorageContract.linkedSwapOldName(name));
             if (interrupted == null) {
                 return null;
             }
-            sidecar = renameExact(place.folder, interrupted, name);
+            saved = renameExact(place.folder, interrupted, name);
             noteWrite(place.folder);
         }
-        return resolver().openInputStream(documentUri(sidecar.documentId));
+        return resolver().openInputStream(documentUri(saved.documentId));
     }
 
     @Override
@@ -602,6 +643,16 @@ final class TreeLibraryStore implements LibraryStore {
             replaceDocument(place.folder, name, cached);
         }
         return displayPath(place.folder, name);
+    }
+
+    @Override
+    public void publishXmp(File cached, Uri raw, String displayName, boolean basename)
+            throws Exception {
+        Place place = place(raw, displayName);
+        String name = AndroidStorageContract.xmpDisplayName(displayName, basename);
+        synchronized (sidecarWrites) {
+            replaceDocument(place.folder, name, cached);
+        }
     }
 
     @Override

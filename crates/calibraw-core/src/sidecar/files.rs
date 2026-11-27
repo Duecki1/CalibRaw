@@ -353,10 +353,7 @@ fn save_photo_review_impl(
     load_sidecar_metadata(raw_path)?;
     // XMP first: CalibRaw's sidecar keeps the old review if it fails, which
     // XMP would win over anyway.
-    let xmp = xmp_review::xmp_review_settings();
-    if xmp.sync.writes() {
-        xmp_review::save_xmp_review(raw_path, xmp.sidecar_name, review)?;
-    }
+    xmp_review::save_photo_xmp_review(raw_path, review)?;
     let path = sidecar_path_for_raw(raw_path);
     let bytes = match read_bounded(&path) {
         Ok(bytes) => bytes,

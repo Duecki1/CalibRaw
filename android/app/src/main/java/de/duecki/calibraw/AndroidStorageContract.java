@@ -27,6 +27,12 @@ final class AndroidStorageContract {
     static final String[] REGENERATED_COMPANION_SUFFIXES = {
             AI_DENOISE_SUFFIX, PEOPLE_ANALYSIS_SUFFIX
     };
+    /**
+     * The XMP sidecar other photo apps keep beside a photo. The one named after the photo's full
+     * name belongs to it alone, so it is renamed and deleted with it, as on desktop
+     * (calibraw_core::sidecar::raw_companion_paths).
+     */
+    static final String XMP_SUFFIX = ".xmp";
 
     // Keep in sync with SUPPORTED_RAW_EXTENSIONS and SUPPORTED_RENDERED_EXTENSIONS
     // in calibraw-core.
@@ -144,6 +150,21 @@ final class AndroidStorageContract {
     /** The people analysis kept next to a RAW while its edit has a people mask. */
     static String peopleAnalysisDisplayName(String rawDisplayName) {
         return companionDisplayName(rawDisplayName, PEOPLE_ANALYSIS_SUFFIX);
+    }
+
+    /**
+     * The photo's XMP sidecar, named as other photo apps name it: after its full name
+     * ("IMG_0001.CR3.xmp", darktable and digiKam), or with {@code basename} after its name
+     * without the extension ("IMG_0001.xmp", Lightroom and Capture One). Matches
+     * calibraw_core::sidecar::xmp_review::XmpSidecarName; change both together.
+     */
+    static String xmpDisplayName(String rawDisplayName, boolean basename) {
+        if (!basename) {
+            return companionDisplayName(rawDisplayName, XMP_SUFFIX);
+        }
+        String name = companionDisplayName(rawDisplayName, "");
+        int dot = name.lastIndexOf('.');
+        return (dot > 0 ? name.substring(0, dot) : name) + XMP_SUFFIX;
     }
 
     static String companionDisplayName(String rawDisplayName, String suffix) {
@@ -336,10 +357,20 @@ final class AndroidStorageContract {
             File directory,
             String rawDisplayName,
             long maximumBytes) throws Exception {
+        return publishAtomically(
+                cached, directory, sidecarDisplayName(rawDisplayName), maximumBytes);
+    }
+
+    /** Replaces {@code name} in {@code directory} with a copy of {@code cached}. */
+    static String publishAtomically(
+            File cached,
+            File directory,
+            String name,
+            long maximumBytes) throws Exception {
         if (!directory.isDirectory() && !directory.mkdirs()) {
             throw new IllegalStateException("Could not create " + directory);
         }
-        File destination = new File(directory, sidecarDisplayName(rawDisplayName));
+        File destination = new File(directory, name);
         File temporary = File.createTempFile(".calibraw-sidecar-", ".part", directory);
         boolean published = false;
         try {

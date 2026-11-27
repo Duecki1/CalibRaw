@@ -28,6 +28,9 @@ pub(crate) struct PlatformCaps {
     /// The library renders the saved edits of photos whose thumbnail does not
     /// show them yet, once their previews have loaded.
     pub(crate) edited_thumbnails: bool,
+    /// Ratings can be read from and saved to XMP: the photo's own and the
+    /// XMP sidecars other photo apps keep beside it.
+    pub(crate) xmp_reviews: bool,
 }
 
 /// How the person works with the app.
@@ -96,6 +99,7 @@ impl PlatformCaps {
         can_restart: true,
         linked_folders: false,
         edited_thumbnails: true,
+        xmp_reviews: true,
     };
 
     pub(crate) const ANDROID: Self = Self {
@@ -109,6 +113,7 @@ impl PlatformCaps {
         can_restart: true,
         linked_folders: true,
         edited_thumbnails: true,
+        xmp_reviews: true,
     };
 
     #[cfg(target_os = "ios")]
@@ -123,6 +128,7 @@ impl PlatformCaps {
         can_restart: false,
         linked_folders: false,
         edited_thumbnails: false,
+        xmp_reviews: false,
     };
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]

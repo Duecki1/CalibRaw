@@ -33,8 +33,7 @@ impl CalibRawApp {
         if caps.has_folders() {
             calibraw_core::serialized_reads::set_enabled(performance.hdd_mode);
         }
-        // Ratings in XMP sidecars: folder storage only.
-        let xmp_review = if caps.has_folders() {
+        let xmp_review = if caps.xmp_reviews {
             crate::sidecar::xmp_review::XmpReviewSettings {
                 sync: performance.xmp_review_sync,
                 sidecar_name: performance.xmp_sidecar_name,

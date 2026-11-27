@@ -154,12 +154,17 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         .ok()
         .and_then(Option::as_ref)
         .map(|loaded| loaded.review);
-    // A photo in a folder may take its review from XMP.
+    // The photo may take its review from XMP.
     let review = match &source.sidecar_target {
         crate::sidecar::SidecarTarget::Desktop { raw_path } => {
             crate::sidecar::xmp_review::resolve_photo_review(raw_path, sidecar_review)
         }
-        crate::sidecar::SidecarTarget::Android { .. } => sidecar_review.unwrap_or_default(),
+        crate::sidecar::SidecarTarget::Android {
+            raw_uri,
+            display_name,
+        } => {
+            platform.resolve_photo_review(raw_uri, display_name, sidecar_review, Some(&source.path))
+        }
     };
     let (reload_profile, reload_edits) = match profile_reload {
         Some(reload) => (Some(reload.camera_profile), Some(reload.edits)),

@@ -91,8 +91,9 @@ fn save_review(platform: &dyn Platform, request: &ReviewSave) -> ReviewSaved {
     }
 }
 
-/// Applies the change to the review the sidecar holds, so the result is
-/// right even where the library had not read it yet.
+/// Applies the change to the review the photo has (its sidecar's, combined
+/// with its XMP as the settings say), so the result is right even where the
+/// library had not read it yet.
 fn write_review(platform: &dyn Platform, request: &ReviewSave) -> Result<PhotoReview, String> {
     let asset = &request.asset;
     match &asset.locator {
@@ -114,17 +115,20 @@ fn write_review(platform: &dyn Platform, request: &ReviewSave) -> Result<PhotoRe
             let sidecar = platform
                 .load_sidecar(uri, &asset.display_name)
                 .map_err(|error| error.to_string())?;
-            let (edits, review, editing_time_ms) = sidecar.map_or_else(
-                || {
-                    (
-                        crate::sidecar::default_edit_state(),
-                        PhotoReview::default(),
-                        0,
-                    )
-                },
-                |sidecar| (sidecar.edits, sidecar.review, sidecar.editing_time_ms),
+            let review = platform.resolve_photo_review(
+                uri,
+                &asset.display_name,
+                sidecar.as_ref().map(|sidecar| sidecar.review),
+                None,
+            );
+            let (edits, editing_time_ms) = sidecar.map_or_else(
+                || (crate::sidecar::default_edit_state(), 0),
+                |sidecar| (sidecar.edits, sidecar.editing_time_ms),
             );
             let review = request.change.apply(review);
+            platform
+                .save_xmp_review(uri, &asset.display_name, review)
+                .map_err(|error| error.to_string())?;
             platform
                 .save_sidecar_with_review_and_editing_time(
                     uri,
@@ -145,7 +149,14 @@ fn read_review(platform: &dyn Platform, asset: &LibraryAsset) -> Result<PhotoRev
         LibraryLocator::Desktop(path) => crate::sidecar::load_photo_review(path),
         LibraryLocator::Android { uri } => platform
             .load_sidecar_metadata(uri, &asset.display_name)
-            .map(|metadata| metadata.unwrap_or_default().review),
+            .map(|metadata| {
+                platform.resolve_photo_review(
+                    uri,
+                    &asset.display_name,
+                    metadata.map(|metadata| metadata.review),
+                    None,
+                )
+            }),
     }
     .map_err(|error| error.to_string())
 }

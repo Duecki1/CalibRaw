@@ -180,7 +180,19 @@ impl CalibRawApp {
         self.start_next_sidecar_save();
     }
 
+    /// [`Self::queue_explicit_sidecar_save`] for a changed review of the open
+    /// media-library photo, whose sidecar is saved with it.
+    pub(crate) fn queue_review_sidecar_save(&mut self) {
+        self.commit_edit_history_now();
+        self.queue_sidecar_save(true, true);
+        self.start_next_sidecar_save();
+    }
+
     pub(super) fn queue_current_sidecar_save(&mut self, explicit: bool) {
+        self.queue_sidecar_save(explicit, false);
+    }
+
+    fn queue_sidecar_save(&mut self, explicit: bool, review_changed: bool) {
         let Some(target) = self.persistence.sidecar_target.clone() else {
             return;
         };
@@ -217,6 +229,7 @@ impl CalibRawApp {
             edits,
             editing_time_ms: self.raw_editing_time_ms(),
             review: self.develop.review,
+            review_changed,
             start,
         };
         if let Some(index) = self
@@ -226,6 +239,7 @@ impl CalibRawApp {
             .position(|pending| pending.generation == generation)
         {
             request.explicit |= self.persistence.sidecar_pending[index].explicit;
+            request.review_changed |= self.persistence.sidecar_pending[index].review_changed;
             self.persistence.sidecar_pending[index] = request;
         } else {
             self.persistence.sidecar_pending.push_back(request);
@@ -584,13 +598,20 @@ pub(super) fn save_sidecar_request(
         crate::sidecar::SidecarTarget::Android {
             raw_uri,
             display_name,
-        } => platform.save_sidecar_with_review_and_editing_time(
-            &raw_uri,
-            &display_name,
-            request.edits,
-            request.review,
-            request.editing_time_ms,
-            request.start,
-        ),
+        } => {
+            // XMP first, as on desktop: CalibRaw's sidecar keeps the old
+            // review if it fails.
+            if request.review_changed {
+                platform.save_xmp_review(&raw_uri, &display_name, request.review)?;
+            }
+            platform.save_sidecar_with_review_and_editing_time(
+                &raw_uri,
+                &display_name,
+                request.edits,
+                request.review,
+                request.editing_time_ms,
+                request.start,
+            )
+        }
     }
 }

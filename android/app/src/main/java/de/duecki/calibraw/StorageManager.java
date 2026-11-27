@@ -682,20 +682,39 @@ final class StorageManager {
         LibraryStore store = storeOf(rawUri);
         store.verify(rawUri, displayName);
         try (InputStream sidecar = store.openSidecar(rawUri, displayName)) {
-            return sidecar == null ? "" : copySidecarToCache(sidecar);
+            return sidecar == null
+                    ? ""
+                    : copySidecarToCache(sidecar, ".calibraw", MAX_SIDECAR_BYTES);
         }
     }
 
-    private String copySidecarToCache(InputStream input) throws Exception {
-        File cached = File.createTempFile("calibraw-sidecar-", ".calibraw", storage.getCacheDir());
+    /**
+     * A private copy of the photo's XMP sidecar, which native code removes after reading it, or
+     * "" when it has none ({@link AndroidStorageContract#xmpDisplayName} names it).
+     */
+    String materializeXmpSidecar(String rawUriText, String displayName, boolean basename)
+            throws Exception {
+        Uri rawUri = Uri.parse(rawUriText);
+        LibraryStore store = storeOf(rawUri);
+        store.verify(rawUri, displayName);
+        try (InputStream xmp = store.openXmp(rawUri, displayName, basename)) {
+            return xmp == null
+                    ? ""
+                    : copySidecarToCache(xmp, ".xmp", LibraryStore.MAX_XMP_BYTES);
+        }
+    }
+
+    private String copySidecarToCache(InputStream input, String suffix, long maximumBytes)
+            throws Exception {
+        File cached = File.createTempFile("calibraw-sidecar-", suffix, storage.getCacheDir());
         boolean completed = false;
         try {
             try (FileOutputStream output = new FileOutputStream(cached)) {
                 BoundedStreams.copy(
                         input,
                         output,
-                        MAX_SIDECAR_BYTES,
-                        storageLimitMessage(MAX_SIDECAR_BYTES));
+                        maximumBytes,
+                        storageLimitMessage(maximumBytes));
                 output.getFD().sync();
             }
             completed = true;
@@ -723,6 +742,27 @@ final class StorageManager {
         LibraryStore store = storeOf(rawUri);
         store.verify(rawUri, displayName);
         return store.publishSidecar(cached, rawUri, displayName);
+    }
+
+    /** Where native code writes an XMP sidecar for {@link #publishXmpSidecar}. */
+    String createXmpSidecarCache() throws Exception {
+        return File.createTempFile("calibraw-sidecar-", ".xmp", storage.getCacheDir())
+                .getAbsolutePath();
+    }
+
+    void publishXmpSidecar(
+            String cachedPath,
+            String rawUriText,
+            String displayName,
+            boolean basename) throws Exception {
+        File cached = new File(cachedPath);
+        if (!cached.isFile() || cached.length() > LibraryStore.MAX_XMP_BYTES) {
+            throw new IllegalStateException("The XMP staging file is missing or too large");
+        }
+        Uri rawUri = Uri.parse(rawUriText);
+        LibraryStore store = storeOf(rawUri);
+        store.verify(rawUri, displayName);
+        store.publishXmp(cached, rawUri, displayName, basename);
     }
 
     private LibraryStore.Stored storeRawFile(Uri source, String requestedName, Selection into)

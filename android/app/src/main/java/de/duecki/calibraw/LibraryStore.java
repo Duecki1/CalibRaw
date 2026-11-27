@@ -17,6 +17,8 @@ import java.util.ArrayList;
 interface LibraryStore {
     // Matches calibraw_core::sidecar::MAX_SIDECAR_BYTES on Android; change both together.
     long MAX_SIDECAR_BYTES = 128L * 1024L * 1024L;
+    // Matches calibraw_core::sidecar::xmp_review::MAX_XMP_BYTES; change both together.
+    long MAX_XMP_BYTES = 64L * 1024L * 1024L;
     int MAX_FOLDERS = 10_000;
     int MAX_FOLDER_DEPTH = 64;
 
@@ -103,6 +105,15 @@ interface LibraryStore {
 
     /** Replaces the photo's sidecar with {@code cached} and returns where it was saved. */
     String publishSidecar(File cached, Uri raw, String displayName) throws Exception;
+
+    /**
+     * The photo's XMP sidecar as {@link AndroidStorageContract#xmpDisplayName} names it, or null
+     * when it has none.
+     */
+    InputStream openXmp(Uri raw, String displayName, boolean basename) throws Exception;
+
+    /** Replaces that XMP sidecar with {@code cached}, or creates it. */
+    void publishXmp(File cached, Uri raw, String displayName, boolean basename) throws Exception;
 
     /** The local file native code reads and writes for this companion. Copies nothing. */
     String companionPath(Uri raw, String displayName, String suffix) throws Exception;

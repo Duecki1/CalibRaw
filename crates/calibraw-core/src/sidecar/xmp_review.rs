@@ -4,11 +4,12 @@
 //! [`XmpReviewSync`] decides how the two relate. CalibRaw's sidecar keeps the
 //! review in every mode, so turning XMP off loses nothing. The settings are
 //! process-wide ([`set_xmp_review_settings`]), as every path that reads or
-//! saves a desktop sidecar must apply them alike: the library, Develop,
-//! pasting and resetting edits, and the rating saver.
+//! saves a sidecar must apply them alike: the library, Develop, pasting and
+//! resetting edits, and the rating saver.
 //!
-//! Only sidecars of photos in folders (desktop paths) are involved; the
-//! Android media library keeps its reviews in CalibRaw sidecars alone.
+//! [`XmpFiles`] is where a photo's XMP is kept. Desktop reaches it by path
+//! ([`resolve_photo_review`]); the Android library and its linked folders
+//! through the platform's storage, which calibraw-ffi implements it with.
 
 mod embedded;
 mod mapping;
@@ -23,7 +24,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{PoisonError, RwLock};
 
 /// Largest XMP file or embedded packet read. Lightroom sidecars that hold
-/// masks reach a few megabytes.
+/// masks reach a few megabytes. Android's copy is `LibraryStore.MAX_XMP_BYTES`;
+/// change both together.
 const MAX_XMP_BYTES: u64 = 64 * 1024 * 1024;
 
 /// How CalibRaw uses the ratings in XMP files.
@@ -95,13 +97,60 @@ pub fn set_xmp_review_settings(settings: XmpReviewSettings) {
     *SETTINGS.write().unwrap_or_else(PoisonError::into_inner) = settings;
 }
 
-pub(super) fn xmp_review_settings() -> XmpReviewSettings {
+fn xmp_review_settings() -> XmpReviewSettings {
     *SETTINGS.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Where a photo's XMP is kept: the sidecars beside it, by name, and the
+/// packet embedded in it.
+pub trait XmpFiles {
+    /// The sidecar called `name`, for messages.
+    fn sidecar_location(&self, name: XmpSidecarName) -> String;
+    /// The photo, for messages.
+    fn photo_location(&self) -> String;
+    /// The sidecar called `name`, read as [`read_xmp_file`] reads one; `None`
+    /// when there is none.
+    fn read_sidecar(&self, name: XmpSidecarName) -> Result<Option<Vec<u8>>, SidecarError>;
+    /// Replaces the sidecar called `name` with `bytes`, or creates it, as
+    /// atomically as the storage allows.
+    fn write_sidecar(&self, name: XmpSidecarName, bytes: &[u8]) -> Result<(), SidecarError>;
+    /// The packet embedded in the photo, as [`embedded_packet`] reads it.
+    fn embedded_packet(&self) -> Result<Option<Vec<u8>>, SidecarError>;
+}
+
+/// The XMP of the photo at a desktop path.
+struct DesktopXmpFiles<'a>(&'a Path);
+
+impl XmpFiles for DesktopXmpFiles<'_> {
+    fn sidecar_location(&self, name: XmpSidecarName) -> String {
+        name.path(self.0).display().to_string()
+    }
+
+    fn photo_location(&self) -> String {
+        self.0.display().to_string()
+    }
+
+    fn read_sidecar(&self, name: XmpSidecarName) -> Result<Option<Vec<u8>>, SidecarError> {
+        read_xmp_file(&name.path(self.0))
+    }
+
+    fn write_sidecar(&self, name: XmpSidecarName, bytes: &[u8]) -> Result<(), SidecarError> {
+        atomic_write(&name.path(self.0), bytes)
+    }
+
+    fn embedded_packet(&self) -> Result<Option<Vec<u8>>, SidecarError> {
+        embedded_packet(self.0)
+    }
 }
 
 /// The review of the photo at `raw_path`, from the review in its CalibRaw
 /// sidecar (`None` when it has no sidecar) and, as the settings say, its XMP.
 pub fn resolve_photo_review(raw_path: &Path, sidecar_review: Option<PhotoReview>) -> PhotoReview {
+    resolve_review(&DesktopXmpFiles(raw_path), sidecar_review)
+}
+
+/// [`resolve_photo_review`] for a photo whose XMP `files` reaches.
+pub fn resolve_review(files: &dyn XmpFiles, sidecar_review: Option<PhotoReview>) -> PhotoReview {
     let settings = xmp_review_settings();
     let base = sidecar_review.unwrap_or_default();
     let reads_xmp = match settings.sync {
@@ -112,51 +161,71 @@ pub fn resolve_photo_review(raw_path: &Path, sidecar_review: Option<PhotoReview>
     if !reads_xmp {
         return base;
     }
-    read_xmp_review(raw_path, settings.sidecar_name).over(base)
+    read_xmp_review(files, settings.sidecar_name).over(base)
 }
 
 /// The review the photo's XMP records: from the first of its XMP sidecars
 /// that records one, `preferred` name first, else from the packet embedded in
 /// the photo file. An unreadable file is logged and passed over.
-fn read_xmp_review(raw_path: &Path, preferred: XmpSidecarName) -> XmpReview {
-    for path in sidecar_paths(raw_path, preferred) {
-        match read_xmp_file(&path)
+fn read_xmp_review(files: &dyn XmpFiles, preferred: XmpSidecarName) -> XmpReview {
+    for name in sidecar_names(preferred) {
+        match files
+            .read_sidecar(name)
             .and_then(|bytes| bytes.map(|bytes| mapping::read_review(&bytes)).transpose())
         {
             Ok(Some(review)) if !review.is_empty() => return review,
             Ok(_) => {}
-            Err(error) => log::warn!("could not read the rating in {}: {error}", path.display()),
+            Err(error) => log::warn!(
+                "could not read the rating in {}: {error}",
+                files.sidecar_location(name)
+            ),
         }
     }
-    match embedded::embedded_packet(raw_path, MAX_XMP_BYTES) {
+    match files.embedded_packet() {
         Ok(Some(bytes)) => mapping::read_review(&bytes).unwrap_or_else(|error| {
             log::warn!(
                 "could not read the rating in {}: {error}",
-                raw_path.display()
+                files.photo_location()
             );
             XmpReview::default()
         }),
         Ok(None) => XmpReview::default(),
         Err(error) => {
-            log::warn!("could not read the XMP in {}: {error}", raw_path.display());
+            log::warn!(
+                "could not read the XMP in {}: {error}",
+                files.photo_location()
+            );
             XmpReview::default()
         }
     }
 }
 
-/// Saves `review` to the photo's XMP sidecar: the first that records a
-/// review, `preferred` name first, else the first that exists, else a new
-/// sidecar with the preferred name. Every other byte of an existing sidecar
-/// is kept; one CalibRaw cannot read is left alone and reported.
-pub(super) fn save_xmp_review(
+/// [`save_review`] for the photo at a desktop path.
+pub(super) fn save_photo_xmp_review(
     raw_path: &Path,
-    preferred: XmpSidecarName,
     review: PhotoReview,
 ) -> Result<(), SidecarError> {
+    save_review(&DesktopXmpFiles(raw_path), review)
+}
+
+/// Saves `review` to the photo's XMP sidecar when the settings write XMP,
+/// and does nothing otherwise: to the first sidecar that records a review,
+/// the preferred name first, else the first that exists, else a new sidecar
+/// with the preferred name. Every other byte of an existing sidecar is kept;
+/// one CalibRaw cannot read is left alone and reported.
+pub fn save_review(files: &dyn XmpFiles, review: PhotoReview) -> Result<(), SidecarError> {
+    let settings = xmp_review_settings();
+    if !settings.sync.writes() {
+        return Ok(());
+    }
+    let preferred = settings.sidecar_name;
     let mut existing = Vec::new();
-    for path in sidecar_paths(raw_path, preferred) {
-        if let Some(bytes) = read_xmp_file(&path).map_err(|error| in_file(&path, error))? {
-            existing.push((path, bytes));
+    for name in sidecar_names(preferred) {
+        if let Some(bytes) = files
+            .read_sidecar(name)
+            .map_err(|error| in_file(&files.sidecar_location(name), error))?
+        {
+            existing.push((name, bytes));
         }
     }
     let records_review =
@@ -165,29 +234,30 @@ pub(super) fn save_xmp_review(
         .iter()
         .position(|(_, bytes)| records_review(bytes))
         .or((!existing.is_empty()).then_some(0));
-    let (path, bytes) = match target.map(|index| &existing[index]) {
-        Some((path, bytes)) => (
-            path.clone(),
-            mapping::write_review(bytes, review).map_err(|error| in_file(path, error))?,
+    let (name, bytes) = match target.map(|index| &existing[index]) {
+        Some((name, bytes)) => (
+            *name,
+            mapping::write_review(bytes, review)
+                .map_err(|error| in_file(&files.sidecar_location(*name), error))?,
         ),
-        None => (
-            preferred.path(raw_path),
-            Some(mapping::new_sidecar(review).into_bytes()),
-        ),
+        None => (preferred, Some(mapping::new_sidecar(review).into_bytes())),
     };
     match bytes {
-        Some(bytes) => atomic_write(&path, &bytes).map_err(|error| in_file(&path, error)),
+        Some(bytes) => files
+            .write_sidecar(name, &bytes)
+            .map_err(|error| in_file(&files.sidecar_location(name), error)),
         None => Ok(()),
     }
 }
 
 /// The photo's XMP sidecar names, `preferred` first.
-fn sidecar_paths(raw_path: &Path, preferred: XmpSidecarName) -> [PathBuf; 2] {
-    [preferred.path(raw_path), preferred.other().path(raw_path)]
+const fn sidecar_names(preferred: XmpSidecarName) -> [XmpSidecarName; 2] {
+    [preferred, preferred.other()]
 }
 
-/// The file at `path`; `None` when there is none.
-fn read_xmp_file(path: &Path) -> Result<Option<Vec<u8>>, SidecarError> {
+/// The XMP file at `path`, at most [`MAX_XMP_BYTES`]; `None` when there is
+/// none.
+pub fn read_xmp_file(path: &Path) -> Result<Option<Vec<u8>>, SidecarError> {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -203,6 +273,13 @@ fn read_xmp_file(path: &Path) -> Result<Option<Vec<u8>>, SidecarError> {
     Ok(Some(bytes))
 }
 
-fn in_file(path: &Path, error: SidecarError) -> SidecarError {
-    SidecarError::Invalid(format!("{}: {error}", path.display()))
+/// The packet embedded in the photo file at `path`, at most
+/// [`MAX_XMP_BYTES`]; `None` when it has none or is not a JPEG or TIFF-based
+/// file.
+pub fn embedded_packet(path: &Path) -> Result<Option<Vec<u8>>, SidecarError> {
+    embedded::embedded_packet(path, MAX_XMP_BYTES).map_err(SidecarError::from)
+}
+
+fn in_file(location: &str, error: SidecarError) -> SidecarError {
+    SidecarError::Invalid(format!("{location}: {error}"))
 }

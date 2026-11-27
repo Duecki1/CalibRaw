@@ -12,6 +12,9 @@ pub(crate) struct SidecarSaveRequest {
     pub(super) editing_time_ms: u64,
     /// Media-library sidecars carry the review; folder sidecars keep theirs on disk.
     pub(super) review: crate::sidecar::PhotoReview,
+    /// The review changed, so a media-library photo saves it to its XMP
+    /// first, as the rating saver does for other photos.
+    pub(super) review_changed: bool,
     pub(super) start: crate::sidecar::SidecarStart,
 }
 

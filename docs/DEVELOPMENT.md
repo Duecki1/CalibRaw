@@ -806,8 +806,8 @@ are published to `Pictures/CalibRaw` through MediaStore where available;
 MediaStore numbers a name that is already taken, and the reported location is
 read back from it.
 
-A linked folder is worked on where it is: photos, `.calibraw` sidecars and AI
-results stay in the folder the person picked, so syncing it with another device
+A linked folder is worked on where it is: photos, `.calibraw` sidecars, XMP
+sidecars and AI results stay in the folder the person picked, so syncing it with another device
 behaves as on desktop. Linking takes no manifest permission. The system picker
 refuses the top level of storage, `Download` and `Android`. Unlinking only
 releases the grant. Photos other apps send always go to `.library`, and the

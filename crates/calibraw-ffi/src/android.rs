@@ -26,12 +26,14 @@ mod library;
 mod notifications;
 mod sidecars;
 mod thumbnail_cache;
+mod xmp;
 pub use callbacks::*;
 pub use export::*;
 pub use library::*;
 pub use notifications::*;
 pub use sidecars::*;
 pub use thumbnail_cache::*;
+pub use xmp::*;
 
 #[derive(Debug)]
 pub struct PickedDocument {

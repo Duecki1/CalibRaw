@@ -428,6 +428,31 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::load_android_sidecar_metadata(&self.app, raw_uri, display_name)
     }
 
+    fn resolve_photo_review(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        sidecar_review: Option<PhotoReview>,
+        photo: Option<&Path>,
+    ) -> PhotoReview {
+        calibraw_ffi::resolve_android_review(
+            &self.app,
+            raw_uri,
+            display_name,
+            sidecar_review,
+            photo,
+        )
+    }
+
+    fn save_xmp_review(
+        &self,
+        raw_uri: &str,
+        display_name: &str,
+        review: PhotoReview,
+    ) -> Result<(), SidecarError> {
+        calibraw_ffi::save_android_xmp_review(&self.app, raw_uri, display_name, review)
+    }
+
     fn save_sidecar(
         &self,
         raw_uri: &str,

@@ -550,7 +550,30 @@ pub(crate) trait Platform: Send + Sync {
     ) -> Result<Option<SidecarMetadata>, SidecarError> {
         Ok(None)
     }
-    /// Saves `edits`, keeping the sidecar's review, editing time and start.
+    /// The review of a media-library photo, from the review in its sidecar
+    /// (`None` when it has none) and, as the XMP settings say, its XMP.
+    /// `photo` is a readable path to the photo while the caller has it open.
+    fn resolve_photo_review(
+        &self,
+        _raw_uri: &str,
+        _display_name: &str,
+        sidecar_review: Option<PhotoReview>,
+        _photo: Option<&Path>,
+    ) -> PhotoReview {
+        sidecar_review.unwrap_or_default()
+    }
+    /// Saves a changed review to a media-library photo's XMP sidecar when the
+    /// XMP settings write XMP, before its sidecar is saved with it.
+    fn save_xmp_review(
+        &self,
+        _raw_uri: &str,
+        _display_name: &str,
+        _review: PhotoReview,
+    ) -> Result<(), SidecarError> {
+        Ok(())
+    }
+    /// Saves `edits`, keeping the photo's review, and the sidecar's editing
+    /// time and start.
     fn save_sidecar(
         &self,
         _raw_uri: &str,

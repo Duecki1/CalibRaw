@@ -644,8 +644,7 @@ impl Settings {
             app.set_preview_backdrop(backdrop);
         }
 
-        // Only photos in folders have XMP files beside them.
-        if app.caps().has_folders() {
+        if app.caps().xmp_reviews {
             moduwu_design::section_separator(ui);
             Self::show_xmp_reviews(ui, app);
         }
