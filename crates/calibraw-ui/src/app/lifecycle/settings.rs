@@ -201,11 +201,12 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
-    /// Reads and saves ratings with `settings` from now on. Ratings still
-    /// being saved finish under the old ones; the library and an open folder
-    /// photo show their ratings as the new ones read them. An open
-    /// media-library photo, whose review is saved with its edits and may be
-    /// waiting to, takes them when it is opened again.
+    /// Reads and saves ratings with `settings` from now on. Ratings the
+    /// rating saver is still saving finish under the old ones; the library
+    /// and an open folder photo show their ratings as the new ones read them.
+    /// An open media-library photo's review is saved with its edits, so one
+    /// still waiting to be saved is written to XMP as the new settings say;
+    /// the photo shows its rating as they read it once it is opened again.
     pub(crate) fn set_xmp_review_settings(
         &mut self,
         settings: crate::sidecar::xmp_review::XmpReviewSettings,

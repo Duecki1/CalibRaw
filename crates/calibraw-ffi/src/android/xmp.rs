@@ -3,8 +3,17 @@
 //! ([`calibraw_core::sidecar::xmp_review`]).
 
 use super::*;
+use calibraw_core::display_metadata_cache::XmpSidecarStamps;
 use calibraw_core::sidecar::xmp_review::{self, XmpFiles, XmpSidecarName};
 use calibraw_core::sidecar::{PhotoReview, SidecarError};
+use std::sync::{Mutex, PoisonError};
+
+/// Held while an XMP sidecar is read, changed and written back. Photos that
+/// differ only in extension share a basename sidecar ("IMG_0001.xmp"), and
+/// the rating saver and the open photo's edit save may change two of them at
+/// once. A leaf lock: nothing else is taken while it is held, and Java does
+/// not call back into native code from the storage calls made under it.
+static XMP_SAVES: Mutex<()> = Mutex::new(());
 
 /// A library photo's XMP: the sidecars `StorageManager` keeps beside it in
 /// CalibRaw's library or a linked folder, and the packet embedded in it.
@@ -15,6 +24,10 @@ struct AndroidXmpFiles<'a> {
     /// A readable path to the photo while the caller has it open, so the
     /// embedded packet is read without opening the photo again.
     photo: Option<&'a Path>,
+    /// The XMP sidecars a library listing showed, taken since this process
+    /// last wrote the photo's; a name it shows absent is not asked for. In a
+    /// linked folder that would list the whole folder again.
+    listed: Option<XmpSidecarStamps>,
 }
 
 impl XmpFiles for AndroidXmpFiles<'_> {
@@ -34,6 +47,15 @@ impl XmpFiles for AndroidXmpFiles<'_> {
     }
 
     fn read_sidecar(&self, name: XmpSidecarName) -> Result<Option<Vec<u8>>, SidecarError> {
+        if let Some(listed) = self.listed {
+            let stamp = match name {
+                XmpSidecarName::WithExtension => listed.with_extension,
+                XmpSidecarName::Basename => listed.basename,
+            };
+            if stamp.is_none() {
+                return Ok(None);
+            }
+        }
         let staged = with_storage_manager(self.app, |env, storage_manager| {
             let raw_uri = env.new_string(self.raw_uri)?;
             let display_name = env.new_string(self.display_name)?;
@@ -151,23 +173,28 @@ pub fn resolve_android_review(
         raw_uri,
         display_name,
         photo,
+        listed: None,
     };
     xmp_review::resolve_review(&files, sidecar_review)
 }
 
 /// The review a library photo's XMP records, its `preferred` sidecar name
-/// first ([`xmp_review::read_xmp_review`]).
+/// first ([`xmp_review::read_xmp_review`]). `listed` is what a library
+/// listing taken since this process last wrote the photo's XMP shows of its
+/// sidecars; only those it shows are read.
 pub fn read_android_xmp_review(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
     preferred: XmpSidecarName,
+    listed: Option<XmpSidecarStamps>,
 ) -> xmp_review::XmpReview {
     let files = AndroidXmpFiles {
         app,
         raw_uri,
         display_name,
         photo: None,
+        listed,
     };
     xmp_review::read_xmp_review(&files, preferred)
 }
@@ -186,6 +213,8 @@ pub fn save_android_xmp_review(
         raw_uri,
         display_name,
         photo: None,
+        listed: None,
     };
+    let _saving = XMP_SAVES.lock().unwrap_or_else(PoisonError::into_inner);
     xmp_review::save_review(&files, review)
 }

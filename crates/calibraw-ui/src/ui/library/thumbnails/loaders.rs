@@ -4,6 +4,7 @@ use super::*;
 use crate::i18n::{tr, tr_fmt};
 use crate::sidecar::xmp_review::{self, XmpReview, XmpSidecarName};
 use crate::sidecar::SidecarSummary;
+use calibraw_core::display_metadata_cache::XmpSidecarStamps;
 use calibraw_core::pipeline::RawDisplayMetadata;
 
 /// Develop's reference photo: its developed thumbnail when that is large
@@ -310,24 +311,31 @@ impl MediaPhoto<'_> {
     fn xmp_review(&self, preferred: XmpSidecarName, written_since_listing: bool) -> XmpReview {
         match self.folder.xmp(&self.asset.id) {
             PhotoXmp::Read(review) if !written_since_listing => review,
-            PhotoXmp::Unread(sources)
-                if !written_since_listing && sources.preferred() == preferred =>
-            {
-                let review = self.read_xmp_review(preferred);
-                self.folder.record_xmp(&self.asset.id, review);
+            PhotoXmp::Unread(sources) if !written_since_listing => {
+                let review = self.read_xmp_review(preferred, Some(sources.sidecars()));
+                // The settings may have changed since the listing.
+                if sources.preferred() == preferred {
+                    self.folder.record_xmp(&self.asset.id, review);
+                }
                 review
             }
+            // The app may have written an XMP sidecar the listing does not show.
             PhotoXmp::Read(_) | PhotoXmp::Unread(_) | PhotoXmp::Unknown => {
-                self.read_xmp_review(preferred)
+                self.read_xmp_review(preferred, None)
             }
         }
     }
 
-    fn read_xmp_review(&self, preferred: XmpSidecarName) -> XmpReview {
+    /// Reads only the XMP sidecars `listed` shows, when it is given.
+    fn read_xmp_review(
+        &self,
+        preferred: XmpSidecarName,
+        listed: Option<XmpSidecarStamps>,
+    ) -> XmpReview {
         // Reads the photo itself when no XMP sidecar records a review.
         let _permit = self.extraction.acquire();
         self.platform
-            .read_xmp_review(self.uri, &self.asset.display_name, preferred)
+            .read_xmp_review(self.uri, &self.asset.display_name, preferred, listed)
     }
 
     /// Reads the photo's sidecar. With `record`, its summary is kept under the

@@ -369,13 +369,17 @@ impl CalibRawApp {
                 .request_repaint_after(SIDECAR_AUTOSAVE_ACTIVE_POLL);
             return;
         }
-        let Some(request) = self.persistence.sidecar_pending.pop_front() else {
+        let Some(mut request) = self.persistence.sidecar_pending.pop_front() else {
             return;
         };
+        // Also when it was queued before the save that failed to reach XMP
+        // finished.
+        request.review_changed |= self.persistence.review_xmp_unsaved == Some(request.generation);
         let job = SidecarSaveJob {
             generation: request.generation,
             revision: request.revision,
             explicit: request.explicit,
+            review_changed: request.review_changed,
         };
         let repaint = self.egui_ctx.clone();
         let (sender, receiver) = mpsc::channel();
@@ -404,6 +408,7 @@ impl CalibRawApp {
                 self.persistence.sidecar_receiver = Some(receiver);
             }
             Err(error) => {
+                self.note_sidecar_save_failed(job);
                 if job.generation == self.persistence.document_generation {
                     self.report_sidecar_save_failure(
                         Some(job.revision),
@@ -436,6 +441,9 @@ impl CalibRawApp {
             Some(Err(mpsc::TryRecvError::Disconnected)) => {
                 let job = self.persistence.sidecar_in_flight.take();
                 self.persistence.sidecar_receiver = None;
+                if let Some(job) = job {
+                    self.note_sidecar_save_failed(job);
+                }
                 if let Some(job) =
                     job.filter(|job| job.generation == self.persistence.document_generation)
                 {
@@ -461,9 +469,28 @@ impl CalibRawApp {
         self.start_next_sidecar_save();
     }
 
+    /// Keeps a changed review the failed `job` carried due for XMP, while its
+    /// photo is open: a closed photo is saved no more.
+    fn note_sidecar_save_failed(&mut self, job: SidecarSaveJob) {
+        if job.review_changed && job.generation == self.persistence.document_generation {
+            self.persistence.review_xmp_unsaved = Some(job.generation);
+        }
+    }
+
     pub(super) fn finish_sidecar_save(&mut self, event: SidecarSaveEvent) {
         self.persistence.sidecar_receiver = None;
         self.persistence.sidecar_in_flight = None;
+        match &event.result {
+            // It wrote XMP before the sidecar, so XMP holds the review too.
+            Ok(_)
+                if event.job.review_changed
+                    && self.persistence.review_xmp_unsaved == Some(event.job.generation) =>
+            {
+                self.persistence.review_xmp_unsaved = None;
+            }
+            Ok(_) => {}
+            Err(_) => self.note_sidecar_save_failed(event.job),
+        }
         // Also for a photo opened before: the library shows every saved edit.
         if let Ok(saved) = &event.result {
             self.library

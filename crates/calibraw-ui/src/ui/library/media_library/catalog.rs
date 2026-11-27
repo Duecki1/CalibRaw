@@ -112,14 +112,17 @@ pub(in crate::ui::library) fn catalog_media_folder(
 }
 
 /// The photo's review when its sidecar and, where the settings read it, its
-/// XMP review are known ([`xmp_review::resolve_review_from`]).
+/// XMP review are known ([`xmp_review::resolve_review_from`]). Until the
+/// thumbnail workers read an unknown XMP review, the sidecar's stands in, so
+/// the tile keeps its rating and its place in rating filters meanwhile; with
+/// XMP written, the two hold the same review unless another app changed one.
 fn known_review(sidecar: &PhotoSidecar, xmp: &PhotoXmp) -> Option<crate::sidecar::PhotoReview> {
     let sidecar_review = match sidecar {
         PhotoSidecar::Absent => None,
         PhotoSidecar::Summarized(summary) => Some(summary.review),
         PhotoSidecar::Unlisted | PhotoSidecar::Unread(_) => return None,
     };
-    xmp_review::resolve_review_from(sidecar_review, |_| xmp.known())
+    xmp_review::resolve_review_from(sidecar_review, |_| xmp.known()).or(sidecar_review)
 }
 
 /// The library path of `subfolder`, a path below `folder`.

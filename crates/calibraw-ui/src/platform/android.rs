@@ -13,6 +13,7 @@ use crate::sidecar::{
     EditState, LoadedSidecar, PhotoCompanion, PhotoReview, SavedSidecar, SidecarError,
     SidecarMetadata, SidecarStart, SidecarSummary,
 };
+use calibraw_core::display_metadata_cache::XmpSidecarStamps;
 use calibraw_core::pipeline::RawDisplayMetadata;
 use calibraw_ffi::AndroidApp;
 use std::path::{Path, PathBuf};
@@ -451,8 +452,9 @@ impl Platform for AndroidPlatform {
         raw_uri: &str,
         display_name: &str,
         preferred: XmpSidecarName,
+        listed: Option<XmpSidecarStamps>,
     ) -> XmpReview {
-        calibraw_ffi::read_android_xmp_review(&self.app, raw_uri, display_name, preferred)
+        calibraw_ffi::read_android_xmp_review(&self.app, raw_uri, display_name, preferred, listed)
     }
 
     fn save_xmp_review(

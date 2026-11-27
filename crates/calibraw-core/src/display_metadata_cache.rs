@@ -96,6 +96,10 @@ impl XmpSources {
     pub const fn preferred(&self) -> XmpSidecarName {
         self.preferred
     }
+
+    pub const fn sidecars(&self) -> XmpSidecarStamps {
+        self.sidecars
+    }
 }
 
 /// Borrows the entries when saving and owns them when loading.

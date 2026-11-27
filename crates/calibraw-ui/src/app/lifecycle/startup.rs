@@ -325,6 +325,7 @@ impl CalibRawApp {
                 sidecar_save_feedback_until: None,
                 sidecar_save_error_dialog: None,
                 sidecar_recovery: None,
+                review_xmp_unsaved: None,
                 sidecar_autosave_deadline: None,
                 developed_thumbnail_check: None,
                 developed_thumbnail_pending: None,

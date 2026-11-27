@@ -510,28 +510,30 @@ final class TreeLibraryStore implements LibraryStore {
             }
             synchronized (this) {
                 Entry renamed = renameExact(place.folder, photo, requestedName);
-                Entry sidecarEntry = entries.get(sidecar);
                 Entry renamedSidecar = null;
-                if (sidecarEntry != null) {
-                    try {
+                try {
+                    Entry sidecarEntry = entries.get(sidecar);
+                    if (sidecarEntry != null) {
                         renamedSidecar =
                                 renameExact(place.folder, sidecarEntry, destinationSidecar);
-                    } catch (Exception error) {
-                        renameExact(place.folder, renamed, displayName);
-                        throw error;
                     }
-                }
-                Entry xmpEntry = entries.get(xmp);
-                if (xmpEntry != null) {
-                    try {
+                    Entry xmpEntry = entries.get(xmp);
+                    if (xmpEntry != null) {
                         renameExact(place.folder, xmpEntry, destinationXmp);
-                    } catch (Exception error) {
-                        if (renamedSidecar != null) {
-                            renameExact(place.folder, renamedSidecar, sidecar);
-                        }
-                        renameExact(place.folder, renamed, displayName);
-                        throw error;
                     }
+                } catch (Exception error) {
+                    // Each step is undone on its own, so one that fails still lets the photo
+                    // get its name back.
+                    boolean restored = restoreName(error, place.folder, renamedSidecar, sidecar)
+                            & restoreName(error, place.folder, renamed, displayName);
+                    noteWrite(place.folder);
+                    if (!restored) {
+                        throw new IllegalStateException(
+                                "The photo was renamed, but moving its sidecars and undoing the "
+                                        + "rename both failed",
+                                error);
+                    }
+                    throw error;
                 }
                 for (String suffix : AndroidStorageContract.REGENERATED_COMPANION_SUFFIXES) {
                     // The local copy is named after the old URI, which no longer reaches it.
@@ -946,6 +948,24 @@ final class TreeLibraryStore implements LibraryStore {
      * The provider renames before it says which name it chose, so a refused rename is undone:
      * the document keeps the name its sidecar and the caller's cleanup expect.
      */
+    /**
+     * Gives {@code entry} back {@code name} after a rename that {@code failure} stopped, and
+     * returns whether it could; a rename that fails is added to {@code failure}. True when
+     * {@code entry} is null, as nothing was renamed.
+     */
+    private boolean restoreName(Exception failure, String folder, Entry entry, String name) {
+        if (entry == null) {
+            return true;
+        }
+        try {
+            renameExact(folder, entry, name);
+            return true;
+        } catch (Exception restore) {
+            failure.addSuppressed(restore);
+            return false;
+        }
+    }
+
     private Entry renameExact(String folder, Entry document, String name) throws Exception {
         Entry entry = renameTo(folder, document, name);
         if (!name.equals(entry.displayName)) {

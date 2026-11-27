@@ -567,12 +567,15 @@ pub(crate) trait Platform: Send + Sync {
     }
     /// The review a media-library photo's XMP records, its `preferred`
     /// sidecar name first. Asked only of platforms whose listing reports XMP
-    /// sidecars ([`LibraryDocument::xmp_sidecars`]).
+    /// sidecars ([`LibraryDocument::xmp_sidecars`]). `listed` is what a
+    /// listing taken since the app last wrote the photo's XMP shows of its
+    /// sidecars; only those it shows are read.
     fn read_xmp_review(
         &self,
         _raw_uri: &str,
         _display_name: &str,
         _preferred: XmpSidecarName,
+        _listed: Option<XmpSidecarStamps>,
     ) -> XmpReview {
         XmpReview::default()
     }

@@ -23,6 +23,9 @@ pub(crate) struct SidecarSaveJob {
     pub(super) generation: u64,
     pub(super) revision: u64,
     pub(super) explicit: bool,
+    /// The save carries a changed review to the photo's XMP
+    /// ([`SidecarSaveRequest::review_changed`]).
+    pub(super) review_changed: bool,
 }
 
 pub(crate) struct SidecarSaveEvent {
@@ -86,6 +89,12 @@ pub(crate) struct PersistenceState {
     pub(crate) sidecar_save_feedback_until: Option<Instant>,
     pub(crate) sidecar_save_error_dialog: Option<String>,
     pub(crate) sidecar_recovery: Option<SidecarSaveRequest>,
+    /// The open document's generation when a failed save of its changed
+    /// review may not have brought it to its XMP. Its next saves carry the
+    /// review to XMP again until one succeeds; otherwise they would put the
+    /// review in CalibRaw's sidecar alone, and the older one in XMP, which
+    /// wins, would return when it is opened again.
+    pub(crate) review_xmp_unsaved: Option<u64>,
     pub(crate) sidecar_autosave_deadline: Option<SidecarAutosaveDeadline>,
     pub(crate) developed_thumbnail_check: Option<DevelopedThumbnailCheck>,
     pub(crate) developed_thumbnail_pending: Option<DevelopedThumbnailJob>,
