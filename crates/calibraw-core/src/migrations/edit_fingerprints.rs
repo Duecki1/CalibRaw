@@ -9,6 +9,7 @@
 use crate::pipeline::SharpenMethod;
 use crate::sidecar::{default_edit_state, EditFingerprint, EditState, SidecarError};
 use serde::Deserialize;
+use serde_json::Value;
 
 /// Whether `edits`, decoded from a sidecar without fingerprints, differ from
 /// the defaults of the versions that saved such sidecars.
@@ -28,13 +29,34 @@ fn saved_defaults() -> EditState {
 }
 
 /// The same for the sidecar `bytes`, without decoding its edits: compares the
-/// `edits` object as saved.
+/// `edits` object as saved with [`saved_defaults`] as those versions wrote
+/// them.
 pub(crate) fn edited_without_fingerprints_in(bytes: &[u8]) -> Result<bool, SidecarError> {
     #[derive(Deserialize)]
     struct Document {
-        edits: serde_json::Value,
+        edits: Value,
     }
     let document: Document =
         serde_json::from_slice(bytes).map_err(|error| SidecarError::Invalid(error.to_string()))?;
-    Ok(EditFingerprint::of_json(document.edits)? != EditFingerprint::of_defaults()?)
+    Ok(EditFingerprint::of_json(document.edits)?
+        != EditFingerprint::of_json(saved_defaults_as_written()?)?)
+}
+
+/// [`saved_defaults`] serialized as those versions wrote it: without a
+/// sharpening method, which they did not have. They always wrote Amount and
+/// Radius.
+///
+/// Read back from its bytes, as a sidecar's edits are: a `Value` made from
+/// the edit directly holds each `f32` widened (0.0152 as 0.015200000256…),
+/// which compares unequal with the same field read from a file.
+fn saved_defaults_as_written() -> Result<Value, SidecarError> {
+    let invalid = |error: serde_json::Error| {
+        SidecarError::Invalid(format!("could not serialize defaults: {error}"))
+    };
+    let bytes = serde_json::to_vec(&saved_defaults()).map_err(invalid)?;
+    let mut defaults: Value = serde_json::from_slice(&bytes).map_err(invalid)?;
+    if let Some(exposure) = defaults.get_mut("exposure").and_then(Value::as_object_mut) {
+        exposure.remove("sharpen_method");
+    }
+    Ok(defaults)
 }

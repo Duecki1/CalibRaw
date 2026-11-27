@@ -23,10 +23,12 @@
 // 3. capture_divide, capture_multiply (tex1 -> tex2 -> tex1), once per
 //    iteration: estimate *= blur(Y / blur(estimate)), the estimate starting
 //    at Y. darktable leaves the ratio unwritten where the mask is 0 and its
-//    buffer keeps older contents there; it is computed everywhere here.
+//    buffer keeps older contents there; it is computed everywhere here, and
+//    is 1 where blur(estimate) is below CAPTURE_YMIN.
 // 4. capture_apply (tex1 and scene -> tex2): the estimate, its last
 //    iteration counted by its share, mixed into Y by the mask and Masking's
-//    edge restriction; each channel is scaled by the new luminance over Y.
+//    edge restriction; each channel is scaled by the new luminance over Y,
+//    except where Y is below CAPTURE_YMIN.
 // 5. capture_store (tex2 -> scene).
 //
 // The work textures hold (Y, mask, estimate, the previous estimate or the
@@ -243,7 +245,9 @@ fn capture_divide(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
 
     let center = capture_read_at(pos);
     let blurred = capture_blur(pos, capture_sigma_at(pos), 2u);
-    let ratio = center.x / max(blurred, CAPTURE_YMIN);
+    // Too dark to divide by: a neutral ratio, so that the blur of the ratios
+    // does not darken the estimates of the brighter pixels around it.
+    let ratio = select(1.0, center.x / blurred, blurred >= CAPTURE_YMIN);
     textureStore(capture_write, pos, vec4<f32>(center.x, center.y, center.z, ratio));
 }
 
@@ -290,11 +294,14 @@ fn capture_apply(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
     let state = capture_read_at(pos);
     var rgb = scene.xyz;
     let mask = clamp(state.y * capture_edge_mask(pos), 0.0, 1.0);
-    if mask > 0.0 {
-        let y = state.x;
+    let y = state.x;
+    // The mask's blur can leave a pixel darker than CAPTURE_YMIN a share of
+    // its neighbours' mask; it is not sharpened, as `capture_prepare` intends,
+    // rather than scaled by a luminance it does not have.
+    if mask > 0.0 && y >= CAPTURE_YMIN {
         let estimate = mix(state.w, state.z, Common::camera_uniforms.capture_sharpening.w);
         let sharpened = mix(y, estimate, mask);
-        rgb = rgb * (sharpened / max(y, CAPTURE_YMIN));
+        rgb = rgb * (sharpened / y);
     }
     textureStore(capture_write, pos, vec4<f32>(rgb, scene.w));
 }

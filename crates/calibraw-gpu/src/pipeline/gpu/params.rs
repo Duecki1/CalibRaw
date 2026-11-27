@@ -944,9 +944,6 @@ impl GpuParams {
         self.camera.ai_denoise_enabled != 0
     }
 
-    /// Chromatic aberration runs between the demosaic finish and colour
-    /// denoise whenever its amount is above zero, even for a photo without
-    /// lateral aberration: its fringe removal still applies.
     /// Richardson-Lucy iterations of capture sharpening, each a blur-divide
     /// and a blur-multiply pass (capture_deconvolution.wgsl); 0 skips its
     /// passes.
@@ -954,6 +951,9 @@ impl GpuParams {
         self.capture_iterations
     }
 
+    /// Chromatic aberration runs between the demosaic finish and colour
+    /// denoise whenever its amount is above zero, even for a photo without
+    /// lateral aberration: its fringe removal still applies.
     pub(super) fn needs_chromatic_aberration_passes(&self) -> bool {
         self.camera.chromatic_aberration[0] > 0.0
     }

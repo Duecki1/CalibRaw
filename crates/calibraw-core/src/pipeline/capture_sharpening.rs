@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The radius measurement is adapted from darktable 5.6
+// (src/iop/demosaicing/capture.c), which ports RawTherapee's
+// (rtengine/capturesharpening.cc, Ingo Weyrich).
+// Copyright (C) 2025-2026 darktable developers.
+// Copyright (C) 2026 CalibRaw contributors (Rust adaptation).
+
 //! Capture sharpening by deconvolution ([`SharpenMethod::Deconvolution`]):
 //! the settings the RAW stage's Richardson-Lucy passes run with
 //! (`capture_deconvolution.wgsl` in calibraw-gpu) and the photo's blur
@@ -178,7 +185,9 @@ const RADIUS_UPPER_LIMIT: f32 = 0.9;
 /// where no sample nearby clipped, is the steepest edge the lens and sensor
 /// image, and a Gaussian of sigma `sqrt(1 / ln(ratio))` blurs a step into
 /// that ratio. X-Trans adds 0.2. [`FALLBACK_CAPTURE_RADIUS`] for a photo
-/// without a mosaic or under 1000 pixels a side.
+/// without a mosaic or under 1000 pixels a side, and for one without a pair
+/// to compare (nearly black or clipped throughout), whose ratio of 1 would
+/// read as an infinite radius.
 pub fn measure_capture_radius(raw: &LoadedRaw) -> f32 {
     let width = raw.width as usize;
     let height = raw.height as usize;
@@ -192,11 +201,14 @@ pub fn measure_capture_radius(raw: &LoadedRaw) -> f32 {
     let area_width = (0.8 * width as f32) as usize - x0;
     let area_height = (0.8 * height as f32) as usize - y0;
     let samples = NormalizedMosaic { raw, width, x0, y0 };
-    let radius = match raw.cfa_kind {
-        CfaKind::Bayer => bayer_radius(&samples, area_width, area_height),
-        CfaKind::XTrans => 0.2 + xtrans_radius(&samples, area_width, area_height),
+    let (ratio, offset) = match raw.cfa_kind {
+        CfaKind::Bayer => (bayer_ratio(&samples, area_width, area_height), 0.0),
+        CfaKind::XTrans => (xtrans_ratio(&samples, area_width, area_height), 0.2),
     };
-    radius.clamp(0.0, MAX_CAPTURE_RADIUS)
+    if !(ratio > 1.0 && ratio.is_finite()) {
+        return FALLBACK_CAPTURE_RADIUS;
+    }
+    (offset + radius_of_ratio(ratio)).clamp(0.0, MAX_CAPTURE_RADIUS)
 }
 
 /// The mosaic's samples normalized to its black and white levels, addressed
@@ -256,10 +268,10 @@ fn radius_of_ratio(ratio: f32) -> f32 {
     (1.0 / ratio.ln()).sqrt()
 }
 
-/// darktable's `_calcRadiusBayer`: every green photosite against the greens
-/// diagonally below it.
-fn bayer_radius(m: &NormalizedMosaic<'_>, width: usize, height: usize) -> f32 {
-    let ratio = (4..height.saturating_sub(4))
+/// darktable's `_calcRadiusBayer`: the steepest ratio of every green
+/// photosite against the greens diagonally below it.
+fn bayer_ratio(m: &NormalizedMosaic<'_>, width: usize, height: usize) -> f32 {
+    (4..height.saturating_sub(4))
         .into_par_iter()
         .map(|row| {
             let mut max_ratio = 1.0f32;
@@ -295,8 +307,7 @@ fn bayer_radius(m: &NormalizedMosaic<'_>, width: usize, height: usize) -> f32 {
             }
             max_ratio
         })
-        .reduce(|| 1.0, f32::max);
-    radius_of_ratio(ratio)
+        .reduce(|| 1.0, f32::max)
 }
 
 /// darktable's `_xtrans_radius_start`: the column of the first green
@@ -304,7 +315,7 @@ fn bayer_radius(m: &NormalizedMosaic<'_>, width: usize, height: usize) -> f32 {
 /// which has no green above or to its left, and the row below it. Both
 /// darktable and RawTherapee leave the row counter one past the match (their
 /// outer loop increments it after the inner `break`), and the sampling
-/// pattern of [`xtrans_radius`] is laid out from there.
+/// pattern of [`xtrans_ratio`] is laid out from there.
 fn xtrans_start(m: &NormalizedMosaic<'_>) -> (usize, usize) {
     let color = |row: usize, col: usize| {
         let channel = m.raw.color_indices.get(m.index(row, col, 0, 0)).copied();
@@ -328,14 +339,14 @@ fn xtrans_start(m: &NormalizedMosaic<'_>) -> (usize, usize) {
     (12, 12)
 }
 
-/// darktable's `_calcRadiusXtrans`: the solitary greens against their
-/// diagonal greens and the greens of each 2x2 green square against each
-/// other, every third row and column.
-fn xtrans_radius(m: &NormalizedMosaic<'_>, width: usize, height: usize) -> f32 {
+/// darktable's `_calcRadiusXtrans`: the steepest ratio of the solitary
+/// greens against their diagonal greens and of the greens of each 2x2 green
+/// square against each other, every third row and column.
+fn xtrans_ratio(m: &NormalizedMosaic<'_>, width: usize, height: usize) -> f32 {
     let (start_x, start_y) = xtrans_start(m);
     let upper = RADIUS_UPPER_LIMIT;
     let eps = RADIUS_RAW_EPSILON;
-    let ratio = (start_y + 2..height.saturating_sub(4))
+    (start_y + 2..height.saturating_sub(4))
         .into_par_iter()
         .step_by(3)
         .map(|row| {
@@ -388,6 +399,5 @@ fn xtrans_radius(m: &NormalizedMosaic<'_>, width: usize, height: usize) -> f32 {
             }
             max_ratio
         })
-        .reduce(|| 1.0, f32::max);
-    radius_of_ratio(ratio)
+        .reduce(|| 1.0, f32::max)
 }
