@@ -1,6 +1,8 @@
 use super::*;
 use crate::i18n::{tr, tr_fmt};
-use crate::pipeline::{effect_params, CardSwitch, SharpenMethod, Treatment, MAX_CAPTURE_RADIUS};
+use crate::pipeline::{
+    effect_params, CardSwitch, SharpenMethod, Treatment, MAX_CAPTURE_RADIUS, MIN_CAPTURE_RADIUS,
+};
 
 const LENS_CARD_TITLE: &str = "Lens Corrections";
 
@@ -641,18 +643,22 @@ impl Sidebar {
                 .reset_to(defaults.sharpen_amount)
                 .show(ui);
         // The slider shows the radius the photo renders with; its reset, Radius
-        // 0, returns to the photo's own.
+        // 0 below the slider's range, returns to the photo's own.
         let shown = if exposure.sharpen_radius > 0.0 {
             exposure.sharpen_radius
         } else {
             capture_radius
         };
         let mut radius = shown;
-        if AdjustmentSlider::new(tr("Radius"), &mut radius, 0.0..=MAX_CAPTURE_RADIUS)
-            .decimals(2)
-            .step(0.01)
-            .reset_to(defaults.sharpen_radius)
-            .show(ui)
+        if AdjustmentSlider::new(
+            tr("Radius"),
+            &mut radius,
+            MIN_CAPTURE_RADIUS..=MAX_CAPTURE_RADIUS,
+        )
+        .decimals(2)
+        .step(0.01)
+        .reset_to(defaults.sharpen_radius)
+        .show(ui)
             && radius != shown
             && radius != exposure.sharpen_radius
         {
@@ -709,8 +715,7 @@ impl Sidebar {
             .on_hover_text(tr("This photo keeps the sharpening it was edited with. Deconvolution restores more of the detail the lens and sensor blurred."))
             .clicked()
         {
-            exposure.sharpen_method = SharpenMethod::Deconvolution;
-            exposure.sharpen_radius = 0.0;
+            exposure.use_deconvolution();
             changed = true;
         }
         changed

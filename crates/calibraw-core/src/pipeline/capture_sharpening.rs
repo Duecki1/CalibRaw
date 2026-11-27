@@ -22,6 +22,10 @@ use rayon::prelude::*;
 
 /// Largest blur sigma in sensor pixels, as darktable's radius slider.
 pub const MAX_CAPTURE_RADIUS: f32 = 1.5;
+/// Smallest blur sigma in sensor pixels a Radius sets: a narrower one does
+/// not sharpen visibly even at full size ([`MIN_PROCESSING_SIGMA`]). Radius 0
+/// takes the photo's own instead.
+pub const MIN_CAPTURE_RADIUS: f32 = MIN_PROCESSING_SIGMA;
 /// The radius darktable falls back to when it cannot measure one: "almost all
 /// tested sensor/lens combinations have a radius of at least 0.5".
 pub const FALLBACK_CAPTURE_RADIUS: f32 = 0.5;
@@ -149,7 +153,8 @@ fn passes(iterations: f32) -> u32 {
 /// the photo's own ([`LoadedRaw::capture_radius`]) at Radius 0.
 fn chosen_sigma(exposure: &ExposureParams) -> Option<f32> {
     let radius = exposure.sharpen_radius;
-    (radius.is_finite() && radius > 0.0).then(|| radius.min(MAX_CAPTURE_RADIUS))
+    (radius.is_finite() && radius > 0.0)
+        .then(|| radius.clamp(MIN_CAPTURE_RADIUS, MAX_CAPTURE_RADIUS))
 }
 
 /// Pixels past a tile core the deconvolution of `exposure` reads, 0 without

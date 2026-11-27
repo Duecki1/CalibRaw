@@ -213,7 +213,10 @@ fn clear_copied_depth_images(masks: &mut MaskStack) {
 /// Inpainting, the destination's scene depth, its card switches and its
 /// fitted camera look always stay with the destination image; Camera match
 /// moves only as on or off and its amount. Copied masks that depend on image content are flagged
-/// for regeneration through `ai_masks_need_update`.
+/// for regeneration through `ai_masks_need_update`. Copied capture sharpening sharpens by
+/// deconvolution ([`ExposureParams::use_deconvolution`]).
+///
+/// [`ExposureParams::use_deconvolution`]: crate::pipeline::ExposureParams::use_deconvolution
 pub fn transfer_edits(
     destination: &mut EditState,
     source: &EditState,
@@ -234,6 +237,15 @@ pub fn transfer_edits(
         destination
             .exposure
             .copy_group_from(&source.exposure, group);
+    }
+    if selection
+        .adjustment_groups
+        .contains(AdjustmentGroup::Detail)
+    {
+        // The legacy sharpening stays with the old edit that has it; presets
+        // and pasted settings sharpen by deconvolution.
+        // migration: remove in v2.0.0, with `SharpenMethod::Legacy`.
+        destination.exposure.use_deconvolution();
     }
     if selection
         .adjustment_groups

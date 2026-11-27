@@ -10,6 +10,7 @@ use calibraw_cli::pipeline::{
 use calibraw_core::luts::ResolvedLook;
 use calibraw_core::pipeline::{
     auto_contrast_threshold, SharpenMethod, SourceCorrections, MAX_CAPTURE_RADIUS,
+    MIN_CAPTURE_RADIUS,
 };
 use calibraw_core::sidecar;
 use calibraw_gpu::{
@@ -386,15 +387,11 @@ fn set_adjustment(
         "sharpen_amount" => exposure.sharpen_amount = value.clamp(0.0, 150.0),
         "sharpen_radius" => {
             exposure.sharpen_radius = match exposure.sharpen_method {
-                SharpenMethod::Deconvolution => value.clamp(0.0, MAX_CAPTURE_RADIUS),
+                // 0 takes the photo's own radius.
+                SharpenMethod::Deconvolution if value <= 0.0 => 0.0,
+                SharpenMethod::Deconvolution => value.clamp(MIN_CAPTURE_RADIUS, MAX_CAPTURE_RADIUS),
+                // A sidecar saved before deconvolution keeps its method.
                 SharpenMethod::Legacy => value.clamp(0.5, 3.0),
-            }
-        }
-        "sharpen_method" => {
-            exposure.sharpen_method = if value < 0.5 {
-                SharpenMethod::Deconvolution
-            } else {
-                SharpenMethod::Legacy
             }
         }
         "sharpen_detail" => exposure.sharpen_detail = value.clamp(0.0, 100.0),
@@ -591,8 +588,8 @@ fn print_help() {
         "Supported adjustment names: exposure, contrast, highlights, shadows, whites,\n",
         "blacks, texture, clarity, dehaze, vignette, hue, vibrance, saturation, temperature, tint,\n",
         "luminance_denoise, color_denoise, denoise_detail, denoise_quality (0/1/2),\n",
-        "sharpen_amount, sharpen_radius, sharpen_detail, sharpen_masking,\n",
-        "  sharpen_method (0 deconvolution, 1 legacy; set it before sharpen_radius), demosaic_mode\n",
+        "sharpen_amount, sharpen_radius (0 for the photo's own), sharpen_detail,\n",
+        "sharpen_masking, demosaic_mode\n",
         "(0 Reference, 1 frequency-domain chroma, 2 dual), dual_threshold,\n",
         "frequency_chroma and chromatic_aberration (0 to 100). The suite\n",
         "exports each adjustment in isolation. --sidecar exports the edit a CalibRaw\n",

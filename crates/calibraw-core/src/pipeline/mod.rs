@@ -56,7 +56,7 @@ pub use calibration::{Calibration, PrimaryCalibration, CALIBRATION_LIMIT};
 pub use capture_sharpening::{
     auto_contrast_threshold, capture_deconvolution_support, measure_capture_radius,
     CaptureDeconvolution, CAPTURE_DECONVOLUTION_MAX_SUPPORT, FALLBACK_CAPTURE_RADIUS,
-    MAX_CAPTURE_ITERATIONS, MAX_CAPTURE_RADIUS,
+    MAX_CAPTURE_ITERATIONS, MAX_CAPTURE_RADIUS, MIN_CAPTURE_RADIUS,
 };
 pub use chromatic_aberration::{LateralChannel, LateralChromaticAberration, MAX_LATERAL_SHIFT};
 pub use color_profile::{

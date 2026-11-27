@@ -119,8 +119,10 @@ pub enum SharpenMethod {
     /// The edge-aware local contrast boost of the scene tone pass
     /// (`detail_capture.wgsl`), whose result stays within each pixel's
     /// neighbourhood. Edits saved before [`Self::Deconvolution`] render with
-    /// it (`migrations/capture_sharpening.rs`); it is never chosen for a new
-    /// edit.
+    /// it (`migrations/capture_sharpening.rs`), and only on their own photo:
+    /// presets and pasted settings take deconvolution
+    /// ([`ExposureParams::use_deconvolution`]), so no new edit sharpens with
+    /// it.
     ///
     /// migration: remove in v2.0.0, with the scene tone pass's global
     /// capture sharpening that renders it.
@@ -464,7 +466,7 @@ pub struct ExposureParams {
     /// Capture sharpening of the Detail card. With
     /// [`SharpenMethod::Deconvolution`] (`capture_deconvolution.wgsl`):
     /// Amount 0-150 runs `Amount / 5` Richardson-Lucy iterations, Radius is
-    /// the Gaussian blur's sigma in sensor pixels from 0 to 1.5 with 0 for
+    /// the Gaussian blur's sigma in sensor pixels from 0.2 to 1.5, or 0 for
     /// the photo's own ([`LoadedRaw::capture_radius`]), Detail 0-100 lowers
     /// the contrast threshold below which nothing is sharpened (25 keeps the
     /// photo's), and Masking 0-100 limits it to strong edges.
@@ -541,6 +543,19 @@ impl ExposureParams {
             film: self.film,
             profile_tone_curve: self.profile_tone_curve,
             ..Self::scene_referred_default()
+        }
+    }
+
+    /// Moves capture sharpening kept with [`SharpenMethod::Legacy`] to
+    /// deconvolution at the photo's own radius. Amount, Detail and Masking
+    /// keep their values, which both methods read in the same ranges; the
+    /// Radius was in the legacy method's units.
+    ///
+    /// migration: remove in v2.0.0, with [`SharpenMethod::Legacy`].
+    pub fn use_deconvolution(&mut self) {
+        if self.sharpen_method == SharpenMethod::Legacy {
+            self.sharpen_method = SharpenMethod::Deconvolution;
+            self.sharpen_radius = 0.0;
         }
     }
 }

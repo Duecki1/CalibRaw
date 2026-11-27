@@ -11,7 +11,9 @@
 //! where it saved none, the defaults those versions read for them (now
 //! Amount 30, and Radius 0 for the photo's own). One that does not sharpen
 //! takes the new method with the photo's own radius, so raising its Amount
-//! deconvolves.
+//! deconvolves. A preset keeps only Amount, Detail and Masking: building it
+//! (`transfer_edits`) moves the legacy method to deconvolution, as pasting
+//! an old edit's settings does.
 //!
 //! [`LegacyCaptureSharpening`] reads what a serialized `edits` object holds
 //! in the same pass as the decoded edit. Checks that compare a serialized

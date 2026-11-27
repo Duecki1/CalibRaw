@@ -38,10 +38,13 @@
 //! - Capture sharpening with the legacy method (`SharpenMethod::Legacy`,
 //!   `pipeline/basicadj.rs`), set by `capture_sharpening`, and the scene tone
 //!   pass's global capture sharpening that renders it (`calibraw-gpu`:
-//!   `scene_adjustments.wgsl`, `pipeline/gpu/stage_params.rs`), and the
-//!   library thumbnail's check for edits, which compares a sidecar saved
-//!   without a method with those versions' defaults
-//!   (`sidecar/files.rs`, `load_photo_preview_info`).
+//!   `scene_adjustments.wgsl`, `pipeline/gpu/stage_params.rs`), the move to
+//!   deconvolution of sharpening that presets and paste copy
+//!   (`ExposureParams::use_deconvolution`, called by `sidecar/transfer.rs`
+//!   and the Detail card in `calibraw-ui`), and the library thumbnail's
+//!   check for edits, which compares a sidecar saved without a method with
+//!   those versions' defaults (`sidecar/files.rs`,
+//!   `load_photo_preview_info`).
 //! - Depth Anything V2 Small, the depth model before Distill-Any-Depth
 //!   Small, removed from the model folder on start-up (`calibraw-ui`,
 //!   `app/ai/models.rs`).
