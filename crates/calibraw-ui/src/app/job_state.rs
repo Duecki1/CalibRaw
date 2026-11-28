@@ -221,6 +221,60 @@ pub(crate) struct AiState {
     pub(crate) denoise_resume_pending: bool,
 }
 
+/// [`crate::pipeline::is_ai_edited`] for the open edit, kept until what it
+/// reads changes: the Remove and Export panels ask every frame they show.
+#[derive(Default)]
+pub(crate) struct AiEditMarkCache {
+    inputs: Option<AiEditMarkInputs>,
+    marked: bool,
+}
+
+/// What `is_ai_edited` reads, by identity. A patch's pixels never change once
+/// it is made, so its alpha allocation and bounds name it; a stroke's opacity
+/// can change in place and is compared by value.
+#[derive(PartialEq)]
+struct AiEditMarkInputs {
+    raw: usize,
+    lens_geometry: Option<usize>,
+    geometry: GeometryTransform,
+    fills: Vec<(usize, NativeRect, u32)>,
+}
+
+impl AiEditMarkCache {
+    pub(crate) fn marked(
+        &mut self,
+        edits: &RemoveEditState,
+        raw: &Arc<LoadedRaw>,
+        geometry: GeometryTransform,
+    ) -> bool {
+        let inputs = AiEditMarkInputs {
+            raw: Arc::as_ptr(raw) as usize,
+            lens_geometry: raw
+                .lens_geometry
+                .as_ref()
+                .map(|lens| Arc::as_ptr(lens) as usize),
+            geometry,
+            fills: edits
+                .strokes
+                .iter()
+                .filter(|stroke| stroke.retouch.is_none())
+                .flat_map(|stroke| {
+                    let opacity = stroke.opacity.to_bits();
+                    stroke
+                        .patches
+                        .iter()
+                        .map(move |patch| (patch.alpha.as_ptr() as usize, patch.bounds, opacity))
+                })
+                .collect(),
+        };
+        if self.inputs.as_ref() != Some(&inputs) {
+            self.marked = crate::pipeline::is_ai_edited(edits, raw, geometry);
+            self.inputs = Some(inputs);
+        }
+        self.marked
+    }
+}
+
 pub(crate) struct InpaintState {
     pub(crate) tool: InpaintTool,
     pub(crate) brush_size: f32,
@@ -244,4 +298,6 @@ pub(crate) struct InpaintState {
     pub(crate) hovered_stroke: Option<usize>,
     pub(crate) selected_stroke: Option<usize>,
     pub(crate) stroke_opacity_edit_pending: bool,
+    /// Whether an export of the open edit is marked as AI-edited.
+    pub(crate) ai_edit_mark: AiEditMarkCache,
 }

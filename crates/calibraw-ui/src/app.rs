@@ -6,7 +6,7 @@ use crate::pipeline::{
     BrushMode, CameraProfileMode, ExportEvent, ExportFormat, ExportMetadata, ExportSettings,
     ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm, LensCorrection,
     LensfunCatalog, LensfunCorrections, LensfunLens, LoadedRaw, ManualLensCorrection, MaskGeometry,
-    MaskImage, MaskKind, MaskRgbImage, MaskStack, MobilePreviewRole, PerspectiveGuide,
+    MaskImage, MaskKind, MaskRgbImage, MaskStack, MobilePreviewRole, NativeRect, PerspectiveGuide,
     PipelineOptions, PreviewResourceShape, ProcessingQuality, ProcessingStage, ProxySpec,
     RawGpuPipeline, RawGpuProgramTemplate, RemoveBrushPoint, RemoveBrushStroke, RemoveEditState,
     RemoveSceneContext, RetouchAlignment, RetouchStroke, RetouchTool, SceneDepth,

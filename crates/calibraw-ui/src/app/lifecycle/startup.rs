@@ -291,6 +291,7 @@ impl CalibRawApp {
                 hovered_stroke: None,
                 selected_stroke: None,
                 stroke_opacity_edit_pending: false,
+                ai_edit_mark: AiEditMarkCache::default(),
             },
             export: ExportState {
                 format: performance.export_format,

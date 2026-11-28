@@ -159,6 +159,15 @@ light rays, and Edit Replay videos.
 No. Editing, AI masks, AI Remove and AI Denoise all run locally. CalibRaw only goes online to
 download AI models or the ONNX Runtime, and only after you agree.
 
+**Why is an export marked as AI-edited?**
+The EU AI Act (Article 50) requires a machine-readable mark on photos an AI tool changed
+substantially. When AI Remove fills a large part of the exported frame (one region of 2% or
+more, or larger regions adding up to 3%), CalibRaw writes the IPTC field `DigitalSourceType`
+with the value `compositeWithTrainedAlgorithmicMedia` into the export's XMP metadata, even with
+Keep metadata off. Nothing visible is added. Small fixes such as dust spots (regions under 0.3%
+of the frame) are not marked, and neither are Clone and Heal. The Remove and Export panels show
+"Marked as AI-edited" when an export will carry the mark.
+
 **Where does CalibRaw get the DCP profiles?**
 On start, CalibRaw tries to automatically detect DCP files on your machine (windows, macOS only).
 

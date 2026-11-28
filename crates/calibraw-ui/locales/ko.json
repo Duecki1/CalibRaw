@@ -2205,5 +2205,7 @@
   "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "별점과 선택 또는 거부 플래그를 XMP로 삽입합니다. Lightroom, Windows 및 기타 앱에서 읽을 수 있습니다.",
   "Deconvolution restores the detail the lens and sensor blurred. Amount sets how far it goes, Radius the blur it undoes (measured from the photo until you change it), Detail how faint a contrast it sharpens, and Masking how strictly it keeps to edges.": "디콘볼루션은 렌즈와 센서가 흐리게 만든 세부 묘사를 복원합니다. 양은 적용 정도를, 반경은 되돌릴 흐림(변경하기 전까지는 사진에서 측정)을, 세부 묘사는 얼마나 약한 대비까지 선명하게 할지를, 마스킹은 얼마나 엄격하게 가장자리에만 적용할지를 정합니다.",
   "Use deconvolution": "디콘볼루션 사용",
-  "This photo keeps the sharpening it was edited with. Deconvolution restores more of the detail the lens and sensor blurred.": "이 사진은 편집할 때 사용한 선명하게 하기를 유지합니다. 디콘볼루션은 렌즈와 센서가 흐리게 만든 세부 묘사를 더 많이 복원합니다."
+  "This photo keeps the sharpening it was edited with. Deconvolution restores more of the detail the lens and sensor blurred.": "이 사진은 편집할 때 사용한 선명하게 하기를 유지합니다. 디콘볼루션은 렌즈와 센서가 흐리게 만든 세부 묘사를 더 많이 복원합니다.",
+  "Marked as AI-edited": "AI 편집으로 표시됨",
+  "Remove changed a large part of this photo, so its exports are tagged as AI-edited in their metadata, as the EU AI Act requires. Nothing visible is added. Small fixes such as dust spots stay untagged, and Clone and Heal never count.": "제거로 이 사진의 큰 부분이 바뀌어, EU AI 법에 따라 내보낸 파일의 메타데이터에 AI 편집 태그가 붙습니다. 눈에 보이는 것은 추가되지 않습니다. 먼지 자국 같은 작은 수정은 태그되지 않으며, 복제와 복구는 포함되지 않습니다."
 }

@@ -12,6 +12,8 @@
 //!   XMP sync on. An XMP file is the sidecar of a RAW named after it, an
 //!   image carries its packet embedded. `saved` holds the XMP sidecar after
 //!   saving each of two reviews, `read_back` the review then read.
+//! - `export/*.json`: the XMP packet an export embeds for a `review` (or
+//!   none) and the AI-edit mark when `ai_edited`.
 //!
 //! A file CalibRaw rejects expects `{"error": message}`. To add a case, add
 //! the file and run this test with `CALIBRAW_PARITY_BLESS=1`, which writes
@@ -34,13 +36,14 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-const KINDS: [(&str, &str); 6] = [
+const KINDS: [(&str, &str); 7] = [
     ("sidecar", "json"),
     ("preset", "json"),
     ("xmp", "xmp"),
     ("review", "xmp"),
     ("review", "jpg"),
     ("review", "tif"),
+    ("export", "json"),
 ];
 const EXPECTED_SUFFIX: &str = ".expected.json";
 
@@ -101,6 +104,7 @@ fn read(kind: &str, path: &Path) -> Value {
         "preset" => read_preset(path),
         "xmp" => read_xmp(path),
         "review" => read_review(path),
+        "export" => read_export(path),
         _ => unreachable!("KINDS lists every kind"),
     };
     result.unwrap_or_else(|error| json!({ "error": error }))
@@ -179,6 +183,18 @@ fn read_review(path: &Path) -> Result<Value, String> {
         );
     }
     Ok(json!({ "read": read, "saved": saved }))
+}
+
+fn read_export(path: &Path) -> Result<Value, String> {
+    #[derive(serde::Deserialize)]
+    struct ExportCase {
+        review: Option<PhotoReview>,
+        ai_edited: bool,
+    }
+    let case: ExportCase =
+        serde_json::from_slice(&fs::read(path).unwrap()).map_err(|error| error.to_string())?;
+    let packet = sidecar::xmp_review::export_packet(case.review, case.ai_edited);
+    Ok(json!({ "packet": packet.as_deref().map(|packet| packet.lines().collect::<Vec<_>>()) }))
 }
 
 /// A fresh copy of the photo a review fixture belongs to, alone in its folder.

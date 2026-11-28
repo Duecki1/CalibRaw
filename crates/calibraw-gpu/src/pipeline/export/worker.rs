@@ -134,6 +134,12 @@ fn run_export_worker(
     };
     let color = resolve_export_color(bit_depth, format.output_color_space(&job.settings))?;
 
+    // The AI-edit mark does not follow Keep metadata: a switch that drops
+    // it would leave the mark the AI Act asks for optional.
+    let review =
+        (job.settings.keep_metadata && job.settings.include_rating).then_some(job.metadata.review);
+    let ai_edited = calibraw_core::pipeline::is_ai_edited(&job.remove, &job.raw, geometry);
+    let xmp_packet = calibraw_core::sidecar::xmp_review::export_packet(review, ai_edited);
     let memory = IntermediateMemory::for_this_device();
     export_to_destinations(targets, &job.cancellation, |outputs| {
         let context = ExportContext {
@@ -144,9 +150,6 @@ fn run_export_worker(
             program_prewarm: job.program_prewarm.as_deref(),
             memory: &memory,
         };
-        let xmp_packet = (job.settings.keep_metadata && job.settings.include_rating)
-            .then(|| calibraw_core::sidecar::xmp_review::export_packet(job.metadata.review))
-            .flatten();
         let request = ExportRequest {
             raw: &job.raw,
             exposure: &job.exposure,

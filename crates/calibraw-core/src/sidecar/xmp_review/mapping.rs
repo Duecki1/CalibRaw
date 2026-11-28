@@ -9,6 +9,9 @@
 //! - `digiKam:PickLabel` (0 none, 1 rejected, 2 pending, 3 accepted) is read,
 //!   and kept current where a file already has it.
 //!
+//! - `Iptc4xmpExt:DigitalSourceType` marks an export AI Remove changed
+//!   substantially; it is only written, into exports.
+//!
 //! The flag is read from `xmpDM:pick`, else `digiKam:PickLabel`, else a
 //! rating of -1. Fractional ratings are rounded. Properties are found by
 //! namespace, whatever prefix the file binds to it, as attributes of a
@@ -162,17 +165,21 @@ pub(super) fn write_review(
 
 /// A new XMP sidecar holding only `review`.
 pub(super) fn new_sidecar(review: PhotoReview) -> String {
-    let values: Vec<Stored> = changes(review)
+    format!(
+        "{NEW_SIDECAR_HEAD}{}{NEW_SIDECAR_TAIL}",
+        added_attributes(&new_values(review), |_| None)
+    )
+}
+
+/// The values a file without review properties gets for `review`.
+fn new_values(review: PhotoReview) -> Vec<Stored> {
+    changes(review)
         .into_iter()
         .filter_map(|change| match change {
             Change::Set(value) if value.added_where_missing() => Some(value),
             Change::Set(_) | Change::Remove(_) => None,
         })
-        .collect();
-    format!(
-        "{NEW_SIDECAR_HEAD}{}{NEW_SIDECAR_TAIL}",
-        added_attributes(&values, |_| None)
-    )
+        .collect()
 }
 
 /// The attributes that add `values` to a description: a declaration of each
@@ -206,11 +213,39 @@ fn added_attributes<'a>(values: &[Stored], bound: impl Fn(&str) -> Option<&'a st
     declarations + &properties
 }
 
-/// The XMP packet an exported file embeds for `review`; `None` for an
-/// unrated, unflagged photo, which carries none.
-pub fn export_packet(review: PhotoReview) -> Option<String> {
-    (review != PhotoReview::default())
-        .then(|| format!("{PACKET_BEGIN}{}{PACKET_END}", new_sidecar(review)))
+/// IPTC's property for how an image was made.
+const DIGITAL_SOURCE_TYPE: Property = Property {
+    namespace: "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+    prefix: "Iptc4xmpExt",
+    name: "DigitalSourceType",
+};
+/// The IPTC digital source type of a capture combined with content a trained
+/// model generated, the mark an AI Remove fill gets.
+const COMPOSITE_WITH_TRAINED_ALGORITHMIC_MEDIA: &str =
+    "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia";
+
+/// The XMP packet an exported file embeds: `review` when given and the photo
+/// is rated or flagged, and the AI-edit mark when `ai_edited`
+/// (`pipeline::is_ai_edited`). `None` when it would hold neither.
+pub fn export_packet(review: Option<PhotoReview>, ai_edited: bool) -> Option<String> {
+    let mut attributes = review
+        .filter(|review| *review != PhotoReview::default())
+        .map(|review| added_attributes(&new_values(review), |_| None))
+        .unwrap_or_default();
+    if ai_edited {
+        let Property {
+            namespace,
+            prefix,
+            name,
+        } = DIGITAL_SOURCE_TYPE;
+        attributes.push_str(&format!(
+            "{ATTRIBUTE_SEPARATOR}xmlns:{prefix}=\"{namespace}\"\
+             {ATTRIBUTE_SEPARATOR}{prefix}:{name}=\"{COMPOSITE_WITH_TRAINED_ALGORITHMIC_MEDIA}\""
+        ));
+    }
+    (!attributes.is_empty()).then(|| {
+        format!("{PACKET_BEGIN}{NEW_SIDECAR_HEAD}{attributes}{NEW_SIDECAR_TAIL}{PACKET_END}")
+    })
 }
 
 /// The stored rating of a rejected photo.

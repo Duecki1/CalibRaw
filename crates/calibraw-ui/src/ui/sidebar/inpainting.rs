@@ -127,6 +127,10 @@ impl Sidebar {
         layout: ScreenLayout,
         _frame: &eframe::Frame,
     ) {
+        if app.exports_marked_ai_edited() {
+            crate::ui::components::ai_edit_notice::ai_edit_notice(ui);
+            moduwu_design::card_gap(ui);
+        }
         let tool_row = layout == ScreenLayout::Horizontal;
         if tool_row || app.inpaint.tool.retouch().is_some() {
             Self::show_inpaint_tool_card(ui, app, tool_row);

@@ -34,6 +34,16 @@ impl InpaintState {
 }
 
 impl CalibRawApp {
+    /// Whether exporting the open edit marks it as AI-edited.
+    pub(crate) fn exports_marked_ai_edited(&mut self) -> bool {
+        let Some(raw) = self.develop.loaded_raw.as_ref() else {
+            return false;
+        };
+        self.inpaint
+            .ai_edit_mark
+            .marked(&self.inpaint.edits, raw, self.develop.geometry)
+    }
+
     pub(crate) fn reset_inpainting_state(&mut self) {
         self.inpaint.reset_for_document();
         if self.ai_consent_is_for(AiFeature::Remove) {

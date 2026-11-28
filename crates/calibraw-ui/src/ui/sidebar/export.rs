@@ -512,6 +512,10 @@ impl Sidebar {
             |ui| {
                 ui.set_min_width(column_width);
                 ui.set_max_width(column_width);
+                if app.exports_marked_ai_edited() {
+                    crate::ui::components::ai_edit_notice::ai_edit_notice(ui);
+                    moduwu_design::card_gap(ui);
+                }
                 let carousel = app.carousel_view();
                 let change = export_settings_controls(
                     ui,

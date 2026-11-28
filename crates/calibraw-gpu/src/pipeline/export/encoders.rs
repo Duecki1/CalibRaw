@@ -193,7 +193,9 @@ pub(super) fn export_tiled_jxl(
             depth,
         );
         let encoder = zune_jpegxl::JxlSimpleEncoder::new(raster, options);
-        if request.keep_metadata {
+        // A bare codestream has no room for metadata; the AI-edit mark needs the
+        // container even without Keep metadata.
+        if request.keep_metadata || request.xmp_packet.is_some() {
             // The container's boxes precede the codestream, whose length is known only
             // once it is encoded.
             let mut codestream = IntermediateWriter::new(
@@ -213,7 +215,12 @@ pub(super) fn export_tiled_jxl(
                 &mut writer,
                 &mut &codestream[..],
                 codestream.len() as u64,
-                &build_exif_payload(request.metadata, width, height, request.color.is_srgb()),
+                request
+                    .keep_metadata
+                    .then(|| {
+                        build_exif_payload(request.metadata, width, height, request.color.is_srgb())
+                    })
+                    .as_deref(),
                 request.xmp_packet,
             )?;
             writer.flush().context("flush JPEG XL container")?;
@@ -234,7 +241,7 @@ pub(super) fn write_jxl_container<W: Write>(
     output: &mut W,
     codestream: &mut impl std::io::Read,
     codestream_len: u64,
-    exif: &[u8],
+    exif: Option<&[u8]>,
     xmp_packet: Option<&str>,
 ) -> Result<()> {
     // JPEG XL container signature and file type boxes.
@@ -243,16 +250,18 @@ pub(super) fn write_jxl_container<W: Write>(
         0, 0, 0, 20, b'f', b't', b'y', b'p', b'j', b'x', b'l', b' ', 0, 0, 0, 0, b'j', b'x', b'l',
         b' ',
     ])?;
-    let exif_box_size = u32::try_from(
-        exif.len()
-            .checked_add(12)
-            .context("JPEG XL EXIF size overflow")?,
-    )
-    .context("JPEG XL EXIF box too large")?;
-    output.write_all(&exif_box_size.to_be_bytes())?;
-    output.write_all(b"Exif")?;
-    output.write_all(&0u32.to_be_bytes())?; // TIFF header starts at byte zero.
-    output.write_all(exif)?;
+    if let Some(exif) = exif {
+        let exif_box_size = u32::try_from(
+            exif.len()
+                .checked_add(12)
+                .context("JPEG XL EXIF size overflow")?,
+        )
+        .context("JPEG XL EXIF box too large")?;
+        output.write_all(&exif_box_size.to_be_bytes())?;
+        output.write_all(b"Exif")?;
+        output.write_all(&0u32.to_be_bytes())?; // TIFF header starts at byte zero.
+        output.write_all(exif)?;
+    }
     if let Some(packet) = xmp_packet {
         let xml_box_size = u32::try_from(
             packet

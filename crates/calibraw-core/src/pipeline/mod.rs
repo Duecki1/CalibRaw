@@ -132,7 +132,7 @@ pub use raw_loader::{
 pub use remove::{
     adaptive_remove_dilation, canonical_remove_scene_to_pipeline_scene,
     composite_patch_into_linear_region, composite_remove_edits_into_linear_region,
-    display_linear_rec2020_to_model_srgb, model_srgb_to_display_linear_rec2020,
+    display_linear_rec2020_to_model_srgb, is_ai_edited, model_srgb_to_display_linear_rec2020,
     pipeline_scene_to_canonical_remove_scene, pipeline_scene_to_working_rec2020,
     plan_remove_passes, rasterize_remove_brush, remove_model_srgb_to_canonical_scene,
     remove_model_view_gain, remove_scene_to_model_srgb, remove_scene_white_balance,

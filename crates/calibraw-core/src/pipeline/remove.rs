@@ -4,10 +4,12 @@ use crate::matrix;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Arc, OnceLock};
 
+mod ai_edit;
 mod brush;
 mod composite;
 mod passes;
 mod scene_color;
+pub use ai_edit::is_ai_edited;
 pub use brush::*;
 pub use composite::*;
 pub use passes::*;

@@ -2211,5 +2211,7 @@
   "Embeds the star rating and the pick or reject flag as XMP, which Lightroom, Windows and other apps read.": "星の評価と選択・不採用のフラグをXMPとして埋め込みます。Lightroom、Windowsなどのアプリで読み取れます。",
   "Deconvolution restores the detail the lens and sensor blurred. Amount sets how far it goes, Radius the blur it undoes (measured from the photo until you change it), Detail how faint a contrast it sharpens, and Masking how strictly it keeps to edges.": "デコンボリューションは、レンズとセンサーがぼかしたディテールを復元します。量は効果の強さ、半径は取り除くぼけ（変更するまでは写真から測定）、ディテールはどれほど弱いコントラストまでシャープにするか、マスキングはどれほど厳密にエッジに限定するかを決めます。",
   "Use deconvolution": "デコンボリューションを使用",
-  "This photo keeps the sharpening it was edited with. Deconvolution restores more of the detail the lens and sensor blurred.": "この写真は編集時のシャープ処理を保持しています。デコンボリューションは、レンズとセンサーがぼかしたディテールをより多く復元します。"
+  "This photo keeps the sharpening it was edited with. Deconvolution restores more of the detail the lens and sensor blurred.": "この写真は編集時のシャープ処理を保持しています。デコンボリューションは、レンズとセンサーがぼかしたディテールをより多く復元します。",
+  "Marked as AI-edited": "AI 編集としてマーク",
+  "Remove changed a large part of this photo, so its exports are tagged as AI-edited in their metadata, as the EU AI Act requires. Nothing visible is added. Small fixes such as dust spots stay untagged, and Clone and Heal never count.": "削除でこの写真の大部分が変更されたため、EU AI 法の要件に従い、書き出したファイルのメタデータに AI 編集のタグが付きます。目に見えるものは追加されません。ゴミ取りなどの小さな修正にはタグが付かず、クローンと修復は対象外です。"
 }

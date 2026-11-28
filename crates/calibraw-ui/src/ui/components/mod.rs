@@ -1,4 +1,5 @@
 pub(crate) mod adjustment_slider;
+pub(crate) mod ai_edit_notice;
 pub(crate) mod color_grading;
 pub(crate) mod color_picker;
 pub(crate) mod depth_range_slider;
