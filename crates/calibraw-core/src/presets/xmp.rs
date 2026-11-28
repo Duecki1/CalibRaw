@@ -449,11 +449,14 @@ impl Converter<'_> {
         exposure: &mut ExposureParams,
         groups: &mut AdjustmentGroupSet,
     ) {
-        let mut keys = MIXER_COLORS.map(|color| {
+        // Lightroom's B&W mix (`GrayMixer`) is, like CalibRaw's
+        // `monochrome_mix`, apart from the colour mixer's Luminance.
+        let keys = MIXER_COLORS.map(|color| {
             [
                 format!("HueAdjustment{color}"),
                 format!("SaturationAdjustment{color}"),
                 format!("LuminanceAdjustment{color}"),
+                format!("GrayMixer{color}"),
             ]
         });
         let point_colors = document
@@ -466,21 +469,12 @@ impl Converter<'_> {
                     &mut self.warnings,
                 )
             });
-        // Lightroom keeps a black-and-white photo's mix apart from the colour
-        // mixer's luminance and renders only the mix; CalibRaw's mix is the
-        // mixer's luminance (`Treatment::Monochrome`), so a black-and-white
-        // preset's luminance comes from its mix.
-        if exposure.treatment.is_monochrome() {
-            for (color_keys, color) in keys.iter_mut().zip(MIXER_COLORS) {
-                color_keys[2] = format!("GrayMixer{color}");
-            }
-        }
         if point_colors.is_none() && !keys.iter().flatten().any(|key| self.properties.has(key)) {
             return;
         }
         groups.set(AdjustmentGroup::ColorMixer, true);
         exposure.point_colors = point_colors.unwrap_or_default();
-        for (index, [hue, saturation, luminance]) in keys.iter().enumerate() {
+        for (index, [hue, saturation, luminance, gray]) in keys.iter().enumerate() {
             // The ±100 hue slider spans CalibRaw's ±200.
             if let Some(value) = self.number(hue) {
                 exposure.hsl_hue[index] = (value * 2.0).clamp(-HSL_HUE_LIMIT, HSL_HUE_LIMIT);
@@ -490,6 +484,9 @@ impl Converter<'_> {
             }
             if let Some(value) = self.number(luminance) {
                 exposure.hsl_luminance[index] = value.clamp(-100.0, 100.0);
+            }
+            if let Some(value) = self.number(gray) {
+                exposure.monochrome_mix[index] = value.clamp(-100.0, 100.0);
             }
         }
     }

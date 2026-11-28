@@ -510,6 +510,7 @@ impl Sidebar {
 
         let effect_frame = mask_effects::EffectFrame::of(app);
         {
+            let monochrome = app.develop.exposure.renders_monochrome();
             let mask = &mut app.masks.stack.masks[mask_index];
             let full_image_mask_before = mask.reads_full_image_mask();
             if mask.effect != MaskEffect::Adjustment {
@@ -568,7 +569,7 @@ impl Sidebar {
                     ] {
                         let response = Self::show_local_adjustment_card(
                             ui,
-                            LocalAdjustmentTarget::of(mask),
+                            LocalAdjustmentTarget::of(mask, monochrome),
                             section,
                             label,
                             default_open,
@@ -630,7 +631,7 @@ impl Sidebar {
                         section => {
                             let response = Self::show_local_adjustment_card(
                                 ui,
-                                LocalAdjustmentTarget::of(mask),
+                                LocalAdjustmentTarget::of(mask, monochrome),
                                 section,
                                 section_title,
                                 true,

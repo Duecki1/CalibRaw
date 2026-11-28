@@ -541,6 +541,7 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
     finite("global HSL hue", &exposure.hsl_hue)?;
     finite("global HSL saturation", &exposure.hsl_saturation)?;
     finite("global HSL luminance", &exposure.hsl_luminance)?;
+    finite("global black-and-white mix", &exposure.monochrome_mix)?;
     validate_point_colors(&exposure.point_colors)?;
     validate_curves(
         &[
@@ -649,6 +650,7 @@ fn validate_local_adjustments(
     finite("local HSL hue", &adjustments.hsl_hue)?;
     finite("local HSL saturation", &adjustments.hsl_saturation)?;
     finite("local HSL luminance", &adjustments.hsl_luminance)?;
+    finite("local black-and-white mix", &adjustments.monochrome_mix)?;
     validate_point_colors(&adjustments.point_colors)?;
     validate_curves(
         &[

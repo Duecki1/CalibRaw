@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::pipeline::effect_lanes::glow;
-use crate::pipeline::{CaptureDeconvolution, PointColors, SharpenMethod, ToneResponse};
+use crate::pipeline::{CaptureDeconvolution, SharpenMethod, ToneResponse};
 
 /// Capture sharpening by deconvolution as the RAW stage of `ctx` runs it, its
 /// sigma in processing pixels: None without deconvolution or where the blur
@@ -324,39 +324,29 @@ fn pack_film(
 }
 
 pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
-    let exposure = ctx.exposure;
+    let monochrome = ctx.exposure.renders_monochrome();
+    let exposure = &treated_exposure(ctx.exposure);
     let masks = ctx.masks;
-    // A black-and-white photo has no colour for these to act on
-    // (`Treatment::Monochrome`); their values stay in the edit.
-    let monochrome = exposure.treatment.is_monochrome();
-    let (saturation, vibrance, hue) = if monochrome {
-        (0.0, 0.0, 0.0)
-    } else {
-        (exposure.saturation, exposure.vibrance, exposure.hue)
-    };
-    let global_point_colors = if monochrome {
-        PointColors::default()
-    } else {
-        exposure.point_colors
-    };
-    let point_color_visualize = exposure.point_color_visualize.filter(|_| !monochrome);
     let (sigmoid_curve, sigmoid_power) = pack_sigmoid(tone_sigmoid_coefficients(exposure));
     let (reference_sigmoid_curve, reference_sigmoid_power) =
         pack_sigmoid(reference_sigmoid_coefficients());
     let (hsl_hue_0, hsl_hue_1) = split_eight(exposure.hsl_hue);
     let (hsl_saturation_0, hsl_saturation_1) = split_eight(exposure.hsl_saturation);
     let (hsl_luminance_0, hsl_luminance_1) = split_eight(exposure.hsl_luminance);
-    let local_point_color_flags = u32::from(masks.masks.iter().any(|mask| {
-        mask.enabled
-            && mask.adjustments_enabled
-            && mask.effect.uses_adjustments()
-            && mask.adjustments.point_colors.has_adjustments()
-    })) | (u32::from(masks.masks.iter().any(|mask| {
-        mask.enabled
-            && mask.adjustments_enabled
-            && mask.effect.uses_adjustments()
-            && mask.adjustments.point_color_visualize.is_some()
-    })) << 1);
+    let adjustment_masks = || {
+        masks
+            .masks
+            .iter()
+            .filter(|mask| {
+                mask.enabled && mask.adjustments_enabled && mask.effect.uses_adjustments()
+            })
+            .map(|mask| treated_adjustments(mask.adjustments, monochrome))
+    };
+    let local_point_color_flags =
+        u32::from(adjustment_masks().any(|adjustments| adjustments.point_colors.has_adjustments()))
+            | (u32::from(
+                adjustment_masks().any(|adjustments| adjustments.point_color_visualize.is_some()),
+            ) << 1);
     let tone_curves = [
         &exposure.tone_curve,
         &exposure.tone_curve_red,
@@ -365,7 +355,7 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
     ]
     .map(pack_local_point_curve);
     let mut point_colors = [PackedPointColor::zeroed(); MAX_POINT_COLORS];
-    for (destination, point) in point_colors.iter_mut().zip(global_point_colors.iter()) {
+    for (destination, point) in point_colors.iter_mut().zip(exposure.point_colors.iter()) {
         *destination = pack_point_color(*point);
     }
     let raster_temperature = if ctx.raw.is_display_referred_raster() {
@@ -376,8 +366,8 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
 
     SceneToneUniforms {
         exposure: exposure.exposure,
-        saturation,
-        vibrance,
+        saturation: exposure.saturation,
+        vibrance: exposure.vibrance,
         legacy_luminance_tone: legacy_luminance_bits(
             exposure.tone_curve_response,
             ToneResponse::Rgb,
@@ -410,7 +400,7 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
         grade_midtones: pack_color_grade_wheel(exposure.color_grading.midtones),
         grade_highlights: pack_color_grade_wheel(exposure.color_grading.highlights),
         grade_global: pack_color_grade_wheel(exposure.color_grading.global),
-        grade_options: pack_view_options(exposure.color_grading, hue, exposure.brightness),
+        grade_options: pack_view_options(exposure.color_grading, exposure.hue, exposure.brightness),
         rec2020_to_xyz: [
             [0.636_958, 0.262_700_2, 0.0, 0.0],
             [0.144_616_9, 0.677_998_1, 0.028_072_7, 0.0],
@@ -433,10 +423,12 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
         ],
         point_colors,
         point_color_meta: [
-            global_point_colors.len() as u32,
-            point_color_visualize.map_or(0, |index| (index + 1) as u32),
+            exposure.point_colors.len() as u32,
+            exposure
+                .point_color_visualize
+                .map_or(0, |index| (index + 1) as u32),
             0,
-            local_point_color_flags | (u32::from(global_point_colors.has_adjustments()) << 2),
+            local_point_color_flags | (u32::from(exposure.point_colors.has_adjustments()) << 2),
         ],
         // Set by `GpuParams::with_look_lut`.
         look_lut: [0.0; 4],

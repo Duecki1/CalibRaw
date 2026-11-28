@@ -107,7 +107,7 @@ Where more than one graphics API works, such as Direct3D 12 and Vulkan on Window
 ### Color & Tone
 - **Point Color:** Sample a color in global or mask HSL controls, refine its Hue/Saturation/Luminance span, preview the selected range, and apply targeted shifts.
 - **8-Band Color Mixer:** Adjust Hue, Saturation, and Luminance across 8 individual color bands.
-- **Black & White:** Switch the Color panel to B&W and mix the grey from the photo's colors in the B&W Mix, like a color filter on black-and-white film, then tone it with Color Grading.
+- **Black & White:** Switch the Color panel to B&W and mix the grey from the photo's colors in the B&W Mix, globally or inside a mask, like a color filter on black-and-white film, then tone it with Color Grading.
 - **3-Way Color Grading:** Dedicated Shadows, Midtones, Highlights, and Global color wheels mapped through Oklab color space.
 - **Tone Curves:** Master curve applied to RGB with a hue lock, so contrast raises saturation, and individual Red, Green, and Blue splines with monotonic limits.
 - **Sigmoid Tone Mapping:** Provides smooth, film-like highlight compression without harsh clipping.

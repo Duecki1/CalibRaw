@@ -1,6 +1,5 @@
 use super::*;
 use crate::app::DevelopUiState;
-use crate::i18n::tr;
 use crate::ui::components::point_color::PointColorUiState;
 
 /// Sidebar tab selections used by the local mask adjustment sections.
@@ -35,19 +34,25 @@ impl<'a> LocalAdjustmentTabs<'a> {
 
 /// The part of a mask the local adjustment cards edit: its adjustments and
 /// the switches of their cards, and the effect components the Effects card
-/// can add to.
+/// can add to; and whether its photo renders black and white
+/// ([`crate::pipeline::Treatment::Monochrome`]), which leaves its colour
+/// controls nothing to change and its Color Mixer card the mix.
 pub(super) struct LocalAdjustmentTarget<'a> {
     pub(super) adjustments: &'a mut crate::pipeline::LocalAdjustments,
     pub(super) cards_off: &'a mut crate::pipeline::AdjustmentGroupSet,
     pub(super) effect_components: &'a [crate::pipeline::EffectComponent],
+    pub(super) monochrome: bool,
 }
 
 impl<'a> LocalAdjustmentTarget<'a> {
-    pub(super) fn of(mask: &'a mut LocalMask) -> Self {
+    /// `mask` of a photo that renders black and white when `monochrome`
+    /// ([`crate::pipeline::ExposureParams::renders_monochrome`]).
+    pub(super) fn of(mask: &'a mut LocalMask, monochrome: bool) -> Self {
         Self {
             adjustments: &mut mask.adjustments,
             cards_off: &mut mask.cards_off,
             effect_components: &mask.effect_components,
+            monochrome,
         }
     }
 }
@@ -104,17 +109,30 @@ impl Sidebar {
             adjustments,
             cards_off,
             effect_components,
+            monochrome,
         } = target;
         let mut response = LocalAdjustmentResponse::default();
         let on = !cards_off.contains(group);
-        let action = Self::adjustment_card(ui, title, default_open, foldable, on, |ui| {
-            if section == MaskSection::Effects {
-                response = Self::show_local_mask_effects(ui, adjustments, effect_components);
-            } else {
-                response.changed =
-                    Self::show_local_mask_adjustment_section(ui, adjustments, section, tabs);
-            }
-        });
+        // One Color Mixer card under either name, so it keeps its fold state.
+        let name = if section == MaskSection::ColorMixer {
+            Self::color_mixer_name(monochrome, false)
+        } else {
+            super::super::adjustment_cards::card_title_text(title)
+        };
+        let action =
+            Self::adjustment_card_named(ui, title, name, default_open, foldable, on, |ui| {
+                if section == MaskSection::Effects {
+                    response = Self::show_local_mask_effects(ui, adjustments, effect_components);
+                } else {
+                    response.changed = Self::show_local_mask_adjustment_section(
+                        ui,
+                        adjustments,
+                        section,
+                        monochrome,
+                        tabs,
+                    );
+                }
+            });
         match action {
             super::super::adjustment_cards::CardAction::None => {}
             super::super::adjustment_cards::CardAction::Toggle => {
@@ -134,6 +152,7 @@ impl Sidebar {
         ui: &mut Ui,
         adjustment: &mut crate::pipeline::LocalAdjustments,
         section: MaskSection,
+        monochrome: bool,
         tabs: LocalAdjustmentTabs<'_>,
     ) -> bool {
         match section {
@@ -146,13 +165,14 @@ impl Sidebar {
                 tabs.tone_curve,
                 tabs.curve_overlay,
             ),
-            MaskSection::Color => Self::show_local_mask_color(ui, adjustment),
+            MaskSection::Color => Self::show_local_mask_color(ui, adjustment, monochrome),
             MaskSection::ColorGrading => {
                 Self::show_local_mask_color_grading(ui, adjustment, tabs.color_grade)
             }
-            MaskSection::ColorMixer => Self::show_local_mask_color_mixer(
+            MaskSection::ColorMixer => color_mixer_body(
                 ui,
-                adjustment,
+                ColorMixerSettings::of_mask(adjustment),
+                monochrome,
                 tabs.hsl_mixer_color,
                 tabs.point_color,
                 tabs.point_color_tab,
@@ -206,9 +226,12 @@ impl Sidebar {
         changed
     }
 
+    /// The Color card of a mask; a black-and-white photo (`monochrome`) has
+    /// no colour for its Hue and Saturation to change.
     fn show_local_mask_color(
         ui: &mut Ui,
         adjustment: &mut crate::pipeline::LocalAdjustments,
+        monochrome: bool,
     ) -> bool {
         use crate::pipeline::effect_params::adjustment as params;
 
@@ -225,13 +248,15 @@ impl Sidebar {
             params::TINT,
             SliderGradient::Tint,
         );
-        changed |= hue_adjustment_slider(ui, &mut adjustment.hue);
-        changed |= gradient_float_param_slider(
-            ui,
-            &mut adjustment.saturation,
-            params::SATURATION,
-            SliderGradient::Colorfulness,
-        );
+        ui.add_enabled_ui(!monochrome, |ui| {
+            changed |= hue_adjustment_slider(ui, &mut adjustment.hue);
+            changed |= gradient_float_param_slider(
+                ui,
+                &mut adjustment.saturation,
+                params::SATURATION,
+                SliderGradient::Colorfulness,
+            );
+        });
         changed
     }
 
@@ -301,36 +326,5 @@ impl Sidebar {
             adjustment.sanitize_tone_curves();
         }
         brightness_changed || curve_changed
-    }
-
-    fn show_local_mask_color_mixer(
-        ui: &mut Ui,
-        adjustment: &mut crate::pipeline::LocalAdjustments,
-        selected_color: &mut HslMixerColor,
-        point_color: &mut PointColorUiState,
-        point_color_tab: &mut bool,
-    ) -> bool {
-        ui.horizontal(|ui| {
-            ui.selectable_value(point_color_tab, false, tr("Mixer"));
-            ui.selectable_value(point_color_tab, true, tr("Point Color"));
-        });
-        ui.add_space(moduwu_design::SPACE_XS);
-        if *point_color_tab {
-            crate::ui::components::point_color::point_color(
-                ui,
-                &mut adjustment.point_colors,
-                point_color,
-            )
-        } else {
-            point_color.picker_active = false;
-            point_color.visualize_range = false;
-            hsl_mixer(
-                ui,
-                selected_color,
-                &mut adjustment.hsl_hue,
-                &mut adjustment.hsl_saturation,
-                &mut adjustment.hsl_luminance,
-            )
-        }
     }
 }

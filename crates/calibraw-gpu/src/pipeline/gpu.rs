@@ -93,10 +93,12 @@ mod mask_params;
 mod params;
 mod remove_scene;
 mod stage_params;
+mod treatment;
 use mask_params::*;
 pub use params::*;
 pub use remove_scene::*;
 use stage_params::*;
+use treatment::{treated_adjustments, treated_exposure};
 
 const GPU_PARAMS_ABI_VERSION: u32 = 17;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;

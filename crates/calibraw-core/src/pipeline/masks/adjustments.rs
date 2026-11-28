@@ -44,6 +44,14 @@ pub struct LocalAdjustments {
     pub hsl_hue: [f32; 8],
     pub hsl_saturation: [f32; 8],
     pub hsl_luminance: [f32; 8],
+    /// As [`ExposureParams::monochrome_mix`](crate::pipeline::ExposureParams::monochrome_mix),
+    /// inside the mask: the mix of a black-and-white photo, which renders
+    /// in place of this mask's colour mixer. Left out of files while zero.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::pipeline::basicadj::bands_are_zero"
+    )]
+    pub monochrome_mix: [f32; 8],
     #[serde(default)]
     pub point_colors: crate::pipeline::PointColors,
     #[serde(skip)]
@@ -80,6 +88,7 @@ impl Default for LocalAdjustments {
             hsl_hue: [0.0; 8],
             hsl_saturation: [0.0; 8],
             hsl_luminance: [0.0; 8],
+            monochrome_mix: [0.0; 8],
             point_colors: crate::pipeline::PointColors::default(),
             point_color_visualize: None,
             color_grading: crate::pipeline::ColorGrading::default(),

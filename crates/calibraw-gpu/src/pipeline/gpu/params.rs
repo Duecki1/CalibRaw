@@ -279,6 +279,9 @@ pub(super) struct SceneToneUniforms {
     pub(super) hsl_hue_1: [f32; 4],
     pub(super) hsl_saturation_0: [f32; 4],
     pub(super) hsl_saturation_1: [f32; 4],
+    /// The colour mixer's Luminance, or in its place a black-and-white
+    /// photo's mix, then the mixer's Hue and Saturation at rest
+    /// (`treatment.rs`).
     pub(super) hsl_luminance_0: [f32; 4],
     pub(super) hsl_luminance_1: [f32; 4],
     pub(super) mask_counts: [u32; 4],
@@ -370,6 +373,9 @@ pub(super) struct MaskData {
     pub(super) hsl_hue_1: [f32; 4],
     pub(super) hsl_saturation_0: [f32; 4],
     pub(super) hsl_saturation_1: [f32; 4],
+    /// The colour mixer's Luminance, or in its place a black-and-white
+    /// photo's mix, then the mixer's Hue and Saturation at rest
+    /// (`treatment.rs`).
     pub(super) hsl_luminance_0: [f32; 4],
     pub(super) hsl_luminance_1: [f32; 4],
     pub(super) point_colors: [PackedPointColor; MAX_POINT_COLORS],
@@ -758,7 +764,7 @@ impl GpuParams {
                 full_height,
             },
         };
-        let mask_data = pack_mask_params(masks);
+        let mask_data = pack_mask_params(masks, exposure.renders_monochrome());
         let capture = processing_capture_deconvolution(&context);
         let (camera, highlight_model) = pack_camera_params(&context, capture);
         Self {

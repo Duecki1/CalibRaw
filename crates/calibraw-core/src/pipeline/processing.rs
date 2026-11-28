@@ -131,6 +131,7 @@ impl RawStageControls {
             hsl_hue: _,
             hsl_saturation: _,
             hsl_luminance: _,
+            monochrome_mix: _,
             point_colors: _,
             point_color_visualize: _,
             color_grading: _,

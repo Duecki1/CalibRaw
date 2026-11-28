@@ -178,14 +178,22 @@ impl ToneResponse {
 pub enum Treatment {
     #[default]
     Color,
-    /// Black and white: the view node turns the photo grey after the colour
-    /// mixers, keeping each pixel's OKLab lightness, and
-    /// [`ExposureParams::hsl_luminance`] mixes the grey from the colours
-    /// before it (`apply_monochrome_mix` in view_transform.wgsl). Colour
-    /// Grading tones the grey. Saturation, Vibrance, Hue, the mixer's Hue and
-    /// Saturation and Point Color have no colour to act on and do not render;
-    /// their values stay in the edit for a return to [`Self::Color`].
-    /// White balance and Calibration change the colours the mix reads.
+    /// Black and white: the view node turns the photo grey where the colour
+    /// mixers run, keeping each pixel's OKLab lightness, and the mix
+    /// ([`ExposureParams::monochrome_mix`], and each mask's
+    /// [`LocalAdjustments::monochrome_mix`]) brightens or darkens the grey
+    /// by the colours before it (`apply_monochrome_mix` in
+    /// view_transform.wgsl).
+    ///
+    /// Controls with no colour to act on do not render, globally or in a
+    /// mask: Saturation, Vibrance, Hue, the colour mixer (Hue, Saturation and
+    /// Luminance) and Point Color. Their values stay in the edit for a return
+    /// to [`Self::Color`], and the mix stays for a return to black and white.
+    /// White balance, Calibration, a mask's Temperature and Tint and the
+    /// channel curves change the colours the mix reads; Color Grading, the
+    /// LUT and colour grain, after the grey, tone it.
+    ///
+    /// [`LocalAdjustments::monochrome_mix`]: super::LocalAdjustments::monochrome_mix
     Monochrome,
 }
 
@@ -198,6 +206,12 @@ impl Treatment {
     pub const fn is_color(&self) -> bool {
         matches!(self, Self::Color)
     }
+}
+
+/// Whether every one of a mixer's eight colour bands is 0. Takes a reference
+/// for `skip_serializing_if`.
+pub(crate) fn bands_are_zero(bands: &[f32; 8]) -> bool {
+    bands.iter().all(|value| *value == 0.0)
 }
 
 /// Whether the camera profile's own tone curve (the DCP's ProfileToneCurve)
@@ -487,6 +501,13 @@ pub struct ExposureParams {
     pub hsl_hue: [f32; 8],
     pub hsl_saturation: [f32; 8],
     pub hsl_luminance: [f32; 8],
+    /// The black-and-white mix, -100 to +100 per colour band of the mixer:
+    /// how far the grey of each colour is darkened or brightened. Renders only
+    /// while the photo is [`Treatment::Monochrome`], and the mixer's Hue,
+    /// Saturation and Luminance only while it is not; all belong to the Color
+    /// Mixer card. Left out of files while zero, which stay as they were.
+    #[serde(default, skip_serializing_if = "bands_are_zero")]
+    pub monochrome_mix: [f32; 8],
 
     #[serde(default)]
     pub point_colors: super::PointColors,
@@ -611,6 +632,7 @@ impl Default for ExposureParams {
             hsl_hue: [0.0; 8],
             hsl_saturation: [0.0; 8],
             hsl_luminance: [0.0; 8],
+            monochrome_mix: [0.0; 8],
             point_colors: super::PointColors::default(),
             point_color_visualize: None,
             color_grading: ColorGrading::default(),

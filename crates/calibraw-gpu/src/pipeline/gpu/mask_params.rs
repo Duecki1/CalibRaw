@@ -104,8 +104,10 @@ pub(super) fn pack_effect_slots(
     })
 }
 
-pub(super) fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
-    let adjustment = mask.adjustments;
+/// The slot of an adjustment `mask` of a photo that renders black and white
+/// when `monochrome` ([`treated_adjustments`]).
+pub(super) fn pack_adjustment_mask(mask: &LocalMask, monochrome: bool) -> MaskData {
+    let adjustment = treated_adjustments(mask.adjustments, monochrome);
     let adjustment_enabled =
         mask.enabled && mask.adjustments_enabled && mask.effect.uses_adjustments();
     let has_hsl = adjustment.has_color_mixer();
@@ -193,7 +195,9 @@ pub(super) fn render_mask_slot_count(masks: &MaskStack) -> usize {
         + crate::pipeline::effect_places(&masks.global_effects)
 }
 
-pub(super) fn pack_mask_params(masks: &MaskStack) -> Box<[MaskData]> {
+/// The slots of `masks`, of a photo that renders black and white when
+/// `monochrome` ([`ExposureParams::renders_monochrome`]).
+pub(super) fn pack_mask_params(masks: &MaskStack, monochrome: bool) -> Box<[MaskData]> {
     let mut packed = vec![MaskData::zeroed(); MAX_RENDER_MASK_SLOTS].into_boxed_slice();
     let mut slot = 0;
     // Validation keeps every list within its places (MAX_EFFECT_COMPONENTS),
@@ -209,7 +213,7 @@ pub(super) fn pack_mask_params(masks: &MaskStack) -> Box<[MaskData]> {
     for (layer, mask) in masks.masks.iter().enumerate() {
         let layer = layer as u32;
         if mask.effect == MaskEffect::Adjustment {
-            place(pack_adjustment_mask(mask), layer);
+            place(pack_adjustment_mask(mask, monochrome), layer);
         } else {
             for data in pack_effect_slots(mask.effect, &mask.effect_settings, mask.enabled) {
                 place(data, layer);

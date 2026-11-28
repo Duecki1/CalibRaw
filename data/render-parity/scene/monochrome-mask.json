@@ -1,0 +1,166 @@
+{
+  "edits": {
+    "exposure": {
+      "treatment": "monochrome",
+      "monochrome_mix": [20.0,0.0,0.0,0.0,0.0,-30.0,0.0,0.0]
+    },
+    "masks": {
+      "masks": [
+        {
+          "adjustments": {
+            "blacks": 0.0,
+            "clarity": 0.0,
+            "color_grading": {
+              "balance": 0.0,
+              "blending": 50.0,
+              "global": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "highlights": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "midtones": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              },
+              "shadows": {
+                "hue": 0.0,
+                "luminance": 0.0,
+                "saturation": 0.0
+              }
+            },
+            "contrast": 0.0,
+            "dehaze": 0.0,
+            "exposure": 0.0,
+            "highlights": 0.0,
+            "hsl_hue": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+            "hsl_luminance": [-100.0,0.0,0.0,0.0,0.0,100.0,0.0,0.0],
+            "hsl_saturation": [100.0,0.0,0.0,0.0,0.0,-100.0,0.0,0.0],
+            "hue": 60.0,
+            "point_colors": [],
+            "saturation": 80.0,
+            "shadows": 0.0,
+            "temperature": 0.0,
+            "texture": 0.0,
+            "tint": 0.0,
+            "tone_curve": {
+              "len": 2,
+              "points": [
+                [0.0,0.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0]
+              ]
+            },
+            "tone_curve_blue": {
+              "len": 2,
+              "points": [
+                [0.0,0.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0]
+              ]
+            },
+            "tone_curve_green": {
+              "len": 2,
+              "points": [
+                [0.0,0.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0]
+              ]
+            },
+            "tone_curve_red": {
+              "len": 2,
+              "points": [
+                [0.0,0.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0],
+                [1.0,1.0]
+              ]
+            },
+            "whites": 0.0,
+            "monochrome_mix": [50.0,30.0,30.0,0.0,-40.0,-80.0,0.0,0.0]
+          },
+          "adjustments_enabled": true,
+          "components": [
+            {
+              "combine": "Add",
+              "enabled": true,
+              "geometry": {
+                "Radial": {
+                  "center": [0.35,0.55],
+                  "feather": 0.6,
+                  "initialized": true,
+                  "radius": [0.28,0.22],
+                  "rotation": 0.4
+                }
+              },
+              "invert": false,
+              "kind": "Radial",
+              "name": "Radial Gradient"
+            }
+          ],
+          "effect": "Adjustment",
+          "enabled": true,
+          "invert": false,
+          "name": "Mask 1",
+          "opacity": 1.0
+        }
+      ]
+    }
+  }
+}

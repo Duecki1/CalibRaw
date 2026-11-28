@@ -196,6 +196,7 @@ impl ExposureParams {
             hsl_hue,
             hsl_saturation,
             hsl_luminance,
+            monochrome_mix,
             point_colors,
             // Transient picker state of the image being edited, never copied.
             point_color_visualize: _,
@@ -258,6 +259,7 @@ impl ExposureParams {
                 self.hsl_hue = hsl_hue;
                 self.hsl_saturation = hsl_saturation;
                 self.hsl_luminance = hsl_luminance;
+                self.monochrome_mix = monochrome_mix;
                 self.point_colors = point_colors;
             }
             ExposureSection::Group(AdjustmentGroup::Calibration) => {
@@ -332,6 +334,7 @@ impl LocalAdjustments {
                 self.hsl_hue = defaults.hsl_hue;
                 self.hsl_saturation = defaults.hsl_saturation;
                 self.hsl_luminance = defaults.hsl_luminance;
+                self.monochrome_mix = defaults.monochrome_mix;
                 self.point_colors = defaults.point_colors;
                 self.point_color_visualize = None;
             }

@@ -180,6 +180,15 @@ impl ExposureParams {
         applied
     }
 
+    /// Whether the photo renders black and white ([`Treatment::Monochrome`]):
+    /// its treatment as [`Self::applied`] renders it, which the Color card's
+    /// switch turns back to colour.
+    ///
+    /// [`Treatment::Monochrome`]: super::Treatment::Monochrome
+    pub fn renders_monochrome(&self) -> bool {
+        self.treatment.is_monochrome() && self.card_on(CardSwitch::Color)
+    }
+
     /// Whether the source this edit develops has its hot pixels repaired: its
     /// `hot_pixel_removal` as [`Self::applied`] renders it, which the Detail
     /// card's switch turns off and the Lens Corrections card's does not.

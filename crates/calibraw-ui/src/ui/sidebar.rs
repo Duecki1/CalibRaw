@@ -14,7 +14,7 @@ use crate::ui::components::adjustment_slider::{
     SliderGradient,
 };
 use crate::ui::components::color_grading::color_grading_editor;
-use crate::ui::components::hsl_mixer::{hsl_mixer, monochrome_mix};
+use crate::ui::components::hsl_mixer::{color_mixer_body, ColorMixerSettings};
 use crate::ui::components::tone_curve_editor::{
     tone_curve_channel_editor, CurveOverlay, ToneCurveChannels,
 };

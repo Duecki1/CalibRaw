@@ -199,11 +199,7 @@ impl Sidebar {
                         AdjustmentSection::Effects => (regular::SPARKLE, tr("Effects")),
                         AdjustmentSection::ColorMixer => (
                             regular::SWATCHES,
-                            if Self::color_mixer_shows_mix(&app.develop.exposure) {
-                                tr("B&W Mix")
-                            } else {
-                                tr("Mixer")
-                            },
+                            Self::color_mixer_name(app.develop.exposure.renders_monochrome(), true),
                         ),
                         AdjustmentSection::Optics => (regular::EYE, tr("Optics")),
                         AdjustmentSection::Calibration => (regular::FADERS, tr("Calibration")),
@@ -260,6 +256,7 @@ impl Sidebar {
                     app.develop_ui.mask_effect_mask = app.masks.stack.selected_mask;
                     app.develop_ui.mask_effect_component = None;
                 }
+                let monochrome = app.develop.exposure.renders_monochrome();
                 let adjustment_mask = app
                     .masks
                     .stack
@@ -276,7 +273,11 @@ impl Sidebar {
                         tr("Grading"),
                     ),
                     (MaskSection::Effects, regular::SPARKLE, tr("Effects")),
-                    (MaskSection::ColorMixer, regular::SWATCHES, tr("Mixer")),
+                    (
+                        MaskSection::ColorMixer,
+                        regular::SWATCHES,
+                        Self::color_mixer_name(monochrome, true),
+                    ),
                 ] {
                     if section != MaskSection::Properties && !adjustment_mask {
                         continue;

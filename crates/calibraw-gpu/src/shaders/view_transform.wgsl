@@ -398,12 +398,14 @@ fn apply_color_mixer(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
 }
 
 // Black and white (Rust `Treatment::Monochrome`). The view node turns the
-// photo grey after the colour mixers: each pixel keeps its OKLab lightness,
-// the grey of Saturation -100. The mixer's Luminance values are the mix: each
-// brightens or darkens the grey of the colours of its band, as a colour
-// filter does on black-and-white film (Lightroom's B&W mix). The mix moves a
-// pixel by how colourful it is, so neutral greys stay where they are and a
-// deep colour moves more than a pale one of the same hue.
+// photo grey in place of the colour mixers: each pixel keeps its OKLab
+// lightness, the grey of Saturation -100. The mix, the global one and each
+// mask's, brightens or darkens the grey of the colours of each band, as a
+// colour filter does on black-and-white film (Lightroom's B&W mix); a
+// black-and-white photo packs it in the colour mixer's Luminance slots
+// (calibraw-gpu `treatment.rs`). The mix moves a pixel by how colourful it
+// is, so neutral greys stay where they are and a deep colour moves more than
+// a pale one of the same hue.
 
 // The gain at ±100 on a fully colourful pixel, in EV. Further than the colour
 // mixer's Luminance (mixer_luminance_ev): without colour there is no hue to
@@ -479,19 +481,40 @@ fn monochrome_mix_ev(
     return amount * endpoint_ev * colourfulness * signal * hdr_guard;
 }
 
-// The global mix at `pos` applied to `rgb`, the pixel there in scene-linear
-// Rec.2020: scaled by the mix's gain, still in colour so that the masks' colour
-// mixers can mix it further before monochrome_grey. Scaling linear RGB by g
-// scales its OKLab lightness by g^(1/3), so the grey moves by the same g.
+// The mix at `pos` applied to `rgb`, the pixel there in scene-linear
+// Rec.2020, before monochrome_grey: scaled by the global mix's gain plus each
+// mask's weighted by its coverage, adding up in EV as mask Exposure does. All
+// read the one colour estimate of the photo's colours, taken only where a mix
+// applies. Scaling linear RGB by g scales its OKLab lightness by g^(1/3), so
+// the grey moves by the same g.
 fn apply_monochrome_mix(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
+    let lab = Color::rec2020_to_oklab(rgb);
+    var ab = vec2<f32>(0.0);
+    var estimated = false;
+    var ev = 0.0;
     let luminance_0 = Common::scene_tone_uniforms.hsl_luminance_0_field;
     let luminance_1 = Common::scene_tone_uniforms.hsl_luminance_1_field;
-    if max(max_abs_vec4(luminance_0), max_abs_vec4(luminance_1)) < 1e-6 {
-        return rgb;
+    if max(max_abs_vec4(luminance_0), max_abs_vec4(luminance_1)) >= 1e-6 {
+        ab = monochrome_mix_colour(pos, lab);
+        estimated = true;
+        ev = monochrome_mix_ev(lab.x, ab, luminance_0, luminance_1);
     }
-    let lab = Color::rec2020_to_oklab(rgb);
-    let ab = monochrome_mix_colour(pos, lab);
-    let ev = monochrome_mix_ev(lab.x, ab, luminance_0, luminance_1);
+    let count = Common::mask_slot_count();
+    for (var index = 0u; index < count; index = index + 1u) {
+        if !mask_mixes_colour(Common::mask_metadata(index)) { continue; }
+        let weight = SceneAdjustments::local_mask_weight(pos, index);
+        if weight <= 1e-5 { continue; }
+        if !estimated {
+            ab = monochrome_mix_colour(pos, lab);
+            estimated = true;
+        }
+        ev = ev + weight * monochrome_mix_ev(
+            lab.x,
+            ab,
+            Common::mask_hsl_luminance_0_field(index),
+            Common::mask_hsl_luminance_1_field(index),
+        );
+    }
     if abs(ev) < 1e-7 {
         return rgb;
     }
@@ -688,12 +711,18 @@ fn local_point_color_visualization(pos: vec2<i32>, selection_sample: vec3<f32>) 
     return 0.0;
 }
 
+// Whether the slot of `state` is an active adjustment whose colour mixer (or,
+// in black and white, mix) changes something: bit 0 of `metadata[3]`
+// (calibraw-gpu `pack_adjustment_mask`).
+fn mask_mixes_colour(state: vec4<u32>) -> bool {
+    return state.x != 0u && Common::mask_effect_id(state) == 0u && (state.w & 1u) != 0u;
+}
+
 fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
     let count = Common::mask_slot_count();
     for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_metadata(index);
-        if state.x == 0u || Common::mask_effect_id(state) != 0u || (state.w & 1u) == 0u { continue; }
+        if !mask_mixes_colour(Common::mask_metadata(index)) { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
 
@@ -795,13 +824,12 @@ fn apply_view_node(@builtin(global_invocation_id) dispatch_gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let rgb = textureLoad(SceneAdjustments::final_adjustment_tex, pos, 0).xyz;
-    // Black and white mixes the grey from the colours, through the masks'
-    // colour mixers too, then drops them. The global mixer's Hue and
-    // Saturation have nothing left to change.
+    // Black and white mixes the grey from the colours, then drops them; its
+    // mix takes the colour mixers' place.
     let monochrome = Common::scene_tone_uniforms.treatment.x == Common::TREATMENT_MONOCHROME;
     var mixed: vec3<f32>;
     if monochrome {
-        mixed = monochrome_grey(apply_local_color_mixer(pos, apply_monochrome_mix(pos, rgb)));
+        mixed = monochrome_grey(apply_monochrome_mix(pos, rgb));
     } else {
         mixed = apply_local_color_mixer(pos, apply_color_mixer(pos, rgb));
     }

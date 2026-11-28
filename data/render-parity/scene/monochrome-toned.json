@@ -2,7 +2,7 @@
   "edits": {
     "exposure": {
       "treatment": "monochrome",
-      "hsl_luminance": [20.0,30.0,0.0,0.0,0.0,-40.0,0.0,0.0],
+      "monochrome_mix": [20.0,30.0,0.0,0.0,0.0,-40.0,0.0,0.0],
       "color_grading": {
         "balance": 0.0,
         "blending": 50.0,

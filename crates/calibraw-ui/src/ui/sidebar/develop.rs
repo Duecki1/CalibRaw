@@ -10,8 +10,8 @@ const COLOR_MIXER_CARD_TITLE: &str = "Color Mixer";
 /// What the Color card changed or asked for.
 pub(super) struct ColorCardChanges {
     pub(super) exposure: bool,
-    /// Show the black-and-white mix: the Color Mixer card of a black-and-white
-    /// photo ([`Sidebar::color_mixer_shows_mix`]).
+    /// Show the black-and-white mix: the Color Mixer card of a photo that
+    /// renders black and white ([`ExposureParams::renders_monochrome`]).
     pub(super) show_mix: bool,
 }
 
@@ -376,7 +376,7 @@ impl Sidebar {
                 changed = true;
             }
             ui.add_space(moduwu_design::SPACE_XS);
-            if exposure.treatment.is_monochrome() {
+            if exposure.renders_monochrome() {
                 // The mix is in another card, which this leads to.
                 let label = format!("{}  {}", egui_phosphor::regular::SWATCHES, tr("B&W Mix"));
                 show_mix = moduwu_design::full_width_button(ui, label).clicked();
@@ -916,10 +916,16 @@ impl Sidebar {
         (changed, added)
     }
 
-    /// Whether the Color Mixer card shows the black-and-white mix, as the
-    /// photo renders: the Color card's switch turns black and white off.
-    pub(super) fn color_mixer_shows_mix(exposure: &ExposureParams) -> bool {
-        exposure.treatment.is_monochrome() && exposure.card_on(CardSwitch::Color)
+    /// The name of a Color Mixer card, the photo's or a mask's, on its header
+    /// or, `short`, on a tab: B&W Mix while the photo renders black and white
+    /// (`monochrome`, [`ExposureParams::renders_monochrome`]), which the card
+    /// then shows ([`color_mixer_body`]).
+    pub(super) fn color_mixer_name(monochrome: bool, short: bool) -> &'static str {
+        match (monochrome, short) {
+            (true, _) => tr("B&W Mix"),
+            (false, false) => adjustment_cards::card_title_text(COLOR_MIXER_CARD_TITLE),
+            (false, true) => tr("Mixer"),
+        }
     }
 
     /// The Color Mixer card, unfolded and scrolled to when
@@ -954,52 +960,24 @@ impl Sidebar {
     ) -> bool {
         let mut changed = false;
         let on = exposure.card_on(CardSwitch::ColorMixer);
-        let monochrome = Self::color_mixer_shows_mix(exposure);
+        let monochrome = exposure.renders_monochrome();
         // One card under either name, so it keeps its fold state.
-        let name = if monochrome {
-            tr("B&W Mix")
-        } else {
-            adjustment_cards::card_title_text(COLOR_MIXER_CARD_TITLE)
-        };
         let action = Self::adjustment_card_named(
             ui,
             COLOR_MIXER_CARD_TITLE,
-            name,
+            Self::color_mixer_name(monochrome, false),
             false,
             foldable,
             on,
             |ui| {
-                if monochrome {
-                    // The mix of a black-and-white photo: each colour's Luminance,
-                    // all at once as Lightroom's B&W mix shows them. Point Color
-                    // has no colour to select in a grey photo.
-                    point_color.picker_active = false;
-                    point_color.visualize_range = false;
-                    changed |= monochrome_mix(ui, &mut exposure.hsl_luminance);
-                    return;
-                }
-                ui.horizontal(|ui| {
-                    ui.selectable_value(point_color_tab, false, tr("Mixer"));
-                    ui.selectable_value(point_color_tab, true, tr("Point Color"));
-                });
-                ui.add_space(moduwu_design::SPACE_XS);
-                if *point_color_tab {
-                    changed |= crate::ui::components::point_color::point_color(
-                        ui,
-                        &mut exposure.point_colors,
-                        point_color,
-                    );
-                } else {
-                    point_color.picker_active = false;
-                    point_color.visualize_range = false;
-                    changed |= hsl_mixer(
-                        ui,
-                        selected_color,
-                        &mut exposure.hsl_hue,
-                        &mut exposure.hsl_saturation,
-                        &mut exposure.hsl_luminance,
-                    );
-                }
+                changed |= color_mixer_body(
+                    ui,
+                    ColorMixerSettings::of_photo(exposure),
+                    monochrome,
+                    selected_color,
+                    point_color,
+                    point_color_tab,
+                );
             },
         );
         changed |= action.apply(exposure, AdjustmentGroup::ColorMixer);
