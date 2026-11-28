@@ -559,6 +559,9 @@ pub(crate) struct DevelopUiState {
     /// Unfold and scroll to the Lens Corrections card when the sidebar next
     /// draws it.
     pub(crate) reveal_lens_card: bool,
+    /// Unfold and scroll to the Color Mixer card when the sidebar next draws
+    /// it.
+    pub(crate) reveal_color_mixer_card: bool,
     pub(crate) manual_lens_dialog: Option<ManualLensDialog>,
     pub(crate) mask_section: MaskSection,
     pub(crate) effect_component: Option<crate::pipeline::MaskEffect>,

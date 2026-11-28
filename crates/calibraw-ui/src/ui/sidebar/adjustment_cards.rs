@@ -27,7 +27,10 @@ impl CardActionLayout {
 
 #[derive(Clone, Copy)]
 struct VerticalCardActions {
+    /// The card's key ([`card_title_text`]).
     title: &'static str,
+    /// The translated name its actions are labelled with.
+    name: &'static str,
     kind: VerticalCardKind,
     scope: Option<usize>,
 }
@@ -120,11 +123,12 @@ pub(super) fn reveal_adjustment_card(ctx: &egui::Context, title: &'static str) {
     moduwu_design::request_scroll_into_view(ctx, target, Some(egui::Align::TOP));
 }
 
-/// The name an adjustment card shows. `title` stays the card's key (reveal
-/// and pending footer actions use it), so only the name is
-/// translated. Names listed here are literals so the catalog extraction
-/// finds them; any other title, such as a mask effect name from
-/// `calibraw-core`, is looked up by its English text.
+/// The name an adjustment card shows. `title` stays the card's key (fold
+/// state, reveal and pending footer actions use it), so only the name is
+/// translated, and a card may show another name for the same key
+/// ([`Sidebar::adjustment_card_named`]). Names listed here are literals so
+/// the catalog extraction finds them; any other title, such as a mask effect
+/// name from `calibraw-core`, is looked up by its English text.
 pub(super) fn card_title_text(title: &'static str) -> &'static str {
     match title {
         "Light" => tr("Light"),
@@ -175,8 +179,9 @@ fn mask_overlay_toggle(ui: &mut Ui, size: egui::Vec2) -> egui::Response {
 }
 
 impl Sidebar {
-    pub(super) fn adjustment_card_title(ui: &mut Ui, title: &'static str) {
-        let response = ui.strong(card_title_text(title));
+    /// The header title `name` of the card keyed `title`.
+    fn adjustment_card_title(ui: &mut Ui, title: &'static str, name: &'static str) {
+        let response = ui.strong(name);
         if let Some(help) = MaskEffect::ALL
             .iter()
             .find(|effect| effect.label() == title)
@@ -225,9 +230,10 @@ impl Sidebar {
         clicked
     }
 
+    /// The header buttons of the card named `name`.
     fn card_actions(
         ui: &mut Ui,
-        title: &'static str,
+        name: &'static str,
         on: bool,
         show_mask_overlay_toggle: bool,
     ) -> CardActionLayout {
@@ -238,13 +244,13 @@ impl Sidebar {
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 size,
-                &tr_fmt("Reset {title}", &[("title", &card_title_text(title))]),
+                &tr_fmt("Reset {title}", &[("title", &name)]),
             );
             if reset.clicked() {
                 action = CardAction::Reset;
             }
             let overlay = show_mask_overlay_toggle.then(|| mask_overlay_toggle(ui, size));
-            let switch = card_switch(ui, on, card_title_text(title));
+            let switch = card_switch(ui, on, name);
             if switch.clicked() {
                 action = CardAction::Toggle;
             }
@@ -281,6 +287,7 @@ impl Sidebar {
     fn register_vertical_card_actions(
         ui: &Ui,
         title: &'static str,
+        name: &'static str,
         on: bool,
         reset: bool,
         show_mask_overlay_toggle: bool,
@@ -288,6 +295,7 @@ impl Sidebar {
         Self::register_vertical_actions(
             ui,
             title,
+            name,
             VerticalCardKind::Adjustment {
                 on,
                 reset,
@@ -302,10 +310,20 @@ impl Sidebar {
         enabled: bool,
         reset: bool,
     ) {
-        Self::register_vertical_actions(ui, title, VerticalCardKind::Effect { enabled, reset });
+        Self::register_vertical_actions(
+            ui,
+            title,
+            card_title_text(title),
+            VerticalCardKind::Effect { enabled, reset },
+        );
     }
 
-    fn register_vertical_actions(ui: &Ui, title: &'static str, kind: VerticalCardKind) {
+    fn register_vertical_actions(
+        ui: &Ui,
+        title: &'static str,
+        name: &'static str,
+        kind: VerticalCardKind,
+    ) {
         let scope = crate::app::preview_visibility::PreviewVisibility::current_scope(ui.ctx());
         let id = Self::vertical_card_actions_id();
         ui.ctx().data_mut(|data| {
@@ -316,7 +334,12 @@ impl Sidebar {
                 .iter()
                 .any(|entry| entry.title == title && entry.scope == scope)
             {
-                actions.push(VerticalCardActions { title, kind, scope });
+                actions.push(VerticalCardActions {
+                    title,
+                    name,
+                    kind,
+                    scope,
+                });
             }
             data.insert_temp(id, actions);
         });
@@ -386,7 +409,7 @@ impl Sidebar {
                 ui.ctx(),
                 entry.scope,
             );
-            let title = card_title_text(entry.title);
+            let title = entry.name;
             let reset = match entry.kind {
                 VerticalCardKind::Adjustment { reset, .. } => reset,
                 VerticalCardKind::Effect { reset, .. } => reset,
@@ -476,9 +499,33 @@ impl Sidebar {
         on: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
+        Self::adjustment_card_named(
+            ui,
+            title,
+            card_title_text(title),
+            default_open,
+            foldable,
+            on,
+            contents,
+        )
+    }
+
+    /// [`Self::adjustment_card`] showing `name`, already translated, in place
+    /// of its title's name: one card, keyed by `title`, that a state of the
+    /// edit gives another name keeps its fold state and reveal.
+    pub(super) fn adjustment_card_named(
+        ui: &mut Ui,
+        title: &'static str,
+        name: &'static str,
+        default_open: bool,
+        foldable: bool,
+        on: bool,
+        contents: impl FnOnce(&mut Ui),
+    ) -> CardAction {
         Self::adjustment_card_controls(
             ui,
             title,
+            name,
             default_open,
             foldable,
             CardHeaderControls {
@@ -503,6 +550,7 @@ impl Sidebar {
         Self::adjustment_card_controls(
             ui,
             "Mask",
+            card_title_text("Mask"),
             true,
             foldable,
             CardHeaderControls {
@@ -526,6 +574,7 @@ impl Sidebar {
         Self::adjustment_card_controls(
             ui,
             "Sub-mask",
+            card_title_text("Sub-mask"),
             true,
             foldable,
             CardHeaderControls {
@@ -550,6 +599,7 @@ impl Sidebar {
     fn adjustment_card_controls(
         ui: &mut Ui,
         title: &'static str,
+        name: &'static str,
         default_open: bool,
         foldable: bool,
         header_controls: CardHeaderControls,
@@ -581,6 +631,7 @@ impl Sidebar {
                     Self::register_vertical_card_actions(
                         ui,
                         title,
+                        name,
                         on,
                         footer_reset,
                         show_mask_overlay_toggle,
@@ -601,9 +652,9 @@ impl Sidebar {
                     }
                     let mut header = header.show_header(ui, |ui| {
                         let available = ui.available_rect_before_wrap();
-                        Self::adjustment_card_title(ui, title);
+                        Self::adjustment_card_title(ui, title, name);
                         let card_actions =
-                            Self::card_actions(ui, title, on, show_mask_overlay_toggle);
+                            Self::card_actions(ui, name, on, show_mask_overlay_toggle);
                         action = card_actions.action;
                         let buttons = card_actions.button_rects();
                         // The built-in arrow already toggles.
@@ -626,8 +677,8 @@ impl Sidebar {
                     header.body_unindented(body);
                 } else {
                     ui.horizontal(|ui| {
-                        Self::adjustment_card_title(ui, title);
-                        action = Self::card_actions(ui, title, on, show_mask_overlay_toggle).action;
+                        Self::adjustment_card_title(ui, title, name);
+                        action = Self::card_actions(ui, name, on, show_mask_overlay_toggle).action;
                     });
                     body(ui);
                 }

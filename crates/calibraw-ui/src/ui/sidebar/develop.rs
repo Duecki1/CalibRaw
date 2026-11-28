@@ -5,6 +5,15 @@ use crate::pipeline::{
 };
 
 const LENS_CARD_TITLE: &str = "Lens Corrections";
+const COLOR_MIXER_CARD_TITLE: &str = "Color Mixer";
+
+/// What the Color card changed or asked for.
+pub(super) struct ColorCardChanges {
+    pub(super) exposure: bool,
+    /// Show the black-and-white mix: the Color Mixer card of a black-and-white
+    /// photo ([`Sidebar::color_mixer_shows_mix`]).
+    pub(super) show_mix: bool,
+}
 
 /// What the Lens Corrections card changed.
 #[derive(Default)]
@@ -346,8 +355,9 @@ impl Sidebar {
         raw: Option<&LoadedRaw>,
         white_balance_picker_active: &mut bool,
         foldable: bool,
-    ) -> bool {
+    ) -> ColorCardChanges {
         let mut changed = false;
+        let mut show_mix = false;
         let on = exposure.card_on(CardSwitch::Color);
         let action = Self::adjustment_card(ui, "Color", false, foldable, on, |ui| {
             let mut treatment = exposure.treatment;
@@ -366,6 +376,12 @@ impl Sidebar {
                 changed = true;
             }
             ui.add_space(moduwu_design::SPACE_XS);
+            if exposure.treatment.is_monochrome() {
+                // The mix is in another card, which this leads to.
+                let label = format!("{}  {}", egui_phosphor::regular::SWATCHES, tr("B&W Mix"));
+                show_mix = moduwu_design::full_width_button(ui, label).clicked();
+                ui.add_space(moduwu_design::SPACE_XS);
+            }
             if let Some((raw, (shown_kelvin, shown_tint))) = raw.and_then(|raw| {
                 raw.shown_white_balance(exposure.white_balance)
                     .map(|shown| (raw, shown))
@@ -603,7 +619,10 @@ impl Sidebar {
         {
             *white_balance_picker_active = false;
         }
-        changed
+        ColorCardChanges {
+            exposure: changed,
+            show_mix,
+        }
     }
 
     pub(super) fn show_color_grading(
@@ -897,7 +916,35 @@ impl Sidebar {
         (changed, added)
     }
 
-    pub(super) fn show_hsl(
+    /// Whether the Color Mixer card shows the black-and-white mix, as the
+    /// photo renders: the Color card's switch turns black and white off.
+    pub(super) fn color_mixer_shows_mix(exposure: &ExposureParams) -> bool {
+        exposure.treatment.is_monochrome() && exposure.card_on(CardSwitch::Color)
+    }
+
+    /// The Color Mixer card, unfolded and scrolled to when
+    /// [`DevelopUiState::reveal_color_mixer_card`] asks.
+    ///
+    /// [`DevelopUiState::reveal_color_mixer_card`]: crate::app::DevelopUiState::reveal_color_mixer_card
+    pub(super) fn show_color_mixer_card(
+        ui: &mut Ui,
+        app: &mut CalibRawApp,
+        foldable: bool,
+    ) -> bool {
+        if std::mem::take(&mut app.develop_ui.reveal_color_mixer_card) {
+            adjustment_cards::reveal_adjustment_card(ui.ctx(), COLOR_MIXER_CARD_TITLE);
+        }
+        Self::show_hsl(
+            ui,
+            &mut app.develop.exposure,
+            &mut app.develop_ui.hsl_mixer_color,
+            &mut app.develop_ui.point_color,
+            &mut app.develop_ui.point_color_tab,
+            foldable,
+        )
+    }
+
+    fn show_hsl(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         selected_color: &mut HslMixerColor,
@@ -907,41 +954,54 @@ impl Sidebar {
     ) -> bool {
         let mut changed = false;
         let on = exposure.card_on(CardSwitch::ColorMixer);
-        // As it renders: the Color card's switch turns black and white off.
-        let monochrome = exposure.treatment.is_monochrome() && exposure.card_on(CardSwitch::Color);
-        let action = Self::adjustment_card(ui, "Color Mixer", false, foldable, on, |ui| {
-            if monochrome {
-                // The mix of a black-and-white photo: each colour's Luminance,
-                // all at once as Lightroom's B&W mix shows them. Point Color
-                // has no colour to select in a grey photo.
-                point_color.picker_active = false;
-                point_color.visualize_range = false;
-                changed |= monochrome_mix(ui, &mut exposure.hsl_luminance);
-                return;
-            }
-            ui.horizontal(|ui| {
-                ui.selectable_value(point_color_tab, false, tr("Mixer"));
-                ui.selectable_value(point_color_tab, true, tr("Point Color"));
-            });
-            ui.add_space(moduwu_design::SPACE_XS);
-            if *point_color_tab {
-                changed |= crate::ui::components::point_color::point_color(
-                    ui,
-                    &mut exposure.point_colors,
-                    point_color,
-                );
-            } else {
-                point_color.picker_active = false;
-                point_color.visualize_range = false;
-                changed |= hsl_mixer(
-                    ui,
-                    selected_color,
-                    &mut exposure.hsl_hue,
-                    &mut exposure.hsl_saturation,
-                    &mut exposure.hsl_luminance,
-                );
-            }
-        });
+        let monochrome = Self::color_mixer_shows_mix(exposure);
+        // One card under either name, so it keeps its fold state.
+        let name = if monochrome {
+            tr("B&W Mix")
+        } else {
+            adjustment_cards::card_title_text(COLOR_MIXER_CARD_TITLE)
+        };
+        let action = Self::adjustment_card_named(
+            ui,
+            COLOR_MIXER_CARD_TITLE,
+            name,
+            false,
+            foldable,
+            on,
+            |ui| {
+                if monochrome {
+                    // The mix of a black-and-white photo: each colour's Luminance,
+                    // all at once as Lightroom's B&W mix shows them. Point Color
+                    // has no colour to select in a grey photo.
+                    point_color.picker_active = false;
+                    point_color.visualize_range = false;
+                    changed |= monochrome_mix(ui, &mut exposure.hsl_luminance);
+                    return;
+                }
+                ui.horizontal(|ui| {
+                    ui.selectable_value(point_color_tab, false, tr("Mixer"));
+                    ui.selectable_value(point_color_tab, true, tr("Point Color"));
+                });
+                ui.add_space(moduwu_design::SPACE_XS);
+                if *point_color_tab {
+                    changed |= crate::ui::components::point_color::point_color(
+                        ui,
+                        &mut exposure.point_colors,
+                        point_color,
+                    );
+                } else {
+                    point_color.picker_active = false;
+                    point_color.visualize_range = false;
+                    changed |= hsl_mixer(
+                        ui,
+                        selected_color,
+                        &mut exposure.hsl_hue,
+                        &mut exposure.hsl_saturation,
+                        &mut exposure.hsl_luminance,
+                    );
+                }
+            },
+        );
         changed |= action.apply(exposure, AdjustmentGroup::ColorMixer);
         changed
     }

@@ -197,7 +197,14 @@ impl Sidebar {
                         AdjustmentSection::ColorGrading => (regular::CIRCLES_THREE, tr("Grading")),
                         AdjustmentSection::Detail => (regular::APERTURE, tr("Detail")),
                         AdjustmentSection::Effects => (regular::SPARKLE, tr("Effects")),
-                        AdjustmentSection::ColorMixer => (regular::SWATCHES, tr("Mixer")),
+                        AdjustmentSection::ColorMixer => (
+                            regular::SWATCHES,
+                            if Self::color_mixer_shows_mix(&app.develop.exposure) {
+                                tr("B&W Mix")
+                            } else {
+                                tr("Mixer")
+                            },
+                        ),
                         AdjustmentSection::Optics => (regular::EYE, tr("Optics")),
                         AdjustmentSection::Calibration => (regular::FADERS, tr("Calibration")),
                     };

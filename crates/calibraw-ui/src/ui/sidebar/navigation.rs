@@ -460,14 +460,7 @@ impl Sidebar {
                     Self::show_global_effects(ui, app, frame, layout, added);
                 }
                 AdjustmentSection::ColorMixer => {
-                    changed |= Self::show_hsl(
-                        ui,
-                        &mut app.develop.exposure,
-                        &mut app.develop_ui.hsl_mixer_color,
-                        &mut app.develop_ui.point_color,
-                        &mut app.develop_ui.point_color_tab,
-                        false,
-                    );
+                    changed |= Self::show_color_mixer_card(ui, app, false);
                 }
                 AdjustmentSection::Optics => {
                     let optics = Self::show_optics(ui, app, false);
@@ -538,14 +531,7 @@ impl Sidebar {
                         added = presence_added;
                     }
                     DevelopCard::ColorMixer => {
-                        changed |= Self::show_hsl(
-                            ui,
-                            &mut app.develop.exposure,
-                            &mut app.develop_ui.hsl_mixer_color,
-                            &mut app.develop_ui.point_color,
-                            &mut app.develop_ui.point_color_tab,
-                            true,
-                        );
+                        changed |= Self::show_color_mixer_card(ui, app, true);
                     }
                     DevelopCard::LensCorrections => {
                         let optics = Self::show_optics(ui, app, true);
@@ -724,6 +710,8 @@ impl Sidebar {
     }
 
     /// The Color card, whose eyedropper is the white balance [`AreaPicker`].
+    /// Its B&W Mix button shows the Color Mixer card: the vertical layout's
+    /// Mixer section, or the card unfolded and scrolled to.
     fn show_color_card(
         ui: &mut Ui,
         app: &mut CalibRawApp,
@@ -731,10 +719,17 @@ impl Sidebar {
         foldable: bool,
     ) -> bool {
         let mut picking = app.develop_ui.area_picker == Some(AreaPicker::WhiteBalance);
-        let changed = Self::show_color(ui, &mut app.develop.exposure, raw, &mut picking, foldable);
+        let changes = Self::show_color(ui, &mut app.develop.exposure, raw, &mut picking, foldable);
+        if changes.show_mix {
+            // The white balance is picked on the card this leaves.
+            picking = false;
+            app.develop_ui.adjustment_section = AdjustmentSection::ColorMixer;
+            app.develop_ui.effect_component = None;
+            app.develop_ui.reveal_color_mixer_card = true;
+        }
         app.develop_ui
             .set_area_picker(AreaPicker::WhiteBalance, picking);
-        changed
+        changes.exposure
     }
 
     /// Whether a photo is open and there is a LUT to show or a library to
