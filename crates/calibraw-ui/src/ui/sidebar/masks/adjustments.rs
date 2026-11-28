@@ -140,7 +140,11 @@ impl Sidebar {
                 response.switched = true;
             }
             super::super::adjustment_cards::CardAction::Reset => {
-                adjustments.reset_group(group);
+                if group == AdjustmentGroup::ColorMixer {
+                    adjustments.reset_color_mixer_card(monochrome);
+                } else {
+                    adjustments.reset_group(group);
+                }
                 cards_off.set(group, false);
                 response.changed = true;
             }

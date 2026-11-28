@@ -333,20 +333,18 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
     let (hsl_hue_0, hsl_hue_1) = split_eight(exposure.hsl_hue);
     let (hsl_saturation_0, hsl_saturation_1) = split_eight(exposure.hsl_saturation);
     let (hsl_luminance_0, hsl_luminance_1) = split_eight(exposure.hsl_luminance);
-    let adjustment_masks = || {
-        masks
-            .masks
-            .iter()
-            .filter(|mask| {
-                mask.enabled && mask.adjustments_enabled && mask.effect.uses_adjustments()
-            })
-            .map(|mask| treated_adjustments(mask.adjustments, monochrome))
-    };
-    let local_point_color_flags =
-        u32::from(adjustment_masks().any(|adjustments| adjustments.point_colors.has_adjustments()))
-            | (u32::from(
-                adjustment_masks().any(|adjustments| adjustments.point_color_visualize.is_some()),
-            ) << 1);
+    // Whether any active adjustment mask, as its photo's treatment packs it,
+    // has Point Color adjustments (bit 0) or previews a range (bit 1).
+    let local_point_color_flags = masks
+        .masks
+        .iter()
+        .filter(|mask| mask.enabled && mask.adjustments_enabled && mask.effect.uses_adjustments())
+        .map(|mask| treated_adjustments(mask.adjustments, monochrome))
+        .fold(0, |flags, adjustments| {
+            flags
+                | u32::from(adjustments.point_colors.has_adjustments())
+                | (u32::from(adjustments.point_color_visualize.is_some()) << 1)
+        });
     let tone_curves = [
         &exposure.tone_curve,
         &exposure.tone_curve_red,

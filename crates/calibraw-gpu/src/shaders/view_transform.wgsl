@@ -429,7 +429,8 @@ const MONOCHROME_MIX_COLOUR: f32 = 0.05;
 // an edge differs in lightness or colour and barely counts, so the mix keeps
 // to its side of the edge. `center_lab` is the pixel's OKLab. Reads the same
 // taps of final_adjustment_tex as the colour mixer (stabilized_mixer_sample),
-// which COLOR_MIXER_SUPPORT keeps in an export tile's halo.
+// which COLOR_MIXER_SUPPORT (calibraw-core `processing/tiles.rs`) keeps in an
+// export tile's halo.
 fn monochrome_mix_colour(pos: vec2<i32>, center_lab: vec3<f32>) -> vec2<f32> {
     var ab_sum = center_lab.yz;
     var weight_sum = 1.0;
@@ -458,8 +459,10 @@ fn monochrome_mix_colour(pos: vec2<i32>, center_lab: vec3<f32>) -> vec2<f32> {
 // The mix's gain in EV for a pixel of OKLab lightness `lightness` and colour
 // `ab`; `luminance_0` and `luminance_1` are the eight bands' values (±100).
 // How colourful the pixel is, its chroma relative to its lightness as the
-// colour mixer measures it, ramps the gain in: from nothing at near-neutral
-// chroma, which noise reaches, to all of it at the chroma of a deep colour.
+// colour mixer measures it (mixer_relative_chroma), ramps the gain in: from
+// nothing at near-neutral chroma (0.10), which noise reaches, to all of it at
+// 1.60, past a deep colour's 1, so only the most saturated colours take the
+// full gain.
 // Like the colour mixer's Luminance, it fades out in the deepest shadows,
 // where colour is mostly noise, and eases off above diffuse white.
 fn monochrome_mix_ev(

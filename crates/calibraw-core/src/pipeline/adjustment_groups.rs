@@ -124,6 +124,22 @@ impl ExposureParams {
         self.copy_group_from(&Self::default(), group);
     }
 
+    /// Resets what the Color Mixer card shows, as its reset button does:
+    /// while the photo renders black and white (`monochrome`,
+    /// [`Self::renders_monochrome`]) the mix, else the rest of the group (the
+    /// colour mixer and Point Color). The part the card hides stays for a
+    /// return to the other treatment; paste and presets still move the whole
+    /// [`AdjustmentGroup::ColorMixer`].
+    pub fn reset_color_mixer_card(&mut self, monochrome: bool) {
+        if monochrome {
+            self.monochrome_mix = Self::default().monochrome_mix;
+        } else {
+            let monochrome_mix = self.monochrome_mix;
+            self.reset_group(AdjustmentGroup::ColorMixer);
+            self.monochrome_mix = monochrome_mix;
+        }
+    }
+
     /// Copies the settings owned by one sidebar card from `source`.
     pub fn copy_group_from(&mut self, source: &Self, group: AdjustmentGroup) {
         self.copy_section_from(source, ExposureSection::Group(group));
@@ -338,6 +354,20 @@ impl LocalAdjustments {
                 self.point_colors = defaults.point_colors;
                 self.point_color_visualize = None;
             }
+        }
+    }
+
+    /// Resets what a mask's Color Mixer card shows, as
+    /// [`ExposureParams::reset_color_mixer_card`] does for the photo's:
+    /// the mix while the photo renders black and white (`monochrome`), else
+    /// the colour mixer and Point Color.
+    pub fn reset_color_mixer_card(&mut self, monochrome: bool) {
+        if monochrome {
+            self.monochrome_mix = Self::default().monochrome_mix;
+        } else {
+            let monochrome_mix = self.monochrome_mix;
+            self.reset_group(AdjustmentGroup::ColorMixer);
+            self.monochrome_mix = monochrome_mix;
         }
     }
 }

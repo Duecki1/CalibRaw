@@ -593,8 +593,7 @@ impl Sidebar {
             }
             // A black-and-white photo keeps these for a return to colour
             // but has no colour for them to change (`Treatment::Monochrome`).
-            let in_color = !exposure.treatment.is_monochrome();
-            ui.add_enabled_ui(in_color, |ui| {
+            ui.add_enabled_ui(!exposure.renders_monochrome(), |ui| {
                 changed |= hue_adjustment_slider(ui, &mut exposure.hue);
                 changed |=
                     AdjustmentSlider::new(tr("Vibrance"), &mut exposure.vibrance, -100.0..=100.0)
@@ -980,7 +979,9 @@ impl Sidebar {
                 );
             },
         );
-        changed |= action.apply(exposure, AdjustmentGroup::ColorMixer);
+        changed |= action.apply_to_card(exposure, CardSwitch::ColorMixer, |exposure| {
+            exposure.reset_color_mixer_card(monochrome)
+        });
         changed
     }
 
